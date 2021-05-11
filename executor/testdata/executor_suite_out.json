@@ -600,7 +600,7 @@
     ]
   },
   {
-    "Name": "TestRangePartitionBoundaries",
+    "Name": "TestRangePartitionBoundariesEq",
     "Cases": [
       {
         "SQL": "INSERT INTO t VALUES (999998, '999998 Filler ...'), (999999, '999999 Filler ...'), (1000000, '1000000 Filler ...'), (1000001, '1000001 Filler ...'), (1000002, '1000002 Filler ...')",
@@ -987,5 +987,561 @@
         "Res": null
       }
     ]
-   }
+  },
+  {
+    "Name": "TestRangePartitionBoundariesNe",
+    "Cases": [
+      {
+        "SQL": "INSERT INTO t VALUES (0, '0 Filler...')",
+        "Plan": [
+          "Insert N/A root  N/A"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "INSERT INTO t VALUES (1, '1 Filler...')",
+        "Plan": [
+          "Insert N/A root  N/A"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "INSERT INTO t VALUES (2, '2 Filler...')",
+        "Plan": [
+          "Insert N/A root  N/A"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "INSERT INTO t VALUES (3, '3 Filler...')",
+        "Plan": [
+          "Insert N/A root  N/A"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "INSERT INTO t VALUES (4, '4 Filler...')",
+        "Plan": [
+          "Insert N/A root  N/A"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "INSERT INTO t VALUES (5, '5 Filler...')",
+        "Plan": [
+          "Insert N/A root  N/A"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "INSERT INTO t VALUES (6, '6 Filler...')",
+        "Plan": [
+          "Insert N/A root  N/A"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a != -1",
+        "Plan": [
+          "TableReader 6656.67 root partition:all data:Selection",
+          "└─Selection 6656.67 cop[tikv]  ne(testrangepartitionboundariesne.t.a, -1)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "1 1 Filler...",
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler...",
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE 1 = 1 AND a != -1",
+        "Plan": [
+          "TableReader 6656.67 root partition:all data:Selection",
+          "└─Selection 6656.67 cop[tikv]  ne(testrangepartitionboundariesne.t.a, -1)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "1 1 Filler...",
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler...",
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a NOT IN (-2, -1)",
+        "Plan": [
+          "TableReader 3583.33 root partition:all data:Selection",
+          "└─Selection 3583.33 cop[tikv]  not(in(testrangepartitionboundariesne.t.a, -2, -1))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "1 1 Filler...",
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler...",
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE 1 = 0 OR a = -1",
+        "Plan": [
+          "TableReader 10.00 root partition:p0 data:Selection",
+          "└─Selection 10.00 cop[tikv]  or(0, eq(testrangepartitionboundariesne.t.a, -1))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a != 0",
+        "Plan": [
+          "TableReader 6656.67 root partition:all data:Selection",
+          "└─Selection 6656.67 cop[tikv]  ne(testrangepartitionboundariesne.t.a, 0)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1 1 Filler...",
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler...",
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0",
+        "Plan": [
+          "TableReader 6656.67 root partition:all data:Selection",
+          "└─Selection 6656.67 cop[tikv]  ne(testrangepartitionboundariesne.t.a, -1), ne(testrangepartitionboundariesne.t.a, 0)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1 1 Filler...",
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler...",
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a NOT IN (-2, -1, 0)",
+        "Plan": [
+          "TableReader 3583.33 root partition:all data:Selection",
+          "└─Selection 3583.33 cop[tikv]  not(in(testrangepartitionboundariesne.t.a, -2, -1, 0))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1 1 Filler...",
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler...",
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0",
+        "Plan": [
+          "TableReader 20.00 root partition:p0 data:Selection",
+          "└─Selection 20.00 cop[tikv]  or(0, or(eq(testrangepartitionboundariesne.t.a, -1), eq(testrangepartitionboundariesne.t.a, 0)))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "0 0 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a != 1",
+        "Plan": [
+          "TableReader 6656.67 root partition:all data:Selection",
+          "└─Selection 6656.67 cop[tikv]  ne(testrangepartitionboundariesne.t.a, 1)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler...",
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1",
+        "Plan": [
+          "TableReader 6656.67 root partition:all data:Selection",
+          "└─Selection 6656.67 cop[tikv]  ne(testrangepartitionboundariesne.t.a, -1), ne(testrangepartitionboundariesne.t.a, 0), ne(testrangepartitionboundariesne.t.a, 1)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler...",
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1)",
+        "Plan": [
+          "TableReader 3583.33 root partition:all data:Selection",
+          "└─Selection 3583.33 cop[tikv]  not(in(testrangepartitionboundariesne.t.a, -2, -1, 0, 1))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler...",
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1",
+        "Plan": [
+          "TableReader 30.00 root partition:p0,p1 data:Selection",
+          "└─Selection 30.00 cop[tikv]  or(or(0, eq(testrangepartitionboundariesne.t.a, -1)), or(eq(testrangepartitionboundariesne.t.a, 0), eq(testrangepartitionboundariesne.t.a, 1)))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "1 1 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a != 2",
+        "Plan": [
+          "TableReader 6656.67 root partition:all data:Selection",
+          "└─Selection 6656.67 cop[tikv]  ne(testrangepartitionboundariesne.t.a, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "1 1 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler...",
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2",
+        "Plan": [
+          "TableReader 6656.67 root partition:all data:Selection",
+          "└─Selection 6656.67 cop[tikv]  ne(testrangepartitionboundariesne.t.a, -1), ne(testrangepartitionboundariesne.t.a, 0), ne(testrangepartitionboundariesne.t.a, 1), ne(testrangepartitionboundariesne.t.a, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "3 3 Filler...",
+          "4 4 Filler...",
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2)",
+        "Plan": [
+          "TableReader 3583.33 root partition:all data:Selection",
+          "└─Selection 3583.33 cop[tikv]  not(in(testrangepartitionboundariesne.t.a, -2, -1, 0, 1, 2))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "3 3 Filler...",
+          "4 4 Filler...",
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2",
+        "Plan": [
+          "TableReader 40.00 root partition:p0,p1,p2 data:Selection",
+          "└─Selection 40.00 cop[tikv]  or(or(0, eq(testrangepartitionboundariesne.t.a, -1)), or(eq(testrangepartitionboundariesne.t.a, 0), or(eq(testrangepartitionboundariesne.t.a, 1), eq(testrangepartitionboundariesne.t.a, 2))))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "1 1 Filler...",
+          "2 2 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a != 3",
+        "Plan": [
+          "TableReader 6656.67 root partition:all data:Selection",
+          "└─Selection 6656.67 cop[tikv]  ne(testrangepartitionboundariesne.t.a, 3)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "1 1 Filler...",
+          "2 2 Filler...",
+          "4 4 Filler...",
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3",
+        "Plan": [
+          "TableReader 6656.67 root partition:all data:Selection",
+          "└─Selection 6656.67 cop[tikv]  ne(testrangepartitionboundariesne.t.a, -1), ne(testrangepartitionboundariesne.t.a, 0), ne(testrangepartitionboundariesne.t.a, 1), ne(testrangepartitionboundariesne.t.a, 2), ne(testrangepartitionboundariesne.t.a, 3)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "4 4 Filler...",
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3)",
+        "Plan": [
+          "TableReader 3583.33 root partition:all data:Selection",
+          "└─Selection 3583.33 cop[tikv]  not(in(testrangepartitionboundariesne.t.a, -2, -1, 0, 1, 2, 3))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "4 4 Filler...",
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3",
+        "Plan": [
+          "TableReader 50.00 root partition:p0,p1,p2,p3 data:Selection",
+          "└─Selection 50.00 cop[tikv]  or(or(0, or(eq(testrangepartitionboundariesne.t.a, -1), eq(testrangepartitionboundariesne.t.a, 0))), or(eq(testrangepartitionboundariesne.t.a, 1), or(eq(testrangepartitionboundariesne.t.a, 2), eq(testrangepartitionboundariesne.t.a, 3))))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "1 1 Filler...",
+          "2 2 Filler...",
+          "3 3 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a != 4",
+        "Plan": [
+          "TableReader 6656.67 root partition:all data:Selection",
+          "└─Selection 6656.67 cop[tikv]  ne(testrangepartitionboundariesne.t.a, 4)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "1 1 Filler...",
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4",
+        "Plan": [
+          "TableReader 6656.67 root partition:all data:Selection",
+          "└─Selection 6656.67 cop[tikv]  ne(testrangepartitionboundariesne.t.a, -1), ne(testrangepartitionboundariesne.t.a, 0), ne(testrangepartitionboundariesne.t.a, 1), ne(testrangepartitionboundariesne.t.a, 2), ne(testrangepartitionboundariesne.t.a, 3), ne(testrangepartitionboundariesne.t.a, 4)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4)",
+        "Plan": [
+          "TableReader 3583.33 root partition:all data:Selection",
+          "└─Selection 3583.33 cop[tikv]  not(in(testrangepartitionboundariesne.t.a, -2, -1, 0, 1, 2, 3, 4))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4",
+        "Plan": [
+          "TableReader 60.00 root partition:p0,p1,p2,p3,p4 data:Selection",
+          "└─Selection 60.00 cop[tikv]  or(or(0, or(eq(testrangepartitionboundariesne.t.a, -1), eq(testrangepartitionboundariesne.t.a, 0))), or(or(eq(testrangepartitionboundariesne.t.a, 1), eq(testrangepartitionboundariesne.t.a, 2)), or(eq(testrangepartitionboundariesne.t.a, 3), eq(testrangepartitionboundariesne.t.a, 4))))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "1 1 Filler...",
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a != 5",
+        "Plan": [
+          "TableReader 6656.67 root partition:all data:Selection",
+          "└─Selection 6656.67 cop[tikv]  ne(testrangepartitionboundariesne.t.a, 5)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "1 1 Filler...",
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5",
+        "Plan": [
+          "TableReader 6656.67 root partition:all data:Selection",
+          "└─Selection 6656.67 cop[tikv]  ne(testrangepartitionboundariesne.t.a, -1), ne(testrangepartitionboundariesne.t.a, 0), ne(testrangepartitionboundariesne.t.a, 1), ne(testrangepartitionboundariesne.t.a, 2), ne(testrangepartitionboundariesne.t.a, 3), ne(testrangepartitionboundariesne.t.a, 4), ne(testrangepartitionboundariesne.t.a, 5)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5)",
+        "Plan": [
+          "TableReader 3583.33 root partition:all data:Selection",
+          "└─Selection 3583.33 cop[tikv]  not(in(testrangepartitionboundariesne.t.a, -2, -1, 0, 1, 2, 3, 4, 5))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5",
+        "Plan": [
+          "TableReader 70.00 root partition:p0,p1,p2,p3,p4,p5 data:Selection",
+          "└─Selection 70.00 cop[tikv]  or(or(or(0, eq(testrangepartitionboundariesne.t.a, -1)), or(eq(testrangepartitionboundariesne.t.a, 0), eq(testrangepartitionboundariesne.t.a, 1))), or(or(eq(testrangepartitionboundariesne.t.a, 2), eq(testrangepartitionboundariesne.t.a, 3)), or(eq(testrangepartitionboundariesne.t.a, 4), eq(testrangepartitionboundariesne.t.a, 5))))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "1 1 Filler...",
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler...",
+          "5 5 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a != 6",
+        "Plan": [
+          "TableReader 6656.67 root partition:all data:Selection",
+          "└─Selection 6656.67 cop[tikv]  ne(testrangepartitionboundariesne.t.a, 6)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "1 1 Filler...",
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler...",
+          "5 5 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5 AND a != 6",
+        "Plan": [
+          "TableReader 6656.67 root partition:all data:Selection",
+          "└─Selection 6656.67 cop[tikv]  ne(testrangepartitionboundariesne.t.a, -1), ne(testrangepartitionboundariesne.t.a, 0), ne(testrangepartitionboundariesne.t.a, 1), ne(testrangepartitionboundariesne.t.a, 2), ne(testrangepartitionboundariesne.t.a, 3), ne(testrangepartitionboundariesne.t.a, 4), ne(testrangepartitionboundariesne.t.a, 5), ne(testrangepartitionboundariesne.t.a, 6)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5, 6)",
+        "Plan": [
+          "TableReader 3583.33 root partition:all data:Selection",
+          "└─Selection 3583.33 cop[tikv]  not(in(testrangepartitionboundariesne.t.a, -2, -1, 0, 1, 2, 3, 4, 5, 6))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5 OR a = 6",
+        "Plan": [
+          "TableReader 80.00 root partition:all data:Selection",
+          "└─Selection 80.00 cop[tikv]  or(or(or(0, eq(testrangepartitionboundariesne.t.a, -1)), or(eq(testrangepartitionboundariesne.t.a, 0), eq(testrangepartitionboundariesne.t.a, 1))), or(or(eq(testrangepartitionboundariesne.t.a, 2), eq(testrangepartitionboundariesne.t.a, 3)), or(eq(testrangepartitionboundariesne.t.a, 4), or(eq(testrangepartitionboundariesne.t.a, 5), eq(testrangepartitionboundariesne.t.a, 6)))))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "1 1 Filler...",
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler...",
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a != 7",
+        "Plan": [
+          "TableReader 6656.67 root partition:all data:Selection",
+          "└─Selection 6656.67 cop[tikv]  ne(testrangepartitionboundariesne.t.a, 7)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "1 1 Filler...",
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler...",
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5 AND a != 6 AND a != 7",
+        "Plan": [
+          "TableReader 6656.67 root partition:all data:Selection",
+          "└─Selection 6656.67 cop[tikv]  ne(testrangepartitionboundariesne.t.a, -1), ne(testrangepartitionboundariesne.t.a, 0), ne(testrangepartitionboundariesne.t.a, 1), ne(testrangepartitionboundariesne.t.a, 2), ne(testrangepartitionboundariesne.t.a, 3), ne(testrangepartitionboundariesne.t.a, 4), ne(testrangepartitionboundariesne.t.a, 5), ne(testrangepartitionboundariesne.t.a, 6), ne(testrangepartitionboundariesne.t.a, 7)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5, 6, 7)",
+        "Plan": [
+          "TableReader 3583.33 root partition:all data:Selection",
+          "└─Selection 3583.33 cop[tikv]  not(in(testrangepartitionboundariesne.t.a, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5 OR a = 6 OR a = 7",
+        "Plan": [
+          "TableReader 90.00 root partition:all data:Selection",
+          "└─Selection 90.00 cop[tikv]  or(or(or(0, eq(testrangepartitionboundariesne.t.a, -1)), or(eq(testrangepartitionboundariesne.t.a, 0), or(eq(testrangepartitionboundariesne.t.a, 1), eq(testrangepartitionboundariesne.t.a, 2)))), or(or(eq(testrangepartitionboundariesne.t.a, 3), eq(testrangepartitionboundariesne.t.a, 4)), or(eq(testrangepartitionboundariesne.t.a, 5), or(eq(testrangepartitionboundariesne.t.a, 6), eq(testrangepartitionboundariesne.t.a, 7)))))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "1 1 Filler...",
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler...",
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      }
+    ]
+  }
 ]

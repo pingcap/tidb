@@ -53,7 +53,7 @@
     ]
   },
   {
-    "name": "TestRangePartitionBoundaries",
+    "name": "TestRangePartitionBoundariesEq",
     "cases": [
       "INSERT INTO t VALUES (999998, '999998 Filler ...'), (999999, '999999 Filler ...'), (1000000, '1000000 Filler ...'), (1000001, '1000001 Filler ...'), (1000002, '1000002 Filler ...')",
       "INSERT INTO t VALUES (1999998, '1999998 Filler ...'), (1999999, '1999999 Filler ...'), (2000000, '2000000 Filler ...'), (2000001, '2000001 Filler ...'), (2000002, '2000002 Filler ...')",
@@ -91,6 +91,54 @@
       "SELECT * FROM t WHERE a IN (2999998, 2999999, 3000000)",
       "SELECT * FROM t WHERE a IN (2999999, 3000000, 3000001)",
       "SELECT * FROM t WHERE a IN (3000000, 3000001, 3000002)"
+    ]
+  },
+  {
+    "name": "TestRangePartitionBoundariesNe",
+    "cases": [
+      "INSERT INTO t VALUES (0, '0 Filler...')",
+      "INSERT INTO t VALUES (1, '1 Filler...')",
+      "INSERT INTO t VALUES (2, '2 Filler...')",
+      "INSERT INTO t VALUES (3, '3 Filler...')",
+      "INSERT INTO t VALUES (4, '4 Filler...')",
+      "INSERT INTO t VALUES (5, '5 Filler...')",
+      "INSERT INTO t VALUES (6, '6 Filler...')",
+      "SELECT * FROM t WHERE a != -1",
+      "SELECT * FROM t WHERE 1 = 1 AND a != -1",
+      "SELECT * FROM t WHERE a NOT IN (-2, -1)",
+      "SELECT * FROM t WHERE 1 = 0 OR a = -1",
+      "SELECT * FROM t WHERE a != 0",
+      "SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0",
+      "SELECT * FROM t WHERE a NOT IN (-2, -1, 0)",
+      "SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0",
+      "SELECT * FROM t WHERE a != 1",
+      "SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1",
+      "SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1)",
+      "SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1",
+      "SELECT * FROM t WHERE a != 2",
+      "SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2",
+      "SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2)",
+      "SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2",
+      "SELECT * FROM t WHERE a != 3",
+      "SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3",
+      "SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3)",
+      "SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3",
+      "SELECT * FROM t WHERE a != 4",
+      "SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4",
+      "SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4)",
+      "SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4",
+      "SELECT * FROM t WHERE a != 5",
+      "SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5",
+      "SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5)",
+      "SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5",
+      "SELECT * FROM t WHERE a != 6",
+      "SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5 AND a != 6",
+      "SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5, 6)",
+      "SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5 OR a = 6",
+      "SELECT * FROM t WHERE a != 7",
+      "SELECT * FROM t WHERE 1 = 1 AND a != -1 AND a != 0 AND a != 1 AND a != 2 AND a != 3 AND a != 4 AND a != 5 AND a != 6 AND a != 7",
+      "SELECT * FROM t WHERE a NOT IN (-2, -1, 0, 1, 2, 3, 4, 5, 6, 7)",
+      "SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5 OR a = 6 OR a = 7"
     ]
   }
 ]

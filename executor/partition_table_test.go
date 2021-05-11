@@ -14,7 +14,6 @@
 package executor_test
 
 import (
-
 	"fmt"
 	"math/rand"
 	"strings"
@@ -675,7 +674,7 @@ func (s *globalIndexSuite) TestIssue21731(c *C) {
 	tk.MustExec("create table t (a int, b int, unique index idx(a)) partition by list columns(b) (partition p0 values in (1), partition p1 values in (2));")
 }
 
-func (s *testSuiteWithData) TestRangePartitionBoundaries(c *C) {
+func (s *testSuiteWithData) TestRangePartitionBoundariesEq(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("create database TestRangePartitionBoundaries")
@@ -714,4 +713,48 @@ PARTITION BY RANGE (a) (
 		tk.MayQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
 	tk.MustExec("drop database TestRangePartitionBoundaries")
+}
+
+func (s *testSuiteWithData) TestRangePartitionBoundariesNe(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create database TestRangePartitionBoundariesNe")
+	tk.MustExec("use TestRangePartitionBoundariesNe")
+	tk.MustExec(`CREATE TABLE t
+(a INT, b varchar(255))
+PARTITION BY RANGE (a) (
+ PARTITION p0 VALUES LESS THAN (1),
+ PARTITION p1 VALUES LESS THAN (2),
+ PARTITION p2 VALUES LESS THAN (3),
+ PARTITION p3 VALUES LESS THAN (4),
+ PARTITION p4 VALUES LESS THAN (5),
+ PARTITION p5 VALUES LESS THAN (6),
+ PARTITION p6 VALUES LESS THAN (7))`)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		var isInsert bool = false
+		if strings.HasPrefix(strings.ToLower(tt), "insert ") {
+			isInsert = true
+		}
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
+			if isInsert {
+				// to avoid double execution of INSERT (and INSERT does not return anything)
+				output[i].Res = nil
+			} else {
+				output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+			}
+		})
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MayQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
+	}
+	tk.MustExec("drop database TestRangePartitionBoundariesNe")
 }
