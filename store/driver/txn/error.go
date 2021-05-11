@@ -62,6 +62,8 @@ var (
 	ErrPDServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrPDServerTimeout)
 	// ErrRegionUnavailable is the error when region is not available.
 	ErrRegionUnavailable = dbterror.ClassTiKV.NewStd(errno.ErrRegionUnavailable)
+	// ErrUnknown is the unknow error.
+	ErrUnknown = dbterror.ClassTiKV.NewStd(errno.ErrUnknown)
 )
 
 // Registers error returned from TiKV.
@@ -269,6 +271,10 @@ func ToTiDBErr(err error) error {
 
 	if e, ok := err.(*tikverr.ErrTokenLimit); ok {
 		return ErrTokenLimit.GenWithStackByArgs(e.StoreID)
+	}
+
+	if errors.ErrorEqual(err, tikverr.ErrUnknown) {
+		return ErrUnknown
 	}
 
 	return errors.Trace(originErr)
