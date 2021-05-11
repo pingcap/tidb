@@ -34,8 +34,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/store/tikv/util"
-	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 )
 
@@ -314,13 +312,11 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 		return copErrorResponse{err}
 	}
 	it := &batchCopIterator{
-		store:        c.store.kvStore,
-		req:          req,
-		finishCh:     make(chan struct{}),
-		vars:         vars,
-		memTracker:   req.MemTracker,
-		ClientHelper: tikv.NewClientHelper(c.store.kvStore.store, util.NewTSSet(5)),
-		rpcCancel:    tikv.NewRPCanceller(),
+		store:     c.store.kvStore,
+		req:       req,
+		finishCh:  make(chan struct{}),
+		vars:      vars,
+		rpcCancel: tikv.NewRPCanceller(),
 	}
 	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
 	it.tasks = tasks
@@ -330,8 +326,6 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 }
 
 type batchCopIterator struct {
-	*tikv.ClientHelper
-
 	store    *kvStore
 	req      *kv.Request
 	finishCh chan struct{}
@@ -342,8 +336,6 @@ type batchCopIterator struct {
 	respChan chan *batchCopResponse
 
 	vars *tikv.Variables
-
-	memTracker *memory.Tracker
 
 	rpcCancel *tikv.RPCCanceller
 
