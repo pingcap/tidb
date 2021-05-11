@@ -1025,7 +1025,7 @@ func (s *testCommitterSuite) TestPessimisticLockPrimary(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL"), IsNil)
 	c.Assert(err, IsNil)
 	waitErr := <-doneCh
-	c.Assert(tikverr.ErrLockWaitTimeout.Equal(waitErr), IsTrue)
+	c.Assert(tikverr.ErrLockWaitTimeout, Equals, waitErr)
 }
 
 func (s *testCommitterSuite) TestResolvePessimisticLock(c *C) {
