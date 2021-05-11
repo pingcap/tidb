@@ -676,7 +676,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 				if v.Hidden {
 					continue
 				}
-				value, err = v.GetGlobalFromHook(sessionVars)
+				value, err = variable.GetGlobalSystemVar(sessionVars, v.Name)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -693,14 +693,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		if v.Hidden {
 			continue
 		}
-		switch {
-		case v.HasNoneScope():
-			value = v.Value
-		case !v.HasSessionScope():
-			value, err = v.GetGlobalFromHook(sessionVars)
-		default:
-			value, err = v.GetSessionFromHook(sessionVars)
-		}
+		value, err = variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -134,24 +134,32 @@ func (sv *SysVar) GetGlobalFromHook(s *SessionVars) (string, error) {
 	if sv.GetGlobal != nil {
 		return sv.GetGlobal(s)
 	}
+	if sv.HasNoneScope() {
+		return sv.Value, nil
+	}
 	return s.GlobalVarsAccessor.GetGlobalSysVar(sv.Name)
 }
 
 // GetSessionFromHook calls the GetSession func if it exists.
 func (sv *SysVar) GetSessionFromHook(s *SessionVars) (string, error) {
-	if val, ok := s.stmtVars[sv.Name]; ok {
-		return val, nil
+	if sv.HasNoneScope() {
+		return sv.Value, nil
 	}
+
 	// Call the Getter if there is one defined.
 	if sv.GetSession != nil {
 		return sv.GetSession(s)
 	}
-	// Important! This requires everything to be in the systems array
-	// Which is not true yet!
-	if val, ok := s.systems[sv.Name]; ok {
+
+	if val, ok := s.stmtVars[sv.Name]; ok {
 		return val, nil
 	}
-	return "", errors.New("bad sysvar")
+
+	if val, ok := s.systems[sv.Name]; !ok {
+		return val, errors.New("sv not loaded yet.")
+	}
+
+	return s.systems[sv.Name], nil
 }
 
 // SetSessionFromHook calls the SetSession func if it exists.
@@ -203,7 +211,7 @@ func (sv *SysVar) SetGlobalFromHook(s *SessionVars, val string, skipAliases bool
 	return nil
 }
 
-// HasNoneScope returns true if the scope for the sysVar is none.
+// HasNoneScope returns true if the scope for the sysVar is None.
 func (sv *SysVar) HasNoneScope() bool {
 	return sv.Scope == ScopeNone
 }
@@ -1296,7 +1304,7 @@ var defaultSysVars = []*SysVar{
 		// To prevent this strange position, prevent setting to OFF when any of these sysVars are ON of the same scope.
 
 		if normalizedValue == Off {
-			for _, potentialIncompatibleSysVar := range []string{TxReadOnly, TransactionReadOnly, OfflineMode, SuperReadOnly, serverReadOnly} {
+			for _, potentialIncompatibleSysVar := range []string{TxReadOnly, TransactionReadOnly, OfflineMode, SuperReadOnly, ReadOnly} {
 				val, _ := vars.GetSystemVar(potentialIncompatibleSysVar) // session scope
 				if scope == ScopeGlobal {                                // global scope
 					var err error

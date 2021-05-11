@@ -158,37 +158,56 @@ func checkIsolationLevel(vars *SessionVars, normalizedValue string, originalValu
 	return normalizedValue, nil
 }
 
-// GetSessionSystemVar gets a system variable.
+// GetSessionOrGlobalSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
-func GetSessionSystemVar(s *SessionVars, name string) (string, error) {
-
-	// This depends on https://github.com/pingcap/tidb/pull/24359 merging
-	name = strings.ToLower(name)
+func GetSessionOrGlobalSystemVar(s *SessionVars, name string) (string, error) {
 	sv := GetSysVar(name)
 	if sv == nil {
 		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	if sv.HasSessionScope() {
-		return sv.GetSessionFromHook(s)
-	}
 	if sv.HasNoneScope() {
-		s.systems[name] = sv.Value
+		s.systems[sv.Name] = sv.Value
 		return sv.Value, nil
 	}
+	if sv.HasSessionScope() {
+		// Populate the value to s.systems if it is not there already.
+		// in future should be already loaded on session init
+
+		if sv.GetSession != nil {
+			// shortcut to the getter, we won't use the value
+			return sv.GetSessionFromHook(s)
+		}
+
+		if _, ok := s.systems[sv.Name]; !ok {
+			if sv.HasGlobalScope() {
+				if val, err := s.GlobalVarsAccessor.GetGlobalSysVar(sv.Name); err == nil {
+					s.systems[sv.Name] = val
+				}
+			} else {
+				s.systems[sv.Name] = sv.Value // no global scope, use default
+			}
+		}
+		return sv.GetSessionFromHook(s)
+	}
+
+	// Workaround for now for backward compatibility.
+	// https://github.com/pingcap/tidb/issues/24368
+	// TODO: We should not cache global values once there is a higher performance sysvar cache.
+	if val, ok := s.systems[sv.Name]; ok {
+		return val, nil
+	}
 	val, err := sv.GetGlobalFromHook(s)
-	s.systems[name] = val
+	s.systems[sv.Name] = val
 	return val, err
 }
 
 // GetGlobalSystemVar gets a global system variable.
+// TODO: can we remove this?
 func GetGlobalSystemVar(s *SessionVars, name string) (string, error) {
 	sv := GetSysVar(name)
 	if sv == nil {
 		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	if sv.HasNoneScope() {
-		return sv.Value, nil
 	}
 	return sv.GetGlobalFromHook(s)
 }

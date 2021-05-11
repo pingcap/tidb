@@ -1215,39 +1215,42 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.ctxStackAppend(f, types.EmptyName)
 		return
 	}
-	sv := variable.GetSysVar(name)
-	if sv == nil {
+	sysVar := variable.GetSysVar(name)
+	if sysVar == nil {
 		er.err = variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 		return
 	}
-	if v.ExplicitScope {
-		if v.IsGlobal && !(sv.HasGlobalScope() || sv.HasNoneScope()) {
-			er.err = errors.New("wrong scope")
+	if v.ExplicitScope && !sysVar.HasNoneScope() {
+		if v.IsGlobal && !sysVar.HasGlobalScope() {
+			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
 			return
 		}
-		if !v.IsGlobal && !sv.HasSessionScope() {
-			er.err = errors.New("wrong scope")
+		if !v.IsGlobal && !sysVar.HasSessionScope() {
+			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "SESSION")
 			return
 		}
 	}
 	var val string
 	var err error
-	switch {
-	case sv.HasNoneScope():
-		val = sv.Value
-	case v.IsGlobal || !sv.HasSessionScope():
-		val, err = sv.GetGlobalFromHook(sessionVars)
-	default:
-		val, err = sv.GetSessionFromHook(sessionVars)
+	if sysVar.HasNoneScope() {
+		val = sysVar.Value
+	} else if v.IsGlobal || !sysVar.HasSessionScope() {
+		// The condition "|| !sysVar.HasSessionScope()" is a workaround
+		// for issue https://github.com/pingcap/tidb/issues/24368
+		// Where global values are cached incorrectly. When this issue closes,
+		// the if statement here can be simplified.
+		val, err = variable.GetGlobalSystemVar(sessionVars, name)
+	} else {
+		val, err = variable.GetSessionOrGlobalSystemVar(sessionVars, name)
 	}
 	if err != nil {
 		er.err = err
 		return
 	}
-	nativeVal, nativeType, nativeFlag := sv.GetNativeValType(val)
+	nativeVal, nativeType, nativeFlag := sysVar.GetNativeValType(val)
 	e := expression.DatumToConstant(nativeVal, nativeType, nativeFlag)
-	e.GetType().Charset, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection)
-	e.GetType().Collate, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CollationConnection)
+	e.GetType().Charset, _ = sessionVars.GetSystemVar(variable.CharacterSetConnection)
+	e.GetType().Collate, _ = sessionVars.GetSystemVar(variable.CollationConnection)
 	er.ctxStackAppend(e, types.EmptyName)
 }
 
