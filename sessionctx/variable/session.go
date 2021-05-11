@@ -130,6 +130,7 @@ type stmtFuture struct {
 
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
+<<<<<<< HEAD
 	forUpdateTS   uint64
 	stmtFuture    oracle.Future
 	DirtyDB       interface{}
@@ -139,6 +140,21 @@ type TransactionContext struct {
 	SchemaVersion int64
 	StartTS       uint64
 	Shard         *int64
+=======
+	forUpdateTS uint64
+	stmtFuture  oracle.Future
+	Binlog      interface{}
+	InfoSchema  interface{}
+	History     interface{}
+	StartTS     uint64
+
+	// ShardStep indicates the max size of continuous rowid shard in one transaction.
+	ShardStep    int
+	shardRemain  int
+	currentShard int64
+	shardRand    *rand.Rand
+
+>>>>>>> 9e13287d9... *: remove SchemaVersion in TransactionContext (#24236)
 	// TableDeltaMap is used in the schema validator for DDL changes in one table not to block others.
 	// It's also used in the statistias updating.
 	// Note: for the partitionted table, it stores all the partition IDs.
@@ -674,6 +690,142 @@ type SessionVars struct {
 
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
+<<<<<<< HEAD
+=======
+
+	// EnableAsyncCommit indicates whether to enable the async commit feature.
+	EnableAsyncCommit bool
+
+	// Enable1PC indicates whether to enable the one-phase commit feature.
+	Enable1PC bool
+
+	// GuaranteeLinearizability indicates whether to guarantee linearizability
+	GuaranteeLinearizability bool
+
+	// AnalyzeVersion indicates how TiDB collect and use analyzed statistics.
+	AnalyzeVersion int
+
+	// EnableIndexMergeJoin indicates whether to enable index merge join.
+	EnableIndexMergeJoin bool
+
+	// TrackAggregateMemoryUsage indicates whether to track the memory usage of aggregate function.
+	TrackAggregateMemoryUsage bool
+
+	// TiDBEnableExchangePartition indicates whether to enable exchange partition
+	TiDBEnableExchangePartition bool
+
+	// AllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
+	// Now we only support TiFlash.
+	AllowFallbackToTiKV map[kv.StoreType]struct{}
+
+	// EnableDynamicPrivileges indicates whether to permit experimental support for MySQL 8.0 compatible dynamic privileges.
+	EnableDynamicPrivileges bool
+
+	// CTEMaxRecursionDepth indicates The common table expression (CTE) maximum recursion depth.
+	// see https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_cte_max_recursion_depth
+	CTEMaxRecursionDepth int
+}
+
+// AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
+// startTs is different.
+func (s *SessionVars) AllocMPPTaskID(startTS uint64) int64 {
+	if s.mppTaskIDAllocator.lastTS == startTS {
+		s.mppTaskIDAllocator.taskID++
+		return s.mppTaskIDAllocator.taskID
+	}
+	s.mppTaskIDAllocator.lastTS = startTS
+	s.mppTaskIDAllocator.taskID = 1
+	return 1
+}
+
+// CheckAndGetTxnScope will return the transaction scope we should use in the current session.
+func (s *SessionVars) CheckAndGetTxnScope() string {
+	if s.InRestrictedSQL {
+		return oracle.GlobalTxnScope
+	}
+	if s.TxnScope.GetVarValue() == oracle.LocalTxnScope {
+		return s.TxnScope.GetTxnScope()
+	}
+	return oracle.GlobalTxnScope
+}
+
+// UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
+func (s *SessionVars) UseDynamicPartitionPrune() bool {
+	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
+}
+
+// BuildParserConfig generate parser.ParserConfig for initial parser
+func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
+	return parser.ParserConfig{
+		EnableWindowFunction:        s.EnableWindowFunction,
+		EnableStrictDoubleTypeCheck: s.EnableStrictDoubleTypeCheck,
+	}
+}
+
+// FIXME: remove this interface
+// infoschemaMetaVersion is a workaround. Due to circular dependency,
+// can not return the complete interface. But SchemaMetaVersion is widely used for logging.
+// So we give a convenience for that
+type infoschemaMetaVersion interface {
+	SchemaMetaVersion() int64
+}
+
+// GetInfoSchema returns snapshotInfoSchema if snapshot schema is set.
+// Otherwise, transaction infoschema is returned.
+// Nil if there is no available infoschema.
+func (s *SessionVars) GetInfoSchema() infoschemaMetaVersion {
+	if snap, ok := s.SnapshotInfoschema.(infoschemaMetaVersion); ok {
+		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", s.ConnectionID), zap.Int64("schemaVersion", snap.SchemaMetaVersion()))
+		return snap
+	}
+	if s.TxnCtx != nil {
+		if is, ok := s.TxnCtx.InfoSchema.(infoschemaMetaVersion); ok {
+			return is
+		}
+	}
+	return nil
+}
+
+// PartitionPruneMode presents the prune mode used.
+type PartitionPruneMode string
+
+const (
+	// Static indicates only prune at plan phase.
+	Static PartitionPruneMode = "static"
+	// Dynamic indicates only prune at execute phase.
+	Dynamic PartitionPruneMode = "dynamic"
+
+	// Don't use out-of-date mode.
+
+	// StaticOnly is out-of-date.
+	StaticOnly PartitionPruneMode = "static-only"
+	// DynamicOnly is out-of-date.
+	DynamicOnly PartitionPruneMode = "dynamic-only"
+	// StaticButPrepareDynamic is out-of-date.
+	StaticButPrepareDynamic PartitionPruneMode = "static-collect-dynamic"
+)
+
+// Valid indicate PruneMode is validated.
+func (p PartitionPruneMode) Valid() bool {
+	switch p {
+	case Static, Dynamic, StaticOnly, DynamicOnly:
+		return true
+	default:
+		return false
+	}
+}
+
+// Update updates out-of-date PruneMode.
+func (p PartitionPruneMode) Update() PartitionPruneMode {
+	switch p {
+	case StaticOnly, StaticButPrepareDynamic:
+		return Static
+	case DynamicOnly:
+		return Dynamic
+	default:
+		return p
+	}
+>>>>>>> 9e13287d9... *: remove SchemaVersion in TransactionContext (#24236)
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.

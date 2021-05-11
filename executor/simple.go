@@ -586,6 +586,98 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	return nil
 }
 
+<<<<<<< HEAD
+=======
+func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx context.Context, s *ast.BeginStmt) error {
+	opt := sessionctx.StalenessTxnOption{}
+	opt.Mode = s.Bound.Mode
+	switch s.Bound.Mode {
+	case ast.TimestampBoundReadTimestamp:
+		// TODO: support funcCallExpr in future
+		v, ok := s.Bound.Timestamp.(*driver.ValueExpr)
+		if !ok {
+			return errors.New("Invalid value for Bound Timestamp")
+		}
+		t, err := types.ParseTime(e.ctx.GetSessionVars().StmtCtx, v.GetString(), v.GetType().Tp, types.GetFsp(v.GetString()))
+		if err != nil {
+			return err
+		}
+		gt, err := t.GoTime(e.ctx.GetSessionVars().TimeZone)
+		if err != nil {
+			return err
+		}
+		startTS := oracle.ComposeTS(gt.Unix()*1000, 0)
+		opt.StartTS = startTS
+	case ast.TimestampBoundExactStaleness:
+		// TODO: support funcCallExpr in future
+		v, ok := s.Bound.Timestamp.(*driver.ValueExpr)
+		if !ok {
+			return errors.New("Invalid value for Bound Timestamp")
+		}
+		d, err := types.ParseDuration(e.ctx.GetSessionVars().StmtCtx, v.GetString(), types.GetFsp(v.GetString()))
+		if err != nil {
+			return err
+		}
+		opt.PrevSec = uint64(d.Seconds())
+	case ast.TimestampBoundMaxStaleness:
+		v, ok := s.Bound.Timestamp.(*driver.ValueExpr)
+		if !ok {
+			return errors.New("Invalid value for Bound Timestamp")
+		}
+		d, err := types.ParseDuration(e.ctx.GetSessionVars().StmtCtx, v.GetString(), types.GetFsp(v.GetString()))
+		if err != nil {
+			return err
+		}
+		opt.PrevSec = uint64(d.Seconds())
+	case ast.TimestampBoundMinReadTimestamp:
+		v, ok := s.Bound.Timestamp.(*driver.ValueExpr)
+		if !ok {
+			return errors.New("Invalid value for Bound Timestamp")
+		}
+		t, err := types.ParseTime(e.ctx.GetSessionVars().StmtCtx, v.GetString(), v.GetType().Tp, types.GetFsp(v.GetString()))
+		if err != nil {
+			return err
+		}
+		gt, err := t.GoTime(e.ctx.GetSessionVars().TimeZone)
+		if err != nil {
+			return err
+		}
+		startTS := oracle.ComposeTS(gt.Unix()*1000, 0)
+		opt.StartTS = startTS
+	}
+	err := e.ctx.NewTxnWithStalenessOption(ctx, opt)
+	if err != nil {
+		return err
+	}
+	dom := domain.GetDomain(e.ctx)
+	m, err := dom.GetSnapshotMeta(e.ctx.GetSessionVars().TxnCtx.StartTS)
+	if err != nil {
+		return err
+	}
+	staleVer, err := m.GetSchemaVersion()
+	if err != nil {
+		return err
+	}
+	failpoint.Inject("mockStalenessTxnSchemaVer", func(val failpoint.Value) {
+		if val.(bool) {
+			staleVer = e.ctx.GetSessionVars().GetInfoSchema().SchemaMetaVersion() - 1
+		} else {
+			staleVer = e.ctx.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
+		}
+	})
+	// TODO: currently we directly check the schema version. In future, we can cache the stale infoschema instead.
+	if e.ctx.GetSessionVars().GetInfoSchema().SchemaMetaVersion() > staleVer {
+		return errors.New("schema version changed after the staleness startTS")
+	}
+
+	// With START TRANSACTION, autocommit remains disabled until you end
+	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
+	// reverts to its previous state.
+	e.ctx.GetSessionVars().SetInTxn(true)
+	return nil
+}
+
+>>>>>>> 9e13287d9... *: remove SchemaVersion in TransactionContext (#24236)
 func (e *SimpleExec) executeRevokeRole(s *ast.RevokeRoleStmt) error {
 	for _, role := range s.Roles {
 		exists, err := userExists(e.ctx, role.Username, role.Hostname)
