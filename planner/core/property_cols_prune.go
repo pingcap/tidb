@@ -160,6 +160,21 @@ func (p *LogicalProjection) PreparePossibleProperties(schema *expression.Schema,
 		}
 	}
 	return newProperties
+<<<<<<< HEAD
+=======
+}
+
+func clonePossibleProperties(props [][]*expression.Column) [][]*expression.Column {
+	res := make([][]*expression.Column, len(props))
+	for i, prop := range props {
+		clonedProp := make([]*expression.Column, len(prop))
+		for j, col := range prop {
+			clonedProp[j] = col.Clone().(*expression.Column)
+		}
+		res[i] = clonedProp
+	}
+	return res
+>>>>>>> 7d41c8681... planner: create new column slice in PreparePossibleProperties (#24342)
 }
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
