@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
@@ -80,12 +81,12 @@ type KVStore struct {
 	safePoint uint64
 	spTime    time.Time
 	spMutex   sync.RWMutex  // this is used to update safePoint and spTime
-	closed    chan struct{} // this is used to nofity when the store is closed
+	closed    chan struct{} // this is used to notify when the store is closed
 
-	resolveTSMu struct {
-		sync.RWMutex
-		resolveTS map[uint64]uint64 // storeID -> resolveTS
-	}
+	// storeID -> safeTS, stored as map[uint64]uint64
+	// safeTS here will be used during the Stale Read process,
+	// it indicates the safe timestamp point that can be used to read consistent but may not the latest data.
+	safeTSMap sync.Map
 
 	replicaReadSeed uint32 // this is used to load balance followers / learners when replica read is enabled
 }
@@ -142,7 +143,6 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 		replicaReadSeed: rand.Uint32(),
 	}
 	store.lockResolver = newLockResolver(store)
-	store.resolveTSMu.resolveTS = make(map[uint64]uint64)
 
 	go store.runSafePointChecker()
 	go store.safeTSUpdater()
@@ -184,56 +184,12 @@ func (s *KVStore) runSafePointChecker() {
 
 // Begin a global transaction.
 func (s *KVStore) Begin() (*KVTxn, error) {
-	return s.BeginWithTxnScope(oracle.GlobalTxnScope)
+	return s.BeginWithOption(tidbkv.DefaultTransactionOption())
 }
 
-// BeginWithTxnScope begins a transaction with the given txnScope (local or global)
-func (s *KVStore) BeginWithTxnScope(txnScope string) (*KVTxn, error) {
-	txn, err := newTiKVTxn(s, txnScope)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return txn, nil
-}
-
-// BeginWithStartTS begins a transaction with startTS.
-func (s *KVStore) BeginWithStartTS(txnScope string, startTS uint64) (*KVTxn, error) {
-	txn, err := newTiKVTxnWithStartTS(s, txnScope, startTS, s.nextReplicaReadSeed())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return txn, nil
-}
-
-// BeginWithExactStaleness begins transaction with given staleness
-func (s *KVStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (*KVTxn, error) {
-	txn, err := newTiKVTxnWithExactStaleness(s, txnScope, prevSec)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return txn, nil
-}
-
-// BeginWithMinStartTS begins transaction with the least startTS
-func (s *KVStore) BeginWithMinStartTS(txnScope string, minStartTS uint64) (*KVTxn, error) {
-	resolveTS := s.GetMinResolveTS(txnScope)
-	startTS := minStartTS
-	// If the resolveTS is larger than the minStartTS, we will use resolveTS as StartTS, otherwise we will use
-	// minStartTS directly.
-	if oracle.CompareTS(startTS, resolveTS) < 0 {
-		startTS = resolveTS
-	}
-	return s.BeginWithStartTS(txnScope, startTS)
-}
-
-// BeginWithMaxPrevSec begins transaction with given max previous seconds for startTS
-func (s *KVStore) BeginWithMaxPrevSec(txnScope string, maxPrevSec uint64) (*KVTxn, error) {
-	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
-	minStartTS, err := s.getStalenessTimestamp(bo, txnScope, maxPrevSec)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return s.BeginWithMinStartTS(txnScope, minStartTS)
+// BeginWithOption begins a transaction with the given TransactionOption
+func (s *KVStore) BeginWithOption(options tidbkv.TransactionOption) (*KVTxn, error) {
+	return newTiKVTxnWithOptions(s, options)
 }
 
 // GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
@@ -381,8 +337,8 @@ func (s *KVStore) GetTiKVClient() (client Client) {
 	return s.client
 }
 
-// GetMinResolveTS return the minimal resolved TS of the storage with given txnScope.
-func (s *KVStore) GetMinResolveTS(txnScope string) uint64 {
+// GetMinSafeTS return the minimal safeTS of the storage with given txnScope.
+func (s *KVStore) GetMinSafeTS(txnScope string) uint64 {
 	stores := make([]*Store, 0)
 	allStores := s.regionCache.getStoresByType(tikvrpc.TiKV)
 	if txnScope != oracle.GlobalTxnScope {
@@ -399,23 +355,33 @@ func (s *KVStore) GetMinResolveTS(txnScope string) uint64 {
 	} else {
 		stores = allStores
 	}
-	return s.getMinResolveTSByStores(stores)
+	return s.getMinSafeTSByStores(stores)
 }
 
-func (s *KVStore) getMinResolveTSByStores(stores []*Store) uint64 {
-	failpoint.Inject("injectResolveTS", func(val failpoint.Value) {
+func (s *KVStore) getSafeTS(storeID uint64) uint64 {
+	safeTS, ok := s.safeTSMap.Load(storeID)
+	if !ok {
+		return 0
+	}
+	return safeTS.(uint64)
+}
+
+func (s *KVStore) setSafeTS(storeID, safeTS uint64) {
+	s.safeTSMap.Store(storeID, safeTS)
+}
+
+func (s *KVStore) getMinSafeTSByStores(stores []*Store) uint64 {
+	failpoint.Inject("injectSafeTS", func(val failpoint.Value) {
 		injectTS := val.(int)
 		failpoint.Return(uint64(injectTS))
 	})
 	minSafeTS := uint64(math.MaxUint64)
-	s.resolveTSMu.RLock()
-	defer s.resolveTSMu.RUnlock()
 	// when there is no store, return 0 in order to let minStartTS become startTS directly
 	if len(stores) < 1 {
 		return 0
 	}
 	for _, store := range stores {
-		safeTS := s.resolveTSMu.resolveTS[store.storeID]
+		safeTS := s.getSafeTS(store.storeID)
 		if safeTS < minSafeTS {
 			minSafeTS = safeTS
 		}
@@ -433,12 +399,12 @@ func (s *KVStore) safeTSUpdater() {
 		case <-s.Closed():
 			return
 		case <-t.C:
-			s.updateResolveTS(ctx)
+			s.updateSafeTS(ctx)
 		}
 	}
 }
 
-func (s *KVStore) updateResolveTS(ctx context.Context) {
+func (s *KVStore) updateSafeTS(ctx context.Context) {
 	stores := s.regionCache.getStoresByType(tikvrpc.TiKV)
 	tikvClient := s.GetTiKVClient()
 	wg := &sync.WaitGroup{}
@@ -454,13 +420,11 @@ func (s *KVStore) updateResolveTS(ctx context.Context) {
 				EndKey:   []byte(""),
 			}}), ReadTimeoutShort)
 			if err != nil {
-				logutil.BgLogger().Debug("update resolveTS failed", zap.Error(err), zap.Uint64("store-id", storeID))
+				logutil.BgLogger().Debug("update safeTS failed", zap.Error(err), zap.Uint64("store-id", storeID))
 				return
 			}
 			safeTSResp := resp.Resp.(*kvrpcpb.StoreSafeTSResponse)
-			s.resolveTSMu.Lock()
-			s.resolveTSMu.resolveTS[storeID] = safeTSResp.GetSafeTs()
-			s.resolveTSMu.Unlock()
+			s.setSafeTS(storeID, safeTSResp.GetSafeTs())
 		}(ctx, wg, storeID, storeAddr)
 	}
 	wg.Wait()

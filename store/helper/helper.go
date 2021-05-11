@@ -71,7 +71,7 @@ type Storage interface {
 	SetTiKVClient(client tikv.Client)
 	GetTiKVClient() tikv.Client
 	Closed() <-chan struct{}
-	GetMinResolveTS(txnScope string) uint64
+	GetMinSafeTS(txnScope string) uint64
 }
 
 // Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.

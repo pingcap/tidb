@@ -881,7 +881,7 @@ func (b *builtinTiDBBoundStalenessSig) vecEvalInt(input *chunk.Chunk, result *ch
 	i64s := result.Int64s()
 	args0 := buf0.Times()
 	args1 := buf1.Times()
-	minResolveTS := getMinResolveTS(b.ctx)
+	minSafeTS := getMinSafeTS(b.ctx)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -916,7 +916,7 @@ func (b *builtinTiDBBoundStalenessSig) vecEvalInt(input *chunk.Chunk, result *ch
 			continue
 		}
 		minTS, maxTS := oracle.ComposeTS(minTime.Unix()*1000, 0), oracle.ComposeTS(maxTime.Unix()*1000, 0)
-		i64s[i] = calAppropriateTS(minTS, maxTS, minResolveTS)
+		i64s[i] = calAppropriateTS(minTS, maxTS, minSafeTS)
 	}
 	return nil
 }

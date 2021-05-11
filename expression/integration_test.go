@@ -2269,20 +2269,20 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	t := time.Now().UTC()
 	ts := oracle.ComposeTS(t.Unix()*1000, 0)
 	tidbBoundStalenessTests := []struct {
-		sql             string
-		injectResolveTS uint64
-		isNull          bool
-		expect          int64
+		sql          string
+		injectSafeTS uint64
+		isNull       bool
+		expect       int64
 	}{
 		{
-			sql:             `select tidb_bound_staleness(DATE_SUB(NOW(), INTERVAL 600 SECOND), DATE_ADD(NOW(), INTERVAL 600 SECOND))`,
-			injectResolveTS: ts,
-			isNull:          false,
-			expect:          int64(ts),
+			sql:          `select tidb_bound_staleness(DATE_SUB(NOW(), INTERVAL 600 SECOND), DATE_ADD(NOW(), INTERVAL 600 SECOND))`,
+			injectSafeTS: ts,
+			isNull:       false,
+			expect:       int64(ts),
 		},
 		{
 			sql: `select tidb_bound_staleness("2021-04-27 12:00:00.000", "2021-04-27 13:00:00.000")`,
-			injectResolveTS: func() uint64 {
+			injectSafeTS: func() uint64 {
 				phy, err := time.Parse("2006-01-02 15:04:05.000", "2021-04-27 13:30:04.877")
 				c.Assert(err, IsNil)
 				return oracle.ComposeTS(phy.Unix()*1000, 0)
@@ -2296,7 +2296,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 		},
 		{
 			sql: `select tidb_bound_staleness("2021-04-27 12:00:00.000", "2021-04-27 13:00:00.000")`,
-			injectResolveTS: func() uint64 {
+			injectSafeTS: func() uint64 {
 				phy, err := time.Parse("2006-01-02 15:04:05.000", "2021-04-27 11:30:04.877")
 				c.Assert(err, IsNil)
 				return oracle.ComposeTS(phy.Unix()*1000, 0)
@@ -2309,35 +2309,35 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 			}(),
 		},
 		{
-			sql:             `select tidb_bound_staleness("2021-04-27 12:00:00.000", "2021-04-27 11:00:00.000")`,
-			injectResolveTS: 0,
-			isNull:          true,
-			expect:          0,
+			sql:          `select tidb_bound_staleness("2021-04-27 12:00:00.000", "2021-04-27 11:00:00.000")`,
+			injectSafeTS: 0,
+			isNull:       true,
+			expect:       0,
 		},
 		// Time is too small.
 		{
-			sql:             `select tidb_bound_staleness("0020-04-27 12:00:00.000", "2021-04-27 11:00:00.000")`,
-			injectResolveTS: 0,
-			isNull:          true,
-			expect:          0,
+			sql:          `select tidb_bound_staleness("0020-04-27 12:00:00.000", "2021-04-27 11:00:00.000")`,
+			injectSafeTS: 0,
+			isNull:       true,
+			expect:       0,
 		},
 		// Wrong value.
 		{
-			sql:             `select tidb_bound_staleness(1, 2)`,
-			injectResolveTS: 0,
-			isNull:          true,
-			expect:          0,
+			sql:          `select tidb_bound_staleness(1, 2)`,
+			injectSafeTS: 0,
+			isNull:       true,
+			expect:       0,
 		},
 		{
-			sql:             `select tidb_bound_staleness("invalid_time_1", "invalid_time_2")`,
-			injectResolveTS: 0,
-			isNull:          true,
-			expect:          0,
+			sql:          `select tidb_bound_staleness("invalid_time_1", "invalid_time_2")`,
+			injectSafeTS: 0,
+			isNull:       true,
+			expect:       0,
 		},
 	}
 	for _, test := range tidbBoundStalenessTests {
-		c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectResolveTS",
-			fmt.Sprintf("return(%v)", test.injectResolveTS)), IsNil)
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+			fmt.Sprintf("return(%v)", test.injectSafeTS)), IsNil)
 		result = tk.MustQuery(test.sql)
 		if test.isNull {
 			result.Check(testkit.Rows("<nil>"))
@@ -2345,7 +2345,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 			result.Check(testkit.Rows(fmt.Sprintf("%d", test.expect)))
 		}
 	}
-	failpoint.Disable("github.com/pingcap/tidb/expression/injectResolveTS")
+	failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS")
 
 	// fix issue 10308
 	result = tk.MustQuery("select time(\"- -\");")
@@ -5558,16 +5558,14 @@ func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	// > pushed to both TiKV and TiFlash
 	rows := tk.MustQuery("explain format = 'brief' select * from test.t where b > date'1988-01-01' and b < date'1994-01-01' " +
 		"and cast(a as decimal(10,2)) > 10.10 and date_format(b,'%m') = '11'").Rows()
-	c.Assert(fmt.Sprintf("%v", rows[0][4]), Equals, "lt(test.t.b, 1994-01-01)")
-	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "gt(cast(test.t.a, decimal(10,2) BINARY), 10.10)")
-	c.Assert(fmt.Sprintf("%v", rows[3][4]), Equals, "eq(date_format(test.t.b, \"%m\"), \"11\"), gt(test.t.b, 1988-01-01)")
+	c.Assert(fmt.Sprintf("%v", rows[0][4]), Equals, "gt(cast(test.t.a, decimal(10,2) BINARY), 10.10), lt(test.t.b, 1994-01-01)")
+	c.Assert(fmt.Sprintf("%v", rows[2][4]), Equals, "eq(date_format(test.t.b, \"%m\"), \"11\"), gt(test.t.b, 1988-01-01)")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
 	rows = tk.MustQuery("explain format = 'brief' select * from test.t where b > date'1988-01-01' and b < date'1994-01-01' " +
 		"and cast(a as decimal(10,2)) > 10.10 and date_format(b,'%m') = '11'").Rows()
-	c.Assert(fmt.Sprintf("%v", rows[0][4]), Equals, "lt(test.t.b, 1994-01-01)")
-	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "eq(date_format(test.t.b, \"%m\"), \"11\")")
-	c.Assert(fmt.Sprintf("%v", rows[3][4]), Equals, "gt(cast(test.t.a, decimal(10,2) BINARY), 10.10), gt(test.t.b, 1988-01-01)")
+	c.Assert(fmt.Sprintf("%v", rows[0][4]), Equals, "eq(date_format(test.t.b, \"%m\"), \"11\"), lt(test.t.b, 1994-01-01)")
+	c.Assert(fmt.Sprintf("%v", rows[2][4]), Equals, "gt(cast(test.t.a, decimal(10,2) BINARY), 10.10), gt(test.t.b, 1988-01-01)")
 
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = '<' and store_type = 'tikv,tiflash,tidb' and reason = 'for test'")
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'date_format' and store_type = 'tikv' and reason = 'for test'")

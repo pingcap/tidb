@@ -200,10 +200,10 @@ func (sh *StmtHints) TaskMapNeedBackUp() bool {
 type StmtCacheKey int
 
 const (
-	// StmtNowTsCacheKey is a variable for now/current_timestamp calculation/cache for one stmt.
+	// StmtNowTsCacheKey is a variable for now/current_timestamp calculation/cache of one stmt.
 	StmtNowTsCacheKey StmtCacheKey = iota
-	// StmtResolveTsCacheKey is a variable for resolveTs calculation/cache for one stmt.
-	StmtResolveTsCacheKey
+	// StmtSafeTSCacheKey is a variable for safeTS calculation/cache of one stmt.
+	StmtSafeTSCacheKey
 )
 
 // GetOrStoreStmtCache gets the cached value of the given key if it exists, otherwise stores the value.

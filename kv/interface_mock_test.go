@@ -217,7 +217,7 @@ func (s *mockStorage) GetMemCache() MemManager {
 	return nil
 }
 
-func (s *mockStorage) GetMinResolveTS(txnScope string) uint64 {
+func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
 	return 0
 }
 
