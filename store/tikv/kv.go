@@ -84,7 +84,7 @@ type KVStore struct {
 
 	// storeID -> safeTS, stored as map[uint64]uint64
 	// safeTS here will be used during the Stale Read process,
-	// it indicates the safe timestamp point that can be used to read some old data with consistency ensuring.
+	// it indicates the safe timestamp point that can be used to read consistent but may not the latest data.
 	safeTSMap sync.Map
 
 	replicaReadSeed uint32 // this is used to load balance followers / learners when replica read is enabled
