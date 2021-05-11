@@ -29,7 +29,6 @@ import (
 	"time"
 
 	"github.com/klauspost/cpuid"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -1310,12 +1309,17 @@ func (s *SessionVars) Location() *time.Location {
 }
 
 // GetSystemVar gets the string value of a system variable.
-func (s *SessionVars) GetSystemVar(name string) (string, error) {
+func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	sv := GetSysVar(name)
 	if sv == nil {
-		return "", errors.New("bad sysvar")
+		return "", false
 	}
-	return sv.GetSessionFromHook(s)
+	var val string
+	var err error
+	if val, err = sv.GetSessionFromHook(s); err != nil {
+		return val, false
+	}
+	return val, true
 }
 
 func (s *SessionVars) setDDLReorgPriority(val string) {
@@ -1335,10 +1339,7 @@ func (s *SessionVars) setDDLReorgPriority(val string) {
 // AddPreparedStmt adds prepareStmt to current session and count in global.
 func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt interface{}) error {
 	if _, exists := s.PreparedStmts[stmtID]; !exists {
-		valStr, err := s.GetSystemVar(MaxPreparedStmtCount)
-		if err != nil {
-			return err
-		}
+		valStr, _ := s.GetSystemVar(MaxPreparedStmtCount)
 		maxPreparedStmtCount, err := strconv.ParseInt(valStr, 10, 64)
 		if err != nil {
 			maxPreparedStmtCount = DefMaxPreparedStmtCount
@@ -1433,6 +1434,20 @@ func (s *SessionVars) GetPrevStmtDigest() string {
 // LazyCheckKeyNotExists returns if we can lazy check key not exists.
 func (s *SessionVars) LazyCheckKeyNotExists() bool {
 	return s.PresumeKeyNotExists || (s.TxnCtx.IsPessimistic && !s.StmtCtx.DupKeyAsWarning)
+}
+
+// SetLocalSystemVar sets values of the local variables which in "server" scope.
+func SetLocalSystemVar(name string, val string) {
+	switch name {
+	case TiDBDDLReorgWorkerCount:
+		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
+	case TiDBDDLReorgBatchSize:
+		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
+	case TiDBDDLErrorCountLimit:
+		SetDDLErrorCountLimit(tidbOptInt64(val, DefTiDBDDLErrorCountLimit))
+	case TiDBRowFormatVersion:
+		SetDDLReorgRowFormat(tidbOptInt64(val, DefTiDBRowFormatV2))
+	}
 }
 
 // special session variables.

@@ -164,6 +164,7 @@ func checkIsolationLevel(vars *SessionVars, normalizedValue string, originalValu
 func GetSessionSystemVar(s *SessionVars, name string) (string, error) {
 
 	// This depends on https://github.com/pingcap/tidb/pull/24359 merging
+	name = strings.ToLower(name)
 	sv := GetSysVar(name)
 	if sv == nil {
 		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
@@ -172,9 +173,12 @@ func GetSessionSystemVar(s *SessionVars, name string) (string, error) {
 		return sv.GetSessionFromHook(s)
 	}
 	if sv.HasNoneScope() {
+		s.systems[name] = sv.Value
 		return sv.Value, nil
 	}
-	return sv.GetGlobalFromHook(s)
+	val, err := sv.GetGlobalFromHook(s)
+	s.systems[name] = val
+	return val, err
 }
 
 // GetGlobalSystemVar gets a global system variable.
@@ -182,6 +186,9 @@ func GetGlobalSystemVar(s *SessionVars, name string) (string, error) {
 	sv := GetSysVar(name)
 	if sv == nil {
 		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	if sv.HasNoneScope() {
+		return sv.Value, nil
 	}
 	return sv.GetGlobalFromHook(s)
 }

@@ -1486,6 +1486,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		if !kv.ErrKeyExists.Equal(err) {
 			logutil.Logger(ctx).Warn("run statement failed",
 				zap.Int64("schemaVersion", s.sessionVars.TxnCtx.SchemaVersion),
+				zap.String("stmt", stmtNode.Text()),
 				zap.Error(err),
 				zap.String("session", s.String()))
 		}
