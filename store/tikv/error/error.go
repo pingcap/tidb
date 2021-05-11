@@ -46,6 +46,8 @@ var (
 	ErrLockAcquireFailAndNoWaitSet = errors.New("lock acquired failed and no wait is setted")
 	// ErrResolveLockTimeout is the error that resolve lock timeout.
 	ErrResolveLockTimeout = errors.New("resolve lock timeout")
+	// ErrLockWaitTimeout is the error that wait for the lock is timeout.
+	ErrLockWaitTimeout = errors.New("lock wait timeout")
 	// ErrTiKVServerBusy is the error when tikv server is busy.
 	ErrTiKVServerBusy = errors.New("tikv server busy")
 	// ErrTiFlashServerBusy is the error that tiflash server is busy.
@@ -60,16 +62,7 @@ const MismatchClusterID = "mismatch cluster id"
 // error instances.
 var (
 	ErrQueryInterrupted = dbterror.ClassTiKV.NewStd(CodeQueryInterrupted)
-	ErrLockWaitTimeout  = dbterror.ClassTiKV.NewStd(CodeLockWaitTimeout)
-	ErrTokenLimit       = dbterror.ClassTiKV.NewStd(CodeTiKVStoreLimit)
 	ErrUnknown          = dbterror.ClassTiKV.NewStd(CodeUnknown)
-)
-
-// Registers error returned from TiKV.
-var (
-	_ = dbterror.ClassTiKV.NewStd(CodeDataOutOfRange)
-	_ = dbterror.ClassTiKV.NewStd(CodeTruncatedWrongValue)
-	_ = dbterror.ClassTiKV.NewStd(CodeDivisionByZero)
 )
 
 // IsErrNotFound checks if err is a kind of NotFound error.
@@ -197,4 +190,13 @@ type ErrGCTooEarly struct {
 
 func (e *ErrGCTooEarly) Error() string {
 	return fmt.Sprintf("GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v", e.TxnStartTS, e.GCSafePoint)
+}
+
+// ErrTokenLimit is the error that token is up to the limit.
+type ErrTokenLimit struct {
+	StoreID uint64
+}
+
+func (e *ErrTokenLimit) Error() string {
+	return fmt.Sprintf("Store token is up to the limit, store id = %d.", e.StoreID)
 }
