@@ -64,9 +64,11 @@ type copTask struct {
 	indexPlanFinished bool
 	// keepOrder indicates if the plan scans data by order.
 	keepOrder bool
-	// doubleReadNeedProj means an extra prune is needed because
-	// in double read case, it may output one more column for handle(row id).
-	doubleReadNeedProj bool
+	// needExtraProj means an extra prune is needed because
+	// in double read / index merge cases, they may output one more column for handle(row id).
+	needExtraProj bool
+	// originSchema is the target schema to be projected to when needExtraProj is true.
+	originSchema *expression.Schema
 
 	extraHandleCol   *expression.Column
 	commonHandleCols []*expression.Column
@@ -639,9 +641,9 @@ func appendExpr(p *PhysicalProjection, expr expression.Expression) *expression.C
 	return col
 }
 
-// TiFlash join require that join key has exactly the same type, while TiDB only guarantee the join key is the same catalog,
-// so if the join key type is not exactly the same, we need add a projection below the join or exchanger if exists.
-func (p *PhysicalHashJoin) convertJoinKeyForTiFlashIfNeed(lTask, rTask *mppTask) (*mppTask, *mppTask) {
+// TiFlash join require that partition key has exactly the same type, while TiDB only guarantee the partition key is the same catalog,
+// so if the partition key type is not exactly the same, we need add a projection below the join or exchanger if exists.
+func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *mppTask) (*mppTask, *mppTask) {
 	lp := lTask.p
 	if _, ok := lp.(*PhysicalExchangeReceiver); ok {
 		lp = lp.Children()[0].Children()[0]
@@ -650,15 +652,15 @@ func (p *PhysicalHashJoin) convertJoinKeyForTiFlashIfNeed(lTask, rTask *mppTask)
 	if _, ok := rp.(*PhysicalExchangeReceiver); ok {
 		rp = rp.Children()[0].Children()[0]
 	}
-	// to mark if any equal cond needs to convert
-	lMask := make([]bool, len(p.EqualConditions))
-	rMask := make([]bool, len(p.EqualConditions))
-	cTypes := make([]*types.FieldType, len(p.EqualConditions))
+	// to mark if any partition key needs to convert
+	lMask := make([]bool, len(lTask.hashCols))
+	rMask := make([]bool, len(rTask.hashCols))
+	cTypes := make([]*types.FieldType, len(lTask.hashCols))
 	lChanged := false
 	rChanged := false
-	for i, eqFunc := range p.EqualConditions {
-		lKey := eqFunc.GetArgs()[0].(*expression.Column)
-		rKey := eqFunc.GetArgs()[1].(*expression.Column)
+	for i := range lTask.hashCols {
+		lKey := lTask.hashCols[i]
+		rKey := rTask.hashCols[i]
 		cType, lConvert, rConvert := negotiateCommonType(lKey.RetType, rKey.RetType)
 		if lConvert {
 			lMask[i] = true
@@ -683,14 +685,12 @@ func (p *PhysicalHashJoin) convertJoinKeyForTiFlashIfNeed(lTask, rTask *mppTask)
 		rProj = getProj(p.ctx, rp)
 		rp = rProj
 	}
-	newEqCondition := make([]*expression.ScalarFunction, 0, len(p.EqualConditions))
-	newEqCondition = append(newEqCondition, p.EqualConditions...)
-	p.EqualConditions = newEqCondition
-	lKeys := make([]*expression.Column, 0, len(p.EqualConditions))
-	rKeys := make([]*expression.Column, 0, len(p.EqualConditions))
-	for i, eqFunc := range p.EqualConditions {
-		lKey := eqFunc.GetArgs()[0].(*expression.Column)
-		rKey := eqFunc.GetArgs()[1].(*expression.Column)
+
+	lPartKeys := make([]*expression.Column, 0, len(rTask.hashCols))
+	rPartKeys := make([]*expression.Column, 0, len(lTask.hashCols))
+	for i := range lTask.hashCols {
+		lKey := lTask.hashCols[i]
+		rKey := rTask.hashCols[i]
 		if lMask[i] {
 			cType := cTypes[i].Clone()
 			cType.Flag = lKey.RetType.Flag
@@ -703,12 +703,8 @@ func (p *PhysicalHashJoin) convertJoinKeyForTiFlashIfNeed(lTask, rTask *mppTask)
 			rCast := expression.BuildCastFunction(p.ctx, rKey, cType)
 			rKey = appendExpr(rProj, rCast)
 		}
-		if lMask[i] || rMask[i] {
-			eqCond := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
-			p.EqualConditions[i] = eqCond.(*expression.ScalarFunction)
-		}
-		lKeys = append(lKeys, lKey)
-		rKeys = append(rKeys, rKey)
+		lPartKeys = append(lPartKeys, lKey)
+		rPartKeys = append(rPartKeys, rKey)
 	}
 	// if left or right child changes, we need to add enforcer.
 	if lChanged {
@@ -717,7 +713,7 @@ func (p *PhysicalHashJoin) convertJoinKeyForTiFlashIfNeed(lTask, rTask *mppTask)
 		nlTask = nlTask.enforceExchangerImpl(&property.PhysicalProperty{
 			TaskTp:        property.MppTaskType,
 			PartitionTp:   property.HashType,
-			PartitionCols: lKeys,
+			PartitionCols: lPartKeys,
 		})
 		nlTask.cst = lTask.cst
 		lTask = nlTask
@@ -728,7 +724,7 @@ func (p *PhysicalHashJoin) convertJoinKeyForTiFlashIfNeed(lTask, rTask *mppTask)
 		nrTask = nrTask.enforceExchangerImpl(&property.PhysicalProperty{
 			TaskTp:        property.MppTaskType,
 			PartitionTp:   property.HashType,
-			PartitionCols: rKeys,
+			PartitionCols: rPartKeys,
 		})
 		nrTask.cst = rTask.cst
 		rTask = nrTask
@@ -743,7 +739,11 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 		return invalidTask
 	}
 	if p.mppShuffleJoin {
-		lTask, rTask = p.convertJoinKeyForTiFlashIfNeed(lTask, rTask)
+		// protection check is case of some bugs
+		if len(lTask.hashCols) != len(rTask.hashCols) || len(lTask.hashCols) == 0 {
+			return invalidTask
+		}
+		lTask, rTask = p.convertPartitionKeysIfNeed(lTask, rTask)
 	}
 	p.SetChildren(lTask.plan(), rTask.plan())
 	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
@@ -883,8 +883,8 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		sortCPUCost := (tableRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
 		newTask.cst += sortCPUCost
 	}
-	if t.doubleReadNeedProj {
-		schema := p.IndexPlans[0].(*PhysicalIndexScan).dataSourceSchema
+	if t.needExtraProj {
+		schema := t.originSchema
 		proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.tablePlan.SelectBlockOffset(), nil)
 		proj.SetSchema(schema)
 		proj.SetChildren(p)
@@ -948,6 +948,13 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		p.PartitionInfo = t.partitionInfo
 		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.p = p
+		if t.needExtraProj {
+			schema := t.originSchema
+			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.idxMergePartPlans[0].SelectBlockOffset(), nil)
+			proj.SetSchema(schema)
+			proj.SetChildren(p)
+			newTask.p = proj
+		}
 		return newTask
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
@@ -1706,13 +1713,13 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 					cop.finishIndexPlan()
 					partialAgg.SetChildren(cop.tablePlan)
 					cop.tablePlan = partialAgg
-					// If doubleReadNeedProj is true, a projection will be created above the PhysicalIndexLookUpReader to make sure
+					// If needExtraProj is true, a projection will be created above the PhysicalIndexLookUpReader to make sure
 					// the schema is the same as the original DataSource schema.
 					// However, we pushed down the agg here, the partial agg was placed on the top of tablePlan, and the final
 					// agg will be placed above the PhysicalIndexLookUpReader, and the schema will be set correctly for them.
 					// If we add the projection again, the projection will be between the PhysicalIndexLookUpReader and
 					// the partial agg, and the schema will be broken.
-					cop.doubleReadNeedProj = false
+					cop.needExtraProj = false
 				} else {
 					partialAgg.SetChildren(cop.indexPlan)
 					cop.indexPlan = partialAgg
@@ -1840,13 +1847,13 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 					cop.finishIndexPlan()
 					partialAgg.SetChildren(cop.tablePlan)
 					cop.tablePlan = partialAgg
-					// If doubleReadNeedProj is true, a projection will be created above the PhysicalIndexLookUpReader to make sure
+					// If needExtraProj is true, a projection will be created above the PhysicalIndexLookUpReader to make sure
 					// the schema is the same as the original DataSource schema.
 					// However, we pushed down the agg here, the partial agg was placed on the top of tablePlan, and the final
 					// agg will be placed above the PhysicalIndexLookUpReader, and the schema will be set correctly for them.
 					// If we add the projection again, the projection will be between the PhysicalIndexLookUpReader and
 					// the partial agg, and the schema will be broken.
-					cop.doubleReadNeedProj = false
+					cop.needExtraProj = false
 				} else {
 					partialAgg.SetChildren(cop.indexPlan)
 					cop.indexPlan = partialAgg

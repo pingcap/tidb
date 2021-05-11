@@ -133,7 +133,7 @@ func (checker *cacheableChecker) isPartitionTable(tn *ast.TableName) bool {
 		logutil.BgLogger().Error("Error occur in checking cacheable", zap.Error(err))
 		return false
 	}
-	if tb.Meta().Partition != nil {
+	if tb.Meta().GetPartitionInfo() != nil {
 		return true
 	}
 	return false

@@ -600,6 +600,27 @@ func (s *testPointGetSuite) TestCBOShouldNotUsePointGet(c *C) {
 	}
 }
 
+func (s *testPointGetSuite) TestIssue23511(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("CREATE TABLE `t1`  (`COL1` bit(11) NOT NULL,PRIMARY KEY (`COL1`));")
+	tk.MustExec("CREATE TABLE `t2`  (`COL1` bit(11) NOT NULL);")
+	tk.MustExec("insert into t1 values(b'00000111001'), (b'00000000000');")
+	tk.MustExec("insert into t2 values(b'00000111001');")
+	tk.MustQuery("select * from t1 where col1 = 0x39;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t2 where col1 = 0x39;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t1 where col1 = 0x00;").Check(testkit.Rows("\x00\x00"))
+	tk.MustQuery("select * from t1 where col1 = 0x0000;").Check(testkit.Rows("\x00\x00"))
+	tk.MustQuery("explain format = 'brief' select * from t1 where col1 = 0x39;").
+		Check(testkit.Rows("Point_Get 1.00 root table:t1, index:PRIMARY(COL1) "))
+	tk.MustQuery("select * from t1 where col1 = 0x0039;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t2 where col1 = 0x0039;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t1 where col1 = 0x000039;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t2 where col1 = 0x000039;").Check(testkit.Rows("\x009"))
+	tk.MustExec("drop table t1, t2;")
+}
+
 func (s *testPointGetSuite) TestPointGetWithIndexHints(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

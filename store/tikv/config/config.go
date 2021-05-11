@@ -53,7 +53,7 @@ type Config struct {
 // DefaultConfig returns the default configuration.
 func DefaultConfig() Config {
 	return Config{
-		CommitterConcurrency:  16,
+		CommitterConcurrency:  128,
 		MaxTxnTTL:             60 * 60 * 1000, // 1hour
 		ServerMemoryQuota:     0,
 		TiKVClient:            DefaultTiKVClient(),
