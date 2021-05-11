@@ -60,6 +60,7 @@ func (s *testStmtSummarySuite) SetUpSuite(c *C) {
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	TestingT(t)
+	TestEvicted(t)
 }
 
 // Test stmtSummaryByDigest.AddStatement.

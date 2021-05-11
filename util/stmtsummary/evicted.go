@@ -65,7 +65,9 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 			record := newStmtSummaryByDigestEvictedElement(beginTime, intervalSeconds)
 			record.addEvicted(evictedKey, e.Value.(*stmtSummaryByDigestElement))
 			ssbde.history.PushBack(record)
-			continue
+			if evictedKey == nil {
+				continue
+			}
 		}
 
 		for h := ssbde.history.Back(); h != nil; h = h.Prev() {
