@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-binlog"
 )
@@ -211,6 +212,11 @@ func (c *Context) GoCtx() context.Context {
 
 // StoreQueryFeedback stores the query feedback.
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
+
+// GetTxnWriteThroughputSLI implements the sessionctx.Context interface.
+func (c *Context) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
+	return &sli.TxnWriteThroughputSLI{}
+}
 
 // StmtCommit implements the sessionctx.Context interface.
 func (c *Context) StmtCommit(tracker *memory.Tracker) error {
