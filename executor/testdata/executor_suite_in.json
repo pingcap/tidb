@@ -51,5 +51,46 @@
       "select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL",
       "select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 is not NULL"
     ]
+  },
+  {
+    "name": "TestRangePartitionBoundaries",
+    "cases": [
+      "INSERT INTO t VALUES (999998, '999998 Filler ...'), (999999, '999999 Filler ...'), (1000000, '1000000 Filler ...'), (1000001, '1000001 Filler ...'), (1000002, '1000002 Filler ...')",
+      "INSERT INTO t VALUES (1999998, '1999998 Filler ...'), (1999999, '1999999 Filler ...'), (2000000, '2000000 Filler ...'), (2000001, '2000001 Filler ...'), (2000002, '2000002 Filler ...')",
+      "INSERT INTO t VALUES (2999998, '2999998 Filler ...'), (2999999, '2999999 Filler ...')",
+      "INSERT INTO t VALUES (-2147483648, 'MIN_INT filler...'), (0, '0 Filler...')",
+      "SELECT * FROM t WHERE a = -2147483648",
+      "SELECT * FROM t WHERE a IN (-2147483648)",
+      "SELECT * FROM t WHERE a = 0",
+      "SELECT * FROM t WHERE a IN (0)",
+      "SELECT * FROM t WHERE a = 999998",
+      "SELECT * FROM t WHERE a IN (999998)",
+      "SELECT * FROM t WHERE a = 999999",
+      "SELECT * FROM t WHERE a IN (999999)",
+      "SELECT * FROM t WHERE a = 1000000",
+      "SELECT * FROM t WHERE a IN (1000000)",
+      "SELECT * FROM t WHERE a = 1000001",
+      "SELECT * FROM t WHERE a IN (1000001)",
+      "SELECT * FROM t WHERE a = 1000002",
+      "SELECT * FROM t WHERE a IN (1000002)",
+      "SELECT * FROM t WHERE a = 3000000",
+      "SELECT * FROM t WHERE a IN (3000000)",
+      "SELECT * FROM t WHERE a = 3000001",
+      "SELECT * FROM t WHERE a IN (3000001)",
+      "SELECT * FROM t WHERE a IN (-2147483648, -2147483647)",
+      "SELECT * FROM t WHERE a IN (-2147483647, -2147483646)",
+      "SELECT * FROM t WHERE a IN (999997, 999998, 999999)",
+      "SELECT * FROM t WHERE a IN (999998, 999999, 1000000)",
+      "SELECT * FROM t WHERE a IN (999999, 1000000, 1000001)",
+      "SELECT * FROM t WHERE a IN (1000000, 1000001, 1000002)",
+      "SELECT * FROM t WHERE a IN (1999997, 1999998, 1999999)",
+      "SELECT * FROM t WHERE a IN (1999998, 1999999, 2000000)",
+      "SELECT * FROM t WHERE a IN (1999999, 2000000, 2000001)",
+      "SELECT * FROM t WHERE a IN (2000000, 2000001, 2000002)",
+      "SELECT * FROM t WHERE a IN (2999997, 2999998, 2999999)",
+      "SELECT * FROM t WHERE a IN (2999998, 2999999, 3000000)",
+      "SELECT * FROM t WHERE a IN (2999999, 3000000, 3000001)",
+      "SELECT * FROM t WHERE a IN (3000000, 3000001, 3000002)"
+    ]
   }
 ]

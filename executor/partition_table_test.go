@@ -14,6 +14,8 @@
 package executor_test
 
 import (
+	"strings"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
@@ -250,4 +252,45 @@ func (s *globalIndexSuite) TestIssue21731(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists p, t")
 	tk.MustExec("create table t (a int, b int, unique index idx(a)) partition by list columns(b) (partition p0 values in (1), partition p1 values in (2));")
+}
+
+func (s *testSuiteWithData) TestRangePartitionBoundaries(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create database TestRangePartitionBoundaries")
+	tk.MustExec("use TestRangePartitionBoundaries")
+	tk.MustExec(`CREATE TABLE t
+(a INT, b varchar(255))
+PARTITION BY RANGE (a) (
+ PARTITION p0 VALUES LESS THAN (1000000),
+ PARTITION p1 VALUES LESS THAN (2000000),
+ PARTITION p2 VALUES LESS THAN (3000000));
+`)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		var isInsert bool = false
+		if strings.HasPrefix(strings.ToLower(tt), "insert ") {
+			isInsert = true
+		}
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
+			if isInsert {
+				// to avoid double execution of INSERT (and INSERT does not return anything)
+				output[i].Res = nil
+			} else {
+				output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+			}
+		})
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MayQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
+	}
+	tk.MustExec("drop database TestRangePartitionBoundaries")
 }

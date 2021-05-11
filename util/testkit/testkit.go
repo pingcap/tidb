@@ -296,6 +296,19 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	return tk.ResultSetToResult(rs, comment)
 }
 
+// MayQuery query the statements and returns result rows if result set is returned.
+// If expected result is set it asserts the query result equals expected result.
+func (tk *TestKit) MayQuery(sql string, args ...interface{}) *Result {
+	comment := check.Commentf("sql:%s, args:%v", sql, args)
+	rs, err := tk.Exec(sql, args...)
+	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	if rs == nil {
+		var emptyStringAoA [][]string
+		return &Result{rows: emptyStringAoA, c: tk.c, comment: comment}
+	}
+	return tk.ResultSetToResult(rs, comment)
+}
+
 // QueryToErr executes a sql statement and discard results.
 func (tk *TestKit) QueryToErr(sql string, args ...interface{}) error {
 	comment := check.Commentf("sql:%s, args:%v", sql, args)
