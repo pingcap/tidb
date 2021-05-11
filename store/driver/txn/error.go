@@ -50,6 +50,8 @@ var (
 	// ErrTiKVMaxTimestampNotSynced is the error that tikv's max timestamp is not synced.
 	ErrTiKVMaxTimestampNotSynced = dbterror.ClassTiKV.NewStd(errno.ErrTiKVMaxTimestampNotSynced)
 	ErrResolveLockTimeout        = dbterror.ClassTiKV.NewStd(errno.ErrResolveLockTimeout)
+	// ErrLockWaitTimeout is the error that wait for the lock is timeout.
+	ErrLockWaitTimeout = dbterror.ClassTiKV.NewStd(errno.ErrLockWaitTimeout)
 	// ErrTiKVServerBusy is the error when tikv server is busy.
 	ErrTiKVServerBusy = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerBusy)
 	// ErrTiFlashServerBusy is the error that tiflash server is busy.
@@ -249,6 +251,10 @@ func ToTiDBErr(err error) error {
 
 	if errors.ErrorEqual(err, tikverr.ErrResolveLockTimeout) {
 		return ErrResolveLockTimeout
+	}
+
+	if errors.ErrorEqual(err, tikverr.ErrLockWaitTimeout) {
+		return ErrLockWaitTimeout
 	}
 
 	if errors.ErrorEqual(err, tikverr.ErrRegionUnavailable) {
