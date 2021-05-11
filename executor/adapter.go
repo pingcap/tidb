@@ -953,12 +953,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(slowItems))
 		if sessVars.InRestrictedSQL {
 			totalQueryProcHistogramInternal.Observe(costTime.Seconds())
-			totalCopProcHistogramInternal.Observe(execDetail.ProcessTime.Seconds())
-			totalCopWaitHistogramInternal.Observe(execDetail.WaitTime.Seconds())
+			totalCopProcHistogramInternal.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
+			totalCopWaitHistogramInternal.Observe(execDetail.TimeDetail.WaitTime.Seconds())
 		} else {
 			totalQueryProcHistogramGeneral.Observe(costTime.Seconds())
-			totalCopProcHistogramGeneral.Observe(execDetail.ProcessTime.Seconds())
-			totalCopWaitHistogramGeneral.Observe(execDetail.WaitTime.Seconds())
+			totalCopProcHistogramGeneral.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
+			totalCopWaitHistogramGeneral.Observe(execDetail.TimeDetail.WaitTime.Seconds())
 		}
 		var userString string
 		if sessVars.User != nil {
