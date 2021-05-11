@@ -29,7 +29,6 @@ type BackoffType = retry.BackoffType
 // Back off types.
 const (
 	BoRegionMiss  = retry.BoRegionMiss
-	BoTiKVRPC     = retry.BoTiKVRPC
 	BoTiFlashRPC  = retry.BoTiFlashRPC
 	BoTxnLockFast = retry.BoTxnLockFast
 	BoTxnLock     = retry.BoTxnLock

@@ -176,7 +176,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 	if req.KeepOrder || req.Desc {
 		return copErrorResponse{errors.New("batch coprocessor cannot prove keep order or desc property")}
 	}
-	ctx = context.WithValue(ctx, tikv.TxnStartKey, req.StartTs)
+	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	bo := newBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	ranges := toTiKVKeyRanges(req.KeyRanges)
 	tasks, err := buildBatchCopTasks(bo, c.store.GetRegionCache(), ranges, req.StoreType)
@@ -386,7 +386,7 @@ func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, b
 				return nil
 			}
 
-			if err1 := bo.Backoff(tikv.BoTiKVRPC, errors.Errorf("recv stream response error: %v, task store addr: %s", err, task.storeAddr)); err1 != nil {
+			if err1 := bo.b.BackoffTiKVRPC(errors.Errorf("recv stream response error: %v, task store addr: %s", err, task.storeAddr)); err1 != nil {
 				return errors.Trace(err)
 			}
 

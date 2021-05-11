@@ -49,7 +49,7 @@ const (
 func (t BackoffType) metric() prometheus.Observer {
 	switch t {
 	// TODO: distinguish tikv and tiflash in metrics
-	case BoTiKVRPC, BoTiFlashRPC:
+	case boTiKVRPC, BoTiFlashRPC:
 		return metrics.BackoffHistogramRPC
 	case BoTxnLock:
 		return metrics.BackoffHistogramLock
@@ -121,7 +121,7 @@ type BackoffType int
 
 // Back off types.
 const (
-	BoTiKVRPC BackoffType = iota
+	boTiKVRPC BackoffType = iota
 	BoTiFlashRPC
 	BoTxnLock
 	BoTxnLockFast
@@ -139,7 +139,7 @@ func (t BackoffType) createFn(vars *kv.Variables) func(context.Context, int) int
 		vars.Hook(t.String(), vars)
 	}
 	switch t {
-	case BoTiKVRPC, BoTiFlashRPC:
+	case boTiKVRPC, BoTiFlashRPC:
 		return NewBackoffFn(100, 2000, EqualJitter)
 	case BoTxnLock:
 		return NewBackoffFn(200, 3000, EqualJitter)
@@ -164,7 +164,7 @@ func (t BackoffType) createFn(vars *kv.Variables) func(context.Context, int) int
 
 func (t BackoffType) String() string {
 	switch t {
-	case BoTiKVRPC:
+	case boTiKVRPC:
 		return "tikvRPC"
 	case BoTiFlashRPC:
 		return "tiflashRPC"
@@ -193,7 +193,7 @@ func (t BackoffType) String() string {
 // TError returns pingcap/error of the backoff type.
 func (t BackoffType) TError() error {
 	switch t {
-	case BoTiKVRPC:
+	case boTiKVRPC:
 		return tikverr.ErrTiKVServerTimeout
 	case BoTiFlashRPC:
 		return tikverr.ErrTiFlashServerTimeout
@@ -277,6 +277,11 @@ func (b *Backoffer) Backoff(typ BackoffType, err error) error {
 		opentracing.ContextWithSpan(b.ctx, span1)
 	}
 	return b.BackoffWithMaxSleep(typ, -1, err)
+}
+
+// BackoffTiKVRPC calls Backoff with boTiKVRPC.
+func (b *Backoffer) BackoffTiKVRPC(err error) error {
+	return b.Backoff(boTiKVRPC, err)
 }
 
 // BackoffWithMaxSleep sleeps a while base on the backoffType and records the error message
