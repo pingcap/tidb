@@ -3611,3 +3611,29 @@ func (s *testIntegrationSuite) TestSequenceAsDataSource(c *C) {
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+func (s *testIntegrationSuite) TestEliminateLockForTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("create global temporary table t1 (a int primary key, b int, c int, index i_b(b))  on commit delete rows;")
+	defer func() {
+		tk.MustExec("drop global temporary table if exists t1;")
+	}()
+	tk.MustExec("begin;")
+	tk.MustExec("insert t1 values (8,8,9);")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
