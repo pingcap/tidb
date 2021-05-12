@@ -205,9 +205,8 @@ SELECT * FROM t1 WHERE a = 1 order by a;
 a
 1
 explain format = 'brief' SELECT * FROM t1 WHERE a = 1;
-id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p1	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[1,1], keep order:false, stats:pseudo
+id  estRows task  access object operator info
+Point_Get 1.00  root  table:t1, partition:p1  handle:1
 SELECT * FROM t1 WHERE a = 2 order by a;
 a
 2
