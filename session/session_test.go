@@ -2892,7 +2892,7 @@ func (s *testSessionSuite2) TestUpdatePrivilege(c *C) {
 
 	_, err := tk1.Exec("update t2 set id = 666 where id = 1;")
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "privilege check"), IsTrue)
 
 	// Cover a bug that t1 and t2 both require update privilege.
 	// In fact, the privlege check for t1 should be update, and for t2 should be select.
@@ -4296,6 +4296,8 @@ func (s *testSessionSuite3) TestGlobalTemporaryTable(c *C) {
 	tk.MustQuery("select c from g_tmp where b = 3").Check(testkit.Rows("3"))
 	// Cover point get.
 	tk.MustQuery("select * from g_tmp where a = 3").Check(testkit.Rows("3 3 3"))
+	// Cover batch point get.
+	tk.MustQuery("select * from g_tmp where a in (2,3,4)").Check(testkit.Rows("3 3 3", "4 7 9"))
 	tk.MustExec("commit")
 
 	// The global temporary table data is discard after the transaction commit.

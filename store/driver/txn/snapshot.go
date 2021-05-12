@@ -74,6 +74,8 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetNotFillCache(val.(bool))
 	case tikvstore.SnapshotTS:
 		s.KVSnapshot.SetSnapshotTS(val.(uint64))
+	case tikvstore.TaskID:
+		s.KVSnapshot.SetTaskID(val.(uint64))
 	case tikvstore.MatchStoreLabels:
 		s.KVSnapshot.SetMatchStoreLabels(val.([]*metapb.StoreLabel))
 	default:
