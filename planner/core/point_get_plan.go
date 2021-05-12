@@ -840,7 +840,12 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 	var partitionInfo *model.PartitionDefinition
 	var pos int
 	if pi != nil {
-		partitionInfo, pos = getPartitionInfo(ctx, tbl, pairs)
+		partitionInfo, pos, isTableDual = getPartitionInfo(ctx, tbl, pairs)
+		if isTableDual {
+			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
+			p.IsTableDual = true
+			return p
+		}
 		if partitionInfo == nil {
 			return nil
 		}
@@ -1462,12 +1467,12 @@ func buildHandleCols(ctx sessionctx.Context, tbl *model.TableInfo, schema *expre
 	return &IntHandleCols{col: handleCol}
 }
 
-func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) (*model.PartitionDefinition, int) {
+func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) (*model.PartitionDefinition, int, bool) {
 	partitionExpr := getPartitionExpr(ctx, tbl)
 
 	pi := tbl.GetPartitionInfo()
 	if pi == nil {
-		return nil, 0
+		return nil, 0, false
 	}
 
 	switch pi.Type {
@@ -1475,19 +1480,19 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 		expr := partitionExpr.OrigExpr
 		col, ok := expr.(*ast.ColumnNameExpr)
 		if !ok {
-			return nil, 0
+			return nil, 0, false
 		}
 
 		partitionColName := col.Name
 		if partitionColName == nil {
-			return nil, 0
+			return nil, 0, false
 		}
 
 		for i, pair := range pairs {
 			if partitionColName.Name.L == pair.colName {
 				val := pair.value.GetInt64()
 				pos := math.Abs(val % int64(pi.Num))
-				return &pi.Definitions[pos], i
+				return &pi.Definitions[pos], i, false
 			}
 		}
 	case model.PartitionTypeRange:
@@ -1505,7 +1510,9 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 							return ranges.Compare(i, val, unsigned) > 0
 						})
 						if pos >= 0 && pos < length {
-							return &pi.Definitions[pos], i
+							return &pi.Definitions[pos], i, false
+						} else {
+							return nil, 0, true
 						}
 					}
 				}
@@ -1523,14 +1530,16 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 						isNull := false
 						pos := partitionExpr.ForListPruning.LocatePartition(val, isNull)
 						if pos >= 0 {
-							return &pi.Definitions[pos], i
+							return &pi.Definitions[pos], i, false
+						} else {
+							return nil, 0, true
 						}
 					}
 				}
 			}
 		}
 	}
-	return nil, 0
+	return nil, 0, false
 }
 
 func findPartitionIdx(idxInfo *model.IndexInfo, pos int, pairs []nameValuePair) int {
