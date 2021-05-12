@@ -110,6 +110,58 @@ func (s *partitionTableSuite) TestPartitionUnionScanIndexJoin(c *C) {
 	tk.MustExec("commit")
 }
 
+func (s *partitionTableSuite) TestPointGetwithRangeAndListPartitionTable(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_pointget_list_hash")
+	tk.MustExec("use test_pointget_list_hash")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	// list partition table
+	tk.MustExec(`create table tlist(a int, b int, unique index idx_a(a), index idx_b(b)) partition by list(a)( 
+		partition p0 values in (1, 2, 3, 4),
+			partition p1 values in (5, 6, 7, 8),
+			partition p2 values in (9, 10, 11, 12));`)
+
+	// range partition table
+	tk.MustExec(`create table trange(a int, unique key(a)) partition by range(a) (
+		partition p0 values less than (30),
+		partition p1 values less than (60),
+		partition p2 values less than (90),
+		partition p3 values less than (120));`)
+
+	// regular partition table
+	tk.MustExec("create table tregular(a int, unique key(a));")
+
+	// insert data into list partition table
+	tk.MustExec("insert into tlist values(1,1), (2,2), (3, 3), (4, 4), (5,5), (6, 6), (7,7), (8, 8), (9, 9), (10, 10), (11, 11), (12, 12), (NULL, NULL);")
+
+	vals := make([]string, 0, 100)
+	// insert data into range partition table and hash partition table
+	for i := 0; i < 100; i++ {
+		vals = append(vals, fmt.Sprintf("(%v)", i+1))
+	}
+	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
+	tk.MustExec("insert into tregular values " + strings.Join(vals, ","))
+
+	// test PointGet
+	for i := 0; i < 100; i++ {
+		// explain select a from t where a = {x}; // x >= 1 and x <= 100 Check if PointGet is used
+		// select a from t where a={x}; // the result is {x}
+		x := rand.Intn(100) + 1
+		queryRange := fmt.Sprintf("select a from trange where a=%v", x)
+		c.Assert(tk.HasPlan(queryRange, "Point_Get"), IsTrue) // check if PointGet is used
+		tk.MustQuery(queryRange).Check(testkit.Rows(fmt.Sprintf("%v", x)))
+
+		y := rand.Intn(12) + 1
+		queryList := fmt.Sprintf("select a from tlist where a=%v", y)
+		c.Assert(tk.HasPlan(queryList, "Point_Get"), IsTrue) // check if PointGet is used
+		tk.MustQuery(queryList).Check(testkit.Rows(fmt.Sprintf("%v", y)))
+	}
+}
+
 func (s *partitionTableSuite) TestPartitionReaderUnderApply(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
