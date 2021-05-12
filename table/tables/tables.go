@@ -1408,6 +1408,9 @@ func shouldWriteBinlog(ctx sessionctx.Context, tblInfo *model.TableInfo) bool {
 	if ctx.GetSessionVars().BinlogClient == nil {
 		return false
 	}
+	if tblInfo.TempTableType != model.TempTableNone {
+		return false
+	}
 	return !ctx.GetSessionVars().InRestrictedSQL
 }
 
