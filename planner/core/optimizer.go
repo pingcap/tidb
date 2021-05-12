@@ -104,13 +104,13 @@ func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs [
 		if v.privilege == mysql.ExtendedPriv {
 			if !pm.RequestDynamicVerification(activeRoles, v.dynamicPriv, v.dynamicWithGrant) {
 				if v.err == nil {
-					return ErrPrivilegeCheckFail
+					return ErrPrivilegeCheckFail.GenWithStackByArgs(v.dynamicPriv)
 				}
 				return v.err
 			}
 		} else if !pm.RequestVerification(activeRoles, v.db, v.table, v.column, v.privilege) {
 			if v.err == nil {
-				return ErrPrivilegeCheckFail
+				return ErrPrivilegeCheckFail.GenWithStackByArgs(v.privilege.String())
 			}
 			return v.err
 		}
