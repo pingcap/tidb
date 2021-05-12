@@ -19,6 +19,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -163,6 +164,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.SetScope(val.(string))
 	case tikvstore.IsStalenessReadOnly:
 		txn.KVTxn.GetSnapshot().SetIsStatenessReadOnly(val.(bool))
+	case tikvstore.MatchStoreLabels:
+		txn.KVTxn.GetSnapshot().SetMatchStoreLabels(val.([]*metapb.StoreLabel))
 	default:
 		txn.KVTxn.SetOption(opt, val)
 	}

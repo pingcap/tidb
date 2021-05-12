@@ -17,6 +17,7 @@ import (
 	"context"
 	"unsafe"
 
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/tikv"
@@ -80,6 +81,8 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetTaskID(val.(uint64))
 	case tikvstore.IsStalenessReadOnly:
 		s.KVSnapshot.SetIsStatenessReadOnly(val.(bool))
+	case tikvstore.MatchStoreLabels:
+		s.KVSnapshot.SetMatchStoreLabels(val.([]*metapb.StoreLabel))
 	default:
 		s.KVSnapshot.SetOption(opt, val)
 	}
