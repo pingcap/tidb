@@ -2894,7 +2894,7 @@ func (s *testSessionSuite2) TestUpdatePrivilege(c *C) {
 
 	_, err := tk1.Exec("update t2 set id = 666 where id = 1;")
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "privilege check"), IsTrue)
 
 	// Cover a bug that t1 and t2 both require update privilege.
 	// In fact, the privlege check for t1 should be update, and for t2 should be select.
