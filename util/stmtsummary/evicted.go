@@ -57,15 +57,17 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 			ssbde.history.Remove(ssbde.history.Front())
 		}
 
-		// look for match history interval
-		// no record in history
+		// look for matching history interval
 		if ssbde.history.Len() == 0 && historySize > 0 {
+			// no record in history
 			beginTime := eBeginTime
 			intervalSeconds := eEndTime - eBeginTime
 			record := newStmtSummaryByDigestEvictedElement(beginTime, intervalSeconds)
 			record.addEvicted(evictedKey, e.Value.(*stmtSummaryByDigestElement))
 			ssbde.history.PushBack(record)
+
 			if evictedKey == nil {
+				// passing a empty Key is used as `refresh`.
 				continue
 			}
 		}
@@ -130,11 +132,6 @@ func (seElement *stmtSummaryByDigestEvictedElement) addEvicted(digestKey *stmtSu
 // ToCurrentOtherDatum converts current evicted record to `other` record's datum
 func (ssbde *stmtSummaryByDigestEvicted) ToCurrentOtherDatum() []types.Datum {
 	induceSsbd := new(stmtSummaryByDigest)
-	induceSsbd.stmtType = ""
-	induceSsbd.schemaName = ""
-	induceSsbd.digest = ""
-	induceSsbd.normalizedSQL = ""
-	induceSsbd.planDigest = ""
 	return ssbde.history.Back().Value.(*stmtSummaryByDigestEvictedElement).toOtherDatum(induceSsbd)
 }
 

@@ -1,17 +1,19 @@
 package stmtsummary
 
 import (
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/types"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/types"
 )
 
-// Test STATEMENTS_SUMMARY_EVICTED
-func (s *testStmtSummarySuite) TestEvictedCountDatum(c *C) {
+// Test stmtSummaryByDigestEvictedElement.ToEvictedCountDatum
+// Test stmtSummaryByDigestMap.ToEvictedCountDatum
+func (s *testStmtSummarySuite) TestToEvictedCountDatum(c *C) {
 	s.ssMap.Clear()
-	s.ssMap.refreshInterval()
+	now := time.Now().Unix()
+	s.ssMap.beginTimeForCurInterval = now + 60
 
 	// set summaryMap capacity to 1.
 	err := s.ssMap.summaryMap.SetCapacity(1)
@@ -21,16 +23,25 @@ func (s *testStmtSummarySuite) TestEvictedCountDatum(c *C) {
 	s.ssMap.Clear()
 
 	sei0 := generateAnyExecInfo()
-	sei0.SchemaName = "schema_00"
+	sei1 := generateAnyExecInfo()
+
+	sei0.SchemaName = "I'll occupy this cache! :("
 	s.ssMap.AddStatement(sei0)
 	n := s.ssMap.beginTimeForCurInterval
 	intervalSeconds := s.ssMap.refreshInterval()
-	s.ssMap.AddStatement(generateAnyExecInfo())
+	sei1.SchemaName = "sorry, it's mine now. =)"
+	s.ssMap.AddStatement(sei1)
 
 	expectedEvictedCount := []interface{}{
 		types.NewTime(types.FromGoTime(time.Unix(n, 0)), mysql.TypeTimestamp, types.DefaultFsp),
 		types.NewTime(types.FromGoTime(time.Unix(n+intervalSeconds, 0)), mysql.TypeTimestamp, types.DefaultFsp),
 		int64(1),
 	}
-	match(c, s.ssMap.other.ToEvictedCountDatum()[0], expectedEvictedCount...)
+
+	// test stmtSummaryByDigestEvictedElement.toEvictedCountDatum()
+	element := s.ssMap.other.history.Front().Value.(*stmtSummaryByDigestEvictedElement)
+	match(c, element.toEvictedCountDatum(), expectedEvictedCount...)
+
+	// test stmtSummaryByDigestMap.toEvictedCountDatum
+	match(c, s.ssMap.ToEvictedCountDatum()[0], expectedEvictedCount...)
 }
