@@ -172,6 +172,18 @@ func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, i
 	return
 }
 
+// GetPotentialPartitionKeys return potential partition keys for join, the potential partition keys are
+// the join keys of EqualConditions
+func (p *LogicalJoin) GetPotentialPartitionKeys() (leftKeys, rightKeys []*property.PartitionColumn) {
+	for _, expr := range p.EqualConditions {
+		_, coll := expr.CharsetAndCollation(p.ctx)
+		collateId := property.GetCollateIDByNameForPartition(coll)
+		leftKeys = append(leftKeys, &property.PartitionColumn{Col: expr.GetArgs()[0].(*expression.Column), CollateId: collateId})
+		rightKeys = append(rightKeys, &property.PartitionColumn{Col: expr.GetArgs()[1].(*expression.Column), CollateId: collateId})
+	}
+	return
+}
+
 func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {
 	for i, cond := range p.LeftConditions {
 		p.LeftConditions[i] = expression.ColumnSubstitute(cond, schema, exprs)
@@ -355,6 +367,20 @@ func (la *LogicalAggregation) GetGroupByCols() []*expression.Column {
 	for _, item := range la.GroupByItems {
 		if col, ok := item.(*expression.Column); ok {
 			groupByCols = append(groupByCols, col)
+		}
+	}
+	return groupByCols
+}
+
+func (la *LogicalAggregation) GetPotentialPartitionKeys() []*property.PartitionColumn {
+	groupByCols := make([]*property.PartitionColumn, 0, len(la.GroupByItems))
+	for _, item := range la.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			_, coll := expression.DeriveCollationFromExprs(la.ctx, col)
+			groupByCols = append(groupByCols, &property.PartitionColumn{
+				Col:       col,
+				CollateId: property.GetCollateIDByNameForPartition(coll),
+			})
 		}
 	}
 	return groupByCols

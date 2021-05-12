@@ -14,10 +14,13 @@
 package property
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
@@ -41,6 +44,50 @@ const (
 	// HashType requires current task to shuffle its data according to some columns.
 	HashType
 )
+
+type PartitionColumn struct {
+	Col       *expression.Column
+	CollateId int32
+}
+
+func (partitionCol *PartitionColumn) hashCode(ctx *stmtctx.StatementContext) []byte {
+	hashcode := partitionCol.Col.HashCode(ctx)
+	if partitionCol.CollateId < 0 {
+		// collateId < 0 means new collation is not enabled
+		hashcode = codec.EncodeInt(hashcode, int64(partitionCol.CollateId))
+	} else {
+		hashcode = codec.EncodeInt(hashcode, 1)
+	}
+	return hashcode
+}
+
+func (partitionCol *PartitionColumn) Equal(other *PartitionColumn) bool {
+	if partitionCol.CollateId < 0 {
+		// collateId only matters if new collation is enabled
+		if partitionCol.CollateId != other.CollateId {
+			return false
+		}
+	}
+	return partitionCol.Col.Equal(nil, other.Col)
+}
+
+// ExplainColumnList generates explain information for a list of columns.
+func ExplainColumnList(cols []*PartitionColumn) []byte {
+	buffer := bytes.NewBufferString("")
+	for i, col := range cols {
+		buffer.WriteString(col.Col.ExplainInfo())
+		if i+1 < len(cols) {
+			buffer.WriteString(", ")
+		}
+	}
+	return buffer.Bytes()
+}
+
+// GetCollateIDByNameForPartition returns collate id by collation name
+func GetCollateIDByNameForPartition(coll string) int32 {
+	collateId := int32(collate.CollationName2ID(coll))
+	return collate.RewriteNewCollationIDIfNeeded(collateId)
+}
 
 // PhysicalProperty stands for the required physical property by parents.
 // It contains the orders and the task types.
@@ -70,7 +117,7 @@ type PhysicalProperty struct {
 	CanAddEnforcer bool
 
 	// If the partition type is hash, the data should be reshuffled by partition cols.
-	MPPPartitionCols []*expression.Column
+	MPPPartitionCols []*PartitionColumn
 
 	// which types the exchange sender belongs to, only take effects when it's a mpp task.
 	MPPPartitionTp MPPPartitionType
@@ -96,7 +143,7 @@ func SortItemsFromCols(cols []*expression.Column, desc bool) []SortItem {
 }
 
 // IsSubsetOf check if the keys can match the needs of partition.
-func (p *PhysicalProperty) IsSubsetOf(keys []*expression.Column) []int {
+func (p *PhysicalProperty) IsSubsetOf(keys []*PartitionColumn) []int {
 	if len(p.MPPPartitionCols) > len(keys) {
 		return nil
 	}
@@ -104,7 +151,7 @@ func (p *PhysicalProperty) IsSubsetOf(keys []*expression.Column) []int {
 	for _, partCol := range p.MPPPartitionCols {
 		found := false
 		for i, key := range keys {
-			if partCol.Equal(nil, key) {
+			if partCol.Equal(key) {
 				found = true
 				matches = append(matches, i)
 				break
@@ -185,7 +232,7 @@ func (p *PhysicalProperty) HashCode() []byte {
 	if p.TaskTp == MppTaskType {
 		p.hashcode = codec.EncodeInt(p.hashcode, int64(p.MPPPartitionTp))
 		for _, col := range p.MPPPartitionCols {
-			p.hashcode = append(p.hashcode, col.HashCode(nil)...)
+			p.hashcode = append(p.hashcode, col.hashCode(nil)...)
 		}
 	}
 	return p.hashcode
