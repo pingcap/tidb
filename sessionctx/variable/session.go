@@ -129,13 +129,12 @@ func (r *retryInfoAutoIDs) getCurrent() (int64, bool) {
 
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
-	forUpdateTS   uint64
-	stmtFuture    oracle.Future
-	Binlog        interface{}
-	InfoSchema    interface{}
-	History       interface{}
-	SchemaVersion int64
-	StartTS       uint64
+	forUpdateTS uint64
+	stmtFuture  oracle.Future
+	Binlog      interface{}
+	InfoSchema  interface{}
+	History     interface{}
+	StartTS     uint64
 
 	// ShardStep indicates the max size of continuous rowid shard in one transaction.
 	ShardStep    int
@@ -871,19 +870,26 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 	}
 }
 
+// FIXME: remove this interface
+// infoschemaMetaVersion is a workaround. Due to circular dependency,
+// can not return the complete interface. But SchemaMetaVersion is widely used for logging.
+// So we give a convenience for that
+type infoschemaMetaVersion interface {
+	SchemaMetaVersion() int64
+}
+
 // GetInfoSchema returns snapshotInfoSchema if snapshot schema is set.
 // Otherwise, transaction infoschema is returned.
 // Nil if there is no available infoschema.
-func (s *SessionVars) GetInfoSchema() interface{} {
-	type IS interface {
-		SchemaMetaVersion() int64
-	}
-	if snap, ok := s.SnapshotInfoschema.(IS); ok {
+func (s *SessionVars) GetInfoSchema() infoschemaMetaVersion {
+	if snap, ok := s.SnapshotInfoschema.(infoschemaMetaVersion); ok {
 		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", s.ConnectionID), zap.Int64("schemaVersion", snap.SchemaMetaVersion()))
 		return snap
 	}
-	if s.TxnCtx != nil && s.TxnCtx.InfoSchema != nil {
-		return s.TxnCtx.InfoSchema
+	if s.TxnCtx != nil {
+		if is, ok := s.TxnCtx.InfoSchema.(infoschemaMetaVersion); ok {
+			return is
+		}
 	}
 	return nil
 }
@@ -1440,20 +1446,6 @@ func (s *SessionVars) LazyCheckKeyNotExists() bool {
 	return s.PresumeKeyNotExists || (s.TxnCtx.IsPessimistic && !s.StmtCtx.DupKeyAsWarning)
 }
 
-// SetLocalSystemVar sets values of the local variables which in "server" scope.
-func SetLocalSystemVar(name string, val string) {
-	switch name {
-	case TiDBDDLReorgWorkerCount:
-		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
-	case TiDBDDLReorgBatchSize:
-		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
-	case TiDBDDLErrorCountLimit:
-		SetDDLErrorCountLimit(tidbOptInt64(val, DefTiDBDDLErrorCountLimit))
-	case TiDBRowFormatVersion:
-		SetDDLReorgRowFormat(tidbOptInt64(val, DefTiDBRowFormatV2))
-	}
-}
-
 // special session variables.
 const (
 	SQLModeVar           = "sql_mode"
@@ -1464,22 +1456,7 @@ const (
 	TransactionIsolation = "transaction_isolation"
 	TxnIsolationOneShot  = "tx_isolation_one_shot"
 	MaxExecutionTime     = "max_execution_time"
-)
-
-// these variables are useless for TiDB, but still need to validate their values for some compatible issues.
-// TODO: some more variables need to be added here.
-const (
-	serverReadOnly = "read_only"
-)
-
-var (
-	// TxIsolationNames are the valid values of the variable "tx_isolation" or "transaction_isolation".
-	TxIsolationNames = map[string]struct{}{
-		"READ-UNCOMMITTED": {},
-		"READ-COMMITTED":   {},
-		"REPEATABLE-READ":  {},
-		"SERIALIZABLE":     {},
-	}
+	ReadOnly             = "read_only"
 )
 
 // TableDelta stands for the changed count for one table or partition.
