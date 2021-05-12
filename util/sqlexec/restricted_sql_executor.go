@@ -89,6 +89,7 @@ type SQLExecutor interface {
 	Execute(ctx context.Context, sql string) ([]RecordSet, error)
 	// ExecuteInternal means execute sql as the internal sql.
 	ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (RecordSet, error)
+	ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (RecordSet, error)
 }
 
 // SQLParser is an interface provides parsing sql statement.

@@ -872,8 +872,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		IsolationLevel: pbIsolationLevel(worker.req.IsolationLevel),
 		Priority:       kvPriorityToCommandPri(worker.req.Priority),
 		NotFillCache:   worker.req.NotFillCache,
-		HandleTime:     true,
-		ScanDetail:     true,
+		RecordTimeStat: true,
+		RecordScanStat: true,
 		TaskId:         worker.req.TaskID,
 	})
 	req.StoreTp = task.storeType
@@ -1013,9 +1013,9 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 		}
 	}
 
-	if detail != nil && detail.HandleTime != nil {
-		processMs := detail.HandleTime.ProcessMs
-		waitMs := detail.HandleTime.WaitMs
+	if detail != nil && detail.TimeDetail != nil {
+		processMs := detail.TimeDetail.ProcessWallTimeMs
+		waitMs := detail.TimeDetail.WaitWallTimeMs
 		if processMs > minLogKVProcessTime {
 			logStr += fmt.Sprintf(" kv_process_ms:%d", processMs)
 			if detail.ScanDetail != nil {
@@ -1149,18 +1149,29 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		resp.detail.CalleeAddress = rpcCtx.Addr
 	}
 	resp.respTime = costTime
-	if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
-		if handleTime := pbDetails.HandleTime; handleTime != nil {
-			resp.detail.WaitTime = time.Duration(handleTime.WaitMs) * time.Millisecond
-			resp.detail.ProcessTime = time.Duration(handleTime.ProcessMs) * time.Millisecond
+	sd := &execdetails.ScanDetail{}
+	td := execdetails.TimeDetail{}
+	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
+		// Take values in `ExecDetailsV2` first.
+		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
+			td.MergeFromTimeDetail(timeDetail)
+		}
+		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
+			sd.MergeFromScanDetailV2(scanDetailV2)
+		}
+	} else if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
+		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
+			td.MergeFromTimeDetail(timeDetail)
 		}
 		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
 			if scanDetail.Write != nil {
-				resp.detail.TotalKeys += scanDetail.Write.Total
-				resp.detail.ProcessedKeys += scanDetail.Write.Processed
+				sd.ProcessedKeys = scanDetail.Write.Processed
+				sd.TotalKeys = scanDetail.Write.Total
 			}
 		}
 	}
+	resp.detail.ScanDetail = sd
+	resp.detail.TimeDetail = td
 	if resp.pbResp.IsCacheHit {
 		if cacheValue == nil {
 			return nil, errors.New("Internal error: received illegal TiKV response")
@@ -1173,7 +1184,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	} else {
 		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
 		if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
-			if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.ProcessTime) {
+			if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime) {
 				data := make([]byte, len(resp.pbResp.Data))
 				copy(data, resp.pbResp.Data)
 

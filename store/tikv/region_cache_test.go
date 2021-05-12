@@ -69,7 +69,23 @@ func (s *testRegionCacheSuite) storeAddr(id uint64) string {
 func (s *testRegionCacheSuite) checkCache(c *C, len int) {
 	ts := time.Now().Unix()
 	c.Assert(validRegions(s.cache.mu.regions, ts), Equals, len)
+	c.Assert(validRegionsSearchedByVersions(s.cache.mu.latestVersions, s.cache.mu.regions, ts), Equals, len)
 	c.Assert(validRegionsInBtree(s.cache.mu.sorted, ts), Equals, len)
+}
+
+func validRegionsSearchedByVersions(
+	versions map[uint64]RegionVerID,
+	regions map[RegionVerID]*Region,
+	ts int64,
+) (count int) {
+	for _, ver := range versions {
+		region, ok := regions[ver]
+		if !ok || !region.checkRegionCacheTTL(ts) {
+			continue
+		}
+		count++
+	}
+	return
 }
 
 func validRegions(regions map[RegionVerID]*Region, ts int64) (len int) {
@@ -831,6 +847,33 @@ func (s *testRegionCacheSuite) TestReplaceNewAddrAndOldOfflineImmediately(c *C) 
 	getVal, err := client.Get(testKey)
 	c.Assert(err, IsNil)
 	c.Assert(getVal, BytesEquals, testValue)
+}
+
+func (s *testRegionCacheSuite) TestReplaceStore(c *C) {
+	mvccStore := mocktikv.MustNewMVCCStore()
+	defer mvccStore.Close()
+
+	client := &RawKVClient{
+		clusterID:   0,
+		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
+		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
+	}
+	defer client.Close()
+	testKey := []byte("test_key")
+	testValue := []byte("test_value")
+	err := client.Put(testKey, testValue)
+	c.Assert(err, IsNil)
+
+	s.cluster.MarkTombstone(s.store1)
+	store3 := s.cluster.AllocID()
+	peer3 := s.cluster.AllocID()
+	s.cluster.AddStore(store3, s.storeAddr(s.store1))
+	s.cluster.AddPeer(s.region1, store3, peer3)
+	s.cluster.RemovePeer(s.region1, s.peer1)
+	s.cluster.ChangeLeader(s.region1, peer3)
+
+	err = client.Put(testKey, testValue)
+	c.Assert(err, IsNil)
 }
 
 func (s *testRegionCacheSuite) TestListRegionIDsInCache(c *C) {

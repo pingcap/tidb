@@ -41,6 +41,26 @@ import (
 )
 
 var _ = Suite(&testStatsSuite{})
+var _ = SerialSuites(&testSerialStatsSuite{})
+
+type testSerialStatsSuite struct {
+	store kv.Storage
+	do    *domain.Domain
+}
+
+func (s *testSerialStatsSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	// Add the hook here to avoid data race.
+	var err error
+	s.store, s.do, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSerialStatsSuite) TearDownSuite(c *C) {
+	s.do.Close()
+	s.store.Close()
+	testleak.AfterTest(c)()
+}
 
 type testStatsSuite struct {
 	store kv.Storage
@@ -463,6 +483,41 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	c.Assert(ok, IsTrue)
 	c.Assert(hg.NDV, Equals, int64(3))
 	c.Assert(hg.Len(), Equals, 3)
+}
+
+func (s *testSerialStatsSuite) TestAutoAnalyzeOnEmptyTable(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+
+	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
+	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
+	}()
+
+	t := time.Now().Add(-1 * time.Minute)
+	h, m := t.Hour(), t.Minute()
+	start, end := fmt.Sprintf("%02d:%02d +0000", h, m), fmt.Sprintf("%02d:%02d +0000", h, m)
+	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", start))
+	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", end))
+	s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema())
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, index idx(a))")
+	// to pass the stats.Pseudo check in autoAnalyzeTable
+	tk.MustExec("analyze table t")
+	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
+	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(handle.AutoAnalyzeMinCnt)))
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(s.do.StatsHandle().Update(s.do.InfoSchema()), IsNil)
+
+	// test if it will be limited by the time range
+	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsFalse)
+
+	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='00:00 +0000'"))
+	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='23:59 +0000'"))
+	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
 }
 
 func (s *testStatsSuite) TestAutoUpdatePartition(c *C) {
