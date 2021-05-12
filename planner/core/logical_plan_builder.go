@@ -3046,6 +3046,18 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 		}
 		resultList = append(resultList, list...)
 	}
+	field := &ast.SelectField{WildCard: &ast.WildCardField{}}
+	list := unfoldWildStar(field, p.OutputNames(), p.Schema().Columns)
+	if isJoin && join.redundantSchema != nil {
+		redundantList := unfoldWildStar(field, join.redundantNames, join.redundantSchema.Columns)
+		if len(redundantList) > len(list) {
+			list = redundantList
+		}
+	}
+	for _, field := range list {
+		field.Auxiliary = true
+	}
+	resultList = append(resultList, list...)
 	return resultList, nil
 }
 
@@ -4845,11 +4857,6 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p LogicalPla
 			return nil, nil, nil, nil, err
 		}
 		p = np
-		switch newArg.(type) {
-		case *expression.Column, *expression.Constant:
-			newArgList = append(newArgList, newArg)
-			continue
-		}
 		proj.Exprs = append(proj.Exprs, newArg)
 		proj.names = append(proj.names, types.EmptyName)
 		col := &expression.Column{
