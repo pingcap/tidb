@@ -565,21 +565,9 @@ func (s *KVSnapshot) IterReverse(k []byte) (unionstore.Iterator, error) {
 // value of this option. Only ReplicaRead is supported for snapshot
 func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 	switch opt {
-	case kv.ReplicaRead:
-		s.mu.Lock()
-		s.mu.replicaRead = val.(kv.ReplicaReadType)
-		s.mu.Unlock()
 	case kv.CollectRuntimeStats:
 		s.mu.Lock()
 		s.mu.stats = val.(*SnapshotRuntimeStats)
-		s.mu.Unlock()
-	case kv.IsStalenessReadOnly:
-		s.mu.Lock()
-		s.mu.isStaleness = val.(bool)
-		s.mu.Unlock()
-	case kv.MatchStoreLabels:
-		s.mu.Lock()
-		s.mu.matchStoreLabels = val.([]*metapb.StoreLabel)
 		s.mu.Unlock()
 	}
 }
@@ -587,10 +575,6 @@ func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 // DelOption deletes an option.
 func (s *KVSnapshot) DelOption(opt int) {
 	switch opt {
-	case kv.ReplicaRead:
-		s.mu.Lock()
-		s.mu.replicaRead = kv.ReplicaReadLeader
-		s.mu.Unlock()
 	case kv.CollectRuntimeStats:
 		s.mu.Lock()
 		s.mu.stats = nil
@@ -607,6 +591,13 @@ func (s *KVSnapshot) SetNotFillCache(b bool) {
 // SetKeyOnly indicates if tikv can return only keys.
 func (s *KVSnapshot) SetKeyOnly(b bool) {
 	s.keyOnly = b
+}
+
+// SetReplicaRead sets up the replica read type.
+func (s *KVSnapshot) SetReplicaRead(readType kv.ReplicaReadType) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.replicaRead = readType
 }
 
 // SetIsolationLevel sets the isolation level used to scan data from tikv.
@@ -630,6 +621,20 @@ func (s *KVSnapshot) SetTaskID(id uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mu.taskID = id
+}
+
+// SetIsStatenessReadOnly indicates whether the transaction is staleness read only transaction
+func (s *KVSnapshot) SetIsStatenessReadOnly(b bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.isStaleness = b
+}
+
+// SetMatchStoreLabels sets up labels to filter target stores.
+func (s *KVSnapshot) SetMatchStoreLabels(labels []*metapb.StoreLabel) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.matchStoreLabels = labels
 }
 
 // SnapCacheHitCount gets the snapshot cache hit count. Only for test.
