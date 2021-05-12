@@ -1662,7 +1662,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	}
 	joins := make([]PhysicalPlan, 0, 8)
 	canPushToTiFlash := p.canPushToCop(kv.TiFlash)
-	if p.ctx.GetSessionVars().AllowMPPExecution != "OFF" && canPushToTiFlash {
+	if p.ctx.GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
 		if p.shouldUseMPPBCJ() {
 			mppJoins := p.tryToGetMppHashJoin(prop, true)
 			if (p.preferJoinType & preferBCJoin) > 0 {
@@ -1965,7 +1965,7 @@ func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPl
 	if !lt.limitHints.preferLimitToCop {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
-	if lt.ctx.GetSessionVars().AllowMPPExecution != "OFF" {
+	if lt.ctx.GetSessionVars().IsMPPAllowed() {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
 	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
@@ -2355,7 +2355,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
 	}
 	canPushDownToTiFlash := la.canPushToCop(kv.TiFlash)
-	canPushDownToMPP := la.ctx.GetSessionVars().AllowMPPExecution != "OFF" && la.checkCanPushDownToMPP() && canPushDownToTiFlash
+	canPushDownToMPP := la.ctx.GetSessionVars().IsMPPAllowed() && la.checkCanPushDownToMPP() && canPushDownToTiFlash
 	if la.HasDistinct() {
 		// TODO: remove after the cost estimation of distinct pushdown is implemented.
 		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {

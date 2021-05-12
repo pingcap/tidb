@@ -495,9 +495,9 @@ type SessionVars struct {
 	// Value set to 2 means to force to send batch cop for any query. Value set to 0 means never use batch cop.
 	AllowBatchCop int
 
-	// AllowMPPExecution means if we should use mpp way to execute query. Default value is 1 (or 'ON'), means to be determined by the optimizer.
-	// Value set to 2 (or 'ENFORCE') which means to use mpp whenever possible. Value set to 2 (or 'OFF') means never use mpp.
-	AllowMPPExecution string
+	// AllowMPPExecution means if we should use mpp way to execute query. Default value is "ON", means to be determined by the optimizer.
+	// Value set to "ENFORCE" means to use mpp whenever possible. Value set to means never use mpp.
+	allowMPPExecution string
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
@@ -846,6 +846,16 @@ func (s *SessionVars) AllocMPPTaskID(startTS uint64) int64 {
 	return 1
 }
 
+// IsMPPAllowed returns whether mpp execution is allowed.
+func (s *SessionVars) IsMPPAllowed() bool {
+	return s.allowMPPExecution != "OFF"
+}
+
+// IsMPPAllowed returns whether mpp execution is enforced.
+func (s *SessionVars) IsMPPEnforced() bool {
+	return s.allowMPPExecution == "ENFORCE"
+}
+
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
 func (s *SessionVars) CheckAndGetTxnScope() string {
 	if s.InRestrictedSQL {
@@ -1095,7 +1105,7 @@ func NewSessionVars() *SessionVars {
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
-	vars.AllowMPPExecution = DefTiDBAllowMPPExecution
+	vars.allowMPPExecution = DefTiDBAllowMPPExecution
 
 	var enableChunkRPC string
 	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {

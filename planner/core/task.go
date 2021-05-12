@@ -2028,7 +2028,7 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	p.stats = t.p.statsInfo()
 
 	p.cost = t.cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
-	if p.ctx.GetSessionVars().AllowMPPExecution == "ENFORCE" {
+	if p.ctx.GetSessionVars().IsMPPEnforced() {
 		p.cost = 0
 	}
 	rt := &rootTask{
