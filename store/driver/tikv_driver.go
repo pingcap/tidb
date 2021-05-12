@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
+	derr "github.com/pingcap/tidb/store/driver/error"
 	txn_driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/tikv"
@@ -205,6 +206,8 @@ var (
 	ldflagGetEtcdAddrsFromConfig = "0" // 1:Yes, otherwise:No
 )
 
+const getAllMembersBackoff = 5000
+
 // EtcdAddrs returns etcd server addresses.
 func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	if s.etcdAddrs == nil {
@@ -219,7 +222,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	}
 
 	ctx := context.Background()
-	bo := tikv.NewBackoffer(ctx, tikv.GetAllMembersBackoff)
+	bo := tikv.NewBackoffer(ctx, getAllMembersBackoff)
 	etcdAddrs := make([]string, 0)
 	pdClient := s.GetPDClient()
 	if pdClient == nil {
@@ -228,7 +231,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	for {
 		members, err := pdClient.GetAllMembers(ctx)
 		if err != nil {
-			err := bo.Backoff(tikv.BoRegionMiss, err)
+			err := bo.Backoff(tikv.BoRegionMiss(), err)
 			if err != nil {
 				return nil, err
 			}
@@ -261,7 +264,7 @@ func (s *tikvStore) StartGCWorker() error {
 
 	gcWorker, err := gcworker.NewGCWorker(s, s.pdClient)
 	if err != nil {
-		return txn_driver.ToTiDBErr(err)
+		return derr.ToTiDBErr(err)
 	}
 	gcWorker.Start()
 	s.gcWorker = gcWorker
@@ -286,7 +289,7 @@ func (s *tikvStore) Close() error {
 	}
 	s.coprStore.Close()
 	err := s.KVStore.Close()
-	return txn_driver.ToTiDBErr(err)
+	return derr.ToTiDBErr(err)
 }
 
 // GetMemCache return memory manager of the storage
@@ -298,16 +301,16 @@ func (s *tikvStore) GetMemCache() kv.MemManager {
 func (s *tikvStore) Begin() (kv.Transaction, error) {
 	txn, err := s.KVStore.Begin()
 	if err != nil {
-		return nil, txn_driver.ToTiDBErr(err)
+		return nil, derr.ToTiDBErr(err)
 	}
 	return txn_driver.NewTiKVTxn(txn), err
 }
 
 // BeginWithOption begins a transaction with given option
-func (s *tikvStore) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
+func (s *tikvStore) BeginWithOption(option tikv.StartTSOption) (kv.Transaction, error) {
 	txn, err := s.KVStore.BeginWithOption(option)
 	if err != nil {
-		return nil, txn_driver.ToTiDBErr(err)
+		return nil, derr.ToTiDBErr(err)
 	}
 	return txn_driver.NewTiKVTxn(txn), err
 }
@@ -321,7 +324,7 @@ func (s *tikvStore) GetSnapshot(ver kv.Version) kv.Snapshot {
 // CurrentVersion returns current max committed version with the given txnScope (local or global).
 func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
 	ver, err := s.KVStore.CurrentTimestamp(txnScope)
-	return kv.NewVersion(ver), txn_driver.ToTiDBErr(err)
+	return kv.NewVersion(ver), derr.ToTiDBErr(err)
 }
 
 // ShowStatus returns the specified status of the storage

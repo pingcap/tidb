@@ -74,7 +74,7 @@ type GCWorker struct {
 
 // NewGCWorker creates a GCWorker instance.
 func NewGCWorker(store kv.Storage, pdClient pd.Client) (*GCWorker, error) {
-	ver, err := store.CurrentVersion(oracle.GlobalTxnScope)
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -409,18 +409,27 @@ func (w *GCWorker) calcSafePointByMinStartTS(ctx context.Context, safePoint uint
 		return safePoint
 	}
 
-	if globalMinStartTS < safePoint {
+	// If the lock.ts <= max_ts(safePoint), it will be collected and resolved by the gc worker,
+	// the locks of ongoing pessimistic transactions could be resolved by the gc worker and then
+	// the transaction is aborted, decrement the value by 1 to avoid this.
+	globalMinStartAllowedTS := globalMinStartTS
+	if globalMinStartTS > 0 {
+		globalMinStartAllowedTS = globalMinStartTS - 1
+	}
+
+	if globalMinStartAllowedTS < safePoint {
 		logutil.Logger(ctx).Info("[gc worker] gc safepoint blocked by a running session",
 			zap.String("uuid", w.uuid),
 			zap.Uint64("globalMinStartTS", globalMinStartTS),
+			zap.Uint64("globalMinStartAllowedTS", globalMinStartAllowedTS),
 			zap.Uint64("safePoint", safePoint))
-		safePoint = globalMinStartTS
+		safePoint = globalMinStartAllowedTS
 	}
 	return safePoint
 }
 
 func (w *GCWorker) getOracleTime() (time.Time, error) {
-	currentVer, err := w.store.CurrentVersion(oracle.GlobalTxnScope)
+	currentVer, err := w.store.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
 		return time.Time{}, errors.Trace(err)
 	}
@@ -1050,7 +1059,7 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 
 	var stat tikv.RangeTaskStat
 	key := startKey
-	bo := tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
+	bo := tikv.NewGcResolveLockMaxBackoffer(ctx)
 	failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
 		sleep := v.(int)
 		// cooperate with github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry
@@ -1080,7 +1089,7 @@ retryScanAndResolve:
 			return stat, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(tikv.BoRegionMiss(), errors.New(regionErr.String()))
 			if err != nil {
 				return stat, errors.Trace(err)
 			}
@@ -1116,7 +1125,7 @@ retryScanAndResolve:
 				return stat, errors.Trace(err1)
 			}
 			if !ok {
-				err = bo.Backoff(tikv.BoTxnLock, errors.Errorf("remain locks: %d", len(locks)))
+				err = bo.Backoff(tikv.BoTxnLock(), errors.Errorf("remain locks: %d", len(locks)))
 				if err != nil {
 					return stat, errors.Trace(err)
 				}
@@ -1147,7 +1156,7 @@ retryScanAndResolve:
 		if len(key) == 0 || (len(endKey) != 0 && bytes.Compare(key, endKey) >= 0) {
 			break
 		}
-		bo = tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
+		bo = tikv.NewGcResolveLockMaxBackoffer(ctx)
 		failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
 			sleep := v.(int)
 			bo = tikv.NewBackofferWithVars(ctx, sleep, nil)
@@ -1460,7 +1469,7 @@ func (w *GCWorker) resolveLocksAcrossRegions(ctx context.Context, locks []*tikv.
 		failpoint.Return(errors.New("injectedError"))
 	})
 
-	bo := tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
+	bo := tikv.NewGcResolveLockMaxBackoffer(ctx)
 
 	for {
 		if len(locks) == 0 {
@@ -1488,7 +1497,7 @@ func (w *GCWorker) resolveLocksAcrossRegions(ctx context.Context, locks []*tikv.
 			return errors.Trace(err)
 		}
 		if !ok {
-			err = bo.Backoff(tikv.BoTxnLock, errors.Errorf("remain locks: %d", len(locks)))
+			err = bo.Backoff(tikv.BoTxnLock(), errors.Errorf("remain locks: %d", len(locks)))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1496,25 +1505,27 @@ func (w *GCWorker) resolveLocksAcrossRegions(ctx context.Context, locks []*tikv.
 		}
 
 		// Recreate backoffer for next region
-		bo = tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
+		bo = tikv.NewGcResolveLockMaxBackoffer(ctx)
 		locks = locks[len(locksInRegion):]
 	}
 
 	return nil
 }
 
+const gcOneRegionMaxBackoff = 20000
+
 func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) error {
 	var newSafePoint uint64
 	var err error
 
-	bo := tikv.NewBackofferWithVars(ctx, tikv.GcOneRegionMaxBackoff, nil)
+	bo := tikv.NewBackofferWithVars(ctx, gcOneRegionMaxBackoff, nil)
 	for {
 		newSafePoint, err = w.pdClient.UpdateGCSafePoint(ctx, safePoint)
 		if err != nil {
 			if errors.Cause(err) == context.Canceled {
 				return errors.Trace(err)
 			}
-			err = bo.Backoff(tikv.BoPDRPC, errors.Errorf("failed to upload safe point to PD, err: %v", err))
+			err = bo.Backoff(tikv.BoPDRPC(), errors.Errorf("failed to upload safe point to PD, err: %v", err))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1544,7 +1555,7 @@ func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []b
 	}()
 	key := startKey
 	for {
-		bo := tikv.NewBackofferWithVars(ctx, tikv.GcOneRegionMaxBackoff, nil)
+		bo := tikv.NewBackofferWithVars(ctx, gcOneRegionMaxBackoff, nil)
 		loc, err := w.tikvStore.GetRegionCache().LocateKey(bo, key)
 		if err != nil {
 			return stat, errors.Trace(err)
@@ -1556,7 +1567,7 @@ func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []b
 		// we check regionErr here first, because we know 'regionErr' and 'err' should not return together, to keep it to
 		// make the process correct.
 		if regionErr != nil {
-			err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(tikv.BoRegionMiss(), errors.New(regionErr.String()))
 			if err == nil {
 				continue
 			}
@@ -1973,7 +1984,7 @@ type MockGCWorker struct {
 
 // NewMockGCWorker creates a MockGCWorker instance ONLY for test.
 func NewMockGCWorker(store kv.Storage) (*MockGCWorker, error) {
-	ver, err := store.CurrentVersion(oracle.GlobalTxnScope)
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

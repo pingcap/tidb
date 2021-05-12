@@ -68,7 +68,7 @@ func (s *testSuite3) TestGrantDBScope(c *C) {
 	createUserSQL := `CREATE USER 'testDB'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)
 	// Make sure all the db privs for new user is empty.
-	sql := fmt.Sprintf("SELECT * FROM mysql.db WHERE User=\"testDB\" and host=\"localhost\"")
+	sql := `SELECT * FROM mysql.db WHERE User="testDB" and host="localhost"`
 	tk.MustQuery(sql).Check(testkit.Rows())
 
 	// Grant each priv to the user.
@@ -89,6 +89,10 @@ func (s *testSuite3) TestGrantDBScope(c *C) {
 		sql := fmt.Sprintf("SELECT %s FROM mysql.DB WHERE User=\"testDB1\" and host=\"localhost\" and db=\"test\";", mysql.Priv2UserCol[v])
 		tk.MustQuery(sql).Check(testkit.Rows("Y"))
 	}
+
+	// Grant in wrong scope.
+	_, err := tk.Exec(` grant create user on test.* to 'testDB1'@'localhost';`)
+	c.Assert(terror.ErrorEqual(err, executor.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")), IsTrue)
 }
 
 func (s *testSuite3) TestWithGrantOption(c *C) {
@@ -97,7 +101,7 @@ func (s *testSuite3) TestWithGrantOption(c *C) {
 	createUserSQL := `CREATE USER 'testWithGrant'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)
 	// Make sure all the db privs for new user is empty.
-	sql := fmt.Sprintf("SELECT * FROM mysql.db WHERE User=\"testWithGrant\" and host=\"localhost\"")
+	sql := `SELECT * FROM mysql.db WHERE User="testWithGrant" and host="localhost"`
 	tk.MustQuery(sql).Check(testkit.Rows())
 
 	// Grant select priv to the user, with grant option.

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/retry"
 
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
@@ -72,7 +73,7 @@ func (s *testRegionRequestToSingleStoreSuite) SetUpTest(c *C) {
 	s.store, s.peer, s.region = mocktikv.BootstrapWithSingleStore(s.cluster)
 	pdCli := &CodecPDClient{mocktikv.NewPDClient(s.cluster)}
 	s.cache = NewRegionCache(pdCli)
-	s.bo = NewNoopBackoff(context.Background())
+	s.bo = retry.NewNoopBackoff(context.Background())
 	s.mvccStore = mocktikv.MustNewMVCCStore()
 	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore, nil)
 	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
@@ -83,7 +84,7 @@ func (s *testRegionRequestToThreeStoresSuite) SetUpTest(c *C) {
 	s.storeIDs, s.peerIDs, s.regionID, s.leaderPeer = mocktikv.BootstrapWithMultiStores(s.cluster, 3)
 	pdCli := &CodecPDClient{mocktikv.NewPDClient(s.cluster)}
 	s.cache = NewRegionCache(pdCli)
-	s.bo = NewNoopBackoff(context.Background())
+	s.bo = retry.NewNoopBackoff(context.Background())
 	s.mvccStore = mocktikv.MustNewMVCCStore()
 	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore, nil)
 	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
@@ -487,6 +488,10 @@ func (s *mockTikvGrpcServer) RawCompareAndSwap(context.Context, *kvrpcpb.RawCASR
 }
 
 func (s *mockTikvGrpcServer) CoprocessorV2(context.Context, *coprocessor_v2.RawCoprocessorRequest) (*coprocessor_v2.RawCoprocessorResponse, error) {
+	return nil, errors.New("unreachable")
+}
+
+func (s *mockTikvGrpcServer) GetLockWaitInfo(context.Context, *kvrpcpb.GetLockWaitInfoRequest) (*kvrpcpb.GetLockWaitInfoResponse, error) {
 	return nil, errors.New("unreachable")
 }
 
