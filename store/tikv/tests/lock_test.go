@@ -649,6 +649,7 @@ func (s *testLockSuite) TestDeadlockReportWaitChain(c *C) {
 		return &kv.LockCtx{
 			ForUpdateTS:      txn.StartTS(),
 			WaitStartTime:    time.Now(),
+			LockWaitTime:     1000,
 			ResourceGroupTag: []byte(resourceGroupTag),
 		}
 	}
@@ -674,7 +675,8 @@ func (s *testLockSuite) TestDeadlockReportWaitChain(c *C) {
 		err := txn1.LockKeys(ctx, makeLockCtx(txn1, "tag3"), []byte("k2"))
 		// After txn2 releases the lock, `txn1.LockKeys` will return a conflict error unconditionally by design.
 		c.Assert(err, NotNil)
-		//c.Assert(errors.Cause(err).(*tikverr.ErrWriteConflict), NotNil)
+		_, ok := errors.Cause(err).(*tikverr.ErrWriteConflict)
+		c.Assert(ok, IsTrue)
 	}()
 	// Sleep for a while to make sure it has been blocked.
 	time.Sleep(time.Millisecond * 100)

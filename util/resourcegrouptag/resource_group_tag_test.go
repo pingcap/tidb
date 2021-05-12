@@ -97,7 +97,7 @@ func (s *testUtilsSuite) TestResourceGroupTagEncoding(c *C) {
 
 	// Unsupported field
 	tag = []byte("\x01\x99")
-	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
+	_, err = DecodeResourceGroupTag(tag)
 	c.Assert(err, NotNil)
 }
 
