@@ -77,6 +77,8 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetSnapshotTS(val.(uint64))
 	case tikvstore.ReplicaRead:
 		s.KVSnapshot.SetReplicaRead(val.(tikvstore.ReplicaReadType))
+	case tikvstore.SampleStep:
+		s.KVSnapshot.SetSampleStep(val.(uint32))
 	case tikvstore.TaskID:
 		s.KVSnapshot.SetTaskID(val.(uint64))
 	case tikvstore.IsStalenessReadOnly:
