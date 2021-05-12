@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	plannerutil "github.com/pingcap/tidb/planner/util"
+	txninfo "github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -58,6 +59,10 @@ type testExecSerialSuite struct {
 type mockSessionManager struct {
 	PS       []*util.ProcessInfo
 	serverID uint64
+}
+
+func (msm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
+	panic("unimplemented!")
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
