@@ -7753,11 +7753,38 @@ func (s *testIntegrationSerialSuite) TestCollationIndexJoin(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Optimizer Hint /*+ INL_MERGE_JOIN(t2) */ is inapplicable"))
 }
 
+func (s *testIntegrationSerialSuite) TestCollationMergeJoin(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"  `col_10` blob DEFAULT NULL," +
+		"  `col_11` decimal(17,5) NOT NULL," +
+		"  `col_13` varchar(381) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'Yr'," +
+		"  PRIMARY KEY (`col_13`,`col_11`)," +
+		"  KEY `idx_4` (`col_10`(3))" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("insert into t values ('a', 12523, 'A');")
+	tk.MustExec("insert into t values ('A', 2, 'a');")
+	tk.MustExec("insert into t values ('a', 23, 'A');")
+	tk.MustExec("insert into t values ('a', 23, 'h2');")
+	tk.MustExec("insert into t values ('a', 23, 'h3');")
+	tk.MustExec("insert into t values ('a', 23, 'h4');")
+	tk.MustExec("insert into t values ('a', 23, 'h5');")
+	tk.MustExec("insert into t values ('a', 23, 'h6');")
+	tk.MustExec("insert into t values ('a', 23, 'h7');")
+	tk.MustQuery("select /*+ MERGE_JOIN(t) */ t.* from t where col_13 in ( select col_10 from t where t.col_13 in ( 'a', 'b' ) ) order by col_10, col_11;").Check(
+		testkit.Rows("\x41 2.00000 a", "\x61 23.00000 A", "\x61 12523.00000 A"))
+}
+
 func (s *testIntegrationSerialSuite) TestIssue20876(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE `t` (" +
 		"  `a` char(10) COLLATE utf8mb4_unicode_ci NOT NULL," +
