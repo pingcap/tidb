@@ -172,8 +172,6 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.GetSnapshot().SetIsStatenessReadOnly(val.(bool))
 	case kv.MatchStoreLabels:
 		txn.KVTxn.GetSnapshot().SetMatchStoreLabels(val.([]*metapb.StoreLabel))
-	default:
-		txn.KVTxn.SetOption(opt, val)
 	}
 }
 
@@ -184,7 +182,7 @@ func (txn *tikvTxn) GetOption(opt int) interface{} {
 	case kv.TxnScope:
 		return txn.KVTxn.GetScope()
 	default:
-		return txn.KVTxn.GetOption(opt)
+		return nil
 	}
 }
 
@@ -192,8 +190,6 @@ func (txn *tikvTxn) DelOption(opt int) {
 	switch opt {
 	case kv.CollectRuntimeStats:
 		txn.KVTxn.GetSnapshot().SetRuntimeStats(nil)
-	default:
-		txn.KVTxn.DelOption(opt)
 	}
 }
 

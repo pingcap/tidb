@@ -23,13 +23,5 @@ type UnionStore interface {
 	// UnmarkPresumeKeyNotExists deletes the key presume key not exists error flag for the lazy check.
 	UnmarkPresumeKeyNotExists(k Key)
 
-	// SetOption sets an option with a value, when val is nil, uses the default
-	// value of this option.
-	SetOption(opt int, val interface{})
-	// DelOption deletes an option.
-	DelOption(opt int)
-	// GetOption gets an option.
-	GetOption(opt int) interface{}
-	// GetMemBuffer return the MemBuffer binding to this unionStore.
 	GetMemBuffer() MemBuffer
 }
