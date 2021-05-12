@@ -126,8 +126,10 @@ func buildBatchCopTasks(bo *backoffer, cache *tikv.RegionCache, ranges *tikv.Key
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			// If the region is not found in cache, it must be out
-			// of date and already be cleaned up. We should retry and generate new tasks.
+			// When rpcCtx is nil, it's not only attributed to the miss region, but also
+			// some TiFlash stores crash and can't be recovered.
+			// That is not an error that can be easily recovered, so we regard this error
+			// same as rpc error.
 			if rpcCtx == nil {
 				needRetry = true
 				logutil.BgLogger().Info("retry for TiFlash peer with region missing", zap.Uint64("region id", task.region.GetID()))
@@ -147,8 +149,10 @@ func buildBatchCopTasks(bo *backoffer, cache *tikv.RegionCache, ranges *tikv.Key
 			}
 		}
 		if needRetry {
-			// Backoff once for each retry.
-			err = bo.Backoff(tikv.BoRegionMiss, errors.New("Cannot find region with TiFlash peer"))
+			// As mentioned above, nil rpcCtx is always attributed to failed stores.
+			// It's equal to long poll the store but get no response. Here we'd better use
+			// TiFlash error to trigger the TiKV fallback mechanism.
+			err = bo.Backoff(tikv.BoTiFlashRPC, errors.New("Cannot find region with TiFlash peer"))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
