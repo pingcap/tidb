@@ -856,9 +856,7 @@ func (c *twoPhaseCommitter) checkOnePC() bool {
 }
 
 func (c *twoPhaseCommitter) needLinearizability() bool {
-	GuaranteeLinearizabilityOption := c.txn.us.GetOption(kv.GuaranteeLinearizability)
-	// by default, guarantee
-	return GuaranteeLinearizabilityOption == nil || GuaranteeLinearizabilityOption.(bool)
+	return !c.txn.causalConsistency
 }
 
 func (c *twoPhaseCommitter) isAsyncCommit() bool {

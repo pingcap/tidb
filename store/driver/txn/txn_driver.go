@@ -152,6 +152,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.SetCommitCallback(val.(func(string, error)))
 	case tikvstore.Enable1PC:
 		txn.SetEnable1PC(val.(bool))
+	case tikvstore.GuaranteeLinearizability:
+		txn.SetCasualConsistency(!val.(bool))
 	case tikvstore.TxnScope:
 		txn.SetScope(val.(string))
 	default:
@@ -161,6 +163,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 
 func (txn *tikvTxn) GetOption(opt int) interface{} {
 	switch opt {
+	case tikvstore.GuaranteeLinearizability:
+		return !txn.KVTxn.IsCasualConsistency()
 	case tikvstore.TxnScope:
 		return txn.KVTxn.GetScope()
 	default:
