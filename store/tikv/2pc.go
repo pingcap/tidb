@@ -992,17 +992,18 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	// If we want to use async commit or 1PC and also want linearizability across
 	// all nodes, we have to make sure the commit TS of this transaction is greater
 	// than the snapshot TS of all existent readers. So we get a new timestamp
-	// from PD as our MinCommitTS.
+	// from PD and plus one as our MinCommitTS.
 	if commitTSMayBeCalculated && c.needLinearizability() {
 		failpoint.Inject("getMinCommitTSFromTSO", nil)
-		minCommitTS, err := c.store.oracle.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		latestTS, err := c.store.oracle.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		// If we fail to get a timestamp from PD, we just propagate the failure
 		// instead of falling back to the normal 2PC because a normal 2PC will
 		// also be likely to fail due to the same timestamp issue.
 		if err != nil {
 			return errors.Trace(err)
 		}
-		c.minCommitTS = minCommitTS
+		// Plus 1 to avoid producing the same commit TS with previously committed transactions
+		c.minCommitTS = latestTS + 1
 	}
 	// Calculate maxCommitTS if necessary
 	if commitTSMayBeCalculated {
