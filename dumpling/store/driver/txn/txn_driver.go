@@ -144,6 +144,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.SetPessimistic(val.(bool))
 	case tikvstore.SnapshotTS:
 		txn.KVTxn.GetSnapshot().SetSnapshotTS(val.(uint64))
+	case tikvstore.ReplicaRead:
+		txn.KVTxn.GetSnapshot().SetReplicaRead(val.(tikvstore.ReplicaReadType))
 	case tikvstore.TaskID:
 		txn.KVTxn.GetSnapshot().SetTaskID(val.(uint64))
 	case tikvstore.InfoSchema:
