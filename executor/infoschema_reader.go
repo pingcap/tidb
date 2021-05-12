@@ -153,6 +153,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.setDataForTiDBTrx(sctx)
 		case infoschema.ClusterTableTiDBTrx:
 			err = e.setDataForClusterTiDBTrx(sctx)
+		case infoschema.TableStatementsSummaryEvicted:
+			err = e.setDataForStatementsSummaryEvicted(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -2046,6 +2048,11 @@ func (e *memtableRetriever) setDataForClusterTiDBTrx(ctx sessionctx.Context) err
 		return err
 	}
 	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForStatementsSummaryEvicted(ctx sessionctx.Context) error {
+	e.rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
 	return nil
 }
 
