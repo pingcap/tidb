@@ -29,10 +29,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -257,6 +259,11 @@ func (tc *TiDBContext) WarningCount() uint16 {
 	return tc.session.GetSessionVars().StmtCtx.WarningCount()
 }
 
+// GetWarnings implements QueryCtx GetWarnings method.
+func (tc *TiDBContext) GetWarnings() []stmtctx.SQLWarn {
+	return tc.GetSessionVars().StmtCtx.GetWarnings()
+}
+
 // ExecuteStmt implements QueryCtx interface.
 func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (ResultSet, error) {
 	rs, err := tc.session.ExecuteStmt(ctx, stmt)
@@ -365,6 +372,11 @@ func (tc *TiDBContext) SetCommandValue(command byte) {
 // GetSessionVars return SessionVars.
 func (tc *TiDBContext) GetSessionVars() *variable.SessionVars {
 	return tc.session.GetSessionVars()
+}
+
+// GetTxnWriteThroughputSLI implements QueryCtx GetTxnWriteThroughputSLI method.
+func (tc *TiDBContext) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
+	return tc.session.GetTxnWriteThroughputSLI()
 }
 
 type tidbResultSet struct {

@@ -266,9 +266,10 @@ type RegionCache struct {
 	pdClient pd.Client
 
 	mu struct {
-		sync.RWMutex                         // mutex protect cached region
-		regions      map[RegionVerID]*Region // cached regions be organized as regionVerID to region ref mapping
-		sorted       *btree.BTree            // cache regions be organized as sorted key to region ref mapping
+		sync.RWMutex                           // mutex protect cached region
+		regions        map[RegionVerID]*Region // cached regions are organized as regionVerID to region ref mapping
+		latestVersions map[uint64]RegionVerID  // cache the map from regionID to its latest RegionVerID
+		sorted         *btree.BTree            // cache regions are organized as sorted key to region ref mapping
 	}
 	storeMu struct {
 		sync.RWMutex
@@ -284,6 +285,7 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 		pdClient: pdClient,
 	}
 	c.mu.regions = make(map[RegionVerID]*Region)
+	c.mu.latestVersions = make(map[uint64]RegionVerID)
 	c.mu.sorted = btree.New(btreeDegree)
 	c.storeMu.stores = make(map[uint64]*Store)
 	c.notifyCheckCh = make(chan struct{}, 1)
@@ -845,6 +847,15 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, c
 	}
 }
 
+// removeVersionFromCache removes a RegionVerID from cache, tries to cleanup
+// both c.mu.regions and c.mu.versions. Note this function is not thread-safe.
+func (c *RegionCache) removeVersionFromCache(oldVer RegionVerID, regionID uint64) {
+	delete(c.mu.regions, oldVer)
+	if ver, ok := c.mu.latestVersions[regionID]; ok && ver.Equals(oldVer) {
+		delete(c.mu.latestVersions, regionID)
+	}
+}
+
 // insertRegionToCache tries to insert the Region to cache.
 func (c *RegionCache) insertRegionToCache(cachedRegion *Region) {
 	old := c.mu.sorted.ReplaceOrInsert(newBtreeItem(cachedRegion))
@@ -853,8 +864,14 @@ func (c *RegionCache) insertRegionToCache(cachedRegion *Region) {
 		// is under transferring regions.
 		atomic.StoreInt32(&cachedRegion.getStore().workTiFlashIdx, atomic.LoadInt32(&old.(*btreeItem).cachedRegion.getStore().workTiFlashIdx))
 		delete(c.mu.regions, old.(*btreeItem).cachedRegion.VerID())
+		c.removeVersionFromCache(old.(*btreeItem).cachedRegion.VerID(), cachedRegion.VerID().id)
 	}
 	c.mu.regions[cachedRegion.VerID()] = cachedRegion
+	newVer := cachedRegion.VerID()
+	latest, ok := c.mu.latestVersions[cachedRegion.VerID().id]
+	if !ok || latest.GetVer() < newVer.GetVer() || latest.GetConfVer() < newVer.GetConfVer() {
+		c.mu.latestVersions[cachedRegion.VerID().id] = newVer
+	}
 }
 
 // searchCachedRegion finds a region from cache by key. Like `getCachedRegion`,
@@ -889,34 +906,26 @@ func (c *RegionCache) searchCachedRegion(key []byte, isEndKey bool) *Region {
 // `getCachedRegion`, it should be called with c.mu.RLock(), and the returned
 // Region should not be used after c.mu is RUnlock().
 func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
-	var newestRegion *Region
 	ts := time.Now().Unix()
-	for v, r := range c.mu.regions {
-		if v.id == regionID {
-			lastAccess := atomic.LoadInt64(&r.lastAccess)
-			if ts-lastAccess > RegionCacheTTLSec {
-				continue
-			}
-			if newestRegion == nil {
-				newestRegion = r
-				continue
-			}
-			nv := newestRegion.VerID()
-			cv := r.VerID()
-			if nv.GetConfVer() < cv.GetConfVer() {
-				newestRegion = r
-				continue
-			}
-			if nv.GetVer() < cv.GetVer() {
-				newestRegion = r
-				continue
-			}
-		}
+	ver, ok := c.mu.latestVersions[regionID]
+	if !ok {
+		return nil
 	}
-	if newestRegion != nil {
-		atomic.CompareAndSwapInt64(&newestRegion.lastAccess, atomic.LoadInt64(&newestRegion.lastAccess), ts)
+	latestRegion, ok := c.mu.regions[ver]
+	if !ok {
+		// should not happen
+		logutil.BgLogger().Warn("region version not found",
+			zap.Uint64("regionID", regionID), zap.Stringer("version", &ver))
+		return nil
 	}
-	return newestRegion
+	lastAccess := atomic.LoadInt64(&latestRegion.lastAccess)
+	if ts-lastAccess > RegionCacheTTLSec {
+		return nil
+	}
+	if latestRegion != nil {
+		atomic.CompareAndSwapInt64(&latestRegion.lastAccess, atomic.LoadInt64(&latestRegion.lastAccess), ts)
+	}
+	return latestRegion
 }
 
 func filterUnavailablePeers(region *pd.Region) {
@@ -1323,6 +1332,16 @@ func (r *RegionVerID) GetVer() uint64 {
 // GetConfVer returns the conf ver of the region's epoch
 func (r *RegionVerID) GetConfVer() uint64 {
 	return r.confVer
+}
+
+// String formats the RegionVerID to string
+func (r *RegionVerID) String() string {
+	return fmt.Sprintf("{ region id: %v, ver: %v, confVer: %v }", r.id, r.ver, r.confVer)
+}
+
+// Equals checks whether the RegionVerID equals to another one
+func (r *RegionVerID) Equals(another RegionVerID) bool {
+	return r.id == another.id && r.confVer == another.confVer && r.ver == another.ver
 }
 
 // VerID returns the Region's RegionVerID.
