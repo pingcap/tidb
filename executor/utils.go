@@ -13,9 +13,7 @@
 
 package executor
 
-import (
-	"strings"
-)
+import "strings"
 
 func setFromString(value string) []string {
 	if len(value) == 0 {
