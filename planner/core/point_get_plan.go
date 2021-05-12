@@ -1511,9 +1511,8 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 						})
 						if pos >= 0 && pos < length {
 							return &pi.Definitions[pos], i, false
-						} else {
-							return nil, 0, true
 						}
+						return nil, 0, true
 					}
 				}
 			}
@@ -1531,9 +1530,8 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 						pos := partitionExpr.ForListPruning.LocatePartition(val, isNull)
 						if pos >= 0 {
 							return &pi.Definitions[pos], i, false
-						} else {
-							return nil, 0, true
 						}
+						return nil, 0, true
 					}
 				}
 			}
