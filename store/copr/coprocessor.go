@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	tidbmetrics "github.com/pingcap/tidb/metrics"
-	txndriver "github.com/pingcap/tidb/store/driver/txn"
+	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -476,7 +476,7 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 			return
 		case <-ticker.C:
 			if atomic.LoadUint32(it.vars.Killed) == 1 {
-				resp = &copResponse{err: txndriver.ErrQueryInterrupted}
+				resp = &copResponse{err: derr.ErrQueryInterrupted}
 				ok = true
 				return
 			}
@@ -717,7 +717,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *backoffer, task *copTask, ch
 		ops = append(ops, tikv.WithMatchLabels(worker.req.MatchStoreLabels))
 	}
 	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region, tikv.ReadTimeoutMedium, getEndPointType(task.storeType), task.storeAddr, ops...)
-	err = txndriver.ToTiDBErr(err)
+	err = derr.ToTiDBErr(err)
 	if err != nil {
 		if task.storeType == kv.TiDB {
 			err = worker.handleTiDBSendReqErr(err, task, ch)
@@ -877,7 +877,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *backoffer, rpcCtx *tikv.R
 		logutil.BgLogger().Debug("coprocessor encounters",
 			zap.Stringer("lock", lockErr))
 		msBeforeExpired, err1 := worker.kvclient.ResolveLocks(bo.TiKVBackoffer(), worker.req.StartTs, []*tikv.Lock{tikv.NewLock(lockErr)})
-		err1 = txndriver.ToTiDBErr(err1)
+		err1 = derr.ToTiDBErr(err1)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
@@ -985,11 +985,11 @@ type CopRuntimeStats struct {
 func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, ch chan<- *copResponse) error {
 	errCode := errno.ErrUnknown
 	errMsg := err.Error()
-	if terror.ErrorEqual(err, txndriver.ErrTiKVServerTimeout) {
+	if terror.ErrorEqual(err, derr.ErrTiKVServerTimeout) {
 		errCode = errno.ErrTiKVServerTimeout
 		errMsg = "TiDB server timeout, address is " + task.storeAddr
 	}
-	if terror.ErrorEqual(err, txndriver.ErrTiFlashServerTimeout) {
+	if terror.ErrorEqual(err, derr.ErrTiFlashServerTimeout) {
 		errCode = errno.ErrTiFlashServerTimeout
 		errMsg = "TiDB server timeout, address is " + task.storeAddr
 	}

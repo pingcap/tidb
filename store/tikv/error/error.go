@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/tidb/util/dbterror"
 )
 
 var (
@@ -44,6 +43,8 @@ var (
 	ErrTiKVStaleCommand = errors.New("tikv stale command")
 	// ErrTiKVMaxTimestampNotSynced is the error that tikv's max timestamp is not synced.
 	ErrTiKVMaxTimestampNotSynced = errors.New("tikv max timestamp not synced")
+	// ErrLockAcquireFailAndNoWaitSet is the error that acquire the lock failed while no wait is setted.
+	ErrLockAcquireFailAndNoWaitSet = errors.New("lock acquired failed and no wait is setted")
 	// ErrResolveLockTimeout is the error that resolve lock timeout.
 	ErrResolveLockTimeout = errors.New("resolve lock timeout")
 	// ErrLockWaitTimeout is the error that wait for the lock is timeout.
@@ -60,11 +61,6 @@ var (
 
 // MismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
 const MismatchClusterID = "mismatch cluster id"
-
-// error instances.
-var (
-	ErrLockAcquireFailAndNoWaitSet = dbterror.ClassTiKV.NewStd(CodeLockAcquireFailAndNoWaitSet)
-)
 
 // IsErrNotFound checks if err is a kind of NotFound error.
 func IsErrNotFound(err error) bool {
