@@ -79,6 +79,8 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetReplicaRead(val.(tikvstore.ReplicaReadType))
 	case tikvstore.TaskID:
 		s.KVSnapshot.SetTaskID(val.(uint64))
+	case tikvstore.IsStalenessReadOnly:
+		s.KVSnapshot.SetIsStatenessReadOnly(val.(bool))
 	case tikvstore.MatchStoreLabels:
 		s.KVSnapshot.SetMatchStoreLabels(val.([]*metapb.StoreLabel))
 	default:

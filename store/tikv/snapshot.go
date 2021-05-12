@@ -571,10 +571,6 @@ func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 		s.mu.Unlock()
 	case kv.SampleStep:
 		s.sampleStep = val.(uint32)
-	case kv.IsStalenessReadOnly:
-		s.mu.Lock()
-		s.mu.isStaleness = val.(bool)
-		s.mu.Unlock()
 	}
 }
 
@@ -622,6 +618,13 @@ func (s *KVSnapshot) SetTaskID(id uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mu.taskID = id
+}
+
+// SetIsStatenessReadOnly indicates whether the transaction is staleness read only transaction
+func (s *KVSnapshot) SetIsStatenessReadOnly(b bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.isStaleness = b
 }
 
 // SetMatchStoreLabels sets up labels to filter target stores.
