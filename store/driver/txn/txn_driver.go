@@ -148,6 +148,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.GetSnapshot().SetTaskID(val.(uint64))
 	case tikvstore.InfoSchema:
 		txn.SetSchemaVer(val.(tikv.SchemaVer))
+	case tikvstore.CollectRuntimeStats:
+		txn.KVTxn.GetSnapshot().SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
 	case tikvstore.CommitHook:
 		txn.SetCommitCallback(val.(func(string, error)))
 	case tikvstore.Enable1PC:
@@ -165,6 +167,15 @@ func (txn *tikvTxn) GetOption(opt int) interface{} {
 		return txn.KVTxn.GetScope()
 	default:
 		return txn.KVTxn.GetOption(opt)
+	}
+}
+
+func (txn *tikvTxn) DelOption(opt int) {
+	switch opt {
+	case tikvstore.CollectRuntimeStats:
+		txn.KVTxn.GetSnapshot().SetRuntimeStats(nil)
+	default:
+		txn.KVTxn.DelOption(opt)
 	}
 }
 

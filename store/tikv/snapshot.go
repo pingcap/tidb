@@ -569,10 +569,6 @@ func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 		s.mu.Lock()
 		s.mu.replicaRead = val.(kv.ReplicaReadType)
 		s.mu.Unlock()
-	case kv.CollectRuntimeStats:
-		s.mu.Lock()
-		s.mu.stats = val.(*SnapshotRuntimeStats)
-		s.mu.Unlock()
 	case kv.SampleStep:
 		s.sampleStep = val.(uint32)
 	case kv.IsStalenessReadOnly:
@@ -592,10 +588,6 @@ func (s *KVSnapshot) DelOption(opt int) {
 	case kv.ReplicaRead:
 		s.mu.Lock()
 		s.mu.replicaRead = kv.ReplicaReadLeader
-		s.mu.Unlock()
-	case kv.CollectRuntimeStats:
-		s.mu.Lock()
-		s.mu.stats = nil
 		s.mu.Unlock()
 	}
 }
@@ -627,6 +619,14 @@ func (s *KVSnapshot) SetTaskID(id uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mu.taskID = id
+}
+
+// SetRuntimeStats sets the stats to collect runtime statistics.
+// Set it to nil to clear stored stats.
+func (s *KVSnapshot) SetRuntimeStats(stats *SnapshotRuntimeStats) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.stats = stats
 }
 
 // SnapCacheHitCount gets the snapshot cache hit count. Only for test.

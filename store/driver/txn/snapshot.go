@@ -75,8 +75,19 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetSnapshotTS(val.(uint64))
 	case tikvstore.TaskID:
 		s.KVSnapshot.SetTaskID(val.(uint64))
+	case tikvstore.CollectRuntimeStats:
+		s.KVSnapshot.SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
 	default:
 		s.KVSnapshot.SetOption(opt, val)
+	}
+}
+
+func (s *tikvSnapshot) DelOption(opt int) {
+	switch opt {
+	case tikvstore.CollectRuntimeStats:
+		s.KVSnapshot.SetRuntimeStats(nil)
+	default:
+		s.KVSnapshot.DelOption(opt)
 	}
 }
 
