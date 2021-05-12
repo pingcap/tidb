@@ -3858,3 +3858,14 @@ func (s *testIntegrationSuite) TestEliminateLockForTemporaryTable(c *C) {
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+func (s *testIntegrationSuite) TestIssue24324(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("CREATE TABLE t1 ( id INTEGER, sample_name1 VARCHAR(100), sample_name2 VARCHAR(100), PRIMARY KEY(id) );")
+	tk.MustExec("SELECT sample_name2 AS testname FROM t1 C ORDER BY (SELECT T.sample_name1 FROM t1 T WHERE T.id = C.id)")
+	tk.MustExec("CREATE TABLE t (i char(10), j int);")
+	tk.MustExec("SELECT LAST_VALUE((SELECT upper.j FROM t LIMIT 1)) OVER (PARTITION BY i)  FROM t AS upper;")
+
+}

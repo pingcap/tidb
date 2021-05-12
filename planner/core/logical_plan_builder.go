@@ -3046,18 +3046,6 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 		}
 		resultList = append(resultList, list...)
 	}
-	field := &ast.SelectField{WildCard: &ast.WildCardField{}}
-	list := unfoldWildStar(field, p.OutputNames(), p.Schema().Columns)
-	if isJoin && join.redundantSchema != nil {
-		redundantList := unfoldWildStar(field, join.redundantNames, join.redundantSchema.Columns)
-		if len(redundantList) > len(list) {
-			list = redundantList
-		}
-	}
-	for _, field := range list {
-		field.Auxiliary = true
-	}
-	resultList = append(resultList, list...)
 	return resultList, nil
 }
 
@@ -3351,6 +3339,20 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			return nil, err
 		}
 	}
+
+	join, isJoin := p.(*LogicalJoin)
+	field := &ast.SelectField{WildCard: &ast.WildCardField{}}
+	list := unfoldWildStar(field, p.OutputNames(), p.Schema().Columns)
+	if isJoin && join.redundantSchema != nil {
+		redundantList := unfoldWildStar(field, join.redundantNames, join.redundantSchema.Columns)
+		if len(redundantList) > len(list) {
+			list = redundantList
+		}
+	}
+	for _, field := range list {
+		field.Auxiliary = true
+	}
+	sel.Fields.Fields = append(sel.Fields.Fields, list...)
 
 	hasWindowFuncField := b.detectSelectWindow(sel)
 	// Some SQL statements define WINDOW but do not use them. But we also need to check the window specification list.
