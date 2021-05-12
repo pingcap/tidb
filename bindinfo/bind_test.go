@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util"
@@ -68,6 +69,10 @@ type testSuite struct {
 
 type mockSessionManager struct {
 	PS []*util.ProcessInfo
+}
+
+func (msm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
+	panic("unimplemented!")
 }
 
 func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
