@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	math2 "math"
+	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -810,9 +811,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		return nil
 	}
 	pi := tbl.GetPartitionInfo()
-	if pi != nil && pi.Type != model.PartitionTypeHash {
-		return nil
-	}
+
 	for _, col := range tbl.Columns {
 		// Do not handle generated columns.
 		if col.IsGenerated() {
@@ -1464,16 +1463,67 @@ func buildHandleCols(ctx sessionctx.Context, tbl *model.TableInfo, schema *expre
 }
 
 func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) (*model.PartitionDefinition, int) {
-	partitionColName := getHashPartitionColumnName(ctx, tbl)
-	if partitionColName == nil {
+	partitionExpr := getPartitionExpr(ctx, tbl)
+
+	pi := tbl.GetPartitionInfo()
+	if pi == nil {
 		return nil, 0
 	}
-	pi := tbl.Partition
-	for i, pair := range pairs {
-		if partitionColName.Name.L == pair.colName {
-			val := pair.value.GetInt64()
-			pos := math.Abs(val % int64(pi.Num))
-			return &pi.Definitions[pos], i
+
+	switch pi.Type {
+	case model.PartitionTypeHash:
+		expr := partitionExpr.OrigExpr
+		col, ok := expr.(*ast.ColumnNameExpr)
+		if !ok {
+			return nil, 0
+		}
+
+		partitionColName := col.Name
+		if partitionColName == nil {
+			return nil, 0
+		}
+
+		for i, pair := range pairs {
+			if partitionColName.Name.L == pair.colName {
+				val := pair.value.GetInt64()
+				pos := math.Abs(val % int64(pi.Num))
+				return &pi.Definitions[pos], i
+			}
+		}
+	case model.PartitionTypeRange:
+		// left range columns partition for future development
+		if len(pi.Columns) == 0 {
+			if col, ok := partitionExpr.Expr.(*expression.Column); ok {
+				colInfo := findColNameByColID(tbl.Columns, col)
+				for i, pair := range pairs {
+					if colInfo.Name.L == pair.colName {
+						val := pair.value.GetInt64() // val cannot be Null, we've check this in func getNameValuePairs
+						unsigned := mysql.HasUnsignedFlag(partitionExpr.Expr.GetType().Flag)
+						ranges := partitionExpr.ForRangePruning
+						length := len(ranges.LessThan)
+						pos := sort.Search(length, func(i int) bool {
+							return ranges.Compare(i, val, unsigned) > 0
+						})
+						return &pi.Definitions[pos], i
+					}
+				}
+			}
+		}
+	case model.PartitionTypeList:
+		// left list columns partition for future development
+		if partitionExpr.ForListPruning.ColPrunes == nil {
+			locateExpr := partitionExpr.ForListPruning.LocateExpr
+			if locateExpr, ok := locateExpr.(*expression.Column); ok {
+				colInfo := findColNameByColID(tbl.Columns, locateExpr)
+				for i, pair := range pairs {
+					if colInfo.Name.L == pair.colName {
+						val := pair.value.GetInt64() // val cannot be Null, we've check this in func getNameValuePairs
+						isNull := false
+						pos := partitionExpr.ForListPruning.LocatePartition(val, isNull)
+						return &pi.Definitions[pos], i
+					}
+				}
+			}
 		}
 	}
 	return nil, 0
@@ -1501,6 +1551,21 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionColName *ast.ColumnNam
 	panic("unique index must include all partition columns")
 }
 
+func getPartitionExpr(ctx sessionctx.Context, tbl *model.TableInfo) *tables.PartitionExpr {
+	is := infoschema.GetInfoSchema(ctx)
+	table, ok := is.TableByID(tbl.ID)
+	if !ok {
+		return nil
+	}
+	// PartitionExpr don't need columns and names for hash partition.
+	partitionExpr, err := table.(partitionTable).PartitionExpr()
+	if err != nil {
+		return nil
+	}
+
+	return partitionExpr
+}
+
 func getHashPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *ast.ColumnName {
 	pi := tbl.GetPartitionInfo()
 	if pi == nil {
@@ -1525,4 +1590,13 @@ func getHashPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *a
 		return nil
 	}
 	return col.Name
+}
+
+func findColNameByColID(cols []*model.ColumnInfo, col *expression.Column) *model.ColumnInfo {
+	for _, c := range cols {
+		if c.ID == col.ID {
+			return c
+		}
+	}
+	return nil
 }

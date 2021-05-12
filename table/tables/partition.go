@@ -1260,3 +1260,8 @@ func (lt *ForRangePruning) compare(ith int, v int64, unsigned bool) int {
 	}
 	return -1
 }
+
+// Compare is for the purpose of exporting
+func (lt *ForRangePruning) Compare(ith int, v int64, unsigned bool) int {
+	return lt.compare(ith, v, unsigned)
+}
