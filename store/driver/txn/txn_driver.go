@@ -154,6 +154,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.SetSchemaVer(val.(tikv.SchemaVer))
 	case tikvstore.SchemaAmender:
 		txn.SetSchemaAmender(val.(tikv.SchemaAmender))
+	case tikvstore.SampleStep:
+		txn.KVTxn.GetSnapshot().SetSampleStep(val.(uint32))
 	case tikvstore.CommitHook:
 		txn.SetCommitCallback(val.(func(string, error)))
 	case tikvstore.EnableAsyncCommit:
