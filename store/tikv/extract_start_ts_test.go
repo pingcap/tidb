@@ -14,9 +14,8 @@
 package tikv
 
 import (
-	"context"
-
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
@@ -28,7 +27,7 @@ type extractStartTsSuite struct {
 	store *KVStore
 }
 
-var _ = Suite(&extractStartTsSuite{})
+var _ = SerialSuites(&extractStartTsSuite{})
 
 func (s *extractStartTsSuite) SetUpTest(c *C) {
 	client, pdClient, cluster, err := unistore.New("")
@@ -63,8 +62,10 @@ func (s *extractStartTsSuite) SetUpTest(c *C) {
 
 func (s *extractStartTsSuite) TestExtractStartTs(c *C) {
 	i := uint64(100)
-	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
-	stalenessTimestamp, _ := s.store.getStalenessTimestamp(bo, oracle.GlobalTxnScope, 100)
+	// to prevent time change during test case execution
+	// we use failpoint to make it "fixed"
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockStalenessTimestamp", "return(200)"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockCurrentTimestamp", `return(300)`), IsNil)
 
 	cases := []struct {
 		expectedTS uint64
@@ -73,7 +74,7 @@ func (s *extractStartTsSuite) TestExtractStartTs(c *C) {
 		// StartTS setted
 		{100, kv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: &i, PrevSec: nil, MinStartTS: nil, MaxPrevSec: nil}},
 		// PrevSec setted
-		{stalenessTimestamp, kv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: &i, MinStartTS: nil, MaxPrevSec: nil}},
+		{200, kv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: &i, MinStartTS: nil, MaxPrevSec: nil}},
 		// MinStartTS setted, global
 		{101, kv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: &i, MaxPrevSec: nil}},
 		// MinStartTS setted, local
@@ -81,26 +82,18 @@ func (s *extractStartTsSuite) TestExtractStartTs(c *C) {
 		// MaxPrevSec setted
 		// however we need to add more cases to check the behavior when it fall backs to MinStartTS setted
 		// see `TestMaxPrevSecFallback`
-		{stalenessTimestamp, kv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
+		{200, kv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
 		// nothing setted
-		{0, kv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: nil}},
+		{300, kv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: nil}},
 	}
 	for _, cs := range cases {
 		expected := cs.expectedTS
 		result, _ := extractStartTs(s.store, cs.option)
-		if expected == 0 {
-			c.Assert(result, Greater, stalenessTimestamp)
-		} else if expected == stalenessTimestamp {
-			// "stalenessTimestamp" fetched by extractStartTs can be later than stalenessTimestamp fetched in this function
-			// because it *is* created in later physical time
-			c.Assert(result, GreaterEqual, expected)
-			// but it should not be late too much
-			maxStalenessTimestamp := oracle.ComposeTS(oracle.ExtractPhysical(stalenessTimestamp)+50, oracle.ExtractLogical(stalenessTimestamp))
-			c.Assert(result, Less, maxStalenessTimestamp)
-		} else {
-			c.Assert(result, Equals, expected)
-		}
+		c.Assert(result, Equals, expected)
 	}
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockStalenessTimestamp"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockCurrentTimestamp"), IsNil)
 }
 
 func (s *extractStartTsSuite) TestMaxPrevSecFallback(c *C) {
