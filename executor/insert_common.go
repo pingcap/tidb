@@ -425,6 +425,9 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	batchSize := sessVars.DMLBatchSize
 	memUsageOfRows := int64(0)
 	memTracker := e.memTracker
+	// In order to ensure the correctness of the `transaction write throughput` SLI statistics,
+	// just ignore the transaction which contain `insert|replace into ... select ... from ...` statement.
+	e.ctx.GetTxnWriteThroughputSLI().SetInvalid()
 	for {
 		err := Next(ctx, selectExec, chk)
 		if err != nil {

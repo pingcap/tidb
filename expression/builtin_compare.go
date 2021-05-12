@@ -385,14 +385,18 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 
 	hasTemporal := false
 	if cmpTp == types.ETString {
-		for _, arg := range args {
-			if types.IsTypeTemporal(arg.GetType().Tp) {
-				hasTemporal = true
-				break
+		if args[0].GetType().Tp == mysql.TypeDuration {
+			cmpTp = types.ETDuration
+		} else {
+			for _, arg := range args {
+				if types.IsTypeTemporal(arg.GetType().Tp) {
+					hasTemporal = true
+					break
+				}
 			}
-		}
-		if hasTemporal {
-			cmpTp = types.ETDatetime
+			if hasTemporal {
+				cmpTp = types.ETDatetime
+			}
 		}
 	}
 
@@ -1305,9 +1309,14 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 			// We try to convert the string constant to double.
 			// If the double result equals the int result, we can return the int result;
 			// otherwise, the compare function will be false.
-			// **Notice**
-			// we can not compare double result to int result directly, because year type will change its value, like
-			// 2 to 2002, here we just check whether double value equal int(double value). We can assert the int(string)
+			// **note**
+			// 1. We compare `doubleDatum` with the `integral part of doubleDatum` rather then intDatum to handle the
+			//    case when `targetFieldType.Tp` is `TypeYear`.
+			// 2. When `targetFieldType.Tp` is `TypeYear`, we can not compare `doubleDatum` with `intDatum` directly,
+			//    because we'll convert values in the ranges '0' to '69' and '70' to '99' to YEAR values in the ranges
+			//    2000 to 2069 and 1970 to 1999.
+			// 3. Suppose the value of `con` is 2, when `targetFieldType.Tp` is `TypeYear`, the value of `doubleDatum`
+			//    will be 2.0 and the value of `intDatum` will be 2002 in this case.
 			var doubleDatum types.Datum
 			doubleDatum, err = dt.ConvertTo(sc, types.NewFieldType(mysql.TypeDouble))
 			if err != nil {
