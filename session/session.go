@@ -541,6 +541,7 @@ func (s *session) doCommit(ctx context.Context) error {
 				if err = memBuffer.Delete(iter.Key()); err != nil {
 					return errors.Trace(err)
 				}
+				s.txn.UpdateEntriesCountAndSize()
 				if err = iter.Next(); err != nil {
 					return errors.Trace(err)
 				}

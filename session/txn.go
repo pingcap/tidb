@@ -68,6 +68,10 @@ type LazyTxn struct {
 	State txninfo.TxnRunningState
 	// last trying to block start time
 	blockStartTime unsafe.Pointer // *time.Time, cannot use atomic.Value here because it is possible to be nil
+	// how many entries are there in the memBuffer, should be equal to self.(kv.Transaction).Len()
+	EntriesCount uint64
+	// how many memory space do the entries in the memBuffer take, should be equal to self.(kv.Transaction).Size()
+	EntriesSize uint64
 }
 
 // GetTableInfo returns the cached index name.
@@ -83,6 +87,8 @@ func (txn *LazyTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 func (txn *LazyTxn) init() {
 	txn.mutations = make(map[int64]*binlog.TableMutation)
 	atomic.StoreInt32(&txn.State, txninfo.TxnRunningNormal)
+	atomic.StoreUint64(&txn.EntriesCount, 0)
+	atomic.StoreUint64(&txn.EntriesSize, 0)
 }
 
 func (txn *LazyTxn) initStmtBuf() {
@@ -118,6 +124,8 @@ func (txn *LazyTxn) cleanupStmtBuf() {
 	buf := txn.Transaction.GetMemBuffer()
 	buf.Cleanup(txn.stagingHandle)
 	txn.initCnt = buf.Len()
+	atomic.StoreUint64(&txn.EntriesCount, uint64(txn.Transaction.Len()))
+	atomic.StoreUint64(&txn.EntriesSize, uint64(txn.Transaction.Size()))
 }
 
 // Size implements the MemBuffer interface.
@@ -176,6 +184,8 @@ func (txn *LazyTxn) changeInvalidToValid(kvTxn kv.Transaction) {
 	atomic.StoreInt32(&txn.State, txninfo.TxnRunningNormal)
 	atomic.StoreUint64(&txn.infoStartTS, kvTxn.StartTS())
 	txn.initStmtBuf()
+	atomic.StoreUint64(&txn.EntriesCount, uint64(txn.Transaction.Len()))
+	atomic.StoreUint64(&txn.EntriesSize, uint64(txn.Transaction.Size()))
 	txn.txnFuture = nil
 }
 
@@ -183,6 +193,8 @@ func (txn *LazyTxn) changeInvalidToPending(future *txnFuture) {
 	txn.Transaction = nil
 	txn.txnFuture = future
 	atomic.StoreUint64(&txn.infoStartTS, 0)
+	atomic.StoreUint64(&txn.EntriesCount, uint64(0))
+	atomic.StoreUint64(&txn.EntriesSize, uint64(0))
 }
 
 func (txn *LazyTxn) changePendingToValid(ctx context.Context) error {
@@ -203,6 +215,8 @@ func (txn *LazyTxn) changePendingToValid(ctx context.Context) error {
 	atomic.StoreInt32(&txn.State, txninfo.TxnRunningNormal)
 	atomic.StoreUint64(&txn.infoStartTS, t.StartTS())
 	txn.initStmtBuf()
+	atomic.StoreUint64(&txn.EntriesCount, uint64(txn.Transaction.Len()))
+	atomic.StoreUint64(&txn.EntriesSize, uint64(txn.Transaction.Size()))
 	return nil
 }
 
@@ -214,6 +228,8 @@ func (txn *LazyTxn) changeToInvalid() {
 	txn.Transaction = nil
 	txn.txnFuture = nil
 	atomic.StoreUint64(&txn.infoStartTS, 0)
+	atomic.StoreUint64(&txn.EntriesCount, 0)
+	atomic.StoreUint64(&txn.EntriesSize, 0)
 }
 
 var hasMockAutoIncIDRetry = int64(0)
@@ -366,8 +382,18 @@ func (txn *LazyTxn) Info() *txninfo.TxnInfo {
 		StartTS:        startTs,
 		State:          atomic.LoadInt32(&txn.State),
 		BlockStartTime: (*time.Time)(atomic.LoadPointer(&txn.blockStartTime)),
-		EntriesCount:   int64(txn.Len()),
-		EntriesSize:    int64(txn.Size()),
+		EntriesCount:   atomic.LoadUint64(&txn.EntriesCount),
+		EntriesSize:    atomic.LoadUint64(&txn.EntriesSize),
+	}
+}
+
+// UpdateEntriesCountAndSize updates the EntriesCount and EntriesSize
+// Note this function is not thread safe, because
+// txn.Transaction can be changed during this function's execution.
+func (txn *LazyTxn) UpdateEntriesCountAndSize() {
+	if txn.Valid() {
+		atomic.StoreUint64(&txn.EntriesCount, uint64(txn.Transaction.Len()))
+		atomic.StoreUint64(&txn.EntriesSize, uint64(txn.Transaction.Size()))
 	}
 }
 

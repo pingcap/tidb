@@ -18,7 +18,6 @@ import (
 	"math"
 	"reflect"
 	"sync"
-	"sync/atomic"
 	"unsafe"
 
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
@@ -60,8 +59,8 @@ type MemDB struct {
 
 	entrySizeLimit  uint64
 	bufferSizeLimit uint64
-	count           int64
-	size            int64
+	count           int
+	size            int
 
 	vlogInvalid bool
 	dirty       bool
@@ -139,8 +138,8 @@ func (db *MemDB) Reset() {
 	db.stages = db.stages[:0]
 	db.dirty = false
 	db.vlogInvalid = false
-	atomic.StoreInt64(&db.size, 0)
-	atomic.StoreInt64(&db.count, 0)
+	db.size = 0
+	db.count = 0
 	db.vlog.reset()
 	db.allocator.reset()
 }
@@ -260,12 +259,12 @@ func (db *MemDB) GetValueByHandle(handle MemKeyHandle) ([]byte, bool) {
 
 // Len returns the number of entries in the DB.
 func (db *MemDB) Len() int {
-	return int(atomic.LoadInt64(&db.count))
+	return db.count
 }
 
 // Size returns sum of keys and values length.
 func (db *MemDB) Size() int {
-	return int(atomic.LoadInt64(&db.size))
+	return db.size
 }
 
 // Dirty returns whether the root staging buffer is updated.
@@ -335,7 +334,7 @@ func (db *MemDB) setValue(x memdbNodeAddr, value []byte) {
 		}
 	}
 	x.vptr = db.vlog.appendValue(x.addr, x.vptr, value)
-	atomic.AddInt64(&db.size, int64(len(value)-len(oldVal)))
+	db.size = db.size - len(oldVal) + len(value)
 }
 
 // traverse search for and if not found and insert is true, will add a new node in.
@@ -539,8 +538,8 @@ func (db *MemDB) rightRotate(y memdbNodeAddr) {
 func (db *MemDB) deleteNode(z memdbNodeAddr) {
 	var x, y memdbNodeAddr
 
-	atomic.AddInt64(&db.count, -1)
-	atomic.AddInt64(&db.size, -int64(z.klen))
+	db.count--
+	db.size -= int(z.klen)
 
 	if z.left.isNull() || z.right.isNull() {
 		y = z
@@ -739,8 +738,8 @@ func (db *MemDB) getRoot() memdbNodeAddr {
 }
 
 func (db *MemDB) allocNode(key []byte) memdbNodeAddr {
-	atomic.AddInt64(&db.size, int64(len(key)))
-	atomic.AddInt64(&db.count, int64(1))
+	db.size += len(key)
+	db.count++
 	x, xn := db.allocator.allocNode(key)
 	return memdbNodeAddr{xn, x}
 }

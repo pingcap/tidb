@@ -4336,12 +4336,12 @@ func (s *testTxnStateSuite) TestEntriesCountAndSize(c *C) {
 	tk.MustExec("begin pessimistic;")
 	tk.MustExec("insert into t(a) values (1);")
 	info := tk.Se.TxnInfo()
-	c.Assert(info.EntriesCount, Equals, int64(1))
-	c.Assert(info.EntriesSize, Equals, int64(29))
+	c.Assert(info.EntriesCount, Equals, uint64(1))
+	c.Assert(info.EntriesSize, Equals, uint64(29))
 	tk.MustExec("insert into t(a) values (2);")
 	info = tk.Se.TxnInfo()
-	c.Assert(info.EntriesCount, Equals, int64(2))
-	c.Assert(info.EntriesSize, Equals, int64(58))
+	c.Assert(info.EntriesCount, Equals, uint64(2))
+	c.Assert(info.EntriesSize, Equals, uint64(58))
 	tk.MustExec("commit;")
 }
 

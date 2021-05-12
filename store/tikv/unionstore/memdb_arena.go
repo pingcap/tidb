@@ -16,7 +16,6 @@ package unionstore
 import (
 	"encoding/binary"
 	"math"
-	"sync/atomic"
 	"unsafe"
 
 	"github.com/pingcap/tidb/store/tikv/kv"
@@ -310,7 +309,7 @@ func (l *memdbVlog) revertToCheckpoint(db *MemDB, cp *memdbCheckpoint) {
 		node := db.getNode(hdr.nodeAddr)
 
 		node.vptr = hdr.oldValue
-		atomic.AddInt64(&db.size, -int64(hdr.valueLen))
+		db.size -= int(hdr.valueLen)
 		// oldValue.isNull() == true means this is a newly added value.
 		if hdr.oldValue.isNull() {
 			// If there are no flags associated with this key, we need to delete this node.
@@ -322,7 +321,7 @@ func (l *memdbVlog) revertToCheckpoint(db *MemDB, cp *memdbCheckpoint) {
 				db.dirty = true
 			}
 		} else {
-			atomic.AddInt64(&db.size, int64(len(l.getValue(hdr.oldValue))))
+			db.size += len(l.getValue(hdr.oldValue))
 		}
 
 		l.moveBackCursor(&cursor, &hdr)

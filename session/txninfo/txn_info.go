@@ -51,9 +51,9 @@ type TxnInfo struct {
 	// last trying to block start time
 	BlockStartTime *time.Time
 	// How many entries are in MemDB
-	EntriesCount int64
+	EntriesCount uint64
 	// MemDB used memory
-	EntriesSize int64
+	EntriesSize uint64
 
 	// the following fields will be filled in `session` instead of `LazyTxn`
 
