@@ -164,11 +164,11 @@ func (s *partitionTableSuite) TestPointGetwithRangeAndListPartitionTable(c *C) {
 
 	// test table dual
 	queryRange := fmt.Sprintf("select a from trange where a=200")
-	c.Assert(tk.HasPlan(queryRange, "TableDual"), IsTrue) // check if PointGet is used
+	c.Assert(tk.HasPlan(queryRange, "TableDual"), IsTrue) // check if TableDual is used
 	tk.MustQuery(queryRange).Check(testkit.Rows())
 
 	queryList := fmt.Sprintf("select a from tlist where a=200")
-	c.Assert(tk.HasPlan(queryList, "TableDual"), IsTrue) // check if PointGet is used
+	c.Assert(tk.HasPlan(queryList, "TableDual"), IsTrue) // check if TableDual is used
 	tk.MustQuery(queryList).Check(testkit.Rows())
 }
 
