@@ -184,15 +184,6 @@ func (txn *tikvTxn) GetOption(opt int) interface{} {
 	}
 }
 
-func (txn *tikvTxn) DelOption(opt int) {
-	switch opt {
-	case kv.CollectRuntimeStats:
-		txn.KVTxn.GetSnapshot().SetRuntimeStats(nil)
-	default:
-		txn.KVTxn.DelOption(opt)
-	}
-}
-
 // SetVars sets variables to the transaction.
 func (txn *tikvTxn) SetVars(vars interface{}) {
 	if vs, ok := vars.(*tikv.Variables); ok {

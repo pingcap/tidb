@@ -161,8 +161,6 @@ type Transaction interface {
 	SetOption(opt int, val interface{})
 	// GetOption returns the option
 	GetOption(opt int) interface{}
-	// DelOption deletes an option.
-	DelOption(opt int)
 	// IsReadOnly checks if the transaction has only performed read operations.
 	IsReadOnly() bool
 	// StartTS returns the transaction start timestamp.
@@ -322,8 +320,6 @@ type Snapshot interface {
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option. Only ReplicaRead is supported for snapshot
 	SetOption(opt int, val interface{})
-	// DelOption deletes an option.
-	DelOption(opt int)
 }
 
 // BatchGetter is the interface for BatchGet.

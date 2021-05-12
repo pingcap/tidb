@@ -48,10 +48,6 @@ func (t *mockTxn) SetOption(opt int, val interface{}) {
 	t.opts[opt] = val
 }
 
-func (t *mockTxn) DelOption(opt int) {
-	delete(t.opts, opt)
-}
-
 func (t *mockTxn) GetOption(opt int) interface{} {
 	return t.opts[opt]
 }
@@ -254,4 +250,3 @@ func (s *mockSnapshot) IterReverse(k Key) (Iterator, error) {
 }
 
 func (s *mockSnapshot) SetOption(opt int, val interface{}) {}
-func (s *mockSnapshot) DelOption(opt int)                  {}

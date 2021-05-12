@@ -90,13 +90,6 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 	}
 }
 
-func (s *tikvSnapshot) DelOption(opt int) {
-	switch opt {
-	case kv.CollectRuntimeStats:
-		s.KVSnapshot.SetRuntimeStats(nil)
-	}
-}
-
 func toTiKVKeys(keys []kv.Key) [][]byte {
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
 	return bytesKeys

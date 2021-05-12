@@ -167,7 +167,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 // Close implements the Executor interface.
 func (e *PointGetExecutor) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {
-		e.snapshot.DelOption(kv.CollectRuntimeStats)
+		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
 	if e.idxInfo != nil && e.tblInfo != nil {
 		actRows := int64(0)

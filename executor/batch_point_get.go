@@ -149,7 +149,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 // Close implements the Executor interface.
 func (e *BatchPointGetExec) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {
-		e.snapshot.DelOption(kv.CollectRuntimeStats)
+		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
 	e.inited = 0
 	e.index = 0

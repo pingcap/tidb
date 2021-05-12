@@ -407,7 +407,7 @@ func (e *UpdateExec) Close() error {
 	if e.runtimeStats != nil && e.stats != nil {
 		txn, err := e.ctx.Txn(false)
 		if err == nil && txn.GetSnapshot() != nil {
-			txn.GetSnapshot().DelOption(kv.CollectRuntimeStats)
+			txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, nil)
 		}
 	}
 	return e.children[0].Close()
