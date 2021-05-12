@@ -226,9 +226,9 @@
       },
       {
         "SQL": "select /*+ USE_INDEX_MERGE(t) USE_INDEX_MERGE(t) */ * from t where c < 1 or f > 2",
-        "Best": "IndexMergeReader(PartialPlans->[Index(t.c_d_e)[[-inf,1)], Index(t.f_g)[(2,+inf]]], TablePlan->Table(t))",
+        "Best": "IndexMergeReader(PartialPlans->[Index(t.c_d_e)[[-inf,1)], Index(t.f)[(2,+inf]]], TablePlan->Table(t))",
         "HasWarn": false,
-        "Hints": "use_index_merge(@`sel_1` `t` `c_d_e`, `f_g`)"
+        "Hints": "use_index_merge(@`sel_1` `t` `c_d_e`, `f`)"
       },
       {
         "SQL": "select /*+ USE_INDEX_MERGE(db2.t) */ * from t where c < 1 or f > 2",
