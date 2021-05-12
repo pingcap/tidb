@@ -851,7 +851,7 @@ func (s *SessionVars) IsMPPAllowed() bool {
 	return s.allowMPPExecution != "OFF"
 }
 
-// IsMPPAllowed returns whether mpp execution is enforced.
+// IsMPPEnforced returns whether mpp execution is enforced.
 func (s *SessionVars) IsMPPEnforced() bool {
 	return s.allowMPPExecution == "ENFORCE"
 }
