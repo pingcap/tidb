@@ -678,6 +678,7 @@ func (s *testSuiteWithData) TestRangePartitionBoundariesEq(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("create database TestRangePartitionBoundaries")
+	defer tk.MustExec("drop database TestRangePartitionBoundaries")
 	tk.MustExec("use TestRangePartitionBoundaries")
 	tk.MustExec(`CREATE TABLE t
 (a INT, b varchar(255))
@@ -712,13 +713,13 @@ PARTITION BY RANGE (a) (
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MayQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
-	tk.MustExec("drop database TestRangePartitionBoundaries")
 }
 
 func (s *testSuiteWithData) TestRangePartitionBoundariesNe(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("create database TestRangePartitionBoundariesNe")
+	defer tk.MustExec("drop database TestRangePartitionBoundariesNe")
 	tk.MustExec("use TestRangePartitionBoundariesNe")
 	tk.MustExec(`CREATE TABLE t
 (a INT, b varchar(255))
@@ -756,5 +757,4 @@ PARTITION BY RANGE (a) (
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MayQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
-	tk.MustExec("drop database TestRangePartitionBoundariesNe")
 }
