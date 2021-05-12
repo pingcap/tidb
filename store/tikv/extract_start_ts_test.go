@@ -63,41 +63,40 @@ func (s *extractStartTsSuite) SetUpTest(c *C) {
 
 func (s *extractStartTsSuite) TestExtractStartTs(c *C) {
 	i := uint64(100)
-	cases := []kv.TransactionOption{
+	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
+	stalenessTimestamp, _ := s.store.getStalenessTimestamp(bo, oracle.GlobalTxnScope, 100)
+
+	cases := []struct {
+		expectedTS uint64
+		option     kv.TransactionOption
+	}{
 		// StartTS setted
-		{TxnScope: oracle.GlobalTxnScope, StartTS: &i, PrevSec: nil, MinStartTS: nil, MaxPrevSec: nil},
+		{100, kv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: &i, PrevSec: nil, MinStartTS: nil, MaxPrevSec: nil}},
 		// PrevSec setted
-		{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: &i, MinStartTS: nil, MaxPrevSec: nil},
+		{stalenessTimestamp, kv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: &i, MinStartTS: nil, MaxPrevSec: nil}},
 		// MinStartTS setted, global
-		{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: &i, MaxPrevSec: nil},
+		{101, kv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: &i, MaxPrevSec: nil}},
 		// MinStartTS setted, local
-		{TxnScope: oracle.LocalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: &i, MaxPrevSec: nil},
+		{102, kv.TransactionOption{TxnScope: oracle.LocalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: &i, MaxPrevSec: nil}},
 		// MaxPrevSec setted
 		// however we need to add more cases to check the behavior when it fall backs to MinStartTS setted
 		// see `TestMaxPrevSecFallback`
-		{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i},
+		{stalenessTimestamp, kv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
 		// nothing setted
-		{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: nil},
+		{0, kv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: nil}},
 	}
-	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
-	stalenessTimestamp, _ := s.store.getStalenessTimestamp(bo, oracle.GlobalTxnScope, 100)
-	expectedTs := []uint64{
-		100,
-		stalenessTimestamp,
-
-		101,
-		102,
-
-		stalenessTimestamp,
-		// it's too hard to figure out the value `getTimestampWithRetry` returns
-		// so we just check whether it is greater than stalenessTimestamp
-		0,
-	}
-	for i, cs := range cases {
-		expected := expectedTs[i]
-		result, _ := extractStartTs(s.store, cs)
+	for _, cs := range cases {
+		expected := cs.expectedTS
+		result, _ := extractStartTs(s.store, cs.option)
 		if expected == 0 {
 			c.Assert(result, Greater, stalenessTimestamp)
+		} else if expected == stalenessTimestamp {
+			// "stalenessTimestamp" fetched by extractStartTs can be later than stalenessTimestamp fetched in this function
+			// because it *is* created in later physical time
+			c.Assert(result, GreaterEqual, expected)
+			// but it should not be late too much
+			maxStalenessTimestamp := oracle.ComposeTS(oracle.ExtractPhysical(stalenessTimestamp)+50, oracle.ExtractLogical(stalenessTimestamp))
+			c.Assert(result, Less, maxStalenessTimestamp)
 		} else {
 			c.Assert(result, Equals, expected)
 		}
@@ -107,16 +106,16 @@ func (s *extractStartTsSuite) TestExtractStartTs(c *C) {
 func (s *extractStartTsSuite) TestMaxPrevSecFallback(c *C) {
 	s.store.setSafeTS(2, 0x8000000000000002)
 	s.store.setSafeTS(3, 0x8000000000000001)
-
 	i := uint64(100)
-	cases := []kv.TransactionOption{
-		{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i},
-		{TxnScope: oracle.LocalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i},
+	cases := []struct {
+		expectedTS uint64
+		option     kv.TransactionOption
+	}{
+		{0x8000000000000001, kv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
+		{0x8000000000000002, kv.TransactionOption{TxnScope: oracle.LocalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
 	}
-	expectedTs := []uint64{0x8000000000000001, 0x8000000000000002}
-	for i, cs := range cases {
-		expected := expectedTs[i]
-		result, _ := extractStartTs(s.store, cs)
-		c.Assert(result, Equals, expected)
+	for _, cs := range cases {
+		result, _ := extractStartTs(s.store, cs.option)
+		c.Assert(result, Equals, cs.expectedTS)
 	}
 }
