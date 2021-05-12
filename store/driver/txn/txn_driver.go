@@ -75,7 +75,7 @@ func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
 // The Iterator must be Closed after use.
 func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	it, err := txn.KVTxn.Iter(k, upperBound)
-	return newKVIterator(it), toTiDBErr(err)
+	return newKVIterator(it), ToTiDBErr(err)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
@@ -84,7 +84,7 @@ func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 // TODO: Add lower bound limit
 func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
 	it, err := txn.KVTxn.IterReverse(k)
-	return newKVIterator(it), toTiDBErr(err)
+	return newKVIterator(it), ToTiDBErr(err)
 }
 
 // BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
@@ -101,17 +101,17 @@ func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]b
 
 func (txn *tikvTxn) Delete(k kv.Key) error {
 	err := txn.KVTxn.Delete(k)
-	return toTiDBErr(err)
+	return ToTiDBErr(err)
 }
 
 func (txn *tikvTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	data, err := txn.KVTxn.Get(ctx, k)
-	return data, toTiDBErr(err)
+	return data, ToTiDBErr(err)
 }
 
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
 	err := txn.KVTxn.Set(k, v)
-	return toTiDBErr(err)
+	return ToTiDBErr(err)
 }
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
@@ -144,8 +144,12 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.SetPessimistic(val.(bool))
 	case tikvstore.SnapshotTS:
 		txn.KVTxn.GetSnapshot().SetSnapshotTS(val.(uint64))
+	case tikvstore.TaskID:
+		txn.KVTxn.GetSnapshot().SetTaskID(val.(uint64))
 	case tikvstore.InfoSchema:
 		txn.SetSchemaVer(val.(tikv.SchemaVer))
+	case tikvstore.SchemaAmender:
+		txn.SetSchemaAmender(val.(tikv.SchemaAmender))
 	case tikvstore.CommitHook:
 		txn.SetCommitCallback(val.(func(string, error)))
 	case tikvstore.Enable1PC:

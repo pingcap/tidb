@@ -34,6 +34,8 @@ var (
 	ErrMaxPreparedStmtCountReached = dbterror.ClassVariable.NewStd(mysql.ErrMaxPreparedStmtCountReached)
 	ErrUnsupportedIsolationLevel   = dbterror.ClassVariable.NewStd(mysql.ErrUnsupportedIsolationLevel)
 	errUnknownSystemVariable       = dbterror.ClassVariable.NewStd(mysql.ErrUnknownSystemVariable)
+	errGlobalVariable              = dbterror.ClassVariable.NewStd(mysql.ErrGlobalVariable)
+	errLocalVariable               = dbterror.ClassVariable.NewStd(mysql.ErrLocalVariable)
 	errValueNotSupportedWhen       = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("%s = OFF is not supported when %s = ON", nil))
 	// ErrFunctionsNoopImpl is an error to say the behavior is protected by the tidb_enable_noop_functions sysvar.
 	// This is copied from expression.ErrFunctionsNoopImpl to prevent circular dependencies.

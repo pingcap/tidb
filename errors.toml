@@ -261,6 +261,11 @@ error = '''
 Duplicate partition name %-.192s
 '''
 
+["ddl:1562"]
+error = '''
+Cannot create temporary table with partitions
+'''
+
 ["ddl:1563"]
 error = '''
 Partition constant is out of partition function domain
@@ -1128,7 +1133,7 @@ Schema has changed
 
 ["planner:8121"]
 error = '''
-privilege check fail
+privilege check for '%s' fail
 '''
 
 ["planner:8122"]
