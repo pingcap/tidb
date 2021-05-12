@@ -411,10 +411,15 @@ func (b *batchCopIterator) handleBatchCopResponse(bo *tikv.Backoffer, response *
 	}
 
 	if len(response.RetryRegions) > 0 {
-		for _, retry := range response.RetryRegions {
+		logutil.BgLogger().Info("multiple regions are stale and need to be refreshed", zap.Int("region size", len(response.RetryRegions)))
+		for idx, retry := range response.RetryRegions {
 			id := tikv.NewRegionVerID(retry.Id, retry.RegionEpoch.ConfVer, retry.RegionEpoch.Version)
 			logutil.BgLogger().Info("invalid region because tiflash detected stale region", zap.String("region id", id.String()))
 			b.store.GetRegionCache().InvalidateCachedRegionWithReason(id, tikv.EpochNotMatch)
+			if idx >= 10 {
+				logutil.BgLogger().Info("stale regions are too many, so we omit the rest ones")
+				break
+			}
 		}
 		return
 	}
