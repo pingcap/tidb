@@ -561,37 +561,6 @@ func (s *KVSnapshot) IterReverse(k []byte) (unionstore.Iterator, error) {
 	return scanner, errors.Trace(err)
 }
 
-// SetOption sets an option with a value, when val is nil, uses the default
-// value of this option. Only ReplicaRead is supported for snapshot
-func (s *KVSnapshot) SetOption(opt int, val interface{}) {
-	switch opt {
-	case kv.ReplicaRead:
-		s.mu.Lock()
-		s.mu.replicaRead = val.(kv.ReplicaReadType)
-		s.mu.Unlock()
-	case kv.SampleStep:
-		s.sampleStep = val.(uint32)
-	case kv.IsStalenessReadOnly:
-		s.mu.Lock()
-		s.mu.isStaleness = val.(bool)
-		s.mu.Unlock()
-	case kv.MatchStoreLabels:
-		s.mu.Lock()
-		s.mu.matchStoreLabels = val.([]*metapb.StoreLabel)
-		s.mu.Unlock()
-	}
-}
-
-// DelOption deletes an option.
-func (s *KVSnapshot) DelOption(opt int) {
-	switch opt {
-	case kv.ReplicaRead:
-		s.mu.Lock()
-		s.mu.replicaRead = kv.ReplicaReadLeader
-		s.mu.Unlock()
-	}
-}
-
 // SetNotFillCache indicates whether tikv should skip filling cache when
 // loading data.
 func (s *KVSnapshot) SetNotFillCache(b bool) {
@@ -603,9 +572,21 @@ func (s *KVSnapshot) SetKeyOnly(b bool) {
 	s.keyOnly = b
 }
 
+// SetReplicaRead sets up the replica read type.
+func (s *KVSnapshot) SetReplicaRead(readType kv.ReplicaReadType) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.replicaRead = readType
+}
+
 // SetIsolationLevel sets the isolation level used to scan data from tikv.
 func (s *KVSnapshot) SetIsolationLevel(level IsoLevel) {
 	s.isolationLevel = level
+}
+
+// SetSampleStep skips 'step - 1' number of keys after each returned key.
+func (s *KVSnapshot) SetSampleStep(step uint32) {
+	s.sampleStep = step
 }
 
 // SetPriority sets the priority for tikv to execute commands.
@@ -627,6 +608,20 @@ func (s *KVSnapshot) SetRuntimeStats(stats *SnapshotRuntimeStats) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mu.stats = stats
+}
+
+// SetIsStatenessReadOnly indicates whether the transaction is staleness read only transaction
+func (s *KVSnapshot) SetIsStatenessReadOnly(b bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.isStaleness = b
+}
+
+// SetMatchStoreLabels sets up labels to filter target stores.
+func (s *KVSnapshot) SetMatchStoreLabels(labels []*metapb.StoreLabel) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.matchStoreLabels = labels
 }
 
 // SnapCacheHitCount gets the snapshot cache hit count. Only for test.

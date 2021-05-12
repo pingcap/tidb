@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
-	txndriver "github.com/pingcap/tidb/store/driver/txn"
+	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -39,7 +39,7 @@ func (s *kvStore) GetRegionCache() *tikv.RegionCache {
 // CheckVisibility checks if it is safe to read using given ts.
 func (s *kvStore) CheckVisibility(startTime uint64) error {
 	err := s.store.CheckVisibility(startTime)
-	return txndriver.ToTiDBErr(err)
+	return derr.ToTiDBErr(err)
 }
 
 // GetTiKVClient gets the client instance.
@@ -54,13 +54,13 @@ type tikvClient struct {
 
 func (c *tikvClient) Close() error {
 	err := c.c.Close()
-	return txndriver.ToTiDBErr(err)
+	return derr.ToTiDBErr(err)
 }
 
 // SendRequest sends Request.
 func (c *tikvClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	res, err := c.c.SendRequest(ctx, addr, req, timeout)
-	return res, txndriver.ToTiDBErr(err)
+	return res, derr.ToTiDBErr(err)
 }
 
 // Store wraps tikv.KVStore and provides coprocessor utilities.
@@ -147,14 +147,14 @@ func (b *backoffer) TiKVBackoffer() *tikv.Backoffer {
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *backoffer) Backoff(typ tikv.BackoffType, err error) error {
 	e := b.b.Backoff(typ, err)
-	return txndriver.ToTiDBErr(e)
+	return derr.ToTiDBErr(e)
 }
 
 // BackoffWithMaxSleep sleeps a while base on the backoffType and records the error message
 // and never sleep more than maxSleepMs for each sleep.
 func (b *backoffer) BackoffWithMaxSleep(typ tikv.BackoffType, maxSleepMs int, err error) error {
 	e := b.b.BackoffWithMaxSleep(typ, maxSleepMs, err)
-	return txndriver.ToTiDBErr(e)
+	return derr.ToTiDBErr(e)
 }
 
 // GetBackoffTimes returns a map contains backoff time count by type.
