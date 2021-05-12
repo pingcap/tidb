@@ -4298,6 +4298,8 @@ func (s *testSessionSuite3) TestGlobalTemporaryTable(c *C) {
 	tk.MustQuery("select c from g_tmp where b = 3").Check(testkit.Rows("3"))
 	// Cover point get.
 	tk.MustQuery("select * from g_tmp where a = 3").Check(testkit.Rows("3 3 3"))
+	// Cover batch point get.
+	tk.MustQuery("select * from g_tmp where a in (2,3,4)").Check(testkit.Rows("3 3 3", "4 7 9"))
 	tk.MustExec("commit")
 
 	// The global temporary table data is discard after the transaction commit.

@@ -316,6 +316,8 @@ func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...k
 	err := txn.Transaction.LockKeys(ctx, lockCtx, keys...)
 	atomic.StorePointer(&txn.blockStartTime, unsafe.Pointer(nil))
 	atomic.StoreInt32(&txn.State, originState)
+	atomic.StoreUint64(&txn.EntriesCount, uint64(txn.Transaction.Len()))
+	atomic.StoreUint64(&txn.EntriesSize, uint64(txn.Transaction.Size()))
 	return err
 }
 
@@ -389,7 +391,7 @@ func (txn *LazyTxn) Info() *txninfo.TxnInfo {
 
 // UpdateEntriesCountAndSize updates the EntriesCount and EntriesSize
 // Note this function is not thread safe, because
-// txn.Transaction can be changed during this function's execution.
+// txn.Transaction can be changed during this function's execution if running parallel.
 func (txn *LazyTxn) UpdateEntriesCountAndSize() {
 	if txn.Valid() {
 		atomic.StoreUint64(&txn.EntriesCount, uint64(txn.Transaction.Len()))
@@ -434,14 +436,14 @@ type txnFuture struct {
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	startTS, err := tf.future.Wait()
 	if err == nil {
-		return tf.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(tf.txnScope).SetStartTs(startTS))
+		return tf.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(tf.txnScope).SetStartTs(startTS))
 	} else if config.GetGlobalConfig().Store == "unistore" {
 		return nil, err
 	}
 
 	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
-	return tf.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(tf.txnScope))
+	return tf.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(tf.txnScope))
 }
 
 func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
