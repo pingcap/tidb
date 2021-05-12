@@ -162,15 +162,4 @@ See meta issue: https://github.com/pingcap/tidb/issues/24190.
 Mainly unit testing.
 
 ## Open issues (if applicable)
-
-
-
-
-
-
-
-
-
-
-
 ## Logging code for each component
