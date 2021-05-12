@@ -152,6 +152,7 @@ func (s *testSnapshotFailSuite) TestRetryMaxTsPointGetSkipLock(c *C) {
 	err = txn.Set([]byte("k2"), []byte("v2"))
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.EnableAsyncCommit, true)
+	txn.SetEnableAsyncCommit(true)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", "return"), IsNil)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/twoPCShortLockTTL", "return"), IsNil)
@@ -181,7 +182,7 @@ func (s *testSnapshotFailSuite) TestRetryMaxTsPointGetSkipLock(c *C) {
 	// Prewrite k1 and k2 again without committing them
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.SetOption(kv.EnableAsyncCommit, true)
+	txn.SetEnableAsyncCommit(true)
 	err = txn.Set([]byte("k1"), []byte("v3"))
 	c.Assert(err, IsNil)
 	err = txn.Set([]byte("k2"), []byte("v4"))
@@ -210,7 +211,7 @@ func (s *testSnapshotFailSuite) TestRetryPointGetResolveTS(c *C) {
 	c.Assert(txn.Set([]byte("k1"), []byte("v1")), IsNil)
 	err = txn.Set([]byte("k2"), []byte("v2"))
 	c.Assert(err, IsNil)
-	txn.SetOption(kv.EnableAsyncCommit, false)
+	txn.SetEnableAsyncCommit(false)
 	txn.SetEnable1PC(false)
 	txn.SetOption(kv.GuaranteeLinearizability, false)
 
