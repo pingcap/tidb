@@ -14,12 +14,12 @@ set @@session.tidb_hashagg_partial_concurrency = 1;
 set @@session.tidb_hashagg_final_concurrency = 1;
 explain format = 'brief' select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 id	estRows	task	access object	operator info
-HashJoin	1600.00	root		semi join, equal:[eq(Column#13, Column#11)]
-├─StreamAgg(Build)	1.00	root		funcs:sum(Column#16)->Column#11
+HashJoin	1600.00	root		semi join, equal:[eq(Column#17, Column#11)]
+├─StreamAgg(Build)	1.00	root		funcs:sum(Column#20)->Column#11
 │ └─TableReader	1.00	root		data:StreamAgg
-│   └─StreamAgg	1.00	cop[tikv]		funcs:sum(test.t3.a)->Column#16
+│   └─StreamAgg	1.00	cop[tikv]		funcs:sum(test.t3.a)->Column#20
 │     └─TableFullScan	2000.00	cop[tikv]	table:s	keep order:false
-└─Projection(Probe)	2000.00	root		test.t3.a, test.t3.b, test.t3.c, test.t3.d, cast(test.t3.a, decimal(20,0) BINARY)->Column#13
+└─Projection(Probe)	2000.00	root		test.t3.a, test.t3.b, test.t3.c, test.t3.d, cast(test.t3.a, decimal(20,0) BINARY)->Column#17
   └─TableReader	2000.00	root		data:TableFullScan
     └─TableFullScan	2000.00	cop[tikv]	table:t3	keep order:false
 explain format = 'brief' select * from t1;
@@ -66,7 +66,7 @@ explain format = 'brief' select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 gr
 id	estRows	task	access object	operator info
 Projection	1985.00	root		Column#7
 └─HashJoin	1985.00	root		inner join, equal:[eq(test.t1.c1, test.t2.c2)]
-  ├─HashAgg(Build)	1985.00	root		group by:test.t2.c2, funcs:count(test.t2.c2)->Column#8, funcs:firstrow(test.t2.c2)->test.t2.c2
+  ├─HashAgg(Build)	1985.00	root		group by:test.t2.c2, funcs:count(test.t2.c2)->Column#9, funcs:firstrow(test.t2.c2)->test.t2.c2
   │ └─TableReader	1985.00	root		data:Selection
   │   └─Selection	1985.00	cop[tikv]		not(isnull(test.t2.c2))
   │     └─TableFullScan	1985.00	cop[tikv]	table:b	keep order:false
@@ -102,7 +102,7 @@ id	estRows	task	access object	operator info
 MemTableScan	10000.00	root	table:COLUMNS	
 explain format = 'brief' select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	estRows	task	access object	operator info
-Projection	1999.00	root		eq(test.t1.c2, test.t2.c2)->Column#11
+Projection	1999.00	root		eq(test.t1.c2, test.t2.c2)->Column#12
 └─Apply	1999.00	root		CARTESIAN left outer join
   ├─TableReader(Build)	1999.00	root		data:TableFullScan
   │ └─TableFullScan	1999.00	cop[tikv]	table:t1	keep order:false
@@ -128,28 +128,28 @@ HashJoin	1999.00	root		CARTESIAN left outer semi join, other cond:eq(1, test.t2.
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
-digraph HashJoin_8 {
-subgraph cluster8{
+digraph HashJoin_10 {
+subgraph cluster10{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"HashJoin_8" -> "TableReader_10"
-"HashJoin_8" -> "TableReader_14"
+"HashJoin_10" -> "TableReader_12"
+"HashJoin_10" -> "TableReader_16"
 }
-subgraph cluster9{
+subgraph cluster11{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"TableFullScan_9"
+"TableFullScan_11"
 }
-subgraph cluster13{
+subgraph cluster15{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"TableFullScan_13"
+"TableFullScan_15"
 }
-"TableReader_10" -> "TableFullScan_9"
-"TableReader_14" -> "TableFullScan_13"
+"TableReader_12" -> "TableFullScan_11"
+"TableReader_16" -> "TableFullScan_15"
 }
 
 explain format = 'brief' select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1;
@@ -157,7 +157,8 @@ id	estRows	task	access object	operator info
 Point_Get	1.00	root	table:index_prune, index:PRIMARY(a, b)	
 explain format = 'brief' select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 0;
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+Projection	0.00	root		test.index_prune.a, test.index_prune.b, test.index_prune.c
+└─TableDual	0.00	root		rows:0
 explain format = 'brief' select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:1, count:1

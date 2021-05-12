@@ -66,34 +66,34 @@ IndexMerge	0.00	root
 explain format="dot" select * from t where (a < 50 or b < 50) and f > 100;
 dot contents
 
-digraph IndexMerge_12 {
-subgraph cluster12{
+digraph IndexMerge_13 {
+subgraph cluster13{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"IndexMerge_12"
-}
-subgraph cluster8{
-node [style=filled, color=lightgrey]
-color=black
-label = "cop"
-"TableRangeScan_8"
+"IndexMerge_13"
 }
 subgraph cluster9{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"IndexRangeScan_9"
+"TableRangeScan_9"
 }
-subgraph cluster11{
+subgraph cluster10{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"Selection_11" -> "TableRowIDScan_10"
+"IndexRangeScan_10"
 }
-"IndexMerge_12" -> "TableRangeScan_8"
-"IndexMerge_12" -> "IndexRangeScan_9"
-"IndexMerge_12" -> "Selection_11"
+subgraph cluster12{
+node [style=filled, color=lightgrey]
+color=black
+label = "cop"
+"Selection_12" -> "TableRowIDScan_11"
+}
+"IndexMerge_13" -> "TableRangeScan_9"
+"IndexMerge_13" -> "IndexRangeScan_10"
+"IndexMerge_13" -> "Selection_12"
 }
 
 set session tidb_enable_index_merge = off;
@@ -146,7 +146,7 @@ KEY `aid_c2` (`aid`,`c2`)
 );
 desc select /*+ USE_INDEX_MERGE(t, aid_c1, aid_c2) */ * from t where (aid = 1 and c1='aaa') or (aid = 2 and c2='bbb');
 id	estRows	task	access object	operator info
-IndexMerge_8	8.08	root		
-├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t, index:aid_c1(aid, c1)	range:[1 "aaa",1 "aaa"], keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t, index:aid_c2(aid, c2)	range:[2 "bbb",2 "bbb"], keep order:false, stats:pseudo
-└─TableRowIDScan_7(Probe)	8.08	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexMerge_9	8.08	root		
+├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t, index:aid_c1(aid, c1)	range:[1 "aaa",1 "aaa"], keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	0.10	cop[tikv]	table:t, index:aid_c2(aid, c2)	range:[2 "bbb",2 "bbb"], keep order:false, stats:pseudo
+└─TableRowIDScan_8(Probe)	8.08	cop[tikv]	table:t	keep order:false, stats:pseudo

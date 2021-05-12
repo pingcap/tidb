@@ -2229,10 +2229,10 @@ create table t1 (s1 int);
 explain format = 'brief' select 1 from t1 union all select 2;
 id	estRows	task	access object	operator info
 Union	10001.00	root		
-├─Projection	10000.00	root		1->Column#5
+├─Projection	10000.00	root		1->Column#6
 │ └─TableReader	10000.00	root		data:TableFullScan
 │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Projection	1.00	root		2->Column#5
+└─Projection	1.00	root		2->Column#6
   └─TableDual	1.00	root		rows:1
 drop table t1;
 create table t1 (a int)
@@ -2456,9 +2456,9 @@ PARTITION p2 VALUES LESS THAN (100)
 );
 desc select * from t where a = 11 and b = 1 or a = 12 and b = 1;
 id	estRows	task	access object	operator info
-TableReader_7	0.02	root	partition:p2	data:Selection_6
-└─Selection_6	0.02	cop[tikv]		or(and(eq(test.t.a, 11), eq(test.t.b, 1)), and(eq(test.t.a, 12), eq(test.t.b, 1)))
-  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_8	0.02	root	partition:p2	data:Selection_7
+└─Selection_7	0.02	cop[tikv]		or(and(eq(test.t.a, 11), eq(test.t.b, 1)), and(eq(test.t.a, 12), eq(test.t.b, 1)))
+  └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t (ts timestamp(3) not null default current_timestamp(3))
 partition by range (floor(unix_timestamp(ts))) (
