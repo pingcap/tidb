@@ -73,6 +73,8 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetNotFillCache(val.(bool))
 	case tikvstore.SnapshotTS:
 		s.KVSnapshot.SetSnapshotTS(val.(uint64))
+	case tikvstore.ReplicaRead:
+		s.KVSnapshot.SetReplicaRead(val.(tikvstore.ReplicaReadType))
 	case tikvstore.TaskID:
 		s.KVSnapshot.SetTaskID(val.(uint64))
 	case tikvstore.IsStalenessReadOnly:

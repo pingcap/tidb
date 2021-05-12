@@ -462,7 +462,10 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 			if tidbutil.IsMemDB(fp.dbName) {
 				return nil
 			}
-			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
+			// ignore lock for temporary table.
+			if fp.TblInfo.TempTableType == model.TempTableNone {
+				fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
+			}
 			p = fp
 			return
 		}
@@ -480,7 +483,10 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 				p = tableDual.Init(ctx, &property.StatsInfo{}, 0)
 				return
 			}
-			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
+			// ignore lock for temporary table.
+			if fp.TblInfo.TempTableType == model.TempTableNone {
+				fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
+			}
 			p = fp
 			return
 		}

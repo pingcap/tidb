@@ -144,6 +144,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.SetPessimistic(val.(bool))
 	case tikvstore.SnapshotTS:
 		txn.KVTxn.GetSnapshot().SetSnapshotTS(val.(uint64))
+	case tikvstore.ReplicaRead:
+		txn.KVTxn.GetSnapshot().SetReplicaRead(val.(tikvstore.ReplicaReadType))
 	case tikvstore.TaskID:
 		txn.KVTxn.GetSnapshot().SetTaskID(val.(uint64))
 	case tikvstore.InfoSchema:
@@ -152,6 +154,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.SetSchemaAmender(val.(tikv.SchemaAmender))
 	case tikvstore.CommitHook:
 		txn.SetCommitCallback(val.(func(string, error)))
+	case tikvstore.EnableAsyncCommit:
+		txn.SetEnableAsyncCommit(val.(bool))
 	case tikvstore.Enable1PC:
 		txn.SetEnable1PC(val.(bool))
 	case tikvstore.TxnScope:

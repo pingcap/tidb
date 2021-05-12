@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
@@ -186,6 +187,7 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	plan = InjectExtraProjection(plan)
 	mergeContinuousSelections(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
+	plan = eliminateLockForTemporaryTable(plan)
 	plan = enableParallelApply(sctx, plan)
 	return plan
 }
@@ -320,6 +322,29 @@ func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) Physical
 		}
 		return p
 	})
+}
+
+// eliminateLockForTemporaryTable eliminates lock for the temporary table.
+func eliminateLockForTemporaryTable(p PhysicalPlan) PhysicalPlan {
+	iteratePhysicalPlan(p, func(p PhysicalPlan) bool {
+		if len(p.Children()) > 1 {
+			return false
+		}
+		switch x := p.(type) {
+		case *PointGetPlan:
+			if x.TblInfo.TempTableType != model.TempTableNone {
+				x.Lock = false
+				x.LockWaitTime = 0
+			}
+		case *BatchPointGetPlan:
+			if x.TblInfo.TempTableType != model.TempTableNone {
+				x.Lock = false
+				x.LockWaitTime = 0
+			}
+		}
+		return true
+	})
+	return p
 }
 
 func iteratePhysicalPlan(p PhysicalPlan, f func(p PhysicalPlan) bool) {
