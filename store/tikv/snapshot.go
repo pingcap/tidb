@@ -565,10 +565,6 @@ func (s *KVSnapshot) IterReverse(k []byte) (unionstore.Iterator, error) {
 // value of this option. Only ReplicaRead is supported for snapshot
 func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 	switch opt {
-	case kv.TaskID:
-		s.mu.Lock()
-		s.mu.taskID = val.(uint64)
-		s.mu.Unlock()
 	case kv.CollectRuntimeStats:
 		s.mu.Lock()
 		s.mu.stats = val.(*SnapshotRuntimeStats)
@@ -622,6 +618,14 @@ func (s *KVSnapshot) SetIsolationLevel(level IsoLevel) {
 // SetPriority sets the priority for tikv to execute commands.
 func (s *KVSnapshot) SetPriority(pri Priority) {
 	s.priority = pri
+}
+
+// SetTaskID marks current task's unique ID to allow TiKV to schedule
+// tasks more fairly.
+func (s *KVSnapshot) SetTaskID(id uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.taskID = id
 }
 
 // SnapCacheHitCount gets the snapshot cache hit count. Only for test.
