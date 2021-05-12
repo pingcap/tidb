@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -368,14 +367,11 @@ func (t *tikvHandlerTool) getPartition(tableVal table.Table, partitionName strin
 }
 
 func (t *tikvHandlerTool) schema() (infoschema.InfoSchema, error) {
-	// Disable stats collector.
-	// Stats collector of all the sessions are linked together in the statistics handler which is a global object.
-	// If we create stats collector here, they may not be recycled by the Go GC and cause memory leak.
-	session, err := session.CreateSessionWithOpt(t.Store, &session.Opt{DisableStatsCollector: true})
+	dom, err := session.GetDomain(t.Store)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	return domain.GetDomain(session.(sessionctx.Context)).InfoSchema(), nil
+	return dom.InfoSchema(), nil
 }
 
 func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (*mvccKV, error) {
@@ -729,14 +725,13 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 		if asyncCommit := req.Form.Get("tidb_enable_async_commit"); asyncCommit != "" {
-			s, err := session.CreateSessionWithOpt(h.Store.(kv.Storage), &session.Opt{DisableStatsCollector: true})
+			s, err := session.CreateSession(h.Store)
 			if err != nil {
 				writeError(w, err)
 				return
 			}
-			if s != nil {
-				defer s.Close()
-			}
+			defer s.Close()
+
 			switch asyncCommit {
 			case "0":
 				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.Off)
@@ -752,14 +747,13 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 		if onePC := req.Form.Get("tidb_enable_1pc"); onePC != "" {
-			s, err := session.CreateSessionWithOpt(h.Store.(kv.Storage), &session.Opt{DisableStatsCollector: true})
+			s, err := session.CreateSession(h.Store)
 			if err != nil {
 				writeError(w, err)
 				return
 			}
-			if s != nil {
-				defer s.Close()
-			}
+			defer s.Close()
+
 			switch onePC {
 			case "0":
 				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.Off)
@@ -895,14 +889,11 @@ func (h flashReplicaHandler) getTiFlashReplicaInfo(tblInfo *model.TableInfo, rep
 }
 
 func (h flashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infoschema.InfoSchema) ([]*tableFlashReplicaInfo, error) {
-	s, err := session.CreateSessionWithOpt(h.Store.(kv.Storage), &session.Opt{DisableStatsCollector: false})
+	s, err := session.CreateSession(h.Store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	if s != nil {
-		defer s.Close()
-	}
+	defer s.Close()
 
 	store := domain.GetDomain(s).Store()
 	txn, err := store.Begin()
@@ -965,16 +956,18 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 		writeError(w, err)
 		return
 	}
-	do, err := session.GetDomain(h.Store.(kv.Storage))
+	do, err := session.GetDomain(h.Store)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	s, err := session.CreateSessionWithOpt(h.Store.(kv.Storage), &session.Opt{DisableStatsCollector: true})
+	s, err := session.CreateSession(h.Store)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	defer s.Close()
+
 	available := status.checkTableFlashReplicaAvailable()
 	err = do.DDL().UpdateTableReplicaInfo(s, status.ID, available)
 	if err != nil {
@@ -1140,18 +1133,7 @@ func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 }
 
 func (h ddlHistoryJobHandler) getAllHistoryDDL() ([]*model.Job, error) {
-	s, err := session.CreateSessionWithOpt(h.Store.(kv.Storage), &session.Opt{DisableStatsCollector: true})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if s != nil {
-		defer s.Close()
-	}
-
-	store := domain.GetDomain(s.(sessionctx.Context)).Store()
-	txn, err := store.Begin()
-
+	txn, err := h.Store.Begin()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1744,7 +1726,7 @@ type serverInfo struct {
 
 // ServeHTTP handles request of ddl server info.
 func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	do, err := session.GetDomain(h.Store.(kv.Storage))
+	do, err := session.GetDomain(h.Store)
 	if err != nil {
 		writeError(w, errors.New("create session error"))
 		log.Error(err)
@@ -1774,7 +1756,7 @@ type clusterServerInfo struct {
 
 // ServeHTTP handles request of all ddl servers info.
 func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	do, err := session.GetDomain(h.Store.(kv.Storage))
+	do, err := session.GetDomain(h.Store)
 	if err != nil {
 		writeError(w, errors.New("create session error"))
 		log.Error(err)
@@ -1870,11 +1852,13 @@ func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // ServeHTTP handles request of TiDB metric profile.
 func (h profileHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	sctx, err := session.CreateSessionWithOpt(h.Store, &session.Opt{DisableStatsCollector: true})
+	sctx, err := session.CreateSession(h.Store)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	defer sctx.Close()
+
 	var start, end time.Time
 	if req.FormValue("end") != "" {
 		end, err = time.ParseInLocation(time.RFC3339, req.FormValue("end"), sctx.GetSessionVars().Location())

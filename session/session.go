@@ -2065,8 +2065,7 @@ func CreateSession4Test(store kv.Storage) (Session, error) {
 
 // Opt describes the option for creating session
 type Opt struct {
-	PreparedPlanCache     *kvcache.SimpleLRUCache
-	DisableStatsCollector bool
+	PreparedPlanCache *kvcache.SimpleLRUCache
 }
 
 // CreateSession4TestWithOpt creates a new session environment for test.
@@ -2105,13 +2104,9 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 
 	sessionBindHandle := bindinfo.NewSessionBindHandle(s.parser)
 	s.SetValue(bindinfo.SessionBindInfoKeyType, sessionBindHandle)
-	var disableStatsCollector bool
-	if opt != nil {
-		disableStatsCollector = opt.DisableStatsCollector
-	}
 	// Add stats collector, and it will be freed by background stats worker
 	// which periodically updates stats using the collected data.
-	if do.StatsHandle() != nil && do.StatsUpdating() && !disableStatsCollector {
+	if do.StatsHandle() != nil && do.StatsUpdating() {
 		s.statsCollector = do.StatsHandle().NewSessionStatsCollector()
 		if GetIndexUsageSyncLease() > 0 {
 			s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
