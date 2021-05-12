@@ -1504,7 +1504,9 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 						pos := sort.Search(length, func(i int) bool {
 							return ranges.Compare(i, val, unsigned) > 0
 						})
-						return &pi.Definitions[pos], i
+						if pos >= 0 || pos < length {
+							return &pi.Definitions[pos], i
+						}
 					}
 				}
 			}
@@ -1520,7 +1522,9 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 						val := pair.value.GetInt64() // val cannot be Null, we've check this in func getNameValuePairs
 						isNull := false
 						pos := partitionExpr.ForListPruning.LocatePartition(val, isNull)
-						return &pi.Definitions[pos], i
+						if pos >= 0 {
+							return &pi.Definitions[pos], i
+						}
 					}
 				}
 			}
