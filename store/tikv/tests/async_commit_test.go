@@ -134,7 +134,7 @@ func (s *testAsyncCommitCommon) beginAsyncCommitWithLinearizability(c *C) tikv.T
 func (s *testAsyncCommitCommon) beginAsyncCommit(c *C) tikv.TxnProbe {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.SetOption(kv.EnableAsyncCommit, true)
+	txn.SetEnableAsyncCommit(true)
 	return tikv.TxnProbe{KVTxn: txn}
 }
 
@@ -160,7 +160,7 @@ func (s *testAsyncCommitSuite) SetUpTest(c *C) {
 func (s *testAsyncCommitSuite) lockKeysWithAsyncCommit(c *C, keys, values [][]byte, primaryKey, primaryValue []byte, commitPrimary bool) (uint64, uint64) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.SetOption(kv.EnableAsyncCommit, true)
+	txn.SetEnableAsyncCommit(true)
 	for i, k := range keys {
 		if len(values[i]) > 0 {
 			err = txn.Set(k, values[i])
