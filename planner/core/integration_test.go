@@ -3707,7 +3707,6 @@ func (s *testIntegrationSerialSuite) TestMergeContinuousSelections(c *C) {
 	}
 }
 
-
 func (s *testIntegrationSerialSuite) TestEnforceMPP(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
