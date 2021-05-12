@@ -215,7 +215,7 @@ func (conf *Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.StringP(flagLogfile, "L", "", "Log file `path`, leave empty to write to console")
 	flags.String(flagLogfmt, "text", "Log `format`: {text|json}")
 	flags.String(flagConsistency, consistencyTypeAuto, "Consistency level during dumping: {auto|none|flush|lock|snapshot}")
-	flags.String(flagSnapshot, "", "Snapshot position (uint64 from pd timestamp for TiDB). Valid only when consistency=snapshot")
+	flags.String(flagSnapshot, "", "Snapshot position (uint64 or MySQL style string timestamp). Valid only when consistency=snapshot")
 	flags.BoolP(flagNoViews, "W", true, "Do not dump views")
 	flags.String(flagStatusAddr, ":8281", "dumpling API server and pprof addr")
 	flags.Uint64P(flagRows, "r", UnspecifiedSize, "Split table into chunks of this many rows, default unlimited")
