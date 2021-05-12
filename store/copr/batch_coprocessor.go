@@ -95,11 +95,15 @@ func (rs *batchCopResponse) RespTime() time.Duration {
 }
 
 // balanceBatchCopTask balance the regions between available stores, the basic rule is
-// 1. the first region of each original batch cop task belongs to its original store
+// 1. the first region of each original batch cop task belongs to its original store because some
+//    meta data(like the rpc context) in batchCopTask is related to it
 // 2. for the remaining regions:
 //    if there is only 1 available store, then put the region to the related store
 //    otherwise, use a greedy algorithm to put it into the store with highest weight
 func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
+	if len(originalTasks) <= 1 {
+		return originalTasks
+	}
 	storeTaskMap := make(map[uint64]*batchCopTask)
 	storeCandidateRegionMap := make(map[uint64]map[string]tikv.RegionInfo)
 	totalRegionCandidateNum := 0
@@ -143,17 +147,18 @@ func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 				totalRemainingRegionNum += 1
 				taskKey := ri.Region.String()
 				for _, storeID := range ri.AllStores {
-					if _, validStore := storeTaskMap[storeID]; validStore {
-						if _, ok := storeCandidateRegionMap[storeID]; !ok {
-							candidateMap := make(map[string]tikv.RegionInfo)
-							storeCandidateRegionMap[taskStoreID] = candidateMap
-						}
-						if _, duplicateRegion := storeCandidateRegionMap[storeID][taskKey]; duplicateRegion {
-							// duplicated region, should not happen, just give up balance
-							return originalTasks
-						}
-						storeCandidateRegionMap[storeID][taskKey] = ri
+					if _, validStore := storeTaskMap[storeID]; !validStore {
+						continue
 					}
+					if _, ok := storeCandidateRegionMap[storeID]; !ok {
+						candidateMap := make(map[string]tikv.RegionInfo)
+						storeCandidateRegionMap[storeID] = candidateMap
+					}
+					if _, duplicateRegion := storeCandidateRegionMap[storeID][taskKey]; duplicateRegion {
+						// duplicated region, should not happen, just give up balance
+						return originalTasks
+					}
+					storeCandidateRegionMap[storeID][taskKey] = ri
 				}
 			}
 		}
@@ -177,9 +182,9 @@ func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 					weightedRegionNum = num
 				}
 			}
-		}
-		if store != uint64(math.MaxUint64) {
-			return store
+			if store != uint64(math.MaxUint64) {
+				return store
+			}
 		}
 		for storeID := range storeTaskMap {
 			if _, validStore := storeCandidateRegionMap[storeID]; !validStore {
@@ -193,6 +198,7 @@ func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 		}
 		return store
 	}
+
 	store := findNextStore(nil)
 	for totalRemainingRegionNum > 0 {
 		if store == uint64(math.MaxUint64) {
