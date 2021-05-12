@@ -1504,7 +1504,7 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 						pos := sort.Search(length, func(i int) bool {
 							return ranges.Compare(i, val, unsigned) > 0
 						})
-						if pos >= 0 || pos < length {
+						if pos >= 0 && pos < length {
 							return &pi.Definitions[pos], i
 						}
 					}
