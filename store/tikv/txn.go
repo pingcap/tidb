@@ -224,10 +224,6 @@ func (txn *KVTxn) Delete(k []byte) error {
 func (txn *KVTxn) SetOption(opt int, val interface{}) {
 	txn.us.SetOption(opt, val)
 	txn.snapshot.SetOption(opt, val)
-	switch opt {
-	case tikv.SchemaAmender:
-		txn.schemaAmender = val.(SchemaAmender)
-	}
 }
 
 // GetOption returns the option
@@ -264,6 +260,11 @@ func (txn *KVTxn) SetSchemaVer(schemaVer SchemaVer) {
 func (txn *KVTxn) SetPriority(pri Priority) {
 	txn.priority = pri
 	txn.GetSnapshot().SetPriority(pri)
+}
+
+// SetSchemaAmender sets an amender to update mutations after schema change.
+func (txn *KVTxn) SetSchemaAmender(sa SchemaAmender) {
+	txn.schemaAmender = sa
 }
 
 // SetCommitCallback sets up a function that will be called when the transaction
