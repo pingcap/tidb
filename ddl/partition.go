@@ -1476,6 +1476,13 @@ func checkAddPartitionTooManyPartitions(piDefs uint64) error {
 	return nil
 }
 
+func checkAddPartitionOnTemporaryMode(tbInfo *model.TableInfo) error {
+	if tbInfo.Partition != nil && tbInfo.TempTableType != model.TempTableNone {
+		return errors.Trace(ErrPartitionNoTemporary)
+	}
+	return nil
+}
+
 func checkNoHashPartitions(ctx sessionctx.Context, partitionNum uint64) error {
 	if partitionNum == 0 {
 		return ast.ErrNoParts.GenWithStackByArgs("partitions")

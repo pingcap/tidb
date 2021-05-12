@@ -1619,6 +1619,9 @@ func checkPartitionDefinitionConstraints(ctx sessionctx.Context, tbInfo *model.T
 	if err = checkAddPartitionTooManyPartitions(uint64(len(tbInfo.Partition.Definitions))); err != nil {
 		return errors.Trace(err)
 	}
+	if err = checkAddPartitionOnTemporaryMode(tbInfo); err != nil {
+		return errors.Trace(err)
+	}
 
 	switch tbInfo.Partition.Type {
 	case model.PartitionTypeRange:
