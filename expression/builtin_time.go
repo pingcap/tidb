@@ -7115,13 +7115,13 @@ func handleInvalidZeroTime(ctx sessionctx.Context, t types.Time) (bool, error) {
 	return true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
 }
 
-// tidbBoundStalenessFunctionClass reads a time window [a, b] and compares it with the latest resolvedTS
+// tidbStalenessBoundFunctionClass reads a time window [a, b] and compares it with the latest resolvedTS
 // to determine which TS to use in a read only transaction.
-type tidbBoundStalenessFunctionClass struct {
+type tidbStalenessBoundFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tidbBoundStalenessFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *tidbStalenessBoundFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -7129,21 +7129,21 @@ func (c *tidbBoundStalenessFunctionClass) getFunction(ctx sessionctx.Context, ar
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinTiDBBoundStalenessSig{bf}
+	sig := &builtinTiDBStalenessBoundSig{bf}
 	return sig, nil
 }
 
-type builtinTiDBBoundStalenessSig struct {
+type builtinTiDBStalenessBoundSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinTiDBBoundStalenessSig) Clone() builtinFunc {
+func (b *builtinTiDBStalenessBoundSig) Clone() builtinFunc {
 	newSig := &builtinTidbParseTsoSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
-func (b *builtinTiDBBoundStalenessSig) evalInt(row chunk.Row) (int64, bool, error) {
+func (b *builtinTiDBStalenessBoundSig) evalInt(row chunk.Row) (int64, bool, error) {
 	leftTime, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
 		return 0, true, handleInvalidTimeError(b.ctx, err)

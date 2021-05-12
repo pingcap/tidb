@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-replace github.com/pingcap/parser v0.0.0-20210427084954-8e8ed7927bde => github.com/JmPotato/parser v0.0.0-20210510024050-df181d49c58e
+replace github.com/pingcap/parser v0.0.0-20210427084954-8e8ed7927bde => github.com/JmPotato/parser v0.0.0-20210512031211-369521b3c879
 
 require (
 	github.com/BurntSushi/toml v0.3.1
@@ -84,7 +84,7 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.0-20200615113413-eeeca48fe776 // indirect
-	honnef.co/go/tools v0.1.4 // indirect
+	honnef.co/go/tools v0.1.3 // indirect
 	modernc.org/mathutil v1.2.2 // indirect
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67

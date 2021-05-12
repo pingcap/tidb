@@ -854,11 +854,11 @@ func (b *builtinTidbParseTsoSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 	return nil
 }
 
-func (b *builtinTiDBBoundStalenessSig) vectorized() bool {
+func (b *builtinTiDBStalenessBoundSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinTiDBBoundStalenessSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinTiDBStalenessBoundSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
