@@ -1133,7 +1133,7 @@ Schema has changed
 
 ["planner:8121"]
 error = '''
-privilege check fail
+privilege check for '%s' fail
 '''
 
 ["planner:8122"]
