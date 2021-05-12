@@ -150,6 +150,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.GetSnapshot().SetTaskID(val.(uint64))
 	case tikvstore.InfoSchema:
 		txn.SetSchemaVer(val.(tikv.SchemaVer))
+	case tikvstore.SchemaAmender:
+		txn.SetSchemaAmender(val.(tikv.SchemaAmender))
 	case tikvstore.CommitHook:
 		txn.SetCommitCallback(val.(func(string, error)))
 	case tikvstore.Enable1PC:
