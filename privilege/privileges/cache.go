@@ -47,6 +47,23 @@ var (
 
 const globalDBVisible = mysql.CreatePriv | mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.ShowDBPriv | mysql.DropPriv | mysql.AlterPriv | mysql.IndexPriv | mysql.CreateViewPriv | mysql.ShowViewPriv | mysql.GrantPriv | mysql.TriggerPriv | mysql.ReferencesPriv | mysql.ExecutePriv
 
+const (
+	sqlLoadRoleGraph        = "SELECT HIGH_PRIORITY FROM_USER, FROM_HOST, TO_USER, TO_HOST FROM mysql.role_edges"
+	sqlLoadGlobalPrivTable  = "SELECT HIGH_PRIORITY Host,User,Priv FROM mysql.global_priv"
+	sqlLoadDBTable          = "SELECT HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv FROM mysql.db ORDER BY host, db, user"
+	sqlLoadTablePrivTable   = "SELECT HIGH_PRIORITY Host,DB,User,Table_name,Grantor,Timestamp,Table_priv,Column_priv FROM mysql.tables_priv"
+	sqlLoadColumnsPrivTable = "SELECT HIGH_PRIORITY Host,DB,User,Table_name,Column_name,Timestamp,Column_priv FROM mysql.columns_priv"
+	sqlLoadDefaultRoles     = "SELECT HIGH_PRIORITY HOST, USER, DEFAULT_ROLE_HOST, DEFAULT_ROLE_USER FROM mysql.default_roles"
+	// list of privileges from mysql.Priv2UserCol
+	sqlLoadUserTable = `SELECT HIGH_PRIORITY Host,User,authentication_string,
+	Create_priv, Select_priv, Insert_priv, Update_priv, Delete_priv, Show_db_priv, Super_priv,
+	Create_user_priv,Trigger_priv,Drop_priv,Process_priv,Grant_priv,
+	References_priv,Alter_priv,Execute_priv,Index_priv,Create_view_priv,Show_view_priv,
+	Create_role_priv,Drop_role_priv,Create_tmp_table_priv,Lock_tables_priv,Create_routine_priv,
+	Alter_routine_priv,Event_priv,Shutdown_priv,Reload_priv,File_priv,Config_priv,
+	account_locked FROM mysql.user`
+)
+
 func computePrivMask(privs []mysql.PrivilegeType) mysql.PrivilegeType {
 	var mask mysql.PrivilegeType
 	for _, p := range privs {
@@ -347,7 +364,7 @@ func noSuchTable(err error) bool {
 // LoadRoleGraph loads the mysql.role_edges table from database.
 func (p *MySQLPrivilege) LoadRoleGraph(ctx sessionctx.Context) error {
 	p.RoleGraph = make(map[string]roleGraphEdgesTable)
-	err := p.loadTable(ctx, "select FROM_USER, FROM_HOST, TO_USER, TO_HOST from mysql.role_edges;", p.decodeRoleEdgesTable)
+	err := p.loadTable(ctx, sqlLoadRoleGraph, p.decodeRoleEdgesTable)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -356,12 +373,7 @@ func (p *MySQLPrivilege) LoadRoleGraph(ctx sessionctx.Context) error {
 
 // LoadUserTable loads the mysql.user table from database.
 func (p *MySQLPrivilege) LoadUserTable(ctx sessionctx.Context) error {
-	userPrivCols := make([]string, 0, len(mysql.Priv2UserCol))
-	for _, v := range mysql.Priv2UserCol {
-		userPrivCols = append(userPrivCols, v)
-	}
-	query := fmt.Sprintf("select HIGH_PRIORITY Host,User,authentication_string,%s,account_locked from mysql.user;", strings.Join(userPrivCols, ", "))
-	err := p.loadTable(ctx, query, p.decodeUserTableRow)
+	err := p.loadTable(ctx, sqlLoadUserTable, p.decodeUserTableRow)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -467,12 +479,12 @@ func (p MySQLPrivilege) SortUserTable() {
 
 // LoadGlobalPrivTable loads the mysql.global_priv table from database.
 func (p *MySQLPrivilege) LoadGlobalPrivTable(ctx sessionctx.Context) error {
-	return p.loadTable(ctx, "select HIGH_PRIORITY Host,User,Priv from mysql.global_priv", p.decodeGlobalPrivTableRow)
+	return p.loadTable(ctx, sqlLoadGlobalPrivTable, p.decodeGlobalPrivTableRow)
 }
 
 // LoadDBTable loads the mysql.db table from database.
 func (p *MySQLPrivilege) LoadDBTable(ctx sessionctx.Context) error {
-	err := p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv from mysql.db order by host, db, user;", p.decodeDBTableRow)
+	err := p.loadTable(ctx, sqlLoadDBTable, p.decodeDBTableRow)
 	if err != nil {
 		return err
 	}
@@ -490,7 +502,7 @@ func (p *MySQLPrivilege) buildDBMap() {
 
 // LoadTablesPrivTable loads the mysql.tables_priv table from database.
 func (p *MySQLPrivilege) LoadTablesPrivTable(ctx sessionctx.Context) error {
-	err := p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Table_name,Grantor,Timestamp,Table_priv,Column_priv from mysql.tables_priv", p.decodeTablesPrivTableRow)
+	err := p.loadTable(ctx, sqlLoadTablePrivTable, p.decodeTablesPrivTableRow)
 	if err != nil {
 		return err
 	}
@@ -508,24 +520,22 @@ func (p *MySQLPrivilege) buildTablesPrivMap() {
 
 // LoadColumnsPrivTable loads the mysql.columns_priv table from database.
 func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx sessionctx.Context) error {
-	return p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Table_name,Column_name,Timestamp,Column_priv from mysql.columns_priv", p.decodeColumnsPrivTableRow)
+	return p.loadTable(ctx, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow)
 }
 
 // LoadDefaultRoles loads the mysql.columns_priv table from database.
 func (p *MySQLPrivilege) LoadDefaultRoles(ctx sessionctx.Context) error {
-	return p.loadTable(ctx, "select HOST, USER, DEFAULT_ROLE_HOST, DEFAULT_ROLE_USER from mysql.default_roles", p.decodeDefaultRoleTableRow)
+	return p.loadTable(ctx, sqlLoadDefaultRoles, p.decodeDefaultRoleTableRow)
 }
 
 func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	decodeTableRow func(chunk.Row, []*ast.ResultField) error) error {
 	ctx := context.Background()
-	tmp, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
+	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rs := tmp[0]
 	defer terror.Call(rs.Close)
-
 	fs := rs.Fields()
 	req := rs.NewChunk()
 	for {
@@ -586,7 +596,7 @@ func (record *baseRecord) assignUserOrHost(row chunk.Row, i int, f *ast.ResultFi
 		record.User = row.GetString(i)
 	case "host":
 		record.Host = row.GetString(i)
-		record.patChars, record.patTypes = stringutil.CompilePattern(record.Host, '\\')
+		record.patChars, record.patTypes = stringutil.CompilePatternBytes(record.Host, '\\')
 		record.hostIPNet = parseHostIPNet(record.Host)
 	}
 }
@@ -662,7 +672,7 @@ func (p *MySQLPrivilege) decodeDBTableRow(row chunk.Row, fs []*ast.ResultField) 
 		switch {
 		case f.ColumnAsName.L == "db":
 			value.DB = row.GetString(i)
-			value.dbPatChars, value.dbPatTypes = stringutil.CompilePattern(strings.ToUpper(value.DB), '\\')
+			value.dbPatChars, value.dbPatTypes = stringutil.CompilePatternBytes(strings.ToUpper(value.DB), '\\')
 		case f.Column.Tp == mysql.TypeEnum:
 			if row.GetEnum(i).String() != "Y" {
 				continue
@@ -829,7 +839,7 @@ func (record *columnsPrivRecord) match(user, host, db, table, col string) bool {
 // patternMatch matches "%" the same way as ".*" in regular expression, for example,
 // "10.0.%" would match "10.0.1" "10.0.1.118" ...
 func patternMatch(str string, patChars, patTypes []byte) bool {
-	return stringutil.DoMatch(str, patChars, patTypes)
+	return stringutil.DoMatchBytes(str, patChars, patTypes)
 }
 
 // connectionVerification verifies the connection have access to TiDB server.

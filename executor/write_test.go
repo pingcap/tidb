@@ -761,6 +761,28 @@ func (s *testSuite4) TestInsertIgnoreOnDup(c *C) {
 	testSQL = `select * from t;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 1", "2 2"))
+
+	tk.MustExec("drop table if exists t4")
+	tk.MustExec("create table t4(id int primary key, k int, v int, unique key uk1(k))")
+	tk.MustExec("insert into t4 values (1, 10, 100), (3, 30, 300)")
+	tk.MustExec("insert ignore into t4 (id, k, v) values(1, 0, 0) on duplicate key update id = 2, k = 30")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '30' for key 'uk1'"))
+	tk.MustQuery("select * from t4").Check(testkit.Rows("1 10 100", "3 30 300"))
+
+	tk.MustExec("drop table if exists t5")
+	tk.MustExec("create table t5(k2 int primary key, uk1 int, v int, unique key ukk1(uk1), unique key ukk2(v))")
+	tk.MustExec("insert into t5(k2, uk1, v) values(1, 1, '100'), (3, 2, '200')")
+	tk.MustExec("update ignore t5 set k2 = '2', uk1 = 2 where k2 = 1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '2' for key 'ukk1'"))
+	tk.MustQuery("select * from t5").Check(testkit.Rows("1 1 100", "3 2 200"))
+
+	tk.MustExec("drop table if exists t6")
+	tk.MustExec("create table t6 (a int, b int, c int, primary key(a), unique key idx_14(b), unique key idx_15(b), unique key idx_16(a, b))")
+	tk.MustExec("insert into t6 select 10, 10, 20")
+	tk.MustExec("insert ignore into t6 set a = 20, b = 10 on duplicate key update a = 100")
+	tk.MustQuery("select * from t6").Check(testkit.Rows("100 10 20"))
+	tk.MustExec("insert ignore into t6 set a = 200, b= 10 on duplicate key update c = 1000")
+	tk.MustQuery("select * from t6").Check(testkit.Rows("100 10 1000"))
 }
 
 func (s *testSuite4) TestInsertSetWithDefault(c *C) {
@@ -1474,6 +1496,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 		"`ts` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP," +
 		"KEY `idx` (`ts`)" +
 		");")
+	tk.MustExec("set @orig_sql_mode=@@sql_mode; set @@sql_mode='';")
 	tk.MustExec("insert into tsup values(1, '0000-00-00 00:00:00');")
 	tk.MustExec("update tsup set a=5;")
 	tk.CheckLastMessage("Rows matched: 1  Changed: 1  Warnings: 0")
@@ -1482,6 +1505,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	r1.Check(r2.Rows())
 	tk.MustExec("update tsup set ts='2019-01-01';")
 	tk.MustQuery("select ts from tsup;").Check(testkit.Rows("2019-01-01 00:00:00"))
+	tk.MustExec("set @@sql_mode=@orig_sql_mode;")
 
 	// issue 5532
 	tk.MustExec("create table decimals (a decimal(20, 0) not null)")
@@ -1534,7 +1558,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a datetime not null, b datetime)")
 	tk.MustExec("insert into t value('1999-12-12', '1999-12-13')")
-	tk.MustExec(" set @orig_sql_mode=@@sql_mode; set @@sql_mode='';")
+	tk.MustExec("set @orig_sql_mode=@@sql_mode; set @@sql_mode='';")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1999-12-12 00:00:00 1999-12-13 00:00:00"))
 	tk.MustExec("update t set a = ''")
 	tk.MustQuery("select * from t").Check(testkit.Rows("0000-00-00 00:00:00 1999-12-13 00:00:00"))
@@ -2217,14 +2241,6 @@ func (s *testSuite4) TestLoadData(c *C) {
 		{[]byte("xxx10\\2\\3"), []byte("\\4xxxx"), []string{"10|2|3|4"}, []byte("x"), trivialMsg},
 		{[]byte("xxx10\\2\\3\\4\\5x"), []byte("xx11\\22\\33xxxxxx12\\222xxx"),
 			[]string{"10|2|3|4", "40|<nil>|<nil>|<nil>"}, []byte("xxx"), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 1"},
-	}
-	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
-
-	// test line terminator in field quoter
-	ld.LinesInfo.Terminated = "\n"
-	ld.FieldsInfo.Enclosed = '"'
-	tests = []testCase{
-		{[]byte("xxx1\\1\\\"2\n\"\\3\nxxx4\\4\\\"5\n5\"\\6"), nil, []string{"1|1|2\n|3", "4|4|5\n5|6"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }

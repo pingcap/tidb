@@ -16,6 +16,7 @@ package core
 import (
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -724,7 +725,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		cst: t.cst,
 	}
 	if t.idxMergePartPlans != nil {
-		p := PhysicalIndexMergeReader{partialPlans: t.idxMergePartPlans, tablePlan: t.tablePlan}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())
+		p := PhysicalIndexMergeReader{partialPlans: t.idxMergePartPlans, tablePlan: t.tablePlan, ExtraHandleCol: t.extraHandleCol}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())
 		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.p = p
 		return newTask
@@ -1043,6 +1044,13 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 			return false
 		}
 		if !aggregation.CheckAggPushDown(aggFunc, storeType) {
+			if sc.InExplainStmt {
+				storageName := storeType.Name()
+				if storeType == kv.UnSpecified {
+					storageName = "storage layer"
+				}
+				sc.AppendWarning(errors.New("Agg function '" + aggFunc.Name + "' can not be pushed to " + storageName))
+			}
 			return false
 		}
 		if !expression.CanExprsPushDown(sc, aggFunc.Args, client, storeType) {
