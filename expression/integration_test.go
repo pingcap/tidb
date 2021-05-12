@@ -7775,7 +7775,7 @@ func (s *testIntegrationSerialSuite) TestCollationMergeJoin(c *C) {
 	tk.MustExec("insert into t values ('a', 23, 'h5');")
 	tk.MustExec("insert into t values ('a', 23, 'h6');")
 	tk.MustExec("insert into t values ('a', 23, 'h7');")
-	tk.MustQuery("select /*+ MERGE_JOIN(t) */ t.* from t where col_13 in ( select col_10 from t where t.col_13 in ( 'a', 'b' ) ) order by col_10， col_11 ;").Check(
+	tk.MustQuery("select /*+ MERGE_JOIN(t) */ t.* from t where col_13 in ( select col_10 from t where t.col_13 in ( 'a', 'b' ) ) order by col_10, col_11;").Check(
 		testkit.Rows("\x41 2.00000 a", "\x61 23.00000 A", "\x61 12523.00000 A"))
 }
 
