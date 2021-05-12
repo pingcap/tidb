@@ -2338,7 +2338,7 @@ func (s *testSuiteP2) TestIsPointGet(c *C) {
 		"select * from help_topic where help_topic_id=1":    true,
 		"select * from help_topic where help_category_id=1": false,
 	}
-	infoSchema := infoschema.GetInfoSchema(ctx)
+	infoSchema := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
@@ -2370,7 +2370,7 @@ func (s *testSuiteP2) TestClusteredIndexIsPointGet(c *C) {
 		"select * from t where a='x' and c='x'":         true,
 		"select * from t where a='x' and c='x' and b=1": false,
 	}
-	infoSchema := infoschema.GetInfoSchema(ctx)
+	infoSchema := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
@@ -8097,4 +8097,41 @@ func (s *testSuite1) TestIssue24091(c *C) {
 
 	tk.MustQuery("select null div 0;").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select * from t;").Check(testkit.Rows("<nil>"))
+}
+
+func (s *testSerialSuite) TestIssue24210(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// for ProjectionExec
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockProjectionExecBaseExecutorOpenReturnedError", `return(true)`), IsNil)
+	_, err := tk.Exec("select a from (select 1 as a, 2 as b) t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "mock ProjectionExec.baseExecutor.Open returned error")
+	err = failpoint.Disable("github.com/pingcap/tidb/executor/mockProjectionExecBaseExecutorOpenReturnedError")
+	c.Assert(err, IsNil)
+
+	// for HashAggExec
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockHashAggExecBaseExecutorOpenReturnedError", `return(true)`), IsNil)
+	_, err = tk.Exec("select sum(a) from (select 1 as a, 2 as b) t group by b")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "mock HashAggExec.baseExecutor.Open returned error")
+	err = failpoint.Disable("github.com/pingcap/tidb/executor/mockHashAggExecBaseExecutorOpenReturnedError")
+	c.Assert(err, IsNil)
+
+	// for StreamAggExec
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStreamAggExecBaseExecutorOpenReturnedError", `return(true)`), IsNil)
+	_, err = tk.Exec("select sum(a) from (select 1 as a, 2 as b) t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "mock StreamAggExec.baseExecutor.Open returned error")
+	err = failpoint.Disable("github.com/pingcap/tidb/executor/mockStreamAggExecBaseExecutorOpenReturnedError")
+	c.Assert(err, IsNil)
+
+	// for SelectionExec
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockSelectionExecBaseExecutorOpenReturnedError", `return(true)`), IsNil)
+	_, err = tk.Exec("select * from (select rand() as a) t where a > 0")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "mock SelectionExec.baseExecutor.Open returned error")
+	err = failpoint.Disable("github.com/pingcap/tidb/executor/mockSelectionExecBaseExecutorOpenReturnedError")
+	c.Assert(err, IsNil)
+
 }

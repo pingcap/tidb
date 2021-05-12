@@ -154,6 +154,7 @@ type Transaction interface {
 	// String implements fmt.Stringer interface.
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
+	// Will block until all keys are locked successfully or an error occurs.
 	LockKeys(ctx context.Context, lockCtx *LockCtx, keys ...Key) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
@@ -257,7 +258,7 @@ type Request struct {
 	// sent to multiple storage units concurrently.
 	Concurrency int
 	// IsolationLevel is the isolation level, default is SI.
-	IsolationLevel tikvstore.IsoLevel
+	IsolationLevel IsoLevel
 	// Priority is the priority of this KV request, its value may be PriorityNormal/PriorityLow/PriorityHigh.
 	Priority int
 	// memTracker is used to trace and control memory usage in co-processor layer.
@@ -341,12 +342,19 @@ type Driver interface {
 }
 
 // TransactionOption indicates the option when beginning a transaction
+// `TxnScope` must be set for each object
+// Every other fields are optional, but currently at most one of them can be set
 type TransactionOption struct {
 	TxnScope   string
 	StartTS    *uint64
 	PrevSec    *uint64
 	MinStartTS *uint64
 	MaxPrevSec *uint64
+}
+
+// DefaultTransactionOption creates a default TransactionOption, ie. Work in GlobalTxnScope and get start ts when got used
+func DefaultTransactionOption() TransactionOption {
+	return TransactionOption{TxnScope: oracle.GlobalTxnScope}
 }
 
 // SetMaxPrevSec set maxPrevSec
@@ -438,3 +446,20 @@ type SplittableStore interface {
 	WaitScatterRegionFinish(ctx context.Context, regionID uint64, backOff int) error
 	CheckRegionInScattering(regionID uint64) (bool, error)
 }
+
+// Priority value for transaction priority.
+const (
+	PriorityNormal = iota
+	PriorityLow
+	PriorityHigh
+)
+
+// IsoLevel is the transaction's isolation level.
+type IsoLevel int
+
+const (
+	// SI stands for 'snapshot isolation'.
+	SI IsoLevel = iota
+	// RC stands for 'read committed'.
+	RC
+)

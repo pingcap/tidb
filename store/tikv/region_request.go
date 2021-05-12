@@ -530,8 +530,7 @@ func (s *RegionRequestSender) getStoreToken(st *Store, limit int64) error {
 		return nil
 	}
 	metrics.TiKVStoreLimitErrorCounter.WithLabelValues(st.addr, strconv.FormatUint(st.storeID, 10)).Inc()
-	return tikverr.ErrTokenLimit.GenWithStackByArgs(st.storeID)
-
+	return &tikverr.ErrTokenLimit{StoreID: st.storeID}
 }
 
 func (s *RegionRequestSender) releaseStoreToken(st *Store) {
@@ -736,16 +735,4 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 		s.regionCache.InvalidateCachedRegion(ctx.Region)
 	}
 	return false, nil
-}
-
-// IsolationLevelToPB converts isolation level to wire type.
-func IsolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
-	switch level {
-	case kv.RC:
-		return kvrpcpb.IsolationLevel_RC
-	case kv.SI:
-		return kvrpcpb.IsolationLevel_SI
-	default:
-		return kvrpcpb.IsolationLevel_SI
-	}
 }

@@ -17,7 +17,7 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/util/testleak"
 )
 
@@ -56,7 +56,7 @@ func (s *testUnionStoreSuite) TestDelete(c *C) {
 	err = s.us.GetMemBuffer().Delete([]byte("1"))
 	c.Assert(err, IsNil)
 	_, err = s.us.Get(context.TODO(), []byte("1"))
-	c.Assert(kv.IsErrNotFound(err), IsTrue)
+	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 
 	err = s.us.GetMemBuffer().Set([]byte("1"), []byte("2"))
 	c.Assert(err, IsNil)
