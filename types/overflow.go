@@ -200,7 +200,7 @@ func DivUintWithInt(a uint64, b int64) (uint64, error) {
 func DivIntWithUint(a int64, b uint64) (uint64, error) {
 	if a < 0 {
 		if uint64(-a) >= b {
-			return 0, ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%d, %d)", a, b))
+			return 0, ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%d, %d)", a, b))
 		}
 
 		return 0, nil
