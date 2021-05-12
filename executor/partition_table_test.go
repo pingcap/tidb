@@ -118,10 +118,11 @@ func (s *partitionTableSuite) TestPointGetwithRangeAndListPartitionTable(c *C) {
 	tk.MustExec("create database test_pointget_list_hash")
 	tk.MustExec("use test_pointget_list_hash")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 
 	// list partition table
 	tk.MustExec(`create table tlist(a int, b int, unique index idx_a(a), index idx_b(b)) partition by list(a)( 
-		partition p0 values in (1, 2, 3, 4),
+		partition p0 values in (NULL, 1, 2, 3, 4),
 			partition p1 values in (5, 6, 7, 8),
 			partition p2 values in (9, 10, 11, 12));`)
 
@@ -160,6 +161,15 @@ func (s *partitionTableSuite) TestPointGetwithRangeAndListPartitionTable(c *C) {
 		c.Assert(tk.HasPlan(queryList, "Point_Get"), IsTrue) // check if PointGet is used
 		tk.MustQuery(queryList).Check(testkit.Rows(fmt.Sprintf("%v", y)))
 	}
+
+	// test table dual
+	queryRange := fmt.Sprintf("select a from trange where a=200")
+	c.Assert(tk.HasPlan(queryRange, "TableDual"), IsTrue) // check if PointGet is used
+	tk.MustQuery(queryRange).Check(testkit.Rows())
+
+	queryList := fmt.Sprintf("select a from tlist where a=200")
+	c.Assert(tk.HasPlan(queryList, "TableDual"), IsTrue) // check if PointGet is used
+	tk.MustQuery(queryList).Check(testkit.Rows())
 }
 
 func (s *partitionTableSuite) TestPartitionReaderUnderApply(c *C) {
