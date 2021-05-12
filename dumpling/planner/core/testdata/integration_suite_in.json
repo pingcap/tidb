@@ -294,5 +294,14 @@
       "select sum(1) from s1",
       "select count(1) as cnt from s1 union select count(1) as cnt from s2"
     ]
+  },
+  {
+    "name": "TestEliminateLockForTemporaryTable",
+    "cases": [
+      "select * from t1 where a = 2 for update",
+      "select * from t1 where a in (1,2) for update",
+      "select c + 1 from t1 where a = 2 and c = 2 for update",
+      "select c + 1 from t1 where a in (1,2) and c = 2 for update"
+    ]
   }
 ]
