@@ -271,6 +271,9 @@ func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []by
 }
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
+	if len(key) == 0 {
+		return nil
+	}
 	if e.lock {
 		seVars := e.ctx.GetSessionVars()
 		lockCtx := newLockCtx(seVars, e.lockWaitTime)

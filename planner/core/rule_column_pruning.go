@@ -217,6 +217,8 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) erro
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) error {
 	parentUsedCols = append(parentUsedCols, p.handleCol)
+	condCols := expression.ExtractColumnsFromExpressions(nil, p.conditions, nil)
+	parentUsedCols = append(parentUsedCols, condCols...)
 	return p.children[0].PruneColumns(parentUsedCols)
 }
 
@@ -301,24 +303,7 @@ func (p *LogicalJoin) extractUsedCols(parentUsedCols []*expression.Column) (left
 }
 
 func (p *LogicalJoin) mergeSchema() {
-	lChild := p.children[0]
-	rChild := p.children[1]
-	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
-		p.schema = lChild.Schema().Clone()
-	} else if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
-		joinCol := p.schema.Columns[len(p.schema.Columns)-1]
-		p.schema = lChild.Schema().Clone()
-		p.schema.Append(joinCol)
-	} else {
-		p.schema = expression.MergeSchema(lChild.Schema(), rChild.Schema())
-		switch p.JoinType {
-		case LeftOuterJoin:
-			resetNotNullFlag(p.schema, p.children[1].Schema().Len(), p.schema.Len())
-		case RightOuterJoin:
-			resetNotNullFlag(p.schema, 0, p.children[0].Schema().Len())
-		default:
-		}
-	}
+	p.schema = buildLogicalJoinSchema(p.JoinType, p)
 }
 
 // PruneColumns implements LogicalPlan interface.
