@@ -494,10 +494,43 @@ func (s *partitionTableSuite) TestDynamicPruneModeWithEqualExpression(c *C) {
 	for _, t := range tests {
 		for i := range t.partitions {
 			sql := fmt.Sprintf(t.sql, tables[i])
-			c.Assert(tk.MustPartition(sql, t.partitions[i]), IsTrue)
-			tk.MustQuery(sql).Sort().Check(tk.MustQuery(fmt.Sprintf(t.sql, "t")).Sort().Rows())
+			tk.MustPartition(sql, t.partitions[i]).Sort().Check(tk.MustQuery(fmt.Sprintf(t.sql, "t")).Sort().Rows())
 		}
 	}
+}
+
+func (s *partitionTableSuite) TestAddDropPartitions(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_add_drop_partition")
+	tk.MustExec("use test_add_drop_partition")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	tk.MustExec(`create table t(a int) partition by range(a) (
+		  partition p0 values less than (5),
+		  partition p1 values less than (10),
+		  partition p2 values less than (15))`)
+	tk.MustExec(`insert into t values (2), (7), (12)`)
+	tk.MustPartition(`select * from t where a < 3`, "p0").Sort().Check(testkit.Rows("2"))
+	tk.MustPartition(`select * from t where a < 8`, "p0,p1").Sort().Check(testkit.Rows("2", "7"))
+	tk.MustPartition(`select * from t where a < 20`, "all").Sort().Check(testkit.Rows("12", "2", "7"))
+
+	// remove p0
+	tk.MustExec(`alter table t drop partition p0`)
+	tk.MustPartition(`select * from t where a < 3`, "p1").Sort().Check(testkit.Rows())
+	tk.MustPartition(`select * from t where a < 8`, "p1").Sort().Check(testkit.Rows("7"))
+	tk.MustPartition(`select * from t where a < 20`, "all").Sort().Check(testkit.Rows("12", "7"))
+
+	// add 2 more partitions
+	tk.MustExec(`alter table t add partition (partition p3 values less than (20))`)
+	tk.MustExec(`alter table t add partition (partition p4 values less than (40))`)
+	tk.MustExec(`insert into t values (15), (25)`)
+	tk.MustPartition(`select * from t where a < 3`, "p1").Sort().Check(testkit.Rows())
+	tk.MustPartition(`select * from t where a < 8`, "p1").Sort().Check(testkit.Rows("7"))
+	tk.MustPartition(`select * from t where a < 20`, "p1,p2,p3").Sort().Check(testkit.Rows("12", "15", "7"))
 }
 
 func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
@@ -511,15 +544,15 @@ func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 
 	// list partition table
-	tk.MustExec(`create table tlist(a int, b int, index idx_a(a), index idx_b(b)) partition by list(a)( 
+	tk.MustExec(`create table tlist(a int, b int, index idx_a(a), index idx_b(b)) partition by list(a)(
 		partition p0 values in (1, 2, 3, 4),
 		partition p1 values in (5, 6, 7, 8),
 		partition p2 values in (9, 10, 11, 12));`)
 
 	// range partition table
 	tk.MustExec(`create table trange(a int, b int, index idx_a(a), index idx_b(b)) partition by range(a) (
-		partition p0 values less than(300), 
-		partition p1 values less than (500), 
+		partition p0 values less than(300),
+		partition p1 values less than (500),
 		partition p2 values less than(1100));`)
 
 	// hash partition table
