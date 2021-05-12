@@ -114,8 +114,6 @@ func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 			regionInfos: []tikv.RegionInfo{task.regionInfos[0]},
 		}
 		storeTaskMap[taskStoreID] = batchTask
-		candidateMap := make(map[string]tikv.RegionInfo)
-		storeCandidateRegionMap[taskStoreID] = candidateMap
 	}
 
 	for _, task := range originalTasks {
@@ -130,7 +128,7 @@ func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 				validStoreNum = 1
 			} else {
 				for _, storeID := range ri.AllStores {
-					if _, ok := storeCandidateRegionMap[storeID]; ok {
+					if _, ok := storeTaskMap[storeID]; ok {
 						validStoreNum++
 					}
 				}
@@ -145,12 +143,16 @@ func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 				totalRemainingRegionNum += 1
 				taskKey := ri.Region.String()
 				for _, storeID := range ri.AllStores {
-					if candidateMap, ok := storeCandidateRegionMap[storeID]; ok {
-						if _, ok := candidateMap[taskKey]; ok {
+					if _, validStore := storeTaskMap[storeID]; validStore {
+						if _, ok := storeCandidateRegionMap[storeID]; !ok {
+							candidateMap := make(map[string]tikv.RegionInfo)
+							storeCandidateRegionMap[taskStoreID] = candidateMap
+						}
+						if _, duplicateRegion := storeCandidateRegionMap[storeID][taskKey]; duplicateRegion {
 							// duplicated region, should not happen, just give up balance
 							return originalTasks
 						}
-						candidateMap[taskKey] = ri
+						storeCandidateRegionMap[storeID][taskKey] = ri
 					}
 				}
 			}
@@ -161,58 +163,64 @@ func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 	}
 
 	avgStorePerRegion := float64(totalRegionCandidateNum) / float64(totalRemainingRegionNum)
-	findNextStore := func() uint64 {
+	findNextStore := func(candidateStores []uint64) uint64 {
 		store := uint64(math.MaxUint64)
-		weightedRegionNum := float64(0)
-		for storeID := range storeTaskMap {
-			if store == uint64(math.MaxUint64) && len(storeCandidateRegionMap[storeID]) > 0 {
-				store = storeID
-				weightedRegionNum = float64(len(storeCandidateRegionMap[storeID]))/avgStorePerRegion + float64(len(storeTaskMap[storeID].regionInfos))
-			} else {
-				num := float64(len(storeCandidateRegionMap[storeID])) / avgStorePerRegion
-				if num == 0 {
+		weightedRegionNum := math.MaxFloat64
+		if candidateStores != nil {
+			for _, storeID := range candidateStores {
+				if _, validStore := storeCandidateRegionMap[storeID]; !validStore {
 					continue
 				}
-				num += float64(len(storeTaskMap[storeID].regionInfos))
+				num := float64(len(storeCandidateRegionMap[storeID]))/avgStorePerRegion + float64(len(storeTaskMap[storeID].regionInfos))
 				if num < weightedRegionNum {
 					store = storeID
 					weightedRegionNum = num
 				}
 			}
 		}
+		if store != uint64(math.MaxUint64) {
+			return store
+		}
+		for storeID := range storeTaskMap {
+			if _, validStore := storeCandidateRegionMap[storeID]; !validStore {
+				continue
+			}
+			num := float64(len(storeCandidateRegionMap[storeID]))/avgStorePerRegion + float64(len(storeTaskMap[storeID].regionInfos))
+			if num < weightedRegionNum {
+				store = storeID
+				weightedRegionNum = num
+			}
+		}
 		return store
 	}
-	store := findNextStore()
+	store := findNextStore(nil)
 	for totalRemainingRegionNum > 0 {
-		if len(storeCandidateRegionMap[store]) == 0 {
-			store = findNextStore()
-		}
 		if store == uint64(math.MaxUint64) {
 			break
 		}
-		for key, ri := range storeCandidateRegionMap[store] {
-			storeTaskMap[store].regionInfos = append(storeTaskMap[store].regionInfos, ri)
-			totalRemainingRegionNum--
-			for _, id := range ri.AllStores {
-				if _, ok := storeCandidateRegionMap[id]; ok {
-					delete(storeCandidateRegionMap[id], key)
-					totalRegionCandidateNum--
-				}
-			}
-			if totalRemainingRegionNum > 0 {
-				avgStorePerRegion = float64(totalRegionCandidateNum) / float64(totalRemainingRegionNum)
-				weightedRegionNum := float64(len(storeCandidateRegionMap[store]))/avgStorePerRegion + float64(len(storeTaskMap[store].regionInfos))
-				for _, id := range ri.AllStores {
-					// it is not optimal because we only check the stores that affected by this region, in fact in order
-					// to find out the store with the lowest weightedRegionNum, all stores should be checked, but I think
-					// check only the affected stores is more simple and will get a good enough result
-					if id != store && len(storeCandidateRegionMap[id]) > 0 && float64(len(storeCandidateRegionMap[id]))/avgStorePerRegion+float64(len(storeTaskMap[id].regionInfos)) <= weightedRegionNum {
-						store = id
-						weightedRegionNum = float64(len(storeCandidateRegionMap[id]))/avgStorePerRegion + float64(len(storeTaskMap[id].regionInfos))
-					}
-				}
-			}
+		var key string
+		var ri tikv.RegionInfo
+		for key, ri = range storeCandidateRegionMap[store] {
+			// get the first region
 			break
+		}
+		storeTaskMap[store].regionInfos = append(storeTaskMap[store].regionInfos, ri)
+		totalRemainingRegionNum--
+		for _, id := range ri.AllStores {
+			if _, ok := storeCandidateRegionMap[id]; ok {
+				delete(storeCandidateRegionMap[id], key)
+				totalRegionCandidateNum--
+				if len(storeCandidateRegionMap[id]) == 0 {
+					delete(storeCandidateRegionMap, id)
+				}
+			}
+		}
+		if totalRemainingRegionNum > 0 {
+			avgStorePerRegion = float64(totalRegionCandidateNum) / float64(totalRemainingRegionNum)
+			// it is not optimal because we only check the stores that affected by this region, in fact in order
+			// to find out the store with the lowest weightedRegionNum, all stores should be checked, but I think
+			// check only the affected stores is more simple and will get a good enough result
+			store = findNextStore(ri.AllStores)
 		}
 	}
 
