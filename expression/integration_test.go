@@ -8198,3 +8198,24 @@ func (s *testIntegrationSerialSuite) TestCollationForBinaryLiteral(c *C) {
 	tk.MustQuery("select * from t where col1 not in (0x1B,0x20) order by col1").Check(testkit.Rows("\x1e \xec 6966939640596047133"))
 	tk.MustExec("drop table t")
 }
+
+func (s *testIntegrationSuite) Test22717(c *C) {
+	// For issue 22717
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t(
+					 	a enum('a','','c'),
+						b enum('0','1','2'),
+						c set('a','','c'),
+						d set('0','1','2')
+					 )`)
+	tk.MustExec("insert into t values(1,1,1,1),(2,2,2,2),(3,3,3,3)")
+	tk.MustExec("set @@sql_mode = ''")
+	tk.MustExec("insert into t values('','','','')")
+	tk.MustQuery("select * from t").Check(testkit.Rows("a 0 a 0", " 1  1", "c 2 a, 0,1", "   "))
+	tk.MustQuery("select a from t where a").Check(testkit.Rows("a", "", "c", ""))
+	tk.MustQuery("select b from t where b").Check(testkit.Rows("0", "1", "2"))
+	tk.MustQuery("select c from t where c").Check(testkit.Rows("a", "", "a,", ""))
+	tk.MustQuery("select d from t where d").Check(testkit.Rows("0", "1", "0,1"))
+}
