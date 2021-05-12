@@ -686,13 +686,13 @@ func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx conte
 	}
 	failpoint.Inject("mockStalenessTxnSchemaVer", func(val failpoint.Value) {
 		if val.(bool) {
-			staleVer = e.ctx.GetSessionVars().TxnCtx.SchemaVersion - 1
+			staleVer = e.ctx.GetSessionVars().GetInfoSchema().SchemaMetaVersion() - 1
 		} else {
-			staleVer = e.ctx.GetSessionVars().TxnCtx.SchemaVersion
+			staleVer = e.ctx.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
 		}
 	})
 	// TODO: currently we directly check the schema version. In future, we can cache the stale infoschema instead.
-	if e.ctx.GetSessionVars().TxnCtx.SchemaVersion > staleVer {
+	if e.ctx.GetSessionVars().GetInfoSchema().SchemaMetaVersion() > staleVer {
 		return errors.New("schema version changed after the staleness startTS")
 	}
 
@@ -1406,7 +1406,7 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) (err error) {
 	if err := h.DeleteTableStatsFromKV(statsIDs); err != nil {
 		return err
 	}
-	return h.Update(infoschema.GetInfoSchema(e.ctx))
+	return h.Update(e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema))
 }
 
 func (e *SimpleExec) autoNewTxn() bool {
