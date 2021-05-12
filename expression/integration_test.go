@@ -6276,6 +6276,13 @@ func (s *testIntegrationSerialSuite) TestCollateConstantPropagation(c *C) {
 	tk.MustExec("insert into t1 values ('ß', 's');")
 	tk.MustExec("insert into t2 values ('s', 's')")
 	tk.MustQuery("select * from t1 left join t2 on t1.a = t2.a collate utf8mb4_unicode_ci where t1.a = 's';").Check(testkit.Rows("ß s <nil> <nil>"))
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(a char(10) collate utf8mb4_general_ci, index (a));")
+	tk.MustExec("create table t2(a char(10) collate utf8_bin, index (a));")
+	tk.MustExec("insert into t1 values ('a');")
+	tk.MustExec("insert into t2 values ('A');")
+	tk.MustExec("set names utf8 collate utf8_general_ci;")
+	tk.MustQuery("select * from t1, t2 where t1.a=t2.a and t1.a= 'a';").Check(testkit.Rows("a A"))
 }
 
 func (s *testIntegrationSerialSuite) TestMixCollation(c *C) {
