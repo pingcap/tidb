@@ -349,93 +349,10 @@ func (b *builtinArithmeticMinusIntSig) vecEvalInt(input *chunk.Chunk, result *ch
 	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
 
-<<<<<<< HEAD
-	switch {
-	case forceToSigned && isLHSUnsigned && isRHSUnsigned:
-		err = b.minusFUU(result, lhi64s, rhi64s, resulti64s)
-	case forceToSigned && isLHSUnsigned && !isRHSUnsigned:
-		err = b.minusFUS(result, lhi64s, rhi64s, resulti64s)
-	case forceToSigned && !isLHSUnsigned && isRHSUnsigned:
-		err = b.minusFSU(result, lhi64s, rhi64s, resulti64s)
-	case forceToSigned && !isLHSUnsigned && !isRHSUnsigned:
-		err = b.minusSS(result, lhi64s, rhi64s, resulti64s)
-	case !forceToSigned && isLHSUnsigned && isRHSUnsigned:
-		err = b.minusUU(result, lhi64s, rhi64s, resulti64s)
-	case !forceToSigned && isLHSUnsigned && !isRHSUnsigned:
-		err = b.minusUS(result, lhi64s, rhi64s, resulti64s)
-	case !forceToSigned && !isLHSUnsigned && isRHSUnsigned:
-		err = b.minusSU(result, lhi64s, rhi64s, resulti64s)
-	case !forceToSigned && !isLHSUnsigned && !isRHSUnsigned:
-		err = b.minusSS(result, lhi64s, rhi64s, resulti64s)
-	}
-	return err
-}
-func (b *builtinArithmeticMinusIntSig) minusFUU(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		lh, rh := lhi64s[i], rhi64s[i]
-
-		if lh < 0 || (lh > math.MaxInt64) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
-		}
-
-		if rh < 0 || (rh > math.MaxInt64) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
-		}
-
-		if (lh > 0 && -rh > math.MaxInt64-lh) || (lh < 0 && -rh < math.MinInt64-lh) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
-		}
-
-		resulti64s[i] = lh - rh
-	}
-	return nil
-}
-
-func (b *builtinArithmeticMinusIntSig) minusFUS(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		lh, rh := lhi64s[i], rhi64s[i]
-
-		if lh < 0 || (lh > math.MaxInt64) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
-		}
-
-		if (lh > 0 && -rh > math.MaxInt64-lh) || (lh < 0 && -rh < math.MinInt64-lh) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
-		}
-
-		resulti64s[i] = lh - rh
-	}
-	return nil
-}
-
-func (b *builtinArithmeticMinusIntSig) minusFSU(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		lh, rh := lhi64s[i], rhi64s[i]
-
-		if rh < 0 || (rh > math.MaxInt64) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
-		}
-
-		if (lh > 0 && -rh > math.MaxInt64-lh) || (lh < 0 && -rh < math.MinInt64-lh) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
-		}
-
-		resulti64s[i] = lh - rh
-=======
 	errType := "BIGINT UNSIGNED"
 	signed := forceToSigned || (!isLHSUnsigned && !isRHSUnsigned)
 	if signed {
 		errType = "BIGINT"
->>>>>>> 31c13d6e3... expression: fix bugs in builtinfunction ArithmeticMinusInt logic (#22426)
 	}
 	for i := 0; i < len(lhi64s); i++ {
 		if result.IsNull(i) {
