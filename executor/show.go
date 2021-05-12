@@ -693,7 +693,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		if v.Hidden {
 			continue
 		}
-		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
+		value, err = variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
 		if err != nil {
 			return errors.Trace(err)
 		}
