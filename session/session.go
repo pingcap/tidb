@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
@@ -933,15 +934,19 @@ func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet) ([]c
 	}
 }
 
-// getExecRet executes restricted sql and the result is one column.
+// getTableValue executes restricted sql and the result is one column.
 // It returns a string value.
-func (s *session) getExecRet(ctx sessionctx.Context, sql string) (string, error) {
-	rows, fields, err := s.ExecRestrictedSQL(sql)
+func (s *session) getTableValue(ctx context.Context, tblName string, varName string) (string, error) {
+	stmt, err := s.ParseWithParams(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, tblName, varName)
+	if err != nil {
+		return "", err
+	}
+	rows, fields, err := s.ExecRestrictedStmt(ctx, stmt)
 	if err != nil {
 		return "", err
 	}
 	if len(rows) == 0 {
-		return "", executor.ErrResultIsEmpty
+		return "", errResultIsEmpty
 	}
 	d := rows[0].GetDatum(0, &fields[0].Column.FieldType)
 	value, err := d.ToString()
@@ -956,9 +961,11 @@ func (s *session) GetAllSysVars() (map[string]string, error) {
 	if s.Value(sessionctx.Initing) != nil {
 		return nil, nil
 	}
-	sql := `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %s.%s;`
-	sql = fmt.Sprintf(sql, mysql.SystemDB, mysql.GlobalVariablesTable)
-	rows, _, err := s.ExecRestrictedSQL(sql)
+	stmt, err := s.ParseWithParams(context.TODO(), `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %n.%n`, mysql.SystemDB, mysql.GlobalVariablesTable)
+	if err != nil {
+		return nil, err
+	}
+	rows, _, err := s.ExecRestrictedStmt(context.TODO(), stmt)
 	if err != nil {
 		return nil, err
 	}
@@ -979,11 +986,9 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return "", nil
 	}
-	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, name)
-	sysVar, err := s.getExecRet(s, sql)
+	sysVar, err := s.getTableValue(context.TODO(), mysql.GlobalVariablesTable, name)
 	if err != nil {
-		if executor.ErrResultIsEmpty.Equal(err) {
+		if errResultIsEmpty.Equal(err) {
 			if sv, ok := variable.SysVars[name]; ok {
 				return sv.Value, nil
 			}
@@ -1012,9 +1017,11 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 		return err
 	}
 	name = strings.ToLower(name)
-	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
-	_, _, err = s.ExecRestrictedSQL(sql)
+	stmt, err := s.ParseWithParams(context.TODO(), "REPLACE %n.%n VALUES (%?, %?)", mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
+	if err != nil {
+		return err
+	}
+	_, _, err = s.ExecRestrictedStmt(context.TODO(), stmt)
 	return err
 }
 
@@ -1814,11 +1821,6 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 	return s, nil
 }
 
-// loadSystemTZ loads systemTZ from mysql.tidb
-func loadSystemTZ(se *session) (string, error) {
-	return loadParameter(se, "system_tz")
-}
-
 // loadCollationParameter loads collation parameter from mysql.tidb
 func loadCollationParameter(se *session) (bool, error) {
 	para, err := loadParameter(se, tidbNewCollationEnabled)
@@ -1862,25 +1864,7 @@ var (
 
 // loadParameter loads read-only parameter from mysql.tidb
 func loadParameter(se *session, name string) (string, error) {
-	sql := "select variable_value from mysql.tidb where variable_name = '" + name + "'"
-	rss, errLoad := se.Execute(context.Background(), sql)
-	if errLoad != nil {
-		return "", errLoad
-	}
-	// the record of mysql.tidb under where condition: variable_name = $name should shall only be one.
-	defer func() {
-		if err := rss[0].Close(); err != nil {
-			logutil.BgLogger().Error("close result set error", zap.Error(err))
-		}
-	}()
-	req := rss[0].NewChunk()
-	if err := rss[0].Next(context.Background(), req); err != nil {
-		return "", err
-	}
-	if req.NumRows() == 0 {
-		return "", errResultIsEmpty
-	}
-	return req.GetRow(0).GetString(0), nil
+	return se.getTableValue(context.TODO(), mysql.TiDBTable, name)
 }
 
 // BootstrapSession runs the first time when the TiDB server start.
@@ -1912,7 +1896,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 	// get system tz from mysql.tidb
-	tz, err := loadSystemTZ(se)
+	tz, err := se.getTableValue(context.TODO(), mysql.TiDBTable, "system_tz")
 	if err != nil {
 		return nil, err
 	}
@@ -2460,4 +2444,9 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 			transactionDurationOptimisticCommit.Observe(duration)
 		}
 	}
+}
+
+// GetTxnWriteThroughputSLI implements the Context interface.
+func (s *session) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
+	return &s.txn.writeSLI
 }
