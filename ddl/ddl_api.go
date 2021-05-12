@@ -1617,10 +1617,10 @@ func checkPartitionDefinitionConstraints(ctx sessionctx.Context, tbInfo *model.T
 		return errors.Trace(err)
 	}
 	if err = checkAddPartitionTooManyPartitions(uint64(len(tbInfo.Partition.Definitions))); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if err = checkAddPartitionOnTemporaryMode(tbInfo); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	switch tbInfo.Partition.Type {
