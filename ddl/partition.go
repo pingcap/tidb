@@ -1478,7 +1478,7 @@ func checkAddPartitionTooManyPartitions(piDefs uint64) error {
 
 func checkAddPartitionOnTemporaryMode(tbInfo *model.TableInfo) error {
 	if tbInfo.Partition != nil && tbInfo.TempTableType != model.TempTableNone {
-		return errors.Trace(ErrPartitionNoTemporary)
+		return ErrPartitionNoTemporary
 	}
 	return nil
 }
