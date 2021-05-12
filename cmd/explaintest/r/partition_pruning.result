@@ -1782,9 +1782,7 @@ TableReader	3323.33	root	partition:all	data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t7	keep order:false, stats:pseudo
 explain format = 'brief' select * from t7 where a = 90;
 id	estRows	task	access object	operator info
-TableReader	10.00	root	partition:dual	data:Selection
-└─Selection	10.00	cop[tikv]		eq(test.t7.a, 90)
-  └─TableFullScan	10000.00	cop[tikv]	table:t7	keep order:false, stats:pseudo
+TableDual	0.00	root		rows:0
 explain format = 'brief' select * from t7 where a > 90;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:dual	data:Selection
@@ -1906,9 +1904,7 @@ TableReader	3323.33	root	partition:all	data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t7	keep order:false, stats:pseudo
 explain format = 'brief' select * from t7 where a = 90;
 id	estRows	task	access object	operator info
-TableReader	10.00	root	partition:dual	data:Selection
-└─Selection	10.00	cop[tikv]		eq(test.t7.a, 90)
-  └─TableFullScan	10000.00	cop[tikv]	table:t7	keep order:false, stats:pseudo
+TableDual	0.00	root		rows:0
 explain format = 'brief' select * from t7 where a > 90;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:dual	data:Selection
