@@ -4555,6 +4555,11 @@ func (s *testIntegrationSuite) TestIssues(c *C) {
 	tk.MustExec(`insert into t2 values(1,"1111"),(2,"2222"),(3,"3333"),(4,"4444"),(5,"5555"),(6,"6666"),(7,"7777"),(8,"8888"),(9,"9999"),(10,"0000")`)
 	tk.MustQuery(`select (@j := case when substr(t2.b,1,3)=@i then 1 else @j+1 end) from t2, (select @j := 0, @i := "0") tt limit 10`).Check(testkit.Rows(
 		"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"))
+
+	// for issue #23479
+	tk.MustQuery("select b'10000000' DIV 10").Check(testkit.Rows("12"))
+	tk.MustQuery("select cast(b'10000000' as unsigned) / 10").Check(testkit.Rows("12.8000"))
+	tk.MustQuery("select b'10000000' / 10").Check(testkit.Rows("12.8000"))
 }
 
 func (s *testIntegrationSuite) TestInPredicate4UnsignedInt(c *C) {
@@ -7746,6 +7751,24 @@ func (s *testIntegrationSerialSuite) TestCollationIndexJoin(c *C) {
 	tk.MustQuery("select /*+ inl_merge_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
 	tk.MustQuery("select /*+ inl_merge_join(t2) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Optimizer Hint /*+ INL_MERGE_JOIN(t2) */ is inapplicable"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue20876(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"  `a` char(10) COLLATE utf8mb4_unicode_ci NOT NULL," +
+		"  `b` char(20) COLLATE utf8mb4_general_ci NOT NULL," +
+		"  `c` int(11) NOT NULL," +
+		"  PRIMARY KEY (`a`,`b`,`c`)," +
+		"  KEY `idx` (`a`)" +
+		")")
+	tk.MustExec("insert into t values ('#', 'C', 10), ('$', 'c', 20), ('$', 'c', 30), ('a', 'a', 10), ('A', 'A', 30)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select * from t where a='#';").Check(testkit.Rows("# C 10"))
 }
 
 func (s *testIntegrationSuite) TestIssue19892(c *C) {

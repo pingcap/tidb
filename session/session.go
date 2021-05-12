@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
@@ -2443,4 +2444,9 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 			transactionDurationOptimisticCommit.Observe(duration)
 		}
 	}
+}
+
+// GetTxnWriteThroughputSLI implements the Context interface.
+func (s *session) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
+	return &s.txn.writeSLI
 }
