@@ -1975,16 +1975,10 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		StoreType: kv.TiFlash,
 	}.Init(ctx, t.p.SelectBlockOffset())
 	p.stats = t.p.statsInfo()
-<<<<<<< HEAD
 	return &rootTask{
-=======
-	rt := &rootTask{
->>>>>>> e79fa8c6b... planner: let CopTiFlashConcurrencyFactor inflence the cost of whole plan (#24157)
 		p:   p,
 		cst: t.cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor,
 	}
-	p.cost = rt.cost()
-	return rt
 }
 
 func (t *mppTask) needEnforce(prop *property.PhysicalProperty) bool {
