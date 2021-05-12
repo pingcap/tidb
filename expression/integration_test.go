@@ -7780,11 +7780,11 @@ func (s *testIntegrationSerialSuite) TestCollationMergeJoin(c *C) {
 }
 
 func (s *testIntegrationSerialSuite) TestIssue20876(c *C) {
-  collate.SetNewCollationEnabledForTest(true)
+	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-  
+
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE `t` (" +
 		"  `a` char(10) COLLATE utf8mb4_unicode_ci NOT NULL," +
