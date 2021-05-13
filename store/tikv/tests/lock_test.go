@@ -25,6 +25,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	deadlockPB "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
@@ -645,7 +646,13 @@ func (s *testLockSuite) TestBatchResolveTxnFallenBackFromAsyncCommit(c *C) {
 }
 
 func (s *testLockSuite) TestDeadlockReportWaitChain(c *C) {
-	makeLockCtx := func(txn tikv.TxnProbe, resourceGroupTag string) *kv.LockCtx {
+	// Utilities to make the test logic clear and simple.
+	type txnWrapper struct {
+		tikv.TxnProbe
+		wg sync.WaitGroup
+	}
+
+	makeLockCtx := func(txn *txnWrapper, resourceGroupTag string) *kv.LockCtx {
 		return &kv.LockCtx{
 			ForUpdateTS:      txn.StartTS(),
 			WaitStartTime:    time.Now(),
@@ -654,54 +661,114 @@ func (s *testLockSuite) TestDeadlockReportWaitChain(c *C) {
 		}
 	}
 
-	txn1, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	txn1.SetPessimistic(true)
-	txn2, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	txn2.SetPessimistic(true)
+	// Prepares several transactions and each locks a key.
+	prepareTxns := func(num int) []*txnWrapper {
+		res := make([]*txnWrapper, 0, num)
+		for i := 0; i < num; i++ {
+			txnProbe, err := s.store.Begin()
+			c.Assert(err, IsNil)
+			txn := &txnWrapper{TxnProbe: txnProbe}
+			txn.SetPessimistic(true)
+			tag := fmt.Sprintf("tag-init%v", i)
+			key := []byte{'k', byte(i)}
+			err = txn.LockKeys(context.Background(), makeLockCtx(txn, tag), key)
+			c.Assert(err, IsNil)
 
-	ctx := context.Background()
-	err = txn1.LockKeys(ctx, makeLockCtx(txn1, "tag1"), []byte("k1"))
-	c.Assert(err, IsNil)
-	err = txn2.LockKeys(ctx, makeLockCtx(txn2, "tag2"), []byte("k2"))
-	c.Assert(err, IsNil)
+			res = append(res, txn)
+		}
+		return res
+	}
 
-	// txn1 blocks on k2.
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		err := txn1.LockKeys(ctx, makeLockCtx(txn1, "tag3"), []byte("k2"))
-		// After txn2 releases the lock, `txn1.LockKeys` will return a conflict error unconditionally by design.
-		c.Assert(err, NotNil)
-		_, ok := errors.Cause(err).(*tikverr.ErrWriteConflict)
-		c.Assert(ok, IsTrue)
-	}()
+	// Let the i-th trnasaction lock the key that has been locked by j-th transaction
+	tryLock := func(txns []*txnWrapper, i int, j int) error {
+		c.Logf("txn %v try locking %v", i, j)
+		txn := txns[i]
+		tag := fmt.Sprintf("tag-%v-%v", i, j)
+		key := []byte{'k', byte(j)}
+		return txn.LockKeys(context.Background(), makeLockCtx(txn, tag), key)
+	}
+
+	// Asserts the i-th transaction waits for the j-th transaction.
+	makeWaitFor := func(txns []*txnWrapper, i int, j int) {
+		txns[i].wg.Add(1)
+		go func() {
+			defer txns[i].wg.Done()
+			err := tryLock(txns, i, j)
+			// After the lock being waited for is released, the transaction returns a WriteConflict error
+			// unconditionally, which is by design.
+			c.Assert(err, NotNil)
+			c.Logf("txn %v wait for %v finished, err: %s", i, j, err.Error())
+			_, ok := errors.Cause(err).(*tikverr.ErrWriteConflict)
+			c.Assert(ok, IsTrue)
+		}()
+	}
+
+	waitAndRollback := func(txns []*txnWrapper, i int) {
+		// It's expected that each transaction should be rolled back after its blocker, so that `Rollback` will not
+		// run when there's concurrent `LockKeys` running.
+		// If it's blocked on the `Wait` forever, it means the transaction's blocker is not rolled back.
+		c.Logf("rollback txn %v", i)
+		txns[i].wg.Wait()
+		err := txns[i].Rollback()
+		c.Assert(err, IsNil)
+	}
+
+	// Check the given WaitForEntry is caused by txn[i] waiting for txn[j].
+	checkWaitChainEntry := func(txns []*txnWrapper, entry *deadlockPB.WaitForEntry, i, j int) {
+		c.Assert(entry.Txn, Equals, txns[i].StartTS())
+		c.Assert(entry.WaitForTxn, Equals, txns[j].StartTS())
+		c.Assert(entry.Key, BytesEquals, []byte{'k', byte(j)})
+		c.Assert(string(entry.ResourceGroupTag), Equals, fmt.Sprintf("tag-%v-%v", i, j))
+	}
+
+	c.Log("test case 1: 1->0->1")
+
+	txns := prepareTxns(2)
+
+	makeWaitFor(txns, 0, 1)
 	// Sleep for a while to make sure it has been blocked.
 	time.Sleep(time.Millisecond * 100)
 
 	// txn2 tries locking k1 and encounters deadlock error.
-	err = txn2.LockKeys(ctx, makeLockCtx(txn2, "tag4"), []byte("k1"))
+	err := tryLock(txns, 1, 0)
 	c.Assert(err, NotNil)
 	dl, ok := errors.Cause(err).(*tikverr.ErrDeadlock)
 	c.Assert(ok, IsTrue)
 
 	waitChain := dl.GetWaitChain()
 	c.Assert(len(waitChain), Equals, 2)
-	c.Assert(waitChain[0].Txn, Equals, txn1.StartTS())
-	c.Assert(waitChain[0].WaitForTxn, Equals, txn2.StartTS())
-	c.Assert(waitChain[0].Key, DeepEquals, []byte("k2"))
-	c.Assert(string(waitChain[0].ResourceGroupTag), Equals, "tag3")
+	checkWaitChainEntry(txns, waitChain[0], 0, 1)
+	checkWaitChainEntry(txns, waitChain[1], 1, 0)
 
-	c.Assert(waitChain[1].Txn, Equals, txn2.StartTS())
-	c.Assert(waitChain[1].WaitForTxn, Equals, txn1.StartTS())
-	c.Assert(waitChain[1].Key, DeepEquals, []byte("k1"))
-	c.Assert(string(waitChain[1].ResourceGroupTag), Equals, "tag4")
+	// Each transaction should be rolled back after its blocker being rolled back
+	waitAndRollback(txns, 1)
+	waitAndRollback(txns, 0)
 
-	err = txn2.Rollback()
-	c.Assert(err, IsNil)
-	wg.Wait()
-	err = txn1.Rollback()
-	c.Assert(err, IsNil)
+	c.Log("test case 2: 3->2->0->1->3")
+	txns = prepareTxns(4)
+
+	makeWaitFor(txns, 0, 1)
+	makeWaitFor(txns, 2, 0)
+	makeWaitFor(txns, 1, 3)
+	// Sleep for a while to make sure it has been blocked.
+	time.Sleep(time.Millisecond * 100)
+
+	err = tryLock(txns, 3, 2)
+	c.Assert(err, NotNil)
+	dl, ok = errors.Cause(err).(*tikverr.ErrDeadlock)
+	c.Assert(ok, IsTrue)
+
+	waitChain = dl.GetWaitChain()
+	c.Assert(len(waitChain), Equals, 4)
+	c.Logf("wait chain: \n** %v\n**%v\n**%v\n**%v\n", waitChain[0], waitChain[1], waitChain[2], waitChain[3])
+	checkWaitChainEntry(txns, waitChain[0], 1, 3)
+	checkWaitChainEntry(txns, waitChain[1], 0, 1)
+	checkWaitChainEntry(txns, waitChain[2], 2, 0)
+	checkWaitChainEntry(txns, waitChain[3], 3, 2)
+
+	// Each transaction should be rolled back after its blocker being rolled back
+	waitAndRollback(txns, 3)
+	waitAndRollback(txns, 1)
+	waitAndRollback(txns, 0)
+	waitAndRollback(txns, 2)
 }
