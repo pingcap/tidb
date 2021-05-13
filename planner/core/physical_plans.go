@@ -1412,7 +1412,7 @@ func (p *PhysicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // ExplainInfo overrides the ExplainInfo
 func (p *PhysicalCTETable) ExplainInfo() string {
-	return "Scan on CTE_" + strconv.Itoa(p.IdForStorage)
+	return "Scan on CTE_" + strconv.Itoa(p.IDForStorage)
 }
 
 // CTEDefinition is CTE definition for explain.
@@ -1429,6 +1429,6 @@ func (p *CTEDefinition) ExplainInfo() string {
 // ExplainID overrides the ExplainID.
 func (p *CTEDefinition) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
-		return "CTE_" + strconv.Itoa(p.CTE.IdForStorage)
+		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
 	})
 }

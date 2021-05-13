@@ -1045,7 +1045,7 @@ func (e *Explain) explainPlanInRowFormatCTE() (err error) {
 	explainedCTEPlan := make(map[int]struct{})
 	for i := 0; i < len(e.ctes); i++ {
 		x := (*CTEDefinition)(e.ctes[i])
-		if _, ok := explainedCTEPlan[x.CTE.IdForStorage]; ok {
+		if _, ok := explainedCTEPlan[x.CTE.IDForStorage]; ok {
 			continue
 		}
 		e.prepareOperatorInfo(x, "root", "", "", true)
@@ -1056,7 +1056,7 @@ func (e *Explain) explainPlanInRowFormatCTE() (err error) {
 		if x.RecurPlan != nil {
 			err = e.explainPlanInRowFormat(x.RecurPlan, "root", "(Recursive Part)", childIndent, true)
 		}
-		explainedCTEPlan[x.CTE.IdForStorage] = struct{}{}
+		explainedCTEPlan[x.CTE.IDForStorage] = struct{}{}
 	}
 
 	return
