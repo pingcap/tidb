@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
@@ -46,11 +47,14 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 // PreparedStmtCount is exported for test.
@@ -127,13 +131,12 @@ func (r *retryInfoAutoIDs) getCurrent() (int64, bool) {
 
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
-	forUpdateTS   uint64
-	stmtFuture    oracle.Future
-	Binlog        interface{}
-	InfoSchema    interface{}
-	History       interface{}
-	SchemaVersion int64
-	StartTS       uint64
+	forUpdateTS uint64
+	stmtFuture  oracle.Future
+	Binlog      interface{}
+	InfoSchema  interface{}
+	History     interface{}
+	StartTS     uint64
 
 	// ShardStep indicates the max size of continuous rowid shard in one transaction.
 	ShardStep    int
@@ -172,6 +175,10 @@ type TransactionContext struct {
 
 	// TableDeltaMap lock to prevent potential data race
 	tdmLock sync.Mutex
+
+	// GlobalTemporaryTables is used to store transaction-specific information for global temporary tables.
+	// It can also be stored in sessionCtx with local temporary tables, but it's easier to clean this data after transaction ends.
+	GlobalTemporaryTables map[int64]tableutil.TempTable
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -489,11 +496,12 @@ type SessionVars struct {
 	AllowWriteRowID bool
 
 	// AllowBatchCop means if we should send batch coprocessor to TiFlash. Default value is 1, means to use batch cop in case of aggregation and join.
-	// If value is set to 2 , which means to force to send batch cop for any query. Value is set to 0 means never use batch cop.
+	// Value set to 2 means to force to send batch cop for any query. Value set to 0 means never use batch cop.
 	AllowBatchCop int
 
-	// AllowMPPExecution will prefer using mpp way to execute a query.
-	AllowMPPExecution bool
+	// AllowMPPExecution means if we should use mpp way to execute query. Default value is "ON", means to be determined by the optimizer.
+	// Value set to "ENFORCE" means to use mpp whenever possible. Value set to means never use mpp.
+	allowMPPExecution string
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
@@ -783,7 +791,7 @@ type SessionVars struct {
 	EnableAmendPessimisticTxn bool
 
 	// LastTxnInfo keeps track the info of last committed transaction.
-	LastTxnInfo kv.TxnInfo
+	LastTxnInfo string
 
 	// LastQueryInfo keeps track the info of last query.
 	LastQueryInfo QueryInfo
@@ -842,6 +850,16 @@ func (s *SessionVars) AllocMPPTaskID(startTS uint64) int64 {
 	return 1
 }
 
+// IsMPPAllowed returns whether mpp execution is allowed.
+func (s *SessionVars) IsMPPAllowed() bool {
+	return s.allowMPPExecution != "OFF"
+}
+
+// IsMPPEnforced returns whether mpp execution is enforced.
+func (s *SessionVars) IsMPPEnforced() bool {
+	return s.allowMPPExecution == "ENFORCE"
+}
+
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
 func (s *SessionVars) CheckAndGetTxnScope() string {
 	if s.InRestrictedSQL {
@@ -864,6 +882,30 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 		EnableWindowFunction:        s.EnableWindowFunction,
 		EnableStrictDoubleTypeCheck: s.EnableStrictDoubleTypeCheck,
 	}
+}
+
+// FIXME: remove this interface
+// infoschemaMetaVersion is a workaround. Due to circular dependency,
+// can not return the complete interface. But SchemaMetaVersion is widely used for logging.
+// So we give a convenience for that
+type infoschemaMetaVersion interface {
+	SchemaMetaVersion() int64
+}
+
+// GetInfoSchema returns snapshotInfoSchema if snapshot schema is set.
+// Otherwise, transaction infoschema is returned.
+// Nil if there is no available infoschema.
+func (s *SessionVars) GetInfoSchema() infoschemaMetaVersion {
+	if snap, ok := s.SnapshotInfoschema.(infoschemaMetaVersion); ok {
+		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", s.ConnectionID), zap.Int64("schemaVersion", snap.SchemaMetaVersion()))
+		return snap
+	}
+	if s.TxnCtx != nil {
+		if is, ok := s.TxnCtx.InfoSchema.(infoschemaMetaVersion); ok {
+			return is
+		}
+	}
+	return nil
 }
 
 // PartitionPruneMode presents the prune mode used.
@@ -962,7 +1004,7 @@ func NewSessionVars() *SessionVars {
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
 		RetryLimit:                  DefTiDBRetryLimit,
 		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
-		DDLReorgPriority:            tikvstore.PriorityLow,
+		DDLReorgPriority:            kv.PriorityLow,
 		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
 		preferRangeScan:             DefOptPreferRangeScan,
 		CorrelationThreshold:        DefOptCorrelationThreshold,
@@ -1067,7 +1109,7 @@ func NewSessionVars() *SessionVars {
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
-	vars.AllowMPPExecution = DefTiDBAllowMPPExecution
+	vars.allowMPPExecution = DefTiDBAllowMPPExecution
 
 	var enableChunkRPC string
 	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
@@ -1308,13 +1350,13 @@ func (s *SessionVars) setDDLReorgPriority(val string) {
 	val = strings.ToLower(val)
 	switch val {
 	case "priority_low":
-		s.DDLReorgPriority = tikvstore.PriorityLow
+		s.DDLReorgPriority = kv.PriorityLow
 	case "priority_normal":
-		s.DDLReorgPriority = tikvstore.PriorityNormal
+		s.DDLReorgPriority = kv.PriorityNormal
 	case "priority_high":
-		s.DDLReorgPriority = tikvstore.PriorityHigh
+		s.DDLReorgPriority = kv.PriorityHigh
 	default:
-		s.DDLReorgPriority = tikvstore.PriorityLow
+		s.DDLReorgPriority = kv.PriorityLow
 	}
 }
 
@@ -1375,11 +1417,7 @@ func (s *SessionVars) ClearStmtVars() {
 // i.e. oN / on / 1 => ON
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	sv := GetSysVar(name)
-	if err := sv.SetSessionFromHook(s, val); err != nil {
-		return err
-	}
-	s.systems[name] = val
-	return nil
+	return sv.SetSessionFromHook(s, val)
 }
 
 // GetReadableTxnMode returns the session variable TxnMode but rewrites it to "OPTIMISTIC" when it's empty.
@@ -1422,18 +1460,22 @@ func (s *SessionVars) LazyCheckKeyNotExists() bool {
 	return s.PresumeKeyNotExists || (s.TxnCtx.IsPessimistic && !s.StmtCtx.DupKeyAsWarning)
 }
 
-// SetLocalSystemVar sets values of the local variables which in "server" scope.
-func SetLocalSystemVar(name string, val string) {
-	switch name {
-	case TiDBDDLReorgWorkerCount:
-		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
-	case TiDBDDLReorgBatchSize:
-		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
-	case TiDBDDLErrorCountLimit:
-		SetDDLErrorCountLimit(tidbOptInt64(val, DefTiDBDDLErrorCountLimit))
-	case TiDBRowFormatVersion:
-		SetDDLReorgRowFormat(tidbOptInt64(val, DefTiDBRowFormatV2))
+// GetTemporaryTable returns a TempTable by tableInfo.
+func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.TempTable {
+	if tblInfo.TempTableType == model.TempTableGlobal {
+		if s.TxnCtx.GlobalTemporaryTables == nil {
+			s.TxnCtx.GlobalTemporaryTables = make(map[int64]tableutil.TempTable)
+		}
+		globalTempTables := s.TxnCtx.GlobalTemporaryTables
+		globalTempTable, ok := globalTempTables[tblInfo.ID]
+		if !ok {
+			globalTempTable = tableutil.TempTableFromMeta(tblInfo)
+			globalTempTables[tblInfo.ID] = globalTempTable
+		}
+		return globalTempTable
 	}
+	// TODO: check local temporary tables
+	return nil
 }
 
 // special session variables.
@@ -1446,22 +1488,7 @@ const (
 	TransactionIsolation = "transaction_isolation"
 	TxnIsolationOneShot  = "tx_isolation_one_shot"
 	MaxExecutionTime     = "max_execution_time"
-)
-
-// these variables are useless for TiDB, but still need to validate their values for some compatible issues.
-// TODO: some more variables need to be added here.
-const (
-	serverReadOnly = "read_only"
-)
-
-var (
-	// TxIsolationNames are the valid values of the variable "tx_isolation" or "transaction_isolation".
-	TxIsolationNames = map[string]struct{}{
-		"READ-UNCOMMITTED": {},
-		"READ-COMMITTED":   {},
-		"REPEATABLE-READ":  {},
-		"SERIALIZABLE":     {},
-	}
+	ReadOnly             = "read_only"
 )
 
 // TableDelta stands for the changed count for one table or partition.

@@ -16,7 +16,7 @@ package unionstore
 import (
 	"context"
 
-	tidbkv "github.com/pingcap/tidb/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
@@ -27,6 +27,13 @@ type Iterator interface {
 	Value() []byte
 	Next() error
 	Close()
+}
+
+// Getter is the interface for the Get method.
+type Getter interface {
+	// Get gets the value for key k from kv store.
+	// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
+	Get(k []byte) ([]byte, error)
 }
 
 // uSnapshot defines the interface for the snapshot fetched from KV store.
@@ -72,14 +79,14 @@ func (us *KVUnionStore) GetMemBuffer() *MemDB {
 // Get implements the Retriever interface.
 func (us *KVUnionStore) Get(ctx context.Context, k []byte) ([]byte, error) {
 	v, err := us.memBuffer.Get(k)
-	if tidbkv.IsErrNotFound(err) {
+	if tikverr.IsErrNotFound(err) {
 		v, err = us.snapshot.Get(ctx, k)
 	}
 	if err != nil {
 		return v, err
 	}
 	if len(v) == 0 {
-		return nil, tidbkv.ErrNotExist
+		return nil, tikverr.ErrNotExist
 	}
 	return v, nil
 }
