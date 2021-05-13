@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	tidbkv "github.com/pingcap/tidb/kv"
 	drivertxn "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
@@ -104,7 +105,7 @@ func (s *testCommitterSuite) begin(c *C) tikv.TxnProbe {
 func (s *testCommitterSuite) beginAsyncCommit(c *C) tikv.TxnProbe {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.SetOption(kv.EnableAsyncCommit, true)
+	txn.SetEnableAsyncCommit(true)
 	return txn
 }
 
@@ -602,12 +603,12 @@ func (s *testCommitterSuite) TestRejectCommitTS(c *C) {
 	// Use max.Uint64 to read the data and success.
 	// That means the final commitTS > startTS+2, it's not the one we provide.
 	// So we cover the rety commitTS logic.
-	txn1, err := s.store.BeginWithStartTS(oracle.GlobalTxnScope, committer.GetStartTS()+2)
+	txn1, err := s.store.BeginWithOption(tidbkv.DefaultTransactionOption().SetStartTs(committer.GetStartTS() + 2))
 	c.Assert(err, IsNil)
 	_, err = txn1.Get(bo.GetCtx(), []byte("x"))
 	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 
-	txn2, err := s.store.BeginWithStartTS(oracle.GlobalTxnScope, math.MaxUint64)
+	txn2, err := s.store.BeginWithOption(tidbkv.DefaultTransactionOption().SetStartTs(math.MaxUint64))
 	c.Assert(err, IsNil)
 	val, err := txn2.Get(bo.GetCtx(), []byte("x"))
 	c.Assert(err, IsNil)
@@ -1024,7 +1025,7 @@ func (s *testCommitterSuite) TestPessimisticLockPrimary(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL"), IsNil)
 	c.Assert(err, IsNil)
 	waitErr := <-doneCh
-	c.Assert(tikverr.ErrLockWaitTimeout.Equal(waitErr), IsTrue)
+	c.Assert(tikverr.ErrLockWaitTimeout, Equals, waitErr)
 }
 
 func (s *testCommitterSuite) TestResolvePessimisticLock(c *C) {

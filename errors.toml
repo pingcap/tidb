@@ -1138,7 +1138,7 @@ Schema has changed
 
 ["planner:8121"]
 error = '''
-privilege check fail
+privilege check for '%s' fail
 '''
 
 ["planner:8122"]
@@ -1284,6 +1284,11 @@ User %s already exists.
 ["schema:4139"]
 error = '''
 Unknown SEQUENCE: '%-.300s'
+'''
+
+["schema:8003"]
+error = '''
+TiDB admin check table failed.
 '''
 
 ["schema:8020"]
