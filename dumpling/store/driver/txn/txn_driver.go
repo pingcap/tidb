@@ -120,10 +120,6 @@ func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
 	return newMemBuffer(txn.KVTxn.GetMemBuffer())
 }
 
-func (txn *tikvTxn) GetUnionStore() kv.UnionStore {
-	return &tikvUnionStore{txn.KVTxn.GetUnionStore()}
-}
-
 func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	switch opt {
 	case kv.BinlogInfo:
