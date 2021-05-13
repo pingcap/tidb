@@ -169,6 +169,11 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 			preSec:   20,
 			errorStr: "not set different ts",
 		},
+		{
+			name:   "NomalRead",
+			sql:    `select * from t, b;`,
+			preSec: 0,
+		},
 	}
 
 	tk.MustExec("use test")

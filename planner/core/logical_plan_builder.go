@@ -2477,11 +2477,14 @@ func TryExtractTSFromAsOf(ctx sessionctx.Context, node ast.Node) (*types.Datum, 
 			for i := 1; i < len(tsValues); i++ {
 				val := tsValues[i]
 				if (val == nil && first != nil) || (val != nil && first == nil) {
-					return nil, errors.New("can not set different ts in one statement")
+					return nil, errors.New("can not set different timestamp in one statement")
+				}
+				if first == nil && val == nil {
+					continue
 				}
 				// TODO: remove reflect
 				if !reflect.DeepEqual(first.GetValue(), val.GetValue()) {
-					return nil, errors.New("can not set different ts in one statement")
+					return nil, errors.New("can not set different timestamp in one statement")
 				}
 			}
 			return first, nil
