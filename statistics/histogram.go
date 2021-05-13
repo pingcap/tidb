@@ -1504,13 +1504,14 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 }
 
 func (idx *Index) outOfRange(val types.Datum) bool {
-	if idx.Histogram.Len() == 0 {
+	if idx.Histogram.Len() == 0 && len(idx.TopN.TopN) == 0 {
 		return true
 	}
+	inTopN := idx.TopN.findTopN(val.GetBytes()) >= 0
 	withInLowBoundOrPrefixMatch := chunk.Compare(idx.Bounds.GetRow(0), 0, &val) <= 0 ||
 		matchPrefix(idx.Bounds.GetRow(0), 0, &val)
 	withInHighBound := chunk.Compare(idx.Bounds.GetRow(idx.Bounds.NumRows()-1), 0, &val) >= 0
-	return !withInLowBoundOrPrefixMatch || !withInHighBound
+	return (!withInLowBoundOrPrefixMatch || !withInHighBound) && !inTopN
 }
 
 // matchPrefix checks whether ad is the prefix of value

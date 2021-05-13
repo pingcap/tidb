@@ -386,8 +386,9 @@ func CMSketchToProto(c *CMSketch, topn *TopN) *tipb.CMSketch {
 
 // CMSketchAndTopNFromProto converts CMSketch and TopN from its protobuf representation.
 func CMSketchAndTopNFromProto(protoSketch *tipb.CMSketch) (*CMSketch, *TopN) {
+	retTopN := TopNFromProto(protoSketch.TopN)
 	if protoSketch == nil || len(protoSketch.Rows) == 0 {
-		return nil, nil
+		return nil, retTopN
 	}
 	c := NewCMSketch(int32(len(protoSketch.Rows)), int32(len(protoSketch.Rows[0].Counters)))
 	for i, row := range protoSketch.Rows {
@@ -398,14 +399,14 @@ func CMSketchAndTopNFromProto(protoSketch *tipb.CMSketch) (*CMSketch, *TopN) {
 		}
 	}
 	c.defaultValue = protoSketch.DefaultValue
-	if len(protoSketch.TopN) == 0 {
-		return c, nil
-	}
-	return c, TopNFromProto(protoSketch.TopN)
+	return c, retTopN
 }
 
 // TopNFromProto converts TopN from its protobuf representation.
 func TopNFromProto(protoTopN []*tipb.CMSketchTopN) *TopN {
+	if len(protoTopN) == 0 {
+		return nil
+	}
 	topN := NewTopN(32)
 	for _, e := range protoTopN {
 		d := make([]byte, len(e.Data))
