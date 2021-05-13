@@ -866,6 +866,10 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		//https://github.com/pingcap/tidb/issues/14297
 		{"select 1 where 1=1", true, "SELECT 1 FROM DUAL WHERE 1=1"},
 
+		//https://github.com/pingcap/tidb/issues/24496
+		{"select 1 group by 1", true, "SELECT 1 GROUP BY 1"},
+		{"select 1 from dual group by 1", true, "SELECT 1 GROUP BY 1"},
+
 		// for https://github.com/pingcap/parser/issues/963
 		{"select min(b) b from (select min(t.b) b from t where t.a = '');", true, "SELECT MIN(`b`) AS `b` FROM (SELECT MIN(`t`.`b`) AS `b` FROM `t` WHERE `t`.`a`=_UTF8MB4'')"},
 		{"select min(b) b from (select min(t.b) b from t where t.a = '') as t1;", true, "SELECT MIN(`b`) AS `b` FROM (SELECT MIN(`t`.`b`) AS `b` FROM `t` WHERE `t`.`a`=_UTF8MB4'') AS `t1`"},
