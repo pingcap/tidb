@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -114,6 +115,91 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 		tk.MustExec("commit")
 		failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
 	}
+}
+
+func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
+		c.Assert(err, IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`drop table if exists b`)
+	tk.MustExec("create table t (id int primary key);")
+	tk.MustExec("create table b (id int primary key);")
+	defer func() {
+		tk.MustExec(`drop table if exists b`)
+		tk.MustExec(`drop table if exists t`)
+	}()
+
+	testcases := []struct {
+		name             string
+		sql              string
+		expectPhysicalTS int64
+		preSec           int64
+		// IsStaleness is auto cleanup in select stmt.
+		errorStr string
+	}{
+		{
+			name:             "TimestampExactRead",
+			sql:              `select * from t as of timestamp TIMESTAMP('2020-09-06 00:00:00');`,
+			expectPhysicalTS: 1599321600000,
+		},
+		{
+			name:   "TimestampExactRead",
+			sql:    `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND);`,
+			preSec: 20,
+		},
+		{
+			name:   "TimestampExactRead",
+			sql:    `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND);`,
+			preSec: 20,
+		},
+		{
+			name:     "TimestampExactRead",
+			sql:      `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND), b as of timestamp TIMESTAMP('2020-09-06 00:00:00');`,
+			preSec:   20,
+			errorStr: "not set different ts",
+		},
+		{
+			name:     "TimestampExactRead",
+			sql:      `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND), b;`,
+			preSec:   20,
+			errorStr: "not set different ts",
+		},
+	}
+
+	tk.MustExec("use test")
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		_, err := tk.Exec(testcase.sql)
+		if len(testcase.errorStr) == 0 {
+			c.Assert(err, IsNil, Commentf("sql:%s, error stack %v", testcase.sql, errors.ErrorStack(err)))
+		} else {
+			c.Assert(err, NotNil)
+			c.Assert(strings.Contains(err.Error(), testcase.errorStr), IsTrue)
+			continue
+		}
+		if testcase.expectPhysicalTS > 0 {
+			c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, testcase.expectPhysicalTS)
+		} else if testcase.preSec > 0 {
+			curSec := time.Now().Unix()
+			startTS := oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS)
+			// exact stale txn tolerate 2 seconds deviation for startTS
+			c.Assert(startTS, Greater, (curSec-testcase.preSec-2)*1000)
+			c.Assert(startTS, Less, (curSec-testcase.preSec+2)*1000)
+		}
+	}
+
+	// TODO: add cases
+	// tk.MustExec("begin")
+	// tk.MustQuery("select count(*) from ( select * from t2 group by a, b) A group by A.b").Check(testkit.Rows("3"))
+	// tk.MustQuery("select count(*) from t1 where t1.a+100 > ( select count(*) from t2 where t1.a=t2.a and t1.b=t2.b) group by t1.b").Check(testkit.Rows("4"))
+	// txn, err := tk.Se.Txn(true)
+	// c.Assert(err, IsNil)
+	// ts := txn.StartTS()
 }
 
 func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {

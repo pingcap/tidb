@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -2419,6 +2420,75 @@ func (b *PlanBuilder) resolveCorrelatedAggregates(ctx context.Context, sel *ast.
 		})
 	}
 	return correlatedAggMap, nil
+}
+
+type asofResolver struct {
+	ctx      sessionctx.Context
+	tsValues []*types.Datum
+	err      error
+}
+
+func (a *asofResolver) Enter(inNode ast.Node) (ast.Node, bool) {
+	switch n := inNode.(type) {
+	case *ast.AsOfClause:
+		if n.TsExpr != nil {
+			tsRes, err := evalAstExpr(a.ctx, n.TsExpr)
+			if err != nil {
+				a.err = err
+				return n, true
+			}
+			a.tsValues = append(a.tsValues, &tsRes)
+
+		}
+		return n, false
+	// for the cases: select * from a as of timestamp 'xxx', b;
+	case *ast.TableName:
+		if n.AsOf == nil {
+			a.tsValues = append(a.tsValues, nil)
+		}
+		return n, false
+	}
+
+	return inNode, false
+}
+
+func (a *asofResolver) Leave(inNode ast.Node) (ast.Node, bool) {
+	return inNode, true
+}
+
+// TryExtractTSFromAsOf trys to  extract the specified timestamp.
+func TryExtractTSFromAsOf(ctx sessionctx.Context, node ast.Node) (*types.Datum, error) {
+	switch x := node.(type) {
+	case *ast.SelectStmt:
+		tblRefs := x.From
+		if tblRefs != nil {
+			resolve := &asofResolver{
+				ctx: ctx,
+			}
+			tblRefs.Accept(resolve)
+			if resolve.err != nil {
+				return nil, resolve.err
+			}
+			tsValues := resolve.tsValues
+			if len(tsValues) == 0 {
+				return nil, nil
+			}
+			first := tsValues[0]
+			for i := 1; i < len(tsValues); i++ {
+				val := tsValues[i]
+				if (val == nil && first != nil) || (val != nil && first == nil) {
+					return nil, errors.New("can not set different ts in one statement")
+				}
+				// TODO: remove reflect
+				if !reflect.DeepEqual(first.GetValue(), val.GetValue()) {
+					return nil, errors.New("can not set different ts in one statement")
+				}
+			}
+			return first, nil
+
+		}
+	}
+	return nil, nil
 }
 
 // gbyResolver resolves group by items from select fields.

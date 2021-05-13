@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
@@ -119,7 +120,25 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			return fp, fp.OutputNames(), nil
 		}
 	}
-
+	// TODO: Supports value expression
+	ts, err := plannercore.TryExtractTSFromAsOf(sctx, node)
+	if err != nil {
+		return nil, nil, err
+	}
+	if ts != nil {
+		tsTime, err := ts.GetMysqlTime().GoTime(sctx.GetSessionVars().TimeZone)
+		if err != nil {
+			return nil, nil, err
+		}
+		tso := oracle.ComposeTS(tsTime.Unix()*1000, 0)
+		opt := sessionctx.StalenessTxnOption{}
+		opt.Mode = ast.TimestampBoundReadTimestamp
+		opt.StartTS = tso
+		err = sctx.NewTxnWithStalenessOption(ctx, opt)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	sctx.PrepareTSFuture(ctx)
 
 	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
