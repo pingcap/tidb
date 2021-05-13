@@ -142,9 +142,9 @@ func FlattenConfigItems(nestedConfig map[string]interface{}) map[string]interfac
 }
 
 func flatten(flatMap map[string]interface{}, nested interface{}, prefix string) {
-	switch nested.(type) {
+	switch nested := nested.(type) {
 	case map[string]interface{}:
-		for k, v := range nested.(map[string]interface{}) {
+		for k, v := range nested {
 			path := k
 			if prefix != "" {
 				path = prefix + "." + k
