@@ -279,7 +279,8 @@ func (b *Backoffer) Backoff(typ BackoffType, err error) error {
 	return b.BackoffWithMaxSleep(typ, -1, err)
 }
 
-// BackoffTiKVRPC calls Backoff with boTiKVRPC.
+// BackoffTiKVRPC sleeps a while base on the TiKVRPC and records the error message.
+// It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) BackoffTiKVRPC(err error) error {
 	return b.Backoff(boTiKVRPC, err)
 }
