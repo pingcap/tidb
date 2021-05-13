@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -161,6 +162,7 @@ func serverStatus2Str(state uint16) string {
 // kill statement rely on this interface.
 type SessionManager interface {
 	ShowProcessList() map[uint64]*ProcessInfo
+	ShowTxnList() []*txninfo.TxnInfo
 	GetProcessInfo(id uint64) (*ProcessInfo, bool)
 	Kill(connectionID uint64, query bool)
 	KillAllConnections()

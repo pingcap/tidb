@@ -82,6 +82,7 @@ type KVTxn struct {
 	syncLog            bool
 	priority           Priority
 	isPessimistic      bool
+	enableAsyncCommit  bool
 	enable1PC          bool
 	scope              string
 	kvFilter           KVFilter
@@ -112,12 +113,12 @@ func extractStartTs(store *KVStore, options kv.TransactionOption) (uint64, error
 		} else {
 			stores = allStores
 		}
-		resolveTS := store.getMinResolveTSByStores(stores)
+		safeTS := store.getMinSafeTSByStores(stores)
 		startTs = *options.MinStartTS
-		// If the resolveTS is larger than the minStartTS, we will use resolveTS as StartTS, otherwise we will use
+		// If the safeTS is larger than the minStartTS, we will use safeTS as StartTS, otherwise we will use
 		// minStartTS directly.
-		if oracle.CompareTS(startTs, resolveTS) < 0 {
-			startTs = resolveTS
+		if oracle.CompareTS(startTs, safeTS) < 0 {
+			startTs = safeTS
 		}
 	} else if options.MaxPrevSec != nil {
 		bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
@@ -223,10 +224,6 @@ func (txn *KVTxn) Delete(k []byte) error {
 func (txn *KVTxn) SetOption(opt int, val interface{}) {
 	txn.us.SetOption(opt, val)
 	txn.snapshot.SetOption(opt, val)
-	switch opt {
-	case tikv.SchemaAmender:
-		txn.schemaAmender = val.(SchemaAmender)
-	}
 }
 
 // GetOption returns the option
@@ -265,10 +262,20 @@ func (txn *KVTxn) SetPriority(pri Priority) {
 	txn.GetSnapshot().SetPriority(pri)
 }
 
+// SetSchemaAmender sets an amender to update mutations after schema change.
+func (txn *KVTxn) SetSchemaAmender(sa SchemaAmender) {
+	txn.schemaAmender = sa
+}
+
 // SetCommitCallback sets up a function that will be called when the transaction
 // is finished.
 func (txn *KVTxn) SetCommitCallback(f func(string, error)) {
 	txn.commitCallback = f
+}
+
+// SetEnableAsyncCommit indicates if the transaction will try to use async commit.
+func (txn *KVTxn) SetEnableAsyncCommit(b bool) {
+	txn.enableAsyncCommit = b
 }
 
 // SetEnable1PC indicates if the transaction will try to use 1 phase commit.
