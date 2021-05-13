@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/kv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	tikv "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -53,6 +52,52 @@ type SchemaAmender interface {
 	// AmendTxn is the amend entry, new mutations will be generated based on input mutations using schema change info.
 	// The returned results are mutations need to prewrite and mutations need to cleanup.
 	AmendTxn(ctx context.Context, startInfoSchema SchemaVer, change *RelatedSchemaChange, mutations CommitterMutations) (CommitterMutations, error)
+}
+
+// TransactionOption indicates the option when beginning a transaction
+// `TxnScope` must be set for each object
+// Every other fields are optional, but currently at most one of them can be set
+type TransactionOption struct {
+	TxnScope   string
+	StartTS    *uint64
+	PrevSec    *uint64
+	MinStartTS *uint64
+	MaxPrevSec *uint64
+}
+
+// DefaultTransactionOption creates a default TransactionOption, ie. Work in GlobalTxnScope and get start ts when got used
+func DefaultTransactionOption() TransactionOption {
+	return TransactionOption{TxnScope: oracle.GlobalTxnScope}
+}
+
+// SetMaxPrevSec set maxPrevSec
+func (to TransactionOption) SetMaxPrevSec(maxPrevSec uint64) TransactionOption {
+	to.MaxPrevSec = &maxPrevSec
+	return to
+}
+
+// SetMinStartTS set minStartTS
+func (to TransactionOption) SetMinStartTS(minStartTS uint64) TransactionOption {
+	to.MinStartTS = &minStartTS
+	return to
+}
+
+// SetStartTs set startTS
+func (to TransactionOption) SetStartTs(startTS uint64) TransactionOption {
+	to.StartTS = &startTS
+	return to
+}
+
+// SetPrevSec set prevSec
+func (to TransactionOption) SetPrevSec(prevSec uint64) TransactionOption {
+	to.PrevSec = &prevSec
+	return to
+}
+
+// SetTxnScope set txnScope
+func (to TransactionOption) SetTxnScope(txnScope string) TransactionOption {
+	to.TxnScope = txnScope
+	return to
 }
 
 // KVTxn contains methods to interact with a TiKV transaction.
@@ -90,7 +135,7 @@ type KVTxn struct {
 	kvFilter           KVFilter
 }
 
-func extractStartTs(store *KVStore, options kv.TransactionOption) (uint64, error) {
+func extractStartTs(store *KVStore, options TransactionOption) (uint64, error) {
 	var startTs uint64
 	var err error
 	if options.StartTS != nil {
@@ -137,7 +182,7 @@ func extractStartTs(store *KVStore, options kv.TransactionOption) (uint64, error
 	return startTs, err
 }
 
-func newTiKVTxnWithOptions(store *KVStore, options kv.TransactionOption) (*KVTxn, error) {
+func newTiKVTxnWithOptions(store *KVStore, options TransactionOption) (*KVTxn, error) {
 	if options.TxnScope == "" {
 		options.TxnScope = oracle.GlobalTxnScope
 	}

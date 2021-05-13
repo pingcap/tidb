@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
@@ -184,11 +183,11 @@ func (s *KVStore) runSafePointChecker() {
 
 // Begin a global transaction.
 func (s *KVStore) Begin() (*KVTxn, error) {
-	return s.BeginWithOption(tidbkv.DefaultTransactionOption())
+	return s.BeginWithOption(DefaultTransactionOption())
 }
 
 // BeginWithOption begins a transaction with the given TransactionOption
-func (s *KVStore) BeginWithOption(options tidbkv.TransactionOption) (*KVTxn, error) {
+func (s *KVStore) BeginWithOption(options TransactionOption) (*KVTxn, error) {
 	return newTiKVTxnWithOptions(s, options)
 }
 
