@@ -72,7 +72,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		logutil.BgLogger().Debug("send batch requests")
 		return c.sendBatch(ctx, req, vars)
 	}
-	ctx = context.WithValue(ctx, tikv.TxnStartKey, req.StartTs)
+	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	bo := newBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	ranges := toTiKVKeyRanges(req.KeyRanges)
 	tasks, err := buildCopTasks(bo, c.store.GetRegionCache(), ranges, req)
@@ -829,11 +829,14 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *backoffer, rpcCtx *ti
 				return nil, nil
 			}
 
-			boRPCType := tikv.BoTiKVRPC
+			err1 := errors.Errorf("recv stream response error: %v, task: %s", err, task)
 			if task.storeType == kv.TiFlash {
-				boRPCType = tikv.BoTiFlashRPC
+				err1 = bo.Backoff(tikv.BoTiFlashRPC, err1)
+			} else {
+				err1 = bo.b.BackoffTiKVRPC(err1)
 			}
-			if err1 := bo.Backoff(boRPCType, errors.Errorf("recv stream response error: %v, task: %s", err, task)); err1 != nil {
+
+			if err1 != nil {
 				return nil, errors.Trace(err)
 			}
 

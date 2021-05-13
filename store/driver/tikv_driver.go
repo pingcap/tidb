@@ -206,6 +206,8 @@ var (
 	ldflagGetEtcdAddrsFromConfig = "0" // 1:Yes, otherwise:No
 )
 
+const getAllMembersBackoff = 5000
+
 // EtcdAddrs returns etcd server addresses.
 func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	if s.etcdAddrs == nil {
@@ -220,7 +222,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	}
 
 	ctx := context.Background()
-	bo := tikv.NewBackoffer(ctx, tikv.GetAllMembersBackoff)
+	bo := tikv.NewBackoffer(ctx, getAllMembersBackoff)
 	etcdAddrs := make([]string, 0)
 	pdClient := s.GetPDClient()
 	if pdClient == nil {
