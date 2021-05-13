@@ -352,7 +352,7 @@ func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return updateColumnDefaultValue(t, job, newCol, &newCol.Name)
 }
 
-func (w *worker) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	newCol := &model.ColumnInfo{}
 	oldColName := &model.CIStr{}
 	pos := &ast.ColumnPosition{}
@@ -364,12 +364,12 @@ func (w *worker) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return ver, errors.Trace(err)
 	}
 
-	return w.doModifyColumn(t, job, newCol, oldColName, pos, modifyColumnTp, updatedAutoRandomBits)
+	return w.doModifyColumn(d, t, job, newCol, oldColName, pos, modifyColumnTp, updatedAutoRandomBits)
 }
 
 // doModifyColumn updates the column information and reorders all columns.
 func (w *worker) doModifyColumn(
-	t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr,
+	d *ddlCtx, t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr,
 	pos *ast.ColumnPosition, modifyColumnTp byte, newAutoRandBits uint64) (ver int64, _ error) {
 	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
@@ -412,172 +412,12 @@ func (w *worker) doModifyColumn(
 		}
 	})
 
-<<<<<<< HEAD
-	if newAutoRandBits > 0 {
-		if err := checkAndApplyNewAutoRandomBits(job, t, tblInfo, newCol, oldName, newAutoRandBits); err != nil {
-=======
-	err = checkAndApplyAutoRandomBits(d, t, dbInfo, tblInfo, oldCol, jobParam.newCol, jobParam.updatedAutoRandomBits)
+	err = checkAndApplyAutoRandomBits(d, t, dbInfo, tblInfo, oldCol, newCol, newAutoRandBits)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	if !needChangeColumnData(oldCol, jobParam.newCol) {
-		return w.doModifyColumn(d, t, job, dbInfo, tblInfo, jobParam.newCol, oldCol, jobParam.pos)
-	}
-
-	if jobParam.changingCol == nil {
-		changingColPos := &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
-		newColName := model.NewCIStr(genChangingColumnUniqueName(tblInfo, oldCol))
-		if mysql.HasPriKeyFlag(oldCol.Flag) {
-			job.State = model.JobStateCancelled
-			msg := "tidb_enable_change_column_type is true and this column has primary key flag"
-			return ver, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-		}
-
-		jobParam.changingCol = jobParam.newCol.Clone()
-		jobParam.changingCol.Name = newColName
-		jobParam.changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
-
-		// Since column type change is implemented as adding a new column then substituting the old one.
-		// Case exists when update-where statement fetch a NULL for not-null column without any default data,
-		// it will errors.
-		// So we set zero original default value here to prevent this error. besides, in insert & update records,
-		// we have already implement using the casted value of relative column to insert rather than the origin
-		// default value.
-		originDefVal, err := generateOriginDefaultValue(jobParam.newCol)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		if err = jobParam.changingCol.SetOriginDefaultValue(originDefVal); err != nil {
-			return ver, errors.Trace(err)
-		}
-
-		_, _, _, err = createColumnInfo(tblInfo, jobParam.changingCol, changingColPos)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-
-		idxInfos, offsets := findIndexesByColName(tblInfo.Indices, oldCol.Name.L)
-		jobParam.changingIdxs = make([]*model.IndexInfo, 0, len(idxInfos))
-		for i, idxInfo := range idxInfos {
-			newIdxInfo := idxInfo.Clone()
-			newIdxInfo.Name = model.NewCIStr(genChangingIndexUniqueName(tblInfo, idxInfo))
-			newIdxInfo.ID = allocateIndexID(tblInfo)
-			newIdxInfo.Columns[offsets[i]].Name = newColName
-			newIdxInfo.Columns[offsets[i]].Offset = jobParam.changingCol.Offset
-			jobParam.changingIdxs = append(jobParam.changingIdxs, newIdxInfo)
-		}
-		tblInfo.Indices = append(tblInfo.Indices, jobParam.changingIdxs...)
-	} else {
-		tblInfo.Columns[len(tblInfo.Columns)-1] = jobParam.changingCol
-		copy(tblInfo.Indices[len(tblInfo.Indices)-len(jobParam.changingIdxs):], jobParam.changingIdxs)
-	}
-
-	return w.doModifyColumnTypeWithData(d, t, job, dbInfo, tblInfo, jobParam.changingCol, oldCol, jobParam.newCol.Name, jobParam.pos, jobParam.changingIdxs)
-}
-
-// rollbackModifyColumnJobWithData is used to rollback modify-column job which need to reorg the data.
-func rollbackModifyColumnJobWithData(t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo, jobParam *modifyColumnJobParameter) (ver int64, err error) {
-	// If the not-null change is included, we should clean the flag info in oldCol.
-	if jobParam.modifyColumnTp == mysql.TypeNull {
-		// Reset NotNullFlag flag.
-		tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.NotNullFlag
-		// Reset PreventNullInsertFlag flag.
-		tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.PreventNullInsertFlag
-	}
-	if jobParam.changingCol != nil {
-		// changingCol isn't nil means the job has been in the mid state. These appended changingCol and changingIndex should
-		// be removed from the tableInfo as well.
-		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
-		tblInfo.Indices = tblInfo.Indices[:len(tblInfo.Indices)-len(jobParam.changingIdxs)]
-	}
-	ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-	// Refactor the job args to add the abandoned temporary index ids into delete range table.
-	idxIDs := make([]int64, 0, len(jobParam.changingIdxs))
-	for _, idx := range jobParam.changingIdxs {
-		idxIDs = append(idxIDs, idx.ID)
-	}
-	job.Args = []interface{}{idxIDs, getPartitionIDs(tblInfo)}
-	return ver, nil
-}
-
-func (w *worker) doModifyColumnTypeWithData(
-	d *ddlCtx, t *meta.Meta, job *model.Job,
-	dbInfo *model.DBInfo, tblInfo *model.TableInfo, changingCol, oldCol *model.ColumnInfo,
-	colName model.CIStr, pos *ast.ColumnPosition, changingIdxs []*model.IndexInfo) (ver int64, _ error) {
-	var err error
-	originalState := changingCol.State
-	switch changingCol.State {
-	case model.StateNone:
-		// Column from null to not null.
-		if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(changingCol.Flag) {
-			// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-			err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, oldCol.Name, oldCol.Tp != changingCol.Tp)
-			if err != nil {
-				if ErrWarnDataTruncated.Equal(err) || errInvalidUseOfNull.Equal(err) {
-					job.State = model.JobStateRollingback
-				}
-				return ver, err
-			}
-		}
-		// none -> delete only
-		updateChangingInfo(changingCol, changingIdxs, model.StateDeleteOnly)
-		failpoint.Inject("mockInsertValueAfterCheckNull", func(val failpoint.Value) {
-			if valStr, ok := val.(string); ok {
-				var ctx sessionctx.Context
-				ctx, err := w.sessPool.get()
-				if err != nil {
-					failpoint.Return(ver, err)
-				}
-				defer w.sessPool.put(ctx)
-
-				stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.Background(), valStr)
-				if err != nil {
-					job.State = model.JobStateCancelled
-					failpoint.Return(ver, err)
-				}
-				_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.Background(), stmt)
-				if err != nil {
-					job.State = model.JobStateCancelled
-					failpoint.Return(ver, err)
-				}
-			}
-		})
-		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != changingCol.State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		// Make sure job args change after `updateVersionAndTableInfoWithCheck`, otherwise, the job args will
-		// be updated in `updateDDLJob` even if it meets an error in `updateVersionAndTableInfoWithCheck`.
-		job.SchemaState = model.StateDeleteOnly
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(0)
-		job.Args = append(job.Args, changingCol, changingIdxs)
-	case model.StateDeleteOnly:
-		// Column from null to not null.
-		if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(changingCol.Flag) {
-			// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-			err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, oldCol.Name, oldCol.Tp != changingCol.Tp)
-			if err != nil {
-				if ErrWarnDataTruncated.Equal(err) || errInvalidUseOfNull.Equal(err) {
-					job.State = model.JobStateRollingback
-				}
-				return ver, err
-			}
-		}
-		// delete only -> write only
-		updateChangingInfo(changingCol, changingIdxs, model.StateWriteOnly)
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != changingCol.State)
-		if err != nil {
->>>>>>> 67acdf3e9... ddl: support change from auto_inc to auto_random through 'alter table' (#20512)
-			return ver, errors.Trace(err)
-		}
-	}
 	// Column from null to not null.
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
 		noPreventNullFlag := !mysql.HasPreventNullInsertFlag(oldCol.Flag)

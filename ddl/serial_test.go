@@ -862,12 +862,6 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertBigIntOnly := func(sql, colType string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOnNonBigIntColumn, colType)
 	}
-<<<<<<< HEAD
-=======
-	assertAddColumn := func(sql, colName string) {
-		assertInvalidAutoRandomErr(sql, autoid.AutoRandomAlterAddColumn, colName, databaseName, tableName)
-	}
->>>>>>> 67acdf3e9... ddl: support change from auto_inc to auto_random through 'alter table' (#20512)
 	mustExecAndDrop := func(sql string, fns ...func()) {
 		tk.MustExec(sql)
 		for _, f := range fns {
@@ -1034,10 +1028,7 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	})
 }
 
-<<<<<<< HEAD
-func (s *testSerialSuite) TestAutoRandomIncBitsIncrementAndOffset(c *C) {
-=======
-func (s *testIntegrationSuite9) TestAutoRandomChangeFromAutoInc(c *C) {
+func (s *testSerialSuite) TestAutoRandomChangeFromAutoInc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("set @@tidb_allow_remove_auto_inc = 1;")
@@ -1093,42 +1084,7 @@ func (s *testIntegrationSuite9) TestAutoRandomChangeFromAutoInc(c *C) {
 	tk.MustExec("alter table t modify column a bigint auto_random(4);")
 }
 
-func (s *testIntegrationSuite9) TestAutoRandomExchangePartition(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database if not exists auto_random_db")
-	defer tk.MustExec("drop database if exists auto_random_db")
-
-	tk.MustExec("use auto_random_db")
-
-	tk.MustExec("set @@tidb_enable_exchange_partition=1")
-	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
-
-	tk.MustExec("drop table if exists e1, e2, e3, e4;")
-
-	tk.MustExec("create table e1 (a bigint primary key clustered auto_random(3)) partition by hash(a) partitions 1;")
-
-	tk.MustExec("create table e2 (a bigint primary key);")
-	tk.MustGetErrCode("alter table e1 exchange partition p0 with table e2;", errno.ErrTablesDifferentMetadata)
-
-	tk.MustExec("create table e3 (a bigint primary key auto_random(2));")
-	tk.MustGetErrCode("alter table e1 exchange partition p0 with table e3;", errno.ErrTablesDifferentMetadata)
-	tk.MustExec("insert into e1 values (), (), ()")
-
-	tk.MustExec("create table e4 (a bigint primary key auto_random(3));")
-	tk.MustExec("insert into e4 values ()")
-	tk.MustExec("alter table e1 exchange partition p0 with table e4;")
-
-	tk.MustQuery("select count(*) from e1").Check(testkit.Rows("1"))
-	tk.MustExec("insert into e1 values ()")
-	tk.MustQuery("select count(*) from e1").Check(testkit.Rows("2"))
-
-	tk.MustQuery("select count(*) from e4").Check(testkit.Rows("3"))
-	tk.MustExec("insert into e4 values ()")
-	tk.MustQuery("select count(*) from e4").Check(testkit.Rows("4"))
-}
-
-func (s *testIntegrationSuite9) TestAutoRandomIncBitsIncrementAndOffset(c *C) {
->>>>>>> 67acdf3e9... ddl: support change from auto_inc to auto_random through 'alter table' (#20512)
+func (s *testSerialSuite) TestAutoRandomIncBitsIncrementAndOffset(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists auto_random_db")
 	defer tk.MustExec("drop database if exists auto_random_db")

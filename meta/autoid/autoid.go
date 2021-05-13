@@ -455,20 +455,13 @@ func NewSequenceAllocator(store kv.Storage, dbID int64, info *model.SequenceInfo
 func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) Allocators {
 	var allocs []Allocator
 	dbID := tblInfo.GetDBID(schemaID)
-<<<<<<< HEAD
-	if tblInfo.AutoIdCache > 0 {
-		allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, CustomAutoIncCacheOption(tblInfo.AutoIdCache)))
-	} else {
-		allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType))
-=======
 	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
 
-	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
+	hasRowID := !tblInfo.PKIsHandle
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
 	if hasRowID || hasAutoIncID {
 		alloc := NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt)
 		allocs = append(allocs, alloc)
->>>>>>> 67acdf3e9... ddl: support change from auto_inc to auto_random through 'alter table' (#20512)
 	}
 	hasAutoRandID := tblInfo.ContainsAutoRandomBits()
 	if hasAutoRandID {
