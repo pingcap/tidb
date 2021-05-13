@@ -42,6 +42,7 @@ var (
 	ErrTableaccessDenied             = dbterror.ClassExecutor.NewStd(mysql.ErrTableaccessDenied)
 	ErrBadDB                         = dbterror.ClassExecutor.NewStd(mysql.ErrBadDB)
 	ErrWrongObject                   = dbterror.ClassExecutor.NewStd(mysql.ErrWrongObject)
+	ErrWrongUsage                    = dbterror.ClassExecutor.NewStd(mysql.ErrWrongUsage)
 	ErrRoleNotGranted                = dbterror.ClassPrivilege.NewStd(mysql.ErrRoleNotGranted)
 	ErrDeadlock                      = dbterror.ClassExecutor.NewStd(mysql.ErrLockDeadlock)
 	ErrQueryInterrupted              = dbterror.ClassExecutor.NewStd(mysql.ErrQueryInterrupted)
