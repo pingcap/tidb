@@ -10,16 +10,16 @@
       {
         "SQL": "select * from t1, t2 where t1.a = t2.a and t1.b = t2.b",
         "AggInput": "",
-        "JoinInput": "[{[5 6] 4}];[{[8 9] 9}]"
+        "JoinInput": "[{[6 7] 4}];[{[9 10] 9}]"
       },
       {
         "SQL": "select count(1) from t1 where a > 0 group by a, b",
-        "AggInput": "[{[11 12] 4}]",
+        "AggInput": "[{[16 17] 4}]",
         "JoinInput": ""
       },
       {
         "SQL": "select count(1) from t1 where b > 0 group by a, b",
-        "AggInput": "[{[15 16] 4}]",
+        "AggInput": "[{[21 22] 4}]",
         "JoinInput": ""
       },
       {
@@ -29,7 +29,7 @@
       },
       {
         "SQL": "select count(c3) from (select a as c1, b as c2, a+1 as c3 from t1) as tmp group by c2, c1",
-        "AggInput": "[{[23 24] 4}]",
+        "AggInput": "[{[31 32] 4}]",
         "JoinInput": ""
       },
       {
@@ -39,7 +39,7 @@
       },
       {
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b > (select t2.b from t2 where t2.a = t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
-        "AggInput": "[{[37 38] 4}]",
+        "AggInput": "[{[53 54] 4}]",
         "JoinInput": ""
       },
       {
@@ -49,12 +49,12 @@
       },
       {
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b in (select t2.b from t2 where t2.a = t1.a limit 3)) as cmp from t1) tmp group by tmp.a, tmp.b",
-        "AggInput": "[{[56 57] 4}]",
+        "AggInput": "[{[81 82] 4}]",
         "JoinInput": ""
       },
       {
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b not in (select t2.b from t2 where t2.a = t1.a limit 3)) as cmp from t1) tmp group by tmp.a, tmp.b",
-        "AggInput": "[{[67 68] 4}]",
+        "AggInput": "[{[97 98] 4}]",
         "JoinInput": ""
       },
       {
@@ -74,8 +74,8 @@
       },
       {
         "SQL": "select count(1) from t1 left join t2 on t1.a = t2.a group by t1.a, t1.b",
-        "AggInput": "[{[99 100] 4}]",
-        "JoinInput": "[{[99 100] 4}];[]"
+        "AggInput": "[{[143 144] 4}]",
+        "JoinInput": "[{[143 144] 4}];[]"
       },
       {
         "SQL": "select count(1) from t1 left join t2 on t1.a = t2.a group by t2.a, t2.b",
@@ -89,18 +89,18 @@
       },
       {
         "SQL": "select count(1) from t1 right join t2 on t1.a = t2.a group by t2.a, t2.b",
-        "AggInput": "[{[123 124] 9}]",
-        "JoinInput": "[];[{[123 124] 9}]"
+        "AggInput": "[{[170 171] 9}]",
+        "JoinInput": "[];[{[170 171] 9}]"
       },
       {
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b in (select t2.b from t2 where t2.a > t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
-        "AggInput": "[{[127 128] 4}]",
-        "JoinInput": "[{[127 128] 4}];[]"
+        "AggInput": "[{[175 176] 4}]",
+        "JoinInput": "[{[175 176] 4}];[]"
       },
       {
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b not in (select t2.b from t2 where t2.a > t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
-        "AggInput": "[{[138 139] 4}]",
-        "JoinInput": "[{[138 139] 4}];[]"
+        "AggInput": "[{[191 192] 4}]",
+        "JoinInput": "[{[191 192] 4}];[]"
       },
       {
         "SQL": "select count(1) from (select t1.a as a, t1.b as b from t1 where t1.b in (select t2.b from t2 where t2.a > t1.a)) tmp group by tmp.a, tmp.b",
@@ -114,8 +114,8 @@
       },
       {
         "SQL": "select * from t1 left join (select t2.a as a, t2.b as b, count(1) as cnt from t2 group by t2.a, t2.b) as tmp on t1.a = tmp.a and t1.b = tmp.b",
-        "AggInput": "[{[166 167] 9}]",
-        "JoinInput": "[{[163 164] 4}];[{[166 167] 9}]"
+        "AggInput": "[{[232 233] 9}]",
+        "JoinInput": "[{[229 230] 4}];[{[232 233] 9}]"
       },
       {
         "SQL": "select count(1) from (select t1.a as a, t1.b as b from t1 limit 3) tmp group by tmp.a, tmp.b",
@@ -124,7 +124,7 @@
       },
       {
         "SQL": "select count(tmp.a_sum) from (select t1.a as a, t1.b as b, sum(a) over() as a_sum from t1) tmp group by tmp.a, tmp.b",
-        "AggInput": "[{[174 175] 4}]",
+        "AggInput": "[{[251 252] 4}]",
         "JoinInput": ""
       }
     ]
@@ -170,8 +170,8 @@
       {
         "SQL": "select count(c3) from (select a as c1, b as c2, a+1 as c3 from t1) as tmp group by c2, c1",
         "Plan": [
-          "StreamAgg 4.00 root  group by:Column#10, Column#11, funcs:count(Column#9)->Column#5",
-          "└─Projection 4.00 root  plus(test.t1.a, 1)->Column#9, test.t1.b, test.t1.a",
+          "StreamAgg 4.00 root  group by:Column#14, Column#15, funcs:count(Column#13)->Column#8",
+          "└─Projection 4.00 root  plus(test.t1.a, 1)->Column#13, test.t1.b, test.t1.a",
           "  └─IndexReader 4.00 root  index:IndexFullScan",
           "    └─IndexFullScan 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true"
         ]
@@ -179,8 +179,8 @@
       {
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b > (select t2.b from t2 where t2.a = t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
         "Plan": [
-          "StreamAgg 4.00 root  group by:Column#14, Column#15, funcs:count(Column#13)->Column#11",
-          "└─Projection 4.00 root  gt(test.t1.b, test.t2.b)->Column#13, test.t1.a, test.t1.b",
+          "StreamAgg 4.00 root  group by:Column#19, Column#20, funcs:count(Column#18)->Column#15",
+          "└─Projection 4.00 root  gt(test.t1.b, test.t2.b)->Column#18, test.t1.a, test.t1.b",
           "  └─Apply 4.00 root  CARTESIAN left outer join",
           "    ├─IndexReader(Build) 4.00 root  index:IndexFullScan",
           "    │ └─IndexFullScan 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true",
@@ -192,7 +192,7 @@
       {
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b in (select t2.b from t2 where t2.a = t1.a limit 3)) as cmp from t1) tmp group by tmp.a, tmp.b",
         "Plan": [
-          "StreamAgg 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#10)->Column#11",
+          "StreamAgg 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#11)->Column#15",
           "└─Apply 4.00 root  left outer semi join, equal:[eq(test.t1.b, test.t2.b)]",
           "  ├─IndexReader(Build) 4.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true",
@@ -205,7 +205,7 @@
       {
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b not in (select t2.b from t2 where t2.a = t1.a limit 3)) as cmp from t1) tmp group by tmp.a, tmp.b",
         "Plan": [
-          "StreamAgg 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#10)->Column#11",
+          "StreamAgg 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#11)->Column#15",
           "└─Apply 4.00 root  anti left outer semi join, equal:[eq(test.t1.b, test.t2.b)]",
           "  ├─IndexReader(Build) 4.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true",
@@ -240,7 +240,7 @@
       {
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b in (select t2.b from t2 where t2.a > t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
         "Plan": [
-          "HashAgg 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#10)->Column#11",
+          "HashAgg 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#11)->Column#15",
           "└─HashJoin 4.00 root  left outer semi join, equal:[eq(test.t1.b, test.t2.b)], other cond:gt(test.t2.a, test.t1.a)",
           "  ├─TableReader(Build) 9.00 root  data:TableFullScan",
           "  │ └─TableFullScan 9.00 cop[tikv] table:t2 keep order:false",
@@ -251,7 +251,7 @@
       {
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b not in (select t2.b from t2 where t2.a > t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
         "Plan": [
-          "HashAgg 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#10)->Column#11",
+          "HashAgg 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#11)->Column#15",
           "└─HashJoin 4.00 root  anti left outer semi join, equal:[eq(test.t1.b, test.t2.b)], other cond:gt(test.t2.a, test.t1.a)",
           "  ├─TableReader(Build) 9.00 root  data:TableFullScan",
           "  │ └─TableFullScan 9.00 cop[tikv] table:t2 keep order:false",
@@ -274,8 +274,8 @@
       {
         "SQL": "select count(tmp.a_sum) from (select t1.a as a, t1.b as b, sum(a) over() as a_sum from t1) tmp group by tmp.a, tmp.b",
         "Plan": [
-          "HashAgg 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#5)->Column#6",
-          "└─Window 4.00 root  sum(cast(test.t1.a, decimal(32,0) BINARY))->Column#5 over()",
+          "HashAgg 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#6)->Column#10",
+          "└─Window 4.00 root  sum(cast(test.t1.a, decimal(32,0) BINARY))->Column#6 over()",
           "  └─TableReader 4.00 root  data:TableFullScan",
           "    └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"
         ]

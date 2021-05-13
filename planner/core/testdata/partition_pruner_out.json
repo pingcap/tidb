@@ -731,8 +731,8 @@
           "6 6 6"
         ],
         "Plan": [
-          "Sort 16.00 root  Column#10",
-          "└─HashAgg 16.00 root  group by:Column#10, Column#11, Column#9, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10, funcs:firstrow(Column#11)->Column#11",
+          "Sort 16.00 root  Column#16",
+          "└─HashAgg 16.00 root  group by:Column#15, Column#16, Column#17, funcs:firstrow(Column#15)->Column#15, funcs:firstrow(Column#16)->Column#16, funcs:firstrow(Column#17)->Column#17",
           "  └─Union 20.00 root  ",
           "    ├─TableReader 10.00 root partition:p1 data:Selection",
           "    │ └─Selection 10.00 cop[tikv]  eq(test_partition.t1.a, 6)",
@@ -928,16 +928,16 @@
           "2"
         ],
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "StreamAgg 1.00 root  funcs:count(Column#8)->Column#5",
           "└─TableReader 1.00 root partition:p0 data:StreamAgg",
-          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#8",
           "    └─Selection 19.99 cop[tikv]  or(eq(test_partition.t1.a, 1), eq(test_partition.t1.b, 2))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "StreamAgg 1.00 root  funcs:count(Column#10)->Column#5",
+          "StreamAgg 1.00 root  funcs:count(Column#11)->Column#5",
           "└─IndexReader 1.00 root partition:p0 index:StreamAgg",
-          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#10",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#11",
           "    └─Selection 19.99 cop[tikv]  or(eq(test_partition_1.t1.a, 1), eq(test_partition_1.t1.b, 2))",
           "      └─IndexFullScan 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
         ]
@@ -1892,8 +1892,8 @@
           "8 8 8"
         ],
         "Plan": [
-          "Sort 48.00 root  Column#10",
-          "└─HashAgg 48.00 root  group by:Column#10, Column#11, Column#9, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10, funcs:firstrow(Column#11)->Column#11",
+          "Sort 48.00 root  Column#16",
+          "└─HashAgg 48.00 root  group by:Column#15, Column#16, Column#17, funcs:firstrow(Column#15)->Column#15, funcs:firstrow(Column#16)->Column#16, funcs:firstrow(Column#17)->Column#17",
           "  └─Union 60.00 root  ",
           "    ├─TableReader 30.00 root partition:p0 data:Selection",
           "    │ └─Selection 30.00 cop[tikv]  in(test_partition.t1.a, 1, 2, 3)",
@@ -1903,8 +1903,8 @@
           "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "Sort 48.00 root  Column#10",
-          "└─HashAgg 48.00 root  group by:Column#10, Column#11, Column#9, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10, funcs:firstrow(Column#11)->Column#11",
+          "Sort 48.00 root  Column#16",
+          "└─HashAgg 48.00 root  group by:Column#15, Column#16, Column#17, funcs:firstrow(Column#15)->Column#15, funcs:firstrow(Column#16)->Column#16, funcs:firstrow(Column#17)->Column#17",
           "  └─Union 60.00 root  ",
           "    ├─IndexReader 30.00 root partition:p0 index:IndexRangeScan",
           "    │ └─IndexRangeScan 30.00 cop[tikv] table:t1, index:a(a, b, id) range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo",
@@ -1935,16 +1935,16 @@
           "1"
         ],
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "StreamAgg 1.00 root  funcs:count(Column#8)->Column#5",
           "└─TableReader 1.00 root partition:p0 data:StreamAgg",
-          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#8",
           "    └─Selection 5542.21 cop[tikv]  or(lt(test_partition.t1.a, 1), lt(test_partition.t1.b, 2))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "StreamAgg 1.00 root  funcs:count(Column#10)->Column#5",
+          "StreamAgg 1.00 root  funcs:count(Column#11)->Column#5",
           "└─IndexReader 1.00 root partition:p0 index:StreamAgg",
-          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#10",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#11",
           "    └─Selection 5542.21 cop[tikv]  or(lt(test_partition_1.t1.a, 1), lt(test_partition_1.t1.b, 2))",
           "      └─IndexFullScan 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
         ]

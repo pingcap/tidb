@@ -34,7 +34,8 @@
       {
         "SQL": "explain format = 'brief' select * from t where 1 = 1 limit 0",
         "Plan": [
-          "TableDual 0.00 root  rows:0"
+          "Projection 0.00 root  test.t.a",
+          "└─TableDual 0.00 root  rows:0"
         ]
       }
     ]
@@ -45,9 +46,9 @@
       {
         "SQL": "explain format = 'brief' select count(*) from t group by a",
         "Plan": [
-          "HashAgg 2.00 root  group by:test.t.a, funcs:count(Column#4)->Column#3",
+          "HashAgg 2.00 root  group by:test.t.a, funcs:count(Column#5)->Column#3",
           "└─TableReader 2.00 root  data:HashAgg",
-          "  └─HashAgg 2.00 cop[tikv]  group by:test.t.a, funcs:count(1)->Column#4",
+          "  └─HashAgg 2.00 cop[tikv]  group by:test.t.a, funcs:count(1)->Column#5",
           "    └─TableFullScan 8.00 cop[tikv] table:t keep order:false"
         ]
       }
@@ -264,19 +265,19 @@
     "Name": "TestTiFlashCostModel",
     "Cases": [
       [
-        "TableReader_7 10000.00 root  data:TableFullScan_6",
-        "└─TableFullScan_6 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        "TableReader_8 10000.00 root  data:TableFullScan_7",
+        "└─TableFullScan_7 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
       ],
       [
-        "TableReader_5 10000.00 root  data:TableFullScan_4",
-        "└─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        "TableReader_6 10000.00 root  data:TableFullScan_5",
+        "└─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
       ],
       [
-        "Batch_Point_Get_5 2.00 root table:t handle:[1 2], keep order:false, desc:false"
+        "Batch_Point_Get_6 2.00 root table:t handle:[1 2], keep order:false, desc:false"
       ],
       [
-        "TableReader_6 2.00 root  data:TableRangeScan_5",
-        "└─TableRangeScan_5 2.00 cop[tiflash] table:t range:[1,1], [2,2], keep order:false, stats:pseudo"
+        "TableReader_7 2.00 root  data:TableRangeScan_6",
+        "└─TableRangeScan_6 2.00 cop[tiflash] table:t range:[1,1], [2,2], keep order:false, stats:pseudo"
       ]
     ]
   },
@@ -355,7 +356,7 @@
     "Name": "TestCorrelatedEstimation",
     "Cases": [
       [
-        "Projection 10.00 root  Column#22",
+        "Projection 10.00 root  Column#23",
         "└─Apply 10.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#21)",
         "  ├─TableReader(Build) 10.00 root  data:TableFullScan",
         "  │ └─TableFullScan 10.00 cop[tikv] table:t keep order:false",
@@ -369,12 +370,12 @@
         "          └─TableFullScan 10.00 cop[tikv] table:s keep order:false"
       ],
       [
-        "Projection 10.00 root  Column#13",
+        "Projection 10.00 root  Column#14",
         "└─Apply 10.00 root  CARTESIAN left outer join",
         "  ├─TableReader(Build) 10.00 root  data:TableFullScan",
         "  │ └─TableFullScan 10.00 cop[tikv] table:t keep order:false",
         "  └─MaxOneRow(Probe) 1.00 root  ",
-        "    └─Projection 0.10 root  concat(cast(test.t.a, var_string(20)), ,, cast(test.t.b, var_string(20)))->Column#13",
+        "    └─Projection 0.10 root  concat(cast(test.t.a, var_string(20)), ,, cast(test.t.b, var_string(20)))->Column#14",
         "      └─IndexReader 0.10 root  index:Selection",
         "        └─Selection 0.10 cop[tikv]  eq(test.t.a, test.t.a)",
         "          └─IndexRangeScan 1.00 cop[tikv] table:t1, index:idx(c, b, a) range: decided by [eq(test.t.c, test.t.c)], keep order:false"
@@ -403,7 +404,7 @@
       "TableReader(Table(t)->Sel([le(test.t.c1, 50)]))",
       "LeftHashJoin{TableReader(Table(t)->Sel([not(isnull(test.t.c1))]))->TableReader(Table(t1)->Sel([not(isnull(test.t1.c1))]))->HashAgg}(test.t.c1,test.t1.c1)",
       "LeftHashJoin{TableReader(Table(t)->Sel([not(isnull(test.t.c1))]))->TableReader(Table(t1)->Sel([not(isnull(test.t1.c1))]))}(test.t.c1,test.t1.c1)",
-      "Dual"
+      "Dual->Projection"
     ]
   },
   {

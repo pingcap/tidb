@@ -4859,6 +4859,11 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p LogicalPla
 			return nil, nil, nil, nil, err
 		}
 		p = np
+		switch newArg.(type) {
+		case *expression.Constant:
+			newArgList = append(newArgList, newArg)
+			continue
+		}
 		proj.Exprs = append(proj.Exprs, newArg)
 		proj.names = append(proj.names, types.EmptyName)
 		col := &expression.Column{

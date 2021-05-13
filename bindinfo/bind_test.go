@@ -1851,11 +1851,11 @@ func (s *testSuite) TestIssue19836(c *C) {
 		PS: []*util.ProcessInfo{tk.Se.ShowProcess()},
 	})
 	explainResult := testkit.Rows(
-		"Limit_8 2.00 0 root  time:0s, loops:0 offset:1, count:2 N/A N/A",
-		"└─TableReader_14 3.00 0 root  time:0s, loops:0 data:Limit_13 N/A N/A",
-		"  └─Limit_13 3.00 0 cop[tikv]   offset:0, count:3 N/A N/A",
-		"    └─Selection_12 3.00 0 cop[tikv]   eq(test.t.a, 40) N/A N/A",
-		"      └─TableFullScan_11 3000.00 0 cop[tikv] table:t  keep order:false, stats:pseudo N/A N/A",
+		"Limit_9 2.00 0 root  time:0s, loops:0 offset:1, count:2 N/A N/A",
+		"└─TableReader_15 3.00 0 root  time:0s, loops:0 data:Limit_13 N/A N/A",
+		"  └─Limit_14 3.00 0 cop[tikv]   offset:0, count:3 N/A N/A",
+		"    └─Selection_13 3.00 0 cop[tikv]   eq(test.t.a, 40) N/A N/A",
+		"      └─TableFullScan_12 3000.00 0 cop[tikv] table:t  keep order:false, stats:pseudo N/A N/A",
 	)
 	tk.MustQuery("explain for connection " + strconv.FormatUint(tk.Se.ShowProcess().ID, 10)).Check(explainResult)
 }

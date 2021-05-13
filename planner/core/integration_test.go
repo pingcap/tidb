@@ -2367,13 +2367,13 @@ func (s *testIntegrationSuite) TestIssue19926(c *C) {
 	tk.MustExec("drop table if exists tb;")
 	tk.MustExec("drop table if exists tc;")
 	tk.MustExec("drop view if exists v;")
-	tk.MustExec("CREATE TABLE `ta`  (\n  `id` varchar(36) NOT NULL ,\n  `status` varchar(1) NOT NULL \n);")
-	tk.MustExec("CREATE TABLE `tb`  (\n  `id` varchar(36) NOT NULL ,\n  `status` varchar(1) NOT NULL \n);")
-	tk.MustExec("CREATE TABLE `tc`  (\n  `id` varchar(36) NOT NULL ,\n  `status` varchar(1) NOT NULL \n);")
+	tk.MustExec("CREATE TABLE `ta`  (  `id` varchar(36) NOT NULL ,  `status` varchar(1) NOT NULL );")
+	tk.MustExec("CREATE TABLE `tb`  (  `id` varchar(36) NOT NULL ,  `status` varchar(1) NOT NULL );")
+	tk.MustExec("CREATE TABLE `tc`  (  `id` varchar(36) NOT NULL ,  `status` varchar(1) NOT NULL );")
 	tk.MustExec("insert into ta values('1','1');")
 	tk.MustExec("insert into tb values('1','1');")
 	tk.MustExec("insert into tc values('1','1');")
-	tk.MustExec("create definer='root'@'localhost' view v as\nselect \nconcat(`ta`.`status`,`tb`.`status`) AS `status`, \n`ta`.`id` AS `id`  from (`ta` join `tb`) \nwhere (`ta`.`id` = `tb`.`id`);")
+	tk.MustExec("create definer='root'@'localhost' view v as select concat(`ta`.`status`,`tb`.`status`) AS `status`, `ta`.`id` AS `id`  from (`ta` join `tb`) where (`ta`.`id` = `tb`.`id`);")
 	tk.MustQuery("SELECT tc.status,v.id FROM tc, v WHERE tc.id = v.id AND v.status = '11';").Check(testkit.Rows("1 1"))
 }
 
