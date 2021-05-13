@@ -1210,7 +1210,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 			newNames = append(newNames, name)
 			continue
 		}
-		newExpr, np, err := b.rewriteWithPreprocess(ctx, field.Expr, p, mapper, windowMapper, true, nil)
+		newExpr, np, err := b.rewriteWithPreprocess(ctx, field.Expr, p, mapper, windowMapper, true, nil, 0)
 		if err != nil {
 			return nil, nil, 0, err
 		}
@@ -1632,7 +1632,7 @@ func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p LogicalPlan, byI
 	for i, item := range byItems {
 		newExpr, _ := item.Expr.Accept(transformer)
 		item.Expr = newExpr.(ast.ExprNode)
-		it, np, err := b.rewriteWithPreprocess(ctx, item.Expr, p, aggMapper, windowMapper, true, nil)
+		it, np, err := b.rewriteWithPreprocess(ctx, item.Expr, p, aggMapper, windowMapper, true, nil, oldLen)
 		if err != nil {
 			return nil, err
 		}
@@ -1901,7 +1901,7 @@ func (a *havingWindowAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, s
 }
 
 func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameExpr, p LogicalPlan) (int, error) {
-	idx, err := expression.FindFieldName(p.OutputNames(), v.Name)
+	idx, err := expression.FindFieldName(p.OutputNames(), v.Name, false)
 	if err != nil {
 		return -1, err
 	}
@@ -1916,7 +1916,7 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 			return a.resolveFromPlan(v, p.Children()[0])
 		case *LogicalJoin:
 			if len(x.redundantNames) != 0 {
-				idx, err = expression.FindFieldName(x.redundantNames, v.Name)
+				idx, err = expression.FindFieldName(x.redundantNames, v.Name, false)
 				schemaCols, outputNames = x.redundantSchema.Columns, x.redundantNames
 			}
 		}
@@ -2047,7 +2047,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 		if index == -1 {
 			// If we can't find it any where, it may be a correlated columns.
 			for _, names := range a.outerNames {
-				idx, err1 := expression.FindFieldName(names, v.Name)
+				idx, err1 := expression.FindFieldName(names, v.Name, false)
 				if err1 != nil {
 					a.err = err1
 					return node, false
@@ -2461,7 +2461,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	extractor := &AggregateFuncExtractor{skipAggMap: g.skipAggMap}
 	switch v := inNode.(type) {
 	case *ast.ColumnNameExpr:
-		idx, err := expression.FindFieldName(g.names, v.Name)
+		idx, err := expression.FindFieldName(g.names, v.Name, false)
 		if idx < 0 || !g.inExpr {
 			var index int
 			index, g.err = resolveFromSelectFields(v, g.fields, false)
@@ -2543,11 +2543,11 @@ func buildFuncDependCol(p LogicalPlan, cond ast.ExprNode) (*types.FieldName, *ty
 	if !ok {
 		return nil, nil, nil
 	}
-	lIdx, err := expression.FindFieldName(p.OutputNames(), lColExpr.Name)
+	lIdx, err := expression.FindFieldName(p.OutputNames(), lColExpr.Name, false)
 	if err != nil {
 		return nil, nil, err
 	}
-	rIdx, err := expression.FindFieldName(p.OutputNames(), rColExpr.Name)
+	rIdx, err := expression.FindFieldName(p.OutputNames(), rColExpr.Name, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2636,7 +2636,7 @@ func checkColFuncDepend(
 				Table:  name.TblName,
 				Name:   iColInfo.Name,
 			}
-			iIdx, err := expression.FindFieldName(p.OutputNames(), cn)
+			iIdx, err := expression.FindFieldName(p.OutputNames(), cn, false)
 			if err != nil || iIdx < 0 {
 				funcDepend = false
 				break
@@ -2674,7 +2674,7 @@ func checkColFuncDepend(
 			Table:  name.TblName,
 			Name:   colInfo.Name,
 		}
-		pIdx, err := expression.FindFieldName(p.OutputNames(), pkName)
+		pIdx, err := expression.FindFieldName(p.OutputNames(), pkName, false)
 		if err != nil || pIdx < 0 {
 			primaryFuncDepend = false
 			break
@@ -2750,7 +2750,7 @@ func (b *PlanBuilder) checkOnlyFullGroupBy(p LogicalPlan, sel *ast.SelectStmt) (
 }
 
 func addGbyOrSingleValueColName(p LogicalPlan, colName *ast.ColumnName, gbyOrSingleValueColNames map[*types.FieldName]struct{}) {
-	idx, err := expression.FindFieldName(p.OutputNames(), colName)
+	idx, err := expression.FindFieldName(p.OutputNames(), colName, false)
 	if err != nil || idx < 0 {
 		return
 	}
@@ -2892,7 +2892,7 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, sel 
 	}
 	tblMap := make(map[*model.TableInfo]struct{}, len(resolver.nonAggCols))
 	for i, colName := range resolver.nonAggCols {
-		idx, err := expression.FindFieldName(p.OutputNames(), colName)
+		idx, err := expression.FindFieldName(p.OutputNames(), colName, false)
 		if err != nil || idx < 0 {
 			return ErrMixOfGroupFuncAndFields.GenWithStackByArgs(resolver.nonAggColIdxs[i]+1, colName.Name.O)
 		}
@@ -2971,7 +2971,7 @@ func (c *colNameResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 func (c *colNameResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	switch v := inNode.(type) {
 	case *ast.ColumnNameExpr:
-		idx, err := expression.FindFieldName(c.p.OutputNames(), v.Name)
+		idx, err := expression.FindFieldName(c.p.OutputNames(), v.Name, false)
 		if err == nil && idx >= 0 {
 			c.names[c.p.OutputNames()[idx]] = struct{}{}
 		}
@@ -4420,7 +4420,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		columnsIdx = make(map[*ast.ColumnName]int, len(list))
 	}
 	for _, assign := range list {
-		idx, err := expression.FindFieldName(p.OutputNames(), assign.Column)
+		idx, err := expression.FindFieldName(p.OutputNames(), assign.Column, false)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -4498,10 +4498,10 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			if i, ok := columnsIdx[assign.Column]; ok {
 				idx = i
 			} else {
-				idx, err = expression.FindFieldName(p.OutputNames(), assign.Column)
+				idx, err = expression.FindFieldName(p.OutputNames(), assign.Column, false)
 			}
 		} else {
-			idx, err = expression.FindFieldName(p.OutputNames(), assign.Column)
+			idx, err = expression.FindFieldName(p.OutputNames(), assign.Column, false)
 		}
 		if err != nil {
 			return nil, nil, false, err
@@ -4534,7 +4534,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 					return expr
 				}
 			}
-			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, false, rewritePreprocess)
+			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, false, rewritePreprocess, 0)
 			if err != nil {
 				return nil, nil, false, err
 			}

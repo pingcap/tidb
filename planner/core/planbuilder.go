@@ -2437,7 +2437,7 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 		columnName := &ast.ColumnName{Name: column.Name}
 		columnName.SetText(column.Name.O)
 
-		idx, err := expression.FindFieldName(mockPlan.OutputNames(), columnName)
+		idx, err := expression.FindFieldName(mockPlan.OutputNames(), columnName, false)
 		if err != nil {
 			return igc, err
 		}
@@ -2612,7 +2612,7 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 	}
 	for _, assign := range onDup {
 		// Check whether the column to be updated exists in the source table.
-		idx, err := expression.FindFieldName(p.tableColNames, assign.Column)
+		idx, err := expression.FindFieldName(p.tableColNames, assign.Column, false)
 		if err != nil {
 			return nil, err
 		} else if idx < 0 {
@@ -2681,7 +2681,7 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 	colNames := make([]string, 0, len(insert.Setlist))
 	exprCols := make([]*expression.Column, 0, len(insert.Setlist))
 	for _, assign := range insert.Setlist {
-		idx, err := expression.FindFieldName(insertPlan.tableColNames, assign.Column)
+		idx, err := expression.FindFieldName(insertPlan.tableColNames, assign.Column, false)
 		if err != nil {
 			return err
 		}
@@ -2724,7 +2724,7 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 		if _, ok := assign.Expr.(*ast.SubqueryExpr); ok {
 			usingPlan = LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 		}
-		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, usingPlan, nil, nil, true, checkRefColumn)
+		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, usingPlan, nil, nil, true, checkRefColumn, 0)
 		if err != nil {
 			return err
 		}
@@ -2802,7 +2802,7 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 				if _, ok := valueItem.(*ast.SubqueryExpr); ok {
 					usingPlan = LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 				}
-				expr, _, err = b.rewriteWithPreprocess(ctx, valueItem, usingPlan, nil, nil, true, checkRefColumn)
+				expr, _, err = b.rewriteWithPreprocess(ctx, valueItem, usingPlan, nil, nil, true, checkRefColumn, 0)
 			}
 			if err != nil {
 				return err

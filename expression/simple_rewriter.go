@@ -118,15 +118,19 @@ func RewriteSimpleExprWithNames(ctx sessionctx.Context, expr ast.ExprNode, schem
 }
 
 // FindFieldName finds the column name from NameSlice.
-func FindFieldName(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
+func FindFieldName(names types.NameSlice, astCol *ast.ColumnName, ignoreDup bool) (int, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
+	var matchedName string
 	for i, name := range names {
 		if !name.NotExplicitUsable && (dbName.L == "" || dbName.L == name.DBName.L) &&
 			(tblName.L == "" || tblName.L == name.TblName.L) &&
 			(colName.L == name.ColName.L) {
 			if idx == -1 {
+				matchedName = name.String()
 				idx = i
+			} else if ignoreDup && name.String() == matchedName {
+				continue
 			} else {
 				return -1, errNonUniq.GenWithStackByArgs(astCol.String(), "field list")
 			}

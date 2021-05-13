@@ -1352,7 +1352,7 @@ func buildOrderedList(ctx sessionctx.Context, plan Plan, list []*ast.Assignment,
 	orderedList = make([]*expression.Assignment, 0, len(list))
 	allAssignmentsAreConstant = true
 	for _, assign := range list {
-		idx, err := expression.FindFieldName(plan.OutputNames(), assign.Column)
+		idx, err := expression.FindFieldName(plan.OutputNames(), assign.Column, false)
 		if idx == -1 || err != nil {
 			return nil, true
 		}

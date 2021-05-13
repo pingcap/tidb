@@ -107,7 +107,7 @@ func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNo
 // asScalar means whether this expression must be treated as a scalar expression.
 // And this function returns a result expression, a new plan that may have apply or semi-join.
 func (b *PlanBuilder) rewrite(ctx context.Context, exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (expression.Expression, LogicalPlan, error) {
-	expr, resultPlan, err := b.rewriteWithPreprocess(ctx, exprNode, p, aggMapper, nil, asScalar, nil)
+	expr, resultPlan, err := b.rewriteWithPreprocess(ctx, exprNode, p, aggMapper, nil, asScalar, nil, 0)
 	return expr, resultPlan, err
 }
 
@@ -120,7 +120,7 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int,
 	windowMapper map[*ast.WindowFuncExpr]int,
 	asScalar bool,
-	preprocess func(ast.Node) ast.Node,
+	preprocess func(ast.Node) ast.Node, oldLen int,
 ) (expression.Expression, LogicalPlan, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
@@ -138,6 +138,7 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	rewriter.windowMap = windowMapper
 	rewriter.asScalar = asScalar
 	rewriter.preprocess = preprocess
+	rewriter.oldLen = oldLen
 
 	expr, resultPlan, err := b.rewriteExprNode(rewriter, exprNode, asScalar)
 	return expr, resultPlan, err
@@ -215,6 +216,7 @@ type expressionRewriter struct {
 	p          LogicalPlan
 	schema     *expression.Schema
 	names      []*types.FieldName
+	oldLen     int
 	err        error
 	aggrMap    map[*ast.AggregateFuncExpr]int
 	windowMap  map[*ast.WindowFuncExpr]int
@@ -400,7 +402,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			schema = er.insertPlan.tableSchema
 			names = er.insertPlan.tableColNames
 		}
-		idx, err := expression.FindFieldName(names, v.Column.Name)
+		idx, err := expression.FindFieldName(names, v.Column.Name, false)
 		if err != nil {
 			er.err = err
 			return inNode, false
@@ -1349,7 +1351,7 @@ func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
 		}
 		er.err = err
 	}
-	if er.err == nil && pos > 0 && pos <= er.schema.Len() {
+	if er.err == nil && pos > 0 && pos <= er.schema.Len() && er.oldLen > 0 && er.oldLen >= pos {
 		er.ctxStackAppend(er.schema.Columns[pos-1], er.names[pos-1])
 	} else {
 		er.err = ErrUnknownColumn.GenWithStackByArgs(str, clauseMsg[er.b.curClause])
@@ -1738,7 +1740,7 @@ func (er *expressionRewriter) toTable(v *ast.TableName) {
 }
 
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
-	idx, err := expression.FindFieldName(er.names, v)
+	idx, err := expression.FindFieldName(er.names, v, false)
 	if err != nil {
 		er.err = ErrAmbiguous.GenWithStackByArgs(v.Name, clauseMsg[fieldList])
 		return
@@ -1754,7 +1756,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	}
 	for i := len(er.b.outerSchemas) - 1; i >= 0; i-- {
 		outerSchema, outerName := er.b.outerSchemas[i], er.b.outerNames[i]
-		idx, err = expression.FindFieldName(outerName, v)
+		idx, err = expression.FindFieldName(outerName, v, true)
 		if idx >= 0 {
 			column := outerSchema.Columns[idx]
 			er.ctxStackAppend(&expression.CorrelatedColumn{Column: *column, Data: new(types.Datum)}, outerName[idx])
@@ -1789,7 +1791,7 @@ func findFieldNameFromNaturalUsingJoin(p LogicalPlan, v *ast.ColumnName) (col *e
 		return findFieldNameFromNaturalUsingJoin(p.Children()[0], v)
 	case *LogicalJoin:
 		if x.redundantSchema != nil {
-			idx, err := expression.FindFieldName(x.redundantNames, v)
+			idx, err := expression.FindFieldName(x.redundantNames, v, false)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -1811,7 +1813,7 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 	// in table t1. If there are none, return an error message.
 	// Based on the above description, we need to look in er.b.allNames from back to front.
 	for i := len(er.b.allNames) - 1; i >= 0; i-- {
-		idx, err := expression.FindFieldName(er.b.allNames[i], v.Name)
+		idx, err := expression.FindFieldName(er.b.allNames[i], v.Name, false)
 		if err != nil {
 			er.err = err
 			return
@@ -1822,7 +1824,7 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 		}
 	}
 	if name == nil {
-		idx, err := expression.FindFieldName(er.names, v.Name)
+		idx, err := expression.FindFieldName(er.names, v.Name, false)
 		if err != nil {
 			er.err = err
 			return
