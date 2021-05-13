@@ -133,7 +133,7 @@ func (svc *SysVarCache) RebuildSysVarCache(ctx sessionctx.Context) error {
 		checkEnableServerGlobalVar(sv.Name, sVal)
 	}
 
-	logutil.BgLogger().Info("rebuilding sysvar cache")
+	logutil.BgLogger().Debug("rebuilding sysvar cache")
 
 	svc.Lock()
 	defer svc.Unlock()

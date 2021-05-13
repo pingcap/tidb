@@ -922,18 +922,17 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 	return nil
 }
 
-// LoadSysVarCacheLoop create a goroutine loads sysvar cache in a loop, it
-// should be called only once in BootstrapSession.
+// LoadSysVarCacheLoop create a goroutine loads sysvar cache in a loop,
+// it should be called only once in BootstrapSession.
 func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 	err := do.sysVarCache.RebuildSysVarCache(ctx)
 	if err != nil {
 		return err
 	}
 	var watchCh clientv3.WatchChan
-	duration := 5 * time.Minute
+	duration := 30 * time.Second
 	if do.etcdClient != nil {
 		watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
-		duration = 10 * time.Minute
 	}
 	do.wg.Add(1)
 	go func() {
@@ -960,9 +959,8 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 				}
 				continue
 			}
-
 			count = 0
-			logutil.BgLogger().Info("Rebuilding sysvar cache from etcd watch event.")
+			logutil.BgLogger().Debug("Rebuilding sysvar cache from etcd watch event.")
 			err := do.sysVarCache.RebuildSysVarCache(ctx)
 			metrics.LoadSysVarCacheCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
