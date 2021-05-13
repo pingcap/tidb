@@ -101,7 +101,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		WaitTimeout:  action.LockWaitTime,
 		ReturnValues: action.ReturnValues,
 		MinCommitTs:  c.forUpdateTS + 1,
-	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
+	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog, ResourceGroupTag: action.LockCtx.ResourceGroupTag})
 	lockWaitStartTime := action.WaitStartTime
 	for {
 		// if lockWaitTime set, refine the request `WaitTimeout` field based on timeout limit
