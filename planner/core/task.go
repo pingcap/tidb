@@ -580,6 +580,11 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 // TiDB only require that the types fall into the same catalog but TiFlash require the type to be exactly the same, so
 // need to check if the conversion is a must
 func needConvert(tp *types.FieldType, rtp *types.FieldType) bool {
+	// all the string type are mapped to the same type in TiFlash, so
+	// do not need convert for string types
+	if types.IsString(tp.Tp) && types.IsString(rtp.Tp) {
+		return false
+	}
 	if tp.Tp != rtp.Tp {
 		return true
 	}

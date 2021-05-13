@@ -75,7 +75,15 @@ func (partitionCol *PartitionColumn) Equal(other *PartitionColumn) bool {
 func ExplainColumnList(cols []*PartitionColumn) []byte {
 	buffer := bytes.NewBufferString("")
 	for i, col := range cols {
+		buffer.WriteString("[name: ")
 		buffer.WriteString(col.Col.ExplainInfo())
+		buffer.WriteString(", collate: ")
+		if collate.NewCollationEnabled() {
+			buffer.WriteString(GetCollateNameByIDForPartition(col.CollateId))
+		} else {
+			buffer.WriteString("N/A")
+		}
+		buffer.WriteString("]")
 		if i+1 < len(cols) {
 			buffer.WriteString(", ")
 		}
@@ -85,8 +93,14 @@ func ExplainColumnList(cols []*PartitionColumn) []byte {
 
 // GetCollateIDByNameForPartition returns collate id by collation name
 func GetCollateIDByNameForPartition(coll string) int32 {
-	collateId := int32(collate.CollationName2ID(coll))
-	return collate.RewriteNewCollationIDIfNeeded(collateId)
+	collateID := int32(collate.CollationName2ID(coll))
+	return collate.RewriteNewCollationIDIfNeeded(collateID)
+}
+
+// GetCollateNameByIDForPartition returns collate id by collation name
+func GetCollateNameByIDForPartition(collateID int32) string {
+	collateID = collate.RestoreCollationIDIfNeeded(collateID)
+	return collate.CollationID2Name(collateID)
 }
 
 // PhysicalProperty stands for the required physical property by parents.
