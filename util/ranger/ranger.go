@@ -464,7 +464,7 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 	for _, ran := range ranges {
 		lowTail := len(ran.LowVal) - 1
 		for i := 0; i < lowTail; i++ {
-			CutDatumByPrefixLen(&ran.LowVal[i], lengths[i], tp[i])
+			hasCut = CutDatumByPrefixLen(&ran.LowVal[i], lengths[i], tp[i]) || hasCut
 		}
 		lowCut := CutDatumByPrefixLen(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail])
 		// If the length of the last column of LowVal is equal to the prefix length, LowExclude should be set false.
@@ -475,13 +475,13 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 		}
 		highTail := len(ran.HighVal) - 1
 		for i := 0; i < highTail; i++ {
-			CutDatumByPrefixLen(&ran.HighVal[i], lengths[i], tp[i])
+			hasCut = CutDatumByPrefixLen(&ran.HighVal[i], lengths[i], tp[i]) || hasCut
 		}
 		highCut := CutDatumByPrefixLen(&ran.HighVal[highTail], lengths[highTail], tp[highTail])
 		if highCut {
 			ran.HighExclude = false
 		}
-		hasCut = lowCut || highCut
+		hasCut = hasCut || lowCut || highCut
 	}
 	return hasCut
 }
