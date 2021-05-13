@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
@@ -101,7 +100,7 @@ func GetPrewriteValue(ctx sessionctx.Context, createIfNotExists bool) *binlog.Pr
 	vars := ctx.GetSessionVars()
 	v, ok := vars.TxnCtx.Binlog.(*binlog.PrewriteValue)
 	if !ok && createIfNotExists {
-		schemaVer := ctx.GetSessionVars().TxnCtx.SchemaVersion
+		schemaVer := ctx.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
 		v = &binlog.PrewriteValue{SchemaVersion: schemaVer}
 		vars.TxnCtx.Binlog = v
 	}
@@ -295,7 +294,7 @@ func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, 
 		},
 		Client: client,
 	}
-	txn.SetOption(tikvstore.BinlogInfo, info)
+	txn.SetOption(kv.BinlogInfo, info)
 }
 
 const specialPrefix = `/*T! `

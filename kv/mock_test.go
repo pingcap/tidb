@@ -17,7 +17,6 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
@@ -35,7 +34,7 @@ func (s testMockSuite) TestInterface(c *C) {
 	snapshot := storage.GetSnapshot(version)
 	_, err = snapshot.BatchGet(context.Background(), []Key{Key("abc"), Key("def")})
 	c.Check(err, IsNil)
-	snapshot.SetOption(tikvstore.Priority, PriorityNormal)
+	snapshot.SetOption(Priority, PriorityNormal)
 
 	transaction, err := storage.Begin()
 	c.Check(err, IsNil)

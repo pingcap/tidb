@@ -25,22 +25,14 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	derr "github.com/pingcap/tidb/store/driver/error"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/dbterror"
 	"go.uber.org/zap"
-)
-
-// tikv error instance
-var (
-	// ErrTiKVServerTimeout is the error when tikv server is timeout.
-	ErrTiKVServerTimeout  = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerTimeout)
-	ErrResolveLockTimeout = dbterror.ClassTiKV.NewStd(errno.ErrResolveLockTimeout)
 )
 
 func genKeyExistsError(name string, value string, err error) error {
@@ -154,45 +146,7 @@ func extractKeyErr(err error) error {
 		notFoundDetail := prettyLockNotFoundKey(e.Retryable)
 		return kv.ErrTxnRetryable.GenWithStackByArgs(e.Retryable + " " + notFoundDetail)
 	}
-	return toTiDBErr(err)
-}
-
-func toTiDBErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	if tikverr.IsErrNotFound(err) {
-		return kv.ErrNotExist
-	}
-
-	if e, ok := err.(*tikverr.ErrWriteConflictInLatch); ok {
-		return kv.ErrWriteConflictInTiDB.FastGenByArgs(e.StartTS)
-	}
-
-	if e, ok := err.(*tikverr.ErrTxnTooLarge); ok {
-		return kv.ErrTxnTooLarge.GenWithStackByArgs(e.Size)
-	}
-
-	if errors.ErrorEqual(err, tikverr.ErrCannotSetNilValue) {
-		return kv.ErrCannotSetNilValue
-	}
-
-	if e, ok := err.(*tikverr.ErrEntryTooLarge); ok {
-		return kv.ErrEntryTooLarge.GenWithStackByArgs(e.Limit, e.Size)
-	}
-
-	if errors.ErrorEqual(err, tikverr.ErrInvalidTxn) {
-		return kv.ErrInvalidTxn
-	}
-
-	if errors.ErrorEqual(err, tikverr.ErrTiKVServerTimeout) {
-		return ErrTiKVServerTimeout
-	}
-
-	if errors.ErrorEqual(err, tikverr.ErrResolveLockTimeout) {
-		return ErrResolveLockTimeout
-	}
-	return errors.Trace(err)
+	return derr.ToTiDBErr(err)
 }
 
 func newWriteConflictError(conflict *kvrpcpb.WriteConflict) error {
