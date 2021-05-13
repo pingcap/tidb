@@ -28,6 +28,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -42,6 +43,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
@@ -121,7 +123,7 @@ func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server
 	lis, err := net.Listen("tcp", addr)
 	c.Assert(err, IsNil)
 	// Fix issue 9836
-	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 1)}
+	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 1), nil}
 	sm.processInfoMap[1] = &util.ProcessInfo{
 		ID:      1,
 		User:    "root",
@@ -276,7 +278,7 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 	tk1.MustQuery("select distinct(table_schema) from information_schema.tables").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
 	// Fix issue 9836
-	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 1)}
+	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 1), nil}
 	sm.processInfoMap[1] = &util.ProcessInfo{
 		ID:      1,
 		User:    "root",
@@ -433,6 +435,11 @@ func (s *testTableSuite) TestCurrentTimestampAsDefault(c *C) {
 
 type mockSessionManager struct {
 	processInfoMap map[uint64]*util.ProcessInfo
+	txnInfo        []*txninfo.TxnInfo
+}
+
+func (sm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
+	return sm.txnInfo
 }
 
 func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
@@ -459,7 +466,7 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.Se = se
-	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2)}
+	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2), nil}
 	sm.processInfoMap[1] = &util.ProcessInfo{
 		ID:      1,
 		User:    "user-1",
@@ -516,7 +523,7 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s", "in transaction", "check port"),
 		))
 
-	sm = &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2)}
+	sm = &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2), nil}
 	sm.processInfoMap[1] = &util.ProcessInfo{
 		ID:      1,
 		User:    "user-1",
@@ -1502,4 +1509,25 @@ func (s *testTableSuite) TestInfoschemaClientErrors(c *C) {
 
 	err = tk.ExecToErr("FLUSH CLIENT_ERRORS_SUMMARY")
 	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RELOAD privilege(s) for this operation")
+}
+
+func (s *testTableSuite) TestTrx(c *C) {
+	tk := s.newTestKitWithRoot(c)
+	_, digest := parser.NormalizeDigest("select * from trx for update;")
+	sm := &mockSessionManager{nil, make([]*txninfo.TxnInfo, 1)}
+	sm.txnInfo[0] = &txninfo.TxnInfo{
+		StartTS:          424768545227014155,
+		CurrentSQLDigest: digest,
+		State:            txninfo.TxnRunningNormal,
+		BlockStartTime:   nil,
+		EntriesCount:     1,
+		EntriesSize:      19,
+		ConnectionID:     2,
+		Username:         "root",
+		CurrentDB:        "test",
+	}
+	tk.Se.SetSessionManager(sm)
+	tk.MustQuery("select * from information_schema.TIDB_TRX;").Check(
+		testkit.Rows("424768545227014155 2021-05-07 12:56:48 " + digest + " Normal <nil> 1 19 2 root test"),
+	)
 }
