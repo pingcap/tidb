@@ -225,7 +225,6 @@ func (txn *KVTxn) Delete(k []byte) error {
 // value of this option.
 func (txn *KVTxn) SetOption(opt int, val interface{}) {
 	txn.us.SetOption(opt, val)
-	txn.snapshot.SetOption(opt, val)
 }
 
 // GetOption returns the option

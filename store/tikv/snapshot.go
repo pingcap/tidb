@@ -566,27 +566,6 @@ func (s *KVSnapshot) IterReverse(k []byte) (unionstore.Iterator, error) {
 	return scanner, errors.Trace(err)
 }
 
-// SetOption sets an option with a value, when val is nil, uses the default
-// value of this option. Only ReplicaRead is supported for snapshot
-func (s *KVSnapshot) SetOption(opt int, val interface{}) {
-	switch opt {
-	case kv.CollectRuntimeStats:
-		s.mu.Lock()
-		s.mu.stats = val.(*SnapshotRuntimeStats)
-		s.mu.Unlock()
-	}
-}
-
-// DelOption deletes an option.
-func (s *KVSnapshot) DelOption(opt int) {
-	switch opt {
-	case kv.CollectRuntimeStats:
-		s.mu.Lock()
-		s.mu.stats = nil
-		s.mu.Unlock()
-	}
-}
-
 // SetNotFillCache indicates whether tikv should skip filling cache when
 // loading data.
 func (s *KVSnapshot) SetNotFillCache(b bool) {
@@ -626,6 +605,14 @@ func (s *KVSnapshot) SetTaskID(id uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mu.taskID = id
+}
+
+// SetRuntimeStats sets the stats to collect runtime statistics.
+// Set it to nil to clear stored stats.
+func (s *KVSnapshot) SetRuntimeStats(stats *SnapshotRuntimeStats) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.stats = stats
 }
 
 // SetIsStatenessReadOnly indicates whether the transaction is staleness read only transaction

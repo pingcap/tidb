@@ -81,12 +81,19 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetSampleStep(val.(uint32))
 	case tikvstore.TaskID:
 		s.KVSnapshot.SetTaskID(val.(uint64))
+	case tikvstore.CollectRuntimeStats:
+		s.KVSnapshot.SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
 	case tikvstore.IsStalenessReadOnly:
 		s.KVSnapshot.SetIsStatenessReadOnly(val.(bool))
 	case tikvstore.MatchStoreLabels:
 		s.KVSnapshot.SetMatchStoreLabels(val.([]*metapb.StoreLabel))
-	default:
-		s.KVSnapshot.SetOption(opt, val)
+	}
+}
+
+func (s *tikvSnapshot) DelOption(opt int) {
+	switch opt {
+	case tikvstore.CollectRuntimeStats:
+		s.KVSnapshot.SetRuntimeStats(nil)
 	}
 }
 
