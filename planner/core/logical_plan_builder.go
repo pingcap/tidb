@@ -5928,7 +5928,8 @@ func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) error {
 		b.outerCTEs = append(b.outerCTEs, &cteInfo{cte, !w.IsRecursive, false, true, false, nil, nil, b.allocIDForCTEStorage, 0, false, false})
 		b.allocIDForCTEStorage++
 		saveFlag := b.optFlag
-		b.optFlag = 0
+		// Init the flag to flagPrunColumns, otherwise it's missing.
+		b.optFlag = flagPrunColumns
 		_, err := b.buildCte(ctx, cte, w.IsRecursive)
 		if err != nil {
 			return err
