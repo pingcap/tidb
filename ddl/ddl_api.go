@@ -3659,10 +3659,13 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 		return errors.Trace(err)
 	}
 	col.Comment, err = value.ToString()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if utf8.RuneCountInString(col.Comment) > MaxCommentLength {
 		return errTooLongFieldComment.GenWithStackByArgs(col.Name.O, MaxCommentLength)
 	}
-	return errors.Trace(err)
+	return nil
 }
 
 // processColumnOptions is only used in getModifiableColumnJob.
