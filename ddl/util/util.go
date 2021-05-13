@@ -186,7 +186,9 @@ func LoadGlobalVars(ctx sessionctx.Context, varNames []string) error {
 		for _, row := range rows {
 			varName := row.GetString(0)
 			varValue := row.GetString(1)
-			variable.SetLocalSystemVar(varName, varValue)
+			if err = ctx.GetSessionVars().SetSystemVar(varName, varValue); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
