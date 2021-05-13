@@ -57,7 +57,8 @@ func (h *InfoCache) GetByVersion(version int64) InfoSchema {
 
 // Insert will **TRY** to insert the infoschema into the cache.
 // It only promised to cache the newest infoschema.
-func (h *InfoCache) Insert(is InfoSchema) {
+// It returns 'true' if it is cached, 'false' otherwise.
+func (h *InfoCache) Insert(is InfoSchema) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -68,7 +69,7 @@ func (h *InfoCache) Insert(is InfoSchema) {
 
 	// cached entry
 	if i < len(h.cache) && h.cache[i].SchemaMetaVersion() == version {
-		return
+		return true
 	}
 
 	if len(h.cache) < cap(h.cache) {
@@ -76,10 +77,13 @@ func (h *InfoCache) Insert(is InfoSchema) {
 		h.cache = h.cache[:len(h.cache)+1]
 		copy(h.cache[i+1:], h.cache[i:])
 		h.cache[i] = is
+		return true
 	} else if i < len(h.cache) {
 		// drop older schema
 		copy(h.cache[i+1:], h.cache[i:])
 		h.cache[i] = is
+		return true
 	}
 	// older than all cached schemas, refuse to cache it
+	return false
 }
