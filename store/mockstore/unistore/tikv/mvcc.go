@@ -239,7 +239,11 @@ func (store *MVCCStore) PessimisticLock(reqCtx *requestCtx, req *kvrpcpb.Pessimi
 	for _, m := range mutations {
 		lock, err := store.checkConflictInLockStore(reqCtx, m, startTS)
 		if err != nil {
-			return store.handleCheckPessimisticErr(startTS, err, req.IsFirstLock, req.WaitTimeout, m.Key, req.Context.ResourceGroupTag)
+			var resourceGroupTag []byte = nil
+			if req.Context != nil {
+				resourceGroupTag = req.Context.ResourceGroupTag
+			}
+			return store.handleCheckPessimisticErr(startTS, err, req.IsFirstLock, req.WaitTimeout, m.Key, resourceGroupTag)
 		}
 		if lock != nil {
 			if lock.Op != uint8(kvrpcpb.Op_PessimisticLock) {
