@@ -142,7 +142,6 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	is := dom.InfoSchema()
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
 	txnCtx.InfoSchema = is
-	txnCtx.SchemaVersion = is.SchemaMetaVersion()
 	// DDL will force commit old transaction, after DDL, in transaction status should be false.
 	e.ctx.GetSessionVars().SetInTxn(false)
 	return nil
@@ -314,8 +313,12 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 		if isSystemTable(tn.Schema.L, tn.Name.L) {
 			return errors.Errorf("Drop tidb system table '%s.%s' is forbidden", tn.Schema.L, tn.Name.L)
 		}
-
-		if obt == tableObject && config.CheckTableBeforeDrop {
+		tableInfo, err := e.is.TableByName(tn.Schema, tn.Name)
+		if err != nil {
+			return err
+		}
+		tempTableType := tableInfo.Meta().TempTableType
+		if obt == tableObject && config.CheckTableBeforeDrop && tempTableType == model.TempTableNone {
 			logutil.BgLogger().Warn("admin check table before drop",
 				zap.String("database", fullti.Schema.O),
 				zap.String("table", fullti.Name.O),

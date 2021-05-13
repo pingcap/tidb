@@ -26,11 +26,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
+	derr "github.com/pingcap/tidb/store/driver/error"
 	txn_driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
@@ -262,7 +262,7 @@ func (s *tikvStore) StartGCWorker() error {
 
 	gcWorker, err := gcworker.NewGCWorker(s, s.pdClient)
 	if err != nil {
-		return txn_driver.ToTiDBErr(err)
+		return derr.ToTiDBErr(err)
 	}
 	gcWorker.Start()
 	s.gcWorker = gcWorker
@@ -287,7 +287,7 @@ func (s *tikvStore) Close() error {
 	}
 	s.coprStore.Close()
 	err := s.KVStore.Close()
-	return txn_driver.ToTiDBErr(err)
+	return derr.ToTiDBErr(err)
 }
 
 // GetMemCache return memory manager of the storage
@@ -299,34 +299,17 @@ func (s *tikvStore) GetMemCache() kv.MemManager {
 func (s *tikvStore) Begin() (kv.Transaction, error) {
 	txn, err := s.KVStore.Begin()
 	if err != nil {
-		return nil, txn_driver.ToTiDBErr(err)
+		return nil, derr.ToTiDBErr(err)
 	}
 	return txn_driver.NewTiKVTxn(txn), err
 }
 
 // BeginWithOption begins a transaction with given option
 func (s *tikvStore) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
-	txnScope := option.TxnScope
-	if txnScope == "" {
-		txnScope = oracle.GlobalTxnScope
-	}
-	var txn *tikv.KVTxn
-	var err error
-	if option.StartTS != nil {
-		txn, err = s.BeginWithStartTS(txnScope, *option.StartTS)
-	} else if option.PrevSec != nil {
-		txn, err = s.BeginWithExactStaleness(txnScope, *option.PrevSec)
-	} else if option.MaxPrevSec != nil {
-		txn, err = s.BeginWithMaxPrevSec(txnScope, *option.MaxPrevSec)
-	} else if option.MinStartTS != nil {
-		txn, err = s.BeginWithMinStartTS(txnScope, *option.MinStartTS)
-	} else {
-		txn, err = s.BeginWithTxnScope(txnScope)
-	}
+	txn, err := s.KVStore.BeginWithOption(option)
 	if err != nil {
-		return nil, txn_driver.ToTiDBErr(err)
+		return nil, derr.ToTiDBErr(err)
 	}
-
 	return txn_driver.NewTiKVTxn(txn), err
 }
 
@@ -339,7 +322,7 @@ func (s *tikvStore) GetSnapshot(ver kv.Version) kv.Snapshot {
 // CurrentVersion returns current max committed version with the given txnScope (local or global).
 func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
 	ver, err := s.KVStore.CurrentTimestamp(txnScope)
-	return kv.NewVersion(ver), txn_driver.ToTiDBErr(err)
+	return kv.NewVersion(ver), derr.ToTiDBErr(err)
 }
 
 // ShowStatus returns the specified status of the storage

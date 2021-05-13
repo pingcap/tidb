@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -46,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -322,8 +324,8 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
-	if meta := t.Meta(); meta.TempTableType == model.TempTableGlobal {
-		addTemporaryTableID(sctx, meta.ID)
+	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
+		addTemporaryTable(sctx, m)
 	}
 
 	var colIDs, binlogColIDs []int64
@@ -588,12 +590,9 @@ func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
 	return pkCols
 }
 
-func addTemporaryTableID(sctx sessionctx.Context, id int64) {
-	txnCtx := sctx.GetSessionVars().TxnCtx
-	if txnCtx.GlobalTemporaryTables == nil {
-		txnCtx.GlobalTemporaryTables = make(map[int64]struct{})
-	}
-	txnCtx.GlobalTemporaryTables[id] = struct{}{}
+func addTemporaryTable(sctx sessionctx.Context, tblInfo *model.TableInfo) {
+	tempTable := sctx.GetSessionVars().GetTemporaryTable(tblInfo)
+	tempTable.SetModified(true)
 }
 
 // AddRecord implements table.Table AddRecord interface.
@@ -608,8 +607,8 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		fn.ApplyOn(&opt)
 	}
 
-	if meta := t.Meta(); meta.TempTableType == model.TempTableGlobal {
-		addTemporaryTableID(sctx, meta.ID)
+	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
+		addTemporaryTable(sctx, m)
 	}
 
 	var ctx context.Context
@@ -1010,8 +1009,8 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		return err
 	}
 
-	if meta := t.Meta(); meta.TempTableType == model.TempTableGlobal {
-		addTemporaryTableID(ctx, meta.ID)
+	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
+		addTemporaryTable(ctx, m)
 	}
 
 	// The table has non-public column and this column is doing the operation of "modify/change column".
@@ -1370,7 +1369,14 @@ func OverflowShardBits(recordID int64, shardRowIDBits uint64, typeBitsLength uin
 
 // Allocators implements table.Table Allocators interface.
 func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
-	if ctx == nil || ctx.GetSessionVars().IDAllocator == nil {
+	if ctx == nil {
+		return t.allocs
+	} else if ctx.GetSessionVars().IDAllocator == nil {
+		// Use an independent allocator for global temporary tables.
+		if t.meta.TempTableType == model.TempTableGlobal {
+			alloc := ctx.GetSessionVars().GetTemporaryTable(t.meta).GetAutoIDAllocator()
+			return autoid.Allocators{alloc}
+		}
 		return t.allocs
 	}
 
@@ -1498,6 +1504,7 @@ func getDuplicateErrorHandleString(t table.Table, handle kv.Handle, row []types.
 func init() {
 	table.TableFromMeta = TableFromMeta
 	table.MockTableFromMeta = MockTableFromMeta
+	tableutil.TempTableFromMeta = TempTableFromMeta
 }
 
 // sequenceCommon cache the sequence value.
@@ -1762,4 +1769,44 @@ func BuildTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.Co
 		tsExec.PrimaryPrefixColumnIds = PrimaryPrefixColumnIDs(tableInfo)
 	}
 	return tsExec
+}
+
+// TemporaryTable is used to store transaction-specific or session-specific information for global / local temporary tables.
+// For example, stats and autoID should have their own copies of data, instead of being shared by all sessions.
+type TemporaryTable struct {
+	// Whether it's modified in this transaction.
+	modified bool
+	// The stats of this table. So far it's always pseudo stats.
+	stats *statistics.Table
+	// The autoID allocator of this table.
+	autoIDAllocator autoid.Allocator
+}
+
+// TempTableFromMeta builds a TempTable from model.TableInfo.
+func TempTableFromMeta(tblInfo *model.TableInfo) tableutil.TempTable {
+	return &TemporaryTable{
+		modified:        false,
+		stats:           statistics.PseudoTable(tblInfo),
+		autoIDAllocator: autoid.NewAllocatorFromTempTblInfo(tblInfo),
+	}
+}
+
+// GetAutoIDAllocator is implemented from TempTable.GetAutoIDAllocator.
+func (t *TemporaryTable) GetAutoIDAllocator() autoid.Allocator {
+	return t.autoIDAllocator
+}
+
+// SetModified is implemented from TempTable.SetModified.
+func (t *TemporaryTable) SetModified(modified bool) {
+	t.modified = modified
+}
+
+// GetModified is implemented from TempTable.GetModified.
+func (t *TemporaryTable) GetModified() bool {
+	return t.modified
+}
+
+// GetStats is implemented from TempTable.GetStats.
+func (t *TemporaryTable) GetStats() interface{} {
+	return t.stats
 }
