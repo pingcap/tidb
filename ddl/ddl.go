@@ -284,10 +284,10 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 
 	// TODO: make store and infoCache explicit arguments
 	// these two should be ensured to exist
-	if (opt.Store == nil) {
+	if opt.Store == nil {
 		panic("store should not be nil")
 	}
-	if (opt.InfoCache == nil) {
+	if opt.InfoCache == nil {
 		panic("infoCache should not be nil")
 	}
 
