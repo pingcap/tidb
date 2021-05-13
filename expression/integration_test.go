@@ -9371,4 +9371,10 @@ func (s *testIntegrationSuite) TestEnumControlFunction(c *C) {
 	tk.MustQuery("select a from t where if(a=1,b,c)=1;").Sort().Check(testkit.Rows("1", "1", "2", "2"))
 	tk.MustQuery("select a from t where if(a=1,b,c);").Sort().Check(testkit.Rows("1", "1", "2", "2"))
 
+	tk.MustExec("drop table if exists e;")
+	tk.MustExec("create table e(e enum('c', 'b', 'a'));")
+	tk.MustExec("insert into e values(3)")
+	tk.MustQuery("select elt(1,e) = 'a' from e").Check(testkit.Rows("1"))
+	tk.MustQuery("select elt(1,e) = 3 from e").Check(testkit.Rows("1"))
+	tk.MustQuery("select e from e where elt(1,e)").Check(testkit.Rows("a"))
 }

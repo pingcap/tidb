@@ -2047,6 +2047,25 @@ func TryPushCastDownToControlFunctionForHybridType(ctx sessionctx.Context, expr 
 		}
 		sf.RetType, sf.Function = f.getRetTp(), f
 		return sf, true
+	case ast.Elt:
+		hasHybrid := false
+		for i := 1; i < len(args); i++ {
+			hasHybrid = hasHybrid || args[i].GetType().Hybrid()
+		}
+		if !hasHybrid {
+			return expr, false
+		}
+
+		for i := 1; i < len(args); i++ {
+			args[i] = wrapCastFunc(ctx, args[i])
+		}
+		f, err := funcs[ast.Elt].getFunction(ctx, args)
+		if err != nil {
+			return expr, false
+		}
+		sf.RetType, sf.Function = f.getRetTp(), f
+		// Elt only supports ETString, so we need add extra cast to keep retType right.
+		return wrapCastFunc(ctx, sf), true
 	default:
 		return expr, false
 	}
