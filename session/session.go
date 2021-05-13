@@ -517,7 +517,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(tikvstore.EnableAsyncCommit, s.GetSessionVars().EnableAsyncCommit)
 	s.txn.SetOption(tikvstore.Enable1PC, s.GetSessionVars().Enable1PC)
 	// priority of the sysvar is lower than `start transaction with causal consistency only`
-	if s.txn.GetOption(tikvstore.GuaranteeLinearizability) == nil {
+	if val := s.txn.GetOption(tikvstore.GuaranteeLinearizability); val == nil || val.(bool) {
 		// We needn't ask the TiKV client to guarantee linearizability for auto-commit transactions
 		// because the property is naturally holds:
 		// We guarantee the commitTS of any transaction must not exceed the next timestamp from the TSO.
