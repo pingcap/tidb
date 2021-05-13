@@ -1344,10 +1344,10 @@ func checkTableHintsApplicableForPartition(partitions []model.CIStr, partitionSe
 func appendWarnForUnknownPartitions(ctx sessionctx.Context, hintName string, unknownPartitions []string) {
 	if len(unknownPartitions) == 0 {
 		return
-	} else {
-		warning := fmt.Errorf("Unknown partitions (%s) in optimizer hint %s", strings.Join(unknownPartitions, ","), hintName)
-		ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 	}
+
+	warning := fmt.Errorf("Unknown partitions (%s) in optimizer hint %s", strings.Join(unknownPartitions, ","), hintName)
+	ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 }
 
 func (s *partitionProcessor) checkHintsApplicable(ds *DataSource, partitionSet set.StringSet) {
