@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
@@ -126,6 +127,8 @@ func newTiKVSnapshot(store *KVStore, ts uint64, replicaReadSeed uint32) *KVSnaps
 	}
 }
 
+const batchGetMaxBackoff = 20000
+
 // SetSnapshotTS resets the timestamp for reads.
 func (s *KVSnapshot) SetSnapshotTS(ts uint64) {
 	// Sanity check for snapshot version.
@@ -170,8 +173,8 @@ func (s *KVSnapshot) BatchGet(ctx context.Context, keys [][]byte) (map[string][]
 
 	// We want [][]byte instead of []kv.Key, use some magic to save memory.
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
-	ctx = context.WithValue(ctx, TxnStartKey, s.version)
-	bo := NewBackofferWithVars(ctx, batchGetMaxBackoff, s.vars)
+	ctx = context.WithValue(ctx, retry.TxnStartKey, s.version)
+	bo := retry.NewBackofferWithVars(ctx, batchGetMaxBackoff, s.vars)
 
 	// Create a map to collect key-values from region servers.
 	var mu sync.Mutex
@@ -331,7 +334,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -378,7 +381,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 				return errors.Trace(err)
 			}
 			if msBeforeExpired > 0 {
-				err = bo.BackoffWithMaxSleep(BoTxnLockFast, int(msBeforeExpired), errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
+				err = bo.BackoffWithMaxSleep(retry.BoTxnLockFast, int(msBeforeExpired), errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -394,6 +397,8 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 	}
 }
 
+const getMaxBackoff = 20000
+
 // Get gets the value for key k from snapshot.
 func (s *KVSnapshot) Get(ctx context.Context, k []byte) ([]byte, error) {
 
@@ -401,8 +406,8 @@ func (s *KVSnapshot) Get(ctx context.Context, k []byte) ([]byte, error) {
 		metrics.TxnCmdHistogramWithGet.Observe(time.Since(start).Seconds())
 	}(time.Now())
 
-	ctx = context.WithValue(ctx, TxnStartKey, s.version)
-	bo := NewBackofferWithVars(ctx, getMaxBackoff, s.vars)
+	ctx = context.WithValue(ctx, retry.TxnStartKey, s.version)
+	bo := retry.NewBackofferWithVars(ctx, getMaxBackoff, s.vars)
 	val, err := s.get(ctx, bo, k)
 	s.recordBackoffInfo(bo)
 	if err != nil {
@@ -436,7 +441,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 		opentracing.ContextWithSpan(ctx, span1)
 	}
 	failpoint.Inject("snapshot-get-cache-fail", func(_ failpoint.Value) {
-		if bo.ctx.Value("TestSnapshotCache") != nil {
+		if bo.GetCtx().Value("TestSnapshotCache") != nil {
 			panic("cache miss")
 		}
 	})
@@ -488,7 +493,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 			return nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -522,7 +527,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 				return nil, errors.Trace(err)
 			}
 			if msBeforeExpired > 0 {
-				err = bo.BackoffWithMaxSleep(BoTxnLockFast, int(msBeforeExpired), errors.New(keyErr.String()))
+				err = bo.BackoffWithMaxSleep(retry.BoTxnLockFast, int(msBeforeExpired), errors.New(keyErr.String()))
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -678,7 +683,7 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 
 func (s *KVSnapshot) recordBackoffInfo(bo *Backoffer) {
 	s.mu.RLock()
-	if s.mu.stats == nil || bo.totalSleep == 0 {
+	if s.mu.stats == nil || bo.GetTotalSleep() == 0 {
 		s.mu.RUnlock()
 		return
 	}
@@ -689,14 +694,14 @@ func (s *KVSnapshot) recordBackoffInfo(bo *Backoffer) {
 		return
 	}
 	if s.mu.stats.backoffSleepMS == nil {
-		s.mu.stats.backoffSleepMS = bo.backoffSleepMS
-		s.mu.stats.backoffTimes = bo.backoffTimes
+		s.mu.stats.backoffSleepMS = bo.GetBackoffSleepMS()
+		s.mu.stats.backoffTimes = bo.GetBackoffTimes()
 		return
 	}
-	for k, v := range bo.backoffSleepMS {
+	for k, v := range bo.GetBackoffSleepMS() {
 		s.mu.stats.backoffSleepMS[k] += v
 	}
-	for k, v := range bo.backoffTimes {
+	for k, v := range bo.GetBackoffTimes() {
 		s.mu.stats.backoffTimes[k] += v
 	}
 }
@@ -725,8 +730,8 @@ func (s *KVSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRunti
 // SnapshotRuntimeStats records the runtime stats of snapshot.
 type SnapshotRuntimeStats struct {
 	rpcStats       RegionRequestRuntimeStats
-	backoffSleepMS map[BackoffType]int
-	backoffTimes   map[BackoffType]int
+	backoffSleepMS map[retry.BackoffType]int
+	backoffTimes   map[retry.BackoffType]int
 	scanDetail     *util.ScanDetail
 	timeDetail     *util.TimeDetail
 }
@@ -740,8 +745,8 @@ func (rs *SnapshotRuntimeStats) Clone() *SnapshotRuntimeStats {
 		}
 	}
 	if len(rs.backoffSleepMS) > 0 {
-		newRs.backoffSleepMS = make(map[BackoffType]int)
-		newRs.backoffTimes = make(map[BackoffType]int)
+		newRs.backoffSleepMS = make(map[retry.BackoffType]int)
+		newRs.backoffTimes = make(map[retry.BackoffType]int)
 		for k, v := range rs.backoffSleepMS {
 			newRs.backoffSleepMS[k] += v
 		}
@@ -762,10 +767,10 @@ func (rs *SnapshotRuntimeStats) Merge(other *SnapshotRuntimeStats) {
 	}
 	if len(other.backoffSleepMS) > 0 {
 		if rs.backoffSleepMS == nil {
-			rs.backoffSleepMS = make(map[BackoffType]int)
+			rs.backoffSleepMS = make(map[retry.BackoffType]int)
 		}
 		if rs.backoffTimes == nil {
-			rs.backoffTimes = make(map[BackoffType]int)
+			rs.backoffTimes = make(map[retry.BackoffType]int)
 		}
 		for k, v := range other.backoffSleepMS {
 			rs.backoffSleepMS[k] += v
