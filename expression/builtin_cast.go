@@ -2009,30 +2009,19 @@ func TryPushCastDownToControlFunctionForHybridType(ctx sessionctx.Context, expr 
 	default:
 		return expr, false
 	}
-	containsHybrid := func(args []Expression) bool {
-		for _, arg := range args {
-			if arg.GetType().Hybrid() {
-				return true
-			}
-		}
-		return false
-	}
 
 	args := sf.GetArgs()
 	switch sf.FuncName.L {
 	case ast.If:
-		if containsHybrid(args[1:]) {
+		if args[1].GetType().Hybrid() || args[2].GetType().Hybrid() {
 			args[1] = wrapCastFunc(ctx, args[1])
 			args[2] = wrapCastFunc(ctx, args[2])
 			f, err := funcs[ast.If].getFunction(ctx, args)
 			if err != nil {
 				return expr, false
 			}
-			return &ScalarFunction{
-				FuncName: model.NewCIStr(ast.If),
-				RetType:  f.getRetTp(),
-				Function: f,
-			}, true
+			sf.RetType, sf.Function = f.getRetTp(), f
+			return sf, true
 		}
 	case ast.Case:
 		hasHybrid := false
@@ -2056,11 +2045,8 @@ func TryPushCastDownToControlFunctionForHybridType(ctx sessionctx.Context, expr 
 		if err != nil {
 			return expr, false
 		}
-		return &ScalarFunction{
-			FuncName: model.NewCIStr(ast.Case),
-			RetType:  f.getRetTp(),
-			Function: f,
-		}, true
+		sf.RetType, sf.Function = f.getRetTp(), f
+		return sf, true
 	default:
 		return expr, false
 	}
