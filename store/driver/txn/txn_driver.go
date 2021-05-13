@@ -152,6 +152,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.GetSnapshot().SetTaskID(val.(uint64))
 	case tikvstore.InfoSchema:
 		txn.SetSchemaVer(val.(tikv.SchemaVer))
+	case tikvstore.CollectRuntimeStats:
+		txn.KVTxn.GetSnapshot().SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
 	case tikvstore.SchemaAmender:
 		txn.SetSchemaAmender(val.(tikv.SchemaAmender))
 	case tikvstore.SampleStep:
@@ -162,6 +164,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.SetEnableAsyncCommit(val.(bool))
 	case tikvstore.Enable1PC:
 		txn.SetEnable1PC(val.(bool))
+	case tikvstore.GuaranteeLinearizability:
+		txn.SetCausalConsistency(!val.(bool))
 	case tikvstore.TxnScope:
 		txn.SetScope(val.(string))
 	case tikvstore.IsStalenessReadOnly:
@@ -175,10 +179,21 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 
 func (txn *tikvTxn) GetOption(opt int) interface{} {
 	switch opt {
+	case tikvstore.GuaranteeLinearizability:
+		return !txn.KVTxn.IsCasualConsistency()
 	case tikvstore.TxnScope:
 		return txn.KVTxn.GetScope()
 	default:
 		return txn.KVTxn.GetOption(opt)
+	}
+}
+
+func (txn *tikvTxn) DelOption(opt int) {
+	switch opt {
+	case tikvstore.CollectRuntimeStats:
+		txn.KVTxn.GetSnapshot().SetRuntimeStats(nil)
+	default:
+		txn.KVTxn.DelOption(opt)
 	}
 }
 
