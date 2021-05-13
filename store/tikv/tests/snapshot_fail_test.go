@@ -213,7 +213,7 @@ func (s *testSnapshotFailSuite) TestRetryPointGetResolveTS(c *C) {
 	c.Assert(err, IsNil)
 	txn.SetEnableAsyncCommit(false)
 	txn.SetEnable1PC(false)
-	txn.SetCasualConsistency(true)
+	txn.SetCausalConsistency(true)
 
 	// Prewrite the lock without committing it
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeCommit", `pause`), IsNil)

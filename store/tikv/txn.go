@@ -284,10 +284,10 @@ func (txn *KVTxn) SetEnable1PC(b bool) {
 	txn.enable1PC = b
 }
 
-// SetCasualConsistency indicates if the transaction does not need to
+// SetCausalConsistency indicates if the transaction does not need to
 // guarantee linearizability. Default value is false which means
 // linearizability is guaranteed.
-func (txn *KVTxn) SetCasualConsistency(b bool) {
+func (txn *KVTxn) SetCausalConsistency(b bool) {
 	txn.causalConsistency = b
 }
 

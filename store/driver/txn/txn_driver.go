@@ -163,7 +163,7 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	case tikvstore.Enable1PC:
 		txn.SetEnable1PC(val.(bool))
 	case tikvstore.GuaranteeLinearizability:
-		txn.SetCasualConsistency(!val.(bool))
+		txn.SetCausalConsistency(!val.(bool))
 	case tikvstore.TxnScope:
 		txn.SetScope(val.(string))
 	case tikvstore.IsStalenessReadOnly:

@@ -126,7 +126,7 @@ func (s *testAsyncCommitCommon) mustGetNoneFromSnapshot(c *C, version uint64, ke
 
 func (s *testAsyncCommitCommon) beginAsyncCommitWithLinearizability(c *C) tikv.TxnProbe {
 	txn := s.beginAsyncCommit(c)
-	txn.SetCasualConsistency(false)
+	txn.SetCausalConsistency(false)
 	return txn
 }
 
