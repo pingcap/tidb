@@ -11,7 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//nolint:gosimple // generates false positive fmt.Sprintf warnings which keep aligned
 package executor_test
 
 import (
@@ -725,6 +724,7 @@ func (s *testSuite2) TestMergeJoinDifferentTypes(c *C) {
 }
 
 // TestVectorizedMergeJoin is used to test vectorized merge join with some corner cases.
+//nolint:gosimple // generates false positive fmt.Sprintf warnings which keep aligned
 func (s *testSuiteJoin3) TestVectorizedMergeJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -840,6 +840,7 @@ func (s *testSuiteJoin3) TestVectorizedMergeJoin(c *C) {
 }
 
 // TestVectorizedShuffleMergeJoin is used to test vectorized shuffle merge join with some corner cases.
+//nolint:gosimple // generates false positive fmt.Sprintf warnings which keep aligned
 func (s *testSuiteJoin3) TestVectorizedShuffleMergeJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@session.tidb_merge_join_concurrency = 4;")
