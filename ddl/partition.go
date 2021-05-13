@@ -911,18 +911,15 @@ func getTableInfoWithDroppingPartitions(t *model.TableInfo) *model.TableInfo {
 }
 
 func dropRuleBundles(d *ddlCtx, physicalTableIDs []int64) error {
-	if d.infoCache != nil && d.infoCache.GetLatest() != nil {
-		bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
-		for _, ID := range physicalTableIDs {
-			oldBundle, ok := d.infoCache.GetLatest().BundleByName(placement.GroupID(ID))
-			if ok && !oldBundle.IsEmpty() {
-				bundles = append(bundles, placement.BuildPlacementDropBundle(ID))
-			}
+	bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
+	for _, ID := range physicalTableIDs {
+		oldBundle, ok := d.infoCache.GetLatest().BundleByName(placement.GroupID(ID))
+		if ok && !oldBundle.IsEmpty() {
+			bundles = append(bundles, placement.BuildPlacementDropBundle(ID))
 		}
-		err := infosync.PutRuleBundles(context.TODO(), bundles)
-		return err
 	}
-	return nil
+	err := infosync.PutRuleBundles(context.TODO(), bundles)
+	return err
 }
 
 // onDropTablePartition deletes old partition meta.

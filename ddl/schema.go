@@ -68,10 +68,6 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 }
 
 func checkSchemaNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, dbInfo *model.DBInfo) error {
-	// d.infoHandle maybe nil in some test.
-	if d.infoCache == nil {
-		return checkSchemaNotExistsFromStore(t, schemaID, dbInfo)
-	}
 	// Try to use memory schema info to check first.
 	currVer, err := t.GetSchemaVersion()
 	if err != nil {

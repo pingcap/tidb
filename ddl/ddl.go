@@ -282,6 +282,15 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
 	}
 
+	// TODO: make store and infoCache explicit arguments
+	// these two should be ensured to exist
+	if (opt.Store == nil) {
+		panic("store should not be nil")
+	}
+	if (opt.InfoCache == nil) {
+		panic("infoCache should not be nil")
+	}
+
 	ddlCtx := &ddlCtx{
 		uuid:         id,
 		store:        opt.Store,
@@ -647,9 +656,6 @@ func (d *ddl) startCleanDeadTableLock() {
 		select {
 		case <-ticker.C:
 			if !d.ownerManager.IsOwner() {
-				continue
-			}
-			if d.infoCache == nil || d.infoCache.GetLatest() == nil {
 				continue
 			}
 			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.ctx, d.infoCache.GetLatest().AllSchemas())
