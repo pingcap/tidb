@@ -761,9 +761,9 @@ func (s *testLockSuite) TestDeadlockReportWaitChain(c *C) {
 	waitChain = dl.GetWaitChain()
 	c.Assert(len(waitChain), Equals, 4)
 	c.Logf("wait chain: \n** %v\n**%v\n**%v\n**%v\n", waitChain[0], waitChain[1], waitChain[2], waitChain[3])
-	checkWaitChainEntry(txns, waitChain[0], 1, 3)
+	checkWaitChainEntry(txns, waitChain[0], 2, 0)
 	checkWaitChainEntry(txns, waitChain[1], 0, 1)
-	checkWaitChainEntry(txns, waitChain[2], 2, 0)
+	checkWaitChainEntry(txns, waitChain[2], 1, 3)
 	checkWaitChainEntry(txns, waitChain[3], 3, 2)
 
 	// Each transaction should be rolled back after its blocker being rolled back

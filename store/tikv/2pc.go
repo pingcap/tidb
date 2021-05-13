@@ -825,12 +825,10 @@ func (c *twoPhaseCommitter) checkAsyncCommit() bool {
 		return false
 	}
 
-	enableAsyncCommitOption := c.txn.us.GetOption(kv.EnableAsyncCommit)
-	enableAsyncCommit := enableAsyncCommitOption != nil && enableAsyncCommitOption.(bool)
 	asyncCommitCfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
 	// TODO the keys limit need more tests, this value makes the unit test pass by now.
 	// Async commit is not compatible with Binlog because of the non unique timestamp issue.
-	if c.sessionID > 0 && enableAsyncCommit &&
+	if c.sessionID > 0 && c.txn.enableAsyncCommit &&
 		uint(c.mutations.Len()) <= asyncCommitCfg.KeysLimit &&
 		!c.shouldWriteBinlog() {
 		totalKeySize := uint64(0)
@@ -856,9 +854,7 @@ func (c *twoPhaseCommitter) checkOnePC() bool {
 }
 
 func (c *twoPhaseCommitter) needLinearizability() bool {
-	GuaranteeLinearizabilityOption := c.txn.us.GetOption(kv.GuaranteeLinearizability)
-	// by default, guarantee
-	return GuaranteeLinearizabilityOption == nil || GuaranteeLinearizabilityOption.(bool)
+	return !c.txn.causalConsistency
 }
 
 func (c *twoPhaseCommitter) isAsyncCommit() bool {

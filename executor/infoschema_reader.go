@@ -150,6 +150,10 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.TableClientErrorsSummaryByUser,
 			infoschema.TableClientErrorsSummaryByHost:
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
+		case infoschema.TableTiDBTrx:
+			e.setDataForTiDBTrx(sctx)
+		case infoschema.ClusterTableTiDBTrx:
+			err = e.setDataForClusterTiDBTrx(sctx)
 		case infoschema.TableDeadLock:
 			err = e.setDataForDeadlock(sctx)
 		case infoschema.ClusterTableDeadLock:
@@ -2011,6 +2015,40 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 				rows = append(rows, row)
 			}
 		}
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForTiDBTrx(ctx sessionctx.Context) {
+	sm := ctx.GetSessionManager()
+	if sm == nil {
+		return
+	}
+
+	loginUser := ctx.GetSessionVars().User
+	var hasProcessPriv bool
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
+			hasProcessPriv = true
+		}
+	}
+	infoList := sm.ShowTxnList()
+	for _, info := range infoList {
+		// If you have the PROCESS privilege, you can see all running transactions.
+		// Otherwise, you can see only your own transactions.
+		if !hasProcessPriv && loginUser != nil && info.Username != loginUser.Username {
+			continue
+		}
+		e.rows = append(e.rows, info.ToDatum())
+	}
+}
+
+func (e *memtableRetriever) setDataForClusterTiDBTrx(ctx sessionctx.Context) error {
+	e.setDataForTiDBTrx(ctx)
+	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
+	if err != nil {
+		return err
 	}
 	e.rows = rows
 	return nil
