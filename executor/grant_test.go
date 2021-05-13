@@ -68,7 +68,7 @@ func (s *testSuite3) TestGrantDBScope(c *C) {
 	createUserSQL := `CREATE USER 'testDB'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)
 	// Make sure all the db privs for new user is empty.
-	sql := `"SELECT * FROM mysql.db WHERE User="testDB" and host="localhost"`
+	sql := `SELECT * FROM mysql.db WHERE User="testDB" and host="localhost"`
 	tk.MustQuery(sql).Check(testkit.Rows())
 
 	// Grant each priv to the user.
