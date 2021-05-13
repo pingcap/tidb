@@ -48,17 +48,10 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
-<<<<<<< HEAD
-	github.com/pingcap/kvproto v0.0.0-20210308063835-39b884695fb8
+	github.com/pingcap/kvproto v0.0.0-20210513093146-12df7bbc771e
 	github.com/pingcap/log v0.0.0-20201112100606-8f1e84a3abc8
 	github.com/pingcap/parser v0.0.0-20210325072920-0d17053a8a69
 	github.com/pingcap/sysutil v0.0.0-20210221112134-a07bda3bde99
-=======
-	github.com/pingcap/kvproto v0.0.0-20210429093846-65f54a202d7e
-	github.com/pingcap/log v0.0.0-20210317133921-96f4fcab92a4
-	github.com/pingcap/parser v0.0.0-20210427084954-8e8ed7927bde
-	github.com/pingcap/sysutil v0.0.0-20210315073920-cc0985d983a3
->>>>>>> c269b1170... store/copr: invalidate stale regions for Mpp query. (#24410)
 	github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible
 	github.com/pingcap/tipb v0.0.0-20210326161441-1164ca065d1b
 	github.com/prometheus/client_golang v1.5.1
