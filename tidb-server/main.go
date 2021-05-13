@@ -575,7 +575,7 @@ func setGlobalVars() {
 	kvcache.GlobalLRUMemUsageTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
 
 	t, err := time.ParseDuration(cfg.TiKVClient.StoreLivenessTimeout)
-	if err != nil {
+	if err != nil || t < 0 {
 		logutil.BgLogger().Fatal("invalid duration value for store-liveness-timeout",
 			zap.String("currentValue", cfg.TiKVClient.StoreLivenessTimeout))
 	}

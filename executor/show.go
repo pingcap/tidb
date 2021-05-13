@@ -704,7 +704,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		if v.Hidden || e.sysVarHiddenForSem(v.Name) {
 			continue
 		}
-		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
+		value, err = variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
 		if err != nil {
 			return errors.Trace(err)
 		}
