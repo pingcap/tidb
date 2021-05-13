@@ -108,7 +108,7 @@ func (s *KVStore) CheckVisibility(startTime uint64) error {
 	diff := time.Since(cachedTime)
 
 	if diff > (GcSafePointCacheInterval - gcCPUTimeInaccuracyBound) {
-		return tikverr.NewErrPDServerTimeout("start timestamp may fall behind safe point")
+		return tikverr.NewErrPDServerTimeout("safe point cache is expired, can't check start-ts")
 	}
 
 	if startTime < cachedSafePoint {
