@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
+	txninfo "github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/israce"
@@ -36,6 +37,10 @@ import (
 // mockSessionManager is a mocked session manager which is used for test.
 type mockSessionManager1 struct {
 	PS []*util.ProcessInfo
+}
+
+func (msm *mockSessionManager1) ShowTxnList() []*txninfo.TxnInfo {
+	return nil
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.

@@ -2393,16 +2393,18 @@ func (s *testStatsSuite) TestDuplicateFMSketch(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, c int)")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	defer tk.MustExec("set @@tidb_partition_prune_mode='static'")
+	tk.MustExec("create table t(a int, b int, c int) partition by hash(a) partitions 3")
 	tk.MustExec("insert into t values (1, 1, 1)")
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("9"))
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("9"))
 
-	tk.MustExec("alter table t drop column a")
+	tk.MustExec("alter table t drop column b")
 	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), time.Duration(0)), IsNil)
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("6"))
 }
 
 func (s *testStatsSuite) TestIndexFMSketch(c *C) {
@@ -2410,24 +2412,26 @@ func (s *testStatsSuite) TestIndexFMSketch(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, c int, index ia(a), index ibc(b, c))")
+	tk.MustExec("create table t(a int, b int, c int, index ia(a), index ibc(b, c)) partition by hash(a) partitions 3")
 	tk.MustExec("insert into t values (1, 1, 1)")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	defer tk.MustExec("set @@tidb_partition_prune_mode='static'")
 	tk.MustExec("analyze table t index ia")
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("3"))
 	tk.MustExec("analyze table t index ibc")
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("6"))
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("5"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("15"))
 	tk.MustExec("drop table if exists t")
 	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), 0), IsNil)
 
 	// clustered index
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@tidb_enable_clustered_index=ON")
-	tk.MustExec("create table t (a datetime, b datetime, primary key (a))")
+	tk.MustExec("create table t (a datetime, b datetime, primary key (a)) partition by hash(year(a)) partitions 3")
 	tk.MustExec("insert into t values ('2000-01-01', '2000-01-01')")
 	tk.MustExec("analyze table t")
-	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("6"))
 	tk.MustExec("drop table if exists t")
 	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), 0), IsNil)
 
@@ -2444,25 +2448,23 @@ func (s *testStatsSuite) TestIndexFMSketch(c *C) {
 	}
 
 	tk.MustExec("set @@tidb_enable_clustered_index=OFF")
-	tk.MustExec("create table t(a int, key(a))")
+	tk.MustExec("create table t(a int, key(a)) partition by hash(a) partitions 3")
 	tk.MustExec("insert into t values (1), (2), (2), (3)")
-	checkNDV(2, 3)
-	tk.MustExec("insert into t values (4), (5)")
-	checkNDV(2, 5)
+	checkNDV(6, 1)
+	tk.MustExec("insert into t values (4), (5), (6)")
+	checkNDV(6, 2)
 	tk.MustExec("insert into t values (2), (5)")
-	checkNDV(2, 5)
+	checkNDV(6, 2)
 	tk.MustExec("drop table if exists t")
 	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), 0), IsNil)
 
 	// clustered index
 	tk.MustExec("set @@tidb_enable_clustered_index=ON")
-	tk.MustExec("create table t (a datetime, b datetime, primary key (a))")
-	tk.MustExec("insert into t values ('2000-01-01', '2000-01-01')")
-	checkNDV(2, 1)
-	tk.MustExec("insert into t values ('2020-01-01', '2020-01-01')")
-	checkNDV(2, 2)
-	tk.MustExec("insert into t values ('1999-01-01', '1999-01-01'), ('1999-01-02', '1999-01-02'), ('1999-01-03', '1999-01-03')")
-	checkNDV(2, 5)
+	tk.MustExec("create table t (a datetime, b datetime, primary key (a)) partition by hash(year(a)) partitions 3")
+	tk.MustExec("insert into t values ('2000-01-01', '2001-01-01'), ('2001-01-01', '2001-01-01'), ('2002-01-01', '2001-01-01')")
+	checkNDV(6, 1)
+	tk.MustExec("insert into t values ('1999-01-01', '1998-01-01'), ('1997-01-02', '1999-01-02'), ('1998-01-03', '1999-01-03')")
+	checkNDV(6, 2)
 }
 
 func (s *testStatsSuite) TestShowExtendedStats4DropColumn(c *C) {
@@ -2862,4 +2864,41 @@ func (s *testSerialStatsSuite) TestIssues24349(c *C) {
 		"test t global b 0 0 3 1 1 2 0",
 		"test t global b 0 1 10 1 4 4 0",
 	))
+}
+
+func (s *testStatsSuite) TestIssues24401(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+
+	// normal table with static prune mode
+	testKit.MustExec("set @@tidb_partition_prune_mode='static'")
+	testKit.MustExec("create table t(a int, index(a))")
+	testKit.MustExec("insert into t values (1), (2), (3)")
+	testKit.MustExec("analyze table t")
+	testKit.MustQuery("select * from mysql.stats_fm_sketch").Check(testkit.Rows())
+
+	// partition table with static prune mode
+	testKit.MustExec("create table tp(a int, index(a)) partition by hash(a) partitions 3")
+	testKit.MustExec("insert into tp values (1), (2), (3)")
+	testKit.MustExec("analyze table tp")
+	testKit.MustQuery("select * from mysql.stats_fm_sketch").Check(testkit.Rows())
+
+	// normal table with dynamic prune mode
+	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
+	testKit.MustExec("analyze table t")
+	testKit.MustQuery("select * from mysql.stats_fm_sketch").Check(testkit.Rows())
+
+	// partition table with dynamic prune mode
+	testKit.MustExec("analyze table tp")
+	rows := testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
+	lenRows := len(rows)
+	c.Assert(lenRows, Equals, 6)
+
+	// check fm-sketch won't increase infinitely
+	testKit.MustExec("insert into t values (10), (20), (30), (12), (23), (23), (4344)")
+	testKit.MustExec("analyze table tp")
+	rows = testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
+	c.Assert(len(rows), Equals, lenRows)
 }
