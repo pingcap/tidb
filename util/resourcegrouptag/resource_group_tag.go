@@ -17,6 +17,15 @@ const (
 // diagnostic information. Currently it contains only the SQL Digest, and the codec method is naive but extendable.
 // This function doesn't return error. When there's some error, which can only be caused by unexpected format of the
 // arguments, it simply returns an empty result.
+// The format:
+// +-----------+-----------------------+----------------------------+---------------+----------------+----
+// | version=1 | field1 prefix (1byte) | field1 content (var bytes) | field2 prefix | field2 content | ...
+// +-----------+-----------------------+----------------------------+---------------+----------------+----
+// The `version` section marks the codec version, which makes it easier for changing the format in the future.
+// Each field starts with a byte to mark what field it is, and the length of the content depends on the field's
+// definition.
+// Currently there's only one field (SQL Digest), and its content starts with a byte `B` describing it's length, and
+// then follows by exactly `B` bytes.
 func EncodeResourceGroupTag(sqlDigest string) []byte {
 	if len(sqlDigest) == 0 {
 		return nil
@@ -27,9 +36,12 @@ func EncodeResourceGroupTag(sqlDigest string) []byte {
 	}
 
 	res := make([]byte, 3+len(sqlDigest)/2)
+
 	const encodingVersion = 1
 	res[0] = encodingVersion
+
 	res[1] = resourceGroupTagPrefixSQLDigest
+	// The SQL Digest is expected to be a hex string. Convert it back to bytes to save half of the memory.
 	res[2] = byte(len(sqlDigest) / 2)
 	_, err := hex.Decode(res[3:], []byte(sqlDigest))
 	if err != nil {
