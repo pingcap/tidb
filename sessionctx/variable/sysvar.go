@@ -145,20 +145,16 @@ func (sv *SysVar) GetSessionFromHook(s *SessionVars) (string, error) {
 	if sv.HasNoneScope() {
 		return sv.Value, nil
 	}
-
 	// Call the Getter if there is one defined.
 	if sv.GetSession != nil {
 		return sv.GetSession(s)
 	}
-
 	if val, ok := s.stmtVars[sv.Name]; ok {
 		return val, nil
 	}
-
 	if val, ok := s.systems[sv.Name]; !ok {
-		return val, errors.New("sv not loaded yet.")
+		return val, errors.New("sysvar has not yet loaded")
 	}
-
 	return s.systems[sv.Name], nil
 }
 

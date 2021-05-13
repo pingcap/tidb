@@ -203,7 +203,6 @@ func GetSessionOrGlobalSystemVar(s *SessionVars, name string) (string, error) {
 }
 
 // GetGlobalSystemVar gets a global system variable.
-// TODO: can we remove this?
 func GetGlobalSystemVar(s *SessionVars, name string) (string, error) {
 	sv := GetSysVar(name)
 	if sv == nil {
