@@ -259,9 +259,11 @@ func (s *testStaleTxnSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
 	time.Sleep(time.Second)
 	tk.MustExec("drop table if exists t")
 	schemaVer2 := tk.Se.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
+	// confirm schema changed
 	c.Assert(schemaVer1, Less, schemaVer2)
 
 	tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:01'`)
 	schemaVer3 := tk.Se.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
+	// got an old infoSchema
 	c.Assert(schemaVer3, Equals, schemaVer1)
 }
