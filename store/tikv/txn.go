@@ -84,6 +84,7 @@ type KVTxn struct {
 	isPessimistic      bool
 	enableAsyncCommit  bool
 	enable1PC          bool
+	causalConsistency  bool
 	scope              string
 	kvFilter           KVFilter
 }
@@ -282,6 +283,13 @@ func (txn *KVTxn) SetEnable1PC(b bool) {
 	txn.enable1PC = b
 }
 
+// SetCausalConsistency indicates if the transaction does not need to
+// guarantee linearizability. Default value is false which means
+// linearizability is guaranteed.
+func (txn *KVTxn) SetCausalConsistency(b bool) {
+	txn.causalConsistency = b
+}
+
 // SetScope sets the geographical scope of the transaction.
 func (txn *KVTxn) SetScope(scope string) {
 	txn.scope = scope
@@ -295,6 +303,12 @@ func (txn *KVTxn) SetKVFilter(filter KVFilter) {
 // IsPessimistic returns true if it is pessimistic.
 func (txn *KVTxn) IsPessimistic() bool {
 	return txn.isPessimistic
+}
+
+// IsCasualConsistency returns if the transaction allows linearizability
+// inconsistency.
+func (txn *KVTxn) IsCasualConsistency() bool {
+	return txn.causalConsistency
 }
 
 // GetScope returns the geographical scope of the transaction.
