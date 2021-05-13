@@ -19,7 +19,7 @@ import (
 )
 
 // InfoCache handles information schema, including getting and setting.
-// The cache behavior, however, is transprent and under automatic management.
+// The cache behavior, however, is transparent and under automatic management.
 // It only promised to cache the infoschema, if it is newer than all the cached.
 type InfoCache struct {
 	mu sync.RWMutex
