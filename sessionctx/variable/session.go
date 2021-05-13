@@ -1063,6 +1063,7 @@ func NewSessionVars() *SessionVars {
 		AnalyzeVersion:              DefTiDBAnalyzeVersion,
 		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
+		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
