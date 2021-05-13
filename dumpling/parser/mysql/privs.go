@@ -304,3 +304,6 @@ var AllTablePrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, C
 
 // AllColumnPrivs is all the privileges in column scope.
 var AllColumnPrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv}
+
+// StaticGlobalOnlyPrivs is all the privileges only in global scope and different from dynamic privileges.
+var StaticGlobalOnlyPrivs = Privileges{ProcessPriv, ShowDBPriv, SuperPriv, CreateUserPriv, CreateTablespacePriv, ShutdownPriv, ReloadPriv, FilePriv, ReplicationClientPriv, ReplicationSlavePriv, ConfigPriv}

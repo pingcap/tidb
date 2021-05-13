@@ -38,6 +38,12 @@ func (s *testPrivsSuite) TestPrivColumn(c *C) {
 		c.Assert(ok, IsTrue, Commentf("%s", p))
 		c.Assert(np, Equals, p)
 	}
+	for _, p := range StaticGlobalOnlyPrivs {
+		c.Assert(p.ColumnString(), Not(Equals), "", Commentf("%s", p))
+		np, ok := NewPrivFromColumn(p.ColumnString())
+		c.Assert(ok, IsTrue, Commentf("%s", p))
+		c.Assert(np, Equals, p)
+	}
 	for _, p := range AllDBPrivs {
 		c.Assert(p.ColumnString(), Not(Equals), "", Commentf("%s", p))
 		np, ok := NewPrivFromColumn(p.ColumnString())
