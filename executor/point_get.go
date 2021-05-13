@@ -398,7 +398,7 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 	var tblID int64
 	var tblName string
 	var partName string
-	is := infoschema.GetInfoSchema(e.ctx)
+	is := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	if e.partInfo != nil {
 		tblID = e.partInfo.ID
 		tblInfo, _, partInfo := is.FindTableByPartitionID(tblID)
@@ -530,6 +530,9 @@ func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expres
 	if col.ID == model.ExtraHandleID {
 		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
+	}
+	if types.NeedRestoredData(col.RetType) {
+		return false, nil
 	}
 	// Try to decode common handle.
 	if mysql.HasPriKeyFlag(col.RetType.Flag) {

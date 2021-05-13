@@ -2338,7 +2338,7 @@ func (s *testSuiteP2) TestIsPointGet(c *C) {
 		"select * from help_topic where help_topic_id=1":    true,
 		"select * from help_topic where help_category_id=1": false,
 	}
-	infoSchema := infoschema.GetInfoSchema(ctx)
+	infoSchema := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
@@ -2370,7 +2370,7 @@ func (s *testSuiteP2) TestClusteredIndexIsPointGet(c *C) {
 		"select * from t where a='x' and c='x'":         true,
 		"select * from t where a='x' and c='x' and b=1": false,
 	}
-	infoSchema := infoschema.GetInfoSchema(ctx)
+	infoSchema := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
@@ -5697,24 +5697,15 @@ func (s *testRecoverTable) TearDownSuite(c *C) {
 	s.dom.Close()
 }
 
-func (s *testRecoverTable) TestRecoverTable(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
-	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange")
-		c.Assert(err, IsNil)
-	}()
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database if not exists test_recover")
-	tk.MustExec("use test_recover")
-	tk.MustExec("drop table if exists t_recover")
-	tk.MustExec("create table t_recover (a int);")
-	defer func(originGC bool) {
+func (s *testRecoverTable) mockGC(tk *testkit.TestKit) (string, string, string, func()) {
+	originGC := ddl.IsEmulatorGCEnable()
+	resetGC := func() {
 		if originGC {
 			ddl.EmulatorGCEnable()
 		} else {
 			ddl.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
+	}
 
 	// disable emulator GC.
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
@@ -5727,6 +5718,23 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 			       UPDATE variable_value = '%[1]s'`
 	// clear GC variables first.
 	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
+	return timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC
+}
+
+func (s *testRecoverTable) TestRecoverTable(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange")
+		c.Assert(err, IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_recover")
+	tk.MustExec("use test_recover")
+	tk.MustExec("drop table if exists t_recover")
+	tk.MustExec("create table t_recover (a int);")
+
+	timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC := s.mockGC(tk)
+	defer resetGC()
 
 	tk.MustExec("insert into t_recover values (1),(2),(3)")
 	tk.MustExec("drop table t_recover")
@@ -5819,24 +5827,10 @@ func (s *testRecoverTable) TestFlashbackTable(c *C) {
 	tk.MustExec("use test_flashback")
 	tk.MustExec("drop table if exists t_flashback")
 	tk.MustExec("create table t_flashback (a int);")
-	defer func(originGC bool) {
-		if originGC {
-			ddl.EmulatorGCEnable()
-		} else {
-			ddl.EmulatorGCDisable()
-		}
-	}(ddl.IsEmulatorGCEnable())
 
-	// Disable emulator GC.
-	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
-	ddl.EmulatorGCDisable()
-	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
-	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[1]s'`
-	// Clear GC variables first.
-	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
+	timeBeforeDrop, _, safePointSQL, resetGC := s.mockGC(tk)
+	defer resetGC()
+
 	// Set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 	// Set GC enable.
@@ -5937,6 +5931,23 @@ func (s *testRecoverTable) TestFlashbackTable(c *C) {
 	tk.MustExec("flashback table t")
 	tk.MustExec("insert into t values (3)")
 	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2", "3"))
+}
+
+func (s *testRecoverTable) TestRecoverTempTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_recover")
+	tk.MustExec("use test_recover")
+	tk.MustExec("drop table if exists t_recover")
+	tk.MustExec("create global temporary table t_recover (a int) on commit delete rows;")
+
+	timeBeforeDrop, _, safePointSQL, resetGC := s.mockGC(tk)
+	defer resetGC()
+	// Set GC safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	tk.MustExec("drop table t_recover")
+	tk.MustGetErrCode("recover table t_recover;", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("flashback table t_recover;", errno.ErrUnsupportedDDLOperation)
 }
 
 func (s *testSuiteP2) TestPointGetPreparedPlan(c *C) {
@@ -8128,7 +8139,7 @@ func (s *testSerialSuite) TestIssue24210(c *C) {
 
 	// for SelectionExec
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockSelectionExecBaseExecutorOpenReturnedError", `return(true)`), IsNil)
-	_, err = tk.Exec("select * from (select 1 as a) t where a > 0")
+	_, err = tk.Exec("select * from (select rand() as a) t where a > 0")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "mock SelectionExec.baseExecutor.Open returned error")
 	err = failpoint.Disable("github.com/pingcap/tidb/executor/mockSelectionExecBaseExecutorOpenReturnedError")
