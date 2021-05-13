@@ -446,7 +446,7 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 			var str string
 			var e types.Enum
 			str, _ = idxVals[i].ToString()
-			e, err = types.ParseEnum(colInfo.FieldType.Elems, str, colInfo.FieldType.Collate)
+			e, err = types.ParseEnumName(colInfo.FieldType.Elems, str, colInfo.FieldType.Collate)
 			if err != nil {
 				e = types.Enum{}
 				err = nil

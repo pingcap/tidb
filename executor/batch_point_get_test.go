@@ -161,9 +161,9 @@ func (s *testBatchPointGetSuite) TestIssue24562(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ttt")
 	tk.MustExec("create table ttt(a enum(\"a\",\"b\",\"c\",\"d\"), primary key(a));")
-	tk.MustExec("insert into t values(1)")
-	tk.MustQuery("select * from t where t.a in (\"1\",\"b\")").Check(testkit.Rows())
-	tk.MustQuery("select * from t where t.a in (1,\"b\")").Check(testkit.Rows("a"))
+	tk.MustExec("insert into ttt values(1)")
+	tk.MustQuery("select * from ttt where ttt.a in (\"1\",\"b\")").Check(testkit.Rows())
+	tk.MustQuery("select * from ttt where ttt.a in (1,\"b\")").Check(testkit.Rows("a"))
 }
 
 func (s *testBatchPointGetSuite) TestBatchPointGetUnsignedHandleWithSort(c *C) {
