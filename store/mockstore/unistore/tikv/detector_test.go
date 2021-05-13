@@ -70,9 +70,9 @@ func (s *testDeadlockSuite) TestDeadlock(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, fmt.Sprintf("deadlock"))
 	c.Assert(len(err.WaitChain), Equals, 3)
-	// The order of entries in the wait chain is specific: each item is waiting for the previous one.
-	checkWaitChainEntry(err.WaitChain[0], 2, 3, "k2", "tag2")
-	checkWaitChainEntry(err.WaitChain[1], 1, 2, "k1", "tag1")
+	// The order of entries in the wait chain is specific: each item is waiting for the next one.
+	checkWaitChainEntry(err.WaitChain[0], 1, 2, "k1", "tag1")
+	checkWaitChainEntry(err.WaitChain[1], 2, 3, "k2", "tag2")
 	checkWaitChainEntry(err.WaitChain[2], 3, 1, "k3", "tag3")
 
 	c.Assert(detector.totalSize, Equals, uint64(2))
