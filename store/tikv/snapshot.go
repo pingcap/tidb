@@ -569,12 +569,6 @@ func (s *KVSnapshot) SetOption(opt int, val interface{}) {
 		s.mu.Lock()
 		s.mu.stats = val.(*SnapshotRuntimeStats)
 		s.mu.Unlock()
-	case kv.SampleStep:
-		s.sampleStep = val.(uint32)
-	case kv.MatchStoreLabels:
-		s.mu.Lock()
-		s.mu.matchStoreLabels = val.([]*metapb.StoreLabel)
-		s.mu.Unlock()
 	}
 }
 
@@ -611,6 +605,11 @@ func (s *KVSnapshot) SetIsolationLevel(level IsoLevel) {
 	s.isolationLevel = level
 }
 
+// SetSampleStep skips 'step - 1' number of keys after each returned key.
+func (s *KVSnapshot) SetSampleStep(step uint32) {
+	s.sampleStep = step
+}
+
 // SetPriority sets the priority for tikv to execute commands.
 func (s *KVSnapshot) SetPriority(pri Priority) {
 	s.priority = pri
@@ -629,6 +628,13 @@ func (s *KVSnapshot) SetIsStatenessReadOnly(b bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mu.isStaleness = b
+}
+
+// SetMatchStoreLabels sets up labels to filter target stores.
+func (s *KVSnapshot) SetMatchStoreLabels(labels []*metapb.StoreLabel) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.matchStoreLabels = labels
 }
 
 // SnapCacheHitCount gets the snapshot cache hit count. Only for test.
