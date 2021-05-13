@@ -3597,6 +3597,23 @@ func (s *testIntegrationSuite) TestIssue24095(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) TestIssue24281(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists member, agent, deposit, view_member_agents")
+	tk.MustExec("create table member(login varchar(50) NOT NULL, agent_login varchar(100) DEFAULT NULL, PRIMARY KEY(login))")
+	tk.MustExec("create table agent(login varchar(50) NOT NULL, data varchar(100) DEFAULT NULL, share_login varchar(50) NOT NULL, PRIMARY KEY(login))")
+	tk.MustExec("create table deposit(id varchar(50) NOT NULL, member_login varchar(50) NOT NULL, transfer_amount int NOT NULL, PRIMARY KEY(id), KEY midx(member_login, transfer_amount))")
+	tk.MustExec("create definer='root'@'localhost' view view_member_agents (member, share_login) as select m.login as member, a.share_login AS share_login from member as m join agent as a on m.agent_login = a.login")
+
+	tk.MustExec(" select s.member_login as v1, SUM(s.transfer_amount) AS v2 " +
+		"FROM deposit AS s " +
+		"JOIN view_member_agents AS v ON s.member_login = v.member " +
+		"WHERE 1 = 1 AND v.share_login = 'somevalue' " +
+		"GROUP BY s.member_login " +
+		"UNION select 1 as v1, 2 as v2")
+}
+
 func (s *testIntegrationSuite) TestConflictReadFromStorage(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3636,6 +3653,196 @@ func (s *testIntegrationSuite) TestSequenceAsDataSource(c *C) {
 	tk.MustExec("drop sequence if exists s1, s2")
 	tk.MustExec("create sequence s1")
 	tk.MustExec("create sequence s2")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestMergeContinuousSelections(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ts")
+	tk.MustExec("create table ts (col_char_64 char(64), col_varchar_64_not_null varchar(64) not null, col_varchar_key varchar(1), id int primary key, col_varchar_64 varchar(64),col_char_64_not_null char(64) not null);")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "ts" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec(" set @@tidb_allow_mpp=1;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestEnforceMPP(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// test value limit of tidb_opt_tiflash_concurrency_factor
+	err := tk.ExecToErr("set @@tidb_opt_tiflash_concurrency_factor = 0")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, `[variable:1231]Variable 'tidb_opt_tiflash_concurrency_factor' can't be set to the value of '0'`)
+
+	tk.MustExec("set @@tidb_opt_tiflash_concurrency_factor = 1")
+	tk.MustQuery("select @@tidb_opt_tiflash_concurrency_factor").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_opt_tiflash_concurrency_factor = 24")
+	tk.MustQuery("select @@tidb_opt_tiflash_concurrency_factor").Check(testkit.Rows("24"))
+
+	// test set tidb_allow_mpp
+	tk.MustExec("set @@session.tidb_allow_mpp = 0")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("OFF"))
+	tk.MustExec("set @@session.tidb_allow_mpp = 1")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("ON"))
+	tk.MustExec("set @@session.tidb_allow_mpp = 2")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("ENFORCE"))
+
+	tk.MustExec("set @@session.tidb_allow_mpp = off")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("OFF"))
+	tk.MustExec("set @@session.tidb_allow_mpp = oN")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("ON"))
+	tk.MustExec("set @@session.tidb_allow_mpp = enForcE")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("ENFORCE"))
+
+	tk.MustExec("set @@global.tidb_allow_mpp = faLsE")
+	tk.MustQuery("select @@global.tidb_allow_mpp").Check(testkit.Rows("OFF"))
+	tk.MustExec("set @@global.tidb_allow_mpp = True")
+	tk.MustQuery("select @@global.tidb_allow_mpp").Check(testkit.Rows("ON"))
+
+	err = tk.ExecToErr("set @@global.tidb_allow_mpp = enforceWithTypo")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, `[variable:1231]Variable 'tidb_allow_mpp' can't be set to the value of 'enforceWithTypo'`)
+
+	// test query
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create index idx on t(a)")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	// ban mpp
+	tk.MustExec("set @@session.tidb_allow_mpp = 0")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("OFF"))
+
+	// read from tiflash, batch cop.
+	tk.MustQuery("explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1").Check(testkit.Rows(
+		"StreamAgg_20 1.00 285050.00 root  funcs:count(Column#5)->Column#3",
+		"└─TableReader_21 1.00 19003.88 root  data:StreamAgg_9",
+		"  └─StreamAgg_9 1.00 19006.88 batchCop[tiflash]  funcs:count(1)->Column#5",
+		"    └─Selection_19 10.00 285020.00 batchCop[tiflash]  eq(test.t.a, 1)",
+		"      └─TableFullScan_18 10000.00 255020.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
+
+	// open mpp
+	tk.MustExec("set @@session.tidb_allow_mpp = 1")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("ON"))
+
+	// should use tikv to index read
+	tk.MustQuery("explain format='verbose' select count(*) from t where a=1;").Check(testkit.Rows(
+		"StreamAgg_30 1.00 485.00 root  funcs:count(Column#6)->Column#3",
+		"└─IndexReader_31 1.00 32.88 root  index:StreamAgg_10",
+		"  └─StreamAgg_10 1.00 35.88 cop[tikv]  funcs:count(1)->Column#6",
+		"    └─IndexRangeScan_29 10.00 455.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"))
+
+	// read from tikv, indexRead
+	tk.MustQuery("explain format='verbose' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1;").Check(testkit.Rows(
+		"StreamAgg_18 1.00 485.00 root  funcs:count(Column#5)->Column#3",
+		"└─IndexReader_19 1.00 32.88 root  index:StreamAgg_10",
+		"  └─StreamAgg_10 1.00 35.88 cop[tikv]  funcs:count(1)->Column#5",
+		"    └─IndexRangeScan_17 10.00 455.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"))
+
+	// read from tiflash, mpp with large cost
+	tk.MustQuery("explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1").Check(testkit.Rows(
+		"HashAgg_21 1.00 11910.68 root  funcs:count(Column#5)->Column#3",
+		"└─TableReader_23 1.00 11877.08 root  data:ExchangeSender_22",
+		"  └─ExchangeSender_22 1.00 285050.00 batchCop[tiflash]  ExchangeType: PassThrough",
+		"    └─HashAgg_9 1.00 285050.00 batchCop[tiflash]  funcs:count(1)->Column#5",
+		"      └─Selection_20 10.00 285020.00 batchCop[tiflash]  eq(test.t.a, 1)",
+		"        └─TableFullScan_19 10000.00 255020.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
+
+	// enforce mpp
+	tk.MustExec("set @@session.tidb_allow_mpp = 2")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("ENFORCE"))
+
+	// should use mpp
+	tk.MustQuery("explain format='verbose' select count(*) from t where a=1;").Check(testkit.Rows(
+		"HashAgg_24 1.00 33.60 root  funcs:count(Column#5)->Column#3",
+		"└─TableReader_26 1.00 0.00 root  data:ExchangeSender_25",
+		"  └─ExchangeSender_25 1.00 285050.00 batchCop[tiflash]  ExchangeType: PassThrough",
+		"    └─HashAgg_9 1.00 285050.00 batchCop[tiflash]  funcs:count(1)->Column#5",
+		"      └─Selection_23 10.00 285020.00 batchCop[tiflash]  eq(test.t.a, 1)",
+		"        └─TableFullScan_22 10000.00 255020.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
+
+	// read from tikv, indexRead
+	tk.MustQuery("explain format='verbose' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1;").Check(testkit.Rows(
+		"StreamAgg_18 1.00 485.00 root  funcs:count(Column#5)->Column#3",
+		"└─IndexReader_19 1.00 32.88 root  index:StreamAgg_10",
+		"  └─StreamAgg_10 1.00 35.88 cop[tikv]  funcs:count(1)->Column#5",
+		"    └─IndexRangeScan_17 10.00 455.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"))
+
+	// read from tiflash, mpp with little cost
+	tk.MustQuery("explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1").Check(testkit.Rows(
+		"HashAgg_21 1.00 33.60 root  funcs:count(Column#5)->Column#3",
+		"└─TableReader_23 1.00 0.00 root  data:ExchangeSender_22",
+		"  └─ExchangeSender_22 1.00 285050.00 batchCop[tiflash]  ExchangeType: PassThrough",
+		"    └─HashAgg_9 1.00 285050.00 batchCop[tiflash]  funcs:count(1)->Column#5",
+		"      └─Selection_20 10.00 285020.00 batchCop[tiflash]  eq(test.t.a, 1)",
+		"        └─TableFullScan_19 10000.00 255020.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
+}
+
+func (s *testIntegrationSuite) TestEliminateLockForTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("create global temporary table t1 (a int primary key, b int, c int, index i_b(b))  on commit delete rows;")
+	defer func() {
+		tk.MustExec("drop global temporary table if exists t1;")
+	}()
+	tk.MustExec("begin;")
+	tk.MustExec("insert t1 values (8,8,9);")
 
 	var input []string
 	var output []struct {
