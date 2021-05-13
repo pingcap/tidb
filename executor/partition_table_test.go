@@ -259,7 +259,7 @@ func (s *partitionTableSuite) TestOrderByandLimit(c *C) {
 	tk.MustExec("insert into tregular values " + strings.Join(vals, ","))
 
 	// test indexLookUp
-	for i := 0; i < 2000; i++ {
+	for i := 0; i < 100; i++ {
 		// explain select * from t where a > {y}  use index(idx_a) order by a limit {x}; // check if IndexLookUp is used
 		// select * from t where a > {y} use index(idx_a) order by a limit {x}; // it can return the correct result
 		x := rand.Intn(1099)
@@ -271,7 +271,7 @@ func (s *partitionTableSuite) TestOrderByandLimit(c *C) {
 	}
 
 	// test tableReader
-	for i := 0; i < 2000; i++ {
+	for i := 0; i < 100; i++ {
 		// explain select * from t where a > {y}  ignore index(idx_a) order by a limit {x}; // check if IndexLookUp is used
 		// select * from t where a > {y} ignore index(idx_a) order by a limit {x}; // it can return the correct result
 		x := rand.Intn(1099)
@@ -283,7 +283,7 @@ func (s *partitionTableSuite) TestOrderByandLimit(c *C) {
 	}
 
 	// test indexReader
-	for i := 0; i < 2000; i++ {
+	for i := 0; i < 100; i++ {
 		// explain select a from t where a > {y}  use index(idx_a) order by a limit {x}; // check if IndexLookUp is used
 		// select a from t where a > {y} use index(idx_a) order by a limit {x}; // it can return the correct result
 		x := rand.Intn(1099)
@@ -295,7 +295,7 @@ func (s *partitionTableSuite) TestOrderByandLimit(c *C) {
 	}
 
 	// test indexMerge
-	for i := 0; i < 2000; i++ {
+	for i := 0; i < 100; i++ {
 		// explain select /*+ use_index_merge(t) */ * from t where a > 2 or b < 5 order by a limit {x}; // check if IndexMerge is used
 		// select /*+ use_index_merge(t) */ * from t where a > 2 or b < 5 order by a limit {x};  // can return the correct value
 		y := rand.Intn(2000) + 1
