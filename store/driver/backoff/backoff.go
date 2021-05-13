@@ -32,6 +32,7 @@ func NewBackofferWithVars(ctx context.Context, maxSleep int, vars *kv.Variables)
 	return &Backoffer{b: b}
 }
 
+// NewBackoffer creates a Backoffer with maximum sleep time(in ms).
 func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 	b := tikv.NewBackoffer(ctx, maxSleep)
 	return &Backoffer{b: b}
