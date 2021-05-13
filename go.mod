@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-replace github.com/pingcap/parser v0.0.0-20210508071014-cd9cd78e230c => github.com/JmPotato/parser v0.0.0-20210512031211-369521b3c879
+replace github.com/pingcap/parser v0.0.0-20210508071014-cd9cd78e230c => github.com/JmPotato/parser v0.0.0-20210513024544-661396307b24
 
 require (
 	github.com/BurntSushi/toml v0.3.1
