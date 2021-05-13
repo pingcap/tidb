@@ -739,12 +739,15 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range, needExtS
 				sample.Columns[i].SetBytes(sample.Columns[i].GetBytes())
 			}
 		}
+		// Calculate handle from the row data for each row. It will be used to sort the samples.
 		sample.Handle, err = e.handleCols.BuildHandleByDatums(sample.Columns)
 		if err != nil {
 			return 0, nil, nil, nil, nil, err
 		}
 	}
 
+	// The order of the samples are broken when merging samples from sub-collectors.
+	// So now we need to sort the samples according to the handle in order to calculate correlation.
 	sort.Slice(rootRowCollector.Samples, func(i, j int) bool {
 		return rootRowCollector.Samples[i].Handle.Compare(rootRowCollector.Samples[j].Handle) < 0
 	})
