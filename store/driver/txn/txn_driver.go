@@ -19,6 +19,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -153,6 +154,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.SetSchemaVer(val.(tikv.SchemaVer))
 	case tikvstore.SchemaAmender:
 		txn.SetSchemaAmender(val.(tikv.SchemaAmender))
+	case tikvstore.SampleStep:
+		txn.KVTxn.GetSnapshot().SetSampleStep(val.(uint32))
 	case tikvstore.CommitHook:
 		txn.SetCommitCallback(val.(func(string, error)))
 	case tikvstore.EnableAsyncCommit:
@@ -161,6 +164,10 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.SetEnable1PC(val.(bool))
 	case tikvstore.TxnScope:
 		txn.SetScope(val.(string))
+	case tikvstore.IsStalenessReadOnly:
+		txn.KVTxn.GetSnapshot().SetIsStatenessReadOnly(val.(bool))
+	case tikvstore.MatchStoreLabels:
+		txn.KVTxn.GetSnapshot().SetMatchStoreLabels(val.([]*metapb.StoreLabel))
 	default:
 		txn.KVTxn.SetOption(opt, val)
 	}
