@@ -1603,10 +1603,7 @@ func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, tab
 	}
 	rowCount := len(rows)
 	if rowCount != 0 {
-		if isDataTruncated {
-			return ErrWarnDataTruncated.GenWithStackByArgs(newCol.L, rowCount)
-		}
-		return errInvalidUseOfNull
+		return ErrWarnDataTruncated.GenWithStackByArgs(newCol.L, rowCount)
 	}
 	return nil
 }

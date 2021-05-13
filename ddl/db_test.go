@@ -6731,3 +6731,23 @@ func (s *testDBSuite8) TestDdlMaxLimitOfIdentifier(c *C) {
 	tk.MustExec(fmt.Sprintf("alter table %s change f2 %s int", longTblName, strings.Repeat("二", mysql.MaxColumnNameLength-1)))
 
 }
+
+// Close issue #24580.
+// See https://github.com/pingcap/tidb/issues/24580
+func (s *testDBSuite8) TestIssue24580(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = false
+	}()
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(250) default null);")
+	tk.MustExec("insert into t values();")
+
+	_, err := tk.Exec("alter table t modify a char not null;")
+	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 1")
+	tk.MustExec("drop table if exists t")
+}
