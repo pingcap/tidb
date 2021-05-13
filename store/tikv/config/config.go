@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"go.uber.org/zap"
 )
@@ -34,6 +35,11 @@ const (
 	// DefStoresRefreshInterval is the default value of StoresRefreshInterval
 	DefStoresRefreshInterval = 60
 )
+
+func init() {
+	conf := DefaultConfig()
+	StoreGlobalConfig(&conf)
+}
 
 // Config contains configuration options.
 type Config struct {
@@ -50,6 +56,7 @@ type Config struct {
 	OpenTracingEnable     bool
 	Path                  string
 	EnableForwarding      bool
+	TxnScope              string
 }
 
 // DefaultConfig returns the default configuration.
@@ -65,6 +72,7 @@ func DefaultConfig() Config {
 		OpenTracingEnable:     false,
 		Path:                  "",
 		EnableForwarding:      false,
+		TxnScope:              "",
 	}
 }
 
@@ -131,6 +139,26 @@ func UpdateGlobal(f func(conf *Config)) func() {
 	f(&newConf)
 	StoreGlobalConfig(&newConf)
 	return restore
+}
+
+const (
+	globalTxnScope = "global"
+)
+
+// GetTxnScopeFromConfig extracts @@txn_scope value from config
+func GetTxnScopeFromConfig() (bool, string) {
+	failpoint.Inject("injectTxnScope", func(val failpoint.Value) {
+		v := val.(string)
+		if len(v) > 0 {
+			failpoint.Return(false, v)
+		}
+		failpoint.Return(true, globalTxnScope)
+	})
+
+	if kvcfg := GetGlobalConfig(); kvcfg != nil && len(kvcfg.TxnScope) > 0 {
+		return false, kvcfg.TxnScope
+	}
+	return true, globalTxnScope
 }
 
 // ParsePath parses this path.

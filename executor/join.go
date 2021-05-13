@@ -1074,13 +1074,6 @@ func (e *joinRuntimeStats) setCacheInfo(useCache bool, hitRatio float64) {
 	e.Unlock()
 }
 
-func (e *joinRuntimeStats) setHashStat(hashStat hashStatistic) {
-	e.Lock()
-	e.hasHashStat = true
-	e.hashStat = hashStat
-	e.Unlock()
-}
-
 func (e *joinRuntimeStats) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	buf.WriteString(e.RuntimeStatsWithConcurrencyInfo.String())

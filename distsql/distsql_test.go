@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -327,7 +328,7 @@ func (s *testSuite) TestAnalyze(c *C) {
 		Build()
 	c.Assert(err, IsNil)
 
-	response, err := Analyze(context.TODO(), s.sctx.GetClient(), request, kv.DefaultVars, true, s.sctx.GetSessionVars().StmtCtx.MemTracker)
+	response, err := Analyze(context.TODO(), s.sctx.GetClient(), request, tikvstore.DefaultVars, true, s.sctx.GetSessionVars().StmtCtx.MemTracker)
 	c.Assert(err, IsNil)
 
 	result, ok := response.(*selectResult)
@@ -350,7 +351,7 @@ func (s *testSuite) TestChecksum(c *C) {
 		Build()
 	c.Assert(err, IsNil)
 
-	response, err := Checksum(context.TODO(), s.sctx.GetClient(), request, kv.DefaultVars)
+	response, err := Checksum(context.TODO(), s.sctx.GetClient(), request, tikvstore.DefaultVars)
 	c.Assert(err, IsNil)
 
 	result, ok := response.(*selectResult)

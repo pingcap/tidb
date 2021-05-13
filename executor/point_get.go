@@ -391,14 +391,14 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
-	txnScope := e.txn.GetUnionStore().GetOption(tikvstore.TxnScope).(string)
+	txnScope := e.txn.GetOption(tikvstore.TxnScope).(string)
 	if txnScope == "" || txnScope == oracle.GlobalTxnScope {
 		return nil
 	}
 	var tblID int64
 	var tblName string
 	var partName string
-	is := infoschema.GetInfoSchema(e.ctx)
+	is := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	if e.partInfo != nil {
 		tblID = e.partInfo.ID
 		tblInfo, _, partInfo := is.FindTableByPartitionID(tblID)

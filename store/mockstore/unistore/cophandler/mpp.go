@@ -15,7 +15,6 @@ package cophandler
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -206,6 +205,11 @@ func (b *mppExecBuilder) buildMPPJoin(pb *tipb.Join, children []*tipb.Executor) 
 			return nil, errors.Trace(err)
 		}
 		e.probeKey = probeExpr.(*expression.Column)
+	}
+	e.comKeyTp = types.AggFieldType([]*types.FieldType{e.probeKey.RetType, e.buildKey.RetType})
+	if e.comKeyTp.Tp == mysql.TypeNewDecimal {
+		e.comKeyTp.Flen = mysql.MaxDecimalWidth
+		e.comKeyTp.Decimal = mysql.MaxDecimalScale
 	}
 	return e, nil
 }
@@ -406,10 +410,6 @@ type ExchangerTunnel struct {
 
 	connectedCh chan struct{}
 	ErrCh       chan error
-}
-
-func (tunnel *ExchangerTunnel) debugString() string {
-	return fmt.Sprintf("(%d->%d)", tunnel.sourceTask.TaskId, tunnel.targetTask.TaskId)
 }
 
 // RecvChunk recive tipb chunk
