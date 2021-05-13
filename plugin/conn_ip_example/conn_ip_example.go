@@ -62,19 +62,14 @@ func OnGeneralEvent(ctx context.Context, sctx *variable.SessionVars, event plugi
 	switch event {
 	case plugin.Log:
 		fmt.Println("---- event: Log")
-		break
 	case plugin.Error:
 		fmt.Println("---- event: Error")
-		break
 	case plugin.Result:
 		fmt.Println("---- event: Result")
-		break
 	case plugin.Status:
 		fmt.Println("---- event: Status")
-		break
 	default:
 		fmt.Println("---- event: unrecognized")
-		break
 	}
 	fmt.Printf("---- cmd: %s\n", cmd)
 }

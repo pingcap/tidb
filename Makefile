@@ -57,6 +57,7 @@ check-static: tools/bin/golangci-lint
 	  --enable=unused \
 	  --enable=structcheck \
 	  --enable=deadcode \
+	  --enable=gosimple \
 	  $$($(PACKAGE_DIRECTORIES))
 
 check-slow:tools/bin/gometalinter tools/bin/gosec

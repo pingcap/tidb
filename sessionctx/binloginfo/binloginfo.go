@@ -155,17 +155,15 @@ func WaitBinlogRecover(timeout time.Duration) error {
 	defer ticker.Stop()
 	start := time.Now()
 	for {
-		select {
-		case <-ticker.C:
-			if atomic.LoadInt32(&skippedCommitterCounter) == 0 {
-				logutil.BgLogger().Warn("[binloginfo] binlog recovered")
-				return nil
-			}
-			if time.Since(start) > timeout {
-				logutil.BgLogger().Warn("[binloginfo] waiting for binlog recovering timed out",
-					zap.Duration("duration", timeout))
-				return errors.New("timeout")
-			}
+		<-ticker.C
+		if atomic.LoadInt32(&skippedCommitterCounter) == 0 {
+			logutil.BgLogger().Warn("[binloginfo] binlog recovered")
+			return nil
+		}
+		if time.Since(start) > timeout {
+			logutil.BgLogger().Warn("[binloginfo] waiting for binlog recovering timed out",
+				zap.Duration("duration", timeout))
+			return errors.New("timeout")
 		}
 	}
 }

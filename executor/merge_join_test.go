@@ -11,6 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//nolint:gosimple // generates false positive fmt.Sprintf warnings which keep aligned
 package executor_test
 
 import (
@@ -277,7 +278,6 @@ func (s *testSerialSuite1) TestShuffleMergeJoinInDisk(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(0))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.DiskTracker.BytesConsumed(), Equals, int64(0))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), Greater, int64(0))
-	return
 }
 func (s *testSerialSuite1) TestMergeJoinInDisk(c *C) {
 	defer config.RestoreFunc()()
@@ -313,7 +313,6 @@ func (s *testSerialSuite1) TestMergeJoinInDisk(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(0))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.DiskTracker.BytesConsumed(), Equals, int64(0))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), Greater, int64(0))
-	return
 }
 
 func (s *testSuite2) TestMergeJoin(c *C) {
