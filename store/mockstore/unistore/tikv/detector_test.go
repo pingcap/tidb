@@ -53,7 +53,7 @@ func (s *testDeadlockSuite) TestDeadlock(c *C) {
 	c.Assert(detector.totalSize, Equals, uint64(2))
 	err = detector.Detect(3, 1, 300)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals,"deadlock")
+	c.Assert(err.Error(), Equals, "deadlock")
 	c.Assert(detector.totalSize, Equals, uint64(2))
 	detector.CleanUp(2)
 	list2 := detector.waitForMap[2]
