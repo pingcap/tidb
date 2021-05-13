@@ -271,16 +271,19 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetKeyRanges(kvRanges).
+	builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetMemTracker(e.memTracker).
-		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
-		Build()
+		SetMemTracker(e.memTracker)
+	// for tests, infoschema may be null
+	if is, ok := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema); ok {
+		builder.SetFromInfoSchema(is)
+	}
+	kvReq, err := builder.Build()
 	if err != nil {
 		e.feedback.Invalidate()
 		return err
@@ -527,8 +530,11 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetKeepOrder(e.keepOrder).
 			SetStreaming(e.indexStreaming).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
-			SetMemTracker(tracker).
-			SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx))
+			SetMemTracker(tracker)
+		// for tests, infoschema may be null
+		if is, ok := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema); ok {
+			builder.SetFromInfoSchema(is)
+		}
 
 		for partTblIdx, kvRange := range kvRanges {
 			// check if executor is closed

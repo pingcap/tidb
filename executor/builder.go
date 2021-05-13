@@ -3434,7 +3434,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
+		SetFromInfoSchema(e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)).
 		Build()
 	if err != nil {
 		return nil, err

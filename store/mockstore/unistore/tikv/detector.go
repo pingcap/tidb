@@ -30,6 +30,7 @@ import (
 	"sync"
 	"time"
 
+	deadlockPB "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
@@ -54,6 +55,12 @@ type txnKeyHashPair struct {
 	txn          uint64
 	keyHash      uint64
 	registerTime time.Time
+	diagCtx      diagnosticContext
+}
+
+type diagnosticContext struct {
+	key              []byte
+	resourceGroupTag []byte
 }
 
 func (p *txnKeyHashPair) isExpired(ttl time.Duration, nowTime time.Time) bool {
@@ -75,13 +82,21 @@ func NewDetector(ttl time.Duration, urgentSize uint64, expireInterval time.Durat
 }
 
 // Detect detects deadlock for the sourceTxn on a locked key.
-func (d *Detector) Detect(sourceTxn, waitForTxn, keyHash uint64) *ErrDeadlock {
+func (d *Detector) Detect(sourceTxn, waitForTxn, keyHash uint64, diagCtx diagnosticContext) *ErrDeadlock {
 	d.lock.Lock()
 	nowTime := time.Now()
 	d.activeExpire(nowTime)
 	err := d.doDetect(nowTime, sourceTxn, waitForTxn)
 	if err == nil {
-		d.register(sourceTxn, waitForTxn, keyHash)
+		d.register(sourceTxn, waitForTxn, keyHash, diagCtx)
+	} else {
+		err.WaitChain = append(err.WaitChain, &deadlockPB.WaitForEntry{
+			Txn:              sourceTxn,
+			Key:              diagCtx.key,
+			KeyHash:          keyHash,
+			ResourceGroupTag: diagCtx.resourceGroupTag,
+			WaitForTxn:       waitForTxn,
+		})
 	}
 	d.lock.Unlock()
 	return err
@@ -103,9 +118,26 @@ func (d *Detector) doDetect(nowTime time.Time, sourceTxn, waitForTxn uint64) *Er
 			continue
 		}
 		if keyHashPair.txn == sourceTxn {
-			return &ErrDeadlock{DeadlockKeyHash: keyHashPair.keyHash}
+			return &ErrDeadlock{DeadlockKeyHash: keyHashPair.keyHash,
+				WaitChain: []*deadlockPB.WaitForEntry{
+					{
+						Txn:              waitForTxn,
+						Key:              keyHashPair.diagCtx.key,
+						KeyHash:          keyHashPair.keyHash,
+						ResourceGroupTag: keyHashPair.diagCtx.resourceGroupTag,
+						WaitForTxn:       keyHashPair.txn,
+					},
+				},
+			}
 		}
 		if err := d.doDetect(nowTime, sourceTxn, keyHashPair.txn); err != nil {
+			err.WaitChain = append(err.WaitChain, &deadlockPB.WaitForEntry{
+				Txn:              waitForTxn,
+				Key:              keyHashPair.diagCtx.key,
+				KeyHash:          keyHashPair.keyHash,
+				ResourceGroupTag: keyHashPair.diagCtx.resourceGroupTag,
+				WaitForTxn:       keyHashPair.txn,
+			})
 			return err
 		}
 	}
@@ -115,9 +147,9 @@ func (d *Detector) doDetect(nowTime time.Time, sourceTxn, waitForTxn uint64) *Er
 	return nil
 }
 
-func (d *Detector) register(sourceTxn, waitForTxn, keyHash uint64) {
+func (d *Detector) register(sourceTxn, waitForTxn, keyHash uint64, diagCtx diagnosticContext) {
 	val := d.waitForMap[sourceTxn]
-	pair := txnKeyHashPair{txn: waitForTxn, keyHash: keyHash, registerTime: time.Now()}
+	pair := txnKeyHashPair{txn: waitForTxn, keyHash: keyHash, registerTime: time.Now(), diagCtx: diagCtx}
 	if val == nil {
 		newList := &txnList{txns: list.New()}
 		newList.txns.PushBack(&pair)
