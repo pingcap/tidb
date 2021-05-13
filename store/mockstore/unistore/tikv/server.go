@@ -845,6 +845,11 @@ func (svr *Server) ReadIndex(context.Context, *kvrpcpb.ReadIndexRequest) (*kvrpc
 	return &kvrpcpb.ReadIndexResponse{}, nil
 }
 
+// GetLockWaitInfo implements implements the tikvpb.TikvServer interface.
+func (svr *Server) GetLockWaitInfo(ctx context.Context, _ *kvrpcpb.GetLockWaitInfoRequest) (*kvrpcpb.GetLockWaitInfoResponse, error) {
+	return &kvrpcpb.GetLockWaitInfoResponse{}, nil
+}
+
 // transaction debugger commands.
 
 // MvccGetByKey implements implements the tikvpb.TikvServer interface.
