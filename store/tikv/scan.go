@@ -22,6 +22,7 @@ import (
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"go.uber.org/zap"
 )
@@ -85,9 +86,11 @@ func (s *Scanner) Value() []byte {
 	return nil
 }
 
+const scannerNextMaxBackoff = 20000
+
 // Next return next element.
 func (s *Scanner) Next() error {
-	bo := NewBackofferWithVars(context.WithValue(context.Background(), TxnStartKey, s.snapshot.version), scannerNextMaxBackoff, s.snapshot.vars)
+	bo := retry.NewBackofferWithVars(context.WithValue(context.Background(), retry.TxnStartKey, s.snapshot.version), scannerNextMaxBackoff, s.snapshot.vars)
 	if !s.valid {
 		return errors.New("scanner iterator is invalid")
 	}
@@ -223,7 +226,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		if regionErr != nil {
 			logutil.BgLogger().Debug("scanner getData failed",
 				zap.Stringer("regionErr", regionErr))
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -251,7 +254,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 				return errors.Trace(err)
 			}
 			if msBeforeExpired > 0 {
-				err = bo.BackoffWithMaxSleep(BoTxnLockFast, int(msBeforeExpired), errors.Errorf("key is locked during scanning"))
+				err = bo.BackoffWithMaxSleep(retry.BoTxnLockFast, int(msBeforeExpired), errors.Errorf("key is locked during scanning"))
 				if err != nil {
 					return errors.Trace(err)
 				}
