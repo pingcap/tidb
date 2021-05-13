@@ -2143,6 +2143,8 @@ func (s *testStatsSuite) TestIssues24401(c *C) {
 
 	// normal table with static prune mode
 	testKit.MustExec("set @@tidb_partition_prune_mode='static'")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	defer testKit.MustExec("set @@tidb_analyze_version=1")
 	testKit.MustExec("create table t(a int, index(a))")
 	testKit.MustExec("insert into t values (1), (2), (3)")
 	testKit.MustExec("analyze table t")
