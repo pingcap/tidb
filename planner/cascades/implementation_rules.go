@@ -160,7 +160,6 @@ func (r *ImplProjection) OnImplement(expr *memo.GroupExpr, reqProp *property.Phy
 		Exprs:                logicProj.Exprs,
 		CalculateNoDelay:     logicProj.CalculateNoDelay,
 		AvoidColumnEvaluator: logicProj.AvoidColumnEvaluator,
-		AvoidEliminateForCTE: logicProj.AvoidEliminateForCTE,
 	}.Init(logicProj.SCtx(), logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicProj.SelectBlockOffset(), childProp)
 	proj.SetSchema(logicProp.Schema)
 	return []memo.Implementation{impl.NewProjectionImpl(proj)}, nil

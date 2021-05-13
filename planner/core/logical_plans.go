@@ -279,10 +279,6 @@ type LogicalProjection struct {
 	// This can be removed after column pool being supported.
 	// Related issue: TiDB#8141(https://github.com/pingcap/tidb/issues/8141)
 	AvoidColumnEvaluator bool
-
-	// AvoidEliminateForCTE indicates this projection is used to change the unique ID for CTE table.
-	// In this case, the projection can not be eliminated.
-	AvoidEliminateForCTE bool
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1180,7 +1176,7 @@ type CTEClass struct {
 	seedPartLogicalPlan      LogicalPlan
 	recursivePartLogicalPlan LogicalPlan
 	cteTask                  task
-	IdForStorage             int
+	IDForStorage             int
 	optFlag                  uint64
 }
 
@@ -1198,4 +1194,13 @@ type LogicalCTETable struct {
 
 	name         string
 	idForStorage int
+}
+
+// ExtractCorrelatedCols implements LogicalPlan interface.
+func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := ExtractCorrelatedCols4LogicalPlan(p.cte.seedPartLogicalPlan)
+	if p.cte.recursivePartLogicalPlan != nil {
+		corCols = append(corCols, ExtractCorrelatedCols4LogicalPlan(p.cte.recursivePartLogicalPlan)...)
+	}
+	return corCols
 }

@@ -1942,7 +1942,6 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 		Exprs:                p.Exprs,
 		CalculateNoDelay:     p.CalculateNoDelay,
 		AvoidColumnEvaluator: p.AvoidColumnEvaluator,
-		AvoidEliminateForCTE: p.AvoidEliminateForCTE,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, newProp)
 	proj.SetSchema(p.schema)
 	return []PhysicalPlan{proj}, true, nil
@@ -2499,7 +2498,10 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 }
 
 func (p *LogicalPartitionUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
-	uas, flagHint, _ := p.LogicalUnionAll.exhaustPhysicalPlans(prop)
+	uas, flagHint, err := p.LogicalUnionAll.exhaustPhysicalPlans(prop)
+	if err != nil {
+		return nil, false, err
+	}
 	for _, ua := range uas {
 		ua.(*PhysicalUnionAll).tp = plancodec.TypePartitionUnion
 	}
@@ -2542,11 +2544,3 @@ func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	mor := PhysicalMaxOneRow{}.Init(p.ctx, p.stats, p.blockOffset, &property.PhysicalProperty{ExpectedCnt: 2})
 	return []PhysicalPlan{mor}, true, nil
 }
-
-//func (p *LogicalCTETable) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
-//	if !prop.IsEmpty() {
-//		return nil, true, nil
-//	}
-//
-//	return []PhysicalPlan{PhysicalCTETable{IdForStorage: p.idForStorage}.Init(p.ctx, p.stats)}, true, nil
-//}

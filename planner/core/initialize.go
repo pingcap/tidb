@@ -535,6 +535,7 @@ func (p LogicalCTE) Init(ctx sessionctx.Context, offset int) *LogicalCTE {
 	return &p
 }
 
+// Init only assigns type and context.
 func (p PhysicalCTE) Init(ctx sessionctx.Context, stats *property.StatsInfo) *PhysicalCTE {
 	p.basePlan = newBasePlan(ctx, plancodec.TypeCTE, 0)
 	p.stats = stats
@@ -547,6 +548,7 @@ func (p LogicalCTETable) Init(ctx sessionctx.Context, offset int) *LogicalCTETab
 	return &p
 }
 
+// Init only assigns type and context.
 func (p PhysicalCTETable) Init(ctx sessionctx.Context, stats *property.StatsInfo) *PhysicalCTETable {
 	p.basePlan = newBasePlan(ctx, plancodec.TypeCTETable, 0)
 	p.stats = stats

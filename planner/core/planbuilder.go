@@ -408,15 +408,24 @@ const (
 )
 
 type cteInfo struct {
-	def           *ast.CommonTableExpression
-	nonRecursive  bool
-	useRecursive  bool
-	isBuilding    bool
-	isDistinct    bool
-	seedLP        LogicalPlan
-	recurLP       LogicalPlan
-	storageID     int
-	optFlag       uint64
+	def *ast.CommonTableExpression
+	// nonRecursive is used to decide if a CTE is visible. If a CTE start with `WITH RECURSIVE`, then nonRecursive is false,
+	// so it is visible in its definition.
+	nonRecursive bool
+	// useRecursive is used to record if a subSelect in CTE's definition refer to itself. This help us to identify the seed part and recursive part.
+	useRecursive bool
+	isBuilding   bool
+	// isDistinct indicates if the union between seed part and recursive part is distinct or not.
+	isDistinct bool
+	// seedLP is the seed part's logical plan.
+	seedLP LogicalPlan
+	// recurLP is the recursive part's logical plan.
+	recurLP LogicalPlan
+	// storageID for this CTE.
+	storageID int
+	// optFlag is the optFlag for the whole CTE.
+	optFlag uint64
+	// enterSubquery and recursiveRef are used to check "recursive table must be referenced only once, and not in any subquery".
 	enterSubquery bool
 	recursiveRef  bool
 }
@@ -429,7 +438,7 @@ type PlanBuilder struct {
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName
 	outerCTEs    []*cteInfo
-	cteId2Plan   map[int]LogicalPlan
+	cteID2Plan   map[int]LogicalPlan
 	// outerRecursiveCheck
 	outerRecursiveCheck []bool
 	// colMapper stores the column that must be pre-resolved.
@@ -606,7 +615,7 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 		ctx:                 sctx,
 		is:                  is,
 		outerCTEs:           make([]*cteInfo, 0),
-		cteId2Plan:          make(map[int]LogicalPlan),
+		cteID2Plan:          make(map[int]LogicalPlan),
 		outerRecursiveCheck: make([]bool, 0),
 		colMapper:           make(map[*ast.ColumnNameExpr]int),
 		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
