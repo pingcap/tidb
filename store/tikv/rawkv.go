@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	pd "github.com/tikv/pd/client"
 )
@@ -110,6 +111,8 @@ func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 	return cmdResp.Value, nil
 }
 
+const rawkvMaxBackoff = 20000
+
 // BatchGet queries values with the keys.
 func (c *RawKVClient) BatchGet(keys [][]byte) ([][]byte, error) {
 	start := time.Now()
@@ -117,7 +120,7 @@ func (c *RawKVClient) BatchGet(keys [][]byte) ([][]byte, error) {
 		metrics.RawkvCmdHistogramWithBatchGet.Observe(time.Since(start).Seconds())
 	}()
 
-	bo := NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
+	bo := retry.NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
 	resp, err := c.sendBatchReq(bo, keys, tikvrpc.CmdRawBatchGet)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -184,7 +187,7 @@ func (c *RawKVClient) BatchPut(keys, values [][]byte) error {
 			return errors.New("empty value is not supported")
 		}
 	}
-	bo := NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
+	bo := retry.NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
 	err := c.sendBatchPut(bo, keys, values)
 	return errors.Trace(err)
 }
@@ -218,7 +221,7 @@ func (c *RawKVClient) BatchDelete(keys [][]byte) error {
 		metrics.RawkvCmdHistogramWithBatchDelete.Observe(time.Since(start).Seconds())
 	}()
 
-	bo := NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
+	bo := retry.NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
 	resp, err := c.sendBatchReq(bo, keys, tikvrpc.CmdRawBatchDelete)
 	if err != nil {
 		return errors.Trace(err)
@@ -350,7 +353,7 @@ func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]
 }
 
 func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, reverse bool) (*tikvrpc.Response, *KeyLocation, error) {
-	bo := NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
+	bo := retry.NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
 	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
 	for {
 		var loc *KeyLocation
@@ -372,7 +375,7 @@ func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, reverse bool) (*
 			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			err := bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -456,7 +459,7 @@ func (c *RawKVClient) doBatchReq(bo *Backoffer, batch batch, cmdType tikvrpc.Cmd
 		return batchResp
 	}
 	if regionErr != nil {
-		err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+		err := bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			batchResp.err = errors.Trace(err)
 			return batchResp
@@ -490,7 +493,7 @@ func (c *RawKVClient) doBatchReq(bo *Backoffer, batch batch, cmdType tikvrpc.Cmd
 // We can't use sendReq directly, because we need to know the end of the region before we send the request
 // TODO: Is there any better way to avoid duplicating code with func `sendReq` ?
 func (c *RawKVClient) sendDeleteRangeReq(startKey []byte, endKey []byte) (*tikvrpc.Response, []byte, error) {
-	bo := NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
+	bo := retry.NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
 	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
 	for {
 		loc, err := c.regionCache.LocateKey(bo, startKey)
@@ -517,7 +520,7 @@ func (c *RawKVClient) sendDeleteRangeReq(startKey []byte, endKey []byte) (*tikvr
 			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			err := bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -622,7 +625,7 @@ func (c *RawKVClient) doBatchPut(bo *Backoffer, batch batch) error {
 		return errors.Trace(err)
 	}
 	if regionErr != nil {
-		err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+		err := bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
 		}
