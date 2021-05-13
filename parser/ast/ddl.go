@@ -3290,6 +3290,13 @@ type PartitionMethod struct {
 
 	// Num is the number of (sub)partitions required by the method.
 	Num uint64
+
+	// KeyAlgorithm is the optional hash algorithm type for `PARTITION BY [LINEAR] KEY` syntax.
+	KeyAlgorithm *PartitionKeyAlgorithm
+}
+
+type PartitionKeyAlgorithm struct {
+	Type uint64
 }
 
 // Restore implements the Node interface
@@ -3298,6 +3305,11 @@ func (n *PartitionMethod) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("LINEAR ")
 	}
 	ctx.WriteKeyWord(n.Tp.String())
+
+	if n.KeyAlgorithm != nil {
+		ctx.WriteKeyWord(" ALGORITHM")
+		ctx.WritePlainf(" = %d", n.KeyAlgorithm.Type)
+	}
 
 	switch {
 	case n.Tp == model.PartitionTypeSystemTime:
