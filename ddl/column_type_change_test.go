@@ -16,6 +16,8 @@ package ddl_test
 import (
 	"context"
 	"errors"
+	"strconv"
+	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -1882,6 +1884,62 @@ func (s *testColumnTypeChangeSuite) TestChangeIntToBitWillPanicInBackfillIndexes
 		"  KEY `idx4` (`a`,`b`,`c`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("\x13 1 1.00", "\x11 2 2.00"))
+}
+
+// Close issue #24584
+func (s *testColumnTypeChangeSuite) TestCancelCTCInReorgStateWillCauseGoroutineLeak(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	failpoint.Enable("github.com/pingcap/tidb/ddl/mockInfiniteReorgLogic", `return(true)`)
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/ddl/mockInfiniteReorgLogic")
+	}()
+
+	// set ddl hook
+	originalHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+
+	tk.MustExec("drop table if exists ctc_goroutine_leak")
+	tk.MustExec("create table ctc_goroutine_leak (a int)")
+	tk.MustExec("insert into ctc_goroutine_leak values(1),(2),(3)")
+	tbl := testGetTableByName(c, tk.Se, "test", "ctc_goroutine_leak")
+
+	hook := &ddl.TestDDLCallback{}
+	var jobID int64
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if jobID != 0 {
+			return
+		}
+		if tbl.Meta().ID != job.TableID {
+			return
+		}
+		if job.Query == "alter table ctc_goroutine_leak modify column a tinyint" {
+			jobID = job.ID
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	// Enable column change variable.
+	tk1.Se.GetSessionVars().EnableChangeColumnType = true
+	var (
+		wg       = sync.WaitGroup{}
+		alterErr error
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// This ddl will be hang over in the failpoint loop, waiting for outside cancel.
+		_, alterErr = tk1.Exec("alter table ctc_goroutine_leak modify column a tinyint")
+	}()
+	<-ddl.TestReorgGoroutineRunning
+	tk.MustExec("admin cancel ddl jobs " + strconv.Itoa(int(jobID)))
+	wg.Wait()
+	c.Assert(alterErr.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 }
 
 // Close issue #24971, #24973, #24974
