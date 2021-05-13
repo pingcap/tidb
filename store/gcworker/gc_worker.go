@@ -1059,7 +1059,7 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 
 	var stat tikv.RangeTaskStat
 	key := startKey
-	bo := tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
+	bo := tikv.NewGcResolveLockMaxBackoffer(ctx)
 	failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
 		sleep := v.(int)
 		// cooperate with github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry
@@ -1156,7 +1156,7 @@ retryScanAndResolve:
 		if len(key) == 0 || (len(endKey) != 0 && bytes.Compare(key, endKey) >= 0) {
 			break
 		}
-		bo = tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
+		bo = tikv.NewGcResolveLockMaxBackoffer(ctx)
 		failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
 			sleep := v.(int)
 			bo = tikv.NewBackofferWithVars(ctx, sleep, nil)
@@ -1469,7 +1469,7 @@ func (w *GCWorker) resolveLocksAcrossRegions(ctx context.Context, locks []*tikv.
 		failpoint.Return(errors.New("injectedError"))
 	})
 
-	bo := tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
+	bo := tikv.NewGcResolveLockMaxBackoffer(ctx)
 
 	for {
 		if len(locks) == 0 {
@@ -1505,18 +1505,20 @@ func (w *GCWorker) resolveLocksAcrossRegions(ctx context.Context, locks []*tikv.
 		}
 
 		// Recreate backoffer for next region
-		bo = tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
+		bo = tikv.NewGcResolveLockMaxBackoffer(ctx)
 		locks = locks[len(locksInRegion):]
 	}
 
 	return nil
 }
 
+const gcOneRegionMaxBackoff = 20000
+
 func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) error {
 	var newSafePoint uint64
 	var err error
 
-	bo := tikv.NewBackofferWithVars(ctx, tikv.GcOneRegionMaxBackoff, nil)
+	bo := tikv.NewBackofferWithVars(ctx, gcOneRegionMaxBackoff, nil)
 	for {
 		newSafePoint, err = w.pdClient.UpdateGCSafePoint(ctx, safePoint)
 		if err != nil {
@@ -1553,7 +1555,7 @@ func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []b
 	}()
 	key := startKey
 	for {
-		bo := tikv.NewBackofferWithVars(ctx, tikv.GcOneRegionMaxBackoff, nil)
+		bo := tikv.NewBackofferWithVars(ctx, gcOneRegionMaxBackoff, nil)
 		loc, err := w.tikvStore.GetRegionCache().LocateKey(bo, key)
 		if err != nil {
 			return stat, errors.Trace(err)

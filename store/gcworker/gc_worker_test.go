@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	pd "github.com/tikv/pd/client"
 )
@@ -413,7 +414,7 @@ func (s *testGCWorkerSuite) TestStatusVars(c *C) {
 
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	ctx := context.Background()
-	bo := tikv.NewBackofferWithVars(ctx, tikv.GcOneRegionMaxBackoff, nil)
+	bo := tikv.NewBackofferWithVars(ctx, gcOneRegionMaxBackoff, nil)
 	loc, err := s.tikvStore.GetRegionCache().LocateKey(bo, []byte(""))
 	c.Assert(err, IsNil)
 	var regionErr *errorpb.Error
@@ -944,7 +945,7 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionEnlargeCausedByRegionM
 			mCluster.Merge(s.initRegion.regionID, region2)
 			regionMeta, _ := mCluster.GetRegion(s.initRegion.regionID)
 			err := s.tikvStore.GetRegionCache().OnRegionEpochNotMatch(
-				tikv.NewNoopBackoff(context.Background()),
+				retry.NewNoopBackoff(context.Background()),
 				&tikv.RPCContext{Region: regionID, Store: &tikv.Store{}},
 				[]*metapb.Region{regionMeta})
 			c.Assert(err, IsNil)
