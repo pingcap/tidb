@@ -290,6 +290,8 @@ const (
 	// The default value is 0
 	TiDBAllowBatchCop = "tidb_allow_batch_cop"
 
+	// TiDBAllowMPPExecution means if we should use mpp way to execute query. Default value is 1 (or 'ON'), means to be determined by the optimizer.
+	// Value set to 2 (or 'ENFORCE') which means to use mpp whenever possible. Value set to 2 (or 'OFF') means never use mpp.
 	TiDBAllowMPPExecution = "tidb_allow_mpp"
 
 	// TiDBInitChunkSize is used to control the init chunk size during query execution.
@@ -613,7 +615,7 @@ const (
 	DefBroadcastJoinThresholdCount     = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 1
-	DefTiDBAllowMPPExecution           = true
+	DefTiDBAllowMPPExecution           = "ON"
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
