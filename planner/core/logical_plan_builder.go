@@ -2456,7 +2456,7 @@ func (a *asofResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, true
 }
 
-// TryExtractTSFromAsOf trys to  extract the specified timestamp.
+// TryExtractTSFromAsOf trys to extract the specified timestamp.
 func TryExtractTSFromAsOf(ctx sessionctx.Context, node ast.Node) (*types.Datum, error) {
 	switch x := node.(type) {
 	case *ast.SelectStmt:

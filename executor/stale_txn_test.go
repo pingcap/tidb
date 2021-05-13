@@ -161,13 +161,13 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 			name:     "TimestampExactRead",
 			sql:      `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND), b as of timestamp TIMESTAMP('2020-09-06 00:00:00');`,
 			preSec:   20,
-			errorStr: "not set different ts",
+			errorStr: "not set different timestamp",
 		},
 		{
 			name:     "TimestampExactRead",
 			sql:      `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND), b;`,
 			preSec:   20,
-			errorStr: "not set different ts",
+			errorStr: "not set different timestamp",
 		},
 		{
 			name:   "NomalRead",
