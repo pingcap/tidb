@@ -509,11 +509,15 @@ func SetSysVar(name string, value string) {
 	sysVars[name].Value = value
 }
 
-// GetSysVars returns the sysVars list under a RWLock
+// GetSysVars deep copies the sysVars list under a RWLock
 func GetSysVars() map[string]*SysVar {
 	sysVarsLock.RLock()
 	defer sysVarsLock.RUnlock()
-	return sysVars
+	copy := make(map[string]*SysVar, len(sysVars))
+	for name, sv := range sysVars {
+		copy[name] = sv
+	}
+	return copy
 }
 
 // PluginVarNames is global plugin var names set.
