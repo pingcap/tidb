@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
-	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
 type testSnapshotFailSuite struct {
@@ -151,7 +150,6 @@ func (s *testSnapshotFailSuite) TestRetryMaxTsPointGetSkipLock(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Set([]byte("k2"), []byte("v2"))
 	c.Assert(err, IsNil)
-	txn.SetOption(kv.EnableAsyncCommit, true)
 	txn.SetEnableAsyncCommit(true)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", "return"), IsNil)
