@@ -698,3 +698,36 @@ func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Ta
 	c.Assert(err, IsNil)
 	return tbl
 }
+
+func (s *testBinlogSuite) TestTempTableBinlog(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().BinlogClient = s.client
+	tk.MustExec("begin")
+	tk.MustExec("drop table if exists temp_table")
+	ddlQuery := "create global temporary table temp_table(id int) on commit delete rows"
+	tk.MustExec(ddlQuery)
+	ok := mustGetDDLBinlog(s, ddlQuery, c)
+	c.Assert(ok, IsTrue)
+
+	tk.MustExec("insert temp_table value(1)")
+	tk.MustExec("update temp_table set id=id+1")
+	tk.MustExec("commit")
+	prewriteVal := getLatestBinlogPrewriteValue(c, s.pump)
+	c.Assert(len(prewriteVal.Mutations), Equals, 0)
+
+	tk.MustExec("begin")
+	tk.MustExec("delete from temp_table")
+	tk.MustExec("commit")
+	prewriteVal = getLatestBinlogPrewriteValue(c, s.pump)
+	c.Assert(len(prewriteVal.Mutations), Equals, 0)
+
+	ddlQuery = "truncate table temp_table"
+	tk.MustExec(ddlQuery)
+	ok = mustGetDDLBinlog(s, ddlQuery, c)
+	c.Assert(ok, IsTrue)
+
+	ddlQuery = "drop table if exists temp_table"
+	tk.MustExec(ddlQuery)
+	ok = mustGetDDLBinlog(s, ddlQuery, c)
+	c.Assert(ok, IsTrue)
+}

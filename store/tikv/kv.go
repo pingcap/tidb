@@ -82,10 +82,10 @@ type KVStore struct {
 	spMutex   sync.RWMutex  // this is used to update safePoint and spTime
 	closed    chan struct{} // this is used to nofity when the store is closed
 
-	resolveTSMu struct {
-		sync.RWMutex
-		resolveTS map[uint64]uint64 // storeID -> resolveTS
-	}
+	// storeID -> safeTS, stored as map[uint64]uint64
+	// safeTS here will be used during the Stale Read process,
+	// it indicates the safe timestamp point that can be used to read consistent but may not the latest data.
+	safeTSMap sync.Map
 
 	replicaReadSeed uint32 // this is used to load balance followers / learners when replica read is enabled
 }
@@ -142,7 +142,6 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 		replicaReadSeed: rand.Uint32(),
 	}
 	store.lockResolver = newLockResolver(store)
-	store.resolveTSMu.resolveTS = make(map[uint64]uint64)
 
 	go store.runSafePointChecker()
 	go store.safeTSUpdater()
@@ -236,6 +235,13 @@ func (s *KVStore) CurrentTimestamp(txnScope string) (uint64, error) {
 }
 
 func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64, error) {
+	failpoint.Inject("MockCurrentTimestamp", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			failpoint.Return(uint64(v), nil)
+		} else {
+			panic("MockCurrentTimestamp should be a number, try use this failpoint with \"return(ts)\"")
+		}
+	})
 	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("TiKVStore.getTimestampWithRetry", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -265,6 +271,13 @@ func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64,
 }
 
 func (s *KVStore) getStalenessTimestamp(bo *Backoffer, txnScope string, prevSec uint64) (uint64, error) {
+	failpoint.Inject("MockStalenessTimestamp", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			failpoint.Return(uint64(v), nil)
+		} else {
+			panic("MockStalenessTimestamp should be a number, try use this failpoint with \"return(ts)\"")
+		}
+	})
 	for {
 		startTS, err := s.oracle.GetStaleTimestamp(bo.ctx, txnScope, prevSec)
 		if err == nil {
@@ -337,20 +350,30 @@ func (s *KVStore) GetTiKVClient() (client Client) {
 	return s.client
 }
 
-func (s *KVStore) getMinResolveTSByStores(stores []*Store) uint64 {
-	failpoint.Inject("injectResolveTS", func(val failpoint.Value) {
+func (s *KVStore) getSafeTS(storeID uint64) uint64 {
+	safeTS, ok := s.safeTSMap.Load(storeID)
+	if !ok {
+		return 0
+	}
+	return safeTS.(uint64)
+}
+
+func (s *KVStore) setSafeTS(storeID, safeTS uint64) {
+	s.safeTSMap.Store(storeID, safeTS)
+}
+
+func (s *KVStore) getMinSafeTSByStores(stores []*Store) uint64 {
+	failpoint.Inject("injectSafeTS", func(val failpoint.Value) {
 		injectTS := val.(int)
 		failpoint.Return(uint64(injectTS))
 	})
 	minSafeTS := uint64(math.MaxUint64)
-	s.resolveTSMu.RLock()
-	defer s.resolveTSMu.RUnlock()
 	// when there is no store, return 0 in order to let minStartTS become startTS directly
 	if len(stores) < 1 {
 		return 0
 	}
 	for _, store := range stores {
-		safeTS := s.resolveTSMu.resolveTS[store.storeID]
+		safeTS := s.getSafeTS(store.storeID)
 		if safeTS < minSafeTS {
 			minSafeTS = safeTS
 		}
@@ -368,12 +391,12 @@ func (s *KVStore) safeTSUpdater() {
 		case <-s.Closed():
 			return
 		case <-t.C:
-			s.updateResolveTS(ctx)
+			s.updateSafeTS(ctx)
 		}
 	}
 }
 
-func (s *KVStore) updateResolveTS(ctx context.Context) {
+func (s *KVStore) updateSafeTS(ctx context.Context) {
 	stores := s.regionCache.getStoresByType(tikvrpc.TiKV)
 	tikvClient := s.GetTiKVClient()
 	wg := &sync.WaitGroup{}
@@ -389,13 +412,11 @@ func (s *KVStore) updateResolveTS(ctx context.Context) {
 				EndKey:   []byte(""),
 			}}), ReadTimeoutShort)
 			if err != nil {
-				logutil.BgLogger().Debug("update resolveTS failed", zap.Error(err), zap.Uint64("store-id", storeID))
+				logutil.BgLogger().Debug("update safeTS failed", zap.Error(err), zap.Uint64("store-id", storeID))
 				return
 			}
 			safeTSResp := resp.Resp.(*kvrpcpb.StoreSafeTSResponse)
-			s.resolveTSMu.Lock()
-			s.resolveTSMu.resolveTS[storeID] = safeTSResp.GetSafeTs()
-			s.resolveTSMu.Unlock()
+			s.setSafeTS(storeID, safeTSResp.GetSafeTs())
 		}(ctx, wg, storeID, storeAddr)
 	}
 	wg.Wait()

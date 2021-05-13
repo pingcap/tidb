@@ -35,6 +35,6 @@ func (s *testJSONFuncSuite) TestdecodeEscapedUnicode(c *C) {
 func BenchmarkDecodeEscapedUnicode(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		in := "597d"
-		decodeEscapedUnicode([]byte(in))
+		_, _, _ = decodeEscapedUnicode([]byte(in))
 	}
 }
