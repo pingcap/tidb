@@ -115,7 +115,7 @@ func (b *PlanBuilder) rewrite(ctx context.Context, exprNode ast.ExprNode, p Logi
 // before really using its node in `expressionRewriter.Leave`. In that case, we first call
 // er.preprocess(expr), which returns a new expr. Then we use the new expr in `Leave`.
 // oldLen is the length of original select fields. Currently this is only for checking if PositionExpr is referencing
-// a column not in the original select fields (eg. auxiliary fields). You can pass -1 if this check is not needed.
+// a column not in the original select fields (eg. auxiliary fields). Pass -1 to disable this check.
 func (b *PlanBuilder) rewriteWithPreprocess(
 	ctx context.Context,
 	exprNode ast.ExprNode,

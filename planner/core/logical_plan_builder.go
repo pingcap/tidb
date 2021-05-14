@@ -1615,11 +1615,12 @@ func (t *itemTransformer) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, false
 }
 
-func (b *PlanBuilder) buildSort(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int,
-	windowMapper map[*ast.WindowFuncExpr]int) (*LogicalSort, error) {
+func (b *PlanBuilder) buildSort(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int) (*LogicalSort, error) {
 	return b.buildSortWithCheck(ctx, p, byItems, aggMapper, windowMapper, nil, -1, false)
 }
 
+// buildSortWithCheck does more checks when building LogicalSort compared to `buildSort()`.
+// Pass (nil, -1, false) to (projExprs, oldLen, hasDistinct) respectively to disable these checks.
 func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int,
 	projExprs []expression.Expression, oldLen int, hasDistinct bool) (*LogicalSort, error) {
 	if _, isUnion := p.(*LogicalUnionAll); isUnion {
@@ -4601,6 +4602,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}
 
 	if delete.Order != nil {
+		// delete stmt doesn't allow 'order by + position' to reference a column, so we pass 0 as oldLen to make expression rewriter report error.
 		p, err = b.buildSortWithCheck(ctx, p, delete.Order.Items, nil, nil, nil, 0, false)
 		if err != nil {
 			return nil, err
