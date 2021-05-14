@@ -164,7 +164,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		zap.String("nextEndKey", kv.StrKey(s.nextEndKey)),
 		zap.Bool("reverse", s.reverse),
 		zap.Uint64("txnStartTS", s.startTS()))
-	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)
+	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.GetTiKVClient())
 	var reqEndKey, reqStartKey []byte
 	var loc *KeyLocation
 	var err error
