@@ -66,10 +66,13 @@ var oracleUpdateInterval = 2000
 
 // KVStore contains methods to interact with a TiKV cluster.
 type KVStore struct {
-	clusterID    uint64
-	uuid         string
-	oracle       oracle.Oracle
-	client       atomic.Value
+	clusterID uint64
+	uuid      string
+	oracle    oracle.Oracle
+	clientMu  struct {
+		sync.RWMutex
+		client Client
+	}
 	pdClient     pd.Client
 	regionCache  *RegionCache
 	lockResolver *LockResolver
@@ -141,7 +144,7 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 		closed:          make(chan struct{}),
 		replicaReadSeed: rand.Uint32(),
 	}
-	store.client.Store(reqCollapse{client})
+	store.clientMu.client = reqCollapse{client}
 	store.lockResolver = newLockResolver(store)
 
 	go store.runSafePointChecker()
@@ -343,12 +346,16 @@ func (s *KVStore) SetOracle(oracle oracle.Oracle) {
 
 // SetTiKVClient resets the client instance.
 func (s *KVStore) SetTiKVClient(client Client) {
-	s.client.Store(client)
+	s.clientMu.Lock()
+	defer s.clientMu.Unlock()
+	s.clientMu.client = client
 }
 
 // GetTiKVClient gets the client instance.
 func (s *KVStore) GetTiKVClient() (client Client) {
-	return s.client.Load().(Client)
+	s.clientMu.RLock()
+	defer s.clientMu.RUnlock()
+	return s.clientMu.client
 }
 
 func (s *KVStore) getSafeTS(storeID uint64) uint64 {
