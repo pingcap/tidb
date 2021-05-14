@@ -8158,7 +8158,7 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 	deadlockhistory.GlobalDeadlockHistory.Clear()
 	defer deadlockhistory.GlobalDeadlockHistory.Clear()
 
-	occurTime := time.Date(2021, 5, 10, 1, 2, 3, 0, time.UTC)
+	occurTime := time.Date(2021, 5, 10, 1, 2, 3, 456789000, time.UTC)
 	rec := &deadlockhistory.DeadlockRecord{
 		OccurTime: occurTime,
 		WaitChain: []deadlockhistory.WaitChainItem{
@@ -8173,19 +8173,45 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 				TryLockTxn:     102,
 				SQLDigest:      "ddccbbaa",
 				Key:            []byte("k2"),
-				SQLs:           nil,
+				SQLs:           []string{"sql1"},
 				TxnHoldingLock: 101,
 			},
 		},
 	}
 	deadlockhistory.GlobalDeadlockHistory.Push(rec)
+
+	occurTime2 := time.Date(2022, 6, 11, 2, 3, 4, 987654000, time.UTC)
+	rec2 := &deadlockhistory.DeadlockRecord{
+		OccurTime: occurTime2,
+		WaitChain: []deadlockhistory.WaitChainItem{
+			{
+				TryLockTxn:     201,
+				SQLs:           []string{},
+				TxnHoldingLock: 202,
+			},
+			{
+				TryLockTxn:     202,
+				SQLs:           []string{"sql1", "sql2, sql3"},
+				TxnHoldingLock: 203,
+			},
+			{
+				TryLockTxn:     203,
+				TxnHoldingLock: 201,
+			},
+		},
+	}
+	deadlockhistory.GlobalDeadlockHistory.Push(rec2)
+
 	// `Push` sets the record's ID
 	//id := strconv.FormatUint(rec.ID, 10)
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select * from information_schema.dead_lock").Check(
 		testutil.RowsWithSep("/",
-			"1/2021-05-10 01:02:03/101/aabbccdd/6B31/<nil>/102",
-			"1/2021-05-10 01:02:03/102/ddccbbaa/6B32/<nil>/101",
+			"1/2021-05-10 01:02:03.456789/101/aabbccdd/6B31/<nil>/102",
+			"1/2021-05-10 01:02:03.456789/102/ddccbbaa/6B32/[sql1]/101",
+			"2/2022-06-11 02:03:04.987654/201/<nil>/<nil>/[]/202",
+			"2/2022-06-11 02:03:04.987654/202/<nil>/<nil>/[sql1, sql2, sql3]/203",
+			"2/2022-06-11 02:03:04.987654/203/<nil>/<nil>/<nil>/201",
 		))
 }

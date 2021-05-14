@@ -144,10 +144,12 @@ func (s *testDeadlockHistorySuite) TestGetDatum(c *C) {
 		WaitChain: []WaitChainItem{
 			{
 				TryLockTxn:     201,
+				SQLs:           []string{},
 				TxnHoldingLock: 202,
 			},
 			{
 				TryLockTxn:     202,
+				SQLs:           []string{"sql1"},
 				TxnHoldingLock: 201,
 			},
 		},
@@ -191,11 +193,13 @@ func (s *testDeadlockHistorySuite) TestGetDatum(c *C) {
 	c.Assert(res[2][0].GetValue(), Equals, uint64(2))   // ID
 	c.Assert(toGoTime(res[2][1]), Equals, time2)        // OCCUR_TIME
 	c.Assert(res[2][2].GetValue(), Equals, uint64(201)) // TRY_LOCK_TRX_ID
+	c.Assert(res[2][5].GetValue(), Equals, "[]")        // SQLS
 	c.Assert(res[2][6].GetValue(), Equals, uint64(202)) // TRX_HOLDING_LOCK
 
 	c.Assert(res[3][0].GetValue(), Equals, uint64(2))   // ID
 	c.Assert(toGoTime(res[3][1]), Equals, time2)        // OCCUR_TIME
 	c.Assert(res[3][2].GetValue(), Equals, uint64(202)) // TRY_LOCK_TRX_ID
+	c.Assert(res[3][5].GetValue(), Equals, "[sql1]")    // SQLS
 	c.Assert(res[3][6].GetValue(), Equals, uint64(201)) // TRX_HOLDING_LOCK
 }
 
