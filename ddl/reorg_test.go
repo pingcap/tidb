@@ -94,9 +94,15 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	txn, err = ctx.Txn(true)
 	c.Assert(err, IsNil)
 	e := &meta.Element{ID: 333, TypeKey: meta.IndexElementKey}
+	dCtx := &ddlCtx{
+		uuid:  d.uuid,
+		store: d.store,
+	}
 	rInfo := &reorgInfo{
 		Job:         job,
 		currElement: e,
+		// reorgJob depend on ddlCtx's store to do the extra txn.
+		d: dCtx,
 	}
 	mockTbl := tables.MockTableFromMeta(&model.TableInfo{IsCommonHandle: s.IsCommonHandle, CommonHandleVersion: 1})
 	err = d.generalWorker().runReorgJob(rInfo, mockTbl.Meta(), d.lease, f)

@@ -1797,3 +1797,20 @@ func (s *testColumnTypeChangeSuite) TestChangeIntToBitWillPanicInBackfillIndexes
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("\x13 1 1.00", "\x11 2 2.00"))
 }
+
+// Close issue #24427
+func (s *testColumnTypeChangeSuite) TestFixDDLTxnWillConflictWithReorgTxn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("alter table t add index(a)")
+	tk.MustExec("set @@sql_mode=\"\"")
+	tk.MustExec("insert into t values(128),(129)")
+	tk.MustExec("set @@tidb_enable_change_column_type=1")
+	tk.MustExec("alter table t modify column a tinyint")
+
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant 128 overflows tinyint", "Warning 1690 constant 128 overflows tinyint"))
+}
