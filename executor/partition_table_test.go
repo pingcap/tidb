@@ -263,7 +263,7 @@ func (s *partitionTableSuite) TestBatchGetandPointGetwithHashPartition(c *C) {
 	}
 
 	// test empty PointGet
-	queryHash := fmt.Sprintf("select a from thash where a=200")
+	queryHash := "select a from thash where a=200"
 	c.Assert(tk.HasPlan(queryHash, "Point_Get"), IsTrue) // check if PointGet is used
 	tk.MustQuery(queryHash).Check(testkit.Rows())
 
