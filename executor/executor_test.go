@@ -8214,4 +8214,9 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 			"2/2022-06-11 02:03:04.987654/202/<nil>/<nil>/[sql1, sql2, sql3]/203",
 			"2/2022-06-11 02:03:04.987654/203/<nil>/<nil>/<nil>/201",
 		))
+
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "",
+		Hostname: "",
+	})
 }
