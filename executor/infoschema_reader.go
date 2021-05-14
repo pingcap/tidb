@@ -1856,7 +1856,6 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 		}
 	}
 	e.rows = rows
-	return
 }
 
 func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, tableName string) error {
