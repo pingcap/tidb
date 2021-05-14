@@ -16,7 +16,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"github.com/pingcap/tidb/util/dbterror"
 	"sort"
 	"strings"
 	"sync"
@@ -50,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
@@ -2804,11 +2804,11 @@ func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, sch
 		return nil, false, nil, err
 	}
 
+	// recalculate key column offsets
 	if lookUpContent[0].keyColIDs == nil {
 		return nil, false, nil,
 			dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("cannot get column IDs when dynamic pruning")
 	}
-
 	keyColOffsets := make([]int, len(lookUpContent[0].keyColIDs))
 	for i, colID := range lookUpContent[0].keyColIDs {
 		offset := -1
