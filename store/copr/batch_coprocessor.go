@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/tikv"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
@@ -97,7 +98,7 @@ type copTaskAndRPCContext struct {
 	ctx  *tikv.RPCContext
 }
 
-func buildBatchCopTasks(bo *backoffer, cache *tikv.RegionCache, ranges *tikv.KeyRanges, storeType kv.StoreType) ([]*batchCopTask, error) {
+func buildBatchCopTasks(bo *Backoffer, cache *tikv.RegionCache, ranges *tikv.KeyRanges, storeType kv.StoreType) ([]*batchCopTask, error) {
 	start := time.Now()
 	const cmdType = tikvrpc.CmdBatchCop
 	rangesLen := ranges.Len()
@@ -126,8 +127,10 @@ func buildBatchCopTasks(bo *backoffer, cache *tikv.RegionCache, ranges *tikv.Key
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			// If the region is not found in cache, it must be out
-			// of date and already be cleaned up. We should retry and generate new tasks.
+			// When rpcCtx is nil, it's not only attributed to the miss region, but also
+			// some TiFlash stores crash and can't be recovered.
+			// That is not an error that can be easily recovered, so we regard this error
+			// same as rpc error.
 			if rpcCtx == nil {
 				needRetry = true
 				logutil.BgLogger().Info("retry for TiFlash peer with region missing", zap.Uint64("region id", task.region.GetID()))
@@ -147,8 +150,10 @@ func buildBatchCopTasks(bo *backoffer, cache *tikv.RegionCache, ranges *tikv.Key
 			}
 		}
 		if needRetry {
-			// Backoff once for each retry.
-			err = bo.Backoff(tikv.BoRegionMiss, errors.New("Cannot find region with TiFlash peer"))
+			// As mentioned above, nil rpcCtx is always attributed to failed stores.
+			// It's equal to long poll the store but get no response. Here we'd better use
+			// TiFlash error to trigger the TiKV fallback mechanism.
+			err = bo.Backoff(tikv.BoTiFlashRPC, errors.New("Cannot find region with TiFlash peer"))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -173,8 +178,8 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 	if req.KeepOrder || req.Desc {
 		return copErrorResponse{errors.New("batch coprocessor cannot prove keep order or desc property")}
 	}
-	ctx = context.WithValue(ctx, tikv.TxnStartKey, req.StartTs)
-	bo := newBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
+	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
+	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	ranges := toTiKVKeyRanges(req.KeyRanges)
 	tasks, err := buildBatchCopTasks(bo, c.store.GetRegionCache(), ranges, req.StoreType)
 	if err != nil {
@@ -219,7 +224,7 @@ func (b *batchCopIterator) run(ctx context.Context) {
 	// We run workers for every batch cop.
 	for _, task := range b.tasks {
 		b.wg.Add(1)
-		bo := newBackofferWithVars(ctx, copNextMaxBackoff, b.vars)
+		bo := backoff.NewBackofferWithVars(ctx, copNextMaxBackoff, b.vars)
 		go b.handleTask(ctx, bo, task)
 	}
 	b.wg.Wait()
@@ -289,7 +294,7 @@ func (b *batchCopIterator) Close() error {
 	return nil
 }
 
-func (b *batchCopIterator) handleTask(ctx context.Context, bo *backoffer, task *batchCopTask) {
+func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *batchCopTask) {
 	tasks := []*batchCopTask{task}
 	for idx := 0; idx < len(tasks); idx++ {
 		ret, err := b.handleTaskOnce(ctx, bo, tasks[idx])
@@ -304,7 +309,7 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *backoffer, task *
 }
 
 // Merge all ranges and request again.
-func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
+func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
 	var ranges []tikvstore.KeyRange
 	for _, taskCtx := range batchTask.copTasks {
 		taskCtx.task.ranges.Do(func(ran *tikvstore.KeyRange) {
@@ -314,7 +319,7 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoffer,
 	return buildBatchCopTasks(bo, b.store.GetRegionCache(), tikv.NewKeyRanges(ranges), b.req.StoreType)
 }
 
-func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoffer, task *batchCopTask) ([]*batchCopTask, error) {
+func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
 	sender := NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient())
 	var regionInfos = make([]*coprocessor.RegionInfo, 0, len(task.copTasks))
 	for _, task := range task.copTasks {
@@ -359,7 +364,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoffer, ta
 	return nil, b.handleStreamedBatchCopResponse(ctx, bo, resp.Resp.(*tikvrpc.BatchCopStreamResponse), task)
 }
 
-func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, bo *backoffer, response *tikvrpc.BatchCopStreamResponse, task *batchCopTask) (err error) {
+func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, bo *Backoffer, response *tikvrpc.BatchCopStreamResponse, task *batchCopTask) (err error) {
 	defer response.Close()
 	resp := response.BatchResponse
 	if resp == nil {
@@ -377,7 +382,7 @@ func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, b
 				return nil
 			}
 
-			if err1 := bo.Backoff(tikv.BoTiKVRPC, errors.Errorf("recv stream response error: %v, task store addr: %s", err, task.storeAddr)); err1 != nil {
+			if err1 := bo.BackoffTiKVRPC(errors.Errorf("recv stream response error: %v, task store addr: %s", err, task.storeAddr)); err1 != nil {
 				return errors.Trace(err)
 			}
 
@@ -392,7 +397,7 @@ func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, b
 	}
 }
 
-func (b *batchCopIterator) handleBatchCopResponse(bo *backoffer, response *coprocessor.BatchResponse, task *batchCopTask) (err error) {
+func (b *batchCopIterator) handleBatchCopResponse(bo *Backoffer, response *coprocessor.BatchResponse, task *batchCopTask) (err error) {
 	if otherErr := response.GetOtherError(); otherErr != "" {
 		err = errors.Errorf("other error: %s", otherErr)
 		logutil.BgLogger().Warn("other error",
@@ -400,6 +405,20 @@ func (b *batchCopIterator) handleBatchCopResponse(bo *backoffer, response *copro
 			zap.String("storeAddr", task.storeAddr),
 			zap.Error(err))
 		return errors.Trace(err)
+	}
+
+	if len(response.RetryRegions) > 0 {
+		logutil.BgLogger().Info("multiple regions are stale and need to be refreshed", zap.Int("region size", len(response.RetryRegions)))
+		for idx, retry := range response.RetryRegions {
+			id := tikv.NewRegionVerID(retry.Id, retry.RegionEpoch.ConfVer, retry.RegionEpoch.Version)
+			logutil.BgLogger().Info("invalid region because tiflash detected stale region", zap.String("region id", id.String()))
+			b.store.GetRegionCache().InvalidateCachedRegionWithReason(id, tikv.EpochNotMatch)
+			if idx >= 10 {
+				logutil.BgLogger().Info("stale regions are too many, so we omit the rest ones")
+				break
+			}
+		}
+		return
 	}
 
 	resp := batchCopResponse{

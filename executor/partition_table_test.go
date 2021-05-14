@@ -227,6 +227,85 @@ func (s *partitionTableSuite) TestPartitionInfoDisable(c *C) {
 	tk.MustQuery("select * from t_info_null where (date = '2020-10-02' or date = '2020-10-06') and app = 'xxx' and media = '19003006'").Check(testkit.Rows())
 }
 
+func (s *partitionTableSuite) TestOrderByandLimit(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_orderby_limit")
+	tk.MustExec("use test_orderby_limit")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	// range partition table
+	tk.MustExec(`create table trange(a int, b int, index idx_a(a)) partition by range(a) (
+		partition p0 values less than(300), 
+		partition p1 values less than (500), 
+		partition p2 values less than(1100));`)
+
+	// hash partition table
+	tk.MustExec("create table thash(a int, b int, index idx_a(a), index idx_b(b)) partition by hash(a) partitions 4;")
+
+	// regular table
+	tk.MustExec("create table tregular(a int, b int, index idx_a(a))")
+
+	// generate some random data to be inserted
+	vals := make([]string, 0, 2000)
+	for i := 0; i < 2000; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(1100), rand.Intn(2000)))
+	}
+	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
+	tk.MustExec("insert into thash values " + strings.Join(vals, ","))
+	tk.MustExec("insert into tregular values " + strings.Join(vals, ","))
+
+	// test indexLookUp
+	for i := 0; i < 100; i++ {
+		// explain select * from t where a > {y}  use index(idx_a) order by a limit {x}; // check if IndexLookUp is used
+		// select * from t where a > {y} use index(idx_a) order by a limit {x}; // it can return the correct result
+		x := rand.Intn(1099)
+		y := rand.Intn(2000) + 1
+		queryPartition := fmt.Sprintf("select * from trange use index(idx_a) where a > %v order by a, b limit %v;", x, y)
+		queryRegular := fmt.Sprintf("select * from tregular use index(idx_a) where a > %v order by a, b limit %v;", x, y)
+		c.Assert(tk.HasPlan(queryPartition, "IndexLookUp"), IsTrue) // check if IndexLookUp is used
+		tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+	}
+
+	// test tableReader
+	for i := 0; i < 100; i++ {
+		// explain select * from t where a > {y}  ignore index(idx_a) order by a limit {x}; // check if IndexLookUp is used
+		// select * from t where a > {y} ignore index(idx_a) order by a limit {x}; // it can return the correct result
+		x := rand.Intn(1099)
+		y := rand.Intn(2000) + 1
+		queryPartition := fmt.Sprintf("select * from trange ignore index(idx_a) where a > %v order by a, b limit %v;", x, y)
+		queryRegular := fmt.Sprintf("select * from tregular ignore index(idx_a) where a > %v order by a, b limit %v;", x, y)
+		c.Assert(tk.HasPlan(queryPartition, "TableReader"), IsTrue) // check if tableReader is used
+		tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+	}
+
+	// test indexReader
+	for i := 0; i < 100; i++ {
+		// explain select a from t where a > {y}  use index(idx_a) order by a limit {x}; // check if IndexLookUp is used
+		// select a from t where a > {y} use index(idx_a) order by a limit {x}; // it can return the correct result
+		x := rand.Intn(1099)
+		y := rand.Intn(2000) + 1
+		queryPartition := fmt.Sprintf("select a from trange use index(idx_a) where a > %v order by a limit %v;", x, y)
+		queryRegular := fmt.Sprintf("select a from tregular use index(idx_a) where a > %v order by a limit %v;", x, y)
+		c.Assert(tk.HasPlan(queryPartition, "IndexReader"), IsTrue) // check if indexReader is used
+		tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+	}
+
+	// test indexMerge
+	for i := 0; i < 100; i++ {
+		// explain select /*+ use_index_merge(t) */ * from t where a > 2 or b < 5 order by a limit {x}; // check if IndexMerge is used
+		// select /*+ use_index_merge(t) */ * from t where a > 2 or b < 5 order by a limit {x};  // can return the correct value
+		y := rand.Intn(2000) + 1
+		queryPartition := fmt.Sprintf("select /*+ use_index_merge(thash) */ * from thash where a > 2 or b < 5 order by a, b limit %v;", y)
+		queryRegular := fmt.Sprintf("select * from tregular where a > 2 or b < 5 order by a, b limit %v;", y)
+		c.Assert(tk.HasPlan(queryPartition, "IndexMerge"), IsTrue) // check if indexMerge is used
+		tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+	}
+}
+
 func (s *partitionTableSuite) TestBatchGetandPointGetwithHashPartition(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
@@ -263,7 +342,7 @@ func (s *partitionTableSuite) TestBatchGetandPointGetwithHashPartition(c *C) {
 	}
 
 	// test empty PointGet
-	queryHash := fmt.Sprintf("select a from thash where a=200")
+	queryHash := "select a from thash where a=200"
 	c.Assert(tk.HasPlan(queryHash, "Point_Get"), IsTrue) // check if PointGet is used
 	tk.MustQuery(queryHash).Check(testkit.Rows())
 
@@ -494,10 +573,43 @@ func (s *partitionTableSuite) TestDynamicPruneModeWithEqualExpression(c *C) {
 	for _, t := range tests {
 		for i := range t.partitions {
 			sql := fmt.Sprintf(t.sql, tables[i])
-			c.Assert(tk.MustPartition(sql, t.partitions[i]), IsTrue)
-			tk.MustQuery(sql).Sort().Check(tk.MustQuery(fmt.Sprintf(t.sql, "t")).Sort().Rows())
+			tk.MustPartition(sql, t.partitions[i]).Sort().Check(tk.MustQuery(fmt.Sprintf(t.sql, "t")).Sort().Rows())
 		}
 	}
+}
+
+func (s *partitionTableSuite) TestAddDropPartitions(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_add_drop_partition")
+	tk.MustExec("use test_add_drop_partition")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	tk.MustExec(`create table t(a int) partition by range(a) (
+		  partition p0 values less than (5),
+		  partition p1 values less than (10),
+		  partition p2 values less than (15))`)
+	tk.MustExec(`insert into t values (2), (7), (12)`)
+	tk.MustPartition(`select * from t where a < 3`, "p0").Sort().Check(testkit.Rows("2"))
+	tk.MustPartition(`select * from t where a < 8`, "p0,p1").Sort().Check(testkit.Rows("2", "7"))
+	tk.MustPartition(`select * from t where a < 20`, "all").Sort().Check(testkit.Rows("12", "2", "7"))
+
+	// remove p0
+	tk.MustExec(`alter table t drop partition p0`)
+	tk.MustPartition(`select * from t where a < 3`, "p1").Sort().Check(testkit.Rows())
+	tk.MustPartition(`select * from t where a < 8`, "p1").Sort().Check(testkit.Rows("7"))
+	tk.MustPartition(`select * from t where a < 20`, "all").Sort().Check(testkit.Rows("12", "7"))
+
+	// add 2 more partitions
+	tk.MustExec(`alter table t add partition (partition p3 values less than (20))`)
+	tk.MustExec(`alter table t add partition (partition p4 values less than (40))`)
+	tk.MustExec(`insert into t values (15), (25)`)
+	tk.MustPartition(`select * from t where a < 3`, "p1").Sort().Check(testkit.Rows())
+	tk.MustPartition(`select * from t where a < 8`, "p1").Sort().Check(testkit.Rows("7"))
+	tk.MustPartition(`select * from t where a < 20`, "p1,p2,p3").Sort().Check(testkit.Rows("12", "15", "7"))
 }
 
 func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
@@ -511,15 +623,15 @@ func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 
 	// list partition table
-	tk.MustExec(`create table tlist(a int, b int, index idx_a(a), index idx_b(b)) partition by list(a)( 
+	tk.MustExec(`create table tlist(a int, b int, index idx_a(a), index idx_b(b)) partition by list(a)(
 		partition p0 values in (1, 2, 3, 4),
 		partition p1 values in (5, 6, 7, 8),
 		partition p2 values in (9, 10, 11, 12));`)
 
 	// range partition table
 	tk.MustExec(`create table trange(a int, b int, index idx_a(a), index idx_b(b)) partition by range(a) (
-		partition p0 values less than(300), 
-		partition p1 values less than (500), 
+		partition p0 values less than(300),
+		partition p1 values less than (500),
 		partition p2 values less than(1100));`)
 
 	// hash partition table

@@ -1554,7 +1554,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	_, err = tk.Exec("UPDATE t SET c2=16777215 WHERE c1>= -8388608 AND c1 < -9 ORDER BY c1 LIMIT 2")
 	c.Assert(err, IsNil)
 
-	tk.MustExec("update (select * from t) t set c1 = 1111111")
+	tk.MustGetErrCode("update (select * from t) t set c1 = 1111111", mysql.ErrNonUpdatableTable)
 
 	// test update ignore for bad null error
 	tk.MustExec("drop table if exists t;")
@@ -1604,8 +1604,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustExec("drop view v")
 
 	tk.MustExec("create sequence seq")
-	_, err = tk.Exec("update seq set minvalue=1")
-	c.Assert(err.Error(), Equals, "update sequence seq is not supported now.")
+	tk.MustGetErrCode("update seq set minvalue=1", mysql.ErrBadField)
 	tk.MustExec("drop sequence seq")
 
 	tk.MustExec("drop table if exists t1, t2")

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/clientv3"
@@ -65,10 +66,13 @@ var oracleUpdateInterval = 2000
 
 // KVStore contains methods to interact with a TiKV cluster.
 type KVStore struct {
-	clusterID    uint64
-	uuid         string
-	oracle       oracle.Oracle
-	client       Client
+	clusterID uint64
+	uuid      string
+	oracle    oracle.Oracle
+	clientMu  struct {
+		sync.RWMutex
+		client Client
+	}
 	pdClient     pd.Client
 	regionCache  *RegionCache
 	lockResolver *LockResolver
@@ -132,7 +136,6 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 		clusterID:       pdClient.GetClusterID(context.TODO()),
 		uuid:            uuid,
 		oracle:          o,
-		client:          reqCollapse{client},
 		pdClient:        pdClient,
 		regionCache:     NewRegionCache(pdClient),
 		kv:              spkv,
@@ -141,6 +144,7 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 		closed:          make(chan struct{}),
 		replicaReadSeed: rand.Uint32(),
 	}
+	store.clientMu.client = reqCollapse{client}
 	store.lockResolver = newLockResolver(store)
 
 	go store.runSafePointChecker()
@@ -204,7 +208,7 @@ func (s *KVStore) Close() error {
 	s.pdClient.Close()
 
 	close(s.closed)
-	if err := s.client.Close(); err != nil {
+	if err := s.GetTiKVClient().Close(); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -226,7 +230,7 @@ func (s *KVStore) UUID() string {
 
 // CurrentTimestamp returns current timestamp with the given txnScope (local or global).
 func (s *KVStore) CurrentTimestamp(txnScope string) (uint64, error) {
-	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
+	bo := retry.NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
 	startTS, err := s.getTimestampWithRetry(bo, txnScope)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -235,14 +239,21 @@ func (s *KVStore) CurrentTimestamp(txnScope string) (uint64, error) {
 }
 
 func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64, error) {
-	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
+	failpoint.Inject("MockCurrentTimestamp", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			failpoint.Return(uint64(v), nil)
+		} else {
+			panic("MockCurrentTimestamp should be a number, try use this failpoint with \"return(ts)\"")
+		}
+	})
+	if span := opentracing.SpanFromContext(bo.GetCtx()); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("TiKVStore.getTimestampWithRetry", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
-		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
+		bo.SetCtx(opentracing.ContextWithSpan(bo.GetCtx(), span1))
 	}
 
 	for {
-		startTS, err := s.oracle.GetTimestamp(bo.ctx, &oracle.Option{TxnScope: txnScope})
+		startTS, err := s.oracle.GetTimestamp(bo.GetCtx(), &oracle.Option{TxnScope: txnScope})
 		// mockGetTSErrorInRetry should wait MockCommitErrorOnce first, then will run into retry() logic.
 		// Then mockGetTSErrorInRetry will return retryable error when first retry.
 		// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout
@@ -256,7 +267,7 @@ func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64,
 		if err == nil {
 			return startTS, nil
 		}
-		err = bo.Backoff(BoPDRPC, errors.Errorf("get timestamp failed: %v", err))
+		err = bo.Backoff(retry.BoPDRPC, errors.Errorf("get timestamp failed: %v", err))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -264,12 +275,19 @@ func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64,
 }
 
 func (s *KVStore) getStalenessTimestamp(bo *Backoffer, txnScope string, prevSec uint64) (uint64, error) {
+	failpoint.Inject("MockStalenessTimestamp", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			failpoint.Return(uint64(v), nil)
+		} else {
+			panic("MockStalenessTimestamp should be a number, try use this failpoint with \"return(ts)\"")
+		}
+	})
 	for {
-		startTS, err := s.oracle.GetStaleTimestamp(bo.ctx, txnScope, prevSec)
+		startTS, err := s.oracle.GetStaleTimestamp(bo.GetCtx(), txnScope, prevSec)
 		if err == nil {
 			return startTS, nil
 		}
-		err = bo.Backoff(BoPDRPC, errors.Errorf("get staleness timestamp failed: %v", err))
+		err = bo.Backoff(retry.BoPDRPC, errors.Errorf("get staleness timestamp failed: %v", err))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -297,7 +315,7 @@ func (s *KVStore) SupportDeleteRange() (supported bool) {
 
 // SendReq sends a request to region.
 func (s *KVStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
-	sender := NewRegionRequestSender(s.regionCache, s.client)
+	sender := NewRegionRequestSender(s.regionCache, s.GetTiKVClient())
 	return sender.SendReq(bo, req, regionID, timeout)
 }
 
@@ -328,12 +346,16 @@ func (s *KVStore) SetOracle(oracle oracle.Oracle) {
 
 // SetTiKVClient resets the client instance.
 func (s *KVStore) SetTiKVClient(client Client) {
-	s.client = client
+	s.clientMu.Lock()
+	defer s.clientMu.Unlock()
+	s.clientMu.client = client
 }
 
 // GetTiKVClient gets the client instance.
 func (s *KVStore) GetTiKVClient() (client Client) {
-	return s.client
+	s.clientMu.RLock()
+	defer s.clientMu.RUnlock()
+	return s.clientMu.client
 }
 
 func (s *KVStore) getSafeTS(storeID uint64) uint64 {

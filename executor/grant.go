@@ -473,6 +473,12 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 	if priv.Priv == mysql.UsagePriv {
 		return nil
 	}
+	for _, v := range mysql.StaticGlobalOnlyPrivs {
+		if v == priv.Priv {
+			return ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")
+		}
+	}
+
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB
