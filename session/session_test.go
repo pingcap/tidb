@@ -42,6 +42,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
+	txninfo "github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -83,6 +84,7 @@ var _ = SerialSuites(&testSessionSerialSuite{})
 var _ = SerialSuites(&testBackupRestoreSuite{})
 var _ = Suite(&testClusteredSuite{})
 var _ = SerialSuites(&testClusteredSerialSuite{})
+var _ = SerialSuites(&testTxnStateSuite{})
 
 type testSessionSuiteBase struct {
 	cluster cluster.Cluster
@@ -2892,7 +2894,7 @@ func (s *testSessionSuite2) TestUpdatePrivilege(c *C) {
 
 	_, err := tk1.Exec("update t2 set id = 666 where id = 1;")
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "privilege check"), IsTrue)
 
 	// Cover a bug that t1 and t2 both require update privilege.
 	// In fact, the privlege check for t1 should be update, and for t2 should be select.
@@ -3746,7 +3748,7 @@ func (s *testSessionSuite2) TestMemoryUsageAlarmVariable(c *C) {
 	err = tk.ExecToErr("set @@session.tidb_memory_usage_alarm_ratio=-1")
 	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_memory_usage_alarm_ratio' can't be set to the value of '-1'")
 	err = tk.ExecToErr("set @@global.tidb_memory_usage_alarm_ratio=0.8")
-	c.Assert(err.Error(), Equals, "Variable 'tidb_memory_usage_alarm_ratio' is a SESSION variable and can't be used with SET GLOBAL")
+	c.Assert(err.Error(), Equals, "[variable:1228]Variable 'tidb_memory_usage_alarm_ratio' is a SESSION variable and can't be used with SET GLOBAL")
 }
 
 func (s *testSessionSuite2) TestSelectLockInShare(c *C) {
@@ -4125,6 +4127,43 @@ func (s *testSessionSerialSuite) TestRemovedSysVars(c *C) {
 	c.Assert(err.Error(), Equals, "[variable:1193]Unknown system variable 'bogus_var'")
 }
 
+func (s *testSessionSerialSuite) TestCorrectScopeError(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeNone, Name: "sv_none", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeGlobal, Name: "sv_global", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeSession, Name: "sv_session", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeGlobal | variable.ScopeSession, Name: "sv_both", Value: "acdc"})
+
+	// check set behavior
+
+	// none
+	_, err := tk.Exec("SET sv_none='acdc'")
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'sv_none' is a read only variable")
+	_, err = tk.Exec("SET GLOBAL sv_none='acdc'")
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'sv_none' is a read only variable")
+
+	// global
+	tk.MustExec("SET GLOBAL sv_global='acdc'")
+	_, err = tk.Exec("SET sv_global='acdc'")
+	c.Assert(err.Error(), Equals, "[variable:1229]Variable 'sv_global' is a GLOBAL variable and should be set with SET GLOBAL")
+
+	// session
+	_, err = tk.Exec("SET GLOBAL sv_session='acdc'")
+	c.Assert(err.Error(), Equals, "[variable:1228]Variable 'sv_session' is a SESSION variable and can't be used with SET GLOBAL")
+	tk.MustExec("SET sv_session='acdc'")
+
+	// both
+	tk.MustExec("SET GLOBAL sv_both='acdc'")
+	tk.MustExec("SET sv_both='acdc'")
+
+	// unregister
+	variable.UnregisterSysVar("sv_none")
+	variable.UnregisterSysVar("sv_global")
+	variable.UnregisterSysVar("sv_session")
+	variable.UnregisterSysVar("sv_both")
+}
+
 func (s *testSessionSerialSuite) TestTiKVSystemVars(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
@@ -4259,8 +4298,110 @@ func (s *testSessionSuite3) TestGlobalTemporaryTable(c *C) {
 	tk.MustQuery("select c from g_tmp where b = 3").Check(testkit.Rows("3"))
 	// Cover point get.
 	tk.MustQuery("select * from g_tmp where a = 3").Check(testkit.Rows("3 3 3"))
+	// Cover batch point get.
+	tk.MustQuery("select * from g_tmp where a in (2,3,4)").Check(testkit.Rows("3 3 3", "4 7 9"))
 	tk.MustExec("commit")
 
 	// The global temporary table data is discard after the transaction commit.
 	tk.MustQuery("select * from g_tmp").Check(testkit.Rows())
+}
+
+type testTxnStateSuite struct {
+	testSessionSuiteBase
+}
+
+func (s *testTxnStateSuite) TestBasic(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t(a) values (1);")
+	info := tk.Se.TxnInfo()
+	c.Assert(info, IsNil)
+	tk.MustExec("begin pessimistic;")
+	tk.MustExec("select * from t for update;")
+	info = tk.Se.TxnInfo()
+	_, expectedDigest := parser.NormalizeDigest("select * from t for update;")
+	c.Assert(info.CurrentSQLDigest, Equals, expectedDigest)
+	c.Assert(info.State, Equals, txninfo.TxnRunningNormal)
+	c.Assert(info.BlockStartTime, IsNil)
+	// len and size will be covered in TestLenAndSize
+	c.Assert(info.ConnectionID, Equals, tk.Se.GetSessionVars().ConnectionID)
+	c.Assert(info.Username, Equals, "")
+	c.Assert(info.CurrentDB, Equals, "test")
+	tk.MustExec("commit;")
+	info = tk.Se.TxnInfo()
+	c.Assert(info, IsNil)
+}
+
+func (s *testTxnStateSuite) TestEntriesCountAndSize(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("begin pessimistic;")
+	tk.MustExec("insert into t(a) values (1);")
+	info := tk.Se.TxnInfo()
+	c.Assert(info.EntriesCount, Equals, uint64(1))
+	c.Assert(info.EntriesSize, Equals, uint64(29))
+	tk.MustExec("insert into t(a) values (2);")
+	info = tk.Se.TxnInfo()
+	c.Assert(info.EntriesCount, Equals, uint64(2))
+	c.Assert(info.EntriesSize, Equals, uint64(58))
+	tk.MustExec("commit;")
+}
+
+func (s *testTxnStateSuite) TestBlocked(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t(a) values (1);")
+	tk.MustExec("begin pessimistic;")
+	tk.MustExec("select * from t where a = 1 for update;")
+	go func() {
+		tk2.MustExec("begin pessimistic")
+		tk2.MustExec("select * from t where a = 1 for update;")
+		tk2.MustExec("commit;")
+	}()
+	time.Sleep(100 * time.Millisecond)
+	c.Assert(tk2.Se.TxnInfo().State, Equals, txninfo.TxnLockWaiting)
+	c.Assert(tk2.Se.TxnInfo().BlockStartTime, NotNil)
+	tk.MustExec("commit;")
+}
+
+func (s *testTxnStateSuite) TestCommitting(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t(a) values (1), (2);")
+	tk.MustExec("begin pessimistic;")
+	tk.MustExec("select * from t where a = 1 for update;")
+	ch := make(chan struct{})
+	go func() {
+		tk2.MustExec("begin pessimistic")
+		c.Assert(tk2.Se.TxnInfo(), NotNil)
+		tk2.MustExec("select * from t where a = 2 for update;")
+		failpoint.Enable("github.com/pingcap/tidb/session/mockSlowCommit", "sleep(200)")
+		defer failpoint.Disable("github.com/pingcap/tidb/session/mockSlowCommit")
+		tk2.MustExec("commit;")
+		ch <- struct{}{}
+	}()
+	time.Sleep(100 * time.Millisecond)
+	c.Assert(tk2.Se.TxnInfo().State, Equals, txninfo.TxnCommitting)
+	tk.MustExec("commit;")
+	<-ch
+}
+
+func (s *testTxnStateSuite) TestRollbacking(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t(a) values (1), (2);")
+	ch := make(chan struct{})
+	go func() {
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("insert into t(a) values (3);")
+		failpoint.Enable("github.com/pingcap/tidb/session/mockSlowRollback", "sleep(200)")
+		defer failpoint.Disable("github.com/pingcap/tidb/session/mockSlowRollback")
+		tk.MustExec("rollback;")
+		ch <- struct{}{}
+	}()
+	time.Sleep(100 * time.Millisecond)
+	c.Assert(tk.Se.TxnInfo().State, Equals, txninfo.TxnRollingBack)
+	<-ch
 }
