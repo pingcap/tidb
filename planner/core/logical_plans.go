@@ -1018,7 +1018,7 @@ func (lt *LogicalTopN) isLimit() bool {
 
 // LogicalLimit represents offset and limit plan.
 type LogicalLimit struct {
-	logicalSchemaProducer
+	baseLogicalPlan
 
 	Offset     uint64
 	Count      uint64

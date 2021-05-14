@@ -47,6 +47,17 @@ func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childS
 		return
 	}
 	la.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
+	for _, key := range childSchema[0].Keys {
+		indices := selfSchema.ColumnsIndices(key)
+		if indices == nil {
+			continue
+		}
+		newKey := make([]*expression.Column, 0, len(key))
+		for _, i := range indices {
+			newKey = append(newKey, selfSchema.Columns[i])
+		}
+		selfSchema.Keys = append(selfSchema.Keys, newKey)
+	}
 	groupByCols := la.GetGroupByCols()
 	if len(groupByCols) == len(la.GroupByItems) && len(la.GroupByItems) > 0 {
 		indices := selfSchema.ColumnsIndices(groupByCols)
@@ -96,7 +107,7 @@ func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSche
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (p *LogicalLimit) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	p.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
+	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 	if p.Count == 1 {
 		p.maxOneRow = true
 	}
@@ -138,10 +149,7 @@ func (p *LogicalProjection) buildSchemaByExprs(selfSchema *expression.Schema) *e
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (p *LogicalProjection) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	// `LogicalProjection` use schema from `Exprs` to build key info. See `buildSchemaByExprs`.
-	// So call `baseLogicalPlan.BuildKeyInfo` here to avoid duplicated building key info.
-	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
-	selfSchema.Keys = nil
+	p.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
 	schema := p.buildSchemaByExprs(selfSchema)
 	for _, key := range childSchema[0].Keys {
 		indices := schema.ColumnsIndices(key)

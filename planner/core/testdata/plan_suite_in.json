@@ -126,10 +126,7 @@
       "select * from ((SELECT 1 a,6 b) UNION (SELECT 2,5) UNION (SELECT 2, 4) ORDER BY 1) t order by 1, 2",
       "select * from (select *, NULL as xxx from t) t order by xxx",
       "select * from t use index(f) where f = 1 and a = 1",
-      "select * from t2 use index(b) where b = 1 and a = 1",
-      // Test inline project for Limit
-      "select f from t where a > 1",
-      "select f from t where a > 1 limit 10"
+      "select * from t2 use index(b) where b = 1 and a = 1"
     ]
   },
   {

@@ -3956,85 +3956,43 @@ func (s *testSuite) TestLimit(c *C) {
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a bigint, b bigint);`)
-	tk.MustExec(`insert into t values(1, 1), (2, 2), (3, 30), (4, 40), (5, 5), (6, 6);`)
+	tk.MustExec(`insert into t values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6);`)
 	tk.MustQuery(`select * from t order by a limit 1, 1;`).Check(testkit.Rows(
 		"2 2",
 	))
 	tk.MustQuery(`select * from t order by a limit 1, 2;`).Check(testkit.Rows(
 		"2 2",
-		"3 30",
+		"3 3",
 	))
 	tk.MustQuery(`select * from t order by a limit 1, 3;`).Check(testkit.Rows(
 		"2 2",
-		"3 30",
-		"4 40",
+		"3 3",
+		"4 4",
 	))
 	tk.MustQuery(`select * from t order by a limit 1, 4;`).Check(testkit.Rows(
 		"2 2",
-		"3 30",
-		"4 40",
+		"3 3",
+		"4 4",
 		"5 5",
 	))
-
-	// test inline projection
-	tk.MustQuery(`select a from t where a > 0 limit 1, 1;`).Check(testkit.Rows(
-		"2",
-	))
-	tk.MustQuery(`select a from t where a > 0 limit 1, 2;`).Check(testkit.Rows(
-		"2",
-		"3",
-	))
-	tk.MustQuery(`select b from t where a > 0 limit 1, 3;`).Check(testkit.Rows(
-		"2",
-		"30",
-		"40",
-	))
-	tk.MustQuery(`select b from t where a > 0 limit 1, 4;`).Check(testkit.Rows(
-		"2",
-		"30",
-		"40",
-		"5",
-	))
-
-	// test @@tidb_init_chunk_size=2
 	tk.MustExec(`set @@tidb_init_chunk_size=2;`)
-	tk.MustQuery(`select * from t where a > 0 limit 2, 1;`).Check(testkit.Rows(
-		"3 30",
+	tk.MustQuery(`select * from t order by a limit 2, 1;`).Check(testkit.Rows(
+		"3 3",
 	))
-	tk.MustQuery(`select * from t where a > 0 limit 2, 2;`).Check(testkit.Rows(
-		"3 30",
-		"4 40",
+	tk.MustQuery(`select * from t order by a limit 2, 2;`).Check(testkit.Rows(
+		"3 3",
+		"4 4",
 	))
-	tk.MustQuery(`select * from t where a > 0 limit 2, 3;`).Check(testkit.Rows(
-		"3 30",
-		"4 40",
+	tk.MustQuery(`select * from t order by a limit 2, 3;`).Check(testkit.Rows(
+		"3 3",
+		"4 4",
 		"5 5",
 	))
-	tk.MustQuery(`select * from t where a > 0 limit 2, 4;`).Check(testkit.Rows(
-		"3 30",
-		"4 40",
+	tk.MustQuery(`select * from t order by a limit 2, 4;`).Check(testkit.Rows(
+		"3 3",
+		"4 4",
 		"5 5",
 		"6 6",
-	))
-
-	// test inline projection
-	tk.MustQuery(`select a from t order by a limit 2, 1;`).Check(testkit.Rows(
-		"3",
-	))
-	tk.MustQuery(`select b from t order by a limit 2, 2;`).Check(testkit.Rows(
-		"30",
-		"40",
-	))
-	tk.MustQuery(`select a from t order by a limit 2, 3;`).Check(testkit.Rows(
-		"3",
-		"4",
-		"5",
-	))
-	tk.MustQuery(`select b from t order by a limit 2, 4;`).Check(testkit.Rows(
-		"30",
-		"40",
-		"5",
-		"6",
 	))
 }
 

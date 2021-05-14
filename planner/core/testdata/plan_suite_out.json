@@ -378,14 +378,6 @@
       {
         "SQL": "select * from t2 use index(b) where b = 1 and a = 1",
         "Best": "PointGet(Index(t2.b)[KindInt64 1])->Sel([eq(test.t2.a, 1)])"
-      },
-      {
-        "SQL": "select f from t where a > 1",
-        "Best": "TableReader(Table(t))->Projection"
-      },
-      {
-        "SQL": "select f from t where a > 1 limit 10",
-        "Best": "TableReader(Table(t)->Limit)->Limit"
       }
     ]
   },

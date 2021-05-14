@@ -418,16 +418,6 @@ func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*
 	return parentUsedCols
 }
 
-// PruneColumns implements LogicalPlan interface.
-func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column) error {
-	if len(parentUsedCols) == 0 { // happens when LIMIT appears in UPDATE.
-		return nil
-	}
-
-	p.inlineProjection(parentUsedCols)
-	return p.children[0].PruneColumns(parentUsedCols)
-}
-
 func (*columnPruner) name() string {
 	return "column_prune"
 }

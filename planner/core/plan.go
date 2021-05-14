@@ -508,22 +508,6 @@ func (p *baseLogicalPlan) BuildKeyInfo(selfSchema *expression.Schema, childSchem
 func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = nil
 	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
-
-	// default implementation for plans has only one child: proprgate child keys
-	// multi-children plans are likely to have particular implementation.
-	if len(childSchema) == 1 {
-		for _, key := range childSchema[0].Keys {
-			indices := selfSchema.ColumnsIndices(key)
-			if indices == nil {
-				continue
-			}
-			newKey := make([]*expression.Column, 0, len(key))
-			for _, i := range indices {
-				newKey = append(newKey, selfSchema.Columns[i])
-			}
-			selfSchema.Keys = append(selfSchema.Keys, newKey)
-		}
-	}
 }
 
 func newBasePlan(ctx sessionctx.Context, tp string, offset int) basePlan {

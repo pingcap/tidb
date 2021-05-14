@@ -930,7 +930,7 @@ type PhysicalLock struct {
 
 // PhysicalLimit is the physical operator of Limit.
 type PhysicalLimit struct {
-	physicalSchemaProducer
+	basePhysicalPlan
 
 	Offset uint64
 	Count  uint64
@@ -940,11 +940,11 @@ type PhysicalLimit struct {
 func (p *PhysicalLimit) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalLimit)
 	*cloned = *p
-	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.physicalSchemaProducer = *base
+	cloned.basePhysicalPlan = *base
 	return cloned, nil
 }
 
