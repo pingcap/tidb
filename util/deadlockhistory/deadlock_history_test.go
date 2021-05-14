@@ -14,15 +14,15 @@
 package deadlockhistory
 
 import (
-	"github.com/pingcap/kvproto/pkg/deadlock"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/resourcegrouptag"
 )
 
 type testDeadlockHistorySuite struct{}
