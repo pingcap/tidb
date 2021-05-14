@@ -632,7 +632,7 @@ create table t(
 			exprStr:     "d in ('aab', 'aac') and e = 'a'",
 			accessConds: "[in(test.t.d, aab, aac) eq(test.t.e, a)]",
 			filterConds: "[in(test.t.d, aab, aac)]",
-			resultStr:   "[[\"aa\" 0x61,\"aa\" 0x61]]",
+			resultStr:   "[[\"aa\" \"[97]\",\"aa\" \"[97]\"]]",
 		},
 	}
 
