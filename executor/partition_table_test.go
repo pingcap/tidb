@@ -441,8 +441,8 @@ func (s *partitionTableSuite) TestPartitionTableWithDifferentJoin(c *C) {
 	}
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("create database test_global_stats")
-	tk.MustExec("use test_global_stats")
+	tk.MustExec("create database test_partition_joins")
+	tk.MustExec("use test_partition_joins")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 
 	// hash and range partition
