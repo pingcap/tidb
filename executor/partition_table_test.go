@@ -433,7 +433,7 @@ func (s *partitionTableSuite) TestGlobalStatsAndSQLBinding(c *C) {
 		partition p2 values less than (600),
 		partition p3 values less than (800),
 		partition p4 values less than (1001))`)
-	tk.MustExec(`create table tlist(a int, b int, key(a)) partition by list (a) (7
+	tk.MustExec(`create table tlist(a int, b int, key(a)) partition by list (a) (
 		partition p0 values in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9),
 		partition p0 values in (10, 11, 12, 13, 14, 15, 16, 17, 18, 19),
 		partition p0 values in (20, 21, 22, 23, 24, 25, 26, 27, 28, 29),
