@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/tikv/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
@@ -148,18 +147,6 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 	go store.safeTSUpdater()
 
 	return store, nil
-}
-
-// SetRegionCacheStore is used to set a store in region cache, for testing only
-func (s *KVStore) SetRegionCacheStore(id uint64, storeType tikvrpc.EndpointType, state uint64, labels []*metapb.StoreLabel) {
-	s.regionCache.storeMu.Lock()
-	defer s.regionCache.storeMu.Unlock()
-	s.regionCache.storeMu.stores[id] = &Store{
-		storeID:   id,
-		storeType: storeType,
-		state:     state,
-		labels:    labels,
-	}
 }
 
 // EnableTxnLocalLatches enables txn latch. It should be called before using
@@ -371,8 +358,8 @@ func (s *KVStore) getSafeTS(storeID uint64) uint64 {
 	return safeTS.(uint64)
 }
 
-// SetSafeTS sets safeTs for store storeID, export for testing
-func (s *KVStore) SetSafeTS(storeID, safeTS uint64) {
+// setSafeTS sets safeTs for store storeID, export for testing
+func (s *KVStore) setSafeTS(storeID, safeTS uint64) {
 	s.safeTSMap.Store(storeID, safeTS)
 }
 
@@ -430,7 +417,7 @@ func (s *KVStore) updateSafeTS(ctx context.Context) {
 				return
 			}
 			safeTSResp := resp.Resp.(*kvrpcpb.StoreSafeTSResponse)
-			s.SetSafeTS(storeID, safeTSResp.GetSafeTs())
+			s.setSafeTS(storeID, safeTSResp.GetSafeTs())
 		}(ctx, wg, storeID, storeAddr)
 	}
 	wg.Wait()

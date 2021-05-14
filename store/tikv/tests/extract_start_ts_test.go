@@ -35,21 +35,22 @@ func (s *extractStartTsSuite) SetUpTest(c *C) {
 	unistore.BootstrapWithSingleStore(cluster)
 	store, err := tikv.NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
-	store.SetRegionCacheStore(2, tikvrpc.TiKV, 1, []*metapb.StoreLabel{
+	probe := tikv.StoreProbe{KVStore: store}
+	probe.SetRegionCacheStore(2, tikvrpc.TiKV, 1, []*metapb.StoreLabel{
 		{
 			Key:   tikv.DCLabelKey,
 			Value: oracle.LocalTxnScope,
 		},
 	})
-	store.SetRegionCacheStore(3, tikvrpc.TiKV, 1, []*metapb.StoreLabel{
+	probe.SetRegionCacheStore(3, tikvrpc.TiKV, 1, []*metapb.StoreLabel{
 		{
 			Key:   tikv.DCLabelKey,
 			Value: "Some Random Label",
 		},
 	})
-	store.SetSafeTS(2, 102)
-	store.SetSafeTS(3, 101)
-	s.store = store
+	probe.SetSafeTS(2, 102)
+	probe.SetSafeTS(3, 101)
+	s.store = probe.KVStore
 }
 
 func (s *extractStartTsSuite) TestExtractStartTs(c *C) {
@@ -89,8 +90,9 @@ func (s *extractStartTsSuite) TestExtractStartTs(c *C) {
 }
 
 func (s *extractStartTsSuite) TestMaxPrevSecFallback(c *C) {
-	s.store.SetSafeTS(2, 0x8000000000000002)
-	s.store.SetSafeTS(3, 0x8000000000000001)
+	probe := tikv.StoreProbe{KVStore: s.store}
+	probe.SetSafeTS(2, 0x8000000000000002)
+	probe.SetSafeTS(3, 0x8000000000000001)
 	i := uint64(100)
 	cases := []struct {
 		expectedTS uint64
