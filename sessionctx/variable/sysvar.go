@@ -1246,11 +1246,11 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeSession, Name: TiDBReplicaRead, Value: "leader", Type: TypeEnum, PossibleValues: []string{"leader", "follower", "leader-and-follower"}, SetSession: func(s *SessionVars, val string) error {
 		if strings.EqualFold(val, "follower") {
-			s.SetReplicaRead(tikvstore.ReplicaReadFollower)
+			s.SetReplicaRead(kv.ReplicaReadFollower)
 		} else if strings.EqualFold(val, "leader-and-follower") {
-			s.SetReplicaRead(tikvstore.ReplicaReadMixed)
+			s.SetReplicaRead(kv.ReplicaReadMixed)
 		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
-			s.SetReplicaRead(tikvstore.ReplicaReadLeader)
+			s.SetReplicaRead(kv.ReplicaReadLeader)
 		}
 		return nil
 	}},

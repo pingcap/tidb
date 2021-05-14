@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	derr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/store/driver/options"
 	"github.com/pingcap/tidb/store/tikv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
@@ -143,7 +144,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	case kv.SnapshotTS:
 		txn.KVTxn.GetSnapshot().SetSnapshotTS(val.(uint64))
 	case kv.ReplicaRead:
-		txn.KVTxn.GetSnapshot().SetReplicaRead(val.(tikvstore.ReplicaReadType))
+		t := options.GetTiKVReplicaReadType(val.(kv.ReplicaReadType))
+		txn.KVTxn.GetSnapshot().SetReplicaRead(t)
 	case kv.TaskID:
 		txn.KVTxn.GetSnapshot().SetTaskID(val.(uint64))
 	case kv.InfoSchema:
