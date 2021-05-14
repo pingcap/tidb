@@ -58,7 +58,7 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 					{
 						ID:   "12",
 						Role: Leader,
-						LabelConstraints: []Constraint{
+						Constraints: []Constraint{
 							{
 								Key:    "zone",
 								Op:     In,
@@ -84,7 +84,7 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 					{
 						ID:   "12",
 						Role: Voter,
-						LabelConstraints: []Constraint{
+						Constraints: []Constraint{
 							{
 								Key:    "zone",
 								Op:     In,
@@ -110,7 +110,7 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 					{
 						ID:   "11",
 						Role: Leader,
-						LabelConstraints: []Constraint{
+						Constraints: []Constraint{
 							{
 								Key:    "zone",
 								Op:     In,
@@ -127,7 +127,7 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 					{
 						ID:   "12",
 						Role: Voter,
-						LabelConstraints: []Constraint{
+						Constraints: []Constraint{
 							{
 								Key:    "zone",
 								Op:     In,
@@ -153,7 +153,7 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 					{
 						ID:   "11",
 						Role: Leader,
-						LabelConstraints: []Constraint{
+						Constraints: []Constraint{
 							{
 								Key:    "fake",
 								Op:     In,
@@ -179,7 +179,7 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 					{
 						ID:   "11",
 						Role: Leader,
-						LabelConstraints: []Constraint{
+						Constraints: []Constraint{
 							{
 								Key:    "zone",
 								Op:     NotIn,
@@ -205,7 +205,7 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 					{
 						ID:   "11",
 						Role: Leader,
-						LabelConstraints: []Constraint{
+						Constraints: []Constraint{
 							{
 								Key:    "zone",
 								Op:     In,
