@@ -156,7 +156,24 @@ func (rc *reorgCtx) clean() {
 	rc.doneCh = nil
 }
 
-func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.TableInfo, lease time.Duration, f func() error) error {
+// runReorgJob is used to do `READ` action of reorg info in ddl txn.
+// If we want to do `WRITE` action of recording some reorg handle down, we need to additional kv txn.
+// Otherwise, the below write conflicts will occur.
+//
+// ddl txn ------------+-------------------------------+
+// (RunInKVTxn: start) |                               | (ddl done successfully)
+//                     | (Write)                       | (RunInKVTxn committed fail: write conflict)
+//                     V                               V
+//               reorg handle
+//                                    ^
+//                                    | (Update handle, eg: change element)
+//                                    | (RunInKVTxn: committed instantly)
+// reorg txn--------------------------+
+//
+// For this case:
+// Let's take the ddl txn as a Daemon thread, it isn't response for writing the reorg handle down, but care for reading
+// reorg result. Because read won't be conflict with any write action of the reorg txn.
+func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo, lease time.Duration, f func() error) error {
 	// lease = 0 means it's in an integration test. In this case we don't delay so the test won't run too slowly.
 	if lease > 0 {
 		delayForAsyncCommit()
@@ -220,7 +237,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		case model.ActionModifyColumn:
 			metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(100)
 		}
-		if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+		if err1 := reorgInfo.CleanReorgMeta(); err1 != nil {
 			logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
 			return errors.Trace(err1)
 		}
@@ -245,7 +262,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		// Update a reorgInfo's handle.
 		// Since daemon-worker is triggered by timer to store the info half-way.
 		// you should keep these infos is read-only (like job) / atomic (like doneKey & element) / concurrent safe.
-		err := t.UpdateDDLReorgStartHandle(job, currentElement, doneKey)
+		err := reorgInfo.UpdateReorgMeta(doneKey)
 
 		logutil.BgLogger().Info("[ddl] run reorg job wait timeout",
 			zap.Duration("waitTime", waitTimeout),
@@ -566,7 +583,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elem
 		})
 
 		info.first = true
-		// get the current version for reorganization if we don't have
+		// get the current version for reorganization if we don't have one.
 		ver, err := getValidCurrentVersion(d.store)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -701,6 +718,17 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key) error {
 	err := kv.RunInNewTxn(context.Background(), r.d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement))
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (r *reorgInfo) CleanReorgMeta() error {
+	err := kv.RunInNewTxn(context.Background(), r.d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		return errors.Trace(t.RemoveDDLReorgHandle(r.Job, r.elements))
 	})
 	if err != nil {
 		return errors.Trace(err)

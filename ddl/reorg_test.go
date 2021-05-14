@@ -93,20 +93,19 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	c.Assert(err, IsNil)
 	txn, err = ctx.Txn(true)
 	c.Assert(err, IsNil)
-	m := meta.NewMeta(txn)
 	e := &meta.Element{ID: 333, TypeKey: meta.IndexElementKey}
 	rInfo := &reorgInfo{
 		Job:         job,
 		currElement: e,
 	}
 	mockTbl := tables.MockTableFromMeta(&model.TableInfo{IsCommonHandle: s.IsCommonHandle, CommonHandleVersion: 1})
-	err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, f)
+	err = d.generalWorker().runReorgJob(rInfo, mockTbl.Meta(), d.lease, f)
 	c.Assert(err, NotNil)
 
 	// The longest to wait for 5 seconds to make sure the function of f is returned.
 	for i := 0; i < 1000; i++ {
 		time.Sleep(5 * time.Millisecond)
-		err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, f)
+		err = d.generalWorker().runReorgJob(rInfo, mockTbl.Meta(), d.lease, f)
 		if err == nil {
 			c.Assert(job.RowCount, Equals, rowCount)
 			c.Assert(d.generalWorker().reorgCtx.rowCount, Equals, int64(0))
@@ -117,7 +116,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 			err = ctx.NewTxn(context.Background())
 			c.Assert(err, IsNil)
 
-			m = meta.NewMeta(txn)
+			m := meta.NewMeta(txn)
 			info, err1 := getReorgInfo(d.ddlCtx, m, job, mockTbl, nil)
 			c.Assert(err1, IsNil)
 			c.Assert(info.StartKey, DeepEquals, kv.Key(handle.Encoded()))
@@ -172,7 +171,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 
 	err = d.Stop()
 	c.Assert(err, IsNil)
-	err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, func() error {
+	err = d.generalWorker().runReorgJob(rInfo, mockTbl.Meta(), d.lease, func() error {
 		time.Sleep(4 * testLease)
 		return nil
 	})

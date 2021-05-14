@@ -1012,10 +1012,10 @@ func (w *worker) doModifyColumnTypeWithData(
 		// enable: curl -X PUT -d "pause" "http://127.0.0.1:10080/fail/github.com/pingcap/tidb/ddl/mockDelayInModifyColumnTypeWithData".
 		// disable: curl -X DELETE "http://127.0.0.1:10080/fail/github.com/pingcap/tidb/ddl/mockDelayInModifyColumnTypeWithData"
 		failpoint.Inject("mockDelayInModifyColumnTypeWithData", func() {})
-		err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+		err = w.runReorgJob(reorgInfo, tbl.Meta(), d.lease, func() (reorgErr error) {
 			defer util.Recover(metrics.LabelDDL, "onModifyColumn",
 				func() {
-					addIndexErr = errCancelledDDLJob.GenWithStack("modify table `%v` column `%v` panic", tblInfo.Name, oldCol.Name)
+					reorgErr = errCancelledDDLJob.GenWithStack("modify table `%v` column `%v` panic", tblInfo.Name, oldCol.Name)
 				}, false)
 			return w.updateColumnAndIndexes(tbl, oldCol, changingCol, changingIdxs, reorgInfo)
 		})
@@ -1025,10 +1025,9 @@ func (w *worker) doModifyColumnTypeWithData(
 				return ver, nil
 			}
 			if needRollbackData(err) {
-				if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+				if err1 := reorgInfo.CleanReorgMeta(); err1 != nil {
 					logutil.BgLogger().Warn("[ddl] run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
 						zap.String("job", job.String()), zap.Error(err1))
-					return ver, errors.Trace(err)
 				}
 				logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 				// When encounter these error above, we change the job to rolling back job directly.
