@@ -8215,8 +8215,10 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 			"2/2022-06-11 02:03:04.987654/203/<nil>/<nil>/<nil>/201",
 		))
 
-	tk.Se.Auth(&auth.UserIdentity{
-		Username: "",
-		Hostname: "",
-	})
+	tk.MustExec("create user 'testuser'@'localhost'")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil), IsTrue)
+	res, err := tk.Exec("select * from information_schema.dead_lock")
+	c.Logf("res %v, err %v", res, err)
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrAccessDenied), IsTrue)
 }
