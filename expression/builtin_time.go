@@ -7115,7 +7115,7 @@ func handleInvalidZeroTime(ctx sessionctx.Context, t types.Time) (bool, error) {
 	return true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
 }
 
-// tidbBoundedStalenessFunctionClass reads a time window [a, b] and compares it with the latest resolvedTS
+// tidbBoundedStalenessFunctionClass reads a time window [a, b] and compares it with the latest SafeTS
 // to determine which TS to use in a read only transaction.
 type tidbBoundedStalenessFunctionClass struct {
 	baseFunctionClass

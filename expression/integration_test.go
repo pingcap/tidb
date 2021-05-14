@@ -2346,6 +2346,16 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 		}
 	}
 	failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS")
+	// test whether tidb_bounded_staleness is deterministic
+	result = tk.MustQuery(`select tidb_bounded_staleness(NOW(), DATE_ADD(NOW(), INTERVAL 600 SECOND)), tidb_bounded_staleness(NOW(), DATE_ADD(NOW(), INTERVAL 600 SECOND))`)
+	c.Assert(result.Rows()[0], HasLen, 2)
+	c.Assert(result.Rows()[0][0], Equals, result.Rows()[0][1])
+	preResult := result.Rows()[0][0]
+	time.Sleep(time.Second)
+	result = tk.MustQuery(`select tidb_bounded_staleness(NOW(), DATE_ADD(NOW(), INTERVAL 600 SECOND)), tidb_bounded_staleness(NOW(), DATE_ADD(NOW(), INTERVAL 600 SECOND))`)
+	c.Assert(result.Rows()[0], HasLen, 2)
+	c.Assert(result.Rows()[0][0], Equals, result.Rows()[0][1])
+	c.Assert(result.Rows()[0][0], Not(Equals), preResult)
 
 	// fix issue 10308
 	result = tk.MustQuery("select time(\"- -\");")

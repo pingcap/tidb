@@ -99,7 +99,7 @@ func (s *mockStorage) CurrentVersion(txnScope string) (kv.Version, error) {
 	return kv.NewVersion(ver), err
 }
 
-// GetMinSafeTS return the minimal resolved TS of the storage with given txnScope.
+// GetMinSafeTS return the minimal SafeTS of the storage with given txnScope.
 func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
 	return 0
 }
