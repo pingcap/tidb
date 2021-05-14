@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	pd "github.com/tikv/pd/client"
 	atomic2 "go.uber.org/atomic"
@@ -203,7 +204,7 @@ func (r *Region) init(c *RegionCache) error {
 		if !exists {
 			store = c.getStoreByStoreID(p.StoreId)
 		}
-		_, err := store.initResolve(NewNoopBackoff(context.Background()), c)
+		_, err := store.initResolve(retry.NewNoopBackoff(context.Background()), c)
 		if err != nil {
 			return err
 		}
@@ -687,7 +688,7 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 			// no region data, return error if failure.
 			return nil, err
 		}
-		logutil.Eventf(bo.ctx, "load region %d from pd, due to cache-miss", lr.GetID())
+		logutil.Eventf(bo.GetCtx(), "load region %d from pd, due to cache-miss", lr.GetID())
 		r = lr
 		c.mu.Lock()
 		c.insertRegionToCache(r)
@@ -697,10 +698,10 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 		lr, err := c.loadRegion(bo, key, isEndKey)
 		if err != nil {
 			// ignore error and use old region info.
-			logutil.Logger(bo.ctx).Error("load region failure",
+			logutil.Logger(bo.GetCtx()).Error("load region failure",
 				zap.ByteString("key", key), zap.Error(err))
 		} else {
-			logutil.Eventf(bo.ctx, "load region %d from pd, due to need-reload", lr.GetID())
+			logutil.Eventf(bo.GetCtx(), "load region %d from pd, due to need-reload", lr.GetID())
 			r = lr
 			c.mu.Lock()
 			c.insertRegionToCache(r)
@@ -714,7 +715,7 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *Store, regionInfos []RegionInfo, scheduleReload bool, err error) {
 	metrics.RegionCacheCounterWithSendFail.Add(float64(len(regionInfos)))
 	if store.storeType != tikvrpc.TiFlash {
-		logutil.Logger(bo.ctx).Info("Should not reach here, OnSendFailForBatchRegions only support TiFlash")
+		logutil.Logger(bo.GetCtx()).Info("Should not reach here, OnSendFailForBatchRegions only support TiFlash")
 		return
 	}
 	for _, ri := range regionInfos {
@@ -725,7 +726,7 @@ func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *Store, reg
 		if r != nil {
 			peersNum := len(r.meta.Peers)
 			if len(ri.Meta.Peers) != peersNum {
-				logutil.Logger(bo.ctx).Info("retry and refresh current region after send request fail and up/down stores length changed",
+				logutil.Logger(bo.GetCtx()).Info("retry and refresh current region after send request fail and up/down stores length changed",
 					zap.Stringer("region", &ri.Region),
 					zap.Bool("needReload", scheduleReload),
 					zap.Reflect("oldPeers", ri.Meta.Peers),
@@ -739,7 +740,7 @@ func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *Store, reg
 			accessMode := TiFlashOnly
 			accessIdx := rs.getAccessIndex(accessMode, store)
 			if accessIdx == -1 {
-				logutil.Logger(bo.ctx).Warn("can not get access index for region " + ri.Region.String())
+				logutil.Logger(bo.GetCtx()).Warn("can not get access index for region " + ri.Region.String())
 				continue
 			}
 			if err != nil {
@@ -755,7 +756,7 @@ func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *Store, reg
 
 			// try next peer
 			rs.switchNextFlashPeer(r, accessIdx)
-			logutil.Logger(bo.ctx).Info("switch region tiflash peer to next due to send request fail",
+			logutil.Logger(bo.GetCtx()).Info("switch region tiflash peer to next due to send request fail",
 				zap.Stringer("region", &ri.Region),
 				zap.Bool("needReload", scheduleReload),
 				zap.Error(err))
@@ -775,7 +776,7 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 	if r != nil {
 		peersNum := len(r.meta.Peers)
 		if len(ctx.Meta.Peers) != peersNum {
-			logutil.Logger(bo.ctx).Info("retry and refresh current ctx after send request fail and up/down stores length changed",
+			logutil.Logger(bo.GetCtx()).Info("retry and refresh current ctx after send request fail and up/down stores length changed",
 				zap.Stringer("current", ctx),
 				zap.Bool("needReload", scheduleReload),
 				zap.Reflect("oldPeers", ctx.Meta.Peers),
@@ -828,20 +829,20 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 				// In case the epoch of the store is increased, try to avoid reloading the current region by also
 				// increasing the epoch stored in `rs`.
 				rs.switchNextProxyStore(r, currentProxyIdx, incEpochStoreIdx)
-				logutil.Logger(bo.ctx).Info("switch region proxy peer to next due to send request fail",
+				logutil.Logger(bo.GetCtx()).Info("switch region proxy peer to next due to send request fail",
 					zap.Stringer("current", ctx),
 					zap.Bool("needReload", scheduleReload),
 					zap.Error(err))
 			} else {
 				rs.switchNextTiKVPeer(r, ctx.AccessIdx)
-				logutil.Logger(bo.ctx).Info("switch region peer to next due to send request fail",
+				logutil.Logger(bo.GetCtx()).Info("switch region peer to next due to send request fail",
 					zap.Stringer("current", ctx),
 					zap.Bool("needReload", scheduleReload),
 					zap.Error(err))
 			}
 		} else {
 			rs.switchNextFlashPeer(r, ctx.AccessIdx)
-			logutil.Logger(bo.ctx).Info("switch region tiflash peer to next due to send request fail",
+			logutil.Logger(bo.GetCtx()).Info("switch region tiflash peer to next due to send request fail",
 				zap.Stringer("current", ctx),
 				zap.Bool("needReload", scheduleReload),
 				zap.Error(err))
@@ -864,7 +865,7 @@ func (c *RegionCache) LocateRegionByID(bo *Backoffer, regionID uint64) (*KeyLoca
 			lr, err := c.loadRegionByID(bo, regionID)
 			if err != nil {
 				// ignore error and use old region info.
-				logutil.Logger(bo.ctx).Error("load region failure",
+				logutil.Logger(bo.GetCtx()).Error("load region failure",
 					zap.Uint64("regionID", regionID), zap.Error(err))
 			} else {
 				r = lr
@@ -1226,7 +1227,7 @@ func filterUnavailablePeers(region *pd.Region) {
 // If the given key is the end key of the region that you want, you may set the second argument to true. This is useful
 // when processing in reverse order.
 func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Region, error) {
-	ctx := bo.ctx
+	ctx := bo.GetCtx()
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("loadRegion", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -1237,7 +1238,7 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 	searchPrev := false
 	for {
 		if backoffErr != nil {
-			err := bo.Backoff(BoPDRPC, backoffErr)
+			err := bo.Backoff(retry.BoPDRPC, backoffErr)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -1284,7 +1285,7 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 
 // loadRegionByID loads region from pd client, and picks the first peer as leader.
 func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, error) {
-	ctx := bo.ctx
+	ctx := bo.GetCtx()
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("loadRegionByID", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -1293,7 +1294,7 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 	var backoffErr error
 	for {
 		if backoffErr != nil {
-			err := bo.Backoff(BoPDRPC, backoffErr)
+			err := bo.Backoff(retry.BoPDRPC, backoffErr)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -1333,7 +1334,7 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit 
 	if limit == 0 {
 		return nil, nil
 	}
-	ctx := bo.ctx
+	ctx := bo.GetCtx()
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("scanRegions", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -1343,7 +1344,7 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit 
 	var backoffErr error
 	for {
 		if backoffErr != nil {
-			err := bo.Backoff(BoPDRPC, backoffErr)
+			err := bo.Backoff(retry.BoPDRPC, backoffErr)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -1513,7 +1514,7 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 				meta.GetRegionEpoch().GetVersion() < ctx.Region.ver) {
 			err := errors.Errorf("region epoch is ahead of tikv. rpc ctx: %+v, currentRegions: %+v", ctx, currentRegions)
 			logutil.BgLogger().Info("region epoch is ahead of tikv", zap.Error(err))
-			return bo.Backoff(BoRegionMiss, err)
+			return bo.Backoff(retry.BoRegionMiss, err)
 		}
 	}
 
@@ -1876,7 +1877,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 	}
 	var store *metapb.Store
 	for {
-		store, err = c.pdClient.GetStore(bo.ctx, s.storeID)
+		store, err = c.pdClient.GetStore(bo.GetCtx(), s.storeID)
 		if err != nil {
 			metrics.RegionCacheCounterWithGetStoreError.Inc()
 		} else {
@@ -1888,7 +1889,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 				return
 			}
 			err = errors.Errorf("loadStore from PD failed, id: %d, err: %v", s.storeID, err)
-			if err = bo.Backoff(BoPDRPC, err); err != nil {
+			if err = bo.Backoff(retry.BoPDRPC, err); err != nil {
 				return
 			}
 			continue
@@ -2091,7 +2092,7 @@ func (s *Store) checkUntilHealth(c *RegionCache) {
 				}
 			}
 
-			bo := NewNoopBackoff(ctx)
+			bo := retry.NewNoopBackoff(ctx)
 			l := s.requestLiveness(bo, c)
 			if l == reachable {
 				logutil.BgLogger().Info("[health check] store became reachable", zap.Uint64("storeID", s.storeID))
@@ -2121,7 +2122,7 @@ func (s *Store) requestLiveness(bo *Backoffer, c *RegionCache) (l livenessState)
 	})
 	var ctx context.Context
 	if bo != nil {
-		ctx = bo.ctx
+		ctx = bo.GetCtx()
 	} else {
 		ctx = context.Background()
 	}

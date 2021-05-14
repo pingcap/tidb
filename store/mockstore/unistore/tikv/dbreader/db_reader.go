@@ -165,7 +165,6 @@ func (r *DBReader) BatchGet(keys [][]byte, startTS uint64, f BatchGetFunc) {
 		}
 		f(key, val, err)
 	}
-	return
 }
 
 // ErrScanBreak is returned by ScanFunc to break the scan loop.
