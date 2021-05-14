@@ -11,19 +11,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package tikv_test
 
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
 type extractStartTsSuite struct {
-	store *KVStore
+	store *tikv.KVStore
 }
 
 var _ = SerialSuites(&extractStartTsSuite{})
@@ -32,30 +33,22 @@ func (s *extractStartTsSuite) SetUpTest(c *C) {
 	client, pdClient, cluster, err := unistore.New("")
 	c.Assert(err, IsNil)
 	unistore.BootstrapWithSingleStore(cluster)
-	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
+	store, err := tikv.NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
-	store.regionCache.storeMu.stores[2] = &Store{
-		storeID:   2,
-		storeType: tikvrpc.TiKV,
-		state:     uint64(resolved),
-		labels: []*metapb.StoreLabel{
-			{
-				Key:   DCLabelKey,
-				Value: oracle.LocalTxnScope,
-			},
+	store.SetRegionCacheStore(2, tikvrpc.TiKV, 1, []*metapb.StoreLabel{
+		{
+			Key:   tikv.DCLabelKey,
+			Value: oracle.LocalTxnScope,
 		},
-	}
-	store.regionCache.storeMu.stores[3] = &Store{
-		storeID:   3,
-		storeType: tikvrpc.TiKV,
-		state:     uint64(resolved),
-		labels: []*metapb.StoreLabel{{
-			Key:   DCLabelKey,
+	})
+	store.SetRegionCacheStore(3, tikvrpc.TiKV, 1, []*metapb.StoreLabel{
+		{
+			Key:   tikv.DCLabelKey,
 			Value: "Some Random Label",
-		}},
-	}
-	store.setSafeTS(2, 102)
-	store.setSafeTS(3, 101)
+		},
+	})
+	store.SetSafeTS(2, 102)
+	store.SetSafeTS(3, 101)
 	s.store = store
 }
 
@@ -68,26 +61,26 @@ func (s *extractStartTsSuite) TestExtractStartTs(c *C) {
 
 	cases := []struct {
 		expectedTS uint64
-		option     TransactionOption
+		option     tikv.TransactionOption
 	}{
 		// StartTS setted
-		{100, TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: &i, PrevSec: nil, MinStartTS: nil, MaxPrevSec: nil}},
+		{100, tikv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: &i, PrevSec: nil, MinStartTS: nil, MaxPrevSec: nil}},
 		// PrevSec setted
-		{200, TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: &i, MinStartTS: nil, MaxPrevSec: nil}},
+		{200, tikv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: &i, MinStartTS: nil, MaxPrevSec: nil}},
 		// MinStartTS setted, global
-		{101, TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: &i, MaxPrevSec: nil}},
+		{101, tikv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: &i, MaxPrevSec: nil}},
 		// MinStartTS setted, local
-		{102, TransactionOption{TxnScope: oracle.LocalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: &i, MaxPrevSec: nil}},
+		{102, tikv.TransactionOption{TxnScope: oracle.LocalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: &i, MaxPrevSec: nil}},
 		// MaxPrevSec setted
 		// however we need to add more cases to check the behavior when it fall backs to MinStartTS setted
 		// see `TestMaxPrevSecFallback`
-		{200, TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
+		{200, tikv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
 		// nothing setted
-		{300, TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: nil}},
+		{300, tikv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: nil}},
 	}
 	for _, cs := range cases {
 		expected := cs.expectedTS
-		result, _ := extractStartTs(s.store, cs.option)
+		result, _ := tikv.ExtractStartTs(s.store, cs.option)
 		c.Assert(result, Equals, expected)
 	}
 
@@ -96,18 +89,18 @@ func (s *extractStartTsSuite) TestExtractStartTs(c *C) {
 }
 
 func (s *extractStartTsSuite) TestMaxPrevSecFallback(c *C) {
-	s.store.setSafeTS(2, 0x8000000000000002)
-	s.store.setSafeTS(3, 0x8000000000000001)
+	s.store.SetSafeTS(2, 0x8000000000000002)
+	s.store.SetSafeTS(3, 0x8000000000000001)
 	i := uint64(100)
 	cases := []struct {
 		expectedTS uint64
-		option     TransactionOption
+		option     tikv.TransactionOption
 	}{
-		{0x8000000000000001, TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
-		{0x8000000000000002, TransactionOption{TxnScope: oracle.LocalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
+		{0x8000000000000001, tikv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
+		{0x8000000000000002, tikv.TransactionOption{TxnScope: oracle.LocalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
 	}
 	for _, cs := range cases {
-		result, _ := extractStartTs(s.store, cs.option)
+		result, _ := tikv.ExtractStartTs(s.store, cs.option)
 		c.Assert(result, Equals, cs.expectedTS)
 	}
 }

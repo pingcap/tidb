@@ -135,23 +135,24 @@ type KVTxn struct {
 	kvFilter           KVFilter
 }
 
-func extractStartTs(store *KVStore, options TransactionOption) (uint64, error) {
+// ExtractStartTs use `option` to get the proper startTS for a transaction
+func ExtractStartTs(store *KVStore, option TransactionOption) (uint64, error) {
 	var startTs uint64
 	var err error
-	if options.StartTS != nil {
-		startTs = *options.StartTS
-	} else if options.PrevSec != nil {
+	if option.StartTS != nil {
+		startTs = *option.StartTS
+	} else if option.PrevSec != nil {
 		bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
-		startTs, err = store.getStalenessTimestamp(bo, options.TxnScope, *options.PrevSec)
-	} else if options.MinStartTS != nil {
+		startTs, err = store.getStalenessTimestamp(bo, option.TxnScope, *option.PrevSec)
+	} else if option.MinStartTS != nil {
 		stores := make([]*Store, 0)
 		allStores := store.regionCache.getStoresByType(tikvrpc.TiKV)
-		if options.TxnScope != oracle.GlobalTxnScope {
+		if option.TxnScope != oracle.GlobalTxnScope {
 			for _, store := range allStores {
 				if store.IsLabelsMatch([]*metapb.StoreLabel{
 					{
 						Key:   DCLabelKey,
-						Value: options.TxnScope,
+						Value: option.TxnScope,
 					},
 				}) {
 					stores = append(stores, store)
@@ -161,23 +162,23 @@ func extractStartTs(store *KVStore, options TransactionOption) (uint64, error) {
 			stores = allStores
 		}
 		safeTS := store.getMinSafeTSByStores(stores)
-		startTs = *options.MinStartTS
+		startTs = *option.MinStartTS
 		// If the safeTS is larger than the minStartTS, we will use safeTS as StartTS, otherwise we will use
 		// minStartTS directly.
 		if oracle.CompareTS(startTs, safeTS) < 0 {
 			startTs = safeTS
 		}
-	} else if options.MaxPrevSec != nil {
+	} else if option.MaxPrevSec != nil {
 		bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
-		minStartTS, err := store.getStalenessTimestamp(bo, options.TxnScope, *options.MaxPrevSec)
+		minStartTS, err := store.getStalenessTimestamp(bo, option.TxnScope, *option.MaxPrevSec)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		options.MinStartTS = &minStartTS
-		return extractStartTs(store, options)
+		option.MinStartTS = &minStartTS
+		return ExtractStartTs(store, option)
 	} else {
 		bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
-		startTs, err = store.getTimestampWithRetry(bo, options.TxnScope)
+		startTs, err = store.getTimestampWithRetry(bo, option.TxnScope)
 	}
 	return startTs, err
 }
@@ -186,7 +187,7 @@ func newTiKVTxnWithOptions(store *KVStore, options TransactionOption) (*KVTxn, e
 	if options.TxnScope == "" {
 		options.TxnScope = oracle.GlobalTxnScope
 	}
-	startTs, err := extractStartTs(store, options)
+	startTs, err := ExtractStartTs(store, options)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
