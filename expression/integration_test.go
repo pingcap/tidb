@@ -5833,7 +5833,7 @@ func (s *testIntegrationSuite) TestDecodetoChunkReuse(c *C) {
 	tk.MustExec("create table chk (a int,b varchar(20))")
 	for i := 0; i < 200; i++ {
 		if i%5 == 0 {
-			tk.MustExec(fmt.Sprintf("insert chk values (NULL,NULL)"))
+			tk.MustExec("insert chk values (NULL,NULL)")
 			continue
 		}
 		tk.MustExec(fmt.Sprintf("insert chk values (%d,'%s')", i, strconv.Itoa(i)))

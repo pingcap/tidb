@@ -246,7 +246,8 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []*point {
 		if col.RetType.EvalType() == types.ETString && (value.Kind() == types.KindString || value.Kind() == types.KindBinaryLiteral) {
 			value.SetString(value.GetString(), col.RetType.Collate)
 		}
-		if col.GetType().Tp == mysql.TypeYear {
+		// If nulleq with null value, values.ToInt64 will return err
+		if col.GetType().Tp == mysql.TypeYear && !value.IsNull() {
 			// If the original value is adjusted, we need to change the condition.
 			// For example, col < 2156. Since the max year is 2155, 2156 is changed to 2155.
 			// col < 2155 is wrong. It should be col <= 2155.
