@@ -647,7 +647,7 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tikv.LockCtx, keysInput
 		// PointGet and BatchPointGet will return value in pessimistic lock response, the value may not exist.
 		// For other lock modes, the locked key values always exist.
 		if lockCtx.ReturnValues {
-			val, _ := lockCtx.Values[string(key)]
+			val := lockCtx.Values[string(key)]
 			if len(val.Value) == 0 {
 				valExists = tikv.SetKeyLockedValueNotExists
 			}

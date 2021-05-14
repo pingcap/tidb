@@ -862,10 +862,10 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if pkCol != nil {
-		// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
+		// If PKIsHandle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
 		fmt.Fprintf(buf, "  PRIMARY KEY (%s)", stringutil.Escape(pkCol.Name.O, sqlMode))
-		buf.WriteString(fmt.Sprintf(" /*T![clustered_index] CLUSTERED */"))
+		buf.WriteString(" /*T![clustered_index] CLUSTERED */")
 	}
 
 	publicIndices := make([]*model.IndexInfo, 0, len(tableInfo.Indices))
@@ -906,9 +906,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 		if idxInfo.Primary {
 			if tableInfo.PKIsHandle || tableInfo.IsCommonHandle {
-				buf.WriteString(fmt.Sprintf(" /*T![clustered_index] CLUSTERED */"))
+				buf.WriteString(" /*T![clustered_index] CLUSTERED */")
 			} else {
-				buf.WriteString(fmt.Sprintf(" /*T![clustered_index] NONCLUSTERED */"))
+				buf.WriteString(" /*T![clustered_index] NONCLUSTERED */")
 			}
 		}
 		if i != len(publicIndices)-1 {
@@ -1412,6 +1412,10 @@ func (e *ShowExec) fetchShowPrivileges() error {
 	e.appendRow([]interface{}{"Create tablespace", "Server Admin", "To create/alter/drop tablespaces"})
 	e.appendRow([]interface{}{"Update", "Tables", "To update existing rows"})
 	e.appendRow([]interface{}{"Usage", "Server Admin", "No privileges - allow connect only"})
+
+	for _, priv := range privileges.GetDynamicPrivileges() {
+		e.appendRow([]interface{}{priv, "Server Admin", ""})
+	}
 	return nil
 }
 
