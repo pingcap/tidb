@@ -411,4 +411,6 @@ func (s *testExpressionRewriterSuite) TestPositionExpr(c *C) {
 	tk.MustExec("create table t(a int, b int, c int);")
 	tk.MustQuery("select a from t group by a having sum(b) > 0 order by 1;")
 	tk.MustGetErrMsg("select a from t group by a having sum(b) > 0 order by 2;", "Unknown column '2' in 'order clause'")
+	tk.MustGetErrMsg("delete from t order by 0;", "Unknown column '2' in 'order clause'")
+	tk.MustGetErrMsg("delete from t order by 1;", "Unknown column '2' in 'order clause'")
 }
