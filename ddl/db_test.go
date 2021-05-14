@@ -2280,10 +2280,8 @@ func (s *testDBSuite6) TestDropColumn(c *C) {
 		testddlutil.ExecMultiSQLInGoroutine(c, s.store, "drop_col_db", []string{"insert into t2 set c1 = 1, c2 = 1, c3 = 1, c4 = 1"}, dmlDone)
 	}
 	for i := 0; i < num; i++ {
-		select {
-		case err := <-ddlDone:
-			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
-		}
+		err := <-ddlDone
+		c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 	}
 
 	// Test for drop partition table column.
@@ -6575,7 +6573,7 @@ func (s *testSerialDBSuite) TestModifyColumnTypeWhenInterception(c *C) {
 
 	count := defaultBatchSize * 4
 	// Add some rows.
-	dml := fmt.Sprintf("insert into t values")
+	dml := "insert into t values"
 	for i := 1; i <= count; i++ {
 		dml += fmt.Sprintf("(%d, %f)", i, 11.22)
 		if i != count {
