@@ -76,8 +76,9 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenInteger(c *C) {
 	tk.MustExec("alter table t modify column b int not null")
 
 	tk.MustExec("insert into t(a, b) values (null, 1)")
-	// Modify column from null to not null in same type will cause ErrInvalidUseOfNull
-	tk.MustGetErrCode("alter table t modify column a int not null", mysql.ErrInvalidUseOfNull)
+	// Modify column from null to not null in same type will cause ErrWarnDataTruncated
+	_, err := tk.Exec("alter table t modify column a int not null")
+	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 1")
 
 	// Modify column from null to not null in different type will cause WarnDataTruncated.
 	tk.MustGetErrCode("alter table t modify column a tinyint not null", mysql.WarnDataTruncated)
@@ -126,7 +127,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenInteger(c *C) {
 	tk.MustGetErrCode("alter table t modify column a mediumint", mysql.ErrDataOutOfRange)
 	tk.MustGetErrCode("alter table t modify column a smallint", mysql.ErrDataOutOfRange)
 	tk.MustGetErrCode("alter table t modify column a tinyint", mysql.ErrDataOutOfRange)
-	_, err := tk.Exec("admin check table t")
+	_, err = tk.Exec("admin check table t")
 	c.Assert(err, IsNil)
 }
 
