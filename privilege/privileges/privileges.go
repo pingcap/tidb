@@ -535,3 +535,14 @@ func RegisterDynamicPrivilege(privNameInUpper string) error {
 	dynamicPrivs = append(dynamicPrivs, privNameInUpper)
 	return nil
 }
+
+// GetDynamicPrivileges returns the list of registered DYNAMIC privileges
+// for use in meta data commands (i.e. SHOW PRIVILEGES)
+func GetDynamicPrivileges() []string {
+	dynamicPrivLock.Lock()
+	defer dynamicPrivLock.Unlock()
+
+	privCopy := make([]string, len(dynamicPrivs))
+	copy(privCopy, dynamicPrivs)
+	return privCopy
+}
