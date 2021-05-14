@@ -126,26 +126,6 @@ func (seElement *stmtSummaryByDigestEvictedElement) addEvicted(digestKey *stmtSu
 	if digestKey != nil {
 		seElement.digestKeyMap[string(digestKey.Hash())] = struct{}{}
 	}
-	sumEvicted(seElement.sum, digestValue)
-}
-
-// ToCurrentOtherDatum converts current evicted record to `other` record's datum
-func (ssbde *stmtSummaryByDigestEvicted) ToCurrentOtherDatum() []types.Datum {
-	induceSsbd := new(stmtSummaryByDigest)
-	return ssbde.history.Back().Value.(*stmtSummaryByDigestEvictedElement).toOtherDatum(induceSsbd)
-}
-
-// ToHistoryOtherDatum converts history evicted record to `other` record's datum
-func (ssbde *stmtSummaryByDigestEvicted) ToHistoryOtherDatum() [][]types.Datum {
-	induceSsbd := new(stmtSummaryByDigest)
-
-	var records [][]types.Datum
-	for e := ssbde.history.Front(); e != nil; e = e.Next() {
-		if record := e.Value.(*stmtSummaryByDigestEvictedElement).toOtherDatum(induceSsbd); record != nil {
-			records = append(records, record)
-		}
-	}
-	return records
 }
 
 // ToEvictedCountDatum converts history evicted record to `evicted count` record's datum
@@ -157,11 +137,6 @@ func (ssbde *stmtSummaryByDigestEvicted) ToEvictedCountDatum() [][]types.Datum {
 		}
 	}
 	return records
-}
-
-// toOtherDatum converts evicted record to `other` record's datum
-func (seElement *stmtSummaryByDigestEvictedElement) toOtherDatum(ssbd *stmtSummaryByDigest) []types.Datum {
-	return seElement.sum.toDatum(ssbd)
 }
 
 // toEvictedCountDatum converts evicted record to `EvictedCount` record's datum
@@ -176,143 +151,4 @@ func (seElement *stmtSummaryByDigestEvictedElement) toEvictedCountDatum() []type
 
 func (ssMap *stmtSummaryByDigestMap) ToEvictedCountDatum() [][]types.Datum {
 	return ssMap.other.ToEvictedCountDatum()
-}
-
-// sumEvicted sum addWith into addTo
-func sumEvicted(sumTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElement) {
-	// Time duration relation: addWith ⊆ sumTo
-	if sumTo.beginTime < addWith.beginTime {
-		sumTo.beginTime = addWith.beginTime
-	}
-	if sumTo.endTime > addWith.beginTime {
-		sumTo.endTime = addWith.endTime
-	}
-	// basic
-	sumTo.execCount += addWith.execCount
-	sumTo.sumErrors += addWith.sumErrors
-	sumTo.sumWarnings += addWith.sumWarnings
-	// latency
-	sumTo.sumLatency += addWith.sumLatency
-	sumTo.sumParseLatency += addWith.sumParseLatency
-	sumTo.sumCompileLatency += addWith.sumCompileLatency
-	if sumTo.maxLatency < addWith.maxLatency {
-		sumTo.maxLatency = addWith.maxLatency
-	}
-	if sumTo.maxCompileLatency < addWith.maxCompileLatency {
-		sumTo.maxCompileLatency = addWith.maxCompileLatency
-	}
-	if sumTo.minLatency > addWith.minLatency {
-		sumTo.minLatency = addWith.minLatency
-	}
-	// coprocessor
-	sumTo.sumNumCopTasks += addWith.sumNumCopTasks
-	if sumTo.maxCopProcessTime < addWith.maxCopProcessTime {
-		sumTo.maxCopProcessTime = addWith.maxCopProcessTime
-	}
-	if sumTo.maxCopWaitTime < addWith.maxCopWaitTime {
-		sumTo.maxCopWaitTime = addWith.maxCopWaitTime
-	}
-	// TiKV
-	sumTo.sumProcessTime += addWith.sumProcessTime
-	sumTo.sumWaitTime += addWith.sumWaitTime
-	sumTo.sumBackoffTime += addWith.sumBackoffTime
-	sumTo.sumTotalKeys += addWith.sumTotalKeys
-	sumTo.sumProcessedKeys += addWith.sumProcessedKeys
-	sumTo.sumRocksdbDeleteSkippedCount += addWith.sumRocksdbDeleteSkippedCount
-	sumTo.sumRocksdbKeySkippedCount += addWith.sumRocksdbKeySkippedCount
-	sumTo.sumRocksdbBlockCacheHitCount += addWith.sumRocksdbBlockCacheHitCount
-	sumTo.sumRocksdbBlockReadCount += addWith.sumRocksdbBlockReadCount
-	sumTo.sumRocksdbBlockReadByte += addWith.sumRocksdbBlockReadByte
-	if sumTo.maxProcessTime < addWith.maxProcessTime {
-		sumTo.maxProcessTime = addWith.maxProcessTime
-	}
-	if sumTo.maxWaitTime < addWith.maxWaitTime {
-		sumTo.maxWaitTime = addWith.maxWaitTime
-	}
-	if sumTo.maxBackoffTime < addWith.maxBackoffTime {
-		sumTo.maxBackoffTime = addWith.maxBackoffTime
-	}
-	if sumTo.maxTotalKeys < addWith.maxTotalKeys {
-		sumTo.maxTotalKeys = addWith.maxTotalKeys
-	}
-	if sumTo.maxProcessedKeys < addWith.maxProcessedKeys {
-		sumTo.maxProcessedKeys = addWith.maxProcessedKeys
-	}
-	if sumTo.maxRocksdbBlockReadByte < addWith.maxRocksdbBlockReadByte {
-		sumTo.maxRocksdbBlockReadByte = addWith.maxRocksdbBlockReadByte
-	}
-	if sumTo.maxRocksdbBlockCacheHitCount < addWith.maxRocksdbBlockCacheHitCount {
-		sumTo.maxRocksdbBlockCacheHitCount = addWith.maxRocksdbBlockCacheHitCount
-	}
-	if sumTo.maxRocksdbBlockReadCount < addWith.maxRocksdbBlockReadCount {
-		sumTo.maxRocksdbBlockReadCount = addWith.maxRocksdbBlockReadCount
-	}
-	if sumTo.maxRocksdbDeleteSkippedCount < addWith.maxRocksdbDeleteSkippedCount {
-		sumTo.maxRocksdbDeleteSkippedCount = addWith.maxRocksdbDeleteSkippedCount
-	}
-	if sumTo.maxRocksdbKeySkippedCount < addWith.maxRocksdbKeySkippedCount {
-		sumTo.maxRocksdbKeySkippedCount = addWith.maxRocksdbKeySkippedCount
-	}
-	// txn
-	sumTo.commitCount += addWith.commitCount
-	sumTo.sumGetCommitTsTime += addWith.sumGetCommitTsTime
-	sumTo.sumPrewriteTime += addWith.sumPrewriteTime
-	sumTo.sumCommitTime += addWith.sumCommitTime
-	sumTo.sumLocalLatchTime += addWith.sumLocalLatchTime
-	sumTo.sumCommitBackoffTime += addWith.sumCommitBackoffTime
-	sumTo.sumResolveLockTime += addWith.sumResolveLockTime
-	sumTo.sumWriteKeys += addWith.sumWriteKeys
-	sumTo.sumWriteSize += addWith.sumWriteSize
-	sumTo.sumPrewriteRegionNum += addWith.sumPrewriteRegionNum
-	sumTo.sumTxnRetry += addWith.sumTxnRetry
-	sumTo.sumBackoffTimes += sumTo.sumBackoffTimes
-	if sumTo.maxGetCommitTsTime < addWith.maxGetCommitTsTime {
-		sumTo.maxGetCommitTsTime = addWith.maxGetCommitTsTime
-	}
-	if sumTo.maxPrewriteTime < addWith.maxPrewriteTime {
-		sumTo.maxPrewriteTime = addWith.maxPrewriteTime
-	}
-	if sumTo.maxCommitTime < addWith.maxCommitTime {
-		sumTo.maxCommitTime = addWith.maxCommitTime
-	}
-	if sumTo.maxLocalLatchTime < addWith.maxLocalLatchTime {
-		sumTo.maxLocalLatchTime = addWith.maxLocalLatchTime
-	}
-	if sumTo.maxCommitBackoffTime < addWith.maxCommitBackoffTime {
-		sumTo.maxCommitBackoffTime = addWith.maxCommitBackoffTime
-	}
-	if sumTo.maxResolveLockTime < addWith.maxResolveLockTime {
-		sumTo.maxResolveLockTime = addWith.maxResolveLockTime
-	}
-	if sumTo.maxWriteKeys < addWith.maxWriteKeys {
-		sumTo.maxWriteKeys = addWith.maxWriteKeys
-	}
-	if sumTo.maxWriteSize < addWith.maxWriteSize {
-		sumTo.maxWriteSize = addWith.maxWriteSize
-	}
-	if sumTo.maxPrewriteRegionNum < sumTo.maxPrewriteRegionNum {
-		sumTo.maxPrewriteRegionNum = addWith.maxPrewriteRegionNum
-	}
-	if sumTo.maxTxnRetry < addWith.maxTxnRetry {
-		sumTo.maxTxnRetry = addWith.maxTxnRetry
-	}
-	// other
-	sumTo.sumMem += addWith.sumMem
-	sumTo.sumDisk += addWith.sumDisk
-	sumTo.sumAffectedRows += addWith.sumAffectedRows
-	sumTo.sumKVTotal += addWith.sumKVTotal
-	sumTo.sumPDTotal += addWith.sumPDTotal
-	sumTo.sumBackoffTotal += addWith.sumBackoffTotal
-	sumTo.sumWriteSQLRespTotal += addWith.sumWriteSQLRespTotal
-	if sumTo.maxMem < addWith.maxMem {
-		sumTo.maxMem = addWith.maxMem
-	}
-	if sumTo.maxDisk < addWith.maxDisk {
-		sumTo.maxDisk = addWith.maxDisk
-	}
-	// plan cache
-	sumTo.planCacheHits += addWith.planCacheHits
-	// pessimistic execution retry information
-	sumTo.execRetryCount += addWith.execRetryCount
-	sumTo.execRetryTime += addWith.execRetryTime
 }
