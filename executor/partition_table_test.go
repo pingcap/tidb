@@ -127,14 +127,18 @@ func (s *partitionTableSuite) TestPointGetwithRangeAndListPartitionTable(c *C) {
 			partition p2 values in (9, 10, 11, 12));`)
 
 	// range partition table
-	tk.MustExec(`create table trange(a int, unique key(a)) partition by range(a) (
+	tk.MustExec(`create table trange1(a int, unique key(a)) partition by range(a) (
 		partition p0 values less than (30),
 		partition p1 values less than (60),
 		partition p2 values less than (90),
 		partition p3 values less than (120));`)
 
-	// regular partition table
-	tk.MustExec("create table tregular(a int, unique key(a));")
+	// range partition table + unsigned int
+	tk.MustExec(`create table trange2(a int unsigned, unique key(a)) partition by range(a) (
+		partition p0 values less than (30),
+		partition p1 values less than (60),
+		partition p2 values less than (90),
+		partition p3 values less than (120));`)
 
 	// insert data into list partition table
 	tk.MustExec("insert into tlist values(1,1), (2,2), (3, 3), (4, 4), (5,5), (6, 6), (7,7), (8, 8), (9, 9), (10, 10), (11, 11), (12, 12), (NULL, NULL);")
@@ -144,17 +148,21 @@ func (s *partitionTableSuite) TestPointGetwithRangeAndListPartitionTable(c *C) {
 	for i := 0; i < 100; i++ {
 		vals = append(vals, fmt.Sprintf("(%v)", i+1))
 	}
-	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
-	tk.MustExec("insert into tregular values " + strings.Join(vals, ","))
+	tk.MustExec("insert into trange1 values " + strings.Join(vals, ","))
+	tk.MustExec("insert into trange2 values " + strings.Join(vals, ","))
 
 	// test PointGet
 	for i := 0; i < 100; i++ {
 		// explain select a from t where a = {x}; // x >= 1 and x <= 100 Check if PointGet is used
 		// select a from t where a={x}; // the result is {x}
 		x := rand.Intn(100) + 1
-		queryRange := fmt.Sprintf("select a from trange where a=%v", x)
-		c.Assert(tk.HasPlan(queryRange, "Point_Get"), IsTrue) // check if PointGet is used
-		tk.MustQuery(queryRange).Check(testkit.Rows(fmt.Sprintf("%v", x)))
+		queryRange1 := fmt.Sprintf("select a from trange1 where a=%v", x)
+		c.Assert(tk.HasPlan(queryRange1, "Point_Get"), IsTrue) // check if PointGet is used
+		tk.MustQuery(queryRange1).Check(testkit.Rows(fmt.Sprintf("%v", x)))
+
+		queryRange2 := fmt.Sprintf("select a from trange1 where a=%v", x)
+		c.Assert(tk.HasPlan(queryRange2, "Point_Get"), IsTrue) // check if PointGet is used
+		tk.MustQuery(queryRange2).Check(testkit.Rows(fmt.Sprintf("%v", x)))
 
 		y := rand.Intn(12) + 1
 		queryList := fmt.Sprintf("select a from tlist where a=%v", y)
@@ -163,9 +171,13 @@ func (s *partitionTableSuite) TestPointGetwithRangeAndListPartitionTable(c *C) {
 	}
 
 	// test table dual
-	queryRange := fmt.Sprintf("select a from trange where a=200")
-	c.Assert(tk.HasPlan(queryRange, "TableDual"), IsTrue) // check if TableDual is used
-	tk.MustQuery(queryRange).Check(testkit.Rows())
+	queryRange1 := fmt.Sprintf("select a from trange1 where a=200")
+	c.Assert(tk.HasPlan(queryRange1, "TableDual"), IsTrue) // check if TableDual is used
+	tk.MustQuery(queryRange1).Check(testkit.Rows())
+
+	queryRange2 := fmt.Sprintf("select a from trange2 where a=200")
+	c.Assert(tk.HasPlan(queryRange2, "TableDual"), IsTrue) // check if TableDual is used
+	tk.MustQuery(queryRange2).Check(testkit.Rows())
 
 	queryList := fmt.Sprintf("select a from tlist where a=200")
 	c.Assert(tk.HasPlan(queryList, "TableDual"), IsTrue) // check if TableDual is used
