@@ -70,31 +70,31 @@ func DefaultTransactionOption() TransactionOption {
 	return TransactionOption{TxnScope: oracle.GlobalTxnScope}
 }
 
-// SetMaxPrevSec set maxPrevSec
+// SetMaxPrevSec returns a new TransactionOption with MaxPrevSec set to maxPrevSec
 func (to TransactionOption) SetMaxPrevSec(maxPrevSec uint64) TransactionOption {
 	to.MaxPrevSec = &maxPrevSec
 	return to
 }
 
-// SetMinStartTS set minStartTS
+// SetMinStartTS returns a new TransactionOption with MinStartTS set to minStartTS
 func (to TransactionOption) SetMinStartTS(minStartTS uint64) TransactionOption {
 	to.MinStartTS = &minStartTS
 	return to
 }
 
-// SetStartTs set startTS
+// SetStartTs returns a new TransactionOption with StartTS set to startTS
 func (to TransactionOption) SetStartTs(startTS uint64) TransactionOption {
 	to.StartTS = &startTS
 	return to
 }
 
-// SetPrevSec set prevSec
+// SetPrevSec returns a new TransactionOption with PrevSec set to prevSec
 func (to TransactionOption) SetPrevSec(prevSec uint64) TransactionOption {
 	to.PrevSec = &prevSec
 	return to
 }
 
-// SetTxnScope set txnScope
+// SetTxnScope returns a new TransactionOption with TxnScope set to txnScope
 func (to TransactionOption) SetTxnScope(txnScope string) TransactionOption {
 	to.TxnScope = txnScope
 	return to
