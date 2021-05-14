@@ -157,6 +157,7 @@ func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 					}
 					if _, duplicateRegion := storeCandidateRegionMap[storeID][taskKey]; duplicateRegion {
 						// duplicated region, should not happen, just give up balance
+						logutil.BgLogger().Warn("Meet duplicated region info during when trying to balance batch cop task, give up balancing")
 						return originalTasks
 					}
 					storeCandidateRegionMap[storeID][taskKey] = ri
@@ -229,6 +230,10 @@ func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 			// check only the affected stores is more simple and will get a good enough result
 			store = findNextStore(ri.AllStores)
 		}
+	}
+	if totalRemainingRegionNum > 0 {
+		logutil.BgLogger().Warn("Some regions are not used when trying to balance batch cop task, give up balancing")
+		return originalTasks
 	}
 
 	var ret []*batchCopTask
