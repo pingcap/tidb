@@ -9344,4 +9344,14 @@ func (s *testIntegrationSuite) TestEnumIndex(c *C) {
 		testkit.Rows(
 			"OFJHCEKCQGT:MXI7P3[YO4N0DF=2XJWJ4Z9Z;HQ8TMUTZV8YLQAHWJ4BDZHR3A -30 <nil>",
 			"ZOHBSCRMZPOI`IVTSEZAIDAF7DS@1TT20AP9 -30 <nil>"))
+
+	// issue 24576
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(col1 enum('a','b','c'), col2 enum('a','b','c'), col3 int, index idx(col1,col2));")
+	tk.MustExec("insert into t values(1,1,1),(2,2,2),(3,3,3);")
+	tk.MustQuery("select /*+ use_index(t,idx) */ col3 from t where col2 between 'b' and 'b' and col1 is not null;").Check(
+		testkit.Rows("2"))
+	tk.MustQuery("select /*+ use_index(t,idx) */ col3 from t where col2 = 'b' and col1 is not null;").Check(
+		testkit.Rows("2"))
 }
