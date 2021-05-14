@@ -111,42 +111,6 @@ func (m *memBuffer) SnapshotGetter() kv.Getter {
 	return newKVGetter(m.MemDB.SnapshotGetter())
 }
 
-//tikvUnionStore implements kv.UnionStore
-type tikvUnionStore struct {
-	*unionstore.KVUnionStore
-}
-
-func (u *tikvUnionStore) GetMemBuffer() kv.MemBuffer {
-	return newMemBuffer(u.KVUnionStore.GetMemBuffer())
-}
-
-func (u *tikvUnionStore) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	data, err := u.KVUnionStore.Get(ctx, k)
-	return data, derr.ToTiDBErr(err)
-}
-
-func (u *tikvUnionStore) HasPresumeKeyNotExists(k kv.Key) bool {
-	return u.KVUnionStore.HasPresumeKeyNotExists(k)
-}
-
-func (u *tikvUnionStore) UnmarkPresumeKeyNotExists(k kv.Key) {
-	u.KVUnionStore.UnmarkPresumeKeyNotExists(k)
-}
-
-func (u *tikvUnionStore) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	it, err := u.KVUnionStore.Iter(k, upperBound)
-	return newKVIterator(it), derr.ToTiDBErr(err)
-}
-
-// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-// The returned iterator will iterate from greater key to smaller key.
-// If k is nil, the returned iterator will be positioned at the last key.
-// TODO: Add lower bound limit
-func (u *tikvUnionStore) IterReverse(k kv.Key) (kv.Iterator, error) {
-	it, err := u.KVUnionStore.IterReverse(k)
-	return newKVIterator(it), derr.ToTiDBErr(err)
-}
-
 type tikvGetter struct {
 	unionstore.Getter
 }

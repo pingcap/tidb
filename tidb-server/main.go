@@ -629,7 +629,7 @@ func setupMetrics() {
 		metrics.TimeJumpBackCounter.Inc()
 	}
 	callBackCount := 0
-	sucessCallBack := func() {
+	successCallBack := func() {
 		callBackCount++
 		// It is callback by monitor per second, we increase metrics.KeepAliveCounter per 5s.
 		if callBackCount >= 5 {
@@ -637,7 +637,7 @@ func setupMetrics() {
 			metrics.KeepAliveCounter.Inc()
 		}
 	}
-	go systimemon.StartMonitor(time.Now, systimeErrHandler, sucessCallBack)
+	go systimemon.StartMonitor(time.Now, systimeErrHandler, successCallBack)
 
 	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
 }
