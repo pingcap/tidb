@@ -8216,9 +8216,13 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 		))
 
 	tk.MustExec("create user 'testuser'@'localhost'")
-	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil), IsTrue)
-	res, err := tk.Exec("select * from information_schema.dead_lock")
-	c.Logf("res %v, err %v", res, err)
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username:     "testuser",
+		Hostname:     "localhost",
+		AuthUsername: "testuser",
+		AuthHostname: "localhost",
+	}, nil, nil), IsTrue)
+	err := tk.QueryToErr("select * from information_schema.dead_lock")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrAccessDenied), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "Access denied"), IsTrue)
 }
