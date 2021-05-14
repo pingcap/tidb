@@ -1412,6 +1412,10 @@ func (e *ShowExec) fetchShowPrivileges() error {
 	e.appendRow([]interface{}{"Create tablespace", "Server Admin", "To create/alter/drop tablespaces"})
 	e.appendRow([]interface{}{"Update", "Tables", "To update existing rows"})
 	e.appendRow([]interface{}{"Usage", "Server Admin", "No privileges - allow connect only"})
+
+	for _, priv := range privileges.GetDynamicPrivileges() {
+		e.appendRow([]interface{}{priv, "Server Admin", ""})
+	}
 	return nil
 }
 
