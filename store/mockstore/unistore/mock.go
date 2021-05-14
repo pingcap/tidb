@@ -52,6 +52,11 @@ func New(path string) (*RPCClient, pd.Client, *Cluster, error) {
 		conf.Engine.VlogFileSize = 16 << 20
 	}
 
+	conf.Engine.MaxMemTableSize = 128 << 20
+	conf.Engine.NumL0Tables = 4
+	conf.Engine.NumL0TablesStall = 16
+	conf.Engine.NumCompactors = 4
+
 	srv, rm, pd, err := ussvr.NewMock(&conf, 1)
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
