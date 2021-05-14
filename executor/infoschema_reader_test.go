@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
+	txninfo "github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -726,6 +727,10 @@ func (s *testInfoschemaClusterTableSuite) TearDownSuite(c *C) {
 type mockSessionManager struct {
 	processInfoMap map[uint64]*util.ProcessInfo
 	serverID       uint64
+}
+
+func (sm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
+	panic("unimplemented!")
 }
 
 func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {

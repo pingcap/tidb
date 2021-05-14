@@ -154,6 +154,7 @@ type Transaction interface {
 	// String implements fmt.Stringer interface.
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
+	// Will block until all keys are locked successfully or an error occurs.
 	LockKeys(ctx context.Context, lockCtx *LockCtx, keys ...Key) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
@@ -173,8 +174,6 @@ type Transaction interface {
 	GetMemBuffer() MemBuffer
 	// GetSnapshot returns the Snapshot binding to this transaction.
 	GetSnapshot() Snapshot
-	// GetUnionStore returns the UnionStore binding to this transaction.
-	GetUnionStore() UnionStore
 	// SetVars sets variables to the transaction.
 	SetVars(vars interface{})
 	// GetVars gets variables from the transaction.
@@ -341,12 +340,19 @@ type Driver interface {
 }
 
 // TransactionOption indicates the option when beginning a transaction
+// `TxnScope` must be set for each object
+// Every other fields are optional, but currently at most one of them can be set
 type TransactionOption struct {
 	TxnScope   string
 	StartTS    *uint64
 	PrevSec    *uint64
 	MinStartTS *uint64
 	MaxPrevSec *uint64
+}
+
+// DefaultTransactionOption creates a default TransactionOption, ie. Work in GlobalTxnScope and get start ts when got used
+func DefaultTransactionOption() TransactionOption {
+	return TransactionOption{TxnScope: oracle.GlobalTxnScope}
 }
 
 // SetMaxPrevSec set maxPrevSec
