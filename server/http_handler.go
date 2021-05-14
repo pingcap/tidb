@@ -680,51 +680,7 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if generalLog := req.Form.Get("tidb_general_log"); generalLog != "" {
 			switch generalLog {
 			case "0":
-<<<<<<< HEAD
 				atomic.StoreUint32(&variable.ProcessGeneralLog, 0)
-=======
-				variable.ProcessGeneralLog.Store(false)
-			case "1":
-				variable.ProcessGeneralLog.Store(true)
-			default:
-				writeError(w, errors.New("illegal argument"))
-				return
-			}
-		}
-		if asyncCommit := req.Form.Get("tidb_enable_async_commit"); asyncCommit != "" {
-			s, err := session.CreateSession(h.Store)
-			if err != nil {
-				writeError(w, err)
-				return
-			}
-			defer s.Close()
-
-			switch asyncCommit {
-			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.Off)
-			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.On)
-			default:
-				writeError(w, errors.New("illegal argument"))
-				return
-			}
-			if err != nil {
-				writeError(w, err)
-				return
-			}
-		}
-		if onePC := req.Form.Get("tidb_enable_1pc"); onePC != "" {
-			s, err := session.CreateSession(h.Store)
-			if err != nil {
-				writeError(w, err)
-				return
-			}
-			defer s.Close()
-
-			switch onePC {
-			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.Off)
->>>>>>> 1c4fbfce5... server: close the temporary session in HTTP API to avoid memory leak (#24339)
 			case "1":
 				atomic.StoreUint32(&variable.ProcessGeneralLog, 1)
 			default:
