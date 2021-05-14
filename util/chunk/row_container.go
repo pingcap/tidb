@@ -90,7 +90,6 @@ func (c *RowContainer) SpillToDisk() {
 		}
 	}
 	c.m.records.Clear()
-	return
 }
 
 // Reset resets RowContainer.
@@ -447,7 +446,6 @@ func (c *SortedRowContainer) Sort() {
 func (c *SortedRowContainer) sortAndSpillToDisk() {
 	c.Sort()
 	c.RowContainer.SpillToDisk()
-	return
 }
 
 // Add appends a chunk into the SortedRowContainer.
