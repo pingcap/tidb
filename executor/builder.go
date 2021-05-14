@@ -16,6 +16,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/util/dbterror"
 	"sort"
 	"strings"
 	"sync"
@@ -2476,11 +2477,14 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		outerKeyCols[i] = v.OuterJoinKeys[i].Index
 	}
 	innerKeyCols := make([]int, len(v.InnerJoinKeys))
+	innerKeyColIDs := make([]int64, len(v.InnerJoinKeys))
 	for i := 0; i < len(v.InnerJoinKeys); i++ {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
+		innerKeyColIDs[i] = v.InnerJoinKeys[i].ID
 	}
 	e.outerCtx.keyCols = outerKeyCols
 	e.innerCtx.keyCols = innerKeyCols
+	e.innerCtx.keyColIDs = innerKeyColIDs
 
 	outerHashCols, innerHashCols := make([]int, len(v.OuterHashKeys)), make([]int, len(v.InnerHashKeys))
 	for i := 0; i < len(v.OuterHashKeys); i++ {
@@ -2785,7 +2789,6 @@ func keyColumnsIncludeAllPartitionColumns(keyColumns []int, pe *tables.Partition
 func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, schema *expression.Schema, partitionInfo *plannercore.PartitionInfo,
 	lookUpContent []*indexJoinLookUpContent) (usedPartition []table.PhysicalTable, canPrune bool, contentPos []int64, err error) {
 	partitionTbl := tbl.(table.PartitionedTable)
-	locateKey := make([]types.Datum, schema.Len())
 	// TODO: condition based pruning can be do in advance.
 	condPruneResult, err := partitionPruning(ctx, partitionTbl, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
 	if err != nil {
@@ -2800,22 +2803,44 @@ func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, sch
 	if err != nil {
 		return nil, false, nil, err
 	}
+
+	if lookUpContent[0].keyColIDs == nil {
+		return nil, false, nil,
+			dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("cannot get column IDs when dynamic pruning")
+	}
+
+	keyColOffsets := make([]int, len(lookUpContent[0].keyColIDs))
+	for i, colID := range lookUpContent[0].keyColIDs {
+		offset := -1
+		for j, col := range partitionTbl.Cols() {
+			if colID == col.ID {
+				offset = j
+				break
+			}
+		}
+		if offset == -1 {
+			return nil, false, nil,
+				dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("invalid column offset when dynamic pruning")
+		}
+		keyColOffsets[i] = offset
+	}
+
 	offsetMap := make(map[int]bool)
-	for _, offset := range lookUpContent[0].keyCols {
+	for _, offset := range keyColOffsets {
 		offsetMap[offset] = true
 	}
 	for _, offset := range pe.ColumnOffset {
 		if _, ok := offsetMap[offset]; !ok {
-			logutil.BgLogger().Warn("can not runtime prune in index join")
 			return condPruneResult, false, nil, nil
 		}
 	}
 
+	locateKey := make([]types.Datum, len(partitionTbl.Cols()))
 	partitions := make(map[int64]table.PhysicalTable)
 	contentPos = make([]int64, len(lookUpContent))
 	for idx, content := range lookUpContent {
 		for i, date := range content.keys {
-			locateKey[content.keyCols[i]] = date
+			locateKey[keyColOffsets[i]] = date
 		}
 		p, err := partitionTbl.GetPartitionByRow(ctx, locateKey)
 		if err != nil {
