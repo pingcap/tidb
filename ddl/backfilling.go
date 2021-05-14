@@ -159,7 +159,7 @@ func newBackfillWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 		sessCtx:   sessCtx,
 		taskCh:    make(chan *reorgBackfillTask, 1),
 		resultCh:  make(chan *backfillResult, 1),
-		priority:  tikvstore.PriorityLow,
+		priority:  kv.PriorityLow,
 	}
 }
 
@@ -677,7 +677,7 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 
 	ver := kv.Version{Ver: version}
 	snap := store.GetSnapshot(ver)
-	snap.SetOption(tikvstore.Priority, priority)
+	snap.SetOption(kv.Priority, priority)
 
 	it, err := snap.Iter(firstKey, upperBound)
 	if err != nil {

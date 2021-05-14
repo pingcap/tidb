@@ -26,8 +26,10 @@ import (
 	"github.com/pingcap/tidb/domain"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
+	txninfo "github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -78,6 +80,9 @@ func (s *testSuite1) TestIgnorePlanCache(c *C) {
 }
 
 func (s *testSerialSuite) TestPrepareStmtAfterIsolationReadChange(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("race test for this case takes too long time")
+	}
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 
@@ -129,6 +134,10 @@ func (s *testSerialSuite) TestPrepareStmtAfterIsolationReadChange(c *C) {
 type mockSessionManager2 struct {
 	se     session.Session
 	killed bool
+}
+
+func (sm *mockSessionManager2) ShowTxnList() []*txninfo.TxnInfo {
+	panic("unimplemented!")
 }
 
 func (sm *mockSessionManager2) ShowProcessList() map[uint64]*util.ProcessInfo {

@@ -274,8 +274,8 @@ func (ts *HTTPHandlerTestSuite) TestRegionsAPIForClusterIndex(c *C) {
 				frameCnt++
 			}
 		}
-		// Primary index is as the record frame, so frame count is 1.
-		c.Assert(frameCnt, Equals, 1)
+		// frameCnt = clustered primary key + secondary index(idx) = 2.
+		c.Assert(frameCnt, Equals, 2)
 		c.Assert(resp.Body.Close(), IsNil)
 	}
 }
@@ -294,8 +294,10 @@ func (ts *HTTPHandlerTestSuite) TestRangesAPI(c *C) {
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
 	c.Assert(data.TableName, Equals, "t")
-	c.Assert(len(data.Indices), Equals, 1)
+	c.Assert(len(data.Indices), Equals, 2)
 	_, ok := data.Indices["PRIMARY"]
+	c.Assert(ok, IsTrue)
+	_, ok = data.Indices["idx"]
 	c.Assert(ok, IsTrue)
 }
 
@@ -552,7 +554,7 @@ partition by range (a)
 	err = txn2.Commit()
 	c.Assert(err, IsNil)
 	dbt.mustExec("drop table if exists t")
-	dbt.mustExec("create table t (a double, b varchar(20), c int, primary key(a,b) clustered)")
+	dbt.mustExec("create table t (a double, b varchar(20), c int, primary key(a,b) clustered, key idx(c))")
 	dbt.mustExec("insert into t values(1.1,'111',1),(2.2,'222',2)")
 }
 
@@ -576,7 +578,7 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	ts.prepareData(c)
 	defer ts.stopServer(c)
 
-	resp, err := ts.fetchStatus(fmt.Sprintf("/mvcc/key/tidb/test/1"))
+	resp, err := ts.fetchStatus("/mvcc/key/tidb/test/1")
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
 	var data mvccKV
@@ -619,7 +621,7 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(data2, DeepEquals, data)
 
-	resp, err = ts.fetchStatus(fmt.Sprintf("/mvcc/key/tidb/test/1?decode=true"))
+	resp, err = ts.fetchStatus("/mvcc/key/tidb/test/1?decode=true")
 	c.Assert(err, IsNil)
 	decoder = json.NewDecoder(resp.Body)
 	var data3 map[string]interface{}
@@ -665,7 +667,7 @@ func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
-	resp, err := ts.fetchStatus(fmt.Sprintf("/mvcc/key/tidb/test/1234"))
+	resp, err := ts.fetchStatus("/mvcc/key/tidb/test/1234")
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
 	var data mvccKV
@@ -956,6 +958,10 @@ func (ts *HTTPHandlerTestSuite) TestGetIndexMVCC(c *C) {
 	c.Assert(err, IsNil)
 	decodeKeyMvcc(resp.Body, c, true)
 
+	resp, err = ts.fetchStatus("/mvcc/index/tidb/t/idx?a=1.1&b=111&c=1")
+	c.Assert(err, IsNil)
+	decodeKeyMvcc(resp.Body, c, true)
+
 	// tests for wrong key
 	resp, err = ts.fetchStatus("/mvcc/index/tidb/test/idx1/5?a=5&b=1")
 	c.Assert(err, IsNil)
@@ -1156,10 +1162,10 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(variable.ProcessGeneralLog.Load(), IsTrue)
 	val, err := variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, variable.BoolOn)
+	c.Assert(val, Equals, variable.On)
 	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnable1PC)
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, variable.BoolOn)
+	c.Assert(val, Equals, variable.On)
 
 	form = make(url.Values)
 	form.Set("log_level", "fatal")
@@ -1175,10 +1181,10 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "fatal")
 	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, variable.BoolOff)
+	c.Assert(val, Equals, variable.Off)
 	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnable1PC)
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, variable.BoolOff)
+	c.Assert(val, Equals, variable.Off)
 	form.Set("log_level", os.Getenv("log_level"))
 
 	// test ddl_slow_threshold
@@ -1468,5 +1474,30 @@ func (ts *HTTPHandlerTestSuite) TestTestHandler(c *C) {
 	c.Assert(err, IsNil)
 	err = resp.Body.Close()
 	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+}
+
+func (ts *HTTPHandlerTestSuite) TestDDLHookHandler(c *C) {
+	defer ts.stopServer(c)
+
+	ts.startServer(c)
+	resp, err := ts.fetchStatus("/test/ddl/hook")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+
+	resp, err = ts.postStatus("/test/ddl/hook", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`ddl_hook=ctc_hook`)))
+	c.Assert(err, IsNil)
+	c.Assert(resp, NotNil)
+	body, err := ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(string(body), Equals, "\"success!\"")
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+
+	resp, err = ts.postStatus("/test/ddl/hook", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`ddl_hook=default_hook`)))
+	c.Assert(err, IsNil)
+	c.Assert(resp, NotNil)
+	body, err = ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(string(body), Equals, "\"success!\"")
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 }

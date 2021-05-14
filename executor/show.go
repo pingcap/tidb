@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -672,7 +673,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		// 		otherwise, fetch the value from table `mysql.Global_Variables`.
 		for _, v := range variable.GetSysVars() {
 			if v.Scope != variable.ScopeSession {
-				if variable.FilterImplicitFeatureSwitch(v) {
+				if v.Hidden {
 					continue
 				}
 				value, err = variable.GetGlobalSystemVar(sessionVars, v.Name)
@@ -689,10 +690,10 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 	// If it is a session only variable, use the default value defined in code,
 	//   otherwise, fetch the value from table `mysql.Global_Variables`.
 	for _, v := range variable.GetSysVars() {
-		if variable.FilterImplicitFeatureSwitch(v) {
+		if v.Hidden {
 			continue
 		}
-		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
+		value, err = variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -707,9 +708,16 @@ func (e *ShowExec) fetchShowStatus() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	checker := privilege.GetPrivilegeManager(e.ctx)
 	for status, v := range statusVars {
 		if e.GlobalScope && v.Scope == variable.ScopeSession {
 			continue
+		}
+		// Skip invisible status vars if permission fails.
+		if sem.IsEnabled() && sem.IsInvisibleStatusVar(status) {
+			if checker == nil || !checker.RequestDynamicVerification(sessionVars.ActiveRoles, "RESTRICTED_STATUS_ADMIN", false) {
+				continue
+			}
 		}
 		switch v.Value.(type) {
 		case []interface{}, nil:
@@ -730,7 +738,8 @@ func getDefaultCollate(charsetName string) string {
 			return c.DefaultCollation
 		}
 	}
-	return ""
+	// The charset is invalid, return server default.
+	return mysql.DefaultCollationName
 }
 
 // ConstructResultOfShowCreateTable constructs the result for show create table.
@@ -853,10 +862,10 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if pkCol != nil {
-		// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
+		// If PKIsHandle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
 		fmt.Fprintf(buf, "  PRIMARY KEY (%s)", stringutil.Escape(pkCol.Name.O, sqlMode))
-		buf.WriteString(fmt.Sprintf(" /*T![clustered_index] CLUSTERED */"))
+		buf.WriteString(" /*T![clustered_index] CLUSTERED */")
 	}
 
 	publicIndices := make([]*model.IndexInfo, 0, len(tableInfo.Indices))
@@ -897,9 +906,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 		if idxInfo.Primary {
 			if tableInfo.PKIsHandle || tableInfo.IsCommonHandle {
-				buf.WriteString(fmt.Sprintf(" /*T![clustered_index] CLUSTERED */"))
+				buf.WriteString(" /*T![clustered_index] CLUSTERED */")
 			} else {
-				buf.WriteString(fmt.Sprintf(" /*T![clustered_index] NONCLUSTERED */"))
+				buf.WriteString(" /*T![clustered_index] NONCLUSTERED */")
 			}
 		}
 		if i != len(publicIndices)-1 {

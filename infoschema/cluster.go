@@ -19,8 +19,11 @@ import (
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/sem"
 )
 
 // Cluster table list, attention:
@@ -34,6 +37,8 @@ const (
 	ClusterTableStatementsSummary = "CLUSTER_STATEMENTS_SUMMARY"
 	// ClusterTableStatementsSummaryHistory is the string constant of cluster statement summary history table.
 	ClusterTableStatementsSummaryHistory = "CLUSTER_STATEMENTS_SUMMARY_HISTORY"
+	// ClusterTableTiDBTrx is the string constant of cluster transaction running table.
+	ClusterTableTiDBTrx = "CLUSTER_TIDB_TRX"
 )
 
 // memTableToClusterTables means add memory table to cluster table.
@@ -42,6 +47,7 @@ var memTableToClusterTables = map[string]string{
 	TableProcesslist:              ClusterTableProcesslist,
 	TableStatementsSummary:        ClusterTableStatementsSummary,
 	TableStatementsSummaryHistory: ClusterTableStatementsSummaryHistory,
+	TableTiDBTrx:                  ClusterTableTiDBTrx,
 }
 
 func init() {
@@ -78,12 +84,18 @@ func isClusterTableByName(dbName, tableName string) bool {
 }
 
 // AppendHostInfoToRows appends host info to the rows.
-func AppendHostInfoToRows(rows [][]types.Datum) ([][]types.Datum, error) {
+func AppendHostInfoToRows(ctx sessionctx.Context, rows [][]types.Datum) ([][]types.Datum, error) {
 	serverInfo, err := infosync.GetServerInfo()
 	if err != nil {
 		return nil, err
 	}
 	addr := serverInfo.IP + ":" + strconv.FormatUint(uint64(serverInfo.StatusPort), 10)
+	if sem.IsEnabled() {
+		checker := privilege.GetPrivilegeManager(ctx)
+		if checker == nil || !checker.RequestDynamicVerification(ctx.GetSessionVars().ActiveRoles, "RESTRICTED_TABLES_ADMIN", false) {
+			addr = serverInfo.ID
+		}
+	}
 	for i := range rows {
 		row := make([]types.Datum, 0, len(rows[i])+1)
 		row = append(row, types.NewStringDatum(addr))
