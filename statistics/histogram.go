@@ -1504,14 +1504,22 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 }
 
 func (idx *Index) outOfRange(val types.Datum) bool {
-	if idx.Histogram.Len() == 0 && idx.TopN.Num() == 0 {
+	histEmpty, topNEmpty := idx.Histogram.Len() == 0, idx.TopN.Num() == 0
+	if histEmpty && topNEmpty {
 		return true
 	}
-	inTopN := idx.TopN.findTopN(val.GetBytes()) >= 0
-	withInLowBoundOrPrefixMatch := chunk.Compare(idx.Bounds.GetRow(0), 0, &val) <= 0 ||
-		matchPrefix(idx.Bounds.GetRow(0), 0, &val)
-	withInHighBound := chunk.Compare(idx.Bounds.GetRow(idx.Bounds.NumRows()-1), 0, &val) >= 0
-	return (!withInLowBoundOrPrefixMatch || !withInHighBound) && !inTopN
+	if !topNEmpty && idx.TopN.findTopN(val.GetBytes()) >= 0 {
+		return true
+	}
+	if !histEmpty {
+		withInLowBoundOrPrefixMatch := chunk.Compare(idx.Bounds.GetRow(0), 0, &val) <= 0 ||
+			matchPrefix(idx.Bounds.GetRow(0), 0, &val)
+		withInHighBound := chunk.Compare(idx.Bounds.GetRow(idx.Bounds.NumRows()-1), 0, &val) >= 0
+		if !withInLowBoundOrPrefixMatch || !withInHighBound {
+			return true
+		}
+	}
+	return false
 }
 
 // matchPrefix checks whether ad is the prefix of value
