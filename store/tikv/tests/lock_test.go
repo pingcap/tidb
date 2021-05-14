@@ -497,7 +497,7 @@ func (s *testLockSuite) TestBatchResolveLocks(c *C) {
 	c.Assert(msBeforeLockExpired, Greater, int64(0))
 
 	lr := s.store.NewLockResolver()
-	bo := tikv.NewBackofferWithVars(context.Background(), tikv.GcResolveLockMaxBackoff, nil)
+	bo := tikv.NewGcResolveLockMaxBackoffer(context.Background())
 	loc, err := s.store.GetRegionCache().LocateKey(bo, locks[0].Primary)
 	c.Assert(err, IsNil)
 	// Check BatchResolveLocks resolve the lock even the ttl is not expired.

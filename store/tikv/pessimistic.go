@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -130,7 +131,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -228,7 +229,7 @@ func (actionPessimisticRollback) handleSingleBatch(c *twoPhaseCommitter, bo *Bac
 		return errors.Trace(err)
 	}
 	if regionErr != nil {
-		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+		err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -247,11 +248,11 @@ func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *kv.
 				for _, action := range strings.Split(v, ",") {
 					if action == "delay" {
 						duration := time.Duration(rand.Int63n(int64(time.Second) * 5))
-						logutil.Logger(bo.ctx).Info("[failpoint] injected delay at pessimistic lock",
+						logutil.Logger(bo.GetCtx()).Info("[failpoint] injected delay at pessimistic lock",
 							zap.Uint64("txnStartTS", c.startTS), zap.Duration("duration", duration))
 						time.Sleep(duration)
 					} else if action == "fail" {
-						logutil.Logger(bo.ctx).Info("[failpoint] injected failure at pessimistic lock",
+						logutil.Logger(bo.GetCtx()).Info("[failpoint] injected failure at pessimistic lock",
 							zap.Uint64("txnStartTS", c.startTS))
 						failpoint.Return(errors.New("injected failure at pessimistic lock"))
 					}

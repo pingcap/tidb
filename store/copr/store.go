@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
@@ -122,62 +123,5 @@ func getEndPointType(t kv.StoreType) tikvrpc.EndpointType {
 	}
 }
 
-// backoffer wraps tikv.Backoffer and converts the error which returns by the functions of tikv.Backoffer to tidb error.
-type backoffer struct {
-	b *tikv.Backoffer
-}
-
-// newBackofferWithVars creates a Backoffer with maximum sleep time(in ms) and kv.Variables.
-func newBackofferWithVars(ctx context.Context, maxSleep int, vars *kv.Variables) *backoffer {
-	b := tikv.NewBackofferWithVars(ctx, maxSleep, vars)
-	return &backoffer{b: b}
-}
-
-func newBackoffer(ctx context.Context, maxSleep int) *backoffer {
-	b := tikv.NewBackoffer(ctx, maxSleep)
-	return &backoffer{b: b}
-}
-
-// TiKVBackoffer returns tikv.Backoffer.
-func (b *backoffer) TiKVBackoffer() *tikv.Backoffer {
-	return b.b
-}
-
-// Backoff sleeps a while base on the backoffType and records the error message.
-// It returns a retryable error if total sleep time exceeds maxSleep.
-func (b *backoffer) Backoff(typ tikv.BackoffType, err error) error {
-	e := b.b.Backoff(typ, err)
-	return derr.ToTiDBErr(e)
-}
-
-// BackoffWithMaxSleep sleeps a while base on the backoffType and records the error message
-// and never sleep more than maxSleepMs for each sleep.
-func (b *backoffer) BackoffWithMaxSleep(typ tikv.BackoffType, maxSleepMs int, err error) error {
-	e := b.b.BackoffWithMaxSleep(typ, maxSleepMs, err)
-	return derr.ToTiDBErr(e)
-}
-
-// GetBackoffTimes returns a map contains backoff time count by type.
-func (b *backoffer) GetBackoffTimes() map[tikv.BackoffType]int {
-	return b.b.GetBackoffTimes()
-}
-
-// GetCtx returns the binded context.
-func (b *backoffer) GetCtx() context.Context {
-	return b.b.GetCtx()
-}
-
-// GetVars returns the binded vars.
-func (b *backoffer) GetVars() *tikv.Variables {
-	return b.b.GetVars()
-}
-
-// GetBackoffSleepMS returns a map contains backoff sleep time by type.
-func (b *backoffer) GetBackoffSleepMS() map[tikv.BackoffType]int {
-	return b.b.GetBackoffSleepMS()
-}
-
-// GetTotalSleep returns total sleep time.
-func (b *backoffer) GetTotalSleep() int {
-	return b.b.GetTotalSleep()
-}
+// Backoffer wraps tikv.Backoffer and converts the error which returns by the functions of tikv.Backoffer to tidb error.
+type Backoffer = backoff.Backoffer
