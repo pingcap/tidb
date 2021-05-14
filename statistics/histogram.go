@@ -1504,7 +1504,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 }
 
 func (idx *Index) outOfRange(val types.Datum) bool {
-	if idx.Histogram.Len() == 0 && len(idx.TopN.TopN) == 0 {
+	if idx.Histogram.Len() == 0 && idx.TopN.Num() == 0 {
 		return true
 	}
 	inTopN := idx.TopN.findTopN(val.GetBytes()) >= 0

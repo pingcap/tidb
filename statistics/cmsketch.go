@@ -386,8 +386,11 @@ func CMSketchToProto(c *CMSketch, topn *TopN) *tipb.CMSketch {
 
 // CMSketchAndTopNFromProto converts CMSketch and TopN from its protobuf representation.
 func CMSketchAndTopNFromProto(protoSketch *tipb.CMSketch) (*CMSketch, *TopN) {
+	if protoSketch == nil {
+		return nil, nil
+	}
 	retTopN := TopNFromProto(protoSketch.TopN)
-	if protoSketch == nil || len(protoSketch.Rows) == 0 {
+	if len(protoSketch.Rows) == 0 {
 		return nil, retTopN
 	}
 	c := NewCMSketch(int32(len(protoSketch.Rows)), int32(len(protoSketch.Rows[0].Counters)))
@@ -516,6 +519,13 @@ func (c *TopN) String() string {
 	fmt.Fprint(builder, "]")
 	fmt.Fprint(builder, "}")
 	return builder.String()
+}
+
+func (c *TopN) Num() int {
+	if c == nil {
+		return 0
+	}
+	return len(c.TopN)
 }
 
 // DecodedString returns the value with decoded result.
