@@ -741,7 +741,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			bo := retry.NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, c.txn.vars)
 			now, err := c.store.GetOracle().GetTimestamp(bo.GetCtx(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 			if err != nil {
-				err1 := bo.Backoff(retry.BoPDRPC, err)
+				err1 := bo.BackoffPDRPC(err)
 				if err1 != nil {
 					logutil.Logger(bo.GetCtx()).Warn("keepAlive get tso fail",
 						zap.Error(err))
@@ -804,7 +804,7 @@ func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, tt
 			return 0, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.BackoffRegionMiss(errors.New(regionErr.String()))
 			if err != nil {
 				return 0, errors.Trace(err)
 			}

@@ -153,7 +153,7 @@ func buildBatchCopTasks(bo *Backoffer, cache *tikv.RegionCache, ranges *tikv.Key
 			// As mentioned above, nil rpcCtx is always attributed to failed stores.
 			// It's equal to long poll the store but get no response. Here we'd better use
 			// TiFlash error to trigger the TiKV fallback mechanism.
-			err = bo.Backoff(tikv.BoTiFlashRPC, errors.New("Cannot find region with TiFlash peer"))
+			err = bo.BackoffTiFlashRPC(errors.New("Cannot find region with TiFlash peer"))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

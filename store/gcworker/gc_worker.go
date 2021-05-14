@@ -1080,7 +1080,7 @@ retryScanAndResolve:
 			return stat, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.BackoffRegionMiss(errors.New(regionErr.String()))
 			if err != nil {
 				return stat, errors.Trace(err)
 			}
@@ -1116,7 +1116,7 @@ retryScanAndResolve:
 				return stat, errors.Trace(err1)
 			}
 			if !ok {
-				err = bo.Backoff(tikv.BoTxnLock, errors.Errorf("remain locks: %d", len(locks)))
+				err = bo.BackoffTxnLock(errors.Errorf("remain locks: %d", len(locks)))
 				if err != nil {
 					return stat, errors.Trace(err)
 				}
@@ -1488,7 +1488,7 @@ func (w *GCWorker) resolveLocksAcrossRegions(ctx context.Context, locks []*tikv.
 			return errors.Trace(err)
 		}
 		if !ok {
-			err = bo.Backoff(tikv.BoTxnLock, errors.Errorf("remain locks: %d", len(locks)))
+			err = bo.BackoffTxnLock(errors.Errorf("remain locks: %d", len(locks)))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1516,7 +1516,7 @@ func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) er
 			if errors.Cause(err) == context.Canceled {
 				return errors.Trace(err)
 			}
-			err = bo.Backoff(tikv.BoPDRPC, errors.Errorf("failed to upload safe point to PD, err: %v", err))
+			err = bo.BackoffPDRPC(errors.Errorf("failed to upload safe point to PD, err: %v", err))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1558,7 +1558,7 @@ func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []b
 		// we check regionErr here first, because we know 'regionErr' and 'err' should not return together, to keep it to
 		// make the process correct.
 		if regionErr != nil {
-			err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.BackoffRegionMiss(errors.New(regionErr.String()))
 			if err == nil {
 				continue
 			}

@@ -26,15 +26,6 @@ type Backoffer = retry.Backoffer
 // BackoffType defines the backoff type.
 type BackoffType = retry.BackoffType
 
-// Back off types.
-const (
-	BoRegionMiss  = retry.BoRegionMiss
-	BoTiFlashRPC  = retry.BoTiFlashRPC
-	BoTxnLockFast = retry.BoTxnLockFast
-	BoTxnLock     = retry.BoTxnLock
-	BoPDRPC       = retry.BoPDRPC
-)
-
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
 	gcResolveLockMaxBackoff = 100000

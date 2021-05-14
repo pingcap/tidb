@@ -22,7 +22,6 @@ import (
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
-	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -68,7 +67,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 		return errors.Trace(err)
 	}
 	if regionErr != nil {
-		err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+		err = bo.BackoffRegionMiss(errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
 		}

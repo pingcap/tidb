@@ -334,7 +334,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.BackoffRegionMiss(errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -381,7 +381,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 				return errors.Trace(err)
 			}
 			if msBeforeExpired > 0 {
-				err = bo.BackoffWithMaxSleep(retry.BoTxnLockFast, int(msBeforeExpired), errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
+				err = bo.BackoffWithMaxSleepTxnLockFast(int(msBeforeExpired), errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -493,7 +493,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 			return nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.BackoffRegionMiss(errors.New(regionErr.String()))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -527,7 +527,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 				return nil, errors.Trace(err)
 			}
 			if msBeforeExpired > 0 {
-				err = bo.BackoffWithMaxSleep(retry.BoTxnLockFast, int(msBeforeExpired), errors.New(keyErr.String()))
+				err = bo.BackoffWithMaxSleepTxnLockFast(int(msBeforeExpired), errors.New(keyErr.String()))
 				if err != nil {
 					return nil, errors.Trace(err)
 				}

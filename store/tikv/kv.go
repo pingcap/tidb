@@ -264,7 +264,7 @@ func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64,
 		if err == nil {
 			return startTS, nil
 		}
-		err = bo.Backoff(retry.BoPDRPC, errors.Errorf("get timestamp failed: %v", err))
+		err = bo.BackoffPDRPC(errors.Errorf("get timestamp failed: %v", err))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -284,7 +284,7 @@ func (s *KVStore) getStalenessTimestamp(bo *Backoffer, txnScope string, prevSec 
 		if err == nil {
 			return startTS, nil
 		}
-		err = bo.Backoff(retry.BoPDRPC, errors.Errorf("get staleness timestamp failed: %v", err))
+		err = bo.BackoffPDRPC(errors.Errorf("get staleness timestamp failed: %v", err))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

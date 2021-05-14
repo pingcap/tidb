@@ -226,7 +226,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		if regionErr != nil {
 			logutil.BgLogger().Debug("scanner getData failed",
 				zap.Stringer("regionErr", regionErr))
-			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.BackoffRegionMiss(errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -254,7 +254,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 				return errors.Trace(err)
 			}
 			if msBeforeExpired > 0 {
-				err = bo.BackoffWithMaxSleep(retry.BoTxnLockFast, int(msBeforeExpired), errors.Errorf("key is locked during scanning"))
+				err = bo.BackoffWithMaxSleepTxnLockFast(int(msBeforeExpired), errors.Errorf("key is locked during scanning"))
 				if err != nil {
 					return errors.Trace(err)
 				}

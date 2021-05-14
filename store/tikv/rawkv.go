@@ -375,7 +375,7 @@ func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, reverse bool) (*
 			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err := bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+			err := bo.BackoffRegionMiss(errors.New(regionErr.String()))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -459,7 +459,7 @@ func (c *RawKVClient) doBatchReq(bo *Backoffer, batch batch, cmdType tikvrpc.Cmd
 		return batchResp
 	}
 	if regionErr != nil {
-		err := bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+		err := bo.BackoffRegionMiss(errors.New(regionErr.String()))
 		if err != nil {
 			batchResp.err = errors.Trace(err)
 			return batchResp
@@ -520,7 +520,7 @@ func (c *RawKVClient) sendDeleteRangeReq(startKey []byte, endKey []byte) (*tikvr
 			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err := bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+			err := bo.BackoffRegionMiss(errors.New(regionErr.String()))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -625,7 +625,7 @@ func (c *RawKVClient) doBatchPut(bo *Backoffer, batch batch) error {
 		return errors.Trace(err)
 	}
 	if regionErr != nil {
-		err := bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+		err := bo.BackoffRegionMiss(errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -91,6 +91,6 @@ func (ss *RegionBatchRequestSender) onSendFail(bo *Backoffer, ctxs []copTaskAndR
 	// When a store is not available, the leader of related region should be elected quickly.
 	// TODO: the number of retry time should be limited:since region may be unavailable
 	// when some unrecoverable disaster happened.
-	err = bo.Backoff(tikv.BoTiFlashRPC, errors.Errorf("send tikv request error: %v, ctxs: %v, try next peer later", err, ctxs))
+	err = bo.BackoffTiFlashRPC(errors.Errorf("send tikv request error: %v, ctxs: %v, try next peer later", err, ctxs))
 	return errors.Trace(err)
 }

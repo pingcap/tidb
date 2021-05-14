@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
-	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
 )
@@ -578,7 +577,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	// TODO: the number of retry time should be limited:since region may be unavailable
 	// when some unrecoverable disaster happened.
 	if ctx.Store != nil && ctx.Store.storeType == tikvrpc.TiFlash {
-		err = bo.Backoff(retry.BoTiFlashRPC, errors.Errorf("send tiflash request error: %v, ctx: %v, try next peer later", err, ctx))
+		err = bo.BackoffTiFlashRPC(errors.Errorf("send tiflash request error: %v, ctx: %v, try next peer later", err, ctx))
 	} else {
 		err = bo.BackoffTiKVRPC(errors.Errorf("send tikv request error: %v, ctx: %v, try next peer later", err, ctx))
 	}
@@ -654,7 +653,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 			// isolated and removed from the Raft group. So it's necessary to reload
 			// the region from PD.
 			s.regionCache.InvalidateCachedRegionWithReason(ctx.Region, NoLeader)
-			if err = bo.Backoff(retry.BoRegionMiss, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
+			if err = bo.BackoffRegionMiss(errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
 				return false, errors.Trace(err)
 			}
 		} else {
@@ -690,9 +689,9 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 			zap.String("reason", regionErr.GetServerIsBusy().GetReason()),
 			zap.Stringer("ctx", ctx))
 		if ctx != nil && ctx.Store != nil && ctx.Store.storeType == tikvrpc.TiFlash {
-			err = bo.Backoff(retry.BoTiFlashServerBusy, errors.Errorf("server is busy, ctx: %v", ctx))
+			err = bo.BackoffTiFlashServerBusy(errors.Errorf("server is busy, ctx: %v", ctx))
 		} else {
-			err = bo.Backoff(retry.BoTiKVServerBusy, errors.Errorf("server is busy, ctx: %v", ctx))
+			err = bo.BackoffTiKVServerBusy(errors.Errorf("server is busy, ctx: %v", ctx))
 		}
 		if err != nil {
 			return false, errors.Trace(err)
@@ -701,7 +700,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 	}
 	if regionErr.GetStaleCommand() != nil {
 		logutil.BgLogger().Debug("tikv reports `StaleCommand`", zap.Stringer("ctx", ctx))
-		err = bo.Backoff(retry.BoStaleCmd, errors.Errorf("stale command, ctx: %v", ctx))
+		err = bo.BackoffStaleCmd(errors.Errorf("stale command, ctx: %v", ctx))
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -718,7 +717,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 	}
 	if regionErr.GetMaxTimestampNotSynced() != nil {
 		logutil.BgLogger().Warn("tikv reports `MaxTimestampNotSynced`", zap.Stringer("ctx", ctx))
-		err = bo.Backoff(retry.BoMaxTsNotSynced, errors.Errorf("max timestamp not synced, ctx: %v", ctx))
+		err = bo.BackoffMaxTsNotSynced(errors.Errorf("max timestamp not synced, ctx: %v", ctx))
 		if err != nil {
 			return false, errors.Trace(err)
 		}

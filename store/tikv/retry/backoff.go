@@ -49,19 +49,19 @@ const (
 func (t BackoffType) metric() prometheus.Observer {
 	switch t {
 	// TODO: distinguish tikv and tiflash in metrics
-	case boTiKVRPC, BoTiFlashRPC:
+	case boTiKVRPC, boTiFlashRPC:
 		return metrics.BackoffHistogramRPC
 	case BoTxnLock:
 		return metrics.BackoffHistogramLock
-	case BoTxnLockFast:
+	case boTxnLockFast:
 		return metrics.BackoffHistogramLockFast
 	case BoPDRPC:
 		return metrics.BackoffHistogramPD
-	case BoRegionMiss:
+	case boRegionMiss:
 		return metrics.BackoffHistogramRegionMiss
-	case BoTiKVServerBusy, BoTiFlashServerBusy:
+	case boTiKVServerBusy, boTiFlashServerBusy:
 		return metrics.BackoffHistogramServerBusy
-	case BoStaleCmd:
+	case boStaleCmd:
 		return metrics.BackoffHistogramStaleCmd
 	}
 	return metrics.BackoffHistogramEmpty
@@ -122,16 +122,16 @@ type BackoffType int
 // Back off types.
 const (
 	boTiKVRPC BackoffType = iota
-	BoTiFlashRPC
+	boTiFlashRPC
 	BoTxnLock
-	BoTxnLockFast
+	boTxnLockFast
 	BoPDRPC
-	BoRegionMiss
-	BoTiKVServerBusy
-	BoTiFlashServerBusy
-	BoTxnNotFound
-	BoStaleCmd
-	BoMaxTsNotSynced
+	boRegionMiss
+	boTiKVServerBusy
+	boTiFlashServerBusy
+	boTxnNotFound
+	boStaleCmd
+	boMaxTsNotSynced
 )
 
 func (t BackoffType) createFn(vars *kv.Variables) func(context.Context, int) int {
@@ -139,24 +139,24 @@ func (t BackoffType) createFn(vars *kv.Variables) func(context.Context, int) int
 		vars.Hook(t.String(), vars)
 	}
 	switch t {
-	case boTiKVRPC, BoTiFlashRPC:
+	case boTiKVRPC, boTiFlashRPC:
 		return NewBackoffFn(100, 2000, EqualJitter)
 	case BoTxnLock:
 		return NewBackoffFn(200, 3000, EqualJitter)
-	case BoTxnLockFast:
+	case boTxnLockFast:
 		return NewBackoffFn(vars.BackoffLockFast, 3000, EqualJitter)
 	case BoPDRPC:
 		return NewBackoffFn(500, 3000, EqualJitter)
-	case BoRegionMiss:
+	case boRegionMiss:
 		// change base time to 2ms, because it may recover soon.
 		return NewBackoffFn(2, 500, NoJitter)
-	case BoTxnNotFound:
+	case boTxnNotFound:
 		return NewBackoffFn(2, 500, NoJitter)
-	case BoTiKVServerBusy, BoTiFlashServerBusy:
+	case boTiKVServerBusy, boTiFlashServerBusy:
 		return NewBackoffFn(2000, 10000, EqualJitter)
-	case BoStaleCmd:
+	case boStaleCmd:
 		return NewBackoffFn(2, 1000, NoJitter)
-	case BoMaxTsNotSynced:
+	case boMaxTsNotSynced:
 		return NewBackoffFn(2, 500, NoJitter)
 	}
 	return nil
@@ -166,25 +166,25 @@ func (t BackoffType) String() string {
 	switch t {
 	case boTiKVRPC:
 		return "tikvRPC"
-	case BoTiFlashRPC:
+	case boTiFlashRPC:
 		return "tiflashRPC"
 	case BoTxnLock:
 		return "txnLock"
-	case BoTxnLockFast:
+	case boTxnLockFast:
 		return "txnLockFast"
 	case BoPDRPC:
 		return "pdRPC"
-	case BoRegionMiss:
+	case boRegionMiss:
 		return "regionMiss"
-	case BoTiKVServerBusy:
+	case boTiKVServerBusy:
 		return "tikvServerBusy"
-	case BoTiFlashServerBusy:
+	case boTiFlashServerBusy:
 		return "tiflashServerBusy"
-	case BoStaleCmd:
+	case boStaleCmd:
 		return "staleCommand"
-	case BoTxnNotFound:
+	case boTxnNotFound:
 		return "txnNotFound"
-	case BoMaxTsNotSynced:
+	case boMaxTsNotSynced:
 		return "maxTsNotSynced"
 	}
 	return ""
@@ -195,21 +195,21 @@ func (t BackoffType) TError() error {
 	switch t {
 	case boTiKVRPC:
 		return tikverr.ErrTiKVServerTimeout
-	case BoTiFlashRPC:
+	case boTiFlashRPC:
 		return tikverr.ErrTiFlashServerTimeout
-	case BoTxnLock, BoTxnLockFast, BoTxnNotFound:
+	case BoTxnLock, boTxnLockFast, boTxnNotFound:
 		return tikverr.ErrResolveLockTimeout
 	case BoPDRPC:
 		return tikverr.NewErrPDServerTimeout("")
-	case BoRegionMiss:
+	case boRegionMiss:
 		return tikverr.ErrRegionUnavailable
-	case BoTiKVServerBusy:
+	case boTiKVServerBusy:
 		return tikverr.ErrTiKVServerBusy
-	case BoTiFlashServerBusy:
+	case boTiFlashServerBusy:
 		return tikverr.ErrTiFlashServerBusy
-	case BoStaleCmd:
+	case boStaleCmd:
 		return tikverr.ErrTiKVStaleCommand
-	case BoMaxTsNotSynced:
+	case boMaxTsNotSynced:
 		return tikverr.ErrTiKVMaxTimestampNotSynced
 	}
 	return tikverr.ErrUnknown
@@ -283,6 +283,72 @@ func (b *Backoffer) Backoff(typ BackoffType, err error) error {
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) BackoffTiKVRPC(err error) error {
 	return b.Backoff(boTiKVRPC, err)
+}
+
+// BackoffTiFlashRPC sleeps a while base on the TiFlash and records the error message.
+// It returns a retryable error if total sleep time exceeds maxSleep.
+func (b *Backoffer) BackoffTiFlashRPC(err error) error {
+	return b.Backoff(boTiFlashRPC, err)
+}
+
+// BackoffTxnLock sleeps a while base on the TxnLock and records the error message.
+// It returns a retryable error if total sleep time exceeds maxSleep.
+func (b *Backoffer) BackoffTxnLock(err error) error {
+	return b.Backoff(BoTxnLock, err)
+}
+
+// BackoffPDRPC sleeps a while base on the PDRPC and records the error message.
+// It returns a retryable error if total sleep time exceeds maxSleep.
+func (b *Backoffer) BackoffPDRPC(err error) error {
+	return b.Backoff(BoPDRPC, err)
+}
+
+// BackoffRegionMiss sleeps a while base on the RegionMiss and records the error message.
+// It returns a retryable error if total sleep time exceeds maxSleep.
+func (b *Backoffer) BackoffRegionMiss(err error) error {
+	return b.Backoff(boRegionMiss, err)
+}
+
+// BackoffTiKVServerBusy sleeps a while base on the TiKVServerBusy and records the error message.
+// It returns a retryable error if total sleep time exceeds maxSleep.
+func (b *Backoffer) BackoffTiKVServerBusy(err error) error {
+	return b.Backoff(boTiKVServerBusy, err)
+}
+
+// BackoffTiFlashServerBusy sleeps a while base on the TiFlashServerBusy and records the error message.
+// It returns a retryable error if total sleep time exceeds maxSleep.
+func (b *Backoffer) BackoffTiFlashServerBusy(err error) error {
+	return b.Backoff(boTiFlashServerBusy, err)
+}
+
+// BackoffTxnNotFound sleeps a while base on the TxnNotFound and records the error message.
+// It returns a retryable error if total sleep time exceeds maxSleep.
+func (b *Backoffer) BackoffTxnNotFound(err error) error {
+	return b.Backoff(boTxnNotFound, err)
+}
+
+// BackoffStaleCmd sleeps a while base on the StaleCmd and records the error message.
+// It returns a retryable error if total sleep time exceeds maxSleep.
+func (b *Backoffer) BackoffStaleCmd(err error) error {
+	return b.Backoff(boStaleCmd, err)
+}
+
+// BackoffMaxTsNotSynced sleeps a while base on the MaxTsNotSynced and records the error message.
+// It returns a retryable error if total sleep time exceeds maxSleep.
+func (b *Backoffer) BackoffMaxTsNotSynced(err error) error {
+	return b.Backoff(boMaxTsNotSynced, err)
+}
+
+// BackoffWithMaxSleepTxnLockFast sleeps a while base on the TxnLockFast and records the error message
+// and never sleep more than maxSleepMs for each sleep.
+func (b *Backoffer) BackoffWithMaxSleepTxnLockFast(maxSleepMs int, err error) error {
+	return b.BackoffWithMaxSleep(boTxnLockFast, maxSleepMs, err)
+}
+
+// BackoffWithMaxSleepTxnLock sleeps a while base on the TxnLock and records the error message
+// and never sleep more than maxSleepMs for each sleep.
+func (b *Backoffer) BackoffWithMaxSleepTxnLock(maxSleepMs int, err error) error {
+	return b.BackoffWithMaxSleep(BoTxnLock, maxSleepMs, err)
 }
 
 // BackoffWithMaxSleep sleeps a while base on the backoffType and records the error message

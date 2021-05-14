@@ -43,13 +43,6 @@ func (b *Backoffer) TiKVBackoffer() *tikv.Backoffer {
 	return b.b
 }
 
-// Backoff sleeps a while base on the backoffType and records the error message.
-// It returns a retryable error if total sleep time exceeds maxSleep.
-func (b *Backoffer) Backoff(typ tikv.BackoffType, err error) error {
-	e := b.b.Backoff(typ, err)
-	return derr.ToTiDBErr(e)
-}
-
 // BackoffTiKVRPC sleeps a while base on the TiKVRPC and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) BackoffTiKVRPC(err error) error {
@@ -57,10 +50,38 @@ func (b *Backoffer) BackoffTiKVRPC(err error) error {
 	return derr.ToTiDBErr(e)
 }
 
-// BackoffWithMaxSleep sleeps a while base on the backoffType and records the error message
+// BackoffTiFlashRPC sleeps a while base on the TiFlash and records the error message.
+// It returns a retryable error if total sleep time exceeds maxSleep.
+func (b *Backoffer) BackoffTiFlashRPC(err error) error {
+	e := b.b.BackoffTiFlashRPC(err)
+	return derr.ToTiDBErr(e)
+}
+
+// BackoffTxnLock sleeps a while base on the TxnLock and records the error message.
+// It returns a retryable error if total sleep time exceeds maxSleep.
+func (b *Backoffer) BackoffTxnLock(err error) error {
+	e := b.b.BackoffTxnLock(err)
+	return derr.ToTiDBErr(e)
+}
+
+// BackoffPDRPC sleeps a while base on the PDRPC and records the error message.
+// It returns a retryable error if total sleep time exceeds maxSleep.
+func (b *Backoffer) BackoffPDRPC(err error) error {
+	e := b.b.BackoffPDRPC(err)
+	return derr.ToTiDBErr(e)
+}
+
+// BackoffRegionMiss sleeps a while base on the RegionMiss and records the error message.
+// It returns a retryable error if total sleep time exceeds maxSleep.
+func (b *Backoffer) BackoffRegionMiss(err error) error {
+	e := b.b.BackoffRegionMiss(err)
+	return derr.ToTiDBErr(e)
+}
+
+// BackoffWithMaxSleepTxnLockFast sleeps a while base on the TxnLockFast and records the error message
 // and never sleep more than maxSleepMs for each sleep.
-func (b *Backoffer) BackoffWithMaxSleep(typ tikv.BackoffType, maxSleepMs int, err error) error {
-	e := b.b.BackoffWithMaxSleep(typ, maxSleepMs, err)
+func (b *Backoffer) BackoffWithMaxSleepTxnLockFast(maxSleepMs int, err error) error {
+	e := b.b.BackoffWithMaxSleepTxnLockFast(maxSleepMs, err)
 	return derr.ToTiDBErr(e)
 }
 

@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -192,7 +192,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 					sync.Mutex
 					BackoffTypes []fmt.Stringer
 				}{
-					BackoffTypes: []fmt.Stringer{tikv.BoTxnLock},
+					BackoffTypes: []fmt.Stringer{retry.BoTxnLock},
 				},
 				ResolveLockTime:   10000,
 				WriteKeys:         100000,
@@ -268,7 +268,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummaryElement.sumTxnRetry += int64(stmtExecInfo2.ExecDetail.CommitDetail.TxnRetry)
 	expectedSummaryElement.maxTxnRetry = stmtExecInfo2.ExecDetail.CommitDetail.TxnRetry
 	expectedSummaryElement.sumBackoffTimes += 1
-	expectedSummaryElement.backoffTypes[tikv.BoTxnLock] = 1
+	expectedSummaryElement.backoffTypes[retry.BoTxnLock] = 1
 	expectedSummaryElement.sumMem += stmtExecInfo2.MemMax
 	expectedSummaryElement.maxMem = stmtExecInfo2.MemMax
 	expectedSummaryElement.sumDisk += stmtExecInfo2.DiskMax
@@ -319,7 +319,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 					sync.Mutex
 					BackoffTypes []fmt.Stringer
 				}{
-					BackoffTypes: []fmt.Stringer{tikv.BoTxnLock},
+					BackoffTypes: []fmt.Stringer{retry.BoTxnLock},
 				},
 				ResolveLockTime:   1000,
 				WriteKeys:         10000,
@@ -374,7 +374,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummaryElement.sumPrewriteRegionNum += int64(stmtExecInfo3.ExecDetail.CommitDetail.PrewriteRegionNum)
 	expectedSummaryElement.sumTxnRetry += int64(stmtExecInfo3.ExecDetail.CommitDetail.TxnRetry)
 	expectedSummaryElement.sumBackoffTimes += 1
-	expectedSummaryElement.backoffTypes[tikv.BoTxnLock] = 2
+	expectedSummaryElement.backoffTypes[retry.BoTxnLock] = 2
 	expectedSummaryElement.sumMem += stmtExecInfo3.MemMax
 	expectedSummaryElement.sumDisk += stmtExecInfo3.DiskMax
 	expectedSummaryElement.sumAffectedRows += stmtExecInfo3.StmtCtx.AffectedRows()
@@ -575,7 +575,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 					sync.Mutex
 					BackoffTypes []fmt.Stringer
 				}{
-					BackoffTypes: []fmt.Stringer{tikv.BoTxnLock},
+					BackoffTypes: []fmt.Stringer{retry.BoTxnLock},
 				},
 				ResolveLockTime:   2000,
 				WriteKeys:         20000,
@@ -960,10 +960,10 @@ func (s *testStmtSummarySuite) TestFormatBackoffTypes(c *C) {
 	backoffMap := make(map[fmt.Stringer]int)
 	c.Assert(formatBackoffTypes(backoffMap), IsNil)
 
-	backoffMap[tikv.BoPDRPC] = 1
+	backoffMap[retry.BoPDRPC] = 1
 	c.Assert(formatBackoffTypes(backoffMap), Equals, "pdRPC:1")
 
-	backoffMap[tikv.BoTxnLock] = 2
+	backoffMap[retry.BoTxnLock] = 2
 	c.Assert(formatBackoffTypes(backoffMap), Equals, "txnLock:2,pdRPC:1")
 }
 
