@@ -1,0 +1,196 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package deadlockhistory
+
+import (
+	"testing"
+	"time"
+
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/types"
+)
+
+type testDeadlockHistorySuite struct{}
+
+var _ = Suite(&testDeadlockHistorySuite{})
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
+
+func (s *testDeadlockHistorySuite) TestDeadlockHistoryCollection(c *C) {
+	h := NewDeadlockHistory(1)
+	c.Assert(len(h.GetAll()), Equals, 0)
+
+	rec1 := &DeadlockRecord{
+		OccurTime: time.Now(),
+	}
+	h.Push(rec1)
+	res := h.GetAll()
+	c.Assert(len(res), Equals, 1)
+	c.Assert(res[0], Equals, rec1) // Checking pointer equals is ok.
+	c.Assert(res[0].ID, Equals, uint64(1))
+
+	rec2 := &DeadlockRecord{
+		OccurTime: time.Now(),
+	}
+	h.Push(rec2)
+	res = h.GetAll()
+	c.Assert(len(res), Equals, 1)
+	c.Assert(res[0], Equals, rec2)
+	c.Assert(res[0].ID, Equals, uint64(2))
+
+	h.Clear()
+	c.Assert(len(h.GetAll()), Equals, 0)
+
+	h = NewDeadlockHistory(3)
+	rec1 = &DeadlockRecord{
+		OccurTime: time.Now(),
+	}
+	h.Push(rec1)
+	res = h.GetAll()
+	c.Assert(len(res), Equals, 1)
+	c.Assert(res[0], Equals, rec1) // Checking pointer equals is ok.
+	c.Assert(res[0].ID, Equals, uint64(1))
+
+	rec2 = &DeadlockRecord{
+		OccurTime: time.Now(),
+	}
+	h.Push(rec2)
+	res = h.GetAll()
+	c.Assert(len(res), Equals, 2)
+	c.Assert(res[0], Equals, rec1)
+	c.Assert(res[0].ID, Equals, uint64(1))
+	c.Assert(res[1], Equals, rec2)
+	c.Assert(res[1].ID, Equals, uint64(2))
+
+	rec3 := &DeadlockRecord{
+		OccurTime: time.Now(),
+	}
+	h.Push(rec3)
+	res = h.GetAll()
+	c.Assert(len(res), Equals, 3)
+	c.Assert(res[0], Equals, rec1)
+	c.Assert(res[0].ID, Equals, uint64(1))
+	c.Assert(res[1], Equals, rec2)
+	c.Assert(res[1].ID, Equals, uint64(2))
+	c.Assert(res[2], Equals, rec3)
+	c.Assert(res[2].ID, Equals, uint64(3))
+
+	// Continuously pushing items to check the correctness of the deque
+	expectedItems := []*DeadlockRecord{rec1, rec2, rec3}
+	expectedIDs := []uint64{1, 2, 3}
+	for i := 0; i < 6; i++ {
+		newRec := &DeadlockRecord{
+			OccurTime: time.Now(),
+		}
+		h.Push(newRec)
+		expectedItems = append(expectedItems[1:], newRec)
+		for idx := range expectedIDs {
+			expectedIDs[idx]++
+		}
+
+		res = h.GetAll()
+		c.Assert(len(res), Equals, 3)
+		for idx, item := range res {
+			c.Assert(item, Equals, expectedItems[idx])
+			c.Assert(item.ID, Equals, expectedIDs[idx])
+		}
+	}
+
+	h.Clear()
+	c.Assert(len(h.GetAll()), Equals, 0)
+}
+
+func (s *testDeadlockHistorySuite) TestGetDatum(c *C) {
+	time1 := time.Date(2021, 05, 14, 15, 28, 30, 123456000, time.UTC)
+	time2 := time.Date(2022, 06, 15, 16, 29, 31, 123457000, time.UTC)
+
+	h := NewDeadlockHistory(10)
+	h.Push(&DeadlockRecord{
+		OccurTime: time1,
+		WaitChain: []WaitChainItem{
+			{
+				TryLockTxn:     101,
+				SQLDigest:      "sql1",
+				Key:            []byte("k1"),
+				SQLs:           []string{"sql1", "sql2"},
+				TxnHoldingLock: 102,
+			},
+			// It should work even some information are missing.
+			{
+				TryLockTxn:     102,
+				TxnHoldingLock: 101,
+			},
+		},
+	})
+	h.Push(&DeadlockRecord{
+		OccurTime: time2,
+		WaitChain: []WaitChainItem{
+			{
+				TryLockTxn:     201,
+				TxnHoldingLock: 202,
+			},
+			{
+				TryLockTxn:     202,
+				TxnHoldingLock: 201,
+			},
+		},
+	})
+	// A deadlock error without wait chain shows nothing in the query result.
+	h.Push(&DeadlockRecord{
+		OccurTime: time.Now(),
+		WaitChain: nil,
+	})
+
+	res := h.GetAllDatum()
+	c.Assert(len(res), Equals, 4)
+	for _, row := range res {
+		c.Assert(len(row), Equals, 7)
+	}
+
+	toGoTime := func(d types.Datum) time.Time {
+		v, ok := d.GetValue().(types.Time)
+		c.Assert(ok, IsTrue)
+		t, err := v.GoTime(time.UTC)
+		c.Assert(err, IsNil)
+		return t
+	}
+
+	c.Assert(res[0][0].GetValue(), Equals, uint64(1))      // ID
+	c.Assert(toGoTime(res[0][1]), Equals, time1)           // OCCUR_TIME
+	c.Assert(res[0][2].GetValue(), Equals, uint64(101))    // TRY_LOCK_TRX_ID
+	c.Assert(res[0][3].GetValue(), Equals, "sql1")         // SQL_DIGEST
+	c.Assert(res[0][4].GetValue(), Equals, "6B31")         // KEY
+	c.Assert(res[0][5].GetValue(), Equals, "[sql1, sql2]") // SQLS
+	c.Assert(res[0][6].GetValue(), Equals, uint64(102))    // TRX_HOLDING_LOCK
+
+	c.Assert(res[1][0].GetValue(), Equals, uint64(1))   // ID
+	c.Assert(toGoTime(res[1][1]), Equals, time1)        // OCCUR_TIME
+	c.Assert(res[1][2].GetValue(), Equals, uint64(102)) // TRY_LOCK_TRX_ID
+	c.Assert(res[1][3].GetValue(), Equals, nil)         // SQL_DIGEST
+	c.Assert(res[1][4].GetValue(), Equals, nil)         // KEY
+	c.Assert(res[1][5].GetValue(), Equals, nil)         // SQLS
+	c.Assert(res[1][6].GetValue(), Equals, uint64(101)) // TRX_HOLDING_LOCK
+
+	c.Assert(res[2][0].GetValue(), Equals, uint64(2))   // ID
+	c.Assert(toGoTime(res[2][1]), Equals, time2)        // OCCUR_TIME
+	c.Assert(res[2][2].GetValue(), Equals, uint64(201)) // TRY_LOCK_TRX_ID
+	c.Assert(res[2][6].GetValue(), Equals, uint64(202)) // TRX_HOLDING_LOCK
+
+	c.Assert(res[3][0].GetValue(), Equals, uint64(2))   // ID
+	c.Assert(toGoTime(res[3][1]), Equals, time2)        // OCCUR_TIME
+	c.Assert(res[3][2].GetValue(), Equals, uint64(202)) // TRY_LOCK_TRX_ID
+	c.Assert(res[3][6].GetValue(), Equals, uint64(201)) // TRX_HOLDING_LOCK
+}

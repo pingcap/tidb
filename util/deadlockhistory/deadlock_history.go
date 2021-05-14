@@ -38,6 +38,8 @@ type WaitChainItem struct {
 
 // DeadlockRecord represents a deadlock events, and contains multiple transactions' information.
 type DeadlockRecord struct {
+	// The ID don't need to be set manually and it's set when it's added into the DeadlockHistory by invoking its Push
+	// method.
 	ID        uint64
 	OccurTime time.Time
 	WaitChain []WaitChainItem
@@ -73,15 +75,20 @@ func NewDeadlockHistory(capacity int) *DeadlockHistory {
 // TODO: Make the capacity configurable
 var GlobalDeadlockHistory = NewDeadlockHistory(10)
 
-// Push pushes an element into the queue.
+// Push pushes an element into the queue. It will set the `ID` field of the record, and add the pointer directly to
+// the collection. Be aware that do not modify the record's content after pushing.
 func (d *DeadlockHistory) Push(record *DeadlockRecord) {
 	d.Lock()
 	defer d.Unlock()
 
+	capacity := len(d.deadlocks)
+	if capacity == 0 {
+		return
+	}
+
 	record.ID = d.currentID
 	d.currentID++
 
-	capacity := len(d.deadlocks)
 	if d.size == capacity {
 		// The current head is popped and it's cell becomes the latest pushed item.
 		d.deadlocks[d.head] = record
@@ -111,7 +118,7 @@ func (d *DeadlockHistory) GetAll() []*DeadlockRecord {
 }
 
 // GetAllDatum gets all collected deadlock events, and make it into datum that matches the definition of the table
-// `DEAD_LOCK`'s definition.
+// `INFORMATION_SCHEMA.DEAD_LOCK`.
 func (d *DeadlockHistory) GetAllDatum() [][]types.Datum {
 	records := d.GetAll()
 	rowsCount := 0
@@ -124,7 +131,7 @@ func (d *DeadlockHistory) GetAllDatum() [][]types.Datum {
 	row := make([]interface{}, 7)
 	for _, rec := range records {
 		row[0] = rec.ID
-		row[1] = types.NewTime(types.FromGoTime(rec.OccurTime), mysql.TypeTimestamp, 0)
+		row[1] = types.NewTime(types.FromGoTime(rec.OccurTime), mysql.TypeTimestamp, types.MaxFsp)
 
 		for _, item := range rec.WaitChain {
 			row[2] = item.TryLockTxn
@@ -141,10 +148,11 @@ func (d *DeadlockHistory) GetAllDatum() [][]types.Datum {
 
 			row[5] = nil
 			if item.SQLs != nil {
-				row = append(row, "["+strings.Join(item.SQLs, ", ")+"]")
+				row[5] = "[" + strings.Join(item.SQLs, ", ") + "]"
 			}
 
 			row[6] = item.TxnHoldingLock
+
 			rows = append(rows, types.MakeDatums(row...))
 		}
 	}
