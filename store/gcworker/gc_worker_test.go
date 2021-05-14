@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -1601,7 +1600,7 @@ func (s *testGCWorkerSuite) TestGCWithPendingTxn(c *C) {
 	v1 := []byte("v1")
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.SetOption(tikvstore.Pessimistic, true)
+	txn.SetOption(kv.Pessimistic, true)
 	lockCtx := &kv.LockCtx{ForUpdateTS: txn.StartTS(), WaitStartTime: time.Now()}
 
 	// Lock the key.
