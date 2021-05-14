@@ -3919,9 +3919,9 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	}()
 
 	// update subquery table should be forbidden
-	var asNameList []string
-	asNameList = extractTableSourceAsNames(update.TableRefs.TableRefs, asNameList, true)
-	for _, asName := range asNameList {
+	var notUpdatableTbl []string
+	notUpdatableTbl = extractTableSourceAsNames(update.TableRefs.TableRefs, notUpdatableTbl, true)
+	for _, asName := range notUpdatableTbl {
 		for _, assign := range update.List {
 			if assign.Column.Table.L == asName {
 				return nil, ErrNonUpdatableTable.GenWithStackByArgs(asName, "UPDATE")
@@ -3993,7 +3993,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 
 	var updateTableList []*ast.TableName
 	updateTableList = extractTableList(update.TableRefs.TableRefs, updateTableList, true)
-	orderedList, np, allAssignmentsAreConstant, err := b.buildUpdateLists(ctx, updateTableList, update.List, p)
+	orderedList, np, allAssignmentsAreConstant, err := b.buildUpdateLists(ctx, updateTableList, update.List, p, notUpdatableTbl)
 	if err != nil {
 		return nil, err
 	}
@@ -4076,16 +4076,8 @@ func checkUpdateList(ctx sessionctx.Context, tblID2table map[int64]table.Table, 
 	return nil
 }
 
-func (b *PlanBuilder) buildUpdateLists(
-	ctx context.Context,
-	tableList []*ast.TableName,
-	list []*ast.Assignment,
-	p LogicalPlan,
-) (newList []*expression.Assignment,
-	po LogicalPlan,
-	allAssignmentsAreConstant bool,
-	e error,
-) {
+func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan,
+	notUpdatableTbl []string) (newList []*expression.Assignment, po LogicalPlan, allAssignmentsAreConstant bool, e error) {
 	b.curClause = fieldList
 	// modifyColumns indicates which columns are in set list,
 	// and if it is set to `DEFAULT`
@@ -4121,8 +4113,18 @@ func (b *PlanBuilder) buildUpdateLists(
 	// If columns in set list contains generated columns, raise error.
 	// And, fill virtualAssignments here; that's for generated columns.
 	virtualAssignments := make([]*ast.Assignment, 0)
-
 	for _, tn := range tableList {
+		// Only generate virtual to updatable table, skip not updatable table(i.e. table in update's subQuery)
+		updatable := true
+		for _, nTbl := range notUpdatableTbl {
+			if tn.Name.L == nTbl {
+				updatable = false
+				break
+			}
+		}
+		if !updatable {
+			continue
+		}
 		tableInfo := tn.TableInfo
 		tableVal, found := b.is.TableByID(tableInfo.ID)
 		if !found {
