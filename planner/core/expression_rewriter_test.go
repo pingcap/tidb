@@ -395,3 +395,20 @@ func (s *testExpressionRewriterSuite) TestIssue22818(c *C) {
 	tk.MustQuery("select * from t where a between \"23:22:22\" and \"23:22:22\"").Check(
 		testkit.Rows("23:22:22"))
 }
+
+func (s *testExpressionRewriterSuite) TestPositionExpr(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int, c int);")
+	tk.MustQuery("select a from t group by a having sum(b) > 0 order by 1;")
+	tk.MustGetErrMsg("select a from t group by a having sum(b) > 0 order by 2;", "Unknown column '2' in 'order clause'")
+}

@@ -107,7 +107,7 @@ func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNo
 // asScalar means whether this expression must be treated as a scalar expression.
 // And this function returns a result expression, a new plan that may have apply or semi-join.
 func (b *PlanBuilder) rewrite(ctx context.Context, exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (expression.Expression, LogicalPlan, error) {
-	expr, resultPlan, err := b.rewriteWithPreprocess(ctx, exprNode, p, aggMapper, nil, asScalar, nil)
+	expr, resultPlan, err := b.rewriteWithPreprocess(ctx, exprNode, p, aggMapper, nil, asScalar, nil, 0)
 	return expr, resultPlan, err
 }
 
@@ -121,6 +121,7 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	windowMapper map[*ast.WindowFuncExpr]int,
 	asScalar bool,
 	preprocess func(ast.Node) ast.Node,
+	oldLen int,
 ) (expression.Expression, LogicalPlan, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
@@ -138,6 +139,7 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	rewriter.windowMap = windowMapper
 	rewriter.asScalar = asScalar
 	rewriter.preprocess = preprocess
+	rewriter.oldLen = oldLen
 
 	expr, resultPlan, err := b.rewriteExprNode(rewriter, exprNode, asScalar)
 	return expr, resultPlan, err
@@ -215,6 +217,7 @@ type expressionRewriter struct {
 	p          LogicalPlan
 	schema     *expression.Schema
 	names      []*types.FieldName
+	oldLen     int
 	err        error
 	aggrMap    map[*ast.AggregateFuncExpr]int
 	windowMap  map[*ast.WindowFuncExpr]int
@@ -1349,7 +1352,7 @@ func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
 		}
 		er.err = err
 	}
-	if er.err == nil && pos > 0 && pos <= er.schema.Len() {
+	if er.err == nil && pos > 0 && pos <= er.schema.Len() && (er.oldLen <= 0 || pos <= er.oldLen) {
 		er.ctxStackAppend(er.schema.Columns[pos-1], er.names[pos-1])
 	} else {
 		er.err = ErrUnknownColumn.GenWithStackByArgs(str, clauseMsg[er.b.curClause])
