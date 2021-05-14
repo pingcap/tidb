@@ -17,11 +17,12 @@ type stmtSummaryByDigestEvicted struct {
 
 // element being stored in stmtSummaryByDigestEvicted
 type stmtSummaryByDigestEvictedElement struct {
+	// beginTime is the begin time of current interval
+	beginTime int64
+	// endTime is the end time of current interval
+	endTime int64
 	// *Kinds* of digest being evicted
 	digestKeyMap map[string]struct{}
-
-	// summary of digest being evicted
-	sum *stmtSummaryByDigestElement
 }
 
 // spawn a new pointer to stmtSummaryByDigestEvicted
@@ -33,12 +34,10 @@ func newStmtSummaryByDigestEvicted() *stmtSummaryByDigestEvicted {
 
 // spawn a new pointer to stmtSummaryByDigestEvictedElement
 func newStmtSummaryByDigestEvictedElement(beginTimeForCurrentInterval int64, intervalSeconds int64) *stmtSummaryByDigestEvictedElement {
-	ssElement := new(stmtSummaryByDigestElement)
-	ssElement.beginTime = beginTimeForCurrentInterval
-	ssElement.endTime = beginTimeForCurrentInterval + intervalSeconds
 	return &stmtSummaryByDigestEvictedElement{
+		beginTime: beginTimeForCurrentInterval,
+		endTime: beginTimeForCurrentInterval + intervalSeconds,
 		digestKeyMap: make(map[string]struct{}),
-		sum:          ssElement,
 	}
 }
 
@@ -49,8 +48,9 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 	evictedValue.Lock()
 	defer evictedValue.Unlock()
 	for e := evictedValue.history.Back(); e != nil; e = e.Prev() {
-		eBeginTime := e.Value.(*stmtSummaryByDigestElement).beginTime
-		eEndTime := e.Value.(*stmtSummaryByDigestElement).endTime
+		evictedElement := e.Value.(*stmtSummaryByDigestElement)
+		eBeginTime := evictedElement.beginTime
+		eEndTime := evictedElement.endTime
 
 		// prevent exceeding history size
 		for ssbde.history.Len() >= historySize && ssbde.history.Len() > 1 {
@@ -63,7 +63,7 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 			beginTime := eBeginTime
 			intervalSeconds := eEndTime - eBeginTime
 			record := newStmtSummaryByDigestEvictedElement(beginTime, intervalSeconds)
-			record.addEvicted(evictedKey, e.Value.(*stmtSummaryByDigestElement))
+			record.addEvicted(evictedKey, evictedElement)
 			ssbde.history.PushBack(record)
 
 			if evictedKey == nil {
@@ -73,13 +73,14 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 		}
 
 		for h := ssbde.history.Back(); h != nil; h = h.Prev() {
-			sBeginTime := h.Value.(*stmtSummaryByDigestEvictedElement).sum.beginTime
-			sEndTime := h.Value.(*stmtSummaryByDigestEvictedElement).sum.endTime
+			historyElement := h.Value.(*stmtSummaryByDigestEvictedElement)
+			sBeginTime := historyElement.beginTime
+			sEndTime := historyElement.endTime
 
 			if sBeginTime <= eBeginTime &&
 				sEndTime >= eEndTime {
 				// is in this history interval
-				h.Value.(*stmtSummaryByDigestEvictedElement).addEvicted(evictedKey, e.Value.(*stmtSummaryByDigestElement))
+				historyElement.addEvicted(evictedKey, evictedElement)
 				break
 			}
 
@@ -88,7 +89,7 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 				beginTime := eBeginTime
 				intervalSeconds := eEndTime - eBeginTime
 				record := newStmtSummaryByDigestEvictedElement(beginTime, intervalSeconds)
-				record.addEvicted(evictedKey, e.Value.(*stmtSummaryByDigestElement))
+				record.addEvicted(evictedKey, evictedElement)
 				ssbde.history.InsertAfter(record, h)
 				break
 			}
@@ -107,7 +108,7 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 					beginTime := eBeginTime
 					intervalSeconds := eEndTime - eBeginTime
 					record := newStmtSummaryByDigestEvictedElement(beginTime, intervalSeconds)
-					record.addEvicted(evictedKey, e.Value.(*stmtSummaryByDigestElement))
+					record.addEvicted(evictedKey, evictedElement)
 					ssbde.history.PushFront(record)
 					break
 				}
@@ -142,8 +143,8 @@ func (ssbde *stmtSummaryByDigestEvicted) ToEvictedCountDatum() [][]types.Datum {
 // toEvictedCountDatum converts evicted record to `EvictedCount` record's datum
 func (seElement *stmtSummaryByDigestEvictedElement) toEvictedCountDatum() []types.Datum {
 	datum := types.MakeDatums(
-		types.NewTime(types.FromGoTime(time.Unix(seElement.sum.beginTime, 0)), mysql.TypeTimestamp, 0),
-		types.NewTime(types.FromGoTime(time.Unix(seElement.sum.endTime, 0)), mysql.TypeTimestamp, 0),
+		types.NewTime(types.FromGoTime(time.Unix(seElement.beginTime, 0)), mysql.TypeTimestamp, 0),
+		types.NewTime(types.FromGoTime(time.Unix(seElement.endTime, 0)), mysql.TypeTimestamp, 0),
 		int64(len(seElement.digestKeyMap)),
 	)
 	return datum
