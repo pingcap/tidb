@@ -305,7 +305,11 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "datetime_format", Value: "%Y-%m-%d %H:%i:%s"},
 	{Scope: ScopeGlobal, Name: "log_syslog", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: "transaction_alloc_block_size", Value: "8192"},
+<<<<<<< HEAD
 	{Scope: ScopeGlobal, Name: "innodb_large_prefix", Type: TypeBool, Value: BoolOff},
+=======
+	{Scope: ScopeGlobal, Name: "innodb_large_prefix", Type: TypeBool, Value: On},
+>>>>>>> 80a557eb4... sessionctx: change innodb large prefix default (#24555)
 	{Scope: ScopeNone, Name: "performance_schema_max_cond_classes", Value: "80"},
 	{Scope: ScopeGlobal, Name: "innodb_io_capacity", Value: "200"},
 	{Scope: ScopeGlobal, Name: "max_binlog_cache_size", Value: "18446744073709547520"},
