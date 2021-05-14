@@ -9086,9 +9086,15 @@ func (s *testIntegrationSuite) TestEnumPushDown(c *C) {
 func (s *testIntegrationSuite) TestJiraSetInnoDBDefaultRowFormat(c *C) {
 	// For issue #23541
 	// JIRA needs to be able to set this to be happy.
+	// See: https://nova.moe/run-jira-on-tidb/
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set global innodb_default_row_format = dynamic")
 	tk.MustExec("set global innodb_default_row_format = 'dynamic'")
+	tk.MustQuery("SHOW VARIABLES LIKE 'innodb_default_row_format'").Check(testkit.Rows("innodb_default_row_format dynamic"))
+	tk.MustQuery("SHOW VARIABLES LIKE 'character_set_server'").Check(testkit.Rows("character_set_server utf8mb4"))
+	tk.MustQuery("SHOW VARIABLES LIKE 'innodb_file_format'").Check(testkit.Rows("innodb_file_format Barracuda"))
+	tk.MustQuery("SHOW VARIABLES LIKE 'innodb_large_prefix'").Check(testkit.Rows("innodb_large_prefix ON"))
+
 }
 
 func (s *testIntegrationSerialSuite) TestCollationForBinaryLiteral(c *C) {
