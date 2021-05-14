@@ -230,9 +230,9 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 						continue
 					}
 					var str string
-					switch val.(type) {
+					switch val := val.(type) {
 					case string: // remove quotes
-						str = val.(string)
+						str = val
 					default:
 						tmp, err := json.Marshal(val)
 						if err != nil {

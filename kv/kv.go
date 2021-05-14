@@ -174,8 +174,6 @@ type Transaction interface {
 	GetMemBuffer() MemBuffer
 	// GetSnapshot returns the Snapshot binding to this transaction.
 	GetSnapshot() Snapshot
-	// GetUnionStore returns the UnionStore binding to this transaction.
-	GetUnionStore() UnionStore
 	// SetVars sets variables to the transaction.
 	SetVars(vars interface{})
 	// GetVars gets variables from the transaction.
