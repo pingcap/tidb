@@ -14,10 +14,14 @@
 package deadlockhistory
 
 import (
+	"github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -193,4 +197,51 @@ func (s *testDeadlockHistorySuite) TestGetDatum(c *C) {
 	c.Assert(toGoTime(res[3][1]), Equals, time2)        // OCCUR_TIME
 	c.Assert(res[3][2].GetValue(), Equals, uint64(202)) // TRY_LOCK_TRX_ID
 	c.Assert(res[3][6].GetValue(), Equals, uint64(201)) // TRX_HOLDING_LOCK
+}
+
+func (s *testDeadlockHistorySuite) TestErrDeadlockToDeadlockRecord(c *C) {
+	err := &tikverr.ErrDeadlock{
+		Deadlock: &kvrpcpb.Deadlock{
+			LockTs:          101,
+			LockKey:         []byte("k1"),
+			DeadlockKeyHash: 1234567,
+			WaitChain: []*deadlock.WaitForEntry{
+				{
+					Txn:              100,
+					WaitForTxn:       101,
+					Key:              []byte("k2"),
+					ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag("aabbccdd"),
+				},
+				{
+					Txn:              101,
+					WaitForTxn:       100,
+					Key:              []byte("k1"),
+					ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag("ddccbbaa"),
+				},
+			},
+		},
+	}
+
+	expectedRecord := &DeadlockRecord{
+		WaitChain: []WaitChainItem{
+			{
+				TryLockTxn:     100,
+				SQLDigest:      "aabbccdd",
+				Key:            []byte("k2"),
+				TxnHoldingLock: 101,
+			},
+			{
+				TryLockTxn:     101,
+				SQLDigest:      "ddccbbaa",
+				Key:            []byte("k1"),
+				TxnHoldingLock: 100,
+			},
+		},
+	}
+
+	record := ErrDeadlockToDeadlockRecord(err)
+	// The OccurTime is set to time.Now
+	c.Assert(time.Since(record.OccurTime), Less, time.Millisecond*5)
+	expectedRecord.OccurTime = record.OccurTime
+	c.Assert(record, DeepEquals, expectedRecord)
 }
