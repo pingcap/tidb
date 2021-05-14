@@ -65,10 +65,13 @@ var oracleUpdateInterval = 2000
 
 // KVStore contains methods to interact with a TiKV cluster.
 type KVStore struct {
-	clusterID    uint64
-	uuid         string
-	oracle       oracle.Oracle
-	client       Client
+	clusterID uint64
+	uuid      string
+	oracle    oracle.Oracle
+	clientMu  struct {
+		sync.RWMutex
+		client Client
+	}
 	pdClient     pd.Client
 	regionCache  *RegionCache
 	lockResolver *LockResolver
@@ -132,7 +135,6 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 		clusterID:       pdClient.GetClusterID(context.TODO()),
 		uuid:            uuid,
 		oracle:          o,
-		client:          reqCollapse{client},
 		pdClient:        pdClient,
 		regionCache:     NewRegionCache(pdClient),
 		kv:              spkv,
@@ -141,6 +143,7 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 		closed:          make(chan struct{}),
 		replicaReadSeed: rand.Uint32(),
 	}
+	store.clientMu.client = reqCollapse{client}
 	store.lockResolver = newLockResolver(store)
 
 	go store.runSafePointChecker()
@@ -204,7 +207,7 @@ func (s *KVStore) Close() error {
 	s.pdClient.Close()
 
 	close(s.closed)
-	if err := s.client.Close(); err != nil {
+	if err := s.GetTiKVClient().Close(); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -311,7 +314,7 @@ func (s *KVStore) SupportDeleteRange() (supported bool) {
 
 // SendReq sends a request to region.
 func (s *KVStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
-	sender := NewRegionRequestSender(s.regionCache, s.client)
+	sender := NewRegionRequestSender(s.regionCache, s.GetTiKVClient())
 	return sender.SendReq(bo, req, regionID, timeout)
 }
 
@@ -342,12 +345,16 @@ func (s *KVStore) SetOracle(oracle oracle.Oracle) {
 
 // SetTiKVClient resets the client instance.
 func (s *KVStore) SetTiKVClient(client Client) {
-	s.client = client
+	s.clientMu.Lock()
+	defer s.clientMu.Unlock()
+	s.clientMu.client = client
 }
 
 // GetTiKVClient gets the client instance.
 func (s *KVStore) GetTiKVClient() (client Client) {
-	return s.client
+	s.clientMu.RLock()
+	defer s.clientMu.RUnlock()
+	return s.clientMu.client
 }
 
 func (s *KVStore) getSafeTS(storeID uint64) uint64 {

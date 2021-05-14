@@ -60,14 +60,6 @@ func (txn *wrapTxn) Valid() bool {
 	return txn.Transaction != nil && txn.Transaction.Valid()
 }
 
-// GetUnionStore implements GetUnionStore
-func (txn *wrapTxn) GetUnionStore() kv.UnionStore {
-	if txn.Transaction == nil {
-		return nil
-	}
-	return txn.Transaction.GetUnionStore()
-}
-
 func (txn *wrapTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 	if txn.Transaction == nil {
 		return
