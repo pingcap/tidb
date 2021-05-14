@@ -35,19 +35,18 @@ func newStmtSummaryByDigestEvicted() *stmtSummaryByDigestEvicted {
 // spawn a new pointer to stmtSummaryByDigestEvictedElement
 func newStmtSummaryByDigestEvictedElement(beginTimeForCurrentInterval int64, intervalSeconds int64) *stmtSummaryByDigestEvictedElement {
 	return &stmtSummaryByDigestEvictedElement{
-		beginTime: beginTimeForCurrentInterval,
-		endTime: beginTimeForCurrentInterval + intervalSeconds,
+		beginTime:    beginTimeForCurrentInterval,
+		endTime:      beginTimeForCurrentInterval + intervalSeconds,
 		digestKeyMap: make(map[string]struct{}),
 	}
 }
 
 // AddEvicted is used add an evicted record to stmtSummaryByDigestEvicted
 func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDigestKey, evictedValue *stmtSummaryByDigest, historySize int) {
-
-	// *need to get optimized*!!
 	evictedValue.Lock()
 	defer evictedValue.Unlock()
-	for e := evictedValue.history.Back(); e != nil; e = e.Prev() {
+
+	for e, h := evictedValue.history.Back(), ssbde.history.Back(); e != nil; e = e.Prev() {
 		evictedElement := e.Value.(*stmtSummaryByDigestElement)
 		eBeginTime := evictedElement.beginTime
 		eEndTime := evictedElement.endTime
@@ -72,7 +71,10 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 			}
 		}
 
-		for h := ssbde.history.Back(); h != nil; h = h.Prev() {
+		// because 2 lists are both exactly time-ordered
+		// begin matching from the latest matched history element.
+
+		for ; h != nil; h = h.Prev() {
 			historyElement := h.Value.(*stmtSummaryByDigestEvictedElement)
 			sBeginTime := historyElement.beginTime
 			sEndTime := historyElement.endTime

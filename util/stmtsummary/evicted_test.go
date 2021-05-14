@@ -4,6 +4,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
@@ -18,7 +19,7 @@ func (s *testStmtSummarySuite) TestToEvictedCountDatum(c *C) {
 	// set summaryMap capacity to 1.
 	err := s.ssMap.summaryMap.SetCapacity(1)
 	if err != nil {
-		c.Assert(err.Error(), IsNil)
+		log.Fatal(err.Error())
 	}
 	s.ssMap.Clear()
 
