@@ -160,9 +160,9 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			var err1 error
 			if result.StatsVer == statistics.Version3 {
-				err1 = statsHandle.SaveStatsToStorage(statisticsID, result.Count, result.IsIndex, hg, nil, result.TopNs[i], result.Fms[i], result.StatsVer, 1)
+				err1 = statsHandle.SaveStatsToStorage(statisticsID, result.Count, result.IsIndex, hg, nil, result.TopNs[i], result.Fms[i], result.StatsVer, 1, result.TableID.IsPartitionTable() && needGlobalStats)
 			} else {
-				err1 = statsHandle.SaveStatsToStorage(statisticsID, result.Count, result.IsIndex, hg, result.Cms[i], result.TopNs[i], result.Fms[i], result.StatsVer, 1)
+				err1 = statsHandle.SaveStatsToStorage(statisticsID, result.Count, result.IsIndex, hg, result.Cms[i], result.TopNs[i], result.Fms[i], result.StatsVer, 1, result.TableID.IsPartitionTable() && needGlobalStats)
 			}
 			if err1 != nil {
 				err = err1
@@ -198,7 +198,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			for i := 0; i < globalStats.Num; i++ {
 				hg, cms, topN, fms := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i], globalStats.Fms[i]
-				err = statsHandle.SaveStatsToStorage(globalStatsID.tableID, globalStats.Count, info.isIndex, hg, cms, topN, fms, info.statsVersion, 1)
+				// fms for global stats doesn't need to dump to kv.
+				err = statsHandle.SaveStatsToStorage(globalStatsID.tableID, globalStats.Count, info.isIndex, hg, cms, topN, fms, info.statsVersion, 1, false)
 				if err != nil {
 					logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
 				}
@@ -210,7 +211,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
 	sessionVars := ctx.GetSessionVars()
-	concurrency, err := variable.GetSessionSystemVar(sessionVars, variable.TiDBBuildStatsConcurrency)
+	concurrency, err := variable.GetSessionOrGlobalSystemVar(sessionVars, variable.TiDBBuildStatsConcurrency)
 	if err != nil {
 		return 0, err
 	}
@@ -1120,9 +1121,9 @@ func (e *AnalyzeFastExec) activateTxnForRowCount() (rollbackFn func() error, err
 			return nil, errors.Trace(err)
 		}
 	}
-	txn.SetOption(tikvstore.Priority, kv.PriorityLow)
-	txn.SetOption(tikvstore.IsolationLevel, kv.RC)
-	txn.SetOption(tikvstore.NotFillCache, true)
+	txn.SetOption(kv.Priority, kv.PriorityLow)
+	txn.SetOption(kv.IsolationLevel, kv.RC)
+	txn.SetOption(kv.NotFillCache, true)
 	return rollbackFn, nil
 }
 
@@ -1321,7 +1322,7 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (scanKeysSize int, er
 func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err error) {
 	snapshot := e.ctx.GetStore().GetSnapshot(kv.MaxVersion)
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		snapshot.SetOption(tikvstore.ReplicaRead, tikvstore.ReplicaReadFollower)
+		snapshot.SetOption(kv.ReplicaRead, tikvstore.ReplicaReadFollower)
 	}
 	for _, t := range e.scanTasks {
 		iter, err := snapshot.Iter(kv.Key(t.StartKey), kv.Key(t.EndKey))
@@ -1340,11 +1341,11 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err
 func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 	defer e.wg.Done()
 	snapshot := e.ctx.GetStore().GetSnapshot(kv.MaxVersion)
-	snapshot.SetOption(tikvstore.NotFillCache, true)
-	snapshot.SetOption(tikvstore.IsolationLevel, kv.RC)
-	snapshot.SetOption(tikvstore.Priority, kv.PriorityLow)
+	snapshot.SetOption(kv.NotFillCache, true)
+	snapshot.SetOption(kv.IsolationLevel, kv.RC)
+	snapshot.SetOption(kv.Priority, kv.PriorityLow)
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		snapshot.SetOption(tikvstore.ReplicaRead, tikvstore.ReplicaReadFollower)
+		snapshot.SetOption(kv.ReplicaRead, tikvstore.ReplicaReadFollower)
 	}
 
 	rander := rand.New(rand.NewSource(e.randSeed))
@@ -1355,7 +1356,7 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 			lower, upper := step-uint32(2*math.Sqrt(float64(step))), step
 			step = uint32(rander.Intn(int(upper-lower))) + lower
 		}
-		snapshot.SetOption(tikvstore.SampleStep, step)
+		snapshot.SetOption(kv.SampleStep, step)
 		kvMap := make(map[string][]byte)
 		var iter kv.Iterator
 		iter, *err = snapshot.Iter(kv.Key(task.StartKey), kv.Key(task.EndKey))
