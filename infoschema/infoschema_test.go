@@ -15,10 +15,6 @@ package infoschema_test
 
 import (
 	"context"
-	"sync"
-	"testing"
-
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -30,31 +26,31 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/suite"
+	"sync"
+	"testing"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
+func TestInfoSchemaTestSuite(t *testing.T) {
+	suite.Run(t, new(InfoSchemaTestSuite))
 }
 
-var _ = Suite(&testSuite{})
-
-type testSuite struct {
+type InfoSchemaTestSuite struct {
+	suite.Suite
 }
 
-func (*testSuite) TestT(c *C) {
-	defer testleak.AfterTest(c)()
+func (s *InfoSchemaTestSuite) TestBasic() {
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	s.Nil(err)
+
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		s.Nil(err)
 	}()
+
 	// Make sure it calls perfschema.Init().
 	dom, err := session.BootstrapSession(store)
-	c.Assert(err, IsNil)
+	s.Nil(err)
 	defer dom.Close()
 
 	handle := infoschema.NewHandle(store)
@@ -65,7 +61,7 @@ func (*testSuite) TestT(c *C) {
 	noexist := model.NewCIStr("noexist")
 
 	colID, err := genGlobalID(store)
-	c.Assert(err, IsNil)
+	s.Nil(err)
 	colInfo := &model.ColumnInfo{
 		ID:        colID,
 		Name:      colName,
@@ -90,7 +86,7 @@ func (*testSuite) TestT(c *C) {
 	}
 
 	tbID, err := genGlobalID(store)
-	c.Assert(err, IsNil)
+	s.Nil(err)
 	tblInfo := &model.TableInfo{
 		ID:      tbID,
 		Name:    tbName,
@@ -100,7 +96,7 @@ func (*testSuite) TestT(c *C) {
 	}
 
 	dbID, err := genGlobalID(store)
-	c.Assert(err, IsNil)
+	s.Nil(err)
 	dbInfo := &model.DBInfo{
 		ID:     dbID,
 		Name:   dbName,
@@ -111,119 +107,125 @@ func (*testSuite) TestT(c *C) {
 	dbInfos := []*model.DBInfo{dbInfo}
 	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
-		c.Assert(err, IsNil)
+		s.Nil(err)
 		return errors.Trace(err)
 	})
-	c.Assert(err, IsNil)
+	s.Nil(err)
 
 	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(dbInfos, nil, 1)
-	c.Assert(err, IsNil)
+	s.Nil(err)
 
 	txn, err := store.Begin()
-	c.Assert(err, IsNil)
-	checkApplyCreateNonExistsSchemaDoesNotPanic(c, txn, builder)
-	checkApplyCreateNonExistsTableDoesNotPanic(c, txn, builder, dbID)
+	s.Nil(err)
+	checkApplyCreateNonExistsSchemaDoesNotPanic(s, txn, builder)
+	checkApplyCreateNonExistsTableDoesNotPanic(s, txn, builder, dbID)
 	err = txn.Rollback()
-	c.Assert(err, IsNil)
+	s.Nil(err)
 
 	builder.Build()
 	is := handle.Get()
 
 	schemaNames := is.AllSchemaNames()
-	c.Assert(schemaNames, HasLen, 4)
-	c.Assert(testutil.CompareUnorderedStringSlice(schemaNames, []string{util.InformationSchemaName.O, util.MetricSchemaName.O, util.PerformanceSchemaName.O, "Test"}), IsTrue)
+	expectedSchemaNames := []string{
+		util.InformationSchemaName.O,
+		util.MetricSchemaName.O,
+		util.PerformanceSchemaName.O,
+		"Test",
+	}
+	s.Len(schemaNames, 4)
+	s.ElementsMatch(schemaNames, expectedSchemaNames)
 
 	schemas := is.AllSchemas()
-	c.Assert(schemas, HasLen, 4)
+	s.Len(schemas, 4)
 	schemas = is.Clone()
-	c.Assert(schemas, HasLen, 4)
+	s.Len(schemas, 4)
 
-	c.Assert(is.SchemaExists(dbName), IsTrue)
-	c.Assert(is.SchemaExists(noexist), IsFalse)
+	s.True(is.SchemaExists(dbName))
+	s.False(is.SchemaExists(noexist))
 
 	schema, ok := is.SchemaByID(dbID)
-	c.Assert(ok, IsTrue)
-	c.Assert(schema, NotNil)
+	s.True(ok)
+	s.NotNil(schema)
 
 	schema, ok = is.SchemaByID(tbID)
-	c.Assert(ok, IsFalse)
-	c.Assert(schema, IsNil)
+	s.False(ok)
+	s.Nil(schema)
 
 	schema, ok = is.SchemaByName(dbName)
-	c.Assert(ok, IsTrue)
-	c.Assert(schema, NotNil)
+	s.True(ok)
+	s.NotNil(schema)
 
 	schema, ok = is.SchemaByName(noexist)
-	c.Assert(ok, IsFalse)
-	c.Assert(schema, IsNil)
+	s.False(ok)
+	s.Nil(schema)
 
 	schema, ok = is.SchemaByTable(tblInfo)
-	c.Assert(ok, IsTrue)
-	c.Assert(schema, NotNil)
+	s.True(ok)
+	s.NotNil(schema)
 
 	noexistTblInfo := &model.TableInfo{ID: 12345, Name: tblInfo.Name}
 	schema, ok = is.SchemaByTable(noexistTblInfo)
-	c.Assert(ok, IsFalse)
-	c.Assert(schema, IsNil)
+	s.False(ok)
+	s.Nil(schema)
 
-	c.Assert(is.TableExists(dbName, tbName), IsTrue)
-	c.Assert(is.TableExists(dbName, noexist), IsFalse)
-	c.Assert(is.TableIsView(dbName, tbName), IsFalse)
-	c.Assert(is.TableIsSequence(dbName, tbName), IsFalse)
+	s.True(is.TableExists(dbName, tbName))
+	s.False(is.TableExists(dbName, noexist))
+	s.False(is.TableIsView(dbName, tbName))
+	s.False(is.TableIsSequence(dbName, tbName))
 
 	tb, ok := is.TableByID(tbID)
-	c.Assert(ok, IsTrue)
-	c.Assert(tb, NotNil)
+	s.True(ok)
+	s.NotNil(tb)
 
 	tb, ok = is.TableByID(dbID)
-	c.Assert(ok, IsFalse)
-	c.Assert(tb, IsNil)
+	s.False(ok)
+	s.Nil(tb)
 
 	alloc, ok := is.AllocByID(tbID)
-	c.Assert(ok, IsTrue)
-	c.Assert(alloc, NotNil)
+	s.True(ok)
+	s.NotNil(alloc)
 
 	tb, err = is.TableByName(dbName, tbName)
-	c.Assert(err, IsNil)
-	c.Assert(tb, NotNil)
+	s.Nil(err)
+	s.NotNil(tb)
 
 	_, err = is.TableByName(dbName, noexist)
-	c.Assert(err, NotNil)
+	s.NotNil(err)
 
 	tbs := is.SchemaTables(dbName)
-	c.Assert(tbs, HasLen, 1)
+	s.Len(tbs, 1)
 
 	tbs = is.SchemaTables(noexist)
-	c.Assert(tbs, HasLen, 0)
+	s.Len(tbs, 0)
 
 	// Make sure partitions table exists
 	tb, err = is.TableByName(model.NewCIStr("information_schema"), model.NewCIStr("partitions"))
-	c.Assert(err, IsNil)
-	c.Assert(tb, NotNil)
+	s.Nil(err)
+	s.NotNil(tb)
 
 	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		err := meta.NewMeta(txn).CreateTableOrView(dbID, tblInfo)
-		c.Assert(err, IsNil)
+		s.Nil(err)
 		return errors.Trace(err)
 	})
-	c.Assert(err, IsNil)
+	s.Nil(err)
 	txn, err = store.Begin()
-	c.Assert(err, IsNil)
+	s.Nil(err)
 	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionRenameTable, SchemaID: dbID, TableID: tbID, OldSchemaID: dbID})
-	c.Assert(err, IsNil)
+	s.Nil(err)
 	err = txn.Rollback()
-	c.Assert(err, IsNil)
+	s.Nil(err)
 	builder.Build()
 	is = handle.Get()
 	schema, ok = is.SchemaByID(dbID)
-	c.Assert(ok, IsTrue)
-	c.Assert(len(schema.Tables), Equals, 1)
+	s.True(ok)
+	s.Len(schema.Tables, 1)
 
 	emptyHandle := handle.EmptyClone()
-	c.Assert(emptyHandle.Get(), IsNil)
+	s.Nil(emptyHandle.Get())
 }
 
-func (testSuite) TestMockInfoSchema(c *C) {
+func (s *InfoSchemaTestSuite) TestMockInfoSchema() {
 	tblID := int64(1234)
 	tblName := model.NewCIStr("tbl_m")
 	tableInfo := &model.TableInfo{
@@ -241,36 +243,36 @@ func (testSuite) TestMockInfoSchema(c *C) {
 	tableInfo.Columns = []*model.ColumnInfo{colInfo}
 	is := infoschema.MockInfoSchema([]*model.TableInfo{tableInfo})
 	tbl, ok := is.TableByID(tblID)
-	c.Assert(ok, IsTrue)
-	c.Assert(tbl.Meta().Name, Equals, tblName)
-	c.Assert(tbl.Cols()[0].ColumnInfo, Equals, colInfo)
+	s.True(ok)
+	s.Equal(tbl.Meta().Name, tblName)
+	s.Equal(tbl.Cols()[0].ColumnInfo, colInfo)
 }
 
-func checkApplyCreateNonExistsSchemaDoesNotPanic(c *C, txn kv.Transaction, builder *infoschema.Builder) {
+func checkApplyCreateNonExistsSchemaDoesNotPanic(s *InfoSchemaTestSuite, txn kv.Transaction, builder *infoschema.Builder) {
 	m := meta.NewMeta(txn)
 	_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: 999})
-	c.Assert(infoschema.ErrDatabaseNotExists.Equal(err), IsTrue)
+	s.True(infoschema.ErrDatabaseNotExists.Equal(err))
 }
 
-func checkApplyCreateNonExistsTableDoesNotPanic(c *C, txn kv.Transaction, builder *infoschema.Builder, dbID int64) {
+func checkApplyCreateNonExistsTableDoesNotPanic(s *InfoSchemaTestSuite, txn kv.Transaction, builder *infoschema.Builder, dbID int64) {
 	m := meta.NewMeta(txn)
 	_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: dbID, TableID: 999})
-	c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
+	s.True(infoschema.ErrTableNotExists.Equal(err))
 }
 
 // TestConcurrent makes sure it is safe to concurrently create handle on multiple stores.
-func (testSuite) TestConcurrent(c *C) {
-	defer testleak.AfterTest(c)()
+func (s *InfoSchemaTestSuite) TestConcurrent() {
 	storeCount := 5
 	stores := make([]kv.Storage, storeCount)
 	for i := 0; i < storeCount; i++ {
 		store, err := mockstore.NewMockStore()
-		c.Assert(err, IsNil)
+		s.Nil(err)
 		stores[i] = store
 	}
 	defer func() {
 		for _, store := range stores {
-			store.Close()
+			err := store.Close()
+			s.Nil(err)
 		}
 	}()
 	var wg sync.WaitGroup
@@ -285,20 +287,19 @@ func (testSuite) TestConcurrent(c *C) {
 }
 
 // TestInfoTables makes sure that all tables of information_schema could be found in infoschema handle.
-func (*testSuite) TestInfoTables(c *C) {
-	defer testleak.AfterTest(c)()
+func (s *InfoSchemaTestSuite) TestInfoTables() {
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	s.Nil(err)
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		s.Nil(err)
 	}()
 	handle := infoschema.NewHandle(store)
 	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(nil, nil, 0)
-	c.Assert(err, IsNil)
+	s.Nil(err)
 	builder.Build()
 	is := handle.Get()
-	c.Assert(is, NotNil)
+	s.NotNil(is)
 
 	infoTables := []string{
 		"SCHEMATA",
@@ -336,8 +337,8 @@ func (*testSuite) TestInfoTables(c *C) {
 	}
 	for _, t := range infoTables {
 		tb, err1 := is.TableByName(util.InformationSchemaName, model.NewCIStr(t))
-		c.Assert(err1, IsNil)
-		c.Assert(tb, NotNil)
+		s.Nil(err1)
+		s.NotNil(tb)
 	}
 }
 
@@ -351,18 +352,17 @@ func genGlobalID(store kv.Storage) (int64, error) {
 	return globalID, errors.Trace(err)
 }
 
-func (*testSuite) TestGetBundle(c *C) {
-	defer testleak.AfterTest(c)()
+func (s *InfoSchemaTestSuite) TestGetBundle() {
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	s.Nil(err)
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		s.Nil(err)
 	}()
 
 	handle := infoschema.NewHandle(store)
 	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(nil, nil, 0)
-	c.Assert(err, IsNil)
+	s.Nil(err)
 	builder.Build()
 
 	is := handle.Get()
@@ -381,11 +381,11 @@ func (*testSuite) TestGetBundle(c *C) {
 	is.SetBundle(bundle)
 
 	b := infoschema.GetBundle(is, []int64{})
-	c.Assert(b.Rules, DeepEquals, bundle.Rules)
+	s.Equal(b.Rules, bundle.Rules)
 
 	// bundle itself is cloned
 	b.ID = "test"
-	c.Assert(bundle.ID, Equals, placement.PDBundleID)
+	s.Equal(bundle.ID, placement.PDBundleID)
 
 	ptID := placement.GroupID(3)
 	bundle = &placement.Bundle{
@@ -402,11 +402,11 @@ func (*testSuite) TestGetBundle(c *C) {
 	is.SetBundle(bundle)
 
 	b = infoschema.GetBundle(is, []int64{2, 3})
-	c.Assert(b, DeepEquals, bundle)
+	s.Equal(b, bundle)
 
 	// bundle itself is cloned
 	b.ID = "test"
-	c.Assert(bundle.ID, Equals, ptID)
+	s.Equal(bundle.ID, ptID)
 
 	ptID = placement.GroupID(1)
 	bundle = &placement.Bundle{
@@ -423,9 +423,9 @@ func (*testSuite) TestGetBundle(c *C) {
 	is.SetBundle(bundle)
 
 	b = infoschema.GetBundle(is, []int64{1, 2, 3})
-	c.Assert(b, DeepEquals, bundle)
+	s.Equal(b, bundle)
 
 	// bundle itself is cloned
 	b.ID = "test"
-	c.Assert(bundle.ID, Equals, ptID)
+	s.Equal(bundle.ID, ptID)
 }
