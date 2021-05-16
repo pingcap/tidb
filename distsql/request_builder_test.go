@@ -625,7 +625,6 @@ func (s *testSuite) TestRequestBuilder8(c *C) {
 		IsolationLevel: 0,
 		Priority:       0,
 		MemTracker:     (*memory.Tracker)(nil),
-		ReplicaRead:    0x1,
 		SchemaVar:      10000,
 	}
 	c.Assert(actual, DeepEquals, expect)
