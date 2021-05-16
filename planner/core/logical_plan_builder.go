@@ -4602,7 +4602,8 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}
 
 	if delete.Order != nil {
-		// delete stmt doesn't allow 'order by + position' to reference a column, so we pass 0 as oldLen to make expression rewriter report error.
+		// Delete stmt doesn't allow 'order by + position' to reference a column,
+		// so we pass 0 as originSchemaLen to make expression rewriter report error.
 		p, err = b.buildSortWithCheck(ctx, p, delete.Order.Items, nil, nil, nil, 0, false)
 		if err != nil {
 			return nil, err
