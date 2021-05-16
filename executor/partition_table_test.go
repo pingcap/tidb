@@ -677,9 +677,11 @@ func (s *globalIndexSuite) TestIssue21731(c *C) {
 func (s *testSuiteWithData) TestRangePartitionBoundariesEq(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("create database TestRangePartitionBoundaries")
 	defer tk.MustExec("drop database TestRangePartitionBoundaries")
 	tk.MustExec("use TestRangePartitionBoundaries")
+	tk.MustExec("DROP TABLE IF EXISTS t")
 	tk.MustExec(`CREATE TABLE t
 (a INT, b varchar(255))
 PARTITION BY RANGE (a) (
@@ -718,9 +720,11 @@ PARTITION BY RANGE (a) (
 func (s *testSuiteWithData) TestRangePartitionBoundariesNe(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("create database TestRangePartitionBoundariesNe")
 	defer tk.MustExec("drop database TestRangePartitionBoundariesNe")
 	tk.MustExec("use TestRangePartitionBoundariesNe")
+	tk.MustExec("DROP TABLE IF EXISTS t")
 	tk.MustExec(`CREATE TABLE t
 (a INT, b varchar(255))
 PARTITION BY RANGE (a) (
