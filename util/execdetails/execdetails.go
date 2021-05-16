@@ -703,9 +703,7 @@ func (e *RuntimeStatsWithConcurrencyInfo) SetConcurrencyInfo(infos ...*Concurren
 	e.Lock()
 	defer e.Unlock()
 	e.concurrency = e.concurrency[:0]
-	for _, info := range infos {
-		e.concurrency = append(e.concurrency, info)
-	}
+	e.concurrency = append(e.concurrency, infos...)
 }
 
 // Clone implements the RuntimeStats interface.
