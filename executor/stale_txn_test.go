@@ -213,14 +213,6 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 			c.Assert(startTS, Less, (curSec-testcase.preSec+2)*1000)
 		}
 	}
-
-	// TODO: add cases
-	// tk.MustExec("begin")
-	// tk.MustQuery("select count(*) from ( select * from t2 group by a, b) A group by A.b").Check(testkit.Rows("3"))
-	// tk.MustQuery("select count(*) from t1 where t1.a+100 > ( select count(*) from t2 where t1.a=t2.a and t1.b=t2.b) group by t1.b").Check(testkit.Rows("4"))
-	// txn, err := tk.Se.Txn(true)
-	// c.Assert(err, IsNil)
-	// ts := txn.StartTS()
 }
 
 func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {

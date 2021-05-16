@@ -120,7 +120,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			return fp, fp.OutputNames(), nil
 		}
 	}
-	// TODO: Supports value expression
+
 	ts, err := plannercore.TryExtractTSFromAsOf(sctx, node)
 	if err != nil {
 		return nil, nil, err
