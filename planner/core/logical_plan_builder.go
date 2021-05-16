@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -2473,7 +2472,17 @@ func TryExtractTSFromAsOf(ctx sessionctx.Context, node ast.Node) (*types.Datum, 
 			if len(tsValues) == 0 {
 				return nil, nil
 			}
+
+			var res *types.Datum
 			first := tsValues[0]
+			if first != nil {
+				ts, err := first.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeTimestamp))
+				if err != nil {
+					return nil, err
+				}
+				res = &ts
+			}
+
 			for i := 1; i < len(tsValues); i++ {
 				val := tsValues[i]
 				if (val == nil && first != nil) || (val != nil && first == nil) {
@@ -2482,13 +2491,20 @@ func TryExtractTSFromAsOf(ctx sessionctx.Context, node ast.Node) (*types.Datum, 
 				if first == nil && val == nil {
 					continue
 				}
-				// TODO: remove reflect
-				if !reflect.DeepEqual(first.GetValue(), val.GetValue()) {
+
+				ts, err := val.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeTimestamp))
+				if err != nil {
+					return nil, err
+				}
+				cmp, err := res.CompareDatum(ctx.GetSessionVars().StmtCtx, &ts)
+				if err != nil {
+					return nil, err
+				}
+				if cmp != 0 {
 					return nil, errors.New("can not set different timestamp in one statement")
 				}
 			}
-			return first, nil
-
+			return res, nil
 		}
 	}
 	return nil, nil

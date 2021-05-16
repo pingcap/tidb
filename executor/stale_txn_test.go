@@ -144,8 +144,18 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 	}{
 		{
 			name:             "TimestampExactRead",
+			sql:              `select * from t as of timestamp '2020-09-06 00:00:00';`,
+			expectPhysicalTS: 1599321600000,
+		},
+		{
+			name:             "TimestampExactRead",
 			sql:              `select * from t as of timestamp TIMESTAMP('2020-09-06 00:00:00');`,
 			expectPhysicalTS: 1599321600000,
+		},
+		{
+			name:   "TimestampExactRead",
+			sql:    `select * from t as of timestamp NOW() - INTERVAL 20 SECOND;`,
+			preSec: 20,
 		},
 		{
 			name:   "TimestampExactRead",
@@ -166,6 +176,12 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 		{
 			name:     "TimestampExactRead",
 			sql:      `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND), b;`,
+			preSec:   20,
+			errorStr: "not set different timestamp",
+		},
+		{
+			name:     "TimestampExactRead",
+			sql:      `select * from t, b as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND);`,
 			preSec:   20,
 			errorStr: "not set different timestamp",
 		},
