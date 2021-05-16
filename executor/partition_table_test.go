@@ -677,10 +677,10 @@ func (s *globalIndexSuite) TestIssue21731(c *C) {
 func (s *testSuiteWithData) TestRangePartitionBoundariesEq(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("create database TestRangePartitionBoundaries")
-	defer tk.MustExec("drop database TestRangePartitionBoundaries")
-	tk.MustExec("use TestRangePartitionBoundaries")
+	tk.MustExec("SET @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("CREATE DATABASE TestRangePartitionBoundaries")
+	defer tk.MustExec("DROP DATABASE TestRangePartitionBoundaries")
+	tk.MustExec("USE TestRangePartitionBoundaries")
 	tk.MustExec("DROP TABLE IF EXISTS t")
 	tk.MustExec(`CREATE TABLE t
 (a INT, b varchar(255))
@@ -698,21 +698,24 @@ PARTITION BY RANGE (a) (
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
-		var isInsert bool = false
-		if strings.HasPrefix(strings.ToLower(tt), "insert ") {
-			isInsert = true
+		var isSelect bool = false
+		if strings.HasPrefix(strings.ToLower(tt), "select ") {
+			isSelect = true
 		}
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
-			if isInsert {
+			if isSelect {
+				output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("EXPLAIN FORMAT = 'brief' " + tt).Rows())
+				output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+			} else {
 				// to avoid double execution of INSERT (and INSERT does not return anything)
 				output[i].Res = nil
-			} else {
-				output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+				output[i].Plan = nil
 			}
 		})
-		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+		if isSelect {
+			tk.MustQuery("EXPLAIN FORMAT = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+		}
 		tk.MayQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
 }
@@ -720,10 +723,10 @@ PARTITION BY RANGE (a) (
 func (s *testSuiteWithData) TestRangePartitionBoundariesNe(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("create database TestRangePartitionBoundariesNe")
-	defer tk.MustExec("drop database TestRangePartitionBoundariesNe")
-	tk.MustExec("use TestRangePartitionBoundariesNe")
+	tk.MustExec("SET @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("CREATE DATABASE TestRangePartitionBoundariesNe")
+	defer tk.MustExec("DROP DATABASE TestRangePartitionBoundariesNe")
+	tk.MustExec("USE TestRangePartitionBoundariesNe")
 	tk.MustExec("DROP TABLE IF EXISTS t")
 	tk.MustExec(`CREATE TABLE t
 (a INT, b varchar(255))
@@ -744,21 +747,24 @@ PARTITION BY RANGE (a) (
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
-		var isInsert bool = false
-		if strings.HasPrefix(strings.ToLower(tt), "insert ") {
-			isInsert = true
+		var isSelect bool = false
+		if strings.HasPrefix(strings.ToLower(tt), "select ") {
+			isSelect = true
 		}
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
-			if isInsert {
+			if isSelect {
+				output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("EXPLAIN FORMAT = 'brief' " + tt).Rows())
+				output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+			} else {
 				// to avoid double execution of INSERT (and INSERT does not return anything)
 				output[i].Res = nil
-			} else {
-				output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+				output[i].Plan = nil
 			}
 		})
-		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+		if isSelect {
+			tk.MustQuery("EXPLAIN FORMAT = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+		}
 		tk.MayQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
 }
