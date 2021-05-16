@@ -410,7 +410,7 @@ func (s *testExpressionRewriterSuite) TestPositionExpr(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int, b int, c int);")
 	tk.MustQuery("select a from t group by a having sum(b) > 0 order by 1;")
-	// order by a negative number should be regarded as a value instead of a position of a column
+	// Order by a negative number should be regarded as a value instead of the position of a column.
 	tk.MustQuery("select a from t group by a having sum(b) > 0 order by -1;")
 	tk.MustGetErrMsg("select a from t group by a having sum(b) > 0 order by 2;", "[planner:1054]Unknown column '2' in 'order clause'")
 	tk.MustGetErrMsg("delete from t order by 0;", "[planner:1054]Unknown column '0' in 'order clause'")

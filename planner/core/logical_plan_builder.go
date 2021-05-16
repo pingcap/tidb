@@ -1616,13 +1616,13 @@ func (t *itemTransformer) Leave(inNode ast.Node) (ast.Node, bool) {
 }
 
 func (b *PlanBuilder) buildSort(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int) (*LogicalSort, error) {
-	return b.buildSortWithCheck(ctx, p, byItems, aggMapper, windowMapper, nil, false, -1)
+	return b.buildSortWithCheck(ctx, p, byItems, aggMapper, windowMapper, nil, -1, false)
 }
 
 // buildSortWithCheck does more checks when building LogicalSort compared to call buildSort() directly.
-// Pass (nil, false, -1) to (projExprs, hasDistinct, originSchemaLen) respectively to disable these checks.
+// Pass (nil, -1, false) to (projExprs, originSchemaLen, hasDistinct) respectively to disable these checks.
 func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int,
-	projExprs []expression.Expression, hasDistinct bool, originSchemaLen int) (*LogicalSort, error) {
+	projExprs []expression.Expression, originSchemaLen int, hasDistinct bool) (*LogicalSort, error) {
 	if _, isUnion := p.(*LogicalUnionAll); isUnion {
 		b.curClause = globalOrderByClause
 	} else {
@@ -3472,9 +3472,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 
 	if sel.OrderBy != nil {
 		if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
-			p, err = b.buildSortWithCheck(ctx, p, sel.OrderBy.Items, orderMap, windowMapper, projExprs, sel.Distinct, oldLen)
+			p, err = b.buildSortWithCheck(ctx, p, sel.OrderBy.Items, orderMap, windowMapper, projExprs, oldLen, sel.Distinct)
 		} else {
-			p, err = b.buildSortWithCheck(ctx, p, sel.OrderBy.Items, orderMap, windowMapper, nil, false, oldLen)
+			p, err = b.buildSortWithCheck(ctx, p, sel.OrderBy.Items, orderMap, windowMapper, nil, oldLen, false)
 		}
 		if err != nil {
 			return nil, err
@@ -4603,7 +4603,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 
 	if delete.Order != nil {
 		// delete stmt doesn't allow 'order by + position' to reference a column, so we pass 0 as oldLen to make expression rewriter report error.
-		p, err = b.buildSortWithCheck(ctx, p, delete.Order.Items, nil, nil, nil, false, 0)
+		p, err = b.buildSortWithCheck(ctx, p, delete.Order.Items, nil, nil, nil, 0, false)
 		if err != nil {
 			return nil, err
 		}

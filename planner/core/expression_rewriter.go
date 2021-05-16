@@ -221,7 +221,8 @@ type expressionRewriter struct {
 	schema     *expression.Schema
 	names      []*types.FieldName
 	// originSchemaLen is the length of the original schema(specified in the SQL), which means not contain auxiliary columns.
-	// Currently it's only used to check if the 'order by + position' usage is valid.
+	// Currently it's only used to check if the 'order by + position' usage is valid. Note that it could be -1, which means
+	// this check is not needed.
 	originSchemaLen int
 	err             error
 	aggrMap         map[*ast.AggregateFuncExpr]int
