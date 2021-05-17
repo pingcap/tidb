@@ -1069,7 +1069,6 @@ func (s *partitionTableSuite) TestParallelApply(c *C) {
 	tk.MustQuery(`select * from touter where touter.a > (select sum(trange.b) from trange use index(a) where trange.a>touter.b)`).Sort().Check(
 		tk.MustQuery(`select * from touter where touter.a > (select sum(tinner.b) from tinner use index(a) where tinner.a>touter.b)`).Sort().Rows())
 
-
 	// random queries
 	ops := []string{"!=", ">", "<", ">=", "<="}
 	aggFuncs := []string{"sum", "count", "max", "min"}
