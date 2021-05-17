@@ -119,7 +119,7 @@ func extractStartTs(store *KVStore, options kv.TransactionOption) (uint64, error
 		startTs = *options.MinStartTS
 		// If the safeTS is larger than the minStartTS, we will use safeTS as StartTS, otherwise we will use
 		// minStartTS directly.
-		if oracle.CompareTS(startTs, safeTS) < 0 {
+		if startTs < safeTS {
 			startTs = safeTS
 		}
 	} else if options.MaxPrevSec != nil {
@@ -219,22 +219,6 @@ func (txn *KVTxn) IterReverse(k []byte) (unionstore.Iterator, error) {
 // Delete removes the entry for key k from kv store.
 func (txn *KVTxn) Delete(k []byte) error {
 	return txn.us.GetMemBuffer().Delete(k)
-}
-
-// SetOption sets an option with a value, when val is nil, uses the default
-// value of this option.
-func (txn *KVTxn) SetOption(opt int, val interface{}) {
-	txn.us.SetOption(opt, val)
-}
-
-// GetOption returns the option
-func (txn *KVTxn) GetOption(opt int) interface{} {
-	return txn.us.GetOption(opt)
-}
-
-// DelOption deletes an option.
-func (txn *KVTxn) DelOption(opt int) {
-	txn.us.DelOption(opt)
 }
 
 // SetSchemaLeaseChecker sets a hook to check schema version.
@@ -642,7 +626,7 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tikv.LockCtx, keysInput
 		// PointGet and BatchPointGet will return value in pessimistic lock response, the value may not exist.
 		// For other lock modes, the locked key values always exist.
 		if lockCtx.ReturnValues {
-			val, _ := lockCtx.Values[string(key)]
+			val := lockCtx.Values[string(key)]
 			if len(val.Value) == 0 {
 				valExists = tikv.SetKeyLockedValueNotExists
 			}

@@ -297,7 +297,7 @@ func (s *partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.
 			})
 			continue
 		}
-		return nil, errors.New(fmt.Sprintf("information of column %v is not found", colExpr.String()))
+		return nil, fmt.Errorf("information of column %v is not found", colExpr.String())
 	}
 	return names, nil
 }
@@ -1345,9 +1345,9 @@ func appendWarnForUnknownPartitions(ctx sessionctx.Context, hintName string, unk
 	if len(unknownPartitions) == 0 {
 		return
 	}
-	ctx.GetSessionVars().StmtCtx.AppendWarning(
-		errors.New(fmt.Sprintf("Unknown partitions (%s) in optimizer hint %s",
-			strings.Join(unknownPartitions, ","), hintName)))
+
+	warning := fmt.Errorf("Unknown partitions (%s) in optimizer hint %s", strings.Join(unknownPartitions, ","), hintName)
+	ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 }
 
 func (s *partitionProcessor) checkHintsApplicable(ds *DataSource, partitionSet set.StringSet) {

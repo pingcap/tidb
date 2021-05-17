@@ -578,7 +578,7 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	ts.prepareData(c)
 	defer ts.stopServer(c)
 
-	resp, err := ts.fetchStatus(fmt.Sprintf("/mvcc/key/tidb/test/1"))
+	resp, err := ts.fetchStatus("/mvcc/key/tidb/test/1")
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
 	var data mvccKV
@@ -621,7 +621,7 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(data2, DeepEquals, data)
 
-	resp, err = ts.fetchStatus(fmt.Sprintf("/mvcc/key/tidb/test/1?decode=true"))
+	resp, err = ts.fetchStatus("/mvcc/key/tidb/test/1?decode=true")
 	c.Assert(err, IsNil)
 	decoder = json.NewDecoder(resp.Body)
 	var data3 map[string]interface{}
@@ -667,7 +667,7 @@ func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
-	resp, err := ts.fetchStatus(fmt.Sprintf("/mvcc/key/tidb/test/1234"))
+	resp, err := ts.fetchStatus("/mvcc/key/tidb/test/1234")
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
 	var data mvccKV

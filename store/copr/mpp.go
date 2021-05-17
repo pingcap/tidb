@@ -144,14 +144,10 @@ func (m *mppIterator) run(ctx context.Context) {
 			break
 		}
 		m.mu.Lock()
-		switch task.State {
-		case kv.MppTaskReady:
+		if task.State == kv.MppTaskReady {
 			task.State = kv.MppTaskRunning
-			m.mu.Unlock()
-		default:
-			m.mu.Unlock()
-			break
 		}
+		m.mu.Unlock()
 		m.wg.Add(1)
 		bo := backoff.NewBackoffer(ctx, copNextMaxBackoff)
 		go m.handleDispatchReq(ctx, bo, task)
