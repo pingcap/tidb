@@ -66,14 +66,14 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 			ssbde.history.PushBack(record)
 
 			if evictedKey == nil {
-				// passing a empty Key is used as `refresh`.
+				// passing an empty Key is used as `refresh`.
+				h = ssbde.history.Back()
 				continue
 			}
 		}
 
 		// because 2 lists are both exactly time-ordered
 		// begin matching from the latest matched history element.
-
 		for ; h != nil; h = h.Prev() {
 			historyElement := h.Value.(*stmtSummaryByDigestEvictedElement)
 			sBeginTime := historyElement.beginTime
@@ -86,27 +86,11 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 				break
 			}
 
-			if sEndTime <= eBeginTime {
-				// digest is young, insert into new interval after this history interval
-				beginTime := eBeginTime
-				intervalSeconds := eEndTime - eBeginTime
-				record := newStmtSummaryByDigestEvictedElement(beginTime, intervalSeconds)
-				record.addEvicted(evictedKey, evictedElement)
-				ssbde.history.InsertAfter(record, h)
-				break
-			}
-
-			if sBeginTime > eEndTime {
-				// digestElement is old
-				if h != ssbde.history.Front() {
-					// check older history digestEvictedElement
-					continue
-				} else if ssbde.history.Len() >= historySize {
-					// out of history size, abandon
-					break
-				} else {
-					// is oldest digest
-					// creat a digestEvictedElement and PushFront!
+			if sBeginTime > eEndTime &&
+				ssbde.history.Len() < historySize &&
+				h == ssbde.history.Front(){
+					// digestElement is older than all history elements.
+					// creat a digestEvictedElement and PushFront
 					beginTime := eBeginTime
 					intervalSeconds := eEndTime - eBeginTime
 					record := newStmtSummaryByDigestEvictedElement(beginTime, intervalSeconds)
@@ -114,7 +98,6 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 					ssbde.history.PushFront(record)
 					break
 				}
-			}
 		}
 	}
 }
