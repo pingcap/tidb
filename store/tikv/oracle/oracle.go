@@ -17,10 +17,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/store/tikv/config"
-	"github.com/pingcap/tidb/store/tikv/logutil"
-	"go.uber.org/zap"
 )
 
 // Option represents available options for the oracle.Oracle.
@@ -100,19 +97,6 @@ const (
 
 // ComposeTS creates a ts from physical and logical parts.
 func ComposeTS(physical, logical int64) uint64 {
-	failpoint.Inject("changeTSFromPD", func(val failpoint.Value) {
-		valInt, ok := val.(int)
-		if ok {
-			origPhyTS := physical
-			logical := logical
-			newPhyTs := origPhyTS + int64(valInt)
-			origTS := uint64((physical << physicalShiftBits) + logical)
-			newTS := uint64((newPhyTs << physicalShiftBits) + logical)
-			logutil.BgLogger().Warn("ComposeTS failpoint", zap.Uint64("origTS", origTS),
-				zap.Int("valInt", valInt), zap.Uint64("ts", newTS))
-			failpoint.Return(newTS)
-		}
-	})
 	return uint64((physical << physicalShiftBits) + logical)
 }
 
