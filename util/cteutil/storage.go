@@ -11,22 +11,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cte_storage
+package cteutil
 
 import (
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
 )
 
-var _ CTEStorage = &CTEStorageRC{}
+var _ Storage = &StorageRC{}
 
-// CTEStorage is a temporary storage to store the intermidate data of CTE.
+// Storage is a temporary storage to store the intermidate data of CTE.
 //
 // Common usage as follows:
 //
@@ -36,18 +35,19 @@ var _ CTEStorage = &CTEStorageRC{}
 //  }
 //  storage.UnLock()
 //  read data from storage
-type CTEStorage interface {
+type Storage interface {
 	// If is first called, will open underlying storage. Otherwise will add ref count by one.
 	OpenAndRef() error
 
 	// Minus ref count by one, if ref count is zero, close underlying storage.
 	DerefAndClose() (err error)
 
-	// Swap data of two storage. Other metainfo is not touched, such ref count/done flag etc.
-	SwapData(other CTEStorage) error
+	// SwapData swaps data of two storage.
+	// Other metainfo is not touched, such ref count/done flag etc.
+	SwapData(other Storage) error
 
 	// Reopen reset storage and related info.
-	// So the status of CTEStorage is like a new created one.
+	// So the status of Storage is like a new created one.
 	Reopen() error
 
 	// Add chunk into underlying storage.
@@ -62,13 +62,13 @@ type CTEStorage interface {
 	// NumChunks return chunk number of the underlying storage.
 	NumChunks() int
 
-	// CTEStorage is not thread-safe.
+	// Storage is not thread-safe.
 	// By using Lock(), users can achieve the purpose of ensuring thread safety.
 	Lock()
 	Unlock()
 
-	// Usually, CTEStorage is filled first, then user can read it.
-	// User can check whether CTEStorage is filled first, if not, they can fill it.
+	// Usually, Storage is filled first, then user can read it.
+	// User can check whether Storage is filled first, if not, they can fill it.
 	Done() bool
 	SetDone()
 
@@ -77,7 +77,7 @@ type CTEStorage interface {
 	// whether they need to read data from the beginning.
 	GetIter() int
 
-	// We use this channel to notify reader that CTEStorage is ready to read.
+	// We use this channel to notify reader that Storage is ready to read.
 	// It exists only to solve the special implementation of IndexLookUpJoin.
 	// We will find a better way and remove this later.
 	GetBegCh() chan struct{}
@@ -87,8 +87,8 @@ type CTEStorage interface {
 	ActionSpill() memory.ActionOnExceed
 }
 
-// CTEStorage implementation using RowContainer.
-type CTEStorageRC struct {
+// StorageRC implements Storage interface using RowContainer.
+type StorageRC struct {
 	// meta info
 	mu      sync.Mutex
 	refCnt  int
@@ -104,13 +104,13 @@ type CTEStorageRC struct {
 	rc *chunk.RowContainer
 }
 
-// NewCTEStorageRC create a new CTEStorageRC.
-func NewCTEStorageRC(tp []*types.FieldType, chkSize int) *CTEStorageRC {
-	return &CTEStorageRC{tp: tp, chkSize: chkSize}
+// NewStorageRC create a new StorageRC.
+func NewStorageRC(tp []*types.FieldType, chkSize int) *StorageRC {
+	return &StorageRC{tp: tp, chkSize: chkSize}
 }
 
-// OpenAndRef impls CTEStorage OpenAndRef interface.
-func (s *CTEStorageRC) OpenAndRef() (err error) {
+// OpenAndRef impls Storage OpenAndRef interface.
+func (s *StorageRC) OpenAndRef() (err error) {
 	if !s.valid() {
 		s.rc = chunk.NewRowContainer(s.tp, s.chkSize)
 		s.refCnt = 1
@@ -122,14 +122,14 @@ func (s *CTEStorageRC) OpenAndRef() (err error) {
 	return nil
 }
 
-// DerefAndClose impls CTEStorage DerefAndClose interface.
-func (s *CTEStorageRC) DerefAndClose() (err error) {
+// DerefAndClose impls Storage DerefAndClose interface.
+func (s *StorageRC) DerefAndClose() (err error) {
 	if !s.valid() {
-		return errors.Trace(errors.New("CTEStorage not opend yet"))
+		return errors.Trace(errors.New("Storage not opend yet"))
 	}
 	s.refCnt -= 1
 	if s.refCnt < 0 {
-		return errors.Trace(errors.New("CTEStorage ref count is less than zero"))
+		return errors.Trace(errors.New("Storage ref count is less than zero"))
 	} else if s.refCnt == 0 {
 		// TODO: unreg memtracker
 		if err = s.rc.Close(); err != nil {
@@ -142,9 +142,9 @@ func (s *CTEStorageRC) DerefAndClose() (err error) {
 	return nil
 }
 
-// Swap impls CTEStorage Swap interface.
-func (s *CTEStorageRC) SwapData(other CTEStorage) (err error) {
-	otherRC, ok := other.(*CTEStorageRC)
+// SwapData impls Storage Swap interface.
+func (s *StorageRC) SwapData(other Storage) (err error) {
+	otherRC, ok := other.(*StorageRC)
 	if !ok {
 		return errors.Trace(errors.New("cannot swap if underlying storages are different"))
 	}
@@ -155,8 +155,8 @@ func (s *CTEStorageRC) SwapData(other CTEStorage) (err error) {
 	return nil
 }
 
-// Reopen impls CTEStorage Reopen interface.
-func (s *CTEStorageRC) Reopen() (err error) {
+// Reopen impls Storage Reopen interface.
+func (s *StorageRC) Reopen() (err error) {
 	if err = s.rc.Reset(); err != nil {
 		return err
 	}
@@ -170,10 +170,10 @@ func (s *CTEStorageRC) Reopen() (err error) {
 	return nil
 }
 
-// Add impls CTEStorage Add interface.
-func (s *CTEStorageRC) Add(chk *chunk.Chunk) (err error) {
+// Add impls Storage Add interface.
+func (s *StorageRC) Add(chk *chunk.Chunk) (err error) {
 	if !s.valid() {
-		return errors.Trace(errors.New("CTEStorage is not valid"))
+		return errors.Trace(errors.New("Storage is not valid"))
 	}
 	if chk.NumRows() == 0 {
 		return nil
@@ -181,83 +181,83 @@ func (s *CTEStorageRC) Add(chk *chunk.Chunk) (err error) {
 	return s.rc.Add(chk)
 }
 
-// GetChunk impls CTEStorage GetChunk interface.
-func (s *CTEStorageRC) GetChunk(chkIdx int) (*chunk.Chunk, error) {
+// GetChunk impls Storage GetChunk interface.
+func (s *StorageRC) GetChunk(chkIdx int) (*chunk.Chunk, error) {
 	if !s.valid() {
-		return nil, errors.Trace(errors.New("CTEStorage is not valid"))
+		return nil, errors.Trace(errors.New("Storage is not valid"))
 	}
 	return s.rc.GetChunk(chkIdx)
 }
 
-// GetRow impls CTEStorage GetRow interface.
-func (s *CTEStorageRC) GetRow(ptr chunk.RowPtr) (chunk.Row, error) {
+// GetRow impls Storage GetRow interface.
+func (s *StorageRC) GetRow(ptr chunk.RowPtr) (chunk.Row, error) {
 	if !s.valid() {
-		return chunk.Row{}, errors.Trace(errors.New("CTEStorage is not valid"))
+		return chunk.Row{}, errors.Trace(errors.New("Storage is not valid"))
 	}
 	return s.rc.GetRow(ptr)
 }
 
-// NumChunks impls CTEStorage NumChunks interface.
-func (s *CTEStorageRC) NumChunks() int {
+// NumChunks impls Storage NumChunks interface.
+func (s *StorageRC) NumChunks() int {
 	return s.rc.NumChunks()
 }
 
-// Lock impls CTEStorage Lock interface.
-func (s *CTEStorageRC) Lock() {
+// Lock impls Storage Lock interface.
+func (s *StorageRC) Lock() {
 	s.mu.Lock()
 }
 
-// Unlock impls CTEStorage Unlock interface.
-func (s *CTEStorageRC) Unlock() {
+// Unlock impls Storage Unlock interface.
+func (s *StorageRC) Unlock() {
 	s.mu.Unlock()
 }
 
-// Done impls CTEStorage Done interface.
-func (s *CTEStorageRC) Done() bool {
+// Done impls Storage Done interface.
+func (s *StorageRC) Done() bool {
 	return s.done
 }
 
-// SetDone impls CTEStorage SetDone interface.
-func (s *CTEStorageRC) SetDone() {
+// SetDone impls Storage SetDone interface.
+func (s *StorageRC) SetDone() {
 	s.done = true
 }
 
-// SetIter impls CTEStorage SetIter interface.
-func (s *CTEStorageRC) SetIter(iter int) {
+// SetIter impls Storage SetIter interface.
+func (s *StorageRC) SetIter(iter int) {
 	s.iter = iter
 }
 
-// GetIter impls CTEStorage GetIter interface.
-func (s *CTEStorageRC) GetIter() int {
+// GetIter impls Storage GetIter interface.
+func (s *StorageRC) GetIter() int {
 	return s.iter
 }
 
-// GetBegCh impls CTEStorage GetBegCh interface.
-func (s *CTEStorageRC) GetBegCh() chan struct{} {
+// GetBegCh impls Storage GetBegCh interface.
+func (s *StorageRC) GetBegCh() chan struct{} {
 	return s.begCh
 }
 
-// GetMemTracker impls CTEStorage GetMemTracker interface.
-func (s *CTEStorageRC) GetMemTracker() *memory.Tracker {
+// GetMemTracker impls Storage GetMemTracker interface.
+func (s *StorageRC) GetMemTracker() *memory.Tracker {
 	return s.rc.GetMemTracker()
 }
 
-// GetDiskTracker impls CTEStorage GetDiskTracker interface.
-func (s *CTEStorageRC) GetDiskTracker() *memory.Tracker {
+// GetDiskTracker impls Storage GetDiskTracker interface.
+func (s *StorageRC) GetDiskTracker() *memory.Tracker {
 	return s.rc.GetDiskTracker()
 }
 
-// ActionSpill impls CTEStorage ActionSpill interface.
-func (s *CTEStorageRC) ActionSpill() memory.ActionOnExceed {
+// ActionSpill impls Storage ActionSpill interface.
+func (s *StorageRC) ActionSpill() memory.ActionOnExceed {
 	return s.rc.ActionSpill()
 }
 
 // ActionSpillForTest is for test.
-func (s *CTEStorageRC) ActionSpillForTest() *chunk.SpillDiskAction {
+func (s *StorageRC) ActionSpillForTest() *chunk.SpillDiskAction {
 	return s.rc.ActionSpillForTest()
 }
 
-func (s *CTEStorageRC) resetAll() error {
+func (s *StorageRC) resetAll() error {
 	s.refCnt = -1
 	s.begCh = nil
 	s.done = false
@@ -269,6 +269,6 @@ func (s *CTEStorageRC) resetAll() error {
 	return nil
 }
 
-func (s *CTEStorageRC) valid() bool {
+func (s *StorageRC) valid() bool {
 	return s.refCnt > 0 && s.rc != nil
 }
