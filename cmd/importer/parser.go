@@ -291,7 +291,7 @@ func parseIndex(table *table, stmt *ast.CreateIndexStmt) error {
 }
 
 func parseIndexSQL(table *table, sql string) error {
-	if len(sql) == 0 {
+	if sql == "" {
 		return nil
 	}
 

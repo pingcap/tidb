@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -145,8 +144,8 @@ func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestB
 		builder.Request.Tp = kv.ReqTypeAnalyze
 		builder.Request.Data, builder.err = ana.Marshal()
 		builder.Request.NotFillCache = true
-		builder.Request.IsolationLevel = tikvstore.RC
-		builder.Request.Priority = tikvstore.PriorityLow
+		builder.Request.IsolationLevel = kv.RC
+		builder.Request.Priority = kv.PriorityLow
 	}
 
 	return builder
@@ -199,24 +198,24 @@ func (builder *RequestBuilder) SetAllowBatchCop(batchCop bool) *RequestBuilder {
 	return builder
 }
 
-func (builder *RequestBuilder) getIsolationLevel() tikvstore.IsoLevel {
+func (builder *RequestBuilder) getIsolationLevel() kv.IsoLevel {
 	switch builder.Tp {
 	case kv.ReqTypeAnalyze:
-		return tikvstore.RC
+		return kv.RC
 	}
-	return tikvstore.SI
+	return kv.SI
 }
 
 func (builder *RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
 	switch sv.StmtCtx.Priority {
 	case mysql.NoPriority, mysql.DelayedPriority:
-		return tikvstore.PriorityNormal
+		return kv.PriorityNormal
 	case mysql.LowPriority:
-		return tikvstore.PriorityLow
+		return kv.PriorityLow
 	case mysql.HighPriority:
-		return tikvstore.PriorityHigh
+		return kv.PriorityHigh
 	}
-	return tikvstore.PriorityNormal
+	return kv.PriorityNormal
 }
 
 // SetFromSessionVars sets the following fields for "kv.Request" from session variables:
@@ -231,10 +230,9 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.TaskID = sv.StmtCtx.TaskID
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.GetReplicaRead()
-	if sv.SnapshotInfoschema != nil {
-		builder.Request.SchemaVar = infoschema.GetInfoSchemaBySessionVars(sv).SchemaMetaVersion()
-	} else {
-		builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
+	// in tests, it may be null
+	if is, ok := sv.GetInfoSchema().(infoschema.InfoSchema); ok {
+		builder.Request.SchemaVar = is.SchemaMetaVersion()
 	}
 	builder.txnScope = sv.TxnCtx.TxnScope
 	builder.IsStaleness = sv.TxnCtx.IsStaleness
@@ -393,17 +391,21 @@ func encodeHandleKey(ran *ranger.Range) ([]byte, []byte) {
 	return low, high
 }
 
-// SplitRangesBySign split the ranges into two parts:
-// 1. signedRanges is less or equal than maxInt64
-// 2. unsignedRanges is greater than maxInt64
-// We do that because the encoding of tikv key takes every key as a int. As a result MaxUInt64 is indeed
-// small than zero. So we must
-// 1. pick the range that straddles the MaxInt64
-// 2. split that range into two parts : smaller than max int64 and greater than it.
-// 3. if the ascent order is required, return signed first, vice versa.
-// 4. if no order is required, is better to return the unsigned one. That's because it's the normal order
-// of tikv scan.
-func SplitRangesBySign(ranges []*ranger.Range, keepOrder bool, desc bool, isCommonHandle bool) ([]*ranger.Range, []*ranger.Range) {
+// SplitRangesAcrossInt64Boundary split the ranges into two groups:
+// 1. signedRanges is less or equal than MaxInt64
+// 2. unsignedRanges is greater than MaxInt64
+//
+// We do this because every key of tikv is encoded as an int64. As a result, MaxUInt64 is small than zero when
+// interpreted as an int64 variable.
+//
+// This function does the following:
+// 1. split ranges into two groups as described above.
+// 2. if there's a range that straddles the int64 boundary, split it into two ranges, which results in one smaller and
+//    one greater than MaxInt64.
+//
+// if `KeepOrder` is false, we merge the two groups of ranges into one group, to save an rpc call later
+// if `desc` is false, return signed ranges first, vice versa.
+func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc bool, isCommonHandle bool) ([]*ranger.Range, []*ranger.Range) {
 	if isCommonHandle || len(ranges) == 0 || ranges[0].LowVal[0].Kind() == types.KindInt64 {
 		return ranges, nil
 	}
@@ -422,6 +424,7 @@ func SplitRangesBySign(ranges []*ranger.Range, keepOrder bool, desc bool, isComm
 		}
 		return signedRanges, unsignedRanges
 	}
+	// need to split the range that straddles the int64 boundary
 	signedRanges := make([]*ranger.Range, 0, idx+1)
 	unsignedRanges := make([]*ranger.Range, 0, len(ranges)-idx)
 	signedRanges = append(signedRanges, ranges[0:idx]...)

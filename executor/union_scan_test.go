@@ -14,6 +14,8 @@
 package executor_test
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -339,9 +341,15 @@ func (s *testSuite7) TestUpdateScanningHandles(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int primary key, b int);")
 	tk.MustExec("begin")
-	for i := 2; i < 100000; i++ {
-		tk.MustExec("insert into t values (?, ?)", i, i)
+	var insertSQL string
+	for i := 2; i < 10000; i++ {
+		if i == 2 {
+			insertSQL += fmt.Sprintf("(%d, %d)", i, i)
+		} else {
+			insertSQL += fmt.Sprintf(",(%d, %d)", i, i)
+		}
 	}
+	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSQL))
 	tk.MustExec("commit;")
 
 	tk.MustExec("set tidb_distsql_scan_concurrency = 1;")

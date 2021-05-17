@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-binlog"
 )
@@ -56,14 +57,6 @@ type wrapTxn struct {
 
 func (txn *wrapTxn) Valid() bool {
 	return txn.Transaction != nil && txn.Transaction.Valid()
-}
-
-// GetUnionStore implements GetUnionStore
-func (txn *wrapTxn) GetUnionStore() kv.UnionStore {
-	if txn.Transaction == nil {
-		return nil
-	}
-	return txn.Transaction.GetUnionStore()
 }
 
 func (txn *wrapTxn) CacheTableInfo(id int64, info *model.TableInfo) {
@@ -255,6 +248,11 @@ func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
 // StoreIndexUsage strores the index usage information.
 func (c *Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}
+
+// GetTxnWriteThroughputSLI implements the sessionctx.Context interface.
+func (c *Context) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
+	return &sli.TxnWriteThroughputSLI{}
+}
 
 // StmtCommit implements the sessionctx.Context interface.
 func (c *Context) StmtCommit() {}

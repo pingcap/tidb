@@ -25,7 +25,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
+	tikvcfg "github.com/pingcap/tidb/store/tikv/config"
 )
 
 // CloneConf deeply clones this config.
@@ -142,9 +142,9 @@ func FlattenConfigItems(nestedConfig map[string]interface{}) map[string]interfac
 }
 
 func flatten(flatMap map[string]interface{}, nested interface{}, prefix string) {
-	switch nested.(type) {
+	switch nested := nested.(type) {
 	case map[string]interface{}:
-		for k, v := range nested.(map[string]interface{}) {
+		for k, v := range nested {
 			path := k
 			if prefix != "" {
 				path = prefix + "." + k
@@ -156,22 +156,7 @@ func flatten(flatMap map[string]interface{}, nested interface{}, prefix string) 
 	}
 }
 
-const (
-	globalTxnScope = "global"
-)
-
 // GetTxnScopeFromConfig extracts @@txn_scope value from config
 func GetTxnScopeFromConfig() (bool, string) {
-	failpoint.Inject("injectTxnScope", func(val failpoint.Value) {
-		v := val.(string)
-		if len(v) > 0 {
-			failpoint.Return(false, v)
-		}
-		failpoint.Return(true, globalTxnScope)
-	})
-	v, ok := GetGlobalConfig().Labels["zone"]
-	if ok && len(v) > 0 {
-		return false, v
-	}
-	return true, globalTxnScope
+	return tikvcfg.GetTxnScopeFromConfig()
 }

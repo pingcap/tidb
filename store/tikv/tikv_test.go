@@ -14,7 +14,15 @@
 package tikv
 
 import (
+	"flag"
+	"sync"
+
 	. "github.com/pingcap/check"
+)
+
+var (
+	withTiKVGlobalLock sync.RWMutex
+	WithTiKV           = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
 )
 
 // OneByOneSuite is a suite, When with-tikv flag is true, there is only one storage, so the test suite have to run one by one.

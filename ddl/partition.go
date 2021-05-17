@@ -129,16 +129,17 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 			// For available state, the new added partition should wait it's replica to
 			// be finished. Otherwise the query to this partition will be blocked.
-			needWait, err := checkPartitionReplica(addingDefinitions, d)
+			needRetry, err := checkPartitionReplica(tblInfo.TiFlashReplica.Count, addingDefinitions, d)
 			if err != nil {
 				ver, err = convertAddTablePartitionJob2RollbackJob(t, job, err, tblInfo)
 				return ver, err
 			}
-			if needWait {
+			if needRetry {
 				// The new added partition hasn't been replicated.
 				// Do nothing to the job this time, wait next worker round.
 				time.Sleep(tiflashCheckTiDBHTTPAPIHalfInterval)
-				return ver, nil
+				// Set the error here which will lead this job exit when it's retry times beyond the limitation.
+				return ver, errors.Errorf("[ddl] add partition wait for tiflash replica to complete")
 			}
 		}
 
@@ -222,12 +223,28 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 	return nil
 }
 
-func checkPartitionReplica(addingDefinitions []model.PartitionDefinition, d *ddlCtx) (needWait bool, err error) {
+func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.PartitionDefinition, d *ddlCtx) (needWait bool, err error) {
+	failpoint.Inject("mockWaitTiFlashReplica", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(true, nil)
+		}
+	})
+
 	ctx := context.Background()
 	pdCli := d.store.(tikv.Storage).GetRegionCache().PDClient()
 	stores, err := pdCli.GetAllStores(ctx)
 	if err != nil {
 		return needWait, errors.Trace(err)
+	}
+	// Check whether stores have `count` tiflash engines.
+	tiFlashStoreCount := uint64(0)
+	for _, store := range stores {
+		if storeHasEngineTiFlashLabel(store) {
+			tiFlashStoreCount++
+		}
+	}
+	if replicaCount > tiFlashStoreCount {
+		return false, errors.Errorf("[ddl] the tiflash replica count: %d should be less than the total tiflash server count: %d", replicaCount, tiFlashStoreCount)
 	}
 	for _, pd := range addingDefinitions {
 		startKey, endKey := tablecodec.GetTableHandleKeyRange(pd.ID)
@@ -1455,6 +1472,13 @@ func getInValues(pi *model.PartitionInfo, index int) []string {
 func checkAddPartitionTooManyPartitions(piDefs uint64) error {
 	if piDefs > uint64(PartitionCountLimit) {
 		return errors.Trace(ErrTooManyPartitions)
+	}
+	return nil
+}
+
+func checkAddPartitionOnTemporaryMode(tbInfo *model.TableInfo) error {
+	if tbInfo.Partition != nil && tbInfo.TempTableType != model.TempTableNone {
+		return ErrPartitionNoTemporary
 	}
 	return nil
 }

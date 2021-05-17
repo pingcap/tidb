@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tipb/go-binlog"
 )
 
@@ -113,6 +114,8 @@ type Context interface {
 	PrepareTSFuture(ctx context.Context)
 	// StoreIndexUsage stores the index usage information.
 	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
+	// GetTxnWriteThroughputSLI returns the TxnWriteThroughputSLI.
+	GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI
 }
 
 type basicCtxType int

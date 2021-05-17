@@ -94,7 +94,6 @@ func newTester(name string) *tester {
 	t.enableQueryLog = true
 	t.ctx = mock.NewContext()
 	t.ctx.GetSessionVars().EnableWindowFunction = true
-	t.ctx.GetSessionVars().IntPrimaryKeyDefaultAsClustered = true
 	return t
 }
 
@@ -658,7 +657,6 @@ func main() {
 		"set @@tidb_projection_concurrency=4",
 		"set @@tidb_distsql_scan_concurrency=15",
 		"set @@global.tidb_enable_clustered_index=0;",
-		"set @@tidb_int_primary_key_default_as_clustered=1",
 	}
 	for _, sql := range resets {
 		if _, err = mdb.Exec(sql); err != nil {

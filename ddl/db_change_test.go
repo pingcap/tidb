@@ -793,12 +793,12 @@ func (s *testStateChangeSuite) TestWriteOnlyForDropColumn(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	sqls := make([]sqlWithErr, 2)
+	sqls := make([]sqlWithErr, 3)
 	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
-	sqls[1] = sqlWithErr{"update t t1, tt t2 set t1.c1='5', t1.c3='2020-03-01', t2.c1='10' where t1.c4=t2.c4",
+	sqls[1] = sqlWithErr{"update t set c1='5', c3='2020-03-01' where c4 = 8;", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
+	sqls[2] = sqlWithErr{"update t t1, tt t2 set t1.c1='5', t1.c3='2020-03-01', t2.c1='10' where t1.c4=t2.c4",
 		errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
-	// TODO: Fix the case of sqls[2].
-	// sqls[2] = sqlWithErr{"update t set c1='5' where c3='2017-07-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
+	sqls[2] = sqlWithErr{"update t set c1='5' where c3='2017-07-01';", errors.New("[planner:1054]Unknown column 'c3' in 'where clause'")}
 	dropColumnSQL := "alter table t drop column c3"
 	query := &expectQuery{sql: "select * from t;", rows: []string{"a N 8"}}
 	s.runTestInSchemaState(c, model.StateWriteOnly, false, dropColumnSQL, sqls, query)
@@ -816,12 +816,11 @@ func (s *testStateChangeSuite) TestWriteOnlyForDropColumns(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	sqls := make([]sqlWithErr, 2)
-	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
+	sqls := make([]sqlWithErr, 3)
+	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[planner:1054]Unknown column 'c1' in 'field list'")}
 	sqls[1] = sqlWithErr{"update t t1, t_drop_columns t2 set t1.c1='5', t1.c3='2020-03-01', t2.c1='10' where t1.c4=t2.c4",
-		errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
-	// TODO: Fix the case of sqls[2].
-	// sqls[2] = sqlWithErr{"update t set c1='5' where c3='2017-07-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
+		errors.New("[planner:1054]Unknown column 'c1' in 'field list'")}
+	sqls[2] = sqlWithErr{"update t set c1='5' where c3='2017-07-01';", errors.New("[planner:1054]Unknown column 'c3' in 'where clause'")}
 	dropColumnsSQL := "alter table t drop column c3, drop column c1"
 	query := &expectQuery{sql: "select * from t;", rows: []string{"N 8"}}
 	s.runTestInSchemaState(c, model.StateWriteOnly, false, dropColumnsSQL, sqls, query)
@@ -1055,6 +1054,26 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 		c.Assert(err, IsNil)
 	}
 	s.testControlParallelExecSQL(c, sql, sql, f)
+}
+
+func (s *testStateChangeSuite) TestParallelAddGeneratedColumnAndAlterModifyColumn(c *C) {
+	_, err := s.se.Execute(context.Background(), "set global tidb_enable_change_column_type = 1")
+	c.Assert(err, IsNil)
+	defer func() {
+		_, err = s.se.Execute(context.Background(), "set global tidb_enable_change_column_type = 0")
+		c.Assert(err, IsNil)
+	}()
+	domain.GetDomain(s.se).GetGlobalVarsCache().Disable()
+
+	sql1 := "ALTER TABLE t ADD COLUMN f INT GENERATED ALWAYS AS(a+1);"
+	sql2 := "ALTER TABLE t MODIFY COLUMN a tinyint;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true, oldCol is a dependent column 'a' for generated column")
+		_, err := s.se.Execute(context.Background(), "select * from t")
+		c.Assert(err, IsNil)
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
 func (s *testStateChangeSuite) TestParallelAlterModifyColumnAndAddPK(c *C) {

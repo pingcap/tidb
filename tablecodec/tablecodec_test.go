@@ -222,6 +222,16 @@ func (s *testTableCodecSuite) TestUnflattenDatums(c *C) {
 	cmp, err := input[0].CompareDatum(sc, &output[0])
 	c.Assert(err, IsNil)
 	c.Assert(cmp, Equals, 0)
+
+	input = []types.Datum{types.NewCollationStringDatum("aaa", "utf8mb4_unicode_ci", 0)}
+	tps = []*types.FieldType{types.NewFieldType(mysql.TypeBlob)}
+	tps[0].Collate = "utf8mb4_unicode_ci"
+	output, err = UnflattenDatums(input, tps, sc.TimeZone)
+	c.Assert(err, IsNil)
+	cmp, err = input[0].CompareDatum(sc, &output[0])
+	c.Assert(err, IsNil)
+	c.Assert(cmp, Equals, 0)
+	c.Assert(output[0].Collation(), Equals, "utf8mb4_unicode_ci")
 }
 
 func (s *testTableCodecSuite) TestTimeCodec(c *C) {
@@ -562,4 +572,10 @@ func (s *testTableCodecSuite) TestError(c *C) {
 		code := terror.ToSQLError(err).Code
 		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
 	}
+}
+
+func (s *testTableCodecSuite) TestUntouchedIndexKValue(c *C) {
+	untouchedIndexKey := []byte("t00000001_i000000001")
+	untouchedIndexValue := []byte{0, 0, 0, 0, 0, 0, 0, 1, 49}
+	c.Assert(IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue), IsTrue)
 }

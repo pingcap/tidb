@@ -16,7 +16,6 @@ package kv
 import (
 	"context"
 	"crypto/tls"
-	"sync"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -24,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -37,10 +35,6 @@ import (
 // Append UnCommitIndexKVFlag to the value indicate the index key/value is no need to commit.
 const UnCommitIndexKVFlag byte = '1'
 
-// MaxTxnTimeUse is the max time a Txn may use (in ms) from its begin to commit.
-// We use it to abort the transaction to guarantee GC worker will not influence it.
-const MaxTxnTimeUse = 24 * 60 * 60 * 1000
-
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
 var (
 	// TxnEntrySizeLimit is limit of single entry size (len(key) + len(value)).
@@ -48,6 +42,9 @@ var (
 	// TxnTotalSizeLimit is limit of the sum of all entry size.
 	TxnTotalSizeLimit uint64 = config.DefTxnTotalSizeLimit
 )
+
+// FlagsOp  describes KeyFlags modify operation. TODO:remove it when br is ready
+type FlagsOp = tikvstore.FlagsOp
 
 // Getter is the interface for the Get method.
 type Getter interface {
@@ -97,15 +94,6 @@ type RetrieverMutator interface {
 	Mutator
 }
 
-// MemBufferIterator is an Iterator with KeyFlags related functions.
-type MemBufferIterator interface {
-	Iterator
-	HasValue() bool
-	Flags() KeyFlags
-	UpdateFlags(...FlagsOp)
-	Handle() MemKeyHandle
-}
-
 // MemBuffer is an in-memory kv collection, can be used to buffer write operations.
 type MemBuffer interface {
 	RetrieverMutator
@@ -119,26 +107,11 @@ type MemBuffer interface {
 	RUnlock()
 
 	// GetFlags returns the latest flags associated with key.
-	GetFlags(Key) (KeyFlags, error)
-	// IterWithFlags returns a MemBufferIterator.
-	IterWithFlags(k Key, upperBound Key) MemBufferIterator
-	// IterReverseWithFlags returns a reversed MemBufferIterator.
-	IterReverseWithFlags(k Key) MemBufferIterator
+	GetFlags(Key) (tikvstore.KeyFlags, error)
 	// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
-	SetWithFlags(Key, []byte, ...FlagsOp) error
-	// UpdateFlags update the flags associated with key.
-	UpdateFlags(Key, ...FlagsOp)
+	SetWithFlags(Key, []byte, ...tikvstore.FlagsOp) error
 	// DeleteWithFlags delete key with the given KeyFlags
-	DeleteWithFlags(Key, ...FlagsOp) error
-
-	GetKeyByHandle(MemKeyHandle) []byte
-	GetValueByHandle(MemKeyHandle) ([]byte, bool)
-
-	// Reset reset the MemBuffer to initial states.
-	Reset()
-	// DiscardValues releases the memory used by all values.
-	// NOTE: any operation need value will panic after this function.
-	DiscardValues()
+	DeleteWithFlags(Key, ...tikvstore.FlagsOp) error
 
 	// Staging create a new staging buffer inside the MemBuffer.
 	// Subsequent writes will be temporarily stored in this new staging buffer.
@@ -150,22 +123,19 @@ type MemBuffer interface {
 	// If the changes are not published by `Release`, they will be discarded.
 	Cleanup(StagingHandle)
 	// InspectStage used to inspect the value updates in the given stage.
-	InspectStage(StagingHandle, func(Key, KeyFlags, []byte))
+	InspectStage(StagingHandle, func(Key, tikvstore.KeyFlags, []byte))
 
-	// SelectValueHistory select the latest value which makes `predicate` returns true from the modification history.
-	SelectValueHistory(key Key, predicate func(value []byte) bool) ([]byte, error)
 	// SnapshotGetter returns a Getter for a snapshot of MemBuffer.
 	SnapshotGetter() Getter
 	// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
 	SnapshotIter(k, upperbound Key) Iterator
 
-	// Size returns sum of keys and values length.
-	Size() int
 	// Len returns the number of entries in the DB.
 	Len() int
-	// Dirty returns whether the root staging buffer is updated.
-	Dirty() bool
 }
+
+// LockCtx contains information for LockKeys method.
+type LockCtx = tikvstore.LockCtx
 
 // Transaction defines the interface for operations inside a Transaction.
 // This is not thread safe.
@@ -184,6 +154,7 @@ type Transaction interface {
 	// String implements fmt.Stringer interface.
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
+	// Will block until all keys are locked successfully or an error occurs.
 	LockKeys(ctx context.Context, lockCtx *LockCtx, keys ...Key) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
@@ -203,12 +174,10 @@ type Transaction interface {
 	GetMemBuffer() MemBuffer
 	// GetSnapshot returns the Snapshot binding to this transaction.
 	GetSnapshot() Snapshot
-	// GetUnionStore returns the UnionStore binding to this transaction.
-	GetUnionStore() UnionStore
 	// SetVars sets variables to the transaction.
-	SetVars(vars *Variables)
+	SetVars(vars interface{})
 	// GetVars gets variables from the transaction.
-	GetVars() *Variables
+	GetVars() interface{}
 	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
 	// Do not use len(value) == 0 or value == nil to represent non-exist.
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
@@ -222,32 +191,10 @@ type Transaction interface {
 	GetTableInfo(id int64) *model.TableInfo
 }
 
-// LockCtx contains information for LockKeys method.
-type LockCtx struct {
-	Killed                *uint32
-	ForUpdateTS           uint64
-	LockWaitTime          int64
-	WaitStartTime         time.Time
-	PessimisticLockWaited *int32
-	LockKeysDuration      *int64
-	LockKeysCount         *int32
-	ReturnValues          bool
-	Values                map[string]ReturnedValue
-	ValuesLock            sync.Mutex
-	LockExpired           *uint32
-	Stats                 *execdetails.LockKeysDetails
-}
-
-// ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.
-type ReturnedValue struct {
-	Value         []byte
-	AlreadyLocked bool
-}
-
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(ctx context.Context, req *Request, vars *Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) Response
+	Send(ctx context.Context, req *Request, vars interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) Response
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool
@@ -309,7 +256,7 @@ type Request struct {
 	// sent to multiple storage units concurrently.
 	Concurrency int
 	// IsolationLevel is the isolation level, default is SI.
-	IsolationLevel tikvstore.IsoLevel
+	IsolationLevel IsoLevel
 	// Priority is the priority of this KV request, its value may be PriorityNormal/PriorityLow/PriorityHigh.
 	Priority int
 	// memTracker is used to trace and control memory usage in co-processor layer.
@@ -326,7 +273,7 @@ type Request struct {
 	// call would not corresponds to a whole region result.
 	Streaming bool
 	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
-	ReplicaRead tikvstore.ReplicaReadType
+	ReplicaRead ReplicaReadType
 	// StoreType represents this request is sent to the which type of store.
 	StoreType StoreType
 	// Cacheable is true if the request can be cached. Currently only deterministic DAG requests can be cached.
@@ -393,10 +340,31 @@ type Driver interface {
 }
 
 // TransactionOption indicates the option when beginning a transaction
+// `TxnScope` must be set for each object
+// Every other fields are optional, but currently at most one of them can be set
 type TransactionOption struct {
-	TxnScope string
-	StartTS  *uint64
-	PrevSec  *uint64
+	TxnScope   string
+	StartTS    *uint64
+	PrevSec    *uint64
+	MinStartTS *uint64
+	MaxPrevSec *uint64
+}
+
+// DefaultTransactionOption creates a default TransactionOption, ie. Work in GlobalTxnScope and get start ts when got used
+func DefaultTransactionOption() TransactionOption {
+	return TransactionOption{TxnScope: oracle.GlobalTxnScope}
+}
+
+// SetMaxPrevSec set maxPrevSec
+func (to TransactionOption) SetMaxPrevSec(maxPrevSec uint64) TransactionOption {
+	to.MaxPrevSec = &maxPrevSec
+	return to
+}
+
+// SetMinStartTS set minStartTS
+func (to TransactionOption) SetMinStartTS(minStartTS uint64) TransactionOption {
+	to.MinStartTS = &minStartTS
+	return to
 }
 
 // SetStartTs set startTS
@@ -477,10 +445,19 @@ type SplittableStore interface {
 	CheckRegionInScattering(regionID uint64) (bool, error)
 }
 
-// Used for pessimistic lock wait time
-// these two constants are special for lock protocol with tikv
-// 0 means always wait, -1 means nowait, others meaning lock wait in milliseconds
-var (
-	LockAlwaysWait = int64(0)
-	LockNoWait     = int64(-1)
+// Priority value for transaction priority.
+const (
+	PriorityNormal = iota
+	PriorityLow
+	PriorityHigh
+)
+
+// IsoLevel is the transaction's isolation level.
+type IsoLevel int
+
+const (
+	// SI stands for 'snapshot isolation'.
+	SI IsoLevel = iota
+	// RC stands for 'read committed'.
+	RC
 )

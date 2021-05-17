@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -39,7 +39,7 @@ func (*testSessionSuite) TestSetSystemVariable(c *C) {
 	v.TimeZone = time.UTC
 	tests := []struct {
 		key   string
-		value interface{}
+		value string
 		err   bool
 	}{
 		{variable.TxnIsolation, "SERIALIZABLE", true},
@@ -57,7 +57,7 @@ func (*testSessionSuite) TestSetSystemVariable(c *C) {
 		{variable.TiDBEnableStmtSummary, "1", false},
 	}
 	for _, t := range tests {
-		err := variable.SetSessionSystemVar(v, t.key, types.NewDatum(t.value))
+		err := variable.SetSessionSystemVar(v, t.key, t.value)
 		if t.err {
 			c.Assert(err, NotNil)
 		} else {
@@ -122,6 +122,20 @@ func (*testSessionSuite) TestSession(c *C) {
 	c.Assert(ss.WarningCount(), Equals, uint16(0))
 }
 
+func (*testSessionSuite) TestAllocMPPID(c *C) {
+	ctx := mock.NewContext()
+
+	seVar := ctx.GetSessionVars()
+	c.Assert(seVar, NotNil)
+
+	c.Assert(seVar.AllocMPPTaskID(1), Equals, int64(1))
+	c.Assert(seVar.AllocMPPTaskID(1), Equals, int64(2))
+	c.Assert(seVar.AllocMPPTaskID(1), Equals, int64(3))
+	c.Assert(seVar.AllocMPPTaskID(2), Equals, int64(1))
+	c.Assert(seVar.AllocMPPTaskID(2), Equals, int64(2))
+	c.Assert(seVar.AllocMPPTaskID(2), Equals, int64(3))
+}
+
 func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	ctx := mock.NewContext()
 
@@ -138,11 +152,11 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	execDetail := execdetails.ExecDetails{
 		BackoffTime:  time.Millisecond,
 		RequestCount: 2,
-		ScanDetail: &execdetails.ScanDetail{
+		ScanDetail: &util.ScanDetail{
 			ProcessedKeys: 20001,
 			TotalKeys:     10000,
 		},
-		TimeDetail: execdetails.TimeDetail{
+		TimeDetail: util.TimeDetail{
 			ProcessTime: time.Second * time.Duration(2),
 			WaitTime:    time.Minute,
 		},

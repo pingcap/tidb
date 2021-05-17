@@ -27,7 +27,7 @@ import (
 )
 
 func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
-	tblInfo := newTestTableBuilder("").add("a", mysql.TypeLong).build()
+	tblInfo := newTestTableBuilder("").add("a", mysql.TypeLong, mysql.NotNullFlag).build()
 	tests := []struct {
 		exprStr string
 		result  string

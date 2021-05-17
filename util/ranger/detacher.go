@@ -505,6 +505,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			// All Intervals are single points
 			accesses[i] = points2EqOrInCond(sctx, points[i], cols[i])
 			newConditions = append(newConditions, accesses[i])
+			sctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
 		}
 	}
 	for i, offset := range offsets {

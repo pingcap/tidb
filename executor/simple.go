@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -39,13 +40,13 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -551,27 +552,29 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	}
 	e.ctx.GetSessionVars().CurrentDBChanged = dbname.O != e.ctx.GetSessionVars().CurrentDB
 	e.ctx.GetSessionVars().CurrentDB = dbname.O
-	// character_set_database is the character set used by the default database.
-	// The server sets this variable whenever the default database changes.
-	// See http://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_character_set_database
 	sessionVars := e.ctx.GetSessionVars()
-	err := sessionVars.SetSystemVar(variable.CharsetDatabase, dbinfo.Charset)
-	if err != nil {
-		return err
-	}
 	dbCollate := dbinfo.Collate
 	if dbCollate == "" {
-		// Since we have checked the charset, the dbCollate here shouldn't be "".
 		dbCollate = getDefaultCollate(dbinfo.Charset)
 	}
+	// If new collations are enabled, switch to the default
+	// collation if this one is not supported.
+	// The SetSystemVar will also update the CharsetDatabase
+	dbCollate = collate.SubstituteMissingCollationToDefault(dbCollate)
 	return sessionVars.SetSystemVar(variable.CollationDatabase, dbCollate)
 }
 
 func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	// If `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND` is the first statement in TxnCtx, we should
 	// always create a new Txn instead of reusing it.
-	if s.ReadOnly && s.Bound != nil {
-		return e.executeStartTransactionReadOnlyWithTimestampBound(ctx, s)
+	if s.ReadOnly {
+		enableNoopFuncs := e.ctx.GetSessionVars().EnableNoopFuncs
+		if !enableNoopFuncs && s.Bound == nil {
+			return expression.ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
+		}
+		if s.Bound != nil {
+			return e.executeStartTransactionReadOnlyWithTimestampBound(ctx, s)
+		}
 	}
 
 	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
@@ -602,10 +605,10 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 		return err
 	}
 	if e.ctx.GetSessionVars().TxnCtx.IsPessimistic {
-		txn.SetOption(tikvstore.Pessimistic, true)
+		txn.SetOption(kv.Pessimistic, true)
 	}
 	if s.CausalConsistencyOnly {
-		txn.SetOption(tikvstore.GuaranteeLinearizability, false)
+		txn.SetOption(kv.GuaranteeLinearizability, false)
 	}
 	return nil
 }
@@ -641,6 +644,31 @@ func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx conte
 			return err
 		}
 		opt.PrevSec = uint64(d.Seconds())
+	case ast.TimestampBoundMaxStaleness:
+		v, ok := s.Bound.Timestamp.(*driver.ValueExpr)
+		if !ok {
+			return errors.New("Invalid value for Bound Timestamp")
+		}
+		d, err := types.ParseDuration(e.ctx.GetSessionVars().StmtCtx, v.GetString(), types.GetFsp(v.GetString()))
+		if err != nil {
+			return err
+		}
+		opt.PrevSec = uint64(d.Seconds())
+	case ast.TimestampBoundMinReadTimestamp:
+		v, ok := s.Bound.Timestamp.(*driver.ValueExpr)
+		if !ok {
+			return errors.New("Invalid value for Bound Timestamp")
+		}
+		t, err := types.ParseTime(e.ctx.GetSessionVars().StmtCtx, v.GetString(), v.GetType().Tp, types.GetFsp(v.GetString()))
+		if err != nil {
+			return err
+		}
+		gt, err := t.GoTime(e.ctx.GetSessionVars().TimeZone)
+		if err != nil {
+			return err
+		}
+		startTS := oracle.ComposeTS(gt.Unix()*1000, 0)
+		opt.StartTS = startTS
 	}
 	err := e.ctx.NewTxnWithStalenessOption(ctx, opt)
 	if err != nil {
@@ -657,13 +685,13 @@ func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx conte
 	}
 	failpoint.Inject("mockStalenessTxnSchemaVer", func(val failpoint.Value) {
 		if val.(bool) {
-			staleVer = e.ctx.GetSessionVars().TxnCtx.SchemaVersion - 1
+			staleVer = e.ctx.GetSessionVars().GetInfoSchema().SchemaMetaVersion() - 1
 		} else {
-			staleVer = e.ctx.GetSessionVars().TxnCtx.SchemaVersion
+			staleVer = e.ctx.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
 		}
 	})
 	// TODO: currently we directly check the schema version. In future, we can cache the stale infoschema instead.
-	if e.ctx.GetSessionVars().TxnCtx.SchemaVersion > staleVer {
+	if e.ctx.GetSessionVars().GetInfoSchema().SchemaMetaVersion() > staleVer {
 		return errors.New("schema version changed after the staleness startTS")
 	}
 
@@ -973,7 +1001,7 @@ func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
 			return err
 		}
 		if !exists {
-			return ErrCannotUser.GenWithStackByArgs("GRANT ROLE", role.String())
+			return ErrGrantRole.GenWithStackByArgs(role.String())
 		}
 	}
 	for _, user := range s.Users {
@@ -1132,6 +1160,15 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 			failedUsers = append(failedUsers, user.String())
 			break
 		}
+
+		// delete relationship from mysql.global_grants
+		sql.Reset()
+		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, "global_grants", user.Hostname, user.Username)
+		if _, err = sqlExecutor.ExecuteInternal(context.TODO(), sql.String()); err != nil {
+			failedUsers = append(failedUsers, user.String())
+			break
+		}
+
 		//TODO: need delete columns_priv once we implement columns_priv functionality.
 	}
 
@@ -1368,7 +1405,7 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) (err error) {
 	if err := h.DeleteTableStatsFromKV(statsIDs); err != nil {
 		return err
 	}
-	return h.Update(infoschema.GetInfoSchema(e.ctx))
+	return h.Update(e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema))
 }
 
 func (e *SimpleExec) autoNewTxn() bool {

@@ -239,7 +239,8 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	}
 	id2Paths := make(map[int64]*planutil.AccessPath)
 	for _, path := range filledPaths {
-		if path.IsTablePath() {
+		// Index merge path and table path don't have index.
+		if path.Index == nil {
 			continue
 		}
 		id2Paths[path.Index.ID] = path

@@ -786,6 +786,8 @@ type Update struct {
 	// Used when partition sets are given.
 	// e.g. update t partition(p0) set a = 1;
 	PartitionedTable []table.PartitionedTable
+
+	tblID2Table map[int64]table.Table
 }
 
 // Delete represents a delete plan.
@@ -854,6 +856,7 @@ type AnalyzeColumnsTask struct {
 	CommonHandleInfo *model.IndexInfo
 	ColsInfo         []*model.ColumnInfo
 	TblInfo          *model.TableInfo
+	Indexes          []*model.IndexInfo
 	analyzeInfo
 }
 
@@ -982,6 +985,8 @@ func (e *Explain) prepareSchema() error {
 	switch {
 	case (format == ast.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil)) || (format == ast.ExplainFormatBrief):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
+	case format == ast.ExplainFormatVerbose:
+		fieldNames = []string{"id", "estRows", "estCost", "task", "access object", "operator info"}
 	case format == ast.ExplainFormatROW && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == ast.ExplainFormatDOT:
@@ -1011,7 +1016,7 @@ func (e *Explain) RenderResult() error {
 		return nil
 	}
 	switch strings.ToLower(e.Format) {
-	case ast.ExplainFormatROW, ast.ExplainFormatBrief:
+	case ast.ExplainFormatROW, ast.ExplainFormatBrief, ast.ExplainFormatVerbose:
 		if e.Rows == nil || e.Analyze {
 			e.explainedPlans = map[int]bool{}
 			err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
@@ -1188,7 +1193,7 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 	}
 
 	id := texttree.PrettyIdentifier(p.ExplainID().String()+driverSide, indent, isLastChild)
-	estRows, accessObject, operatorInfo := e.getOperatorInfo(p, id)
+	estRows, estCost, accessObject, operatorInfo := e.getOperatorInfo(p, id)
 
 	var row []string
 	if e.Analyze {
@@ -1198,24 +1203,32 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p, e.RuntimeStatsColl)
 		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
 	} else {
-		row = []string{id, estRows, taskType, accessObject, operatorInfo}
+		row = []string{id, estRows}
+		if e.Format == ast.ExplainFormatVerbose {
+			row = append(row, estCost)
+		}
+		row = append(row, taskType, accessObject, operatorInfo)
 	}
 	e.Rows = append(e.Rows, row)
 }
 
-func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string) {
+func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, string) {
 	// For `explain for connection` statement, `e.ExplainRows` will be set.
 	for _, row := range e.ExplainRows {
 		if len(row) < 5 {
 			panic("should never happen")
 		}
 		if row[0] == id {
-			return row[1], row[3], row[4]
+			return row[1], "N/A", row[3], row[4]
 		}
 	}
 	estRows := "N/A"
 	if si := p.statsInfo(); si != nil {
 		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
+	}
+	estCost := "N/A"
+	if pp, ok := p.(PhysicalPlan); ok {
+		estCost = strconv.FormatFloat(pp.Cost(), 'f', 2, 64)
 	}
 	var accessObject, operatorInfo string
 	if plan, ok := p.(dataAccesser); ok {
@@ -1227,7 +1240,7 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string) {
 		}
 		operatorInfo = p.ExplainInfo()
 	}
-	return estRows, accessObject, operatorInfo
+	return estRows, estCost, accessObject, operatorInfo
 }
 
 func (e *Explain) prepareDotInfo(p PhysicalPlan) {

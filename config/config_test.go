@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"testing"
 
@@ -184,6 +185,7 @@ unrecognized-option-test = true
 	_, err = f.WriteString(`
 token-limit = 0
 enable-table-lock = true
+alter-primary-key = true
 delay-clean-table-lock = 5
 split-region-max-num=10000
 enable-batch-dml = true
@@ -243,6 +245,7 @@ spilled-file-encryption-method = "plaintext"
 
 	// Test that the value will be overwritten by the config file.
 	c.Assert(conf.Performance.TxnTotalSizeLimit, Equals, uint64(2000))
+	c.Assert(conf.AlterPrimaryKey, Equals, true)
 	c.Assert(conf.Performance.TCPNoDelay, Equals, false)
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
@@ -421,6 +424,14 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 	// is recycled when the reference count drops to 0.
 	c.Assert(os.Remove(certFile), IsNil)
 	c.Assert(os.Remove(keyFile), IsNil)
+
+	// test for config `toml` and `json` tag names
+	c1 := Config{}
+	st := reflect.TypeOf(c1)
+	for i := 0; i < st.NumField(); i++ {
+		field := st.Field(i)
+		c.Assert(field.Tag.Get("toml"), Equals, field.Tag.Get("json"))
+	}
 }
 
 func (s *testConfigSuite) TestOOMActionValid(c *C) {
@@ -593,4 +604,18 @@ func (s *testConfigSuite) TestTcpNoDelay(c *C) {
 	c1 := NewConfig()
 	//check default value
 	c.Assert(c1.Performance.TCPNoDelay, Equals, true)
+}
+
+func (s *testConfigSuite) TestConfigExample(c *C) {
+	conf := NewConfig()
+	_, localFile, _, _ := runtime.Caller(0)
+	configFile := filepath.Join(filepath.Dir(localFile), "config.toml.example")
+	metaData, err := toml.DecodeFile(configFile, conf)
+	c.Assert(err, IsNil)
+	keys := metaData.Keys()
+	for _, key := range keys {
+		for _, s := range key {
+			c.Assert(ContainHiddenConfig(s), IsFalse)
+		}
+	}
 }
