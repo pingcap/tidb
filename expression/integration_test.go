@@ -9361,3 +9361,14 @@ func (s *testIntegrationSuite) TestEnumIndex(c *C) {
 	tk.MustQuery("select /*+ use_index(t,idx) */ col3 from t where col2 = 'b' and col1 is not null;").Check(
 		testkit.Rows("2"))
 }
+
+// Previously global values were cached. This is incorrect.
+// See: https://github.com/pingcap/tidb/issues/24368
+func (s *testIntegrationSuite) TestGlobalCacheCorrectness(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("SHOW VARIABLES LIKE 'max_connections'").Check(testkit.Rows("max_connections 151"))
+	tk.MustExec("SET GLOBAL max_connections=1234")
+	tk.MustQuery("SHOW VARIABLES LIKE 'max_connections'").Check(testkit.Rows("max_connections 1234"))
+	// restore
+	tk.MustExec("SET GLOBAL max_connections=151")
+}

@@ -173,10 +173,6 @@ func GetSessionOrGlobalSystemVar(s *SessionVars, key string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// This cache results in incorrect behavior since changes to global
-	// variables will not be picked up. It should be removed once
-	// https://github.com/pingcap/tidb/issues/24368 is closed.
-	s.systems[key] = gVal
 	return gVal, nil
 }
 
