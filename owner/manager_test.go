@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	. "github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/logutil"
@@ -72,11 +73,14 @@ func TestSingle(t *testing.T) {
 	defer clus.Terminate(t)
 	cli := clus.RandClient()
 	ctx := goctx.Background()
+	ic := infoschema.NewCache(2)
+	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0))
 	d := NewDDL(
 		ctx,
 		WithEtcdClient(cli),
 		WithStore(store),
 		WithLease(testLease),
+		WithInfoCache(ic),
 	)
 	err = d.Start(nil)
 	if err != nil {
