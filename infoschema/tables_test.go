@@ -937,6 +937,22 @@ func (s *testTableSuite) TestFormatVersion(c *C) {
 		version := infoschema.FormatVersion(v, false)
 		c.Assert(version, Equals, res[i])
 	}
+
+	versions = []string{"v4.0.12", "4.0.12", "v5.0.1"}
+	resultVersion := []string{"4.0.12", "4.0.12", "5.0.1"}
+
+	f := func(v string) string {
+		if v[0] == 'v' {
+			v = v[1:]
+		}
+
+		return v
+	}
+
+	for i, versionString := range versions {
+		c.Assert(resultVersion[i], Equals, f(versionString))
+	}
+
 }
 
 // Test statements_summary.
