@@ -333,7 +333,8 @@ func testReaderWithCache(c *check.C) {
 	// It means only new reader is alloced after writing.
 	oriReader := l.r
 	for i := 0; i < 100; i++ {
-		row, _ = l.GetRow(RowPtr{0, 0})
+		row, err = l.GetRow(RowPtr{0, 0})
+		c.Assert(err, check.IsNil)
 		c.Assert(oriReader == l.r, check.IsTrue)
 		c.Assert(l.isReaderStale, check.IsFalse)
 	}
@@ -345,12 +346,14 @@ func testReaderWithCache(c *check.C) {
 
 	// New reader is generated when reading.
 	row, err = l.GetRow(RowPtr{1, 0})
+	c.Assert(err, check.IsNil)
 	c.Assert(oriReader != l.r, check.IsTrue)
 	c.Assert(l.isReaderStale, check.IsFalse)
 	oriReader = l.r
 
 	for i := 0; i < 100; i++ {
-		row, _ = l.GetRow(RowPtr{0, 0})
+		row, err = l.GetRow(RowPtr{0, 0})
+		c.Assert(err, check.IsNil)
 		c.Assert(oriReader == l.r, check.IsTrue)
 		c.Assert(l.isReaderStale, check.IsFalse)
 	}

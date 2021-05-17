@@ -15,11 +15,10 @@ package checksum
 
 import (
 	"encoding/binary"
+	"errors"
 	"hash/crc32"
 	"io"
 	"sync"
-
-	"github.com/pingcap/errors"
 )
 
 const (
