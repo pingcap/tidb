@@ -45,6 +45,7 @@ var dynamicPrivs = []string{
 	"CONNECTION_ADMIN",
 	"RESTRICTED_TABLES_ADMIN", // Can see system tables when SEM is enabled
 	"RESTRICTED_STATUS_ADMIN", // Can see all status vars when SEM is enabled.
+	"RESTRICTED_USER_ADMIN",   // User can not have their access revoked by SUPER users.
 }
 var dynamicPrivLock sync.Mutex
 
@@ -54,6 +55,21 @@ type UserPrivileges struct {
 	user string
 	host string
 	*Handle
+}
+
+// RequestDynamicVerificationWithUser implements the Manager interface.
+func (p *UserPrivileges) RequestDynamicVerificationWithUser(privName string, grantable bool, user *auth.UserIdentity) bool {
+	if SkipWithGrant {
+		return true
+	}
+
+	if user == nil {
+		return false
+	}
+
+	mysqlPriv := p.Handle.Get()
+	roles := mysqlPriv.getDefaultRoles(user.Username, user.Hostname)
+	return mysqlPriv.RequestDynamicVerification(roles, user.Username, user.Hostname, privName, grantable)
 }
 
 // RequestDynamicVerification implements the Manager interface.
@@ -534,4 +550,15 @@ func RegisterDynamicPrivilege(privNameInUpper string) error {
 	}
 	dynamicPrivs = append(dynamicPrivs, privNameInUpper)
 	return nil
+}
+
+// GetDynamicPrivileges returns the list of registered DYNAMIC privileges
+// for use in meta data commands (i.e. SHOW PRIVILEGES)
+func GetDynamicPrivileges() []string {
+	dynamicPrivLock.Lock()
+	defer dynamicPrivLock.Unlock()
+
+	privCopy := make([]string, len(dynamicPrivs))
+	copy(privCopy, dynamicPrivs)
+	return privCopy
 }
