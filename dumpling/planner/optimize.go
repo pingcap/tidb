@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
@@ -533,7 +532,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 			warns = append(warns, warn)
 		}
 		stmtHints.HasReplicaReadHint = true
-		stmtHints.ReplicaRead = byte(tikvstore.ReplicaReadFollower)
+		stmtHints.ReplicaRead = byte(kv.ReplicaReadFollower)
 	}
 	// Handle MAX_EXECUTION_TIME
 	if maxExecutionTimeCnt != 0 {
