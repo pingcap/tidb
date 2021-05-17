@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -1121,9 +1120,9 @@ func (e *AnalyzeFastExec) activateTxnForRowCount() (rollbackFn func() error, err
 			return nil, errors.Trace(err)
 		}
 	}
-	txn.SetOption(tikvstore.Priority, kv.PriorityLow)
-	txn.SetOption(tikvstore.IsolationLevel, kv.RC)
-	txn.SetOption(tikvstore.NotFillCache, true)
+	txn.SetOption(kv.Priority, kv.PriorityLow)
+	txn.SetOption(kv.IsolationLevel, kv.RC)
+	txn.SetOption(kv.NotFillCache, true)
 	return rollbackFn, nil
 }
 
@@ -1322,7 +1321,7 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (scanKeysSize int, er
 func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err error) {
 	snapshot := e.ctx.GetStore().GetSnapshot(kv.MaxVersion)
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		snapshot.SetOption(tikvstore.ReplicaRead, tikvstore.ReplicaReadFollower)
+		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	for _, t := range e.scanTasks {
 		iter, err := snapshot.Iter(kv.Key(t.StartKey), kv.Key(t.EndKey))
@@ -1341,11 +1340,11 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err
 func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 	defer e.wg.Done()
 	snapshot := e.ctx.GetStore().GetSnapshot(kv.MaxVersion)
-	snapshot.SetOption(tikvstore.NotFillCache, true)
-	snapshot.SetOption(tikvstore.IsolationLevel, kv.RC)
-	snapshot.SetOption(tikvstore.Priority, kv.PriorityLow)
+	snapshot.SetOption(kv.NotFillCache, true)
+	snapshot.SetOption(kv.IsolationLevel, kv.RC)
+	snapshot.SetOption(kv.Priority, kv.PriorityLow)
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		snapshot.SetOption(tikvstore.ReplicaRead, tikvstore.ReplicaReadFollower)
+		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 
 	rander := rand.New(rand.NewSource(e.randSeed))
@@ -1356,7 +1355,7 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 			lower, upper := step-uint32(2*math.Sqrt(float64(step))), step
 			step = uint32(rander.Intn(int(upper-lower))) + lower
 		}
-		snapshot.SetOption(tikvstore.SampleStep, step)
+		snapshot.SetOption(kv.SampleStep, step)
 		kvMap := make(map[string][]byte)
 		var iter kv.Iterator
 		iter, *err = snapshot.Iter(kv.Key(task.StartKey), kv.Key(task.EndKey))

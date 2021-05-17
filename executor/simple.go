@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
@@ -605,10 +604,10 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 		return err
 	}
 	if e.ctx.GetSessionVars().TxnCtx.IsPessimistic {
-		txn.SetOption(tikvstore.Pessimistic, true)
+		txn.SetOption(kv.Pessimistic, true)
 	}
 	if s.CausalConsistencyOnly {
-		txn.SetOption(tikvstore.GuaranteeLinearizability, false)
+		txn.SetOption(kv.GuaranteeLinearizability, false)
 	}
 	return nil
 }

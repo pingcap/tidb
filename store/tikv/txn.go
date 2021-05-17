@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
@@ -118,7 +119,7 @@ func extractStartTs(store *KVStore, options kv.TransactionOption) (uint64, error
 		startTs = *options.MinStartTS
 		// If the safeTS is larger than the minStartTS, we will use safeTS as StartTS, otherwise we will use
 		// minStartTS directly.
-		if oracle.CompareTS(startTs, safeTS) < 0 {
+		if startTs < safeTS {
 			startTs = safeTS
 		}
 	} else if options.MaxPrevSec != nil {
@@ -218,23 +219,6 @@ func (txn *KVTxn) IterReverse(k []byte) (unionstore.Iterator, error) {
 // Delete removes the entry for key k from kv store.
 func (txn *KVTxn) Delete(k []byte) error {
 	return txn.us.GetMemBuffer().Delete(k)
-}
-
-// SetOption sets an option with a value, when val is nil, uses the default
-// value of this option.
-func (txn *KVTxn) SetOption(opt int, val interface{}) {
-	txn.us.SetOption(opt, val)
-	txn.snapshot.SetOption(opt, val)
-}
-
-// GetOption returns the option
-func (txn *KVTxn) GetOption(opt int) interface{} {
-	return txn.us.GetOption(opt)
-}
-
-// DelOption deletes an option.
-func (txn *KVTxn) DelOption(opt int) {
-	txn.us.DelOption(opt)
 }
 
 // SetSchemaLeaseChecker sets a hook to check schema version.
@@ -444,7 +428,7 @@ func (txn *KVTxn) rollbackPessimisticLocks() error {
 	if txn.lockedCnt == 0 {
 		return nil
 	}
-	bo := NewBackofferWithVars(context.Background(), cleanupMaxBackoff, txn.vars)
+	bo := retry.NewBackofferWithVars(context.Background(), cleanupMaxBackoff, txn.vars)
 	keys := txn.collectLockedKeys()
 	return txn.committer.pessimisticRollbackMutations(bo, &PlainMutations{keys: keys})
 }
@@ -585,16 +569,16 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tikv.LockCtx, keysInput
 		lockCtx.Stats = &util.LockKeysDetails{
 			LockKeys: int32(len(keys)),
 		}
-		bo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, txn.vars)
+		bo := retry.NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, txn.vars)
 		txn.committer.forUpdateTS = lockCtx.ForUpdateTS
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
 		txn.committer.isFirstLock = txn.lockedCnt == 0 && len(keys) == 1
 		err = txn.committer.pessimisticLockMutations(bo, lockCtx, &PlainMutations{keys: keys})
-		if bo.totalSleep > 0 {
-			atomic.AddInt64(&lockCtx.Stats.BackoffTime, int64(bo.totalSleep)*int64(time.Millisecond))
+		if bo.GetTotalSleep() > 0 {
+			atomic.AddInt64(&lockCtx.Stats.BackoffTime, int64(bo.GetTotalSleep())*int64(time.Millisecond))
 			lockCtx.Stats.Mu.Lock()
-			lockCtx.Stats.Mu.BackoffTypes = append(lockCtx.Stats.Mu.BackoffTypes, bo.types...)
+			lockCtx.Stats.Mu.BackoffTypes = append(lockCtx.Stats.Mu.BackoffTypes, bo.GetTypes()...)
 			lockCtx.Stats.Mu.Unlock()
 		}
 		if lockCtx.Killed != nil {
@@ -613,15 +597,18 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tikv.LockCtx, keysInput
 			// If there is only 1 key and lock fails, no need to do pessimistic rollback.
 			if len(keys) > 1 || keyMayBeLocked {
 				wg := txn.asyncPessimisticRollback(ctx, keys)
-				if dl, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok && hashInKeys(dl.DeadlockKeyHash, keys) {
-					dl.IsRetryable = true
-					// Wait for the pessimistic rollback to finish before we retry the statement.
-					wg.Wait()
-					// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
-					time.Sleep(time.Millisecond * 5)
-					failpoint.Inject("SingleStmtDeadLockRetrySleep", func() {
-						time.Sleep(300 * time.Millisecond)
-					})
+				if dl, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok {
+					logutil.Logger(ctx).Debug("deadlock error received", zap.Uint64("startTS", txn.startTS), zap.Stringer("deadlockInfo", dl))
+					if hashInKeys(dl.DeadlockKeyHash, keys) {
+						dl.IsRetryable = true
+						// Wait for the pessimistic rollback to finish before we retry the statement.
+						wg.Wait()
+						// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
+						time.Sleep(time.Millisecond * 5)
+						failpoint.Inject("SingleStmtDeadLockRetrySleep", func() {
+							time.Sleep(300 * time.Millisecond)
+						})
+					}
 				}
 			}
 			if assignedPrimaryKey {
@@ -639,7 +626,7 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tikv.LockCtx, keysInput
 		// PointGet and BatchPointGet will return value in pessimistic lock response, the value may not exist.
 		// For other lock modes, the locked key values always exist.
 		if lockCtx.ReturnValues {
-			val, _ := lockCtx.Values[string(key)]
+			val := lockCtx.Values[string(key)]
 			if len(val.Value) == 0 {
 				valExists = tikv.SetKeyLockedValueNotExists
 			}
@@ -663,6 +650,8 @@ func deduplicateKeys(keys [][]byte) [][]byte {
 	}
 	return deduped
 }
+
+const pessimisticRollbackMaxBackoff = 20000
 
 func (txn *KVTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte) *sync.WaitGroup {
 	// Clone a new committer for execute in background.
@@ -692,7 +681,7 @@ func (txn *KVTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte) *
 			}
 		})
 
-		err := committer.pessimisticRollbackMutations(NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, txn.vars), &PlainMutations{keys: keys})
+		err := committer.pessimisticRollbackMutations(retry.NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, txn.vars), &PlainMutations{keys: keys})
 		if err != nil {
 			logutil.Logger(ctx).Warn("[kv] pessimisticRollback failed.", zap.Error(err))
 		}
