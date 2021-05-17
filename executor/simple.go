@@ -1053,7 +1053,7 @@ func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
 // Should cover same internal mysql.* tables as DROP USER, so this function is very similar
 func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 
-	failedUsers := make([]string, 0, len(s.UserToUsers))
+	var failedUser string
 	sysSession, err := e.getSysSession()
 	defer e.releaseSysSession(sysSession)
 	if err != nil {
@@ -1072,7 +1072,7 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 			return err
 		}
 		if !exists {
-			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" old did not exist")
+			failedUser = oldUser.String() + " TO " + newUser.String() + " old did not exist"
 			break
 		}
 
@@ -1082,59 +1082,59 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 		}
 		if exists {
 			// MySQL reports the old user, even when the issue is the new user.
-			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" new did exist")
+			failedUser = oldUser.String() + " TO " + newUser.String() + " new did exist"
 			break
 		}
 
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.UserTable, "User", "Host", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" "+mysql.UserTable+" error")
+			failedUser = oldUser.String() + " TO " + newUser.String() + " " + mysql.UserTable + " error"
 			break
 		}
 
 		// rename privileges from mysql.global_priv
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.GlobalPrivTable, "User", "Host", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" "+mysql.GlobalPrivTable+" error")
+			failedUser = oldUser.String() + " TO " + newUser.String() + " " + mysql.GlobalPrivTable + " error"
 			break
 		}
 
 		// rename privileges from mysql.db
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.DBTable, "User", "Host", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" "+mysql.DBTable+" error")
+			failedUser = oldUser.String() + " TO " + newUser.String() + " " + mysql.DBTable + " error"
 			break
 		}
 
 		// rename privileges from mysql.tables_priv
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.TablePrivTable, "User", "Host", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" "+mysql.TablePrivTable+" error")
+			failedUser = oldUser.String() + " TO " + newUser.String() + " " + mysql.TablePrivTable + " error"
 			break
 		}
 
 		// rename relationship from mysql.role_edges
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.RoleEdgeTable, "TO_USER", "TO_HOST", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" "+mysql.RoleEdgeTable+" (to) error")
+			failedUser = oldUser.String() + " TO " + newUser.String() + " " + mysql.RoleEdgeTable + " (to) error"
 			break
 		}
 
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.RoleEdgeTable, "FROM_USER", "FROM_HOST", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" "+mysql.RoleEdgeTable+" (from) error")
+			failedUser = oldUser.String() + " TO " + newUser.String() + " " + mysql.RoleEdgeTable + " (from) error"
 			break
 		}
 
 		// rename relationship from mysql.default_roles
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.DefaultRoleTable, "DEFAULT_ROLE_USER", "DEFAULT_ROLE_HOST", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" "+mysql.DefaultRoleTable+" (default role user) error")
+			failedUser = oldUser.String() + " TO " + newUser.String() + " " + mysql.DefaultRoleTable + " (default role user) error"
 			break
 		}
 
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.DefaultRoleTable, "USER", "HOST", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" "+mysql.DefaultRoleTable+" error")
+			failedUser = oldUser.String() + " TO " + newUser.String() + " " + mysql.DefaultRoleTable + " error"
 			break
 		}
 
 		// rename relationship from mysql.global_grants
 		// TODO: add global_grants into the parser
 		if err = renameUserHostInSystemTable(sqlExecutor, "global_grants", "User", "Host", userToUser); err != nil {
-			failedUsers = append(failedUsers, oldUser.String()+" TO "+newUser.String()+" mysql.global_grants error")
+			failedUser = oldUser.String() + " TO " + newUser.String() + " mysql.global_grants error"
 			break
 		}
 
@@ -1143,7 +1143,7 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 		// to loop over, so it is easier to maintain.
 	}
 
-	if len(failedUsers) == 0 {
+	if failedUser == "" {
 		if _, err := sqlExecutor.ExecuteInternal(context.TODO(), "commit"); err != nil {
 			return err
 		}
@@ -1151,7 +1151,7 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 		if _, err := sqlExecutor.ExecuteInternal(context.TODO(), "rollback"); err != nil {
 			return err
 		}
-		return ErrCannotUser.GenWithStackByArgs("RENAME USER", strings.Join(failedUsers, ","))
+		return ErrCannotUser.GenWithStackByArgs("RENAME USER", failedUser)
 	}
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return nil
