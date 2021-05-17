@@ -273,7 +273,7 @@ type Request struct {
 	// call would not corresponds to a whole region result.
 	Streaming bool
 	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
-	ReplicaRead tikvstore.ReplicaReadType
+	ReplicaRead ReplicaReadType
 	// StoreType represents this request is sent to the which type of store.
 	StoreType StoreType
 	// Cacheable is true if the request can be cached. Currently only deterministic DAG requests can be cached.

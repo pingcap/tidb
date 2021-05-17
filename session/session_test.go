@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
@@ -788,6 +787,49 @@ func (s *testSessionSuite) TestRetryUnion(c *C) {
 
 	_, err := tk.Exec("commit")
 	c.Assert(err, ErrorMatches, ".*can not retry select for update statement")
+}
+
+func (s *testSessionSuite) TestRetryGlobalTempTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists normal_table")
+	tk.MustExec("create table normal_table(a int primary key, b int)")
+	defer tk.MustExec("drop table if exists normal_table")
+	tk.MustExec("drop table if exists temp_table")
+	tk.MustExec("create global temporary table temp_table(a int primary key, b int) on commit delete rows")
+	defer tk.MustExec("drop table if exists temp_table")
+
+	// insert select
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("insert normal_table value(100, 100)")
+	tk.MustExec("set @@autocommit = 0")
+	// used to make conflicts
+	tk.MustExec("update normal_table set b=b+1 where a=100")
+	tk.MustExec("insert temp_table value(1, 1)")
+	tk.MustExec("insert normal_table select * from temp_table")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 3)
+
+	// try to conflict with tk
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("update normal_table set b=b+1 where a=100")
+
+	// It will retry internally.
+	tk.MustExec("commit")
+	tk.MustQuery("select a, b from normal_table order by a").Check(testkit.Rows("1 1", "100 102"))
+	tk.MustQuery("select a, b from temp_table order by a").Check(testkit.Rows())
+
+	// update multi-tables
+	tk.MustExec("update normal_table set b=b+1 where a=100")
+	tk.MustExec("insert temp_table value(1, 2)")
+	// before update: normal_table=(1 1) (100 102), temp_table=(1 2)
+	tk.MustExec("update normal_table, temp_table set normal_table.b=temp_table.b where normal_table.a=temp_table.a")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 3)
+
+	// try to conflict with tk
+	tk1.MustExec("update normal_table set b=b+1 where a=100")
+
+	// It will retry internally.
+	tk.MustExec("commit")
+	tk.MustQuery("select a, b from normal_table order by a").Check(testkit.Rows("1 2", "100 104"))
 }
 
 func (s *testSessionSuite) TestRetryShow(c *C) {
@@ -3064,11 +3106,11 @@ func (s *testSessionSuite2) TestReplicaRead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.Se, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
-	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, tikvstore.ReplicaReadLeader)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadLeader)
 	tk.MustExec("set @@tidb_replica_read = 'follower';")
-	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, tikvstore.ReplicaReadFollower)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
 	tk.MustExec("set @@tidb_replica_read = 'leader';")
-	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, tikvstore.ReplicaReadLeader)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadLeader)
 }
 
 func (s *testSessionSuite3) TestIsolationRead(c *C) {
@@ -3153,12 +3195,12 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 	c.Assert(tk.Se.GetSessionVars().GetEnableCascadesPlanner(), IsTrue)
 
 	// Test READ_CONSISTENT_REPLICA hint
-	tk.Se.GetSessionVars().SetReplicaRead(tikvstore.ReplicaReadLeader)
+	tk.Se.GetSessionVars().SetReplicaRead(kv.ReplicaReadLeader)
 	tk.MustExec("select /*+ READ_CONSISTENT_REPLICA() */ 1;")
-	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, tikvstore.ReplicaReadFollower)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
 	tk.MustExec("select /*+ READ_CONSISTENT_REPLICA(), READ_CONSISTENT_REPLICA() */ 1;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
-	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, tikvstore.ReplicaReadFollower)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
 }
 
 func (s *testSessionSuite3) TestPessimisticLockOnPartition(c *C) {
@@ -3904,9 +3946,7 @@ func (s *testSessionSerialSuite) TestIssue21943(c *C) {
 	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'last_plan_from_cache' is a read only variable")
 }
 
-func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
+func (s *testSessionSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 	testcases := []struct {
 		name       string
 		sql        string
@@ -4037,7 +4077,7 @@ func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 	tk.MustExec(`set @@tidb_enable_noop_functions=1;`)
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`)
+		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:00';`)
 		if testcase.isValidate {
 			_, err := tk.Exec(testcase.sql)
 			c.Assert(err, IsNil)
@@ -4051,8 +4091,6 @@ func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestSpecialSQLInStalenessTxn(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testcases := []struct {
@@ -4099,7 +4137,7 @@ func (s *testSessionSerialSuite) TestSpecialSQLInStalenessTxn(c *C) {
 	tk.MustExec("CREATE USER 'newuser' IDENTIFIED BY 'mypassword';")
 	for _, testcase := range testcases {
 		comment := Commentf(testcase.name)
-		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`)
+		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:00';`)
 		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, true, comment)
 		tk.MustExec(testcase.sql)
 		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, testcase.sameSession, comment)
