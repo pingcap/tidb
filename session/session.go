@@ -69,7 +69,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/tablecodec"
@@ -1891,7 +1890,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
 		s.txn.SetVars(s.sessionVars.KVVars)
 		if s.sessionVars.GetReplicaRead().IsFollowerRead() {
-			s.txn.SetOption(kv.ReplicaRead, tikvstore.ReplicaReadFollower)
+			s.txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 		}
 	}
 	return &s.txn, nil
@@ -1936,7 +1935,7 @@ func (s *session) isTxnRetryable() bool {
 
 func (s *session) NewTxn(ctx context.Context) error {
 	if s.txn.Valid() {
-		txnID := s.txn.StartTS()
+		txnStartTS := s.txn.StartTS()
 		txnScope := s.GetSessionVars().TxnCtx.TxnScope
 		err := s.CommitTxn(ctx)
 		if err != nil {
@@ -1945,7 +1944,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 		vars := s.GetSessionVars()
 		logutil.Logger(ctx).Info("NewTxn() inside a transaction auto commit",
 			zap.Int64("schemaVersion", vars.GetInfoSchema().SchemaMetaVersion()),
-			zap.Uint64("txnStartTS", txnID),
+			zap.Uint64("txnStartTS", txnStartTS),
 			zap.String("txnScope", txnScope))
 	}
 
@@ -1955,7 +1954,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 	}
 	txn.SetVars(s.sessionVars.KVVars)
 	if s.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		txn.SetOption(kv.ReplicaRead, tikvstore.ReplicaReadFollower)
+		txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
@@ -2806,7 +2805,10 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 	txn.SetOption(kv.IsStalenessReadOnly, true)
 	txn.SetOption(kv.TxnScope, txnScope)
 	s.txn.changeInvalidToValid(txn)
-	is := domain.GetDomain(s).InfoSchema()
+	is, err := domain.GetDomain(s).GetSnapshotInfoSchema(txn.StartTS())
+	if err != nil {
+		return errors.Trace(err)
+	}
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:  is,
 		CreateTime:  time.Now(),
