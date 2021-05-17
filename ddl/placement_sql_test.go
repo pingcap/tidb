@@ -404,7 +404,7 @@ PARTITION BY RANGE (c) (
 						GroupID: groupID,
 						Role:    placement.Leader,
 						Count:   1,
-						LabelConstraints: []placement.Constraint{
+						Constraints: []placement.Constraint{
 							{
 								Key:    placement.DCLabelKey,
 								Op:     placement.In,
@@ -423,7 +423,7 @@ PARTITION BY RANGE (c) (
 						GroupID: groupID,
 						Role:    placement.Follower,
 						Count:   3,
-						LabelConstraints: []placement.Constraint{
+						Constraints: []placement.Constraint{
 							{
 								Key:    placement.DCLabelKey,
 								Op:     placement.In,
@@ -619,7 +619,7 @@ PARTITION BY RANGE (c) (
 				GroupID: groupID,
 				Role:    placement.Leader,
 				Count:   1,
-				LabelConstraints: []placement.Constraint{
+				Constraints: []placement.Constraint{
 					{
 						Key:    placement.DCLabelKey,
 						Op:     placement.In,
