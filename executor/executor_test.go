@@ -8156,7 +8156,6 @@ func (s *testSerialSuite) TestIssue24210(c *C) {
 
 func (s *testSerialSuite) TestDeadlockTable(c *C) {
 	deadlockhistory.GlobalDeadlockHistory.Clear()
-	defer deadlockhistory.GlobalDeadlockHistory.Clear()
 
 	occurTime := time.Date(2021, 5, 10, 1, 2, 3, 456789000, time.UTC)
 	rec := &deadlockhistory.DeadlockRecord{
@@ -8202,16 +8201,18 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 	}
 	deadlockhistory.GlobalDeadlockHistory.Push(rec2)
 
-	// `Push` sets the record's ID
-	//id := strconv.FormatUint(rec.ID, 10)
+	// `Push` sets the record's ID, and ID in a single DeadlockHistory is monotonically increasing. We must get it here
+	// to know what it is.
+	id1 := strconv.FormatUint(rec.ID, 10)
+	id2 := strconv.FormatUint(rec2.ID, 10)
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select * from information_schema.dead_lock").Check(
 		testutil.RowsWithSep("/",
-			"1/2021-05-10 01:02:03.456789/101/aabbccdd/6B31/<nil>/102",
-			"1/2021-05-10 01:02:03.456789/102/ddccbbaa/6B32/[sql1]/101",
-			"2/2022-06-11 02:03:04.987654/201/<nil>/<nil>/[]/202",
-			"2/2022-06-11 02:03:04.987654/202/<nil>/<nil>/[sql1, sql2, sql3]/203",
-			"2/2022-06-11 02:03:04.987654/203/<nil>/<nil>/<nil>/201",
+			id1 + "/2021-05-10 01:02:03.456789/101/aabbccdd/6B31/<nil>/102",
+			id1 + "1/2021-05-10 01:02:03.456789/102/ddccbbaa/6B32/[sql1]/101",
+			id2 + "2/2022-06-11 02:03:04.987654/201/<nil>/<nil>/[]/202",
+			id2 + "2/2022-06-11 02:03:04.987654/202/<nil>/<nil>/[sql1, sql2, sql3]/203",
+			id2 + "2/2022-06-11 02:03:04.987654/203/<nil>/<nil>/<nil>/201",
 		))
 }
