@@ -16,6 +16,8 @@ package infoschema
 import (
 	"sort"
 	"sync"
+
+	"github.com/pingcap/tidb/metrics"
 )
 
 // InfoCache handles information schema, including getting and setting.
@@ -36,7 +38,9 @@ func NewCache(capcity int) *InfoCache {
 func (h *InfoCache) GetLatest() InfoSchema {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+	metrics.InfoCacheCounters.WithLabelValues("get").Inc()
 	if len(h.cache) > 0 {
+		metrics.InfoCacheCounters.WithLabelValues("hit").Inc()
 		return h.cache[0]
 	}
 	return nil
@@ -46,10 +50,12 @@ func (h *InfoCache) GetLatest() InfoSchema {
 func (h *InfoCache) GetByVersion(version int64) InfoSchema {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+	metrics.InfoCacheCounters.WithLabelValues("get").Inc()
 	i := sort.Search(len(h.cache), func(i int) bool {
 		return h.cache[i].SchemaMetaVersion() <= version
 	})
 	if i < len(h.cache) && h.cache[i].SchemaMetaVersion() == version {
+		metrics.InfoCacheCounters.WithLabelValues("hit").Inc()
 		return h.cache[i]
 	}
 	return nil
