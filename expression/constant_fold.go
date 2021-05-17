@@ -208,14 +208,13 @@ func foldConstant(expr Expression) (Expression, bool) {
 			return expr, isDeferredConst
 		}
 		value, err := x.Eval(chunk.Row{})
-		retType := x.RetType.Clone()
 		if !hasNullArg {
 			// set right not null flag for constant value
 			switch value.Kind() {
 			case types.KindNull:
-				retType.Flag &= ^mysql.NotNullFlag
+				x.RetType.Flag &= ^mysql.NotNullFlag
 			default:
-				retType.Flag |= mysql.NotNullFlag
+				x.RetType.Flag |= mysql.NotNullFlag
 			}
 		}
 		if err != nil {
@@ -223,9 +222,9 @@ func foldConstant(expr Expression) (Expression, bool) {
 			return expr, isDeferredConst
 		}
 		if isDeferredConst {
-			return &Constant{Value: value, RetType: retType, DeferredExpr: x}, true
+			return &Constant{Value: value, RetType: x.RetType, DeferredExpr: x}, true
 		}
-		return &Constant{Value: value, RetType: retType}, false
+		return &Constant{Value: value, RetType: x.RetType}, false
 	case *Constant:
 		if x.ParamMarker != nil {
 			return &Constant{
