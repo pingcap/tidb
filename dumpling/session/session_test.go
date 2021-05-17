@@ -213,7 +213,6 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	var err error
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	s.dom.GetGlobalVarsCache().Disable()
 }
 
 func (s *testSessionSuiteBase) TearDownSuite(c *C) {
@@ -639,7 +638,6 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	c.Assert(v, Equals, varValue2)
 
 	// For issue 10955, make sure the new session load `max_execution_time` into sessionVars.
-	s.dom.GetGlobalVarsCache().Disable()
 	tk1.MustExec("set @@global.max_execution_time = 100")
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	c.Assert(tk2.Se.GetSessionVars().MaxExecutionTime, Equals, uint64(100))
@@ -2618,8 +2616,6 @@ func (s *testSessionSuite) TestSetGlobalTZ(c *C) {
 
 	tk.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +08:00"))
 
-	// Disable global variable cache, so load global session variable take effect immediate.
-	s.dom.GetGlobalVarsCache().Disable()
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +00:00"))
 }
@@ -2761,8 +2757,6 @@ func (s *testSessionSuite3) TestEnablePartition(c *C) {
 	tk.MustExec("set tidb_enable_list_partition=on")
 	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
 
-	// Disable global variable cache, so load global session variable take effect immediate.
-	s.dom.GetGlobalVarsCache().Disable()
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustQuery("show variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition ON"))
 }
