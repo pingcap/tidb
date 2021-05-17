@@ -49,6 +49,10 @@ type ListInDisk struct {
 	checksumWriter *checksum.Writer
 	cipherWriter   *encrypt.Writer
 
+	// By using this flag, we don't need to allocate a new reader every time.
+	isReaderStale bool
+	r             io.ReaderAt
+
 	// ctrCipher stores the key and nonce using by aes encrypt io layer
 	ctrCipher *encrypt.CtrCipher
 }
@@ -60,7 +64,8 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 	l := &ListInDisk{
 		fieldTypes: fieldTypes,
 		// TODO(fengliyuan): set the quota of disk usage.
-		diskTracker: disk.NewTracker(memory.LabelForChunkListInDisk, -1),
+		diskTracker:   disk.NewTracker(memory.LabelForChunkListInDisk, -1),
+		isReaderStale: true,
 	}
 	return l
 }
@@ -150,6 +155,7 @@ func (l *ListInDisk) Add(chk *Chunk) (err error) {
 	l.offsets = append(l.offsets, chk2.getOffsetsOfRows())
 	l.diskTracker.Consume(n)
 	l.numRowsInDisk += chk.NumRows()
+	l.isReaderStale = true
 	return
 }
 
@@ -174,11 +180,14 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	}
 	off := l.offsets[ptr.ChkIdx][ptr.RowIdx]
 	var underlying io.ReaderAt = l.disk
-	if l.ctrCipher != nil {
-		underlying = NewReaderWithCache(encrypt.NewReader(l.disk, l.ctrCipher), l.cipherWriter.GetCache(), l.cipherWriter.GetCacheDataOffset())
+	if l.isReaderStale {
+		if l.ctrCipher != nil {
+			underlying = NewReaderWithCache(encrypt.NewReader(l.disk, l.ctrCipher), l.cipherWriter.GetCache(), l.cipherWriter.GetCacheDataOffset())
+		}
+		l.r = NewReaderWithCache(checksum.NewReader(underlying), l.checksumWriter.GetCache(), l.checksumWriter.GetCacheDataOffset())
+		l.isReaderStale = false
 	}
-	checksumReader := NewReaderWithCache(checksum.NewReader(underlying), l.checksumWriter.GetCache(), l.checksumWriter.GetCacheDataOffset())
-	r := io.NewSectionReader(checksumReader, off, l.offWrite-off)
+	r := io.NewSectionReader(l.r, off, l.offWrite-off)
 	format := rowInDisk{numCol: len(l.fieldTypes)}
 	_, err = format.ReadFrom(r)
 	if err != nil {
