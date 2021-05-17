@@ -852,6 +852,7 @@ const (
 	ErrInvalidEncryptionOption                               = 3184
 	ErrTooLongValueForType                                   = 3505
 	ErrPKIndexCantBeInvisible                                = 3522
+	ErrGrantRole                                             = 3523
 	ErrRoleNotGranted                                        = 3530
 	ErrLockAcquireFailAndNoWaitSet                           = 3572
 	ErrWindowNoSuchWindow                                    = 3579
@@ -875,6 +876,7 @@ const (
 	ErrWindowNoGroupOrderUnused                              = 3597
 	ErrWindowExplainJSON                                     = 3598
 	ErrWindowFunctionIgnoresFrame                            = 3599
+	ErrIllegalPrivilegeLevel                                 = 3619
 	ErrNotHintUpdatable                                      = 3637
 	ErrDataTruncatedFunctionalIndex                          = 3751
 	ErrDataOutOfRangeFunctionalIndex                         = 3752
@@ -896,6 +898,7 @@ const (
 	ErrJSONValueOutOfRangeForFuncIndex                       = 3904
 	ErrFunctionalIndexDataIsTooLong                          = 3907
 	ErrFunctionalIndexNotApplicable                          = 3909
+	ErrDynamicPrivilegeNotRegistered                         = 3929
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030
 	ErrWrongPartitionTypeExpectedSystemTime = 4113
@@ -992,6 +995,7 @@ const (
 	ErrJSONObjectKeyTooLong                = 8129
 	ErrMultiStatementDisabled              = 8130
 	ErrPartitionStatsMissing               = 8131
+	ErrNotSupportedWithSem                 = 8132
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200

@@ -261,6 +261,11 @@ error = '''
 Duplicate partition name %-.192s
 '''
 
+["ddl:1562"]
+error = '''
+Cannot create temporary table with partitions
+'''
+
 ["ddl:1563"]
 error = '''
 Partition constant is out of partition function domain
@@ -496,6 +501,11 @@ error = '''
 Deadlock found when trying to get lock; try restarting transaction
 '''
 
+["executor:1221"]
+error = '''
+Incorrect usage of %s and %s
+'''
+
 ["executor:1242"]
 error = '''
 Subquery returns more than 1 row
@@ -539,6 +549,21 @@ Transaction characteristics can't be changed while a transaction is in progress
 ["executor:1827"]
 error = '''
 The password hash doesn't have the expected format. Check if the correct password algorithm is being used with the PASSWORD() function.
+'''
+
+["executor:3523"]
+error = '''
+Unknown authorization ID %.256s
+'''
+
+["executor:3619"]
+error = '''
+Illegal privilege level specified for %s
+'''
+
+["executor:3929"]
+error = '''
+Dynamic privilege '%s' is not registered with the server.
 '''
 
 ["executor:8003"]
@@ -1113,7 +1138,7 @@ Schema has changed
 
 ["planner:8121"]
 error = '''
-privilege check fail
+privilege check for '%s' fail
 '''
 
 ["planner:8122"]
@@ -1124,6 +1149,11 @@ Wildcard fields without any table name appears in wrong place
 ["planner:8123"]
 error = '''
 In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by
+'''
+
+["planner:8132"]
+error = '''
+Feature '%s' is not supported when security enhanced mode is enabled
 '''
 
 ["privilege:1141"]
@@ -1254,6 +1284,11 @@ User %s already exists.
 ["schema:4139"]
 error = '''
 Unknown SEQUENCE: '%-.300s'
+'''
+
+["schema:8003"]
+error = '''
+TiDB admin check table failed.
 '''
 
 ["schema:8020"]
@@ -1599,6 +1634,11 @@ Variable '%-.64s' can't be set to the value of '%-.200s'
 ["variable:1232"]
 error = '''
 Incorrect argument type to variable '%-.64s'
+'''
+
+["variable:1235"]
+error = '''
+function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions
 '''
 
 ["variable:1238"]

@@ -56,21 +56,26 @@ func (e *ShowExec) appendTableForStatsExtended(dbName string, tbl *model.TableIn
 	}
 	var sb strings.Builder
 	for statsName, item := range statsTbl.ExtendedStats.Stats {
+		sb.Reset()
 		sb.WriteString("[")
+		allColsExist := true
 		for i, colID := range item.ColIDs {
 			name, ok := colID2Name[colID]
-			if ok {
-				sb.WriteString(name)
-			} else {
-				sb.WriteString("?")
+			if !ok {
+				allColsExist = false
+				break
 			}
+			sb.WriteString(name)
 			if i != len(item.ColIDs)-1 {
 				sb.WriteString(",")
 			}
 		}
+		// The column may have been dropped, while the extended stats have not been removed by GC yet.
+		if !allColsExist {
+			continue
+		}
 		sb.WriteString("]")
 		colNames := sb.String()
-		sb.Reset()
 		var statsType, statsVal string
 		switch item.Tp {
 		case ast.StatsTypeCorrelation:

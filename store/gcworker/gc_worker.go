@@ -44,6 +44,8 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -407,12 +409,21 @@ func (w *GCWorker) calcSafePointByMinStartTS(ctx context.Context, safePoint uint
 		return safePoint
 	}
 
-	if globalMinStartTS < safePoint {
+	// If the lock.ts <= max_ts(safePoint), it will be collected and resolved by the gc worker,
+	// the locks of ongoing pessimistic transactions could be resolved by the gc worker and then
+	// the transaction is aborted, decrement the value by 1 to avoid this.
+	globalMinStartAllowedTS := globalMinStartTS
+	if globalMinStartTS > 0 {
+		globalMinStartAllowedTS = globalMinStartTS - 1
+	}
+
+	if globalMinStartAllowedTS < safePoint {
 		logutil.Logger(ctx).Info("[gc worker] gc safepoint blocked by a running session",
 			zap.String("uuid", w.uuid),
 			zap.Uint64("globalMinStartTS", globalMinStartTS),
+			zap.Uint64("globalMinStartAllowedTS", globalMinStartAllowedTS),
 			zap.Uint64("safePoint", safePoint))
-		safePoint = globalMinStartTS
+		safePoint = globalMinStartAllowedTS
 	}
 	return safePoint
 }
@@ -1010,7 +1021,7 @@ func (w *GCWorker) legacyResolveLocks(ctx context.Context, safePoint uint64, con
 		zap.Int("concurrency", concurrency))
 	startTime := time.Now()
 
-	handler := func(ctx context.Context, r kv.KeyRange) (tikv.RangeTaskStat, error) {
+	handler := func(ctx context.Context, r tikvstore.KeyRange) (tikv.RangeTaskStat, error) {
 		return w.resolveLocksForRange(ctx, safePoint, r.StartKey, r.EndKey)
 	}
 
@@ -1048,7 +1059,7 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 
 	var stat tikv.RangeTaskStat
 	key := startKey
-	bo := tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
+	bo := tikv.NewGcResolveLockMaxBackoffer(ctx)
 	failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
 		sleep := v.(int)
 		// cooperate with github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry
@@ -1085,7 +1096,7 @@ retryScanAndResolve:
 			continue
 		}
 		if resp.Resp == nil {
-			return stat, errors.Trace(tikv.ErrBodyMissing)
+			return stat, errors.Trace(tikverr.ErrBodyMissing)
 		}
 		locksResp := resp.Resp.(*kvrpcpb.ScanLockResponse)
 		if locksResp.GetError() != nil {
@@ -1145,7 +1156,7 @@ retryScanAndResolve:
 		if len(key) == 0 || (len(endKey) != 0 && bytes.Compare(key, endKey) >= 0) {
 			break
 		}
-		bo = tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
+		bo = tikv.NewGcResolveLockMaxBackoffer(ctx)
 		failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
 			sleep := v.(int)
 			bo = tikv.NewBackofferWithVars(ctx, sleep, nil)
@@ -1266,7 +1277,7 @@ func (w *GCWorker) registerLockObservers(ctx context.Context, safePoint uint64, 
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
-			return errors.Trace(tikv.ErrBodyMissing)
+			return errors.Trace(tikverr.ErrBodyMissing)
 		}
 		errStr := resp.Resp.(*kvrpcpb.RegisterLockObserverResponse).Error
 		if len(errStr) > 0 {
@@ -1307,7 +1318,7 @@ func (w *GCWorker) checkLockObservers(ctx context.Context, safePoint uint64, sto
 			continue
 		}
 		if resp.Resp == nil {
-			logError(store, tikv.ErrBodyMissing)
+			logError(store, tikverr.ErrBodyMissing)
 			continue
 		}
 		respInner := resp.Resp.(*kvrpcpb.CheckLockObserverResponse)
@@ -1373,7 +1384,7 @@ func (w *GCWorker) removeLockObservers(ctx context.Context, safePoint uint64, st
 			continue
 		}
 		if resp.Resp == nil {
-			logError(store, tikv.ErrBodyMissing)
+			logError(store, tikverr.ErrBodyMissing)
 			continue
 		}
 		errStr := resp.Resp.(*kvrpcpb.RemoveLockObserverResponse).Error
@@ -1458,7 +1469,7 @@ func (w *GCWorker) resolveLocksAcrossRegions(ctx context.Context, locks []*tikv.
 		failpoint.Return(errors.New("injectedError"))
 	})
 
-	bo := tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
+	bo := tikv.NewGcResolveLockMaxBackoffer(ctx)
 
 	for {
 		if len(locks) == 0 {
@@ -1494,18 +1505,20 @@ func (w *GCWorker) resolveLocksAcrossRegions(ctx context.Context, locks []*tikv.
 		}
 
 		// Recreate backoffer for next region
-		bo = tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
+		bo = tikv.NewGcResolveLockMaxBackoffer(ctx)
 		locks = locks[len(locksInRegion):]
 	}
 
 	return nil
 }
 
+const gcOneRegionMaxBackoff = 20000
+
 func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) error {
 	var newSafePoint uint64
 	var err error
 
-	bo := tikv.NewBackofferWithVars(ctx, tikv.GcOneRegionMaxBackoff, nil)
+	bo := tikv.NewBackofferWithVars(ctx, gcOneRegionMaxBackoff, nil)
 	for {
 		newSafePoint, err = w.pdClient.UpdateGCSafePoint(ctx, safePoint)
 		if err != nil {
@@ -1542,7 +1555,7 @@ func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []b
 	}()
 	key := startKey
 	for {
-		bo := tikv.NewBackofferWithVars(ctx, tikv.GcOneRegionMaxBackoff, nil)
+		bo := tikv.NewBackofferWithVars(ctx, gcOneRegionMaxBackoff, nil)
 		loc, err := w.tikvStore.GetRegionCache().LocateKey(bo, key)
 		if err != nil {
 			return stat, errors.Trace(err)
@@ -1600,7 +1613,7 @@ func (w *GCWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region ti
 	}
 
 	if resp.Resp == nil {
-		return nil, errors.Trace(tikv.ErrBodyMissing)
+		return nil, errors.Trace(tikverr.ErrBodyMissing)
 	}
 	gcResp := resp.Resp.(*kvrpcpb.GCResponse)
 	if gcResp.GetError() != nil {
@@ -1622,7 +1635,7 @@ func (w *GCWorker) doGC(ctx context.Context, safePoint uint64, concurrency int) 
 		"gc-runner",
 		w.tikvStore,
 		concurrency,
-		func(ctx context.Context, r kv.KeyRange) (tikv.RangeTaskStat, error) {
+		func(ctx context.Context, r tikvstore.KeyRange) (tikv.RangeTaskStat, error) {
 			return w.doGCForRange(ctx, r.StartKey, r.EndKey, safePoint)
 		})
 
@@ -2184,7 +2197,7 @@ func (s *mergeLockScanner) physicalScanLocksForStore(ctx context.Context, safePo
 			return errors.Trace(err)
 		}
 		if response.Resp == nil {
-			return errors.Trace(tikv.ErrBodyMissing)
+			return errors.Trace(tikverr.ErrBodyMissing)
 		}
 		resp := response.Resp.(*kvrpcpb.PhysicalScanLockResponse)
 		if len(resp.Error) > 0 {

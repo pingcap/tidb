@@ -38,6 +38,19 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		})
 
+	// InfoCacheCounters are the counters of get/hit.
+	InfoCacheCounters = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "domain",
+			Name:      "infocache_counters",
+			Help:      "Counters of infoCache: get/hit.",
+		}, []string{LblType})
+	// InfoCacheCounterGet is the total number of getting entry.
+	InfoCacheCounterGet = "get"
+	// InfoCacheCounterHit is the cache hit numbers for get.
+	InfoCacheCounterHit = "hit"
+
 	// LoadPrivilegeCounter records the counter of load privilege.
 	LoadPrivilegeCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{

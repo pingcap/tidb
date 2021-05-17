@@ -610,10 +610,9 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 		}
 	}
 	if hintTbl := hintInfo.ifPreferTiFlash(alias); hintTbl != nil {
-		// 1. `ds.tableInfo.Partition == nil`, which means the hint takes effect in the whole table.
-		// 2. `ds.preferStoreType != 0`, which means there's a hint hit the both TiKV value and TiFlash value for table.
-		// If it's satisfied the above two conditions, then we can make sure there are some hints conflicted.
-		if ds.preferStoreType != 0 && ds.tableInfo.Partition == nil {
+		// `ds.preferStoreType != 0`, which means there's a hint hit the both TiKV value and TiFlash value for table.
+		// We can't support read a table from two different storages, even partition table.
+		if ds.preferStoreType != 0 {
 			errMsg := fmt.Sprintf("Storage hints are conflict, you can only specify one storage type of table %s.%s",
 				alias.dbName.L, alias.tblName.L)
 			warning := ErrInternal.GenWithStack(errMsg)
@@ -2676,7 +2675,7 @@ func checkColFuncDepend(
 			Name:   colInfo.Name,
 		}
 		pIdx, err := expression.FindFieldName(p.OutputNames(), pkName)
-		if err != nil {
+		if err != nil || pIdx < 0 {
 			primaryFuncDepend = false
 			break
 		}
@@ -3204,6 +3203,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 	})
 }
 
+func (b *PlanBuilder) popVisitInfo() {
+	b.visitInfo = b.visitInfo[:len(b.visitInfo)-1]
+}
+
 func (b *PlanBuilder) popTableHints() {
 	hintInfo := b.tableHintInfo[len(b.tableHintInfo)-1]
 	b.appendUnmatchedIndexHintWarning(hintInfo.indexHintList, false)
@@ -3439,11 +3442,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		if err != nil {
 			return nil, err
 		}
-		groupedFuncs, err := b.groupWindowFuncs(windowFuncs)
+		groupedFuncs, orderedSpec, err := b.groupWindowFuncs(windowFuncs)
 		if err != nil {
 			return nil, err
 		}
-		p, windowMapper, err = b.buildWindowFunctions(ctx, p, groupedFuncs, windowAggMap)
+		p, windowMapper, err = b.buildWindowFunctions(ctx, p, groupedFuncs, orderedSpec, windowAggMap)
 		if err != nil {
 			return nil, err
 		}
@@ -3589,6 +3592,14 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return b.BuildDataSourceFromView(ctx, dbName, tableInfo)
 	}
 
+	if tableInfo.IsSequence() {
+		if tn.TableSample != nil {
+			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in sequences")
+		}
+		// When the source is a Sequence, we convert it to a TableDual, as what most databases do.
+		return b.buildTableDual(), nil
+	}
+
 	if tableInfo.GetPartitionInfo() != nil {
 		// Use the new partition implementation, clean up the code here when it's full implemented.
 		if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
@@ -3621,9 +3632,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if err != nil {
 		return nil, err
 	}
-	possiblePaths, err = filterPathByIsolationRead(b.ctx, possiblePaths, dbName)
-	if err != nil {
-		return nil, err
+	// Skip storage engine check for CreateView.
+	if b.capFlag&canExpandAST == 0 {
+		possiblePaths, err = filterPathByIsolationRead(b.ctx, possiblePaths, dbName)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Try to substitute generate column only if there is an index on generate column.
@@ -3723,12 +3737,13 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	for i, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		names = append(names, &types.FieldName{
-			DBName:      dbName,
-			TblName:     tableInfo.Name,
-			ColName:     col.Name,
-			OrigTblName: tableInfo.Name,
-			OrigColName: col.Name,
-			Hidden:      col.Hidden,
+			DBName:            dbName,
+			TblName:           tableInfo.Name,
+			ColName:           col.Name,
+			OrigTblName:       tableInfo.Name,
+			OrigColName:       col.Name,
+			Hidden:            col.Hidden,
+			NotExplicitUsable: col.State != model.StatePublic,
 		})
 		newCol := &expression.Column{
 			UniqueID: sessionVars.AllocPlanColumnID(),
@@ -3959,7 +3974,8 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
 		if terror.ErrorNotEqual(err, ErrViewRecursive) &&
-			terror.ErrorNotEqual(err, ErrNoSuchTable) {
+			terror.ErrorNotEqual(err, ErrNoSuchTable) &&
+			terror.ErrorNotEqual(err, ErrInternal) {
 			err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 		}
 		return nil, err
@@ -4150,8 +4166,7 @@ type TblColPosInfo struct {
 	// Start and End represent the ordinal range [Start, End) of the consecutive columns.
 	Start, End int
 	// HandleOrdinal represents the ordinal of the handle column.
-	HandleCols     HandleCols
-	IsCommonHandle bool // TODO: fix redesign update join table and remove me!
+	HandleCols HandleCols
 }
 
 // TblColPosInfoSlice attaches the methods of sort.Interface to []TblColPosInfos sorting in increasing order.
@@ -4172,8 +4187,8 @@ func (c TblColPosInfoSlice) Less(i, j int) bool {
 	return c[i].Start < c[j].Start
 }
 
-// FindHandle finds the ordinal of the corresponding handle column.
-func (c TblColPosInfoSlice) FindHandle(colOrdinal int) (int, bool) {
+// FindTblIdx finds the ordinal of the corresponding access column.
+func (c TblColPosInfoSlice) FindTblIdx(colOrdinal int) (int, bool) {
 	if len(c) == 0 {
 		return 0, false
 	}
@@ -4183,11 +4198,7 @@ func (c TblColPosInfoSlice) FindHandle(colOrdinal int) (int, bool) {
 	if rangeBehindOrdinal == 0 {
 		return 0, false
 	}
-	if c[rangeBehindOrdinal-1].IsCommonHandle {
-		// TODO: fix redesign update join table to fix me.
-		return 0, false
-	}
-	return c[rangeBehindOrdinal-1].HandleCols.GetCol(0).Index, true
+	return rangeBehindOrdinal - 1, true
 }
 
 // buildColumns2Handle builds columns to handle mapping.
@@ -4212,8 +4223,7 @@ func buildColumns2Handle(
 				return nil, err
 			}
 			end := offset + tblLen
-			cols2Handles = append(cols2Handles, TblColPosInfo{tblID, offset, end, handleCol, tbl.Meta().IsCommonHandle})
-			// TODO: fix me for cluster index
+			cols2Handles = append(cols2Handles, TblColPosInfo{tblID, offset, end, handleCol})
 		}
 	}
 	sort.Sort(cols2Handles)
@@ -4229,17 +4239,6 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		b.popTableHints()
 	}()
 
-	// update subquery table should be forbidden
-	var asNameList []string
-	asNameList = extractTableSourceAsNames(update.TableRefs.TableRefs, asNameList, true)
-	for _, asName := range asNameList {
-		for _, assign := range update.List {
-			if assign.Column.Table.L == asName {
-				return nil, ErrNonUpdatableTable.GenWithStackByArgs(asName, "UPDATE")
-			}
-		}
-	}
-
 	b.inUpdateStmt = true
 	b.isForUpdateRead = true
 
@@ -4254,12 +4253,6 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		dbName := t.Schema.L
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
-		}
-		if t.TableInfo.IsView() {
-			return nil, errors.Errorf("update view %s is not supported now.", t.Name.O)
-		}
-		if t.TableInfo.IsSequence() {
-			return nil, errors.Errorf("update sequence %s is not supported now.", t.Name.O)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
 	}
@@ -4304,9 +4297,13 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	proj.SetChildren(p)
 	p = proj
 
+	// update subquery table should be forbidden
+	var notUpdatableTbl []string
+	notUpdatableTbl = extractTableSourceAsNames(update.TableRefs.TableRefs, notUpdatableTbl, true)
+
 	var updateTableList []*ast.TableName
 	updateTableList = extractTableList(update.TableRefs.TableRefs, updateTableList, true)
-	orderedList, np, allAssignmentsAreConstant, err := b.buildUpdateLists(ctx, updateTableList, update.List, p)
+	orderedList, np, allAssignmentsAreConstant, err := b.buildUpdateLists(ctx, updateTableList, update.List, p, notUpdatableTbl)
 	if err != nil {
 		return nil, err
 	}
@@ -4337,24 +4334,9 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
 	updt.TblColPosInfos, err = buildColumns2Handle(updt.OutputNames(), tblID2Handle, tblID2table, true)
-	if err == nil {
-		err = checkUpdateList(b.ctx, tblID2table, updt)
-	}
 	updt.PartitionedTable = b.partitionedTable
+	updt.tblID2Table = tblID2table
 	return updt, err
-}
-
-// GetUpdateColumns gets the columns of updated lists.
-func GetUpdateColumns(ctx sessionctx.Context, orderedList []*expression.Assignment, schemaLen int) ([]bool, error) {
-	assignFlag := make([]bool, schemaLen)
-	for _, v := range orderedList {
-		if !ctx.GetSessionVars().AllowWriteRowID && v.Col.ID == model.ExtraHandleID {
-			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
-		}
-		idx := v.Col.Index
-		assignFlag[idx] = true
-	}
-	return assignFlag, nil
 }
 
 type tblUpdateInfo struct {
@@ -4362,21 +4344,18 @@ type tblUpdateInfo struct {
 	pkUpdated bool
 }
 
-func checkUpdateList(ctx sessionctx.Context, tblID2table map[int64]table.Table, updt *Update) error {
-	assignFlags, err := GetUpdateColumns(ctx, updt.OrderedList, updt.SelectPlan.Schema().Len())
-	if err != nil {
-		return err
-	}
+// CheckUpdateList checks all related columns in updatable state.
+func CheckUpdateList(assignFlags []int, updt *Update) error {
 	updateFromOtherAlias := make(map[int64]tblUpdateInfo)
 	for _, content := range updt.TblColPosInfos {
-		tbl := tblID2table[content.TblID]
+		tbl := updt.tblID2Table[content.TblID]
 		flags := assignFlags[content.Start:content.End]
 		var update, updatePK bool
 		for i, col := range tbl.WritableCols() {
-			if flags[i] && col.State != model.StatePublic {
+			if flags[i] >= 0 && col.State != model.StatePublic {
 				return ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
 			}
-			if flags[i] {
+			if flags[i] >= 0 {
 				update = true
 				if mysql.HasPriKeyFlag(col.Flag) {
 					updatePK = true
@@ -4401,16 +4380,8 @@ func checkUpdateList(ctx sessionctx.Context, tblID2table map[int64]table.Table, 
 	return nil
 }
 
-func (b *PlanBuilder) buildUpdateLists(
-	ctx context.Context,
-	tableList []*ast.TableName,
-	list []*ast.Assignment,
-	p LogicalPlan,
-) (newList []*expression.Assignment,
-	po LogicalPlan,
-	allAssignmentsAreConstant bool,
-	e error,
-) {
+func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan,
+	notUpdatableTbl []string) (newList []*expression.Assignment, po LogicalPlan, allAssignmentsAreConstant bool, e error) {
 	b.curClause = fieldList
 	// modifyColumns indicates which columns are in set list,
 	// and if it is set to `DEFAULT`
@@ -4433,6 +4404,21 @@ func (b *PlanBuilder) buildUpdateLists(
 			columnsIdx[assign.Column] = idx
 		}
 		name := p.OutputNames()[idx]
+		for _, tl := range tableList {
+			if (tl.Schema.L == "" || tl.Schema.L == name.DBName.L) && (tl.Name.L == name.TblName.L) {
+				if tl.TableInfo.IsView() || tl.TableInfo.IsSequence() {
+					return nil, nil, false, ErrNonUpdatableTable.GenWithStackByArgs(name.TblName.O, "UPDATE")
+				}
+				// may be a subquery
+				if tl.Schema.L == "" {
+					for _, nTbl := range notUpdatableTbl {
+						if nTbl == name.TblName.L {
+							return nil, nil, false, ErrNonUpdatableTable.GenWithStackByArgs(name.TblName.O, "UPDATE")
+						}
+					}
+				}
+			}
+		}
 		columnFullName := fmt.Sprintf("%s.%s.%s", name.DBName.L, name.TblName.L, name.ColName.L)
 		// We save a flag for the column in map `modifyColumns`
 		// This flag indicated if assign keyword `DEFAULT` to the column
@@ -4446,8 +4432,19 @@ func (b *PlanBuilder) buildUpdateLists(
 	// If columns in set list contains generated columns, raise error.
 	// And, fill virtualAssignments here; that's for generated columns.
 	virtualAssignments := make([]*ast.Assignment, 0)
-
 	for _, tn := range tableList {
+		// Only generate virtual to updatable table, skip not updatable table(i.e. table in update's subQuery)
+		updatable := true
+		for _, nTbl := range notUpdatableTbl {
+			if tn.Name.L == nTbl {
+				updatable = false
+				break
+			}
+		}
+		if !updatable || tn.TableInfo.IsView() || tn.TableInfo.IsSequence() {
+			continue
+		}
+
 		tableInfo := tn.TableInfo
 		tableVal, found := b.is.TableByID(tableInfo.ID)
 		if !found {
@@ -4619,6 +4616,13 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		}
 	}
 
+	// If the delete is non-qualified it does not require Select Priv
+	if delete.Where == nil && delete.Order == nil {
+		b.popVisitInfo()
+	}
+	var authErr error
+	sessionVars := b.ctx.GetSessionVars()
+
 	proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
 	proj.SetChildren(p)
 	proj.SetSchema(oldSchema.Clone())
@@ -4693,7 +4697,10 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 			if tn.TableInfo.IsSequence() {
 				return nil, errors.Errorf("delete sequence %s is not supported now.", tn.Name.O)
 			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tb.DBInfo.Name.L, tb.Name.L, "", nil)
+			if sessionVars.User != nil {
+				authErr = ErrTableaccessDenied.FastGenByArgs("DELETE", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, tb.Name.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tb.DBInfo.Name.L, tb.Name.L, "", authErr)
 		}
 	} else {
 		// Delete from a, b, c, d.
@@ -4710,7 +4717,10 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 			if dbName == "" {
 				dbName = b.ctx.GetSessionVars().CurrentDB
 			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "", nil)
+			if sessionVars.User != nil {
+				authErr = ErrTableaccessDenied.FastGenByArgs("DELETE", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, v.Name.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "", authErr)
 		}
 	}
 	if del.IsMultiTable {
@@ -5112,10 +5122,10 @@ type windowFuncs struct {
 
 // sortWindowSpecs sorts the window specifications by reversed alphabetical order, then we could add less `Sort` operator
 // in physical plan because the window functions with the same partition by and order by clause will be at near places.
-func sortWindowSpecs(groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr) []windowFuncs {
+func sortWindowSpecs(groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, orderedSpec []*ast.WindowSpec) []windowFuncs {
 	windows := make([]windowFuncs, 0, len(groupedFuncs))
-	for spec, funcs := range groupedFuncs {
-		windows = append(windows, windowFuncs{spec, funcs})
+	for _, spec := range orderedSpec {
+		windows = append(windows, windowFuncs{spec, groupedFuncs[spec]})
 	}
 	lItemsBuf := make([]*ast.ByItem, 0, 4)
 	rItemsBuf := make([]*ast.ByItem, 0, 4)
@@ -5127,10 +5137,10 @@ func sortWindowSpecs(groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr) []w
 	return windows
 }
 
-func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, map[*ast.WindowFuncExpr]int, error) {
+func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, orderedSpec []*ast.WindowSpec, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, map[*ast.WindowFuncExpr]int, error) {
 	args := make([]ast.ExprNode, 0, 4)
 	windowMap := make(map[*ast.WindowFuncExpr]int)
-	for _, window := range sortWindowSpecs(groupedFuncs) {
+	for _, window := range sortWindowSpecs(groupedFuncs, orderedSpec) {
 		args = args[:0]
 		spec, funcs := window.spec, window.funcs
 		for _, windowFunc := range funcs {
@@ -5330,44 +5340,58 @@ func (b *PlanBuilder) handleDefaultFrame(spec *ast.WindowSpec, windowFuncName st
 	return spec, false
 }
 
+// append ast.WindowSpec to []*ast.WindowSpec if absent
+func appendIfAbsentWindowSpec(specs []*ast.WindowSpec, ns *ast.WindowSpec) []*ast.WindowSpec {
+	for _, spec := range specs {
+		if spec == ns {
+			return specs
+		}
+	}
+	return append(specs, ns)
+}
+
 // groupWindowFuncs groups the window functions according to the window specification name.
 // TODO: We can group the window function by the definition of window specification.
-func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*ast.WindowSpec][]*ast.WindowFuncExpr, error) {
+func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*ast.WindowSpec][]*ast.WindowFuncExpr, []*ast.WindowSpec, error) {
 	// updatedSpecMap is used to handle the specifications that have frame clause changed.
 	updatedSpecMap := make(map[string]*ast.WindowSpec)
 	groupedWindow := make(map[*ast.WindowSpec][]*ast.WindowFuncExpr)
+	orderedSpec := make([]*ast.WindowSpec, 0, len(windowFuncs))
 	for _, windowFunc := range windowFuncs {
 		if windowFunc.Spec.Name.L == "" {
 			spec := &windowFunc.Spec
 			if spec.Ref.L != "" {
 				ref, ok := b.windowSpecs[spec.Ref.L]
 				if !ok {
-					return nil, ErrWindowNoSuchWindow.GenWithStackByArgs(getWindowName(spec.Ref.O))
+					return nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(getWindowName(spec.Ref.O))
 				}
 				err := mergeWindowSpec(spec, ref)
 				if err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 			}
 			spec, _ = b.handleDefaultFrame(spec, windowFunc.F)
 			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)
+			orderedSpec = appendIfAbsentWindowSpec(orderedSpec, spec)
 			continue
 		}
 
 		name := windowFunc.Spec.Name.L
 		spec, ok := b.windowSpecs[name]
 		if !ok {
-			return nil, ErrWindowNoSuchWindow.GenWithStackByArgs(windowFunc.Spec.Name.O)
+			return nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(windowFunc.Spec.Name.O)
 		}
 		newSpec, updated := b.handleDefaultFrame(spec, windowFunc.F)
 		if !updated {
 			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)
+			orderedSpec = appendIfAbsentWindowSpec(orderedSpec, spec)
 		} else {
 			if _, ok := updatedSpecMap[name]; !ok {
 				updatedSpecMap[name] = newSpec
 			}
 			updatedSpec := updatedSpecMap[name]
 			groupedWindow[updatedSpec] = append(groupedWindow[updatedSpec], windowFunc)
+			orderedSpec = appendIfAbsentWindowSpec(orderedSpec, updatedSpec)
 		}
 	}
 	// Unused window specs should also be checked in b.buildWindowFunctions,
@@ -5376,10 +5400,11 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 		if _, ok := groupedWindow[spec]; !ok {
 			if _, ok = updatedSpecMap[spec.Name.L]; !ok {
 				groupedWindow[spec] = nil
+				orderedSpec = appendIfAbsentWindowSpec(orderedSpec, spec)
 			}
 		}
 	}
-	return groupedWindow, nil
+	return groupedWindow, orderedSpec, nil
 }
 
 // resolveWindowSpec resolve window specifications for sql like `select ... from t window w1 as (w2), w2 as (partition by a)`.
@@ -5518,6 +5543,15 @@ func extractTableSourceAsNames(node ast.ResultSetNode, input []string, onlySelec
 		input = append(input, x.AsName.L)
 	}
 	return input
+}
+
+func appendDynamicVisitInfo(vi []visitInfo, priv string, withGrant bool, err error) []visitInfo {
+	return append(vi, visitInfo{
+		privilege:        mysql.ExtendedPriv,
+		dynamicPriv:      priv,
+		dynamicWithGrant: withGrant,
+		err:              err,
+	})
 }
 
 func appendVisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl, col string, err error) []visitInfo {

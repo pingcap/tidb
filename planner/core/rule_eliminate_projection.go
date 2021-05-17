@@ -117,6 +117,9 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 		return p
 	}
 	child := p.Children()[0]
+	if childProj, ok := child.(*PhysicalProjection); ok {
+		childProj.SetSchema(p.Schema())
+	}
 	return child
 }
 

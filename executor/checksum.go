@@ -132,7 +132,6 @@ func (e *ChecksumTableExec) handleChecksumRequest(req *kv.Request) (resp *tipb.C
 	if err != nil {
 		return nil, err
 	}
-	res.Fetch(ctx)
 	defer func() {
 		if err1 := res.Close(); err1 != nil {
 			err = err1
@@ -270,7 +269,7 @@ func (c *checksumContext) HandleResponse(update *tipb.ChecksumResponse) {
 
 func getChecksumTableConcurrency(ctx sessionctx.Context) (int, error) {
 	sessionVars := ctx.GetSessionVars()
-	concurrency, err := variable.GetSessionSystemVar(sessionVars, variable.TiDBChecksumTableConcurrency)
+	concurrency, err := variable.GetSessionOrGlobalSystemVar(sessionVars, variable.TiDBChecksumTableConcurrency)
 	if err != nil {
 		return 0, err
 	}

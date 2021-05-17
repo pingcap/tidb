@@ -24,9 +24,11 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
+	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -134,6 +136,7 @@ type StatementContext struct {
 	NotFillCache     bool
 	MemTracker       *memory.Tracker
 	DiskTracker      *disk.Tracker
+	IsTiFlash        atomic2.Bool
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	TableIDs         []int64
 	IndexNames       []string
@@ -518,7 +521,7 @@ func (sc *StatementContext) ResetForRetry() {
 
 // MergeExecDetails merges a single region execution details into self, used to print
 // the information in slow query log.
-func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, commitDetails *execdetails.CommitDetails) {
+func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, commitDetails *util.CommitDetails) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	if details != nil {
@@ -539,25 +542,25 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 }
 
 // MergeScanDetail merges scan details into self.
-func (sc *StatementContext) MergeScanDetail(scanDetail *execdetails.ScanDetail) {
+func (sc *StatementContext) MergeScanDetail(scanDetail *util.ScanDetail) {
 	// Currently TiFlash cop task does not fill scanDetail, so need to skip it if scanDetail is nil
 	if scanDetail == nil {
 		return
 	}
 	if sc.mu.execDetails.ScanDetail == nil {
-		sc.mu.execDetails.ScanDetail = &execdetails.ScanDetail{}
+		sc.mu.execDetails.ScanDetail = &util.ScanDetail{}
 	}
 	sc.mu.execDetails.ScanDetail.Merge(scanDetail)
 }
 
 // MergeTimeDetail merges time details into self.
-func (sc *StatementContext) MergeTimeDetail(timeDetail execdetails.TimeDetail) {
+func (sc *StatementContext) MergeTimeDetail(timeDetail util.TimeDetail) {
 	sc.mu.execDetails.TimeDetail.ProcessTime += timeDetail.ProcessTime
 	sc.mu.execDetails.TimeDetail.WaitTime += timeDetail.WaitTime
 }
 
 // MergeLockKeysExecDetails merges lock keys execution details into self.
-func (sc *StatementContext) MergeLockKeysExecDetails(lockKeys *execdetails.LockKeysDetails) {
+func (sc *StatementContext) MergeLockKeysExecDetails(lockKeys *util.LockKeysDetails) {
 	sc.mu.Lock()
 	if sc.mu.execDetails.LockKeysDetail == nil {
 		sc.mu.execDetails.LockKeysDetail = lockKeys

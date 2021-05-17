@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
@@ -42,9 +41,8 @@ const sampleMethodRegionConcurrency = 5
 type TableSampleExecutor struct {
 	baseExecutor
 
-	table     table.Table
-	startTS   uint64
-	tablePlan plannercore.PhysicalPlan
+	table   table.Table
+	startTS uint64
 
 	sampler rowSampler
 }
@@ -210,11 +208,11 @@ func splitIntoMultiRanges(store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRa
 
 	maxSleep := 10000 // ms
 	bo := tikv.NewBackofferWithVars(context.Background(), maxSleep, nil)
-	var ranges []kv.KeyRange
 	regions, err := s.GetRegionCache().LoadRegionsInKeyRange(bo, startKey, endKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	var ranges = make([]kv.KeyRange, 0, len(regions))
 	for _, r := range regions {
 		start, end := r.StartKey(), r.EndKey()
 		if kv.Key(start).Cmp(startKey) < 0 {

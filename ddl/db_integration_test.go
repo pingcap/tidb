@@ -38,10 +38,12 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/israce"
@@ -967,9 +969,9 @@ func (s *testIntegrationSuite5) TestModifyColumnOption(c *C) {
 
 func (s *testIntegrationSuite4) TestIndexOnMultipleGeneratedColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int as (a + 1), c int as (b + 1))")
 	tk.MustExec("insert into t (a) values (1)")
@@ -978,42 +980,72 @@ func (s *testIntegrationSuite4) TestIndexOnMultipleGeneratedColumn(c *C) {
 	res := tk.MustQuery("select * from t use index(idx) where c > 1")
 	tk.MustQuery("select * from t ignore index(idx) where c > 1").Check(res.Rows())
 	tk.MustExec("admin check table t")
+}
+
+func (s *testIntegrationSuite4) TestIndexOnMultipleGeneratedColumn1(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int as (a + 1), c int as (b + 1), d int as (c + 1))")
 	tk.MustExec("insert into t (a) values (1)")
 	tk.MustExec("create index idx on t (d)")
 	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("1 2 3 4"))
-	res = tk.MustQuery("select * from t use index(idx) where d > 2")
+	res := tk.MustQuery("select * from t use index(idx) where d > 2")
 	tk.MustQuery("select * from t ignore index(idx) where d > 2").Check(res.Rows())
 	tk.MustExec("admin check table t")
+}
+
+func (s *testIntegrationSuite4) TestIndexOnMultipleGeneratedColumn2(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a bigint, b decimal as (a+1), c varchar(20) as (b*2), d float as (a*23+b-1+length(c)))")
 	tk.MustExec("insert into t (a) values (1)")
 	tk.MustExec("create index idx on t (d)")
 	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("1 2 4 25"))
-	res = tk.MustQuery("select * from t use index(idx) where d > 2")
+	res := tk.MustQuery("select * from t use index(idx) where d > 2")
 	tk.MustQuery("select * from t ignore index(idx) where d > 2").Check(res.Rows())
 	tk.MustExec("admin check table t")
+}
+
+func (s *testIntegrationSuite4) TestIndexOnMultipleGeneratedColumn3(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(10), b float as (length(a)+123), c varchar(20) as (right(a, 2)), d float as (b+b-7+1-3+3*ASCII(c)))")
 	tk.MustExec("insert into t (a) values ('adorable')")
 	tk.MustExec("create index idx on t (d)")
 	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("adorable 131 le 577")) // 131+131-7+1-3+3*108
-	res = tk.MustQuery("select * from t use index(idx) where d > 2")
+	res := tk.MustQuery("select * from t use index(idx) where d > 2")
 	tk.MustQuery("select * from t ignore index(idx) where d > 2").Check(res.Rows())
 	tk.MustExec("admin check table t")
+}
+
+func (s *testIntegrationSuite4) TestIndexOnMultipleGeneratedColumn4(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a bigint, b decimal as (a), c int(10) as (a+b), d float as (a+b+c), e decimal as (a+b+c+d))")
 	tk.MustExec("insert into t (a) values (1)")
 	tk.MustExec("create index idx on t (d)")
 	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("1 1 2 4 8"))
-	res = tk.MustQuery("select * from t use index(idx) where d > 2")
+	res := tk.MustQuery("select * from t use index(idx) where d > 2")
 	tk.MustQuery("select * from t ignore index(idx) where d > 2").Check(res.Rows())
 	tk.MustExec("admin check table t")
+}
+
+func (s *testIntegrationSuite4) TestIndexOnMultipleGeneratedColumn5(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint, b bigint as (a+1) virtual, c bigint as (b+1) virtual)")
@@ -1023,7 +1055,7 @@ func (s *testIntegrationSuite4) TestIndexOnMultipleGeneratedColumn(c *C) {
 	tk.MustExec("alter table t add column(d bigint as (c+1) virtual)")
 	tk.MustExec("alter table t add index idx_d(d)")
 	tk.MustQuery("select * from t where d > 2").Check(testkit.Rows("1 2 3 4"))
-	res = tk.MustQuery("select * from t use index(idx_d) where d > 2")
+	res := tk.MustQuery("select * from t use index(idx_d) where d > 2")
 	tk.MustQuery("select * from t ignore index(idx_d) where d > 2").Check(res.Rows())
 	tk.MustExec("admin check table t")
 }
@@ -1201,7 +1233,8 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 	c.Assert(err, IsNil)
 
 	// Split the table.
-	s.cluster.SplitTable(tbl.Meta().ID, 100)
+	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
+	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)
 
 	unique := false
 	indexName := model.NewCIStr("idx_b")
@@ -1279,7 +1312,8 @@ func (s *testIntegrationSuite3) TestMultiRegionGetTableEndHandle(c *C) {
 	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
 
 	// Split the table.
-	s.cluster.SplitTable(tblID, 100)
+	tableStart := tablecodec.GenTableRecordPrefix(tblID)
+	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)
 
 	maxHandle, emptyTable := getMaxTableHandle(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)
@@ -1507,6 +1541,86 @@ func (s *testIntegrationSuite8) TestCreateTooManyIndexes(c *C) {
 	tk.MustExec("create index idx1 on t_index_too_many (c62)")
 	alterSQL := "create index idx2 on t_index_too_many (c63)"
 	tk.MustGetErrCode(alterSQL, errno.ErrTooManyKeys)
+}
+
+func (s *testIntegrationSuite8) TestCreateSecondaryIndexInCluster(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// test create table with non-unique key
+	tk.MustGetErrCode(`
+CREATE TABLE t (
+  c01 varchar(255) NOT NULL,
+  c02 varchar(255) NOT NULL,
+  c03 varchar(255) NOT NULL,
+  c04 varchar(255) DEFAULT NULL,
+  c05 varchar(255) DEFAULT NULL,
+  c06 varchar(255) DEFAULT NULL,
+  PRIMARY KEY (c01,c02,c03) clustered,
+  KEY c04 (c04)
+)`, errno.ErrTooLongKey)
+
+	// test create long clustered primary key.
+	tk.MustGetErrCode(`
+CREATE TABLE t (
+  c01 varchar(255) NOT NULL,
+  c02 varchar(255) NOT NULL,
+  c03 varchar(255) NOT NULL,
+  c04 varchar(255) NOT NULL,
+  c05 varchar(255) DEFAULT NULL,
+  c06 varchar(255) DEFAULT NULL,
+  PRIMARY KEY (c01,c02,c03,c04) clustered
+)`, errno.ErrTooLongKey)
+
+	// test create table with unique key
+	tk.MustExec(`
+CREATE TABLE t (
+  c01 varchar(255) NOT NULL,
+  c02 varchar(255) NOT NULL,
+  c03 varchar(255) NOT NULL,
+  c04 varchar(255) DEFAULT NULL,
+  c05 varchar(255) DEFAULT NULL,
+  c06 varchar(255) DEFAULT NULL,
+  PRIMARY KEY (c01,c02,c03) clustered,
+  unique key c04 (c04)
+)`)
+	tk.MustExec("drop table t")
+
+	// test create index
+	tk.MustExec(`
+CREATE TABLE t (
+  c01 varchar(255) NOT NULL,
+  c02 varchar(255) NOT NULL,
+  c03 varchar(255) NOT NULL,
+  c04 varchar(255) DEFAULT NULL,
+  c05 varchar(255) DEFAULT NULL,
+  c06 varchar(255) DEFAULT NULL,
+  PRIMARY KEY (c01,c02) clustered
+)`)
+	tk.MustExec("create index idx1 on t(c03)")
+	tk.MustGetErrCode("create index idx2 on t(c03, c04)", errno.ErrTooLongKey)
+	tk.MustExec("create unique index uk2 on t(c03, c04)")
+	tk.MustExec("drop table t")
+
+	// test change/modify column
+	tk.MustExec(`
+CREATE TABLE t (
+  c01 varchar(255) NOT NULL,
+  c02 varchar(255) NOT NULL,
+  c03 varchar(255) NOT NULL,
+  c04 varchar(255) DEFAULT NULL,
+  c05 varchar(255) DEFAULT NULL,
+  c06 varchar(255) DEFAULT NULL,
+  Index idx1(c03),
+  PRIMARY KEY (c01,c02) clustered,
+  unique index uk1(c06)
+)`)
+	tk.MustExec("alter table t change c03 c10 varchar(256) default null")
+	tk.MustGetErrCode("alter table t change c10 c100 varchar(1024) default null", errno.ErrTooLongKey)
+	tk.MustGetErrCode("alter table t modify c10 varchar(600) default null", errno.ErrTooLongKey)
+	tk.MustExec("alter table t modify c06 varchar(600) default null")
+	tk.MustGetErrCode("alter table t modify c01 varchar(510)", errno.ErrTooLongKey)
+	tk.MustExec("create table t2 like t")
 }
 
 func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
@@ -2638,7 +2752,7 @@ func (s *testIntegrationSuite7) TestDuplicateErrorMessage(c *C) {
 			config.UpdateGlobal(func(conf *config.Config) {
 				conf.EnableGlobalIndex = globalIndex
 			})
-			for _, clusteredIndex := range []bool{false, true} {
+			for _, clusteredIndex := range []variable.ClusteredIndexDefMode{variable.ClusteredIndexDefModeOn, variable.ClusteredIndexDefModeOff, variable.ClusteredIndexDefModeIntOnly} {
 				tk.Se.GetSessionVars().EnableClusteredIndex = clusteredIndex
 				for _, t := range tests {
 					tk.MustExec("drop table if exists t;")

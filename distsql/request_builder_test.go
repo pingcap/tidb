@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -324,7 +323,7 @@ func (s *testSuite) TestRequestBuilder1(c *C) {
 		NotFillCache:   false,
 		SyncLog:        false,
 		Streaming:      false,
-		ReplicaRead:    tikvstore.ReplicaReadLeader,
+		ReplicaRead:    kv.ReplicaReadLeader,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -400,7 +399,7 @@ func (s *testSuite) TestRequestBuilder2(c *C) {
 		NotFillCache:   false,
 		SyncLog:        false,
 		Streaming:      false,
-		ReplicaRead:    tikvstore.ReplicaReadLeader,
+		ReplicaRead:    kv.ReplicaReadLeader,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -447,7 +446,7 @@ func (s *testSuite) TestRequestBuilder3(c *C) {
 		NotFillCache:   false,
 		SyncLog:        false,
 		Streaming:      false,
-		ReplicaRead:    tikvstore.ReplicaReadLeader,
+		ReplicaRead:    kv.ReplicaReadLeader,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -494,7 +493,7 @@ func (s *testSuite) TestRequestBuilder4(c *C) {
 		Streaming:      true,
 		NotFillCache:   false,
 		SyncLog:        false,
-		ReplicaRead:    tikvstore.ReplicaReadLeader,
+		ReplicaRead:    kv.ReplicaReadLeader,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -533,7 +532,7 @@ func (s *testSuite) TestRequestBuilder5(c *C) {
 		KeepOrder:      true,
 		Desc:           false,
 		Concurrency:    15,
-		IsolationLevel: tikvstore.RC,
+		IsolationLevel: kv.RC,
 		Priority:       1,
 		NotFillCache:   true,
 		SyncLog:        false,
@@ -577,10 +576,10 @@ func (s *testSuite) TestRequestBuilder6(c *C) {
 }
 
 func (s *testSuite) TestRequestBuilder7(c *C) {
-	for _, replicaRead := range []tikvstore.ReplicaReadType{
-		tikvstore.ReplicaReadLeader,
-		tikvstore.ReplicaReadFollower,
-		tikvstore.ReplicaReadMixed,
+	for _, replicaRead := range []kv.ReplicaReadType{
+		kv.ReplicaReadLeader,
+		kv.ReplicaReadFollower,
+		kv.ReplicaReadMixed,
 	} {
 		vars := variable.NewSessionVars()
 		vars.SetReplicaRead(replicaRead)
@@ -626,7 +625,6 @@ func (s *testSuite) TestRequestBuilder8(c *C) {
 		IsolationLevel: 0,
 		Priority:       0,
 		MemTracker:     (*memory.Tracker)(nil),
-		ReplicaRead:    0x1,
 		SchemaVar:      10000,
 	}
 	c.Assert(actual, DeepEquals, expect)

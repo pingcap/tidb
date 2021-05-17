@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -64,7 +65,7 @@ func (s *testSuite1) TestExportRowID(c *C) {
 func (s *testSuite1) TestNotAllowWriteRowID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table tt(id binary(10), c int, primary key(id));")
 	tk.MustExec("insert tt values (1, 10);")
 	// select statement

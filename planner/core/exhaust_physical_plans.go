@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -480,16 +479,7 @@ func (p *LogicalJoin) constructIndexJoin(
 		IsNullEQ:        newIsNullEQ,
 		DefaultValues:   p.DefaultValues,
 	}
-	// Correct the collation used by hash.
-	for i := range outerHashKeys {
-		// Make compiler happy.
-		if len(innerHashKeys) == 0 {
-			return nil
-		}
-		chs, coll := expression.DeriveCollationFromExprs(nil, outerHashKeys[i], innerHashKeys[i])
-		outerHashKeys[i].GetType().Charset, outerHashKeys[i].GetType().Collate = chs, coll
-		innerHashKeys[i].GetType().Charset, innerHashKeys[i].GetType().Collate = chs, coll
-	}
+
 	join := PhysicalIndexJoin{
 		basePhysicalJoin: baseJoin,
 		innerTask:        innerTask,
@@ -835,15 +825,14 @@ type indexJoinBuildHelper struct {
 	join      *LogicalJoin
 	innerPlan *DataSource
 
-	chosenIndexInfo *model.IndexInfo
-	usedColsLen     int
-	usedColsNDV     float64
-	chosenAccess    []expression.Expression
-	chosenRemained  []expression.Expression
-	idxOff2KeyOff   []int
-	lastColManager  *ColWithCmpFuncManager
-	chosenRanges    []*ranger.Range
-	chosenPath      *util.AccessPath
+	usedColsLen    int
+	usedColsNDV    float64
+	chosenAccess   []expression.Expression
+	chosenRemained []expression.Expression
+	idxOff2KeyOff  []int
+	lastColManager *ColWithCmpFuncManager
+	chosenRanges   []*ranger.Range
+	chosenPath     *util.AccessPath
 
 	curPossibleUsedKeys []*expression.Column
 	curNotUsedIndexCols []*expression.Column
@@ -1036,13 +1025,18 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 				if ts.schema.ColumnIndex(col) == -1 {
 					ts.Schema().Append(col)
 					ts.Columns = append(ts.Columns, col.ToInfo())
-					cop.doubleReadNeedProj = true
+					cop.needExtraProj = true
 				}
 			}
 		}
 		// If inner cop task need keep order, the extraHandleCol should be set.
 		if cop.keepOrder && !ds.tableInfo.IsCommonHandle {
-			cop.extraHandleCol, cop.doubleReadNeedProj = ts.appendExtraHandleCol(ds)
+			var needExtraProj bool
+			cop.extraHandleCol, needExtraProj = ts.appendExtraHandleCol(ds)
+			cop.needExtraProj = cop.needExtraProj || needExtraProj
+		}
+		if cop.needExtraProj {
+			cop.originSchema = ds.schema
 		}
 		cop.tablePlan = ts
 	}
@@ -1422,6 +1416,7 @@ func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges []*ranger.Range, p
 
 func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAndInFuncs []expression.Expression, nextColRange []*ranger.Range, haveExtraCol bool) (ranges []*ranger.Range, emptyRange bool, err error) {
 	pointLength := matchedKeyCnt + len(eqAndInFuncs)
+	//nolint:gosimple // false positive unnecessary nil check
 	if nextColRange != nil {
 		for _, colRan := range nextColRange {
 			// The range's exclude status is the same with last col's.
@@ -1668,7 +1663,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	}
 	joins := make([]PhysicalPlan, 0, 8)
 	canPushToTiFlash := p.canPushToCop(kv.TiFlash)
-	if p.ctx.GetSessionVars().AllowMPPExecution && !collate.NewCollationEnabled() && canPushToTiFlash {
+	if p.ctx.GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
 		if p.shouldUseMPPBCJ() {
 			mppJoins := p.tryToGetMppHashJoin(prop, true)
 			if (p.preferJoinType & preferBCJoin) > 0 {
@@ -1819,6 +1814,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		Concurrency:      uint(p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor),
 		EqualConditions:  p.EqualConditions,
 		storeTp:          kv.TiFlash,
+		mppShuffleJoin:   !useBCJ,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childrenProps...)
 	return []PhysicalPlan{join}
 }
@@ -1970,6 +1966,9 @@ func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPl
 	if !lt.limitHints.preferLimitToCop {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
+	if lt.ctx.GetSessionVars().IsMPPAllowed() {
+		allTaskTypes = append(allTaskTypes, property.MppTaskType)
+	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64}
@@ -2046,7 +2045,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	}
 	disableAggPushDownToCop(la.children[0])
 	join := la.GetHashJoin(prop)
-	var columns []*expression.Column
+	var columns = make([]*expression.Column, 0, len(la.CorCols))
 	for _, colColumn := range la.CorCols {
 		columns = append(columns, &colColumn.Column)
 	}
@@ -2307,7 +2306,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		}
 		// TODO: permute various partition columns from group-by columns
 		// 1-phase agg
-		// If there are no available parititon cols, but still have group by items, that means group by items are all expressions or constants.
+		// If there are no available partition cols, but still have group by items, that means group by items are all expressions or constants.
 		// To avoid mess, we don't do any one-phase aggregation in this case.
 		if len(partitionCols) != 0 {
 			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols, CanAddEnforcer: true}
@@ -2322,6 +2321,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.schema.Clone())
 		agg.MppRunMode = Mpp2Phase
+		agg.MppPartitionCols = partitionCols
 		hashAggs = append(hashAggs, agg)
 
 		// agg runs on TiDB with a partial agg on TiFlash if possible
@@ -2356,7 +2356,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
 	}
 	canPushDownToTiFlash := la.canPushToCop(kv.TiFlash)
-	canPushDownToMPP := la.ctx.GetSessionVars().AllowMPPExecution && !collate.NewCollationEnabled() && la.checkCanPushDownToMPP() && canPushDownToTiFlash
+	canPushDownToMPP := la.ctx.GetSessionVars().IsMPPAllowed() && la.checkCanPushDownToMPP() && canPushDownToTiFlash
 	if la.HasDistinct() {
 		// TODO: remove after the cost estimation of distinct pushdown is implemented.
 		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
