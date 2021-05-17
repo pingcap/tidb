@@ -5194,6 +5194,18 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 	// Test show table regions.
 	tk.MustQuery(`split table t_regions between (-10000) and (10000) regions 4;`).Check(testkit.Rows("4 1"))
 	re := tk.MustQuery("show table t_regions regions")
+
+	// Test show table regions and split table on temporary table.
+	tk.MustExec("drop table if exists t_regions_temporary_table")
+	tk.MustExec("create global temporary table t_regions_temporary_table (a int key, b int, c int, index idx(b), index idx2(c)) ON COMMIT DELETE ROWS;")
+	// Test show table regions.
+	_, err = tk.Exec("show table t_regions_temporary_table regions")
+	c.Assert(err.Error(), Equals, plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions").Error())
+	// Test split table.
+	_, err = tk.Exec(`split table t_regions_temporary_table between (-10000) and (10000) regions 4;`)
+	c.Assert(err.Error(), Equals, plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("split table").Error())
+	tk.MustExec("drop table if exists t_regions_temporary_table")
+
 	rows := re.Rows()
 	// Table t_regions should have 5 regions now.
 	// 4 regions to store record data.

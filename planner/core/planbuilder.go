@@ -2201,6 +2201,14 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			err = ErrDBaccessDenied.GenWithStackByArgs(user.AuthUsername, user.AuthHostname, mysql.SystemDB)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, mysql.SystemDB, "", "", err)
+	case ast.ShowRegions:
+		tableInfo, err := b.is.TableByName(show.Table.Schema, show.Table.Name)
+		if err != nil {
+			return nil, err
+		}
+		if tableInfo.Meta().TempTableType != model.TempTableNone {
+			return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions")
+		}
 	}
 	schema, names := buildShowSchema(show, isView, isSequence)
 	p.SetSchema(schema)
@@ -3067,6 +3075,9 @@ func (b *PlanBuilder) buildIndexAdvise(node *ast.IndexAdviseStmt) Plan {
 func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) {
 	if node.SplitSyntaxOpt != nil && node.SplitSyntaxOpt.HasPartition && node.Table.TableInfo.Partition == nil {
 		return nil, ErrPartitionClauseOnNonpartitioned
+	}
+	if node.SplitSyntaxOpt != nil && node.Table.TableInfo.TempTableType != model.TempTableNone {
+		return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("split table")
 	}
 	if len(node.IndexName.L) != 0 {
 		return b.buildSplitIndexRegion(node)

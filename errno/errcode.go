@@ -916,6 +916,7 @@ const (
 	ErrAdminCheckTable                     = 8003
 	ErrTxnTooLarge                         = 8004
 	ErrWriteConflictInTiDB                 = 8005
+	ErrOptOnTemporaryTable                 = 8006
 	ErrUnsupportedReloadPlugin             = 8018
 	ErrUnsupportedReloadPluginVar          = 8019
 	ErrTableLocked                         = 8020

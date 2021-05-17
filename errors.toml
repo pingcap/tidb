@@ -1106,6 +1106,11 @@ error = '''
 Variable '%s' cannot be set using SET_VAR hint.
 '''
 
+["planner:8006"]
+error = '''
+TiDB %s failed on temporary table.
+'''
+
 ["planner:8108"]
 error = '''
 Unsupported type %T
