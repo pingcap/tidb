@@ -767,23 +767,23 @@ func (s *partitionTableSuite) TestIdexMerge(c *C) {
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 
 	// list partition table
-	tk.MustExec(`create table tlist(a int, b int, index idx_a(a), index idx_b(b)) partition by list(a)(
+	tk.MustExec(`create table tlist(a int, b int, primary key(a) clustered, index idx_b(b)) partition by list(a)(
 		partition p0 values in (1, 2, 3, 4),
 		partition p1 values in (5, 6, 7, 8),
 		partition p2 values in (9, 10, 11, 12));`)
 
 	// range partition table
-	tk.MustExec(`create table trange(a int, b int, index idx_a(a), index idx_b(b)) partition by range(a) (
+	tk.MustExec(`create table trange(a int, b int, primary key(a) clustered, index idx_b(b)) partition by range(a) (
 		partition p0 values less than(300),
 		partition p1 values less than (500),
 		partition p2 values less than(1100));`)
 
 	// hash partition table
-	tk.MustExec(`create table thash(a int, b int, index idx_a(a), index idx_b(b)) partition by hash(a) partitions 4;`)
+	tk.MustExec(`create table thash(a int, b int, primary key(a) clustered, index idx_b(b)) partition by hash(a) partitions 4;`)
 
 	// regular table
-	tk.MustExec("create table tregular1(a int, b int, index idx_a(a))")
-	tk.MustExec("create table tregular2(a int, b int, index idx_a(a))")
+	tk.MustExec("create table tregular1(a int, b int, primary key(a) clustered)")
+	tk.MustExec("create table tregular2(a int, b int, primary key(a) clustered)")
 
 	// generate some random data to be inserted
 	vals := make([]string, 0, 2000)
@@ -791,17 +791,17 @@ func (s *partitionTableSuite) TestIdexMerge(c *C) {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(1100), rand.Intn(2000)))
 	}
 
-	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
-	tk.MustExec("insert into thash values " + strings.Join(vals, ","))
-	tk.MustExec("insert into tregular1 values " + strings.Join(vals, ","))
+	tk.MustExec("insert ignore into trange values " + strings.Join(vals, ","))
+	tk.MustExec("insert ignore into thash values " + strings.Join(vals, ","))
+	tk.MustExec("insert ignore into tregular1 values " + strings.Join(vals, ","))
 
 	vals = make([]string, 0, 2000)
 	for i := 0; i < 2000; i++ {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(12)+1, rand.Intn(20)))
 	}
 
-	tk.MustExec("insert into tlist values " + strings.Join(vals, ","))
-	tk.MustExec("insert into tregular2 values " + strings.Join(vals, ","))
+	tk.MustExec("insert ignore into tlist values " + strings.Join(vals, ","))
+	tk.MustExec("insert ignore into tregular2 values " + strings.Join(vals, ","))
 
 	// test range partition
 	for i := 0; i < 100; i++ {
