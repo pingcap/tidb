@@ -208,7 +208,7 @@ type processor struct {
 	// expectedCmpResult is used to decide if one value is included in the frame.
 	expectedCmpResult int64
 
-	// rows keeps rows starting from curStartRow, TODO(zhifeng): make it a queue
+	// rows keeps rows starting from curStartRow
 	rows                     []chunk.Row
 	rowCnt                   uint64
 	whole                    bool
@@ -389,6 +389,12 @@ func (p *processor) produce(ctx sessionctx.Context, chk *chunk.Chunk, remained i
 					if slidingWindowAggFunc != nil && p.initializedSlidingWindow {
 						err = slidingWindowAggFunc.Slide(ctx, p.getRow, p.lastStartRow, p.lastEndRow, start-p.lastStartRow, end-p.lastEndRow, p.partialResults[i])
 					} else {
+						// For MinMaxSlidingWindowAggFuncs, it needs the absolute value of each start of window, to compare
+						// whether elements inside deque are out of current window.
+						if minMaxSlidingWindowAggFunc, ok := wf.(aggfuncs.MaxMinSlidingWindowAggFunc); ok {
+							// Store start inside MaxMinSlidingWindowAggFunc.windowInfo
+							minMaxSlidingWindowAggFunc.SetWindowStart(start)
+						}
 						// TODO(zhifeng): track memory usage here
 						wf.ResetPartialResult(p.partialResults[i])
 						_, err = wf.UpdatePartialResult(ctx, p.getRows(start, end), p.partialResults[i])
