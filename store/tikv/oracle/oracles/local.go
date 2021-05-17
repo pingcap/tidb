@@ -99,7 +99,7 @@ func (l *localOracle) UntilExpired(lockTimeStamp, TTL uint64, opt *oracle.Option
 		now = l.hook.currentTime
 	}
 	expire := oracle.GetTimeFromTS(lockTimeStamp).Add(time.Duration(TTL) * time.Millisecond)
-	return int64(expire.Sub(now).Milliseconds())
+	return expire.Sub(now).Milliseconds()
 }
 
 func (l *localOracle) Close() {

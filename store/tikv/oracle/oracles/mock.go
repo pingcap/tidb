@@ -112,7 +112,7 @@ func (o *MockOracle) UntilExpired(lockTimeStamp, TTL uint64, _ *oracle.Option) i
 	o.RLock()
 	defer o.RUnlock()
 	expire := oracle.GetTimeFromTS(lockTimeStamp).Add(time.Duration(TTL) * time.Millisecond)
-	return int64(expire.Sub(time.Now().Add(o.offset)).Milliseconds())
+	return expire.Sub(time.Now().Add(o.offset)).Milliseconds()
 }
 
 // Close implements oracle.Oracle interface.

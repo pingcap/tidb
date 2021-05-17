@@ -1220,7 +1220,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 			// 18 is for the logical time.
 			ts := oracle.GoTimeToTS(time.Now())
 			s := reorg.d.store.(tikv.Storage)
-			s.UpdateSPCache(uint64(ts), time.Now())
+			s.UpdateSPCache(ts, time.Now())
 			time.Sleep(time.Millisecond * 3)
 		}
 	})
