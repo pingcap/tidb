@@ -858,7 +858,7 @@ func (b *builtinTiDBBoundedStalenessSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinTiDBBoundedStalenessSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinTiDBBoundedStalenessSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
@@ -876,12 +876,13 @@ func (b *builtinTiDBBoundedStalenessSig) vecEvalInt(input *chunk.Chunk, result *
 	if err = b.args[1].VecEvalTime(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	result.ResizeInt64(n, false)
-	result.MergeNulls(buf0, buf1)
-	i64s := result.Int64s()
 	args0 := buf0.Times()
 	args1 := buf1.Times()
-	minSafeTS := getMinSafeTS(b.ctx)
+	timeZone := getTimeZone(b.ctx)
+	minSafeTime := getMinSafeTime(b.ctx, timeZone)
+	result.ResizeTime(n, false)
+	result.MergeNulls(buf0, buf1)
+	times := result.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -899,24 +900,20 @@ func (b *builtinTiDBBoundedStalenessSig) vecEvalInt(input *chunk.Chunk, result *
 			result.SetNull(i, true)
 			continue
 		}
-		minTime, err := args0[i].GoTime(getTimeZone(b.ctx))
+		minTime, err := args0[i].GoTime(timeZone)
 		if err != nil {
 			return err
 		}
-		maxTime, err := args1[i].GoTime(getTimeZone(b.ctx))
+		maxTime, err := args1[i].GoTime(timeZone)
 		if err != nil {
 			return err
-		}
-		if !(checkTimeRange(minTime) && checkTimeRange(maxTime)) {
-			result.SetNull(i, true)
-			continue
 		}
 		if minTime.After(maxTime) {
 			result.SetNull(i, true)
 			continue
 		}
-		minTS, maxTS := oracle.ComposeTS(minTime.Unix()*1000, 0), oracle.ComposeTS(maxTime.Unix()*1000, 0)
-		i64s[i] = calAppropriateTS(minTS, maxTS, minSafeTS)
+		// Because the minimum unit of a TSO is millisecond, so we only need fsp to be 3.
+		times[i] = types.NewTime(types.FromGoTime(calAppropriateTime(minTime, maxTime, minSafeTime)), mysql.TypeDatetime, 3)
 	}
 	return nil
 }

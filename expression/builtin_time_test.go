@@ -2858,57 +2858,45 @@ func (s *testEvaluatorSuite) TestTidbParseTso(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestTiDBBoundedStaleness(c *C) {
-	const timeParserLayout = "2006-01-02 15:04:05.000"
-	t1, err := time.Parse(timeParserLayout, "2015-09-21 09:53:04.877")
+	t1, err := time.Parse(types.TimeFormat, "2015-09-21 09:53:04")
 	c.Assert(err, IsNil)
-	t1Str := t1.Format(timeParserLayout)
-	ts1 := int64(oracle.ComposeTS(t1.Unix()*1000, 0))
-	t2 := time.Now().UTC()
-	t2Str := t2.Format(timeParserLayout)
-	ts2 := int64(oracle.ComposeTS(t2.Unix()*1000, 0))
-	s.ctx.GetSessionVars().TimeZone = time.UTC
+	// time.Parse uses UTC time zone by default, we need to change it to Local manually.
+	t1 = t1.Local()
+	t1Str := t1.Format(types.TimeFormat)
+	t2 := time.Now()
+	t2Str := t2.Format(types.TimeFormat)
+	timeZone := time.Local
+	s.ctx.GetSessionVars().TimeZone = timeZone
 	tests := []struct {
 		leftTime     interface{}
 		rightTime    interface{}
 		injectSafeTS uint64
 		isNull       bool
-		expect       int64
+		expect       time.Time
 	}{
 		// SafeTS is in the range.
 		{
-			leftTime:  t1Str,
-			rightTime: t2Str,
-			injectSafeTS: func() uint64 {
-				phy := t2.Add(-1*time.Second).Unix() * 1000
-				return oracle.ComposeTS(phy, 0)
-			}(),
-			isNull: false,
-			expect: func() int64 {
-				phy := t2.Add(-1*time.Second).Unix() * 1000
-				return int64(oracle.ComposeTS(phy, 0))
-			}(),
+			leftTime:     t1Str,
+			rightTime:    t2Str,
+			injectSafeTS: oracle.GoTimeToTS(t2.Add(-1 * time.Second)),
+			isNull:       false,
+			expect:       t2.Add(-1 * time.Second),
 		},
 		// SafeTS is less than the left time.
 		{
-			leftTime:  t1Str,
-			rightTime: t2Str,
-			injectSafeTS: func() uint64 {
-				phy := t1.Add(-1*time.Second).Unix() * 1000
-				return oracle.ComposeTS(phy, 0)
-			}(),
-			isNull: false,
-			expect: ts1,
+			leftTime:     t1Str,
+			rightTime:    t2Str,
+			injectSafeTS: oracle.GoTimeToTS(t1.Add(-1 * time.Second)),
+			isNull:       false,
+			expect:       t1,
 		},
 		// SafeTS is bigger than the right time.
 		{
-			leftTime:  t1Str,
-			rightTime: t2Str,
-			injectSafeTS: func() uint64 {
-				phy := t2.Add(time.Second).Unix() * 1000
-				return oracle.ComposeTS(phy, 0)
-			}(),
-			isNull: false,
-			expect: ts2,
+			leftTime:     t1Str,
+			rightTime:    t2Str,
+			injectSafeTS: oracle.GoTimeToTS(t2.Add(time.Second)),
+			isNull:       false,
+			expect:       t2,
 		},
 		// Wrong time order.
 		{
@@ -2916,7 +2904,7 @@ func (s *testEvaluatorSuite) TestTiDBBoundedStaleness(c *C) {
 			rightTime:    t1Str,
 			injectSafeTS: 0,
 			isNull:       true,
-			expect:       0,
+			expect:       time.Time{},
 		},
 	}
 
@@ -2931,30 +2919,37 @@ func (s *testEvaluatorSuite) TestTiDBBoundedStaleness(c *C) {
 		if test.isNull {
 			c.Assert(d.IsNull(), IsTrue)
 		} else {
-			c.Assert(d.GetInt64(), Equals, test.expect)
+			goTime, err := d.GetMysqlTime().GoTime(timeZone)
+			c.Assert(err, IsNil)
+			c.Assert(goTime.Format(types.TimeFormat), Equals, test.expect.Format(types.TimeFormat))
 		}
 		resetStmtContext(s.ctx)
 	}
 
 	// Test whether it's deterministic.
-	safeTS1 := oracle.ComposeTS(t2.Add(-1*time.Second).Unix()*1000, 0)
+	safeTime1 := t2.Add(-1 * time.Second)
+	safeTS1 := oracle.ComposeTS(safeTime1.Unix()*1000, 0)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
 		fmt.Sprintf("return(%v)", safeTS1)), IsNil)
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(t1Str), types.NewDatum(t2Str)}))
 	c.Assert(err, IsNil)
 	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
-	c.Assert(d.GetInt64(), Equals, int64(safeTS1))
+	goTime, err := d.GetMysqlTime().GoTime(timeZone)
+	c.Assert(err, IsNil)
+	resultTime := goTime.Format(types.TimeFormat)
+	c.Assert(resultTime, Equals, safeTime1.Format(types.TimeFormat))
 	// SafeTS updated.
-	safeTS2 := oracle.ComposeTS(t2.Add(1*time.Second).Unix()*1000, 0)
+	safeTime2 := t2.Add(1 * time.Second)
+	safeTS2 := oracle.ComposeTS(safeTime2.Unix()*1000, 0)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
 		fmt.Sprintf("return(%v)", safeTS2)), IsNil)
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(t1Str), types.NewDatum(t2Str)}))
 	c.Assert(err, IsNil)
 	d, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
-	// Still safeTS1
-	c.Assert(d.GetInt64(), Equals, int64(safeTS1))
+	// Still safeTime1
+	c.Assert(resultTime, Equals, safeTime1.Format(types.TimeFormat))
 	resetStmtContext(s.ctx)
 	failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS")
 }

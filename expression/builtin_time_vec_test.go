@@ -522,7 +522,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	// Todo: how to inject the safeTS for better testing.
 	ast.TiDBBoundedStaleness: {
 		{
-			retEvalType:   types.ETInt,
+			retEvalType:   types.ETDatetime,
 			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime},
 		},
 	},

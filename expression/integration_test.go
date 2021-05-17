@@ -2267,83 +2267,63 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	// for tidb_bounded_staleness
 	tk.MustExec("SET time_zone = '+00:00';")
 	t := time.Now().UTC()
-	ts := oracle.ComposeTS(t.Unix()*1000, 0)
+	ts := oracle.GoTimeToTS(t)
 	tidbBoundedStalenessTests := []struct {
 		sql          string
 		injectSafeTS uint64
-		isNull       bool
-		expect       int64
+		expect       string
 	}{
 		{
 			sql:          `select tidb_bounded_staleness(DATE_SUB(NOW(), INTERVAL 600 SECOND), DATE_ADD(NOW(), INTERVAL 600 SECOND))`,
 			injectSafeTS: ts,
-			isNull:       false,
-			expect:       int64(ts),
+			expect:       t.Format(types.TimeFSPFormat[:len(types.TimeFSPFormat)-3]),
 		},
 		{
 			sql: `select tidb_bounded_staleness("2021-04-27 12:00:00.000", "2021-04-27 13:00:00.000")`,
 			injectSafeTS: func() uint64 {
-				phy, err := time.Parse("2006-01-02 15:04:05.000", "2021-04-27 13:30:04.877")
+				t, err := time.Parse("2006-01-02 15:04:05.000", "2021-04-27 13:30:04.877")
 				c.Assert(err, IsNil)
-				return oracle.ComposeTS(phy.Unix()*1000, 0)
+				return oracle.GoTimeToTS(t)
 			}(),
-			isNull: false,
-			expect: func() int64 {
-				phy, err := time.Parse("2006-01-02 15:04:05.000", "2021-04-27 13:00:00.000")
-				c.Assert(err, IsNil)
-				return int64(oracle.ComposeTS(phy.Unix()*1000, 0))
-			}(),
+			expect: "2021-04-27 13:00:00.000",
 		},
 		{
 			sql: `select tidb_bounded_staleness("2021-04-27 12:00:00.000", "2021-04-27 13:00:00.000")`,
 			injectSafeTS: func() uint64 {
-				phy, err := time.Parse("2006-01-02 15:04:05.000", "2021-04-27 11:30:04.877")
+				t, err := time.Parse("2006-01-02 15:04:05.000", "2021-04-27 11:30:04.877")
 				c.Assert(err, IsNil)
-				return oracle.ComposeTS(phy.Unix()*1000, 0)
+				return oracle.GoTimeToTS(t)
 			}(),
-			isNull: false,
-			expect: func() int64 {
-				phy, err := time.Parse("2006-01-02 15:04:05.000", "2021-04-27 12:00:00.000")
-				c.Assert(err, IsNil)
-				return int64(oracle.ComposeTS(phy.Unix()*1000, 0))
-			}(),
+			expect: "2021-04-27 12:00:00.000",
 		},
 		{
 			sql:          `select tidb_bounded_staleness("2021-04-27 12:00:00.000", "2021-04-27 11:00:00.000")`,
 			injectSafeTS: 0,
-			isNull:       true,
-			expect:       0,
+			expect:       "<nil>",
 		},
 		// Time is too small.
 		{
 			sql:          `select tidb_bounded_staleness("0020-04-27 12:00:00.000", "2021-04-27 11:00:00.000")`,
 			injectSafeTS: 0,
-			isNull:       true,
-			expect:       0,
+			expect:       "1970-01-01 00:00:00.000",
 		},
 		// Wrong value.
 		{
 			sql:          `select tidb_bounded_staleness(1, 2)`,
 			injectSafeTS: 0,
-			isNull:       true,
-			expect:       0,
+			expect:       "<nil>",
 		},
 		{
 			sql:          `select tidb_bounded_staleness("invalid_time_1", "invalid_time_2")`,
 			injectSafeTS: 0,
-			isNull:       true,
-			expect:       0,
+			expect:       "<nil>",
 		},
 	}
 	for _, test := range tidbBoundedStalenessTests {
 		c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
 			fmt.Sprintf("return(%v)", test.injectSafeTS)), IsNil)
 		result = tk.MustQuery(test.sql)
-		if test.isNull {
-			result.Check(testkit.Rows("<nil>"))
-		} else {
-			result.Check(testkit.Rows(fmt.Sprintf("%d", test.expect)))
-		}
+		result.Check(testkit.Rows(test.expect))
 	}
 	failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS")
 	// test whether tidb_bounded_staleness is deterministic

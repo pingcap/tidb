@@ -7125,7 +7125,7 @@ func (c *tidbBoundedStalenessFunctionClass) getFunction(ctx sessionctx.Context, 
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETDatetime, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETDatetime, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -7143,14 +7143,14 @@ func (b *builtinTiDBBoundedStalenessSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinTiDBBoundedStalenessSig) evalInt(row chunk.Row) (int64, bool, error) {
+func (b *builtinTiDBBoundedStalenessSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	leftTime, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return 0, true, handleInvalidTimeError(b.ctx, err)
+		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
 	rightTime, isNull, err := b.args[1].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return 0, true, handleInvalidTimeError(b.ctx, err)
+		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
 	if invalidLeftTime, invalidRightTime := leftTime.InvalidZero(), rightTime.InvalidZero(); invalidLeftTime || invalidRightTime {
 		if invalidLeftTime {
@@ -7159,42 +7159,26 @@ func (b *builtinTiDBBoundedStalenessSig) evalInt(row chunk.Row) (int64, bool, er
 		if invalidRightTime {
 			err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, rightTime.String()))
 		}
-		return 0, true, err
+		return types.ZeroTime, true, err
 	}
-	minTime, err := leftTime.GoTime(getTimeZone(b.ctx))
+	timeZone := getTimeZone(b.ctx)
+	minTime, err := leftTime.GoTime(timeZone)
 	if err != nil {
-		return 0, true, err
+		return types.ZeroTime, true, err
 	}
-	maxTime, err := rightTime.GoTime(getTimeZone(b.ctx))
+	maxTime, err := rightTime.GoTime(timeZone)
 	if err != nil {
-		return 0, true, err
-	}
-	// Make sure the time is not too big or small to prevent it from overflow later.
-	if !(checkTimeRange(minTime) && checkTimeRange(maxTime)) {
-		return 0, true, nil
+		return types.ZeroTime, true, err
 	}
 	if minTime.After(maxTime) {
-		return 0, true, nil
+		return types.ZeroTime, true, nil
 	}
-	minTS, maxTS := oracle.ComposeTS(minTime.Unix()*1000, 0), oracle.ComposeTS(maxTime.Unix()*1000, 0)
-	return calAppropriateTS(minTS, maxTS, getMinSafeTS(b.ctx)), false, nil
+	// Because the minimum unit of a TSO is millisecond, so we only need fsp to be 3.
+	return types.NewTime(types.FromGoTime(calAppropriateTime(minTime, maxTime, getMinSafeTime(b.ctx, timeZone))), mysql.TypeDatetime, 3), false, nil
 }
 
-func checkTimeRange(t time.Time) bool {
-	unixT := t.Unix()
-	unixTMillisecond := unixT * 1000
-	// Less than the unix timestamp zero or overflow after * 1000.
-	if unixT < 0 || unixTMillisecond < 0 {
-		return false
-	}
-	// Overflow after being composed to TS
-	if oracle.ComposeTS(unixTMillisecond, 0) < uint64(unixTMillisecond) {
-		return false
-	}
-	return true
-}
-
-func getMinSafeTS(sessionCtx sessionctx.Context) (minSafeTS uint64) {
+func getMinSafeTime(sessionCtx sessionctx.Context, timeZone *time.Location) time.Time {
+	var minSafeTS uint64
 	if store := sessionCtx.GetStore(); store != nil {
 		minSafeTS = store.GetMinSafeTS(sessionCtx.GetSessionVars().CheckAndGetTxnScope())
 	}
@@ -7206,7 +7190,7 @@ func getMinSafeTS(sessionCtx sessionctx.Context) (minSafeTS uint64) {
 	// Try to get from the stmt cache to make sure this function is deterministic.
 	stmtCtx := sessionCtx.GetSessionVars().StmtCtx
 	minSafeTS = stmtCtx.GetOrStoreStmtCache(stmtctx.StmtSafeTSCacheKey, minSafeTS).(uint64)
-	return
+	return oracle.GetTimeFromTS(minSafeTS).In(timeZone)
 }
 
 // For a SafeTS t and a time range [t1, t2]:
@@ -7216,11 +7200,11 @@ func getMinSafeTS(sessionCtx sessionctx.Context) (minSafeTS uint64) {
 //      a read request won't fail.
 //   2. If t2 < t, we will use t2 as the result,
 //      and with it, a read request won't fail because it's bigger than the latest SafeTS.
-func calAppropriateTS(minTS, maxTS, minSafeTS uint64) int64 {
-	if minSafeTS < minTS {
-		return int64(minTS)
-	} else if minTS <= minSafeTS && minSafeTS <= maxTS {
-		return int64(minSafeTS)
+func calAppropriateTime(minTime, maxTime, minSafeTime time.Time) time.Time {
+	if minSafeTime.Before(minTime) {
+		return minTime
+	} else if minSafeTime.After(maxTime) {
+		return maxTime
 	}
-	return int64(maxTS)
+	return minSafeTime
 }
