@@ -970,13 +970,13 @@ func (s *partitionTableSuite) TestParallelApply(c *C) {
 			  partition p3 values less than(40000))`)
 
 	vouter := make([]string, 0, 100)
-	for i := 0; i < 100; i++{
+	for i := 0; i < 100; i++ {
 		vouter = append(vouter, fmt.Sprintf("(%v, %v)", rand.Intn(40000), rand.Intn(40000)))
 	}
 	tk.MustExec("insert into touter values " + strings.Join(vouter, ", "))
 
-	vals := make([]string, 0, 4000)
-	for i := 0; i < 4000; i++ {
+	vals := make([]string, 0, 2000)
+	for i := 0; i < 100; i++ {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(40000), rand.Intn(40000)))
 	}
 	tk.MustExec("insert into tinner values " + strings.Join(vals, ", "))
@@ -1068,6 +1068,26 @@ func (s *partitionTableSuite) TestParallelApply(c *C) {
 		`        └─TableRowIDScan 8000.00 cop[tikv] table:tinner keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from touter where touter.a > (select sum(trange.b) from trange use index(a) where trange.a>touter.b)`).Sort().Check(
 		tk.MustQuery(`select * from touter where touter.a > (select sum(tinner.b) from tinner use index(a) where tinner.a>touter.b)`).Sort().Rows())
+
+
+	// random queries
+	ops := []string{"!=", ">", "<", ">=", "<="}
+	aggFuncs := []string{"sum", "count", "max", "min"}
+	tbls := []string{"tinner", "thash", "trange"}
+	for i := 0; i < 50; i++ {
+		var r [][]interface{}
+		op := ops[rand.Intn(len(ops))]
+		agg := aggFuncs[rand.Intn(len(aggFuncs))]
+		x := rand.Intn(10000)
+		for _, tbl := range tbls {
+			q := fmt.Sprintf(`select * from touter where touter.a > (select %v(%v.b) from %v where %v.a%vtouter.b-%v)`, agg, tbl, tbl, tbl, op, x)
+			if r == nil {
+				r = tk.MustQuery(q).Sort().Rows()
+			} else {
+				tk.MustQuery(q).Sort().Check(r)
+			}
+		}
+	}
 }
 
 func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
