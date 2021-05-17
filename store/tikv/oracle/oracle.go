@@ -148,25 +148,6 @@ func GoTimeToTS(t time.Time) uint64 {
 	return uint64(ts)
 }
 
-// CompareTS is used to compare two timestamps.
-// If tsoOne > tsoTwo, returns 1.
-// If tsoOne = tsoTwo, returns 0.
-// If tsoOne < tsoTwo, returns -1.
-func CompareTS(tsoOne, tsoTwo uint64) int {
-	tsOnePhy := ExtractPhysical(tsoOne)
-	tsOneLog := ExtractLogical(tsoOne)
-	tsTwoPhy := ExtractPhysical(tsoTwo)
-	tsTwoLog := ExtractLogical(tsoTwo)
-
-	if tsOnePhy > tsTwoPhy || (tsOnePhy == tsTwoPhy && tsOneLog > tsTwoLog) {
-		return 1
-	}
-	if tsOnePhy == tsTwoPhy && tsOneLog == tsTwoLog {
-		return 0
-	}
-	return -1
-}
-
 // GoTimeToLowerLimitStartTS returns the min start_ts of the uncommitted transaction.
 // maxTxnTimeUse means the max time a Txn May use (in ms) from its begin to commit.
 func GoTimeToLowerLimitStartTS(now time.Time, maxTxnTimeUse int64) uint64 {
