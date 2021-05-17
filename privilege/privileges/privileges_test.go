@@ -1427,3 +1427,15 @@ func (s *testPrivilegeSuite) TestViewDefiner(c *C) {
 	tk.MustExec("select * from test_view")
 	tk.MustExec("select * from test_view2")
 }
+
+func (s *testPrivilegeSuite) TestDynamicPrivsRegistration(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	pm := privilege.GetPrivilegeManager(se)
+
+	count := len(privileges.GetDynamicPrivileges())
+
+	c.Assert(pm.IsDynamicPrivilege("ACDC_ADMIN"), IsFalse)
+	privileges.RegisterDynamicPrivilege("ACDC_ADMIN")
+	c.Assert(pm.IsDynamicPrivilege("ACDC_ADMIN"), IsTrue)
+	c.Assert(len(privileges.GetDynamicPrivileges()), Equals, count+1)
+}
