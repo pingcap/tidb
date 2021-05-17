@@ -17,6 +17,7 @@ import (
 	"context"
 	"io"
 	"math"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
@@ -310,7 +312,21 @@ func buildBatchCopTasks(bo *Backoffer, cache *tikv.RegionCache, ranges *tikv.Key
 		for _, task := range storeTaskMap {
 			batchTasks = append(batchTasks, task)
 		}
+		if log.GetLevel() <= zap.DebugLevel {
+			msg := "Before region balance:"
+			for _, task := range batchTasks {
+				msg += " store " + task.storeAddr + ": " + strconv.Itoa(len(task.regionInfos)) + " regions,"
+			}
+			logutil.BgLogger().Debug(msg)
+		}
 		batchTasks = balanceBatchCopTask(batchTasks)
+		if log.GetLevel() <= zap.DebugLevel {
+			msg := "After region balance:"
+			for _, task := range batchTasks {
+				msg += " store " + task.storeAddr + ": " + strconv.Itoa(len(task.regionInfos)) + " regions,"
+			}
+			logutil.BgLogger().Debug(msg)
+		}
 
 		if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
 			logutil.BgLogger().Warn("buildBatchCopTasks takes too much time",
