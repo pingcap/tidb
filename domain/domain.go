@@ -73,7 +73,7 @@ type Domain struct {
 	sysSessionPool       *sessionPool
 	exit                 chan struct{}
 	etcdClient           *clientv3.Client
-	gvc                  GlobalVariableCache
+	sysVarCache          SysVarCache // replaces GlobalVariableCache
 	slowQuery            *topNSlowQueries
 	expensiveQueryHandle *expensivequery.Handle
 	wg                   sync.WaitGroup
@@ -896,6 +896,55 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 	return nil
 }
 
+// LoadSysVarCacheLoop create a goroutine loads sysvar cache in a loop,
+// it should be called only once in BootstrapSession.
+func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
+	err := do.sysVarCache.RebuildSysVarCache(ctx)
+	if err != nil {
+		return err
+	}
+	var watchCh clientv3.WatchChan
+	duration := 30 * time.Second
+	if do.etcdClient != nil {
+		watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
+	}
+	do.wg.Add(1)
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("LoadSysVarCacheLoop exited.")
+			util.Recover(metrics.LabelDomain, "LoadSysVarCacheLoop", nil, false)
+		}()
+		var count int
+		for {
+			ok := true
+			select {
+			case <-do.exit:
+				return
+			case _, ok = <-watchCh:
+			case <-time.After(duration):
+			}
+			if !ok {
+				logutil.BgLogger().Error("LoadSysVarCacheLoop loop watch channel closed")
+				watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
+				count++
+				if count > 10 {
+					time.Sleep(time.Duration(count) * time.Second)
+				}
+				continue
+			}
+			count = 0
+			logutil.BgLogger().Debug("Rebuilding sysvar cache from etcd watch event.")
+			err := do.sysVarCache.RebuildSysVarCache(ctx)
+			metrics.LoadSysVarCacheCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
+			if err != nil {
+				logutil.BgLogger().Error("LoadSysVarCacheLoop failed", zap.Error(err))
+			}
+		}
+	}()
+	return nil
+}
+
 // PrivilegeHandle returns the MySQLPrivilege.
 func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
@@ -1198,12 +1247,19 @@ func (do *Domain) ExpensiveQueryHandle() *expensivequery.Handle {
 	return do.expensiveQueryHandle
 }
 
+<<<<<<< HEAD
 // InitExpensiveQueryHandle init the expensive query handler.
 func (do *Domain) InitExpensiveQueryHandle() {
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 }
 
 const privilegeKey = "/tidb/privilege"
+=======
+const (
+	privilegeKey   = "/tidb/privilege"
+	sysVarCacheKey = "/tidb/sysvars"
+)
+>>>>>>> 0f10bef47... domain, session: Add new sysvarcache to replace global values cache (#24359)
 
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
 // the key will get notification.
@@ -1225,6 +1281,262 @@ func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 	}
 }
 
+<<<<<<< HEAD
+=======
+// NotifyUpdateSysVarCache updates the sysvar cache key in etcd, which other TiDB
+// clients are subscribed to for updates. For the caller, the cache is also built
+// synchronously so that the effect is immediate.
+func (do *Domain) NotifyUpdateSysVarCache(ctx sessionctx.Context) {
+	if do.etcdClient != nil {
+		row := do.etcdClient.KV
+		_, err := row.Put(context.Background(), sysVarCacheKey, "")
+		if err != nil {
+			logutil.BgLogger().Warn("notify update sysvar cache failed", zap.Error(err))
+		}
+	}
+	// update locally
+	if err := do.sysVarCache.RebuildSysVarCache(ctx); err != nil {
+		logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
+	}
+}
+
+// ServerID gets serverID.
+func (do *Domain) ServerID() uint64 {
+	return atomic.LoadUint64(&do.serverID)
+}
+
+// IsLostConnectionToPD indicates lost connection to PD or not.
+func (do *Domain) IsLostConnectionToPD() bool {
+	return do.isLostConnectionToPD.Get() != 0
+}
+
+const (
+	serverIDEtcdPath               = "/tidb/server_id"
+	refreshServerIDRetryCnt        = 3
+	acquireServerIDRetryInterval   = 300 * time.Millisecond
+	acquireServerIDTimeout         = 10 * time.Second
+	retrieveServerIDSessionTimeout = 10 * time.Second
+)
+
+var (
+	// serverIDTTL should be LONG ENOUGH to avoid barbarically killing an on-going long-run SQL.
+	serverIDTTL = 12 * time.Hour
+	// serverIDTimeToKeepAlive is the interval that we keep serverID TTL alive periodically.
+	serverIDTimeToKeepAlive = 5 * time.Minute
+	// serverIDTimeToCheckPDConnectionRestored is the interval that we check connection to PD restored (after broken) periodically.
+	serverIDTimeToCheckPDConnectionRestored = 10 * time.Second
+	// lostConnectionToPDTimeout is the duration that when TiDB cannot connect to PD excceeds this limit,
+	//   we realize the connection to PD is lost utterly, and server ID acquired before should be released.
+	//   Must be SHORTER than `serverIDTTL`.
+	lostConnectionToPDTimeout = 6 * time.Hour
+)
+
+var (
+	ldflagIsGlobalKillTest                        = "0"  // 1:Yes, otherwise:No.
+	ldflagServerIDTTL                             = "10" // in seconds.
+	ldflagServerIDTimeToKeepAlive                 = "1"  // in seconds.
+	ldflagServerIDTimeToCheckPDConnectionRestored = "1"  // in seconds.
+	ldflagLostConnectionToPDTimeout               = "5"  // in seconds.
+)
+
+func initByLDFlagsForGlobalKill() {
+	if ldflagIsGlobalKillTest == "1" {
+		var (
+			i   int
+			err error
+		)
+
+		if i, err = strconv.Atoi(ldflagServerIDTTL); err != nil {
+			panic("invalid ldflagServerIDTTL")
+		}
+		serverIDTTL = time.Duration(i) * time.Second
+
+		if i, err = strconv.Atoi(ldflagServerIDTimeToKeepAlive); err != nil {
+			panic("invalid ldflagServerIDTimeToKeepAlive")
+		}
+		serverIDTimeToKeepAlive = time.Duration(i) * time.Second
+
+		if i, err = strconv.Atoi(ldflagServerIDTimeToCheckPDConnectionRestored); err != nil {
+			panic("invalid ldflagServerIDTimeToCheckPDConnectionRestored")
+		}
+		serverIDTimeToCheckPDConnectionRestored = time.Duration(i) * time.Second
+
+		if i, err = strconv.Atoi(ldflagLostConnectionToPDTimeout); err != nil {
+			panic("invalid ldflagLostConnectionToPDTimeout")
+		}
+		lostConnectionToPDTimeout = time.Duration(i) * time.Second
+
+		logutil.BgLogger().Info("global_kill_test is enabled", zap.Duration("serverIDTTL", serverIDTTL),
+			zap.Duration("serverIDTimeToKeepAlive", serverIDTimeToKeepAlive),
+			zap.Duration("serverIDTimeToCheckPDConnectionRestored", serverIDTimeToCheckPDConnectionRestored),
+			zap.Duration("lostConnectionToPDTimeout", lostConnectionToPDTimeout))
+	}
+}
+
+func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Session, error) {
+	if do.serverIDSession != nil {
+		return do.serverIDSession, nil
+	}
+
+	// `etcdClient.Grant` needs a shortterm timeout, to avoid blocking if connection to PD lost,
+	//   while `etcdClient.KeepAlive` should be longterm.
+	//   So we separately invoke `etcdClient.Grant` and `concurrency.NewSession` with leaseID.
+	childCtx, cancel := context.WithTimeout(ctx, retrieveServerIDSessionTimeout)
+	resp, err := do.etcdClient.Grant(childCtx, int64(serverIDTTL.Seconds()))
+	cancel()
+	if err != nil {
+		logutil.BgLogger().Error("retrieveServerIDSession.Grant fail", zap.Error(err))
+		return nil, err
+	}
+	leaseID := resp.ID
+
+	session, err := concurrency.NewSession(do.etcdClient,
+		concurrency.WithLease(leaseID), concurrency.WithContext(context.Background()))
+	if err != nil {
+		logutil.BgLogger().Error("retrieveServerIDSession.NewSession fail", zap.Error(err))
+		return nil, err
+	}
+	do.serverIDSession = session
+	return session, nil
+}
+
+func (do *Domain) acquireServerID(ctx context.Context) error {
+	atomic.StoreUint64(&do.serverID, 0)
+
+	session, err := do.retrieveServerIDSession(ctx)
+	if err != nil {
+		return err
+	}
+
+	for {
+		randServerID := rand.Int63n(int64(util.MaxServerID)) + 1 // get a random serverID: [1, MaxServerID]
+		key := fmt.Sprintf("%s/%v", serverIDEtcdPath, randServerID)
+		cmp := clientv3.Compare(clientv3.CreateRevision(key), "=", 0)
+		value := "0"
+
+		childCtx, cancel := context.WithTimeout(ctx, acquireServerIDTimeout)
+		txn := do.etcdClient.Txn(childCtx)
+		t := txn.If(cmp)
+		resp, err := t.Then(clientv3.OpPut(key, value, clientv3.WithLease(session.Lease()))).Commit()
+		cancel()
+		if err != nil {
+			return err
+		}
+		if !resp.Succeeded {
+			logutil.BgLogger().Info("proposed random serverID exists, will randomize again", zap.Int64("randServerID", randServerID))
+			time.Sleep(acquireServerIDRetryInterval)
+			continue
+		}
+
+		atomic.StoreUint64(&do.serverID, uint64(randServerID))
+		logutil.BgLogger().Info("acquireServerID", zap.Uint64("serverID", do.ServerID()),
+			zap.String("lease id", strconv.FormatInt(int64(session.Lease()), 16)))
+		return nil
+	}
+}
+
+func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
+	session, err := do.retrieveServerIDSession(ctx)
+	if err != nil {
+		return err
+	}
+
+	key := fmt.Sprintf("%s/%v", serverIDEtcdPath, do.ServerID())
+	value := "0"
+	err = ddlutil.PutKVToEtcd(ctx, do.etcdClient, refreshServerIDRetryCnt, key, value, clientv3.WithLease(session.Lease()))
+	if err != nil {
+		logutil.BgLogger().Error("refreshServerIDTTL fail", zap.Uint64("serverID", do.ServerID()), zap.Error(err))
+	} else {
+		logutil.BgLogger().Info("refreshServerIDTTL succeed", zap.Uint64("serverID", do.ServerID()),
+			zap.String("lease id", strconv.FormatInt(int64(session.Lease()), 16)))
+	}
+	return err
+}
+
+func (do *Domain) serverIDKeeper() {
+	defer func() {
+		do.wg.Done()
+		logutil.BgLogger().Info("serverIDKeeper exited.")
+	}()
+	defer util.Recover(metrics.LabelDomain, "serverIDKeeper", func() {
+		logutil.BgLogger().Info("recover serverIDKeeper.")
+		// should be called before `do.wg.Done()`, to ensure that Domain.Close() waits for the new `serverIDKeeper()` routine.
+		do.wg.Add(1)
+		go do.serverIDKeeper()
+	}, false)
+
+	tickerKeepAlive := time.NewTicker(serverIDTimeToKeepAlive)
+	tickerCheckRestored := time.NewTicker(serverIDTimeToCheckPDConnectionRestored)
+	defer func() {
+		tickerKeepAlive.Stop()
+		tickerCheckRestored.Stop()
+	}()
+
+	blocker := make(chan struct{}) // just used for blocking the sessionDone() when session is nil.
+	sessionDone := func() <-chan struct{} {
+		if do.serverIDSession == nil {
+			return blocker
+		}
+		return do.serverIDSession.Done()
+	}
+
+	var lastSucceedTimestamp time.Time
+
+	onConnectionToPDRestored := func() {
+		logutil.BgLogger().Info("restored connection to PD")
+		do.isLostConnectionToPD.Set(0)
+		lastSucceedTimestamp = time.Now()
+
+		if err := do.info.StoreServerInfo(context.Background()); err != nil {
+			logutil.BgLogger().Error("StoreServerInfo failed", zap.Error(err))
+		}
+	}
+
+	onConnectionToPDLost := func() {
+		logutil.BgLogger().Warn("lost connection to PD")
+		do.isLostConnectionToPD.Set(1)
+
+		// Kill all connections when lost connection to PD,
+		//   to avoid the possibility that another TiDB instance acquires the same serverID and generates a same connection ID,
+		//   which will lead to a wrong connection killed.
+		do.InfoSyncer().GetSessionManager().KillAllConnections()
+	}
+
+	for {
+		select {
+		case <-tickerKeepAlive.C:
+			if !do.IsLostConnectionToPD() {
+				if err := do.refreshServerIDTTL(context.Background()); err == nil {
+					lastSucceedTimestamp = time.Now()
+				} else {
+					if lostConnectionToPDTimeout > 0 && time.Since(lastSucceedTimestamp) > lostConnectionToPDTimeout {
+						onConnectionToPDLost()
+					}
+				}
+			}
+		case <-tickerCheckRestored.C:
+			if do.IsLostConnectionToPD() {
+				if err := do.acquireServerID(context.Background()); err == nil {
+					onConnectionToPDRestored()
+				}
+			}
+		case <-sessionDone():
+			// inform that TTL of `serverID` is expired. See https://godoc.org/github.com/coreos/etcd/clientv3/concurrency#Session.Done
+			//   Should be in `IsLostConnectionToPD` state, as `lostConnectionToPDTimeout` is shorter than `serverIDTTL`.
+			//   So just set `do.serverIDSession = nil` to restart `serverID` session in `retrieveServerIDSession()`.
+			logutil.BgLogger().Info("serverIDSession need restart")
+			do.serverIDSession = nil
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+func init() {
+	initByLDFlagsForGlobalKill()
+}
+
+>>>>>>> 0f10bef47... domain, session: Add new sysvarcache to replace global values cache (#24359)
 var (
 	// ErrInfoSchemaExpired returns the error that information schema is out of date.
 	ErrInfoSchemaExpired = dbterror.ClassDomain.NewStd(errno.ErrInfoSchemaExpired)

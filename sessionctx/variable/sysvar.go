@@ -54,6 +54,262 @@ type SysVar struct {
 
 	// Value is the variable value.
 	Value string
+<<<<<<< HEAD
+=======
+	// Type is the MySQL type (optional)
+	Type TypeFlag
+	// MinValue will automatically be validated when specified (optional)
+	MinValue int64
+	// MaxValue will automatically be validated when specified (optional)
+	MaxValue uint64
+	// AutoConvertNegativeBool applies to boolean types (optional)
+	AutoConvertNegativeBool bool
+	// AutoConvertOutOfRange applies to int and unsigned types.
+	AutoConvertOutOfRange bool
+	// ReadOnly applies to all types
+	ReadOnly bool
+	// PossibleValues applies to ENUM type
+	PossibleValues []string
+	// AllowEmpty is a special TiDB behavior which means "read value from config" (do not use)
+	AllowEmpty bool
+	// AllowEmptyAll is a special behavior that only applies to TiDBCapturePlanBaseline, TiDBTxnMode (do not use)
+	AllowEmptyAll bool
+	// AllowAutoValue means that the special value "-1" is permitted, even when outside of range.
+	AllowAutoValue bool
+	// Validation is a callback after the type validation has been performed, but before the Set function
+	Validation func(*SessionVars, string, string, ScopeFlag) (string, error)
+	// SetSession is called after validation but before updating systems[]. It also doubles as an Init function
+	// and will be called on all variables in builtinGlobalVariable, regardless of their scope.
+	SetSession func(*SessionVars, string) error
+	// SetGlobal is called after validation
+	SetGlobal func(*SessionVars, string) error
+	// IsHintUpdatable indicate whether it's updatable via SET_VAR() hint (optional)
+	IsHintUpdatable bool
+	// Hidden means that it still responds to SET but doesn't show up in SHOW VARIABLES
+	Hidden bool
+	// Aliases is a list of sysvars that should also be updated when this sysvar is updated.
+	// Updating aliases calls the SET function of the aliases, but does not update their aliases (preventing SET recursion)
+	Aliases []string
+}
+
+// SetSessionFromHook calls the SetSession func if it exists.
+func (sv *SysVar) SetSessionFromHook(s *SessionVars, val string) error {
+	if sv.SetSession != nil {
+		if err := sv.SetSession(s, val); err != nil {
+			return err
+		}
+	}
+	s.systems[sv.Name] = val
+
+	// Call the Set function on all the aliases for this sysVar
+	// Skipping the validation function, and not calling aliases of
+	// aliases. By skipping the validation function it means that things
+	// like duplicate warnings should not appear.
+
+	if sv.Aliases != nil {
+		for _, aliasName := range sv.Aliases {
+			aliasSv := GetSysVar(aliasName)
+			if aliasSv.SetSession != nil {
+				if err := aliasSv.SetSession(s, val); err != nil {
+					return err
+				}
+			}
+			s.systems[aliasSv.Name] = val
+		}
+	}
+	return nil
+}
+
+// SetGlobalFromHook calls the SetGlobal func if it exists.
+func (sv *SysVar) SetGlobalFromHook(s *SessionVars, val string, skipAliases bool) error {
+	if sv.SetGlobal != nil {
+		return sv.SetGlobal(s, val)
+	}
+
+	// Call the SetGlobalSysVarOnly function on all the aliases for this sysVar
+	// which skips the validation function and when SetGlobalFromHook is called again
+	// it will be with skipAliases=true. This helps break recursion because
+	// most aliases are reciprocal.
+
+	if !skipAliases && sv.Aliases != nil {
+		for _, aliasName := range sv.Aliases {
+			if err := s.GlobalVarsAccessor.SetGlobalSysVarOnly(aliasName, val); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// HasNoneScope returns true if the scope for the sysVar is None.
+func (sv *SysVar) HasNoneScope() bool {
+	return sv.Scope == ScopeNone
+}
+
+// HasSessionScope returns true if the scope for the sysVar includes session.
+func (sv *SysVar) HasSessionScope() bool {
+	return sv.Scope&ScopeSession != 0
+}
+
+// HasGlobalScope returns true if the scope for the sysVar includes global.
+func (sv *SysVar) HasGlobalScope() bool {
+	return sv.Scope&ScopeGlobal != 0
+}
+
+// Validate checks if system variable satisfies specific restriction.
+func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
+	// Check that the scope is correct first.
+	if err := sv.validateScope(scope); err != nil {
+		return value, err
+	}
+	// Normalize the value and apply validation based on type.
+	// i.e. TypeBool converts 1/on/ON to ON.
+	normalizedValue, err := sv.validateFromType(vars, value, scope)
+	if err != nil {
+		return normalizedValue, err
+	}
+	// If type validation was successful, call the (optional) validation function
+	if sv.Validation != nil {
+		return sv.Validation(vars, normalizedValue, value, scope)
+	}
+	return normalizedValue, nil
+}
+
+// validateFromType provides automatic validation based on the SysVar's type
+func (sv *SysVar) validateFromType(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
+	// The string "DEFAULT" is a special keyword in MySQL, which restores
+	// the compiled sysvar value. In which case we can skip further validation.
+	if strings.EqualFold(value, "DEFAULT") {
+		return sv.Value, nil
+	}
+	// Some sysvars in TiDB have a special behavior where the empty string means
+	// "use the config file value". This needs to be cleaned up once the behavior
+	// for instance variables is determined.
+	if value == "" && ((sv.AllowEmpty && scope == ScopeSession) || sv.AllowEmptyAll) {
+		return value, nil
+	}
+	// Provide validation using the SysVar struct
+	switch sv.Type {
+	case TypeUnsigned:
+		return sv.checkUInt64SystemVar(value, vars)
+	case TypeInt:
+		return sv.checkInt64SystemVar(value, vars)
+	case TypeBool:
+		return sv.checkBoolSystemVar(value, vars)
+	case TypeFloat:
+		return sv.checkFloatSystemVar(value, vars)
+	case TypeEnum:
+		return sv.checkEnumSystemVar(value, vars)
+	case TypeTime:
+		return sv.checkTimeSystemVar(value, vars)
+	case TypeDuration:
+		return sv.checkDurationSystemVar(value, vars)
+	}
+	return value, nil // typeString
+}
+
+func (sv *SysVar) validateScope(scope ScopeFlag) error {
+	if sv.ReadOnly || sv.Scope == ScopeNone {
+		return ErrIncorrectScope.FastGenByArgs(sv.Name, "read only")
+	}
+	if scope == ScopeGlobal && !sv.HasGlobalScope() {
+		return errLocalVariable.FastGenByArgs(sv.Name)
+	}
+	if scope == ScopeSession && !sv.HasSessionScope() {
+		return errGlobalVariable.FastGenByArgs(sv.Name)
+	}
+	return nil
+}
+
+// ValidateWithRelaxedValidation normalizes values but can not return errors.
+// Normalization+validation needs to be applied when reading values because older versions of TiDB
+// may be less sophisticated in normalizing values. But errors should be caught and handled,
+// because otherwise there will be upgrade issues.
+func (sv *SysVar) ValidateWithRelaxedValidation(vars *SessionVars, value string, scope ScopeFlag) string {
+	normalizedValue, err := sv.validateFromType(vars, value, scope)
+	if err != nil {
+		return normalizedValue
+	}
+	if sv.Validation != nil {
+		normalizedValue, err = sv.Validation(vars, normalizedValue, value, scope)
+		if err != nil {
+			return normalizedValue
+		}
+	}
+	return normalizedValue
+}
+
+const (
+	localDayTimeFormat = "15:04"
+	// FullDayTimeFormat is the full format of analyze start time and end time.
+	FullDayTimeFormat = "15:04 -0700"
+)
+
+func (sv *SysVar) checkTimeSystemVar(value string, vars *SessionVars) (string, error) {
+	var t time.Time
+	var err error
+	if len(value) <= len(localDayTimeFormat) {
+		t, err = time.ParseInLocation(localDayTimeFormat, value, vars.TimeZone)
+	} else {
+		t, err = time.ParseInLocation(FullDayTimeFormat, value, vars.TimeZone)
+	}
+	if err != nil {
+		return "", err
+	}
+	return t.Format(FullDayTimeFormat), nil
+}
+
+func (sv *SysVar) checkDurationSystemVar(value string, vars *SessionVars) (string, error) {
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
+	}
+	// Check for min/max violations
+	if int64(d) < sv.MinValue {
+		return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
+	}
+	if uint64(d) > sv.MaxValue {
+		return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
+	}
+	// return a string representation of the duration
+	return d.String(), nil
+}
+
+func (sv *SysVar) checkUInt64SystemVar(value string, vars *SessionVars) (string, error) {
+	if sv.AllowAutoValue && value == "-1" {
+		return value, nil
+	}
+	// There are two types of validation behaviors for integer values. The default
+	// is to return an error saying the value is out of range. For MySQL compatibility, some
+	// values prefer convert the value to the min/max and return a warning.
+	if !sv.AutoConvertOutOfRange {
+		return sv.checkUint64SystemVarWithError(value)
+	}
+	if len(value) == 0 {
+		return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
+	}
+	if value[0] == '-' {
+		_, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
+		}
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
+		return fmt.Sprintf("%d", sv.MinValue), nil
+	}
+	val, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
+	}
+	if val < uint64(sv.MinValue) {
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
+		return fmt.Sprintf("%d", sv.MinValue), nil
+	}
+	if val > sv.MaxValue {
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
+		return fmt.Sprintf("%d", sv.MaxValue), nil
+	}
+	return value, nil
+>>>>>>> 0f10bef47... domain, session: Add new sysvarcache to replace global values cache (#24359)
 }
 
 // SysVars is global sys vars map.
@@ -691,6 +947,7 @@ var defaultSysVars = []*SysVar{
 
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableRateLimitAction, Value: boolToOnOff(DefTiDBEnableRateLimitAction)},
 
+<<<<<<< HEAD
 	/* The following variable is defined as session scope but is actually server scope. */
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
 	{ScopeSession, TiDBPProfSQLCPU, strconv.Itoa(DefTiDBPProfSQLCPU)},
@@ -744,6 +1001,17 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, TiDBEnableTelemetry, BoolToIntStr(DefTiDBEnableTelemetry)},
 	{ScopeGlobal | ScopeSession, TiDBEnableAmendPessimisticTxn, boolToOnOff(DefTiDBEnableAmendPessimisticTxn)},
 	{ScopeGlobal | ScopeSession, TiDBMultiStatementMode, Off},
+=======
+// GetSysVars deep copies the sysVars list under a RWLock
+func GetSysVars() map[string]*SysVar {
+	sysVarsLock.RLock()
+	defer sysVarsLock.RUnlock()
+	copy := make(map[string]*SysVar, len(sysVars))
+	for name, sv := range sysVars {
+		copy[name] = sv
+	}
+	return copy
+>>>>>>> 0f10bef47... domain, session: Add new sysvarcache to replace global values cache (#24359)
 }
 
 // SynonymsSysVariables is synonyms of system variables.

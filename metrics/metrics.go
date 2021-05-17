@@ -175,4 +175,12 @@ func RegisterMetrics() {
 	prometheus.MustRegister(ConfigStatus)
 	prometheus.MustRegister(SmallTxnWriteDuration)
 	prometheus.MustRegister(TxnWriteThroughput)
+<<<<<<< HEAD
+=======
+	prometheus.MustRegister(LoadSysVarCacheCounter)
+
+	tikvmetrics.InitMetrics(TiDB, TiKVClient)
+	tikvmetrics.RegisterMetrics()
+	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
+>>>>>>> 0f10bef47... domain, session: Add new sysvarcache to replace global values cache (#24359)
 }

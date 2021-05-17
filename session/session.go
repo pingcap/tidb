@@ -965,9 +965,21 @@ func (s *session) GetAllSysVars() (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
 	rows, _, err := s.ExecRestrictedStmt(context.TODO(), stmt)
 	if err != nil {
 		return nil, err
+=======
+	_, _, err = s.ExecRestrictedStmt(ctx, stmt)
+	domain.GetDomain(s).NotifyUpdateSysVarCache(s)
+	return err
+}
+
+func (s *session) varFromTiDBTable(name string) bool {
+	switch name {
+	case variable.TiDBGCConcurrency, variable.TiDBGCEnable, variable.TiDBGCRunInterval, variable.TiDBGCLifetime, variable.TiDBGCScanLockMode:
+		return true
+>>>>>>> 0f10bef47... domain, session: Add new sysvarcache to replace global values cache (#24359)
 	}
 	ret := make(map[string]string, len(rows))
 	for _, r := range rows {
@@ -986,15 +998,35 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return "", nil
 	}
-	sysVar, err := s.getTableValue(context.TODO(), mysql.GlobalVariablesTable, name)
+
+	sv := variable.GetSysVar(name)
+	if sv == nil {
+		// It might be a recently unregistered sysvar. We should return unknown
+		// since GetSysVar is the canonical version, but we can update the cache
+		// so the next request doesn't attempt to load this.
+		logutil.BgLogger().Info("sysvar does not exist. sysvar cache may be stale", zap.String("name", name))
+		return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+
+	sysVar, err := domain.GetDomain(s).GetSysVarCache().GetGlobalVar(s, name)
 	if err != nil {
+<<<<<<< HEAD
 		if errResultIsEmpty.Equal(err) {
 			if sv, ok := variable.SysVars[name]; ok {
 				return sv.Value, nil
 			}
 			return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+=======
+		// The sysvar exists, but there is no cache entry yet.
+		// This might be because the sysvar was only recently registered.
+		// In which case it is safe to return the default, but we can also
+		// update the cache for the future.
+		logutil.BgLogger().Info("sysvar not in cache yet. sysvar cache may be stale", zap.String("name", name))
+		sysVar, err = s.getTableValue(context.TODO(), mysql.GlobalVariablesTable, name)
+		if err != nil {
+			return sv.Value, nil
+>>>>>>> 0f10bef47... domain, session: Add new sysvarcache to replace global values cache (#24359)
 		}
-		return "", err
 	}
 	return sysVar, nil
 }
@@ -1010,6 +1042,7 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 			return err
 		}
 	}
+<<<<<<< HEAD
 	var sVal string
 	var err error
 	sVal, err = variable.ValidateSetSystemVar(s.sessionVars, name, value, variable.ScopeGlobal)
@@ -1018,6 +1051,69 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	}
 	name = strings.ToLower(name)
 	stmt, err := s.ParseWithParams(context.TODO(), "REPLACE %n.%n VALUES (%?, %?)", mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
+=======
+	return s.replaceTableValue(context.TODO(), mysql.GlobalVariablesTable, sv.Name, value)
+}
+
+// setTiDBTableValue handles tikv_* sysvars which need to update mysql.tidb
+// for backwards compatibility. Validation has already been performed.
+func (s *session) setTiDBTableValue(name, val string) error {
+	if name == variable.TiDBGCConcurrency {
+		autoConcurrency := "false"
+		if val == "-1" {
+			autoConcurrency = "true"
+		}
+		err := s.replaceTableValue(context.TODO(), mysql.TiDBTable, tiKVGCAutoConcurrency, autoConcurrency)
+		if err != nil {
+			return err
+		}
+	}
+	val = onOffToTrueFalse(val)
+	err := s.replaceTableValue(context.TODO(), mysql.TiDBTable, gcVariableMap[name], val)
+	return err
+}
+
+// In mysql.tidb the convention has been to store the string value "true"/"false",
+// but sysvars use the convention ON/OFF.
+func trueFalseToOnOff(str string) string {
+	if strings.EqualFold("true", str) {
+		return variable.On
+	} else if strings.EqualFold("false", str) {
+		return variable.Off
+	}
+	return str
+}
+
+// In mysql.tidb the convention has been to store the string value "true"/"false",
+// but sysvars use the convention ON/OFF.
+func onOffToTrueFalse(str string) string {
+	if strings.EqualFold("ON", str) {
+		return "true"
+	} else if strings.EqualFold("OFF", str) {
+		return "false"
+	}
+	return str
+}
+
+// getTiDBTableValue handles tikv_* sysvars which need
+// to read from mysql.tidb for backwards compatibility.
+func (s *session) getTiDBTableValue(name, val string) (string, error) {
+	if name == variable.TiDBGCConcurrency {
+		// Check if autoconcurrency is set
+		autoConcurrencyVal, err := s.getTableValue(context.TODO(), mysql.TiDBTable, tiKVGCAutoConcurrency)
+		if err == nil && strings.EqualFold(autoConcurrencyVal, "true") {
+			return "-1", nil // convention for "AUTO"
+		}
+	}
+	tblValue, err := s.getTableValue(context.TODO(), mysql.TiDBTable, gcVariableMap[name])
+	if err != nil {
+		return val, nil // mysql.tidb value does not exist.
+	}
+	// Run validation on the tblValue. This will return an error if it can't be validated,
+	// but will also make it more consistent: disTribuTeD -> DISTRIBUTED etc
+	tblValue = trueFalseToOnOff(tblValue)
+	validatedVal, err := variable.GetSysVar(name).Validate(s.sessionVars, tblValue, variable.ScopeGlobal)
+>>>>>>> 0f10bef47... domain, session: Add new sysvarcache to replace global values cache (#24359)
 	if err != nil {
 		return err
 	}
@@ -1951,14 +2047,28 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
+	//  Rebuild sysvar cache in a loop
+	err = dom.LoadSysVarCacheLoop(se)
+	if err != nil {
+		return nil, err
+	}
+
 	if len(cfg.Plugin.Load) > 0 {
 		err := plugin.Init(context.Background(), plugin.Config{EtcdClient: dom.GetEtcdClient()})
 		if err != nil {
 			return nil, err
 		}
 	}
+<<<<<<< HEAD
 
 	err = executor.LoadExprPushdownBlacklist(se)
+=======
+	se4, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	err = executor.LoadExprPushdownBlacklist(se4)
+>>>>>>> 0f10bef47... domain, session: Add new sysvarcache to replace global values cache (#24359)
 	if err != nil {
 		return nil, err
 	}
@@ -2054,7 +2164,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 // CreateSessionWithDomain creates a new Session and binds it with a Domain.
 // We need this because when we start DDL in Domain, the DDL need a session
 // to change some system tables. But at that time, we have been already in
-// a lock context, which cause we can't call createSesion directly.
+// a lock context, which cause we can't call createSession directly.
 func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
 		store:       store,
@@ -2250,6 +2360,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		return nil
 	}
 
+<<<<<<< HEAD
 	var err error
 	// Use GlobalVariableCache if TiDB just loaded global variables within 2 second ago.
 	// When a lot of connections connect to TiDB simultaneously, it can protect TiKV meta region from overload.
@@ -2258,11 +2369,17 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		return s.ExecRestrictedSQL(loadCommonGlobalVarsSQL)
 	}
 	rows, fields, err := gvc.LoadGlobalVariables(loadFunc)
+=======
+	vars.CommonGlobalLoaded = true
+
+	// Deep copy sessionvar cache
+	// Eventually this whole map will be applied to systems[], which is a MySQL behavior.
+	sessionCache, err := domain.GetDomain(s).GetSysVarCache().GetSessionCache(s)
+>>>>>>> 0f10bef47... domain, session: Add new sysvarcache to replace global values cache (#24359)
 	if err != nil {
-		logutil.BgLogger().Warn("failed to load global variables",
-			zap.Uint64("conn", s.sessionVars.ConnectionID), zap.Error(err))
 		return err
 	}
+<<<<<<< HEAD
 	vars.CommonGlobalLoaded = true
 
 	for _, row := range rows {
@@ -2270,6 +2387,24 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		varVal := row.GetDatum(1, &fields[1].Column.FieldType)
 		if _, ok := vars.GetSystemVar(varName); !ok {
 			err = variable.SetSessionSystemVar(s.sessionVars, varName, varVal)
+=======
+	for _, varName := range builtinGlobalVariable {
+		// The item should be in the sessionCache, but due to a strange current behavior there are some Global-only
+		// vars that are in builtinGlobalVariable. For compatibility we need to fall back to the Global cache on these items.
+		// TODO: don't load these globals into the session!
+		var varVal string
+		var ok bool
+		if varVal, ok = sessionCache[varName]; !ok {
+			varVal, err = s.GetGlobalSysVar(varName)
+			if err != nil {
+				continue // skip variables that are not loaded.
+			}
+		}
+		// `collation_server` is related to `character_set_server`, set `character_set_server` will also set `collation_server`.
+		// We have to make sure we set the `collation_server` with right value.
+		if _, ok := vars.GetSystemVar(varName); !ok || varName == variable.CollationServer {
+			err = vars.SetSystemVarWithRelaxedValidation(varName, varVal)
+>>>>>>> 0f10bef47... domain, session: Add new sysvarcache to replace global values cache (#24359)
 			if err != nil {
 				return err
 			}
@@ -2284,8 +2419,6 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 			}
 		}
 	}
-
-	vars.CommonGlobalLoaded = true
 	return nil
 }
 
