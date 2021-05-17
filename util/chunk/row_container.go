@@ -115,9 +115,9 @@ func (c *RowContainer) alreadySpilled() bool {
 	return c.m.recordsInDisk != nil
 }
 
-// alreadySpilledSafeForTest indicates that records have spilled out into disk. It's thread-safe.
+// AlreadySpilledSafeForTest indicates that records have spilled out into disk. It's thread-safe.
 // The function is only used for test.
-func (c *RowContainer) alreadySpilledSafeForTest() bool {
+func (c *RowContainer) AlreadySpilledSafeForTest() bool {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	return c.m.recordsInDisk != nil
