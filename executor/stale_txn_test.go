@@ -256,65 +256,65 @@ func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 	defer tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MAX STALENESS '00:00:10'`)
 	testcases := []struct {
-		name            string
-		sql             string
-		injectResolveTS uint64
-		useResolveTS    bool
+		name         string
+		sql          string
+		injectSafeTS uint64
+		useSafeTS    bool
 	}{
 		{
-			name: "max 20 seconds ago, resolveTS 10 secs ago",
+			name: "max 20 seconds ago, safeTS 10 secs ago",
 			sql:  `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MAX STALENESS '00:00:20'`,
-			injectResolveTS: func() uint64 {
+			injectSafeTS: func() uint64 {
 				phy := time.Now().Add(-10*time.Second).Unix() * 1000
 				return oracle.ComposeTS(phy, 0)
 			}(),
-			useResolveTS: true,
+			useSafeTS: true,
 		},
 		{
-			name: "max 10 seconds ago, resolveTS 20 secs ago",
+			name: "max 10 seconds ago, safeTS 20 secs ago",
 			sql:  `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MAX STALENESS '00:00:10'`,
-			injectResolveTS: func() uint64 {
+			injectSafeTS: func() uint64 {
 				phy := time.Now().Add(-20*time.Second).Unix() * 1000
 				return oracle.ComposeTS(phy, 0)
 			}(),
-			useResolveTS: false,
+			useSafeTS: false,
 		},
 		{
-			name: "max 20 seconds ago, resolveTS 10 secs ago",
+			name: "max 20 seconds ago, safeTS 10 secs ago",
 			sql: func() string {
 				return fmt.Sprintf(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MIN READ TIMESTAMP '%v'`,
 					time.Now().Add(-20*time.Second).Format("2006-01-02 15:04:05"))
 			}(),
-			injectResolveTS: func() uint64 {
+			injectSafeTS: func() uint64 {
 				phy := time.Now().Add(-10*time.Second).Unix() * 1000
 				return oracle.ComposeTS(phy, 0)
 			}(),
-			useResolveTS: true,
+			useSafeTS: true,
 		},
 		{
-			name: "max 10 seconds ago, resolveTS 20 secs ago",
+			name: "max 10 seconds ago, safeTS 20 secs ago",
 			sql: func() string {
 				return fmt.Sprintf(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MIN READ TIMESTAMP '%v'`,
 					time.Now().Add(-10*time.Second).Format("2006-01-02 15:04:05"))
 			}(),
-			injectResolveTS: func() uint64 {
+			injectSafeTS: func() uint64 {
 				phy := time.Now().Add(-20*time.Second).Unix() * 1000
 				return oracle.ComposeTS(phy, 0)
 			}(),
-			useResolveTS: false,
+			useSafeTS: false,
 		},
 	}
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/injectResolveTS",
-			fmt.Sprintf("return(%v)", testcase.injectResolveTS)), IsNil)
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/injectSafeTS",
+			fmt.Sprintf("return(%v)", testcase.injectSafeTS)), IsNil)
 		tk.MustExec(testcase.sql)
-		if testcase.useResolveTS {
-			c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Equals, testcase.injectResolveTS)
+		if testcase.useSafeTS {
+			c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Equals, testcase.injectSafeTS)
 		} else {
-			c.Assert(oracle.CompareTS(tk.Se.GetSessionVars().TxnCtx.StartTS, testcase.injectResolveTS), Equals, 1)
+			c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Greater, testcase.injectSafeTS)
 		}
 		tk.MustExec("commit")
-		failpoint.Disable("github.com/pingcap/tidb/store/tikv/injectResolveTS")
+		failpoint.Disable("github.com/pingcap/tidb/store/tikv/injectSafeTS")
 	}
 }
