@@ -64,10 +64,7 @@ type diagnosticContext struct {
 }
 
 func (p *txnKeyHashPair) isExpired(ttl time.Duration, nowTime time.Time) bool {
-	if p.registerTime.Add(ttl).Before(nowTime) {
-		return true
-	}
-	return false
+	return p.registerTime.Add(ttl).Before(nowTime)
 }
 
 // NewDetector creates a new Detector.

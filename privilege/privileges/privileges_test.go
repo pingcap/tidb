@@ -1400,6 +1400,55 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeStatusVars(c *C) {
 	}, nil, nil)
 }
 
+func (s *testPrivilegeSuite) TestSecurityEnhancedModeSysVars(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER svroot1, svroot2")
+	tk.MustExec("GRANT SUPER ON *.* to svroot1 WITH GRANT OPTION")
+	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
+	tk.MustExec("GRANT SUPER, RESTRICTED_VARIABLES_ADMIN ON *.* to svroot2")
+
+	sem.Enable()
+	defer sem.Disable()
+
+	// svroot1 has SUPER but in SEM will be restricted
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "svroot1",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	tk.MustQuery(`SHOW VARIABLES LIKE 'tidb_force_priority'`).Check(testkit.Rows())
+	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_enable_telemetry'`).Check(testkit.Rows())
+
+	_, err := tk.Exec("SET tidb_force_priority = 'NO_PRIORITY'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
+	_, err = tk.Exec("SET GLOBAL tidb_enable_telemetry = OFF")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
+
+	_, err = tk.Exec("SELECT @@session.tidb_force_priority")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
+	_, err = tk.Exec("SELECT @@global.tidb_enable_telemetry")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
+
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "svroot2",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	tk.MustQuery(`SHOW VARIABLES LIKE 'tidb_force_priority'`).Check(testkit.Rows("tidb_force_priority NO_PRIORITY"))
+	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_enable_telemetry'`).Check(testkit.Rows("tidb_enable_telemetry ON"))
+
+	// should not actually make any change.
+	tk.MustExec("SET tidb_force_priority = 'NO_PRIORITY'")
+	tk.MustExec("SET GLOBAL tidb_enable_telemetry = ON")
+
+	tk.MustQuery(`SELECT @@session.tidb_force_priority`).Check(testkit.Rows("NO_PRIORITY"))
+	tk.MustQuery(`SELECT @@global.tidb_enable_telemetry`).Check(testkit.Rows("1"))
+}
+
 // TestViewDefiner tests that default roles are correctly applied in the algorithm definer
 // See: https://github.com/pingcap/tidb/issues/24414
 func (s *testPrivilegeSuite) TestViewDefiner(c *C) {
@@ -1426,4 +1475,63 @@ func (s *testPrivilegeSuite) TestViewDefiner(c *C) {
 	// all examples should work
 	tk.MustExec("select * from test_view")
 	tk.MustExec("select * from test_view2")
+}
+
+func (s *testPrivilegeSuite) TestSecurityEnhancedModeRestrictedUsers(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER ruroot1, ruroot2, ruroot3")
+	tk.MustExec("CREATE ROLE notimportant")
+	tk.MustExec("GRANT SUPER, CREATE USER ON *.* to ruroot1 WITH GRANT OPTION")
+	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
+	tk.MustExec("GRANT SUPER, RESTRICTED_USER_ADMIN,  CREATE USER  ON *.* to ruroot2 WITH GRANT OPTION")
+	tk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* to ruroot3")
+	tk.MustExec("GRANT notimportant TO ruroot2, ruroot3")
+
+	sem.Enable()
+	defer sem.Disable()
+
+	stmts := []string{
+		"SET PASSWORD for ruroot3 = 'newpassword'",
+		"REVOKE notimportant FROM ruroot3",
+		"REVOKE SUPER ON *.* FROM ruroot3",
+		"DROP USER ruroot3",
+	}
+
+	// ruroot1 has SUPER but in SEM will be restricted
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "ruroot1",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	for _, stmt := range stmts {
+		err := tk.ExecToErr(stmt)
+		c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	}
+
+	// Switch to ruroot2, it should be permitted
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "ruroot2",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	for _, stmt := range stmts {
+		err := tk.ExecToErr(stmt)
+		c.Assert(err, IsNil)
+	}
+}
+
+func (s *testPrivilegeSuite) TestDynamicPrivsRegistration(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	pm := privilege.GetPrivilegeManager(se)
+
+	count := len(privileges.GetDynamicPrivileges())
+
+	c.Assert(pm.IsDynamicPrivilege("ACDC_ADMIN"), IsFalse)
+	privileges.RegisterDynamicPrivilege("ACDC_ADMIN")
+	c.Assert(pm.IsDynamicPrivilege("ACDC_ADMIN"), IsTrue)
+	c.Assert(len(privileges.GetDynamicPrivileges()), Equals, count+1)
 }

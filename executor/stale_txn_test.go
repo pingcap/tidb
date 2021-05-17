@@ -312,7 +312,7 @@ func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 		if testcase.useSafeTS {
 			c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Equals, testcase.injectSafeTS)
 		} else {
-			c.Assert(oracle.CompareTS(tk.Se.GetSessionVars().TxnCtx.StartTS, testcase.injectSafeTS), Equals, 1)
+			c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Greater, testcase.injectSafeTS)
 		}
 		tk.MustExec("commit")
 		failpoint.Disable("github.com/pingcap/tidb/store/tikv/injectSafeTS")
