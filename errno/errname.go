@@ -1020,7 +1020,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBuildExecutor:                       mysql.Message("Failed to build executor", nil),
 	ErrBatchInsertFail:                     mysql.Message("Batch insert failed, please clean the table and try again.", nil),
 	ErrGetStartTS:                          mysql.Message("Can not get start ts", nil),
-	ErrPrivilegeCheckFail:                  mysql.Message("privilege check fail", nil), // this error message should begin lowercased to be compatible with the test
+	ErrPrivilegeCheckFail:                  mysql.Message("privilege check for '%s' fail", nil), // this error message should begin lowercased to be compatible with the test
 	ErrInvalidWildCard:                     mysql.Message("Wildcard fields without any table name appears in wrong place", nil),
 	ErrMixOfGroupFuncAndFieldsIncompatible: mysql.Message("In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by", nil),
 	ErrUnsupportedSecondArgumentType:       mysql.Message("JSON_OBJECTAGG: unsupported second argument type %v", nil),

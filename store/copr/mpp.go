@@ -27,8 +27,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/driver/backoff"
+	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/tikv"
-	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"go.uber.org/zap"
@@ -36,7 +37,7 @@ import (
 
 // MPPClient servers MPP requests.
 type MPPClient struct {
-	store *tikv.KVStore
+	store *kvStore
 }
 
 // GetAddress returns the network address.
@@ -55,8 +56,8 @@ func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 
 // ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
 func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest) ([]kv.MPPTaskMeta, error) {
-	ctx = context.WithValue(ctx, tikv.TxnStartKey, req.StartTS)
-	bo := tikv.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
+	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
+	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 	if req.KeyRanges == nil {
 		return c.selectAllTiFlashStore(), nil
 	}
@@ -117,7 +118,7 @@ func (m *mppResponse) RespTime() time.Duration {
 }
 
 type mppIterator struct {
-	store *tikv.KVStore
+	store *kvStore
 
 	tasks    []*kv.MPPDispatchRequest
 	finishCh chan struct{}
@@ -143,16 +144,12 @@ func (m *mppIterator) run(ctx context.Context) {
 			break
 		}
 		m.mu.Lock()
-		switch task.State {
-		case kv.MppTaskReady:
+		if task.State == kv.MppTaskReady {
 			task.State = kv.MppTaskRunning
-			m.mu.Unlock()
-		default:
-			m.mu.Unlock()
-			break
 		}
+		m.mu.Unlock()
 		m.wg.Add(1)
-		bo := tikv.NewBackoffer(ctx, copNextMaxBackoff)
+		bo := backoff.NewBackoffer(ctx, copNextMaxBackoff)
 		go m.handleDispatchReq(ctx, bo, task)
 	}
 	m.wg.Wait()
@@ -176,7 +173,7 @@ func (m *mppIterator) sendToRespCh(resp *mppResponse) (exit bool) {
 // TODO:: Consider that which way is better:
 // - dispatch all tasks at once, and connect tasks at second.
 // - dispatch tasks and establish connection at the same time.
-func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer, req *kv.MPPDispatchRequest) {
+func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req *kv.MPPDispatchRequest) {
 	defer func() {
 		m.wg.Done()
 	}()
@@ -225,7 +222,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 		if sender.GetRPCError() != nil {
 			logutil.BgLogger().Error("mpp dispatch meet io error", zap.String("error", sender.GetRPCError().Error()))
 			// we return timeout to trigger tikv's fallback
-			m.sendError(tikverr.ErrTiFlashServerTimeout)
+			m.sendError(derr.ErrTiFlashServerTimeout)
 			return
 		}
 	} else {
@@ -235,7 +232,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 	if err != nil {
 		logutil.BgLogger().Error("mpp dispatch meet error", zap.String("error", err.Error()))
 		// we return timeout to trigger tikv's fallback
-		m.sendError(tikverr.ErrTiFlashServerTimeout)
+		m.sendError(derr.ErrTiFlashServerTimeout)
 		return
 	}
 
@@ -245,10 +242,17 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 		m.sendError(errors.New(realResp.Error.Msg))
 		return
 	}
+	if len(realResp.RetryRegions) > 0 {
+		for _, retry := range realResp.RetryRegions {
+			id := tikv.NewRegionVerID(retry.Id, retry.RegionEpoch.ConfVer, retry.RegionEpoch.Version)
+			logutil.BgLogger().Info("invalid region because tiflash detected stale region", zap.String("region id", id.String()))
+			m.store.GetRegionCache().InvalidateCachedRegionWithReason(id, tikv.EpochNotMatch)
+		}
+	}
 	failpoint.Inject("mppNonRootTaskError", func(val failpoint.Value) {
 		if val.(bool) && !req.IsRoot {
 			time.Sleep(1 * time.Second)
-			m.sendError(tikverr.ErrTiFlashServerTimeout)
+			m.sendError(derr.ErrTiFlashServerTimeout)
 			return
 		}
 	})
@@ -292,7 +296,7 @@ func (m *mppIterator) cancelMppTasks() {
 	}
 }
 
-func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchRequest, taskMeta *mpp.TaskMeta) {
+func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchRequest, taskMeta *mpp.TaskMeta) {
 	connReq := &mpp.EstablishMPPConnectionRequest{
 		SenderMeta: taskMeta,
 		ReceiverMeta: &mpp.TaskMeta{
@@ -311,7 +315,7 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 	if err != nil {
 		logutil.BgLogger().Error("establish mpp connection meet error", zap.String("error", err.Error()))
 		// we return timeout to trigger tikv's fallback
-		m.sendError(tikverr.ErrTiFlashServerTimeout)
+		m.sendError(derr.ErrTiFlashServerTimeout)
 		return
 	}
 
@@ -336,14 +340,14 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 				return
 			}
 
-			if err1 := bo.Backoff(tikv.BoTiKVRPC, errors.Errorf("recv stream response error: %v", err)); err1 != nil {
+			if err1 := bo.BackoffTiKVRPC(errors.Errorf("recv stream response error: %v", err)); err1 != nil {
 				if errors.Cause(err) == context.Canceled {
 					logutil.BgLogger().Info("stream recv timeout", zap.Error(err))
 				} else {
 					logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 				}
 			}
-			m.sendError(tikverr.ErrTiFlashServerTimeout)
+			m.sendError(derr.ErrTiFlashServerTimeout)
 			return
 		}
 	}
@@ -359,7 +363,7 @@ func (m *mppIterator) Close() error {
 	return nil
 }
 
-func (m *mppIterator) handleMPPStreamResponse(bo *tikv.Backoffer, response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {
+func (m *mppIterator) handleMPPStreamResponse(bo *Backoffer, response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {
 	if response.Error != nil {
 		err = errors.Errorf("other error for mpp stream: %s", response.Error.Msg)
 		logutil.BgLogger().Warn("other error",
@@ -398,7 +402,7 @@ func (m *mppIterator) nextImpl(ctx context.Context) (resp *mppResponse, ok bool,
 			return
 		case <-ticker.C:
 			if m.vars != nil && m.vars.Killed != nil && atomic.LoadUint32(m.vars.Killed) == 1 {
-				err = tikverr.ErrQueryInterrupted
+				err = derr.ErrQueryInterrupted
 				exit = true
 				return
 			}

@@ -17,6 +17,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/kv"
+	derr "github.com/pingcap/tidb/store/driver/error"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
 )
@@ -39,17 +40,17 @@ func (m *memBuffer) Delete(k kv.Key) error {
 
 func (m *memBuffer) DeleteWithFlags(k kv.Key, ops ...tikvstore.FlagsOp) error {
 	err := m.MemDB.DeleteWithFlags(k, ops...)
-	return toTiDBErr(err)
+	return derr.ToTiDBErr(err)
 }
 
 func (m *memBuffer) Get(_ context.Context, key kv.Key) ([]byte, error) {
 	data, err := m.MemDB.Get(key)
-	return data, toTiDBErr(err)
+	return data, derr.ToTiDBErr(err)
 }
 
 func (m *memBuffer) GetFlags(key kv.Key) (tikvstore.KeyFlags, error) {
 	data, err := m.MemDB.GetFlags(key)
-	return data, toTiDBErr(err)
+	return data, derr.ToTiDBErr(err)
 }
 
 func (m *memBuffer) Staging() kv.StagingHandle {
@@ -73,12 +74,12 @@ func (m *memBuffer) InspectStage(handle kv.StagingHandle, f func(kv.Key, tikvsto
 
 func (m *memBuffer) Set(key kv.Key, value []byte) error {
 	err := m.MemDB.Set(key, value)
-	return toTiDBErr(err)
+	return derr.ToTiDBErr(err)
 }
 
 func (m *memBuffer) SetWithFlags(key kv.Key, value []byte, ops ...kv.FlagsOp) error {
 	err := m.MemDB.SetWithFlags(key, value, ops...)
-	return toTiDBErr(err)
+	return derr.ToTiDBErr(err)
 }
 
 // Iter creates an Iterator positioned on the first entry that k <= entry's key.
@@ -87,7 +88,7 @@ func (m *memBuffer) SetWithFlags(key kv.Key, value []byte, ops ...kv.FlagsOp) er
 // The Iterator must be Closed after use.
 func (m *memBuffer) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	it, err := m.MemDB.Iter(k, upperBound)
-	return &tikvIterator{Iterator: it}, toTiDBErr(err)
+	return &tikvIterator{Iterator: it}, derr.ToTiDBErr(err)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
@@ -96,7 +97,7 @@ func (m *memBuffer) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 // TODO: Add lower bound limit
 func (m *memBuffer) IterReverse(k kv.Key) (kv.Iterator, error) {
 	it, err := m.MemDB.IterReverse(k)
-	return &tikvIterator{Iterator: it}, toTiDBErr(err)
+	return &tikvIterator{Iterator: it}, derr.ToTiDBErr(err)
 }
 
 // SnapshotIter returns a Iterator for a snapshot of MemBuffer.
@@ -110,42 +111,6 @@ func (m *memBuffer) SnapshotGetter() kv.Getter {
 	return newKVGetter(m.MemDB.SnapshotGetter())
 }
 
-//tikvUnionStore implements kv.UnionStore
-type tikvUnionStore struct {
-	*unionstore.KVUnionStore
-}
-
-func (u *tikvUnionStore) GetMemBuffer() kv.MemBuffer {
-	return newMemBuffer(u.KVUnionStore.GetMemBuffer())
-}
-
-func (u *tikvUnionStore) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	data, err := u.KVUnionStore.Get(ctx, k)
-	return data, toTiDBErr(err)
-}
-
-func (u *tikvUnionStore) HasPresumeKeyNotExists(k kv.Key) bool {
-	return u.KVUnionStore.HasPresumeKeyNotExists(k)
-}
-
-func (u *tikvUnionStore) UnmarkPresumeKeyNotExists(k kv.Key) {
-	u.KVUnionStore.UnmarkPresumeKeyNotExists(k)
-}
-
-func (u *tikvUnionStore) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	it, err := u.KVUnionStore.Iter(k, upperBound)
-	return newKVIterator(it), toTiDBErr(err)
-}
-
-// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-// The returned iterator will iterate from greater key to smaller key.
-// If k is nil, the returned iterator will be positioned at the last key.
-// TODO: Add lower bound limit
-func (u *tikvUnionStore) IterReverse(k kv.Key) (kv.Iterator, error) {
-	it, err := u.KVUnionStore.IterReverse(k)
-	return newKVIterator(it), toTiDBErr(err)
-}
-
 type tikvGetter struct {
 	unionstore.Getter
 }
@@ -156,7 +121,7 @@ func newKVGetter(getter unionstore.Getter) kv.Getter {
 
 func (g *tikvGetter) Get(_ context.Context, k kv.Key) ([]byte, error) {
 	data, err := g.Getter.Get(k)
-	return data, toTiDBErr(err)
+	return data, derr.ToTiDBErr(err)
 }
 
 // tikvIterator wraps unionstore.Iterator as kv.Iterator
