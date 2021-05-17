@@ -14,6 +14,7 @@
 package sem
 
 import (
+	"os"
 	"strings"
 	"sync/atomic"
 
@@ -70,6 +71,7 @@ var (
 func Enable() {
 	atomic.StoreInt32(&semEnabled, 1)
 	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.On)
+	variable.SetSysVar(variable.Hostname, variable.DefHostname)
 	// write to log so users understand why some operations are weird.
 	logutil.BgLogger().Info("tidb-server is operating with security enhanced mode (SEM) enabled")
 }
@@ -79,6 +81,9 @@ func Enable() {
 func Disable() {
 	atomic.StoreInt32(&semEnabled, 0)
 	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.Off)
+	if hostname, err := os.Hostname(); err != nil {
+		variable.SetSysVar(variable.Hostname, hostname)
+	}
 }
 
 // IsEnabled checks if Security Enhanced Mode (SEM) is enabled
@@ -123,6 +128,33 @@ func IsInvisibleTable(dbLowerName, tblLowerName string) bool {
 // IsInvisibleStatusVar returns true if the status var needs to be hidden
 func IsInvisibleStatusVar(varName string) bool {
 	return varName == tidbGCLeaderDesc
+}
+
+// IsInvisibleSysVar returns true if the sysvar needs to be hidden
+func IsInvisibleSysVar(varNameInLower string) bool {
+	switch varNameInLower {
+	case variable.TiDBDDLSlowOprThreshold, // ddl_slow_threshold
+		variable.TiDBAllowRemoveAutoInc,
+		variable.TiDBCheckMb4ValueInUTF8,
+		variable.TiDBConfig,
+		variable.TiDBEnableSlowLog,
+		variable.TiDBExpensiveQueryTimeThreshold,
+		variable.TiDBForcePriority,
+		variable.TiDBGeneralLog,
+		variable.TiDBMetricSchemaRangeDuration,
+		variable.TiDBMetricSchemaStep,
+		variable.TiDBOptWriteRowID,
+		variable.TiDBPProfSQLCPU,
+		variable.TiDBRecordPlanInSlowLog,
+		variable.TiDBSlowQueryFile,
+		variable.TiDBSlowLogThreshold,
+		variable.TiDBEnableCollectExecutionInfo,
+		variable.TiDBMemoryUsageAlarmRatio,
+		variable.TiDBEnableTelemetry,
+		variable.TiDBRowFormatVersion:
+		return true
+	}
+	return false
 }
 
 // IsRestrictedPrivilege returns true if the privilege shuld not be satisfied by SUPER
