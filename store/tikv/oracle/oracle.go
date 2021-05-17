@@ -126,16 +126,6 @@ func ExtractLogical(ts uint64) int64 {
 	return int64(ts & logicalBits)
 }
 
-// GetPhysical returns physical from an instant time with millisecond precision.
-func GetPhysical(t time.Time) int64 {
-	return t.UnixNano() / int64(time.Millisecond)
-}
-
-// EncodeTSO encodes a millisecond into tso.
-func EncodeTSO(ts int64) uint64 {
-	return uint64(ts) << physicalShiftBits
-}
-
 // GetTimeFromTS extracts time.Time from a timestamp.
 func GetTimeFromTS(ts uint64) time.Time {
 	ms := ExtractPhysical(ts)

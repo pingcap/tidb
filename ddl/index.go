@@ -1218,7 +1218,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 	failpoint.Inject("mockUpdateCachedSafePoint", func(val failpoint.Value) {
 		if val.(bool) {
 			// 18 is for the logical time.
-			ts := oracle.GetPhysical(time.Now()) << 18
+			ts := oracle.GoTimeToTS(time.Now())
 			s := reorg.d.store.(tikv.Storage)
 			s.UpdateSPCache(uint64(ts), time.Now())
 			time.Sleep(time.Millisecond * 3)

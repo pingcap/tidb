@@ -559,7 +559,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
 		return
 	}
-	now := time.Unix(0, oracle.ExtractPhysical(currentVer.Ver)*1e6)
+	now := oracle.GetTimeFromTS(currentVer.Ver)
 	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
 
 	minStartTS := oracle.GoTimeToTS(now)

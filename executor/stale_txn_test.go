@@ -265,8 +265,7 @@ func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 			name: "max 20 seconds ago, safeTS 10 secs ago",
 			sql:  `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MAX STALENESS '00:00:20'`,
 			injectSafeTS: func() uint64 {
-				phy := time.Now().Add(-10*time.Second).Unix() * 1000
-				return oracle.ComposeTS(phy, 0)
+				return oracle.GoTimeToTS(time.Now().Add(-10 * time.Second))
 			}(),
 			useSafeTS: true,
 		},
@@ -274,8 +273,7 @@ func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 			name: "max 10 seconds ago, safeTS 20 secs ago",
 			sql:  `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MAX STALENESS '00:00:10'`,
 			injectSafeTS: func() uint64 {
-				phy := time.Now().Add(-20*time.Second).Unix() * 1000
-				return oracle.ComposeTS(phy, 0)
+				return oracle.GoTimeToTS(time.Now().Add(-20 * time.Second))
 			}(),
 			useSafeTS: false,
 		},
@@ -286,8 +284,7 @@ func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 					time.Now().Add(-20*time.Second).Format("2006-01-02 15:04:05"))
 			}(),
 			injectSafeTS: func() uint64 {
-				phy := time.Now().Add(-10*time.Second).Unix() * 1000
-				return oracle.ComposeTS(phy, 0)
+				return oracle.GoTimeToTS(time.Now().Add(-10 * time.Second))
 			}(),
 			useSafeTS: true,
 		},
@@ -298,8 +295,7 @@ func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 					time.Now().Add(-10*time.Second).Format("2006-01-02 15:04:05"))
 			}(),
 			injectSafeTS: func() uint64 {
-				phy := time.Now().Add(-20*time.Second).Unix() * 1000
-				return oracle.ComposeTS(phy, 0)
+				return oracle.GoTimeToTS(time.Now().Add(-20 * time.Second))
 			}(),
 			useSafeTS: false,
 		},

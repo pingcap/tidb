@@ -725,7 +725,7 @@ func (s *testCommitterSuite) TestPessimisticLockReturnValues(c *C) {
 func (s *testCommitterSuite) TestElapsedTTL(c *C) {
 	key := []byte("key")
 	txn := s.begin(c)
-	txn.SetStartTS(oracle.ComposeTS(oracle.GetPhysical(time.Now().Add(time.Second*10)), 1))
+	txn.SetStartTS(oracle.GoTimeToTS(time.Now().Add(time.Second*10)) + 1)
 	txn.SetPessimistic(true)
 	time.Sleep(time.Millisecond * 100)
 	lockCtx := &kv.LockCtx{

@@ -631,7 +631,7 @@ func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx conte
 		if err != nil {
 			return err
 		}
-		startTS := oracle.ComposeTS(gt.Unix()*1000, 0)
+		startTS := oracle.GoTimeToTS(gt)
 		opt.StartTS = startTS
 	case ast.TimestampBoundExactStaleness:
 		// TODO: support funcCallExpr in future
@@ -667,7 +667,7 @@ func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx conte
 		if err != nil {
 			return err
 		}
-		startTS := oracle.ComposeTS(gt.Unix()*1000, 0)
+		startTS := oracle.GoTimeToTS(gt)
 		opt.StartTS = startTS
 	}
 	err := e.ctx.NewTxnWithStalenessOption(ctx, opt)
