@@ -64,7 +64,7 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 func (c *RowContainer) SpillToDisk() {
 	c.m.Lock()
 	defer c.m.Unlock()
-	if c.AlreadySpilled() {
+	if c.alreadySpilled() {
 		return
 	}
 	// c.actionSpill may be nil when testing SpillToDisk directly.
@@ -97,7 +97,7 @@ func (c *RowContainer) SpillToDisk() {
 func (c *RowContainer) Reset() error {
 	c.m.Lock()
 	defer c.m.Unlock()
-	if c.AlreadySpilled() {
+	if c.alreadySpilled() {
 		err := c.m.recordsInDisk.Close()
 		c.m.recordsInDisk = nil
 		if err != nil {
@@ -110,14 +110,14 @@ func (c *RowContainer) Reset() error {
 	return nil
 }
 
-// AlreadySpilled indicates that records have spilled out into disk.
-func (c *RowContainer) AlreadySpilled() bool {
+// alreadySpilled indicates that records have spilled out into disk.
+func (c *RowContainer) alreadySpilled() bool {
 	return c.m.recordsInDisk != nil
 }
 
-// AlreadySpilledSafeForTest indicates that records have spilled out into disk. It's thread-safe.
+// alreadySpilledSafeForTest indicates that records have spilled out into disk. It's thread-safe.
 // The function is only used for test.
-func (c *RowContainer) AlreadySpilledSafeForTest() bool {
+func (c *RowContainer) alreadySpilledSafeForTest() bool {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	return c.m.recordsInDisk != nil
@@ -127,7 +127,7 @@ func (c *RowContainer) AlreadySpilledSafeForTest() bool {
 func (c *RowContainer) NumRow() int {
 	c.m.RLock()
 	defer c.m.RUnlock()
-	if c.AlreadySpilled() {
+	if c.alreadySpilled() {
 		return c.m.recordsInDisk.Len()
 	}
 	return c.m.records.Len()
@@ -137,7 +137,7 @@ func (c *RowContainer) NumRow() int {
 func (c *RowContainer) NumRowsOfChunk(chkID int) int {
 	c.m.RLock()
 	defer c.m.RUnlock()
-	if c.AlreadySpilled() {
+	if c.alreadySpilled() {
 		return c.m.recordsInDisk.NumRowsOfChunk(chkID)
 	}
 	return c.m.records.NumRowsOfChunk(chkID)
@@ -147,7 +147,7 @@ func (c *RowContainer) NumRowsOfChunk(chkID int) int {
 func (c *RowContainer) NumChunks() int {
 	c.m.RLock()
 	defer c.m.RUnlock()
-	if c.AlreadySpilled() {
+	if c.alreadySpilled() {
 		return c.m.recordsInDisk.NumChunks()
 	}
 	return c.m.records.NumChunks()
@@ -162,7 +162,7 @@ func (c *RowContainer) Add(chk *Chunk) (err error) {
 			time.Sleep(time.Second)
 		}
 	})
-	if c.AlreadySpilled() {
+	if c.alreadySpilled() {
 		if c.m.spillError != nil {
 			return c.m.spillError
 		}
@@ -182,7 +182,7 @@ func (c *RowContainer) AllocChunk() (chk *Chunk) {
 func (c *RowContainer) GetChunk(chkIdx int) (*Chunk, error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
-	if !c.AlreadySpilled() {
+	if !c.alreadySpilled() {
 		return c.m.records.GetChunk(chkIdx), nil
 	}
 	if c.m.spillError != nil {
@@ -195,7 +195,7 @@ func (c *RowContainer) GetChunk(chkIdx int) (*Chunk, error) {
 func (c *RowContainer) GetRow(ptr RowPtr) (Row, error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
-	if c.AlreadySpilled() {
+	if c.alreadySpilled() {
 		if c.m.spillError != nil {
 			return Row{}, c.m.spillError
 		}
@@ -223,7 +223,7 @@ func (c *RowContainer) Close() (err error) {
 		c.actionSpill.setStatus(spilledYet)
 		c.actionSpill.cond.Broadcast()
 	}
-	if c.AlreadySpilled() {
+	if c.alreadySpilled() {
 		err = c.m.recordsInDisk.Close()
 		c.m.recordsInDisk = nil
 	}
