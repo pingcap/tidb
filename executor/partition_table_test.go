@@ -647,12 +647,12 @@ func (s *partitionTableSuite) TestGlobalStatsAndSQLBinding(c *C) {
 }
 
 func createTable4DynamicPruneModeTestWithExpression(tk *testkit.TestKit) {
-	tk.MustExec("create table trange(a int) partition by range(a) (partition p0 values less than(3), partition p1 values less than (5), partition p2 values less than(11));")
-	tk.MustExec("create table thash(a int) partition by hash(a) partitions 4;")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("insert into trange values(1), (1), (1), (2), (3), (4), (5), (6), (7), (7), (10), (NULL), (NULL);")
-	tk.MustExec("insert into thash values(1), (1), (1), (2), (3), (4), (5), (6), (7), (7), (10), (NULL), (NULL);")
-	tk.MustExec("insert into t values(1), (1), (1), (2), (3), (4), (5), (6), (7), (7), (10), (NULL), (NULL);")
+	tk.MustExec("create table trange(a int, b int) partition by range(a) (partition p0 values less than(3), partition p1 values less than (5), partition p2 values less than(11));")
+	tk.MustExec("create table thash(a int, b int) partition by hash(a) partitions 4;")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into trange values(1, NULL), (1, NULL), (1, 1), (2, 1), (3, 2), (4, 3), (5, 5), (6, 7), (7, 7), (7, 7), (10, NULL), (NULL, NULL), (NULL, 1);")
+	tk.MustExec("insert into thash values(1, NULL), (1, NULL), (1, 1), (2, 1), (3, 2), (4, 3), (5, 5), (6, 7), (7, 7), (7, 7), (10, NULL), (NULL, NULL), (NULL, 1);")
+	tk.MustExec("insert into t values(1, NULL), (1, NULL), (1, 1), (2, 1), (3, 2), (4, 3), (5, 5), (6, 7), (7, 7), (7, 7), (10, NULL), (NULL, NULL), (NULL, 1);")
 	tk.MustExec("set session tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("analyze table trange")
 	tk.MustExec("analyze table thash")
@@ -664,7 +664,7 @@ type testData4Expression struct {
 	partitions []string
 }
 
-func (s *partitionTableSuite) TestDynamicPruneModeWithEqualExpression(c *C) {
+func (s *partitionTableSuite) TestDynamicPruneModeWithExpression(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop database if exists db_equal_expression")
 	tk.MustExec("create database db_equal_expression")
@@ -699,6 +699,247 @@ func (s *partitionTableSuite) TestDynamicPruneModeWithEqualExpression(c *C) {
 			partitions: []string{
 				"p0",
 				"p0",
+			},
+		},
+		{
+			sql: "select * from %s where b is NULL",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a > -1",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a >= 4 and a <= 5",
+			partitions: []string{
+				"p1,p2",
+				"p0,p1",
+			},
+		},
+		{
+			sql: "select * from %s where a > 10",
+			partitions: []string{
+				"dual",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a >=2 and a <= 3",
+			partitions: []string{
+				"p0,p1",
+				"p2,p3",
+			},
+		},
+		{
+			sql: "select * from %s where a between 2 and 3",
+			partitions: []string{
+				"p0,p1",
+				"p2,p3",
+			},
+		},
+		{
+			sql: "select * from %s where a < 2",
+			partitions: []string{
+				"p0",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a <= 3",
+			partitions: []string{
+				"p0,p1",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a in (2, 3)",
+			partitions: []string{
+				"p0,p1",
+				"p2,p3",
+			},
+		},
+		{
+			sql: "select * from %s where a in (1, 5)",
+			partitions: []string{
+				"p0,p2",
+				"p1",
+			},
+		},
+		{
+			sql: "select * from %s where a not in (1, 5)",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a = 2 and a = 2",
+			partitions: []string{
+				"p0",
+				"p2",
+			},
+		},
+		{
+			sql: "select * from %s where a = 2 and a = 3",
+			partitions: []string{
+				// This means that we have no partition-read plan
+				"",
+				"",
+			},
+		},
+		{
+			sql: "select * from %s where a < 2 and a > 0",
+			partitions: []string{
+				"p0",
+				"p1",
+			},
+		},
+		{
+			sql: "select * from %s where a < 2 and a < 3",
+			partitions: []string{
+				"p0",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a > 1 and a > 2",
+			partitions: []string{
+				"p1,p2",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a = 2 or a = 3",
+			partitions: []string{
+				"p0,p1",
+				"p2,p3",
+			},
+		},
+		{
+			sql: "select * from %s where a = 2 or a in (3)",
+			partitions: []string{
+				"p0,p1",
+				"p2,p3",
+			},
+		},
+		{
+			sql: "select * from %s where a = 2 or a > 3",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a = 2 or a <= 1",
+			partitions: []string{
+				"p0",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a = 2 or a between 2 and 2",
+			partitions: []string{
+				"p0",
+				"p2",
+			},
+		},
+		{
+			sql: "select * from %s where a != 2",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a != 2 and a > 4",
+			partitions: []string{
+				"p2",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a != 2 and a != 3",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a != 2 and a = 3",
+			partitions: []string{
+				"p1",
+				"p3",
+			},
+		},
+		{
+			sql: "select * from %s where not (a = 2)",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where not (a > 2)",
+			partitions: []string{
+				"p0",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where not (a < 2)",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		// cases that partition pruning can not work
+		{
+			sql: "select * from %s where a + 1 > 4",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a - 1 > 0",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a * 2 < 0",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a << 1 < 0",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		// comparison between int column and string column
+		{
+			sql: "select * from %s where a > '10'",
+			partitions: []string{
+				"dual",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a > '10ab'",
+			partitions: []string{
+				"dual",
+				"all",
 			},
 		},
 	}
