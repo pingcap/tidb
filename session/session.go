@@ -1949,7 +1949,7 @@ func (s *session) isTxnRetryable() bool {
 
 func (s *session) NewTxn(ctx context.Context) error {
 	if s.txn.Valid() {
-		txnID := s.txn.StartTS()
+		txnStartTS := s.txn.StartTS()
 		txnScope := s.GetSessionVars().TxnCtx.TxnScope
 		err := s.CommitTxn(ctx)
 		if err != nil {
@@ -1958,7 +1958,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 		vars := s.GetSessionVars()
 		logutil.Logger(ctx).Info("NewTxn() inside a transaction auto commit",
 			zap.Int64("schemaVersion", vars.GetInfoSchema().SchemaMetaVersion()),
-			zap.Uint64("txnStartTS", txnID),
+			zap.Uint64("txnStartTS", txnStartTS),
 			zap.String("txnScope", txnScope))
 	}
 
@@ -2819,7 +2819,10 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 	txn.SetOption(kv.IsStalenessReadOnly, true)
 	txn.SetOption(kv.TxnScope, txnScope)
 	s.txn.changeInvalidToValid(txn)
-	is := domain.GetDomain(s).InfoSchema()
+	is, err := domain.GetDomain(s).GetSnapshotInfoSchema(txn.StartTS())
+	if err != nil {
+		return errors.Trace(err)
+	}
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:  is,
 		CreateTime:  time.Now(),
