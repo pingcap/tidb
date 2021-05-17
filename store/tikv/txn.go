@@ -88,6 +88,7 @@ type KVTxn struct {
 	causalConsistency  bool
 	scope              string
 	kvFilter           KVFilter
+	sessionID          uint64
 }
 
 func extractStartTs(store *KVStore, options kv.TransactionOption) (uint64, error) {
@@ -285,6 +286,11 @@ func (txn *KVTxn) SetKVFilter(filter KVFilter) {
 	txn.kvFilter = filter
 }
 
+// SetSessionID sets the session ID for this transaction.
+func (txn *KVTxn) SetSessionID(id uint64) {
+	txn.sessionID = id
+}
+
 // IsPessimistic returns true if it is pessimistic.
 func (txn *KVTxn) IsPessimistic() bool {
 	return txn.isPessimistic
@@ -325,18 +331,11 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 	start := time.Now()
 	defer func() { metrics.TxnCmdHistogramWithCommit.Observe(time.Since(start).Seconds()) }()
 
-	// sessionID is used for log.
-	var sessionID uint64
-	val := ctx.Value(util.SessionID)
-	if val != nil {
-		sessionID = val.(uint64)
-	}
-
 	var err error
 	// If the txn use pessimistic lock, committer is initialized.
 	committer := txn.committer
 	if committer == nil {
-		committer, err = newTwoPhaseCommitter(txn, sessionID)
+		committer, err = newTwoPhaseCommitter(txn, txn.sessionID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -369,9 +368,7 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 	// pessimistic transaction should also bypass latch.
 	if txn.store.txnLatches == nil || txn.IsPessimistic() {
 		err = committer.execute(ctx)
-		if val == nil || sessionID > 0 {
-			txn.onCommitted(err)
-		}
+		txn.onCommitted(err)
 		logutil.Logger(ctx).Debug("[kv] txnLatches disabled, 2pc directly", zap.Error(err))
 		return errors.Trace(err)
 	}
@@ -390,9 +387,7 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 		return &tikverr.ErrWriteConflictInLatch{StartTS: txn.startTS}
 	}
 	err = committer.execute(ctx)
-	if val == nil || sessionID > 0 {
-		txn.onCommitted(err)
-	}
+	txn.onCommitted(err)
 	if err == nil {
 		lock.SetCommitTS(committer.commitTS)
 	}
@@ -548,14 +543,7 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tikv.LockCtx, keysInput
 	keys = deduplicateKeys(keys)
 	if txn.IsPessimistic() && lockCtx.ForUpdateTS > 0 {
 		if txn.committer == nil {
-			// sessionID is used for log.
-			var sessionID uint64
-			var err error
-			val := ctx.Value(util.SessionID)
-			if val != nil {
-				sessionID = val.(uint64)
-			}
-			txn.committer, err = newTwoPhaseCommitter(txn, sessionID)
+			txn.committer, err = newTwoPhaseCommitter(txn, txn.sessionID)
 			if err != nil {
 				return err
 			}

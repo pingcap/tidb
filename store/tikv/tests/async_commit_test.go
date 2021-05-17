@@ -134,6 +134,7 @@ func (s *testAsyncCommitCommon) beginAsyncCommit(c *C) tikv.TxnProbe {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.SetEnableAsyncCommit(true)
+	txn.SetSessionID(1)
 	return tikv.TxnProbe{KVTxn: txn}
 }
 

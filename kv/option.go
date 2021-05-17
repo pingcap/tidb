@@ -59,4 +59,6 @@ const (
 	IsStalenessReadOnly
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels
+	// SessionID store the session (connection) ID to the transaction.
+	SessionID
 )

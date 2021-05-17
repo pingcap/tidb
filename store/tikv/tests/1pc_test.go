@@ -20,13 +20,13 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/util"
 )
 
 func (s *testAsyncCommitCommon) begin1PC(c *C) tikv.TxnProbe {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.SetEnable1PC(true)
+	txn.SetSessionID(1)
 	return tikv.TxnProbe{KVTxn: txn}
 }
 
@@ -44,7 +44,7 @@ func (s *testOnePCSuite) SetUpTest(c *C) {
 }
 
 func (s *testOnePCSuite) Test1PC(c *C) {
-	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
+	ctx := context.Background()
 
 	k1 := []byte("k1")
 	v1 := []byte("v1")
@@ -67,6 +67,7 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 	txn = s.begin1PC(c)
 	err = txn.Set(k2, v2)
 	c.Assert(err, IsNil)
+	txn.SetSessionID(0)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(txn.GetCommitter().IsOnePC(), IsFalse)
@@ -74,13 +75,13 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 	c.Assert(txn.GetCommitter().GetCommitTS(), Greater, txn.StartTS())
 
 	// 1PC doesn't work if system variable not set
-
 	k3 := []byte("k3")
 	v3 := []byte("v3")
 
 	txn = s.begin(c)
 	err = txn.Set(k3, v3)
 	c.Assert(err, IsNil)
+	txn.SetSessionID(1)
 	err = txn.Commit(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(txn.GetCommitter().IsOnePC(), IsFalse)
@@ -142,7 +143,7 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 }
 
 func (s *testOnePCSuite) Test1PCIsolation(c *C) {
-	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
+	ctx := context.Background()
 
 	k := []byte("k")
 	v1 := []byte("v1")
@@ -183,7 +184,7 @@ func (s *testOnePCSuite) Test1PCDisallowMultiRegion(c *C) {
 		return
 	}
 
-	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
+	ctx := context.Background()
 
 	txn := s.begin1PC(c)
 
@@ -234,7 +235,7 @@ func (s *testOnePCSuite) Test1PCLinearizability(c *C) {
 	c.Assert(err, IsNil)
 	err = t2.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
-	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
+	ctx := context.Background()
 	// t2 commits earlier than t1
 	err = t2.Commit(ctx)
 	c.Assert(err, IsNil)
@@ -255,7 +256,7 @@ func (s *testOnePCSuite) Test1PCWithMultiDC(c *C) {
 	err := localTxn.Set([]byte("a"), []byte("a1"))
 	localTxn.SetScope("bj")
 	c.Assert(err, IsNil)
-	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
+	ctx := context.Background()
 	err = localTxn.Commit(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(localTxn.GetCommitter().IsOnePC(), IsFalse)
@@ -276,7 +277,7 @@ func (s *testOnePCSuite) TestTxnCommitCounter(c *C) {
 	txn := s.begin(c)
 	err := txn.Set([]byte("k"), []byte("v"))
 	c.Assert(err, IsNil)
-	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
+	ctx := context.Background()
 	err = txn.Commit(ctx)
 	c.Assert(err, IsNil)
 	curr := metrics.GetTxnCommitCounter()

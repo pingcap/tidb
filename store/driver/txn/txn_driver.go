@@ -168,6 +168,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.GetSnapshot().SetIsStatenessReadOnly(val.(bool))
 	case kv.MatchStoreLabels:
 		txn.KVTxn.GetSnapshot().SetMatchStoreLabels(val.([]*metapb.StoreLabel))
+	case kv.SessionID:
+		txn.KVTxn.SetSessionID(val.(uint64))
 	}
 }
 
