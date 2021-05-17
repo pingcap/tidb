@@ -33,10 +33,10 @@ func newStmtSummaryByDigestEvicted() *stmtSummaryByDigestEvicted {
 }
 
 // spawn a new pointer to stmtSummaryByDigestEvictedElement
-func newStmtSummaryByDigestEvictedElement(beginTimeForCurrentInterval int64, intervalSeconds int64) *stmtSummaryByDigestEvictedElement {
+func newStmtSummaryByDigestEvictedElement(beginTime int64, endTime int64) *stmtSummaryByDigestEvictedElement {
 	return &stmtSummaryByDigestEvictedElement{
-		beginTime:    beginTimeForCurrentInterval,
-		endTime:      beginTimeForCurrentInterval + intervalSeconds,
+		beginTime:    beginTime,
+		endTime:      endTime,
 		digestKeyMap: make(map[string]struct{}),
 	}
 }
@@ -51,53 +51,45 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 		eBeginTime := evictedElement.beginTime
 		eEndTime := evictedElement.endTime
 
+		// no record in ssbde.history, direct insert
+		if ssbde.history.Len() == 0 {
+			record := newStmtSummaryByDigestEvictedElement(eBeginTime, eEndTime)
+			record.addEvicted(evictedKey, evictedElement)
+			ssbde.history.PushFront(record)
+			continue
+		}
+
 		// prevent exceeding history size
 		for ssbde.history.Len() >= historySize && ssbde.history.Len() > 1 {
 			ssbde.history.Remove(ssbde.history.Front())
 		}
 
 		// look for matching history interval
-		if ssbde.history.Len() == 0 && historySize > 0 {
-			// no record in history
-			beginTime := eBeginTime
-			intervalSeconds := eEndTime - eBeginTime
-			record := newStmtSummaryByDigestEvictedElement(beginTime, intervalSeconds)
-			record.addEvicted(evictedKey, evictedElement)
-			ssbde.history.PushBack(record)
-
-			if evictedKey == nil {
-				// passing an empty Key is used as `refresh`.
-				h = ssbde.history.Back()
-				continue
-			}
-		}
-
-		// because 2 lists are both exactly time-ordered
-		// begin matching from the latest matched history element.
+		// if there are no records in ssbde.history, following code will not be executed. which will probably lead to a bug.
+	MATCHING:
 		for ; h != nil; h = h.Prev() {
 			historyElement := h.Value.(*stmtSummaryByDigestEvictedElement)
-			sBeginTime := historyElement.beginTime
-			sEndTime := historyElement.endTime
 
-			if sBeginTime <= eBeginTime &&
-				sEndTime >= eEndTime {
-				// is in this history interval
-				historyElement.addEvicted(evictedKey, evictedElement)
-				break
-			}
-
-			if sBeginTime > eEndTime &&
-				ssbde.history.Len() < historySize &&
-				h == ssbde.history.Front(){
-					// digestElement is older than all history elements.
-					// creat a digestEvictedElement and PushFront
-					beginTime := eBeginTime
-					intervalSeconds := eEndTime - eBeginTime
-					record := newStmtSummaryByDigestEvictedElement(beginTime, intervalSeconds)
+			switch historyElement.matchAndAdd(evictedKey, evictedElement) {
+			case isMatch:
+				break MATCHING
+			case isTooYoung:
+				{
+					record := newStmtSummaryByDigestEvictedElement(eBeginTime, eEndTime)
 					record.addEvicted(evictedKey, evictedElement)
-					ssbde.history.PushFront(record)
-					break
+					ssbde.history.InsertAfter(record, h)
+					break MATCHING
 				}
+			default:
+				{
+					if h == ssbde.history.Front() {
+						record := newStmtSummaryByDigestEvictedElement(eBeginTime, eEndTime)
+						record.addEvicted(evictedKey, evictedElement)
+						ssbde.history.PushFront(record)
+						break MATCHING
+					}
+				}
+			}
 		}
 	}
 }
@@ -111,6 +103,32 @@ func (ssbde *stmtSummaryByDigestEvicted) Clear() {
 func (seElement *stmtSummaryByDigestEvictedElement) addEvicted(digestKey *stmtSummaryByDigestKey, digestValue *stmtSummaryByDigestElement) {
 	if digestKey != nil {
 		seElement.digestKeyMap[string(digestKey.Hash())] = struct{}{}
+	}
+}
+
+const (
+	isMatch    = 0
+	isTooOld   = 1
+	isTooYoung = 2
+)
+
+// matchAndAdd check time interval of seElement and digestValue.
+// if matches, it will add the digest and return enum match
+// if digest too old, it will return enum tooOld and do nothing
+// if digest too young, it will return enum tooYoung and do nothing
+func (seElement *stmtSummaryByDigestEvictedElement) matchAndAdd(digestKey *stmtSummaryByDigestKey, digestValue *stmtSummaryByDigestElement) (statement int) {
+	if seElement == nil {
+		return isTooYoung
+	}
+	sBeginTime, sEndTime := seElement.beginTime, seElement.endTime
+	eBeginTime, eEndTime := digestValue.beginTime, digestValue.endTime
+	if sBeginTime <= eBeginTime && eEndTime <= sEndTime {
+		seElement.addEvicted(digestKey, digestValue)
+		return isMatch
+	} else if eEndTime < sBeginTime {
+		return isTooOld
+	} else {
+		return isTooYoung
 	}
 }
 
