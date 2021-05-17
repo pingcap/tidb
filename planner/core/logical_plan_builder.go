@@ -1120,6 +1120,7 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 		UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  expr.GetType(),
 	}
+	newCol.SetCoercibility(expr.Coercibility())
 	return newCol, name, nil
 }
 
@@ -5737,12 +5738,15 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 			l := len(b.outerCTEs)
 			defer func() {
 				b.outerCTEs = b.outerCTEs[:l]
+				sw := x.With
+				x.With = sw
 			}()
 			err := b.buildWith(ctx, x.With)
 			if err != nil {
 				return err
 			}
 		}
+		x.With = nil
 
 		recursive := make([]LogicalPlan, 0)
 		tmpAfterSetOptsForRecur := []*ast.SetOprType{nil}
