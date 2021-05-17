@@ -1509,7 +1509,7 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 				for i, pair := range pairs {
 					if colInfo.Name.L == pair.colName {
 						val := pair.value.GetInt64() // val cannot be Null, we've check this in func getNameValuePairs
-						unsigned := mysql.HasUnsignedFlag(partitionExpr.Expr.GetType().Flag)
+						unsigned := mysql.HasUnsignedFlag(col.GetType().Flag)
 						ranges := partitionExpr.ForRangePruning
 						length := len(ranges.LessThan)
 						pos := sort.Search(length, func(i int) bool {
