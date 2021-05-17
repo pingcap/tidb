@@ -26,7 +26,6 @@
 package tikv
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -68,7 +67,7 @@ func (s *testDeadlockSuite) TestDeadlock(c *C) {
 	c.Assert(detector.totalSize, Equals, uint64(2))
 	err = detector.Detect(3, 1, 300, makeDiagCtx("k3", "tag3"))
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, fmt.Sprintf("deadlock"))
+	c.Assert(err.Error(), Equals, "deadlock")
 	c.Assert(len(err.WaitChain), Equals, 3)
 	// The order of entries in the wait chain is specific: each item is waiting for the next one.
 	checkWaitChainEntry(err.WaitChain[0], 1, 2, "k1", "tag1")
