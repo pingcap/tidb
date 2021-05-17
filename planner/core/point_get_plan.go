@@ -1569,7 +1569,7 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionColName *ast.ColumnNam
 }
 
 func getPartitionExpr(ctx sessionctx.Context, tbl *model.TableInfo) *tables.PartitionExpr {
-	is := infoschema.GetInfoSchema(ctx)
+	is := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	table, ok := is.TableByID(tbl.ID)
 	if !ok {
 		return nil
