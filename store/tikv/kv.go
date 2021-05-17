@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"math"
 	"math/rand"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -414,17 +415,20 @@ func (s *KVStore) updateSafeTS(ctx context.Context) {
 		storeAddr := store.addr
 		go func(ctx context.Context, wg *sync.WaitGroup, storeID uint64, storeAddr string) {
 			defer wg.Done()
-			// TODO: add metrics for updateSafeTS
 			resp, err := tikvClient.SendRequest(ctx, storeAddr, tikvrpc.NewRequest(tikvrpc.CmdStoreSafeTS, &kvrpcpb.StoreSafeTSRequest{KeyRange: &kvrpcpb.KeyRange{
 				StartKey: []byte(""),
 				EndKey:   []byte(""),
 			}}), ReadTimeoutShort)
+			storeIDStr := strconv.Itoa(int(storeID))
 			if err != nil {
+				metrics.TiKVSafeTSUpdateCounter.WithLabelValues("fail", storeIDStr).Inc()
 				logutil.BgLogger().Debug("update safeTS failed", zap.Error(err), zap.Uint64("store-id", storeID))
 				return
 			}
 			safeTSResp := resp.Resp.(*kvrpcpb.StoreSafeTSResponse)
 			s.setSafeTS(storeID, safeTSResp.GetSafeTs())
+			metrics.TiKVSafeTSUpdateCounter.WithLabelValues("success", storeIDStr).Inc()
+			metrics.TiKVSafeTSUpdateStats.WithLabelValues(storeIDStr).Set(float64(safeTSResp.GetSafeTs()))
 		}(ctx, wg, storeID, storeAddr)
 	}
 	wg.Wait()
