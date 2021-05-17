@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -431,19 +431,19 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBReplicaRead)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "follower")
-	c.Assert(v.GetReplicaRead(), Equals, tikvstore.ReplicaReadFollower)
+	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadFollower)
 	err = SetSessionSystemVar(v, TiDBReplicaRead, "leader")
 	c.Assert(err, IsNil)
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBReplicaRead)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "leader")
-	c.Assert(v.GetReplicaRead(), Equals, tikvstore.ReplicaReadLeader)
+	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadLeader)
 	err = SetSessionSystemVar(v, TiDBReplicaRead, "leader-and-follower")
 	c.Assert(err, IsNil)
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBReplicaRead)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "leader-and-follower")
-	c.Assert(v.GetReplicaRead(), Equals, tikvstore.ReplicaReadMixed)
+	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadMixed)
 
 	err = SetSessionSystemVar(v, TiDBEnableStmtSummary, "ON")
 	c.Assert(err, IsNil)
