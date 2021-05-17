@@ -352,7 +352,7 @@ type TransactionOption struct {
 
 // DefaultTransactionOption creates a default TransactionOption, ie. Work in GlobalTxnScope and get start ts when got used
 func DefaultTransactionOption() TransactionOption {
-	return TransactionOption{TxnScope: oracle.GlobalTxnScope}
+	return TransactionOption{TxnScope: GlobalTxnScope}
 }
 
 // SetMaxPrevSec set maxPrevSec

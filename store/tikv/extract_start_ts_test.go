@@ -42,7 +42,7 @@ func (s *extractStartTsSuite) SetUpTest(c *C) {
 		labels: []*metapb.StoreLabel{
 			{
 				Key:   DCLabelKey,
-				Value: oracle.LocalTxnScope,
+				Value: "local1",
 			},
 		},
 	}
@@ -78,7 +78,7 @@ func (s *extractStartTsSuite) TestExtractStartTs(c *C) {
 		// MinStartTS setted, global
 		{101, kv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: &i, MaxPrevSec: nil}},
 		// MinStartTS setted, local
-		{102, kv.TransactionOption{TxnScope: oracle.LocalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: &i, MaxPrevSec: nil}},
+		{102, kv.TransactionOption{TxnScope: "local1", StartTS: nil, PrevSec: nil, MinStartTS: &i, MaxPrevSec: nil}},
 		// MaxPrevSec setted
 		// however we need to add more cases to check the behavior when it fall backs to MinStartTS setted
 		// see `TestMaxPrevSecFallback`
@@ -105,7 +105,7 @@ func (s *extractStartTsSuite) TestMaxPrevSecFallback(c *C) {
 		option     kv.TransactionOption
 	}{
 		{0x8000000000000001, kv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
-		{0x8000000000000002, kv.TransactionOption{TxnScope: oracle.LocalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
+		{0x8000000000000002, kv.TransactionOption{TxnScope: "local1", StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
 	}
 	for _, cs := range cases {
 		result, _ := extractStartTs(s.store, cs.option)
