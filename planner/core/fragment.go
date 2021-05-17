@@ -134,7 +134,15 @@ func (f *Fragment) init(p PhysicalPlan) error {
 	return nil
 }
 
-func flattenPlanForUnionAll(stack []PhysicalPlan, forest *[]*PhysicalExchangeSender) error {
+// We would remove all the union-all operators by 'untwist'ing and copying the plans above union-all.
+// This will make every route from root (ExchangeSender) to leaf nodes (ExchangeReceiver and TableScan)
+// a new ioslated tree (and also a fragment) without union all. These trees (fragments then tasks) will
+// finally be gathered to TiDB or be exchanged to upper tasks again. 
+// For instance, given a plan "select c1 from t union all select c1 from s"
+// after untwist, there will be two plans in `forest` slice:
+// - ExchangeSender -> Projection (c1) -> TableScan(t)
+// - ExchangeSender -> Projection (c2) -> TableScan(s)
+func untwistPlanAndRemoveUnionAll(stack []PhysicalPlan, forest *[]*PhysicalExchangeSender) error {
 	cur := stack[len(stack)-1]
 	switch x := cur.(type) {
 	case *PhysicalTableScan, *PhysicalExchangeReceiver: // This should be the leave node.
@@ -160,13 +168,13 @@ func flattenPlanForUnionAll(stack []PhysicalPlan, forest *[]*PhysicalExchangeSen
 		}
 	case *PhysicalHashJoin:
 		stack = append(stack, x.children[1-x.InnerChildIdx])
-		err := flattenPlanForUnionAll(stack, forest)
+		err := untwistPlanAndRemoveUnionAll(stack, forest)
 		stack = stack[:len(stack)-1]
 		return errors.Trace(err)
 	case *PhysicalUnionAll:
 		for _, ch := range x.children {
 			stack = append(stack, ch)
-			err := flattenPlanForUnionAll(stack, forest)
+			err := untwistPlanAndRemoveUnionAll(stack, forest)
 			stack = stack[:len(stack)-1]
 			if err != nil {
 				return errors.Trace(err)
@@ -178,7 +186,7 @@ func flattenPlanForUnionAll(stack []PhysicalPlan, forest *[]*PhysicalExchangeSen
 		}
 		ch := cur.Children()[0]
 		stack = append(stack, ch)
-		err := flattenPlanForUnionAll(stack, forest)
+		err := untwistPlanAndRemoveUnionAll(stack, forest)
 		stack = stack[:len(stack)-1]
 		return errors.Trace(err)
 	}
@@ -187,7 +195,7 @@ func flattenPlanForUnionAll(stack []PhysicalPlan, forest *[]*PhysicalExchangeSen
 
 func buildFragments(s *PhysicalExchangeSender) ([]*Fragment, error) {
 	forest := make([]*PhysicalExchangeSender, 0, 1)
-	err := flattenPlanForUnionAll([]PhysicalPlan{s}, &forest)
+	err := untwistPlanAndRemoveUnionAll([]PhysicalPlan{s}, &forest)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
