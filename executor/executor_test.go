@@ -5202,7 +5202,9 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 	_, err = tk.Exec("show table t_regions_temporary_table regions")
 	c.Assert(err.Error(), Equals, plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions").Error())
 	// Test split table.
-	_, err = tk.Exec(`split table t_regions_temporary_table between (-10000) and (10000) regions 4;`)
+	_, err = tk.Exec("split table t_regions_temporary_table between (-10000) and (10000) regions 4;")
+	c.Assert(err.Error(), Equals, plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("split table").Error())
+	_, err = tk.Exec("split partition table t_regions_temporary_table partition (p1,p2) index idx between (0) and (20000) regions 2;")
 	c.Assert(err.Error(), Equals, plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("split table").Error())
 	tk.MustExec("drop table if exists t_regions_temporary_table")
 
