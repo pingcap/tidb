@@ -37,6 +37,7 @@ import (
 	tidbmetrics "github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/store/driver/options"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -697,7 +698,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		}
 	}
 
-	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, worker.req.ReplicaRead, &worker.replicaReadSeed, kvrpcpb.Context{
+	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, options.GetTiKVReplicaReadType(worker.req.ReplicaRead), &worker.replicaReadSeed, kvrpcpb.Context{
 		IsolationLevel: isolationLevelToPB(worker.req.IsolationLevel),
 		Priority:       priorityToPB(worker.req.Priority),
 		NotFillCache:   worker.req.NotFillCache,
