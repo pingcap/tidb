@@ -146,11 +146,14 @@ func TestCluster(t *testing.T) {
 	defer clus.Terminate(t)
 
 	cli := clus.Client(0)
+	ic := infoschema.NewCache(2)
+	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0))
 	d := NewDDL(
 		goctx.Background(),
 		WithEtcdClient(cli),
 		WithStore(store),
 		WithLease(testLease),
+		WithInfoCache(ic),
 	)
 	err = d.Start(nil)
 	if err != nil {
@@ -161,11 +164,14 @@ func TestCluster(t *testing.T) {
 		t.Fatalf("expect true, got isOwner:%v", isOwner)
 	}
 	cli1 := clus.Client(1)
+	ic2 := infoschema.NewCache(2)
+	ic2.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0))
 	d1 := NewDDL(
 		goctx.Background(),
 		WithEtcdClient(cli1),
 		WithStore(store),
 		WithLease(testLease),
+		WithInfoCache(ic2),
 	)
 	err = d1.Start(nil)
 	if err != nil {
@@ -193,11 +199,14 @@ func TestCluster(t *testing.T) {
 
 	// d3 (not owner) stop
 	cli3 := clus.Client(3)
+	ic3 := infoschema.NewCache(2)
+	ic3.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0))
 	d3 := NewDDL(
 		goctx.Background(),
 		WithEtcdClient(cli3),
 		WithStore(store),
 		WithLease(testLease),
+		WithInfoCache(ic3),
 	)
 	err = d3.Start(nil)
 	if err != nil {
