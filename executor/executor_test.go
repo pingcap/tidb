@@ -8214,15 +8214,4 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 			"2/2022-06-11 02:03:04.987654/202/<nil>/<nil>/[sql1, sql2, sql3]/203",
 			"2/2022-06-11 02:03:04.987654/203/<nil>/<nil>/<nil>/201",
 		))
-
-	tk.MustExec("create user 'testuser'@'localhost'")
-	c.Assert(tk.Se.Auth(&auth.UserIdentity{
-		Username:     "testuser",
-		Hostname:     "localhost",
-		AuthUsername: "testuser",
-		AuthHostname: "localhost",
-	}, nil, nil), IsTrue)
-	err := tk.QueryToErr("select * from information_schema.dead_lock")
-	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), "Access denied"), IsTrue)
 }
