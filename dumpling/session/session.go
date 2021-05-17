@@ -473,6 +473,9 @@ func (s *session) doCommit(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err = s.removeTempTableFromBuffer(); err != nil {
+		return err
+	}
 
 	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
 	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
@@ -526,29 +529,40 @@ func (s *session) doCommit(ctx context.Context) error {
 			s.GetSessionVars().TxnCtx.IsExplicit && s.GetSessionVars().GuaranteeLinearizability)
 	}
 
-	// Filter out the temporary table key-values.
-	if tables := s.sessionVars.TxnCtx.GlobalTemporaryTables; tables != nil {
-		memBuffer := s.txn.GetMemBuffer()
-		for tid := range tables {
-			seekKey := tablecodec.EncodeTablePrefix(tid)
-			endKey := tablecodec.EncodeTablePrefix(tid + 1)
-			iter, err := memBuffer.Iter(seekKey, endKey)
-			if err != nil {
+	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
+}
+
+// removeTempTableFromBuffer filters out the temporary table key-values.
+func (s *session) removeTempTableFromBuffer() error {
+	tables := s.GetSessionVars().TxnCtx.GlobalTemporaryTables
+	if len(tables) == 0 {
+		return nil
+	}
+	memBuffer := s.txn.GetMemBuffer()
+	// Reset and new an empty stage buffer.
+	defer func() {
+		s.txn.cleanup()
+	}()
+	for tid := range tables {
+		seekKey := tablecodec.EncodeTablePrefix(tid)
+		endKey := tablecodec.EncodeTablePrefix(tid + 1)
+		iter, err := memBuffer.Iter(seekKey, endKey)
+		if err != nil {
+			return err
+		}
+		for iter.Valid() && iter.Key().HasPrefix(seekKey) {
+			if err = memBuffer.Delete(iter.Key()); err != nil {
 				return err
 			}
-			for iter.Valid() && iter.Key().HasPrefix(seekKey) {
-				if err = memBuffer.Delete(iter.Key()); err != nil {
-					return errors.Trace(err)
-				}
-				s.txn.UpdateEntriesCountAndSize()
-				if err = iter.Next(); err != nil {
-					return errors.Trace(err)
-				}
+			s.txn.UpdateEntriesCountAndSize()
+			if err = iter.Next(); err != nil {
+				return err
 			}
 		}
 	}
-
-	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
+	// Flush to the root membuffer.
+	s.txn.flushStmtBuf()
+	return nil
 }
 
 // errIsNoisy is used to filter DUPLCATE KEY errors.
