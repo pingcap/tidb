@@ -25,15 +25,14 @@ type ReplicaReadType byte
 
 const (
 	// ReplicaReadLeader stands for 'read from leader'.
-	ReplicaReadLeader ReplicaReadType = 1 << iota
+	ReplicaReadLeader ReplicaReadType = iota
 	// ReplicaReadFollower stands for 'read from follower'.
 	ReplicaReadFollower
 	// ReplicaReadMixed stands for 'read from leader and follower and learner'.
 	ReplicaReadMixed
 )
 
-// IsFollowerRead checks if leader is going to be used to read data.
+// IsFollowerRead checks if follower is going to be used to read data.
 func (r ReplicaReadType) IsFollowerRead() bool {
-	// In some cases the default value is 0, which should be treated as `ReplicaReadLeader`.
-	return r != ReplicaReadLeader && r != 0
+	return r != ReplicaReadLeader
 }
