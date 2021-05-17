@@ -5895,8 +5895,8 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 		}
 
 		rules = append(rules, &placement.Rule{
-			Count:            int(replicas),
-			LabelConstraints: labelConstraints,
+			Count:       int(replicas),
+			Constraints: labelConstraints,
 		})
 
 		return rules, nil
@@ -5925,8 +5925,8 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 			}
 
 			rules = append(rules, &placement.Rule{
-				Count:            cnt,
-				LabelConstraints: labelConstraints,
+				Count:       cnt,
+				Constraints: labelConstraints,
 			})
 		}
 
@@ -6051,14 +6051,14 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 	newRules := bundle.Rules[:0]
 	for i, rule := range bundle.Rules {
 		// merge all empty constraints
-		if len(rule.LabelConstraints) == 0 {
+		if len(rule.Constraints) == 0 {
 			extraCnt[rule.Role] += rule.Count
 			continue
 		}
 		// refer to tidb#22065.
 		// add -engine=tiflash to every rule to avoid schedules to tiflash instances.
 		// placement rules in SQL is not compatible with `set tiflash replica` yet
-		if err := rule.LabelConstraints.Add(placement.Constraint{
+		if err := rule.Constraints.Add(placement.Constraint{
 			Op:     placement.NotIn,
 			Key:    placement.EngineLabelKey,
 			Values: []string{placement.EngineLabelTiFlash},
@@ -6083,7 +6083,7 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 			Count:       cnt,
 			StartKeyHex: startKey,
 			EndKeyHex:   endKey,
-			LabelConstraints: []placement.Constraint{{
+			Constraints: []placement.Constraint{{
 				Op:     placement.NotIn,
 				Key:    placement.EngineLabelKey,
 				Values: []string{placement.EngineLabelTiFlash},
