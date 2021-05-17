@@ -357,6 +357,7 @@ func (s *testSuiteP1) TestShow(c *C) {
 		"CONNECTION_ADMIN Server Admin ",
 		"RESTRICTED_TABLES_ADMIN Server Admin ",
 		"RESTRICTED_STATUS_ADMIN Server Admin ",
+		"RESTRICTED_USER_ADMIN Server Admin ",
 	))
 	c.Assert(len(tk.MustQuery("show table status").Rows()), Equals, 1)
 }
