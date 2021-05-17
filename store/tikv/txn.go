@@ -221,22 +221,6 @@ func (txn *KVTxn) Delete(k []byte) error {
 	return txn.us.GetMemBuffer().Delete(k)
 }
 
-// SetOption sets an option with a value, when val is nil, uses the default
-// value of this option.
-func (txn *KVTxn) SetOption(opt int, val interface{}) {
-	txn.us.SetOption(opt, val)
-}
-
-// GetOption returns the option
-func (txn *KVTxn) GetOption(opt int) interface{} {
-	return txn.us.GetOption(opt)
-}
-
-// DelOption deletes an option.
-func (txn *KVTxn) DelOption(opt int) {
-	txn.us.DelOption(opt)
-}
-
 // SetSchemaLeaseChecker sets a hook to check schema version.
 func (txn *KVTxn) SetSchemaLeaseChecker(checker SchemaLeaseChecker) {
 	txn.schemaLeaseChecker = checker
@@ -613,15 +597,18 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tikv.LockCtx, keysInput
 			// If there is only 1 key and lock fails, no need to do pessimistic rollback.
 			if len(keys) > 1 || keyMayBeLocked {
 				wg := txn.asyncPessimisticRollback(ctx, keys)
-				if dl, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok && hashInKeys(dl.DeadlockKeyHash, keys) {
-					dl.IsRetryable = true
-					// Wait for the pessimistic rollback to finish before we retry the statement.
-					wg.Wait()
-					// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
-					time.Sleep(time.Millisecond * 5)
-					failpoint.Inject("SingleStmtDeadLockRetrySleep", func() {
-						time.Sleep(300 * time.Millisecond)
-					})
+				if dl, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok {
+					logutil.Logger(ctx).Debug("deadlock error received", zap.Uint64("startTS", txn.startTS), zap.Stringer("deadlockInfo", dl))
+					if hashInKeys(dl.DeadlockKeyHash, keys) {
+						dl.IsRetryable = true
+						// Wait for the pessimistic rollback to finish before we retry the statement.
+						wg.Wait()
+						// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
+						time.Sleep(time.Millisecond * 5)
+						failpoint.Inject("SingleStmtDeadLockRetrySleep", func() {
+							time.Sleep(300 * time.Millisecond)
+						})
+					}
 				}
 			}
 			if assignedPrimaryKey {
@@ -639,7 +626,7 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tikv.LockCtx, keysInput
 		// PointGet and BatchPointGet will return value in pessimistic lock response, the value may not exist.
 		// For other lock modes, the locked key values always exist.
 		if lockCtx.ReturnValues {
-			val, _ := lockCtx.Values[string(key)]
+			val := lockCtx.Values[string(key)]
 			if len(val.Value) == 0 {
 				valExists = tikv.SetKeyLockedValueNotExists
 			}
