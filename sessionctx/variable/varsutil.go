@@ -173,12 +173,10 @@ func GetSessionOrGlobalSystemVar(s *SessionVars, name string) (string, error) {
 	if sv.HasSessionScope() {
 		// Populate the value to s.systems if it is not there already.
 		// in future should be already loaded on session init
-
 		if sv.GetSession != nil {
 			// shortcut to the getter, we won't use the value
 			return sv.GetSessionFromHook(s)
 		}
-
 		if _, ok := s.systems[sv.Name]; !ok {
 			if sv.HasGlobalScope() {
 				if val, err := s.GlobalVarsAccessor.GetGlobalSysVar(sv.Name); err == nil {
@@ -190,16 +188,7 @@ func GetSessionOrGlobalSystemVar(s *SessionVars, name string) (string, error) {
 		}
 		return sv.GetSessionFromHook(s)
 	}
-
-	// Workaround for now for backward compatibility.
-	// https://github.com/pingcap/tidb/issues/24368
-	// TODO: We should not cache global values once there is a higher performance sysvar cache.
-	if val, ok := s.systems[sv.Name]; ok {
-		return val, nil
-	}
-	val, err := sv.GetGlobalFromHook(s)
-	s.systems[sv.Name] = val
-	return val, err
+	return sv.GetGlobalFromHook(s)
 }
 
 // GetGlobalSystemVar gets a global system variable.
