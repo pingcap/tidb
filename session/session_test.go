@@ -2131,6 +2131,45 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerSQL(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testSchemaSerialSuite) TestSchemaCheckerTempTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+
+	// create table
+	tk.MustExec(`drop table if exists normal_table`)
+	tk.MustExec(`create table normal_table (id int, c int);`)
+	defer tk.MustExec(`drop table if exists normal_table`)
+	tk.MustExec(`drop table if exists temp_table`)
+	tk.MustExec(`create global temporary table temp_table (id int, c int) on commit delete rows;`)
+	defer tk.MustExec(`drop table if exists temp_table`)
+
+	// The schema version is out of date in the first transaction, and the SQL can't be retried.
+	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 1)
+	defer func() {
+		atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 0)
+	}()
+
+	// It's fine to change the schema of temporary tables.
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`alter table temp_table modify column c bigint;`)
+	tk.MustExec(`insert into temp_table values(3, 3);`)
+	tk.MustExec(`commit;`)
+
+	// Truncate will modify table ID.
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`truncate table temp_table;`)
+	tk.MustExec(`insert into temp_table values(3, 3);`)
+	tk.MustExec(`commit;`)
+
+	// It reports error when also changing the schema of a normal table.
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`alter table normal_table modify column c bigint;`)
+	tk.MustExec(`insert into temp_table values(3, 3);`)
+	tk.MustExec(`insert into normal_table values(3, 3);`)
+	_, err := tk.Exec(`commit;`)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue, Commentf("err %v", err))
+}
+
 func (s *testSchemaSuite) TestPrepareStmtCommitWhenSchemaChanged(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
