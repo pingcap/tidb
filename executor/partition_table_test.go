@@ -686,6 +686,43 @@ func (s *partitionTableSuite) TestAddDropPartitions(c *C) {
 	tk.MustPartition(`select * from t where a < 20`, "p1,p2,p3").Sort().Check(testkit.Rows("12", "15", "7"))
 }
 
+func (s *partitionTableSuite) TestSplitRegion(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_split_region")
+	tk.MustExec("use test_split_region")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	tk.MustExec(`create table tnormal (a int, b int)`)
+	tk.MustExec(`create table thash (a int, b int, index(a)) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table trange (a int, b int, index(a)) partition by range(a) (
+		partition p0 values less than (10000),
+		partition p1 values less than (20000),
+		partition p2 values less than (30000),
+		partition p3 values less than (40000))`)
+	vals := make([]string, 0, 1000)
+	for i := 0; i < 1000; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(40000), rand.Intn(40000)))
+	}
+	tk.MustExec(`insert into tnormal values ` + strings.Join(vals, ", "))
+	tk.MustExec(`insert into thash values ` + strings.Join(vals, ", "))
+	tk.MustExec(`insert into trange values ` + strings.Join(vals, ", "))
+
+	tk.MustExec(`SPLIT TABLE thash INDEX a BETWEEN (1) AND (25000) REGIONS 10`)
+	tk.MustExec(`SPLIT TABLE trange INDEX a BETWEEN (1) AND (25000) REGIONS 10`)
+
+	result := tk.MustQuery(`select * from tnormal where a>=1 and a<=15000`).Sort().Rows()
+	tk.MustPartition(`select * from trange where a>=1 and a<=15000`, "p0,p1").Sort().Check(result)
+	tk.MustPartition(`select * from thash where a>=1 and a<=15000`, "all").Sort().Check(result)
+
+	result = tk.MustQuery(`select * from tnormal where a in (1, 10001, 20001)`).Sort().Rows()
+	tk.MustPartition(`select * from trange where a in (1, 10001, 20001)`, "p0,p1,p2").Sort().Check(result)
+	tk.MustPartition(`select * from thash where a in (1, 10001, 20001)`, "p1").Sort().Check(result)
+}
+
 func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
