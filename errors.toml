@@ -501,6 +501,11 @@ error = '''
 Deadlock found when trying to get lock; try restarting transaction
 '''
 
+["executor:1221"]
+error = '''
+Incorrect usage of %s and %s
+'''
+
 ["executor:1242"]
 error = '''
 Subquery returns more than 1 row
@@ -1133,7 +1138,7 @@ Schema has changed
 
 ["planner:8121"]
 error = '''
-privilege check fail
+privilege check for '%s' fail
 '''
 
 ["planner:8122"]
@@ -1279,6 +1284,11 @@ User %s already exists.
 ["schema:4139"]
 error = '''
 Unknown SEQUENCE: '%-.300s'
+'''
+
+["schema:8003"]
+error = '''
+TiDB admin check table failed.
 '''
 
 ["schema:8020"]

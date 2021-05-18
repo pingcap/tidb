@@ -4254,17 +4254,6 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		b.popTableHints()
 	}()
 
-	// update subquery table should be forbidden
-	var notUpdatableTbl []string
-	notUpdatableTbl = extractTableSourceAsNames(update.TableRefs.TableRefs, notUpdatableTbl, true)
-	for _, asName := range notUpdatableTbl {
-		for _, assign := range update.List {
-			if assign.Column.Table.L == asName {
-				return nil, ErrNonUpdatableTable.GenWithStackByArgs(asName, "UPDATE")
-			}
-		}
-	}
-
 	b.inUpdateStmt = true
 	b.isForUpdateRead = true
 
@@ -4279,12 +4268,6 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		dbName := t.Schema.L
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
-		}
-		if t.TableInfo.IsView() {
-			return nil, errors.Errorf("update view %s is not supported now.", t.Name.O)
-		}
-		if t.TableInfo.IsSequence() {
-			return nil, errors.Errorf("update sequence %s is not supported now.", t.Name.O)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
 	}
@@ -4328,6 +4311,10 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	copy(proj.schema.Columns, p.Schema().Columns[:oldSchemaLen])
 	proj.SetChildren(p)
 	p = proj
+
+	// update subquery table should be forbidden
+	var notUpdatableTbl []string
+	notUpdatableTbl = extractTableSourceAsNames(update.TableRefs.TableRefs, notUpdatableTbl, true)
 
 	var updateTableList []*ast.TableName
 	updateTableList = extractTableList(update.TableRefs.TableRefs, updateTableList, true)
@@ -4432,6 +4419,21 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			columnsIdx[assign.Column] = idx
 		}
 		name := p.OutputNames()[idx]
+		for _, tl := range tableList {
+			if (tl.Schema.L == "" || tl.Schema.L == name.DBName.L) && (tl.Name.L == name.TblName.L) {
+				if tl.TableInfo.IsView() || tl.TableInfo.IsSequence() {
+					return nil, nil, false, ErrNonUpdatableTable.GenWithStackByArgs(name.TblName.O, "UPDATE")
+				}
+				// may be a subquery
+				if tl.Schema.L == "" {
+					for _, nTbl := range notUpdatableTbl {
+						if nTbl == name.TblName.L {
+							return nil, nil, false, ErrNonUpdatableTable.GenWithStackByArgs(name.TblName.O, "UPDATE")
+						}
+					}
+				}
+			}
+		}
 		columnFullName := fmt.Sprintf("%s.%s.%s", name.DBName.L, name.TblName.L, name.ColName.L)
 		// We save a flag for the column in map `modifyColumns`
 		// This flag indicated if assign keyword `DEFAULT` to the column
@@ -4454,9 +4456,10 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 				break
 			}
 		}
-		if !updatable {
+		if !updatable || tn.TableInfo.IsView() || tn.TableInfo.IsSequence() {
 			continue
 		}
+
 		tableInfo := tn.TableInfo
 		tableVal, found := b.is.TableByID(tableInfo.ID)
 		if !found {

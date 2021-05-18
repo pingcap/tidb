@@ -5474,16 +5474,14 @@ func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	// > pushed to both TiKV and TiFlash
 	rows := tk.MustQuery("explain format = 'brief' select * from test.t where b > date'1988-01-01' and b < date'1994-01-01' " +
 		"and cast(a as decimal(10,2)) > 10.10 and date_format(b,'%m') = '11'").Rows()
-	c.Assert(fmt.Sprintf("%v", rows[0][4]), Equals, "lt(test.t.b, 1994-01-01)")
-	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "gt(cast(test.t.a, decimal(10,2) BINARY), 10.10)")
-	c.Assert(fmt.Sprintf("%v", rows[3][4]), Equals, "eq(date_format(test.t.b, \"%m\"), \"11\"), gt(test.t.b, 1988-01-01)")
+	c.Assert(fmt.Sprintf("%v", rows[0][4]), Equals, "gt(cast(test.t.a, decimal(10,2) BINARY), 10.10), lt(test.t.b, 1994-01-01)")
+	c.Assert(fmt.Sprintf("%v", rows[2][4]), Equals, "eq(date_format(test.t.b, \"%m\"), \"11\"), gt(test.t.b, 1988-01-01)")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
 	rows = tk.MustQuery("explain format = 'brief' select * from test.t where b > date'1988-01-01' and b < date'1994-01-01' " +
 		"and cast(a as decimal(10,2)) > 10.10 and date_format(b,'%m') = '11'").Rows()
-	c.Assert(fmt.Sprintf("%v", rows[0][4]), Equals, "lt(test.t.b, 1994-01-01)")
-	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "eq(date_format(test.t.b, \"%m\"), \"11\")")
-	c.Assert(fmt.Sprintf("%v", rows[3][4]), Equals, "gt(cast(test.t.a, decimal(10,2) BINARY), 10.10), gt(test.t.b, 1988-01-01)")
+	c.Assert(fmt.Sprintf("%v", rows[0][4]), Equals, "eq(date_format(test.t.b, \"%m\"), \"11\"), lt(test.t.b, 1994-01-01)")
+	c.Assert(fmt.Sprintf("%v", rows[2][4]), Equals, "gt(cast(test.t.a, decimal(10,2) BINARY), 10.10), gt(test.t.b, 1988-01-01)")
 
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = '<' and store_type = 'tikv,tiflash,tidb' and reason = 'for test'")
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'date_format' and store_type = 'tikv' and reason = 'for test'")
@@ -5835,7 +5833,7 @@ func (s *testIntegrationSuite) TestDecodetoChunkReuse(c *C) {
 	tk.MustExec("create table chk (a int,b varchar(20))")
 	for i := 0; i < 200; i++ {
 		if i%5 == 0 {
-			tk.MustExec(fmt.Sprintf("insert chk values (NULL,NULL)"))
+			tk.MustExec("insert chk values (NULL,NULL)")
 			continue
 		}
 		tk.MustExec(fmt.Sprintf("insert chk values (%d,'%s')", i, strconv.Itoa(i)))
@@ -8757,7 +8755,7 @@ PARTITION BY RANGE (c) (
 					GroupID: groupID,
 					Role:    placement.Leader,
 					Count:   1,
-					LabelConstraints: []placement.Constraint{
+					Constraints: []placement.Constraint{
 						{
 							Key:    placement.DCLabelKey,
 							Op:     placement.In,
@@ -9088,9 +9086,15 @@ func (s *testIntegrationSuite) TestEnumPushDown(c *C) {
 func (s *testIntegrationSuite) TestJiraSetInnoDBDefaultRowFormat(c *C) {
 	// For issue #23541
 	// JIRA needs to be able to set this to be happy.
+	// See: https://nova.moe/run-jira-on-tidb/
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set global innodb_default_row_format = dynamic")
 	tk.MustExec("set global innodb_default_row_format = 'dynamic'")
+	tk.MustQuery("SHOW VARIABLES LIKE 'innodb_default_row_format'").Check(testkit.Rows("innodb_default_row_format dynamic"))
+	tk.MustQuery("SHOW VARIABLES LIKE 'character_set_server'").Check(testkit.Rows("character_set_server utf8mb4"))
+	tk.MustQuery("SHOW VARIABLES LIKE 'innodb_file_format'").Check(testkit.Rows("innodb_file_format Barracuda"))
+	tk.MustQuery("SHOW VARIABLES LIKE 'innodb_large_prefix'").Check(testkit.Rows("innodb_large_prefix ON"))
+
 }
 
 func (s *testIntegrationSerialSuite) TestCollationForBinaryLiteral(c *C) {
@@ -9156,6 +9160,17 @@ func (s *testIntegrationSerialSuite) TestIssue23805(c *C) {
 		"  PRIMARY KEY (`col_26`(3),`col_27`) /*T![clustered_index] CLUSTERED */," +
 		"  UNIQUE KEY `idx_10` (`col_26`(5)));")
 	tk.MustExec("insert ignore into tbl_5 set col_28 = 'ZmZIdSnq' , col_25 = '18:50:52.00' on duplicate key update col_26 = 'y';\n")
+}
+
+func (s *testIntegrationSuite) TestIssue24429(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("set @@sql_mode = ANSI_QUOTES;")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustQuery(`select t."a"=10 from t;`).Check(testkit.Rows())
+	tk.MustExec("drop table if exists t;")
 }
 
 func (s *testIntegrationSuite) TestVitessHash(c *C) {
@@ -9335,6 +9350,16 @@ func (s *testIntegrationSuite) TestEnumIndex(c *C) {
 		testkit.Rows(
 			"OFJHCEKCQGT:MXI7P3[YO4N0DF=2XJWJ4Z9Z;HQ8TMUTZV8YLQAHWJ4BDZHR3A -30 <nil>",
 			"ZOHBSCRMZPOI`IVTSEZAIDAF7DS@1TT20AP9 -30 <nil>"))
+
+	// issue 24576
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(col1 enum('a','b','c'), col2 enum('a','b','c'), col3 int, index idx(col1,col2));")
+	tk.MustExec("insert into t values(1,1,1),(2,2,2),(3,3,3);")
+	tk.MustQuery("select /*+ use_index(t,idx) */ col3 from t where col2 between 'b' and 'b' and col1 is not null;").Check(
+		testkit.Rows("2"))
+	tk.MustQuery("select /*+ use_index(t,idx) */ col3 from t where col2 = 'b' and col1 is not null;").Check(
+		testkit.Rows("2"))
 }
 
 func (s *testIntegrationSuite) TestEnumControlFunction(c *C) {
