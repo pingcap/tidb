@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	derr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/store/driver/options"
 	"github.com/pingcap/tidb/store/tikv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
@@ -120,65 +121,73 @@ func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
 	return newMemBuffer(txn.KVTxn.GetMemBuffer())
 }
 
-func (txn *tikvTxn) GetUnionStore() kv.UnionStore {
-	return &tikvUnionStore{txn.KVTxn.GetUnionStore()}
-}
-
 func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	switch opt {
-	case tikvstore.BinlogInfo:
+	case kv.BinlogInfo:
 		txn.SetBinlogExecutor(&binlogExecutor{
 			txn:     txn.KVTxn,
 			binInfo: val.(*binloginfo.BinlogInfo), // val cannot be other type.
 		})
-	case tikvstore.SchemaChecker:
+	case kv.SchemaChecker:
 		txn.SetSchemaLeaseChecker(val.(tikv.SchemaLeaseChecker))
-	case tikvstore.IsolationLevel:
+	case kv.IsolationLevel:
 		level := getTiKVIsolationLevel(val.(kv.IsoLevel))
 		txn.KVTxn.GetSnapshot().SetIsolationLevel(level)
-	case tikvstore.Priority:
+	case kv.Priority:
 		txn.KVTxn.SetPriority(getTiKVPriority(val.(int)))
-	case tikvstore.NotFillCache:
+	case kv.NotFillCache:
 		txn.KVTxn.GetSnapshot().SetNotFillCache(val.(bool))
-	case tikvstore.SyncLog:
+	case kv.SyncLog:
 		txn.EnableForceSyncLog()
-	case tikvstore.Pessimistic:
+	case kv.Pessimistic:
 		txn.SetPessimistic(val.(bool))
-	case tikvstore.SnapshotTS:
+	case kv.SnapshotTS:
 		txn.KVTxn.GetSnapshot().SetSnapshotTS(val.(uint64))
-	case tikvstore.ReplicaRead:
-		txn.KVTxn.GetSnapshot().SetReplicaRead(val.(tikvstore.ReplicaReadType))
-	case tikvstore.TaskID:
+	case kv.ReplicaRead:
+		t := options.GetTiKVReplicaReadType(val.(kv.ReplicaReadType))
+		txn.KVTxn.GetSnapshot().SetReplicaRead(t)
+	case kv.TaskID:
 		txn.KVTxn.GetSnapshot().SetTaskID(val.(uint64))
-	case tikvstore.InfoSchema:
+	case kv.InfoSchema:
 		txn.SetSchemaVer(val.(tikv.SchemaVer))
-	case tikvstore.SchemaAmender:
+	case kv.CollectRuntimeStats:
+		txn.KVTxn.GetSnapshot().SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
+	case kv.SchemaAmender:
 		txn.SetSchemaAmender(val.(tikv.SchemaAmender))
-	case tikvstore.SampleStep:
+	case kv.SampleStep:
 		txn.KVTxn.GetSnapshot().SetSampleStep(val.(uint32))
-	case tikvstore.CommitHook:
+	case kv.CommitHook:
 		txn.SetCommitCallback(val.(func(string, error)))
-	case tikvstore.EnableAsyncCommit:
+	case kv.EnableAsyncCommit:
 		txn.SetEnableAsyncCommit(val.(bool))
-	case tikvstore.Enable1PC:
+	case kv.Enable1PC:
 		txn.SetEnable1PC(val.(bool))
-	case tikvstore.TxnScope:
+	case kv.GuaranteeLinearizability:
+		txn.SetCausalConsistency(!val.(bool))
+	case kv.TxnScope:
 		txn.SetScope(val.(string))
-	case tikvstore.IsStalenessReadOnly:
+	case kv.IsStalenessReadOnly:
 		txn.KVTxn.GetSnapshot().SetIsStatenessReadOnly(val.(bool))
-	case tikvstore.MatchStoreLabels:
+	case kv.MatchStoreLabels:
 		txn.KVTxn.GetSnapshot().SetMatchStoreLabels(val.([]*metapb.StoreLabel))
-	default:
-		txn.KVTxn.SetOption(opt, val)
 	}
 }
 
 func (txn *tikvTxn) GetOption(opt int) interface{} {
 	switch opt {
-	case tikvstore.TxnScope:
+	case kv.GuaranteeLinearizability:
+		return !txn.KVTxn.IsCasualConsistency()
+	case kv.TxnScope:
 		return txn.KVTxn.GetScope()
 	default:
-		return txn.KVTxn.GetOption(opt)
+		return nil
+	}
+}
+
+func (txn *tikvTxn) DelOption(opt int) {
+	switch opt {
+	case kv.CollectRuntimeStats:
+		txn.KVTxn.GetSnapshot().SetRuntimeStats(nil)
 	}
 }
 

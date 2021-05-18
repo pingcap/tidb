@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	"go.uber.org/zap"
 )
 
@@ -91,6 +92,8 @@ func (s *RangeTaskRunner) SetRegionsPerTask(regionsPerTask int) {
 	s.regionsPerTask = regionsPerTask
 }
 
+const locateRegionMaxBackoff = 20000
+
 // RunOnRange runs the task on the given range.
 // Empty startKey or endKey means unbounded.
 func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey, endKey []byte) error {
@@ -157,7 +160,7 @@ Loop:
 		default:
 		}
 
-		bo := NewBackofferWithVars(ctx, locateRegionMaxBackoff, nil)
+		bo := retry.NewBackofferWithVars(ctx, locateRegionMaxBackoff, nil)
 
 		rangeEndKey, err := s.store.GetRegionCache().BatchLoadRegionsFromKey(bo, key, s.regionsPerTask)
 		if err != nil {

@@ -44,7 +44,10 @@ type DetectorServer struct {
 func (ds *DetectorServer) Detect(req *deadlockPb.DeadlockRequest) *deadlockPb.DeadlockResponse {
 	switch req.Tp {
 	case deadlockPb.DeadlockRequestType_Detect:
-		err := ds.Detector.Detect(req.Entry.Txn, req.Entry.WaitForTxn, req.Entry.KeyHash)
+		err := ds.Detector.Detect(req.Entry.Txn, req.Entry.WaitForTxn, req.Entry.KeyHash, diagnosticContext{
+			key:              req.Entry.Key,
+			resourceGroupTag: req.Entry.ResourceGroupTag,
+		})
 		if err != nil {
 			resp := convertErrToResp(err, req.Entry.Txn, req.Entry.WaitForTxn, req.Entry.KeyHash)
 			return resp
@@ -178,30 +181,35 @@ func (dt *DetectorClient) recvLoop(streamCli deadlockPb.Deadlock_DetectClient) {
 }
 
 func (dt *DetectorClient) handleRemoteTask(requestType deadlockPb.DeadlockRequestType,
-	txnTs uint64, waitForTxnTs uint64, keyHash uint64) {
+	txnTs uint64, waitForTxnTs uint64, keyHash uint64, diagCtx diagnosticContext) {
 	detectReq := &deadlockPb.DeadlockRequest{}
 	detectReq.Tp = requestType
 	detectReq.Entry.Txn = txnTs
 	detectReq.Entry.WaitForTxn = waitForTxnTs
 	detectReq.Entry.KeyHash = keyHash
+	detectReq.Entry.Key = diagCtx.key
+	detectReq.Entry.ResourceGroupTag = diagCtx.resourceGroupTag
 	dt.sendCh <- detectReq
 }
 
 // CleanUp processes cleaup task on local detector
 // user interfaces
 func (dt *DetectorClient) CleanUp(startTs uint64) {
-	dt.handleRemoteTask(deadlockPb.DeadlockRequestType_CleanUp, startTs, 0, 0)
+	dt.handleRemoteTask(deadlockPb.DeadlockRequestType_CleanUp, startTs, 0, 0, diagnosticContext{})
 }
 
 // CleanUpWaitFor cleans up the specific wait edge in detector's wait map
 func (dt *DetectorClient) CleanUpWaitFor(txnTs, waitForTxn, keyHash uint64) {
-	dt.handleRemoteTask(deadlockPb.DeadlockRequestType_CleanUpWaitFor, txnTs, waitForTxn, keyHash)
+	dt.handleRemoteTask(deadlockPb.DeadlockRequestType_CleanUpWaitFor, txnTs, waitForTxn, keyHash, diagnosticContext{})
 }
 
 // Detect post the detection request to local deadlock detector or remote first region leader,
 // the caller should use `waiter.ch` to receive possible deadlock response
-func (dt *DetectorClient) Detect(txnTs uint64, waitForTxnTs uint64, keyHash uint64) {
-	dt.handleRemoteTask(deadlockPb.DeadlockRequestType_Detect, txnTs, waitForTxnTs, keyHash)
+func (dt *DetectorClient) Detect(txnTs uint64, waitForTxnTs uint64, keyHash uint64, key []byte, resourceGroupTag []byte) {
+	dt.handleRemoteTask(deadlockPb.DeadlockRequestType_Detect, txnTs, waitForTxnTs, keyHash, diagnosticContext{
+		key:              key,
+		resourceGroupTag: resourceGroupTag,
+	})
 }
 
 // convertErrToResp converts `ErrDeadlock` to `DeadlockResponse` proto type
@@ -213,6 +221,18 @@ func convertErrToResp(errDeadlock *ErrDeadlock, txnTs, waitForTxnTs, keyHash uin
 	resp := &deadlockPb.DeadlockResponse{}
 	resp.Entry = entry
 	resp.DeadlockKeyHash = errDeadlock.DeadlockKeyHash
+
+	resp.WaitChain = make([]*deadlockPb.WaitForEntry, 0, len(errDeadlock.WaitChain))
+	for _, item := range errDeadlock.WaitChain {
+		resp.WaitChain = append(resp.WaitChain, &deadlockPb.WaitForEntry{
+			Txn:              item.Txn,
+			WaitForTxn:       item.WaitForTxn,
+			KeyHash:          item.KeyHash,
+			Key:              item.Key,
+			ResourceGroupTag: item.ResourceGroupTag,
+		})
+	}
+
 	return resp
 }
 
