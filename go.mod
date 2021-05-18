@@ -1,7 +1,5 @@
 module github.com/pingcap/tidb
 
-replace github.com/pingcap/parser v0.0.0-20210513020953-ae2c4497c07b => github.com/JmPotato/parser v0.0.0-20210513034240-2f4474019616
-
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/DATA-DOG/go-sqlmock v1.5.0 // indirect
@@ -49,7 +47,7 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20210429093846-65f54a202d7e
 	github.com/pingcap/log v0.0.0-20210317133921-96f4fcab92a4
-	github.com/pingcap/parser v0.0.0-20210513020953-ae2c4497c07b
+	github.com/pingcap/parser v0.0.0-20210518053259-92fa6fe07eb6
 	github.com/pingcap/sysutil v0.0.0-20210315073920-cc0985d983a3
 	github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible
 	github.com/pingcap/tipb v0.0.0-20210422074242-57dd881b81b1
