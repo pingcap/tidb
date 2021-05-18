@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
@@ -85,7 +86,7 @@ type KVStore struct {
 	safePoint uint64
 	spTime    time.Time
 	spMutex   sync.RWMutex  // this is used to update safePoint and spTime
-	closed    chan struct{} // this is used to nofity when the store is closed
+	closed    chan struct{} // this is used to notify when the store is closed
 
 	// storeID -> safeTS, stored as map[uint64]uint64
 	// safeTS here will be used during the Stale Read process,
@@ -357,6 +358,27 @@ func (s *KVStore) GetTiKVClient() (client Client) {
 	s.clientMu.RLock()
 	defer s.clientMu.RUnlock()
 	return s.clientMu.client
+}
+
+// GetMinSafeTS return the minimal safeTS of the storage with given txnScope.
+func (s *KVStore) GetMinSafeTS(txnScope string) uint64 {
+	stores := make([]*Store, 0)
+	allStores := s.regionCache.getStoresByType(tikvrpc.TiKV)
+	if txnScope != oracle.GlobalTxnScope {
+		for _, store := range allStores {
+			if store.IsLabelsMatch([]*metapb.StoreLabel{
+				{
+					Key:   DCLabelKey,
+					Value: txnScope,
+				},
+			}) {
+				stores = append(stores, store)
+			}
+		}
+	} else {
+		stores = allStores
+	}
+	return s.getMinSafeTSByStores(stores)
 }
 
 func (s *KVStore) getSafeTS(storeID uint64) uint64 {
