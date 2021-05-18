@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -1215,25 +1216,37 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.ctxStackAppend(f, types.EmptyName)
 		return
 	}
-	var val string
-	var err error
-	if v.ExplicitScope {
-		err = variable.ValidateGetSystemVar(name, v.IsGlobal)
-		if err != nil {
-			er.err = err
-			return
-		}
-	}
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
 		er.err = variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 		return
 	}
-	// Variable is @@gobal.variable_name or variable is only global scope variable.
-	if v.IsGlobal || sysVar.Scope == variable.ScopeGlobal {
+	if sem.IsEnabled() && sem.IsInvisibleSysVar(sysVar.Name) {
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_VARIABLES_ADMIN")
+		er.b.visitInfo = appendDynamicVisitInfo(er.b.visitInfo, "RESTRICTED_VARIABLES_ADMIN", false, err)
+	}
+	if v.ExplicitScope && !sysVar.HasNoneScope() {
+		if v.IsGlobal && !sysVar.HasGlobalScope() {
+			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
+			return
+		}
+		if !v.IsGlobal && !sysVar.HasSessionScope() {
+			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "SESSION")
+			return
+		}
+	}
+	var val string
+	var err error
+	if sysVar.HasNoneScope() {
+		val = sysVar.Value
+	} else if v.IsGlobal || !sysVar.HasSessionScope() {
+		// The condition "|| !sysVar.HasSessionScope()" is a workaround
+		// for issue https://github.com/pingcap/tidb/issues/24368
+		// Where global values are cached incorrectly. When this issue closes,
+		// the if statement here can be simplified.
 		val, err = variable.GetGlobalSystemVar(sessionVars, name)
 	} else {
-		val, err = variable.GetSessionSystemVar(sessionVars, name)
+		val, err = variable.GetSessionOrGlobalSystemVar(sessionVars, name)
 	}
 	if err != nil {
 		er.err = err
@@ -1241,8 +1254,8 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	}
 	nativeVal, nativeType, nativeFlag := sysVar.GetNativeValType(val)
 	e := expression.DatumToConstant(nativeVal, nativeType, nativeFlag)
-	e.GetType().Charset, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection)
-	e.GetType().Collate, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CollationConnection)
+	e.GetType().Charset, _ = sessionVars.GetSystemVar(variable.CharacterSetConnection)
+	e.GetType().Collate, _ = sessionVars.GetSystemVar(variable.CollationConnection)
 	er.ctxStackAppend(e, types.EmptyName)
 }
 

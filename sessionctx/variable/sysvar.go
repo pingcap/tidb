@@ -171,6 +171,11 @@ func (sv *SysVar) SetGlobalFromHook(s *SessionVars, val string, skipAliases bool
 	return nil
 }
 
+// HasNoneScope returns true if the scope for the sysVar is None.
+func (sv *SysVar) HasNoneScope() bool {
+	return sv.Scope == ScopeNone
+}
+
 // HasSessionScope returns true if the scope for the sysVar includes session.
 func (sv *SysVar) HasSessionScope() bool {
 	return sv.Scope&ScopeSession != 0
@@ -183,6 +188,10 @@ func (sv *SysVar) HasGlobalScope() bool {
 
 // Validate checks if system variable satisfies specific restriction.
 func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
+	// Check that the scope is correct first.
+	if err := sv.validateScope(scope); err != nil {
+		return value, err
+	}
 	// Normalize the value and apply validation based on type.
 	// i.e. TypeBool converts 1/on/ON to ON.
 	normalizedValue, err := sv.validateFromType(vars, value, scope)
@@ -198,17 +207,6 @@ func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (st
 
 // validateFromType provides automatic validation based on the SysVar's type
 func (sv *SysVar) validateFromType(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
-	// Check that the scope is correct and return the appropriate error message.
-	if sv.ReadOnly || sv.Scope == ScopeNone {
-		return value, ErrIncorrectScope.FastGenByArgs(sv.Name, "read only")
-	}
-	if scope == ScopeGlobal && !sv.HasGlobalScope() {
-		return value, errLocalVariable.FastGenByArgs(sv.Name)
-	}
-	if scope == ScopeSession && !sv.HasSessionScope() {
-		return value, errGlobalVariable.FastGenByArgs(sv.Name)
-	}
-
 	// The string "DEFAULT" is a special keyword in MySQL, which restores
 	// the compiled sysvar value. In which case we can skip further validation.
 	if strings.EqualFold(value, "DEFAULT") {
@@ -238,6 +236,37 @@ func (sv *SysVar) validateFromType(vars *SessionVars, value string, scope ScopeF
 		return sv.checkDurationSystemVar(value, vars)
 	}
 	return value, nil // typeString
+}
+
+func (sv *SysVar) validateScope(scope ScopeFlag) error {
+	if sv.ReadOnly || sv.Scope == ScopeNone {
+		return ErrIncorrectScope.FastGenByArgs(sv.Name, "read only")
+	}
+	if scope == ScopeGlobal && !sv.HasGlobalScope() {
+		return errLocalVariable.FastGenByArgs(sv.Name)
+	}
+	if scope == ScopeSession && !sv.HasSessionScope() {
+		return errGlobalVariable.FastGenByArgs(sv.Name)
+	}
+	return nil
+}
+
+// ValidateWithRelaxedValidation normalizes values but can not return errors.
+// Normalization+validation needs to be applied when reading values because older versions of TiDB
+// may be less sophisticated in normalizing values. But errors should be caught and handled,
+// because otherwise there will be upgrade issues.
+func (sv *SysVar) ValidateWithRelaxedValidation(vars *SessionVars, value string, scope ScopeFlag) string {
+	normalizedValue, err := sv.validateFromType(vars, value, scope)
+	if err != nil {
+		return normalizedValue
+	}
+	if sv.Validation != nil {
+		normalizedValue, err = sv.Validation(vars, normalizedValue, value, scope)
+		if err != nil {
+			return normalizedValue
+		}
+	}
+	return normalizedValue
 }
 
 const (
@@ -480,11 +509,15 @@ func SetSysVar(name string, value string) {
 	sysVars[name].Value = value
 }
 
-// GetSysVars returns the sysVars list under a RWLock
+// GetSysVars deep copies the sysVars list under a RWLock
 func GetSysVars() map[string]*SysVar {
 	sysVarsLock.RLock()
 	defer sysVarsLock.RUnlock()
-	return sysVars
+	copy := make(map[string]*SysVar, len(sysVars))
+	for name, sv := range sysVars {
+		copy[name] = sv
+	}
+	return copy
 }
 
 // PluginVarNames is global plugin var names set.
@@ -570,7 +603,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(ForeignKeyChecks, originalValue)
 	}},
-	{Scope: ScopeNone, Name: Hostname, Value: ServerHostname},
+	{Scope: ScopeNone, Name: Hostname, Value: DefHostname},
 	{Scope: ScopeSession, Name: Timestamp, Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetFilesystem, Value: "binary", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterSet(normalizedValue, CharacterSetFilesystem)
@@ -715,8 +748,8 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowMPPExecution, Type: TypeBool, Value: BoolToOnOff(DefTiDBAllowMPPExecution), SetSession: func(s *SessionVars, val string) error {
-		s.AllowMPPExecution = TiDBOptOn(val)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowMPPExecution, Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "ENFORCE"}, SetSession: func(s *SessionVars, val string) error {
+		s.allowMPPExecution = val
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBCJThresholdCount, Value: strconv.Itoa(DefBroadcastJoinThresholdCount), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
@@ -788,7 +821,7 @@ var defaultSysVars = []*SysVar{
 		s.CPUFactor = tidbOptFloat64(val, DefOptCPUFactor)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptTiFlashConcurrencyFactor, Value: strconv.FormatFloat(DefOptTiFlashConcurrencyFactor, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptTiFlashConcurrencyFactor, Value: strconv.FormatFloat(DefOptTiFlashConcurrencyFactor, 'f', -1, 64), Type: TypeFloat, MinValue: 1, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
 		s.CopTiFlashConcurrencyFactor = tidbOptFloat64(val, DefOptTiFlashConcurrencyFactor)
 		return nil
 	}},
@@ -1060,6 +1093,7 @@ var defaultSysVars = []*SysVar{
 		} else if formatVersion == DefTiDBRowFormatV2 {
 			s.RowEncoder.Enable = true
 		}
+		SetDDLReorgRowFormat(tidbOptInt64(val, DefTiDBRowFormatV2))
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBOptimizerSelectivityLevel, Value: strconv.Itoa(DefTiDBOptimizerSelectivityLevel), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
@@ -1138,9 +1172,18 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBConfig, Value: "", ReadOnly: true},
-	{Scope: ScopeGlobal, Name: TiDBDDLReorgWorkerCount, Value: strconv.Itoa(DefTiDBDDLReorgWorkerCount), Type: TypeUnsigned, MinValue: 1, MaxValue: uint64(maxDDLReorgWorkerCount)},
-	{Scope: ScopeGlobal, Name: TiDBDDLReorgBatchSize, Value: strconv.Itoa(DefTiDBDDLReorgBatchSize), Type: TypeUnsigned, MinValue: int64(MinDDLReorgBatchSize), MaxValue: uint64(MaxDDLReorgBatchSize), AutoConvertOutOfRange: true},
-	{Scope: ScopeGlobal, Name: TiDBDDLErrorCountLimit, Value: strconv.Itoa(DefTiDBDDLErrorCountLimit), Type: TypeUnsigned, MinValue: 0, MaxValue: uint64(math.MaxInt64), AutoConvertOutOfRange: true},
+	{Scope: ScopeGlobal, Name: TiDBDDLReorgWorkerCount, Value: strconv.Itoa(DefTiDBDDLReorgWorkerCount), Type: TypeUnsigned, MinValue: 1, MaxValue: uint64(maxDDLReorgWorkerCount), SetSession: func(s *SessionVars, val string) error {
+		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBDDLReorgBatchSize, Value: strconv.Itoa(DefTiDBDDLReorgBatchSize), Type: TypeUnsigned, MinValue: int64(MinDDLReorgBatchSize), MaxValue: uint64(MaxDDLReorgBatchSize), AutoConvertOutOfRange: true, SetSession: func(s *SessionVars, val string) error {
+		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBDDLErrorCountLimit, Value: strconv.Itoa(DefTiDBDDLErrorCountLimit), Type: TypeUnsigned, MinValue: 0, MaxValue: uint64(math.MaxInt64), AutoConvertOutOfRange: true, SetSession: func(s *SessionVars, val string) error {
+		SetDDLErrorCountLimit(tidbOptInt64(val, DefTiDBDDLErrorCountLimit))
+		return nil
+	}},
 	{Scope: ScopeSession, Name: TiDBDDLReorgPriority, Value: "PRIORITY_LOW", SetSession: func(s *SessionVars, val string) error {
 		s.setDDLReorgPriority(val)
 		return nil
@@ -1210,7 +1253,7 @@ var defaultSysVars = []*SysVar{
 		// To prevent this strange position, prevent setting to OFF when any of these sysVars are ON of the same scope.
 
 		if normalizedValue == Off {
-			for _, potentialIncompatibleSysVar := range []string{TxReadOnly, TransactionReadOnly, OfflineMode, SuperReadOnly, serverReadOnly} {
+			for _, potentialIncompatibleSysVar := range []string{TxReadOnly, TransactionReadOnly, OfflineMode, SuperReadOnly, ReadOnly} {
 				val, _ := vars.GetSystemVar(potentialIncompatibleSysVar) // session scope
 				if scope == ScopeGlobal {                                // global scope
 					var err error
@@ -1231,11 +1274,11 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeSession, Name: TiDBReplicaRead, Value: "leader", Type: TypeEnum, PossibleValues: []string{"leader", "follower", "leader-and-follower"}, SetSession: func(s *SessionVars, val string) error {
 		if strings.EqualFold(val, "follower") {
-			s.SetReplicaRead(tikvstore.ReplicaReadFollower)
+			s.SetReplicaRead(kv.ReplicaReadFollower)
 		} else if strings.EqualFold(val, "leader-and-follower") {
-			s.SetReplicaRead(tikvstore.ReplicaReadMixed)
+			s.SetReplicaRead(kv.ReplicaReadMixed)
 		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
-			s.SetReplicaRead(tikvstore.ReplicaReadLeader)
+			s.SetReplicaRead(kv.ReplicaReadLeader)
 		}
 		return nil
 	}},
