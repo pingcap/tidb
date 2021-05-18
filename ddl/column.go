@@ -1612,7 +1612,7 @@ func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, tab
 	}
 	rowCount := len(rows)
 	if rowCount != 0 {
-		if isDataTruncated || ctx.GetSessionVars().EnableChangeColumnType {
+		if isDataTruncated {
 			return ErrWarnDataTruncated.GenWithStackByArgs(newCol.L, rowCount)
 		}
 		return errInvalidUseOfNull
