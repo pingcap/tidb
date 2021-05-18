@@ -2955,7 +2955,7 @@ func (s *testEvaluatorSuite) TestTiDBBoundedStaleness(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestGetIntervalFromDecimal(c *C) {
-	du := baseDateArithmitical{}
+	du := baseDateArithmetical{}
 
 	tests := []struct {
 		param  string
