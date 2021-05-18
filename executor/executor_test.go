@@ -8209,10 +8209,10 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select * from information_schema.dead_lock").Check(
 		testutil.RowsWithSep("/",
-			id1 + "/2021-05-10 01:02:03.456789/101/aabbccdd/6B31/<nil>/102",
-			id1 + "1/2021-05-10 01:02:03.456789/102/ddccbbaa/6B32/[sql1]/101",
-			id2 + "2/2022-06-11 02:03:04.987654/201/<nil>/<nil>/[]/202",
-			id2 + "2/2022-06-11 02:03:04.987654/202/<nil>/<nil>/[sql1, sql2, sql3]/203",
-			id2 + "2/2022-06-11 02:03:04.987654/203/<nil>/<nil>/<nil>/201",
+			id1+"/2021-05-10 01:02:03.456789/101/aabbccdd/6B31/<nil>/102",
+			id1+"/2021-05-10 01:02:03.456789/102/ddccbbaa/6B32/[sql1]/101",
+			id2+"/2022-06-11 02:03:04.987654/201/<nil>/<nil>/[]/202",
+			id2+"/2022-06-11 02:03:04.987654/202/<nil>/<nil>/[sql1, sql2, sql3]/203",
+			id2+"/2022-06-11 02:03:04.987654/203/<nil>/<nil>/<nil>/201",
 		))
 }

@@ -1542,8 +1542,8 @@ func (s *testTableSuite) TestInfoschemaDeadlockPrivilege(c *C) {
 	tk := s.newTestKitWithRoot(c)
 	tk.MustExec("create user 'testuser'@'localhost'")
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{
-		Username:     "testuser",
-		Hostname:     "localhost",
+		Username: "testuser",
+		Hostname: "localhost",
 	}, nil, nil), IsTrue)
 	err := tk.QueryToErr("select * from information_schema.dead_lock")
 	c.Assert(err, NotNil)
@@ -1553,8 +1553,8 @@ func (s *testTableSuite) TestInfoschemaDeadlockPrivilege(c *C) {
 	tk.MustExec("create user 'testuser2'@'localhost'")
 	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{
-		Username:     "testuser2",
-		Hostname:     "localhost",
+		Username: "testuser2",
+		Hostname: "localhost",
 	}, nil, nil), IsTrue)
 	_ = tk.MustQuery("select * from information_schema.dead_lock")
 }
