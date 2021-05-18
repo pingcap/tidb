@@ -417,6 +417,8 @@ type Storage interface {
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
 	// GetMemCache return memory manager of the storage.
 	GetMemCache() MemManager
+	// GetMinSafeTS return the minimal SafeTS of the storage with given txnScope.
+	GetMinSafeTS(txnScope string) uint64
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.

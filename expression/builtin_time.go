@@ -27,6 +27,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -7112,4 +7113,98 @@ func handleInvalidZeroTime(ctx sessionctx.Context, t types.Time) (bool, error) {
 		return false, nil
 	}
 	return true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
+}
+
+// tidbBoundedStalenessFunctionClass reads a time window [a, b] and compares it with the latest SafeTS
+// to determine which TS to use in a read only transaction.
+type tidbBoundedStalenessFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbBoundedStalenessFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETDatetime, types.ETDatetime)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinTiDBBoundedStalenessSig{bf}
+	return sig, nil
+}
+
+type builtinTiDBBoundedStalenessSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTiDBBoundedStalenessSig) Clone() builtinFunc {
+	newSig := &builtinTidbParseTsoSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinTiDBBoundedStalenessSig) evalTime(row chunk.Row) (types.Time, bool, error) {
+	leftTime, isNull, err := b.args[0].EvalTime(b.ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
+	}
+	rightTime, isNull, err := b.args[1].EvalTime(b.ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
+	}
+	if invalidLeftTime, invalidRightTime := leftTime.InvalidZero(), rightTime.InvalidZero(); invalidLeftTime || invalidRightTime {
+		if invalidLeftTime {
+			err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, leftTime.String()))
+		}
+		if invalidRightTime {
+			err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, rightTime.String()))
+		}
+		return types.ZeroTime, true, err
+	}
+	timeZone := getTimeZone(b.ctx)
+	minTime, err := leftTime.GoTime(timeZone)
+	if err != nil {
+		return types.ZeroTime, true, err
+	}
+	maxTime, err := rightTime.GoTime(timeZone)
+	if err != nil {
+		return types.ZeroTime, true, err
+	}
+	if minTime.After(maxTime) {
+		return types.ZeroTime, true, nil
+	}
+	// Because the minimum unit of a TSO is millisecond, so we only need fsp to be 3.
+	return types.NewTime(types.FromGoTime(calAppropriateTime(minTime, maxTime, getMinSafeTime(b.ctx, timeZone))), mysql.TypeDatetime, 3), false, nil
+}
+
+func getMinSafeTime(sessionCtx sessionctx.Context, timeZone *time.Location) time.Time {
+	var minSafeTS uint64
+	if store := sessionCtx.GetStore(); store != nil {
+		minSafeTS = store.GetMinSafeTS(sessionCtx.GetSessionVars().CheckAndGetTxnScope())
+	}
+	// Inject mocked SafeTS for test.
+	failpoint.Inject("injectSafeTS", func(val failpoint.Value) {
+		injectTS := val.(int)
+		minSafeTS = uint64(injectTS)
+	})
+	// Try to get from the stmt cache to make sure this function is deterministic.
+	stmtCtx := sessionCtx.GetSessionVars().StmtCtx
+	minSafeTS = stmtCtx.GetOrStoreStmtCache(stmtctx.StmtSafeTSCacheKey, minSafeTS).(uint64)
+	return oracle.GetTimeFromTS(minSafeTS).In(timeZone)
+}
+
+// For a SafeTS t and a time range [t1, t2]:
+//   1. If t < t1, we will use t1 as the result,
+//      and with it, a read request may fail because it's an unreached SafeTS.
+//   2. If t1 <= t <= t2, we will use t as the result, and with it,
+//      a read request won't fail.
+//   2. If t2 < t, we will use t2 as the result,
+//      and with it, a read request won't fail because it's bigger than the latest SafeTS.
+func calAppropriateTime(minTime, maxTime, minSafeTime time.Time) time.Time {
+	if minSafeTime.Before(minTime) {
+		return minTime
+	} else if minSafeTime.After(maxTime) {
+		return maxTime
+	}
+	return minSafeTime
 }
