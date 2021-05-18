@@ -23,16 +23,16 @@ import (
 // Backoffer is a utility for retrying queries.
 type Backoffer = retry.Backoffer
 
-// BackoffType defines the backoff type.
-type BackoffType = retry.BackoffType
+// BackoffConfig defines the backoff configuration.
+type BackoffConfig = retry.Config
 
-// Back off types.
-const (
-	BoRegionMiss  = retry.BoRegionMiss
-	BoTiFlashRPC  = retry.BoTiFlashRPC
-	BoTxnLockFast = retry.BoTxnLockFast
-	BoTxnLock     = retry.BoTxnLock
-	BoPDRPC       = retry.BoPDRPC
+// Back off configurations.
+var (
+	BoRegionMiss = retry.BoRegionMiss
+	BoTiFlashRPC = retry.BoTiFlashRPC
+	BoTxnLock    = retry.BoTxnLock
+	BoPDRPC      = retry.BoPDRPC
+	BoTiKVRPC    = retry.BoTiKVRPC
 )
 
 // Maximum total sleep time(in ms) for kv/cop commands.
