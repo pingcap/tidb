@@ -263,7 +263,6 @@ func testReaderWithCache(c *check.C) {
 	chk := NewChunkWithCapacity(field, 1)
 	chk.AppendString(0, buf.String())
 	l := NewListInDisk(field)
-	c.Assert(l.isReaderStale, check.IsTrue)
 	err := l.Add(chk)
 	c.Assert(err, check.IsNil)
 
@@ -328,35 +327,6 @@ func testReaderWithCache(c *check.C) {
 	c.Assert(err, check.IsNil)
 	c.Assert(readCnt, check.Equals, 10)
 	c.Assert(reflect.DeepEqual(data, buf.Bytes()[1002:1012]), check.IsTrue)
-
-	// Test l.isReaderStale works properly
-	// It means only new reader is alloced after writing.
-	oriReader := l.r
-	for i := 0; i < 100; i++ {
-		row, err = l.GetRow(RowPtr{0, 0})
-		c.Assert(err, check.IsNil)
-		c.Assert(oriReader == l.r, check.IsTrue)
-		c.Assert(l.isReaderStale, check.IsFalse)
-	}
-	// After write, reader is stale.
-	err = l.Add(chk)
-	c.Assert(err, check.IsNil)
-	c.Assert(oriReader == l.r, check.IsTrue)
-	c.Assert(l.isReaderStale, check.IsTrue)
-
-	// New reader is generated when reading.
-	row, err = l.GetRow(RowPtr{1, 0})
-	c.Assert(err, check.IsNil)
-	c.Assert(oriReader != l.r, check.IsTrue)
-	c.Assert(l.isReaderStale, check.IsFalse)
-	oriReader = l.r
-
-	for i := 0; i < 100; i++ {
-		row, err = l.GetRow(RowPtr{0, 0})
-		c.Assert(err, check.IsNil)
-		c.Assert(oriReader == l.r, check.IsTrue)
-		c.Assert(l.isReaderStale, check.IsFalse)
-	}
 }
 
 // Here we test situations where size of data is small, so no data is flushed to disk.
