@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	derr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/store/driver/options"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 )
 
 type tikvSnapshot struct {
@@ -66,27 +66,35 @@ func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
 
 func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 	switch opt {
-	case tikvstore.IsolationLevel:
+	case kv.IsolationLevel:
 		level := getTiKVIsolationLevel(val.(kv.IsoLevel))
 		s.KVSnapshot.SetIsolationLevel(level)
-	case tikvstore.Priority:
+	case kv.Priority:
 		s.KVSnapshot.SetPriority(getTiKVPriority(val.(int)))
-	case tikvstore.NotFillCache:
+	case kv.NotFillCache:
 		s.KVSnapshot.SetNotFillCache(val.(bool))
-	case tikvstore.SnapshotTS:
+	case kv.SnapshotTS:
 		s.KVSnapshot.SetSnapshotTS(val.(uint64))
-	case tikvstore.ReplicaRead:
-		s.KVSnapshot.SetReplicaRead(val.(tikvstore.ReplicaReadType))
-	case tikvstore.SampleStep:
+	case kv.ReplicaRead:
+		t := options.GetTiKVReplicaReadType(val.(kv.ReplicaReadType))
+		s.KVSnapshot.SetReplicaRead(t)
+	case kv.SampleStep:
 		s.KVSnapshot.SetSampleStep(val.(uint32))
-	case tikvstore.TaskID:
+	case kv.TaskID:
 		s.KVSnapshot.SetTaskID(val.(uint64))
-	case tikvstore.IsStalenessReadOnly:
+	case kv.CollectRuntimeStats:
+		s.KVSnapshot.SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
+	case kv.IsStalenessReadOnly:
 		s.KVSnapshot.SetIsStatenessReadOnly(val.(bool))
-	case tikvstore.MatchStoreLabels:
+	case kv.MatchStoreLabels:
 		s.KVSnapshot.SetMatchStoreLabels(val.([]*metapb.StoreLabel))
-	default:
-		s.KVSnapshot.SetOption(opt, val)
+	}
+}
+
+func (s *tikvSnapshot) DelOption(opt int) {
+	switch opt {
+	case kv.CollectRuntimeStats:
+		s.KVSnapshot.SetRuntimeStats(nil)
 	}
 }
 

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -310,7 +311,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
 	ctx, err := s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, seed)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Addr, Equals, "store2")
-	s.cache.OnSendFail(NewNoopBackoff(context.Background()), ctx, false, errors.New("send fail"))
+	s.cache.OnSendFail(retry.NewNoopBackoff(context.Background()), ctx, false, errors.New("send fail"))
 	s.cache.checkAndResolve(nil)
 	s.cache.UpdateLeader(loc.Region, s.store2, 0)
 	addr := s.getAddr(c, []byte("a"), kv.ReplicaReadLeader, 0)
@@ -870,7 +871,7 @@ func (s *testRegionCacheSuite) TestRegionEpochAheadOfTiKV(c *C) {
 	c.Assert(err, IsNil)
 	err = cache.OnRegionEpochNotMatch(bo, &RPCContext{Region: region.VerID()}, []*metapb.Region{&r2})
 	c.Assert(err, IsNil)
-	c.Assert(len(bo.errors), Equals, 2)
+	c.Assert(bo.ErrorsNum(), Equals, 2)
 }
 
 func (s *testRegionCacheSuite) TestRegionEpochOnTiFlash(c *C) {
@@ -1329,7 +1330,7 @@ func (s *testRegionCacheSuite) TestPeersLenChange(c *C) {
 	s.cache.insertRegionToCache(region)
 
 	// OnSendFail should not panic
-	s.cache.OnSendFail(NewNoopBackoff(context.Background()), ctx, false, errors.New("send fail"))
+	s.cache.OnSendFail(retry.NewNoopBackoff(context.Background()), ctx, false, errors.New("send fail"))
 }
 
 func createSampleRegion(startKey, endKey []byte) *Region {
