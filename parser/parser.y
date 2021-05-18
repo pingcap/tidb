@@ -2660,6 +2660,13 @@ BeginTransactionStmt:
 			ReadOnly: true,
 		}
 	}
+|	"START" "TRANSACTION" "READ" "ONLY" AsOfClause
+	{
+		$$ = &ast.BeginStmt{
+			ReadOnly: true,
+			AsOf:     $5.(*ast.AsOfClause),
+		}
+	}
 |	"START" "TRANSACTION" "READ" "ONLY" "WITH" "TIMESTAMP" "BOUND" TimestampBound
 	{
 		$$ = &ast.BeginStmt{
