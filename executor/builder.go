@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
@@ -953,19 +954,6 @@ func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) E
 // Note that this function may be called by inner workers of index lookup join concurrently.
 // Be careful to avoid data race.
 func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannercore.PhysicalUnionScan) Executor {
-	// Adjust UnionScan->PartitionTable->Reader
-	// to PartitionTable->UnionScan->Reader
-	// The build of UnionScan executor is delay to the nextPartition() function
-	// because the Reader executor is available there.
-	if x, ok := reader.(*PartitionTableExecutor); ok {
-		nextPartitionForReader := x.nextPartition
-		x.nextPartition = nextPartitionForUnionScan{
-			b:     b,
-			us:    v,
-			child: nextPartitionForReader,
-		}
-		return x
-	}
 	// If reader is union, it means a partition table and we should transfer as above.
 	if x, ok := reader.(*UnionExec); ok {
 		for i, child := range x.children {
@@ -1544,7 +1532,9 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TablePlacementPolicy),
 			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
-			strings.ToLower(infoschema.TableClientErrorsSummaryByHost):
+			strings.ToLower(infoschema.TableClientErrorsSummaryByHost),
+			strings.ToLower(infoschema.TableTiDBTrx),
+			strings.ToLower(infoschema.ClusterTableTiDBTrx):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -2040,7 +2030,65 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 	return analyzeTask
 }
 
+func (b *executorBuilder) buildAnalyzeSamplingPushdown(
+	task plannercore.AnalyzeColumnsTask,
+	opts map[ast.AnalyzeOptionType]uint64,
+	autoAnalyze string,
+) *analyzeTask {
+	availableIdx := make([]*model.IndexInfo, 0, len(task.Indexes))
+	colGroups := make([]*tipb.AnalyzeColumnGroup, 0, len(task.Indexes))
+	if len(task.Indexes) > 0 {
+		for _, idx := range task.Indexes {
+			availableIdx = append(availableIdx, idx)
+			colGroup := &tipb.AnalyzeColumnGroup{
+				ColumnOffsets: make([]int64, 0, len(idx.Columns)),
+			}
+			for _, col := range idx.Columns {
+				colGroup.ColumnOffsets = append(colGroup.ColumnOffsets, int64(col.Offset))
+			}
+			colGroups = append(colGroups, colGroup)
+		}
+	}
+
+	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
+	sc := b.ctx.GetSessionVars().StmtCtx
+	e := &AnalyzeColumnsExec{
+		ctx:         b.ctx,
+		tableID:     task.TableID,
+		colsInfo:    task.ColsInfo,
+		handleCols:  task.HandleCols,
+		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency(),
+		analyzePB: &tipb.AnalyzeReq{
+			Tp:             tipb.AnalyzeType_TypeFullSampling,
+			Flags:          sc.PushDownFlags(),
+			TimeZoneOffset: offset,
+		},
+		opts:       opts,
+		analyzeVer: task.StatsVersion,
+		indexes:    availableIdx,
+	}
+	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
+		BucketSize:   int64(opts[ast.AnalyzeOptNumBuckets]),
+		SampleSize:   int64(opts[ast.AnalyzeOptNumSamples]),
+		SketchSize:   maxSketchSize,
+		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle),
+		ColumnGroups: colGroups,
+	}
+	if task.TblInfo != nil {
+		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
+		if task.TblInfo.IsCommonHandle {
+			e.analyzePB.ColReq.PrimaryPrefixColumnIds = tables.PrimaryPrefixColumnIDs(task.TblInfo)
+		}
+	}
+	b.err = plannercore.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, task.ColsInfo)
+	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze table"}
+	return &analyzeTask{taskType: colTask, colExec: e, job: job}
+}
+
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
+	if task.StatsVersion == statistics.Version3 {
+		return b.buildAnalyzeSamplingPushdown(task, opts, autoAnalyze)
+	}
 	cols := task.ColsInfo
 	if hasPkHist(task.HandleCols) {
 		colInfo := task.TblInfo.Columns[task.HandleCols.GetCol(0).Index]
@@ -2429,11 +2477,14 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		outerKeyCols[i] = v.OuterJoinKeys[i].Index
 	}
 	innerKeyCols := make([]int, len(v.InnerJoinKeys))
+	innerKeyColIDs := make([]int64, len(v.InnerJoinKeys))
 	for i := 0; i < len(v.InnerJoinKeys); i++ {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
+		innerKeyColIDs[i] = v.InnerJoinKeys[i].ID
 	}
 	e.outerCtx.keyCols = outerKeyCols
 	e.innerCtx.keyCols = innerKeyCols
+	e.innerCtx.keyColIDs = innerKeyColIDs
 
 	outerHashCols, innerHashCols := make([]int, len(v.OuterHashKeys)), make([]int, len(v.InnerHashKeys))
 	for i := 0; i < len(v.OuterHashKeys); i++ {
@@ -2686,31 +2737,6 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	}
 	if v.StoreType == kv.TiFlash {
 		sctx.IsTiFlash.Store(true)
-		partsExecutor := make([]Executor, 0, len(partitions))
-		for _, part := range partitions {
-			exec, err := buildNoRangeTableReader(b, v)
-			if err != nil {
-				b.err = err
-				return nil
-			}
-			exec.ranges = ts.Ranges
-			nexec, err := nextPartitionForTableReader{exec: exec}.nextPartition(context.Background(), part)
-			if err != nil {
-				b.err = err
-				return nil
-			}
-			partsExecutor = append(partsExecutor, nexec)
-		}
-		if len(partsExecutor) == 0 {
-			return &TableDualExec{baseExecutor: *ret.base()}
-		}
-		if len(partsExecutor) == 1 {
-			return partsExecutor[0]
-		}
-		return &UnionExec{
-			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), partsExecutor...),
-			concurrency:  b.ctx.GetSessionVars().UnionConcurrency(),
-		}
 	}
 
 	if len(partitions) == 0 {
@@ -2763,7 +2789,6 @@ func keyColumnsIncludeAllPartitionColumns(keyColumns []int, pe *tables.Partition
 func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, schema *expression.Schema, partitionInfo *plannercore.PartitionInfo,
 	lookUpContent []*indexJoinLookUpContent) (usedPartition []table.PhysicalTable, canPrune bool, contentPos []int64, err error) {
 	partitionTbl := tbl.(table.PartitionedTable)
-	locateKey := make([]types.Datum, schema.Len())
 	// TODO: condition based pruning can be do in advance.
 	condPruneResult, err := partitionPruning(ctx, partitionTbl, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
 	if err != nil {
@@ -2778,22 +2803,44 @@ func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, sch
 	if err != nil {
 		return nil, false, nil, err
 	}
+
+	// recalculate key column offsets
+	if lookUpContent[0].keyColIDs == nil {
+		return nil, false, nil,
+			dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("cannot get column IDs when dynamic pruning")
+	}
+	keyColOffsets := make([]int, len(lookUpContent[0].keyColIDs))
+	for i, colID := range lookUpContent[0].keyColIDs {
+		offset := -1
+		for j, col := range partitionTbl.Cols() {
+			if colID == col.ID {
+				offset = j
+				break
+			}
+		}
+		if offset == -1 {
+			return nil, false, nil,
+				dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("invalid column offset when dynamic pruning")
+		}
+		keyColOffsets[i] = offset
+	}
+
 	offsetMap := make(map[int]bool)
-	for _, offset := range lookUpContent[0].keyCols {
+	for _, offset := range keyColOffsets {
 		offsetMap[offset] = true
 	}
 	for _, offset := range pe.ColumnOffset {
 		if _, ok := offsetMap[offset]; !ok {
-			logutil.BgLogger().Warn("can not runtime prune in index join")
 			return condPruneResult, false, nil, nil
 		}
 	}
 
+	locateKey := make([]types.Datum, len(partitionTbl.Cols()))
 	partitions := make(map[int64]table.PhysicalTable)
 	contentPos = make([]int64, len(lookUpContent))
 	for idx, content := range lookUpContent {
 		for i, date := range content.keys {
-			locateKey[content.keyCols[i]] = date
+			locateKey[keyColOffsets[i]] = date
 		}
 		p, err := partitionTbl.GetPartitionByRow(ctx, locateKey)
 		if err != nil {
@@ -3412,7 +3459,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
+		SetFromInfoSchema(e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)).
 		Build()
 	if err != nil {
 		return nil, err

@@ -577,8 +577,8 @@ func (s *testSerialStatsSuite) TestAutoAnalyzeOnEmptyTable(c *C) {
 	// test if it will be limited by the time range
 	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsFalse)
 
-	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='00:00 +0000'"))
-	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='23:59 +0000'"))
+	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
+	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
 }
 

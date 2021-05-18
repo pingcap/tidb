@@ -106,10 +106,6 @@ func (t *mockTxn) GetSnapshot() Snapshot {
 	return nil
 }
 
-func (t *mockTxn) GetUnionStore() UnionStore {
-	return nil
-}
-
 func (t *mockTxn) NewStagingBuffer() MemBuffer {
 	return nil
 }
@@ -215,6 +211,10 @@ func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, 
 
 func (s *mockStorage) GetMemCache() MemManager {
 	return nil
+}
+
+func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
+	return 0
 }
 
 // newMockStorage creates a new mockStorage.

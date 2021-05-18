@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -146,7 +145,7 @@ func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestB
 		builder.Request.Data, builder.err = ana.Marshal()
 		builder.Request.NotFillCache = true
 		builder.Request.IsolationLevel = kv.RC
-		builder.Request.Priority = tikvstore.PriorityLow
+		builder.Request.Priority = kv.PriorityLow
 	}
 
 	return builder
@@ -210,13 +209,13 @@ func (builder *RequestBuilder) getIsolationLevel() kv.IsoLevel {
 func (builder *RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
 	switch sv.StmtCtx.Priority {
 	case mysql.NoPriority, mysql.DelayedPriority:
-		return tikvstore.PriorityNormal
+		return kv.PriorityNormal
 	case mysql.LowPriority:
-		return tikvstore.PriorityLow
+		return kv.PriorityLow
 	case mysql.HighPriority:
-		return tikvstore.PriorityHigh
+		return kv.PriorityHigh
 	}
-	return tikvstore.PriorityNormal
+	return kv.PriorityNormal
 }
 
 // SetFromSessionVars sets the following fields for "kv.Request" from session variables:
@@ -231,10 +230,9 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.TaskID = sv.StmtCtx.TaskID
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.GetReplicaRead()
-	if sv.SnapshotInfoschema != nil {
-		builder.Request.SchemaVar = infoschema.GetInfoSchemaBySessionVars(sv).SchemaMetaVersion()
-	} else {
-		builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
+	// in tests, it may be null
+	if is, ok := sv.GetInfoSchema().(infoschema.InfoSchema); ok {
+		builder.Request.SchemaVar = is.SchemaMetaVersion()
 	}
 	builder.txnScope = sv.TxnCtx.TxnScope
 	builder.IsStaleness = sv.TxnCtx.IsStaleness

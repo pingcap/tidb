@@ -154,6 +154,7 @@ type Transaction interface {
 	// String implements fmt.Stringer interface.
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
+	// Will block until all keys are locked successfully or an error occurs.
 	LockKeys(ctx context.Context, lockCtx *LockCtx, keys ...Key) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
@@ -173,8 +174,6 @@ type Transaction interface {
 	GetMemBuffer() MemBuffer
 	// GetSnapshot returns the Snapshot binding to this transaction.
 	GetSnapshot() Snapshot
-	// GetUnionStore returns the UnionStore binding to this transaction.
-	GetUnionStore() UnionStore
 	// SetVars sets variables to the transaction.
 	SetVars(vars interface{})
 	// GetVars gets variables from the transaction.
@@ -274,7 +273,7 @@ type Request struct {
 	// call would not corresponds to a whole region result.
 	Streaming bool
 	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
-	ReplicaRead tikvstore.ReplicaReadType
+	ReplicaRead ReplicaReadType
 	// StoreType represents this request is sent to the which type of store.
 	StoreType StoreType
 	// Cacheable is true if the request can be cached. Currently only deterministic DAG requests can be cached.
@@ -341,12 +340,19 @@ type Driver interface {
 }
 
 // TransactionOption indicates the option when beginning a transaction
+// `TxnScope` must be set for each object
+// Every other fields are optional, but currently at most one of them can be set
 type TransactionOption struct {
 	TxnScope   string
 	StartTS    *uint64
 	PrevSec    *uint64
 	MinStartTS *uint64
 	MaxPrevSec *uint64
+}
+
+// DefaultTransactionOption creates a default TransactionOption, ie. Work in GlobalTxnScope and get start ts when got used
+func DefaultTransactionOption() TransactionOption {
+	return TransactionOption{TxnScope: oracle.GlobalTxnScope}
 }
 
 // SetMaxPrevSec set maxPrevSec
@@ -411,6 +417,8 @@ type Storage interface {
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
 	// GetMemCache return memory manager of the storage.
 	GetMemCache() MemManager
+	// GetMinSafeTS return the minimal SafeTS of the storage with given txnScope.
+	GetMinSafeTS(txnScope string) uint64
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.
@@ -438,6 +446,13 @@ type SplittableStore interface {
 	WaitScatterRegionFinish(ctx context.Context, regionID uint64, backOff int) error
 	CheckRegionInScattering(regionID uint64) (bool, error)
 }
+
+// Priority value for transaction priority.
+const (
+	PriorityNormal = iota
+	PriorityLow
+	PriorityHigh
+)
 
 // IsoLevel is the transaction's isolation level.
 type IsoLevel int

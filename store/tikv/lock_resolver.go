@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
 	pd "github.com/tikv/pd/client"
@@ -228,7 +229,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 	// locks have been cleaned before GC.
 	expiredLocks := locks
 
-	callerStartTS, err := lr.store.GetOracle().GetTimestamp(bo.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	callerStartTS, err := lr.store.GetOracle().GetTimestamp(bo.GetCtx(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -297,7 +298,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 	}
 
 	if regionErr != nil {
-		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+		err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -473,8 +474,8 @@ func (t *txnExpireTime) value() int64 {
 // seconds before calling it after Prewrite.
 func (lr *LockResolver) GetTxnStatus(txnID uint64, callerStartTS uint64, primary []byte) (TxnStatus, error) {
 	var status TxnStatus
-	bo := NewBackoffer(context.Background(), cleanupMaxBackoff)
-	currentTS, err := lr.store.GetOracle().GetLowResolutionTimestamp(bo.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	bo := retry.NewBackoffer(context.Background(), cleanupMaxBackoff)
+	currentTS, err := lr.store.GetOracle().GetLowResolutionTimestamp(bo.GetCtx(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	if err != nil {
 		return status, err
 	}
@@ -485,19 +486,15 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 	var currentTS uint64
 	var err error
 	var status TxnStatus
-	if l.UseAsyncCommit && !forceSyncCommit {
-		// Async commit doesn't need the current ts since it uses the minCommitTS.
-		currentTS = 0
-		// Set to 0 so as not to push forward min commit ts.
-		callerStartTS = 0
-	} else if l.TTL == 0 {
+
+	if l.TTL == 0 {
 		// NOTE: l.TTL = 0 is a special protocol!!!
 		// When the pessimistic txn prewrite meets locks of a txn, it should resolve the lock **unconditionally**.
 		// In this case, TiKV use lock TTL = 0 to notify TiDB, and TiDB should resolve the lock!
 		// Set currentTS to max uint64 to make the lock expired.
 		currentTS = math.MaxUint64
 	} else {
-		currentTS, err = lr.store.GetOracle().GetLowResolutionTimestamp(bo.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		currentTS, err = lr.store.GetOracle().GetLowResolutionTimestamp(bo.GetCtx(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		if err != nil {
 			return TxnStatus{}, err
 		}
@@ -526,12 +523,12 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 		// getTxnStatus() returns it when the secondary locks exist while the primary lock doesn't.
 		// This is likely to happen in the concurrently prewrite when secondary regions
 		// success before the primary region.
-		if err := bo.Backoff(boTxnNotFound, err); err != nil {
-			logutil.Logger(bo.ctx).Warn("getTxnStatusFromLock backoff fail", zap.Error(err))
+		if err := bo.Backoff(retry.BoTxnNotFound, err); err != nil {
+			logutil.Logger(bo.GetCtx()).Warn("getTxnStatusFromLock backoff fail", zap.Error(err))
 		}
 
 		if lr.store.GetOracle().UntilExpired(l.TxnID, l.TTL, &oracle.Option{TxnScope: oracle.GlobalTxnScope}) <= 0 {
-			logutil.Logger(bo.ctx).Warn("lock txn not found, lock has expired",
+			logutil.Logger(bo.GetCtx()).Warn("lock txn not found, lock has expired",
 				zap.Uint64("CallerStartTs", callerStartTS),
 				zap.Stringer("lock str", l))
 			if l.LockType == kvrpcpb.Op_PessimisticLock {
@@ -603,7 +600,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			return status, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return status, errors.Trace(err)
 			}
@@ -739,7 +736,7 @@ func (lr *LockResolver) checkSecondaries(bo *Backoffer, txnID uint64, curKeys []
 		return errors.Trace(err)
 	}
 	if regionErr != nil {
-		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+		err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -870,7 +867,7 @@ func (lr *LockResolver) resolveRegionLocks(bo *Backoffer, l *Lock, region Region
 		return errors.Trace(err)
 	}
 	if regionErr != nil {
-		err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+		err := bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -938,7 +935,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, li
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -989,7 +986,7 @@ func (lr *LockResolver) resolvePessimisticLock(bo *Backoffer, l *Lock, cleanRegi
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1001,7 +998,7 @@ func (lr *LockResolver) resolvePessimisticLock(bo *Backoffer, l *Lock, cleanRegi
 		cmdResp := resp.Resp.(*kvrpcpb.PessimisticRollbackResponse)
 		if keyErr := cmdResp.GetErrors(); len(keyErr) > 0 {
 			err = errors.Errorf("unexpected resolve pessimistic lock err: %s, lock: %v", keyErr[0], l)
-			logutil.Logger(bo.ctx).Error("resolveLock error", zap.Error(err))
+			logutil.Logger(bo.GetCtx()).Error("resolveLock error", zap.Error(err))
 			return err
 		}
 		return nil

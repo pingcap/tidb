@@ -269,25 +269,6 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 		binlog.MutationType_Insert,
 	})
 
-	// Cannot create common clustered index table when binlog client exists.
-	errMsg := "[ddl:8200]Cannot create clustered index table when the binlog is ON"
-	tk.MustGetErrMsg("create table local_clustered_index (c1 varchar(255) primary key clustered);", errMsg)
-	// Create int clustered index table when binlog client exists.
-	tk.MustExec("create table local_clustered_index (c1 bigint primary key clustered);")
-	tk.MustQuery("select tidb_pk_type from information_schema.tables where table_name = 'local_clustered_index' and table_schema = 'test';").
-		Check(testkit.Rows("CLUSTERED"))
-	tk.MustExec("drop table if exists local_clustered_index;")
-	// Test common clustered index tables will not write binlog.
-	tk.Se.GetSessionVars().BinlogClient = nil
-	tk.MustExec("create table local_clustered_index (c1 varchar(255) primary key clustered);")
-	tk.MustQuery("select tidb_pk_type from information_schema.tables where table_name = 'local_clustered_index' and table_schema = 'test';").
-		Check(testkit.Rows("CLUSTERED"))
-	tk.Se.GetSessionVars().BinlogClient = s.client
-	// This statement should not write binlog.
-	tk.MustExec(`insert into local_clustered_index values ("aaaaaa")`)
-	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
-	c.Assert(len(prewriteVal.Mutations), Equals, 0)
-
 	checkBinlogCount(c, pump)
 
 	pump.mu.Lock()
@@ -716,4 +697,37 @@ func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Ta
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
 	c.Assert(err, IsNil)
 	return tbl
+}
+
+func (s *testBinlogSuite) TestTempTableBinlog(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().BinlogClient = s.client
+	tk.MustExec("begin")
+	tk.MustExec("drop table if exists temp_table")
+	ddlQuery := "create global temporary table temp_table(id int) on commit delete rows"
+	tk.MustExec(ddlQuery)
+	ok := mustGetDDLBinlog(s, ddlQuery, c)
+	c.Assert(ok, IsTrue)
+
+	tk.MustExec("insert temp_table value(1)")
+	tk.MustExec("update temp_table set id=id+1")
+	tk.MustExec("commit")
+	prewriteVal := getLatestBinlogPrewriteValue(c, s.pump)
+	c.Assert(len(prewriteVal.Mutations), Equals, 0)
+
+	tk.MustExec("begin")
+	tk.MustExec("delete from temp_table")
+	tk.MustExec("commit")
+	prewriteVal = getLatestBinlogPrewriteValue(c, s.pump)
+	c.Assert(len(prewriteVal.Mutations), Equals, 0)
+
+	ddlQuery = "truncate table temp_table"
+	tk.MustExec(ddlQuery)
+	ok = mustGetDDLBinlog(s, ddlQuery, c)
+	c.Assert(ok, IsTrue)
+
+	ddlQuery = "drop table if exists temp_table"
+	tk.MustExec(ddlQuery)
+	ok = mustGetDDLBinlog(s, ddlQuery, c)
+	c.Assert(ok, IsTrue)
 }
