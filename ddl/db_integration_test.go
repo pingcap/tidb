@@ -2823,5 +2823,5 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 
 	tk.MustExec("set @@tidb_enable_noop_functions = 1")
 	tk.MustExec("create temporary table t (id int)")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1105 TiDB doesn't support local TEMPORARY TABLE yet, TEMPORARY will be parsed but ignored."))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1105 local TEMPORARY TABLE is not supported yet, TEMPORARY will be parsed but ignored"))
 }

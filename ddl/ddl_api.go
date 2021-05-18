@@ -1737,13 +1737,13 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	case ast.TemporaryGlobal:
 		tbInfo.TempTableType = model.TempTableGlobal
 		// "create global temporary table ... on commit preserve rows"
-		if s.OnCommitDelete == false {
+		if !s.OnCommitDelete {
 			return nil, errors.Trace(errUnsupportedOnCommitPreserve)
 		}
 	case ast.TemporaryLocal:
 		// TODO: set "tbInfo.TempTableType = model.TempTableLocal" after local temporary table is supported.
 		tbInfo.TempTableType = model.TempTableNone
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("TiDB doesn't support local TEMPORARY TABLE yet, TEMPORARY will be parsed but ignored."))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("local TEMPORARY TABLE is not supported yet, TEMPORARY will be parsed but ignored"))
 	case ast.TemporaryNone:
 		tbInfo.TempTableType = model.TempTableNone
 	}
