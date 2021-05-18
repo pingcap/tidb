@@ -183,6 +183,7 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 	tk1.MustExec("begin pessimistic")
 	tk1.MustExec("update deadlock set v = v + 1 where k = 1")
 	ts1, err := strconv.ParseUint(tk1.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string), 10, 64)
+	c.Assert(err, IsNil)
 
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk2.MustExec("begin pessimistic")
