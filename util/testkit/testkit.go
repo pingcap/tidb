@@ -258,9 +258,12 @@ func (tk *TestKit) MustNoGlobalStats(table string) bool {
 // MustPartition checks if the result execution plan must read specific partitions.
 func (tk *TestKit) MustPartition(sql string, partitions string, args ...interface{}) *Result {
 	rs := tk.MustQuery("explain "+sql, args...)
-	ok := false
+	ok := len(partitions) == 0
 	for i := range rs.rows {
-		if strings.Compare(rs.rows[i][3], "partition:"+partitions) == 0 {
+		if len(partitions) == 0 && strings.Contains(rs.rows[i][3], "partition:") {
+			ok = false
+		}
+		if len(partitions) != 0 && strings.Compare(rs.rows[i][3], "partition:"+partitions) == 0 {
 			ok = true
 		}
 	}

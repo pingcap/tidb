@@ -965,8 +965,6 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
 
-	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
-	s.dom.GetGlobalVarsCache().Disable()
 	// Disable refreshing summary.
 	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
 	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
@@ -1209,8 +1207,6 @@ func (s *testClusterTableSuite) TestStmtSummaryHistoryTable(c *C) {
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
 
-	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
-	s.dom.GetGlobalVarsCache().Disable()
 	// Disable refreshing summary.
 	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
 	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
@@ -1266,8 +1262,6 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 	tk.MustExec("create global binding for select * from t where t.a = 1 using select * from t ignore index(k) where t.a = 1")
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
-	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
-	s.dom.GetGlobalVarsCache().Disable()
 	// Disable refreshing summary.
 	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
 	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
@@ -1449,7 +1443,7 @@ func (s *testTableSuite) TestPlacementPolicy(c *C) {
 				ID:      "0",
 				Role:    "voter",
 				Count:   3,
-				LabelConstraints: []placement.Constraint{
+				Constraints: []placement.Constraint{
 					{
 						Key:    "zone",
 						Op:     "in",
