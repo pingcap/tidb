@@ -36,6 +36,8 @@ func TestT(t *testing.T) {
 func (s *testDeadlockHistorySuite) TestDeadlockHistoryCollection(c *C) {
 	h := NewDeadlockHistory(1)
 	c.Assert(len(h.GetAll()), Equals, 0)
+	c.Assert(h.head, Equals, 0)
+	c.Assert(h.size, Equals, 0)
 
 	rec1 := &DeadlockRecord{
 		OccurTime: time.Now(),
@@ -45,6 +47,8 @@ func (s *testDeadlockHistorySuite) TestDeadlockHistoryCollection(c *C) {
 	c.Assert(len(res), Equals, 1)
 	c.Assert(res[0], Equals, rec1) // Checking pointer equals is ok.
 	c.Assert(res[0].ID, Equals, uint64(1))
+	c.Assert(h.head, Equals, 0)
+	c.Assert(h.size, Equals, 1)
 
 	rec2 := &DeadlockRecord{
 		OccurTime: time.Now(),
@@ -54,6 +58,8 @@ func (s *testDeadlockHistorySuite) TestDeadlockHistoryCollection(c *C) {
 	c.Assert(len(res), Equals, 1)
 	c.Assert(res[0], Equals, rec2)
 	c.Assert(res[0].ID, Equals, uint64(2))
+	c.Assert(h.head, Equals, 0)
+	c.Assert(h.size, Equals, 1)
 
 	h.Clear()
 	c.Assert(len(h.GetAll()), Equals, 0)
@@ -67,6 +73,8 @@ func (s *testDeadlockHistorySuite) TestDeadlockHistoryCollection(c *C) {
 	c.Assert(len(res), Equals, 1)
 	c.Assert(res[0], Equals, rec1) // Checking pointer equals is ok.
 	c.Assert(res[0].ID, Equals, uint64(1))
+	c.Assert(h.head, Equals, 0)
+	c.Assert(h.size, Equals, 1)
 
 	rec2 = &DeadlockRecord{
 		OccurTime: time.Now(),
@@ -78,6 +86,8 @@ func (s *testDeadlockHistorySuite) TestDeadlockHistoryCollection(c *C) {
 	c.Assert(res[0].ID, Equals, uint64(1))
 	c.Assert(res[1], Equals, rec2)
 	c.Assert(res[1].ID, Equals, uint64(2))
+	c.Assert(h.head, Equals, 0)
+	c.Assert(h.size, Equals, 2)
 
 	rec3 := &DeadlockRecord{
 		OccurTime: time.Now(),
@@ -91,19 +101,24 @@ func (s *testDeadlockHistorySuite) TestDeadlockHistoryCollection(c *C) {
 	c.Assert(res[1].ID, Equals, uint64(2))
 	c.Assert(res[2], Equals, rec3)
 	c.Assert(res[2].ID, Equals, uint64(3))
+	c.Assert(h.head, Equals, 0)
+	c.Assert(h.size, Equals, 3)
 
 	// Continuously pushing items to check the correctness of the deque
 	expectedItems := []*DeadlockRecord{rec1, rec2, rec3}
 	expectedIDs := []uint64{1, 2, 3}
+	expectedDequeHead := 0
 	for i := 0; i < 6; i++ {
 		newRec := &DeadlockRecord{
 			OccurTime: time.Now(),
 		}
 		h.Push(newRec)
+
 		expectedItems = append(expectedItems[1:], newRec)
 		for idx := range expectedIDs {
 			expectedIDs[idx]++
 		}
+		expectedDequeHead = (expectedDequeHead + 1) % 3
 
 		res = h.GetAll()
 		c.Assert(len(res), Equals, 3)
@@ -111,6 +126,8 @@ func (s *testDeadlockHistorySuite) TestDeadlockHistoryCollection(c *C) {
 			c.Assert(item, Equals, expectedItems[idx])
 			c.Assert(item.ID, Equals, expectedIDs[idx])
 		}
+		c.Assert(h.head, Equals, expectedDequeHead)
+		c.Assert(h.size, Equals, 3)
 	}
 
 	h.Clear()
