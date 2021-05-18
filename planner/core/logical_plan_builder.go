@@ -980,14 +980,12 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 		if expr.GetType().EvalType() == types.ETString {
 			tp := &types.FieldType{
 				Tp:      mysql.TypeDouble,
-				Flag:    expr.GetType().Flag & mysql.UnsignedFlag,
+				Flag:    expr.GetType().Flag,
 				Flen:    mysql.MaxRealWidth,
 				Decimal: types.UnspecifiedLength,
 			}
 			types.SetBinChsClnFlag(tp)
-			if res, ok := expression.TryPushCastIntoControlFunctionForHybridType(b.ctx, expr, tp); ok {
-				cnfExpres[i] = res
-			}
+			cnfExpres[i] = expression.TryPushCastIntoControlFunctionForHybridType(b.ctx, expr, tp)
 		}
 	}
 	selection.Conditions = cnfExpres

@@ -1804,9 +1804,7 @@ func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
-	if res, success := TryPushCastIntoControlFunctionForHybridType(ctx, expr, tp); success {
-		expr = res
-	}
+	expr = TryPushCastIntoControlFunctionForHybridType(ctx, expr, tp)
 	var fc functionClass
 	switch tp.EvalType() {
 	case types.ETInt:
@@ -1994,10 +1992,10 @@ func WrapWithCastAsJSON(ctx sessionctx.Context, expr Expression) Expression {
 // For example, the condition `if(1, e, 'a') = 1`, `if` function will output `e` and compare with `1`.
 // If the evaltype is ETString, it will get wrong result. So we can rewrite the condition to
 // `IfInt(1, cast(e as int), cast('a' as int)) = 1` to get the correct result.
-func TryPushCastIntoControlFunctionForHybridType(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression, success bool) {
+func TryPushCastIntoControlFunctionForHybridType(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
 	sf, ok := expr.(*ScalarFunction)
 	if !ok {
-		return expr, false
+		return expr
 	}
 
 	var wrapCastFunc func(ctx sessionctx.Context, expr Expression) Expression
@@ -2007,32 +2005,36 @@ func TryPushCastIntoControlFunctionForHybridType(ctx sessionctx.Context, expr Ex
 	case types.ETReal:
 		wrapCastFunc = WrapWithCastAsReal
 	default:
-		return expr, false
+		return expr
+	}
+
+	isEnumOrSet := func(ft *types.FieldType) bool {
+		return ft.Tp == mysql.TypeEnum || ft.Tp == mysql.TypeSet
 	}
 
 	args := sf.GetArgs()
 	switch sf.FuncName.L {
 	case ast.If:
-		if args[1].GetType().Hybrid() || args[2].GetType().Hybrid() {
+		if isEnumOrSet(args[1].GetType()) || isEnumOrSet(args[2].GetType()) {
 			args[1] = wrapCastFunc(ctx, args[1])
 			args[2] = wrapCastFunc(ctx, args[2])
 			f, err := funcs[ast.If].getFunction(ctx, args)
 			if err != nil {
-				return expr, false
+				return expr
 			}
 			sf.RetType, sf.Function = f.getRetTp(), f
-			return sf, true
+			return sf
 		}
 	case ast.Case:
 		hasHybrid := false
 		for i := 0; i < len(args)-1; i += 2 {
-			hasHybrid = hasHybrid || args[i+1].GetType().Hybrid()
+			hasHybrid = hasHybrid || isEnumOrSet(args[i+1].GetType())
 		}
 		if len(args)%2 == 1 {
-			hasHybrid = hasHybrid || args[len(args)-1].GetType().Hybrid()
+			hasHybrid = hasHybrid || isEnumOrSet(args[len(args)-1].GetType())
 		}
 		if !hasHybrid {
-			return expr, false
+			return expr
 		}
 
 		for i := 0; i < len(args)-1; i += 2 {
@@ -2043,17 +2045,17 @@ func TryPushCastIntoControlFunctionForHybridType(ctx sessionctx.Context, expr Ex
 		}
 		f, err := funcs[ast.Case].getFunction(ctx, args)
 		if err != nil {
-			return expr, false
+			return expr
 		}
 		sf.RetType, sf.Function = f.getRetTp(), f
-		return sf, true
+		return sf
 	case ast.Elt:
 		hasHybrid := false
 		for i := 1; i < len(args); i++ {
-			hasHybrid = hasHybrid || args[i].GetType().Hybrid()
+			hasHybrid = hasHybrid || isEnumOrSet(args[i].GetType())
 		}
 		if !hasHybrid {
-			return expr, false
+			return expr
 		}
 
 		for i := 1; i < len(args); i++ {
@@ -2061,12 +2063,12 @@ func TryPushCastIntoControlFunctionForHybridType(ctx sessionctx.Context, expr Ex
 		}
 		f, err := funcs[ast.Elt].getFunction(ctx, args)
 		if err != nil {
-			return expr, false
+			return expr
 		}
 		sf.RetType, sf.Function = f.getRetTp(), f
-		return sf, true
+		return sf
 	default:
-		return expr, false
+		return expr
 	}
-	return expr, false
+	return expr
 }
