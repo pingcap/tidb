@@ -1358,13 +1358,13 @@ var tableTiDBTrxCols = []columnInfo{
 }
 
 var tableDeadLockCols = []columnInfo{
-	{name: "DEADLOCK_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
-	{name: "OCCUR_TIME", tp: mysql.TypeTimestamp, decimal: 6, size: 26},
-	{name: "TRY_LOCK_TRX_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
-	{name: "CURRENT_SQL_DIGEST", tp: mysql.TypeVarchar, size: 64},
-	{name: "KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
-	{name: "SQLS", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
-	{name: "TRX_HOLDING_LOCK", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "DEADLOCK_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, comment: "The ID to dinstinguish different deadlock events"},
+	{name: "OCCUR_TIME", tp: mysql.TypeTimestamp, decimal: 6, size: 26, comment: "The physical time when the deadlock occurs"},
+	{name: "TRY_LOCK_TRX_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, comment: "The transaction ID (start ts) of the transaction that's trying to acquire the lock"},
+	{name: "CURRENT_SQL_DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "The digest of the SQL that's being blocked"},
+	{name: "KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The key on which a transaction is waiting for another"},
+	{name: "SQLS", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
+	{name: "TRX_HOLDING_LOCK", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, comment: "The transaction ID (start ts) of the transaction that's currently holding the lock"},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
