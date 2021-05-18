@@ -1805,10 +1805,7 @@ func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
 	if res, success := TryPushCastDownToControlFunctionForHybridType(ctx, expr, tp); success {
-		if tp.EvalType() != types.ETJson {
-			res = FoldConstant(res)
-		}
-		return res
+		expr = res
 	}
 	var fc functionClass
 	switch tp.EvalType() {
@@ -1992,6 +1989,8 @@ func WrapWithCastAsJSON(ctx sessionctx.Context, expr Expression) Expression {
 
 // TryPushCastDownToControlFunctionForHybridType try to push cast down to control function for Hybrid Type.
 // If necessary, it will rebuild control function using changed args.
+// When a hybrid type is the output of a control function, the result may be as a numeric type to subsequent calculation
+// We should perform the `Cast` operation early to avoid using the wrong type for calculation
 func TryPushCastDownToControlFunctionForHybridType(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression, success bool) {
 	sf, ok := expr.(*ScalarFunction)
 	if !ok {

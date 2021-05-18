@@ -9356,6 +9356,15 @@ func (s *testIntegrationSuite) TestEnumControlFunction(c *C) {
 		testkit.Rows("0", "0", "1", "1"))
 	tk.MustQuery("select if(e>1,e,e)=1 from e").Sort().Check(
 		testkit.Rows("0", "0", "0", "0"))
+	// if and if
+	tk.MustQuery("select if(e>2,e,e) and if(e<=2,e,e) from e;").Sort().Check(
+		testkit.Rows("1", "1", "1", "1"))
+	tk.MustQuery("select if(e>2,e,e) and (if(e<3,0,e) or if(e>=2,0,e)) from e;").Sort().Check(
+		testkit.Rows("0", "0", "1", "1"))
+	tk.MustQuery("select * from e where if(e>2,e,e) and if(e<=2,e,e);").Sort().Check(
+		testkit.Rows("a", "a", "b", "b"))
+	tk.MustQuery("select * from e where if(e>2,e,e) and (if(e<3,0,e) or if(e>=2,0,e));").Sort().Check(
+		testkit.Rows("a", "a"))
 
 	// issue 24494
 	tk.MustExec("drop table if exists t;")
