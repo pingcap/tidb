@@ -266,7 +266,7 @@ func (tk *TestKit) MustPartition(sql string, partitions string, args ...interfac
 	return false
 }
 
-// MustPartition checks if the result execution plan must read specific partitions.
+// UsedPartitions returns the partition names that will be used or all/dual.
 func (tk *TestKit) UsedPartitions(sql string, args ...interface{}) *Result {
 	rs := tk.MustQuery("explain "+sql, args...)
 	var usedPartitions [][]string
