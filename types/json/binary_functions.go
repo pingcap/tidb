@@ -527,7 +527,6 @@ func (bm *binaryModifier) doInsert(path PathExpression, newBj BinaryJSON) {
 		elems = append(elems, newBj)
 	}
 	bm.modifyValue, bm.err = buildBinaryObject(keys, elems)
-	return
 }
 
 func (bm *binaryModifier) remove(path PathExpression) BinaryJSON {
@@ -582,7 +581,6 @@ func (bm *binaryModifier) doRemove(path PathExpression) {
 		}
 	}
 	bm.modifyValue, bm.err = buildBinaryObject(keys, elems)
-	return
 }
 
 // rebuild merges the old and the modified JSON into a new BinaryJSON

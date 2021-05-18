@@ -22,7 +22,6 @@ import (
 	driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 // Wraps tikv.KVStore and make it compatible with kv.Storage.
@@ -85,20 +84,7 @@ func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, 
 
 // BeginWithOption begins a transaction with given option
 func (s *mockStorage) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
-	txnScope := option.TxnScope
-	if txnScope == "" {
-		txnScope = oracle.GlobalTxnScope
-	}
-	if option.StartTS != nil {
-		return newTiKVTxn(s.BeginWithStartTS(txnScope, *option.StartTS))
-	} else if option.PrevSec != nil {
-		return newTiKVTxn(s.BeginWithExactStaleness(txnScope, *option.PrevSec))
-	} else if option.MaxPrevSec != nil {
-		return newTiKVTxn(s.BeginWithMaxPrevSec(txnScope, *option.MaxPrevSec))
-	} else if option.MinStartTS != nil {
-		return newTiKVTxn(s.BeginWithMinStartTS(txnScope, *option.MinStartTS))
-	}
-	return newTiKVTxn(s.BeginWithTxnScope(txnScope))
+	return newTiKVTxn(s.KVStore.BeginWithOption(option))
 }
 
 // GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
@@ -111,6 +97,11 @@ func (s *mockStorage) GetSnapshot(ver kv.Version) kv.Snapshot {
 func (s *mockStorage) CurrentVersion(txnScope string) (kv.Version, error) {
 	ver, err := s.KVStore.CurrentTimestamp(txnScope)
 	return kv.NewVersion(ver), err
+}
+
+// GetMinSafeTS return the minimal SafeTS of the storage with given txnScope.
+func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
+	return 0
 }
 
 func newTiKVTxn(txn *tikv.KVTxn, err error) (kv.Transaction, error) {
