@@ -3091,9 +3091,6 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, er
 	if indexInfo == nil {
 		return nil, ErrKeyDoesNotExist.GenWithStackByArgs(node.IndexName, tblInfo.Name)
 	}
-	if node.SplitSyntaxOpt != nil && node.Table.TableInfo.TempTableType != model.TempTableNone {
-		return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("split table")
-	}
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, node.Table.Schema, tblInfo)
 	if err != nil {
