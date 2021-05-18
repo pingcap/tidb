@@ -8158,6 +8158,7 @@ func (s testSerialSuite) TestExprBlackListForEnum(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a enum('a','b','c'), b enum('a','b','c'), c int, index idx(b,a));")
 	tk.MustExec("insert into t values(1,1,1),(2,2,2),(3,3,3);")
 
