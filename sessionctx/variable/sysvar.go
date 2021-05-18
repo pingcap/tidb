@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
+
 	atomic2 "go.uber.org/atomic"
 )
 
@@ -492,12 +493,40 @@ func UnregisterSysVar(name string) {
 	sysVarsLock.Unlock()
 }
 
+// copySv deep copies the sysvar struct to avoid a race
+func copySv(src *SysVar) (dest *SysVar) {
+	return &SysVar{
+		Scope:                   src.Scope,
+		Name:                    src.Name,
+		Value:                   src.Value,
+		Type:                    src.Type,
+		MinValue:                src.MinValue,
+		MaxValue:                src.MaxValue,
+		AutoConvertNegativeBool: src.AutoConvertNegativeBool,
+		AutoConvertOutOfRange:   src.AutoConvertOutOfRange,
+		ReadOnly:                src.ReadOnly,
+		PossibleValues:          src.PossibleValues,
+		AllowEmpty:              src.AllowEmpty,
+		AllowEmptyAll:           src.AllowEmptyAll,
+		AllowAutoValue:          src.AllowAutoValue,
+		Validation:              src.Validation,
+		SetSession:              src.SetSession,
+		SetGlobal:               src.SetGlobal,
+		IsHintUpdatable:         src.IsHintUpdatable,
+		Hidden:                  src.Hidden,
+		Aliases:                 src.Aliases,
+	}
+}
+
 // GetSysVar returns sys var info for name as key.
 func GetSysVar(name string) *SysVar {
 	name = strings.ToLower(name)
 	sysVarsLock.RLock()
 	defer sysVarsLock.RUnlock()
-	return sysVars[name]
+	if sysVars[name] == nil {
+		return nil
+	}
+	return copySv(sysVars[name])
 }
 
 // SetSysVar sets a sysvar. This will not propagate to the cluster, so it should only be
@@ -515,7 +544,7 @@ func GetSysVars() map[string]*SysVar {
 	defer sysVarsLock.RUnlock()
 	copy := make(map[string]*SysVar, len(sysVars))
 	for name, sv := range sysVars {
-		copy[name] = sv
+		copy[name] = copySv(sv)
 	}
 	return copy
 }
