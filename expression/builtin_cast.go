@@ -1804,7 +1804,7 @@ func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
-	if res, success := TryPushCastDownToControlFunctionForHybridType(ctx, expr, tp); success {
+	if res, success := TryPushCastIntoControlFunctionForHybridType(ctx, expr, tp); success {
 		expr = res
 	}
 	var fc functionClass
@@ -1987,11 +1987,14 @@ func WrapWithCastAsJSON(ctx sessionctx.Context, expr Expression) Expression {
 	return BuildCastFunction(ctx, expr, tp)
 }
 
-// TryPushCastDownToControlFunctionForHybridType try to push cast down to control function for Hybrid Type.
+// TryPushCastIntoControlFunctionForHybridType try to push cast into control function for Hybrid Type.
 // If necessary, it will rebuild control function using changed args.
 // When a hybrid type is the output of a control function, the result may be as a numeric type to subsequent calculation
 // We should perform the `Cast` operation early to avoid using the wrong type for calculation
-func TryPushCastDownToControlFunctionForHybridType(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression, success bool) {
+// For example, the condition `if(1, e, 'a') = 1`, `if` function will output `e` and compare with `1`.
+// If the evaltype is ETString, it will get wrong result. So we can rewrite the condition to
+// `IfInt(1, cast(e as int), cast('a' as int)) = 1` to get the correct result.
+func TryPushCastIntoControlFunctionForHybridType(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression, success bool) {
 	sf, ok := expr.(*ScalarFunction)
 	if !ok {
 		return expr, false
@@ -2003,8 +2006,6 @@ func TryPushCastDownToControlFunctionForHybridType(ctx sessionctx.Context, expr 
 		wrapCastFunc = WrapWithCastAsInt
 	case types.ETReal:
 		wrapCastFunc = WrapWithCastAsReal
-	case types.ETString:
-		wrapCastFunc = WrapWithCastAsString
 	default:
 		return expr, false
 	}
@@ -2063,8 +2064,7 @@ func TryPushCastDownToControlFunctionForHybridType(ctx sessionctx.Context, expr 
 			return expr, false
 		}
 		sf.RetType, sf.Function = f.getRetTp(), f
-		// Elt only supports ETString, so we need add extra cast to keep retType right.
-		return wrapCastFunc(ctx, sf), true
+		return sf, true
 	default:
 		return expr, false
 	}

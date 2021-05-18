@@ -985,7 +985,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 				Decimal: types.UnspecifiedLength,
 			}
 			types.SetBinChsClnFlag(tp)
-			if res, ok := expression.TryPushCastDownToControlFunctionForHybridType(b.ctx, expr, tp); ok {
+			if res, ok := expression.TryPushCastIntoControlFunctionForHybridType(b.ctx, expr, tp); ok {
 				cnfExpres[i] = res
 			}
 		}
