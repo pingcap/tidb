@@ -138,6 +138,7 @@ func IsInvisibleSysVar(varNameInLower string) bool {
 		variable.TiDBCheckMb4ValueInUTF8,
 		variable.TiDBConfig,
 		variable.TiDBEnableSlowLog,
+		variable.TiDBEnableTelemetry,
 		variable.TiDBExpensiveQueryTimeThreshold,
 		variable.TiDBForcePriority,
 		variable.TiDBGeneralLog,
@@ -146,12 +147,13 @@ func IsInvisibleSysVar(varNameInLower string) bool {
 		variable.TiDBOptWriteRowID,
 		variable.TiDBPProfSQLCPU,
 		variable.TiDBRecordPlanInSlowLog,
+		variable.TiDBRowFormatVersion,
 		variable.TiDBSlowQueryFile,
 		variable.TiDBSlowLogThreshold,
 		variable.TiDBEnableCollectExecutionInfo,
 		variable.TiDBMemoryUsageAlarmRatio,
-		variable.TiDBEnableTelemetry,
-		variable.TiDBRowFormatVersion:
+		variable.TiDBRedactLog,
+		variable.TiDBSlowLogMasking:
 		return true
 	}
 	return false
