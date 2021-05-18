@@ -2803,3 +2803,25 @@ func (s *testIntegrationSuite3) TestIssue21835(c *C) {
 	_, err := tk.Exec("create table t( col decimal(1,2) not null default 0);")
 	c.Assert(err.Error(), Equals, "[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column 'col').")
 }
+
+func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+
+	// Grammar error.
+	tk.MustGetErrCode("create global temporary table t(a double(0, 0))", errno.ErrParse)
+	tk.MustGetErrCode("create temporary table t(id int) on commit delete rows", errno.ErrParse)
+	tk.MustGetErrCode("create temporary table t(id int) on commit preserve rows", errno.ErrParse)
+
+	// Not support yet.
+	tk.MustGetErrCode("create global temporary table t (id int) on commit preserve rows", errno.ErrUnsupportedDDLOperation)
+	// Engine type can only be 'memory' or empty for now.
+	tk.MustGetErrCode("create global temporary table t (id int) engine = 'innodb' on commit delete rows", errno.ErrUnsupportedDDLOperation)
+	// Follow the behaviour of the old version TiDB: parse and ignore the 'temporary' keyword.
+	tk.MustGetErrCode("create temporary table t(id int)", errno.ErrNotSupportedYet)
+
+	tk.MustExec("set @@tidb_enable_noop_functions = 1")
+	tk.MustExec("create temporary table t (id int)")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1105 TiDB doesn't support local TEMPORARY TABLE yet, TEMPORARY will be parsed but ignored."))
+}
