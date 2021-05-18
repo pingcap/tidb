@@ -182,7 +182,7 @@ func untwistPlanAndRemoveUnionAll(stack []PhysicalPlan, forest *[]*PhysicalExcha
 		}
 	default:
 		if len(cur.Children()) != 1 {
-			return errors.New("unexpected plan " + cur.ExplainID().String())
+			return errors.Trace(errors.New("unexpected plan " + cur.ExplainID().String()))
 		}
 		ch := cur.Children()[0]
 		stack = append(stack, ch)
