@@ -391,6 +391,9 @@ type BeginStmt struct {
 	ReadOnly              bool
 	Bound                 *TimestampBound
 	CausalConsistencyOnly bool
+	// AS OF is used to read the data at a specific point of time.
+	// Should only be used when ReadOnly is true.
+	AsOf *AsOfClause
 }
 
 // Restore implements Node interface.
@@ -415,6 +418,9 @@ func (n *BeginStmt) Restore(ctx *format.RestoreCtx) error {
 					ctx.WriteKeyWord(" WITH TIMESTAMP BOUND MIN READ TIMESTAMP ")
 					return n.Bound.Timestamp.Restore(ctx)
 				}
+			} else if n.AsOf != nil {
+				ctx.WriteKeyWord(" ")
+				return n.AsOf.Restore(ctx)
 			}
 		} else if n.CausalConsistencyOnly {
 			ctx.WriteKeyWord("START TRANSACTION WITH CAUSAL CONSISTENCY ONLY")
