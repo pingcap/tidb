@@ -2008,14 +2008,15 @@ func TryPushCastIntoControlFunctionForHybridType(ctx sessionctx.Context, expr Ex
 		return expr
 	}
 
-	isEnumOrSet := func(ft *types.FieldType) bool {
-		return ft.Tp == mysql.TypeEnum || ft.Tp == mysql.TypeSet
+	isHybrid := func(ft *types.FieldType) bool {
+		// todo: compatible with mysql control function using bit type. issue 24725
+		return ft.Hybrid() && ft.Tp != mysql.TypeBit
 	}
 
 	args := sf.GetArgs()
 	switch sf.FuncName.L {
 	case ast.If:
-		if isEnumOrSet(args[1].GetType()) || isEnumOrSet(args[2].GetType()) {
+		if isHybrid(args[1].GetType()) || isHybrid(args[2].GetType()) {
 			args[1] = wrapCastFunc(ctx, args[1])
 			args[2] = wrapCastFunc(ctx, args[2])
 			f, err := funcs[ast.If].getFunction(ctx, args)
@@ -2028,10 +2029,10 @@ func TryPushCastIntoControlFunctionForHybridType(ctx sessionctx.Context, expr Ex
 	case ast.Case:
 		hasHybrid := false
 		for i := 0; i < len(args)-1; i += 2 {
-			hasHybrid = hasHybrid || isEnumOrSet(args[i+1].GetType())
+			hasHybrid = hasHybrid || isHybrid(args[i+1].GetType())
 		}
 		if len(args)%2 == 1 {
-			hasHybrid = hasHybrid || isEnumOrSet(args[len(args)-1].GetType())
+			hasHybrid = hasHybrid || isHybrid(args[len(args)-1].GetType())
 		}
 		if !hasHybrid {
 			return expr
@@ -2052,7 +2053,7 @@ func TryPushCastIntoControlFunctionForHybridType(ctx sessionctx.Context, expr Ex
 	case ast.Elt:
 		hasHybrid := false
 		for i := 1; i < len(args); i++ {
-			hasHybrid = hasHybrid || isEnumOrSet(args[i].GetType())
+			hasHybrid = hasHybrid || isHybrid(args[i].GetType())
 		}
 		if !hasHybrid {
 			return expr
