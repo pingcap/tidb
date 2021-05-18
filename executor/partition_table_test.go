@@ -691,33 +691,15 @@ PARTITION BY RANGE (a) (
 `)
 
 	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Res  []string
-	}
+	var output []testOutput
 	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		var isSelect bool = false
-		if strings.HasPrefix(strings.ToLower(tt), "select ") {
-			isSelect = true
-		}
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			if isSelect {
-				output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("EXPLAIN FORMAT = 'brief' " + tt).Rows())
-				output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
-			} else {
-				// to avoid double execution of INSERT (and INSERT does not return anything)
-				output[i].Res = nil
-				output[i].Plan = nil
-			}
-		})
-		if isSelect {
-			tk.MustQuery("EXPLAIN FORMAT = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
-		}
-		tk.MayQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
-	}
+	s.verifyPartitionResult(tk, input, output)
+}
+
+type testOutput struct {
+	SQL  string
+	Plan []string
+	Res  []string
 }
 
 func (s *testSuiteWithData) TestRangePartitionBoundariesNe(c *C) {
@@ -740,12 +722,12 @@ PARTITION BY RANGE (a) (
  PARTITION p6 VALUES LESS THAN (7))`)
 
 	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Res  []string
-	}
+	var output []testOutput
 	s.testData.GetTestCases(c, &input, &output)
+	s.verifyPartitionResult(tk, input, output)
+}
+
+func (s *testSuiteWithData) verifyPartitionResult(tk *testkit.TestKit, input []string, output []testOutput) {
 	for i, tt := range input {
 		var isSelect bool = false
 		if strings.HasPrefix(strings.ToLower(tt), "select ") {
@@ -754,7 +736,7 @@ PARTITION BY RANGE (a) (
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			if isSelect {
-				output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("EXPLAIN FORMAT = 'brief' " + tt).Rows())
+				output[i].Plan = s.testData.ConvertRowsToStrings(tk.UsedPartitions(tt).Rows())
 				output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
 			} else {
 				// to avoid double execution of INSERT (and INSERT does not return anything)
@@ -763,7 +745,7 @@ PARTITION BY RANGE (a) (
 			}
 		})
 		if isSelect {
-			tk.MustQuery("EXPLAIN FORMAT = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+			tk.UsedPartitions(tt).Check(testkit.Rows(output[i].Plan...))
 		}
 		tk.MayQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}

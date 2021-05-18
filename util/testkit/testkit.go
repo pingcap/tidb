@@ -266,6 +266,21 @@ func (tk *TestKit) MustPartition(sql string, partitions string, args ...interfac
 	return false
 }
 
+// MustPartition checks if the result execution plan must read specific partitions.
+func (tk *TestKit) UsedPartitions(sql string, args ...interface{}) *Result {
+	rs := tk.MustQuery("explain "+sql, args...)
+	var usedPartitions [][]string
+	for i := range rs.rows {
+		index := strings.Index(rs.rows[i][3], "partition:")
+		if index != -1 {
+			p := rs.rows[i][3][index+len("partition:"):]
+			partitions := strings.Split(strings.SplitN(p, " ", 2)[0], ",")
+			usedPartitions = append(usedPartitions, partitions)
+		}
+	}
+	return &Result{rows: usedPartitions, c: tk.c, comment: check.Commentf("sql:%s, args:%v", sql, args)}
+}
+
 // MustUseIndex checks if the result execution plan contains specific index(es).
 func (tk *TestKit) MustUseIndex(sql string, index string, args ...interface{}) bool {
 	rs := tk.MustQuery("explain "+sql, args...)
