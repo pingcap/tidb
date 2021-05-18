@@ -357,6 +357,8 @@ func (s *testSuiteP1) TestShow(c *C) {
 		"CONNECTION_ADMIN Server Admin ",
 		"RESTRICTED_TABLES_ADMIN Server Admin ",
 		"RESTRICTED_STATUS_ADMIN Server Admin ",
+		"RESTRICTED_VARIABLES_ADMIN Server Admin ",
+		"RESTRICTED_USER_ADMIN Server Admin ",
 	))
 	c.Assert(len(tk.MustQuery("show table status").Rows()), Equals, 1)
 }
@@ -2265,8 +2267,6 @@ func (s *testSuiteP2) TestSQLMode(c *C) {
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 	tk.MustExec("set @@global.sql_mode = ''")
 
-	// Disable global variable cache, so load global session variable take effect immediate.
-	s.domain.GetGlobalVarsCache().Disable()
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
 	tk2.MustExec("drop table if exists t2")

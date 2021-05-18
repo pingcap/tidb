@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *partitionTableSuite) TestFourReader(c *C) {
@@ -435,6 +436,65 @@ func (s *partitionTableSuite) TestView(c *C) {
 	}
 }
 
+func (s *partitionTableSuite) TestDynamicPruningUnderIndexJoin(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database pruing_under_index_join")
+	tk.MustExec("use pruing_under_index_join")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	tk.MustExec(`create table tnormal (a int, b int, c int, primary key(a), index idx_b(b))`)
+	tk.MustExec(`create table thash (a int, b int, c int, primary key(a), index idx_b(b)) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table touter (a int, b int, c int)`)
+
+	vals := make([]string, 0, 2000)
+	for i := 0; i < 2000; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v, %v)", i, rand.Intn(10000), rand.Intn(10000)))
+	}
+	tk.MustExec(`insert into tnormal values ` + strings.Join(vals, ", "))
+	tk.MustExec(`insert into thash values ` + strings.Join(vals, ", "))
+	tk.MustExec(`insert into touter values ` + strings.Join(vals, ", "))
+
+	// case 1: IndexReader in the inner side
+	tk.MustQuery(`explain format='brief' select /*+ INL_JOIN(touter, thash) */ thash.b from touter join thash use index(idx_b) on touter.b = thash.b`).Check(testkit.Rows(
+		`IndexJoin 12487.50 root  inner join, inner:IndexReader, outer key:pruing_under_index_join.touter.b, inner key:pruing_under_index_join.thash.b, equal cond:eq(pruing_under_index_join.touter.b, pruing_under_index_join.thash.b)`,
+		`├─TableReader(Build) 9990.00 root  data:Selection`,
+		`│ └─Selection 9990.00 cop[tikv]  not(isnull(pruing_under_index_join.touter.b))`,
+		`│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
+		`└─IndexReader(Probe) 1.25 root partition:all index:Selection`,
+		`  └─Selection 1.25 cop[tikv]  not(isnull(pruing_under_index_join.thash.b))`,
+		`    └─IndexRangeScan 1.25 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(pruing_under_index_join.thash.b, pruing_under_index_join.touter.b)], keep order:false, stats:pseudo`))
+	tk.MustQuery(`select /*+ INL_JOIN(touter, thash) */ thash.b from touter join thash use index(idx_b) on touter.b = thash.b`).Sort().Check(
+		tk.MustQuery(`select /*+ INL_JOIN(touter, tnormal) */ tnormal.b from touter join tnormal use index(idx_b) on touter.b = tnormal.b`).Sort().Rows())
+
+	// case 2: TableReader in the inner side
+	tk.MustQuery(`explain format='brief' select /*+ INL_JOIN(touter, thash) */ thash.* from touter join thash use index(primary) on touter.b = thash.a`).Check(testkit.Rows(
+		`IndexJoin 12487.50 root  inner join, inner:TableReader, outer key:pruing_under_index_join.touter.b, inner key:pruing_under_index_join.thash.a, equal cond:eq(pruing_under_index_join.touter.b, pruing_under_index_join.thash.a)`,
+		`├─TableReader(Build) 9990.00 root  data:Selection`,
+		`│ └─Selection 9990.00 cop[tikv]  not(isnull(pruing_under_index_join.touter.b))`,
+		`│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
+		`└─TableReader(Probe) 1.00 root partition:all data:TableRangeScan`,
+		`  └─TableRangeScan 1.00 cop[tikv] table:thash range: decided by [pruing_under_index_join.touter.b], keep order:false, stats:pseudo`))
+	tk.MustQuery(`select /*+ INL_JOIN(touter, thash) */ thash.* from touter join thash use index(primary) on touter.b = thash.a`).Sort().Check(
+		tk.MustQuery(`select /*+ INL_JOIN(touter, tnormal) */ tnormal.* from touter join tnormal use index(primary) on touter.b = tnormal.a`).Sort().Rows())
+
+	// case 3: IndexLookUp in the inner side + read all inner columns
+	tk.MustQuery(`explain format='brief' select /*+ INL_JOIN(touter, thash) */ thash.* from touter join thash use index(idx_b) on touter.b = thash.b`).Check(testkit.Rows(
+		`IndexJoin 12487.50 root  inner join, inner:IndexLookUp, outer key:pruing_under_index_join.touter.b, inner key:pruing_under_index_join.thash.b, equal cond:eq(pruing_under_index_join.touter.b, pruing_under_index_join.thash.b)`,
+		`├─TableReader(Build) 9990.00 root  data:Selection`,
+		`│ └─Selection 9990.00 cop[tikv]  not(isnull(pruing_under_index_join.touter.b))`,
+		`│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
+		`└─IndexLookUp(Probe) 1.25 root partition:all `,
+		`  ├─Selection(Build) 1.25 cop[tikv]  not(isnull(pruing_under_index_join.thash.b))`,
+		`  │ └─IndexRangeScan 1.25 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(pruing_under_index_join.thash.b, pruing_under_index_join.touter.b)], keep order:false, stats:pseudo`,
+		`  └─TableRowIDScan(Probe) 1.25 cop[tikv] table:thash keep order:false, stats:pseudo`))
+	tk.MustQuery(`select /*+ INL_JOIN(touter, thash) */ thash.* from touter join thash use index(idx_b) on touter.b = thash.b`).Sort().Check(
+		tk.MustQuery(`select /*+ INL_JOIN(touter, tnormal) */ tnormal.* from touter join tnormal use index(idx_b) on touter.b = tnormal.b`).Sort().Rows())
+}
+
 func (s *partitionTableSuite) TestGlobalStatsAndSQLBinding(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
@@ -513,13 +573,247 @@ func (s *partitionTableSuite) TestGlobalStatsAndSQLBinding(c *C) {
 	tk.MustIndexLookup("select * from tlist where a<1")
 }
 
+func (s *partitionTableSuite) TestPartitionTableWithDifferentJoin(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_partition_joins")
+	tk.MustExec("use test_partition_joins")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	// hash and range partition
+	tk.MustExec("create table thash(a int, b int, key(a)) partition by hash(a) partitions 4")
+	tk.MustExec("create table tregular1(a int, b int, key(a))")
+
+	tk.MustExec(`create table trange(a int, b int, key(a)) partition by range(a) (
+		partition p0 values less than (200),
+		partition p1 values less than (400),
+		partition p2 values less than (600),
+		partition p3 values less than (800),
+		partition p4 values less than (1001))`)
+	tk.MustExec("create table tregular2(a int, b int, key(a))")
+
+	vals := make([]string, 0, 2000)
+	for i := 0; i < 2000; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(1000), rand.Intn(1000)))
+	}
+	tk.MustExec("insert into thash values " + strings.Join(vals, ","))
+	tk.MustExec("insert into tregular1 values " + strings.Join(vals, ","))
+
+	vals = make([]string, 0, 2000)
+	for i := 0; i < 2000; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(1000), rand.Intn(1000)))
+	}
+	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
+	tk.MustExec("insert into tregular2 values " + strings.Join(vals, ","))
+
+	// random params
+	x1 := rand.Intn(1000)
+	x2 := rand.Intn(1000)
+	x3 := rand.Intn(1000)
+	x4 := rand.Intn(1000)
+
+	// group 1
+	// hash_join range partition and hash partition
+	queryHash := fmt.Sprintf("select /*+ hash_join(trange, thash) */ * from trange, thash where trange.b=thash.b and thash.a = %v and trange.a > %v;", x1, x2)
+	queryRegular := fmt.Sprintf("select /*+ hash_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.b=tregular1.b and tregular1.a = %v and tregular2.a > %v;", x1, x2)
+	c.Assert(tk.HasPlan(queryHash, "HashJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	queryHash = fmt.Sprintf("select /*+ hash_join(trange, thash) */ * from trange, thash where trange.a=thash.a and thash.a > %v;", x1)
+	queryRegular = fmt.Sprintf("select /*+ hash_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a=tregular1.a and tregular1.a > %v;", x1)
+	c.Assert(tk.HasPlan(queryHash, "HashJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	queryHash = fmt.Sprintf("select /*+ hash_join(trange, thash) */ * from trange, thash where trange.a=thash.a and trange.b = thash.b and thash.a > %v;", x1)
+	queryRegular = fmt.Sprintf("select /*+ hash_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a=tregular1.a and tregular1.b = tregular2.b and tregular1.a > %v;", x1)
+	c.Assert(tk.HasPlan(queryHash, "HashJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	queryHash = fmt.Sprintf("select /*+ hash_join(trange, thash) */ * from trange, thash where trange.a=thash.a and thash.a = %v;", x1)
+	queryRegular = fmt.Sprintf("select /*+ hash_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a=tregular1.a and tregular1.a = %v;", x1)
+	c.Assert(tk.HasPlan(queryHash, "HashJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	// group 2
+	// hash_join range partition and regular table
+	queryHash = fmt.Sprintf("select /*+ hash_join(trange, tregular1) */ * from trange, tregular1 where trange.a = tregular1.a and trange.a >= %v and tregular1.a > %v;", x1, x2)
+	queryRegular = fmt.Sprintf("select /*+ hash_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a = tregular1.a and tregular2.a >= %v and tregular1.a > %v;", x1, x2)
+	c.Assert(tk.HasPlan(queryHash, "HashJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	queryHash = fmt.Sprintf("select /*+ hash_join(trange, tregular1) */ * from trange, tregular1 where trange.a = tregular1.a and trange.a in (%v, %v, %v);", x1, x2, x3)
+	queryRegular = fmt.Sprintf("select /*+ hash_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a = tregular1.a and tregular2.a in (%v, %v, %v);", x1, x2, x3)
+	c.Assert(tk.HasPlan(queryHash, "HashJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	queryHash = fmt.Sprintf("select /*+ hash_join(trange, tregular1) */ * from trange, tregular1 where trange.a = tregular1.a and tregular1.a >= %v;", x1)
+	queryRegular = fmt.Sprintf("select /*+ hash_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a = tregular1.a and tregular1.a >= %v;", x1)
+	c.Assert(tk.HasPlan(queryHash, "HashJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	// group 3
+	// merge_join range partition and hash partition
+	queryHash = fmt.Sprintf("select /*+ merge_join(trange, thash) */ * from trange, thash where trange.b=thash.b and thash.a = %v and trange.a > %v;", x1, x2)
+	queryRegular = fmt.Sprintf("select /*+ merge_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.b=tregular1.b and tregular1.a = %v and tregular2.a > %v;", x1, x2)
+	c.Assert(tk.HasPlan(queryHash, "MergeJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	queryHash = fmt.Sprintf("select /*+ merge_join(trange, thash) */ * from trange, thash where trange.a=thash.a and thash.a > %v;", x1)
+	queryRegular = fmt.Sprintf("select /*+ merge_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a=tregular1.a and tregular1.a > %v;", x1)
+	c.Assert(tk.HasPlan(queryHash, "MergeJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	queryHash = fmt.Sprintf("select /*+ merge_join(trange, thash) */ * from trange, thash where trange.a=thash.a and trange.b = thash.b and thash.a > %v;", x1)
+	queryRegular = fmt.Sprintf("select /*+ merge_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a=tregular1.a and tregular1.b = tregular2.b and tregular1.a > %v;", x1)
+	c.Assert(tk.HasPlan(queryHash, "MergeJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	queryHash = fmt.Sprintf("select /*+ merge_join(trange, thash) */ * from trange, thash where trange.a=thash.a and thash.a = %v;", x1)
+	queryRegular = fmt.Sprintf("select /*+ merge_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a=tregular1.a and tregular1.a = %v;", x1)
+	c.Assert(tk.HasPlan(queryHash, "MergeJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	// group 4
+	// merge_join range partition and regular table
+	queryHash = fmt.Sprintf("select /*+ merge_join(trange, tregular1) */ * from trange, tregular1 where trange.a = tregular1.a and trange.a >= %v and tregular1.a > %v;", x1, x2)
+	queryRegular = fmt.Sprintf("select /*+ merge_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a = tregular1.a and tregular2.a >= %v and tregular1.a > %v;", x1, x2)
+	c.Assert(tk.HasPlan(queryHash, "MergeJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	queryHash = fmt.Sprintf("select /*+ merge_join(trange, tregular1) */ * from trange, tregular1 where trange.a = tregular1.a and trange.a in (%v, %v, %v);", x1, x2, x3)
+	queryRegular = fmt.Sprintf("select /*+ merge_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a = tregular1.a and tregular2.a in (%v, %v, %v);", x1, x2, x3)
+	c.Assert(tk.HasPlan(queryHash, "MergeJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	queryHash = fmt.Sprintf("select /*+ merge_join(trange, tregular1) */ * from trange, tregular1 where trange.a = tregular1.a and tregular1.a >= %v;", x1)
+	queryRegular = fmt.Sprintf("select /*+ merge_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a = tregular1.a and tregular1.a >= %v;", x1)
+	c.Assert(tk.HasPlan(queryHash, "MergeJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	// new table instances
+	tk.MustExec("create table thash2(a int, b int, index idx(a)) partition by hash(a) partitions 4")
+	tk.MustExec("create table tregular3(a int, b int, index idx(a))")
+
+	tk.MustExec(`create table trange2(a int, b int, index idx(a)) partition by range(a) (
+		partition p0 values less than (200),
+		partition p1 values less than (400),
+		partition p2 values less than (600),
+		partition p3 values less than (800),
+		partition p4 values less than (1001))`)
+	tk.MustExec("create table tregular4(a int, b int, index idx(a))")
+
+	vals = make([]string, 0, 2000)
+	for i := 0; i < 2000; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(1000), rand.Intn(1000)))
+	}
+	tk.MustExec("insert into thash2 values " + strings.Join(vals, ","))
+	tk.MustExec("insert into tregular3 values " + strings.Join(vals, ","))
+
+	vals = make([]string, 0, 2000)
+	for i := 0; i < 2000; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(1000), rand.Intn(1000)))
+	}
+	tk.MustExec("insert into trange2 values " + strings.Join(vals, ","))
+	tk.MustExec("insert into tregular4 values " + strings.Join(vals, ","))
+
+	// group 5
+	// index_merge_join range partition and range partition
+	// Currently don't support index merge join on two partition tables. Only test warning.
+	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, trange2) */ * from trange, trange2 where trange.a=trange2.a and trange.a > %v;", x1)
+	// queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v;", x1)
+	// c.Assert(tk.HasPlan(queryHash, "IndexMergeJoin"), IsTrue)
+	// tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+	tk.MustQuery(queryHash)
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1815|Optimizer Hint /*+ INL_MERGE_JOIN(trange, trange2) */ is inapplicable"))
+
+	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, trange2) */ * from trange, trange2 where trange.a=trange2.a and trange.a > %v and trange2.a > %v;", x1, x2)
+	// queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v and tregular4.a > %v;", x1, x2)
+	// c.Assert(tk.HasPlan(queryHash, "IndexMergeJoin"), IsTrue)
+	// tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+	tk.MustQuery(queryHash)
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1815|Optimizer Hint /*+ INL_MERGE_JOIN(trange, trange2) */ is inapplicable"))
+
+	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, trange2) */ * from trange, trange2 where trange.a=trange2.a and trange.a > %v and trange.b > %v;", x1, x2)
+	// queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v and tregular2.b > %v;", x1, x2)
+	// c.Assert(tk.HasPlan(queryHash, "IndexMergeJoin"), IsTrue)
+	// tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+	tk.MustQuery(queryHash)
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1815|Optimizer Hint /*+ INL_MERGE_JOIN(trange, trange2) */ is inapplicable"))
+
+	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, trange2) */ * from trange, trange2 where trange.a=trange2.a and trange.a > %v and trange2.b > %v;", x1, x2)
+	// queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v and tregular4.b > %v;", x1, x2)
+	// c.Assert(tk.HasPlan(queryHash, "IndexMergeJoin"), IsTrue)
+	// tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+	tk.MustQuery(queryHash)
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1815|Optimizer Hint /*+ INL_MERGE_JOIN(trange, trange2) */ is inapplicable"))
+
+	// group 6
+	// index_merge_join range partition and regualr table
+	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, tregular4) */ * from trange, tregular4 where trange.a=tregular4.a and trange.a > %v;", x1)
+	queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v;", x1)
+	c.Assert(tk.HasPlan(queryHash, "IndexMergeJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, tregular4) */ * from trange, tregular4 where trange.a=tregular4.a and trange.a > %v and tregular4.a > %v;", x1, x2)
+	queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v and tregular4.a > %v;", x1, x2)
+	c.Assert(tk.HasPlan(queryHash, "IndexMergeJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, tregular4) */ * from trange, tregular4 where trange.a=tregular4.a and trange.a > %v and trange.b > %v;", x1, x2)
+	queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v and tregular2.b > %v;", x1, x2)
+	c.Assert(tk.HasPlan(queryHash, "IndexMergeJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, tregular4) */ * from trange, tregular4 where trange.a=tregular4.a and trange.a > %v and tregular4.b > %v;", x1, x2)
+	queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v and tregular4.b > %v;", x1, x2)
+	c.Assert(tk.HasPlan(queryHash, "IndexMergeJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	// group 7
+	// index_hash_join hash partition and hash partition
+	queryHash = fmt.Sprintf("select /*+ inl_hash_join(thash, thash2) */ * from thash, thash2 where thash.a = thash2.a and thash.a in (%v, %v);", x1, x2)
+	queryRegular = fmt.Sprintf("select /*+ inl_hash_join(tregular1, tregular3) */ * from tregular1, tregular3 where tregular1.a = tregular3.a and tregular1.a in (%v, %v);", x1, x2)
+	c.Assert(tk.HasPlan(queryHash, "IndexHashJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	queryHash = fmt.Sprintf("select /*+ inl_hash_join(thash, thash2) */ * from thash, thash2 where thash.a = thash2.a and thash.a in (%v, %v) and thash2.a in (%v, %v);", x1, x2, x3, x4)
+	queryRegular = fmt.Sprintf("select /*+ inl_hash_join(tregular1, tregular3) */ * from tregular1, tregular3 where tregular1.a = tregular3.a and tregular1.a in (%v, %v) and tregular3.a in (%v, %v);", x1, x2, x3, x4)
+	c.Assert(tk.HasPlan(queryHash, "IndexHashJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	queryHash = fmt.Sprintf("select /*+ inl_hash_join(thash, thash2) */ * from thash, thash2 where thash.a = thash2.a and thash.a > %v and thash2.b > %v;", x1, x2)
+	queryRegular = fmt.Sprintf("select /*+ inl_hash_join(tregular1, tregular3) */ * from tregular1, tregular3 where tregular1.a = tregular3.a and tregular1.a > %v and tregular3.b > %v;", x1, x2)
+	c.Assert(tk.HasPlan(queryHash, "IndexHashJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	// group 8
+	// index_hash_join hash partition and hash partition
+	queryHash = fmt.Sprintf("select /*+ inl_hash_join(thash, tregular3) */ * from thash, tregular3 where thash.a = tregular3.a and thash.a in (%v, %v);", x1, x2)
+	queryRegular = fmt.Sprintf("select /*+ inl_hash_join(tregular1, tregular3) */ * from tregular1, tregular3 where tregular1.a = tregular3.a and tregular1.a in (%v, %v);", x1, x2)
+	c.Assert(tk.HasPlan(queryHash, "IndexHashJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	queryHash = fmt.Sprintf("select /*+ inl_hash_join(thash, tregular3) */ * from thash, tregular3 where thash.a = tregular3.a and thash.a in (%v, %v) and tregular3.a in (%v, %v);", x1, x2, x3, x4)
+	queryRegular = fmt.Sprintf("select /*+ inl_hash_join(tregular1, tregular3) */ * from tregular1, tregular3 where tregular1.a = tregular3.a and tregular1.a in (%v, %v) and tregular3.a in (%v, %v);", x1, x2, x3, x4)
+	c.Assert(tk.HasPlan(queryHash, "IndexHashJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	queryHash = fmt.Sprintf("select /*+ inl_hash_join(thash, tregular3) */ * from thash, tregular3 where thash.a = tregular3.a and thash.a > %v and tregular3.b > %v;", x1, x2)
+	queryRegular = fmt.Sprintf("select /*+ inl_hash_join(tregular1, tregular3) */ * from tregular1, tregular3 where tregular1.a = tregular3.a and tregular1.a > %v and tregular3.b > %v;", x1, x2)
+	c.Assert(tk.HasPlan(queryHash, "IndexHashJoin"), IsTrue)
+	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+}
+
 func createTable4DynamicPruneModeTestWithExpression(tk *testkit.TestKit) {
-	tk.MustExec("create table trange(a int) partition by range(a) (partition p0 values less than(3), partition p1 values less than (5), partition p2 values less than(11));")
-	tk.MustExec("create table thash(a int) partition by hash(a) partitions 4;")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("insert into trange values(1), (1), (1), (2), (3), (4), (5), (6), (7), (7), (10), (NULL), (NULL);")
-	tk.MustExec("insert into thash values(1), (1), (1), (2), (3), (4), (5), (6), (7), (7), (10), (NULL), (NULL);")
-	tk.MustExec("insert into t values(1), (1), (1), (2), (3), (4), (5), (6), (7), (7), (10), (NULL), (NULL);")
+	tk.MustExec("create table trange(a int, b int) partition by range(a) (partition p0 values less than(3), partition p1 values less than (5), partition p2 values less than(11));")
+	tk.MustExec("create table thash(a int, b int) partition by hash(a) partitions 4;")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into trange values(1, NULL), (1, NULL), (1, 1), (2, 1), (3, 2), (4, 3), (5, 5), (6, 7), (7, 7), (7, 7), (10, NULL), (NULL, NULL), (NULL, 1);")
+	tk.MustExec("insert into thash values(1, NULL), (1, NULL), (1, 1), (2, 1), (3, 2), (4, 3), (5, 5), (6, 7), (7, 7), (7, 7), (10, NULL), (NULL, NULL), (NULL, 1);")
+	tk.MustExec("insert into t values(1, NULL), (1, NULL), (1, 1), (2, 1), (3, 2), (4, 3), (5, 5), (6, 7), (7, 7), (7, 7), (10, NULL), (NULL, NULL), (NULL, 1);")
 	tk.MustExec("set session tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("analyze table trange")
 	tk.MustExec("analyze table thash")
@@ -531,7 +825,7 @@ type testData4Expression struct {
 	partitions []string
 }
 
-func (s *partitionTableSuite) TestDynamicPruneModeWithEqualExpression(c *C) {
+func (s *partitionTableSuite) TestDynamicPruneModeWithExpression(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop database if exists db_equal_expression")
 	tk.MustExec("create database db_equal_expression")
@@ -566,6 +860,247 @@ func (s *partitionTableSuite) TestDynamicPruneModeWithEqualExpression(c *C) {
 			partitions: []string{
 				"p0",
 				"p0",
+			},
+		},
+		{
+			sql: "select * from %s where b is NULL",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a > -1",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a >= 4 and a <= 5",
+			partitions: []string{
+				"p1,p2",
+				"p0,p1",
+			},
+		},
+		{
+			sql: "select * from %s where a > 10",
+			partitions: []string{
+				"dual",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a >=2 and a <= 3",
+			partitions: []string{
+				"p0,p1",
+				"p2,p3",
+			},
+		},
+		{
+			sql: "select * from %s where a between 2 and 3",
+			partitions: []string{
+				"p0,p1",
+				"p2,p3",
+			},
+		},
+		{
+			sql: "select * from %s where a < 2",
+			partitions: []string{
+				"p0",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a <= 3",
+			partitions: []string{
+				"p0,p1",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a in (2, 3)",
+			partitions: []string{
+				"p0,p1",
+				"p2,p3",
+			},
+		},
+		{
+			sql: "select * from %s where a in (1, 5)",
+			partitions: []string{
+				"p0,p2",
+				"p1",
+			},
+		},
+		{
+			sql: "select * from %s where a not in (1, 5)",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a = 2 and a = 2",
+			partitions: []string{
+				"p0",
+				"p2",
+			},
+		},
+		{
+			sql: "select * from %s where a = 2 and a = 3",
+			partitions: []string{
+				// This means that we have no partition-read plan
+				"",
+				"",
+			},
+		},
+		{
+			sql: "select * from %s where a < 2 and a > 0",
+			partitions: []string{
+				"p0",
+				"p1",
+			},
+		},
+		{
+			sql: "select * from %s where a < 2 and a < 3",
+			partitions: []string{
+				"p0",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a > 1 and a > 2",
+			partitions: []string{
+				"p1,p2",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a = 2 or a = 3",
+			partitions: []string{
+				"p0,p1",
+				"p2,p3",
+			},
+		},
+		{
+			sql: "select * from %s where a = 2 or a in (3)",
+			partitions: []string{
+				"p0,p1",
+				"p2,p3",
+			},
+		},
+		{
+			sql: "select * from %s where a = 2 or a > 3",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a = 2 or a <= 1",
+			partitions: []string{
+				"p0",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a = 2 or a between 2 and 2",
+			partitions: []string{
+				"p0",
+				"p2",
+			},
+		},
+		{
+			sql: "select * from %s where a != 2",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a != 2 and a > 4",
+			partitions: []string{
+				"p2",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a != 2 and a != 3",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a != 2 and a = 3",
+			partitions: []string{
+				"p1",
+				"p3",
+			},
+		},
+		{
+			sql: "select * from %s where not (a = 2)",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where not (a > 2)",
+			partitions: []string{
+				"p0",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where not (a < 2)",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		// cases that partition pruning can not work
+		{
+			sql: "select * from %s where a + 1 > 4",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a - 1 > 0",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a * 2 < 0",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a << 1 < 0",
+			partitions: []string{
+				"all",
+				"all",
+			},
+		},
+		// comparison between int column and string column
+		{
+			sql: "select * from %s where a > '10'",
+			partitions: []string{
+				"dual",
+				"all",
+			},
+		},
+		{
+			sql: "select * from %s where a > '10ab'",
+			partitions: []string{
+				"dual",
+				"all",
 			},
 		},
 	}
@@ -610,6 +1145,43 @@ func (s *partitionTableSuite) TestAddDropPartitions(c *C) {
 	tk.MustPartition(`select * from t where a < 3`, "p1").Sort().Check(testkit.Rows())
 	tk.MustPartition(`select * from t where a < 8`, "p1").Sort().Check(testkit.Rows("7"))
 	tk.MustPartition(`select * from t where a < 20`, "p1,p2,p3").Sort().Check(testkit.Rows("12", "15", "7"))
+}
+
+func (s *partitionTableSuite) TestSplitRegion(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_split_region")
+	tk.MustExec("use test_split_region")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	tk.MustExec(`create table tnormal (a int, b int)`)
+	tk.MustExec(`create table thash (a int, b int, index(a)) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table trange (a int, b int, index(a)) partition by range(a) (
+		partition p0 values less than (10000),
+		partition p1 values less than (20000),
+		partition p2 values less than (30000),
+		partition p3 values less than (40000))`)
+	vals := make([]string, 0, 1000)
+	for i := 0; i < 1000; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(40000), rand.Intn(40000)))
+	}
+	tk.MustExec(`insert into tnormal values ` + strings.Join(vals, ", "))
+	tk.MustExec(`insert into thash values ` + strings.Join(vals, ", "))
+	tk.MustExec(`insert into trange values ` + strings.Join(vals, ", "))
+
+	tk.MustExec(`SPLIT TABLE thash INDEX a BETWEEN (1) AND (25000) REGIONS 10`)
+	tk.MustExec(`SPLIT TABLE trange INDEX a BETWEEN (1) AND (25000) REGIONS 10`)
+
+	result := tk.MustQuery(`select * from tnormal where a>=1 and a<=15000`).Sort().Rows()
+	tk.MustPartition(`select * from trange where a>=1 and a<=15000`, "p0,p1").Sort().Check(result)
+	tk.MustPartition(`select * from thash where a>=1 and a<=15000`, "all").Sort().Check(result)
+
+	result = tk.MustQuery(`select * from tnormal where a in (1, 10001, 20001)`).Sort().Rows()
+	tk.MustPartition(`select * from trange where a in (1, 10001, 20001)`, "p0,p1,p2").Sort().Check(result)
+	tk.MustPartition(`select * from thash where a in (1, 10001, 20001)`, "p1").Sort().Check(result)
 }
 
 func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
