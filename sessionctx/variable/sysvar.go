@@ -188,6 +188,10 @@ func (sv *SysVar) HasGlobalScope() bool {
 
 // Validate checks if system variable satisfies specific restriction.
 func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
+	// Check that the scope is correct first.
+	if err := sv.validateScope(scope); err != nil {
+		return value, err
+	}
 	// Normalize the value and apply validation based on type.
 	// i.e. TypeBool converts 1/on/ON to ON.
 	normalizedValue, err := sv.validateFromType(vars, value, scope)
@@ -203,17 +207,6 @@ func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (st
 
 // validateFromType provides automatic validation based on the SysVar's type
 func (sv *SysVar) validateFromType(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
-	// Check that the scope is correct and return the appropriate error message.
-	if sv.ReadOnly || sv.Scope == ScopeNone {
-		return value, ErrIncorrectScope.FastGenByArgs(sv.Name, "read only")
-	}
-	if scope == ScopeGlobal && !sv.HasGlobalScope() {
-		return value, errLocalVariable.FastGenByArgs(sv.Name)
-	}
-	if scope == ScopeSession && !sv.HasSessionScope() {
-		return value, errGlobalVariable.FastGenByArgs(sv.Name)
-	}
-
 	// The string "DEFAULT" is a special keyword in MySQL, which restores
 	// the compiled sysvar value. In which case we can skip further validation.
 	if strings.EqualFold(value, "DEFAULT") {
@@ -243,6 +236,37 @@ func (sv *SysVar) validateFromType(vars *SessionVars, value string, scope ScopeF
 		return sv.checkDurationSystemVar(value, vars)
 	}
 	return value, nil // typeString
+}
+
+func (sv *SysVar) validateScope(scope ScopeFlag) error {
+	if sv.ReadOnly || sv.Scope == ScopeNone {
+		return ErrIncorrectScope.FastGenByArgs(sv.Name, "read only")
+	}
+	if scope == ScopeGlobal && !sv.HasGlobalScope() {
+		return errLocalVariable.FastGenByArgs(sv.Name)
+	}
+	if scope == ScopeSession && !sv.HasSessionScope() {
+		return errGlobalVariable.FastGenByArgs(sv.Name)
+	}
+	return nil
+}
+
+// ValidateWithRelaxedValidation normalizes values but can not return errors.
+// Normalization+validation needs to be applied when reading values because older versions of TiDB
+// may be less sophisticated in normalizing values. But errors should be caught and handled,
+// because otherwise there will be upgrade issues.
+func (sv *SysVar) ValidateWithRelaxedValidation(vars *SessionVars, value string, scope ScopeFlag) string {
+	normalizedValue, err := sv.validateFromType(vars, value, scope)
+	if err != nil {
+		return normalizedValue
+	}
+	if sv.Validation != nil {
+		normalizedValue, err = sv.Validation(vars, normalizedValue, value, scope)
+		if err != nil {
+			return normalizedValue
+		}
+	}
+	return normalizedValue
 }
 
 const (
@@ -485,11 +509,15 @@ func SetSysVar(name string, value string) {
 	sysVars[name].Value = value
 }
 
-// GetSysVars returns the sysVars list under a RWLock
+// GetSysVars deep copies the sysVars list under a RWLock
 func GetSysVars() map[string]*SysVar {
 	sysVarsLock.RLock()
 	defer sysVarsLock.RUnlock()
-	return sysVars
+	copy := make(map[string]*SysVar, len(sysVars))
+	for name, sv := range sysVars {
+		copy[name] = sv
+	}
+	return copy
 }
 
 // PluginVarNames is global plugin var names set.
@@ -575,7 +603,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(ForeignKeyChecks, originalValue)
 	}},
-	{Scope: ScopeNone, Name: Hostname, Value: ServerHostname},
+	{Scope: ScopeNone, Name: Hostname, Value: DefHostname},
 	{Scope: ScopeSession, Name: Timestamp, Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetFilesystem, Value: "binary", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterSet(normalizedValue, CharacterSetFilesystem)
@@ -1246,11 +1274,11 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeSession, Name: TiDBReplicaRead, Value: "leader", Type: TypeEnum, PossibleValues: []string{"leader", "follower", "leader-and-follower"}, SetSession: func(s *SessionVars, val string) error {
 		if strings.EqualFold(val, "follower") {
-			s.SetReplicaRead(tikvstore.ReplicaReadFollower)
+			s.SetReplicaRead(kv.ReplicaReadFollower)
 		} else if strings.EqualFold(val, "leader-and-follower") {
-			s.SetReplicaRead(tikvstore.ReplicaReadMixed)
+			s.SetReplicaRead(kv.ReplicaReadMixed)
 		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
-			s.SetReplicaRead(tikvstore.ReplicaReadLeader)
+			s.SetReplicaRead(kv.ReplicaReadLeader)
 		}
 		return nil
 	}},
