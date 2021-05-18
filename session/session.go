@@ -2221,6 +2221,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableRateLimitAction,
 	variable.TiDBMemoryUsageAlarmRatio,
 	variable.TiDBMultiStatementMode,
+<<<<<<< HEAD
 }
 
 var (
@@ -2236,6 +2237,13 @@ func initLoadCommonGlobalVarsSQL() {
 		}
 		loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" + strings.Join(vars, quoteCommaQuote) + "')"
 	})
+=======
+	variable.TiDBEnableExchangePartition,
+	variable.TiDBAllowFallbackToTiKV,
+	variable.TiDBEnableDynamicPrivileges,
+	variable.CTEMaxRecursionDepth,
+	variable.TiDBDMLBatchSize,
+>>>>>>> 44830b917... session: fix dml_batch_size doesn't load the global variable (#24710)
 }
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
