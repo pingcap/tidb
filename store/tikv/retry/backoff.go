@@ -27,6 +27,7 @@ import (
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -146,7 +147,8 @@ func (b *Backoffer) BackoffWithMaxSleep(typ int, maxSleepMs int, err error) erro
 	case boMaxTsNotSynced:
 		return b.BackoffWithCfgAndMaxSleep(BoMaxTsNotSynced, maxSleepMs, err)
 	}
-	return err
+	cfg := NewConfig("", metrics.BackoffHistogramEmpty, nil, tikverr.ErrUnknown)
+	return b.BackoffWithCfgAndMaxSleep(cfg, maxSleepMs, err)
 }
 
 // BackoffWithCfgAndMaxSleep sleeps a while base on the Config and records the error message
@@ -185,7 +187,6 @@ func (b *Backoffer) BackoffWithCfgAndMaxSleep(cfg *Config, maxSleepMs int, err e
 		f = cfg.backoffFn
 		b.fn[cfg.name] = cfg.backoffFn
 	}
-
 	realSleep := f(b.ctx, maxSleepMs)
 	cfg.metric.Observe(float64(realSleep) / 1000)
 	b.totalSleep += realSleep
