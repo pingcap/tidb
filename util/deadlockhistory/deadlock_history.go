@@ -38,7 +38,7 @@ type WaitChainItem struct {
 
 // DeadlockRecord represents a deadlock events, and contains multiple transactions' information.
 type DeadlockRecord struct {
-	// The ID don't need to be set manually and it's set when it's added into the DeadlockHistory by invoking its Push
+	// The ID doesn't need to be set manually and it's set when it's added into the DeadlockHistory by invoking its Push
 	// method.
 	ID        uint64
 	OccurTime time.Time
