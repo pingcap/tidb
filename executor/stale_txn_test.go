@@ -27,7 +27,6 @@ import (
 )
 
 func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
 	defer func() {
 		err := failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
 		c.Assert(err, IsNil)
@@ -118,17 +117,12 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 }
 
 func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
-	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
-		c.Assert(err, IsNil)
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`drop table if exists b`)
 	tk.MustExec("create table t (id int primary key);")
-	tk.MustExec("create table b (id int primary key);")
+	tk.MustExec("create table b (pid int primary key);")
 	defer func() {
 		tk.MustExec(`drop table if exists b`)
 		tk.MustExec(`drop table if exists t`)
@@ -171,38 +165,54 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 			name:     "TimestampExactRead",
 			sql:      `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND), b as of timestamp TIMESTAMP('2020-09-06 00:00:00');`,
 			preSec:   20,
-			errorStr: "not set different timestamp",
+			errorStr: "can not set different time",
 		},
 		{
 			name:     "TimestampExactRead",
 			sql:      `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND), b;`,
 			preSec:   20,
-			errorStr: "not set different timestamp",
+			errorStr: "can not set different time",
 		},
 		{
 			name:     "TimestampExactRead",
 			sql:      `select * from t, b as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND);`,
 			preSec:   20,
-			errorStr: "not set different timestamp",
+			errorStr: "can not set different time",
 		},
 		{
 			name:   "NomalRead",
 			sql:    `select * from t, b;`,
 			preSec: 0,
 		},
+		{
+			name:     "TimestampExactRead",
+			sql:      `select * from (select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND)) as c, b;`,
+			preSec:   20,
+			errorStr: "can not set different time",
+		},
+		{
+			name:   "TimestampExactRead",
+			sql:    `select * from (select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND)) as c;`,
+			preSec: 20,
+		},
+		// Cannot be supported the SubSelect
+		{
+			name:     "TimestampExactRead",
+			sql:      `select * from (select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND)) as c as of timestamp Now();`,
+			preSec:   20,
+			errorStr: "You have an error in your SQL syntax",
+		},
 	}
 
-	tk.MustExec("use test")
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		_, err := tk.Exec(testcase.sql)
-		if len(testcase.errorStr) == 0 {
-			c.Assert(err, IsNil, Commentf("sql:%s, error stack %v", testcase.sql, errors.ErrorStack(err)))
-		} else {
+		if len(testcase.errorStr) != 0 {
 			c.Assert(err, NotNil)
 			c.Assert(strings.Contains(err.Error(), testcase.errorStr), IsTrue)
 			continue
 		}
+		c.Assert(err, IsNil, Commentf("sql:%s, error stack %v", testcase.sql, errors.ErrorStack(err)))
 		if testcase.expectPhysicalTS > 0 {
 			c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, testcase.expectPhysicalTS)
 		} else if testcase.preSec > 0 {

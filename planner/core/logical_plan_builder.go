@@ -2422,9 +2422,10 @@ func (b *PlanBuilder) resolveCorrelatedAggregates(ctx context.Context, sel *ast.
 }
 
 type asofResolver struct {
-	ctx      sessionctx.Context
-	tsValues []*types.Datum
-	err      error
+	ctx           sessionctx.Context
+	tsValues      []*types.Datum
+	err           error
+	hasStrongRead bool
 }
 
 func (a *asofResolver) Enter(inNode ast.Node) (ast.Node, bool) {
@@ -2443,7 +2444,7 @@ func (a *asofResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 	// for the cases: select * from a as of timestamp 'xxx', b;
 	case *ast.TableName:
 		if n.AsOf == nil {
-			a.tsValues = append(a.tsValues, nil)
+			a.hasStrongRead = true
 		}
 		return n, false
 	}
@@ -2455,7 +2456,9 @@ func (a *asofResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, true
 }
 
-// TryExtractTSFromAsOf trys to extract the specified timestamp.
+// TryExtractTSFromAsOf try to extract the specified timestamp.
+// Currently, it only supports one global timestamp and should throw an error when there are
+// multiple different times specified  in the as of clause.
 func TryExtractTSFromAsOf(ctx sessionctx.Context, node ast.Node) (*types.Datum, error) {
 	switch x := node.(type) {
 	case *ast.SelectStmt:
@@ -2472,26 +2475,19 @@ func TryExtractTSFromAsOf(ctx sessionctx.Context, node ast.Node) (*types.Datum, 
 			if len(tsValues) == 0 {
 				return nil, nil
 			}
-
+			if resolve.hasStrongRead && len(tsValues) > 0 {
+				return nil, ErrDifferentAsOf.GenWithStack("can not set different time %v in the as of", tsValues)
+			}
 			var res *types.Datum
 			first := tsValues[0]
-			if first != nil {
-				ts, err := first.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeTimestamp))
-				if err != nil {
-					return nil, err
-				}
-				res = &ts
+			ts, err := first.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeTimestamp))
+			if err != nil {
+				return nil, err
 			}
+			res = &ts
 
 			for i := 1; i < len(tsValues); i++ {
 				val := tsValues[i]
-				if (val == nil && first != nil) || (val != nil && first == nil) {
-					return nil, errors.New("can not set different timestamp in one statement")
-				}
-				if first == nil && val == nil {
-					continue
-				}
-
 				ts, err := val.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeTimestamp))
 				if err != nil {
 					return nil, err
@@ -2501,7 +2497,7 @@ func TryExtractTSFromAsOf(ctx sessionctx.Context, node ast.Node) (*types.Datum, 
 					return nil, err
 				}
 				if cmp != 0 {
-					return nil, errors.New("can not set different timestamp in one statement")
+					return nil, ErrDifferentAsOf.GenWithStack("can not set different time %v in the as of", tsValues)
 				}
 			}
 			return res, nil

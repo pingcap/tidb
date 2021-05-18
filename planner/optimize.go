@@ -344,7 +344,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 	return nil, "", "", nil
 }
 
-// tryPrepareStaledTS try to prepare the staled timestamp for stale read.
+// tryPrepareStaledTS try to prepare the staled timestamp for stale read(https://github.com/pingcap/tidb/issues/21094).
 func tryPrepareStaledTS(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) error {
 	ts, err := plannercore.TryExtractTSFromAsOf(sctx, node)
 	if err != nil {
@@ -355,7 +355,7 @@ func tryPrepareStaledTS(ctx context.Context, sctx sessionctx.Context, node ast.N
 		if err != nil {
 			return err
 		}
-		tso := oracle.ComposeTS(tsTime.Unix()*1000, 0)
+		tso := oracle.GoTimeToTS(tsTime)
 		opt := sessionctx.StalenessTxnOption{}
 		// TODO: remove TimestampBoundReadTimestamp
 		opt.Mode = ast.TimestampBoundReadTimestamp
