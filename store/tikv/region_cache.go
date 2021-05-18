@@ -110,6 +110,15 @@ func (r *RegionStore) accessStore(mode AccessMode, idx AccessIndex) (int, *Store
 	return sidx, r.stores[sidx]
 }
 
+func (r *RegionStore) getAccessIndex(mode AccessMode, store *Store) AccessIndex {
+	for index, sidx := range r.accessIndex[mode] {
+		if r.stores[sidx].storeID == store.storeID {
+			return AccessIndex(index)
+		}
+	}
+	return -1
+}
+
 func (r *RegionStore) accessStoreNum(mode AccessMode) int {
 	return len(r.accessIndex[mode])
 }
@@ -527,6 +536,40 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	}, nil
 }
 
+// GetAllValidTiFlashStores returns the store ids of all valid TiFlash stores, the store id of currentStore is always the first one
+func (c *RegionCache) GetAllValidTiFlashStores(id RegionVerID, currentStore *Store) []uint64 {
+	// set the cap to 2 because usually, TiFlash table will have 2 replicas
+	allStores := make([]uint64, 0, 2)
+	// make sure currentStore id is always the first in allStores
+	allStores = append(allStores, currentStore.storeID)
+	ts := time.Now().Unix()
+	cachedRegion := c.getCachedRegionWithRLock(id)
+	if cachedRegion == nil {
+		return allStores
+	}
+	if !cachedRegion.checkRegionCacheTTL(ts) {
+		return allStores
+	}
+	regionStore := cachedRegion.getStore()
+	currentIndex := regionStore.getAccessIndex(TiFlashOnly, currentStore)
+	if currentIndex == -1 {
+		return allStores
+	}
+	for startOffset := 1; startOffset < regionStore.accessStoreNum(TiFlashOnly); startOffset++ {
+		accessIdx := AccessIndex((int(currentIndex) + startOffset) % regionStore.accessStoreNum(TiFlashOnly))
+		storeIdx, store := regionStore.accessStore(TiFlashOnly, accessIdx)
+		if store.getResolveState() == needCheck {
+			continue
+		}
+		storeFailEpoch := atomic.LoadUint32(&store.epoch)
+		if storeFailEpoch != regionStore.storeEpochs[storeIdx] {
+			continue
+		}
+		allStores = append(allStores, store.storeID)
+	}
+	return allStores
+}
+
 // GetTiFlashRPCContext returns RPCContext for a region must access flash store. If it returns nil, the region
 // must be out of date and already dropped from cache or not flash store found.
 // `loadBalance` is an option. For MPP and batch cop, it is pointless and might cause try the failed store repeatly.
@@ -662,6 +705,64 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 		}
 	}
 	return r, nil
+}
+
+// OnSendFailForBatchRegions handles send request fail logic.
+func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *Store, regionInfos []RegionInfo, scheduleReload bool, err error) {
+	metrics.RegionCacheCounterWithSendFail.Add(float64(len(regionInfos)))
+	if store.storeType != tikvrpc.TiFlash {
+		logutil.Logger(bo.GetCtx()).Info("Should not reach here, OnSendFailForBatchRegions only support TiFlash")
+		return
+	}
+	for _, ri := range regionInfos {
+		if ri.Meta == nil {
+			continue
+		}
+		r := c.getCachedRegionWithRLock(ri.Region)
+		if r != nil {
+			peersNum := len(r.meta.Peers)
+			if len(ri.Meta.Peers) != peersNum {
+				logutil.Logger(bo.GetCtx()).Info("retry and refresh current region after send request fail and up/down stores length changed",
+					zap.Stringer("region", &ri.Region),
+					zap.Bool("needReload", scheduleReload),
+					zap.Reflect("oldPeers", ri.Meta.Peers),
+					zap.Reflect("newPeers", r.meta.Peers),
+					zap.Error(err))
+				continue
+			}
+
+			rs := r.getStore()
+
+			accessMode := TiFlashOnly
+			accessIdx := rs.getAccessIndex(accessMode, store)
+			if accessIdx == -1 {
+				logutil.Logger(bo.GetCtx()).Warn("can not get access index for region " + ri.Region.String())
+				continue
+			}
+			if err != nil {
+				storeIdx, s := rs.accessStore(accessMode, accessIdx)
+				epoch := rs.storeEpochs[storeIdx]
+				if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
+					logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
+					metrics.RegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
+				}
+				// schedule a store addr resolve.
+				s.markNeedCheck(c.notifyCheckCh)
+			}
+
+			// try next peer
+			rs.switchNextFlashPeer(r, accessIdx)
+			logutil.Logger(bo.GetCtx()).Info("switch region tiflash peer to next due to send request fail",
+				zap.Stringer("region", &ri.Region),
+				zap.Bool("needReload", scheduleReload),
+				zap.Error(err))
+
+			// force reload region when retry all known peers in region.
+			if scheduleReload {
+				r.scheduleReload()
+			}
+		}
+	}
 }
 
 // OnSendFail handles send request fail logic.
