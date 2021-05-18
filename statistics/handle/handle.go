@@ -955,6 +955,30 @@ func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics
 	return table, nil
 }
 
+// StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
+func (h *Handle) StatsMetaCountAndModifyCount(tableID int64) (int64, int64, error) {
+	reader, err := h.getStatsReader(0)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer func() {
+		err1 := h.releaseStatsReader(reader)
+		if err1 != nil && err == nil {
+			err = err1
+		}
+	}()
+	rows, _, err := reader.read("select count, modify_count from mysql.stats_meta where table_id = %?", tableID)
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(rows) == 0 {
+		return 0, 0, nil
+	}
+	count := int64(rows[0].GetUint64(0))
+	modifyCount := rows[0].GetInt64(1)
+	return count, modifyCount, nil
+}
+
 // SaveTableStatsToStorage saves the stats of a table to storage.
 func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, needDumpFMS bool) (err error) {
 	tableID := results.TableID.GetStatisticsID()
@@ -977,7 +1001,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 	// 1. Save mysql.stats_meta.
 	var rs sqlexec.RecordSet
 	// Lock this row to prevent writing of concurrent analyze.
-	rs, err = exec.ExecuteInternal(ctx, "select snapshot from mysql.stats_meta where table_id = %? for update", tableID)
+	rs, err = exec.ExecuteInternal(ctx, "select snapshot, count, modify_count from mysql.stats_meta where table_id = %? for update", tableID)
 	if err != nil {
 		return err
 	}
@@ -986,17 +1010,32 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 	if err != nil {
 		return err
 	}
+	var curCnt, curModifyCnt int64
 	if len(rows) > 0 {
 		snapshot := rows[0].GetUint64(0)
 		// A newer version analyze result has been written, so skip this writing.
 		if snapshot >= results.Snapshot && results.StatsVer == statistics.Version2 {
 			return nil
 		}
+		curCnt = int64(rows[0].GetUint64(1))
+		curModifyCnt = rows[0].GetInt64(2)
 	}
-	// This `replace` would reset modify_count to 0.
-	// TODO: subtract original modify_count from the current modify_count.
-	if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, snapshot) values (%?, %?, %?, %?)", version, tableID, results.Count, results.Snapshot); err != nil {
-		return err
+	if len(rows) == 0 || results.StatsVer != statistics.Version2 {
+		if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, snapshot) values (%?, %?, %?, %?)", version, tableID, results.Count, results.Snapshot); err != nil {
+			return err
+		}
+	} else {
+		modifyCnt := curModifyCnt - results.BaseModifyCnt
+		if modifyCnt < 0 {
+			modifyCnt = 0
+		}
+		cnt := curCnt + results.Count - results.BaseCount
+		if cnt < 0 {
+			cnt = 0
+		}
+		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%? where table_id=%?", version, modifyCnt, cnt, results.Snapshot, tableID); err != nil {
+			return err
+		}
 	}
 	// 2. Save histograms.
 	for _, result := range results.Ars {
