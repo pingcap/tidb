@@ -1384,13 +1384,18 @@ func (p *PhysicalCTE) OperatorInfo(normalized bool) string {
 	return fmt.Sprintf("data:%s", (*CTEDefinition)(p).ExplainID())
 }
 
+// ExplainInfo implements Plan interface.
+func (p *PhysicalCTE) ExplainInfo() string {
+	return p.AccessObject(false) + ", " + p.OperatorInfo(false)
+}
+
 // ExplainID overrides the ExplainID.
 func (p *PhysicalCTE) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
-			return p.TP() + "FullScan"
+			return p.TP()
 		}
-		return p.TP() + "FullScan_" + strconv.Itoa(p.id)
+		return p.TP() + "_" + strconv.Itoa(p.id)
 	})
 }
 
