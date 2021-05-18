@@ -37,7 +37,7 @@ func (s *testPDSuite) TestPDOracle_UntilExpired(c *C) {
 	o := oracles.NewEmptyPDOracle()
 	start := time.Now()
 	oracles.SetEmptyPDOracleLastTs(o, oracle.GoTimeToTS(start))
-	lockTs := oracle.GoTimeToTS((start.Add(time.Duration(lockAfter)))) + 1
+	lockTs := oracle.GoTimeToTS((start.Add(time.Duration(lockAfter) * time.Millisecond))) + 1
 	waitTs := o.UntilExpired(lockTs, uint64(lockExp), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(waitTs, Equals, int64(lockAfter+lockExp), Commentf("waitTs shoulb be %d but got %d", int64(lockAfter+lockExp), waitTs))
 }
