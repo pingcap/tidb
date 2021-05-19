@@ -4362,7 +4362,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	}
 	// Ban setting replica count for tables in MySQL system database.
 	if util.IsSysDB(schema.Name.L) {
-		return errors.Trace(errors.New("[ddl] couldn't set tiflash replica for tables in MySQL system database"))
+		return errors.Trace(errUnsupportedAlterReplicaForSysTable)
 	}
 
 	tbReplicaInfo := tb.Meta().TiFlashReplica

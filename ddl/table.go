@@ -878,7 +878,7 @@ func (w *worker) onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64
 
 	// Ban setting replica count for tables in MySQL system database.
 	if tidb_util.IsSysDB(job.SchemaName) {
-		return ver, errors.Trace(errors.New("[ddl] couldn't set tiflash replica for tables in MySQL system database"))
+		return ver, errors.Trace(errUnsupportedAlterReplicaForSysTable)
 	}
 
 	err = w.checkTiFlashReplicaCount(replicaInfo.Count)

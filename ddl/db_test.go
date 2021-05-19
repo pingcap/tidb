@@ -5310,7 +5310,7 @@ func (s *testSerialDBSuite) TestSetTableFlashReplicaForSystemTable(c *C) {
 			continue
 		}
 		_, err := tk.Exec(fmt.Sprintf("alter table %s set tiflash replica 1", one))
-		c.Assert(err.Error(), Equals, "[ddl] couldn't set tiflash replica for tables in MySQL system database")
+		c.Assert(err.Error(), Equals, "[ddl:8200]ALTER table replica for tables in system database is currently unsupported")
 	}
 }
 
