@@ -4475,3 +4475,13 @@ func (s *testTxnStateSuite) TestRollbacking(c *C) {
 	c.Assert(tk.Se.TxnInfo().State, Equals, txninfo.TxnRollingBack)
 	<-ch
 }
+
+func (s *testSessionSuite) TestReadDMLBatchSize(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set global tidb_dml_batch_size=1000")
+	se, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	// `select 1` to load the global variables.
+	_, _ = se.Execute(context.TODO(), "select 1")
+	c.Assert(se.GetSessionVars().DMLBatchSize, Equals, 1000)
+}
