@@ -307,7 +307,7 @@ func (s *tikvStore) Begin() (kv.Transaction, error) {
 }
 
 // BeginWithOption begins a transaction with given option
-func (s *tikvStore) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
+func (s *tikvStore) BeginWithOption(option tikv.StartTSOption) (kv.Transaction, error) {
 	txn, err := s.KVStore.BeginWithOption(option)
 	if err != nil {
 		return nil, derr.ToTiDBErr(err)
