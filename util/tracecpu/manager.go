@@ -13,14 +13,19 @@ import (
 )
 
 type StmtProfiler struct {
-	taskCh     chan *bytes.Buffer
-	cacheBufCh chan *bytes.Buffer
+	taskCh     chan *profileTask
+	cacheBufCh chan *profileTask
+}
+
+type profileTask struct {
+	buf *bytes.Buffer
+	end int64
 }
 
 func NewStmtProfiler() *StmtProfiler {
 	return &StmtProfiler{
-		taskCh:     make(chan *bytes.Buffer, 128),
-		cacheBufCh: make(chan *bytes.Buffer, 128),
+		taskCh:     make(chan *profileTask, 128),
+		cacheBufCh: make(chan *profileTask, 128),
 	}
 }
 
@@ -33,30 +38,34 @@ func (sp *StmtProfiler) Run() {
 func (sp *StmtProfiler) startCPUProfileWorker() {
 	for {
 		cfg := config.GetGlobalConfig()
-		interval := time.Duration(cfg.TopStmt.RefreshInterval) * time.Second
 		if cfg.TopStmt.Enable {
-			sp.doCPUProfile(interval)
+			sp.doCPUProfile(cfg.TopStmt.RefreshInterval)
 		} else {
-			time.Sleep(interval)
+			time.Sleep(time.Second)
 		}
 	}
 }
 
-func (sp *StmtProfiler) doCPUProfile(interval time.Duration) {
-	buf := sp.getBuffer()
-	if err := pprof.StartCPUProfile(buf); err != nil {
+func (sp *StmtProfiler) doCPUProfile(interval int) {
+	task := sp.newProfileTask()
+	if err := pprof.StartCPUProfile(task.buf); err != nil {
 		return
 	}
-	time.Sleep(interval)
+	ns := int(time.Second)*interval - time.Now().Nanosecond()
+	time.Sleep(time.Nanosecond * time.Duration(ns))
 	pprof.StopCPUProfile()
-	sp.taskCh <- buf
+	sp.sendProfileTask(task)
+}
+
+func (sp *StmtProfiler) sendProfileTask(task *profileTask) {
+	task.end = time.Now().Unix()
+	sp.taskCh <- task
 }
 
 func (sp *StmtProfiler) startAnalyzeProfileWorker() {
-	var buf *bytes.Buffer
 	for {
-		buf = <-sp.taskCh
-		reader := bytes.NewReader(buf.Bytes())
+		task := <-sp.taskCh
+		reader := bytes.NewReader(task.buf.Bytes())
 		p, err := profile.Parse(reader)
 		if err != nil {
 			logutil.BgLogger().Error("parse profile error", zap.Error(err))
@@ -76,23 +85,26 @@ func (sp *StmtProfiler) startAnalyzeProfileWorker() {
 			}
 		}
 		fmt.Printf("\n\n")
-		sp.putBuffer(buf)
+		sp.putTaskToBuffer(task)
 	}
 }
 
-func (sp *StmtProfiler) getBuffer() *bytes.Buffer {
+func (sp *StmtProfiler) newProfileTask() *profileTask {
+	var task *profileTask
 	select {
-	case buf := <-sp.cacheBufCh:
-		buf.Reset()
-		return buf
+	case task = <-sp.cacheBufCh:
+		task.buf.Reset()
 	default:
-		return bytes.NewBuffer(make([]byte, 0, 100*1024))
+		task = &profileTask{
+			buf: bytes.NewBuffer(make([]byte, 0, 100*1024)),
+		}
 	}
+	return task
 }
 
-func (sp *StmtProfiler) putBuffer(buf *bytes.Buffer) {
+func (sp *StmtProfiler) putTaskToBuffer(task *profileTask) {
 	select {
-	case sp.cacheBufCh <- buf:
+	case sp.cacheBufCh <- task:
 	default:
 	}
 }
