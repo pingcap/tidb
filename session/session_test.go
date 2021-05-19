@@ -4229,3 +4229,197 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(sb.String(), Equals, "SELECT 3")
 }
+<<<<<<< HEAD
+=======
+
+func (s *testSessionSuite3) TestGlobalTemporaryTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create global temporary table g_tmp (a int primary key, b int, c int, index i_b(b)) on commit delete rows")
+	tk.MustExec("begin")
+	tk.MustExec("insert into g_tmp values (3, 3, 3)")
+	tk.MustExec("insert into g_tmp values (4, 7, 9)")
+
+	// Cover table scan.
+	tk.MustQuery("select * from g_tmp").Check(testkit.Rows("3 3 3", "4 7 9"))
+	// Cover index reader.
+	tk.MustQuery("select b from g_tmp where b > 3").Check(testkit.Rows("7"))
+	// Cover index lookup.
+	tk.MustQuery("select c from g_tmp where b = 3").Check(testkit.Rows("3"))
+	// Cover point get.
+	tk.MustQuery("select * from g_tmp where a = 3").Check(testkit.Rows("3 3 3"))
+	// Cover batch point get.
+	tk.MustQuery("select * from g_tmp where a in (2,3,4)").Check(testkit.Rows("3 3 3", "4 7 9"))
+	tk.MustExec("commit")
+
+	// The global temporary table data is discard after the transaction commit.
+	tk.MustQuery("select * from g_tmp").Check(testkit.Rows())
+}
+
+type testTxnStateSuite struct {
+	testSessionSuiteBase
+}
+
+func (s *testTxnStateSuite) TestBasic(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t(a) values (1);")
+	info := tk.Se.TxnInfo()
+	c.Assert(info, IsNil)
+	tk.MustExec("begin pessimistic;")
+	tk.MustExec("select * from t for update;")
+	info = tk.Se.TxnInfo()
+	_, expectedDigest := parser.NormalizeDigest("select * from t for update;")
+	c.Assert(info.CurrentSQLDigest, Equals, expectedDigest)
+	c.Assert(info.State, Equals, txninfo.TxnRunningNormal)
+	c.Assert(info.BlockStartTime, IsNil)
+	// len and size will be covered in TestLenAndSize
+	c.Assert(info.ConnectionID, Equals, tk.Se.GetSessionVars().ConnectionID)
+	c.Assert(info.Username, Equals, "")
+	c.Assert(info.CurrentDB, Equals, "test")
+	tk.MustExec("commit;")
+	info = tk.Se.TxnInfo()
+	c.Assert(info, IsNil)
+}
+
+func (s *testTxnStateSuite) TestEntriesCountAndSize(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("begin pessimistic;")
+	tk.MustExec("insert into t(a) values (1);")
+	info := tk.Se.TxnInfo()
+	c.Assert(info.EntriesCount, Equals, uint64(1))
+	c.Assert(info.EntriesSize, Equals, uint64(29))
+	tk.MustExec("insert into t(a) values (2);")
+	info = tk.Se.TxnInfo()
+	c.Assert(info.EntriesCount, Equals, uint64(2))
+	c.Assert(info.EntriesSize, Equals, uint64(58))
+	tk.MustExec("commit;")
+}
+
+func (s *testTxnStateSuite) TestBlocked(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t(a) values (1);")
+	tk.MustExec("begin pessimistic;")
+	tk.MustExec("select * from t where a = 1 for update;")
+	go func() {
+		tk2.MustExec("begin pessimistic")
+		tk2.MustExec("select * from t where a = 1 for update;")
+		tk2.MustExec("commit;")
+	}()
+	time.Sleep(100 * time.Millisecond)
+	c.Assert(tk2.Se.TxnInfo().State, Equals, txninfo.TxnLockWaiting)
+	c.Assert(tk2.Se.TxnInfo().BlockStartTime, NotNil)
+	tk.MustExec("commit;")
+}
+
+func (s *testTxnStateSuite) TestCommitting(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t(a) values (1), (2);")
+	tk.MustExec("begin pessimistic;")
+	tk.MustExec("select * from t where a = 1 for update;")
+	ch := make(chan struct{})
+	go func() {
+		tk2.MustExec("begin pessimistic")
+		c.Assert(tk2.Se.TxnInfo(), NotNil)
+		tk2.MustExec("select * from t where a = 2 for update;")
+		failpoint.Enable("github.com/pingcap/tidb/session/mockSlowCommit", "sleep(200)")
+		defer failpoint.Disable("github.com/pingcap/tidb/session/mockSlowCommit")
+		tk2.MustExec("commit;")
+		ch <- struct{}{}
+	}()
+	time.Sleep(100 * time.Millisecond)
+	c.Assert(tk2.Se.TxnInfo().State, Equals, txninfo.TxnCommitting)
+	tk.MustExec("commit;")
+	<-ch
+}
+
+func (s *testTxnStateSuite) TestRollbacking(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t(a) values (1), (2);")
+	ch := make(chan struct{})
+	go func() {
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("insert into t(a) values (3);")
+		failpoint.Enable("github.com/pingcap/tidb/session/mockSlowRollback", "sleep(200)")
+		defer failpoint.Disable("github.com/pingcap/tidb/session/mockSlowRollback")
+		tk.MustExec("rollback;")
+		ch <- struct{}{}
+	}()
+	time.Sleep(100 * time.Millisecond)
+	c.Assert(tk.Se.TxnInfo().State, Equals, txninfo.TxnRollingBack)
+	<-ch
+}
+
+func (s *testSessionSuite) TestReadDMLBatchSize(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set global tidb_dml_batch_size=1000")
+	se, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	// `select 1` to load the global variables.
+	_, _ = se.Execute(context.TODO(), "select 1")
+	c.Assert(se.GetSessionVars().DMLBatchSize, Equals, 1000)
+}
+
+func (s *testSessionSuite) TestInTxnPSProtoPointGet(c *C) {
+	ctx := context.Background()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(c1 int primary key, c2 int, c3 int)")
+	tk.MustExec("insert into t1 values(1, 10, 100)")
+
+	// Generate the ps statement and make the prepared plan cached for point get.
+	id, _, _, err := tk.Se.PrepareStmt("select c1, c2 from t1 where c1 = ?")
+	c.Assert(err, IsNil)
+	idForUpdate, _, _, err := tk.Se.PrepareStmt("select c1, c2 from t1 where c1 = ? for update")
+	c.Assert(err, IsNil)
+	params := []types.Datum{types.NewDatum(1)}
+	rs, err := tk.Se.ExecutePreparedStmt(ctx, id, params)
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 10"))
+	rs, err = tk.Se.ExecutePreparedStmt(ctx, idForUpdate, params)
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 10"))
+
+	// Query again the cached plan will be used.
+	rs, err = tk.Se.ExecutePreparedStmt(ctx, id, params)
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 10"))
+	rs, err = tk.Se.ExecutePreparedStmt(ctx, idForUpdate, params)
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 10"))
+
+	// Start a transaction, now the in txn flag will be added to the session vars.
+	_, err = tk.Se.Execute(ctx, "start transaction")
+	c.Assert(err, IsNil)
+	rs, err = tk.Se.ExecutePreparedStmt(ctx, id, params)
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 10"))
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsTrue)
+	rs, err = tk.Se.ExecutePreparedStmt(ctx, idForUpdate, params)
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 10"))
+	txn, err = tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsTrue)
+	_, err = tk.Se.Execute(ctx, "update t1 set c2 = c2 + 1")
+	c.Assert(err, IsNil)
+	// Check the read result after in-transaction update.
+	rs, err = tk.Se.ExecutePreparedStmt(ctx, id, params)
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 11"))
+	rs, err = tk.Se.ExecutePreparedStmt(ctx, idForUpdate, params)
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 11"))
+	txn, err = tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsTrue)
+	tk.MustExec("commit")
+}
+>>>>>>> f71fbdb17... execution: fix the incorrect use of cached plan for point get (#24749)
