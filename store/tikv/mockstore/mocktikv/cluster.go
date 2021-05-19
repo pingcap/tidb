@@ -15,7 +15,6 @@ package mocktikv
 
 import (
 	"bytes"
-	"context"
 	"math"
 	"sort"
 	"sync"
@@ -144,27 +143,6 @@ func (c *Cluster) StartStore(storeID uint64) {
 	}
 }
 
-// CancelStore makes the store with cancel state true.
-func (c *Cluster) CancelStore(storeID uint64) {
-	c.Lock()
-	defer c.Unlock()
-
-	// A store returns context.Cancelled Error when cancel is true.
-	if store := c.stores[storeID]; store != nil {
-		store.cancel = true
-	}
-}
-
-// UnCancelStore makes the store with cancel state false.
-func (c *Cluster) UnCancelStore(storeID uint64) {
-	c.Lock()
-	defer c.Unlock()
-
-	if store := c.stores[storeID]; store != nil {
-		store.cancel = false
-	}
-}
-
 // GetStoreByAddr returns a Store's meta by an addr.
 func (c *Cluster) GetStoreByAddr(addr string) *metapb.Store {
 	c.RLock()
@@ -184,10 +162,6 @@ func (c *Cluster) GetAndCheckStoreByAddr(addr string) (ss []*metapb.Store, err e
 	defer c.RUnlock()
 
 	for _, s := range c.stores {
-		if s.cancel {
-			err = context.Canceled
-			return
-		}
 		if s.meta.GetAddress() == addr {
 			ss = append(ss, proto.Clone(s.meta).(*metapb.Store))
 		}
@@ -649,8 +623,7 @@ func (r *Region) incVersion() {
 
 // Store is the Store's meta data.
 type Store struct {
-	meta   *metapb.Store
-	cancel bool // return context.Cancelled error when cancel is true.
+	meta *metapb.Store
 }
 
 func newStore(storeID uint64, addr string, labels ...*metapb.StoreLabel) *Store {

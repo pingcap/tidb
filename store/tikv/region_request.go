@@ -23,8 +23,6 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -227,8 +225,6 @@ func (s *RegionRequestSender) SendReqCtx(
 	if span := opentracing.SpanFromContext(bo.GetCtx()); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("regionRequest.SendReqCtx", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
-		// TODO(MyonKeminta): Make sure trace works without cloning the backoffer.
-		// bo = bo.Clone()
 		bo.SetCtx(opentracing.ContextWithSpan(bo.GetCtx(), span1))
 	}
 
@@ -544,27 +540,13 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	if span := opentracing.SpanFromContext(bo.GetCtx()); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("regionRequest.onSendFail", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
-		// TODO(MyonKeminta): Make sure trace works without cloning the backoffer.
-		// bo = bo.Clone()
 		bo.SetCtx(opentracing.ContextWithSpan(bo.GetCtx(), span1))
 	}
-	// If it failed because the context is cancelled by ourself, don't retry.
-	if errors.Cause(err) == context.Canceled {
-		return errors.Trace(err)
-	} else if atomic.LoadUint32(&ShuttingDown) > 0 {
+	if atomic.LoadUint32(&ShuttingDown) > 0 {
 		return tikverr.ErrTiDBShuttingDown
 	}
-	if status.Code(errors.Cause(err)) == codes.Canceled {
-		select {
-		case <-bo.GetCtx().Done():
-			return errors.Trace(err)
-		default:
-			// If we don't cancel, but the error code is Canceled, it must be from grpc remote.
-			// This may happen when tikv is killed and exiting.
-			// Backoff and retry in this case.
-			logutil.BgLogger().Warn("receive a grpc cancel signal from remote", zap.Error(err))
-		}
-	}
+	// TODO(youjiali1995): better handle errors of gRPC, for example, increase timeout
+	// for codes.DeadlineExceeded if the store is available.
 
 	if ctx.Meta != nil {
 		s.regionCache.OnSendFail(bo, ctx, s.NeedReloadRegion(ctx), err)
@@ -572,8 +554,6 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 
 	// Retry on send request failure when it's not canceled.
 	// When a store is not available, the leader of related region should be elected quickly.
-	// TODO: the number of retry time should be limited:since region may be unavailable
-	// when some unrecoverable disaster happened.
 	if ctx.Store != nil && ctx.Store.storeType == tikvrpc.TiFlash {
 		err = bo.Backoff(retry.BoTiFlashRPC, errors.Errorf("send tiflash request error: %v, ctx: %v, try next peer later", err, ctx))
 	} else {
@@ -633,8 +613,6 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 	if span := opentracing.SpanFromContext(bo.GetCtx()); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tikv.onRegionError", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
-		// TODO(MyonKeminta): Make sure trace works without cloning the backoffer.
-		// bo = bo.Clone()
 		bo.SetCtx(opentracing.ContextWithSpan(bo.GetCtx(), span1))
 	}
 

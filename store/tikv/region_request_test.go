@@ -268,36 +268,6 @@ func (s *testRegionRequestToSingleStoreSuite) TestSendReqCtx(c *C) {
 	c.Assert(ctx, NotNil)
 }
 
-func (s *testRegionRequestToSingleStoreSuite) TestOnSendFailedWithCancelled(c *C) {
-	req := tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
-		Key:   []byte("key"),
-		Value: []byte("value"),
-	})
-	region, err := s.cache.LocateRegionByID(s.bo, s.region)
-	c.Assert(err, IsNil)
-	c.Assert(region, NotNil)
-	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
-	c.Assert(err, IsNil)
-	c.Assert(resp.Resp, NotNil)
-
-	// set store to cancel state.
-	s.cluster.CancelStore(s.store)
-	// locate region again is needed
-	// since last request on the region failed and region's info had been cleared.
-	_, err = s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
-	c.Assert(err, NotNil)
-	c.Assert(errors.Cause(err), Equals, context.Canceled)
-
-	// set store to normal state.
-	s.cluster.UnCancelStore(s.store)
-	region, err = s.cache.LocateRegionByID(s.bo, s.region)
-	c.Assert(err, IsNil)
-	c.Assert(region, NotNil)
-	resp, err = s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
-	c.Assert(err, IsNil)
-	c.Assert(resp.Resp, NotNil)
-}
-
 func (s *testRegionRequestToSingleStoreSuite) TestNoReloadRegionWhenCtxCanceled(c *C) {
 	req := tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
 		Key:   []byte("key"),
