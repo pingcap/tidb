@@ -140,8 +140,6 @@ type StatementContext struct {
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	TableIDs         []int64
 	IndexNames       []string
-	nowTs            time.Time // use this variable for now/current_timestamp calculation/cache for one stmt
-	stmtTimeCached   bool
 	StmtType         string
 	OriginalSQL      string
 	digestMemo       struct {
@@ -164,6 +162,9 @@ type StatementContext struct {
 	TblInfo2UnionScan     map[*model.TableInfo]bool
 	TaskID                uint64 // unique ID for an execution of a statement
 	TaskMapBakTS          uint64 // counter for
+
+	// stmtCache is used to store some statement-related values.
+	stmtCache map[StmtCacheKey]interface{}
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -195,19 +196,35 @@ func (sh *StmtHints) TaskMapNeedBackUp() bool {
 	return sh.ForceNthPlan != -1
 }
 
-// GetNowTsCached getter for nowTs, if not set get now time and cache it
-func (sc *StatementContext) GetNowTsCached() time.Time {
-	if !sc.stmtTimeCached {
-		now := time.Now()
-		sc.nowTs = now
-		sc.stmtTimeCached = true
+// StmtCacheKey represents the key type in the StmtCache.
+type StmtCacheKey int
+
+const (
+	// StmtNowTsCacheKey is a variable for now/current_timestamp calculation/cache of one stmt.
+	StmtNowTsCacheKey StmtCacheKey = iota
+	// StmtSafeTSCacheKey is a variable for safeTS calculation/cache of one stmt.
+	StmtSafeTSCacheKey
+)
+
+// GetOrStoreStmtCache gets the cached value of the given key if it exists, otherwise stores the value.
+func (sc *StatementContext) GetOrStoreStmtCache(key StmtCacheKey, value interface{}) interface{} {
+	if sc.stmtCache == nil {
+		sc.stmtCache = make(map[StmtCacheKey]interface{})
 	}
-	return sc.nowTs
+	if _, ok := sc.stmtCache[key]; !ok {
+		sc.stmtCache[key] = value
+	}
+	return sc.stmtCache[key]
 }
 
-// ResetNowTs resetter for nowTs, clear cached time flag
-func (sc *StatementContext) ResetNowTs() {
-	sc.stmtTimeCached = false
+// ResetInStmtCache resets the cache of given key.
+func (sc *StatementContext) ResetInStmtCache(key StmtCacheKey) {
+	delete(sc.stmtCache, key)
+}
+
+// ResetStmtCache resets all cached values.
+func (sc *StatementContext) ResetStmtCache() {
+	sc.stmtCache = make(map[StmtCacheKey]interface{})
 }
 
 // SQLDigest gets normalized and digest for provided sql.

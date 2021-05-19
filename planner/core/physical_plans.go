@@ -911,9 +911,7 @@ func (p *PhysicalMergeJoin) Clone() (PhysicalPlan, error) {
 		return nil, err
 	}
 	cloned.basePhysicalJoin = *base
-	for _, cf := range p.CompareFuncs {
-		cloned.CompareFuncs = append(cloned.CompareFuncs, cf)
-	}
+	cloned.CompareFuncs = append(cloned.CompareFuncs, p.CompareFuncs...)
 	cloned.Desc = p.Desc
 	return cloned, nil
 }
