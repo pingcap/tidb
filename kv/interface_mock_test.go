@@ -17,6 +17,7 @@ import (
 	"context"
 
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
@@ -150,7 +151,7 @@ func (s *mockStorage) Begin() (Transaction, error) {
 	return newMockTxn(), nil
 }
 
-func (s *mockStorage) BeginWithOption(option TransactionOption) (Transaction, error) {
+func (s *mockStorage) BeginWithOption(option tikv.StartTSOption) (Transaction, error) {
 	return newMockTxn(), nil
 }
 
@@ -207,6 +208,10 @@ func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, 
 
 func (s *mockStorage) GetMemCache() MemManager {
 	return nil
+}
+
+func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
+	return 0
 }
 
 // newMockStorage creates a new mockStorage.
