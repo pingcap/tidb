@@ -6111,7 +6111,6 @@ func (s *testSuite1) TestUpdateGivenPartitionSet(c *C) {
 func (s *testSuite1) TestDIVZeroInPartitionExpr(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-<<<<<<< HEAD
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int) partition by range (10 div a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
 	defer tk.MustExec("drop table if exists t1")
@@ -6120,44 +6119,6 @@ func (s *testSuite1) TestDIVZeroInPartitionExpr(c *C) {
 	tk.MustExec("insert into t1 values (NULL), (0), (1)")
 	tk.MustExec("set @@sql_mode='STRICT_ALL_TABLES,ERROR_FOR_DIVISION_BY_ZERO'")
 	tk.MustGetErrCode("insert into t1 values (NULL), (0), (1)", mysql.ErrDivisionByZero)
-=======
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int);")
-	tk.MustExec("insert into t values (1),(1),(1),(1),(1),(1),(1),(1),(1);")
-	tk.MustExec("analyze table t;")
-	result := tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
-	c.Assert(result.Rows()[1][0], Equals, "└─Apply_39")
-	var (
-		ind  int
-		flag bool
-	)
-	value := (result.Rows()[1][5]).(string)
-	for ind = 0; ind < len(value)-5; ind++ {
-		if value[ind:ind+5] == "cache" {
-			flag = true
-			break
-		}
-	}
-	c.Assert(flag, Equals, true)
-	c.Assert(value[ind:], Equals, "cache:ON, cacheHitRatio:88.889%")
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int);")
-	tk.MustExec("insert into t values (1),(2),(3),(4),(5),(6),(7),(8),(9);")
-	tk.MustExec("analyze table t;")
-	result = tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
-	c.Assert(result.Rows()[1][0], Equals, "└─Apply_39")
-	flag = false
-	value = (result.Rows()[1][5]).(string)
-	for ind = 0; ind < len(value)-5; ind++ {
-		if value[ind:ind+5] == "cache" {
-			flag = true
-			break
-		}
-	}
-	c.Assert(flag, Equals, true)
-	c.Assert(value[ind:], Equals, "cache:OFF")
->>>>>>> 28c374849... planner: remove some risky cache operations in the plan builder (#23354)
 }
 
 // For issue 17256

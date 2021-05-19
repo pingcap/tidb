@@ -711,37 +711,20 @@ and n_name = 'MOZAMBIQUE'
 order by
 value desc;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-Projection_49	1304801.67	root		tpch.partsupp.ps_partkey, Column#35
-└─Sort_50	1304801.67	root		Column#35:desc
-  └─Selection_52	1304801.67	root		gt(Column#35, NULL)
-    └─HashAgg_53	1631002.09	root		group by:Column#44, funcs:sum(Column#42)->Column#35, funcs:firstrow(Column#43)->tpch.partsupp.ps_partkey
-      └─Projection_73	1631002.09	root		mul(tpch.partsupp.ps_supplycost, cast(tpch.partsupp.ps_availqty, decimal(20,0) BINARY))->Column#42, tpch.partsupp.ps_partkey, tpch.partsupp.ps_partkey
-        └─HashJoin_56	1631002.09	root		inner join, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
-          ├─HashJoin_64(Build)	20000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
-          │ ├─TableReader_69(Build)	1.00	root		data:Selection_68
-          │ │ └─Selection_68	1.00	cop[tikv]		eq(tpch.nation.n_name, "MOZAMBIQUE")
-          │ │   └─TableFullScan_67	25.00	cop[tikv]	table:nation	keep order:false
-          │ └─TableReader_66(Probe)	500000.00	root		data:TableFullScan_65
-          │   └─TableFullScan_65	500000.00	cop[tikv]	table:supplier	keep order:false
-          └─TableReader_71(Probe)	40000000.00	root		data:TableFullScan_70
-            └─TableFullScan_70	40000000.00	cop[tikv]	table:partsupp	keep order:false
-=======
-Projection	1304801.67	root		tpch.partsupp.ps_partkey, Column#35
-└─Sort	1304801.67	root		Column#35:desc
-  └─Selection	1304801.67	root		gt(Column#35, NULL)
-    └─HashAgg	1631002.09	root		group by:Column#61, funcs:sum(Column#59)->Column#35, funcs:firstrow(Column#60)->tpch.partsupp.ps_partkey
-      └─Projection	1631002.09	root		mul(tpch.partsupp.ps_supplycost, cast(tpch.partsupp.ps_availqty, decimal(20,0) BINARY))->Column#59, tpch.partsupp.ps_partkey, tpch.partsupp.ps_partkey
-        └─HashJoin	1631002.09	root		inner join, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
-          ├─HashJoin(Build)	20000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
-          │ ├─TableReader(Build)	1.00	root		data:Selection
-          │ │ └─Selection	1.00	cop[tikv]		eq(tpch.nation.n_name, "MOZAMBIQUE")
-          │ │   └─TableFullScan	25.00	cop[tikv]	table:nation	keep order:false
-          │ └─TableReader(Probe)	500000.00	root		data:TableFullScan
-          │   └─TableFullScan	500000.00	cop[tikv]	table:supplier	keep order:false
-          └─TableReader(Probe)	40000000.00	root		data:TableFullScan
-            └─TableFullScan	40000000.00	cop[tikv]	table:partsupp	keep order:false
->>>>>>> 28c374849... planner: remove some risky cache operations in the plan builder (#23354)
+Projection_54	1304801.67	root		tpch.partsupp.ps_partkey, Column#35
+└─Sort_55	1304801.67	root		Column#35:desc
+  └─Selection_57	1304801.67	root		gt(Column#35, NULL)
+    └─HashAgg_58	1631002.09	root		group by:Column#61, funcs:sum(Column#59)->Column#35, funcs:firstrow(Column#60)->tpch.partsupp.ps_partkey
+      └─Projection_78	1631002.09	root		mul(tpch.partsupp.ps_supplycost, cast(tpch.partsupp.ps_availqty, decimal(20,0) BINARY))->Column#59, tpch.partsupp.ps_partkey, tpch.partsupp.ps_partkey
+        └─HashJoin_61	1631002.09	root		inner join, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
+          ├─HashJoin_69(Build)	20000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
+          │ ├─TableReader_74(Build)	1.00	root		data:Selection_73
+          │ │ └─Selection_73	1.00	cop[tikv]		eq(tpch.nation.n_name, "MOZAMBIQUE")
+          │ │   └─TableFullScan_72	25.00	cop[tikv]	table:nation	keep order:false
+          │ └─TableReader_71(Probe)	500000.00	root		data:TableFullScan_70
+          │   └─TableFullScan_70	500000.00	cop[tikv]	table:supplier	keep order:false
+          └─TableReader_76(Probe)	40000000.00	root		data:TableFullScan_75
+            └─TableFullScan_75	40000000.00	cop[tikv]	table:partsupp	keep order:false
 /*
 Q12 Shipping Modes and Order Priority Query
 This query determines whether selecting less expensive modes of shipping is negatively affecting the critical-priority

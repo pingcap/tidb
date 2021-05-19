@@ -17,29 +17,16 @@ insert into t values(1,1,1,1),(2,2,2,2),(3,2,2,2),(4,2,2,2),(5,2,2,2);
 analyze table t;
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c = 1 and s.d = t.a and s.a = t1.a) from t;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-Projection_11	5.00	root		Column#14
-└─Apply_13	5.00	root		CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#13)
-  ├─TableReader_15(Build)	5.00	root		data:TableFullScan_14
-  │ └─TableFullScan_14	5.00	cop[tikv]	table:t	keep order:false
-  └─StreamAgg_19(Probe)	1.00	root		funcs:count(1)->Column#13
-    └─IndexJoin_22	0.50	root		inner join, inner:TableReader_21, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
-      ├─IndexReader_28(Build)	1.00	root		index:IndexRangeScan_27
-      │ └─IndexRangeScan_27	1.00	cop[tikv]	table:s, index:idx(b, c, d)	range: decided by [eq(test.t.b, 1) eq(test.t.c, 1) eq(test.t.d, test.t.a)], keep order:false
-      └─TableReader_21(Probe)	1.00	root		data:TableRangeScan_20
-        └─TableRangeScan_20	1.00	cop[tikv]	table:t1	range: decided by [test.t.a], keep order:false
-=======
-Projection	5.00	root		Column#22
-└─Apply	5.00	root		CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#21)
-  ├─TableReader(Build)	5.00	root		data:TableFullScan
-  │ └─TableFullScan	5.00	cop[tikv]	table:t	keep order:false
-  └─StreamAgg(Probe)	1.00	root		funcs:count(1)->Column#21
-    └─IndexJoin	0.50	root		inner join, inner:TableReader, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
-      ├─IndexReader(Build)	1.00	root		index:IndexRangeScan
-      │ └─IndexRangeScan	1.00	cop[tikv]	table:s, index:idx(b, c, d)	range: decided by [eq(test.t.b, 1) eq(test.t.c, 1) eq(test.t.d, test.t.a)], keep order:false
-      └─TableReader(Probe)	1.00	root		data:TableRangeScan
-        └─TableRangeScan	1.00	cop[tikv]	table:t1	range: decided by [test.t.a], keep order:false
->>>>>>> 28c374849... planner: remove some risky cache operations in the plan builder (#23354)
+Projection_14	5.00	root		Column#22
+└─Apply_16	5.00	root		CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#21)
+  ├─TableReader_18(Build)	5.00	root		data:TableFullScan_17
+  │ └─TableFullScan_17	5.00	cop[tikv]	table:t	keep order:false
+  └─StreamAgg_22(Probe)	1.00	root		funcs:count(1)->Column#21
+    └─IndexJoin_25	0.50	root		inner join, inner:TableReader_24, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
+      ├─IndexReader_31(Build)	1.00	root		index:IndexRangeScan_30
+      │ └─IndexRangeScan_30	1.00	cop[tikv]	table:s, index:idx(b, c, d)	range: decided by [eq(test.t.b, 1) eq(test.t.c, 1) eq(test.t.d, test.t.a)], keep order:false
+      └─TableReader_24(Probe)	1.00	root		data:TableRangeScan_23
+        └─TableRangeScan_23	1.00	cop[tikv]	table:t1	range: decided by [test.t.a], keep order:false
 drop table if exists t;
 create table t(a int, b int, c int);
 explain select a from t t1 where t1.a = (select max(t2.a) from t t2 where t1.b=t2.b and t1.c=t2.b);
