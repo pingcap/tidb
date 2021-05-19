@@ -2358,8 +2358,8 @@ func (s *testDBSuite4) TestChangeColumn(c *C) {
 	tk.MustGetErrCode(sql, errno.ErrWrongTableName)
 	s.mustExec(tk, c, "create table t4 (c1 int, c2 int, c3 int default 1, index (c1));")
 	tk.MustExec("insert into t4(c2) values (null);")
-	sql = "alter table t4 change c1 a1 int not null;"
-	tk.MustGetErrCode(sql, errno.ErrInvalidUseOfNull)
+	_, err = tk.Exec("alter table t4 change c1 a1 int not null;")
+	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a1' at row 1")
 	sql = "alter table t4 change c2 a bigint not null;"
 	tk.MustGetErrCode(sql, mysql.WarnDataTruncated)
 	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c') not null default 'a'"
@@ -3805,7 +3805,8 @@ func (s *testDBSuite3) TestColumnModifyingDefinition(c *C) {
 	tk.MustExec("drop table if exists test2;")
 	tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
 	tk.MustExec("insert into test2(c2) values (null);")
-	tk.MustGetErrCode("alter table test2 change c2 a int not null", errno.ErrInvalidUseOfNull)
+	_, err = tk.Exec("alter table test2 change c2 a int not null")
+	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 1")
 	tk.MustGetErrCode("alter table test2 change c1 a1 bigint not null;", mysql.WarnDataTruncated)
 }
 
