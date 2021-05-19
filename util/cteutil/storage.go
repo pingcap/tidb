@@ -125,11 +125,11 @@ func (s *StorageRC) OpenAndRef() (err error) {
 // DerefAndClose impls Storage DerefAndClose interface.
 func (s *StorageRC) DerefAndClose() (err error) {
 	if !s.valid() {
-		return errors.Trace(errors.New("Storage not opend yet"))
+		return errors.New("Storage not opend yet")
 	}
 	s.refCnt -= 1
 	if s.refCnt < 0 {
-		return errors.Trace(errors.New("Storage ref count is less than zero"))
+		return errors.New("Storage ref count is less than zero")
 	} else if s.refCnt == 0 {
 		// TODO: unreg memtracker
 		if err = s.rc.Close(); err != nil {
@@ -146,7 +146,7 @@ func (s *StorageRC) DerefAndClose() (err error) {
 func (s *StorageRC) SwapData(other Storage) (err error) {
 	otherRC, ok := other.(*StorageRC)
 	if !ok {
-		return errors.Trace(errors.New("cannot swap if underlying storages are different"))
+		return errors.New("cannot swap if underlying storages are different")
 	}
 	s.tp, otherRC.tp = otherRC.tp, s.tp
 	s.chkSize, otherRC.chkSize = otherRC.chkSize, s.chkSize
@@ -173,7 +173,7 @@ func (s *StorageRC) Reopen() (err error) {
 // Add impls Storage Add interface.
 func (s *StorageRC) Add(chk *chunk.Chunk) (err error) {
 	if !s.valid() {
-		return errors.Trace(errors.New("Storage is not valid"))
+		return errors.New("Storage is not valid")
 	}
 	if chk.NumRows() == 0 {
 		return nil
@@ -184,7 +184,7 @@ func (s *StorageRC) Add(chk *chunk.Chunk) (err error) {
 // GetChunk impls Storage GetChunk interface.
 func (s *StorageRC) GetChunk(chkIdx int) (*chunk.Chunk, error) {
 	if !s.valid() {
-		return nil, errors.Trace(errors.New("Storage is not valid"))
+		return nil, errors.New("Storage is not valid")
 	}
 	return s.rc.GetChunk(chkIdx)
 }
@@ -192,7 +192,7 @@ func (s *StorageRC) GetChunk(chkIdx int) (*chunk.Chunk, error) {
 // GetRow impls Storage GetRow interface.
 func (s *StorageRC) GetRow(ptr chunk.RowPtr) (chunk.Row, error) {
 	if !s.valid() {
-		return chunk.Row{}, errors.Trace(errors.New("Storage is not valid"))
+		return chunk.Row{}, errors.New("Storage is not valid")
 	}
 	return s.rc.GetRow(ptr)
 }
