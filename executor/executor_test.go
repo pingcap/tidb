@@ -2727,7 +2727,7 @@ func (s *testSuiteP2) TestHistoryRead(c *C) {
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
 	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2", "4"))
-	tsoStr := strconv.FormatUint(oracle.EncodeTSO(snapshotTime.UnixNano()/int64(time.Millisecond)), 10)
+	tsoStr := strconv.FormatUint(oracle.GoTimeToTS(snapshotTime), 10)
 
 	tk.MustExec("set @@tidb_snapshot = '" + tsoStr + "'")
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2", "4"))
