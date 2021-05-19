@@ -904,7 +904,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBDMLBatchSize, Value: strconv.Itoa(DefDMLBatchSize), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
-		s.DMLBatchSize = int(tidbOptInt64(val, DefOptCorrelationExpFactor))
+		s.DMLBatchSize = int(tidbOptInt64(val, DefDMLBatchSize))
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBCurrentTS, Value: strconv.Itoa(DefCurretTS), ReadOnly: true},
