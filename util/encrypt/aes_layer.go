@@ -71,11 +71,12 @@ func (ctr *CtrCipher) stream(counter uint64) cipher.Stream {
 
 // Writer implements an io.WriteCloser, it encrypt data using AES before writing to the underlying object.
 type Writer struct {
-	err          error
-	w            io.WriteCloser
-	n            int
-	buf          []byte
-	cipherStream cipher.Stream
+	err                error
+	w                  io.WriteCloser
+	n                  int
+	buf                []byte
+	cipherStream       cipher.Stream
+	flushedUserDataCnt int64
 }
 
 // NewWriter returns a new Writer which encrypt data using AES before writing to the underlying object.
@@ -123,6 +124,7 @@ func (w *Writer) Flush() error {
 	}
 	w.cipherStream.XORKeyStream(w.buf[:w.n], w.buf[:w.n])
 	n, err := w.w.Write(w.buf[:w.n])
+	w.flushedUserDataCnt += int64(n)
 	if n < w.n && err == nil {
 		err = io.ErrShortWrite
 	}
@@ -132,6 +134,16 @@ func (w *Writer) Flush() error {
 	}
 	w.n = 0
 	return nil
+}
+
+// GetCache returns the byte slice that holds the data not flushed to disk.
+func (w *Writer) GetCache() []byte {
+	return w.buf[:w.n]
+}
+
+// GetCacheDataOffset return the user data offset in cache.
+func (w *Writer) GetCacheDataOffset() int64 {
+	return w.flushedUserDataCnt
 }
 
 // Close implements the io.Closer interface.
