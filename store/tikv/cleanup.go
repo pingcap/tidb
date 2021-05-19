@@ -50,7 +50,7 @@ func (actionCleanup) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batc
 		return errors.Trace(err)
 	}
 	if regionErr != nil {
-		err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+		err = bo.BackoffWithCfg(retry.BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
 		}

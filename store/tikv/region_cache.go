@@ -1238,7 +1238,7 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 	searchPrev := false
 	for {
 		if backoffErr != nil {
-			err := bo.Backoff(retry.BoPDRPC, backoffErr)
+			err := bo.BackoffWithCfg(retry.BoPDRPC, backoffErr)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -1294,7 +1294,7 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 	var backoffErr error
 	for {
 		if backoffErr != nil {
-			err := bo.Backoff(retry.BoPDRPC, backoffErr)
+			err := bo.BackoffWithCfg(retry.BoPDRPC, backoffErr)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -1344,7 +1344,7 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit 
 	var backoffErr error
 	for {
 		if backoffErr != nil {
-			err := bo.Backoff(retry.BoPDRPC, backoffErr)
+			err := bo.BackoffWithCfg(retry.BoPDRPC, backoffErr)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -1514,7 +1514,7 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 				meta.GetRegionEpoch().GetVersion() < ctx.Region.ver) {
 			err := errors.Errorf("region epoch is ahead of tikv. rpc ctx: %+v, currentRegions: %+v", ctx, currentRegions)
 			logutil.BgLogger().Info("region epoch is ahead of tikv", zap.Error(err))
-			return bo.Backoff(retry.BoRegionMiss, err)
+			return bo.BackoffWithCfg(retry.BoRegionMiss, err)
 		}
 	}
 
@@ -1889,7 +1889,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 				return
 			}
 			err = errors.Errorf("loadStore from PD failed, id: %d, err: %v", s.storeID, err)
-			if err = bo.Backoff(retry.BoPDRPC, err); err != nil {
+			if err = bo.BackoffWithCfg(retry.BoPDRPC, err); err != nil {
 				return
 			}
 			continue

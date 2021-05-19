@@ -46,7 +46,7 @@ func (b *Backoffer) TiKVBackoffer() *tikv.Backoffer {
 // Backoff sleeps a while base on the BackoffConfig and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(cfg *tikv.BackoffConfig, err error) error {
-	e := b.b.Backoff(cfg, err)
+	e := b.b.BackoffWithCfg(cfg, err)
 	return derr.ToTiDBErr(e)
 }
 

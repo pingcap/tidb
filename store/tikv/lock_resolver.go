@@ -293,7 +293,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 	}
 
 	if regionErr != nil {
-		err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+		err = bo.BackoffWithCfg(retry.BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -518,7 +518,7 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 		// getTxnStatus() returns it when the secondary locks exist while the primary lock doesn't.
 		// This is likely to happen in the concurrently prewrite when secondary regions
 		// success before the primary region.
-		if err := bo.Backoff(retry.BoTxnNotFound, err); err != nil {
+		if err := bo.BackoffWithCfg(retry.BoTxnNotFound, err); err != nil {
 			logutil.Logger(bo.GetCtx()).Warn("getTxnStatusFromLock backoff fail", zap.Error(err))
 		}
 
@@ -595,7 +595,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			return status, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.BackoffWithCfg(retry.BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return status, errors.Trace(err)
 			}
@@ -731,7 +731,7 @@ func (lr *LockResolver) checkSecondaries(bo *Backoffer, txnID uint64, curKeys []
 		return errors.Trace(err)
 	}
 	if regionErr != nil {
-		err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+		err = bo.BackoffWithCfg(retry.BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -862,7 +862,7 @@ func (lr *LockResolver) resolveRegionLocks(bo *Backoffer, l *Lock, region Region
 		return errors.Trace(err)
 	}
 	if regionErr != nil {
-		err := bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+		err := bo.BackoffWithCfg(retry.BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -930,7 +930,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, li
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.BackoffWithCfg(retry.BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -981,7 +981,7 @@ func (lr *LockResolver) resolvePessimisticLock(bo *Backoffer, l *Lock, cleanRegi
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.BackoffWithCfg(retry.BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}

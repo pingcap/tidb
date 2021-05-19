@@ -231,7 +231,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	for {
 		members, err := pdClient.GetAllMembers(ctx)
 		if err != nil {
-			err := bo.Backoff(tikv.BoRegionMiss(), err)
+			err := bo.BackoffWithCfg(tikv.BoRegionMiss(), err)
 			if err != nil {
 				return nil, err
 			}

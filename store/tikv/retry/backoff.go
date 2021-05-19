@@ -89,9 +89,9 @@ func (b *Backoffer) withVars(vars *kv.Variables) *Backoffer {
 	return b
 }
 
-// Backoff sleeps a while base on the Config and records the error message.
+// BackoffWithCfg sleeps a while base on the Config and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
-func (b *Backoffer) Backoff(cfg *Config, err error) error {
+func (b *Backoffer) BackoffWithCfg(cfg *Config, err error) error {
 	if span := opentracing.SpanFromContext(b.ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan(fmt.Sprintf("tikv.backoff.%s", cfg), opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -107,47 +107,60 @@ func (b *Backoffer) BackoffWithMaxSleepTxnLockFast(maxSleepMs int, err error) er
 	return b.BackoffWithCfgAndMaxSleep(cfg, maxSleepMs, err)
 }
 
-// BackoffWithMaxSleep is deprecated, please use BackoffWithCfgAndMaxSleep instead. TODO: remove it when br is ready.
-func (b *Backoffer) BackoffWithMaxSleep(typ int, maxSleepMs int, err error) error {
-	// Back off types.
-	const (
-		boTiKVRPC int = iota
-		boTiFlashRPC
-		boTxnLock
-		boTxnLockFast
-		boPDRPC
-		boRegionMiss
-		boTiKVServerBusy
-		boTiFlashServerBusy
-		boTxnNotFound
-		boStaleCmd
-		boMaxTsNotSynced
-	)
+// Back off types. TODO:remove it when br is ready
+const (
+	boTiKVRPC int = iota
+	boTiFlashRPC
+	boTxnLock
+	boTxnLockFast
+	boPDRPC
+	boRegionMiss
+	boTiKVServerBusy
+	boTiFlashServerBusy
+	boTxnNotFound
+	boStaleCmd
+	boMaxTsNotSynced
+)
+
+// TODO:remove it when br is ready
+func (b *Backoffer) getCfgWithType(typ int) *Config {
 	switch typ {
 	case boTiKVRPC:
-		return b.BackoffWithCfgAndMaxSleep(BoTiKVRPC, maxSleepMs, err)
+		return BoTiKVRPC
 	case boTiFlashRPC:
-		return b.BackoffWithCfgAndMaxSleep(BoTiFlashRPC, maxSleepMs, err)
+		return BoTiFlashRPC
 	case boTxnLock:
-		return b.BackoffWithCfgAndMaxSleep(BoTxnLock, maxSleepMs, err)
+		return BoTxnLock
 	case boTxnLockFast:
-		return b.BackoffWithCfgAndMaxSleep(BoTxnLockFast(b.GetVars()), maxSleepMs, err)
+		return BoTxnLockFast(b.GetVars())
 	case boPDRPC:
-		return b.BackoffWithCfgAndMaxSleep(BoPDRPC, maxSleepMs, err)
+		return BoPDRPC
 	case boRegionMiss:
-		return b.BackoffWithCfgAndMaxSleep(BoRegionMiss, maxSleepMs, err)
+		return BoRegionMiss
 	case boTiKVServerBusy:
-		return b.BackoffWithCfgAndMaxSleep(BoTiKVServerBusy, maxSleepMs, err)
+		return BoTiKVServerBusy
 	case boTiFlashServerBusy:
-		return b.BackoffWithCfgAndMaxSleep(BoTiFlashServerBusy, maxSleepMs, err)
+		return BoTiFlashServerBusy
 	case boTxnNotFound:
-		return b.BackoffWithCfgAndMaxSleep(BoTxnNotFound, maxSleepMs, err)
+		return BoTxnNotFound
 	case boStaleCmd:
-		return b.BackoffWithCfgAndMaxSleep(BoStaleCmd, maxSleepMs, err)
+		return BoStaleCmd
 	case boMaxTsNotSynced:
-		return b.BackoffWithCfgAndMaxSleep(BoMaxTsNotSynced, maxSleepMs, err)
+		return BoMaxTsNotSynced
 	}
-	cfg := NewConfig("", metrics.BackoffHistogramEmpty, nil, tikverr.ErrUnknown)
+	return NewConfig("", metrics.BackoffHistogramEmpty, nil, tikverr.ErrUnknown)
+}
+
+// Backoff sleeps a while base on the BackoffConfig and records the error message.
+// It returns a retryable error if total sleep time exceeds maxSleep. TODO:remove it when other package is ready.
+func (b *Backoffer) Backoff(typ int, err error) error {
+	cfg := b.getCfgWithType(typ)
+	return b.BackoffWithCfg(cfg, err)
+}
+
+// BackoffWithMaxSleep is deprecated, please use BackoffWithCfgAndMaxSleep instead. TODO: remove it when br is ready.
+func (b *Backoffer) BackoffWithMaxSleep(typ int, maxSleepMs int, err error) error {
+	cfg := b.getCfgWithType(typ)
 	return b.BackoffWithCfgAndMaxSleep(cfg, maxSleepMs, err)
 }
 

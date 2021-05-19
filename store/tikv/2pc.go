@@ -800,7 +800,7 @@ func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, tt
 			return 0, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.BackoffWithCfg(retry.BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
