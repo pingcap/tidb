@@ -577,6 +577,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		if len(keys) == 0 {
 			return nil
 		}
+		keys = filterTemporaryTableKeys(sctx.GetSessionVars(), keys)
 		seVars := sctx.GetSessionVars()
 		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout)
 		var lockKeyStats *util.LockKeysDetails

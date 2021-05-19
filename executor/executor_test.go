@@ -8153,3 +8153,41 @@ func (s *testSerialSuite) TestIssue24210(c *C) {
 	c.Assert(err, IsNil)
 
 }
+
+func (s *testSuite1) TestTemporaryTableNoPessimisticLock(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create global temporary table t (a int primary key, b int) on commit delete rows")
+	tk.MustExec("insert into t values (1, 1)")
+
+	// Do something on the temporary table, pessimistic transaction mode.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (2, 2)")
+	tk.MustExec("update t set b = b + 1 where a = 1")
+	tk.MustExec("delete from t where a > 1")
+	tk.MustQuery("select count(*) from t where b >= 2 for update")
+
+	// Get the temporary table ID.
+	schema := tk.Se.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	tbl, err := schema.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	meta := tbl.Meta()
+	c.Assert(meta.TempTableType, Equals, model.TempTableGlobal)
+
+	// Scan the table range to check there is no lock.
+	// It's better to use the rawkv client, but the txnkv client should also works.
+	// If there is a lock, the txnkv client should have reported the lock error.
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	seekKey := tablecodec.EncodeTablePrefix(meta.ID)
+	endKey := tablecodec.EncodeTablePrefix(meta.ID + 1)
+	scanner, err := txn.Iter(seekKey, endKey)
+	c.Assert(err, IsNil)
+	for scanner.Valid() {
+		// No lock written to TiKV here.
+		c.FailNow()
+	}
+
+	tk.MustExec("rollback")
+}
