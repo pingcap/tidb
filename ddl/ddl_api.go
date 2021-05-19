@@ -4360,6 +4360,10 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Ban setting replica count for tables in MySQL system database.
+	if util.IsSysDB(schema.Name.L) {
+		return errors.Trace(errors.New("[ddl] couldn't set tiflash replica for tables in MySQL system database"))
+	}
 
 	tbReplicaInfo := tb.Meta().TiFlashReplica
 	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&

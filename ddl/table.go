@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	tidb_util "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gcutil"
 )
 
@@ -873,6 +874,11 @@ func (w *worker) onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+
+	// Ban setting replica count for tables in MySQL system database.
+	if tidb_util.IsSysDB(job.SchemaName) {
+		return ver, errors.Trace(errors.New("[ddl] couldn't set tiflash replica for tables in MySQL system database"))
 	}
 
 	err = w.checkTiFlashReplicaCount(replicaInfo.Count)

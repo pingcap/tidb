@@ -5295,6 +5295,26 @@ func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
 	c.Assert(err.Error(), Equals, "the tiflash replica count: 2 should be less than the total tiflash server count: 0")
 }
 
+func (s *testSerialDBSuite) TestSetTableFlashReplicaForSystemTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use mysql")
+	sysTables := make([]string, 0, 24)
+	rows := tk.MustQuery("show tables").Rows()
+	for i := 0; i < len(rows); i++ {
+		sysTables = append(sysTables, rows[i][0].(string))
+	}
+	fmt.Println(sysTables)
+	for _, one := range sysTables {
+		// Issue: https://github.com/pingcap/tidb/issues/24742
+		// Skip the `stats_extended` system temporarily.
+		if one == "stats_extended" {
+			continue
+		}
+		_, err := tk.Exec(fmt.Sprintf("alter table %s set tiflash replica 1", one))
+		c.Assert(err.Error(), Equals, "[ddl] couldn't set tiflash replica for tables in MySQL system database")
+	}
+}
+
 func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
