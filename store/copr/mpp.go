@@ -180,14 +180,14 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	var regionInfos []*coprocessor.RegionInfo
 	originalTask, ok := req.Meta.(*batchCopTask)
 	if ok {
-		for _, task := range originalTask.copTasks {
+		for _, ri := range originalTask.regionInfos {
 			regionInfos = append(regionInfos, &coprocessor.RegionInfo{
-				RegionId: task.task.region.GetID(),
+				RegionId: ri.Region.GetID(),
 				RegionEpoch: &metapb.RegionEpoch{
-					ConfVer: task.task.region.GetConfVer(),
-					Version: task.task.region.GetVer(),
+					ConfVer: ri.Region.GetConfVer(),
+					Version: ri.Region.GetVer(),
 				},
-				Ranges: task.task.ranges.ToPBRanges(),
+				Ranges: ri.Ranges.ToPBRanges(),
 			})
 		}
 	}
@@ -214,8 +214,8 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	// Or else it's the task without region, which always happens in high layer task without table.
 	// In that case
 	if originalTask != nil {
-		sender := NewRegionBatchRequestSender(m.store.GetRegionCache(), m.store.GetTiKVClient())
-		rpcResp, _, _, err = sender.sendStreamReqToAddr(bo, originalTask.copTasks, wrappedReq, tikv.ReadTimeoutMedium)
+		sender := tikv.NewRegionBatchRequestSender(m.store.GetRegionCache(), m.store.GetTiKVClient())
+		rpcResp, _, _, err = sender.SendReqToAddr(bo.TiKVBackoffer(), originalTask.ctx, originalTask.regionInfos, wrappedReq, tikv.ReadTimeoutMedium)
 		// No matter what the rpc error is, we won't retry the mpp dispatch tasks.
 		// TODO: If we want to retry, we must redo the plan fragment cutting and task scheduling.
 		// That's a hard job but we can try it in the future.
