@@ -98,4 +98,6 @@ func (s *testSecurity) TestIsInvisibleSysVar(c *C) {
 	c.Assert(IsInvisibleSysVar(variable.TiDBMemoryUsageAlarmRatio), IsTrue)
 	c.Assert(IsInvisibleSysVar(variable.TiDBEnableTelemetry), IsTrue)
 	c.Assert(IsInvisibleSysVar(variable.TiDBRowFormatVersion), IsTrue)
+	c.Assert(IsInvisibleSysVar(variable.TiDBRedactLog), IsTrue)
+	c.Assert(IsInvisibleSysVar(variable.TiDBSlowLogMasking), IsTrue)
 }
