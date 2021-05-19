@@ -833,9 +833,9 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *ti
 
 			err1 := errors.Errorf("recv stream response error: %v, task: %s", err, task)
 			if task.storeType == kv.TiFlash {
-				err1 = bo.Backoff(tikv.BoTiFlashRPC, err1)
+				err1 = bo.Backoff(tikv.BoTiFlashRPC(), err1)
 			} else {
-				err1 = bo.Backoff(tikv.BoTiKVRPC, err1)
+				err1 = bo.Backoff(tikv.BoTiKVRPC(), err1)
 			}
 
 			if err1 != nil {
@@ -869,7 +869,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		}
 		errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
 			task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
-		if err := bo.Backoff(tikv.BoRegionMiss, errors.New(errStr)); err != nil {
+		if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
