@@ -376,7 +376,6 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					}
 					e.names = cachedVal.OutPutNames
 					e.Plan = cachedVal.Plan
-					stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 					return nil
 				}
 				break
@@ -406,7 +405,6 @@ REBUILD:
 		}
 		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
-		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		if cacheVals, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			hitVal := false
 			for i, cacheVal := range cacheVals.([]*PSTMTPlanCacheValue) {
@@ -466,7 +464,6 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 		prepared.CachedPlan = p
 		prepared.CachedNames = names
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
-		sctx.GetSessionVars().StmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 	}
 	return err
 }

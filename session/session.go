@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
 	"strings"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/util/tracecpu"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 
@@ -1601,6 +1603,15 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+
+	if es, ok := s.(*executor.ExecStmt); ok && es.Plan != nil {
+		planDigest := es.PlanDigest()
+		if len(planDigest) > 0 {
+			ctx = pprof.WithLabels(ctx, pprof.Labels(tracecpu.LabelPlanDigest, planDigest))
+			pprof.SetGoroutineLabels(ctx)
+		}
+	}
+
 	se.SetValue(sessionctx.QueryString, s.OriginText())
 	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DDLNode); ok {
 		se.SetValue(sessionctx.LastExecuteDDL, true)
@@ -1774,7 +1785,6 @@ func (s *session) cachedPlanExec(ctx context.Context,
 	stmt.Text = prepared.Stmt.Text()
 	stmtCtx.OriginalSQL = stmt.Text
 	stmtCtx.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
-	stmtCtx.SetPlanDigest(prepareStmt.NormalizedPlan, prepareStmt.PlanDigest)
 	logQuery(stmt.GetTextToLog(), s.sessionVars)
 
 	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {

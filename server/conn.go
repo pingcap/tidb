@@ -85,6 +85,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/tracecpu"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -1026,17 +1027,24 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
-	if variable.EnablePProfSQLCPU.Load() || config.GetGlobalConfig().TopStmt.Enable {
-		label := getLastStmtInConn{cc}.PProfLabel()
-		if len(label) > 0 {
+	if config.GetGlobalConfig().TopStmt.Enable {
+		normalizedSQL, digest := getLastStmtInConn{cc}.PProfLabel()
+		if len(normalizedSQL) > 0 {
 			defer pprof.SetGoroutineLabels(ctx)
-			ctx = pprof.WithLabels(ctx, pprof.Labels("sql", label))
+			ctx = pprof.WithLabels(ctx, pprof.Labels(tracecpu.LabelSQL, normalizedSQL, tracecpu.LabelSQLDigest, digest))
+			pprof.SetGoroutineLabels(ctx)
+		}
+	} else if variable.EnablePProfSQLCPU.Load() {
+		normalizedSQL, _ := getLastStmtInConn{cc}.PProfLabel()
+		if len(normalizedSQL) > 0 {
+			defer pprof.SetGoroutineLabels(ctx)
+			ctx = pprof.WithLabels(ctx, pprof.Labels("sql", normalizedSQL))
 			pprof.SetGoroutineLabels(ctx)
 		}
 	}
 	if trace.IsEnabled() {
 		lc := getLastStmtInConn{cc}
-		sqlType := lc.PProfLabel()
+		sqlType, _ := lc.PProfLabel()
 		if len(sqlType) > 0 {
 			var task *trace.Task
 			ctx, task = trace.NewTask(ctx, sqlType)
@@ -2142,26 +2150,27 @@ func (cc getLastStmtInConn) String() string {
 }
 
 // PProfLabel return sql label used to tag pprof.
-func (cc getLastStmtInConn) PProfLabel() string {
+func (cc getLastStmtInConn) PProfLabel() (string, string) {
 	if len(cc.lastPacket) == 0 {
-		return ""
+		return "", ""
 	}
 	cmd, data := cc.lastPacket[0], cc.lastPacket[1:]
 	switch cmd {
 	case mysql.ComInitDB:
-		return "UseDB"
+		return "UseDB", ""
 	case mysql.ComFieldList:
-		return "ListFields"
+		return "ListFields", ""
 	case mysql.ComStmtClose:
-		return "CloseStmt"
+		return "CloseStmt", ""
 	case mysql.ComStmtReset:
-		return "ResetStmt"
+		return "ResetStmt", ""
 	case mysql.ComQuery, mysql.ComStmtPrepare:
-		return parser.Normalize(queryStrForLog(string(hack.String(data))))
+		return parser.NormalizeDigest(queryStrForLog(string(hack.String(data))))
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
-		return queryStrForLog(cc.preparedStmt2StringNoArgs(stmtID))
+		str := cc.preparedStmt2StringNoArgs(stmtID)
+		return queryStrForLog(str), parser.DigestNormalized(str)
 	default:
-		return ""
+		return "", ""
 	}
 }

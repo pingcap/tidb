@@ -12,6 +12,12 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	LabelSQL        = "sql"
+	LabelSQLDigest  = "sql_digest"
+	LabelPlanDigest = "plan_digest"
+)
+
 type StmtProfiler struct {
 	taskCh     chan *profileTask
 	cacheBufCh chan *profileTask
@@ -71,17 +77,15 @@ func (sp *StmtProfiler) startAnalyzeProfileWorker() {
 			logutil.BgLogger().Error("parse profile error", zap.Error(err))
 			continue
 		}
-		tagMap := sp.parseCPUProfileTags(p)
-		if len(tagMap) == 0 {
+		stmtMap := sp.parseCPUProfileTags(p)
+		if len(stmtMap) == 0 {
 			continue
 		}
 		logutil.BgLogger().Info("-------- [ BEGIN ] ----------")
-		for k, tags := range tagMap {
-			if k != "sql" {
-				continue
-			}
-			for t, v := range tags {
-				fmt.Printf("%s : %s\n", time.Duration(v), t)
+		for _, stmt := range stmtMap {
+			fmt.Printf("%s\n", stmt.normalizedSQL)
+			for p, v := range stmt.plans {
+				fmt.Printf("\t %s : %s\n", p, time.Duration(v))
 			}
 		}
 		fmt.Printf("\n\n")
@@ -109,20 +113,65 @@ func (sp *StmtProfiler) putTaskToBuffer(task *profileTask) {
 	}
 }
 
-func (sp *StmtProfiler) parseCPUProfileTags(p *profile.Profile) map[string]map[string]int64 {
-	tagMap := make(map[string]map[string]int64)
+func (sp *StmtProfiler) parseCPUProfileTags(p *profile.Profile) (stmtMap map[string]*stmtStats) {
+	stmtMap = make(map[string]*stmtStats)
 	idx := len(p.SampleType) - 1
 	for _, s := range p.Sample {
-		for key, vals := range s.Label {
-			for _, val := range vals {
-				valueMap, ok := tagMap[key]
-				if !ok {
-					valueMap = make(map[string]int64)
-					tagMap[key] = valueMap
+		digests, ok := s.Label[LabelSQLDigest]
+		if !ok || len(digests) == 0 {
+			continue
+		}
+		sqls, ok := s.Label[LabelSQL]
+		if !ok || len(sqls) != len(digests) {
+			continue
+		}
+		for i, digest := range digests {
+			stmt, ok := stmtMap[digest]
+			if !ok {
+				stmt = &stmtStats{
+					plans:         make(map[string]int64),
+					total:         0,
+					isInternal:    false,
+					normalizedSQL: sqls[i],
 				}
-				valueMap[val] += s.Value[idx]
+				stmtMap[digest] = stmt
+			}
+			stmt.total += s.Value[idx]
+
+			plans := s.Label[LabelPlanDigest]
+			for _, plan := range plans {
+				stmt.plans[plan] += s.Value[idx]
 			}
 		}
 	}
-	return tagMap
+	for _, stmt := range stmtMap {
+		stmt.tune()
+	}
+	return stmtMap
+}
+
+type stmtStats struct {
+	plans         map[string]int64
+	total         int64
+	isInternal    bool
+	normalizedSQL string
+}
+
+// tune use to adjust stats
+func (s *stmtStats) tune() {
+	if len(s.plans) == 0 {
+		s.plans[""] = s.total
+		return
+	}
+	planTotal := int64(0)
+	for _, v := range s.plans {
+		planTotal += v
+	}
+	remain := s.total - planTotal
+	if remain <= 0 {
+		return
+	}
+	for k, v := range s.plans {
+		s.plans[k] = v + (v/planTotal)*remain
+	}
 }

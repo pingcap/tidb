@@ -20,6 +20,7 @@ import (
 	"math"
 	"runtime/trace"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -198,6 +199,11 @@ type ExecStmt struct {
 	// OutputNames will be set if using cached plan
 	OutputNames []*types.FieldName
 	PsStmt      *plannercore.CachedPrepareStmt
+	// cache for plan digest and normalized
+	planDigestMemo struct {
+		sync.Once
+		digest string
+	}
 }
 
 // PointGet short path for point exec directly from plan, keep only necessary steps
@@ -868,6 +874,13 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 	}
 }
 
+func (a *ExecStmt) PlanDigest() string {
+	a.planDigestMemo.Do(func() {
+		_, a.planDigestMemo.digest = plannercore.NormalizePlan(a.Plan)
+	})
+	return a.planDigestMemo.digest
+}
+
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
@@ -919,7 +932,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	diskMax := sessVars.StmtCtx.DiskTracker.MaxConsumed()
-	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
+	planDigest := a.PlanDigest()
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		SQL:               sql.String(),
@@ -1010,17 +1023,6 @@ func getPlanTree(sctx sessionctx.Context, p plannercore.Plan) string {
 	return variable.SlowLogPlanPrefix + planTree + variable.SlowLogPlanSuffix
 }
 
-// getPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
-func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, planDigest string) {
-	normalized, planDigest = sctx.GetSessionVars().StmtCtx.GetPlanDigest()
-	if len(normalized) > 0 {
-		return
-	}
-	normalized, planDigest = plannercore.NormalizePlan(p)
-	sctx.GetSessionVars().StmtCtx.SetPlanDigest(normalized, planDigest)
-	return
-}
-
 // getEncodedPlan gets the encoded plan, and generates the hint string if indicated.
 func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool, n ast.StmtNode) (encodedPlan, hintStr string) {
 	var hintSet bool
@@ -1092,11 +1094,11 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	var planDigestGen func() string
 	if a.Plan.TP() == plancodec.TypePointGet {
 		planDigestGen = func() string {
-			_, planDigest := getPlanDigest(a.Ctx, a.Plan)
+			planDigest := a.PlanDigest()
 			return planDigest
 		}
 	} else {
-		_, planDigest = getPlanDigest(a.Ctx, a.Plan)
+		planDigest = a.PlanDigest()
 	}
 
 	execDetail := stmtCtx.GetExecDetails()

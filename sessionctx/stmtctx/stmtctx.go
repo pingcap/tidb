@@ -243,16 +243,6 @@ func (sc *StatementContext) InitSQLDigest(normalized, digest string) {
 	})
 }
 
-// GetPlanDigest gets the normalized plan and plan digest.
-func (sc *StatementContext) GetPlanDigest() (normalized, planDigest string) {
-	return sc.planNormalized, sc.planDigest
-}
-
-// SetPlanDigest sets the normalized plan and plan digest.
-func (sc *StatementContext) SetPlanDigest(normalized, planDigest string) {
-	sc.planNormalized, sc.planDigest = normalized, planDigest
-}
-
 // GetEncodedPlan gets the encoded plan, it is used to avoid repeated encode.
 func (sc *StatementContext) GetEncodedPlan() string {
 	return sc.encodedPlan
