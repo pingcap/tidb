@@ -851,6 +851,11 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err.Error(), Equals,
 		"[executor:8003]admin_test err:[admin:8223]index:<nil> != record:&admin.RecordData{Handle:-1, Values:[]types.Datum{types.Datum{k:0x1, decimal:0x0, length:0x0, i:-10, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}}}")
 	c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
+	tk.MustExec("set @@tidb_redact_log=1;")
+	err = tk.ExecToErr("admin check table admin_test")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:8003]admin_test err:[admin:8223]data isn't equal")
+	tk.MustExec("set @@tidb_redact_log=0;")
 	r := tk.MustQuery("admin recover index admin_test c2")
 	r.Check(testkit.Rows("1 7"))
 	tk.MustExec("admin check table admin_test")
@@ -867,6 +872,11 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "handle 0, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:0, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:<nil>")
+	tk.MustExec("set @@tidb_redact_log=1;")
+	err = tk.ExecToErr("admin check table admin_test")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "index is not equal to record")
+	tk.MustExec("set @@tidb_redact_log=0;")
 
 	// Add one row of index.
 	// Table count < index count.
@@ -885,6 +895,11 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "col c2, handle 2, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:13, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:12, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}")
+	tk.MustExec("set @@tidb_redact_log=1;")
+	err = tk.ExecToErr("admin check table admin_test")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "index is not equal to record")
+	tk.MustExec("set @@tidb_redact_log=0;")
 
 	// Table count = index count.
 	// Two indices have the same handle.
@@ -899,6 +914,11 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "col c2, handle 10, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:19, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:20, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}")
+	tk.MustExec("set @@tidb_redact_log=1;")
+	err = tk.ExecToErr("admin check table admin_test")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "index is not equal to record")
+	tk.MustExec("set @@tidb_redact_log=0;")
 
 	// Table count = index count.
 	// Index c2 has one line of data is 19, the corresponding table data is 20.
@@ -913,6 +933,11 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "col c2, handle 10, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:19, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:20, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}")
+	tk.MustExec("set @@tidb_redact_log=1;")
+	err = tk.ExecToErr("admin check table admin_test")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "index is not equal to record")
+	tk.MustExec("set @@tidb_redact_log=0;")
 
 	// Recover records.
 	txn, err = s.store.Begin()

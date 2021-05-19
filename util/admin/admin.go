@@ -391,6 +391,9 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		}
 		isExist, h2, err := idx.Exist(sc, txn, vals1, h1)
 		if kv.ErrKeyExists.Equal(err) {
+			if sessCtx.GetSessionVars().EnableRedactLog {
+				return false, ErrDataInConsistent
+			}
 			record1 := &RecordData{Handle: h1, Values: vals1}
 			record2 := &RecordData{Handle: h2, Values: vals1}
 			return false, ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", record2, record1)
@@ -399,6 +402,9 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 			return false, errors.Trace(err)
 		}
 		if !isExist {
+			if sessCtx.GetSessionVars().EnableRedactLog {
+				return false, ErrDataInConsistent
+			}
 			record := &RecordData{Handle: h1, Values: vals1}
 			return false, ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", nil, record)
 		}

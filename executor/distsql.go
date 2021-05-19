@@ -1094,7 +1094,11 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 		if chk.NumRows() == 0 {
 			task.indexOrder.Range(func(h kv.Handle, val interface{}) bool {
 				idxRow := task.idxRows.GetRow(val.(int))
-				err = errors.Errorf("handle %#v, index:%#v != record:%#v", h, idxRow.GetDatum(0, w.idxColTps[0]), nil)
+				if w.idxLookup.ctx.GetSessionVars().EnableRedactLog {
+					err = errors.New("index is not equal to record")
+				} else {
+					err = errors.Errorf("handle %#v, index:%#v != record:%#v", h, idxRow.GetDatum(0, w.idxColTps[0]), nil)
+				}
 				return false
 			})
 			if err != nil {
@@ -1129,10 +1133,16 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
 				cmpRes, err := idxVal.CompareDatum(sctx, &val)
 				if err != nil {
+					if w.idxLookup.ctx.GetSessionVars().EnableRedactLog {
+						return errors.New("index is not equal to record")
+					}
 					return errors.Errorf("col %s, handle %#v, index:%#v != record:%#v, compare err:%#v", col.Name,
 						handle, idxRow.GetDatum(i, tp), val, err)
 				}
 				if cmpRes != 0 {
+					if w.idxLookup.ctx.GetSessionVars().EnableRedactLog {
+						return errors.New("index is not equal to record")
+					}
 					return errors.Errorf("col %s, handle %#v, index:%#v != record:%#v", col.Name,
 						handle, idxRow.GetDatum(i, tp), val)
 				}
@@ -1212,10 +1222,15 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				obtainedHandlesMap.Set(handle, true)
 			}
 
-			logutil.Logger(ctx).Error("inconsistent index handles", zap.String("index", w.idxLookup.index.Name.O),
-				zap.Int("index_cnt", handleCnt), zap.Int("table_cnt", len(task.rows)),
-				zap.String("missing_handles", fmt.Sprint(GetLackHandles(task.handles, obtainedHandlesMap))),
-				zap.String("total_handles", fmt.Sprint(task.handles)))
+			if w.idxLookup.ctx.GetSessionVars().EnableRedactLog {
+				logutil.Logger(ctx).Error("inconsistent index handles", zap.String("index", w.idxLookup.index.Name.O),
+					zap.Int("index_cnt", handleCnt), zap.Int("table_cnt", len(task.rows)))
+			} else {
+				logutil.Logger(ctx).Error("inconsistent index handles", zap.String("index", w.idxLookup.index.Name.O),
+					zap.Int("index_cnt", handleCnt), zap.Int("table_cnt", len(task.rows)),
+					zap.String("missing_handles", fmt.Sprint(GetLackHandles(task.handles, obtainedHandlesMap))),
+					zap.String("total_handles", fmt.Sprint(task.handles)))
+			}
 
 			// table scan in double read can never has conditions according to convertToIndexScan.
 			// if this table scan has no condition, the number of rows it returns must equal to the length of handles.
