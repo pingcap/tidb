@@ -31,7 +31,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -322,19 +321,14 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 	if e.lock {
 		seVars := e.ctx.GetSessionVars()
 		lockCtx := newLockCtx(seVars, e.lockWaitTime)
-		lockCtx.ReturnValues = true
-		lockCtx.Values = map[string]tikvstore.ReturnedValue{}
+		lockCtx.InitReturnValues(1)
 		err := doLockKeys(ctx, e.ctx, lockCtx, key)
 		if err != nil {
 			return err
 		}
-		lockCtx.ValuesLock.Lock()
-		defer lockCtx.ValuesLock.Unlock()
-		for key, val := range lockCtx.Values {
-			if !val.AlreadyLocked {
-				seVars.TxnCtx.SetPessimisticLockCache(kv.Key(key), val.Value)
-			}
-		}
+		lockCtx.IterateValuesNotLocked(func(k, v []byte) {
+			seVars.TxnCtx.SetPessimisticLockCache(kv.Key(k), v)
+		})
 		if len(e.handleVal) > 0 {
 			seVars.TxnCtx.SetPessimisticLockCache(e.idxKey, e.handleVal)
 		}
