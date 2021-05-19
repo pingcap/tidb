@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
-
 	atomic2 "go.uber.org/atomic"
 )
 
