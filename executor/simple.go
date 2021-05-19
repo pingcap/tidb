@@ -564,6 +564,13 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 }
 
 func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
+	// When TxnReadTS is not 0, it indicates the transaction is staleness transaction
+	if e.ctx.GetSessionVars().TxnReadTS > 0 {
+		startTS := e.ctx.GetSessionVars().TxnReadTS
+		// clear TxnReadTS after we used it.
+		e.ctx.GetSessionVars().TxnReadTS = 0
+		return e.executeBeginWithReadTS(ctx, startTS)
+	}
 	// If `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND` is the first statement in TxnCtx, we should
 	// always create a new Txn instead of reusing it.
 	if s.ReadOnly {
@@ -609,6 +616,21 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	if s.CausalConsistencyOnly {
 		txn.SetOption(kv.GuaranteeLinearizability, false)
 	}
+	return nil
+}
+
+func (e *SimpleExec) executeBeginWithReadTS(ctx context.Context, startTS uint64) error {
+	opt := sessionctx.StalenessTxnOption{}
+	opt.Mode = ast.TimestampBoundReadTimestamp
+	opt.StartTS = startTS
+	err := e.ctx.NewTxnWithStalenessOption(ctx, opt)
+	if err != nil {
+		return err
+	}
+	// With START TRANSACTION, autocommit remains disabled until you end
+	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
+	// reverts to its previous state.
+	e.ctx.GetSessionVars().SetInTxn(true)
 	return nil
 }
 

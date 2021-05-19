@@ -465,6 +465,23 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 	return err
 }
 
+func setTxnReadTS(s *SessionVars, sVal string) error {
+	if sVal == "" {
+		s.TxnReadTS = 0
+		return nil
+	}
+	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
+	if err != nil {
+		return err
+	}
+	t1, err := t.GoTime(s.TimeZone)
+	if err != nil {
+		return err
+	}
+	s.TxnReadTS = GoTimeToTS(t1)
+	return err
+}
+
 // GoTimeToTS converts a Go time to uint64 timestamp.
 func GoTimeToTS(t time.Time) uint64 {
 	ts := (t.UnixNano() / int64(time.Millisecond)) << epochShiftBits

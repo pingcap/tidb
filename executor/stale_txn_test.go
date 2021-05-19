@@ -267,3 +267,16 @@ func (s *testStaleTxnSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
 	// got an old infoSchema
 	c.Assert(schemaVer3, Equals, schemaVer1)
 }
+
+func (s *testStaleTxnSerialSuite) TestSetTransactionReadOnlyAsOf(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`SET TRANSACTION READ ONLY as of timestamp '2021-04-21 00:42:12'`)
+	// 424394603102208000 is the tso of 2021-04-21 00:42:12
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(424394603102208000))
+	tk.MustExec("begin")
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(0))
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Equals, uint64(424394603102208000))
+	tk.MustExec("commit")
+	tk.MustExec("begin")
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Not(Equals), uint64(424394603102208000))
+}
