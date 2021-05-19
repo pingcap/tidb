@@ -248,8 +248,6 @@ func (s *RegionRequestSender) SendReqCtx(
 					Resp: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
 				}, nil, nil)
 			}
-		case "callBackofferHook":
-			bo.SetVarsHook("callBackofferHook", bo.GetVars())
 		case "requestTiDBStoreError":
 			if et == tikvrpc.TiDB {
 				failpoint.Return(nil, nil, tikverr.ErrTiKVServerTimeout)
