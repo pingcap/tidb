@@ -26,6 +26,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -177,6 +179,8 @@ func (a *recordSet) OnFetchReturned() {
 type ExecStmt struct {
 	// GoCtx stores parent go context.Context for a stmt.
 	GoCtx context.Context
+	// TSO stores the timestamp for stale read.
+	TSO uint64
 	// InfoSchema stores a reference to the schema information.
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
@@ -268,18 +272,19 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 // RebuildPlan rebuilds current execute statement plan.
 // It returns the current information schema version that 'a' is using.
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
-	is := a.Ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
-	a.InfoSchema = is
-	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
+	ret := &plannercore.PreprocesorReturn{}
+	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, plannercore.InTxnRetry, plannercore.WithReturn(ret)); err != nil {
 		return 0, err
 	}
-	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, is)
+	a.InfoSchema = ret.InfoSchema
+	a.TSO = ret.TSO
+	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, a.InfoSchema)
 	if err != nil {
 		return 0, err
 	}
 	a.OutputNames = names
 	a.Plan = p
-	return is.SchemaMetaVersion(), nil
+	return a.InfoSchema.SchemaMetaVersion(), nil
 }
 
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
@@ -305,6 +310,24 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.GetTextToLog()), zap.Stack("stack"))
 	}()
 
+	failpoint.Inject("assertStaleTSO", func(val failpoint.Value) {
+		if n, ok := val.(int64); ok {
+			startTS := oracle.ExtractPhysical(a.TSO)
+			if n != startTS {
+				panic("different tso")
+			}
+			failpoint.Return()
+		}
+	})
+	failpoint.Inject("assertStaleTSOWithTolerance", func(val failpoint.Value) {
+		if n, ok := val.(int64); ok {
+			startTS := oracle.ExtractPhysical(a.TSO)
+			if startTS <= n-2 || n+2 <= startTS {
+				panic("tso violate tolerance")
+			}
+			failpoint.Return()
+		}
+	})
 	sctx := a.Ctx
 	ctx = util.SetSessionID(ctx, sctx.GetSessionVars().ConnectionID)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
@@ -744,6 +767,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	}
 
 	b := newExecutorBuilder(ctx, a.InfoSchema)
+	b.snapshotTS = a.TSO
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)

@@ -15,7 +15,6 @@ package executor_test
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -123,6 +122,10 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 		tk.MustExec(`drop table if exists t`)
 	}()
 
+	time.Sleep(2 * time.Second)
+
+	now := time.Now()
+
 	testcases := []struct {
 		name             string
 		sql              string
@@ -132,9 +135,9 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 		errorStr string
 	}{
 		{
-			name:             "TimestampExactRead",
-			sql:              `select * from t as of timestamp '2020-09-06 00:00:00';`,
-			expectPhysicalTS: 1599321600000,
+			name:             "TimestampExactRead1",
+			sql:              fmt.Sprintf("select * from t as of timestamp '%s';", now.Format("2006-1-2 15:04:05")),
+			expectPhysicalTS: now.Unix(),
 		},
 		{
 			name:   "NomalRead",
@@ -142,42 +145,39 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 			preSec: 0,
 		},
 		{
-			name:             "TimestampExactRead",
-			sql:              `select * from t as of timestamp TIMESTAMP('2020-09-06 00:00:00');`,
-			expectPhysicalTS: 1599321600000,
+			name:             "TimestampExactRead2",
+			sql:              fmt.Sprintf("select * from t as of timestamp TIMESTAMP('%s');", now.Format("2006-1-2 15:04:05")),
+			expectPhysicalTS: now.Unix(),
 		},
 		{
-			name:   "TimestampExactRead",
-			sql:    `select * from t as of timestamp NOW() - INTERVAL 20 SECOND;`,
-			preSec: 20,
+			name:   "TimestampExactRead3",
+			sql:    `select * from t as of timestamp NOW() - INTERVAL 1 SECOND;`,
+			preSec: 1,
 		},
 		{
-			name:   "TimestampExactRead",
-			sql:    `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND);`,
-			preSec: 20,
+			name:   "TimestampExactRead4",
+			sql:    `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND);`,
+			preSec: 1,
 		},
 		{
-			name:   "TimestampExactRead",
-			sql:    `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND);`,
-			preSec: 20,
+			name:   "TimestampExactRead5",
+			sql:    `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND);`,
+			preSec: 1,
 		},
 		{
-			name:     "TimestampExactRead",
-			sql:      `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND), b as of timestamp TIMESTAMP('2020-09-06 00:00:00');`,
-			preSec:   20,
-			errorStr: "can not set different time",
+			name:     "TimestampExactRead6",
+			sql:      `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND), b as of timestamp TIMESTAMP('2020-09-06 00:00:00');`,
+			errorStr: ".*can not set different time in the as of.*",
 		},
 		{
-			name:     "TimestampExactRead",
-			sql:      `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND), b;`,
-			preSec:   20,
-			errorStr: "can not set different time",
+			name:     "TimestampExactRead7",
+			sql:      `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND), b;`,
+			errorStr: ".*can not set different time in the as of.*",
 		},
 		{
-			name:     "TimestampExactRead",
-			sql:      `select * from t, b as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND);`,
-			preSec:   20,
-			errorStr: "can not set different time",
+			name:     "TimestampExactRead8",
+			sql:      `select * from t, b as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND);`,
+			errorStr: ".*can not set different time in the as of.*",
 		},
 		{
 			name:   "NomalRead",
@@ -185,42 +185,40 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 			preSec: 0,
 		},
 		{
-			name:     "TimestampExactRead",
-			sql:      `select * from (select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND)) as c, b;`,
-			preSec:   20,
-			errorStr: "can not set different time",
+			name:     "TimestampExactRead9",
+			sql:      `select * from (select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND)) as c, b;`,
+			errorStr: ".*can not set different time in the as of.*",
 		},
 		{
-			name:   "TimestampExactRead",
-			sql:    `select * from (select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND)) as c;`,
-			preSec: 20,
+			name:   "TimestampExactRead10",
+			sql:    `select * from (select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND)) as c;`,
+			preSec: 1,
 		},
 		// Cannot be supported the SubSelect
 		{
-			name:     "TimestampExactRead",
+			name:     "TimestampExactRead11",
 			sql:      `select * from (select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND)) as c as of timestamp Now();`,
-			preSec:   20,
-			errorStr: "You have an error in your SQL syntax",
+			errorStr: ".*You have an error in your SQL syntax.*",
 		},
 	}
 
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
+		if testcase.expectPhysicalTS > 0 {
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSO", fmt.Sprintf(`return("int64(%d)")`, testcase.expectPhysicalTS)), IsNil)
+		} else if testcase.preSec > 0 {
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSOWithTolerance", fmt.Sprintf(`return("int64(%d)")`, time.Now().Unix()-testcase.preSec)), IsNil)
+		}
 		_, err := tk.Exec(testcase.sql)
 		if len(testcase.errorStr) != 0 {
-			c.Assert(err, NotNil)
-			c.Assert(strings.Contains(err.Error(), testcase.errorStr), IsTrue)
+			c.Assert(err, ErrorMatches, testcase.errorStr)
 			continue
 		}
 		c.Assert(err, IsNil, Commentf("sql:%s, error stack %v", testcase.sql, errors.ErrorStack(err)))
 		if testcase.expectPhysicalTS > 0 {
-			c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, testcase.expectPhysicalTS)
+			c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSO"), IsNil)
 		} else if testcase.preSec > 0 {
-			curSec := time.Now().Unix()
-			startTS := oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS)
-			// exact stale txn tolerate 2 seconds deviation for startTS
-			c.Assert(startTS, Greater, (curSec-testcase.preSec-2)*1000)
-			c.Assert(startTS, Less, (curSec-testcase.preSec+2)*1000)
+			c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSOWithTolerance"), IsNil)
 		}
 	}
 }
@@ -372,7 +370,7 @@ func (s *testStaleTxnSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
 	tk.MustExec("create table t (id int primary key);")
 
 	schemaVer1 := tk.Se.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
-	time.Sleep(time.Second)
+	time.Sleep(2 * time.Second)
 	tk.MustExec("drop table if exists t")
 	schemaVer2 := tk.Se.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
 	// confirm schema changed

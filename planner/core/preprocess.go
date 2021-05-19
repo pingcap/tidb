@@ -25,11 +25,13 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
@@ -49,6 +51,12 @@ func InPrepare(p *preprocessor) {
 // InTxnRetry is a PreprocessOpt that indicates preprocess is executing under transaction retry.
 func InTxnRetry(p *preprocessor) {
 	p.flag |= inTxnRetry
+}
+
+func WithReturn(ret *PreprocesorReturn) PreprocessOpt {
+	return func(p *preprocessor) {
+		p.PreprocesorReturn = ret
+	}
 }
 
 // TryAddExtraLimit trys to add an extra limit for SELECT or UNION statement when sql_select_limit is set.
@@ -82,12 +90,16 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 }
 
 // Preprocess resolves table names of the node, and checks some statements validation.
-func Preprocess(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema, preprocessOpt ...PreprocessOpt) error {
-	v := preprocessor{is: is, ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0)}
+func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
+	v := preprocessor{ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0)}
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
 	}
 	node.Accept(&v)
+	// it must be non-nil
+	if v.InfoSchema == nil {
+		v.handleAsOf(nil)
+	}
 	return errors.Trace(v.err)
 }
 
@@ -109,18 +121,25 @@ const (
 	inSequenceFunction
 )
 
+type PreprocesorReturn struct {
+	TSO        uint64
+	InfoSchema infoschema.InfoSchema
+}
+
 // preprocessor is an ast.Visitor that preprocess
 // ast Nodes parsed from parser.
 type preprocessor struct {
-	is     infoschema.InfoSchema
 	ctx    sessionctx.Context
-	err    error
 	flag   preprocessorFlag
 	stmtTp byte
 
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
 	tableAliasInJoin []map[string]interface{}
+
+	// values that may be returned
+	*PreprocesorReturn
+	err error
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -561,6 +580,10 @@ func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
 
 func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 	for _, table := range stmt.Tables {
+		p.handleTableName(table)
+		if p.err != nil {
+			return
+		}
 		currentDB := p.ctx.GetSessionVars().CurrentDB
 		if table.Schema.String() != "" {
 			currentDB = table.Schema.L
@@ -571,7 +594,7 @@ func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 		}
 		sName := model.NewCIStr(currentDB)
 		tName := table.Name
-		tableInfo, err := p.is.TableByName(sName, tName)
+		tableInfo, err := p.InfoSchema.TableByName(sName, tName)
 		if err != nil {
 			p.err = err
 			return
@@ -1165,7 +1188,12 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
-	table, err := p.is.TableByName(tn.Schema, tn.Name)
+	p.handleAsOf(tn.AsOf)
+	if p.err != nil {
+		return
+	}
+
+	table, err := p.InfoSchema.TableByName(tn.Schema, tn.Name)
 	if err != nil {
 		// We should never leak that the table doesn't exist (i.e. attach ErrTableNotExists)
 		// unless we know that the user has permissions to it, should it exist.
@@ -1187,7 +1215,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 	tableInfo := table.Meta()
-	dbInfo, _ := p.is.SchemaByName(tn.Schema)
+	dbInfo, _ := p.InfoSchema.SchemaByName(tn.Schema)
 	// tableName should be checked as sequence object.
 	if p.flag&inSequenceFunction > 0 {
 		if !tableInfo.IsSequence() {
@@ -1310,5 +1338,48 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 			p.err = types.ErrTooBigScale.GenWithStackByArgs(node.Tp.Decimal, buf.String(), mysql.MaxDecimalScale)
 			return
 		}
+	}
+}
+
+func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
+	dom := domain.GetDomain(p.ctx)
+
+	tso := uint64(0)
+	if node != nil {
+		tsRes, err := evalAstExpr(p.ctx, node.TsExpr)
+		if err != nil {
+			p.err = err
+			return
+		}
+
+		ts, err := tsRes.ConvertTo(p.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeTimestamp))
+		if err != nil {
+			p.err = err
+			return
+		}
+
+		tsTime, err := ts.GetMysqlTime().GoTime(p.ctx.GetSessionVars().TimeZone)
+		if err != nil {
+			p.err = err
+			return
+		}
+
+		tso = oracle.GoTimeToTS(tsTime)
+	}
+	if p.InfoSchema == nil {
+		if tso != 0 {
+			is, err := dom.GetSnapshotInfoSchema(tso)
+			if err != nil {
+				p.err = err
+				return
+			}
+			p.TSO = tso
+			p.InfoSchema = is
+		} else {
+			p.InfoSchema = dom.InfoSchema()
+		}
+	}
+	if p.TSO != tso {
+		p.err = ErrDifferentAsOf.GenWithStack("can not set different time in the as of")
 	}
 }

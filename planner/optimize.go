@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
@@ -102,10 +101,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		if err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
-	}
-	err := tryPrepareStaledTS(ctx, sctx, node, is)
-	if err != nil {
-		return nil, nil, err
 	}
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
 		var fp plannercore.Plan
@@ -342,30 +337,6 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 		return x, normalizedSQL, hash, nil
 	}
 	return nil, "", "", nil
-}
-
-// tryPrepareStaledTS try to prepare the staled timestamp for stale read(https://github.com/pingcap/tidb/issues/21094).
-func tryPrepareStaledTS(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) error {
-	ts, err := plannercore.TryExtractTSFromAsOf(sctx, node)
-	if err != nil {
-		return err
-	}
-	if ts != nil {
-		tsTime, err := ts.GetMysqlTime().GoTime(sctx.GetSessionVars().TimeZone)
-		if err != nil {
-			return err
-		}
-		tso := oracle.GoTimeToTS(tsTime)
-		opt := sessionctx.StalenessTxnOption{}
-		// TODO: remove TimestampBoundReadTimestamp
-		opt.Mode = ast.TimestampBoundReadTimestamp
-		opt.StartTS = tso
-		err = sctx.NewTxnWithStalenessOption(ctx, opt)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRecord, string, error) {
