@@ -197,6 +197,10 @@ type IndexReaderExecutor struct {
 
 // Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() error {
+	if e.table.Meta().TempTableType != model.TempTableNone {
+		return nil
+	}
+
 	err := e.result.Close()
 	e.result = nil
 	e.ctx.StoreQueryFeedback(e.feedback)
@@ -205,6 +209,11 @@ func (e *IndexReaderExecutor) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *IndexReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
+	if e.table.Meta().TempTableType != model.TempTableNone {
+		req.Reset()
+		return nil
+	}
+
 	err := e.result.Next(ctx, req)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -267,6 +276,10 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
 	e.kvRanges = kvRanges
+	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
+	if e.table.Meta().TempTableType != model.TempTableNone {
+		return nil
+	}
 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
@@ -385,6 +398,12 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return err
 	}
+
+	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
+	if e.table.Meta().TempTableType == model.TempTableGlobal {
+		return nil
+	}
+
 	err = e.open(ctx)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -646,6 +665,10 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
+	if e.table.Meta().TempTableType != model.TempTableNone {
+		return nil
+	}
+
 	if !e.workerStarted || e.finished == nil {
 		return nil
 	}
@@ -666,6 +689,11 @@ func (e *IndexLookUpExecutor) Close() error {
 
 // Next implements Exec Next interface.
 func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
+	if e.table.Meta().TempTableType == model.TempTableGlobal {
+		req.Reset()
+		return nil
+	}
+
 	if !e.workerStarted {
 		if err := e.startWorkers(ctx, req.RequiredRows()); err != nil {
 			return err

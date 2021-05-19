@@ -154,6 +154,25 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		}
 	}
 	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
+
+	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
+	// Calculate the kv ranges here, UnionScan rely on this kv ranges.
+	if e.table.Meta().TempTableType != model.TempTableNone {
+		kvReq, err := e.buildKVReq(ctx, firstPartRanges)
+		if err != nil {
+			return err
+		}
+		e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
+		if len(secondPartRanges) != 0 {
+			kvReq, err = e.buildKVReq(ctx, secondPartRanges)
+			if err != nil {
+				return err
+			}
+			e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
+		}
+		return nil
+	}
+
 	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -176,6 +195,12 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
+	if e.table.Meta().TempTableType != model.TempTableNone {
+		// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
+		req.Reset()
+		return nil
+	}
+
 	logutil.Eventf(ctx, "table scan table: %s, range: %v", stringutil.MemoizeStr(func() string {
 		var tableName string
 		if meta := e.table.Meta(); meta != nil {
@@ -198,6 +223,10 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
+	if e.table.Meta().TempTableType != model.TempTableNone {
+		return nil
+	}
+
 	var err error
 	if e.resultHandler != nil {
 		err = e.resultHandler.Close()
@@ -210,6 +239,20 @@ func (e *TableReaderExecutor) Close() error {
 // buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResult returned by the callee
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
+	kvReq, err := e.buildKVReq(ctx, ranges)
+	if err != nil {
+		return nil, err
+	}
+	e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
+
+	result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.Range) (*kv.Request, error) {
 	var builder distsql.RequestBuilder
 	var reqBuilder *distsql.RequestBuilder
 	if e.kvRangeBuilder != nil {
@@ -235,17 +278,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	if is, ok := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema); ok {
 		reqBuilder.SetFromInfoSchema(is)
 	}
-	kvReq, err := reqBuilder.Build()
-	if err != nil {
-		return nil, err
-	}
-	e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
-
-	result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
+	return reqBuilder.Build()
 }
 
 func buildVirtualColumnIndex(schema *expression.Schema, columns []*model.ColumnInfo) []int {
