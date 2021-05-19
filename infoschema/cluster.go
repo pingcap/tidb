@@ -39,8 +39,8 @@ const (
 	ClusterTableStatementsSummaryHistory = "CLUSTER_STATEMENTS_SUMMARY_HISTORY"
 	// ClusterTableTiDBTrx is the string constant of cluster transaction running table.
 	ClusterTableTiDBTrx = "CLUSTER_TIDB_TRX"
-	// ClusterTableDeadLock is the string constant of cluster dead lock table.
-	ClusterTableDeadLock = "CLUSTER_DEAD_LOCK"
+	// ClusterTableDeadlocks is the string constant of cluster dead lock table.
+	ClusterTableDeadlocks = "CLUSTER_DEADLOCKS"
 )
 
 // memTableToClusterTables means add memory table to cluster table.
@@ -50,7 +50,7 @@ var memTableToClusterTables = map[string]string{
 	TableStatementsSummary:        ClusterTableStatementsSummary,
 	TableStatementsSummaryHistory: ClusterTableStatementsSummaryHistory,
 	TableTiDBTrx:                  ClusterTableTiDBTrx,
-	TableDeadLock:                 ClusterTableDeadLock,
+	TableDeadlocks:                ClusterTableDeadlocks,
 }
 
 func init() {

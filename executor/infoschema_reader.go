@@ -154,9 +154,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.setDataForTiDBTrx(sctx)
 		case infoschema.ClusterTableTiDBTrx:
 			err = e.setDataForClusterTiDBTrx(sctx)
-		case infoschema.TableDeadLock:
+		case infoschema.TableDeadlocks:
 			err = e.setDataForDeadlock(sctx)
-		case infoschema.ClusterTableDeadLock:
+		case infoschema.ClusterTableDeadlocks:
 			err = e.setDataForClusterDeadlock(sctx)
 		}
 		if err != nil {

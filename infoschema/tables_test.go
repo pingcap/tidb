@@ -1539,7 +1539,7 @@ func (s *testTableSuite) TestInfoschemaDeadlockPrivilege(c *C) {
 		Username: "testuser",
 		Hostname: "localhost",
 	}, nil, nil), IsTrue)
-	err := tk.QueryToErr("select * from information_schema.dead_lock")
+	err := tk.QueryToErr("select * from information_schema.deadlocks")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 
@@ -1550,5 +1550,5 @@ func (s *testTableSuite) TestInfoschemaDeadlockPrivilege(c *C) {
 		Username: "testuser2",
 		Hostname: "localhost",
 	}, nil, nil), IsTrue)
-	_ = tk.MustQuery("select * from information_schema.dead_lock")
+	_ = tk.MustQuery("select * from information_schema.deadlocks")
 }

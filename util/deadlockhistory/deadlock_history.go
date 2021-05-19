@@ -32,7 +32,7 @@ type WaitChainItem struct {
 	TryLockTxn     uint64
 	SQLDigest      string
 	Key            []byte
-	SQLs           []string
+	AllSQLs        []string
 	TxnHoldingLock uint64
 }
 
@@ -40,9 +40,10 @@ type WaitChainItem struct {
 type DeadlockRecord struct {
 	// The ID doesn't need to be set manually and it's set when it's added into the DeadlockHistory by invoking its Push
 	// method.
-	ID        uint64
-	OccurTime time.Time
-	WaitChain []WaitChainItem
+	ID          uint64
+	OccurTime   time.Time
+	IsRetryable bool
+	WaitChain   []WaitChainItem
 }
 
 // DeadlockHistory is a collection for maintaining recent several deadlock events.
@@ -118,7 +119,7 @@ func (d *DeadlockHistory) GetAll() []*DeadlockRecord {
 }
 
 // GetAllDatum gets all collected deadlock events, and make it into datum that matches the definition of the table
-// `INFORMATION_SCHEMA.DEAD_LOCK`.
+// `INFORMATION_SCHEMA.DEADLOCKS`.
 func (d *DeadlockHistory) GetAllDatum() [][]types.Datum {
 	records := d.GetAll()
 	rowsCount := 0
@@ -128,30 +129,31 @@ func (d *DeadlockHistory) GetAllDatum() [][]types.Datum {
 
 	rows := make([][]types.Datum, 0, rowsCount)
 
-	row := make([]interface{}, 7)
+	row := make([]interface{}, 8)
 	for _, rec := range records {
 		row[0] = rec.ID
 		row[1] = types.NewTime(types.FromGoTime(rec.OccurTime), mysql.TypeTimestamp, types.MaxFsp)
+		row[2] = rec.IsRetryable
 
 		for _, item := range rec.WaitChain {
-			row[2] = item.TryLockTxn
-
-			row[3] = nil
-			if len(item.SQLDigest) > 0 {
-				row[3] = item.SQLDigest
-			}
+			row[3] = item.TryLockTxn
 
 			row[4] = nil
-			if len(item.Key) > 0 {
-				row[4] = strings.ToUpper(hex.EncodeToString(item.Key))
+			if len(item.SQLDigest) > 0 {
+				row[4] = item.SQLDigest
 			}
 
 			row[5] = nil
-			if item.SQLs != nil {
-				row[5] = "[" + strings.Join(item.SQLs, ", ") + "]"
+			if len(item.Key) > 0 {
+				row[5] = strings.ToUpper(hex.EncodeToString(item.Key))
 			}
 
-			row[6] = item.TxnHoldingLock
+			row[6] = nil
+			if item.AllSQLs != nil {
+				row[6] = "[" + strings.Join(item.AllSQLs, ", ") + "]"
+			}
+
+			row[7] = item.TxnHoldingLock
 
 			rows = append(rows, types.MakeDatums(row...))
 		}
@@ -183,13 +185,14 @@ func ErrDeadlockToDeadlockRecord(dl *tikverr.ErrDeadlock) *DeadlockRecord {
 			TryLockTxn:     rawItem.Txn,
 			SQLDigest:      sqlDigest,
 			Key:            rawItem.Key,
-			SQLs:           nil,
+			AllSQLs:        nil,
 			TxnHoldingLock: rawItem.WaitForTxn,
 		})
 	}
 	rec := &DeadlockRecord{
-		OccurTime: time.Now(),
-		WaitChain: waitChain,
+		OccurTime:   time.Now(),
+		IsRetryable: dl.IsRetryable,
+		WaitChain:   waitChain,
 	}
 	return rec
 }

@@ -222,7 +222,7 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 		// Swap the two to match the correct order.
 		expectedDeadlockInfo[0], expectedDeadlockInfo[1] = expectedDeadlockInfo[1], expectedDeadlockInfo[0]
 	}
-	res := tk1.MustQuery("select deadlock_id, try_lock_trx_id, trx_holding_lock, current_sql_digest from information_schema.dead_lock")
+	res := tk1.MustQuery("select deadlock_id, try_lock_trx_id, trx_holding_lock, current_sql_digest from information_schema.deadlocks")
 	res.CheckAt([]int{1, 2, 3}, testkit.Rows(expectedDeadlockInfo...))
 	c.Assert(res.Rows()[0][0], Equals, res.Rows()[1][0])
 }
