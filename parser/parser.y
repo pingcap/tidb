@@ -9377,8 +9377,6 @@ TransactionChar:
 |	"READ" "ONLY" AsOfClause
 	{
 		varAssigns := []*ast.VariableAssignment{}
-		expr := ast.NewValueExpr("1", parser.charset, parser.collation)
-		varAssigns = append(varAssigns, &ast.VariableAssignment{Name: "tx_read_only", Value: expr, IsSystem: true})
 		asof := $3.(*ast.AsOfClause)
 		if asof != nil {
 			varAssigns = append(varAssigns, &ast.VariableAssignment{Name: "tx_read_ts", Value: asof.TsExpr, IsSystem: true})
