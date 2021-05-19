@@ -1340,33 +1340,49 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, storeType kv.StoreType) bool {
 	sc := sctx.GetSessionVars().StmtCtx
 	client := sctx.GetClient()
+	ret := true
+	reason := ""
 	for _, aggFunc := range aggFuncs {
 		// if the aggFunc contain VirtualColumn or CorrelatedColumn, it can not be pushed down.
 		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args) {
-			return false
+			reason = "agg function '" + aggFunc.Name + "' contains virtual column or correlated column"
+			ret = false
+			break
+		}
+		if !aggregation.CheckAggPushDown(aggFunc, storeType) {
+			reason = "agg function '" + aggFunc.Name + "' is not supported"
+			ret = false
+			break
+		}
+		if !expression.CanExprsPushDown(sc, aggFunc.Args, client, storeType) {
+			reason = "argument of agg function '" + aggFunc.Name + "' contains unsupported expr"
+			ret = false
+			break
 		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
-			return false
-		}
-		if !aggregation.CheckAggPushDown(aggFunc, storeType) {
-			if sc.InExplainStmt {
-				storageName := storeType.Name()
-				if storeType == kv.UnSpecified {
-					storageName = "storage layer"
-				}
-				sc.AppendWarning(errors.New("Agg function '" + aggFunc.Name + "' can not be pushed to " + storageName))
-			}
-			return false
-		}
-		if !expression.CanExprsPushDown(sc, aggFunc.Args, client, storeType) {
-			return false
+			reason = "agg function '" + aggFunc.Name + "' can not be converted to pb expr"
+			ret = false
+			break
 		}
 	}
-	if expression.ContainVirtualColumn(groupByItems) {
-		return false
+	if ret && expression.ContainVirtualColumn(groupByItems) {
+		reason = "group by items contain virtual columns"
+		ret = false
 	}
-	return expression.CanExprsPushDown(sc, groupByItems, client, storeType)
+	if ret && !expression.CanExprsPushDown(sc, groupByItems, client, storeType) {
+		reason = "group by items contain unsupported expr"
+		ret = false
+	}
+
+	if !ret && sc.InExplainStmt {
+		storageName := storeType.Name()
+		if storeType == kv.UnSpecified {
+			storageName = "storage layer"
+		}
+		sc.AppendWarning(errors.New("Aggregation can not be pushed to " + storageName + " because " + reason))
+	}
+	return ret
 }
 
 // AggInfo stores the information of an Aggregation.
