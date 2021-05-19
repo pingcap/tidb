@@ -491,12 +491,21 @@ func UnregisterSysVar(name string) {
 	sysVarsLock.Unlock()
 }
 
+// Clone deep copies the sysvar struct to avoid a race
+func (sv *SysVar) Clone() *SysVar {
+	dst := *sv
+	return &dst
+}
+
 // GetSysVar returns sys var info for name as key.
 func GetSysVar(name string) *SysVar {
 	name = strings.ToLower(name)
 	sysVarsLock.RLock()
 	defer sysVarsLock.RUnlock()
-	return sysVars[name]
+	if sysVars[name] == nil {
+		return nil
+	}
+	return sysVars[name].Clone()
 }
 
 // SetSysVar sets a sysvar. This will not propagate to the cluster, so it should only be
@@ -514,7 +523,7 @@ func GetSysVars() map[string]*SysVar {
 	defer sysVarsLock.RUnlock()
 	copy := make(map[string]*SysVar, len(sysVars))
 	for name, sv := range sysVars {
-		copy[name] = sv
+		copy[name] = sv.Clone()
 	}
 	return copy
 }
