@@ -17,12 +17,10 @@ import (
 	"fmt"
 	"sort"
 	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/placement"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
@@ -310,40 +308,6 @@ func (is *infoSchema) SequenceByName(schema, sequence model.CIStr) (util.Sequenc
 		return nil, ErrWrongObject.GenWithStackByArgs(schema, sequence, "SEQUENCE")
 	}
 	return tbl.(util.SequenceTable), nil
-}
-
-// Handle handles information schema, including getting and setting.
-type Handle struct {
-	value atomic.Value
-	store kv.Storage
-}
-
-// NewHandle creates a new Handle.
-func NewHandle(store kv.Storage) *Handle {
-	h := &Handle{
-		store: store,
-	}
-	return h
-}
-
-// Get gets information schema from Handle.
-func (h *Handle) Get() InfoSchema {
-	v := h.value.Load()
-	schema, _ := v.(InfoSchema)
-	return schema
-}
-
-// IsValid uses to check whether handle value is valid.
-func (h *Handle) IsValid() bool {
-	return h.value.Load() != nil
-}
-
-// EmptyClone creates a new Handle with the same store and memSchema, but the value is not set.
-func (h *Handle) EmptyClone() *Handle {
-	newHandle := &Handle{
-		store: h.store,
-	}
-	return newHandle
 }
 
 func init() {

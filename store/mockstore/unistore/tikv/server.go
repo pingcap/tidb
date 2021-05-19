@@ -217,6 +217,7 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 			LockKey:         errLocked.Key,
 			LockTS:          errLocked.Lock.StartTS,
 			DeadlockKeyHash: result.DeadlockResp.DeadlockKeyHash,
+			WaitChain:       result.DeadlockResp.WaitChain,
 		}
 		resp.Errors, resp.RegionError = convertToPBErrors(deadlockErr)
 		return resp, nil
@@ -971,6 +972,11 @@ func (svr *Server) GetStoreSafeTS(context.Context, *kvrpcpb.StoreSafeTSRequest) 
 	return &kvrpcpb.StoreSafeTSResponse{}, nil
 }
 
+// GetLockWaitInfo implements the tikvpb.TikvServer interface.
+func (svr *Server) GetLockWaitInfo(context.Context, *kvrpcpb.GetLockWaitInfoRequest) (*kvrpcpb.GetLockWaitInfoResponse, error) {
+	panic("unimplemented")
+}
+
 func convertToKeyError(err error) *kvrpcpb.KeyError {
 	if err == nil {
 		return nil
@@ -1006,6 +1012,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				LockKey:         x.LockKey,
 				LockTs:          x.LockTS,
 				DeadlockKeyHash: x.DeadlockKeyHash,
+				WaitChain:       x.WaitChain,
 			},
 		}
 	case *ErrCommitExpire:

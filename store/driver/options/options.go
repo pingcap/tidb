@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,23 +11,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package options
 
 import (
-	"context"
-	"errors"
-
-	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/kv"
+	storekv "github.com/pingcap/tidb/store/tikv/kv"
 )
 
-type testBackoffSuite struct {
-}
-
-var _ = Suite(&testBackoffSuite{})
-
-func (s *testBackoffSuite) TestBackoffWithMax(c *C) {
-	b := NewBackofferWithVars(context.TODO(), 2000, nil)
-	err := b.BackoffWithMaxSleep(BoTxnLockFast, 30, errors.New("test"))
-	c.Assert(err, IsNil)
-	c.Assert(b.totalSleep, Equals, 30)
+// GetTiKVReplicaReadType maps kv.ReplicaReadType to tikv/kv.ReplicaReadType.
+func GetTiKVReplicaReadType(t kv.ReplicaReadType) storekv.ReplicaReadType {
+	switch t {
+	case kv.ReplicaReadLeader:
+		return storekv.ReplicaReadLeader
+	case kv.ReplicaReadFollower:
+		return storekv.ReplicaReadFollower
+	case kv.ReplicaReadMixed:
+		return storekv.ReplicaReadMixed
+	}
+	return 0
 }

@@ -312,7 +312,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "datetime_format", Value: "%Y-%m-%d %H:%i:%s"},
 	{Scope: ScopeGlobal, Name: "log_syslog", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: "transaction_alloc_block_size", Value: "8192"},
-	{Scope: ScopeGlobal, Name: "innodb_large_prefix", Type: TypeBool, Value: Off},
+	{Scope: ScopeGlobal, Name: "innodb_large_prefix", Type: TypeBool, Value: On},
 	{Scope: ScopeNone, Name: "performance_schema_max_cond_classes", Value: "80"},
 	{Scope: ScopeGlobal, Name: "innodb_io_capacity", Value: "200"},
 	{Scope: ScopeGlobal, Name: "max_binlog_cache_size", Value: "18446744073709547520"},
