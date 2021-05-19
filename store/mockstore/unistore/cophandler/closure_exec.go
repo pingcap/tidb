@@ -277,7 +277,7 @@ func newClosureExecutor(dagCtx *dagContext, outputOffsets []uint32, scanExec *ti
 		e.ndvs = make([]int64, len(ranges))
 	}
 	e.kvRanges = ranges
-	e.scanCtx.chk = chunk.NewChunkWithCapacity(e.fieldTps, 32)
+	e.scanCtx.chk = chunk.NewChunkWithCapacity(e.fieldTps, 2)
 	if e.scanType == TableScan {
 		e.scanCtx.decoder, err = newRowDecoder(e.evalContext.columnInfos, e.evalContext.fieldTps, e.evalContext.primaryCols, e.evalContext.sc.TimeZone)
 		if err != nil {
