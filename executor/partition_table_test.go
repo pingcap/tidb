@@ -436,12 +436,126 @@ func (s *partitionTableSuite) TestView(c *C) {
 	}
 }
 
+func (s *partitionTableSuite) TestDirectReadingwithIndexJoin(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_dr_join")
+	tk.MustExec("use test_dr_join")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	// hash and range partition
+	tk.MustExec("create table thash (a int, b int, c int, primary key(a), index idx_b(b)) partition by hash(a) partitions 4;")
+	tk.MustExec(`create table trange (a int, b int, c int, primary key(a), index idx_b(b)) partition by range(a) (
+		  partition p0 values less than(1000),
+		  partition p1 values less than(2000),
+		  partition p2 values less than(3000),
+		  partition p3 values less than(4000));`)
+
+	// regualr table
+	tk.MustExec(`create table tnormal (a int, b int, c int, primary key(a), index idx_b(b));`)
+	tk.MustExec(`create table touter (a int, b int, c int);`)
+
+	// generate some random data to be inserted
+	vals := make([]string, 0, 2000)
+	for i := 0; i < 2000; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v, %v)", rand.Intn(4000), rand.Intn(4000), rand.Intn(4000)))
+	}
+	tk.MustExec("insert ignore into trange values " + strings.Join(vals, ","))
+	tk.MustExec("insert ignore into thash values " + strings.Join(vals, ","))
+	tk.MustExec("insert ignore into tnormal values " + strings.Join(vals, ","))
+	tk.MustExec("insert ignore into touter values " + strings.Join(vals, ","))
+
+	// test indexLookUp + hash
+	queryPartition := fmt.Sprintf("select /*+ INL_JOIN(touter, thash) */ * from touter join thash use index(idx_b) on touter.b = thash.b")
+	queryRegular := fmt.Sprintf("select /*+ INL_JOIN(touter, tnormal) */ * from touter join tnormal use index(idx_b) on touter.b = tnormal.b")
+	tk.MustQuery("explain format = 'brief' " + queryPartition).Check(testkit.Rows(
+		"IndexJoin 12487.50 root  inner join, inner:IndexLookUp, outer key:test_dr_join.touter.b, inner key:test_dr_join.thash.b, equal cond:eq(test_dr_join.touter.b, test_dr_join.thash.b)",
+		"├─TableReader(Build) 9990.00 root  data:Selection",
+		"│ └─Selection 9990.00 cop[tikv]  not(isnull(test_dr_join.touter.b))",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
+		"└─IndexLookUp(Probe) 1.25 root partition:all ",
+		"  ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test_dr_join.thash.b))",
+		"  │ └─IndexRangeScan 1.25 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(test_dr_join.thash.b, test_dr_join.touter.b)], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 1.25 cop[tikv] table:thash keep order:false, stats:pseudo")) // check if IndexLookUp is used
+	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	// test tableReader + hash
+	queryPartition = fmt.Sprintf("select /*+ INL_JOIN(touter, thash) */ * from touter join thash on touter.a = thash.a")
+	queryRegular = fmt.Sprintf("select /*+ INL_JOIN(touter, tnormal) */ * from touter join tnormal on touter.a = tnormal.a")
+	tk.MustQuery("explain format = 'brief' " + queryPartition).Check(testkit.Rows(
+		"IndexJoin 12487.50 root  inner join, inner:TableReader, outer key:test_dr_join.touter.a, inner key:test_dr_join.thash.a, equal cond:eq(test_dr_join.touter.a, test_dr_join.thash.a)",
+		"├─TableReader(Build) 9990.00 root  data:Selection",
+		"│ └─Selection 9990.00 cop[tikv]  not(isnull(test_dr_join.touter.a))",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
+		"└─TableReader(Probe) 1.00 root partition:all data:TableRangeScan",
+		"  └─TableRangeScan 1.00 cop[tikv] table:thash range: decided by [test_dr_join.touter.a], keep order:false, stats:pseudo")) // check if tableReader is used
+	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	// test indexReader + hash
+	queryPartition = fmt.Sprintf("select /*+ INL_JOIN(touter, thash) */ thash.b from touter join thash use index(idx_b) on touter.b = thash.b;")
+	queryRegular = fmt.Sprintf("select /*+ INL_JOIN(touter, tnormal) */ tnormal.b from touter join tnormal use index(idx_b) on touter.b = tnormal.b;")
+	tk.MustQuery("explain format = 'brief' " + queryPartition).Check(testkit.Rows(
+		"IndexJoin 12487.50 root  inner join, inner:IndexReader, outer key:test_dr_join.touter.b, inner key:test_dr_join.thash.b, equal cond:eq(test_dr_join.touter.b, test_dr_join.thash.b)",
+		"├─TableReader(Build) 9990.00 root  data:Selection",
+		"│ └─Selection 9990.00 cop[tikv]  not(isnull(test_dr_join.touter.b))",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
+		"└─IndexReader(Probe) 1.25 root partition:all index:Selection",
+		"  └─Selection 1.25 cop[tikv]  not(isnull(test_dr_join.thash.b))",
+		"    └─IndexRangeScan 1.25 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(test_dr_join.thash.b, test_dr_join.touter.b)], keep order:false, stats:pseudo")) // check if indexReader is used
+	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	// test indexLookUp + range
+	// explain select /*+ INL_JOIN(touter, tinner) */ * from touter join tinner use index(a) on touter.a = tinner.a;
+	queryPartition = fmt.Sprintf("select /*+ INL_JOIN(touter, trange) */ * from touter join trange use index(idx_b) on touter.b = trange.b;")
+	queryRegular = fmt.Sprintf("select /*+ INL_JOIN(touter, tnormal) */ * from touter join tnormal use index(idx_b) on touter.b = tnormal.b;")
+	tk.MustQuery("explain format = 'brief' " + queryPartition).Check(testkit.Rows(
+		"IndexJoin 12487.50 root  inner join, inner:IndexLookUp, outer key:test_dr_join.touter.b, inner key:test_dr_join.trange.b, equal cond:eq(test_dr_join.touter.b, test_dr_join.trange.b)",
+		"├─TableReader(Build) 9990.00 root  data:Selection",
+		"│ └─Selection 9990.00 cop[tikv]  not(isnull(test_dr_join.touter.b))",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
+		"└─IndexLookUp(Probe) 1.25 root partition:all ",
+		"  ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test_dr_join.trange.b))",
+		"  │ └─IndexRangeScan 1.25 cop[tikv] table:trange, index:idx_b(b) range: decided by [eq(test_dr_join.trange.b, test_dr_join.touter.b)], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 1.25 cop[tikv] table:trange keep order:false, stats:pseudo")) // check if IndexLookUp is used
+	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	// test tableReader + range
+	queryPartition = fmt.Sprintf("select /*+ INL_JOIN(touter, trange) */ * from touter join trange on touter.a = trange.a;")
+	queryRegular = fmt.Sprintf("select /*+ INL_JOIN(touter, tnormal) */ * from touter join tnormal on touter.a = tnormal.a;")
+	tk.MustQuery("explain format = 'brief' " + queryPartition).Check(testkit.Rows(
+		"IndexJoin 12487.50 root  inner join, inner:TableReader, outer key:test_dr_join.touter.a, inner key:test_dr_join.trange.a, equal cond:eq(test_dr_join.touter.a, test_dr_join.trange.a)",
+		"├─TableReader(Build) 9990.00 root  data:Selection",
+		"│ └─Selection 9990.00 cop[tikv]  not(isnull(test_dr_join.touter.a))",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
+		"└─TableReader(Probe) 1.00 root partition:all data:TableRangeScan",
+		"  └─TableRangeScan 1.00 cop[tikv] table:trange range: decided by [test_dr_join.touter.a], keep order:false, stats:pseudo")) // check if tableReader is used
+	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	// test indexReader + range
+	// explain select /*+ INL_JOIN(touter, tinner) */ tinner.a from touter join tinner on touter.a = tinner.a;
+	queryPartition = fmt.Sprintf("select /*+ INL_JOIN(touter, trange) */ trange.b from touter join trange use index(idx_b) on touter.b = trange.b;")
+	queryRegular = fmt.Sprintf("select /*+ INL_JOIN(touter, tnormal) */ tnormal.b from touter join tnormal use index(idx_b) on touter.b = tnormal.b;")
+	tk.MustQuery("explain format = 'brief' " + queryPartition).Check(testkit.Rows(
+		"IndexJoin 12487.50 root  inner join, inner:IndexReader, outer key:test_dr_join.touter.b, inner key:test_dr_join.trange.b, equal cond:eq(test_dr_join.touter.b, test_dr_join.trange.b)",
+		"├─TableReader(Build) 9990.00 root  data:Selection",
+		"│ └─Selection 9990.00 cop[tikv]  not(isnull(test_dr_join.touter.b))",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
+		"└─IndexReader(Probe) 1.25 root partition:all index:Selection",
+		"  └─Selection 1.25 cop[tikv]  not(isnull(test_dr_join.trange.b))",
+		"    └─IndexRangeScan 1.25 cop[tikv] table:trange, index:idx_b(b) range: decided by [eq(test_dr_join.trange.b, test_dr_join.touter.b)], keep order:false, stats:pseudo")) // check if indexReader is used
+	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+}
+
 func (s *partitionTableSuite) TestDynamicPruningUnderIndexJoin(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
 	}
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
+
 	tk.MustExec("create database pruing_under_index_join")
 	tk.MustExec("use pruing_under_index_join")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
