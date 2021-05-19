@@ -39,7 +39,7 @@ func (s *extractStartTsSuite) SetUpTest(c *C) {
 	probe.SetRegionCacheStore(2, tikvrpc.TiKV, 1, []*metapb.StoreLabel{
 		{
 			Key:   tikv.DCLabelKey,
-			Value: oracle.LocalTxnScope,
+			Value: "local1",
 		},
 	})
 	probe.SetRegionCacheStore(3, tikvrpc.TiKV, 1, []*metapb.StoreLabel{
@@ -71,7 +71,7 @@ func (s *extractStartTsSuite) TestExtractStartTs(c *C) {
 		// MinStartTS setted, global
 		{101, tikv.StartTSOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: &i, MaxPrevSec: nil}},
 		// MinStartTS setted, local
-		{102, tikv.StartTSOption{TxnScope: oracle.LocalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: &i, MaxPrevSec: nil}},
+		{102, tikv.StartTSOption{TxnScope: "local1", StartTS: nil, PrevSec: nil, MinStartTS: &i, MaxPrevSec: nil}},
 		// MaxPrevSec setted
 		// however we need to add more cases to check the behavior when it fall backs to MinStartTS setted
 		// see `TestMaxPrevSecFallback`
@@ -99,7 +99,7 @@ func (s *extractStartTsSuite) TestMaxPrevSecFallback(c *C) {
 		option     tikv.StartTSOption
 	}{
 		{0x8000000000000001, tikv.StartTSOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
-		{0x8000000000000002, tikv.StartTSOption{TxnScope: oracle.LocalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
+		{0x8000000000000002, tikv.StartTSOption{TxnScope: "local1", StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
 	}
 	for _, cs := range cases {
 		result, _ := tikv.ExtractStartTs(s.store, cs.option)

@@ -16,8 +16,6 @@ package oracle
 import (
 	"context"
 	"time"
-
-	"github.com/pingcap/tidb/store/tikv/config"
 )
 
 // Option represents available options for the oracle.Oracle.
@@ -42,57 +40,11 @@ type Future interface {
 	Wait() (uint64, error)
 }
 
-// TxnScope indicates the used txnScope for oracle
-type TxnScope struct {
-	// varValue indicates the value of @@txn_scope, which can only be `global` or `local`
-	varValue string
-	// txnScope indicates the value which the tidb-server holds to request tso to pd
-	txnScope string
-}
-
-// GetTxnScope gets oracle.TxnScope from config
-func GetTxnScope() TxnScope {
-	isGlobal, location := config.GetTxnScopeFromConfig()
-	if isGlobal {
-		return NewGlobalTxnScope()
-	}
-	return NewLocalTxnScope(location)
-}
-
-// NewGlobalTxnScope creates a Global TxnScope
-func NewGlobalTxnScope() TxnScope {
-	return newTxnScope(GlobalTxnScope, GlobalTxnScope)
-}
-
-// NewLocalTxnScope creates a Local TxnScope with given real txnScope value.
-func NewLocalTxnScope(txnScope string) TxnScope {
-	return newTxnScope(LocalTxnScope, txnScope)
-}
-
-// GetVarValue returns the value of @@txn_scope which can only be `global` or `local`
-func (t TxnScope) GetVarValue() string {
-	return t.varValue
-}
-
-// GetTxnScope returns the value of the tidb-server holds to request tso to pd.
-func (t TxnScope) GetTxnScope() string {
-	return t.txnScope
-}
-
-func newTxnScope(varValue string, txnScope string) TxnScope {
-	return TxnScope{
-		varValue: varValue,
-		txnScope: txnScope,
-	}
-}
-
 const (
 	physicalShiftBits = 18
 	logicalBits       = (1 << physicalShiftBits) - 1
 	// GlobalTxnScope is the default transaction scope for a Oracle service.
 	GlobalTxnScope = "global"
-	// LocalTxnScope indicates the local txn scope for a Oracle service.
-	LocalTxnScope = "local"
 )
 
 // ComposeTS creates a ts from physical and logical parts.
