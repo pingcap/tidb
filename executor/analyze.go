@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -1354,7 +1353,7 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (scanKeysSize int, er
 func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err error) {
 	snapshot := e.ctx.GetStore().GetSnapshot(kv.MaxVersion)
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		snapshot.SetOption(kv.ReplicaRead, tikvstore.ReplicaReadFollower)
+		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	for _, t := range e.scanTasks {
 		iter, err := snapshot.Iter(kv.Key(t.StartKey), kv.Key(t.EndKey))
@@ -1377,7 +1376,7 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 	snapshot.SetOption(kv.IsolationLevel, kv.RC)
 	snapshot.SetOption(kv.Priority, kv.PriorityLow)
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		snapshot.SetOption(kv.ReplicaRead, tikvstore.ReplicaReadFollower)
+		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 
 	rander := rand.New(rand.NewSource(e.randSeed))

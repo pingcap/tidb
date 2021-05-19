@@ -554,7 +554,6 @@ func (sc statsCache) initMemoryUsage() {
 		sum += tb.MemoryUsage()
 	}
 	sc.memUsage = sum
-	return
 }
 
 // update updates the statistics table cache using copy on write.

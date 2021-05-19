@@ -2438,7 +2438,7 @@ func (s *testStatsSuite) TestIndexFMSketch(c *C) {
 	// test NDV
 	checkNDV := func(rows, ndv int) {
 		tk.MustExec("analyze table t")
-		rs := tk.MustQuery(fmt.Sprintf("select value from mysql.stats_fm_sketch")).Rows()
+		rs := tk.MustQuery("select value from mysql.stats_fm_sketch").Rows()
 		c.Assert(len(rs), Equals, rows)
 		for i := range rs {
 			fm, err := statistics.DecodeFMSketch([]byte(rs[i][0].(string)))

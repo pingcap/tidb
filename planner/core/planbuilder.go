@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -719,6 +721,10 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 		if vars.IsGlobal {
 			err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or SYSTEM_VARIABLES_ADMIN")
 			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "SYSTEM_VARIABLES_ADMIN", false, err)
+		}
+		if sem.IsEnabled() && sem.IsInvisibleSysVar(strings.ToLower(vars.Name)) {
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_VARIABLES_ADMIN")
+			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESTRICTED_VARIABLES_ADMIN", false, err)
 		}
 		assign := &expression.VarAssignment{
 			Name:     vars.Name,
@@ -2284,9 +2290,16 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		p.setSchemaAndNames(buildBRIESchema())
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or BACKUP_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "BACKUP_ADMIN", false, err)
-	case *ast.GrantRoleStmt, *ast.RevokeRoleStmt:
+	case *ast.GrantRoleStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ROLE_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "ROLE_ADMIN", false, err)
+	case *ast.RevokeRoleStmt:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ROLE_ADMIN")
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "ROLE_ADMIN", false, err)
+		// Check if any of the users are RESTRICTED
+		for _, user := range raw.Users {
+			b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, user, "RESTRICTED_USER_ADMIN")
+		}
 	case *ast.RevokeStmt:
 		b.visitInfo = collectVisitInfoFromRevokeStmt(b.ctx, b.visitInfo, raw)
 	case *ast.KillStmt:
@@ -2300,11 +2313,22 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 					err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CONNECTION_ADMIN")
 					b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "CONNECTION_ADMIN", false, err)
 				}
+				b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, &auth.UserIdentity{Username: pi.User, Hostname: pi.Host}, "RESTRICTED_CONNECTION_ADMIN")
 			}
 		}
 	case *ast.UseStmt:
 		if raw.DBName == "" {
 			return nil, ErrNoDB
+		}
+	case *ast.DropUserStmt:
+		// The main privilege checks for DROP USER are currently performed in executor/simple.go
+		// because they use complex OR conditions (not supported by visitInfo).
+		for _, user := range raw.UserList {
+			b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, user, "RESTRICTED_USER_ADMIN")
+		}
+	case *ast.SetPwdStmt:
+		if raw.User != nil {
+			b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, raw.User, "RESTRICTED_USER_ADMIN")
 		}
 	case *ast.ShutdownStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShutdownPriv, "", "", "", nil)
@@ -2347,12 +2371,30 @@ func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stm
 	for _, priv := range allPrivs {
 		vi = appendVisitInfo(vi, priv, dbName, tableName, "", nil)
 	}
+	for _, u := range stmt.Users {
+		// For SEM, make sure the users are not restricted
+		vi = appendVisitInfoIsRestrictedUser(vi, sctx, u.User, "RESTRICTED_USER_ADMIN")
+	}
 	if nonDynamicPrivilege {
 		// Dynamic privileges use their own GRANT OPTION. If there were any non-dynamic privilege requests,
 		// we need to attach the "GLOBAL" version of the GRANT OPTION.
 		vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
 	}
 	return vi
+}
+
+// appendVisitInfoIsRestrictedUser appends additional visitInfo if the user has a
+// special privilege called "RESTRICTED_USER_ADMIN". It only applies when SEM is enabled.
+func appendVisitInfoIsRestrictedUser(visitInfo []visitInfo, sctx sessionctx.Context, user *auth.UserIdentity, priv string) []visitInfo {
+	if !sem.IsEnabled() {
+		return visitInfo
+	}
+	checker := privilege.GetPrivilegeManager(sctx)
+	if checker != nil && checker.RequestDynamicVerificationWithUser("RESTRICTED_USER_ADMIN", false, user) {
+		err := ErrSpecificAccessDenied.GenWithStackByArgs(priv)
+		visitInfo = appendDynamicVisitInfo(visitInfo, priv, false, err)
+	}
+	return visitInfo
 }
 
 func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.GrantStmt) []visitInfo {
