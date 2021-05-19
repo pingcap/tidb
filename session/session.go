@@ -2652,6 +2652,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBAllowFallbackToTiKV,
 	variable.TiDBEnableDynamicPrivileges,
 	variable.CTEMaxRecursionDepth,
+	variable.TiDBDMLBatchSize,
 }
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
