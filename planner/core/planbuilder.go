@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -642,7 +643,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt:
-		return b.buildSimple(node.(ast.StmtNode))
+		return b.buildSimple(ctx, node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
 	case *ast.CreateBindingStmt:
@@ -2258,7 +2259,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	return np, nil
 }
 
-func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
+func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan, error) {
 	p := &Simple{Statement: node}
 
 	switch raw := node.(type) {
@@ -2324,6 +2325,36 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		}
 	case *ast.ShutdownStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShutdownPriv, "", "", "", nil)
+	case *ast.BeginStmt:
+		if raw.AsOf != nil {
+			p.StalenessTxnOption = &sessionctx.StalenessTxnOption{
+				UseAsOf: true,
+			}
+			var tsTime time.Time
+			// For the normal expression like `AS OF TIMESTAMP '2015-09-21 00:00:00.000'`.
+			if tsExpr, isValueExpr := raw.AsOf.TsExpr.(*driver.ValueExpr); isValueExpr {
+				tsVal, err := types.ParseTime(b.ctx.GetSessionVars().StmtCtx, tsExpr.GetString(), tsExpr.GetType().Tp, types.GetFsp(tsExpr.GetString()))
+				if err != nil {
+					return nil, err
+				}
+				tsTime, err = tsVal.GoTime(b.ctx.GetSessionVars().TimeZone)
+				if err != nil {
+					return nil, err
+				}
+			}
+			// For the function call expression like `AS OF TIMESTAMP NOW()`.
+			if _, isFuncCall := raw.AsOf.TsExpr.(*ast.FuncCallExpr); isFuncCall {
+				tsVal, err := evalAstExpr(b.ctx, raw.AsOf.TsExpr)
+				if err != nil {
+					return nil, err
+				}
+				tsTime, err = tsVal.GetMysqlTime().GoTime(b.ctx.GetSessionVars().TimeZone)
+				if err != nil {
+					return nil, err
+				}
+			}
+			p.StalenessTxnOption.StartTS = oracle.GoTimeToTS(tsTime)
+		}
 	}
 	return p, nil
 }

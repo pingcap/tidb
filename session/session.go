@@ -1960,21 +1960,10 @@ func (s *session) isTxnRetryable() bool {
 }
 
 func (s *session) NewTxn(ctx context.Context) error {
-	if s.txn.Valid() {
-		txnStartTS := s.txn.StartTS()
-		txnScope := s.GetSessionVars().TxnCtx.TxnScope
-		err := s.CommitTxn(ctx)
-		if err != nil {
-			return err
-		}
-		vars := s.GetSessionVars()
-		logutil.Logger(ctx).Info("NewTxn() inside a transaction auto commit",
-			zap.Int64("schemaVersion", vars.GetInfoSchema().SchemaMetaVersion()),
-			zap.Uint64("txnStartTS", txnStartTS),
-			zap.String("txnScope", txnScope))
+	if err := s.checkBeforeCreateNewTxn(ctx); err != nil {
+		return err
 	}
-
-	txn, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(s.sessionVars.CheckAndGetTxnScope()))
+	txn, err := s.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(s.sessionVars.CheckAndGetTxnScope()))
 	if err != nil {
 		return err
 	}
@@ -1991,6 +1980,84 @@ func (s *session) NewTxn(ctx context.Context) error {
 		ShardStep:   int(s.sessionVars.ShardAllocateStep),
 		IsStaleness: false,
 		TxnScope:    s.sessionVars.CheckAndGetTxnScope(),
+	}
+	return nil
+}
+
+func (s *session) checkBeforeCreateNewTxn(ctx context.Context) error {
+	if s.txn.Valid() {
+		txnStartTS := s.txn.StartTS()
+		txnScope := s.GetSessionVars().TxnCtx.TxnScope
+		err := s.CommitTxn(ctx)
+		if err != nil {
+			return err
+		}
+		vars := s.GetSessionVars()
+		logutil.Logger(ctx).Info("Try to create a new txn inside a transaction auto commit",
+			zap.Int64("schemaVersion", vars.GetInfoSchema().SchemaMetaVersion()),
+			zap.Uint64("txnStartTS", txnStartTS),
+			zap.String("txnScope", txnScope))
+	}
+	return nil
+}
+
+// NewTxnWithStalenessOption create a transaction with Staleness option
+func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionctx.StalenessTxnOption) error {
+	err := s.checkBeforeCreateNewTxn(ctx)
+	if err != nil {
+		return err
+	}
+	var (
+		txn      kv.Transaction
+		txnScope = s.GetSessionVars().CheckAndGetTxnScope()
+	)
+	if option.UseAsOf {
+		txn, err = s.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(txnScope).SetStartTs(option.StartTS))
+		if err != nil {
+			return err
+		}
+	} else {
+		switch option.Mode {
+		case ast.TimestampBoundReadTimestamp:
+			txn, err = s.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(txnScope).SetStartTs(option.StartTS))
+			if err != nil {
+				return err
+			}
+		case ast.TimestampBoundExactStaleness:
+			txn, err = s.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(txnScope).SetPrevSec(option.PrevSec))
+			if err != nil {
+				return err
+			}
+		case ast.TimestampBoundMaxStaleness:
+			txn, err = s.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(txnScope).SetMaxPrevSec(option.PrevSec))
+			if err != nil {
+				return err
+			}
+		case ast.TimestampBoundMinReadTimestamp:
+			txn, err = s.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(txnScope).SetMinStartTS(option.StartTS))
+			if err != nil {
+				return err
+			}
+		default:
+			// For unsupported staleness txn cases, fallback to NewTxn
+			return s.NewTxn(ctx)
+		}
+	}
+	txn.SetVars(s.sessionVars.KVVars)
+	txn.SetOption(kv.IsStalenessReadOnly, true)
+	txn.SetOption(kv.TxnScope, txnScope)
+	s.txn.changeInvalidToValid(txn)
+	is, err := domain.GetDomain(s).GetSnapshotInfoSchema(txn.StartTS())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	s.sessionVars.TxnCtx = &variable.TransactionContext{
+		InfoSchema:  is,
+		CreateTime:  time.Now(),
+		StartTS:     txn.StartTS(),
+		ShardStep:   int(s.sessionVars.ShardAllocateStep),
+		IsStaleness: true,
+		TxnScope:    txnScope,
 	}
 	return nil
 }
@@ -2780,6 +2847,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	return nil
 }
 
+<<<<<<< HEAD
 // NewTxnWithStalenessOption create a transaction with Staleness option
 func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionctx.StalenessTxnOption) error {
 	if s.txn.Valid() {
@@ -2842,6 +2910,8 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 	return nil
 }
 
+=======
+>>>>>>> Support AS OF TIMESTAMP read-only begin statement
 // GetStore gets the store of session.
 func (s *session) GetStore() kv.Storage {
 	return s.store
