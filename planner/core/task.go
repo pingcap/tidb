@@ -1511,6 +1511,20 @@ func BuildFinalModeAggregation(
 	// TODO: Refactor the way of constructing aggregation functions.
 	// This fop loop is ugly, but I do not find a proper way to reconstruct
 	// it right away.
+
+	// group_concat is special when pushing down, it cannot take the two phase execution if no distinct but with orderBy, and other cases are also different:
+	// for example: group_concat([distinct] expr0, expr1[, order by expr1] separtar ‘,’)
+	// no distinct, no orderBy: can two phase
+	// 		[final agg] group_concat(col#1,’,’)
+	// 		[part  agg] group_concat(expr0, expr1,’,’) -> col#1
+	// no distinct,  orderBy: only one phase
+	// distinct, no orderBy: can two phase
+	// 		[final agg] group_concat(col#0, col#1,’,’)
+	// 		[part  agg] group by expr0 ->col#0, expr1 -> col#1
+	// distinct,  orderBy: can two phase
+	// 		[final agg] group_concat(col#0, col#1, order by col#1,’,’)
+	// 		[part  agg] group by expr0 ->col#0, expr1 -> col#1
+
 	for i, aggFunc := range original.AggFuncs {
 		finalAggFunc := &aggregation.AggFuncDesc{HasDistinct: false}
 		finalAggFunc.Name = aggFunc.Name
@@ -1525,7 +1539,12 @@ func BuildFinalModeAggregation(
 					[root] group by: c, funcs:count(distinct a), funcs:sum(b)
 						[cop]: group by: c, a
 			*/
-			for _, distinctArg := range aggFunc.Args {
+			for j, distinctArg := range aggFunc.Args {
+				// the last arg of ast.AggFuncGroupConcat is the separator, so just put it into the final agg
+				if aggFunc.Name == ast.AggFuncGroupConcat && j+1 == len(aggFunc.Args) {
+					args = append(args, distinctArg)
+					continue
+				}
 				// 1. add all args to partial.GroupByItems
 				foundInGroupBy := false
 				for j, gbyExpr := range partial.GroupByItems {
@@ -1567,9 +1586,15 @@ func BuildFinalModeAggregation(
 				}
 			}
 
-			finalAggFunc.HasDistinct = true
+			finalAggFunc.HasDistinct = aggFunc.HasDistinct
 			finalAggFunc.Mode = aggregation.CompleteMode
 		} else {
+			if aggFunc.Name == ast.AggFuncGroupConcat && len(aggFunc.OrderByItems) > 0 {
+				// group_concat can only run in one phase if it has order by items but without distinct property
+				partial = nil
+				final = original
+				return
+			}
 			if aggregation.NeedCount(finalAggFunc.Name) {
 				if isMPPTask && finalAggFunc.Name == ast.AggFuncCount {
 					// For MPP Task, the final count() is changed to sum().
@@ -1616,11 +1641,15 @@ func BuildFinalModeAggregation(
 				sumAgg.Name = ast.AggFuncSum
 				sumAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
 				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
-			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct {
+			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct || aggFunc.Name == ast.AggFuncGroupConcat {
 				approxCountDistinctAgg := *aggFunc
-				approxCountDistinctAgg.Name = ast.AggFuncApproxCountDistinct
+				approxCountDistinctAgg.Name = aggFunc.Name
 				approxCountDistinctAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
 				partial.AggFuncs = append(partial.AggFuncs, &approxCountDistinctAgg)
+				if aggFunc.Name == ast.AggFuncGroupConcat {
+					// append the last separator arg
+					args = append(args, aggFunc.Args[len(aggFunc.Args)-1])
+				}
 			} else {
 				partial.AggFuncs = append(partial.AggFuncs, aggFunc)
 			}
@@ -1712,6 +1741,9 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 		GroupByItems: p.GroupByItems,
 		Schema:       p.Schema().Clone(),
 	}, true, isMPPTask)
+	if partialPref == nil {
+		return nil, p.self
+	}
 	if p.tp == plancodec.TypeStreamAgg && len(partialPref.GroupByItems) != len(finalPref.GroupByItems) {
 		return nil, p.self
 	}

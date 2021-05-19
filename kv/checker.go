@@ -44,8 +44,9 @@ func (d RequestTypeSupportedChecker) supportExpr(exprType tipb.ExprType) bool {
 		tipb.ExprType_Float32, tipb.ExprType_Float64, tipb.ExprType_ColumnRef, tipb.ExprType_MysqlEnum:
 		return true
 	// aggregate functions.
+	// NOTE: tipb.ExprType_GroupConcat is only supported to tiflash, So checking it for tikv outside.
 	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min, tipb.ExprType_Sum, tipb.ExprType_Avg,
-		tipb.ExprType_Agg_BitXor, tipb.ExprType_Agg_BitAnd, tipb.ExprType_Agg_BitOr, tipb.ExprType_ApproxCountDistinct:
+		tipb.ExprType_Agg_BitXor, tipb.ExprType_Agg_BitAnd, tipb.ExprType_Agg_BitOr, tipb.ExprType_ApproxCountDistinct, tipb.ExprType_GroupConcat:
 		return true
 	case ReqSubTypeDesc:
 		return true

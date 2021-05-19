@@ -30,7 +30,7 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 	// if aggFunc.HasDistinct {
 	// do nothing and ignore aggFunc.HasDistinct
 	// }
-	if len(aggFunc.OrderByItems) > 0 {
+	if len(aggFunc.OrderByItems) > 0 && aggFunc.Name != ast.AggFuncGroupConcat {
 		return nil
 	}
 	pc := expression.NewPBConverter(client, sc)
