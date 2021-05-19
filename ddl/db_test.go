@@ -5303,7 +5303,6 @@ func (s *testSerialDBSuite) TestSetTableFlashReplicaForSystemTable(c *C) {
 	for i := 0; i < len(rows); i++ {
 		sysTables = append(sysTables, rows[i][0].(string))
 	}
-	fmt.Println(sysTables)
 	for _, one := range sysTables {
 		// Issue: https://github.com/pingcap/tidb/issues/24742
 		// Skip the `stats_extended` system temporarily.
