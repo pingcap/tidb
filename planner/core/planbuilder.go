@@ -2327,33 +2327,26 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShutdownPriv, "", "", "", nil)
 	case *ast.BeginStmt:
 		if raw.AsOf != nil {
+			// Calculate the TsExpr to get a timestamp.
+			tsVal, err := evalAstExpr(b.ctx, raw.AsOf.TsExpr)
+			if err != nil {
+				return nil, err
+			}
+			toTypeTimestamp := types.NewFieldType(mysql.TypeTimestamp)
+			// We need at least the millionsecond here, so set fsp to 3.
+			toTypeTimestamp.Decimal = 3
+			tsTimestamp, err := tsVal.ConvertTo(b.ctx.GetSessionVars().StmtCtx, toTypeTimestamp)
+			if err != nil {
+				return nil, err
+			}
+			tsTime, err := tsTimestamp.GetMysqlTime().GoTime(b.ctx.GetSessionVars().TimeZone)
+			if err != nil {
+				return nil, err
+			}
 			p.StalenessTxnOption = &sessionctx.StalenessTxnOption{
 				UseAsOf: true,
+				StartTS: oracle.GoTimeToTS(tsTime),
 			}
-			var tsTime time.Time
-			// For the normal expression like `AS OF TIMESTAMP '2015-09-21 00:00:00.000'`.
-			if tsExpr, isValueExpr := raw.AsOf.TsExpr.(*driver.ValueExpr); isValueExpr {
-				tsVal, err := types.ParseTime(b.ctx.GetSessionVars().StmtCtx, tsExpr.GetString(), tsExpr.GetType().Tp, types.GetFsp(tsExpr.GetString()))
-				if err != nil {
-					return nil, err
-				}
-				tsTime, err = tsVal.GoTime(b.ctx.GetSessionVars().TimeZone)
-				if err != nil {
-					return nil, err
-				}
-			}
-			// For the function call expression like `AS OF TIMESTAMP NOW()`.
-			if _, isFuncCall := raw.AsOf.TsExpr.(*ast.FuncCallExpr); isFuncCall {
-				tsVal, err := evalAstExpr(b.ctx, raw.AsOf.TsExpr)
-				if err != nil {
-					return nil, err
-				}
-				tsTime, err = tsVal.GetMysqlTime().GoTime(b.ctx.GetSessionVars().TimeZone)
-				if err != nil {
-					return nil, err
-				}
-			}
-			p.StalenessTxnOption.StartTS = oracle.GoTimeToTS(tsTime)
 		}
 	}
 	return p, nil

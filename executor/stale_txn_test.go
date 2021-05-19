@@ -164,7 +164,8 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", fmt.Sprintf(`return("%v")`, testcase.zone))
 		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStoreLabels", fmt.Sprintf(`return("%v_%v")`, placement.DCLabelKey, testcase.txnScope))
 		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag", `return(true)`)
-		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP CURRENT_TIMESTAMP(3);`)
+		// Using NOW() will cause the loss of fsp precision, so we use NOW(3) to be accurate to the millisecond.
+		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
 		tk.MustQuery(testcase.sql)
 		tk.MustExec(`commit`)
 		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:00';`)
