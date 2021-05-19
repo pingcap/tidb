@@ -840,11 +840,11 @@ func (s *partitionTableSuite) TestDateColWithUnequalExpression(c *C) {
 
 	tests := []testData4Expression{
 		{
-			sql: "select * from %s where a != '2024-01-01 01:01:01'",
+			sql:        "select * from %s where a != '2024-01-01 01:01:01'",
 			partitions: []string{"all"},
 		},
 		{
-			sql: "select * from %s where a != '2024-01-01 01:01:01' and a > '2015-09-09 00:00:00'",
+			sql:        "select * from %s where a != '2024-01-01 01:01:01' and a > '2015-09-09 00:00:00'",
 			partitions: []string{"p1,p2"},
 		},
 	}
@@ -871,11 +871,11 @@ func (s *partitionTableSuite) TestToDaysColWithExpression(c *C) {
 
 	tests := []testData4Expression{
 		{
-			sql: "select * from %s where a < '2020-08-16'",
+			sql:        "select * from %s where a < '2020-08-16'",
 			partitions: []string{"p0,p1"},
 		},
 		{
-			sql: "select * from %s where a between '2020-05-01' and '2020-10-01'",
+			sql:        "select * from %s where a between '2020-05-01' and '2020-10-01'",
 			partitions: []string{"p1,p2"},
 		},
 	}
@@ -902,15 +902,15 @@ func (s *partitionTableSuite) TestWeekdayWithExpression(c *C) {
 
 	tests := []testData4Expression{
 		{
-			sql: "select * from %s where a = '2020-08-17 00:00:00'",
+			sql:        "select * from %s where a = '2020-08-17 00:00:00'",
 			partitions: []string{"p0"},
 		},
 		{
-			sql: "select * from %s where a= '2020-08-20 00:00:00' and a < '2020-08-22 00:00:00'",
+			sql:        "select * from %s where a= '2020-08-20 00:00:00' and a < '2020-08-22 00:00:00'",
 			partitions: []string{"p1"},
 		},
 		{
-			sql: " select * from %s where a < '2020-08-19 00:00:00'",
+			sql:        " select * from %s where a < '2020-08-19 00:00:00'",
 			partitions: []string{"all"},
 		},
 	}
@@ -937,11 +937,11 @@ func (s *partitionTableSuite) TestFloorUnixTimestampAndIntColWithExpression(c *C
 
 	tests := []testData4Expression{
 		{
-			sql: "select * from %s where a > '2020-09-11 00:00:00'",
+			sql:        "select * from %s where a > '2020-09-11 00:00:00'",
 			partitions: []string{"p2"},
 		},
 		{
-			sql: "select * from %s where a < '2020-07-07 01:00:00'",
+			sql:        "select * from %s where a < '2020-07-07 01:00:00'",
 			partitions: []string{"p0,p1"},
 		},
 	}
@@ -968,11 +968,11 @@ func (s *partitionTableSuite) TestUnixTimestampAndIntColWithExpression(c *C) {
 
 	tests := []testData4Expression{
 		{
-			sql: "select * from %s where a > '2020-09-11 00:00:00'",
+			sql:        "select * from %s where a > '2020-09-11 00:00:00'",
 			partitions: []string{"p2"},
 		},
 		{
-			sql: "select * from %s where a < '2020-07-07 01:00:00'",
+			sql:        "select * from %s where a < '2020-07-07 01:00:00'",
 			partitions: []string{"p0,p1"},
 		},
 	}
@@ -999,11 +999,11 @@ func (s *partitionTableSuite) TestDatetimeColAndIntColWithExpression(c *C) {
 
 	tests := []testData4Expression{
 		{
-			sql: "select * from %s where a < '2020-09-01 00:00:00'",
+			sql:        "select * from %s where a < '2020-09-01 00:00:00'",
 			partitions: []string{"p0,p1"},
 		},
 		{
-			sql: "select * from %s where a > '2020-07-07 01:00:00'",
+			sql:        "select * from %s where a > '2020-07-07 01:00:00'",
 			partitions: []string{"p1,p2"},
 		},
 	}
@@ -1030,15 +1030,15 @@ func (s *partitionTableSuite) TestVarcharColAndIntColWithExpression(c *C) {
 
 	tests := []testData4Expression{
 		{
-			sql: "select * from %s where a < '10'",
+			sql:        "select * from %s where a < '10'",
 			partitions: []string{"p0"},
 		},
 		{
-			sql: "select * from %s where a > 0",
+			sql:        "select * from %s where a > 0",
 			partitions: []string{"all"},
 		},
 		{
-			sql: "select * from %s where a > 0",
+			sql:        "select * from %s where a > 0",
 			partitions: []string{"all"},
 		},
 	}
