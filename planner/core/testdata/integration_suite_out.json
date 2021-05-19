@@ -247,27 +247,15 @@
       {
         "SQL": "desc select t1.a from t t1 order by (t1.b = 1 and exists (select 1 from t t2 where t1.b = t2.b)) limit 1",
         "Plan": [
-<<<<<<< HEAD
-          "Projection_11 1.00 root  test.t.a",
-          "└─Projection_20 1.00 root  test.t.a, test.t.b, Column#8",
-          "  └─TopN_14 1.00 root  Column#10:asc, offset:0, count:1",
-          "    └─Projection_21 10000.00 root  test.t.a, test.t.b, Column#8, and(eq(test.t.b, 1), Column#8)->Column#10",
-          "      └─HashJoin_15 10000.00 root  left outer semi join, equal:[eq(test.t.b, test.t.b)]",
-          "        ├─TableReader_19(Build) 10000.00 root  data:TableFullScan_18",
-          "        │ └─TableFullScan_18 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "        └─TableReader_17(Probe) 10000.00 root  data:TableFullScan_16",
-          "          └─TableFullScan_16 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-=======
-          "Projection 1.00 root  test.t.a",
-          "└─Projection 1.00 root  test.t.a, test.t.b, Column#11",
-          "  └─TopN 1.00 root  Column#13, offset:0, count:1",
-          "    └─Projection 10000.00 root  test.t.a, test.t.b, Column#11, and(eq(test.t.b, 1), Column#11)->Column#13",
-          "      └─HashJoin 10000.00 root  left outer semi join, equal:[eq(test.t.b, test.t.b)]",
-          "        ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "        │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "        └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "          └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
->>>>>>> 28c374849... planner: remove some risky cache operations in the plan builder (#23354)
+          "Projection_12 1.00 root  test.t.a",
+          "└─Projection_21 1.00 root  test.t.a, test.t.b, Column#11",
+          "  └─TopN_15 1.00 root  Column#13:asc, offset:0, count:1",
+          "    └─Projection_22 10000.00 root  test.t.a, test.t.b, Column#11, and(eq(test.t.b, 1), Column#11)->Column#13",
+          "      └─HashJoin_16 10000.00 root  left outer semi join, equal:[eq(test.t.b, test.t.b)]",
+          "        ├─TableReader_20(Build) 10000.00 root  data:TableFullScan_19",
+          "        │ └─TableFullScan_19 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "        └─TableReader_18(Probe) 10000.00 root  data:TableFullScan_17",
+          "          └─TableFullScan_17 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {

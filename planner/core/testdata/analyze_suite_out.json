@@ -46,14 +46,14 @@
           "EXPLAIN SELECT *, t1.a IN (SELECT t2.b FROM t t2) FROM t t1 WHERE t1.b <= 6 ORDER BY t1.a limit 1"
         ],
         "Plan": [
-          "Limit_17 1.00 root  offset:0, count:1",
-          "└─IndexJoin_62 1.00 root  left outer semi join, inner:IndexReader_61, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
-          "  ├─TopN_25(Build) 1.00 root  test.t.a:asc, offset:0, count:1",
-          "  │ └─IndexReader_33 1.00 root  index:TopN_32",
-          "  │   └─TopN_32 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
-          "  │     └─IndexRangeScan_31 6.00 cop[tikv] table:t1, index:idx_bc(b, c) range:[-inf,6], keep order:false",
-          "  └─IndexReader_61(Probe) 1.04 root  index:IndexRangeScan_60",
-          "    └─IndexRangeScan_60 1.04 cop[tikv] table:t2, index:idx_bc(b, c) range: decided by [eq(test.t.b, test.t.a)], keep order:false"
+          "Limit_18 1.00 root  offset:0, count:1",
+          "└─IndexJoin_63 1.00 root  left outer semi join, inner:IndexReader_62, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+          "  ├─TopN_26(Build) 1.00 root  test.t.a:asc, offset:0, count:1",
+          "  │ └─IndexReader_34 1.00 root  index:TopN_33",
+          "  │   └─TopN_33 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
+          "  │     └─IndexRangeScan_32 6.00 cop[tikv] table:t1, index:idx_bc(b, c) range:[-inf,6], keep order:false",
+          "  └─IndexReader_62(Probe) 1.04 root  index:IndexRangeScan_61",
+          "    └─IndexRangeScan_61 1.04 cop[tikv] table:t2, index:idx_bc(b, c) range: decided by [eq(test.t.b, test.t.a)], keep order:false"
         ]
       },
       {
@@ -264,55 +264,29 @@
     "Name": "TestCorrelatedEstimation",
     "Cases": [
       [
-<<<<<<< HEAD
-        "Projection_11 10.00 root  Column#14",
-        "└─Apply_13 10.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#13)",
-        "  ├─TableReader_15(Build) 10.00 root  data:TableFullScan_14",
-        "  │ └─TableFullScan_14 10.00 cop[tikv] table:t keep order:false",
-        "  └─StreamAgg_19(Probe) 1.00 root  funcs:count(1)->Column#13",
-        "    └─HashJoin_20 1.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-        "      ├─TableReader_30(Build) 1.00 root  data:Selection_29",
-        "      │ └─Selection_29 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
-        "      │   └─TableFullScan_28 10.00 cop[tikv] table:t1 keep order:false",
-        "      └─TableReader_24(Probe) 1.00 root  data:Selection_23",
-        "        └─Selection_23 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
-        "          └─TableFullScan_22 10.00 cop[tikv] table:s keep order:false"
+        "Projection_14 10.00 root  Column#22",
+        "└─Apply_16 10.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#21)",
+        "  ├─TableReader_18(Build) 10.00 root  data:TableFullScan_17",
+        "  │ └─TableFullScan_17 10.00 cop[tikv] table:t keep order:false",
+        "  └─StreamAgg_22(Probe) 1.00 root  funcs:count(1)->Column#21",
+        "    └─HashJoin_23 1.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+        "      ├─TableReader_33(Build) 1.00 root  data:Selection_32",
+        "      │ └─Selection_32 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
+        "      │   └─TableFullScan_31 10.00 cop[tikv] table:t1 keep order:false",
+        "      └─TableReader_27(Probe) 1.00 root  data:Selection_26",
+        "        └─Selection_26 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
+        "          └─TableFullScan_25 10.00 cop[tikv] table:s keep order:false"
       ],
       [
-        "Projection_8 10.00 root  Column#9",
-        "└─Apply_10 10.00 root  CARTESIAN left outer join",
-        "  ├─TableReader_12(Build) 10.00 root  data:TableFullScan_11",
-        "  │ └─TableFullScan_11 10.00 cop[tikv] table:t keep order:false",
-        "  └─MaxOneRow_15(Probe) 1.00 root  ",
-        "    └─Projection_16 0.10 root  concat(cast(test.t.a, var_string(20)), ,, cast(test.t.b, var_string(20)))->Column#9",
-        "      └─IndexReader_19 0.10 root  index:Selection_18",
-        "        └─Selection_18 0.10 cop[tikv]  eq(test.t.a, test.t.a)",
-        "          └─IndexRangeScan_17 1.00 cop[tikv] table:t1, index:idx(c, b, a) range: decided by [eq(test.t.c, test.t.c)], keep order:false"
-=======
-        "Projection 10.00 root  Column#22",
-        "└─Apply 10.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#21)",
-        "  ├─TableReader(Build) 10.00 root  data:TableFullScan",
-        "  │ └─TableFullScan 10.00 cop[tikv] table:t keep order:false",
-        "  └─StreamAgg(Probe) 1.00 root  funcs:count(1)->Column#21",
-        "    └─HashJoin 1.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-        "      ├─TableReader(Build) 1.00 root  data:Selection",
-        "      │ └─Selection 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
-        "      │   └─TableFullScan 10.00 cop[tikv] table:t1 keep order:false",
-        "      └─TableReader(Probe) 1.00 root  data:Selection",
-        "        └─Selection 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
-        "          └─TableFullScan 10.00 cop[tikv] table:s keep order:false"
-      ],
-      [
-        "Projection 10.00 root  Column#13",
-        "└─Apply 10.00 root  CARTESIAN left outer join",
-        "  ├─TableReader(Build) 10.00 root  data:TableFullScan",
-        "  │ └─TableFullScan 10.00 cop[tikv] table:t keep order:false",
-        "  └─MaxOneRow(Probe) 1.00 root  ",
-        "    └─Projection 0.10 root  concat(cast(test.t.a, var_string(20)), ,, cast(test.t.b, var_string(20)))->Column#13",
-        "      └─IndexReader 0.10 root  index:Selection",
-        "        └─Selection 0.10 cop[tikv]  eq(test.t.a, test.t.a)",
-        "          └─IndexRangeScan 1.00 cop[tikv] table:t1, index:idx(c, b, a) range: decided by [eq(test.t.c, test.t.c)], keep order:false"
->>>>>>> 28c374849... planner: remove some risky cache operations in the plan builder (#23354)
+        "Projection_9 10.00 root  Column#13",
+        "└─Apply_11 10.00 root  CARTESIAN left outer join",
+        "  ├─TableReader_13(Build) 10.00 root  data:TableFullScan_12",
+        "  │ └─TableFullScan_12 10.00 cop[tikv] table:t keep order:false",
+        "  └─MaxOneRow_16(Probe) 1.00 root  ",
+        "    └─Projection_17 0.10 root  concat(cast(test.t.a, var_string(20)), ,, cast(test.t.b, var_string(20)))->Column#13",
+        "      └─IndexReader_20 0.10 root  index:Selection_19",
+        "        └─Selection_19 0.10 cop[tikv]  eq(test.t.a, test.t.a)",
+        "          └─IndexRangeScan_18 1.00 cop[tikv] table:t1, index:idx(c, b, a) range: decided by [eq(test.t.c, test.t.c)], keep order:false"
       ]
     ]
   },

@@ -302,11 +302,7 @@
           "Group#5 Schema:[test.t.a], UniqueKey:[test.t.a]",
           "    Limit_8 input:[Group#6], offset:0, count:1",
           "Group#6 Schema:[test.t.a], UniqueKey:[test.t.a]",
-<<<<<<< HEAD
-          "    Sort_6 input:[Group#7], test.t.a:asc",
-=======
-          "    Sort_7 input:[Group#7], test.t.a",
->>>>>>> 28c374849... planner: remove some risky cache operations in the plan builder (#23354)
+          "    Sort_7 input:[Group#7], test.t.a:asc",
           "Group#7 Schema:[test.t.a], UniqueKey:[test.t.a]",
           "    Projection_6 input:[Group#8], test.t.a",
           "Group#8 Schema:[test.t.a,test.t.b], UniqueKey:[test.t.a]",

@@ -1019,47 +1019,25 @@
       {
         "SQL": "select sum(a), (select t1.a from t1 where t1.a = t2.a limit 1), (select t1.b from t1 where t1.b = t2.b limit 1) from t2",
         "Plan": [
-<<<<<<< HEAD
-          "Projection_28 1.00 root  Column#7, test.t1.a, test.t1.b",
-          "└─Apply_30 1.00 root  CARTESIAN left outer join",
-          "  ├─Apply_32(Build) 1.00 root  CARTESIAN left outer join",
-          "  │ ├─HashAgg_37(Build) 1.00 root  funcs:sum(Column#8)->Column#7, funcs:firstrow(Column#9)->test.t2.a, funcs:firstrow(Column#10)->test.t2.b",
-          "  │ │ └─TableReader_38 1.00 root  data:HashAgg_39",
-          "  │ │   └─HashAgg_39 1.00 cop[tikv]  funcs:sum(test.t2.a)->Column#8, funcs:firstrow(test.t2.a)->Column#9, funcs:firstrow(test.t2.b)->Column#10",
-          "  │ │     └─TableFullScan_35 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  │ └─MaxOneRow_40(Probe) 1.00 root  ",
-          "  │   └─Limit_41 1.00 root  offset:0, count:1",
-          "  │     └─TableReader_42 1.00 root  data:Limit_43",
-          "  │       └─Limit_43 1.00 cop[tikv]  offset:0, count:1",
-          "  │         └─Selection_44 1.00 cop[tikv]  eq(test.t1.a, test.t2.a)",
-          "  │           └─TableFullScan_45 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─MaxOneRow_46(Probe) 1.00 root  ",
-          "    └─Limit_47 1.00 root  offset:0, count:1",
-          "      └─TableReader_48 1.00 root  data:Limit_49",
-          "        └─Limit_49 1.00 cop[tikv]  offset:0, count:1",
-          "          └─Selection_50 1.00 cop[tikv]  eq(test.t1.b, test.t2.b)",
-          "            └─TableFullScan_51 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-=======
-          "Projection_32 1.00 root  Column#7, test.t1.a, test.t1.b",
-          "└─Apply_34 1.00 root  CARTESIAN left outer join",
-          "  ├─Apply_36(Build) 1.00 root  CARTESIAN left outer join",
-          "  │ ├─HashAgg_41(Build) 1.00 root  funcs:sum(Column#12)->Column#7, funcs:firstrow(Column#13)->test.t2.a, funcs:firstrow(Column#14)->test.t2.b",
-          "  │ │ └─TableReader_42 1.00 root  data:HashAgg_43",
-          "  │ │   └─HashAgg_43 1.00 cop[tikv]  funcs:sum(test.t2.a)->Column#12, funcs:firstrow(test.t2.a)->Column#13, funcs:firstrow(test.t2.b)->Column#14",
-          "  │ │     └─TableFullScan_40 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  │ └─MaxOneRow_44(Probe) 1.00 root  ",
-          "  │   └─Limit_45 1.00 root  offset:0, count:1",
-          "  │     └─TableReader_46 1.00 root  data:Limit_47",
-          "  │       └─Limit_47 1.00 cop[tikv]  offset:0, count:1",
-          "  │         └─Selection_48 1.00 cop[tikv]  eq(test.t1.a, test.t2.a)",
-          "  │           └─TableFullScan_49 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─MaxOneRow_50(Probe) 1.00 root  ",
-          "    └─Limit_51 1.00 root  offset:0, count:1",
-          "      └─TableReader_52 1.00 root  data:Limit_53",
-          "        └─Limit_53 1.00 cop[tikv]  offset:0, count:1",
-          "          └─Selection_54 1.00 cop[tikv]  eq(test.t1.b, test.t2.b)",
-          "            └─TableFullScan_55 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
->>>>>>> 28c374849... planner: remove some risky cache operations in the plan builder (#23354)
+          "Projection_30 1.00 root  Column#7, test.t1.a, test.t1.b",
+          "└─Apply_32 1.00 root  CARTESIAN left outer join",
+          "  ├─Apply_34(Build) 1.00 root  CARTESIAN left outer join",
+          "  │ ├─HashAgg_39(Build) 1.00 root  funcs:sum(Column#12)->Column#7, funcs:firstrow(Column#13)->test.t2.a, funcs:firstrow(Column#14)->test.t2.b",
+          "  │ │ └─TableReader_40 1.00 root  data:HashAgg_41",
+          "  │ │   └─HashAgg_41 1.00 cop[tikv]  funcs:sum(test.t2.a)->Column#12, funcs:firstrow(test.t2.a)->Column#13, funcs:firstrow(test.t2.b)->Column#14",
+          "  │ │     └─TableFullScan_37 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  │ └─MaxOneRow_42(Probe) 1.00 root  ",
+          "  │   └─Limit_43 1.00 root  offset:0, count:1",
+          "  │     └─TableReader_44 1.00 root  data:Limit_45",
+          "  │       └─Limit_45 1.00 cop[tikv]  offset:0, count:1",
+          "  │         └─Selection_46 1.00 cop[tikv]  eq(test.t1.a, test.t2.a)",
+          "  │           └─TableFullScan_47 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─MaxOneRow_48(Probe) 1.00 root  ",
+          "    └─Limit_49 1.00 root  offset:0, count:1",
+          "      └─TableReader_50 1.00 root  data:Limit_51",
+          "        └─Limit_51 1.00 cop[tikv]  offset:0, count:1",
+          "          └─Selection_52 1.00 cop[tikv]  eq(test.t1.b, test.t2.b)",
+          "            └─TableFullScan_53 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Result": [
           "6 1 11"
@@ -1262,21 +1240,12 @@
       {
         "SQL": "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a in (select t2.a from t2) from t1) x;",
         "Plan": [
-<<<<<<< HEAD
-          "Projection_17 10000.00 root  1->Column#8",
-          "└─HashJoin_18 10000.00 root  CARTESIAN left outer semi join, other cond:eq(test.t1.a, test.t2.a)",
-          "  ├─IndexReader_25(Build) 10000.00 root  index:IndexFullScan_26",
-          "  │ └─IndexFullScan_26 10000.00 cop[tikv] table:t2, index:idx_a(a) keep order:false, stats:pseudo",
-          "  └─IndexReader_21(Probe) 10000.00 root  index:IndexFullScan_22",
-          "    └─IndexFullScan_22 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo"
-=======
-          "Projection 10000.00 root  1->Column#11",
-          "└─HashJoin 10000.00 root  CARTESIAN left outer semi join, other cond:eq(test.t1.a, test.t2.a)",
-          "  ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
-          "  │ └─IndexFullScan 10000.00 cop[tikv] table:t2, index:idx_a(a) keep order:false, stats:pseudo",
-          "  └─IndexReader(Probe) 10000.00 root  index:IndexFullScan",
-          "    └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo"
->>>>>>> 28c374849... planner: remove some risky cache operations in the plan builder (#23354)
+          "Projection_18 10000.00 root  1->Column#11",
+          "└─HashJoin_19 10000.00 root  CARTESIAN left outer semi join, other cond:eq(test.t1.a, test.t2.a)",
+          "  ├─IndexReader_26(Build) 10000.00 root  index:IndexFullScan_27",
+          "  │ └─IndexFullScan_27 10000.00 cop[tikv] table:t2, index:idx_a(a) keep order:false, stats:pseudo",
+          "  └─IndexReader_22(Probe) 10000.00 root  index:IndexFullScan_23",
+          "    └─IndexFullScan_23 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo"
         ],
         "Result": [
           "1",
@@ -1286,21 +1255,12 @@
       {
         "SQL": "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a not in (select t2.a from t2) from t1) x;",
         "Plan": [
-<<<<<<< HEAD
-          "Projection_17 10000.00 root  1->Column#8",
-          "└─HashJoin_18 10000.00 root  CARTESIAN anti left outer semi join, other cond:eq(test.t1.a, test.t2.a)",
-          "  ├─IndexReader_25(Build) 10000.00 root  index:IndexFullScan_26",
-          "  │ └─IndexFullScan_26 10000.00 cop[tikv] table:t2, index:idx_a(a) keep order:false, stats:pseudo",
-          "  └─IndexReader_21(Probe) 10000.00 root  index:IndexFullScan_22",
-          "    └─IndexFullScan_22 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo"
-=======
-          "Projection 10000.00 root  1->Column#11",
-          "└─HashJoin 10000.00 root  CARTESIAN anti left outer semi join, other cond:eq(test.t1.a, test.t2.a)",
-          "  ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
-          "  │ └─IndexFullScan 10000.00 cop[tikv] table:t2, index:idx_a(a) keep order:false, stats:pseudo",
-          "  └─IndexReader(Probe) 10000.00 root  index:IndexFullScan",
-          "    └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo"
->>>>>>> 28c374849... planner: remove some risky cache operations in the plan builder (#23354)
+          "Projection_18 10000.00 root  1->Column#11",
+          "└─HashJoin_19 10000.00 root  CARTESIAN anti left outer semi join, other cond:eq(test.t1.a, test.t2.a)",
+          "  ├─IndexReader_26(Build) 10000.00 root  index:IndexFullScan_27",
+          "  │ └─IndexFullScan_27 10000.00 cop[tikv] table:t2, index:idx_a(a) keep order:false, stats:pseudo",
+          "  └─IndexReader_22(Probe) 10000.00 root  index:IndexFullScan_23",
+          "    └─IndexFullScan_23 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo"
         ],
         "Result": [
           "1",
