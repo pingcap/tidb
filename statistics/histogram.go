@@ -1505,21 +1505,25 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 
 func (idx *Index) outOfRange(val types.Datum) bool {
 	histEmpty, topNEmpty := idx.Histogram.Len() == 0, idx.TopN.Num() == 0
+	// All empty.
 	if histEmpty && topNEmpty {
 		return true
 	}
+	// TopN is not empty. Record found.
 	if !topNEmpty && idx.TopN.findTopN(val.GetBytes()) >= 0 {
-		return true
+		return false
 	}
 	if !histEmpty {
 		withInLowBoundOrPrefixMatch := chunk.Compare(idx.Bounds.GetRow(0), 0, &val) <= 0 ||
 			matchPrefix(idx.Bounds.GetRow(0), 0, &val)
 		withInHighBound := chunk.Compare(idx.Bounds.GetRow(idx.Bounds.NumRows()-1), 0, &val) >= 0
-		if !withInLowBoundOrPrefixMatch || !withInHighBound {
-			return true
+		// Hist is not empty. Record found.
+		if withInLowBoundOrPrefixMatch && withInHighBound {
+			return false
 		}
 	}
-	return false
+	// No record found. Is out of range.
+	return true
 }
 
 // matchPrefix checks whether ad is the prefix of value
