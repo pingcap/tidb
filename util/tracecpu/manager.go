@@ -1,13 +1,15 @@
-package traceresource
+package tracecpu
 
 import (
 	"bytes"
 	"fmt"
-	"github.com/google/pprof/profile"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"runtime/pprof"
 	"time"
+
+	"github.com/google/pprof/profile"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 type StmtProfiler struct {
@@ -30,14 +32,24 @@ func (sp *StmtProfiler) Run() {
 
 func (sp *StmtProfiler) startCPUProfileWorker() {
 	for {
-		buf := sp.getBuffer()
-		if err := pprof.StartCPUProfile(buf); err != nil {
-			return
+		cfg := config.GetGlobalConfig()
+		interval := time.Duration(cfg.TopStmt.RefreshInterval) * time.Second
+		if cfg.TopStmt.Enable {
+			sp.doCPUProfile(interval)
+		} else {
+			time.Sleep(interval)
 		}
-		sp.sleep(time.Second * 10)
-		pprof.StopCPUProfile()
-		sp.taskCh <- buf
 	}
+}
+
+func (sp *StmtProfiler) doCPUProfile(interval time.Duration) {
+	buf := sp.getBuffer()
+	if err := pprof.StartCPUProfile(buf); err != nil {
+		return
+	}
+	time.Sleep(interval)
+	pprof.StopCPUProfile()
+	sp.taskCh <- buf
 }
 
 func (sp *StmtProfiler) startAnalyzeProfileWorker() {
@@ -83,14 +95,6 @@ func (sp *StmtProfiler) putBuffer(buf *bytes.Buffer) {
 	case sp.cacheBufCh <- buf:
 	default:
 	}
-}
-
-func (sp *StmtProfiler) sleep(d time.Duration) {
-	timer := time.NewTimer(d)
-	select {
-	case <-timer.C:
-	}
-	timer.Stop()
 }
 
 func (sp *StmtProfiler) parseCPUProfileTags(p *profile.Profile) map[string]map[string]int64 {

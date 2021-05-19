@@ -1026,7 +1026,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
-	if variable.EnablePProfSQLCPU.Load() {
+	if variable.EnablePProfSQLCPU.Load() || config.GetGlobalConfig().TopStmt.Enable {
 		label := getLastStmtInConn{cc}.PProfLabel()
 		if len(label) > 0 {
 			defer pprof.SetGoroutineLabels(ctx)

@@ -64,7 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/sys/linux"
 	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
-	"github.com/pingcap/tidb/util/traceresource"
+	"github.com/pingcap/tidb/util/tracecpu"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	pd "github.com/tikv/pd/client"
@@ -689,6 +689,6 @@ func stringToList(repairString string) []string {
 }
 
 func setProfiler() {
-	sp := traceresource.NewStmtProfiler()
+	sp := tracecpu.NewStmtProfiler()
 	sp.Run()
 }
