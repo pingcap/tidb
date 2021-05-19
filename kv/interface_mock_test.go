@@ -213,6 +213,10 @@ func (s *mockStorage) GetMemCache() MemManager {
 	return nil
 }
 
+func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
+	return 0
+}
+
 // newMockStorage creates a new mockStorage.
 func newMockStorage() Storage {
 	return &mockStorage{}
