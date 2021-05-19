@@ -661,6 +661,17 @@ func (e *ShowExec) fetchShowMasterStatus() error {
 	return nil
 }
 
+func (e *ShowExec) sysVarHiddenForSem(sysVarNameInLower string) bool {
+	if !sem.IsEnabled() || !sem.IsInvisibleSysVar(sysVarNameInLower) {
+		return false
+	}
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker == nil || checker.RequestDynamicVerification(e.ctx.GetSessionVars().ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
+		return false
+	}
+	return true
+}
+
 func (e *ShowExec) fetchShowVariables() (err error) {
 	var (
 		value       string
@@ -673,7 +684,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		// 		otherwise, fetch the value from table `mysql.Global_Variables`.
 		for _, v := range variable.GetSysVars() {
 			if v.Scope != variable.ScopeSession {
-				if v.Hidden {
+				if v.Hidden || e.sysVarHiddenForSem(v.Name) {
 					continue
 				}
 				value, err = variable.GetGlobalSystemVar(sessionVars, v.Name)
@@ -690,7 +701,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 	// If it is a session only variable, use the default value defined in code,
 	//   otherwise, fetch the value from table `mysql.Global_Variables`.
 	for _, v := range variable.GetSysVars() {
-		if v.Hidden {
+		if v.Hidden || e.sysVarHiddenForSem(v.Name) {
 			continue
 		}
 		value, err = variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
@@ -1412,6 +1423,10 @@ func (e *ShowExec) fetchShowPrivileges() error {
 	e.appendRow([]interface{}{"Create tablespace", "Server Admin", "To create/alter/drop tablespaces"})
 	e.appendRow([]interface{}{"Update", "Tables", "To update existing rows"})
 	e.appendRow([]interface{}{"Usage", "Server Admin", "No privileges - allow connect only"})
+
+	for _, priv := range privileges.GetDynamicPrivileges() {
+		e.appendRow([]interface{}{priv, "Server Admin", ""})
+	}
 	return nil
 }
 
