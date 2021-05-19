@@ -137,6 +137,11 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 			expectPhysicalTS: 1599321600000,
 		},
 		{
+			name:   "NomalRead",
+			sql:    `select * from b;`,
+			preSec: 0,
+		},
+		{
 			name:             "TimestampExactRead",
 			sql:              `select * from t as of timestamp TIMESTAMP('2020-09-06 00:00:00');`,
 			expectPhysicalTS: 1599321600000,

@@ -2423,12 +2423,15 @@ func (b *PlanBuilder) resolveCorrelatedAggregates(ctx context.Context, sel *ast.
 
 type asofResolver struct {
 	ctx           sessionctx.Context
-	tsValues      []*types.Datum
+	tsValue       *types.Datum
 	err           error
 	hasStrongRead bool
 }
 
 func (a *asofResolver) Enter(inNode ast.Node) (ast.Node, bool) {
+	if a.err != nil {
+		return inNode, true
+	}
 	switch n := inNode.(type) {
 	case *ast.AsOfClause:
 		if n.TsExpr != nil {
@@ -2437,13 +2440,38 @@ func (a *asofResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 				a.err = err
 				return n, true
 			}
-			a.tsValues = append(a.tsValues, &tsRes)
+			if a.hasStrongRead {
+				a.err = ErrDifferentAsOf.GenWithStack("can not set different time in the as of")
+				return n, true
+			}
+			ts, err := tsRes.ConvertTo(a.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeTimestamp))
+			if err != nil {
+				a.err = err
+				return n, true
+			}
+			if a.tsValue == nil {
+				a.tsValue = &ts
+				return n, false
+			}
+			cmp, err := a.tsValue.CompareDatum(a.ctx.GetSessionVars().StmtCtx, &ts)
+			if err != nil {
+				a.err = err
+				return n, true
+			}
+			if cmp != 0 {
+				a.err = ErrDifferentAsOf.GenWithStack("can not set different time in the as of")
+				return n, true
+			}
 
 		}
 		return n, false
 	// for the cases: select * from a as of timestamp 'xxx', b;
 	case *ast.TableName:
 		if n.AsOf == nil {
+			if a.tsValue != nil {
+				a.err = ErrDifferentAsOf.GenWithStack("can not set different time in the as of")
+				return n, true
+			}
 			a.hasStrongRead = true
 		}
 		return n, false
@@ -2467,40 +2495,8 @@ func TryExtractTSFromAsOf(ctx sessionctx.Context, node ast.Node) (*types.Datum, 
 			resolve := &asofResolver{
 				ctx: ctx,
 			}
-			tblRefs.Accept(resolve)
-			if resolve.err != nil {
-				return nil, resolve.err
-			}
-			tsValues := resolve.tsValues
-			if len(tsValues) == 0 {
-				return nil, nil
-			}
-			if resolve.hasStrongRead && len(tsValues) > 0 {
-				return nil, ErrDifferentAsOf.GenWithStack("can not set different time %v in the as of", tsValues)
-			}
-			var res *types.Datum
-			first := tsValues[0]
-			ts, err := first.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeTimestamp))
-			if err != nil {
-				return nil, err
-			}
-			res = &ts
-
-			for i := 1; i < len(tsValues); i++ {
-				val := tsValues[i]
-				ts, err := val.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeTimestamp))
-				if err != nil {
-					return nil, err
-				}
-				cmp, err := res.CompareDatum(ctx.GetSessionVars().StmtCtx, &ts)
-				if err != nil {
-					return nil, err
-				}
-				if cmp != 0 {
-					return nil, ErrDifferentAsOf.GenWithStack("can not set different time %v in the as of", tsValues)
-				}
-			}
-			return res, nil
+			node.Accept(resolve)
+			return resolve.tsValue, resolve.err
 		}
 	}
 	return nil, nil
