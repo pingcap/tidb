@@ -54,10 +54,10 @@ type SchemaAmender interface {
 	AmendTxn(ctx context.Context, startInfoSchema SchemaVer, change *RelatedSchemaChange, mutations CommitterMutations) (CommitterMutations, error)
 }
 
-// TransactionOption indicates the option when beginning a transaction
+// StartTSOption indicates the option when beginning a transaction
 // `TxnScope` must be set for each object
 // Every other fields are optional, but currently at most one of them can be set
-type TransactionOption struct {
+type StartTSOption struct {
 	TxnScope   string
 	StartTS    *uint64
 	PrevSec    *uint64
@@ -65,37 +65,37 @@ type TransactionOption struct {
 	MaxPrevSec *uint64
 }
 
-// DefaultTransactionOption creates a default TransactionOption, ie. Work in GlobalTxnScope and get start ts when got used
-func DefaultTransactionOption() TransactionOption {
-	return TransactionOption{TxnScope: oracle.GlobalTxnScope}
+// DefaultStartTSOption creates a default StartTSOption, ie. Work in GlobalTxnScope and get start ts when got used
+func DefaultStartTSOption() StartTSOption {
+	return StartTSOption{TxnScope: oracle.GlobalTxnScope}
 }
 
-// SetMaxPrevSec returns a new TransactionOption with MaxPrevSec set to maxPrevSec
-func (to TransactionOption) SetMaxPrevSec(maxPrevSec uint64) TransactionOption {
+// SetMaxPrevSec returns a new StartTSOption with MaxPrevSec set to maxPrevSec
+func (to StartTSOption) SetMaxPrevSec(maxPrevSec uint64) StartTSOption {
 	to.MaxPrevSec = &maxPrevSec
 	return to
 }
 
-// SetMinStartTS returns a new TransactionOption with MinStartTS set to minStartTS
-func (to TransactionOption) SetMinStartTS(minStartTS uint64) TransactionOption {
+// SetMinStartTS returns a new StartTSOption with MinStartTS set to minStartTS
+func (to StartTSOption) SetMinStartTS(minStartTS uint64) StartTSOption {
 	to.MinStartTS = &minStartTS
 	return to
 }
 
-// SetStartTs returns a new TransactionOption with StartTS set to startTS
-func (to TransactionOption) SetStartTs(startTS uint64) TransactionOption {
+// SetStartTs returns a new StartTSOption with StartTS set to startTS
+func (to StartTSOption) SetStartTs(startTS uint64) StartTSOption {
 	to.StartTS = &startTS
 	return to
 }
 
-// SetPrevSec returns a new TransactionOption with PrevSec set to prevSec
-func (to TransactionOption) SetPrevSec(prevSec uint64) TransactionOption {
+// SetPrevSec returns a new StartTSOption with PrevSec set to prevSec
+func (to StartTSOption) SetPrevSec(prevSec uint64) StartTSOption {
 	to.PrevSec = &prevSec
 	return to
 }
 
-// SetTxnScope returns a new TransactionOption with TxnScope set to txnScope
-func (to TransactionOption) SetTxnScope(txnScope string) TransactionOption {
+// SetTxnScope returns a new StartTSOption with TxnScope set to txnScope
+func (to StartTSOption) SetTxnScope(txnScope string) StartTSOption {
 	to.TxnScope = txnScope
 	return to
 }
@@ -136,7 +136,7 @@ type KVTxn struct {
 }
 
 // ExtractStartTs use `option` to get the proper startTS for a transaction
-func ExtractStartTs(store *KVStore, option TransactionOption) (uint64, error) {
+func ExtractStartTs(store *KVStore, option StartTSOption) (uint64, error) {
 	var startTs uint64
 	var err error
 	if option.StartTS != nil {
@@ -183,7 +183,7 @@ func ExtractStartTs(store *KVStore, option TransactionOption) (uint64, error) {
 	return startTs, err
 }
 
-func newTiKVTxnWithOptions(store *KVStore, options TransactionOption) (*KVTxn, error) {
+func newTiKVTxnWithOptions(store *KVStore, options StartTSOption) (*KVTxn, error) {
 	if options.TxnScope == "" {
 		options.TxnScope = oracle.GlobalTxnScope
 	}

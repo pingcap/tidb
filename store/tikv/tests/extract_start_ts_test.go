@@ -62,22 +62,22 @@ func (s *extractStartTsSuite) TestExtractStartTs(c *C) {
 
 	cases := []struct {
 		expectedTS uint64
-		option     tikv.TransactionOption
+		option     tikv.StartTSOption
 	}{
 		// StartTS setted
-		{100, tikv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: &i, PrevSec: nil, MinStartTS: nil, MaxPrevSec: nil}},
+		{100, tikv.StartTSOption{TxnScope: oracle.GlobalTxnScope, StartTS: &i, PrevSec: nil, MinStartTS: nil, MaxPrevSec: nil}},
 		// PrevSec setted
-		{200, tikv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: &i, MinStartTS: nil, MaxPrevSec: nil}},
+		{200, tikv.StartTSOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: &i, MinStartTS: nil, MaxPrevSec: nil}},
 		// MinStartTS setted, global
-		{101, tikv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: &i, MaxPrevSec: nil}},
+		{101, tikv.StartTSOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: &i, MaxPrevSec: nil}},
 		// MinStartTS setted, local
-		{102, tikv.TransactionOption{TxnScope: oracle.LocalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: &i, MaxPrevSec: nil}},
+		{102, tikv.StartTSOption{TxnScope: oracle.LocalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: &i, MaxPrevSec: nil}},
 		// MaxPrevSec setted
 		// however we need to add more cases to check the behavior when it fall backs to MinStartTS setted
 		// see `TestMaxPrevSecFallback`
-		{200, tikv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
+		{200, tikv.StartTSOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
 		// nothing setted
-		{300, tikv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: nil}},
+		{300, tikv.StartTSOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: nil}},
 	}
 	for _, cs := range cases {
 		expected := cs.expectedTS
@@ -96,10 +96,10 @@ func (s *extractStartTsSuite) TestMaxPrevSecFallback(c *C) {
 	i := uint64(100)
 	cases := []struct {
 		expectedTS uint64
-		option     tikv.TransactionOption
+		option     tikv.StartTSOption
 	}{
-		{0x8000000000000001, tikv.TransactionOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
-		{0x8000000000000002, tikv.TransactionOption{TxnScope: oracle.LocalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
+		{0x8000000000000001, tikv.StartTSOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
+		{0x8000000000000002, tikv.StartTSOption{TxnScope: oracle.LocalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
 	}
 	for _, cs := range cases {
 		result, _ := tikv.ExtractStartTs(s.store, cs.option)

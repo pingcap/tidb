@@ -39,7 +39,7 @@ func (s *Store) GetOracle() oracle.Oracle { return nil }
 func (s *Store) Begin() (kv.Transaction, error) { return nil, nil }
 
 // BeginWithOption implements kv.Storage interface.
-func (s *Store) BeginWithOption(option tikv.TransactionOption) (kv.Transaction, error) {
+func (s *Store) BeginWithOption(option tikv.StartTSOption) (kv.Transaction, error) {
 	return s.Begin()
 }
 

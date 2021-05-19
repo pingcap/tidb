@@ -83,7 +83,7 @@ func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, 
 }
 
 // BeginWithOption begins a transaction with given option
-func (s *mockStorage) BeginWithOption(option tikv.TransactionOption) (kv.Transaction, error) {
+func (s *mockStorage) BeginWithOption(option tikv.StartTSOption) (kv.Transaction, error) {
 	return newTiKVTxn(s.KVStore.BeginWithOption(option))
 }
 

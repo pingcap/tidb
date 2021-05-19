@@ -188,11 +188,11 @@ func (s *KVStore) runSafePointChecker() {
 
 // Begin a global transaction.
 func (s *KVStore) Begin() (*KVTxn, error) {
-	return s.BeginWithOption(DefaultTransactionOption())
+	return s.BeginWithOption(DefaultStartTSOption())
 }
 
-// BeginWithOption begins a transaction with the given TransactionOption
-func (s *KVStore) BeginWithOption(options TransactionOption) (*KVTxn, error) {
+// BeginWithOption begins a transaction with the given StartTSOption
+func (s *KVStore) BeginWithOption(options StartTSOption) (*KVTxn, error) {
 	return newTiKVTxnWithOptions(s, options)
 }
 

@@ -48,7 +48,7 @@ import (
 // Methods copied from kv.Storage and tikv.Storage due to limitation of go1.13.
 type Storage interface {
 	Begin() (kv.Transaction, error)
-	BeginWithOption(option tikv.TransactionOption) (kv.Transaction, error)
+	BeginWithOption(option tikv.StartTSOption) (kv.Transaction, error)
 	GetSnapshot(ver kv.Version) kv.Snapshot
 	GetClient() kv.Client
 	GetMPPClient() kv.MPPClient

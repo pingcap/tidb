@@ -155,7 +155,7 @@ func (s *mockStorage) Begin() (Transaction, error) {
 	return newMockTxn(), nil
 }
 
-func (s *mockStorage) BeginWithOption(option tikv.TransactionOption) (Transaction, error) {
+func (s *mockStorage) BeginWithOption(option tikv.StartTSOption) (Transaction, error) {
 	return newMockTxn(), nil
 }
 

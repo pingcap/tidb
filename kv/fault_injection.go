@@ -66,7 +66,7 @@ func (s *InjectedStore) Begin() (Transaction, error) {
 }
 
 // BeginWithOption creates an injected Transaction with given option.
-func (s *InjectedStore) BeginWithOption(option tikv.TransactionOption) (Transaction, error) {
+func (s *InjectedStore) BeginWithOption(option tikv.StartTSOption) (Transaction, error) {
 	txn, err := s.Storage.BeginWithOption(option)
 	return &InjectedTransaction{
 		Transaction: txn,
