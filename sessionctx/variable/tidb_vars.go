@@ -48,6 +48,10 @@ const (
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
 	TiDBOptBCJ = "tidb_opt_broadcast_join"
+
+	TiDBOptCARTESIANBCJ = "tidb_opt_cartesian_bcj"
+
+	TiDBOptForceCARTESIANBCJ = "tidb_opt_force_cartesian_bcj"
 	// tidb_opt_distinct_agg_push_down is used to decide whether agg with distinct should be pushed to tikv/tiflash.
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
 
@@ -566,6 +570,8 @@ const (
 	DefSkipASCIICheck                  = false
 	DefOptAggPushDown                  = false
 	DefOptBCJ                          = false
+	DefOptCARTESIANBCJ                 = false
+	DefOptForceCARTESIANBCJ            = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
