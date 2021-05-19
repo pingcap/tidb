@@ -62,9 +62,8 @@ func (o *MockOracle) GetTimestamp(ctx context.Context, _ *oracle.Option) (uint64
 	if o.stop {
 		return 0, errors.Trace(errStopped)
 	}
-	physical := oracle.GetPhysical(time.Now().Add(o.offset))
-	ts := oracle.ComposeTS(physical, 0)
-	if oracle.ExtractPhysical(o.lastTS) == physical {
+	ts := oracle.GoTimeToTS(time.Now().Add(o.offset))
+	if oracle.ExtractPhysical(o.lastTS) == oracle.ExtractPhysical(ts) {
 		ts = o.lastTS + 1
 	}
 	o.lastTS = ts
@@ -73,9 +72,7 @@ func (o *MockOracle) GetTimestamp(ctx context.Context, _ *oracle.Option) (uint64
 
 // GetStaleTimestamp implements oracle.Oracle interface.
 func (o *MockOracle) GetStaleTimestamp(ctx context.Context, txnScope string, prevSecond uint64) (ts uint64, err error) {
-	physical := oracle.GetPhysical(time.Now().Add(-time.Second * time.Duration(prevSecond)))
-	ts = oracle.ComposeTS(physical, 0)
-	return ts, nil
+	return oracle.GoTimeToTS(time.Now().Add(-time.Second * time.Duration(prevSecond))), nil
 }
 
 type mockOracleFuture struct {
@@ -106,15 +103,16 @@ func (o *MockOracle) GetLowResolutionTimestampAsync(ctx context.Context, opt *or
 func (o *MockOracle) IsExpired(lockTimestamp, TTL uint64, _ *oracle.Option) bool {
 	o.RLock()
 	defer o.RUnlock()
-
-	return oracle.GetPhysical(time.Now().Add(o.offset)) >= oracle.ExtractPhysical(lockTimestamp)+int64(TTL)
+	expire := oracle.GetTimeFromTS(lockTimestamp).Add(time.Duration(TTL) * time.Millisecond)
+	return !time.Now().Add(o.offset).Before(expire)
 }
 
 // UntilExpired implement oracle.Oracle interface.
 func (o *MockOracle) UntilExpired(lockTimeStamp, TTL uint64, _ *oracle.Option) int64 {
 	o.RLock()
 	defer o.RUnlock()
-	return oracle.ExtractPhysical(lockTimeStamp) + int64(TTL) - oracle.GetPhysical(time.Now().Add(o.offset))
+	expire := oracle.GetTimeFromTS(lockTimeStamp).Add(time.Duration(TTL) * time.Millisecond)
+	return expire.Sub(time.Now().Add(o.offset)).Milliseconds()
 }
 
 // Close implements oracle.Oracle interface.
