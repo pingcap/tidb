@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	deadlockPB "github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
 	derr "github.com/pingcap/tidb/store/driver/error"
@@ -31,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
@@ -330,4 +333,13 @@ func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
 // ShowStatus returns the specified status of the storage
 func (s *tikvStore) ShowStatus(ctx context.Context, key string) (interface{}, error) {
 	return nil, kv.ErrNotImplemented
+}
+
+func (s *tikvStore) GetLockWaits() []*deadlockPB.WaitForEntry {
+	stores := s.GetRegionCache().GetStoresByType(tikvrpc.TiKV)
+	resp, err := s.GetTiKVClient().SendRequest(context.TODO(), stores[0].Addr, tikvrpc.NewRequest(tikvrpc.CmdLockWaitInfo, &kvrpcpb.GetLockWaitInfoRequest{}), time.Second*30)
+	if err != nil {
+		panic(err)
+	}
+	return resp.Resp.(*kvrpcpb.GetLockWaitInfoResponse).Entries
 }

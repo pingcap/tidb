@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/tls"
 
+	deadlockPB "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
 	driver "github.com/pingcap/tidb/store/driver/txn"
@@ -114,4 +115,8 @@ func newTiKVTxn(txn *tikv.KVTxn, err error) (kv.Transaction, error) {
 func (s *mockStorage) Close() error {
 	s.Store.Close()
 	return s.KVStore.Close()
+}
+
+func (s *mockStorage) GetLockWaits() []*deadlockPB.WaitForEntry {
+	return nil
 }

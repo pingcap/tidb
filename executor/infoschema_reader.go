@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -158,6 +159,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForDeadlock(sctx)
 		case infoschema.ClusterTableDeadlocks:
 			err = e.setDataForClusterDeadlock(sctx)
+		case infoschema.TableDataLockWaits:
+			err = e.setDataForTableLockWait(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -1001,6 +1004,24 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err 
 			}
 		}
 		e.rows = append(e.rows, row)
+	}
+	return nil
+}
+
+func (e *memtableRetriever) setDataForTableLockWait(ctx sessionctx.Context) (err error) {
+	waits := ctx.GetStore().GetLockWaits()
+	for _, wait := range waits {
+		digest, err := resourcegrouptag.DecodeResourceGroupTag(wait.ResourceGroupTag)
+		if err != nil {
+			return err
+		}
+		e.rows = append(e.rows, types.MakeDatums(
+			wait.KeyHash,
+			wait.Key,
+			wait.Txn,
+			wait.WaitForTxn,
+			digest,
+		))
 	}
 	return nil
 }
