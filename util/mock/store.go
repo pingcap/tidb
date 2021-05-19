@@ -72,3 +72,8 @@ func (s *Store) GetMemCache() kv.MemManager {
 
 // ShowStatus implements kv.Storage interface.
 func (s *Store) ShowStatus(ctx context.Context, key string) (interface{}, error) { return nil, nil }
+
+// GetMinSafeTS implements kv.Storage interface.
+func (s *Store) GetMinSafeTS(txnScope string) uint64 {
+	return 0
+}
