@@ -188,10 +188,7 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 		var err error
 		rowMap.Range(func(h kv.Handle, val interface{}) bool {
 			err = e.removeRow(e.ctx, e.tblID2Table[id], h, val.([]types.Datum))
-			if err != nil {
-				return false
-			}
-			return true
+			return err == nil
 		})
 		if err != nil {
 			return err

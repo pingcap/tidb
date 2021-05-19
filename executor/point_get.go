@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -144,17 +143,17 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.stats = &runtimeStatsWithSnapshot{
 			SnapshotRuntimeStats: snapshotStats,
 		}
-		e.snapshot.SetOption(tikvstore.CollectRuntimeStats, snapshotStats)
+		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		e.snapshot.SetOption(tikvstore.ReplicaRead, tikvstore.ReplicaReadFollower)
+		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
-	e.snapshot.SetOption(tikvstore.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	isStaleness := e.ctx.GetSessionVars().TxnCtx.IsStaleness
-	e.snapshot.SetOption(tikvstore.IsStalenessReadOnly, isStaleness)
-	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != oracle.GlobalTxnScope {
-		e.snapshot.SetOption(tikvstore.MatchStoreLabels, []*metapb.StoreLabel{
+	e.snapshot.SetOption(kv.IsStalenessReadOnly, isStaleness)
+	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != kv.GlobalTxnScope {
+		e.snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
 				Value: e.ctx.GetSessionVars().TxnCtx.TxnScope,
@@ -167,7 +166,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 // Close implements the Executor interface.
 func (e *PointGetExecutor) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {
-		e.snapshot.DelOption(tikvstore.CollectRuntimeStats)
+		e.snapshot.DelOption(kv.CollectRuntimeStats)
 	}
 	if e.idxInfo != nil && e.tblInfo != nil {
 		actRows := int64(0)
@@ -391,8 +390,8 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
-	txnScope := e.txn.GetOption(tikvstore.TxnScope).(string)
-	if txnScope == "" || txnScope == oracle.GlobalTxnScope {
+	txnScope := e.txn.GetOption(kv.TxnScope).(string)
+	if txnScope == "" || txnScope == kv.GlobalTxnScope {
 		return nil
 	}
 	var tblID int64
@@ -530,6 +529,9 @@ func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expres
 	if col.ID == model.ExtraHandleID {
 		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
+	}
+	if types.NeedRestoredData(col.RetType) {
+		return false, nil
 	}
 	// Try to decode common handle.
 	if mysql.HasPriKeyFlag(col.RetType.Flag) {

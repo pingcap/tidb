@@ -829,14 +829,11 @@ func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
 }
 
 func checkEmptyTopNs(topNs []*TopN) bool {
-	totCnt := uint64(0)
+	count := uint64(0)
 	for _, topN := range topNs {
-		totCnt += topN.TotalCount()
+		count += topN.TotalCount()
 	}
-	if totCnt == 0 {
-		return true
-	}
-	return false
+	return count == 0
 }
 
 func getMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {

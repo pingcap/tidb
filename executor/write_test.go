@@ -1554,7 +1554,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	_, err = tk.Exec("UPDATE t SET c2=16777215 WHERE c1>= -8388608 AND c1 < -9 ORDER BY c1 LIMIT 2")
 	c.Assert(err, IsNil)
 
-	tk.MustExec("update (select * from t) t set c1 = 1111111")
+	tk.MustGetErrCode("update (select * from t) t set c1 = 1111111", mysql.ErrNonUpdatableTable)
 
 	// test update ignore for bad null error
 	tk.MustExec("drop table if exists t;")
@@ -1604,8 +1604,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustExec("drop view v")
 
 	tk.MustExec("create sequence seq")
-	_, err = tk.Exec("update seq set minvalue=1")
-	c.Assert(err.Error(), Equals, "update sequence seq is not supported now.")
+	tk.MustGetErrCode("update seq set minvalue=1", mysql.ErrBadField)
 	tk.MustExec("drop sequence seq")
 
 	tk.MustExec("drop table if exists t1, t2")
@@ -3929,6 +3928,25 @@ func (s *testSerialSuite) TestIssue20840(c *C) {
 	tk.MustExec("replace into t1 values ('A')")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("A"))
 	tk.MustExec("drop table t1")
+}
+
+func (s *testSerialSuite) TestIssueInsertPrefixIndexForNonUTF8Collation(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1 ( c_int int, c_str varchar(40) character set ascii collate ascii_bin, primary key(c_int, c_str(8)) clustered , unique key(c_str))")
+	tk.MustExec("create table t2 ( c_int int, c_str varchar(40) character set latin1 collate latin1_bin, primary key(c_int, c_str(8)) clustered , unique key(c_str))")
+	tk.MustExec("insert into t1 values (3, 'fervent brattain')")
+	tk.MustExec("insert into t2 values (3, 'fervent brattain')")
+	tk.MustExec("admin check table t1")
+	tk.MustExec("admin check table t2")
+
+	tk.MustExec("create table t3 (x varchar(40) CHARACTER SET ascii COLLATE ascii_bin, UNIQUE KEY uk(x(4)))")
+	tk.MustExec("insert into t3 select 'abc '")
+	tk.MustGetErrCode("insert into t3 select 'abc d'", 1062)
 }
 
 func (s *testSerialSuite) TestIssue22496(c *C) {

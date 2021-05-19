@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
@@ -127,7 +128,7 @@ func TestInfo(t *testing.T) {
 		goCtx,
 		ddl.WithEtcdClient(dom.GetEtcdClient()),
 		ddl.WithStore(s),
-		ddl.WithInfoHandle(dom.infoHandle),
+		ddl.WithInfoCache(dom.infoCache),
 		ddl.WithLease(ddlLease),
 	)
 	err = dom.ddl.Start(nil)
@@ -241,6 +242,10 @@ type mockSessionManager struct {
 	PS []*util.ProcessInfo
 }
 
+func (msm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
+	panic("unimplemented!")
+}
+
 func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
 	ret := make(map[uint64]*util.ProcessInfo)
 	for _, item := range msm.PS {
@@ -342,7 +347,7 @@ func (*testSuite) TestT(c *C) {
 
 	// for schemaValidator
 	schemaVer := dom.SchemaValidator.(*schemaValidator).LatestSchemaVersion()
-	ver, err := store.CurrentVersion(oracle.GlobalTxnScope)
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	ts := ver.Ver
 
@@ -355,7 +360,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(succ, Equals, ResultSucc)
 	time.Sleep(ddlLease)
 
-	ver, err = store.CurrentVersion(oracle.GlobalTxnScope)
+	ver, err = store.CurrentVersion(kv.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	ts = ver.Ver
 	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
