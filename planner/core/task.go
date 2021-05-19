@@ -1081,7 +1081,6 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 		pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
 		mpp = attachPlan2Task(pushedDownLimit, mpp).(*mppTask)
 		pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
-		pushedDownLimit.cost = mpp.cost()
 		t = mpp.convertToRootTask(p.ctx)
 	}
 	if sunk {
