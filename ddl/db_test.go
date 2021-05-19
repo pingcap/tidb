@@ -5305,7 +5305,7 @@ func (s *testSerialDBSuite) TestSetTableFlashReplicaForSystemTable(c *C) {
 	}
 	for _, one := range sysTables {
 		// Issue: https://github.com/pingcap/tidb/issues/24742
-		// Skip the `stats_extended` system temporarily.
+		// Skip the `stats_extended` system table temporarily.
 		if one == "stats_extended" {
 			continue
 		}
