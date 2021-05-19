@@ -103,7 +103,7 @@ func (b *Backoffer) Backoff(cfg *Config, err error) error {
 // BackoffWithMaxSleepTxnLockFast sleeps a while base on the MaxSleepTxnLock and records the error message
 // and never sleep more than maxSleepMs for each sleep.
 func (b *Backoffer) BackoffWithMaxSleepTxnLockFast(maxSleepMs int, err error) error {
-	cfg := BoTxnLockFast(b.GetVars())
+	cfg := BoTxnLockFast
 	return b.BackoffWithCfgAndMaxSleep(cfg, maxSleepMs, err)
 }
 
@@ -131,7 +131,7 @@ func (b *Backoffer) BackoffWithMaxSleep(typ int, maxSleepMs int, err error) erro
 	case boTxnLock:
 		return b.BackoffWithCfgAndMaxSleep(BoTxnLock, maxSleepMs, err)
 	case boTxnLockFast:
-		return b.BackoffWithCfgAndMaxSleep(BoTxnLockFast(b.GetVars()), maxSleepMs, err)
+		return b.BackoffWithCfgAndMaxSleep(BoTxnLockFast, maxSleepMs, err)
 	case boPDRPC:
 		return b.BackoffWithCfgAndMaxSleep(BoPDRPC, maxSleepMs, err)
 	case boRegionMiss:
@@ -184,8 +184,8 @@ func (b *Backoffer) BackoffWithCfgAndMaxSleep(cfg *Config, maxSleepMs int, err e
 	}
 	f, ok := b.fn[cfg.name]
 	if !ok {
-		f = cfg.backoffFn
-		b.fn[cfg.name] = cfg.backoffFn
+		f = cfg.createBackoffFn(b.vars)
+		b.fn[cfg.name] = f
 	}
 	realSleep := f(b.ctx, maxSleepMs)
 	cfg.metric.Observe(float64(realSleep) / 1000)
