@@ -99,6 +99,11 @@ func (s *mockStorage) CurrentVersion(txnScope string) (kv.Version, error) {
 	return kv.NewVersion(ver), err
 }
 
+// GetMinSafeTS return the minimal SafeTS of the storage with given txnScope.
+func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
+	return 0
+}
+
 func newTiKVTxn(txn *tikv.KVTxn, err error) (kv.Transaction, error) {
 	if err != nil {
 		return nil, err
