@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
 	"strings"
@@ -63,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/pingcap/tidb/util/tracecpu"
 	"go.uber.org/zap"
 )
 
@@ -1591,8 +1593,8 @@ func (e *UnionExec) Close() error {
 
 // ResetContextOfStmt resets the StmtContext and session variables.
 // Before every execution, we must clear statement context.
-func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
-	vars := ctx.GetSessionVars()
+func ResetContextOfStmt(ctx context.Context, sctx sessionctx.Context, s ast.StmtNode) (err error) {
+	vars := sctx.GetSessionVars()
 	sc := &stmtctx.StatementContext{
 		TimeZone:    vars.Location(),
 		MemTracker:  memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery),
@@ -1606,20 +1608,29 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	switch globalConfig.OOMAction {
 	case config.OOMActionCancel:
-		action := &memory.PanicOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
-		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
+		action := &memory.PanicOnExceed{ConnID: sctx.GetSessionVars().ConnectionID}
+		action.SetLogHook(domain.GetDomain(sctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
 		sc.MemTracker.SetActionOnExceed(action)
 	case config.OOMActionLog:
 		fallthrough
 	default:
-		action := &memory.LogOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
-		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
+		action := &memory.LogOnExceed{ConnID: sctx.GetSessionVars().ConnectionID}
+		action.SetLogHook(domain.GetDomain(sctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
 		sc.MemTracker.SetActionOnExceed(action)
 	}
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
 		s, err = planner.GetPreparedStmt(execStmt, vars)
 		if err != nil {
 			return
+		}
+		if config.GetGlobalConfig().TopStmt.Enable {
+			sc.OriginalSQL = s.Text()
+			sc.SQLDigest()
+			normalizedSQL, digest := sc.SQLDigest()
+			if len(normalizedSQL) > 0 {
+				ctx = pprof.WithLabels(context.Background(), pprof.Labels(tracecpu.LabelSQL, normalizedSQL, tracecpu.LabelSQLDigest, digest))
+				pprof.SetGoroutineLabels(ctx)
+			}
 		}
 	}
 	// execute missed stmtID uses empty sql

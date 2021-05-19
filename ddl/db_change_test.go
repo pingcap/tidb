@@ -415,7 +415,7 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 		ctx := context.TODO()
 		se.PrepareTxnCtx(ctx)
 		sctx := se.(sessionctx.Context)
-		if err = executor.ResetContextOfStmt(sctx, c.rawStmt); err != nil {
+		if err = executor.ResetContextOfStmt(context.Background(),sctx, c.rawStmt); err != nil {
 			return errors.Trace(err)
 		}
 		c.stmt, err = compiler.Compile(ctx, c.rawStmt)

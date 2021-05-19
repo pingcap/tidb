@@ -2165,11 +2165,11 @@ func (cc getLastStmtInConn) PProfLabel() (string, string) {
 	case mysql.ComStmtReset:
 		return "ResetStmt", ""
 	case mysql.ComQuery, mysql.ComStmtPrepare:
-		return parser.NormalizeDigest(queryStrForLog(string(hack.String(data))))
+		return parser.NormalizeDigest(string(hack.String(data)))
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
 		str := cc.preparedStmt2StringNoArgs(stmtID)
-		return queryStrForLog(str), parser.DigestNormalized(str)
+		return parser.NormalizeDigest(str)
 	default:
 		return "", ""
 	}

@@ -1492,7 +1492,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	s.sessionVars.StartTime = time.Now()
 
 	// Some executions are done in compile stage, so we reset them before compile.
-	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
+	if err := executor.ResetContextOfStmt(ctx, s, stmtNode); err != nil {
 		return nil, err
 	}
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
@@ -1759,7 +1759,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 		is = s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	}
 	execAst := &ast.ExecuteStmt{ExecID: stmtID}
-	if err := executor.ResetContextOfStmt(s, execAst); err != nil {
+	if err := executor.ResetContextOfStmt(ctx, s, execAst); err != nil {
 		return nil, err
 	}
 	execAst.BinaryArgs = args

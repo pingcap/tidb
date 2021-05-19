@@ -400,7 +400,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		err = executor.ResetContextOfStmt(ctx, stmt)
+		err = executor.ResetContextOfStmt(context.Background(),ctx, stmt)
 		c.Assert(err, IsNil)
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is)
