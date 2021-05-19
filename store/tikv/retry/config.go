@@ -28,9 +28,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// BackoffFn is the backoff function which compute the sleep time and do sleep.
-type BackoffFn func(ctx context.Context, maxSleepMs int) int
-
 // Config is the configuration of the Backoff function.
 type Config struct {
 	name   string
@@ -39,17 +36,22 @@ type Config struct {
 	err    error
 }
 
-func (c *Config) createBackoffFn(vars *kv.Variables) BackoffFn {
+// backoffFn is the backoff function which compute the sleep time and do sleep.
+type backoffFn func(ctx context.Context, maxSleepMs int) int
+
+func (c *Config) createBackoffFn(vars *kv.Variables) backoffFn {
 	if vars.Hook != nil {
 		vars.Hook(c.name, vars)
 	}
 	if strings.EqualFold(c.name, txnLockFastName) {
-		return NewBackoffFn(vars.BackoffLockFast, c.fnCfg.cap, c.fnCfg.jitter)
+		return newBackoffFn(vars.BackoffLockFast, c.fnCfg.cap, c.fnCfg.jitter)
 	}
-	return NewBackoffFn(c.fnCfg.base, c.fnCfg.cap, c.fnCfg.jitter)
+	return newBackoffFn(c.fnCfg.base, c.fnCfg.cap, c.fnCfg.jitter)
 }
 
-// BackoffFnCfg is the configuration for BackoffFn
+// BackoffFnCfg is the configuration for the backoff func which implements exponential backoff with
+// optional jitters.
+// See http://www.awsarchitectureblog.com/2015/03/backoff.html
 type BackoffFnCfg struct {
 	base   int
 	cap    int
@@ -79,6 +81,8 @@ func (c *Config) String() string {
 	return c.name
 }
 
+const txnLockFastName = "txnLockFast"
+
 // Backoff Config samples.
 var (
 	// TODO: distinguish tikv and tiflash in metrics
@@ -97,8 +101,6 @@ var (
 	BoTxnLockFast = NewConfig(txnLockFastName, metrics.BackoffHistogramLockFast, NewBackoffFnCfg(2, 3000, EqualJitter), tikverr.ErrResolveLockTimeout)
 )
 
-const txnLockFastName = "txnLockFast"
-
 const (
 	// NoJitter makes the backoff sequence strict exponential.
 	NoJitter = 1 + iota
@@ -110,10 +112,10 @@ const (
 	DecorrJitter
 )
 
-// NewBackoffFn creates a backoff func which implements exponential backoff with
+// newBackoffFn creates a backoff func which implements exponential backoff with
 // optional jitters.
 // See http://www.awsarchitectureblog.com/2015/03/backoff.html
-func NewBackoffFn(base, cap, jitter int) BackoffFn {
+func newBackoffFn(base, cap, jitter int) backoffFn {
 	if base < 2 {
 		// Top prevent panic in 'rand.Intn'.
 		base = 2

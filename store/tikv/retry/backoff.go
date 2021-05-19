@@ -33,14 +33,11 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-// BackoffType defines the backoff type.
-type BackoffType int
-
 // Backoffer is a utility for retrying queries.
 type Backoffer struct {
 	ctx context.Context
 
-	fn         map[string]BackoffFn
+	fn         map[string]backoffFn
 	maxSleep   int
 	totalSleep int
 	errors     []error
@@ -180,7 +177,7 @@ func (b *Backoffer) BackoffWithCfgAndMaxSleep(cfg *Config, maxSleepMs int, err e
 
 	// Lazy initialize.
 	if b.fn == nil {
-		b.fn = make(map[string]BackoffFn)
+		b.fn = make(map[string]backoffFn)
 	}
 	f, ok := b.fn[cfg.name]
 	if !ok {
