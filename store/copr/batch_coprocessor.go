@@ -473,34 +473,20 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *tikv.Backoffer, t
 }
 
 // Merge all ranges and request again.
-<<<<<<< HEAD
 func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *tikv.Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
 	var ranges []kv.KeyRange
-	for _, taskCtx := range batchTask.copTasks {
-		taskCtx.task.ranges.Do(func(ran *kv.KeyRange) {
-=======
-func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
-	var ranges []tikvstore.KeyRange
 	for _, ri := range batchTask.regionInfos {
-		ri.Ranges.Do(func(ran *tikvstore.KeyRange) {
->>>>>>> 66c8cd96b... store/copr: balance region for batch cop task (#24521)
+		ri.Ranges.Do(func(ran *kv.KeyRange) {
 			ranges = append(ranges, *ran)
 		})
 	}
 	return buildBatchCopTasks(bo, b.store.GetRegionCache(), tikv.NewKeyRanges(ranges), b.req.StoreType)
 }
 
-<<<<<<< HEAD
 func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *tikv.Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
-	sender := NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient())
-	var regionInfos []*coprocessor.RegionInfo
-	for _, task := range task.copTasks {
-=======
-func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
 	sender := tikv.NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient())
-	var regionInfos = make([]*coprocessor.RegionInfo, 0, len(task.regionInfos))
+	var regionInfos []*coprocessor.RegionInfo
 	for _, ri := range task.regionInfos {
->>>>>>> 66c8cd96b... store/copr: balance region for batch cop task (#24521)
 		regionInfos = append(regionInfos, &coprocessor.RegionInfo{
 			RegionId: ri.Region.GetID(),
 			RegionEpoch: &metapb.RegionEpoch{
@@ -530,13 +516,12 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, ta
 	req.StoreTp = kv.TiFlash
 
 	logutil.BgLogger().Debug("send batch request to ", zap.String("req info", req.String()), zap.Int("cop task len", len(task.regionInfos)))
-	resp, retry, cancel, err := sender.SendReqToAddr(bo.TiKVBackoffer(), task.ctx, task.regionInfos, req, tikv.ReadTimeoutUltraLong)
+	resp, retry, cancel, err := sender.SendReqToAddr(bo, task.ctx, task.regionInfos, req, tikv.ReadTimeoutUltraLong)
 	// If there are store errors, we should retry for all regions.
 	if retry {
 		return b.retryBatchCopTask(ctx, bo, task)
 	}
 	if err != nil {
-		err = derr.ToTiDBErr(err)
 		return nil, errors.Trace(err)
 	}
 	defer cancel()

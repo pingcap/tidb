@@ -710,7 +710,7 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 // OnSendFailForBatchRegions handles send request fail logic.
 func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *Store, regionInfos []RegionInfo, scheduleReload bool, err error) {
 	metrics.RegionCacheCounterWithSendFail.Add(float64(len(regionInfos)))
-	if store.storeType != tikvrpc.TiFlash {
+	if store.storeType != TiFlash {
 		logutil.Logger(bo.GetCtx()).Info("Should not reach here, OnSendFailForBatchRegions only support TiFlash")
 		return
 	}

@@ -19,12 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-<<<<<<< HEAD:store/copr/batch_request_sender.go
-	"github.com/pingcap/tidb/store/tikv"
-=======
 	"github.com/pingcap/kvproto/pkg/metapb"
-	tikverr "github.com/pingcap/tidb/store/tikv/error"
->>>>>>> 66c8cd96b... store/copr: balance region for batch cop task (#24521):store/tikv/batch_request_sender.go
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -50,13 +45,8 @@ func NewRegionBatchRequestSender(cache *RegionCache, client Client) *RegionBatch
 	}
 }
 
-<<<<<<< HEAD:store/copr/batch_request_sender.go
-func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *tikv.Backoffer, ctxs []copTaskAndRPCContext, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, retry bool, cancel func(), err error) {
-	// use the first ctx to send request, because every ctx has same address.
-=======
 // SendReqToAddr send batch cop request
 func (ss *RegionBatchRequestSender) SendReqToAddr(bo *Backoffer, rpcCtx *RPCContext, regionInfos []RegionInfo, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, retry bool, cancel func(), err error) {
->>>>>>> 66c8cd96b... store/copr: balance region for batch cop task (#24521):store/tikv/batch_request_sender.go
 	cancel = func() {}
 	if e := tikvrpc.SetContext(req, rpcCtx.Meta, rpcCtx.Peer); e != nil {
 		return nil, false, cancel, errors.Trace(e)
@@ -83,28 +73,12 @@ func (ss *RegionBatchRequestSender) SendReqToAddr(bo *Backoffer, rpcCtx *RPCCont
 	return
 }
 
-<<<<<<< HEAD:store/copr/batch_request_sender.go
-func (ss *RegionBatchRequestSender) onSendFail(bo *tikv.Backoffer, ctxs []copTaskAndRPCContext, err error) error {
-	// If it failed because the context is cancelled by ourself, don't retry.
-	if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
-		return errors.Trace(err)
-	} else if atomic.LoadUint32(&tikv.ShuttingDown) > 0 {
-		return tikv.ErrTiDBShuttingDown
-	}
-
-	for _, failedCtx := range ctxs {
-		ctx := failedCtx.ctx
-		if ctx.Meta != nil {
-			ss.GetRegionCache().OnSendFail(bo, ctx, ss.NeedReloadRegion(ctx), err)
-		}
-	}
-=======
 func (ss *RegionBatchRequestSender) onSendFailForBatchRegions(bo *Backoffer, ctx *RPCContext, regionInfos []RegionInfo, err error) error {
 	// If it failed because the context is cancelled by ourself, don't retry.
 	if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
 		return errors.Trace(err)
 	} else if atomic.LoadUint32(&ShuttingDown) > 0 {
-		return tikverr.ErrTiDBShuttingDown
+		return ErrTiDBShuttingDown
 	}
 
 	// The reload region param is always true. Because that every time we try, we must
@@ -113,7 +87,6 @@ func (ss *RegionBatchRequestSender) onSendFailForBatchRegions(bo *Backoffer, ctx
 	// Now that the batch cop and mpp has a relative low qps, it's reasonable to reload every time
 	// when meeting io error.
 	ss.GetRegionCache().OnSendFailForBatchRegions(bo, ctx.Store, regionInfos, true, err)
->>>>>>> 66c8cd96b... store/copr: balance region for batch cop task (#24521):store/tikv/batch_request_sender.go
 
 	// Retry on send request failure when it's not canceled.
 	// When a store is not available, the leader of related region should be elected quickly.
