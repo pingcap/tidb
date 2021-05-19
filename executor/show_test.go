@@ -1112,17 +1112,6 @@ func (s *testSuite5) TestShowClusterConfig(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	instances := []string{
-		strings.Join([]string{"tiflash", "127.0.0.0:1234", "127.0.0.0:1234", "mock-version,mock-githash,0"}, ","),
-	}
-
-	fpExpr := `return("` + strings.Join(instances, ";") + `")`
-	fpName := "github.com/pingcap/tidb/executor/mockClusterConfigServerInfo"
-	c.Assert(failpoint.Enable(fpName, fpExpr), IsNil)
-	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
-	tk.MustExec("show config")
-	c.Assert(tk.Se.GetSessionVars().SysWarningCount, Equals, 0)
-
 	var confItems [][]types.Datum
 	var confErr error
 	var confFunc executor.TestShowClusterConfigFunc = func() ([][]types.Datum, error) {
