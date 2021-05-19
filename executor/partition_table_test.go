@@ -825,6 +825,231 @@ type testData4Expression struct {
 	partitions []string
 }
 
+func (s *partitionTableSuite) TestDateColWithUnequalExpression(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists db_datetime_unequal_expression")
+	tk.MustExec("create database db_datetime_unequal_expression")
+	tk.MustExec("use db_datetime_unequal_expression")
+	tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+	tk.MustExec(`create table tp(a datetime, b int) partition by range columns (a) (partition p0 values less than("2012-12-10 00:00:00"), partition p1 values less than("2022-12-30 00:00:00"), partition p2 values less than("2025-12-12 00:00:00"))`)
+	tk.MustExec(`create table t(a datetime, b int) partition by range columns (a) (partition p0 values less than("2012-12-10 00:00:00"), partition p1 values less than("2022-12-30 00:00:00"), partition p2 values less than("2025-12-12 00:00:00"))`)
+	tk.MustExec(`insert into tp values("2015-09-09 00:00:00", 1), ("2020-08-08 19:00:01", 2), ("2024-01-01 01:01:01", 3)`)
+	tk.MustExec(`insert into t values("2015-09-09 00:00:00", 1), ("2020-08-08 19:00:01", 2), ("2024-01-01 01:01:01", 3)`)
+	tk.MustExec("analyze table tp")
+	tk.MustExec("analyze table t")
+
+	tests := []testData4Expression{
+		{
+			sql: "select * from %s where a != '2024-01-01 01:01:01'",
+			partitions: []string{"all"},
+		},
+		{
+			sql: "select * from %s where a != '2024-01-01 01:01:01' and a > '2015-09-09 00:00:00'",
+			partitions: []string{"p1,p2"},
+		},
+	}
+
+	for _, t := range tests {
+		tpSQL := fmt.Sprintf(t.sql, "tp")
+		tSQL := fmt.Sprintf(t.sql, "t")
+		tk.MustPartition(tpSQL, t.partitions[0]).Sort().Check(tk.MustQuery(tSQL).Sort().Rows())
+	}
+}
+
+func (s *partitionTableSuite) TestToDaysColWithExpression(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists db_to_days_expression")
+	tk.MustExec("create database db_to_days_expression")
+	tk.MustExec("use db_to_days_expression")
+	tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("create table tp(a date, b int) partition by range(to_days(a)) (partition p0 values less than (737822), partition p1 values less than (738019), partition p2 values less than (738154))")
+	tk.MustExec("create table t(a date, b int)")
+	tk.MustExec("insert into tp values('2020-01-01', 1), ('2020-03-02', 2), ('2020-05-05', 3), ('2020-11-11', 4)")
+	tk.MustExec("insert into t values('2020-01-01', 1), ('2020-03-02', 2), ('2020-05-05', 3), ('2020-11-11', 4)")
+	tk.MustExec("analyze table tp")
+	tk.MustExec("analyze table t")
+
+	tests := []testData4Expression{
+		{
+			sql: "select * from %s where a < '2020-08-16'",
+			partitions: []string{"p0,p1"},
+		},
+		{
+			sql: "select * from %s where a between '2020-05-01' and '2020-10-01'",
+			partitions: []string{"p1,p2"},
+		},
+	}
+
+	for _, t := range tests {
+		tpSQL := fmt.Sprintf(t.sql, "tp")
+		tSQL := fmt.Sprintf(t.sql, "t")
+		tk.MustPartition(tpSQL, t.partitions[0]).Sort().Check(tk.MustQuery(tSQL).Sort().Rows())
+	}
+}
+
+func (s *partitionTableSuite) TestWeekdayWithExpression(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists db_weekday_expression")
+	tk.MustExec("create database db_weekday_expression")
+	tk.MustExec("use db_weekday_expression")
+	tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("create table tp(a datetime, b int) partition by range(weekday(a)) (partition p0 values less than(3), partition p1 values less than(5), partition p2 values less than(8))")
+	tk.MustExec("create table t(a datetime, b int)")
+	tk.MustExec(`insert into tp values("2020-08-17 00:00:00", 1), ("2020-08-18 00:00:00", 2), ("2020-08-19 00:00:00", 4), ("2020-08-20 00:00:00", 5), ("2020-08-21 00:00:00", 6), ("2020-08-22 00:00:00", 0)`)
+	tk.MustExec(`insert into t values("2020-08-17 00:00:00", 1), ("2020-08-18 00:00:00", 2), ("2020-08-19 00:00:00", 4), ("2020-08-20 00:00:00", 5), ("2020-08-21 00:00:00", 6), ("2020-08-22 00:00:00", 0)`)
+	tk.MustExec("analyze table tp")
+	tk.MustExec("analyze table t")
+
+	tests := []testData4Expression{
+		{
+			sql: "select * from %s where a = '2020-08-17 00:00:00'",
+			partitions: []string{"p0"},
+		},
+		{
+			sql: "select * from %s where a= '2020-08-20 00:00:00' and a < '2020-08-22 00:00:00'",
+			partitions: []string{"p1"},
+		},
+		{
+			sql: " select * from %s where a < '2020-08-19 00:00:00'",
+			partitions: []string{"all"},
+		},
+	}
+
+	for _, t := range tests {
+		tpSQL := fmt.Sprintf(t.sql, "tp")
+		tSQL := fmt.Sprintf(t.sql, "t")
+		tk.MustPartition(tpSQL, t.partitions[0]).Sort().Check(tk.MustQuery(tSQL).Sort().Rows())
+	}
+}
+
+func (s *partitionTableSuite) TestFloorUnixTimestampAndIntColWithExpression(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists db_floor_unix_timestamp_int_expression")
+	tk.MustExec("create database db_floor_unix_timestamp_int_expression")
+	tk.MustExec("use db_floor_unix_timestamp_int_expression")
+	tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("create table tp(a timestamp, b int) partition by range(floor(unix_timestamp(a))) (partition p0 values less than(1580670000), partition p1 values less than(1597622400), partition p2 values less than(1629158400))")
+	tk.MustExec("create table t(a timestamp, b int)")
+	tk.MustExec("insert into tp values('2020-01-01 19:00:00', 1),('2020-08-15 00:00:00', -1), ('2020-08-18 05:00:01', 2), ('2020-10-01 14:13:15', 3)")
+	tk.MustExec("insert into t values('2020-01-01 19:00:00', 1),('2020-08-15 00:00:00', -1), ('2020-08-18 05:00:01', 2), ('2020-10-01 14:13:15', 3)")
+	tk.MustExec("analyze table tp")
+	tk.MustExec("analyze table t")
+
+	tests := []testData4Expression{
+		{
+			sql: "select * from %s where a > '2020-09-11 00:00:00'",
+			partitions: []string{"p2"},
+		},
+		{
+			sql: "select * from %s where a < '2020-07-07 01:00:00'",
+			partitions: []string{"p0,p1"},
+		},
+	}
+
+	for _, t := range tests {
+		tpSQL := fmt.Sprintf(t.sql, "tp")
+		tSQL := fmt.Sprintf(t.sql, "t")
+		tk.MustPartition(tpSQL, t.partitions[0]).Sort().Check(tk.MustQuery(tSQL).Sort().Rows())
+	}
+}
+
+func (s *partitionTableSuite) TestUnixTimestampAndIntColWithExpression(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists db_unix_timestamp_int_expression")
+	tk.MustExec("create database db_unix_timestamp_int_expression")
+	tk.MustExec("use db_unix_timestamp_int_expression")
+	tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("create table tp(a timestamp, b int) partition by range(unix_timestamp(a)) (partition p0 values less than(1580670000), partition p1 values less than(1597622400), partition p2 values less than(1629158400))")
+	tk.MustExec("create table t(a timestamp, b int)")
+	tk.MustExec("insert into tp values('2020-01-01 19:00:00', 1),('2020-08-15 00:00:00', -1), ('2020-08-18 05:00:01', 2), ('2020-10-01 14:13:15', 3)")
+	tk.MustExec("insert into t values('2020-01-01 19:00:00', 1),('2020-08-15 00:00:00', -1), ('2020-08-18 05:00:01', 2), ('2020-10-01 14:13:15', 3)")
+	tk.MustExec("analyze table tp")
+	tk.MustExec("analyze table t")
+
+	tests := []testData4Expression{
+		{
+			sql: "select * from %s where a > '2020-09-11 00:00:00'",
+			partitions: []string{"p2"},
+		},
+		{
+			sql: "select * from %s where a < '2020-07-07 01:00:00'",
+			partitions: []string{"p0,p1"},
+		},
+	}
+
+	for _, t := range tests {
+		tpSQL := fmt.Sprintf(t.sql, "tp")
+		tSQL := fmt.Sprintf(t.sql, "t")
+		tk.MustPartition(tpSQL, t.partitions[0]).Sort().Check(tk.MustQuery(tSQL).Sort().Rows())
+	}
+}
+
+func (s *partitionTableSuite) TestDatetimeColAndIntColWithExpression(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists db_datetime_int_expression")
+	tk.MustExec("create database db_datetime_int_expression")
+	tk.MustExec("use db_datetime_int_expression")
+	tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("create table tp(a datetime, b int) partition by range columns(a) (partition p0 values less than('2020-02-02 00:00:00'), partition p1 values less than('2020-09-01 00:00:00'), partition p2 values less than('2020-12-20 00:00:00'))")
+	tk.MustExec("create table t(a datetime, b int)")
+	tk.MustExec("insert into tp values('2020-01-01 12:00:00', 1), ('2020-08-22 10:00:00', 2), ('2020-09-09 11:00:00', 3), ('2020-10-01 00:00:00', 4)")
+	tk.MustExec("insert into t values('2020-01-01 12:00:00', 1), ('2020-08-22 10:00:00', 2), ('2020-09-09 11:00:00', 3), ('2020-10-01 00:00:00', 4)")
+	tk.MustExec("analyze table tp")
+	tk.MustExec("analyze table t")
+
+	tests := []testData4Expression{
+		{
+			sql: "select * from %s where a < '2020-09-01 00:00:00'",
+			partitions: []string{"p0,p1"},
+		},
+		{
+			sql: "select * from %s where a > '2020-07-07 01:00:00'",
+			partitions: []string{"p1,p2"},
+		},
+	}
+
+	for _, t := range tests {
+		tpSQL := fmt.Sprintf(t.sql, "tp")
+		tSQL := fmt.Sprintf(t.sql, "t")
+		tk.MustPartition(tpSQL, t.partitions[0]).Sort().Check(tk.MustQuery(tSQL).Sort().Rows())
+	}
+}
+
+func (s *partitionTableSuite) TestVarcharColAndIntColWithExpression(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists db_varchar_int_expression")
+	tk.MustExec("create database db_varchar_int_expression")
+	tk.MustExec("use db_varchar_int_expression")
+	tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("create table tp(a varchar(255), b int) partition by range columns(a) (partition p0 values less than('ddd'), partition p1 values less than('ggggg'), partition p2 values less than('mmmmmm'))")
+	tk.MustExec("create table t(a varchar(255), b int)")
+	tk.MustExec("insert into tp values('aaa', 1), ('bbbb', 2), ('ccc', 3), ('dfg', 4), ('kkkk', 5), ('10', 6)")
+	tk.MustExec("insert into t values('aaa', 1), ('bbbb', 2), ('ccc', 3), ('dfg', 4), ('kkkk', 5), ('10', 6)")
+	tk.MustExec("analyze table tp")
+	tk.MustExec("analyze table t")
+
+	tests := []testData4Expression{
+		{
+			sql: "select * from %s where a < '10'",
+			partitions: []string{"p0"},
+		},
+		{
+			sql: "select * from %s where a > 0",
+			partitions: []string{"all"},
+		},
+		{
+			sql: "select * from %s where a > 0",
+			partitions: []string{"all"},
+		},
+	}
+
+	for _, t := range tests {
+		tpSQL := fmt.Sprintf(t.sql, "tp")
+		tSQL := fmt.Sprintf(t.sql, "t")
+		tk.MustPartition(tpSQL, t.partitions[0]).Sort().Check(tk.MustQuery(tSQL).Sort().Rows())
+	}
+}
+
 func (s *partitionTableSuite) TestDynamicPruneModeWithExpression(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop database if exists db_equal_expression")
