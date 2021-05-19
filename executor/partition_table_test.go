@@ -1707,6 +1707,38 @@ func (s *globalIndexSuite) TestIssue21731(c *C) {
 	tk.MustExec("create table t (a int, b int, unique index idx(a)) partition by list columns(b) (partition p0 values in (1), partition p1 values in (2));")
 }
 
+type testOutput struct {
+	SQL  string
+	Plan []string
+	Res  []string
+}
+
+func (s *testSuiteWithData) verifyPartitionResult(tk *testkit.TestKit, input []string, output []testOutput) {
+	for i, tt := range input {
+		var isSelect bool = false
+		if strings.HasPrefix(strings.ToLower(tt), "select ") {
+			isSelect = true
+		}
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			if isSelect {
+				output[i].Plan = s.testData.ConvertRowsToStrings(tk.UsedPartitions(tt).Rows())
+				output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+			} else {
+				// Just verify SELECT (also avoid double INSERTs during record)
+				output[i].Res = nil
+				output[i].Plan = nil
+			}
+		})
+		if isSelect {
+			tk.UsedPartitions(tt).Check(testkit.Rows(output[i].Plan...))
+			tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
+		} else {
+			tk.MustExec(tt)
+		}
+	}
+}
+
 func (s *testSuiteWithData) TestRangePartitionBoundariesEq(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -1727,12 +1759,6 @@ PARTITION BY RANGE (a) (
 	var output []testOutput
 	s.testData.GetTestCases(c, &input, &output)
 	s.verifyPartitionResult(tk, input, output)
-}
-
-type testOutput struct {
-	SQL  string
-	Plan []string
-	Res  []string
 }
 
 func (s *testSuiteWithData) TestRangePartitionBoundariesNe(c *C) {
@@ -1760,26 +1786,46 @@ PARTITION BY RANGE (a) (
 	s.verifyPartitionResult(tk, input, output)
 }
 
-func (s *testSuiteWithData) verifyPartitionResult(tk *testkit.TestKit, input []string, output []testOutput) {
-	for i, tt := range input {
-		var isSelect bool = false
-		if strings.HasPrefix(strings.ToLower(tt), "select ") {
-			isSelect = true
-		}
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			if isSelect {
-				output[i].Plan = s.testData.ConvertRowsToStrings(tk.UsedPartitions(tt).Rows())
-				output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
-			} else {
-				// to avoid double execution of INSERT (and INSERT does not return anything)
-				output[i].Res = nil
-				output[i].Plan = nil
-			}
-		})
-		if isSelect {
-			tk.UsedPartitions(tt).Check(testkit.Rows(output[i].Plan...))
-		}
-		tk.MayQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
-	}
+func (s *testSuiteWithData) TestRangePartitionBoundariesBetweenM(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("CREATE DATABASE IF NOT EXISTS TestRangePartitionBoundariesBetweenM")
+	defer tk.MustExec("DROP DATABASE TestRangePartitionBoundariesBetweenM")
+	tk.MustExec("USE TestRangePartitionBoundariesBetweenM")
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec(`CREATE TABLE t
+(a INT, b varchar(255))
+PARTITION BY RANGE (a) (
+ PARTITION p0 VALUES LESS THAN (1000000),
+ PARTITION p1 VALUES LESS THAN (2000000),
+ PARTITION p2 VALUES LESS THAN (3000000))`)
+
+	var input []string
+	var output []testOutput
+	s.testData.GetTestCases(c, &input, &output)
+	s.verifyPartitionResult(tk, input, output)
+}
+
+func (s *testSuiteWithData) TestRangePartitionBoundariesBetweenS(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("CREATE DATABASE IF NOT EXISTS TestRangePartitionBoundariesBetweenS")
+	defer tk.MustExec("DROP DATABASE TestRangePartitionBoundariesBetweenS")
+	tk.MustExec("USE TestRangePartitionBoundariesBetweenS")
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec(`CREATE TABLE t
+(a INT, b varchar(255))
+PARTITION BY RANGE (a) (
+ PARTITION p0 VALUES LESS THAN (1),
+ PARTITION p1 VALUES LESS THAN (2),
+ PARTITION p2 VALUES LESS THAN (3),
+ PARTITION p3 VALUES LESS THAN (4),
+ PARTITION p4 VALUES LESS THAN (5),
+ PARTITION p5 VALUES LESS THAN (6),
+ PARTITION p6 VALUES LESS THAN (7))`)
+
+	var input []string
+	var output []testOutput
+	s.testData.GetTestCases(c, &input, &output)
+	s.verifyPartitionResult(tk, input, output)
 }
