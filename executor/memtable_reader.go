@@ -191,6 +191,10 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 					url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), statusAddr, pdapi.Config)
 				case "tikv", "tidb":
 					url = fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), statusAddr)
+				case "tiflash":
+					fmt.Println("tiflash !")
+					// TODO: tiflash does not yet support reading config, handle correspondingly once it supports.
+					return
 				default:
 					ch <- result{err: errors.Errorf("unknown node type: %s(%s)", typ, address)}
 					return
