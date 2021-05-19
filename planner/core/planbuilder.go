@@ -2327,29 +2327,37 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShutdownPriv, "", "", "", nil)
 	case *ast.BeginStmt:
 		if raw.AsOf != nil {
-			// Calculate the TsExpr to get a timestamp.
-			tsVal, err := evalAstExpr(b.ctx, raw.AsOf.TsExpr)
-			if err != nil {
-				return nil, err
-			}
-			toTypeTimestamp := types.NewFieldType(mysql.TypeTimestamp)
-			// We need at least the millionsecond here, so set fsp to 3.
-			toTypeTimestamp.Decimal = 3
-			tsTimestamp, err := tsVal.ConvertTo(b.ctx.GetSessionVars().StmtCtx, toTypeTimestamp)
-			if err != nil {
-				return nil, err
-			}
-			tsTime, err := tsTimestamp.GetMysqlTime().GoTime(b.ctx.GetSessionVars().TimeZone)
+			startTS, err := b.calculateTsExpr(raw.AsOf)
 			if err != nil {
 				return nil, err
 			}
 			p.StalenessTxnOption = &sessionctx.StalenessTxnOption{
 				UseAsOf: true,
-				StartTS: oracle.GoTimeToTS(tsTime),
+				StartTS: startTS,
 			}
 		}
 	}
 	return p, nil
+}
+
+// calculateTsExpr calculates the TsExpr of AsOfClause to get a StartTS.
+func (b *PlanBuilder) calculateTsExpr(asOfClause *ast.AsOfClause) (uint64, error) {
+	tsVal, err := evalAstExpr(b.ctx, asOfClause.TsExpr)
+	if err != nil {
+		return 0, err
+	}
+	toTypeTimestamp := types.NewFieldType(mysql.TypeTimestamp)
+	// We need at least the millionsecond here, so set fsp to 3.
+	toTypeTimestamp.Decimal = 3
+	tsTimestamp, err := tsVal.ConvertTo(b.ctx.GetSessionVars().StmtCtx, toTypeTimestamp)
+	if err != nil {
+		return 0, err
+	}
+	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(b.ctx.GetSessionVars().TimeZone)
+	if err != nil {
+		return 0, err
+	}
+	return oracle.GoTimeToTS(tsTime), nil
 }
 
 func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.RevokeStmt) []visitInfo {
