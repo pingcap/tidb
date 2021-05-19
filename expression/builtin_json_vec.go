@@ -1199,10 +1199,10 @@ func (b *builtinJSONSPrettySig) vecEvalString(input *chunk.Chunk, result *chunk.
 			result.AppendNull()
 			continue
 		}
-		j := buf.GetJSON(i)
-		jb, err := j.MarshalJSON()
+
+		jb, err := buf.GetJSON(i).MarshalJSON()
 		if err != nil {
-			continue
+			return err
 		}
 
 		var resBuf bytes.Buffer

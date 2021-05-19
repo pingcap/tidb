@@ -1009,11 +1009,43 @@ func (s *testEvaluatorSuite) TestJSONPretty(c *C) {
 		{[]interface{}{`false`}, "false", true},
 		{[]interface{}{`2223`}, "2223", true},
 		// Tests simple json
-		{[]interface{}{`{"a":1}`}, "{\n  \"a\": 1\n}", true},
-		{[]interface{}{`[1]`}, "[\n  1\n]", true},
+		{[]interface{}{`{"a":1}`}, `{
+  "a": 1
+}`, true},
+		{[]interface{}{`[1]`}, `[
+  1
+]`, true},
 		// Test complex json
-		{[]interface{}{`{"a":1,"b":[{"d":1},{"e":2},{"f":3}],"c":"eee"}`}, "{\n  \"a\": 1,\n  \"b\": [\n    {\n      \"d\": 1\n    },\n    {\n      \"e\": 2\n    },\n    {\n      \"f\": 3\n    }\n  ],\n  \"c\": \"eee\"\n}", true},
-		{[]interface{}{`{"a":1,"b":"qwe","c":[1,2,3,"123",null],"d":{"d1":1,"d2":2}}`}, "{\n  \"a\": 1,\n  \"b\": \"qwe\",\n  \"c\": [\n    1,\n    2,\n    3,\n    \"123\",\n    null\n  ],\n  \"d\": {\n    \"d1\": 1,\n    \"d2\": 2\n  }\n}", true},
+		{[]interface{}{`{"a":1,"b":[{"d":1},{"e":2},{"f":3}],"c":"eee"}`}, `{
+  "a": 1,
+  "b": [
+    {
+      "d": 1
+    },
+    {
+      "e": 2
+    },
+    {
+      "f": 3
+    }
+  ],
+  "c": "eee"
+}`, true},
+		{[]interface{}{`{"a":1,"b":"qwe","c":[1,2,3,"123",null],"d":{"d1":1,"d2":2}}`}, `{
+  "a": 1,
+  "b": "qwe",
+  "c": [
+    1,
+    2,
+    3,
+    "123",
+    null
+  ],
+  "d": {
+    "d1": 1,
+    "d2": 2
+  }
+}`, true},
 		// Tests invalid json data
 		{[]interface{}{`{1}`}, nil, false},
 		{[]interface{}{`[1,3,4,5]]`}, nil, false},

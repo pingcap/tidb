@@ -226,8 +226,36 @@ func (s *testIntegrationSuite) TestBuiltinFuncJsonPretty(c *C) {
 
 	// valid json format in json and varchar
 	checkResult := []string{
-		"{\n  \"a\": 1,\n  \"b\": \"qwe\",\n  \"c\": [\n    1,\n    2,\n    3,\n    \"123\",\n    null\n  ],\n  \"d\": {\n    \"d1\": 1,\n    \"d2\": 2\n  }\n}",
-		"{\n  \"a\": 1,\n  \"b\": \"qwe\",\n  \"c\": [\n    1,\n    2,\n    3,\n    \"123\",\n    null\n  ],\n  \"d\": {\n    \"d1\": 1,\n    \"d2\": 2\n  }\n}",
+		`{
+  "a": 1,
+  "b": "qwe",
+  "c": [
+    1,
+    2,
+    3,
+    "123",
+    null
+  ],
+  "d": {
+    "d1": 1,
+    "d2": 2
+  }
+}`,
+		`{
+  "a": 1,
+  "b": "qwe",
+  "c": [
+    1,
+    2,
+    3,
+    "123",
+    null
+  ],
+  "d": {
+    "d1": 1,
+    "d2": 2
+  }
+}`,
 	}
 	tk.
 		MustQuery("select JSON_PRETTY(t.j),JSON_PRETTY(vc) from  t where id = 1;").
@@ -237,6 +265,12 @@ func (s *testIntegrationSuite) TestBuiltinFuncJsonPretty(c *C) {
 	rs, _ := tk.Exec("select JSON_PRETTY(t.j),JSON_PRETTY(vc) from  t where id = 2;")
 	_, err := session.GetRows4Test(ctx, tk.Se, rs)
 	terr := errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrInvalidJSONText))
+
+	// invalid json format in one row
+	rs, _ = tk.Exec("select JSON_PRETTY(t.j),JSON_PRETTY(vc) from  t where id in (1,2);")
+	_, err = session.GetRows4Test(ctx, tk.Se, rs)
+	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrInvalidJSONText))
 
 	// invalid json string
