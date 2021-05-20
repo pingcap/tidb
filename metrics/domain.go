@@ -60,6 +60,15 @@ var (
 			Help:      "Counter of load privilege",
 		}, []string{LblType})
 
+	// LoadSysVarCacheCounter records the counter of loading sysvars
+	LoadSysVarCacheCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "domain",
+			Name:      "load_sysvarcache_total",
+			Help:      "Counter of load sysvar cache",
+		}, []string{LblType})
+
 	SchemaValidatorStop       = "stop"
 	SchemaValidatorRestart    = "restart"
 	SchemaValidatorReset      = "reset"

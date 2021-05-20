@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -213,7 +212,6 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	var err error
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	s.dom.GetGlobalVarsCache().Disable()
 }
 
 func (s *testSessionSuiteBase) TearDownSuite(c *C) {
@@ -639,7 +637,6 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	c.Assert(v, Equals, varValue2)
 
 	// For issue 10955, make sure the new session load `max_execution_time` into sessionVars.
-	s.dom.GetGlobalVarsCache().Disable()
 	tk1.MustExec("set @@global.max_execution_time = 100")
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	c.Assert(tk2.Se.GetSessionVars().MaxExecutionTime, Equals, uint64(100))
@@ -787,6 +784,49 @@ func (s *testSessionSuite) TestRetryUnion(c *C) {
 
 	_, err := tk.Exec("commit")
 	c.Assert(err, ErrorMatches, ".*can not retry select for update statement")
+}
+
+func (s *testSessionSuite) TestRetryGlobalTempTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists normal_table")
+	tk.MustExec("create table normal_table(a int primary key, b int)")
+	defer tk.MustExec("drop table if exists normal_table")
+	tk.MustExec("drop table if exists temp_table")
+	tk.MustExec("create global temporary table temp_table(a int primary key, b int) on commit delete rows")
+	defer tk.MustExec("drop table if exists temp_table")
+
+	// insert select
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("insert normal_table value(100, 100)")
+	tk.MustExec("set @@autocommit = 0")
+	// used to make conflicts
+	tk.MustExec("update normal_table set b=b+1 where a=100")
+	tk.MustExec("insert temp_table value(1, 1)")
+	tk.MustExec("insert normal_table select * from temp_table")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 3)
+
+	// try to conflict with tk
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("update normal_table set b=b+1 where a=100")
+
+	// It will retry internally.
+	tk.MustExec("commit")
+	tk.MustQuery("select a, b from normal_table order by a").Check(testkit.Rows("1 1", "100 102"))
+	tk.MustQuery("select a, b from temp_table order by a").Check(testkit.Rows())
+
+	// update multi-tables
+	tk.MustExec("update normal_table set b=b+1 where a=100")
+	tk.MustExec("insert temp_table value(1, 2)")
+	// before update: normal_table=(1 1) (100 102), temp_table=(1 2)
+	tk.MustExec("update normal_table, temp_table set normal_table.b=temp_table.b where normal_table.a=temp_table.a")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 3)
+
+	// try to conflict with tk
+	tk1.MustExec("update normal_table set b=b+1 where a=100")
+
+	// It will retry internally.
+	tk.MustExec("commit")
+	tk.MustQuery("select a, b from normal_table order by a").Check(testkit.Rows("1 2", "100 104"))
 }
 
 func (s *testSessionSuite) TestRetryShow(c *C) {
@@ -2034,7 +2074,7 @@ func (s *testSchemaSerialSuite) TestLoadSchemaFailed(c *C) {
 	_, err = tk1.Exec("commit")
 	c.Check(err, NotNil)
 
-	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
+	ver, err := s.store.CurrentVersion(kv.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	c.Assert(ver, NotNil)
 
@@ -2088,6 +2128,45 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerSQL(c *C) {
 	tk.MustQuery(`select * from t for update`)
 	_, err = tk.Exec(`commit;`)
 	c.Assert(err, NotNil)
+}
+
+func (s *testSchemaSerialSuite) TestSchemaCheckerTempTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+
+	// create table
+	tk.MustExec(`drop table if exists normal_table`)
+	tk.MustExec(`create table normal_table (id int, c int);`)
+	defer tk.MustExec(`drop table if exists normal_table`)
+	tk.MustExec(`drop table if exists temp_table`)
+	tk.MustExec(`create global temporary table temp_table (id int, c int) on commit delete rows;`)
+	defer tk.MustExec(`drop table if exists temp_table`)
+
+	// The schema version is out of date in the first transaction, and the SQL can't be retried.
+	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 1)
+	defer func() {
+		atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 0)
+	}()
+
+	// It's fine to change the schema of temporary tables.
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`alter table temp_table modify column c bigint;`)
+	tk.MustExec(`insert into temp_table values(3, 3);`)
+	tk.MustExec(`commit;`)
+
+	// Truncate will modify table ID.
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`truncate table temp_table;`)
+	tk.MustExec(`insert into temp_table values(3, 3);`)
+	tk.MustExec(`commit;`)
+
+	// It reports error when also changing the schema of a normal table.
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`alter table normal_table modify column c bigint;`)
+	tk.MustExec(`insert into temp_table values(3, 3);`)
+	tk.MustExec(`insert into normal_table values(3, 3);`)
+	_, err := tk.Exec(`commit;`)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testSchemaSuite) TestPrepareStmtCommitWhenSchemaChanged(c *C) {
@@ -2575,8 +2654,6 @@ func (s *testSessionSuite) TestSetGlobalTZ(c *C) {
 
 	tk.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +08:00"))
 
-	// Disable global variable cache, so load global session variable take effect immediate.
-	s.dom.GetGlobalVarsCache().Disable()
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +00:00"))
 }
@@ -2718,8 +2795,6 @@ func (s *testSessionSuite3) TestEnablePartition(c *C) {
 	tk.MustExec("set tidb_enable_list_partition=on")
 	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
 
-	// Disable global variable cache, so load global session variable take effect immediate.
-	s.dom.GetGlobalVarsCache().Disable()
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustQuery("show variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition ON"))
 }
@@ -3262,26 +3337,26 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result := tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows(oracle.GlobalTxnScope))
-	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, oracle.GlobalTxnScope)
+	result.Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
 	// assert set sys variable
 	tk.MustExec("set @@session.txn_scope = 'local';")
 	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows(oracle.GlobalTxnScope))
-	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, oracle.GlobalTxnScope)
+	result.Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
 	failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
 	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("bj")`)
 	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
 	tk = testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows(oracle.LocalTxnScope))
+	result.Check(testkit.Rows(kv.LocalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, "bj")
 	// assert set sys variable
 	tk.MustExec("set @@session.txn_scope = 'global';")
 	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows(oracle.GlobalTxnScope))
-	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, oracle.GlobalTxnScope)
+	result.Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
 
 	// assert set invalid txn_scope
 	err := tk.ExecToErr("set @@txn_scope='foo'")
@@ -3338,9 +3413,9 @@ PARTITION BY RANGE (c) (
 	setBundle("p1", "dc-2")
 
 	// set txn_scope to global
-	tk.MustExec(fmt.Sprintf("set @@session.txn_scope = '%s';", oracle.GlobalTxnScope))
+	tk.MustExec(fmt.Sprintf("set @@session.txn_scope = '%s';", kv.GlobalTxnScope))
 	result := tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows(oracle.GlobalTxnScope))
+	result.Check(testkit.Rows(kv.GlobalTxnScope))
 
 	// test global txn auto commit
 	tk.MustExec("insert into t1 (c) values (1)") // write dc-1 with global scope
@@ -3351,7 +3426,7 @@ PARTITION BY RANGE (c) (
 	tk.MustExec("begin")
 	txn, err := tk.Se.Txn(true)
 	c.Assert(err, IsNil)
-	c.Assert(tk.Se.GetSessionVars().TxnCtx.TxnScope, Equals, oracle.GlobalTxnScope)
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.TxnScope, Equals, kv.GlobalTxnScope)
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert into t1 (c) values (1)") // write dc-1 with global scope
 	result = tk.MustQuery("select * from t1")    // read dc-1 and dc-2 with global scope
@@ -3365,7 +3440,7 @@ PARTITION BY RANGE (c) (
 	tk.MustExec("begin")
 	txn, err = tk.Se.Txn(true)
 	c.Assert(err, IsNil)
-	c.Assert(tk.Se.GetSessionVars().TxnCtx.TxnScope, Equals, oracle.GlobalTxnScope)
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.TxnScope, Equals, kv.GlobalTxnScope)
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert into t1 (c) values (101)") // write dc-2 with global scope
 	result = tk.MustQuery("select * from t1")      // read dc-1 and dc-2 with global scope
@@ -4399,4 +4474,72 @@ func (s *testTxnStateSuite) TestRollbacking(c *C) {
 	time.Sleep(100 * time.Millisecond)
 	c.Assert(tk.Se.TxnInfo().State, Equals, txninfo.TxnRollingBack)
 	<-ch
+}
+
+func (s *testSessionSuite) TestReadDMLBatchSize(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set global tidb_dml_batch_size=1000")
+	se, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	// `select 1` to load the global variables.
+	_, _ = se.Execute(context.TODO(), "select 1")
+	c.Assert(se.GetSessionVars().DMLBatchSize, Equals, 1000)
+}
+
+func (s *testSessionSuite) TestInTxnPSProtoPointGet(c *C) {
+	ctx := context.Background()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(c1 int primary key, c2 int, c3 int)")
+	tk.MustExec("insert into t1 values(1, 10, 100)")
+
+	// Generate the ps statement and make the prepared plan cached for point get.
+	id, _, _, err := tk.Se.PrepareStmt("select c1, c2 from t1 where c1 = ?")
+	c.Assert(err, IsNil)
+	idForUpdate, _, _, err := tk.Se.PrepareStmt("select c1, c2 from t1 where c1 = ? for update")
+	c.Assert(err, IsNil)
+	params := []types.Datum{types.NewDatum(1)}
+	rs, err := tk.Se.ExecutePreparedStmt(ctx, id, params)
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 10"))
+	rs, err = tk.Se.ExecutePreparedStmt(ctx, idForUpdate, params)
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 10"))
+
+	// Query again the cached plan will be used.
+	rs, err = tk.Se.ExecutePreparedStmt(ctx, id, params)
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 10"))
+	rs, err = tk.Se.ExecutePreparedStmt(ctx, idForUpdate, params)
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 10"))
+
+	// Start a transaction, now the in txn flag will be added to the session vars.
+	_, err = tk.Se.Execute(ctx, "start transaction")
+	c.Assert(err, IsNil)
+	rs, err = tk.Se.ExecutePreparedStmt(ctx, id, params)
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 10"))
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsTrue)
+	rs, err = tk.Se.ExecutePreparedStmt(ctx, idForUpdate, params)
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 10"))
+	txn, err = tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsTrue)
+	_, err = tk.Se.Execute(ctx, "update t1 set c2 = c2 + 1")
+	c.Assert(err, IsNil)
+	// Check the read result after in-transaction update.
+	rs, err = tk.Se.ExecutePreparedStmt(ctx, id, params)
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 11"))
+	rs, err = tk.Se.ExecutePreparedStmt(ctx, idForUpdate, params)
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 11"))
+	txn, err = tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsTrue)
+	tk.MustExec("commit")
 }
