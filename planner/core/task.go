@@ -1588,6 +1588,7 @@ func BuildFinalModeAggregation(
 
 			finalAggFunc.HasDistinct = aggFunc.HasDistinct
 			finalAggFunc.Mode = aggregation.CompleteMode
+			finalAggFunc.OrderByItems = aggFunc.OrderByItems
 		} else {
 			if aggFunc.Name == ast.AggFuncGroupConcat && len(aggFunc.OrderByItems) > 0 {
 				// group_concat can only run in one phase if it has order by items but without distinct property
@@ -1661,6 +1662,7 @@ func BuildFinalModeAggregation(
 		finalAggFunc.Args = args
 		finalAggFunc.RetTp = aggFunc.RetTp
 		final.AggFuncs[i] = finalAggFunc
+		finalAggFunc.OrderByItems = aggFunc.OrderByItems
 	}
 	partial.Schema.Append(partialGbySchema.Columns...)
 	return
