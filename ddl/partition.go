@@ -911,18 +911,15 @@ func getTableInfoWithDroppingPartitions(t *model.TableInfo) *model.TableInfo {
 }
 
 func dropRuleBundles(d *ddlCtx, physicalTableIDs []int64) error {
-	if d.infoHandle != nil && d.infoHandle.IsValid() {
-		bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
-		for _, ID := range physicalTableIDs {
-			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(ID))
-			if ok && !oldBundle.IsEmpty() {
-				bundles = append(bundles, placement.BuildPlacementDropBundle(ID))
-			}
+	bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
+	for _, ID := range physicalTableIDs {
+		oldBundle, ok := d.infoCache.GetLatest().BundleByName(placement.GroupID(ID))
+		if ok && !oldBundle.IsEmpty() {
+			bundles = append(bundles, placement.BuildPlacementDropBundle(ID))
 		}
-		err := infosync.PutRuleBundles(context.TODO(), bundles)
-		return err
 	}
-	return nil
+	err := infosync.PutRuleBundles(context.TODO(), bundles)
+	return err
 }
 
 // onDropTablePartition deletes old partition meta.
@@ -1095,22 +1092,20 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		}
 	}
 
-	if d.infoHandle != nil && d.infoHandle.IsValid() {
-		bundles := make([]*placement.Bundle, 0, len(oldIDs))
+	bundles := make([]*placement.Bundle, 0, len(oldIDs))
 
-		for i, oldID := range oldIDs {
-			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(oldID))
-			if ok && !oldBundle.IsEmpty() {
-				bundles = append(bundles, placement.BuildPlacementDropBundle(oldID))
-				bundles = append(bundles, placement.BuildPlacementCopyBundle(oldBundle, newPartitions[i].ID))
-			}
+	for i, oldID := range oldIDs {
+		oldBundle, ok := d.infoCache.GetLatest().BundleByName(placement.GroupID(oldID))
+		if ok && !oldBundle.IsEmpty() {
+			bundles = append(bundles, placement.BuildPlacementDropBundle(oldID))
+			bundles = append(bundles, placement.BuildPlacementCopyBundle(oldBundle, newPartitions[i].ID))
 		}
+	}
 
-		err = infosync.PutRuleBundles(context.TODO(), bundles)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
+	err = infosync.PutRuleBundles(context.TODO(), bundles)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
 	newIDs := make([]int64, len(oldIDs))
@@ -1299,27 +1294,25 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	// the follow code is a swap function for rules of two partitions
 	// though partitions has exchanged their ID, swap still take effect
-	if d.infoHandle != nil && d.infoHandle.IsValid() {
-		bundles := make([]*placement.Bundle, 0, 2)
-		ptBundle, ptOK := d.infoHandle.Get().BundleByName(placement.GroupID(partDef.ID))
-		ptOK = ptOK && !ptBundle.IsEmpty()
-		ntBundle, ntOK := d.infoHandle.Get().BundleByName(placement.GroupID(nt.ID))
-		ntOK = ntOK && !ntBundle.IsEmpty()
-		if ptOK && ntOK {
-			bundles = append(bundles, placement.BuildPlacementCopyBundle(ptBundle, nt.ID))
-			bundles = append(bundles, placement.BuildPlacementCopyBundle(ntBundle, partDef.ID))
-		} else if ptOK {
-			bundles = append(bundles, placement.BuildPlacementDropBundle(partDef.ID))
-			bundles = append(bundles, placement.BuildPlacementCopyBundle(ptBundle, nt.ID))
-		} else if ntOK {
-			bundles = append(bundles, placement.BuildPlacementDropBundle(nt.ID))
-			bundles = append(bundles, placement.BuildPlacementCopyBundle(ntBundle, partDef.ID))
-		}
-		err = infosync.PutRuleBundles(context.TODO(), bundles)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
+	bundles := make([]*placement.Bundle, 0, 2)
+	ptBundle, ptOK := d.infoCache.GetLatest().BundleByName(placement.GroupID(partDef.ID))
+	ptOK = ptOK && !ptBundle.IsEmpty()
+	ntBundle, ntOK := d.infoCache.GetLatest().BundleByName(placement.GroupID(nt.ID))
+	ntOK = ntOK && !ntBundle.IsEmpty()
+	if ptOK && ntOK {
+		bundles = append(bundles, placement.BuildPlacementCopyBundle(ptBundle, nt.ID))
+		bundles = append(bundles, placement.BuildPlacementCopyBundle(ntBundle, partDef.ID))
+	} else if ptOK {
+		bundles = append(bundles, placement.BuildPlacementDropBundle(partDef.ID))
+		bundles = append(bundles, placement.BuildPlacementCopyBundle(ptBundle, nt.ID))
+	} else if ntOK {
+		bundles = append(bundles, placement.BuildPlacementDropBundle(nt.ID))
+		bundles = append(bundles, placement.BuildPlacementCopyBundle(ntBundle, partDef.ID))
+	}
+	err = infosync.PutRuleBundles(context.TODO(), bundles)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
 	ver, err = updateSchemaVersion(t, job)
@@ -1472,6 +1465,13 @@ func getInValues(pi *model.PartitionInfo, index int) []string {
 func checkAddPartitionTooManyPartitions(piDefs uint64) error {
 	if piDefs > uint64(PartitionCountLimit) {
 		return errors.Trace(ErrTooManyPartitions)
+	}
+	return nil
+}
+
+func checkAddPartitionOnTemporaryMode(tbInfo *model.TableInfo) error {
+	if tbInfo.Partition != nil && tbInfo.TempTableType != model.TempTableNone {
+		return ErrPartitionNoTemporary
 	}
 	return nil
 }

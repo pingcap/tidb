@@ -19,9 +19,12 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	derr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/store/driver/options"
 	"github.com/pingcap/tidb/store/tikv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
@@ -75,7 +78,7 @@ func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
 // The Iterator must be Closed after use.
 func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	it, err := txn.KVTxn.Iter(k, upperBound)
-	return newKVIterator(it), toTiDBErr(err)
+	return newKVIterator(it), derr.ToTiDBErr(err)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
@@ -84,7 +87,7 @@ func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 // TODO: Add lower bound limit
 func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
 	it, err := txn.KVTxn.IterReverse(k)
-	return newKVIterator(it), toTiDBErr(err)
+	return newKVIterator(it), derr.ToTiDBErr(err)
 }
 
 // BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
@@ -101,43 +104,90 @@ func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]b
 
 func (txn *tikvTxn) Delete(k kv.Key) error {
 	err := txn.KVTxn.Delete(k)
-	return toTiDBErr(err)
+	return derr.ToTiDBErr(err)
 }
 
 func (txn *tikvTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	data, err := txn.KVTxn.Get(ctx, k)
-	return data, toTiDBErr(err)
+	return data, derr.ToTiDBErr(err)
 }
 
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
 	err := txn.KVTxn.Set(k, v)
-	return toTiDBErr(err)
+	return derr.ToTiDBErr(err)
 }
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
 	return newMemBuffer(txn.KVTxn.GetMemBuffer())
 }
 
-func (txn *tikvTxn) GetUnionStore() kv.UnionStore {
-	return &tikvUnionStore{txn.KVTxn.GetUnionStore()}
-}
-
 func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	switch opt {
-	case tikvstore.BinlogInfo:
+	case kv.BinlogInfo:
 		txn.SetBinlogExecutor(&binlogExecutor{
 			txn:     txn.KVTxn,
 			binInfo: val.(*binloginfo.BinlogInfo), // val cannot be other type.
 		})
-	case tikvstore.SchemaChecker:
+	case kv.SchemaChecker:
 		txn.SetSchemaLeaseChecker(val.(tikv.SchemaLeaseChecker))
-	case tikvstore.IsolationLevel:
+	case kv.IsolationLevel:
 		level := getTiKVIsolationLevel(val.(kv.IsoLevel))
 		txn.KVTxn.GetSnapshot().SetIsolationLevel(level)
-	case tikvstore.Pessimistic:
+	case kv.Priority:
+		txn.KVTxn.SetPriority(getTiKVPriority(val.(int)))
+	case kv.NotFillCache:
+		txn.KVTxn.GetSnapshot().SetNotFillCache(val.(bool))
+	case kv.SyncLog:
+		txn.EnableForceSyncLog()
+	case kv.Pessimistic:
 		txn.SetPessimistic(val.(bool))
+	case kv.SnapshotTS:
+		txn.KVTxn.GetSnapshot().SetSnapshotTS(val.(uint64))
+	case kv.ReplicaRead:
+		t := options.GetTiKVReplicaReadType(val.(kv.ReplicaReadType))
+		txn.KVTxn.GetSnapshot().SetReplicaRead(t)
+	case kv.TaskID:
+		txn.KVTxn.GetSnapshot().SetTaskID(val.(uint64))
+	case kv.InfoSchema:
+		txn.SetSchemaVer(val.(tikv.SchemaVer))
+	case kv.CollectRuntimeStats:
+		txn.KVTxn.GetSnapshot().SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
+	case kv.SchemaAmender:
+		txn.SetSchemaAmender(val.(tikv.SchemaAmender))
+	case kv.SampleStep:
+		txn.KVTxn.GetSnapshot().SetSampleStep(val.(uint32))
+	case kv.CommitHook:
+		txn.SetCommitCallback(val.(func(string, error)))
+	case kv.EnableAsyncCommit:
+		txn.SetEnableAsyncCommit(val.(bool))
+	case kv.Enable1PC:
+		txn.SetEnable1PC(val.(bool))
+	case kv.GuaranteeLinearizability:
+		txn.SetCausalConsistency(!val.(bool))
+	case kv.TxnScope:
+		txn.SetScope(val.(string))
+	case kv.IsStalenessReadOnly:
+		txn.KVTxn.GetSnapshot().SetIsStatenessReadOnly(val.(bool))
+	case kv.MatchStoreLabels:
+		txn.KVTxn.GetSnapshot().SetMatchStoreLabels(val.([]*metapb.StoreLabel))
+	}
+}
+
+func (txn *tikvTxn) GetOption(opt int) interface{} {
+	switch opt {
+	case kv.GuaranteeLinearizability:
+		return !txn.KVTxn.IsCasualConsistency()
+	case kv.TxnScope:
+		return txn.KVTxn.GetScope()
 	default:
-		txn.KVTxn.SetOption(opt, val)
+		return nil
+	}
+}
+
+func (txn *tikvTxn) DelOption(opt int) {
+	switch opt {
+	case kv.CollectRuntimeStats:
+		txn.KVTxn.GetSnapshot().SetRuntimeStats(nil)
 	}
 }
 

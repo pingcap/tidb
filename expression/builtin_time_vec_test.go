@@ -519,6 +519,13 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			geners:        []dataGenerator{newRangeInt64Gener(0, math.MaxInt64)},
 		},
 	},
+	// Todo: how to inject the safeTS for better testing.
+	ast.TiDBBoundedStaleness: {
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime},
+		},
+	},
 	ast.LastDay: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},

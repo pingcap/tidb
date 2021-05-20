@@ -17,9 +17,11 @@ import (
 	"context"
 	"unsafe"
 
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
+	derr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/store/driver/options"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 )
 
 type tikvSnapshot struct {
@@ -48,7 +50,7 @@ func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	scanner, err := s.KVSnapshot.Iter(k, upperBound)
 	if err != nil {
-		return nil, toTiDBErr(err)
+		return nil, derr.ToTiDBErr(err)
 	}
 	return &tikvScanner{scanner.(*tikv.Scanner)}, err
 }
@@ -57,18 +59,42 @@ func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
 	scanner, err := s.KVSnapshot.IterReverse(k)
 	if err != nil {
-		return nil, toTiDBErr(err)
+		return nil, derr.ToTiDBErr(err)
 	}
 	return &tikvScanner{scanner.(*tikv.Scanner)}, err
 }
 
 func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 	switch opt {
-	case tikvstore.IsolationLevel:
+	case kv.IsolationLevel:
 		level := getTiKVIsolationLevel(val.(kv.IsoLevel))
 		s.KVSnapshot.SetIsolationLevel(level)
-	default:
-		s.KVSnapshot.SetOption(opt, val)
+	case kv.Priority:
+		s.KVSnapshot.SetPriority(getTiKVPriority(val.(int)))
+	case kv.NotFillCache:
+		s.KVSnapshot.SetNotFillCache(val.(bool))
+	case kv.SnapshotTS:
+		s.KVSnapshot.SetSnapshotTS(val.(uint64))
+	case kv.ReplicaRead:
+		t := options.GetTiKVReplicaReadType(val.(kv.ReplicaReadType))
+		s.KVSnapshot.SetReplicaRead(t)
+	case kv.SampleStep:
+		s.KVSnapshot.SetSampleStep(val.(uint32))
+	case kv.TaskID:
+		s.KVSnapshot.SetTaskID(val.(uint64))
+	case kv.CollectRuntimeStats:
+		s.KVSnapshot.SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
+	case kv.IsStalenessReadOnly:
+		s.KVSnapshot.SetIsStatenessReadOnly(val.(bool))
+	case kv.MatchStoreLabels:
+		s.KVSnapshot.SetMatchStoreLabels(val.([]*metapb.StoreLabel))
+	}
+}
+
+func (s *tikvSnapshot) DelOption(opt int) {
+	switch opt {
+	case kv.CollectRuntimeStats:
+		s.KVSnapshot.SetRuntimeStats(nil)
 	}
 }
 
@@ -85,5 +111,16 @@ func getTiKVIsolationLevel(level kv.IsoLevel) tikv.IsoLevel {
 		return tikv.RC
 	default:
 		return tikv.SI
+	}
+}
+
+func getTiKVPriority(pri int) tikv.Priority {
+	switch pri {
+	case kv.PriorityHigh:
+		return tikv.PriorityHigh
+	case kv.PriorityLow:
+		return tikv.PriorityLow
+	default:
+		return tikv.PriorityNormal
 	}
 }

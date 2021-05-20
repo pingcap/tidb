@@ -61,6 +61,8 @@ var (
 	TiKVPanicCounter                       *prometheus.CounterVec
 	TiKVForwardRequestCounter              *prometheus.CounterVec
 	TiKVTSFutureWaitDuration               prometheus.Histogram
+	TiKVSafeTSUpdateCounter                *prometheus.CounterVec
+	TiKVSafeTSUpdateStats                  *prometheus.GaugeVec
 )
 
 // Label constants.
@@ -434,6 +436,22 @@ func initMetrics(namespace, subsystem string) {
 			Buckets:   prometheus.ExponentialBuckets(0.000005, 2, 30), // 5us ~ 2560s
 		})
 
+	TiKVSafeTSUpdateCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "safets_update_counter",
+			Help:      "Counter of tikv safe_ts being updated.",
+		}, []string{LblResult, LblStore})
+
+	TiKVSafeTSUpdateStats = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "safets_update_stats",
+			Help:      "stat of tikv updating safe_ts stats",
+		}, []string{LblStore})
+
 	initShortcuts()
 }
 
@@ -490,6 +508,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVPanicCounter)
 	prometheus.MustRegister(TiKVForwardRequestCounter)
 	prometheus.MustRegister(TiKVTSFutureWaitDuration)
+	prometheus.MustRegister(TiKVSafeTSUpdateCounter)
+	prometheus.MustRegister(TiKVSafeTSUpdateStats)
 }
 
 // readCounter reads the value of a prometheus.Counter.

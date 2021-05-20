@@ -43,7 +43,6 @@ func checkApplyPlan(c *C, tk *testkit.TestKit, sql string, parallel int) {
 		}
 	}
 	c.Assert(containApply, IsTrue)
-	return
 }
 
 func (s *testSuite) TestParallelApply(c *C) {
