@@ -1889,8 +1889,8 @@ func (d *ddl) CreateTableWithInfo(
 		actionType = model.ActionCreateTable
 	}
 
-	createTableQuery := ctx.Value(sessionctx.QueryString).(string)
-	if ctx.GetSessionVars().StmtCtx.UseShowCreateInDDLJob {
+	createTableQuery, _ := ctx.Value(sessionctx.QueryString).(string)
+	if createTableQuery != "" && ctx.GetSessionVars().StmtCtx.UseShowCreateInDDLJob {
 		var buf bytes.Buffer
 		err = CtorShowCreateTableHook(ctx, tbInfo, nil, &buf)
 		if err != nil {
