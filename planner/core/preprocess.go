@@ -53,6 +53,7 @@ func InTxnRetry(p *preprocessor) {
 	p.flag |= inTxnRetry
 }
 
+// WithPreprocessorReturn returns a PreprocessOpt to initialize the PreprocesorReturn.
 func WithPreprocessorReturn(ret *PreprocesorReturn) PreprocessOpt {
 	return func(p *preprocessor) {
 		p.PreprocesorReturn = ret
@@ -121,6 +122,7 @@ const (
 	inSequenceFunction
 )
 
+// PreprocesorReturn is used to retain information obtained in the preprocessor.
 type PreprocesorReturn struct {
 	TSO        uint64
 	InfoSchema infoschema.InfoSchema
@@ -1352,7 +1354,10 @@ func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
 			return
 		}
 
-		ts, err := tsRes.ConvertTo(p.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeTimestamp))
+		toTypeTimestamp := types.NewFieldType(mysql.TypeTimestamp)
+		// We need at least the millionsecond here, so set fsp to 3.
+		toTypeTimestamp.Decimal = 3
+		ts, err := tsRes.ConvertTo(p.ctx.GetSessionVars().StmtCtx, toTypeTimestamp)
 		if err != nil {
 			p.err = err
 			return
