@@ -714,6 +714,10 @@ func BenchmarkWindowFunctions(b *testing.B) {
 			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 				benchmarkWindowExecWithCase(b, cas)
 			})
+			cas.pipelined = true
+			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+				benchmarkWindowExecWithCase(b, cas)
+			})
 		}
 	}
 }
@@ -744,6 +748,10 @@ func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
 					if i < len(frames) {
 						cas.frame = frames[i]
 					}
+					b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+						benchmarkWindowExecWithCase(b, cas)
+					})
+					cas.pipelined = true
 					b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 						benchmarkWindowExecWithCase(b, cas)
 					})
@@ -802,6 +810,10 @@ func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.F
 		cas.windowFunc = windowFunc.aggFunc
 		cas.frame = frame
 		cas.columns[0].RetType.Tp = windowFunc.aggColTypes
+		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+			benchmarkWindowExecWithCase(b, cas)
+		})
+		cas.pipelined = true
 		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 			benchmarkWindowExecWithCase(b, cas)
 		})

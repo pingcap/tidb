@@ -42,7 +42,7 @@ type PipelinedWindowExec struct {
 	done         bool
 	p            processor // TODO(zhifeng): you don't need a processor, just make it into the executor
 	rows         []chunk.Row
-	wantMore     int64
+	wantMore     bool
 	consumed     bool
 	newPartition bool
 }
@@ -72,7 +72,12 @@ func (e *PipelinedWindowExec) Next(ctx context.Context, chk *chunk.Chunk) (err e
 		// we firstly gathering enough rows and consume them, until we are able to produce.
 		// for unbounded frame, it needs consume the whole partition before being able to produce, in this case
 		// e.p.moreToProduce will be false until so.
-		if !e.done && !e.p.moreToProduce(e.ctx) {
+		var more bool
+		more, err = e.p.moreToProduce(e.ctx)
+		if err != nil {
+			return
+		}
+		if !e.done && !more {
 			if e.consumed {
 				err = e.getRowsInPartition(ctx)
 				if err != nil {
@@ -81,9 +86,13 @@ func (e *PipelinedWindowExec) Next(ctx context.Context, chk *chunk.Chunk) (err e
 			}
 			if e.newPartition {
 				e.p.finish()
-				e.wantMore = 0
+				e.wantMore = false
 				// if we continued, the rows will not be consumed, so next time we should consume it instead of calling e.getRowsInPartition
-				if e.p.moreToProduce(e.ctx) {
+				more, err = e.p.moreToProduce(e.ctx)
+				if err != nil {
+					return
+				}
+				if more {
 					continue
 				}
 				e.newPartition = false
@@ -93,7 +102,7 @@ func (e *PipelinedWindowExec) Next(ctx context.Context, chk *chunk.Chunk) (err e
 					break
 				}
 			}
-			e.wantMore, err = e.p.consume(e.ctx, e.rows)
+			e.wantMore, err = e.p.consume(e.rows)
 			e.consumed = true // TODO(zhifeng): move this into consume() after absorbing p into e
 			if err != nil {
 				return err
@@ -101,7 +110,7 @@ func (e *PipelinedWindowExec) Next(ctx context.Context, chk *chunk.Chunk) (err e
 		}
 
 		// e.p is ready to produce data, we use wantMore here to avoid meaningless produce when the whole frame is required
-		if e.wantMore == 0 && len(e.resultChunks) > 0 && e.remainingRowsInChunk[0] != 0 {
+		if !e.wantMore && len(e.resultChunks) > 0 && e.remainingRowsInChunk[0] != 0 {
 			produced, err := e.p.produce(e.ctx, e.resultChunks[0], e.remainingRowsInChunk[0])
 			if err != nil {
 				return err
@@ -237,7 +246,7 @@ func (p *processor) init() {
 // slide consumes more rows, and it returns the number of more rows needed in order to proceed, more = -1 means it can only
 // process when the whole partition is consumed, more = 0 means it is ready now, more = n (n > 0), means it need at least n
 // more rows to process.
-func (p *processor) consume(ctx sessionctx.Context, rows []chunk.Row) (more int64, err error) {
+func (p *processor) consume(rows []chunk.Row) (wantMore bool, err error) {
 	num := uint64(len(rows))
 	p.rowCnt += num
 	p.rows = append(p.rows, rows...)
@@ -245,11 +254,11 @@ func (p *processor) consume(ctx sessionctx.Context, rows []chunk.Row) (more int6
 	if p.end.UnBounded {
 		if !p.whole {
 			// we can't proceed until the whole partition is consumed
-			return -1, nil
+			return true, nil
 		}
 	}
 	// let's just try produce
-	return 0, nil
+	return false, nil
 }
 
 // finish is called upon a whole partition is consumed
@@ -298,10 +307,7 @@ func (p *processor) getStart(ctx sessionctx.Context) (uint64, error) {
 
 func (p *processor) getEnd(ctx sessionctx.Context) (uint64, error) {
 	if p.end.UnBounded {
-		if p.whole {
-			return p.rowCnt, nil
-		}
-		return p.rowCnt + 1, nil
+		return p.rowCnt, nil
 	}
 	if p.isRangeFrame {
 		var end uint64
@@ -344,8 +350,16 @@ func (p *processor) produce(ctx sessionctx.Context, chk *chunk.Chunk, remained i
 	var (
 		start uint64
 		end   uint64
+		more  bool
 	)
-	for remained > 0 && p.moreToProduce(ctx) {
+	for remained > 0 {
+		more, err = p.moreToProduce(ctx)
+		if err != nil {
+			return
+		}
+		if !more {
+			break
+		}
 		start, err = p.getStart(ctx)
 		if err != nil {
 			return
@@ -430,19 +444,22 @@ func (p *processor) produce(ctx sessionctx.Context, chk *chunk.Chunk, remained i
 	return
 }
 
-func (p *processor) moreToProduce(ctx sessionctx.Context) bool {
+func (p *processor) moreToProduce(ctx sessionctx.Context) (more bool, err error) {
 	if p.curRowIdx >= p.rowCnt {
-		return false
+		return
 	}
 	if p.whole {
-		return true
+		return true, nil
 	}
 	start, err := p.getStart(ctx)
-	_ = err
+	if err != nil {
+		return
+	}
 	end, err := p.getEnd(ctx)
-	_ = err
-	// TODO(Zhifeng): handle the error here
-	return end < p.rowCnt && start < p.rowCnt
+	if err != nil {
+		return
+	}
+	return end < p.rowCnt && start < p.rowCnt, nil
 }
 
 // reset resets the processor

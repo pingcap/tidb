@@ -3740,35 +3740,36 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 }
 
 func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) Executor {
-	if b.ctx.GetSessionVars().EnablePipelinedWindowExec {
-		childExec := b.build(v.Children()[0])
-		if b.err != nil {
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		return nil
+	}
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec)
+	groupByItems := make([]expression.Expression, 0, len(v.PartitionBy))
+	for _, item := range v.PartitionBy {
+		groupByItems = append(groupByItems, item.Col)
+	}
+	orderByCols := make([]*expression.Column, 0, len(v.OrderBy))
+	for _, item := range v.OrderBy {
+		orderByCols = append(orderByCols, item.Col)
+	}
+	windowFuncs := make([]aggfuncs.AggFunc, 0, len(v.WindowFuncDescs))
+	partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
+	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
+	for _, desc := range v.WindowFuncDescs {
+		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, desc.Name, desc.Args, false)
+		if err != nil {
+			b.err = err
 			return nil
 		}
-		base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec)
-		groupByItems := make([]expression.Expression, 0, len(v.PartitionBy))
-		for _, item := range v.PartitionBy {
-			groupByItems = append(groupByItems, item.Col)
-		}
-		orderByCols := make([]*expression.Column, 0, len(v.OrderBy))
-		for _, item := range v.OrderBy {
-			orderByCols = append(orderByCols, item.Col)
-		}
-		windowFuncs := make([]aggfuncs.AggFunc, 0, len(v.WindowFuncDescs))
-		partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
-		resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
-		for _, desc := range v.WindowFuncDescs {
-			aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, desc.Name, desc.Args, false)
-			if err != nil {
-				b.err = err
-				return nil
-			}
-			agg := aggfuncs.BuildWindowFunctions(b.ctx, aggDesc, resultColIdx, orderByCols)
-			windowFuncs = append(windowFuncs, agg)
-			partialResult, _ := agg.AllocPartialResult()
-			partialResults = append(partialResults, partialResult)
-			resultColIdx++
-		}
+		agg := aggfuncs.BuildWindowFunctions(b.ctx, aggDesc, resultColIdx, orderByCols)
+		windowFuncs = append(windowFuncs, agg)
+		partialResult, _ := agg.AllocPartialResult()
+		partialResults = append(partialResults, partialResult)
+		resultColIdx++
+	}
+
+	if b.ctx.GetSessionVars().EnablePipelinedWindowExec {
 		p := processor{
 			windowFuncs:    windowFuncs,
 			partialResults: partialResults,
@@ -3802,66 +3803,39 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) Executor {
 			numWindowFuncs: len(v.WindowFuncDescs),
 			p:              p,
 		}
-	}
-	childExec := b.build(v.Children()[0])
-	if b.err != nil {
-		return nil
-	}
-	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec)
-	groupByItems := make([]expression.Expression, 0, len(v.PartitionBy))
-	for _, item := range v.PartitionBy {
-		groupByItems = append(groupByItems, item.Col)
-	}
-	orderByCols := make([]*expression.Column, 0, len(v.OrderBy))
-	for _, item := range v.OrderBy {
-		orderByCols = append(orderByCols, item.Col)
-	}
-	windowFuncs := make([]aggfuncs.AggFunc, 0, len(v.WindowFuncDescs))
-	partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
-	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
-	for _, desc := range v.WindowFuncDescs {
-		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, desc.Name, desc.Args, false)
-		if err != nil {
-			b.err = err
-			return nil
-		}
-		agg := aggfuncs.BuildWindowFunctions(b.ctx, aggDesc, resultColIdx, orderByCols)
-		windowFuncs = append(windowFuncs, agg)
-		partialResult, _ := agg.AllocPartialResult()
-		partialResults = append(partialResults, partialResult)
-		resultColIdx++
-	}
-	var processor windowProcessor
-	if v.Frame == nil {
-		processor = &aggWindowProcessor{
-			windowFuncs:    windowFuncs,
-			partialResults: partialResults,
-		}
-	} else if v.Frame.Type == ast.Rows {
-		processor = &rowFrameWindowProcessor{
-			windowFuncs:    windowFuncs,
-			partialResults: partialResults,
-			start:          v.Frame.Start,
-			end:            v.Frame.End,
-		}
 	} else {
-		cmpResult := int64(-1)
-		if len(v.OrderBy) > 0 && v.OrderBy[0].Desc {
-			cmpResult = 1
+		var processor windowProcessor
+		if v.Frame == nil {
+			processor = &aggWindowProcessor{
+				windowFuncs:    windowFuncs,
+				partialResults: partialResults,
+			}
+		} else if v.Frame.Type == ast.Rows {
+			processor = &rowFrameWindowProcessor{
+				windowFuncs:    windowFuncs,
+				partialResults: partialResults,
+				start:          v.Frame.Start,
+				end:            v.Frame.End,
+			}
+		} else {
+			cmpResult := int64(-1)
+			if len(v.OrderBy) > 0 && v.OrderBy[0].Desc {
+				cmpResult = 1
+			}
+			processor = &rangeFrameWindowProcessor{
+				windowFuncs:       windowFuncs,
+				partialResults:    partialResults,
+				start:             v.Frame.Start,
+				end:               v.Frame.End,
+				orderByCols:       orderByCols,
+				expectedCmpResult: cmpResult,
+			}
 		}
-		processor = &rangeFrameWindowProcessor{
-			windowFuncs:       windowFuncs,
-			partialResults:    partialResults,
-			start:             v.Frame.Start,
-			end:               v.Frame.End,
-			orderByCols:       orderByCols,
-			expectedCmpResult: cmpResult,
+		return &WindowExec{baseExecutor: base,
+			processor:      processor,
+			groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
+			numWindowFuncs: len(v.WindowFuncDescs),
 		}
-	}
-	return &WindowExec{baseExecutor: base,
-		processor:      processor,
-		groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
-		numWindowFuncs: len(v.WindowFuncDescs),
 	}
 }
 
