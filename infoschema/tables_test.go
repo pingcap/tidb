@@ -23,6 +23,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
@@ -1514,7 +1515,7 @@ func (s *testTableSuite) TestInfoschemaClientErrors(c *C) {
 func (s *testTableSuite) TestTrx(c *C) {
 	tk := s.newTestKitWithRoot(c)
 	_, digest := parser.NormalizeDigest("select * from trx for update;")
-	sm := &mockSessionManager{nil, make([]*txninfo.TxnInfo, 1)}
+	sm := &mockSessionManager{nil, make([]*txninfo.TxnInfo, 2)}
 	sm.txnInfo[0] = &txninfo.TxnInfo{
 		StartTS:          424768545227014155,
 		CurrentSQLDigest: digest,
@@ -1526,10 +1527,21 @@ func (s *testTableSuite) TestTrx(c *C) {
 		Username:         "root",
 		CurrentDB:        "test",
 	}
+	blockTime2 := time.Date(2021, 05, 20, 13, 18, 30, 123456000, time.UTC)
+	sm.txnInfo[1] = &txninfo.TxnInfo{
+		StartTS:          425070846483628033,
+		CurrentSQLDigest: "",
+		AllSQLDigests:    nil,
+		State:            txninfo.TxnLockWaiting,
+		BlockStartTime:   unsafe.Pointer(&blockTime2),
+		ConnectionID:     10,
+		Username:         "root",
+		CurrentDB:        "test",
+	}
 	tk.Se.SetSessionManager(sm)
-	tk.MustQuery("select * from information_schema.TIDB_TRX;").Check(
-		testkit.Rows("424768545227014155 2021-05-07 12:56:48 " + digest + " Normal <nil> 1 19 2 root test"),
-	)
+	tk.MustQuery("select * from information_schema.TIDB_TRX;").Check(testkit.Rows(
+		"424768545227014155 2021-05-07 12:56:48.001000 " + digest + " Normal <nil> 1 19 2 root test",
+		"425070846483628033 2021-05-20 13:16:35.778000 <nil> LockWaiting 2021-05-20 13:18:30.123456 0 0 2 root test"))
 }
 
 func (s *testTableSuite) TestInfoschemaDeadlockPrivilege(c *C) {

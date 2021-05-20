@@ -450,7 +450,6 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 		return nil
 	}
 	processInfo := s.ShowProcess()
-	txnInfo.CurrentSQLDigest = processInfo.Digest
 	txnInfo.ConnectionID = processInfo.ID
 	txnInfo.Username = processInfo.User
 	txnInfo.CurrentDB = processInfo.DB
@@ -1499,6 +1498,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Uncorrelated subqueries will execute once when building plan, so we reset process info before building plan.
 	cmd32 := atomic.LoadUint32(&s.GetSessionVars().CommandValue)
 	s.SetProcessInfo(stmtNode.Text(), time.Now(), byte(cmd32), 0)
+	_, digest := s.sessionVars.StmtCtx.SQLDigest()
+	s.txn.onStmtStart(digest)
+	defer s.txn.onStmtEnd()
 
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}

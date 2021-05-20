@@ -50,10 +50,11 @@ type TxnInfo struct {
 	StartTS uint64
 	// digest of SQL currently running
 	CurrentSQLDigest string
-	// current executing State
+	AllSQLDigests    []string
 
 	// The following fields are mutable and needs atomic read for goroutines other than the transaction itself.
 
+	// current executing State
 	State TxnRunningState
 	// last trying to block start time. Invalid if State is not TxnLockWaiting. It's an unsafe pointer to time.Time or nil.
 	BlockStartTime unsafe.Pointer
@@ -72,26 +73,12 @@ type TxnInfo struct {
 	CurrentDB string
 }
 
-// UnsafeClone clones the TxnInfo while assuming there are no concurrent write on it.
-func (info *TxnInfo) UnsafeClone() *TxnInfo {
-	return &TxnInfo{
-		StartTS:          info.StartTS,
-		CurrentSQLDigest: info.CurrentSQLDigest,
-		State:            info.State,
-		BlockStartTime:   info.BlockStartTime,
-		EntriesCount:     info.EntriesCount,
-		EntriesSize:      info.EntriesSize,
-		ConnectionID:     info.ConnectionID,
-		Username:         info.Username,
-		CurrentDB:        info.CurrentDB,
-	}
-}
-
 // Clone clones the TxnInfo. It's safe to call concurrently with the transaction.
 func (info *TxnInfo) Clone() *TxnInfo {
 	return &TxnInfo{
 		StartTS:          info.StartTS,
 		CurrentSQLDigest: info.CurrentSQLDigest,
+		AllSQLDigests:    info.AllSQLDigests,
 		State:            atomic.LoadInt32(&info.State),
 		BlockStartTime:   atomic.LoadPointer(&info.BlockStartTime),
 		EntriesCount:     atomic.LoadUint64(&info.EntriesCount),
@@ -105,21 +92,30 @@ func (info *TxnInfo) Clone() *TxnInfo {
 // ToDatum Converts the `TxnInfo` to `Datum` to show in the `TIDB_TRX` table
 func (info *TxnInfo) ToDatum() []types.Datum {
 	humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
+
+	var currentDigest interface{}
+	if len(info.CurrentSQLDigest) != 0 {
+		currentDigest = info.CurrentSQLDigest
+	}
+
 	var blockStartTime interface{}
 	if t := (*time.Time)(atomic.LoadPointer(&info.BlockStartTime)); t == nil {
 		blockStartTime = nil
 	} else {
 		blockStartTime = types.NewTime(types.FromGoTime(*t), mysql.TypeTimestamp, types.MaxFsp)
 	}
+
 	e, err := types.ParseEnumValue(TxnRunningStateStrs, uint64(info.State+1))
 	if err != nil {
 		panic("this should never happen")
 	}
+
 	state := types.NewMysqlEnumDatum(e)
+
 	datums := types.MakeDatums(
 		info.StartTS,
 		types.NewTime(types.FromGoTime(humanReadableStartTime), mysql.TypeTimestamp, types.MaxFsp),
-		info.CurrentSQLDigest,
+		currentDigest,
 	)
 	datums = append(datums, state)
 	datums = append(datums, types.MakeDatums(

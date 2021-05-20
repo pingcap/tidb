@@ -134,6 +134,7 @@ func (txn *LazyTxn) cleanupStmtBuf() {
 }
 
 func (txn *LazyTxn) storeTxnInfo(info *txninfo.TxnInfo) {
+	txn.txnInfo = info
 	atomic.StorePointer(&txn.atomicTxnInfo, unsafe.Pointer(info))
 }
 
@@ -144,7 +145,6 @@ func (txn *LazyTxn) recreateTxnInfo(startTS uint64, state txninfo.TxnRunningStat
 		EntriesCount: entriesCount,
 		EntriesSize:  entriesSize,
 	}
-	txn.txnInfo = info
 	txn.storeTxnInfo(info)
 }
 
@@ -245,6 +245,28 @@ func (txn *LazyTxn) changeToInvalid() {
 	txn.txnFuture = nil
 
 	txn.recreateTxnInfo(0, txninfo.TxnRunningNormal, 0, 0)
+}
+
+func (txn *LazyTxn) onStmtStart(currentSQLDigest string) {
+	if len(currentSQLDigest) == 0 {
+		return
+	}
+
+	info := txn.txnInfo.Clone()
+	info.CurrentSQLDigest = currentSQLDigest
+	// Keeps at most 50 history sqls to avoid consuming too much memory.
+	const maxTransactionStmtHistory int = 50
+	if len(info.AllSQLDigests) < maxTransactionStmtHistory {
+		info.AllSQLDigests = append(info.AllSQLDigests, currentSQLDigest)
+	}
+
+	txn.storeTxnInfo(info)
+}
+
+func (txn *LazyTxn) onStmtEnd() {
+	info := txn.txnInfo.Clone()
+	info.CurrentSQLDigest = ""
+	txn.storeTxnInfo(info)
 }
 
 var hasMockAutoIncIDRetry = int64(0)
@@ -390,8 +412,11 @@ func keyNeedToLock(k, v []byte, flags tikvstore.KeyFlags) bool {
 // Info dump the TxnState to Datum for displaying in `TIDB_TRX`
 // This function is supposed to be thread safe
 func (txn *LazyTxn) Info() *txninfo.TxnInfo {
-	info := txn.loadTxnInfo()
-	return info.Clone()
+	info := txn.loadTxnInfo().Clone()
+	if info.StartTS == 0 {
+		return nil
+	}
+	return info
 }
 
 // UpdateEntriesCountAndSize updates the EntriesCount and EntriesSize
