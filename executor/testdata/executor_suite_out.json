@@ -1391,5 +1391,1172 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestRangePartitionBoundariesBetweenM",
+    "Cases": [
+      {
+        "SQL": "INSERT INTO t VALUES (999998, '999998 Filler ...'), (999999, '999999 Filler ...'), (1000000, '1000000 Filler ...'), (1000001, '1000001 Filler ...'), (1000002, '1000002 Filler ...')",
+        "Plan": null,
+        "Res": null
+      },
+      {
+        "SQL": "INSERT INTO t VALUES (1999998, '1999998 Filler ...'), (1999999, '1999999 Filler ...'), (2000000, '2000000 Filler ...'), (2000001, '2000001 Filler ...'), (2000002, '2000002 Filler ...')",
+        "Plan": null,
+        "Res": null
+      },
+      {
+        "SQL": "INSERT INTO t VALUES (2999998, '2999998 Filler ...'), (2999999, '2999999 Filler ...')",
+        "Plan": null,
+        "Res": null
+      },
+      {
+        "SQL": "INSERT INTO t VALUES (-2147483648, 'MIN_INT filler...'), (0, '0 Filler...')",
+        "Plan": null,
+        "Res": null
+      },
+      {
+        "SQL": "ANALYZE TABLE t",
+        "Plan": null,
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2147483649",
+        "Plan": [
+          "p0"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2147483648",
+        "Plan": [
+          "p0"
+        ],
+        "Res": [
+          "-2147483648 MIN_INT filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2147483647",
+        "Plan": [
+          "p0"
+        ],
+        "Res": [
+          "-2147483648 MIN_INT filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2147483646",
+        "Plan": [
+          "p0"
+        ],
+        "Res": [
+          "-2147483648 MIN_INT filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2147483638",
+        "Plan": [
+          "p0"
+        ],
+        "Res": [
+          "-2147483648 MIN_INT filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2146483650",
+        "Plan": [
+          "p0"
+        ],
+        "Res": [
+          "-2147483648 MIN_INT filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2146483649",
+        "Plan": [
+          "p0"
+        ],
+        "Res": [
+          "-2147483648 MIN_INT filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2146483648",
+        "Plan": [
+          "p0"
+        ],
+        "Res": [
+          "-2147483648 MIN_INT filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2146483647",
+        "Plan": [
+          "p0"
+        ],
+        "Res": [
+          "-2147483648 MIN_INT filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN -2147483648 AND -2146483646",
+        "Plan": [
+          "p0"
+        ],
+        "Res": [
+          "-2147483648 MIN_INT filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 0 AND -1",
+        "Plan": [
+          "p0"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 0 AND 0",
+        "Plan": [
+          "p0"
+        ],
+        "Res": [
+          "0 0 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 0 AND 1",
+        "Plan": [
+          "p0"
+        ],
+        "Res": [
+          "0 0 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 0 AND 2",
+        "Plan": [
+          "p0"
+        ],
+        "Res": [
+          "0 0 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 0 AND 10",
+        "Plan": [
+          "p0"
+        ],
+        "Res": [
+          "0 0 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 0 AND 999998",
+        "Plan": [
+          "p0"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "999998 999998 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 0 AND 999999",
+        "Plan": [
+          "p0"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "999998 999998 Filler ...",
+          "999999 999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 0 AND 1000000",
+        "Plan": [
+          "p0 p1"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "1000000 1000000 Filler ...",
+          "999998 999998 Filler ...",
+          "999999 999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 0 AND 1000001",
+        "Plan": [
+          "p0 p1"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "999998 999998 Filler ...",
+          "999999 999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 0 AND 1000002",
+        "Plan": [
+          "p0 p1"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "999998 999998 Filler ...",
+          "999999 999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 999998 AND 999997",
+        "Plan": [
+          "p0"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 999998 AND 999998",
+        "Plan": [
+          "p0"
+        ],
+        "Res": [
+          "999998 999998 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 999998 AND 999999",
+        "Plan": [
+          "p0"
+        ],
+        "Res": [
+          "999998 999998 Filler ...",
+          "999999 999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 999998 AND 1000000",
+        "Plan": [
+          "p0 p1"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "999998 999998 Filler ...",
+          "999999 999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 999998 AND 1000008",
+        "Plan": [
+          "p0 p1"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "999998 999998 Filler ...",
+          "999999 999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 999998 AND 1999996",
+        "Plan": [
+          "p0 p1"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "999998 999998 Filler ...",
+          "999999 999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 999998 AND 1999997",
+        "Plan": [
+          "p0 p1"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "999998 999998 Filler ...",
+          "999999 999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 999998 AND 1999998",
+        "Plan": [
+          "p0 p1"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ...",
+          "999998 999998 Filler ...",
+          "999999 999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 999998 AND 1999999",
+        "Plan": [
+          "p0 p1"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ...",
+          "1999999 1999999 Filler ...",
+          "999998 999998 Filler ...",
+          "999999 999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 999998 AND 2000000",
+        "Plan": [
+          "all"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ...",
+          "1999999 1999999 Filler ...",
+          "2000000 2000000 Filler ...",
+          "999998 999998 Filler ...",
+          "999999 999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 999999 AND 999998",
+        "Plan": [
+          "p0"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 999999 AND 999999",
+        "Plan": [
+          "p0"
+        ],
+        "Res": [
+          "999999 999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 999999 AND 1000000",
+        "Plan": [
+          "p0 p1"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "999999 999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 999999 AND 1000001",
+        "Plan": [
+          "p0 p1"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "999999 999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 999999 AND 1000009",
+        "Plan": [
+          "p0 p1"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "999999 999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 999999 AND 1999997",
+        "Plan": [
+          "p0 p1"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "999999 999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 999999 AND 1999998",
+        "Plan": [
+          "p0 p1"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ...",
+          "999999 999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 999999 AND 1999999",
+        "Plan": [
+          "p0 p1"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ...",
+          "1999999 1999999 Filler ...",
+          "999999 999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 999999 AND 2000000",
+        "Plan": [
+          "all"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ...",
+          "1999999 1999999 Filler ...",
+          "2000000 2000000 Filler ...",
+          "999999 999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 999999 AND 2000001",
+        "Plan": [
+          "all"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ...",
+          "1999999 1999999 Filler ...",
+          "2000000 2000000 Filler ...",
+          "2000001 2000001 Filler ...",
+          "999999 999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000000 AND 999999",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000000 AND 1000000",
+        "Plan": [
+          "p1"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000000 AND 1000001",
+        "Plan": [
+          "p1"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000000 AND 1000002",
+        "Plan": [
+          "p1"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000000 AND 1000010",
+        "Plan": [
+          "p1"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000000 AND 1999998",
+        "Plan": [
+          "p1"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000000 AND 1999999",
+        "Plan": [
+          "p1"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ...",
+          "1999999 1999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000000 AND 2000000",
+        "Plan": [
+          "p1 p2"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ...",
+          "1999999 1999999 Filler ...",
+          "2000000 2000000 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000000 AND 2000001",
+        "Plan": [
+          "p1 p2"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ...",
+          "1999999 1999999 Filler ...",
+          "2000000 2000000 Filler ...",
+          "2000001 2000001 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000000 AND 2000002",
+        "Plan": [
+          "p1 p2"
+        ],
+        "Res": [
+          "1000000 1000000 Filler ...",
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ...",
+          "1999999 1999999 Filler ...",
+          "2000000 2000000 Filler ...",
+          "2000001 2000001 Filler ...",
+          "2000002 2000002 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000001 AND 1000000",
+        "Plan": [
+          "p1"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000001 AND 1000001",
+        "Plan": [
+          "p1"
+        ],
+        "Res": [
+          "1000001 1000001 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000001 AND 1000002",
+        "Plan": [
+          "p1"
+        ],
+        "Res": [
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000001 AND 1000003",
+        "Plan": [
+          "p1"
+        ],
+        "Res": [
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000001 AND 1000011",
+        "Plan": [
+          "p1"
+        ],
+        "Res": [
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000001 AND 1999999",
+        "Plan": [
+          "p1"
+        ],
+        "Res": [
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ...",
+          "1999999 1999999 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000001 AND 2000000",
+        "Plan": [
+          "p1 p2"
+        ],
+        "Res": [
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ...",
+          "1999999 1999999 Filler ...",
+          "2000000 2000000 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000001 AND 2000001",
+        "Plan": [
+          "p1 p2"
+        ],
+        "Res": [
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ...",
+          "1999999 1999999 Filler ...",
+          "2000000 2000000 Filler ...",
+          "2000001 2000001 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000001 AND 2000002",
+        "Plan": [
+          "p1 p2"
+        ],
+        "Res": [
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ...",
+          "1999999 1999999 Filler ...",
+          "2000000 2000000 Filler ...",
+          "2000001 2000001 Filler ...",
+          "2000002 2000002 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000001 AND 2000003",
+        "Plan": [
+          "p1 p2"
+        ],
+        "Res": [
+          "1000001 1000001 Filler ...",
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ...",
+          "1999999 1999999 Filler ...",
+          "2000000 2000000 Filler ...",
+          "2000001 2000001 Filler ...",
+          "2000002 2000002 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000002 AND 1000001",
+        "Plan": [
+          "p1"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000002 AND 1000002",
+        "Plan": [
+          "p1"
+        ],
+        "Res": [
+          "1000002 1000002 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000002 AND 1000003",
+        "Plan": [
+          "p1"
+        ],
+        "Res": [
+          "1000002 1000002 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000002 AND 1000004",
+        "Plan": [
+          "p1"
+        ],
+        "Res": [
+          "1000002 1000002 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000002 AND 1000012",
+        "Plan": [
+          "p1"
+        ],
+        "Res": [
+          "1000002 1000002 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000002 AND 2000000",
+        "Plan": [
+          "p1 p2"
+        ],
+        "Res": [
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ...",
+          "1999999 1999999 Filler ...",
+          "2000000 2000000 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000002 AND 2000001",
+        "Plan": [
+          "p1 p2"
+        ],
+        "Res": [
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ...",
+          "1999999 1999999 Filler ...",
+          "2000000 2000000 Filler ...",
+          "2000001 2000001 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000002 AND 2000002",
+        "Plan": [
+          "p1 p2"
+        ],
+        "Res": [
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ...",
+          "1999999 1999999 Filler ...",
+          "2000000 2000000 Filler ...",
+          "2000001 2000001 Filler ...",
+          "2000002 2000002 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000002 AND 2000003",
+        "Plan": [
+          "p1 p2"
+        ],
+        "Res": [
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ...",
+          "1999999 1999999 Filler ...",
+          "2000000 2000000 Filler ...",
+          "2000001 2000001 Filler ...",
+          "2000002 2000002 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1000002 AND 2000004",
+        "Plan": [
+          "p1 p2"
+        ],
+        "Res": [
+          "1000002 1000002 Filler ...",
+          "1999998 1999998 Filler ...",
+          "1999999 1999999 Filler ...",
+          "2000000 2000000 Filler ...",
+          "2000001 2000001 Filler ...",
+          "2000002 2000002 Filler ..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 3000000 AND 2999999",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 3000000 AND 3000000",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 3000000 AND 3000001",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 3000000 AND 3000002",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 3000000 AND 3000010",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 3000000 AND 3999998",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 3000000 AND 3999999",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 3000000 AND 4000000",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 3000000 AND 4000001",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 3000000 AND 4000002",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000000",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000001",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000002",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000003",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 3000001 AND 3000011",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 3000001 AND 3999999",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 3000001 AND 4000000",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 3000001 AND 4000001",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 3000001 AND 4000002",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 3000001 AND 4000003",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      }
+    ]
+  },
+  {
+    "Name": "TestRangePartitionBoundariesBetweenS",
+    "Cases": [
+      {
+        "SQL": "INSERT INTO t VALUES (0, '0 Filler...')",
+        "Plan": null,
+        "Res": null
+      },
+      {
+        "SQL": "INSERT INTO t VALUES (1, '1 Filler...')",
+        "Plan": null,
+        "Res": null
+      },
+      {
+        "SQL": "INSERT INTO t VALUES (2, '2 Filler...')",
+        "Plan": null,
+        "Res": null
+      },
+      {
+        "SQL": "INSERT INTO t VALUES (3, '3 Filler...')",
+        "Plan": null,
+        "Res": null
+      },
+      {
+        "SQL": "INSERT INTO t VALUES (4, '4 Filler...')",
+        "Plan": null,
+        "Res": null
+      },
+      {
+        "SQL": "INSERT INTO t VALUES (5, '5 Filler...')",
+        "Plan": null,
+        "Res": null
+      },
+      {
+        "SQL": "INSERT INTO t VALUES (6, '6 Filler...')",
+        "Plan": null,
+        "Res": null
+      },
+      {
+        "SQL": "ANALYZE TABLE t",
+        "Plan": null,
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 2 AND -1",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN -1 AND 4",
+        "Plan": [
+          "p0 p1 p2 p3 p4"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "1 1 Filler...",
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 2 AND 0",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 0 AND 4",
+        "Plan": [
+          "p0 p1 p2 p3 p4"
+        ],
+        "Res": [
+          "0 0 Filler...",
+          "1 1 Filler...",
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 2 AND 1",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 1 AND 4",
+        "Plan": [
+          "p1 p2 p3 p4"
+        ],
+        "Res": [
+          "1 1 Filler...",
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 2 AND 2",
+        "Plan": [
+          "p2"
+        ],
+        "Res": [
+          "2 2 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 2 AND 4",
+        "Plan": [
+          "p2 p3 p4"
+        ],
+        "Res": [
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 2 AND 3",
+        "Plan": [
+          "p2 p3"
+        ],
+        "Res": [
+          "2 2 Filler...",
+          "3 3 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 3 AND 4",
+        "Plan": [
+          "p3 p4"
+        ],
+        "Res": [
+          "3 3 Filler...",
+          "4 4 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 2 AND 4",
+        "Plan": [
+          "p2 p3 p4"
+        ],
+        "Res": [
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 4 AND 4",
+        "Plan": [
+          "p4"
+        ],
+        "Res": [
+          "4 4 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 2 AND 5",
+        "Plan": [
+          "p2 p3 p4 p5"
+        ],
+        "Res": [
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler...",
+          "5 5 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 5 AND 4",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 2 AND 6",
+        "Plan": [
+          "p2 p3 p4 p5 p6"
+        ],
+        "Res": [
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler...",
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 6 AND 4",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 2 AND 7",
+        "Plan": [
+          "p2 p3 p4 p5 p6"
+        ],
+        "Res": [
+          "2 2 Filler...",
+          "3 3 Filler...",
+          "4 4 Filler...",
+          "5 5 Filler...",
+          "6 6 Filler..."
+        ]
+      },
+      {
+        "SQL": "SELECT * FROM t WHERE a BETWEEN 7 AND 4",
+        "Plan": [
+          "dual"
+        ],
+        "Res": null
+      }
+    ]
   }
 ]

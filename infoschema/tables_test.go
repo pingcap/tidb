@@ -1531,3 +1531,24 @@ func (s *testTableSuite) TestTrx(c *C) {
 		testkit.Rows("424768545227014155 2021-05-07 12:56:48 " + digest + " Normal <nil> 1 19 2 root test"),
 	)
 }
+
+func (s *testTableSuite) TestInfoschemaDeadlockPrivilege(c *C) {
+	tk := s.newTestKitWithRoot(c)
+	tk.MustExec("create user 'testuser'@'localhost'")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "testuser",
+		Hostname: "localhost",
+	}, nil, nil), IsTrue)
+	err := tk.QueryToErr("select * from information_schema.deadlocks")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+
+	tk = s.newTestKitWithRoot(c)
+	tk.MustExec("create user 'testuser2'@'localhost'")
+	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "testuser2",
+		Hostname: "localhost",
+	}, nil, nil), IsTrue)
+	_ = tk.MustQuery("select * from information_schema.deadlocks")
+}

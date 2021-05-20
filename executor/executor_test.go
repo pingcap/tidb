@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -2726,7 +2727,7 @@ func (s *testSuiteP2) TestHistoryRead(c *C) {
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
 	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2", "4"))
-	tsoStr := strconv.FormatUint(oracle.EncodeTSO(snapshotTime.UnixNano()/int64(time.Millisecond)), 10)
+	tsoStr := strconv.FormatUint(oracle.GoTimeToTS(snapshotTime), 10)
 
 	tk.MustExec("set @@tidb_snapshot = '" + tsoStr + "'")
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2", "4"))
@@ -8151,7 +8152,71 @@ func (s *testSerialSuite) TestIssue24210(c *C) {
 	c.Assert(err.Error(), Equals, "mock SelectionExec.baseExecutor.Open returned error")
 	err = failpoint.Disable("github.com/pingcap/tidb/executor/mockSelectionExecBaseExecutorOpenReturnedError")
 	c.Assert(err, IsNil)
+}
 
+func (s *testSerialSuite) TestDeadlockTable(c *C) {
+	deadlockhistory.GlobalDeadlockHistory.Clear()
+
+	occurTime := time.Date(2021, 5, 10, 1, 2, 3, 456789000, time.UTC)
+	rec := &deadlockhistory.DeadlockRecord{
+		OccurTime:   occurTime,
+		IsRetryable: false,
+		WaitChain: []deadlockhistory.WaitChainItem{
+			{
+				TryLockTxn:     101,
+				SQLDigest:      "aabbccdd",
+				Key:            []byte("k1"),
+				AllSQLs:        nil,
+				TxnHoldingLock: 102,
+			},
+			{
+				TryLockTxn:     102,
+				SQLDigest:      "ddccbbaa",
+				Key:            []byte("k2"),
+				AllSQLs:        []string{"sql1"},
+				TxnHoldingLock: 101,
+			},
+		},
+	}
+	deadlockhistory.GlobalDeadlockHistory.Push(rec)
+
+	occurTime2 := time.Date(2022, 6, 11, 2, 3, 4, 987654000, time.UTC)
+	rec2 := &deadlockhistory.DeadlockRecord{
+		OccurTime:   occurTime2,
+		IsRetryable: true,
+		WaitChain: []deadlockhistory.WaitChainItem{
+			{
+				TryLockTxn:     201,
+				AllSQLs:        []string{},
+				TxnHoldingLock: 202,
+			},
+			{
+				TryLockTxn:     202,
+				AllSQLs:        []string{"sql1", "sql2, sql3"},
+				TxnHoldingLock: 203,
+			},
+			{
+				TryLockTxn:     203,
+				TxnHoldingLock: 201,
+			},
+		},
+	}
+	deadlockhistory.GlobalDeadlockHistory.Push(rec2)
+
+	// `Push` sets the record's ID, and ID in a single DeadlockHistory is monotonically increasing. We must get it here
+	// to know what it is.
+	id1 := strconv.FormatUint(rec.ID, 10)
+	id2 := strconv.FormatUint(rec2.ID, 10)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select * from information_schema.deadlocks").Check(
+		testutil.RowsWithSep("/",
+			id1+"/2021-05-10 01:02:03.456789/0/101/aabbccdd/6B31/<nil>/102",
+			id1+"/2021-05-10 01:02:03.456789/0/102/ddccbbaa/6B32/[sql1]/101",
+			id2+"/2022-06-11 02:03:04.987654/1/201/<nil>/<nil>/[]/202",
+			id2+"/2022-06-11 02:03:04.987654/1/202/<nil>/<nil>/[sql1, sql2, sql3]/203",
+			id2+"/2022-06-11 02:03:04.987654/1/203/<nil>/<nil>/<nil>/201",
+		))
 }
 
 func (s testSerialSuite) TestExprBlackListForEnum(c *C) {
