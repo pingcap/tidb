@@ -50,8 +50,9 @@ var (
 	ErrIllegalPrivilegeLevel         = dbterror.ClassExecutor.NewStd(mysql.ErrIllegalPrivilegeLevel)
 	ErrInvalidSplitRegionRanges      = dbterror.ClassExecutor.NewStd(mysql.ErrInvalidSplitRegionRanges)
 
-	ErrBRIEBackupFailed  = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEBackupFailed)
-	ErrBRIERestoreFailed = dbterror.ClassExecutor.NewStd(mysql.ErrBRIERestoreFailed)
-	ErrBRIEImportFailed  = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEImportFailed)
-	ErrBRIEExportFailed  = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEExportFailed)
+	ErrBRIEBackupFailed     = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEBackupFailed)
+	ErrBRIERestoreFailed    = dbterror.ClassExecutor.NewStd(mysql.ErrBRIERestoreFailed)
+	ErrBRIEImportFailed     = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEImportFailed)
+	ErrBRIEExportFailed     = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEExportFailed)
+	ErrCTEMaxRecursionDepth = dbterror.ClassExecutor.NewStd(mysql.ErrCTEMaxRecursionDepth)
 )
