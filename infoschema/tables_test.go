@@ -28,6 +28,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
+	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -46,9 +47,13 @@ import (
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mockstorage"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -1530,6 +1535,23 @@ func (s *testTableSuite) TestTrx(c *C) {
 	tk.MustQuery("select * from information_schema.TIDB_TRX;").Check(
 		testkit.Rows("424768545227014155 2021-05-07 12:56:48 " + digest.String() + " Normal <nil> 1 19 2 root test"),
 	)
+}
+
+func (s *testTableSuite) TestDataLockWait(c *C) {
+	client, pdClient, _, err := unistore.New("")
+	c.Assert(err, IsNil)
+	kvstore, err := tikv.NewTestTiKVStore(client, pdClient, nil, nil, 0)
+	c.Assert(err, IsNil)
+	oldStore := s.store
+	s.store, err = mockstorage.NewMockStorageWithLockWaits(kvstore, []*deadlock.WaitForEntry{
+		{Txn: 1, WaitForTxn: 2, KeyHash: 3, Key: []byte("a"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag("c")},
+		{Txn: 4, WaitForTxn: 5, KeyHash: 6, Key: []byte("b"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag("d")},
+	})
+	c.Assert(err, IsNil)
+	tk := s.newTestKitWithRoot(c)
+	tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS;").Check(testkit.Rows("3 a 1 2 c", "6 b 4 5 d"))
+
+	s.store = oldStore
 }
 
 func (s *testTableSuite) TestInfoschemaDeadlockPrivilege(c *C) {

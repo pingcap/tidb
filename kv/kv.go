@@ -341,7 +341,7 @@ type Driver interface {
 type Storage interface {
 	// Begin a global transaction
 	Begin() (Transaction, error)
-	// Begin a transaction with given option
+	// BeginWithOption begin a transaction with given option
 	BeginWithOption(option tikv.StartTSOption) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
