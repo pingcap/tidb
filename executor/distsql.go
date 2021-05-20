@@ -197,7 +197,7 @@ type IndexReaderExecutor struct {
 
 // Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() error {
-	if e.table.Meta().TempTableType != model.TempTableNone {
+	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
 
@@ -209,7 +209,7 @@ func (e *IndexReaderExecutor) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *IndexReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.table.Meta().TempTableType != model.TempTableNone {
+	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		req.Reset()
 		return nil
 	}
@@ -277,7 +277,8 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	}
 	e.kvRanges = kvRanges
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
-	if e.table.Meta().TempTableType != model.TempTableNone {
+	// In a test case IndexReaderExecutor is mocked and e.table is nil.
+	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
 
