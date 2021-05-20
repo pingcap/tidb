@@ -1296,6 +1296,12 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "BACKUP_ADMIN", true},
 			},
 		},
+		{
+			sql: "RENAME USER user1 to user1_tmp",
+			ans: []visitInfo{
+				{mysql.CreateUserPriv, "", "", "", ErrSpecificAccessDenied, false, "", false},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1459,7 +1465,6 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		{"delete a from (select * from t ) as a, t", "[planner:1288]The target table a of the DELETE is not updatable"},
 		{"delete b from (select * from t ) as a, t", "[planner:1109]Unknown table 'b' in MULTI DELETE"},
 		{"select '' as fakeCol from t group by values(fakeCol)", "[planner:1054]Unknown column '' in 'VALUES() function'"},
-		{"update t, (select * from t) as b set b.a = t.a", "[planner:1288]The target table b of the UPDATE is not updatable"},
 		{"select row_number() over () from t group by 1", "[planner:1056]Can't group on 'row_number() over ()'"},
 		{"select row_number() over () as x from t group by 1", "[planner:1056]Can't group on 'x'"},
 		{"select sum(a) as x from t group by 1", "[planner:1056]Can't group on 'x'"},
