@@ -2614,7 +2614,8 @@ func (s *testIntegrationSuite5) TestDropColumnsWithMultiIndex(c *C) {
 	tk.MustQuery(query).Check(testkit.Rows())
 }
 
-func (s *testIntegrationSuite5) TestDropLastVisibleColumnOrColumns(c *C) {
+func (s *testSerialDBSuite) TestDropLastVisibleColumnOrColumns(c *C) {
+	defer config.RestoreFunc()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Experimental.AllowsExpressionIndex = true
 	})
