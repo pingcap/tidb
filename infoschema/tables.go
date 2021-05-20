@@ -245,7 +245,7 @@ var tableIDMap = map[string]int64{
 	ClusterTableTiDBTrx:                     autoid.InformationSchemaDBID + 71,
 	TableDeadlocks:                          autoid.InformationSchemaDBID + 72,
 	ClusterTableDeadlocks:                   autoid.InformationSchemaDBID + 73,
-	TableDataLockWaits: autoid.InformationSchemaDBID + 74,
+	TableDataLockWaits:                      autoid.InformationSchemaDBID + 74,
 }
 
 type columnInfo struct {
@@ -1750,7 +1750,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClientErrorsSummaryByHost:          tableClientErrorsSummaryByHostCols,
 	TableTiDBTrx:                            tableTiDBTrxCols,
 	TableDeadlocks:                          tableDeadlocksCols,
-	TableDataLockWaits: tableDataLockWaitsCols,
+	TableDataLockWaits:                      tableDataLockWaitsCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
