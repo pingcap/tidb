@@ -430,6 +430,7 @@ func (req *Request) StoreSafeTS() *kvrpcpb.StoreSafeTSRequest {
 	return req.Req.(*kvrpcpb.StoreSafeTSRequest)
 }
 
+// LockWaitInfo returns GetLockWaitInfoRequest in request.
 func (req *Request) LockWaitInfo() *kvrpcpb.GetLockWaitInfoRequest {
 	return req.Req.(*kvrpcpb.GetLockWaitInfoRequest)
 }

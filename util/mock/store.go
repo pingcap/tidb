@@ -79,6 +79,8 @@ func (s *Store) ShowStatus(ctx context.Context, key string) (interface{}, error)
 func (s *Store) GetMinSafeTS(txnScope string) uint64 {
 	return 0
 }
+
+// GetLockWaits implements kv.Storage interface.
 func (s *Store) GetLockWaits() []*deadlockPB.WaitForEntry {
 	return nil
 }

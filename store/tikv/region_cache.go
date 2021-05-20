@@ -1268,6 +1268,7 @@ func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
 	return latestRegion
 }
 
+// GetStoresByType Get Stores by type `typ`
 // TODO: revise it by get store by closure.
 func (c *RegionCache) GetStoresByType(typ tikvrpc.EndpointType) []*Store {
 	c.storeMu.Lock()
