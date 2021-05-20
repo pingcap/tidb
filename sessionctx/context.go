@@ -34,8 +34,6 @@ type Context interface {
 	// If old transaction is valid, it is committed first.
 	// It's used in BEGIN statement and DDL statements to commit old transaction.
 	NewTxn(context.Context) error
-	// NewTxnWithStalenessOption initializes a transaction with StalenessTxnOption.
-	NewTxnWithStalenessOption(ctx context.Context, option StalenessTxnOption) error
 
 	// Txn returns the current transaction which is created before executing a statement.
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
@@ -74,6 +72,9 @@ type Context interface {
 	// InitTxnWithStartTS initializes a transaction with startTS.
 	// It should be called right before we builds an executor.
 	InitTxnWithStartTS(startTS uint64) error
+
+	// NewTxnWithStalenessOption initializes a transaction with StalenessTxnOption.
+	NewTxnWithStalenessOption(ctx context.Context, option StalenessTxnOption) error
 
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
@@ -146,7 +147,4 @@ type StalenessTxnOption struct {
 	Mode    ast.TimestampBoundMode
 	PrevSec uint64
 	StartTS uint64
-	// UseAsOf is used to be compatible with the current implementation,
-	// it will be removed later.
-	UseAsOf bool
 }

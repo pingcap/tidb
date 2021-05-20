@@ -1960,7 +1960,7 @@ func (s *session) isTxnRetryable() bool {
 }
 
 func (s *session) NewTxn(ctx context.Context) error {
-	if err := s.checkBeforeCreateNewTxn(ctx); err != nil {
+	if err := s.checkBeforeNewTxn(ctx); err != nil {
 		return err
 	}
 	txn, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(s.sessionVars.CheckAndGetTxnScope()))
@@ -1984,7 +1984,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 	return nil
 }
 
-func (s *session) checkBeforeCreateNewTxn(ctx context.Context) error {
+func (s *session) checkBeforeNewTxn(ctx context.Context) error {
 	if s.txn.Valid() {
 		txnStartTS := s.txn.StartTS()
 		txnScope := s.GetSessionVars().TxnCtx.TxnScope
@@ -1997,67 +1997,6 @@ func (s *session) checkBeforeCreateNewTxn(ctx context.Context) error {
 			zap.Int64("schemaVersion", vars.GetInfoSchema().SchemaMetaVersion()),
 			zap.Uint64("txnStartTS", txnStartTS),
 			zap.String("txnScope", txnScope))
-	}
-	return nil
-}
-
-// NewTxnWithStalenessOption create a transaction with Staleness option
-func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionctx.StalenessTxnOption) error {
-	err := s.checkBeforeCreateNewTxn(ctx)
-	if err != nil {
-		return err
-	}
-	var (
-		txn      kv.Transaction
-		txnScope = s.GetSessionVars().CheckAndGetTxnScope()
-	)
-	if option.UseAsOf {
-		txn, err = s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetStartTs(option.StartTS))
-		if err != nil {
-			return err
-		}
-	} else {
-		switch option.Mode {
-		case ast.TimestampBoundReadTimestamp:
-			txn, err = s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetStartTs(option.StartTS))
-			if err != nil {
-				return err
-			}
-		case ast.TimestampBoundExactStaleness:
-			txn, err = s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetPrevSec(option.PrevSec))
-			if err != nil {
-				return err
-			}
-		case ast.TimestampBoundMaxStaleness:
-			txn, err = s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetMaxPrevSec(option.PrevSec))
-			if err != nil {
-				return err
-			}
-		case ast.TimestampBoundMinReadTimestamp:
-			txn, err = s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetMinStartTS(option.StartTS))
-			if err != nil {
-				return err
-			}
-		default:
-			// For unsupported staleness txn cases, fallback to NewTxn
-			return s.NewTxn(ctx)
-		}
-	}
-	txn.SetVars(s.sessionVars.KVVars)
-	txn.SetOption(kv.IsStalenessReadOnly, true)
-	txn.SetOption(kv.TxnScope, txnScope)
-	s.txn.changeInvalidToValid(txn)
-	is, err := domain.GetDomain(s).GetSnapshotInfoSchema(txn.StartTS())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	s.sessionVars.TxnCtx = &variable.TransactionContext{
-		InfoSchema:  is,
-		CreateTime:  time.Now(),
-		StartTS:     txn.StartTS(),
-		ShardStep:   int(s.sessionVars.ShardAllocateStep),
-		IsStaleness: true,
-		TxnScope:    txnScope,
 	}
 	return nil
 }
@@ -2843,6 +2782,60 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return err
+	}
+	return nil
+}
+
+// NewTxnWithStalenessOption create a transaction with Staleness option
+func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionctx.StalenessTxnOption) error {
+	err := s.checkBeforeNewTxn(ctx)
+	if err != nil {
+		return err
+	}
+	var (
+		txn      kv.Transaction
+		txnScope = s.GetSessionVars().CheckAndGetTxnScope()
+	)
+	switch option.Mode {
+	case ast.TimestampBoundReadTimestamp:
+		txn, err = s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetStartTs(option.StartTS))
+		if err != nil {
+			return err
+		}
+	case ast.TimestampBoundExactStaleness:
+		txn, err = s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetPrevSec(option.PrevSec))
+		if err != nil {
+			return err
+		}
+	case ast.TimestampBoundMaxStaleness:
+		txn, err = s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetMaxPrevSec(option.PrevSec))
+		if err != nil {
+			return err
+		}
+	case ast.TimestampBoundMinReadTimestamp:
+		txn, err = s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetMinStartTS(option.StartTS))
+		if err != nil {
+			return err
+		}
+	default:
+		// For unsupported staleness txn cases, fallback to NewTxn
+		return s.NewTxn(ctx)
+	}
+	txn.SetVars(s.sessionVars.KVVars)
+	txn.SetOption(kv.IsStalenessReadOnly, true)
+	txn.SetOption(kv.TxnScope, txnScope)
+	s.txn.changeInvalidToValid(txn)
+	is, err := domain.GetDomain(s).GetSnapshotInfoSchema(txn.StartTS())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	s.sessionVars.TxnCtx = &variable.TransactionContext{
+		InfoSchema:  is,
+		CreateTime:  time.Now(),
+		StartTS:     txn.StartTS(),
+		ShardStep:   int(s.sessionVars.ShardAllocateStep),
+		IsStaleness: true,
+		TxnScope:    txnScope,
 	}
 	return nil
 }

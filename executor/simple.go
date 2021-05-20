@@ -622,7 +622,7 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 
 func (e *SimpleExec) executeStartTransactionReadOnlyWithBoundedStaleness(ctx context.Context, s *ast.BeginStmt) error {
 	if e.StalenessTxnOption == nil {
-		return errors.New("Planner failed to create the txn option for AS OF TIMESTAMP statement")
+		return errors.New("Failed to get timestamp during start transaction read only as of timestamp")
 	}
 	if err := e.ctx.NewTxnWithStalenessOption(ctx, *e.StalenessTxnOption); err != nil {
 		return err
