@@ -73,11 +73,28 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 			zone:        "sz",
 		},
 		{
-			name:        "begin",
+			name:        "begin after TimestampBoundReadTimestamp",
 			preSQL:      `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
 			sql:         "begin",
 			IsStaleness: false,
 			txnScope:    kv.GlobalTxnScope,
+			zone:        "",
+		},
+		{
+			name:             "AsOfTimestamp",
+			preSQL:           "begin",
+			sql:              `START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00';`,
+			IsStaleness:      true,
+			expectPhysicalTS: 1599321600000,
+			txnScope:         "local",
+			zone:             "sh",
+		},
+		{
+			name:        "begin after AsOfTimestamp",
+			preSQL:      `START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00';`,
+			sql:         "begin",
+			IsStaleness: false,
+			txnScope:    oracle.GlobalTxnScope,
 			zone:        "",
 		},
 	}
@@ -106,8 +123,8 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 		}
 		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, testcase.IsStaleness)
 		tk.MustExec("commit")
-		failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
 	}
+	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
 }
 
 func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
@@ -147,13 +164,17 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", fmt.Sprintf(`return("%v")`, testcase.zone))
 		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStoreLabels", fmt.Sprintf(`return("%v_%v")`, placement.DCLabelKey, testcase.txnScope))
 		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag", `return(true)`)
+		// Using NOW() will cause the loss of fsp precision, so we use NOW(3) to be accurate to the millisecond.
+		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
+		tk.MustQuery(testcase.sql)
+		tk.MustExec(`commit`)
 		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:00';`)
 		tk.MustQuery(testcase.sql)
 		tk.MustExec(`commit`)
-		failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
-		failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStoreLabels")
-		failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag")
 	}
+	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+	failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStoreLabels")
+	failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag")
 }
 
 func (s *testStaleTxnSerialSuite) TestStalenessAndHistoryRead(c *C) {
@@ -167,6 +188,17 @@ func (s *testStaleTxnSerialSuite) TestStalenessAndHistoryRead(c *C) {
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
+	// set @@tidb_snapshot before staleness txn
+	tk.MustExec(`set @@tidb_snapshot="2016-10-08 16:45:26";`)
+	tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00';`)
+	// 1599321600000 == 2020-09-06 00:00:00
+	c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, int64(1599321600000))
+	tk.MustExec("commit")
+	// set @@tidb_snapshot during staleness txn
+	tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00';`)
+	tk.MustExec(`set @@tidb_snapshot="2016-10-08 16:45:26";`)
+	c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, int64(1599321600000))
+	tk.MustExec("commit")
 	// set @@tidb_snapshot before staleness txn
 	tk.MustExec(`set @@tidb_snapshot="2016-10-08 16:45:26";`)
 	tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`)
@@ -190,23 +222,20 @@ func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 		name         string
 		sql          string
 		injectSafeTS uint64
-		useSafeTS    bool
+		// compareWithSafeTS will be 0 if StartTS==SafeTS, -1 if StartTS < SafeTS, and +1 if StartTS > SafeTS.
+		compareWithSafeTS int
 	}{
 		{
-			name: "max 20 seconds ago, safeTS 10 secs ago",
-			sql:  `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MAX STALENESS '00:00:20'`,
-			injectSafeTS: func() uint64 {
-				return oracle.GoTimeToTS(time.Now().Add(-10 * time.Second))
-			}(),
-			useSafeTS: true,
+			name:              "max 20 seconds ago, safeTS 10 secs ago",
+			sql:               `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MAX STALENESS '00:00:20'`,
+			injectSafeTS:      oracle.GoTimeToTS(time.Now().Add(-10 * time.Second)),
+			compareWithSafeTS: 0,
 		},
 		{
-			name: "max 10 seconds ago, safeTS 20 secs ago",
-			sql:  `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MAX STALENESS '00:00:10'`,
-			injectSafeTS: func() uint64 {
-				return oracle.GoTimeToTS(time.Now().Add(-20 * time.Second))
-			}(),
-			useSafeTS: false,
+			name:              "max 10 seconds ago, safeTS 20 secs ago",
+			sql:               `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MAX STALENESS '00:00:10'`,
+			injectSafeTS:      oracle.GoTimeToTS(time.Now().Add(-20 * time.Second)),
+			compareWithSafeTS: 1,
 		},
 		{
 			name: "max 20 seconds ago, safeTS 10 secs ago",
@@ -214,10 +243,8 @@ func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 				return fmt.Sprintf(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MIN READ TIMESTAMP '%v'`,
 					time.Now().Add(-20*time.Second).Format("2006-01-02 15:04:05"))
 			}(),
-			injectSafeTS: func() uint64 {
-				return oracle.GoTimeToTS(time.Now().Add(-10 * time.Second))
-			}(),
-			useSafeTS: true,
+			injectSafeTS:      oracle.GoTimeToTS(time.Now().Add(-10 * time.Second)),
+			compareWithSafeTS: 0,
 		},
 		{
 			name: "max 10 seconds ago, safeTS 20 secs ago",
@@ -225,25 +252,46 @@ func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 				return fmt.Sprintf(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MIN READ TIMESTAMP '%v'`,
 					time.Now().Add(-10*time.Second).Format("2006-01-02 15:04:05"))
 			}(),
-			injectSafeTS: func() uint64 {
-				return oracle.GoTimeToTS(time.Now().Add(-20 * time.Second))
-			}(),
-			useSafeTS: false,
+			injectSafeTS:      oracle.GoTimeToTS(time.Now().Add(-20 * time.Second)),
+			compareWithSafeTS: 1,
+		},
+		{
+			name:              "20 seconds ago to now, safeTS 10 secs ago",
+			sql:               `START TRANSACTION READ ONLY AS OF TIMESTAMP tidb_bounded_staleness(NOW() - INTERVAL 20 SECOND, NOW())`,
+			injectSafeTS:      oracle.GoTimeToTS(time.Now().Add(-10 * time.Second)),
+			compareWithSafeTS: 0,
+		},
+		{
+			name:              "10 seconds ago to now, safeTS 20 secs ago",
+			sql:               `START TRANSACTION READ ONLY AS OF TIMESTAMP tidb_bounded_staleness(NOW() - INTERVAL 10 SECOND, NOW())`,
+			injectSafeTS:      oracle.GoTimeToTS(time.Now().Add(-20 * time.Second)),
+			compareWithSafeTS: 1,
+		},
+		{
+			name:              "20 seconds ago to 10 seconds ago, safeTS 5 secs ago",
+			sql:               `START TRANSACTION READ ONLY AS OF TIMESTAMP tidb_bounded_staleness(NOW() - INTERVAL 20 SECOND, NOW() - INTERVAL 10 SECOND)`,
+			injectSafeTS:      oracle.GoTimeToTS(time.Now().Add(-5 * time.Second)),
+			compareWithSafeTS: -1,
 		},
 	}
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/injectSafeTS",
 			fmt.Sprintf("return(%v)", testcase.injectSafeTS)), IsNil)
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+			fmt.Sprintf("return(%v)", testcase.injectSafeTS)), IsNil)
 		tk.MustExec(testcase.sql)
-		if testcase.useSafeTS {
+		if testcase.compareWithSafeTS == 1 {
+			c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Greater, testcase.injectSafeTS)
+		} else if testcase.compareWithSafeTS == 0 {
 			c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Equals, testcase.injectSafeTS)
 		} else {
-			c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Greater, testcase.injectSafeTS)
+			c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Less, testcase.injectSafeTS)
 		}
 		tk.MustExec("commit")
-		failpoint.Disable("github.com/pingcap/tidb/store/tikv/injectSafeTS")
 	}
+	failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS")
+	failpoint.Disable("github.com/pingcap/tidb/store/tikv/injectSafeTS")
 }
 
 func (s *testStaleTxnSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
@@ -263,4 +311,16 @@ func (s *testStaleTxnSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
 	schemaVer3 := tk.Se.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
 	// got an old infoSchema
 	c.Assert(schemaVer3, Equals, schemaVer1)
+
+	schemaVer4 := tk.Se.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
+	time.Sleep(time.Second)
+	tk.MustExec("create table t (id int primary key);")
+	schemaVer5 := tk.Se.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
+	// confirm schema changed
+	c.Assert(schemaVer4, Less, schemaVer5)
+
+	tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW() - INTERVAL 1 SECOND`)
+	schemaVer6 := tk.Se.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
+	// got an old infoSchema
+	c.Assert(schemaVer6, Equals, schemaVer4)
 }
