@@ -317,6 +317,8 @@ github.com/juju/ratelimit v1.0.1/go.mod h1:qapgC/Gy+xNh9UxzV13HGGl/6UXNN+ct+vwSg
 github.com/julienschmidt/httprouter v1.2.0/go.mod h1:SYymIcj16QtmaHHD7aYtjjsJG7VTCxuUUipMqKk8s4w=
 github.com/jyz0309/kvproto v0.0.0-20210412095715-8452de20a352 h1:yl80y0LwB2c6GsFbgMrFlNsFOwc9BI7yOiv/EtG2z+w=
 github.com/jyz0309/kvproto v0.0.0-20210412095715-8452de20a352/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
+github.com/jyz0309/kvproto v0.0.0-20210520071820-6820b1d8cf13 h1:eNu78XffMJH1lhtb/jSfrvUds39O6gpgDdViSfn9YLs=
+github.com/jyz0309/kvproto v0.0.0-20210520071820-6820b1d8cf13/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
 github.com/kisielk/errcheck v1.1.0/go.mod h1:EZBBE59ingxPouuu3KfxchcWSUPOHkagtvWXihfKN4Q=
 github.com/kisielk/errcheck v1.2.0/go.mod h1:/BMXB+zMLi60iA8Vv6Ksmxu/1UDYcXs4uQLJ+jE2L00=
 github.com/kisielk/errcheck v1.5.0/go.mod h1:pFxgyoBC7bSaBwPgfKdkLd5X25qrDl4LWUI2bnpBCr8=

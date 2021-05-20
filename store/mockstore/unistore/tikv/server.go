@@ -15,7 +15,6 @@ package tikv
 
 import (
 	"context"
-	goctx "golang.org/x/net/context"
 	"io"
 	"sync/atomic"
 	"time"
@@ -50,10 +49,6 @@ type Server struct {
 	RPCClient     client.Client
 	refCount      int32
 	stopped       int32
-}
-
-func (svr *Server) RawCompareAndSwap(c goctx.Context, request *kvrpcpb.RawCASRequest) (*kvrpcpb.RawCASResponse, error) {
-	panic("implement me")
 }
 
 // NewServer returns a new server.
@@ -94,11 +89,6 @@ func (svr *Server) GetStoreIDByAddr(addr string) (uint64, error) {
 // GetStoreAddrByStoreID gets a store address by the store id.
 func (svr *Server) GetStoreAddrByStoreID(storeID uint64) (string, error) {
 	return svr.regionManager.GetStoreAddrByStoreID(storeID)
-}
-
-// GetStoreSafeTS gets a store address by the store id.
-func (svr *Server) GetStoreSafeTS(context.Context, *kvrpcpb.StoreSafeTSRequest) (*kvrpcpb.StoreSafeTSResponse, error) {
-	return nil, nil
 }
 
 type requestCtx struct {
@@ -573,11 +563,6 @@ func (svr *Server) Coprocessor(_ context.Context, req *coprocessor.Request) (*co
 		return &coprocessor.Response{RegionError: reqCtx.regErr}, nil
 	}
 	return cophandler.HandleCopRequest(reqCtx.getDBReader(), svr.mvccStore.lockStore, req), nil
-}
-
-// CoprocessorV2 implements implements the tikvpb.TikvServer interface.
-func (svr *Server) CoprocessorV2(_ context.Context, req *coprocessor_v2.RawCoprocessorRequest) (*coprocessor_v2.RawCoprocessorResponse, error) {
-	return nil, nil
 }
 
 // CoprocessorStream implements implements the tikvpb.TikvServer interface.
