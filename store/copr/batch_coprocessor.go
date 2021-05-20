@@ -16,6 +16,8 @@ package copr
 import (
 	"context"
 	"io"
+	"math"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -38,8 +40,9 @@ import (
 type batchCopTask struct {
 	storeAddr string
 	cmdType   tikvrpc.CmdType
+	ctx       *tikv.RPCContext
 
-	copTasks []copTaskAndRPCContext
+	regionInfos []tikv.RegionInfo
 }
 
 type batchCopResponse struct {
@@ -91,9 +94,133 @@ func (rs *batchCopResponse) RespTime() time.Duration {
 	return rs.respTime
 }
 
-type copTaskAndRPCContext struct {
-	task *copTask
-	ctx  *tikv.RPCContext
+// balanceBatchCopTask balance the regions between available stores, the basic rule is
+// 1. the first region of each original batch cop task belongs to its original store
+// 2. for the remaining regions:
+//    if there is only 1 available store, then put the region to the related store
+//    otherwise, use a greedy algorithm to put it into the store with highest weight
+func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
+	storeTaskMap := make(map[uint64]*batchCopTask)
+	storeCandidateRegionMap := make(map[uint64]map[string]tikv.RegionInfo)
+	totalRegionCandidateNum := 0
+	totalRemainingRegionNum := 0
+
+	for _, task := range originalTasks {
+		taskStoreID := task.regionInfos[0].AllStores[0]
+		batchTask := &batchCopTask{
+			storeAddr:   task.storeAddr,
+			cmdType:     task.cmdType,
+			ctx:         task.ctx,
+			regionInfos: []tikv.RegionInfo{task.regionInfos[0]},
+		}
+		storeTaskMap[taskStoreID] = batchTask
+		candidateMap := make(map[string]tikv.RegionInfo)
+		storeCandidateRegionMap[taskStoreID] = candidateMap
+	}
+
+	for _, task := range originalTasks {
+		taskStoreID := task.regionInfos[0].AllStores[0]
+		for index, ri := range task.regionInfos {
+			// for each region, figure out the valid store num
+			validStoreNum := 0
+			if index == 0 {
+				continue
+			}
+			if len(ri.AllStores) <= 1 {
+				validStoreNum = 1
+			} else {
+				for _, storeID := range ri.AllStores {
+					if _, ok := storeCandidateRegionMap[storeID]; ok {
+						validStoreNum++
+					}
+				}
+			}
+			if validStoreNum == 1 {
+				// if only one store is valid, just put it to storeTaskMap
+				storeTaskMap[taskStoreID].regionInfos = append(storeTaskMap[taskStoreID].regionInfos, ri)
+			} else {
+				// if more than one store is valid, put the region
+				// to store candidate map
+				totalRegionCandidateNum += validStoreNum
+				totalRemainingRegionNum += 1
+				taskKey := ri.Region.String()
+				for _, storeID := range ri.AllStores {
+					if candidateMap, ok := storeCandidateRegionMap[storeID]; ok {
+						if _, ok := candidateMap[taskKey]; ok {
+							// duplicated region, should not happen, just give up balance
+							return originalTasks
+						}
+						candidateMap[taskKey] = ri
+					}
+				}
+			}
+		}
+	}
+	if totalRemainingRegionNum == 0 {
+		return originalTasks
+	}
+
+	avgStorePerRegion := float64(totalRegionCandidateNum) / float64(totalRemainingRegionNum)
+	findNextStore := func() uint64 {
+		store := uint64(math.MaxUint64)
+		weightedRegionNum := float64(0)
+		for storeID := range storeTaskMap {
+			if store == uint64(math.MaxUint64) && len(storeCandidateRegionMap[storeID]) > 0 {
+				store = storeID
+				weightedRegionNum = float64(len(storeCandidateRegionMap[storeID]))/avgStorePerRegion + float64(len(storeTaskMap[storeID].regionInfos))
+			} else {
+				num := float64(len(storeCandidateRegionMap[storeID])) / avgStorePerRegion
+				if num == 0 {
+					continue
+				}
+				num += float64(len(storeTaskMap[storeID].regionInfos))
+				if num < weightedRegionNum {
+					store = storeID
+					weightedRegionNum = num
+				}
+			}
+		}
+		return store
+	}
+	store := findNextStore()
+	for totalRemainingRegionNum > 0 {
+		if len(storeCandidateRegionMap[store]) == 0 {
+			store = findNextStore()
+		}
+		if store == uint64(math.MaxUint64) {
+			break
+		}
+		for key, ri := range storeCandidateRegionMap[store] {
+			storeTaskMap[store].regionInfos = append(storeTaskMap[store].regionInfos, ri)
+			totalRemainingRegionNum--
+			for _, id := range ri.AllStores {
+				if _, ok := storeCandidateRegionMap[id]; ok {
+					delete(storeCandidateRegionMap[id], key)
+					totalRegionCandidateNum--
+				}
+			}
+			if totalRemainingRegionNum > 0 {
+				weightedTaskNum := float64(len(storeCandidateRegionMap[store]))/avgStorePerRegion + float64(len(storeTaskMap[store].regionInfos))
+				avgStorePerRegion = float64(totalRegionCandidateNum) / float64(totalRemainingRegionNum)
+				for _, id := range ri.AllStores {
+					// it is not optimal because we only check the stores that affected by this region, in fact in order
+					// to find out the store with the lowest weightedTaskNum, all stores should be checked, but I think
+					// check only the affected stores is more simple and will get a good enough result
+					if id != store && len(storeCandidateRegionMap[id]) > 0 && float64(len(storeCandidateRegionMap[id]))/avgStorePerRegion+float64(len(storeTaskMap[id].regionInfos)) <= weightedTaskNum {
+						store = id
+						weightedTaskNum = float64(len(storeCandidateRegionMap[id]))/avgStorePerRegion + float64(len(storeTaskMap[id].regionInfos))
+					}
+				}
+			}
+			break
+		}
+	}
+
+	var ret []*batchCopTask
+	for _, task := range storeTaskMap {
+		ret = append(ret, task)
+	}
+	return ret
 }
 
 func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tikv.KeyRanges, storeType kv.StoreType) ([]*batchCopTask, error) {
@@ -134,13 +261,15 @@ func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tik
 				// Then `splitRegion` will reloads these regions.
 				continue
 			}
+			allStores := cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store)
 			if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
-				batchCop.copTasks = append(batchCop.copTasks, copTaskAndRPCContext{task: task, ctx: rpcCtx})
+				batchCop.regionInfos = append(batchCop.regionInfos, tikv.RegionInfo{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores})
 			} else {
 				batchTask := &batchCopTask{
-					storeAddr: rpcCtx.Addr,
-					cmdType:   cmdType,
-					copTasks:  []copTaskAndRPCContext{{task, rpcCtx}},
+					storeAddr:   rpcCtx.Addr,
+					cmdType:     cmdType,
+					ctx:         rpcCtx,
+					regionInfos: []tikv.RegionInfo{{task.region, rpcCtx.Meta, task.ranges, allStores}},
 				}
 				storeTaskMap[rpcCtx.Addr] = batchTask
 			}
@@ -153,9 +282,21 @@ func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tik
 			}
 			continue
 		}
+
 		for _, task := range storeTaskMap {
 			batchTasks = append(batchTasks, task)
 		}
+		msg := "before task balance"
+		for _, task := range batchTasks {
+			msg += " store " + task.storeAddr + " : " + strconv.Itoa(len(task.regionInfos)) + " regions, "
+		}
+		logutil.BgLogger().Info(msg)
+		batchTasks = balanceBatchCopTask(batchTasks)
+		msg = "after task balance"
+		for _, task := range batchTasks {
+			msg += " store " + task.storeAddr + " : " + strconv.Itoa(len(task.regionInfos)) + " regions, "
+		}
+		logutil.BgLogger().Info(msg)
 
 		if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
 			logutil.BgLogger().Warn("buildBatchCopTasks takes too much time",
@@ -310,8 +451,8 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *tikv.Backoffer, t
 // Merge all ranges and request again.
 func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *tikv.Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
 	var ranges []kv.KeyRange
-	for _, taskCtx := range batchTask.copTasks {
-		taskCtx.task.ranges.Do(func(ran *kv.KeyRange) {
+	for _, ri := range batchTask.regionInfos {
+		ri.Ranges.Do(func(ran *kv.KeyRange) {
 			ranges = append(ranges, *ran)
 		})
 	}
@@ -319,16 +460,16 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *tikv.Backo
 }
 
 func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *tikv.Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
-	sender := NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient())
-	var regionInfos []*coprocessor.RegionInfo
-	for _, task := range task.copTasks {
+	sender := tikv.NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient())
+	var regionInfos = make([]*coprocessor.RegionInfo, 0, len(task.regionInfos))
+	for _, ri := range task.regionInfos {
 		regionInfos = append(regionInfos, &coprocessor.RegionInfo{
-			RegionId: task.task.region.GetID(),
+			RegionId: ri.Region.GetID(),
 			RegionEpoch: &metapb.RegionEpoch{
-				ConfVer: task.task.region.GetConfVer(),
-				Version: task.task.region.GetVer(),
+				ConfVer: ri.Region.GetConfVer(),
+				Version: ri.Region.GetVer(),
 			},
-			Ranges: task.task.ranges.ToPBRanges(),
+			Ranges: ri.Ranges.ToPBRanges(),
 		})
 	}
 
@@ -350,8 +491,8 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *tikv.Backoffe
 	})
 	req.StoreTp = kv.TiFlash
 
-	logutil.BgLogger().Debug("send batch request to ", zap.String("req info", req.String()), zap.Int("cop task len", len(task.copTasks)))
-	resp, retry, cancel, err := sender.sendStreamReqToAddr(bo, task.copTasks, req, tikv.ReadTimeoutUltraLong)
+	logutil.BgLogger().Debug("send batch request to ", zap.String("req info", req.String()), zap.Int("cop task len", len(task.regionInfos)))
+	resp, retry, cancel, err := sender.SendReqToAddr(bo, task.ctx, task.regionInfos, req, tikv.ReadTimeoutUltraLong)
 	// If there are store errors, we should retry for all regions.
 	if retry {
 		return b.retryBatchCopTask(ctx, bo, task)
