@@ -53,7 +53,7 @@ func InTxnRetry(p *preprocessor) {
 	p.flag |= inTxnRetry
 }
 
-func WithReturn(ret *PreprocesorReturn) PreprocessOpt {
+func WithPreprocessorReturn(ret *PreprocesorReturn) PreprocessOpt {
 	return func(p *preprocessor) {
 		p.PreprocesorReturn = ret
 	}

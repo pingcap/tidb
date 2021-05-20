@@ -158,7 +158,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	ret := &plannercore.PreprocesorReturn{}
-	err = plannercore.Preprocess(e.ctx, stmt, plannercore.InPrepare, plannercore.WithReturn(ret))
+	err = plannercore.Preprocess(e.ctx, stmt, plannercore.InPrepare, plannercore.WithPreprocessorReturn(ret))
 	if err != nil {
 		return err
 	}

@@ -2350,7 +2350,7 @@ func (s *testSuiteP2) TestIsPointGet(c *C) {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
 		preprocessorReturn := &plannercore.PreprocesorReturn{}
-		err = plannercore.Preprocess(ctx, stmtNode, plannercore.WithReturn(preprocessorReturn))
+		err = plannercore.Preprocess(ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		c.Check(err, IsNil)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		c.Check(err, IsNil)
@@ -2381,7 +2381,7 @@ func (s *testSuiteP2) TestClusteredIndexIsPointGet(c *C) {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
 		preprocessorReturn := &plannercore.PreprocesorReturn{}
-		err = plannercore.Preprocess(ctx, stmtNode, plannercore.WithReturn(preprocessorReturn))
+		err = plannercore.Preprocess(ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		c.Check(err, IsNil)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		c.Check(err, IsNil)

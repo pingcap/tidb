@@ -61,7 +61,7 @@ func (s *testSuite7) TestStmtLabel(c *C) {
 		stmtNode, err := parser.New().ParseOneStmt(tt.sql, "", "")
 		c.Check(err, IsNil)
 		preprocessorReturn := &plannercore.PreprocesorReturn{}
-		err = plannercore.Preprocess(tk.Se, stmtNode, plannercore.WithReturn(preprocessorReturn))
+		err = plannercore.Preprocess(tk.Se, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		c.Check(err, IsNil)
 		c.Assert(err, IsNil)
 		_, _, err = planner.Optimize(context.TODO(), tk.Se, stmtNode, preprocessorReturn.InfoSchema)
