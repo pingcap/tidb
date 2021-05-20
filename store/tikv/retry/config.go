@@ -40,9 +40,6 @@ type Config struct {
 type backoffFn func(ctx context.Context, maxSleepMs int) int
 
 func (c *Config) createBackoffFn(vars *kv.Variables) backoffFn {
-	if vars.Hook != nil {
-		vars.Hook(c.name, vars)
-	}
 	if strings.EqualFold(c.name, txnLockFastName) {
 		return newBackoffFn(vars.BackoffLockFast, c.fnCfg.cap, c.fnCfg.jitter)
 	}

@@ -293,10 +293,3 @@ func (b *Backoffer) GetBackoffSleepMS() map[string]int {
 func (b *Backoffer) ErrorsNum() int {
 	return len(b.errors)
 }
-
-// SetVarsHook sets the vars.Hook is used for test to verify the variable take effect.
-func (b *Backoffer) SetVarsHook(name string, vars *kv.Variables) {
-	if b.vars != nil && b.vars.Hook != nil {
-		b.vars.Hook(name, vars)
-	}
-}
