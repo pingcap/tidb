@@ -554,7 +554,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	pl := is.manager.ShowProcessList()
 
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
-	currentVer, err := store.CurrentVersion(oracle.GlobalTxnScope)
+	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
 		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
 		return

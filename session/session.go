@@ -69,7 +69,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/telemetry"
@@ -1821,7 +1820,7 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 		return false, nil
 	}
 	// check auto commit
-	if !s.GetSessionVars().IsAutocommit() {
+	if !plannercore.IsAutoCommitTxn(s) {
 		return false, nil
 	}
 	// check schema version
@@ -1975,7 +1974,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 			zap.String("txnScope", txnScope))
 	}
 
-	txn, err := s.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(s.sessionVars.CheckAndGetTxnScope()))
+	txn, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(s.sessionVars.CheckAndGetTxnScope()))
 	if err != nil {
 		return err
 	}
@@ -2768,7 +2767,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	}
 
 	// no need to get txn from txnFutureCh since txn should init with startTs
-	txn, err := s.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(s.GetSessionVars().CheckAndGetTxnScope()).SetStartTs(startTS))
+	txn, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(s.GetSessionVars().CheckAndGetTxnScope()).SetStartTs(startTS))
 	if err != nil {
 		return err
 	}
@@ -2801,22 +2800,22 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 	txnScope := s.GetSessionVars().CheckAndGetTxnScope()
 	switch option.Mode {
 	case ast.TimestampBoundReadTimestamp:
-		txn, err = s.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(txnScope).SetStartTs(option.StartTS))
+		txn, err = s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetStartTs(option.StartTS))
 		if err != nil {
 			return err
 		}
 	case ast.TimestampBoundExactStaleness:
-		txn, err = s.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(txnScope).SetPrevSec(option.PrevSec))
+		txn, err = s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetPrevSec(option.PrevSec))
 		if err != nil {
 			return err
 		}
 	case ast.TimestampBoundMaxStaleness:
-		txn, err = s.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(txnScope).SetMaxPrevSec(option.PrevSec))
+		txn, err = s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetMaxPrevSec(option.PrevSec))
 		if err != nil {
 			return err
 		}
 	case ast.TimestampBoundMinReadTimestamp:
-		txn, err = s.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(txnScope).SetMinStartTS(option.StartTS))
+		txn, err = s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetMinStartTS(option.StartTS))
 		if err != nil {
 			return err
 		}
@@ -2929,9 +2928,9 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 	// Get the txnScope of the transaction we're going to commit.
 	txnScope := s.GetSessionVars().TxnCtx.TxnScope
 	if txnScope == "" {
-		txnScope = oracle.GlobalTxnScope
+		txnScope = kv.GlobalTxnScope
 	}
-	if txnScope != oracle.GlobalTxnScope {
+	if txnScope != kv.GlobalTxnScope {
 		is := s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 		deltaMap := s.GetSessionVars().TxnCtx.TableDeltaMap
 		for physicalTableID := range deltaMap {

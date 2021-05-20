@@ -2693,11 +2693,11 @@ func (s *testSuiteP2) TestHistoryRead(c *C) {
 	// SnapshotTS Is not updated if check failed.
 	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
 
-	curVer1, _ := s.store.CurrentVersion(oracle.GlobalTxnScope)
+	curVer1, _ := s.store.CurrentVersion(kv.GlobalTxnScope)
 	time.Sleep(time.Millisecond)
 	snapshotTime := time.Now()
 	time.Sleep(time.Millisecond)
-	curVer2, _ := s.store.CurrentVersion(oracle.GlobalTxnScope)
+	curVer2, _ := s.store.CurrentVersion(kv.GlobalTxnScope)
 	tk.MustExec("insert history_read values (2)")
 	tk.MustQuery("select * from history_read").Check(testkit.Rows("1", "2"))
 	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
@@ -8152,4 +8152,80 @@ func (s *testSerialSuite) TestIssue24210(c *C) {
 	err = failpoint.Disable("github.com/pingcap/tidb/executor/mockSelectionExecBaseExecutorOpenReturnedError")
 	c.Assert(err, IsNil)
 
+}
+
+func (s testSerialSuite) TestExprBlackListForEnum(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a enum('a','b','c'), b enum('a','b','c'), c int, index idx(b,a));")
+	tk.MustExec("insert into t values(1,1,1),(2,2,2),(3,3,3);")
+
+	checkFuncPushDown := func(rows [][]interface{}, keyWord string) bool {
+		for _, line := range rows {
+			// Agg/Expr push down
+			if line[2].(string) == "cop[tikv]" && strings.Contains(line[4].(string), keyWord) {
+				return true
+			}
+			// access index
+			if line[2].(string) == "cop[tikv]" && strings.Contains(line[3].(string), keyWord) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Test agg(enum) push down
+	tk.MustExec("insert into mysql.expr_pushdown_blacklist(name) values('enum');")
+	tk.MustExec("admin reload expr_pushdown_blacklist;")
+	rows := tk.MustQuery("desc format='brief' select /*+ HASH_AGG() */ max(a) from t;").Rows()
+	c.Assert(checkFuncPushDown(rows, "max"), IsFalse)
+	rows = tk.MustQuery("desc format='brief' select /*+ STREAM_AGG() */ max(a) from t;").Rows()
+	c.Assert(checkFuncPushDown(rows, "max"), IsFalse)
+
+	tk.MustExec("delete from mysql.expr_pushdown_blacklist;")
+	tk.MustExec("admin reload expr_pushdown_blacklist;")
+	rows = tk.MustQuery("desc format='brief' select /*+ HASH_AGG() */ max(a) from t;").Rows()
+	c.Assert(checkFuncPushDown(rows, "max"), IsTrue)
+	rows = tk.MustQuery("desc format='brief' select /*+ STREAM_AGG() */ max(a) from t;").Rows()
+	c.Assert(checkFuncPushDown(rows, "max"), IsTrue)
+
+	// Test expr(enum) push down
+	tk.MustExec("insert into mysql.expr_pushdown_blacklist(name) values('enum');")
+	tk.MustExec("admin reload expr_pushdown_blacklist;")
+	rows = tk.MustQuery("desc format='brief' select * from t where a + b;").Rows()
+	c.Assert(checkFuncPushDown(rows, "plus"), IsFalse)
+	rows = tk.MustQuery("desc format='brief' select * from t where a + b;").Rows()
+	c.Assert(checkFuncPushDown(rows, "plus"), IsFalse)
+
+	tk.MustExec("delete from mysql.expr_pushdown_blacklist;")
+	tk.MustExec("admin reload expr_pushdown_blacklist;")
+	rows = tk.MustQuery("desc format='brief' select * from t where a + b;").Rows()
+	c.Assert(checkFuncPushDown(rows, "plus"), IsTrue)
+	rows = tk.MustQuery("desc format='brief' select * from t where a + b;").Rows()
+	c.Assert(checkFuncPushDown(rows, "plus"), IsTrue)
+
+	// Test enum index
+	tk.MustExec("insert into mysql.expr_pushdown_blacklist(name) values('enum');")
+	tk.MustExec("admin reload expr_pushdown_blacklist;")
+	rows = tk.MustQuery("desc format='brief' select * from t where b = 1;").Rows()
+	c.Assert(checkFuncPushDown(rows, "index:idx(b)"), IsFalse)
+	rows = tk.MustQuery("desc format='brief' select * from t where b = 'a';").Rows()
+	c.Assert(checkFuncPushDown(rows, "index:idx(b)"), IsFalse)
+	rows = tk.MustQuery("desc format='brief' select * from t where b > 1;").Rows()
+	c.Assert(checkFuncPushDown(rows, "index:idx(b)"), IsFalse)
+	rows = tk.MustQuery("desc format='brief' select * from t where b > 'a';").Rows()
+	c.Assert(checkFuncPushDown(rows, "index:idx(b)"), IsFalse)
+
+	tk.MustExec("delete from mysql.expr_pushdown_blacklist;")
+	tk.MustExec("admin reload expr_pushdown_blacklist;")
+	rows = tk.MustQuery("desc format='brief' select * from t where b = 1 and a = 1;").Rows()
+	c.Assert(checkFuncPushDown(rows, "index:idx(b, a)"), IsTrue)
+	rows = tk.MustQuery("desc format='brief' select * from t where b = 'a' and a = 'a';").Rows()
+	c.Assert(checkFuncPushDown(rows, "index:idx(b, a)"), IsTrue)
+	rows = tk.MustQuery("desc format='brief' select * from t where b = 1 and a > 1;").Rows()
+	c.Assert(checkFuncPushDown(rows, "index:idx(b, a)"), IsTrue)
+	rows = tk.MustQuery("desc format='brief' select * from t where b = 1 and a > 'a'").Rows()
+	c.Assert(checkFuncPushDown(rows, "index:idx(b, a)"), IsTrue)
 }
