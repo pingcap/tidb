@@ -83,7 +83,16 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 		}
 		children = append(children, pbArg)
 	}
-	return &tipb.Expr{Tp: tp, Children: children, FieldType: expression.ToPBFieldType(aggFunc.RetTp), HasDistinct: aggFunc.HasDistinct}
+	orderBy := make([]*tipb.ByItem, 0, len(aggFunc.OrderByItems))
+	for _, arg := range aggFunc.OrderByItems {
+		pbArg := expression.SortByItemToPB(sc, client, arg.Expr, arg.Desc)
+		if pbArg == nil {
+			return nil
+		}
+		orderBy = append(orderBy, pbArg)
+	}
+
+	return &tipb.Expr{Tp: tp, Children: children, FieldType: expression.ToPBFieldType(aggFunc.RetTp), HasDistinct: aggFunc.HasDistinct, OrderBy: orderBy}
 }
 
 // PBExprToAggFuncDesc converts pb to aggregate function.
