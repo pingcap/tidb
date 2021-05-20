@@ -185,6 +185,12 @@ var gcVariableComments = map[string]string{
 	gcScanLockModeKey:    "Mode of scanning locks, \"physical\" or \"legacy\"",
 }
 
+const (
+	unsafeDestroyRangeTimeout = 5 * time.Minute
+	accessLockObserverTimeout = 10 * time.Second
+	gcTimeout                 = 5 * time.Minute
+)
+
 func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
 	logutil.Logger(ctx).Info("[gc worker] start",
 		zap.String("uuid", w.uuid))
@@ -808,7 +814,7 @@ func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []b
 		go func() {
 			defer wg.Done()
 
-			resp, err1 := w.tikvStore.GetTiKVClient().SendRequest(ctx, address, req, tikv.UnsafeDestroyRangeTimeout)
+			resp, err1 := w.tikvStore.GetTiKVClient().SendRequest(ctx, address, req, unsafeDestroyRangeTimeout)
 			if err1 == nil {
 				if resp == nil || resp.Resp == nil {
 					err1 = errors.Errorf("unsafe destroy range returns nil response from store %v", storeID)
@@ -1272,7 +1278,7 @@ func (w *GCWorker) registerLockObservers(ctx context.Context, safePoint uint64, 
 	for _, store := range stores {
 		address := store.Address
 
-		resp, err := w.tikvStore.GetTiKVClient().SendRequest(ctx, address, req, tikv.AccessLockObserverTimeout)
+		resp, err := w.tikvStore.GetTiKVClient().SendRequest(ctx, address, req, accessLockObserverTimeout)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1312,7 +1318,7 @@ func (w *GCWorker) checkLockObservers(ctx context.Context, safePoint uint64, sto
 	for _, store := range stores {
 		address := store.Address
 
-		resp, err := w.tikvStore.GetTiKVClient().SendRequest(ctx, address, req, tikv.AccessLockObserverTimeout)
+		resp, err := w.tikvStore.GetTiKVClient().SendRequest(ctx, address, req, accessLockObserverTimeout)
 		if err != nil {
 			logError(store, err)
 			continue
@@ -1378,7 +1384,7 @@ func (w *GCWorker) removeLockObservers(ctx context.Context, safePoint uint64, st
 	for _, store := range stores {
 		address := store.Address
 
-		resp, err := w.tikvStore.GetTiKVClient().SendRequest(ctx, address, req, tikv.AccessLockObserverTimeout)
+		resp, err := w.tikvStore.GetTiKVClient().SendRequest(ctx, address, req, accessLockObserverTimeout)
 		if err != nil {
 			logError(store, err)
 			continue
@@ -1600,7 +1606,7 @@ func (w *GCWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region ti
 		SafePoint: safePoint,
 	})
 
-	resp, err := w.tikvStore.SendReq(bo, req, region, tikv.GCTimeout)
+	resp, err := w.tikvStore.SendReq(bo, req, region, gcTimeout)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

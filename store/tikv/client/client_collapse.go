@@ -11,8 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package tikv provides tcp connection to kvserver.
-package tikv
+// Package client provides tcp connection to kvserver.
+package client
 
 import (
 	"context"
@@ -32,6 +32,10 @@ type reqCollapse struct {
 	Client
 }
 
+// NewReqCollapse creates a reqCollapse.
+func NewReqCollapse(client Client) Client {
+	return &reqCollapse{client}
+}
 func (r reqCollapse) Close() error {
 	if r.Client == nil {
 		panic("client should not be nil")

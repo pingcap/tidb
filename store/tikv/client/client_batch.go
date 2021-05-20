@@ -11,8 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package tikv provides tcp connection to kvserver.
-package tikv
+// Package client provides tcp connection to kvserver.
+package client
 
 import (
 	"context"
