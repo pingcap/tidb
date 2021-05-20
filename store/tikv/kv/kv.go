@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/util"
 )
 
@@ -28,4 +29,5 @@ type LockCtx struct {
 	LockExpired           *uint32
 	Stats                 *util.LockKeysDetails
 	ResourceGroupTag      []byte
+	OnDeadlock            func(*tikverr.ErrDeadlock)
 }

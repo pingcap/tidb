@@ -135,9 +135,6 @@ const (
 )
 
 func (t BackoffType) createFn(vars *kv.Variables) func(context.Context, int) int {
-	if vars.Hook != nil {
-		vars.Hook(t.String(), vars)
-	}
 	switch t {
 	case boTiKVRPC, BoTiFlashRPC:
 		return NewBackoffFn(100, 2000, EqualJitter)
@@ -430,11 +427,4 @@ func (b *Backoffer) GetBackoffSleepMS() map[BackoffType]int {
 // ErrorsNum returns the number of errors.
 func (b *Backoffer) ErrorsNum() int {
 	return len(b.errors)
-}
-
-// SetVarsHook sets the vars.Hook is used for test to verify the variable take effect.
-func (b *Backoffer) SetVarsHook(name string, vars *kv.Variables) {
-	if b.vars != nil && b.vars.Hook != nil {
-		b.vars.Hook(name, vars)
-	}
 }
