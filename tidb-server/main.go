@@ -689,6 +689,5 @@ func stringToList(repairString string) []string {
 }
 
 func setProfiler() {
-	sp := tracecpu.NewStmtProfiler()
-	sp.Run()
+	tracecpu.GlobalStmtProfiler.Run()
 }

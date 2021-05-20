@@ -535,8 +535,6 @@ type TopStmt struct {
 	RefreshInterval int `toml:"refresh-interval" json:"refresh-interval"`
 	// The maximum number of statements kept in memory.
 	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
-
-	Debug bool
 }
 
 // IsolationRead is the config for isolation read.
@@ -672,7 +670,6 @@ var defaultConf = Config{
 		Enable:          true,
 		RefreshInterval: 1,
 		MaxStmtCount:    5000,
-		Debug:           true,
 	},
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},

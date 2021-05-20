@@ -2,14 +2,18 @@ package tracecpu
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
+	"net/http"
 	"runtime/pprof"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/google/pprof/profile"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -20,9 +24,16 @@ const (
 	LabelPlanDigest = "plan_digest"
 )
 
+var GlobalStmtProfiler = NewStmtProfiler()
+
 type StmtProfiler struct {
 	taskCh     chan *profileTask
 	cacheBufCh chan *profileTask
+
+	mu struct {
+		sync.Mutex
+		ept *exportProfileTask
+	}
 }
 
 type profileTask struct {
@@ -38,23 +49,25 @@ func NewStmtProfiler() *StmtProfiler {
 }
 
 func (sp *StmtProfiler) Run() {
-	logutil.BgLogger().Info("profiler started")
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	logutil.BgLogger().Info("cpu profiler started")
 	go sp.startCPUProfileWorker()
 	go sp.startAnalyzeProfileWorker()
 }
 
 func (sp *StmtProfiler) startCPUProfileWorker() {
 	for {
-		cfg := config.GetGlobalConfig()
-		if cfg.TopStmt.Enable {
-			sp.doCPUProfile(cfg.TopStmt.RefreshInterval)
+		if sp.isEnabled() {
+			sp.doCPUProfile()
 		} else {
 			time.Sleep(time.Second)
 		}
 	}
 }
 
-func (sp *StmtProfiler) doCPUProfile(interval int) {
+func (sp *StmtProfiler) doCPUProfile() {
+	interval := config.GetGlobalConfig().TopStmt.RefreshInterval
 	task := sp.newProfileTask()
 	if err := pprof.StartCPUProfile(task.buf); err != nil {
 		return
@@ -79,6 +92,7 @@ func (sp *StmtProfiler) startAnalyzeProfileWorker() {
 			logutil.BgLogger().Error("parse profile error", zap.Error(err))
 			continue
 		}
+		sp.handleExportProfileTask(p)
 		stmtMap := sp.parseCPUProfileTags(p)
 		if len(stmtMap) == 0 {
 			continue
@@ -91,9 +105,6 @@ func (sp *StmtProfiler) startAnalyzeProfileWorker() {
 				logutil.BgLogger().Info(fmt.Sprintf("    %s : %s", time.Duration(v), p))
 				total += v
 			}
-		}
-		if config.GetGlobalConfig().TopStmt.Debug && total > (500*int64(time.Millisecond)) {
-			ioutil.WriteFile("cpu.profile."+strconv.Itoa(int(task.end)), task.buf.Bytes(), 0644)
 		}
 		sp.putTaskToBuffer(task)
 	}
@@ -180,4 +191,139 @@ func (s *stmtStats) tune() {
 	for k, v := range s.plans {
 		s.plans[k] = v + (v/planTotal)*remain
 	}
+}
+
+func (sp *StmtProfiler) handleExportProfileTask(p *profile.Profile) {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	if sp.mu.ept == nil {
+		return
+	}
+	sp.mu.ept.mergeProfile(p)
+}
+
+func (sp *StmtProfiler) hasExportProfileTask() bool {
+	sp.mu.Lock()
+	has := sp.mu.ept != nil
+	sp.mu.Unlock()
+	return has
+}
+
+func (sp *StmtProfiler) isEnabled() bool {
+	return config.GetGlobalConfig().TopStmt.Enable || sp.hasExportProfileTask()
+}
+
+func StartCPUProfile(w io.Writer) error {
+	if GlobalStmtProfiler.isEnabled() {
+		return GlobalStmtProfiler.startExportCPUProfile(w)
+	}
+	return pprof.StartCPUProfile(w)
+}
+
+func StopCPUProfile() error {
+	if GlobalStmtProfiler.isEnabled() {
+		return GlobalStmtProfiler.stopExportCPUProfile()
+	}
+	pprof.StopCPUProfile()
+	return nil
+}
+
+func (sp *StmtProfiler) startExportCPUProfile(w io.Writer) error {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	if sp.mu.ept != nil {
+		return errors.New("cpu profiling already in use")
+	}
+	sp.mu.ept = &exportProfileTask{w: w}
+	return nil
+}
+
+func (sp *StmtProfiler) stopExportCPUProfile() error {
+	sp.mu.Lock()
+	ept := sp.mu.ept
+	sp.mu.ept = nil
+	sp.mu.Unlock()
+	if ept.err != nil {
+		return ept.err
+	}
+	if w := ept.w; w != nil {
+		sp.removeLabel(ept.cpuProfile)
+		return ept.cpuProfile.Write(w)
+	}
+	return nil
+}
+
+func (sp *StmtProfiler) removeLabel(p *profile.Profile) {
+	if p == nil {
+		return
+	}
+	keepLabelSQL := variable.EnablePProfSQLCPU.Load()
+	for _, s := range p.Sample {
+		for k := range s.Label {
+			if keepLabelSQL && k == LabelSQL {
+				continue
+			}
+			delete(s.Label, k)
+		}
+	}
+}
+
+type exportProfileTask struct {
+	cpuProfile *profile.Profile
+	err        error
+	w          io.Writer
+}
+
+func (t *exportProfileTask) mergeProfile(p *profile.Profile) {
+	if t.err != nil {
+		return
+	}
+	if t.cpuProfile == nil {
+		t.cpuProfile = p
+	} else {
+		t.cpuProfile, t.err = profile.Merge([]*profile.Profile{t.cpuProfile, p})
+	}
+}
+
+func ProfileHTTPHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	sec, err := strconv.ParseInt(r.FormValue("seconds"), 10, 64)
+	if sec <= 0 || err != nil {
+		sec = 30
+	}
+
+	if durationExceedsWriteTimeout(r, float64(sec)) {
+		serveError(w, http.StatusBadRequest, "profile duration exceeds server's WriteTimeout")
+		return
+	}
+
+	// Set Content Type assuming StartCPUProfile will work,
+	// because if it does it starts writing.
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", `attachment; filename="profile"`)
+
+	err = StartCPUProfile(w)
+	if err != nil {
+		serveError(w, http.StatusInternalServerError, "Could not enable CPU profiling: "+err.Error())
+		return
+	}
+	time.Sleep(time.Second * time.Duration(sec))
+	err = StopCPUProfile()
+	if err != nil {
+		serveError(w, http.StatusInternalServerError, "Could not enable CPU profiling: "+err.Error())
+		return
+	}
+}
+
+func durationExceedsWriteTimeout(r *http.Request, seconds float64) bool {
+	srv, ok := r.Context().Value(http.ServerContextKey).(*http.Server)
+	return ok && srv.WriteTimeout != 0 && seconds >= srv.WriteTimeout.Seconds()
+}
+
+func serveError(w http.ResponseWriter, status int, txt string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Go-Pprof", "1")
+	w.Header().Del("Content-Disposition")
+	w.WriteHeader(status)
+	fmt.Fprintln(w, txt)
 }
