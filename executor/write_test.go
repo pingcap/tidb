@@ -2876,7 +2876,7 @@ func (s *testSuite7) TestDeferConstraintCheckForInsert(c *C) {
 		c.Assert(err, NotNil)
 		_, err = tk.Exec("insert into t values (1, 3) on duplicated key update a = a + 1")
 		c.Assert(err, NotNil)
-		tk.MustExec("rollback")
+		tk.MustExec("commit")
 
 		tk.MustExec("drop table t")
 		tk.MustExec("create global temporary table t (a int, b int unique) on commit delete rows")
@@ -2889,7 +2889,7 @@ func (s *testSuite7) TestDeferConstraintCheckForInsert(c *C) {
 		c.Assert(err, NotNil)
 		_, err = tk.Exec("insert into t values (3, 1) on duplicated key update b = b + 1")
 		c.Assert(err, NotNil)
-		tk.MustExec("rollback")
+		tk.MustExec("commit")
 	}
 }
 
