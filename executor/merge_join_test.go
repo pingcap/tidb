@@ -393,12 +393,12 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 	tk.MustExec("create table s(a int, b int)")
 	tk.MustExec("insert into s values(1,1)")
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t").Check(testkit.Rows(
-		"Projection_7 10000.00 root  Column#7",
-		"└─MergeJoin_8 10000.00 root  left outer semi join, other cond:eq(test.t.a, test.s.a), ge(test.s.b, test.t.b)",
-		"  ├─TableReader_12(Build) 10000.00 root  data:TableFullScan_11",
-		"  │ └─TableFullScan_11 10000.00 cop[tikv] table:s keep order:false, stats:pseudo",
-		"  └─TableReader_10(Probe) 10000.00 root  data:TableFullScan_9",
-		"    └─TableFullScan_9 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"Projection_8 10000.00 root  Column#10",
+		"└─MergeJoin_9 10000.00 root  left outer semi join, other cond:eq(test.t.a, test.s.a), ge(test.s.b, test.t.b)",
+		"  ├─TableReader_13(Build) 10000.00 root  data:TableFullScan_12",
+		"  │ └─TableFullScan_12 10000.00 cop[tikv] table:s keep order:false, stats:pseudo",
+		"  └─TableReader_11(Probe) 10000.00 root  data:TableFullScan_10",
+		"    └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t").Check(testkit.Rows(
 		"1",
