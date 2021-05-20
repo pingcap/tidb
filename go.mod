@@ -35,23 +35,22 @@ require (
 	github.com/mattn/go-runewidth v0.0.10 // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
-	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20200908111422-2e78ee155d19
-	github.com/pingcap/br v5.0.0-nightly.0.20210329063924-86407e1a7324+incompatible
+	github.com/pingcap/br v5.0.0-nightly.0.20210419090151-03762465b589+incompatible
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20201126102027-b0a155152ca3
 	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
-	github.com/pingcap/kvproto v0.0.0-20210308063835-39b884695fb8
+	github.com/pingcap/kvproto v0.0.0-20210507054410-a8152f8a876c
 	github.com/pingcap/log v0.0.0-20210317133921-96f4fcab92a4
-	github.com/pingcap/parser v0.0.0-20210330190622-f959a136fc19
+	github.com/pingcap/parser v0.0.0-20210518053259-92fa6fe07eb6
 	github.com/pingcap/sysutil v0.0.0-20210315073920-cc0985d983a3
 	github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible
-	github.com/pingcap/tipb v0.0.0-20210326161441-1164ca065d1b
+	github.com/pingcap/tipb v0.0.0-20210422074242-57dd881b81b1
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
@@ -59,7 +58,6 @@ require (
 	github.com/shirou/gopsutil v3.21.2+incompatible
 	github.com/sirupsen/logrus v1.6.0
 	github.com/soheilhy/cmux v0.1.4
-	github.com/stretchr/testify v1.6.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/pd v1.1.0-beta.0.20210323121136-78679e5e209d
 	github.com/twmb/murmur3 v1.1.3
@@ -77,14 +75,14 @@ require (
 	golang.org/x/net v0.0.0-20210316092652-d523dce5a7f4
 	golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9
 	golang.org/x/sys v0.0.0-20210324051608-47abb6519492
-	golang.org/x/text v0.3.5
+	golang.org/x/text v0.3.6
 	golang.org/x/tools v0.1.0
 	google.golang.org/grpc v1.27.1
-	gopkg.in/check.v1 v1.0.0-20200902074654-038fdea0a05b // indirect
+	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.0-20200615113413-eeeca48fe776 // indirect
-	honnef.co/go/tools v0.1.3 // indirect
+	honnef.co/go/tools v0.1.4 // indirect
 	modernc.org/mathutil v1.2.2 // indirect
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67

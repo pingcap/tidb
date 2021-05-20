@@ -65,9 +65,8 @@ func (s *testSuite) TestEncodeLargeSmallReuseBug(c *C) {
 			IsPKHandle: false,
 		},
 	}, nil)
-	m, err := bDecoder.DecodeToDatumMap(b, nil)
+	_, err = bDecoder.DecodeToDatumMap(b, nil)
 	c.Assert(err, IsNil)
-	v := m[largeColID]
 
 	colFt = types.NewFieldType(mysql.TypeLonglong)
 	smallColID := int64(1)
@@ -81,9 +80,9 @@ func (s *testSuite) TestEncodeLargeSmallReuseBug(c *C) {
 			IsPKHandle: false,
 		},
 	}, nil)
-	m, err = bDecoder.DecodeToDatumMap(b, nil)
+	m, err := bDecoder.DecodeToDatumMap(b, nil)
 	c.Assert(err, IsNil)
-	v = m[smallColID]
+	v := m[smallColID]
 	c.Assert(v.GetInt64(), Equals, int64(2))
 }
 
@@ -740,7 +739,7 @@ func (s *testSuite) TestCodecUtil(c *C) {
 	c.Assert(rowcodec.IsNewFormat(oldRow), IsFalse)
 
 	// test stringer for decoder.
-	var cols []rowcodec.ColInfo
+	var cols = make([]rowcodec.ColInfo, 0, len(tps))
 	for i, ft := range tps {
 		cols = append(cols, rowcodec.ColInfo{
 			ID:         colIDs[i],

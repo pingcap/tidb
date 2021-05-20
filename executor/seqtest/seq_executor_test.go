@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
@@ -136,7 +137,8 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	tblID := tbl.Meta().ID
 
 	// Split the table.
-	s.cluster.SplitTable(tblID, N/2)
+	tableStart := tablecodec.GenTableRecordPrefix(tblID)
+	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), N/2)
 
 	ctx := context.Background()
 	for i := 0; i < N/2; i++ {
@@ -965,7 +967,7 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5000)
+	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5500)
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1471,8 +1473,6 @@ func (s *seqTestSuite) TestMaxDeltaSchemaCount(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	c.Assert(variable.GetMaxDeltaSchemaCount(), Equals, int64(variable.DefTiDBMaxDeltaSchemaCount))
-	gvc := domain.GetDomain(tk.Se).GetGlobalVarsCache()
-	gvc.Disable()
 
 	tk.MustExec("set @@global.tidb_max_delta_schema_count= -1")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_max_delta_schema_count value: '-1'"))

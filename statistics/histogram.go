@@ -285,7 +285,7 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 const (
 	// Version0 is the state that no statistics is actually collected, only the meta info.(the total count and the average col size)
 	Version0 = 0
-	// In Version1
+	// Version1 maintains the statistics in the following way.
 	// Column stats: CM Sketch is built in TiKV using full data. Histogram is built from samples. TopN is extracted from CM Sketch.
 	//    TopN + CM Sketch represent all data. Histogram also represents all data.
 	// Index stats: CM Sketch and Histogram is built in TiKV using full data. TopN is extracted from histogram. Then values covered by TopN is removed from CM Sketch.
@@ -293,11 +293,15 @@ const (
 	// Int PK column stats is always Version1 because it only has histogram built from full data.
 	// Fast analyze is always Version1 currently.
 	Version1 = 1
-	// In Version2
+	// Version2 maintains the statistics in the following way.
 	// Column stats: CM Sketch is not used. TopN and Histogram are built from samples. TopN + Histogram represent all data.
 	// Index stats: CM SKetch is not used. TopN and Histograms are built in TiKV using full data. NDV is also collected for each bucket in histogram.
 	//    Then values covered by TopN is removed from Histogram. TopN + Histogram represent all data.
 	Version2 = 2
+	// Version3 is used for testing now. Once it finished, we will fallback the Version3 to Version2.
+	// The difference between Version2 and Version3 is that we construct the index's statistics based on sampling also.
+	// The data structure between them are then same.
+	Version3 = 3
 )
 
 // AnalyzeFlag is set when the statistics comes from analyze and has not been modified by feedback.
@@ -343,22 +347,25 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d ndv: %d", hg.bucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat, hg.Buckets[bktID].NDV)
 }
 
-// RemoveIdxVals remove the given values from the histogram.
-func (hg *Histogram) RemoveIdxVals(idxValCntPairs []TopNMeta) {
+// RemoveVals remove the given values from the histogram.
+// This function contains an **ASSUMPTION**: valCntPairs is sorted in ascending order.
+func (hg *Histogram) RemoveVals(valCntPairs []TopNMeta) {
 	totalSubCnt := int64(0)
+	var cmpResult int
 	for bktIdx, pairIdx := 0, 0; bktIdx < hg.Len(); bktIdx++ {
-		for pairIdx < len(idxValCntPairs) {
+		for pairIdx < len(valCntPairs) {
 			// If the current val smaller than current bucket's lower bound, skip it.
-			cmpResult := bytes.Compare(hg.Bounds.Column(0).GetBytes(bktIdx*2), idxValCntPairs[pairIdx].Encoded)
+			cmpResult = bytes.Compare(hg.Bounds.Column(0).GetRaw(bktIdx*2), valCntPairs[pairIdx].Encoded)
 			if cmpResult > 0 {
+				pairIdx++
 				continue
 			}
 			// If the current val bigger than current bucket's upper bound, break.
-			cmpResult = bytes.Compare(hg.Bounds.Column(0).GetBytes(bktIdx*2+1), idxValCntPairs[pairIdx].Encoded)
+			cmpResult = bytes.Compare(hg.Bounds.Column(0).GetRaw(bktIdx*2+1), valCntPairs[pairIdx].Encoded)
 			if cmpResult < 0 {
 				break
 			}
-			totalSubCnt += int64(idxValCntPairs[pairIdx].Count)
+			totalSubCnt += int64(valCntPairs[pairIdx].Count)
 			if hg.Buckets[bktIdx].NDV > 0 {
 				hg.Buckets[bktIdx].NDV--
 			}
@@ -1119,6 +1126,7 @@ type Index struct {
 	Histogram
 	*CMSketch
 	*TopN
+	FMSketch *FMSketch
 	ErrorRate
 	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
 	Info           *model.IndexInfo

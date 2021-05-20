@@ -76,7 +76,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
+	storeerr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1568,7 +1569,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
 		if err != nil {
 			_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
-			if allowTiFlashFallback && errors.ErrorEqual(err, tikvstore.ErrTiFlashServerTimeout) && retryable {
+			if allowTiFlashFallback && errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) && retryable {
 				// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
 				// server and fallback to TiKV.
 				warns := append(parserWarns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
@@ -1691,6 +1692,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 // Currently the first return value is used to fallback to TiKV when TiFlash is down.
 func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) (bool, error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
+	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	reg.End()
@@ -1868,10 +1870,10 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
 			switch value.(string) {
 			case "firstNext":
-				failpoint.Return(firstNext, tikvstore.ErrTiFlashServerTimeout)
+				failpoint.Return(firstNext, storeerr.ErrTiFlashServerTimeout)
 			case "secondNext":
 				if !firstNext {
-					failpoint.Return(firstNext, tikvstore.ErrTiFlashServerTimeout)
+					failpoint.Return(firstNext, storeerr.ErrTiFlashServerTimeout)
 				}
 			}
 		})

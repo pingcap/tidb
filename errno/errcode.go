@@ -852,8 +852,14 @@ const (
 	ErrInvalidEncryptionOption                               = 3184
 	ErrTooLongValueForType                                   = 3505
 	ErrPKIndexCantBeInvisible                                = 3522
+	ErrGrantRole                                             = 3523
 	ErrRoleNotGranted                                        = 3530
 	ErrLockAcquireFailAndNoWaitSet                           = 3572
+	ErrCTERecursiveRequiresUnion                             = 3573
+	ErrCTERecursiveRequiresNonRecursiveFirst                 = 3574
+	ErrCTERecursiveForbidsAggregation                        = 3575
+	ErrCTERecursiveForbiddenJoinOrder                        = 3576
+	ErrInvalidRequiresSingleReference                        = 3577
 	ErrWindowNoSuchWindow                                    = 3579
 	ErrWindowCircularityInWindowGraph                        = 3580
 	ErrWindowNoChildPartitioning                             = 3581
@@ -876,6 +882,7 @@ const (
 	ErrWindowExplainJSON                                     = 3598
 	ErrWindowFunctionIgnoresFrame                            = 3599
 	ErrIllegalPrivilegeLevel                                 = 3619
+	ErrCTEMaxRecursionDepth                                  = 3636
 	ErrNotHintUpdatable                                      = 3637
 	ErrDataTruncatedFunctionalIndex                          = 3751
 	ErrDataOutOfRangeFunctionalIndex                         = 3752
@@ -994,6 +1001,7 @@ const (
 	ErrJSONObjectKeyTooLong                = 8129
 	ErrMultiStatementDisabled              = 8130
 	ErrPartitionStatsMissing               = 8131
+	ErrNotSupportedWithSem                 = 8132
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200

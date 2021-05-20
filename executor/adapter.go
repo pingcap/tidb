@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
+
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -212,7 +213,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 	if err != nil {
 		return nil, err
 	}
-	a.Ctx.GetSessionVars().StmtCtx.Priority = tikvstore.PriorityHigh
+	a.Ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
 
 	// try to reuse point get executor
 	if a.PsStmt.Executor != nil {
@@ -267,7 +268,7 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 // RebuildPlan rebuilds current execute statement plan.
 // It returns the current information schema version that 'a' is using.
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
-	is := infoschema.GetInfoSchema(a.Ctx)
+	is := a.Ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	a.InfoSchema = is
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
 		return 0, err
@@ -376,6 +377,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	if txn.Valid() {
 		txnStartTS = txn.StartTS()
 	}
+
 	return &recordSet{
 		executor:   e,
 		stmt:       a,
@@ -577,8 +579,8 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		}
 		seVars := sctx.GetSessionVars()
 		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout)
-		var lockKeyStats *execdetails.LockKeysDetails
-		ctx = context.WithValue(ctx, execdetails.LockKeysDetailCtxKey, &lockKeyStats)
+		var lockKeyStats *util.LockKeysDetails
+		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
 		startLocking := time.Now()
 		err = txn.LockKeys(ctx, lockCtx, keys...)
 		if lockKeyStats != nil {
@@ -589,6 +591,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		}
 		e, err = a.handlePessimisticLockError(ctx, err)
 		if err != nil {
+			// todo: Report deadlock
 			if ErrDeadlock.Equal(err) {
 				metrics.StatementDeadlockDetectDuration.Observe(time.Since(startLocking).Seconds())
 			}
@@ -625,7 +628,7 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 		newForUpdateTS = version.Ver
 	}
 	seCtx.GetSessionVars().TxnCtx.SetForUpdateTS(newForUpdateTS)
-	txn.SetOption(tikvstore.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
+	txn.SetOption(kv.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
 	return nil
 }
 
@@ -637,7 +640,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	}
 	txnCtx := sessVars.TxnCtx
 	var newForUpdateTS uint64
-	if deadlock, ok := errors.Cause(err).(*tikvstore.ErrDeadlock); ok {
+	if deadlock, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok {
 		if !deadlock.IsRetryable {
 			return nil, ErrDeadlock
 		}
@@ -729,15 +732,15 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 			if stmtPri := stmtCtx.Priority; stmtPri == mysql.NoPriority {
 				switch {
 				case useMaxTS:
-					stmtCtx.Priority = tikvstore.PriorityHigh
+					stmtCtx.Priority = kv.PriorityHigh
 				case a.LowerPriority:
-					stmtCtx.Priority = tikvstore.PriorityLow
+					stmtCtx.Priority = kv.PriorityLow
 				}
 			}
 		}
 	}
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
-		ctx.GetSessionVars().StmtCtx.Priority = tikvstore.PriorityLow
+		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
 	b := newExecutorBuilder(ctx, a.InfoSchema)
@@ -757,7 +760,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
 		if executorExec.lowerPriority {
-			ctx.GetSessionVars().StmtCtx.Priority = tikvstore.PriorityLow
+			ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 		}
 		e = executorExec.stmtExec
 	}
@@ -788,14 +791,14 @@ func (a *ExecStmt) logAudit() {
 }
 
 // FormatSQL is used to format the original SQL, e.g. truncating long SQL, appending prepared arguments.
-func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc {
+func FormatSQL(sql string) stringutil.StringerFunc {
 	return func() string {
 		cfg := config.GetGlobalConfig()
 		length := len(sql)
 		if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(length) > maxQueryLen {
 			sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, length)
 		}
-		return QueryReplacer.Replace(sql) + pps.String()
+		return QueryReplacer.Replace(sql)
 	}
 }
 
@@ -840,13 +843,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 			totalTiFlashQueryFailCounter.Inc()
 		}
 	}
-	prevStmt := a.GetTextToLog()
-	if sessVars.EnableRedactLog {
-		sessVars.PrevStmt = FormatSQL(prevStmt, nil)
-	} else {
-		pps := types.CloneRow(sessVars.PreparedParams)
-		sessVars.PrevStmt = FormatSQL(prevStmt, pps)
-	}
+	sessVars.PrevStmt = FormatSQL(a.GetTextToLog())
 
 	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
 	if sessVars.InRestrictedSQL {
@@ -884,15 +881,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if (!enable || costTime < threshold) && !force {
 		return
 	}
-	var sql stringutil.StringerFunc
-	normalizedSQL, digest := sessVars.StmtCtx.SQLDigest()
-	if sessVars.EnableRedactLog {
-		sql = FormatSQL(normalizedSQL, nil)
-	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
-		sql = FormatSQL(sensitiveStmt.SecureText(), nil)
-	} else {
-		sql = FormatSQL(a.Text, sessVars.PreparedParams)
-	}
+	sql := FormatSQL(a.GetTextToLog())
+	_, digest := sessVars.StmtCtx.SQLDigest()
 
 	var indexNames string
 	if len(sessVars.StmtCtx.IndexNames) > 0 {
@@ -918,6 +908,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
 	if stmtDetailRaw != nil {
 		stmtDetail = *(stmtDetailRaw.(*execdetails.StmtExecDetails))
+	}
+	var tikvExecDetail util.ExecDetails
+	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
+	if tikvExecDetailRaw != nil {
+		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
@@ -948,9 +943,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		PlanFromCache:     sessVars.FoundInPlanCache,
 		PlanFromBinding:   sessVars.FoundInBinding,
 		RewriteInfo:       sessVars.RewritePhaseInfo,
-		KVTotal:           time.Duration(atomic.LoadInt64(&stmtDetail.WaitKVRespDuration)),
-		PDTotal:           time.Duration(atomic.LoadInt64(&stmtDetail.WaitPDRespDuration)),
-		BackoffTotal:      time.Duration(atomic.LoadInt64(&stmtDetail.BackoffDuration)),
+		KVTotal:           time.Duration(atomic.LoadInt64(&tikvExecDetail.WaitKVRespDuration)),
+		PDTotal:           time.Duration(atomic.LoadInt64(&tikvExecDetail.WaitPDRespDuration)),
+		BackoffTotal:      time.Duration(atomic.LoadInt64(&tikvExecDetail.BackoffDuration)),
 		WriteSQLRespTotal: stmtDetail.WriteSQLRespDuration,
 		ExecRetryCount:    a.retryCount,
 	}
@@ -1114,6 +1109,11 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if stmtDetailRaw != nil {
 		stmtDetail = *(stmtDetailRaw.(*execdetails.StmtExecDetails))
 	}
+	var tikvExecDetail util.ExecDetails
+	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
+	if tikvExecDetailRaw != nil {
+		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
+	}
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:      strings.ToLower(sessVars.CurrentDB),
 		OriginalSQL:     sql,
@@ -1142,6 +1142,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		PlanInBinding:   sessVars.FoundInBinding,
 		ExecRetryCount:  a.retryCount,
 		StmtExecDetails: stmtDetail,
+		TiKVExecDetails: tikvExecDetail,
 		Prepared:        a.isPreparedStmt,
 	}
 	if a.retryCount > 0 {
@@ -1153,12 +1154,13 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 // GetTextToLog return the query text to log.
 func (a *ExecStmt) GetTextToLog() string {
 	var sql string
-	if a.Ctx.GetSessionVars().EnableRedactLog {
-		sql, _ = a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
+	sessVars := a.Ctx.GetSessionVars()
+	if sessVars.EnableRedactLog {
+		sql, _ = sessVars.StmtCtx.SQLDigest()
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = sensitiveStmt.SecureText()
 	} else {
-		sql = a.Text
+		sql = sessVars.StmtCtx.OriginalSQL + sessVars.PreparedParams.String()
 	}
 	return sql
 }

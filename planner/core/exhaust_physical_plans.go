@@ -1025,13 +1025,18 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 				if ts.schema.ColumnIndex(col) == -1 {
 					ts.Schema().Append(col)
 					ts.Columns = append(ts.Columns, col.ToInfo())
-					cop.doubleReadNeedProj = true
+					cop.needExtraProj = true
 				}
 			}
 		}
 		// If inner cop task need keep order, the extraHandleCol should be set.
 		if cop.keepOrder && !ds.tableInfo.IsCommonHandle {
-			cop.extraHandleCol, cop.doubleReadNeedProj = ts.appendExtraHandleCol(ds)
+			var needExtraProj bool
+			cop.extraHandleCol, needExtraProj = ts.appendExtraHandleCol(ds)
+			cop.needExtraProj = cop.needExtraProj || needExtraProj
+		}
+		if cop.needExtraProj {
+			cop.originSchema = ds.schema
 		}
 		cop.tablePlan = ts
 	}
@@ -1411,6 +1416,7 @@ func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges []*ranger.Range, p
 
 func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAndInFuncs []expression.Expression, nextColRange []*ranger.Range, haveExtraCol bool) (ranges []*ranger.Range, emptyRange bool, err error) {
 	pointLength := matchedKeyCnt + len(eqAndInFuncs)
+	//nolint:gosimple // false positive unnecessary nil check
 	if nextColRange != nil {
 		for _, colRan := range nextColRange {
 			// The range's exclude status is the same with last col's.
@@ -1657,7 +1663,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	}
 	joins := make([]PhysicalPlan, 0, 8)
 	canPushToTiFlash := p.canPushToCop(kv.TiFlash)
-	if p.ctx.GetSessionVars().AllowMPPExecution && canPushToTiFlash {
+	if p.ctx.GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
 		if p.shouldUseMPPBCJ() {
 			mppJoins := p.tryToGetMppHashJoin(prop, true)
 			if (p.preferJoinType & preferBCJoin) > 0 {
@@ -1960,6 +1966,9 @@ func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPl
 	if !lt.limitHints.preferLimitToCop {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
+	if lt.ctx.GetSessionVars().IsMPPAllowed() {
+		allTaskTypes = append(allTaskTypes, property.MppTaskType)
+	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64}
@@ -2036,7 +2045,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	}
 	disableAggPushDownToCop(la.children[0])
 	join := la.GetHashJoin(prop)
-	var columns []*expression.Column
+	var columns = make([]*expression.Column, 0, len(la.CorCols))
 	for _, colColumn := range la.CorCols {
 		columns = append(columns, &colColumn.Column)
 	}
@@ -2347,7 +2356,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
 	}
 	canPushDownToTiFlash := la.canPushToCop(kv.TiFlash)
-	canPushDownToMPP := la.ctx.GetSessionVars().AllowMPPExecution && la.checkCanPushDownToMPP() && canPushDownToTiFlash
+	canPushDownToMPP := la.ctx.GetSessionVars().IsMPPAllowed() && la.checkCanPushDownToMPP() && canPushDownToTiFlash
 	if la.HasDistinct() {
 		// TODO: remove after the cost estimation of distinct pushdown is implemented.
 		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {

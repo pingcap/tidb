@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
+	"github.com/pingcap/tidb/util/sem"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -124,6 +125,8 @@ type preprocessor struct {
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
+	case *ast.AdminStmt:
+		p.checkAdminCheckTableGrammar(node)
 	case *ast.DeleteStmt:
 		p.stmtTp = TypeDelete
 	case *ast.SelectStmt:
@@ -556,6 +559,31 @@ func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
 	}
 }
 
+func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
+	for _, table := range stmt.Tables {
+		currentDB := p.ctx.GetSessionVars().CurrentDB
+		if table.Schema.String() != "" {
+			currentDB = table.Schema.L
+		}
+		if currentDB == "" {
+			p.err = errors.Trace(ErrNoDB)
+			return
+		}
+		sName := model.NewCIStr(currentDB)
+		tName := table.Name
+		tableInfo, err := p.is.TableByName(sName, tName)
+		if err != nil {
+			p.err = err
+			return
+		}
+		tempTableType := tableInfo.Meta().TempTableType
+		if stmt.Tp == ast.AdminCheckTable && tempTableType != model.TempTableNone {
+			p.err = infoschema.ErrAdminCheckTable
+			return
+		}
+	}
+}
+
 func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
@@ -563,7 +591,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		return
 	}
 	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
-	if stmt.IsTemporary && !enableNoopFuncs {
+	if stmt.TemporaryKeyword == ast.TemporaryLocal && !enableNoopFuncs {
 		p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("CREATE TEMPORARY TABLE")
 		return
 	}
@@ -675,7 +703,7 @@ func (p *preprocessor) checkDropSequenceGrammar(stmt *ast.DropSequenceStmt) {
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 	p.checkDropTableNames(stmt.Tables)
 	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
-	if stmt.IsTemporary && !enableNoopFuncs {
+	if stmt.TemporaryKeyword == ast.TemporaryLocal && !enableNoopFuncs {
 		p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE")
 		return
 	}
@@ -1202,6 +1230,9 @@ func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 }
 
 func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
+	if sem.IsEnabled() && node.Tp == ast.ShowConfig {
+		p.err = ErrNotSupportedWithSem.GenWithStackByArgs("SHOW CONFIG")
+	}
 	if node.DBName == "" {
 		if node.Table != nil && node.Table.Schema.L != "" {
 			node.DBName = node.Table.Schema.O

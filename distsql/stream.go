@@ -49,8 +49,6 @@ type streamResult struct {
 	durationReported bool
 }
 
-func (r *streamResult) Fetch(context.Context) {}
-
 func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	for !chk.IsFull() {

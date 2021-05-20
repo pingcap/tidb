@@ -18,6 +18,7 @@ import (
 	"flag"
 	"fmt"
 	"sync"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -26,6 +27,11 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
 )
+
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	TestingT(t)
+}
 
 var (
 	withTiKVGlobalLock sync.RWMutex

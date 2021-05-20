@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
 // KeyRanges is like []kv.KeyRange, but may has extra elements at head/tail.

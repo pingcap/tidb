@@ -21,6 +21,11 @@ import (
 	. "github.com/pingcap/check"
 )
 
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	TestingT(t)
+}
+
 var _ = Suite(&testRandSuite{})
 
 type testRandSuite struct {

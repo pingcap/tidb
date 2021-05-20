@@ -22,7 +22,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
@@ -38,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -819,14 +817,19 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		}
 	})
 
-	if jobParam.updatedAutoRandomBits > 0 {
-		if err := checkAndApplyNewAutoRandomBits(job, t, tblInfo, jobParam.newCol, jobParam.oldColName, jobParam.updatedAutoRandomBits); err != nil {
-			return ver, errors.Trace(err)
-		}
+	err = checkAndApplyAutoRandomBits(d, t, dbInfo, tblInfo, oldCol, jobParam.newCol, jobParam.updatedAutoRandomBits)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
 	}
 
 	if !needChangeColumnData(oldCol, jobParam.newCol) {
 		return w.doModifyColumn(d, t, job, dbInfo, tblInfo, jobParam.newCol, oldCol, jobParam.pos)
+	}
+
+	if err = isGeneratedRelatedColumn(tblInfo, jobParam.newCol, oldCol); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
 	}
 
 	if jobParam.changingCol == nil {
@@ -1257,7 +1260,7 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 }
 
 func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, rawRow []byte) error {
-	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, handle, rawRow, time.UTC, timeutil.SystemLocation(), w.rowMap)
+	_, err := w.rowDecoder.DecodeTheExistedColumnMap(w.sessCtx, handle, rawRow, time.UTC, w.rowMap)
 	if err != nil {
 		return errors.Trace(errCantDecodeRecord.GenWithStackByArgs("column", err))
 	}
@@ -1295,6 +1298,11 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	})
 
 	w.rowMap[w.newColInfo.ID] = newColVal
+	_, err = w.rowDecoder.EvalRemainedExprColumnMap(w.sessCtx, timeutil.SystemLocation(), w.rowMap)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	newColumnIDs := make([]int64, 0, len(w.rowMap))
 	newRow := make([]types.Datum, 0, len(w.rowMap))
 	for colID, val := range w.rowMap {
@@ -1337,7 +1345,7 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
-		txn.SetOption(tikvstore.Priority, w.priority)
+		txn.SetOption(kv.Priority, w.priority)
 
 		rowRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
@@ -1507,31 +1515,73 @@ func adjustColumnInfoInModifyColumn(
 	return nil
 }
 
-func checkAndApplyNewAutoRandomBits(job *model.Job, t *meta.Meta, tblInfo *model.TableInfo,
-	newCol *model.ColumnInfo, oldName *model.CIStr, newAutoRandBits uint64) error {
-	schemaID := job.SchemaID
-	newLayout := autoid.NewShardIDLayout(&newCol.FieldType, newAutoRandBits)
-
-	// GenAutoRandomID first to prevent concurrent update.
-	_, err := t.GenAutoRandomID(schemaID, tblInfo.ID, 1)
+func checkAndApplyAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+	oldCol *model.ColumnInfo, newCol *model.ColumnInfo, newAutoRandBits uint64) error {
+	if newAutoRandBits == 0 {
+		return nil
+	}
+	err := checkNewAutoRandomBits(m, dbInfo.ID, tblInfo.ID, oldCol, newCol, newAutoRandBits)
 	if err != nil {
 		return err
 	}
-	currentIncBitsVal, err := t.GetAutoRandomID(schemaID, tblInfo.ID)
+	return applyNewAutoRandomBits(d, m, dbInfo, tblInfo, oldCol, newAutoRandBits)
+}
+
+// checkNewAutoRandomBits checks whether the new auto_random bits number can cause overflow.
+func checkNewAutoRandomBits(m *meta.Meta, schemaID, tblID int64,
+	oldCol *model.ColumnInfo, newCol *model.ColumnInfo, newAutoRandBits uint64) error {
+	newLayout := autoid.NewShardIDLayout(&newCol.FieldType, newAutoRandBits)
+
+	allocTp := autoid.AutoRandomType
+	convertedFromAutoInc := mysql.HasAutoIncrementFlag(oldCol.Flag)
+	if convertedFromAutoInc {
+		allocTp = autoid.AutoIncrementType
+	}
+	// GenerateAutoID first to prevent concurrent update in DML.
+	_, err := autoid.GenerateAutoID(m, schemaID, tblID, 1, allocTp)
+	if err != nil {
+		return err
+	}
+	currentIncBitsVal, err := autoid.GetAutoID(m, schemaID, tblID, allocTp)
 	if err != nil {
 		return err
 	}
 	// Find the max number of available shard bits by
 	// counting leading zeros in current inc part of auto_random ID.
-	availableBits := bits.LeadingZeros64(uint64(currentIncBitsVal))
-	isOccupyingIncBits := newLayout.TypeBitsLength-newLayout.IncrementalBits > uint64(availableBits)
-	if isOccupyingIncBits {
-		availableBits := mathutil.Min(autoid.MaxAutoRandomBits, availableBits)
-		errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, availableBits, newAutoRandBits, oldName.O)
-		job.State = model.JobStateCancelled
+	usedBits := uint64(64 - bits.LeadingZeros64(uint64(currentIncBitsVal)))
+	if usedBits > newLayout.IncrementalBits {
+		overflowCnt := usedBits - newLayout.IncrementalBits
+		errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, newAutoRandBits-overflowCnt, newAutoRandBits, oldCol.Name.O)
 		return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 	}
+	return nil
+}
+
+// applyNewAutoRandomBits set auto_random bits to TableInfo and
+// migrate auto_increment ID to auto_random ID if possible.
+func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
+	tblInfo *model.TableInfo, oldCol *model.ColumnInfo, newAutoRandBits uint64) error {
 	tblInfo.AutoRandomBits = newAutoRandBits
+	needMigrateFromAutoIncToAutoRand := mysql.HasAutoIncrementFlag(oldCol.Flag)
+	if !needMigrateFromAutoIncToAutoRand {
+		return nil
+	}
+	autoRandAlloc := autoid.NewAllocatorsFromTblInfo(d.store, dbInfo.ID, tblInfo).Get(autoid.AutoRandomType)
+	if autoRandAlloc == nil {
+		errMsg := fmt.Sprintf(autoid.AutoRandomAllocatorNotFound, dbInfo.Name.O, tblInfo.Name.O)
+		return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+	}
+	nextAutoIncID, err := m.GetAutoTableID(dbInfo.ID, tblInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = autoRandAlloc.Rebase(tblInfo.ID, nextAutoIncID, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := m.CleanAutoID(dbInfo.ID, tblInfo.ID); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 
