@@ -19,7 +19,6 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -305,7 +304,11 @@ func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool
 			removeNotNull = true
 		}
 	default:
-		return errors.Errorf("unsupported agg function: %s", a.Name)
+		ret, err := extensionAggFuncUpdateNotNullFlag4RetType(a, hasGroupBy, allAggsFirstRow)
+		if err != nil {
+			return err
+		}
+		removeNotNull = ret
 	}
 	if removeNotNull {
 		a.RetTp = a.RetTp.Clone()

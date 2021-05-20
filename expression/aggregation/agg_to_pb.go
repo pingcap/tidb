@@ -24,6 +24,10 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+const (
+	tipbExprTypeHsBuildDb = 3021
+)
+
 // AggFuncToPBExpr converts aggregate function to pb.
 func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *AggFuncDesc) *tipb.Expr {
 	// if aggFunc.HasDistinct {
@@ -67,6 +71,8 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 		tp = tipb.ExprType_VarSamp
 	case ast.AggFuncStddevSamp:
 		tp = tipb.ExprType_StddevSamp
+	case ast.AggFuncHSBuildDB:
+		tp = tipbExprTypeHsBuildDb
 	}
 	if !client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
 		return nil
@@ -109,6 +115,8 @@ func PBExprToAggFuncDesc(ctx sessionctx.Context, aggFunc *tipb.Expr, fieldTps []
 		name = ast.AggFuncBitXor
 	case tipb.ExprType_Agg_BitAnd:
 		name = ast.AggFuncBitAnd
+	case tipbExprTypeHsBuildDb:
+		name = ast.AggFuncHSBuildDB
 	default:
 		return nil, errors.Errorf("unknown aggregation function type: %v", aggFunc.Tp)
 	}

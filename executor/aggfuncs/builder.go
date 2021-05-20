@@ -30,6 +30,20 @@ import (
 	"go.uber.org/zap"
 )
 
+type aggFuncBuilderFunc func(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc
+
+var (
+	extensionAggFuncBuilders = map[string]aggFuncBuilderFunc{}
+)
+
+func buildFromExtensionAggFuncs(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	buildFunc, have := extensionAggFuncBuilders[aggFuncDesc.Name]
+	if !have {
+		return nil
+	}
+	return buildFunc(ctx, aggFuncDesc, ordinal)
+}
+
 // Build is used to build a specific AggFunc implementation according to the
 // input aggFuncDesc.
 func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
@@ -69,7 +83,7 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 	case ast.AggFuncStddevSamp:
 		return buildStddevSamp(aggFuncDesc, ordinal)
 	}
-	return nil
+	return buildFromExtensionAggFuncs(ctx, aggFuncDesc, ordinal)
 }
 
 // BuildWindowFunctions builds specific window function according to function description and order by columns.

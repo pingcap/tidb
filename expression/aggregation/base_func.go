@@ -118,7 +118,7 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 	case ast.AggFuncJsonObjectAgg:
 		a.typeInfer4JsonFuncs(ctx)
 	default:
-		return errors.Errorf("unsupported agg function: %s", a.Name)
+		return extensionAggFuncTypeInfer(a, ctx)
 	}
 	return nil
 }

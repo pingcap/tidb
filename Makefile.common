@@ -25,10 +25,15 @@ CURDIR := $(shell pwd)
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
 export PATH := $(path_to_add):$(PATH)
 
+TEST_TAGS=
+ifneq "$(BUILD_TAGS)" ""
+	TEST_TAGS=-tags $(BUILD_TAGS)
+endif
+
 GO              := GO111MODULE=on go
-GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes
+GOBUILD         := $(GO) build $(BUILD_FLAG) -tags "codes $(BUILD_TAGS)"
 GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
-GOTEST          := $(GO) test -p $(P)
+GOTEST          := $(GO) test -p $(P) $(TEST_TAGS)
 OVERALLS        := GO111MODULE=on overalls
 STATICCHECK     := GO111MODULE=on staticcheck
 TIDB_EDITION    ?= Community
