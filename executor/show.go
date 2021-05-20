@@ -753,6 +753,10 @@ func getDefaultCollate(charsetName string) string {
 	return mysql.DefaultCollationName
 }
 
+func init() {
+	ddl.CtorShowCreateTableHook = ConstructResultOfShowCreateTable
+}
+
 // ConstructResultOfShowCreateTable constructs the result for show create table.
 func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
 	if tableInfo.IsView() {
@@ -969,16 +973,18 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		fmt.Fprintf(buf, " COMPRESSION='%s'", tableInfo.Compression)
 	}
 
-	incrementAllocator := allocators.Get(autoid.RowIDAllocType)
-	if hasAutoIncID && incrementAllocator != nil {
-		autoIncID, err := incrementAllocator.NextGlobalAutoID(tableInfo.ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	if allocators != nil {
+		incrementAllocator := allocators.Get(autoid.RowIDAllocType)
+		if hasAutoIncID && incrementAllocator != nil {
+			autoIncID, err := incrementAllocator.NextGlobalAutoID(tableInfo.ID)
+			if err != nil {
+				return errors.Trace(err)
+			}
 
-		// It's compatible with MySQL.
-		if autoIncID > 1 {
-			fmt.Fprintf(buf, " AUTO_INCREMENT=%d", autoIncID)
+			// It's compatible with MySQL.
+			if autoIncID > 1 {
+				fmt.Fprintf(buf, " AUTO_INCREMENT=%d", autoIncID)
+			}
 		}
 	}
 
@@ -986,15 +992,17 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		fmt.Fprintf(buf, " /*T![auto_id_cache] AUTO_ID_CACHE=%d */", tableInfo.AutoIdCache)
 	}
 
-	randomAllocator := allocators.Get(autoid.AutoRandomType)
-	if randomAllocator != nil {
-		autoRandID, err := randomAllocator.NextGlobalAutoID(tableInfo.ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	if allocators != nil {
+		randomAllocator := allocators.Get(autoid.AutoRandomType)
+		if randomAllocator != nil {
+			autoRandID, err := randomAllocator.NextGlobalAutoID(tableInfo.ID)
+			if err != nil {
+				return errors.Trace(err)
+			}
 
-		if autoRandID > 1 {
-			fmt.Fprintf(buf, " /*T![auto_rand_base] AUTO_RANDOM_BASE=%d */", autoRandID)
+			if autoRandID > 1 {
+				fmt.Fprintf(buf, " /*T![auto_rand_base] AUTO_RANDOM_BASE=%d */", autoRandID)
+			}
 		}
 	}
 

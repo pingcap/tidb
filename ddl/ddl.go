@@ -533,7 +533,9 @@ func updateTickerInterval(ticker *time.Ticker, lease time.Duration, job *model.J
 // - other: found in history DDL job and return that job error
 func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// Get a global job ID and put the DDL job in the queue.
-	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
+	if job.Query == "" {
+		job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
+	}
 	task := &limitJobTask{job, make(chan error)}
 	d.limitJobCh <- task
 	// worker should restart to continue handling tasks in limitJobCh, and send back through task.err
