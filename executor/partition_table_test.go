@@ -1038,7 +1038,7 @@ func (s *partitionTableSuite) TestVarcharColAndIntColWithExpression(c *C) {
 			partitions: []string{"all"},
 		},
 		{
-			sql:        "select * from %s where a > 0",
+			sql:        "select * from %s where a < 0",
 			partitions: []string{"all"},
 		},
 	}
