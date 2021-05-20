@@ -74,7 +74,7 @@ type GCWorker struct {
 
 // NewGCWorker creates a GCWorker instance.
 func NewGCWorker(store kv.Storage, pdClient pd.Client) (*GCWorker, error) {
-	ver, err := store.CurrentVersion(oracle.GlobalTxnScope)
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -429,7 +429,7 @@ func (w *GCWorker) calcSafePointByMinStartTS(ctx context.Context, safePoint uint
 }
 
 func (w *GCWorker) getOracleTime() (time.Time, error) {
-	currentVer, err := w.store.CurrentVersion(oracle.GlobalTxnScope)
+	currentVer, err := w.store.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
 		return time.Time{}, errors.Trace(err)
 	}
@@ -1984,7 +1984,7 @@ type MockGCWorker struct {
 
 // NewMockGCWorker creates a MockGCWorker instance ONLY for test.
 func NewMockGCWorker(store kv.Storage) (*MockGCWorker, error) {
-	ver, err := store.CurrentVersion(oracle.GlobalTxnScope)
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

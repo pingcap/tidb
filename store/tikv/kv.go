@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"math"
 	"math/rand"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,7 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/tikv/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
@@ -84,7 +85,7 @@ type KVStore struct {
 	safePoint uint64
 	spTime    time.Time
 	spMutex   sync.RWMutex  // this is used to update safePoint and spTime
-	closed    chan struct{} // this is used to nofity when the store is closed
+	closed    chan struct{} // this is used to notify when the store is closed
 
 	// storeID -> safeTS, stored as map[uint64]uint64
 	// safeTS here will be used during the Stale Read process,
@@ -187,11 +188,11 @@ func (s *KVStore) runSafePointChecker() {
 
 // Begin a global transaction.
 func (s *KVStore) Begin() (*KVTxn, error) {
-	return s.BeginWithOption(tidbkv.DefaultTransactionOption())
+	return s.BeginWithOption(DefaultStartTSOption())
 }
 
-// BeginWithOption begins a transaction with the given TransactionOption
-func (s *KVStore) BeginWithOption(options tidbkv.TransactionOption) (*KVTxn, error) {
+// BeginWithOption begins a transaction with the given StartTSOption
+func (s *KVStore) BeginWithOption(options StartTSOption) (*KVTxn, error) {
 	return newTiKVTxnWithOptions(s, options)
 }
 
@@ -358,6 +359,27 @@ func (s *KVStore) GetTiKVClient() (client Client) {
 	return s.clientMu.client
 }
 
+// GetMinSafeTS return the minimal safeTS of the storage with given txnScope.
+func (s *KVStore) GetMinSafeTS(txnScope string) uint64 {
+	stores := make([]*Store, 0)
+	allStores := s.regionCache.getStoresByType(tikvrpc.TiKV)
+	if txnScope != oracle.GlobalTxnScope {
+		for _, store := range allStores {
+			if store.IsLabelsMatch([]*metapb.StoreLabel{
+				{
+					Key:   DCLabelKey,
+					Value: txnScope,
+				},
+			}) {
+				stores = append(stores, store)
+			}
+		}
+	} else {
+		stores = allStores
+	}
+	return s.getMinSafeTSByStores(stores)
+}
+
 func (s *KVStore) getSafeTS(storeID uint64) uint64 {
 	safeTS, ok := s.safeTSMap.Load(storeID)
 	if !ok {
@@ -366,6 +388,7 @@ func (s *KVStore) getSafeTS(storeID uint64) uint64 {
 	return safeTS.(uint64)
 }
 
+// setSafeTS sets safeTs for store storeID, export for testing
 func (s *KVStore) setSafeTS(storeID, safeTS uint64) {
 	s.safeTSMap.Store(storeID, safeTS)
 }
@@ -414,17 +437,20 @@ func (s *KVStore) updateSafeTS(ctx context.Context) {
 		storeAddr := store.addr
 		go func(ctx context.Context, wg *sync.WaitGroup, storeID uint64, storeAddr string) {
 			defer wg.Done()
-			// TODO: add metrics for updateSafeTS
 			resp, err := tikvClient.SendRequest(ctx, storeAddr, tikvrpc.NewRequest(tikvrpc.CmdStoreSafeTS, &kvrpcpb.StoreSafeTSRequest{KeyRange: &kvrpcpb.KeyRange{
 				StartKey: []byte(""),
 				EndKey:   []byte(""),
 			}}), ReadTimeoutShort)
+			storeIDStr := strconv.Itoa(int(storeID))
 			if err != nil {
+				metrics.TiKVSafeTSUpdateCounter.WithLabelValues("fail", storeIDStr).Inc()
 				logutil.BgLogger().Debug("update safeTS failed", zap.Error(err), zap.Uint64("store-id", storeID))
 				return
 			}
 			safeTSResp := resp.Resp.(*kvrpcpb.StoreSafeTSResponse)
 			s.setSafeTS(storeID, safeTSResp.GetSafeTs())
+			metrics.TiKVSafeTSUpdateCounter.WithLabelValues("success", storeIDStr).Inc()
+			metrics.TiKVSafeTSUpdateStats.WithLabelValues(storeIDStr).Set(float64(safeTSResp.GetSafeTs()))
 		}(ctx, wg, storeID, storeAddr)
 	}
 	wg.Wait()
