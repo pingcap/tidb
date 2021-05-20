@@ -147,9 +147,6 @@ type StatementContext struct {
 		normalized string
 		digest     string
 	}
-	// planNormalized use for cache the normalized plan, avoid duplicate builds.
-	planNormalized        string
-	planDigest            string
 	encodedPlan           string
 	planHint              string
 	planHintSet           bool

@@ -3,7 +3,9 @@ package tracecpu
 import (
 	"bytes"
 	"fmt"
+	"io/ioutil"
 	"runtime/pprof"
+	"strconv"
 	"time"
 
 	"github.com/google/pprof/profile"
@@ -81,12 +83,17 @@ func (sp *StmtProfiler) startAnalyzeProfileWorker() {
 		if len(stmtMap) == 0 {
 			continue
 		}
+		total := int64(0)
 		logutil.BgLogger().Info("-------- [ BEGIN ] ----------")
 		for digest, stmt := range stmtMap {
 			logutil.BgLogger().Info(fmt.Sprintf("%s , %v", stmt.normalizedSQL, digest))
 			for p, v := range stmt.plans {
 				logutil.BgLogger().Info(fmt.Sprintf("    %s : %s", time.Duration(v), p))
+				total += v
 			}
+		}
+		if config.GetGlobalConfig().TopStmt.Debug && total > (500*int64(time.Millisecond)) {
+			ioutil.WriteFile("cpu.profile."+strconv.Itoa(int(task.end)), task.buf.Bytes(), 0644)
 		}
 		sp.putTaskToBuffer(task)
 	}

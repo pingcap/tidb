@@ -340,7 +340,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	if config.GetGlobalConfig().TopStmt.Enable && a.Plan != nil {
 		// ExecuteExec will rewrite `a.Plan`, so goroutine set label should be executed after `a.buildExecutor`.
 		normalizedSQL, sqlDigest := a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
-		planDigest := a.PlanDigest()
+		planDigest := a.getPlanDigest()
 		if len(planDigest) > 0 {
 			ctx = pprof.WithLabels(ctx, pprof.Labels(
 				tracecpu.LabelSQL, normalizedSQL,
@@ -885,7 +885,7 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 	}
 }
 
-func (a *ExecStmt) PlanDigest() string {
+func (a *ExecStmt) getPlanDigest() string {
 	if len(a.planDigest) == 0 {
 		_, a.planDigest = plannercore.NormalizePlan(a.Plan)
 	}
@@ -943,7 +943,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	diskMax := sessVars.StmtCtx.DiskTracker.MaxConsumed()
-	planDigest := a.PlanDigest()
+	planDigest := a.getPlanDigest()
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		SQL:               sql.String(),
@@ -1105,11 +1105,11 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	var planDigestGen func() string
 	if a.Plan.TP() == plancodec.TypePointGet {
 		planDigestGen = func() string {
-			planDigest := a.PlanDigest()
+			planDigest := a.getPlanDigest()
 			return planDigest
 		}
 	} else {
-		planDigest = a.PlanDigest()
+		planDigest = a.getPlanDigest()
 	}
 
 	execDetail := stmtCtx.GetExecDetails()
