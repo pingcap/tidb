@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -190,14 +191,27 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 						}
 						used = append(used, int(idx))
 					}
-				} else {
-					used = []int{FullRange}
-					break
+					continue
 				}
-			} else {
-				used = []int{FullRange}
-				break
+
+				// issue:#22619
+				if col.RetType.Tp == mysql.TypeBit {
+					// maximum number of partitions is 8192
+					if col.RetType.Flen > 0 && col.RetType.Flen < int(math.Log2(ddl.PartitionCountLimit)) {
+						// all possible hash values
+						maxUsedPartitions := 1 << col.RetType.Flen
+						if maxUsedPartitions < numPartitions {
+							for i := 0; i < maxUsedPartitions; i++ {
+								used = append(used, i)
+							}
+							continue
+						}
+					}
+				}
 			}
+
+			used = []int{FullRange}
+			break
 		}
 	}
 	if len(partitionNames) > 0 && len(used) == 1 && used[0] == FullRange {
@@ -283,7 +297,7 @@ func (s *partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.
 			})
 			continue
 		}
-		return nil, errors.New(fmt.Sprintf("information of column %v is not found", colExpr.String()))
+		return nil, fmt.Errorf("information of column %v is not found", colExpr.String())
 	}
 	return names, nil
 }
@@ -1331,9 +1345,9 @@ func appendWarnForUnknownPartitions(ctx sessionctx.Context, hintName string, unk
 	if len(unknownPartitions) == 0 {
 		return
 	}
-	ctx.GetSessionVars().StmtCtx.AppendWarning(
-		errors.New(fmt.Sprintf("Unknown partitions (%s) in optimizer hint %s",
-			strings.Join(unknownPartitions, ","), hintName)))
+
+	warning := fmt.Errorf("Unknown partitions (%s) in optimizer hint %s", strings.Join(unknownPartitions, ","), hintName)
+	ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 }
 
 func (s *partitionProcessor) checkHintsApplicable(ds *DataSource, partitionSet set.StringSet) {

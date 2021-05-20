@@ -110,7 +110,7 @@ func (s *testLatchSuite) TestFirstAcquireFailedWithStale(c *C) {
 func (s *testLatchSuite) TestRecycle(c *C) {
 	latches := NewLatches(8)
 	now := time.Now()
-	startTS := oracle.ComposeTS(oracle.GetPhysical(now), 0)
+	startTS := oracle.GoTimeToTS(now)
 	lock := latches.genLock(startTS, [][]byte{
 		[]byte("a"), []byte("b"),
 	})
@@ -142,7 +142,7 @@ func (s *testLatchSuite) TestRecycle(c *C) {
 	}
 	c.Assert(allEmpty, IsFalse)
 
-	currentTS := oracle.ComposeTS(oracle.GetPhysical(now.Add(expireDuration)), 3)
+	currentTS := oracle.GoTimeToTS(now.Add(expireDuration)) + 3
 	latches.recycle(currentTS)
 
 	for i := 0; i < len(latches.slots); i++ {

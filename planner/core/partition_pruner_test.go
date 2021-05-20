@@ -67,6 +67,7 @@ func (s *testPartitionPruneSuit) TestHashPartitionPruner(c *C) {
 	tk.MustExec("create table t6(a int, b int) partition by hash(a) partitions 3;")
 	tk.MustExec("create table t7(a int, b int) partition by hash(a + b) partitions 10;")
 	tk.MustExec("create table t8(a int, b int) partition by hash(a) partitions 6;")
+	tk.MustExec("create table t9(a bit(1) default null, b int(11) default null) partition by hash(a) partitions 3;") //issue #22619
 
 	var input []string
 	var output []struct {
@@ -326,7 +327,7 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPrunerRandom(c *C) {
 		tk1.MustExec(insert)
 
 		// Test query without condition
-		query := fmt.Sprintf("select * from t1 order by id,a,b")
+		query := "select * from t1 order by id,a,b"
 		tk.MustQuery(query).Check(tk1.MustQuery(query).Rows())
 	}
 
@@ -466,9 +467,9 @@ func (s *testPartitionPruneSuit) TestRangePartitionPredicatePruner(c *C) {
 	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec(`create table t (a int(11) default null) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 		partition by range(a) (
-		partition p0 values less than (1), 
-		partition p1 values less than (2), 
-		partition p2 values less than (3), 
+		partition p0 values less than (1),
+		partition p1 values less than (2),
+		partition p2 values less than (3),
 		partition p_max values less than (maxvalue));`)
 
 	var input []string

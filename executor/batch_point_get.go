@@ -30,7 +30,6 @@ import (
 	driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -113,17 +112,17 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		e.stats = &runtimeStatsWithSnapshot{
 			SnapshotRuntimeStats: snapshotStats,
 		}
-		snapshot.SetOption(tikvstore.CollectRuntimeStats, snapshotStats)
+		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		snapshot.SetOption(tikvstore.ReplicaRead, tikvstore.ReplicaReadFollower)
+		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
-	snapshot.SetOption(tikvstore.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+	snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	isStaleness := e.ctx.GetSessionVars().TxnCtx.IsStaleness
-	snapshot.SetOption(tikvstore.IsStalenessReadOnly, isStaleness)
-	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != oracle.GlobalTxnScope {
-		snapshot.SetOption(tikvstore.MatchStoreLabels, []*metapb.StoreLabel{
+	snapshot.SetOption(kv.IsStalenessReadOnly, isStaleness)
+	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != kv.GlobalTxnScope {
+		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
 				Value: e.ctx.GetSessionVars().TxnCtx.TxnScope,
@@ -149,7 +148,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 // Close implements the Executor interface.
 func (e *BatchPointGetExec) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {
-		e.snapshot.DelOption(tikvstore.CollectRuntimeStats)
+		e.snapshot.DelOption(kv.CollectRuntimeStats)
 	}
 	e.inited = 0
 	e.index = 0
