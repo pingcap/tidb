@@ -13,8 +13,8 @@
       {
         "SQL": "explain format = 'brief' select * from t where cast(t.a as float) + 3 = 5.1",
         "Plan": [
-          "Selection 10000.00 root  eq(plus(cast(test.t.a), 3), 5.1)",
-          "└─TableReader 10000.00 root  data:TableFullScan",
+          "TableReader 8000.00 root  data:Selection",
+          "└─Selection 8000.00 cop[tiflash]  eq(plus(cast(test.t.a), 3), 5.1)",
           "  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
