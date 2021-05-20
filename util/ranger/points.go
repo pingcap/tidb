@@ -460,7 +460,7 @@ func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val 
 	for i := range ft.Elems {
 		tmpEnum.Name = ft.Elems[i]
 		tmpEnum.Value = uint64(i) + 1
-		d := types.NewMysqlEnumDatum(tmpEnum)
+		d := types.NewCollateMysqlEnumDatum(tmpEnum, ft.Collate)
 		if v, err := d.CompareDatum(sc, &val); err == nil {
 			switch op {
 			case ast.LT:

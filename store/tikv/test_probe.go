@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
@@ -79,6 +80,23 @@ func (s StoreProbe) LoadSafePoint() (uint64, error) {
 // SaveSafePoint saves safepoint to kv.
 func (s StoreProbe) SaveSafePoint(v uint64) error {
 	return saveSafePoint(s.GetSafePointKV(), v)
+}
+
+// SetRegionCacheStore is used to set a store in region cache, for testing only
+func (s StoreProbe) SetRegionCacheStore(id uint64, storeType tikvrpc.EndpointType, state uint64, labels []*metapb.StoreLabel) {
+	s.regionCache.storeMu.Lock()
+	defer s.regionCache.storeMu.Unlock()
+	s.regionCache.storeMu.stores[id] = &Store{
+		storeID:   id,
+		storeType: storeType,
+		state:     state,
+		labels:    labels,
+	}
+}
+
+// SetSafeTS is used to set safeTS for the store with `storeID`
+func (s StoreProbe) SetSafeTS(storeID, safeTS uint64) {
+	s.setSafeTS(storeID, safeTS)
 }
 
 // TxnProbe wraps a txn and exports internal states for testing purpose.
