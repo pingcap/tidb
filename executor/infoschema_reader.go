@@ -143,6 +143,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.ClusterTableStatementsSummary,
 			infoschema.ClusterTableStatementsSummaryHistory:
 			err = e.setDataForStatementsSummary(sctx, e.table.Name.O)
+		case infoschema.TableStatementsSummaryEvicted:
+			e.setDataForStatementsSummaryEvicted(sctx)
 		case infoschema.TablePlacementPolicy:
 			err = e.setDataForPlacementPolicy(sctx)
 		case infoschema.TableClientErrorsSummaryGlobal,
@@ -153,8 +155,6 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.setDataForTiDBTrx(sctx)
 		case infoschema.ClusterTableTiDBTrx:
 			err = e.setDataForClusterTiDBTrx(sctx)
-		case infoschema.TableStatementsSummaryEvicted:
-			err = e.setDataForStatementsSummaryEvicted(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -1909,11 +1909,11 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 			ptName = part.Name.L
 			skip = false
 		}
-		failpoint.Inject("outputInvalidPlacementRules", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("outputInvalidPlacementRules")); _err_ == nil {
 			if val.(bool) {
 				skip = false
 			}
-		})
+		}
 		if skip {
 			continue
 		}
@@ -2051,9 +2051,9 @@ func (e *memtableRetriever) setDataForClusterTiDBTrx(ctx sessionctx.Context) err
 	return nil
 }
 
-func (e *memtableRetriever) setDataForStatementsSummaryEvicted(ctx sessionctx.Context) error {
+func (e *memtableRetriever) setDataForStatementsSummaryEvicted(ctx sessionctx.Context) {
 	e.rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
-	return nil
+	return
 }
 
 type hugeMemTableRetriever struct {

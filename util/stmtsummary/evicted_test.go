@@ -85,10 +85,10 @@ func (s *testStmtSummarySuite) TestEvictedElementAdd(c *C) {
 
 	// test matchAndAdd
 	c.Assert(stmtEvictedElement.matchAndAdd(digestKey, digestElement), Equals, isTooYoung)
-	digestElement.beginTime, digestElement.endTime = now - 60, now
+	digestElement.beginTime, digestElement.endTime = now-60, now
 	c.Assert(stmtEvictedElement.matchAndAdd(digestKey, digestElement), Equals, isTooOld)
-	digestElement.beginTime, digestElement.endTime = now, now + 60
-	c.Assert(stmtEvictedElement.matchAndAdd(digestKey,digestElement), Equals, isMatch)
+	digestElement.beginTime, digestElement.endTime = now, now+60
+	c.Assert(stmtEvictedElement.matchAndAdd(digestKey, digestElement), Equals, isMatch)
 	c.Assert(len(stmtEvictedElement.digestKeyMap), Equals, 1)
 
 	// test clear
