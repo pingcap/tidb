@@ -85,10 +85,9 @@ func (sp *StmtProfiler) startAnalyzeProfileWorker() {
 		for digest, stmt := range stmtMap {
 			logutil.BgLogger().Info(fmt.Sprintf("%s , %v", stmt.normalizedSQL, digest))
 			for p, v := range stmt.plans {
-				logutil.BgLogger().Info(fmt.Sprintf("    %s : %s", p, time.Duration(v)))
+				logutil.BgLogger().Info(fmt.Sprintf("    %s : %s", time.Duration(v), p))
 			}
 		}
-		logutil.BgLogger().Info("------")
 		sp.putTaskToBuffer(task)
 	}
 }

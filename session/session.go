@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
 	"strings"
@@ -42,7 +41,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/util/tracecpu"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 
@@ -1492,7 +1490,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	s.sessionVars.StartTime = time.Now()
 
 	// Some executions are done in compile stage, so we reset them before compile.
-	if err := executor.ResetContextOfStmt(ctx, s, stmtNode); err != nil {
+	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
@@ -1602,14 +1600,6 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		span1.LogKV("sql", s.OriginText())
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-
-	if es, ok := s.(*executor.ExecStmt); ok && es.Plan != nil {
-		planDigest := es.PlanDigest()
-		if len(planDigest) > 0 {
-			ctx = pprof.WithLabels(ctx, pprof.Labels(tracecpu.LabelPlanDigest, planDigest))
-			pprof.SetGoroutineLabels(ctx)
-		}
 	}
 
 	se.SetValue(sessionctx.QueryString, s.OriginText())
@@ -1759,7 +1749,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 		is = s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	}
 	execAst := &ast.ExecuteStmt{ExecID: stmtID}
-	if err := executor.ResetContextOfStmt(ctx, s, execAst); err != nil {
+	if err := executor.ResetContextOfStmt(s, execAst); err != nil {
 		return nil, err
 	}
 	execAst.BinaryArgs = args

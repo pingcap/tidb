@@ -735,7 +735,7 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	c.Assert(err, IsNil)
 	compiler := executor.Compiler{Ctx: tk.Se}
 	stmt, _ := compiler.Compile(context.TODO(), stmtNode)
-	executor.ResetContextOfStmt(context.Background(), tk.Se, stmtNode)
+	executor.ResetContextOfStmt(tk.Se, stmtNode)
 	history.Add(stmt, tk.Se.GetSessionVars().StmtCtx)
 	_, err = tk.Exec("commit")
 	c.Assert(err, NotNil)

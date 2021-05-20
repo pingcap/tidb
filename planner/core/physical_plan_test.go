@@ -1292,7 +1292,7 @@ func (s *testPlanSuite) TestIndexMergeHint(c *C) {
 		stmt, err := s.ParseOneStmt(test, "", "")
 		c.Assert(err, IsNil, comment)
 		sctx := se.(sessionctx.Context)
-		err = executor.ResetContextOfStmt(context.Background(),sctx, stmt)
+		err = executor.ResetContextOfStmt(sctx, stmt)
 		c.Assert(err, IsNil)
 		p, _, err := planner.Optimize(ctx, se, stmt, s.is)
 		c.Assert(err, IsNil)

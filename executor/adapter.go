@@ -18,9 +18,9 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"runtime/pprof"
 	"runtime/trace"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/tracecpu"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -199,11 +200,8 @@ type ExecStmt struct {
 	// OutputNames will be set if using cached plan
 	OutputNames []*types.FieldName
 	PsStmt      *plannercore.CachedPrepareStmt
-	// cache for plan digest and normalized
-	planDigestMemo struct {
-		sync.Once
-		digest string
-	}
+	// cache for plan digest
+	planDigest string
 }
 
 // PointGet short path for point exec directly from plan, keep only necessary steps
@@ -337,6 +335,19 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err
+	}
+
+	if config.GetGlobalConfig().TopStmt.Enable && a.Plan != nil {
+		// ExecuteExec will rewrite `a.Plan`, so goroutine set label should be executed after `a.buildExecutor`.
+		normalizedSQL, sqlDigest := a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
+		planDigest := a.PlanDigest()
+		if len(planDigest) > 0 {
+			ctx = pprof.WithLabels(ctx, pprof.Labels(
+				tracecpu.LabelSQL, normalizedSQL,
+				tracecpu.LabelSQLDigest, sqlDigest,
+				tracecpu.LabelPlanDigest, planDigest))
+			pprof.SetGoroutineLabels(ctx)
+		}
 	}
 
 	if err = e.Open(ctx); err != nil {
@@ -875,10 +886,10 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 }
 
 func (a *ExecStmt) PlanDigest() string {
-	a.planDigestMemo.Do(func() {
-		_, a.planDigestMemo.digest = plannercore.NormalizePlan(a.Plan)
-	})
-	return a.planDigestMemo.digest
+	if len(a.planDigest) == 0 {
+		_, a.planDigest = plannercore.NormalizePlan(a.Plan)
+	}
+	return a.planDigest
 }
 
 // LogSlowQuery is used to print the slow query in the log files.

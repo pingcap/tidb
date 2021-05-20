@@ -207,7 +207,7 @@ func (s *testPlanSerialSuite) TestPrepareCacheDeferredFunction(c *C) {
 		c.Check(err, IsNil)
 		execPlan, ok := p.(*core.Execute)
 		c.Check(ok, IsTrue)
-		err = executor.ResetContextOfStmt(context.Background(),tk.Se, stmt)
+		err = executor.ResetContextOfStmt(tk.Se, stmt)
 		c.Assert(err, IsNil)
 		err = execPlan.OptimizePreparedPlan(ctx, tk.Se, is)
 		c.Check(err, IsNil)

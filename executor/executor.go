@@ -1593,8 +1593,8 @@ func (e *UnionExec) Close() error {
 
 // ResetContextOfStmt resets the StmtContext and session variables.
 // Before every execution, we must clear statement context.
-func ResetContextOfStmt(ctx context.Context, sctx sessionctx.Context, s ast.StmtNode) (err error) {
-	vars := sctx.GetSessionVars()
+func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
+	vars := ctx.GetSessionVars()
 	sc := &stmtctx.StatementContext{
 		TimeZone:    vars.Location(),
 		MemTracker:  memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery),
@@ -1608,14 +1608,14 @@ func ResetContextOfStmt(ctx context.Context, sctx sessionctx.Context, s ast.Stmt
 	}
 	switch globalConfig.OOMAction {
 	case config.OOMActionCancel:
-		action := &memory.PanicOnExceed{ConnID: sctx.GetSessionVars().ConnectionID}
-		action.SetLogHook(domain.GetDomain(sctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
+		action := &memory.PanicOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
+		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
 		sc.MemTracker.SetActionOnExceed(action)
 	case config.OOMActionLog:
 		fallthrough
 	default:
-		action := &memory.LogOnExceed{ConnID: sctx.GetSessionVars().ConnectionID}
-		action.SetLogHook(domain.GetDomain(sctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
+		action := &memory.LogOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
+		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
 		sc.MemTracker.SetActionOnExceed(action)
 	}
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
@@ -1628,8 +1628,8 @@ func ResetContextOfStmt(ctx context.Context, sctx sessionctx.Context, s ast.Stmt
 			sc.SQLDigest()
 			normalizedSQL, digest := sc.SQLDigest()
 			if len(normalizedSQL) > 0 {
-				ctx = pprof.WithLabels(context.Background(), pprof.Labels(tracecpu.LabelSQL, normalizedSQL, tracecpu.LabelSQLDigest, digest))
-				pprof.SetGoroutineLabels(ctx)
+				goctx := pprof.WithLabels(context.Background(), pprof.Labels(tracecpu.LabelSQL, normalizedSQL, tracecpu.LabelSQLDigest, digest))
+				pprof.SetGoroutineLabels(goctx)
 			}
 		}
 	}

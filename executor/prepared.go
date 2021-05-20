@@ -135,7 +135,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	stmt := stmts[0]
 
-	err = ResetContextOfStmt(ctx,e.ctx, stmt)
+	err = ResetContextOfStmt(e.ctx, stmt)
 	if err != nil {
 		return err
 	}
@@ -316,7 +316,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
 	}()
 	execStmt := &ast.ExecuteStmt{ExecID: ID}
-	if err := ResetContextOfStmt(ctx,sctx, execStmt); err != nil {
+	if err := ResetContextOfStmt(sctx, execStmt); err != nil {
 		return nil, false, false, err
 	}
 	execStmt.BinaryArgs = args
