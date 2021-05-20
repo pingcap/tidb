@@ -1588,7 +1588,6 @@ func BuildFinalModeAggregation(
 
 			finalAggFunc.HasDistinct = aggFunc.HasDistinct
 			finalAggFunc.Mode = aggregation.CompleteMode
-			finalAggFunc.OrderByItems = aggFunc.OrderByItems
 		} else {
 			if aggFunc.Name == ast.AggFuncGroupConcat && len(aggFunc.OrderByItems) > 0 {
 				// group_concat can only run in one phase if it has order by items but without distinct property

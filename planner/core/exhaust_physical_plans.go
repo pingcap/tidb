@@ -2420,7 +2420,7 @@ func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
 	for _, agg := range la.AggFuncs {
 		// MPP does not support distinct except count distinct now
 		if agg.HasDistinct {
-			if agg.Name != ast.AggFuncCount {
+			if agg.Name != ast.AggFuncCount && agg.Name != ast.AggFuncGroupConcat {
 				hasUnsupportedDistinct = true
 			}
 		}
