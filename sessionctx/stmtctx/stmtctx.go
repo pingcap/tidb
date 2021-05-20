@@ -162,6 +162,7 @@ type StatementContext struct {
 	TblInfo2UnionScan     map[*model.TableInfo]bool
 	TaskID                uint64 // unique ID for an execution of a statement
 	TaskMapBakTS          uint64 // counter for
+	UseShowCreateInDDLJob bool   // indicate whether use `show create table` sql in ddl job
 
 	// stmtCache is used to store some statement-related values.
 	stmtCache map[StmtCacheKey]interface{}

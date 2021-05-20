@@ -18,6 +18,7 @@
 package ddl
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
 	"math"
@@ -1419,12 +1420,13 @@ func buildTableInfo(
 				return nil, err
 			}
 			isSingleIntPK := isSingleIntPK(constr, lastCol)
-			if ShouldBuildClusteredIndex(ctx, constr.Option, isSingleIntPK) {
+			if isClustered, setBySessionVar := ShouldBuildClusteredIndex(ctx, constr.Option, isSingleIntPK); isClustered {
 				if isSingleIntPK {
 					tbInfo.PKIsHandle = true
 				} else {
 					tbInfo.IsCommonHandle = true
 					tbInfo.CommonHandleVersion = 1
+					ctx.GetSessionVars().StmtCtx.UseShowCreateInDDLJob = setBySessionVar
 				}
 			}
 			if tbInfo.PKIsHandle || tbInfo.IsCommonHandle {
@@ -1539,18 +1541,18 @@ func isSingleIntPK(constr *ast.Constraint, lastCol *model.ColumnInfo) bool {
 }
 
 // ShouldBuildClusteredIndex is used to determine whether the CREATE TABLE statement should build a clustered index table.
-func ShouldBuildClusteredIndex(ctx sessionctx.Context, opt *ast.IndexOption, isSingleIntPK bool) bool {
+func ShouldBuildClusteredIndex(ctx sessionctx.Context, opt *ast.IndexOption, isSingleIntPK bool) (isClustered bool, setBySessionVar bool) {
 	if opt == nil || opt.PrimaryKeyTp == model.PrimaryKeyTypeDefault {
 		switch ctx.GetSessionVars().EnableClusteredIndex {
 		case variable.ClusteredIndexDefModeOn:
-			return true
+			return true, true
 		case variable.ClusteredIndexDefModeIntOnly:
-			return !config.GetGlobalConfig().AlterPrimaryKey && isSingleIntPK
+			return !config.GetGlobalConfig().AlterPrimaryKey && isSingleIntPK, false
 		default:
-			return false
+			return false, false
 		}
 	}
-	return opt.PrimaryKeyTp == model.PrimaryKeyTypeClustered
+	return opt.PrimaryKeyTp == model.PrimaryKeyTypeClustered, false
 }
 
 // checkTableInfoValidExtra is like checkTableInfoValid, but also assumes the
@@ -1821,6 +1823,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist, false /*tryRetainID*/)
 }
 
+// CtorShowCreateTableHook is the hook to call `executor.ConstructResultOfShowCreateTable` from ddl package(or it will cycle dependence)
+var CtorShowCreateTableHook func(ctx sessionctx.Context, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error)
+
 func (d *ddl) CreateTableWithInfo(
 	ctx sessionctx.Context,
 	dbName model.CIStr,
@@ -1884,6 +1889,15 @@ func (d *ddl) CreateTableWithInfo(
 		actionType = model.ActionCreateTable
 	}
 
+	createTableQuery := ctx.Value(sessionctx.QueryString).(string)
+	if ctx.GetSessionVars().StmtCtx.UseShowCreateInDDLJob {
+		var buf bytes.Buffer
+		err = CtorShowCreateTableHook(ctx, tbInfo, nil, &buf)
+		if err != nil {
+			return err
+		}
+		createTableQuery = buf.String()
+	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tbInfo.ID,
@@ -1891,6 +1905,7 @@ func (d *ddl) CreateTableWithInfo(
 		Type:       actionType,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       args,
+		Query:      createTableQuery,
 	}
 
 	err = d.doDDLJob(ctx, job)
