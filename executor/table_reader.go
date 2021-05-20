@@ -157,7 +157,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 	// Calculate the kv ranges here, UnionScan rely on this kv ranges.
-	if e.table.Meta().TempTableType != model.TempTableNone {
+	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		kvReq, err := e.buildKVReq(ctx, firstPartRanges)
 		if err != nil {
 			return err
@@ -195,7 +195,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.table.Meta().TempTableType != model.TempTableNone {
+	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 		req.Reset()
 		return nil
@@ -223,7 +223,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
-	if e.table.Meta().TempTableType != model.TempTableNone {
+	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
 
