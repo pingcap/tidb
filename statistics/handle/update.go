@@ -678,7 +678,7 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 	if !analyzed {
 		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
 		dur := time.Since(t)
-		return dur >= limit, fmt.Sprintf("table unanalyzed, time since last updated %vs", dur)
+		return dur >= limit, fmt.Sprintf("table unanalyzed, time since last updated %v", dur)
 	}
 	// Auto analyze is disabled.
 	if autoAnalyzeRatio == 0 {
@@ -773,14 +773,24 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 		return false
 	}
 	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease(), ratio, start, end, time.Now()); needAnalyze {
-		logutil.BgLogger().Info("[stats] auto analyze triggered", zap.String("sql", sql), zap.String("reason", reason))
+		escaped, err := sqlexec.EscapeSQL(sql, params...)
+		if err != nil {
+			return false
+		}
+		logutil.BgLogger().Info("[stats] auto analyze triggered", zap.String("sql", escaped), zap.String("reason", reason))
 		h.execAutoAnalyze(sql, params...)
 		return true
 	}
 	for _, idx := range tblInfo.Indices {
 		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
-			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed", zap.String("sql", sql))
-			h.execAutoAnalyze(sql+" index %n", append(params, idx.Name.O)...)
+			sqlWithIdx := sql + " index %n"
+			paramsWithIdx := append(params, idx.Name.O)
+			escaped, err := sqlexec.EscapeSQL(sqlWithIdx, paramsWithIdx...)
+			if err != nil {
+				return false
+			}
+			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed", zap.String("sql", escaped))
+			h.execAutoAnalyze(sqlWithIdx, paramsWithIdx...)
 			return true
 		}
 	}

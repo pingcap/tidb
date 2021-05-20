@@ -761,6 +761,28 @@ func (s *testSuite4) TestInsertIgnoreOnDup(c *C) {
 	testSQL = `select * from t;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 1", "2 2"))
+
+	tk.MustExec("drop table if exists t4")
+	tk.MustExec("create table t4(id int primary key, k int, v int, unique key uk1(k))")
+	tk.MustExec("insert into t4 values (1, 10, 100), (3, 30, 300)")
+	tk.MustExec("insert ignore into t4 (id, k, v) values(1, 0, 0) on duplicate key update id = 2, k = 30")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '30' for key 'uk1'"))
+	tk.MustQuery("select * from t4").Check(testkit.Rows("1 10 100", "3 30 300"))
+
+	tk.MustExec("drop table if exists t5")
+	tk.MustExec("create table t5(k2 int primary key, uk1 int, v int, unique key ukk1(uk1), unique key ukk2(v))")
+	tk.MustExec("insert into t5(k2, uk1, v) values(1, 1, '100'), (3, 2, '200')")
+	tk.MustExec("update ignore t5 set k2 = '2', uk1 = 2 where k2 = 1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '2' for key 'ukk1'"))
+	tk.MustQuery("select * from t5").Check(testkit.Rows("1 1 100", "3 2 200"))
+
+	tk.MustExec("drop table if exists t6")
+	tk.MustExec("create table t6 (a int, b int, c int, primary key(a), unique key idx_14(b), unique key idx_15(b), unique key idx_16(a, b))")
+	tk.MustExec("insert into t6 select 10, 10, 20")
+	tk.MustExec("insert ignore into t6 set a = 20, b = 10 on duplicate key update a = 100")
+	tk.MustQuery("select * from t6").Check(testkit.Rows("100 10 20"))
+	tk.MustExec("insert ignore into t6 set a = 200, b= 10 on duplicate key update c = 1000")
+	tk.MustQuery("select * from t6").Check(testkit.Rows("100 10 1000"))
 }
 
 func (s *testSuite4) TestInsertSetWithDefault(c *C) {
@@ -2931,6 +2953,19 @@ func (s *testSerialSuite1) TestIssue20724(c *C) {
 	tk.MustExec("update t1 set a = 'A'")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("A"))
 	tk.MustExec("drop table t1")
+}
+
+func (s *testSuite) TestIssue22496(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t12")
+	tk.MustExec("create table t12(d decimal(15,2));")
+	_, err := tk.Exec("insert into t12 values('1,9999.00')")
+	c.Assert(err, NotNil)
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("insert into t12 values('1,999.00');")
+	tk.MustQuery("SELECT * FROM t12;").Check(testkit.Rows("1.00"))
+	tk.MustExec("drop table t12")
 }
 
 func (s *testSuite) TestIssue21232(c *C) {

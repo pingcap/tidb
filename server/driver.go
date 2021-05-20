@@ -21,10 +21,12 @@ import (
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sli"
 )
 
 // IDriver opens IContext.
@@ -64,6 +66,9 @@ type QueryCtx interface {
 	// WarningCount returns warning count of last executed command.
 	WarningCount() uint16
 
+	// GetWarnings returns all warnings
+	GetWarnings() []stmtctx.SQLWarn
+
 	// CurrentDB returns current DB.
 	CurrentDB() string
 
@@ -100,6 +105,9 @@ type QueryCtx interface {
 	SetCommandValue(command byte)
 
 	SetSessionManager(util.SessionManager)
+
+	// GetTxnWriteThroughputSLI returns the TxnWriteThroughputSLI.
+	GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI
 }
 
 // PreparedStatement is the interface to use a prepared statement.

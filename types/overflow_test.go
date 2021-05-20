@@ -329,16 +329,18 @@ func (s *testOverflowSuite) TestDiv(c *C) {
 		rsh      uint64
 		ret      uint64
 		overflow bool
+		err      string
 	}{
-		{math.MinInt64, math.MaxInt64, 0, true},
-		{0, 1, 0, false},
-		{-1, math.MaxInt64, 0, false},
+		{math.MinInt64, math.MaxInt64, 0, true, "*BIGINT UNSIGNED value is out of range in '\\(-9223372036854775808, 9223372036854775807\\)'"},
+		{0, 1, 0, false, ""},
+		{-1, math.MaxInt64, 0, false, ""},
 	}
 
 	for _, t := range tblInt2 {
 		ret, err := DivIntWithUint(t.lsh, t.rsh)
 		if t.overflow {
 			c.Assert(err, NotNil)
+			c.Assert(err, ErrorMatches, t.err)
 		} else {
 			c.Assert(ret, Equals, t.ret)
 		}
