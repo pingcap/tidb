@@ -123,7 +123,7 @@ const (
 // if digest too old, it will return enum tooOld and do nothing
 // if digest too young, it will return enum tooYoung and do nothing
 func (seElement *stmtSummaryByDigestEvictedElement) matchAndAdd(digestKey *stmtSummaryByDigestKey, digestValue *stmtSummaryByDigestElement) (statement int) {
-	if seElement == nil {
+	if seElement == nil || digestValue == nil {
 		return isTooYoung
 	}
 	sBeginTime, sEndTime := seElement.beginTime, seElement.endTime
@@ -131,7 +131,7 @@ func (seElement *stmtSummaryByDigestEvictedElement) matchAndAdd(digestKey *stmtS
 	if sBeginTime <= eBeginTime && eEndTime <= sEndTime {
 		seElement.addEvicted(digestKey, digestValue)
 		return isMatch
-	} else if eEndTime < sBeginTime {
+	} else if eEndTime <= sBeginTime {
 		return isTooOld
 	} else {
 		return isTooYoung
