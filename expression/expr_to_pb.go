@@ -212,9 +212,7 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 	case mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
 		return nil
 	case mysql.TypeEnum:
-		if !IsPushDownEnabled("enum", kv.UnSpecified) {
-			return nil
-		}
+		return nil
 	}
 
 	if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
