@@ -1486,7 +1486,7 @@ func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
 	tk.MustExec("insert into tregular2 values " + strings.Join(vals, ","))
 
 	// test range partition
-	for i := 0; i < 2000; i++ {
+	for i := 0; i < 200; i++ {
 		// select /*+ stream_agg() */ a from t where a > ? group by a;
 		// select /*+ hash_agg() */ a from t where a > ? group by a;
 		// select /*+ stream_agg() */ a from t where a in(?, ?, ?) group by a;
@@ -1518,7 +1518,7 @@ func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
 	}
 
 	// test hash partition
-	for i := 0; i < 2000; i++ {
+	for i := 0; i < 200; i++ {
 		// select /*+ stream_agg() */ a from t where a > ? group by a;
 		// select /*+ hash_agg() */ a from t where a > ? group by a;
 		// select /*+ stream_agg() */ a from t where a in(?, ?, ?) group by a;
@@ -1550,7 +1550,7 @@ func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
 	}
 
 	// test list partition
-	for i := 0; i < 2000; i++ {
+	for i := 0; i < 200; i++ {
 		// select /*+ stream_agg() */ a from t where a > ? group by a;
 		// select /*+ hash_agg() */ a from t where a > ? group by a;
 		// select /*+ stream_agg() */ a from t where a in(?, ?, ?) group by a;
