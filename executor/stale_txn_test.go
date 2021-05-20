@@ -191,6 +191,7 @@ func (s *testStaleTxnSerialSuite) TestStalenessAndHistoryRead(c *C) {
 	// set @@tidb_snapshot before staleness txn
 	tk.MustExec(`set @@tidb_snapshot="2016-10-08 16:45:26";`)
 	tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00';`)
+	// 1599321600000 == 2020-09-06 00:00:00
 	c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, int64(1599321600000))
 	tk.MustExec("commit")
 	// set @@tidb_snapshot during staleness txn
