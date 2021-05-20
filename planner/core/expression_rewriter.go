@@ -170,6 +170,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 	rewriter.ctxStack = rewriter.ctxStack[:0]
 	rewriter.ctxNameStk = rewriter.ctxNameStk[:0]
 	rewriter.ctx = ctx
+	rewriter.err = nil
 	return
 }
 
@@ -497,6 +498,8 @@ func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np LogicalPlan, l, r e
 }
 
 func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.CompareSubqueryExpr) (ast.Node, bool) {
+	ci := er.b.prepareCTECheckForSubQuery()
+	defer resetCTECheckForSubQuery(ci)
 	v.L.Accept(er)
 	if er.err != nil {
 		return v, true
@@ -771,6 +774,8 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 }
 
 func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.ExistsSubqueryExpr) (ast.Node, bool) {
+	ci := er.b.prepareCTECheckForSubQuery()
+	defer resetCTECheckForSubQuery(ci)
 	subq, ok := v.Sel.(*ast.SubqueryExpr)
 	if !ok {
 		er.err = errors.Errorf("Unknown exists type %T.", v.Sel)
@@ -836,6 +841,8 @@ out:
 }
 
 func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.PatternInExpr) (ast.Node, bool) {
+	ci := er.b.prepareCTECheckForSubQuery()
+	defer resetCTECheckForSubQuery(ci)
 	asScalar := er.asScalar
 	er.asScalar = true
 	v.Expr.Accept(er)
@@ -945,6 +952,8 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 }
 
 func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.SubqueryExpr) (ast.Node, bool) {
+	ci := er.b.prepareCTECheckForSubQuery()
+	defer resetCTECheckForSubQuery(ci)
 	np, err := er.buildSubquery(ctx, v)
 	if err != nil {
 		er.err = err

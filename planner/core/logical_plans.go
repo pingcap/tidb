@@ -1169,3 +1169,37 @@ type LogicalShowDDLJobs struct {
 
 	JobNumber int64
 }
+
+// CTEClass holds the information and plan for a CTE.
+type CTEClass struct {
+	IsDistinct               bool
+	seedPartLogicalPlan      LogicalPlan
+	recursivePartLogicalPlan LogicalPlan
+	cteTask                  task
+	IDForStorage             int
+	optFlag                  uint64
+}
+
+// LogicalCTE is for CTE.
+type LogicalCTE struct {
+	logicalSchemaProducer
+
+	cte *CTEClass
+}
+
+// LogicalCTETable is for CTE table
+type LogicalCTETable struct {
+	logicalSchemaProducer
+
+	name         string
+	idForStorage int
+}
+
+// ExtractCorrelatedCols implements LogicalPlan interface.
+func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := ExtractCorrelatedCols4LogicalPlan(p.cte.seedPartLogicalPlan)
+	if p.cte.recursivePartLogicalPlan != nil {
+		corCols = append(corCols, ExtractCorrelatedCols4LogicalPlan(p.cte.recursivePartLogicalPlan)...)
+	}
+	return corCols
+}
