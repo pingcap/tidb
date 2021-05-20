@@ -196,6 +196,20 @@ func (s *testIntegrationSuite) TestIssue22298(c *C) {
 	tk.MustGetErrMsg(`select * from t where 0 and c = 10;`, "[planner:1054]Unknown column 'c' in 'where clause'")
 }
 
+func (s *testIntegrationSuite) TestIssue24571(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create view v as select 1 as b;`)
+	tk.MustExec(`create table t (a int);`)
+	tk.MustExec(`update v, t set a=2;`)
+	tk.MustGetErrCode(`update v, t set b=2;`, mysql.ErrNonUpdatableTable)
+	tk.MustExec("create database db1")
+	tk.MustExec("use db1")
+	tk.MustExec("update test.t, (select 1 as a) as t set test.t.a=1;")
+	// bug in MySQL: ERROR 1288 (HY000): The target table t of the UPDATE is not updatable
+	tk.MustExec("update (select 1 as a) as t, test.t set test.t.a=1;")
+}
+
 func (s *testIntegrationSuite) TestIssue22828(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

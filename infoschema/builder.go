@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
@@ -35,8 +36,10 @@ import (
 
 // Builder builds a new InfoSchema.
 type Builder struct {
-	is     *infoSchema
-	handle *Handle
+	is *infoSchema
+	// TODO: store is only used by autoid allocators
+	// detach allocators from storage, use passed transaction in the feature
+	store kv.Storage
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -352,14 +355,14 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
 
 	if len(allocs) == 0 {
-		allocs = autoid.NewAllocatorsFromTblInfo(b.handle.store, dbInfo.ID, tblInfo)
+		allocs = autoid.NewAllocatorsFromTblInfo(b.store, dbInfo.ID, tblInfo)
 	} else {
 		switch tp {
 		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
-			newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType)
+			newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType)
 			allocs = append(allocs, newAlloc)
 		case model.ActionRebaseAutoRandomBase:
-			newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType)
+			newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType)
 			allocs = append(allocs, newAlloc)
 		case model.ActionModifyColumn:
 			// Change column attribute from auto_increment to auto_random.
@@ -368,7 +371,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 				allocs = allocs.Filter(func(a autoid.Allocator) bool {
 					return a.GetType() != autoid.AutoIncrementType && a.GetType() != autoid.RowIDAllocType
 				})
-				newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType)
+				newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType)
 				allocs = append(allocs, newAlloc)
 			}
 		}
@@ -470,9 +473,14 @@ func (b *Builder) applyPlacementUpdate(id string) error {
 	return nil
 }
 
+// Build builds and returns the built infoschema.
+func (b *Builder) Build() InfoSchema {
+	return b.is
+}
+
 // InitWithOldInfoSchema initializes an empty new InfoSchema by copies all the data from old InfoSchema.
-func (b *Builder) InitWithOldInfoSchema() *Builder {
-	oldIS := b.handle.Get().(*infoSchema)
+func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) *Builder {
+	oldIS := oldSchema.(*infoSchema)
 	b.is.schemaMetaVersion = oldIS.schemaMetaVersion
 	b.copySchemasMap(oldIS)
 	b.copyBundlesMap(oldIS)
@@ -549,7 +557,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 	b.is.schemaMap[di.Name.L] = schTbls
 
 	for _, t := range di.Tables {
-		allocs := autoid.NewAllocatorsFromTblInfo(b.handle.store, di.ID, t)
+		allocs := autoid.NewAllocatorsFromTblInfo(b.store, di.ID, t)
 		var tbl table.Table
 		tbl, err := tableFromMeta(allocs, t)
 		if err != nil {
@@ -574,21 +582,16 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 	drivers = append(drivers, &virtualTableDriver{dbInfo, tableFromMeta})
 }
 
-// Build sets new InfoSchema to the handle in the Builder.
-func (b *Builder) Build() {
-	b.handle.value.Store(b.is)
-}
-
 // NewBuilder creates a new Builder with a Handle.
-func NewBuilder(handle *Handle) *Builder {
-	b := new(Builder)
-	b.handle = handle
-	b.is = &infoSchema{
-		schemaMap:           map[string]*schemaTables{},
-		ruleBundleMap:       map[string]*placement.Bundle{},
-		sortedTablesBuckets: make([]sortedTables, bucketCount),
+func NewBuilder(store kv.Storage) *Builder {
+	return &Builder{
+		store: store,
+		is: &infoSchema{
+			schemaMap:           map[string]*schemaTables{},
+			ruleBundleMap:       map[string]*placement.Bundle{},
+			sortedTablesBuckets: make([]sortedTables, bucketCount),
+		},
 	}
-	return b
 }
 
 func tableBucketIdx(tableID int64) int {
