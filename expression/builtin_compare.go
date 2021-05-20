@@ -1121,7 +1121,7 @@ func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 	lhsFieldType, rhsFieldType := lhs.GetType(), rhs.GetType()
 	lhsEvalType, rhsEvalType := lhsFieldType.EvalType(), rhsFieldType.EvalType()
 	// Enum type index order by int, and can not compare by string.
-	if lhsFieldType.Tp == mysql.TypeEnum && rhsFieldType.Tp == mysql.TypeEnum && lhsEvalType == types.ETString &&  rhsEvalType == types.ETString {
+	if lhsFieldType.Tp == mysql.TypeEnum && rhsFieldType.Tp == mysql.TypeEnum && lhsEvalType == types.ETString && rhsEvalType == types.ETString {
 		lhsEvalType, rhsEvalType = types.ETInt, types.ETInt
 	}
 	cmpType := getBaseCmpType(lhsEvalType, rhsEvalType, lhsFieldType, rhsFieldType)
