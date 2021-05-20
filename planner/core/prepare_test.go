@@ -278,9 +278,6 @@ func (s *testPrepareSerialSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
 	tk.MustExec("set @@global.max_prepared_stmt_count = 2")
 	tk.MustQuery("select @@global.max_prepared_stmt_count").Check(testkit.Rows("2"))
 
-	// Disable global variable cache, so load global session variable take effect immediate.
-	dom.GetGlobalVarsCache().Disable()
-
 	// test close session to give up all prepared stmt
 	tk.MustExec(`prepare stmt2 from "select 1"`)
 	prePrepared = readGaugeInt(metrics.PreparedStmtGauge)

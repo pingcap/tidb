@@ -723,7 +723,7 @@ type SessionVars struct {
 	enableIndexMerge bool
 
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
-	replicaRead tikvstore.ReplicaReadType
+	replicaRead kv.ReplicaReadType
 
 	// IsolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
 	IsolationReadEngines map[kv.StoreType]struct{}
@@ -800,7 +800,7 @@ type SessionVars struct {
 	PartitionPruneMode atomic2.String
 
 	// TxnScope indicates the scope of the transactions. It should be `global` or equal to `dc-location` in configuration.
-	TxnScope oracle.TxnScope
+	TxnScope kv.TxnScopeVar
 
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
@@ -863,12 +863,12 @@ func (s *SessionVars) IsMPPEnforced() bool {
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
 func (s *SessionVars) CheckAndGetTxnScope() string {
 	if s.InRestrictedSQL {
-		return oracle.GlobalTxnScope
+		return kv.GlobalTxnScope
 	}
-	if s.TxnScope.GetVarValue() == oracle.LocalTxnScope {
+	if s.TxnScope.GetVarValue() == kv.LocalTxnScope {
 		return s.TxnScope.GetTxnScope()
 	}
-	return oracle.GlobalTxnScope
+	return kv.GlobalTxnScope
 }
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
@@ -1029,7 +1029,7 @@ func NewSessionVars() *SessionVars {
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
 		enableIndexMerge:            false,
 		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
-		replicaRead:                 tikvstore.ReplicaReadLeader,
+		replicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
@@ -1055,7 +1055,7 @@ func NewSessionVars() *SessionVars {
 		EnableAlterPlacement:        DefTiDBEnableAlterPlacement,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
-		TxnScope:                    oracle.GetTxnScope(),
+		TxnScope:                    kv.GetTxnScopeVar(),
 		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
 		EnableAsyncCommit:           DefTiDBEnableAsyncCommit,
 		Enable1PC:                   DefTiDBEnable1PC,
@@ -1179,15 +1179,15 @@ func (s *SessionVars) SetEnableIndexMerge(val bool) {
 }
 
 // GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.
-func (s *SessionVars) GetReplicaRead() tikvstore.ReplicaReadType {
+func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
 	if s.StmtCtx.HasReplicaReadHint {
-		return tikvstore.ReplicaReadType(s.StmtCtx.ReplicaRead)
+		return kv.ReplicaReadType(s.StmtCtx.ReplicaRead)
 	}
 	return s.replicaRead
 }
 
 // SetReplicaRead set SessionVars.replicaRead.
-func (s *SessionVars) SetReplicaRead(val tikvstore.ReplicaReadType) {
+func (s *SessionVars) SetReplicaRead(val kv.ReplicaReadType) {
 	s.replicaRead = val
 }
 
@@ -1418,6 +1418,15 @@ func (s *SessionVars) ClearStmtVars() {
 // i.e. oN / on / 1 => ON
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	sv := GetSysVar(name)
+	return sv.SetSessionFromHook(s, val)
+}
+
+// SetSystemVarWithRelaxedValidation sets the value of a system variable for session scope.
+// Validation functions are called, but scope validation is skipped.
+// Errors are not expected to be returned because this could cause upgrade issues.
+func (s *SessionVars) SetSystemVarWithRelaxedValidation(name string, val string) error {
+	sv := GetSysVar(name)
+	val = sv.ValidateWithRelaxedValidation(s, val, ScopeSession)
 	return sv.SetSessionFromHook(s, val)
 }
 

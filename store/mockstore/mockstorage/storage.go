@@ -83,7 +83,7 @@ func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, 
 }
 
 // BeginWithOption begins a transaction with given option
-func (s *mockStorage) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
+func (s *mockStorage) BeginWithOption(option tikv.StartTSOption) (kv.Transaction, error) {
 	return newTiKVTxn(s.KVStore.BeginWithOption(option))
 }
 
@@ -97,6 +97,11 @@ func (s *mockStorage) GetSnapshot(ver kv.Version) kv.Snapshot {
 func (s *mockStorage) CurrentVersion(txnScope string) (kv.Version, error) {
 	ver, err := s.KVStore.CurrentTimestamp(txnScope)
 	return kv.NewVersion(ver), err
+}
+
+// GetMinSafeTS return the minimal SafeTS of the storage with given txnScope.
+func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
+	return 0
 }
 
 func newTiKVTxn(txn *tikv.KVTxn, err error) (kv.Transaction, error) {
