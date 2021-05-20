@@ -287,7 +287,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(dd, NotNil)
 	c.Assert(dd.GetLease(), Equals, 80*time.Millisecond)
 
-	snapTS := oracle.EncodeTSO(oracle.GetPhysical(time.Now()))
+	snapTS := oracle.GoTimeToTS(time.Now())
 	cs := &ast.CharsetOpt{
 		Chs: "utf8",
 		Col: "utf8_bin",
@@ -317,7 +317,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 
 	// for GetSnapshotInfoSchema
-	currSnapTS := oracle.EncodeTSO(oracle.GetPhysical(time.Now()))
+	currSnapTS := oracle.GoTimeToTS(time.Now())
 	currSnapIs, err := dom.GetSnapshotInfoSchema(currSnapTS)
 	c.Assert(err, IsNil)
 	c.Assert(currSnapIs, NotNil)

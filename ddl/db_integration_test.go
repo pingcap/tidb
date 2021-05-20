@@ -1233,7 +1233,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 
 	// Split the table.
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
-	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)
+	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 10)
 
 	unique := false
 	indexName := model.NewCIStr("idx_b")
@@ -1275,7 +1275,6 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 		historyJob, err := getHistoryDDLJob(s.store, job.ID)
 		c.Assert(err, IsNil)
 		if historyJob == nil {
-
 			continue
 		}
 		c.Assert(historyJob.Error, IsNil)
