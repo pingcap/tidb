@@ -14,7 +14,9 @@
 package txninfo
 
 import (
+	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -43,13 +45,18 @@ var TxnRunningStateStrs = []string{
 // TxnInfo is information about a running transaction
 // This is supposed to be the datasource of `TIDB_TRX` in infoschema
 type TxnInfo struct {
+	// The following fields are immutable and can be safely read across threads.
+
 	StartTS uint64
-	// digest of SQL current running
+	// digest of SQL currently running
 	CurrentSQLDigest string
 	// current executing State
+
+	// The following fields are mutable and needs atomic read for goroutines other than the transaction itself.
+
 	State TxnRunningState
-	// last trying to block start time
-	BlockStartTime *time.Time
+	// last trying to block start time. Invalid if State is not TxnLockWaiting. It's an unsafe pointer to time.Time or nil.
+	BlockStartTime unsafe.Pointer
 	// How many entries are in MemDB
 	EntriesCount uint64
 	// MemDB used memory
@@ -65,14 +72,44 @@ type TxnInfo struct {
 	CurrentDB string
 }
 
+// UnsafeClone clones the TxnInfo while assuming there are no concurrent write on it.
+func (info *TxnInfo) UnsafeClone() *TxnInfo {
+	return &TxnInfo{
+		StartTS:          info.StartTS,
+		CurrentSQLDigest: info.CurrentSQLDigest,
+		State:            info.State,
+		BlockStartTime:   info.BlockStartTime,
+		EntriesCount:     info.EntriesCount,
+		EntriesSize:      info.EntriesSize,
+		ConnectionID:     info.ConnectionID,
+		Username:         info.Username,
+		CurrentDB:        info.CurrentDB,
+	}
+}
+
+// Clone clones the TxnInfo. It's safe to call concurrently with the transaction.
+func (info *TxnInfo) Clone() *TxnInfo {
+	return &TxnInfo{
+		StartTS:          info.StartTS,
+		CurrentSQLDigest: info.CurrentSQLDigest,
+		State:            atomic.LoadInt32(&info.State),
+		BlockStartTime:   atomic.LoadPointer(&info.BlockStartTime),
+		EntriesCount:     atomic.LoadUint64(&info.EntriesCount),
+		EntriesSize:      atomic.LoadUint64(&info.EntriesSize),
+		ConnectionID:     info.ConnectionID,
+		Username:         info.Username,
+		CurrentDB:        info.CurrentDB,
+	}
+}
+
 // ToDatum Converts the `TxnInfo` to `Datum` to show in the `TIDB_TRX` table
 func (info *TxnInfo) ToDatum() []types.Datum {
 	humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
 	var blockStartTime interface{}
-	if info.BlockStartTime == nil {
+	if t := (*time.Time)(atomic.LoadPointer(&info.BlockStartTime)); t == nil {
 		blockStartTime = nil
 	} else {
-		blockStartTime = types.NewTime(types.FromGoTime(*info.BlockStartTime), mysql.TypeTimestamp, 0)
+		blockStartTime = types.NewTime(types.FromGoTime(*t), mysql.TypeTimestamp, types.MaxFsp)
 	}
 	e, err := types.ParseEnumValue(TxnRunningStateStrs, uint64(info.State+1))
 	if err != nil {
@@ -81,7 +118,7 @@ func (info *TxnInfo) ToDatum() []types.Datum {
 	state := types.NewMysqlEnumDatum(e)
 	datums := types.MakeDatums(
 		info.StartTS,
-		types.NewTime(types.FromGoTime(humanReadableStartTime), mysql.TypeTimestamp, 0),
+		types.NewTime(types.FromGoTime(humanReadableStartTime), mysql.TypeTimestamp, types.MaxFsp),
 		info.CurrentSQLDigest,
 	)
 	datums = append(datums, state)
