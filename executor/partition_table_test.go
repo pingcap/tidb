@@ -1903,3 +1903,49 @@ PARTITION BY RANGE (a) (
 	s.testData.GetTestCases(c, &input, &output)
 	s.verifyPartitionResult(tk, input, output)
 }
+
+func (s *testSuiteWithData) TestRangePartitionBoundariesLtM(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("create database TestRangePartitionBoundariesLtM")
+	defer tk.MustExec("drop database TestRangePartitionBoundariesLtM")
+	tk.MustExec("use TestRangePartitionBoundariesLtM")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t
+(a INT, b varchar(255))
+PARTITION BY RANGE (a) (
+ PARTITION p0 VALUES LESS THAN (1000000),
+ PARTITION p1 VALUES LESS THAN (2000000),
+ PARTITION p2 VALUES LESS THAN (3000000))`)
+
+	var input []string
+	var output []testOutput
+	s.testData.GetTestCases(c, &input, &output)
+	s.verifyPartitionResult(tk, input, output)
+}
+
+func (s *testSuiteWithData) TestRangePartitionBoundariesLtS(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("create database TestRangePartitionBoundariesLtS")
+	defer tk.MustExec("drop database TestRangePartitionBoundariesLtS")
+	tk.MustExec("use TestRangePartitionBoundariesLtS")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t
+(a INT, b varchar(255))
+PARTITION BY RANGE (a) (
+ PARTITION p0 VALUES LESS THAN (1),
+ PARTITION p1 VALUES LESS THAN (2),
+ PARTITION p2 VALUES LESS THAN (3),
+ PARTITION p3 VALUES LESS THAN (4),
+ PARTITION p4 VALUES LESS THAN (5),
+ PARTITION p5 VALUES LESS THAN (6),
+ PARTITION p6 VALUES LESS THAN (7))`)
+
+	var input []string
+	var output []testOutput
+	s.testData.GetTestCases(c, &input, &output)
+	s.verifyPartitionResult(tk, input, output)
+}
