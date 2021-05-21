@@ -2218,7 +2218,7 @@ func (s *testIntegrationSuite4) TestInsertIntoGeneratedColumnWithDefaultExpr(c *
 	tk.MustExec("drop table t1, t2, t3, t4, t5")
 }
 
-func (s *testIntegrationSuite3) TestSqlFunctionsInGeneratedColumns(c *C) {
+func (s *testIntegrationSuite3) TestSQLFunctionsInGeneratedColumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")

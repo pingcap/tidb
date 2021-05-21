@@ -246,7 +246,7 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		_, err = tk.Exec("execute stmt")
 		c.Assert(err, IsNil)
 		tk.MustQuery("select a from prepare1;").Check(testkit.Rows("6"))
-		_, err = tk.Exec("prepare stmt FROM @Sql")
+		_, err = tk.Exec("prepare stmt FROM @SQL")
 		c.Assert(err, IsNil)
 		_, err = tk.Exec("execute stmt")
 		c.Assert(err, IsNil)
