@@ -997,6 +997,9 @@ AAAAAAAAAAAA5gm5Mg==
 		{"CREATE SEQUENCE seq INCREMENT - 9223372036854775808", true, "CREATE SEQUENCE `seq` INCREMENT BY -9223372036854775808"},
 		{"CREATE SEQUENCE seq INCREMENT -9223372036854775808", true, "CREATE SEQUENCE `seq` INCREMENT BY -9223372036854775808"},
 		{"CREATE SEQUENCE seq INCREMENT -9223372036854775809", false, ""},
+
+		{"select `t`.`1a`.1 from t;", true, "SELECT `t`.`1a`.`1` FROM `t`"},
+		{"select * from 1db.1table;", true, "SELECT * FROM `1db`.`1table`"},
 	}
 	s.RunTest(c, table)
 }
