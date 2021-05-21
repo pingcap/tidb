@@ -8458,6 +8458,12 @@ func (s *testIntegrationSerialSuite) TestCollationIndexJoin(c *C) {
 	tk.MustQuery("select /*+ inl_merge_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
 	tk.MustQuery("select /*+ inl_merge_join(t2) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Optimizer Hint /*+ INL_MERGE_JOIN(t2) */ is inapplicable"))
+
+	tk.MustExec("drop table if exists a, b")
+	tk.MustExec("create table a(i int, k varbinary(40), v int, primary key(i, k) clustered)")
+	tk.MustExec("create table b(i int, k varchar(40), v int, primary key(i, k) clustered)")
+	tk.MustExec("insert into a select 3, 'nice mccarthy', 10")
+	tk.MustQuery("select * from a, b where a.i = b.i and a.k = b.k").Check(testkit.Rows(""))
 }
 
 func (s *testIntegrationSerialSuite) TestCollationMergeJoin(c *C) {
