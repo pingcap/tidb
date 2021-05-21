@@ -28,10 +28,10 @@ import (
 	"github.com/pingcap/tipb/go-binlog"
 )
 
-// FIXME: remove this interface
 // InfoschemaMetaVersion is a workaround. Due to circular dependency,
 // can not return the complete interface. But SchemaMetaVersion is widely used for logging.
-// So we give a convenience for that
+// So we give a convenience for that.
+// FIXME: remove this interface
 type InfoschemaMetaVersion interface {
 	SchemaMetaVersion() int64
 }
