@@ -3898,7 +3898,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	// We support modifying the type definitions of 'null' to 'not null' now.
 	var modifyColumnTp byte
 	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		if err = checkForNullValue(ctx, col.Tp != newCol.Tp, ident.Schema, ident.Name, newCol.Name, col.ColumnInfo); err != nil {
+		if err = checkForNullValue(ctx, true, ident.Schema, ident.Name, newCol.Name, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
 		// `modifyColumnTp` indicates that there is a type modification.
