@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/kv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	tikv "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -53,6 +52,52 @@ type SchemaAmender interface {
 	// AmendTxn is the amend entry, new mutations will be generated based on input mutations using schema change info.
 	// The returned results are mutations need to prewrite and mutations need to cleanup.
 	AmendTxn(ctx context.Context, startInfoSchema SchemaVer, change *RelatedSchemaChange, mutations CommitterMutations) (CommitterMutations, error)
+}
+
+// StartTSOption indicates the option when beginning a transaction
+// `TxnScope` must be set for each object
+// Every other fields are optional, but currently at most one of them can be set
+type StartTSOption struct {
+	TxnScope   string
+	StartTS    *uint64
+	PrevSec    *uint64
+	MinStartTS *uint64
+	MaxPrevSec *uint64
+}
+
+// DefaultStartTSOption creates a default StartTSOption, ie. Work in GlobalTxnScope and get start ts when got used
+func DefaultStartTSOption() StartTSOption {
+	return StartTSOption{TxnScope: oracle.GlobalTxnScope}
+}
+
+// SetMaxPrevSec returns a new StartTSOption with MaxPrevSec set to maxPrevSec
+func (to StartTSOption) SetMaxPrevSec(maxPrevSec uint64) StartTSOption {
+	to.MaxPrevSec = &maxPrevSec
+	return to
+}
+
+// SetMinStartTS returns a new StartTSOption with MinStartTS set to minStartTS
+func (to StartTSOption) SetMinStartTS(minStartTS uint64) StartTSOption {
+	to.MinStartTS = &minStartTS
+	return to
+}
+
+// SetStartTs returns a new StartTSOption with StartTS set to startTS
+func (to StartTSOption) SetStartTs(startTS uint64) StartTSOption {
+	to.StartTS = &startTS
+	return to
+}
+
+// SetPrevSec returns a new StartTSOption with PrevSec set to prevSec
+func (to StartTSOption) SetPrevSec(prevSec uint64) StartTSOption {
+	to.PrevSec = &prevSec
+	return to
+}
+
+// SetTxnScope returns a new StartTSOption with TxnScope set to txnScope
+func (to StartTSOption) SetTxnScope(txnScope string) StartTSOption {
+	to.TxnScope = txnScope
+	return to
 }
 
 // KVTxn contains methods to interact with a TiKV transaction.
@@ -90,23 +135,24 @@ type KVTxn struct {
 	kvFilter           KVFilter
 }
 
-func extractStartTs(store *KVStore, options kv.TransactionOption) (uint64, error) {
+// ExtractStartTs use `option` to get the proper startTS for a transaction
+func ExtractStartTs(store *KVStore, option StartTSOption) (uint64, error) {
 	var startTs uint64
 	var err error
-	if options.StartTS != nil {
-		startTs = *options.StartTS
-	} else if options.PrevSec != nil {
+	if option.StartTS != nil {
+		startTs = *option.StartTS
+	} else if option.PrevSec != nil {
 		bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
-		startTs, err = store.getStalenessTimestamp(bo, options.TxnScope, *options.PrevSec)
-	} else if options.MinStartTS != nil {
+		startTs, err = store.getStalenessTimestamp(bo, option.TxnScope, *option.PrevSec)
+	} else if option.MinStartTS != nil {
 		stores := make([]*Store, 0)
 		allStores := store.regionCache.getStoresByType(tikvrpc.TiKV)
-		if options.TxnScope != oracle.GlobalTxnScope {
+		if option.TxnScope != oracle.GlobalTxnScope {
 			for _, store := range allStores {
 				if store.IsLabelsMatch([]*metapb.StoreLabel{
 					{
 						Key:   DCLabelKey,
-						Value: options.TxnScope,
+						Value: option.TxnScope,
 					},
 				}) {
 					stores = append(stores, store)
@@ -116,32 +162,32 @@ func extractStartTs(store *KVStore, options kv.TransactionOption) (uint64, error
 			stores = allStores
 		}
 		safeTS := store.getMinSafeTSByStores(stores)
-		startTs = *options.MinStartTS
+		startTs = *option.MinStartTS
 		// If the safeTS is larger than the minStartTS, we will use safeTS as StartTS, otherwise we will use
 		// minStartTS directly.
 		if startTs < safeTS {
 			startTs = safeTS
 		}
-	} else if options.MaxPrevSec != nil {
+	} else if option.MaxPrevSec != nil {
 		bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
-		minStartTS, err := store.getStalenessTimestamp(bo, options.TxnScope, *options.MaxPrevSec)
+		minStartTS, err := store.getStalenessTimestamp(bo, option.TxnScope, *option.MaxPrevSec)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		options.MinStartTS = &minStartTS
-		return extractStartTs(store, options)
+		option.MinStartTS = &minStartTS
+		return ExtractStartTs(store, option)
 	} else {
 		bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
-		startTs, err = store.getTimestampWithRetry(bo, options.TxnScope)
+		startTs, err = store.getTimestampWithRetry(bo, option.TxnScope)
 	}
 	return startTs, err
 }
 
-func newTiKVTxnWithOptions(store *KVStore, options kv.TransactionOption) (*KVTxn, error) {
+func newTiKVTxnWithOptions(store *KVStore, options StartTSOption) (*KVTxn, error) {
 	if options.TxnScope == "" {
 		options.TxnScope = oracle.GlobalTxnScope
 	}
-	startTs, err := extractStartTs(store, options)
+	startTs, err := ExtractStartTs(store, options)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -596,8 +642,13 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tikv.LockCtx, keysInput
 			keyMayBeLocked := !(tikverr.IsErrWriteConflict(err) || tikverr.IsErrKeyExist(err))
 			// If there is only 1 key and lock fails, no need to do pessimistic rollback.
 			if len(keys) > 1 || keyMayBeLocked {
+				dl, ok := errors.Cause(err).(*tikverr.ErrDeadlock)
+				if ok && lockCtx.OnDeadlock != nil {
+					// Call OnDeadlock before pessimistic rollback.
+					lockCtx.OnDeadlock(dl)
+				}
 				wg := txn.asyncPessimisticRollback(ctx, keys)
-				if dl, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok {
+				if ok {
 					logutil.Logger(ctx).Debug("deadlock error received", zap.Uint64("startTS", txn.startTS), zap.Stringer("deadlockInfo", dl))
 					if hashInKeys(dl.DeadlockKeyHash, keys) {
 						dl.IsRetryable = true

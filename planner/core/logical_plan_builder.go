@@ -975,6 +975,19 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 	if len(cnfExpres) == 0 {
 		return p, nil
 	}
+	// check expr field types.
+	for i, expr := range cnfExpres {
+		if expr.GetType().EvalType() == types.ETString {
+			tp := &types.FieldType{
+				Tp:      mysql.TypeDouble,
+				Flag:    expr.GetType().Flag,
+				Flen:    mysql.MaxRealWidth,
+				Decimal: types.UnspecifiedLength,
+			}
+			types.SetBinChsClnFlag(tp)
+			cnfExpres[i] = expression.TryPushCastIntoControlFunctionForHybridType(b.ctx, expr, tp)
+		}
+	}
 	selection.Conditions = cnfExpres
 	selection.SetChildren(p)
 	return selection, nil
