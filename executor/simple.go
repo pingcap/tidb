@@ -1456,7 +1456,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 	kvReq, err := builder.
 		SetDAGRequest(dagReq).
 		SetFromSessionVars(sctx.GetSessionVars()).
-		SetFromInfoSchema(sctx.GetInfoSchema().(infoschema.InfoSchema)).
+		SetFromInfoSchema(sctx.GetInfoSchema()).
 		SetStoreType(kv.TiDB).
 		SetTiDBServerID(connID.ServerID).
 		Build()

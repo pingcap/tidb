@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -278,7 +277,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetFromInfoSchema(e.ctx.GetInfoSchema().(infoschema.InfoSchema)).
+		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		SetMemTracker(e.memTracker)
 	kvReq, err := builder.Build()
 	if err != nil {
@@ -527,7 +526,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetKeepOrder(e.keepOrder).
 			SetStreaming(e.indexStreaming).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
-			SetFromInfoSchema(e.ctx.GetInfoSchema().(infoschema.InfoSchema)).
+			SetFromInfoSchema(e.ctx.GetInfoSchema()).
 			SetMemTracker(tracker)
 
 		for partTblIdx, kvRange := range kvRanges {
