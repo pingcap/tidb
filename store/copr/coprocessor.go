@@ -52,10 +52,10 @@ import (
 var coprCacheHistogramEvict = tidbmetrics.DistSQLCoprCacheHistogram.WithLabelValues("evict")
 
 // Maximum total sleep time(in ms) for kv/cop commands.
-const (
-	copBuildTaskMaxBackoff = 5000
-	copNextMaxBackoff      = 20000
-)
+const copBuildTaskMaxBackoff = 5000
+
+// CopNextMaxBackoff is maximum total sleep time(in ms) for kv/cop commands. It's exported for test.
+var CopNextMaxBackoff = 20000
 
 // CopClient is coprocessor client.
 type CopClient struct {
@@ -612,7 +612,7 @@ func chooseBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, ta
 	if ok {
 		return bo
 	}
-	newbo := backoff.NewBackofferWithVars(ctx, copNextMaxBackoff, worker.vars)
+	newbo := backoff.NewBackofferWithVars(ctx, CopNextMaxBackoff, worker.vars)
 	backoffermap[task.region.GetID()] = newbo
 	return newbo
 }

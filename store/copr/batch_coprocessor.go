@@ -389,7 +389,7 @@ func (b *batchCopIterator) run(ctx context.Context) {
 	// We run workers for every batch cop.
 	for _, task := range b.tasks {
 		b.wg.Add(1)
-		bo := backoff.NewBackofferWithVars(ctx, copNextMaxBackoff, b.vars)
+		bo := backoff.NewBackofferWithVars(ctx, CopNextMaxBackoff, b.vars)
 		go b.handleTask(ctx, bo, task)
 	}
 	b.wg.Wait()
