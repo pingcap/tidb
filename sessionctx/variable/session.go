@@ -1242,9 +1242,7 @@ func (s *SessionVars) GetStatusFlag(flag uint16) bool {
 // It also updates the IsExplicit flag in TxnCtx if val is true.
 func (s *SessionVars) SetInTxn(val bool) {
 	s.SetStatusFlag(mysql.ServerStatusInTrans, val)
-	if val {
-		s.TxnCtx.IsExplicit = true
-	}
+	s.TxnCtx.IsExplicit = val
 }
 
 // InTxn returns if the session is in transaction.
