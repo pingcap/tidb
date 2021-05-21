@@ -335,6 +335,18 @@ func (s *testSuite5) TestIssue23722(c *C) {
 		"order by col_15 , col_16 , col_17 , col_18 , col_19;").Check(testkit.Rows("38799.400 20301 KETeFZhkoxnwMAhA Charlie zyhXEppZdqyqNV"))
 }
 
+func (s *testSuite5) TestIssue24547(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists a")
+	tk.MustExec("drop table if exists b")
+	tk.MustExec("CREATE TABLE `a` (\n  `v` varchar(100) DEFAULT NULL,\n  `k1` varchar(100) NOT NULL,\n  `k2` varchar(100) NOT NULL,\n  PRIMARY KEY (`k1`(3),`k2`(3)) /*T![clustered_index] CLUSTERED */,\n  KEY `kk2` (`k2`(3)),\n  UNIQUE KEY `uk1` (`v`)\n)")
+	tk.MustExec("CREATE TABLE `b` (\n  `v` varchar(100) DEFAULT NULL,\n  `k1` varchar(100) NOT NULL,\n  `k2` varchar(100) NOT NULL,\n  PRIMARY KEY (`k1`(3),`k2`(3)) /*T![clustered_index] CLUSTERED */,\n  KEY `kk2` (`k2`(3))\n)")
+	tk.MustExec("insert into a(v, k1, k2) values('1', '1', '1'), ('22', '22', '22'), ('333', '333', '333'), ('3444', '3444', '3444'), ('444', '444', '444')")
+	tk.MustExec("insert into b(v, k1, k2) values('1', '1', '1'), ('22', '22', '22'), ('333', '333', '333'), ('2333', '2333', '2333'), ('555', '555', '555')")
+	tk.MustExec("delete a from a inner join b on a.k1 = b.k1 and a.k2 = b.k2 where b.k2 <> '333'")
+}
+
 func (s *testSuite5) TestPartitionTableIndexJoinAndIndexReader(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
