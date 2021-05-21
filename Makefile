@@ -241,11 +241,11 @@ tools/bin/unconvert: tools/check/go.mod
 
 tools/bin/failpoint-ctl: tools/check/go.mod
 	cd tools/check; \
-	$(GO) build -o $@ github.com/pingcap/failpoint/failpoint-ctl
+	$(GO) build -o ../bin/failpoint-ctl github.com/pingcap/failpoint/failpoint-ctl
 
 tools/bin/errdoc-gen: tools/check/go.mod
 	cd tools/check; \
-	$(GO) build -o $@ github.com/pingcap/errors/errdoc-gen
+	$(GO) build -o ../bin/errdoc-gen github.com/pingcap/errors/errdoc-gen
 
 tools/bin/golangci-lint:
 	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.29.0
