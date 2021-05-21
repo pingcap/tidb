@@ -14,6 +14,10 @@
 package resourcegrouptag
 
 import (
+	"crypto/sha256"
+	"errors"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tipb/go-tipb"
 	"math/rand"
 	"testing"
 
@@ -108,4 +112,129 @@ func genRandHex(length int) string {
 		res[i] = chars[rand.Intn(len(chars))]
 	}
 	return string(res)
+}
+
+func genRandDigest(str string) []byte {
+	hasher := sha256.New()
+	hasher.Write([]byte(str))
+	return hasher.Sum(nil)
+}
+
+func (s *testUtilsSuite) TestResourceGroupTagEncodingPB(c *C) {
+	digest1 := genRandDigest("abc")
+	digest2 := genRandDigest("abcdefg")
+	// Test for manualEncode
+	data := manualEncodeResourceGroupTag(digest1, digest2)
+	c.Assert(len(data), Equals, 69)
+	sqlDigest, planDigest, err := manualDecodeResourceGroupTag(data)
+	c.Assert(err, IsNil)
+	c.Assert(sqlDigest, DeepEquals, digest1)
+	c.Assert(planDigest, DeepEquals, digest2)
+
+	// Test for protobuf
+	resourceTag := &tipb.ResourceGroupTag{
+		SqlDigest:  digest1,
+		PlanDigest: digest2,
+	}
+	buf, err := resourceTag.Marshal()
+	c.Assert(err, IsNil)
+	tag := &tipb.ResourceGroupTag{}
+	err = tag.Unmarshal(buf)
+	c.Assert(err, IsNil)
+	c.Assert(tag.SqlDigest, DeepEquals, digest1)
+	c.Assert(tag.PlanDigest, DeepEquals, digest2)
+}
+
+func manualEncodeResourceGroupTag(sqlDigest []byte, planDigest []byte) []byte {
+	buf := make([]byte, 1, len(sqlDigest)+len(planDigest)+8)
+	buf[0] = 1 // version
+	if len(sqlDigest) > 0 {
+		buf = append(buf, 1) // sql digest flag
+		buf = codec.EncodeVarint(buf, int64(len(sqlDigest)))
+		buf = append(buf, sqlDigest...)
+	}
+	buf = append(buf, 2) // plan digest flag
+	buf = codec.EncodeVarint(buf, int64(len(planDigest)))
+	buf = append(buf, planDigest...)
+	return buf
+}
+
+func manualDecodeResourceGroupTag(buf []byte) (sqlDigest []byte, planDigest []byte, err error) {
+	if len(buf) == 0 {
+		return nil, nil, errors.New("invalid")
+	}
+	if buf[0] != 1 {
+		return nil, nil, errors.New("invalid")
+	}
+	buf = buf[1:]
+	var l int64
+	for len(buf) > 0 {
+		flag := buf[0]
+		buf, l, err = codec.DecodeVarint(buf[1:])
+		if err != nil {
+			return nil, nil, errors.New("invalid")
+		}
+		if len(buf) < int(l) {
+			return nil, nil, errors.New("invalid")
+		}
+		data := make([]byte, l)
+		copy(data, buf[:l])
+		buf = buf[l:]
+		switch flag {
+		case 1: // sql_digest
+			sqlDigest = data
+		case 2: // plan digest
+			planDigest = data
+		default:
+			return nil, nil, errors.New("invalid")
+		}
+	}
+	return
+}
+
+func BenchmarkResourceGroupManualEncode(b *testing.B) {
+	digest1 := genRandDigest("abc")
+	digest2 := genRandDigest("abcdefg")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		manualEncodeResourceGroupTag(digest1, digest2)
+	}
+}
+
+func BenchmarkResourceGroupTagPBEncode(b *testing.B) {
+	digest1 := genRandDigest("abc")
+	digest2 := genRandDigest("abcdefg")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		resourceTag := &tipb.ResourceGroupTag{
+			SqlDigest:  digest1,
+			PlanDigest: digest2,
+		}
+		resourceTag.Marshal()
+	}
+}
+
+func BenchmarkResourceGroupTagManualDecode(b *testing.B) {
+	digest1 := genRandDigest("abc")
+	digest2 := genRandDigest("abcdefg")
+	data := manualEncodeResourceGroupTag(digest1, digest2)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		manualDecodeResourceGroupTag(data)
+	}
+}
+
+func BenchmarkResourceGroupTagPBDecode(b *testing.B) {
+	digest1 := genRandDigest("abc")
+	digest2 := genRandDigest("abcdefg")
+	resourceTag := &tipb.ResourceGroupTag{
+		SqlDigest:  digest1,
+		PlanDigest: digest2,
+	}
+	data, _ := resourceTag.Marshal()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tag := &tipb.ResourceGroupTag{}
+		tag.Unmarshal(data)
+	}
 }
