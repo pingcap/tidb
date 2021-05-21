@@ -53,7 +53,7 @@ func (s *extractStartTsSuite) SetUpTest(c *C) {
 	s.store = probe.KVStore
 }
 
-func (s *extractStartTsSuite) TestExtractStartTs(c *C) {
+func (s *extractStartTsSuite) TestExtractStartTS(c *C) {
 	i := uint64(100)
 	// to prevent time change during test case execution
 	// we use failpoint to make it "fixed"
@@ -65,44 +65,16 @@ func (s *extractStartTsSuite) TestExtractStartTs(c *C) {
 		option     tikv.StartTSOption
 	}{
 		// StartTS setted
-		{100, tikv.StartTSOption{TxnScope: oracle.GlobalTxnScope, StartTS: &i, PrevSec: nil, MinStartTS: nil, MaxPrevSec: nil}},
-		// PrevSec setted
-		{200, tikv.StartTSOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: &i, MinStartTS: nil, MaxPrevSec: nil}},
-		// MinStartTS setted, global
-		{101, tikv.StartTSOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: &i, MaxPrevSec: nil}},
-		// MinStartTS setted, local
-		{102, tikv.StartTSOption{TxnScope: "local1", StartTS: nil, PrevSec: nil, MinStartTS: &i, MaxPrevSec: nil}},
-		// MaxPrevSec setted
-		// however we need to add more cases to check the behavior when it fall backs to MinStartTS setted
-		// see `TestMaxPrevSecFallback`
-		{200, tikv.StartTSOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
+		{100, tikv.StartTSOption{TxnScope: oracle.GlobalTxnScope, StartTS: &i}},
 		// nothing setted
-		{300, tikv.StartTSOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: nil}},
+		{300, tikv.StartTSOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil}},
 	}
 	for _, cs := range cases {
 		expected := cs.expectedTS
-		result, _ := tikv.ExtractStartTs(s.store, cs.option)
+		result, _ := tikv.ExtractStartTS(s.store, cs.option)
 		c.Assert(result, Equals, expected)
 	}
 
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockStalenessTimestamp"), IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockCurrentTimestamp"), IsNil)
-}
-
-func (s *extractStartTsSuite) TestMaxPrevSecFallback(c *C) {
-	probe := tikv.StoreProbe{KVStore: s.store}
-	probe.SetSafeTS(2, 0x8000000000000002)
-	probe.SetSafeTS(3, 0x8000000000000001)
-	i := uint64(100)
-	cases := []struct {
-		expectedTS uint64
-		option     tikv.StartTSOption
-	}{
-		{0x8000000000000001, tikv.StartTSOption{TxnScope: oracle.GlobalTxnScope, StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
-		{0x8000000000000002, tikv.StartTSOption{TxnScope: "local1", StartTS: nil, PrevSec: nil, MinStartTS: nil, MaxPrevSec: &i}},
-	}
-	for _, cs := range cases {
-		result, _ := tikv.ExtractStartTs(s.store, cs.option)
-		c.Assert(result, Equals, cs.expectedTS)
-	}
 }

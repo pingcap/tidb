@@ -188,6 +188,11 @@ func (c *Context) NewTxn(context.Context) error {
 	return nil
 }
 
+// NewTxnWithStartTS implements the sessionctx.Context interface.
+func (c *Context) NewTxnWithStartTS(ctx context.Context, startTS uint64) error {
+	return c.NewTxn(ctx)
+}
+
 // RefreshTxnCtx implements the sessionctx.Context interface.
 func (c *Context) RefreshTxnCtx(ctx context.Context) error {
 	return errors.Trace(c.NewTxn(ctx))
@@ -204,18 +209,13 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		return nil
 	}
 	if c.Store != nil {
-		txn, err := c.Store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(kv.GlobalTxnScope).SetStartTs(startTS))
+		txn, err := c.Store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(kv.GlobalTxnScope).SetStartTS(startTS))
 		if err != nil {
 			return errors.Trace(err)
 		}
 		c.txn.Transaction = txn
 	}
 	return nil
-}
-
-// NewTxnWithStalenessOption implements the sessionctx.Context interface.
-func (c *Context) NewTxnWithStalenessOption(ctx context.Context, option sessionctx.StalenessTxnOption) error {
-	return c.NewTxn(ctx)
 }
 
 // GetStore gets the store of session.

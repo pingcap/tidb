@@ -20,7 +20,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/placement"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -32,54 +31,9 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 		sql              string
 		IsStaleness      bool
 		expectPhysicalTS int64
-		preSec           int64
 		txnScope         string
 		zone             string
 	}{
-		{
-			name:             "TimestampBoundExactStaleness",
-			preSQL:           `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`,
-			sql:              `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
-			IsStaleness:      true,
-			expectPhysicalTS: 1599321600000,
-			txnScope:         "local",
-			zone:             "sh",
-		},
-		{
-			name:             "TimestampBoundReadTimestamp",
-			preSQL:           "begin",
-			sql:              `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
-			IsStaleness:      true,
-			expectPhysicalTS: 1599321600000,
-			txnScope:         "local",
-			zone:             "bj",
-		},
-		{
-			name:        "TimestampBoundExactStaleness",
-			preSQL:      "begin",
-			sql:         `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`,
-			IsStaleness: true,
-			preSec:      20,
-			txnScope:    "local",
-			zone:        "sh",
-		},
-		{
-			name:        "TimestampBoundExactStaleness",
-			preSQL:      `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
-			sql:         `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`,
-			IsStaleness: true,
-			preSec:      20,
-			txnScope:    "local",
-			zone:        "sz",
-		},
-		{
-			name:        "begin after TimestampBoundReadTimestamp",
-			preSQL:      `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
-			sql:         "begin",
-			IsStaleness: false,
-			txnScope:    kv.GlobalTxnScope,
-			zone:        "",
-		},
 		{
 			name:             "AsOfTimestamp",
 			preSQL:           "begin",
@@ -109,12 +63,6 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 		tk.MustExec(testcase.sql)
 		if testcase.expectPhysicalTS > 0 {
 			c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, testcase.expectPhysicalTS)
-		} else if testcase.preSec > 0 {
-			curSec := time.Now().Unix()
-			startTS := oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS)
-			// exact stale txn tolerate 2 seconds deviation for startTS
-			c.Assert(startTS, Greater, (curSec-testcase.preSec-2)*1000)
-			c.Assert(startTS, Less, (curSec-testcase.preSec+2)*1000)
 		} else if !testcase.IsStaleness {
 			curSec := time.Now().Unix()
 			startTS := oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS)
@@ -168,9 +116,6 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
 		tk.MustQuery(testcase.sql)
 		tk.MustExec(`commit`)
-		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:00';`)
-		tk.MustQuery(testcase.sql)
-		tk.MustExec(`commit`)
 	}
 	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
 	failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStoreLabels")
@@ -199,16 +144,6 @@ func (s *testStaleTxnSerialSuite) TestStalenessAndHistoryRead(c *C) {
 	tk.MustExec(`set @@tidb_snapshot="2016-10-08 16:45:26";`)
 	c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, int64(1599321600000))
 	tk.MustExec("commit")
-	// set @@tidb_snapshot before staleness txn
-	tk.MustExec(`set @@tidb_snapshot="2016-10-08 16:45:26";`)
-	tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`)
-	c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, int64(1599321600000))
-	tk.MustExec("commit")
-	// set @@tidb_snapshot during staleness txn
-	tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`)
-	tk.MustExec(`set @@tidb_snapshot="2016-10-08 16:45:26";`)
-	c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, int64(1599321600000))
-	tk.MustExec("commit")
 }
 
 func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
@@ -217,7 +152,6 @@ func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key);")
 	defer tk.MustExec(`drop table if exists t`)
-	tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MAX STALENESS '00:00:10'`)
 	testcases := []struct {
 		name         string
 		sql          string
@@ -225,36 +159,6 @@ func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 		// compareWithSafeTS will be 0 if StartTS==SafeTS, -1 if StartTS < SafeTS, and +1 if StartTS > SafeTS.
 		compareWithSafeTS int
 	}{
-		{
-			name:              "max 20 seconds ago, safeTS 10 secs ago",
-			sql:               `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MAX STALENESS '00:00:20'`,
-			injectSafeTS:      oracle.GoTimeToTS(time.Now().Add(-10 * time.Second)),
-			compareWithSafeTS: 0,
-		},
-		{
-			name:              "max 10 seconds ago, safeTS 20 secs ago",
-			sql:               `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MAX STALENESS '00:00:10'`,
-			injectSafeTS:      oracle.GoTimeToTS(time.Now().Add(-20 * time.Second)),
-			compareWithSafeTS: 1,
-		},
-		{
-			name: "max 20 seconds ago, safeTS 10 secs ago",
-			sql: func() string {
-				return fmt.Sprintf(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MIN READ TIMESTAMP '%v'`,
-					time.Now().Add(-20*time.Second).Format("2006-01-02 15:04:05"))
-			}(),
-			injectSafeTS:      oracle.GoTimeToTS(time.Now().Add(-10 * time.Second)),
-			compareWithSafeTS: 0,
-		},
-		{
-			name: "max 10 seconds ago, safeTS 20 secs ago",
-			sql: func() string {
-				return fmt.Sprintf(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MIN READ TIMESTAMP '%v'`,
-					time.Now().Add(-10*time.Second).Format("2006-01-02 15:04:05"))
-			}(),
-			injectSafeTS:      oracle.GoTimeToTS(time.Now().Add(-20 * time.Second)),
-			compareWithSafeTS: 1,
-		},
 		{
 			name:              "20 seconds ago to now, safeTS 10 secs ago",
 			sql:               `START TRANSACTION READ ONLY AS OF TIMESTAMP tidb_bounded_staleness(NOW() - INTERVAL 20 SECOND, NOW())`,
@@ -307,20 +211,8 @@ func (s *testStaleTxnSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
 	// confirm schema changed
 	c.Assert(schemaVer1, Less, schemaVer2)
 
-	tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:01'`)
+	tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3) - INTERVAL 1 SECOND`)
 	schemaVer3 := tk.Se.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
 	// got an old infoSchema
 	c.Assert(schemaVer3, Equals, schemaVer1)
-
-	schemaVer4 := tk.Se.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
-	time.Sleep(time.Second)
-	tk.MustExec("create table t (id int primary key);")
-	schemaVer5 := tk.Se.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
-	// confirm schema changed
-	c.Assert(schemaVer4, Less, schemaVer5)
-
-	tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW() - INTERVAL 1 SECOND`)
-	schemaVer6 := tk.Se.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
-	// got an old infoSchema
-	c.Assert(schemaVer6, Equals, schemaVer4)
 }
