@@ -998,7 +998,7 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *mode
 		if isNull {
 			return true
 		}
-		return ranges.compare(i, ret, unsigned) > 0
+		return ranges.Compare(i, ret, unsigned) > 0
 	})
 	if isNull {
 		pos = 0
@@ -1243,7 +1243,8 @@ func compareUnsigned(v1, v2 int64) int {
 	return -1
 }
 
-func (lt *ForRangePruning) compare(ith int, v int64, unsigned bool) int {
+// Compare is to be used in the binary search to locate partition
+func (lt *ForRangePruning) Compare(ith int, v int64, unsigned bool) int {
 	if ith == len(lt.LessThan)-1 {
 		if lt.MaxValue {
 			return 1
