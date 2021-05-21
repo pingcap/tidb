@@ -81,7 +81,7 @@ func PreviewUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (stri
 			s.ErrorMessage = err.Error()
 		} else {
 			s.IsRequestSent = reported
-			// s.IsTelemetryEnabled = enabled
+
 		}
 		err = updateTelemetryStatus(s, etcdClient)
 		return "", err
