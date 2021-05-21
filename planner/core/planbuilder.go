@@ -3077,7 +3077,7 @@ func (b *PlanBuilder) buildIndexAdvise(node *ast.IndexAdviseStmt) Plan {
 }
 
 func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) {
-	if node.SplitSyntaxOpt != nil && node.Table.TableInfo.TempTableType != model.TempTableNone {
+	if node.Table.TableInfo.TempTableType != model.TempTableNone {
 		return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("split table")
 	}
 	if node.SplitSyntaxOpt != nil && node.SplitSyntaxOpt.HasPartition && node.Table.TableInfo.Partition == nil {

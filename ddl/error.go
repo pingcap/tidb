@@ -277,4 +277,6 @@ var (
 
 	// ErrPartitionNoTemporary returns when partition at temporary mode
 	ErrPartitionNoTemporary = dbterror.ClassDDL.NewStd(mysql.ErrPartitionNoTemporary)
+
+	ErrOptOnTemporaryTable = dbterror.ClassDDL.NewStd(mysql.ErrOptOnTemporaryTable)
 )
