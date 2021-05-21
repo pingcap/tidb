@@ -14,6 +14,7 @@
 package stmtctx
 
 import (
+	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"math"
 	"sort"
 	"strconv"
@@ -149,7 +150,7 @@ type StatementContext struct {
 	}
 	// planNormalized use for cache the normalized plan, avoid duplicate builds.
 	planNormalized        string
-	planDigest            string
+	planDigest            *parser.Digest
 	encodedPlan           string
 	planHint              string
 	planHintSet           bool
@@ -165,6 +166,8 @@ type StatementContext struct {
 
 	// stmtCache is used to store some statement-related values.
 	stmtCache map[StmtCacheKey]interface{}
+	// resourceGroupTag cache for the current statement resource group tag.
+	resourceGroupTag []byte
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -244,12 +247,22 @@ func (sc *StatementContext) InitSQLDigest(normalized string, digest *parser.Dige
 }
 
 // GetPlanDigest gets the normalized plan and plan digest.
-func (sc *StatementContext) GetPlanDigest() (normalized, planDigest string) {
+func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *parser.Digest) {
 	return sc.planNormalized, sc.planDigest
 }
 
+// GetResourceGroupTag gets the resource group of the statement.
+func (sc *StatementContext) GetResourceGroupTag() []byte {
+	if len(sc.resourceGroupTag) > 0 {
+		return sc.resourceGroupTag
+	}
+	_, sqlDigest := sc.SQLDigest()
+	sc.resourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(sqlDigest, sc.planDigest)
+	return sc.resourceGroupTag
+}
+
 // SetPlanDigest sets the normalized plan and plan digest.
-func (sc *StatementContext) SetPlanDigest(normalized, planDigest string) {
+func (sc *StatementContext) SetPlanDigest(normalized string, planDigest *parser.Digest) {
 	sc.planNormalized, sc.planDigest = normalized, planDigest
 }
 

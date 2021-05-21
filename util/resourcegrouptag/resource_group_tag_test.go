@@ -37,14 +37,14 @@ func TestT(t *testing.T) {
 
 func (s *testUtilsSuite) TestResourceGroupTagEncoding(c *C) {
 	sqlDigest := parser.NewDigest(nil)
-	tag := EncodeResourceGroupTag(sqlDigest)
+	tag := EncodeResourceGroupTag(sqlDigest, nil)
 	c.Assert(len(tag), Equals, 0)
 	decodedSQLDigest, err := DecodeResourceGroupTag(tag)
 	c.Assert(err, IsNil)
 	c.Assert(len(decodedSQLDigest), Equals, 0)
 
 	sqlDigest = parser.NewDigest([]byte{'a', 'a'})
-	tag = EncodeResourceGroupTag(sqlDigest)
+	tag = EncodeResourceGroupTag(sqlDigest, nil)
 	// version(1) + prefix(1) + length(1) + content(2hex -> 1byte)
 	c.Assert(len(tag), Equals, 4)
 	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
@@ -52,13 +52,13 @@ func (s *testUtilsSuite) TestResourceGroupTagEncoding(c *C) {
 	c.Assert(decodedSQLDigest, DeepEquals, sqlDigest.Bytes())
 
 	sqlDigest = parser.NewDigest(genRandHex(64))
-	tag = EncodeResourceGroupTag(sqlDigest)
+	tag = EncodeResourceGroupTag(sqlDigest, nil)
 	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
 	c.Assert(err, IsNil)
 	c.Assert(decodedSQLDigest, DeepEquals, sqlDigest.Bytes())
 
 	sqlDigest = parser.NewDigest(genRandHex(510))
-	tag = EncodeResourceGroupTag(sqlDigest)
+	tag = EncodeResourceGroupTag(sqlDigest, nil)
 	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
 	c.Assert(err, IsNil)
 	c.Assert(decodedSQLDigest, DeepEquals, sqlDigest.Bytes())

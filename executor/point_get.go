@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/config"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -159,6 +160,9 @@ func (e *PointGetExecutor) Open(context.Context) error {
 				Value: e.ctx.GetSessionVars().TxnCtx.TxnScope,
 			},
 		})
+	}
+	if config.GetGlobalConfig().TopStmt.Enable {
+		e.snapshot.SetOption(kv.ResourceGroupTag, e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTag())
 	}
 	return nil
 }

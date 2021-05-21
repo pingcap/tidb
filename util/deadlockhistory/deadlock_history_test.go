@@ -14,17 +14,16 @@
 package deadlockhistory
 
 import (
-	"crypto/sha256"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/tipb/go-tipb"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/parser"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 type testDeadlockHistorySuite struct{}
@@ -227,12 +226,6 @@ func (s *testDeadlockHistorySuite) TestGetDatum(c *C) {
 	c.Assert(res[3][3].GetValue(), Equals, uint64(202)) // TRY_LOCK_TRX_ID
 	c.Assert(res[3][6].GetValue(), Equals, "[sql1]")    // ALL_SQLS
 	c.Assert(res[3][7].GetValue(), Equals, uint64(201)) // TRX_HOLDING_LOCK
-}
-
-func genDigest(str string) *parser.Digest {
-	hasher := sha256.New()
-	hasher.Write([]byte(str))
-	return parser.NewDigest(hasher.Sum(nil))
 }
 
 func (s *testDeadlockHistorySuite) TestErrDeadlockToDeadlockRecord(c *C) {
