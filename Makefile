@@ -239,10 +239,12 @@ tools/bin/unconvert: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/unconvert github.com/mdempsky/unconvert
 
-tools/bin/failpoint-ctl: go.mod
+tools/bin/failpoint-ctl: tools/check/go.mod
+	cd tools/check; \
 	$(GO) build -o $@ github.com/pingcap/failpoint/failpoint-ctl
 
-tools/bin/errdoc-gen: go.mod
+tools/bin/errdoc-gen: tools/check/go.mod
+	cd tools/check; \
 	$(GO) build -o $@ github.com/pingcap/errors/errdoc-gen
 
 tools/bin/golangci-lint:
