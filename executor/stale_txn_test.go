@@ -51,6 +51,23 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 			txnScope:    oracle.GlobalTxnScope,
 			zone:        "",
 		},
+		{
+			name:             "AsOfTimestamp with tidb_bounded_staleness",
+			preSQL:           "begin",
+			sql:              `START TRANSACTION READ ONLY AS OF TIMESTAMP tidb_bounded_staleness('2015-09-21 00:07:01', NOW());`,
+			IsStaleness:      true,
+			expectPhysicalTS: 1442765221000,
+			txnScope:         "local",
+			zone:             "bj",
+		},
+		{
+			name:        "begin after AsOfTimestamp with tidb_bounded_staleness",
+			preSQL:      `START TRANSACTION READ ONLY AS OF TIMESTAMP tidb_bounded_staleness('2015-09-21 00:07:01', NOW());`,
+			sql:         "begin",
+			IsStaleness: false,
+			txnScope:    oracle.GlobalTxnScope,
+			zone:        "",
+		},
 	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -61,15 +78,15 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
 		tk.MustExec(testcase.preSQL)
 		tk.MustExec(testcase.sql)
+		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, testcase.IsStaleness)
 		if testcase.expectPhysicalTS > 0 {
 			c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, testcase.expectPhysicalTS)
 		} else if !testcase.IsStaleness {
-			curSec := time.Now().Unix()
+			curTS := oracle.ExtractPhysical(oracle.GoTimeToTS(time.Now()))
 			startTS := oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS)
-			c.Assert(curSec*1000-startTS, Less, time.Second/time.Millisecond)
-			c.Assert(startTS-curSec*1000, Less, time.Second/time.Millisecond)
+			c.Assert(curTS-startTS, Less, time.Second.Milliseconds())
+			c.Assert(startTS-curTS, Less, time.Second.Milliseconds())
 		}
-		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, testcase.IsStaleness)
 		tk.MustExec("commit")
 	}
 	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
@@ -174,6 +191,18 @@ func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 		{
 			name:              "20 seconds ago to 10 seconds ago, safeTS 5 secs ago",
 			sql:               `START TRANSACTION READ ONLY AS OF TIMESTAMP tidb_bounded_staleness(NOW() - INTERVAL 20 SECOND, NOW() - INTERVAL 10 SECOND)`,
+			injectSafeTS:      oracle.GoTimeToTS(time.Now().Add(-5 * time.Second)),
+			compareWithSafeTS: -1,
+		},
+		{
+			name:              "exact timestamp 5 seconds ago, safeTS 10 secs ago",
+			sql:               `START TRANSACTION READ ONLY AS OF TIMESTAMP NOW() - INTERVAL 5 SECOND`,
+			injectSafeTS:      oracle.GoTimeToTS(time.Now().Add(-10 * time.Second)),
+			compareWithSafeTS: 1,
+		},
+		{
+			name:              "exact timestamp 10 seconds ago, safeTS 5 secs ago",
+			sql:               `START TRANSACTION READ ONLY AS OF TIMESTAMP NOW() - INTERVAL 10 SECOND`,
 			injectSafeTS:      oracle.GoTimeToTS(time.Now().Add(-5 * time.Second)),
 			compareWithSafeTS: -1,
 		},
