@@ -58,7 +58,7 @@ type TableClusteredInfo struct {
 }
 
 func GetClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, err error) {
-	usage := make (ClusterIndexUsage)
+	usage := make(ClusterIndexUsage)
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 
 	// query INFORMATION_SCHEMA.tables to get the latest table information about ClusterIndex
@@ -76,7 +76,7 @@ func GetClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, er
 		return nil, err
 	}
 
-	defer func() { 
+	defer func() {
 		if r := recover(); r != nil {
 			switch x := r.(type) {
 			case string:
@@ -89,7 +89,7 @@ func GetClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, er
 		}
 	}()
 	infoSchema := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
-	
+
 	// check ClusterIndex information for each table
 	// row: 0 = table_name_hash, 1 = TIDB_PK_TYPE, 2 = TABLE_SCHEMA (db), 3 = TABLE_NAME
 
