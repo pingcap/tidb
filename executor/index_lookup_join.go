@@ -535,7 +535,7 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 			// Store the encoded lookup key in chunk, so we can use it to lookup the matched inners directly.
 			task.encodedLookUpKeys[chkIdx].AppendBytes(0, keyBuf)
 			if iw.hasPrefixCol {
-				for i, outerOffset := range iw.outerCtx.keyCols {
+				for i, outerOffset := range iw.keyOff2IdxOff {
 					// If it's a prefix column. Try to fix it.
 					joinKeyColPrefixLen := iw.colLens[outerOffset]
 					if joinKeyColPrefixLen != types.UnspecifiedLength {
