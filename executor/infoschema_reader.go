@@ -1011,7 +1011,10 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err 
 func (e *memtableRetriever) setDataForTableLockWait(ctx sessionctx.Context) error {
 	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
 		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
-			waits := ctx.GetStore().GetLockWaits()
+			waits, err := ctx.GetStore().GetLockWaits()
+			if err != nil {
+				return err
+			}
 			for _, wait := range waits {
 				digest, err := resourcegrouptag.DecodeResourceGroupTag(wait.ResourceGroupTag)
 				if err != nil {

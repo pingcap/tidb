@@ -81,6 +81,6 @@ func (s *Store) GetMinSafeTS(txnScope string) uint64 {
 }
 
 // GetLockWaits implements kv.Storage interface.
-func (s *Store) GetLockWaits() []*deadlockPB.WaitForEntry {
-	return nil
+func (s *Store) GetLockWaits() ([]*deadlockPB.WaitForEntry, error) {
+	return nil, nil
 }

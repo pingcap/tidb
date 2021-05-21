@@ -118,8 +118,8 @@ func newTiKVTxn(txn *tikv.KVTxn, err error) (kv.Transaction, error) {
 	return driver.NewTiKVTxn(txn), nil
 }
 
-func (s *mockStorage) GetLockWaits() []*deadlockPB.WaitForEntry {
-	return s.LockWaits
+func (s *mockStorage) GetLockWaits() ([]*deadlockPB.WaitForEntry, error) {
+	return s.LockWaits, nil
 }
 
 func (s *mockStorage) Close() error {

@@ -73,7 +73,7 @@ type Storage interface {
 	GetTiKVClient() tikv.Client
 	Closed() <-chan struct{}
 	GetMinSafeTS(txnScope string) uint64
-	GetLockWaits() []*deadlockPB.WaitForEntry
+	GetLockWaits() ([]*deadlockPB.WaitForEntry, error)
 }
 
 // Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.

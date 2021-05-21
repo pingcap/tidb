@@ -371,7 +371,7 @@ type Storage interface {
 	// GetMinSafeTS return the minimal SafeTS of the storage with given txnScope.
 	GetMinSafeTS(txnScope string) uint64
 	// GetLockWaits return all lock wait information
-	GetLockWaits() []*deadlockPB.WaitForEntry
+	GetLockWaits() ([]*deadlockPB.WaitForEntry, error)
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.

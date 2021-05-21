@@ -336,7 +336,7 @@ func (s *tikvStore) ShowStatus(ctx context.Context, key string) (interface{}, er
 }
 
 // GetLockWaits get return lock waits info
-func (s *tikvStore) GetLockWaits() []*deadlockPB.WaitForEntry {
+func (s *tikvStore) GetLockWaits() ([]*deadlockPB.WaitForEntry, error) {
 	stores := s.GetRegionCache().GetStoresByType(tikvrpc.TiKV)
 	var resp *tikvrpc.Response
 	var err error
@@ -347,7 +347,7 @@ func (s *tikvStore) GetLockWaits() []*deadlockPB.WaitForEntry {
 		}
 	}
 	if resp == nil {
-		return nil
+		return nil, err
 	}
-	return resp.Resp.(*kvrpcpb.GetLockWaitInfoResponse).Entries
+	return resp.Resp.(*kvrpcpb.GetLockWaitInfoResponse).Entries, nil
 }

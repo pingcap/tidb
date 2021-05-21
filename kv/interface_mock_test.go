@@ -215,8 +215,8 @@ func (s *mockStorage) GetMemCache() MemManager {
 	return nil
 }
 
-func (s *mockStorage) GetLockWaits() []*deadlockPB.WaitForEntry {
-	return nil
+func (s *mockStorage) GetLockWaits() ([]*deadlockPB.WaitForEntry, error) {
+	return nil, nil
 }
 
 func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
