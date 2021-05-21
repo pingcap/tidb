@@ -46,9 +46,10 @@ func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
 	return &featureUsage{txnUsage, clusterIdxUsage}, nil
 }
 
+// ClusterIndexUsage records the usage info of all the tables, no more than 10k tables
 type ClusterIndexUsage map[string]TableClusteredInfo
 
-// TableClusterInfo records the usage info of clusterindex of each table
+// TableClusteredInfo records the usage info of clusterindex of each table
 // CLUSTERED, NON_CLUSTERED, NA
 type TableClusteredInfo struct {
 	IsClustered   bool   `json:"isClustered"`   // True means CLUSTERED, False means NON_CLUSTERED
@@ -57,6 +58,7 @@ type TableClusteredInfo struct {
 	// NA means this field is no meaningful information
 }
 
+// GetClusterIndexUsageInfo gets the ClusterIndex usage information. It's exported for future test.
 func GetClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, err error) {
 	usage := make(ClusterIndexUsage)
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
