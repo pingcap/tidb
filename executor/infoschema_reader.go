@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
@@ -153,6 +154,10 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.setDataForTiDBTrx(sctx)
 		case infoschema.ClusterTableTiDBTrx:
 			err = e.setDataForClusterTiDBTrx(sctx)
+		case infoschema.TableDeadlocks:
+			err = e.setDataForDeadlock(sctx)
+		case infoschema.ClusterTableDeadlocks:
+			err = e.setDataForClusterDeadlock(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -1856,7 +1861,6 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 		}
 	}
 	e.rows = rows
-	return
 }
 
 func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, tableName string) error {
@@ -1916,7 +1920,7 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 			continue
 		}
 		for _, rule := range bundle.Rules {
-			constraint, err := rule.LabelConstraints.Restore()
+			constraint, err := rule.Constraints.Restore()
 			if err != nil {
 				return errors.Wrapf(err, "Restore rule %s in bundle %s failed", rule.ID, bundle.ID)
 			}
@@ -2041,6 +2045,33 @@ func (e *memtableRetriever) setDataForTiDBTrx(ctx sessionctx.Context) {
 
 func (e *memtableRetriever) setDataForClusterTiDBTrx(ctx sessionctx.Context) error {
 	e.setDataForTiDBTrx(ctx)
+	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
+	if err != nil {
+		return err
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForDeadlock(ctx sessionctx.Context) error {
+	hasPriv := false
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		hasPriv = pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv)
+	}
+
+	if !hasPriv {
+		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
+
+	e.rows = deadlockhistory.GlobalDeadlockHistory.GetAllDatum()
+	return nil
+}
+
+func (e *memtableRetriever) setDataForClusterDeadlock(ctx sessionctx.Context) error {
+	err := e.setDataForDeadlock(ctx)
+	if err != nil {
+		return err
+	}
 	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
 	if err != nil {
 		return err
