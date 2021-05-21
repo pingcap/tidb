@@ -4782,10 +4782,10 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 		stmts, err := session.Parse(sctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
-		is := domain.GetDomain(sctx).InfoSchema()
-		err = plannercore.Preprocess(sctx, stmts[0], is)
+		ret := &plannercore.PreprocesorReturn{}
+		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		conds := make([]expression.Expression, len(selection.Conditions))
