@@ -146,6 +146,15 @@ func (c *Context) GetMPPClient() kv.MPPClient {
 
 // GetInfoSchema implements sessionctx.Context GetInfoSchema interface.
 func (c *Context) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
+	vars := c.GetSessionVars()
+	if snap, ok := vars.SnapshotInfoschema.(sessionctx.InfoschemaMetaVersion); ok {
+		return snap
+	}
+	if vars.TxnCtx != nil && vars.InTxn() {
+		if is, ok := vars.TxnCtx.InfoSchema.(sessionctx.InfoschemaMetaVersion); ok {
+			return is
+		}
+	}
 	return nil
 }
 
