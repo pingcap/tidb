@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -1234,7 +1233,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 
 	// Split the table.
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
-	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)
+	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 10)
 
 	unique := false
 	indexName := model.NewCIStr("idx_b")
@@ -1276,7 +1275,6 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 		historyJob, err := getHistoryDDLJob(s.store, job.ID)
 		c.Assert(err, IsNil)
 		if historyJob == nil {
-
 			continue
 		}
 		c.Assert(historyJob.Error, IsNil)
@@ -1343,7 +1341,7 @@ func getMaxTableHandle(ctx *testMaxTableRowIDContext, store kv.Storage) (kv.Hand
 	c := ctx.c
 	d := ctx.d
 	tbl := ctx.tbl
-	curVer, err := store.CurrentVersion(oracle.GlobalTxnScope)
+	curVer, err := store.CurrentVersion(kv.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	maxHandle, emptyTable, err := d.GetTableMaxHandle(curVer.Ver, tbl.(table.PhysicalTable))
 	c.Assert(err, IsNil)
@@ -2616,24 +2614,24 @@ func (s *testIntegrationSuite5) TestDropColumnsWithMultiIndex(c *C) {
 	tk.MustQuery(query).Check(testkit.Rows())
 }
 
-func (s *testIntegrationSuite5) TestDropLastVisibleColumn(c *C) {
+func (s *testSerialDBSuite) TestDropLastVisibleColumnOrColumns(c *C) {
+	defer config.RestoreFunc()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("create table t_drop_last_column(x int, key((1+1)))")
-	defer tk.MustExec("drop table if exists t_drop_last_column")
 	_, err := tk.Exec("alter table t_drop_last_column drop column x")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:1113]A table must have at least 1 column")
-}
-
-func (s *testIntegrationSuite5) TestDropLastVisibleColumns(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test_db")
+	// for visible columns
 	tk.MustExec("create table t_drop_last_columns(x int, y int, key((1+1)))")
-	defer tk.MustExec("drop table if exists t_drop_last_columns")
-	_, err := tk.Exec("alter table t_drop_last_columns drop column x, drop column y")
+	_, err = tk.Exec("alter table t_drop_last_columns drop column x, drop column y")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:1113]A table must have at least 1 column")
+
+	tk.MustExec("drop table if exists t_drop_last_column, t_drop_last_columns")
 }
 
 func (s *testIntegrationSuite7) TestAutoIncrementTableOption(c *C) {

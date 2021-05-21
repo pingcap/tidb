@@ -213,6 +213,74 @@ func (s *testIntegrationSuite) TestFuncLpadAndRpad(c *C) {
 	result.Check(testkit.Rows("<nil> <nil>"))
 }
 
+func (s *testIntegrationSuite) TestBuiltinFuncJsonPretty(c *C) {
+	ctx := context.Background()
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec("CREATE TABLE t  (`id` int NOT NULL AUTO_INCREMENT, `j` json,vc VARCHAR(500) ,  PRIMARY KEY (`id`));")
+	tk.MustExec(`INSERT INTO t ( id, j, vc ) VALUES
+	( 1, '{"a":1,"b":"qwe","c":[1,2,3,"123",null],"d":{"d1":1,"d2":2}}', '{"a":1,"b":"qwe","c":[1,2,3,"123",null],"d":{"d1":1,"d2":2}}' ),
+	( 2, '[1,2,34]', '{' );`)
+
+	// valid json format in json and varchar
+	checkResult := []string{
+		`{
+  "a": 1,
+  "b": "qwe",
+  "c": [
+    1,
+    2,
+    3,
+    "123",
+    null
+  ],
+  "d": {
+    "d1": 1,
+    "d2": 2
+  }
+}`,
+		`{
+  "a": 1,
+  "b": "qwe",
+  "c": [
+    1,
+    2,
+    3,
+    "123",
+    null
+  ],
+  "d": {
+    "d1": 1,
+    "d2": 2
+  }
+}`,
+	}
+	tk.
+		MustQuery("select JSON_PRETTY(t.j),JSON_PRETTY(vc) from  t where id = 1;").
+		Check(testkit.Rows(strings.Join(checkResult, " ")))
+
+	// invalid json format in varchar
+	rs, _ := tk.Exec("select JSON_PRETTY(t.j),JSON_PRETTY(vc) from  t where id = 2;")
+	_, err := session.GetRows4Test(ctx, tk.Se, rs)
+	terr := errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrInvalidJSONText))
+
+	// invalid json format in one row
+	rs, _ = tk.Exec("select JSON_PRETTY(t.j),JSON_PRETTY(vc) from  t where id in (1,2);")
+	_, err = session.GetRows4Test(ctx, tk.Se, rs)
+	terr = errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrInvalidJSONText))
+
+	// invalid json string
+	rs, _ = tk.Exec(`select JSON_PRETTY("[1,2,3]}");`)
+	_, err = session.GetRows4Test(ctx, tk.Se, rs)
+	terr = errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrInvalidJSONText))
+}
+
 func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 	ctx := context.Background()
 	defer s.cleanEnv(c)
