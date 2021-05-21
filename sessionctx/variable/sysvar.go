@@ -474,6 +474,8 @@ func (sv *SysVar) GetNativeValType(val string) (types.Datum, byte, uint) {
 	return types.NewStringDatum(val), mysql.TypeVarString, 0
 }
 
+// SkipInit returns true if when a new session is created we should "skip" copying
+// an initial value to it (and call the SetSession func if it exists)
 func (sv *SysVar) SkipInit() bool {
 	if sv.skipInit {
 		return true
