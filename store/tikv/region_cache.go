@@ -1797,7 +1797,7 @@ const (
 )
 
 // initResolve resolves the address of the store that never resolved and returns an
-// emptry string if it's a tombstone.
+// empty string if it's a tombstone.
 func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err error) {
 	s.resolveMutex.Lock()
 	state := s.getResolveState()
