@@ -382,7 +382,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 				return errors.Trace(err)
 			}
 			if msBeforeExpired > 0 {
-				err = bo.BackoffWithMaxSleep(retry.BoTxnLockFast, int(msBeforeExpired), errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
+				err = bo.BackoffWithMaxSleepTxnLockFast(int(msBeforeExpired), errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -528,7 +528,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 				return nil, errors.Trace(err)
 			}
 			if msBeforeExpired > 0 {
-				err = bo.BackoffWithMaxSleep(retry.BoTxnLockFast, int(msBeforeExpired), errors.New(keyErr.String()))
+				err = bo.BackoffWithMaxSleepTxnLockFast(int(msBeforeExpired), errors.New(keyErr.String()))
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -731,8 +731,8 @@ func (s *KVSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRunti
 // SnapshotRuntimeStats records the runtime stats of snapshot.
 type SnapshotRuntimeStats struct {
 	rpcStats       RegionRequestRuntimeStats
-	backoffSleepMS map[retry.BackoffType]int
-	backoffTimes   map[retry.BackoffType]int
+	backoffSleepMS map[string]int
+	backoffTimes   map[string]int
 	scanDetail     *util.ScanDetail
 	timeDetail     *util.TimeDetail
 }
@@ -746,8 +746,8 @@ func (rs *SnapshotRuntimeStats) Clone() *SnapshotRuntimeStats {
 		}
 	}
 	if len(rs.backoffSleepMS) > 0 {
-		newRs.backoffSleepMS = make(map[retry.BackoffType]int)
-		newRs.backoffTimes = make(map[retry.BackoffType]int)
+		newRs.backoffSleepMS = make(map[string]int)
+		newRs.backoffTimes = make(map[string]int)
 		for k, v := range rs.backoffSleepMS {
 			newRs.backoffSleepMS[k] += v
 		}
@@ -768,10 +768,10 @@ func (rs *SnapshotRuntimeStats) Merge(other *SnapshotRuntimeStats) {
 	}
 	if len(other.backoffSleepMS) > 0 {
 		if rs.backoffSleepMS == nil {
-			rs.backoffSleepMS = make(map[retry.BackoffType]int)
+			rs.backoffSleepMS = make(map[string]int)
 		}
 		if rs.backoffTimes == nil {
-			rs.backoffTimes = make(map[retry.BackoffType]int)
+			rs.backoffTimes = make(map[string]int)
 		}
 		for k, v := range other.backoffSleepMS {
 			rs.backoffSleepMS[k] += v
@@ -792,7 +792,7 @@ func (rs *SnapshotRuntimeStats) String() string {
 		}
 		ms := rs.backoffSleepMS[k]
 		d := time.Duration(ms) * time.Millisecond
-		buf.WriteString(fmt.Sprintf("%s_backoff:{num:%d, total_time:%s}", k.String(), v, util.FormatDuration(d)))
+		buf.WriteString(fmt.Sprintf("%s_backoff:{num:%d, total_time:%s}", k, v, util.FormatDuration(d)))
 	}
 	timeDetail := rs.timeDetail.String()
 	if timeDetail != "" {

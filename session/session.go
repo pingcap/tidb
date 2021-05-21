@@ -1960,20 +1960,9 @@ func (s *session) isTxnRetryable() bool {
 }
 
 func (s *session) NewTxn(ctx context.Context) error {
-	if s.txn.Valid() {
-		txnStartTS := s.txn.StartTS()
-		txnScope := s.GetSessionVars().TxnCtx.TxnScope
-		err := s.CommitTxn(ctx)
-		if err != nil {
-			return err
-		}
-		vars := s.GetSessionVars()
-		logutil.Logger(ctx).Info("NewTxn() inside a transaction auto commit",
-			zap.Int64("schemaVersion", vars.GetInfoSchema().SchemaMetaVersion()),
-			zap.Uint64("txnStartTS", txnStartTS),
-			zap.String("txnScope", txnScope))
+	if err := s.checkBeforeNewTxn(ctx); err != nil {
+		return err
 	}
-
 	txn, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(s.sessionVars.CheckAndGetTxnScope()))
 	if err != nil {
 		return err
@@ -1991,6 +1980,23 @@ func (s *session) NewTxn(ctx context.Context) error {
 		ShardStep:   int(s.sessionVars.ShardAllocateStep),
 		IsStaleness: false,
 		TxnScope:    s.sessionVars.CheckAndGetTxnScope(),
+	}
+	return nil
+}
+
+func (s *session) checkBeforeNewTxn(ctx context.Context) error {
+	if s.txn.Valid() {
+		txnStartTS := s.txn.StartTS()
+		txnScope := s.GetSessionVars().TxnCtx.TxnScope
+		err := s.CommitTxn(ctx)
+		if err != nil {
+			return err
+		}
+		vars := s.GetSessionVars()
+		logutil.Logger(ctx).Info("Try to create a new txn inside a transaction auto commit",
+			zap.Int64("schemaVersion", vars.GetInfoSchema().SchemaMetaVersion()),
+			zap.Uint64("txnStartTS", txnStartTS),
+			zap.String("txnScope", txnScope))
 	}
 	return nil
 }
@@ -2782,22 +2788,14 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 
 // NewTxnWithStalenessOption create a transaction with Staleness option
 func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionctx.StalenessTxnOption) error {
-	if s.txn.Valid() {
-		txnID := s.txn.StartTS()
-		txnScope := s.txn.GetOption(kv.TxnScope).(string)
-		err := s.CommitTxn(ctx)
-		if err != nil {
-			return err
-		}
-		vars := s.GetSessionVars()
-		logutil.Logger(ctx).Info("InitTxnWithExactStaleness() inside a transaction auto commit",
-			zap.Int64("schemaVersion", vars.GetInfoSchema().SchemaMetaVersion()),
-			zap.Uint64("txnStartTS", txnID),
-			zap.String("txnScope", txnScope))
+	err := s.checkBeforeNewTxn(ctx)
+	if err != nil {
+		return err
 	}
-	var txn kv.Transaction
-	var err error
-	txnScope := s.GetSessionVars().CheckAndGetTxnScope()
+	var (
+		txn      kv.Transaction
+		txnScope = s.GetSessionVars().CheckAndGetTxnScope()
+	)
 	switch option.Mode {
 	case ast.TimestampBoundReadTimestamp:
 		txn, err = s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetStartTs(option.StartTS))
