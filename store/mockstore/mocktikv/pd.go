@@ -119,6 +119,10 @@ func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store,
 	default:
 	}
 	store := c.cluster.GetStore(storeID)
+<<<<<<< HEAD:store/mockstore/mocktikv/pd.go
+=======
+	// It's same as PD's implementation.
+>>>>>>> 55d26c583... region_cache: filter peers on tombstone or dropped stores (#24726):store/tikv/mockstore/mocktikv/pd.go
 	if store == nil {
 		return nil, fmt.Errorf("invalid store ID %d, not found", storeID)
 	}
