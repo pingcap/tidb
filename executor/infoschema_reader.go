@@ -1909,11 +1909,11 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 			ptName = part.Name.L
 			skip = false
 		}
-		if val, _err_ := failpoint.Eval(_curpkg_("outputInvalidPlacementRules")); _err_ == nil {
+		failpoint.Inject("outputInvalidPlacementRules", func(val failpoint.Value) {
 			if val.(bool) {
 				skip = false
 			}
-		}
+		})
 		if skip {
 			continue
 		}
