@@ -31,12 +31,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/kv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	tikv "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
@@ -52,6 +52,52 @@ type SchemaAmender interface {
 	// AmendTxn is the amend entry, new mutations will be generated based on input mutations using schema change info.
 	// The returned results are mutations need to prewrite and mutations need to cleanup.
 	AmendTxn(ctx context.Context, startInfoSchema SchemaVer, change *RelatedSchemaChange, mutations CommitterMutations) (CommitterMutations, error)
+}
+
+// StartTSOption indicates the option when beginning a transaction
+// `TxnScope` must be set for each object
+// Every other fields are optional, but currently at most one of them can be set
+type StartTSOption struct {
+	TxnScope   string
+	StartTS    *uint64
+	PrevSec    *uint64
+	MinStartTS *uint64
+	MaxPrevSec *uint64
+}
+
+// DefaultStartTSOption creates a default StartTSOption, ie. Work in GlobalTxnScope and get start ts when got used
+func DefaultStartTSOption() StartTSOption {
+	return StartTSOption{TxnScope: oracle.GlobalTxnScope}
+}
+
+// SetMaxPrevSec returns a new StartTSOption with MaxPrevSec set to maxPrevSec
+func (to StartTSOption) SetMaxPrevSec(maxPrevSec uint64) StartTSOption {
+	to.MaxPrevSec = &maxPrevSec
+	return to
+}
+
+// SetMinStartTS returns a new StartTSOption with MinStartTS set to minStartTS
+func (to StartTSOption) SetMinStartTS(minStartTS uint64) StartTSOption {
+	to.MinStartTS = &minStartTS
+	return to
+}
+
+// SetStartTs returns a new StartTSOption with StartTS set to startTS
+func (to StartTSOption) SetStartTs(startTS uint64) StartTSOption {
+	to.StartTS = &startTS
+	return to
+}
+
+// SetPrevSec returns a new StartTSOption with PrevSec set to prevSec
+func (to StartTSOption) SetPrevSec(prevSec uint64) StartTSOption {
+	to.PrevSec = &prevSec
+	return to
+}
+
+// SetTxnScope returns a new StartTSOption with TxnScope set to txnScope
+func (to StartTSOption) SetTxnScope(txnScope string) StartTSOption {
+	to.TxnScope = txnScope
+	return to
 }
 
 // KVTxn contains methods to interact with a TiKV transaction.
@@ -82,28 +128,31 @@ type KVTxn struct {
 	syncLog            bool
 	priority           Priority
 	isPessimistic      bool
+	enableAsyncCommit  bool
 	enable1PC          bool
+	causalConsistency  bool
 	scope              string
 	kvFilter           KVFilter
 }
 
-func extractStartTs(store *KVStore, options kv.TransactionOption) (uint64, error) {
+// ExtractStartTs use `option` to get the proper startTS for a transaction
+func ExtractStartTs(store *KVStore, option StartTSOption) (uint64, error) {
 	var startTs uint64
 	var err error
-	if options.StartTS != nil {
-		startTs = *options.StartTS
-	} else if options.PrevSec != nil {
+	if option.StartTS != nil {
+		startTs = *option.StartTS
+	} else if option.PrevSec != nil {
 		bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
-		startTs, err = store.getStalenessTimestamp(bo, options.TxnScope, *options.PrevSec)
-	} else if options.MinStartTS != nil {
+		startTs, err = store.getStalenessTimestamp(bo, option.TxnScope, *option.PrevSec)
+	} else if option.MinStartTS != nil {
 		stores := make([]*Store, 0)
 		allStores := store.regionCache.getStoresByType(tikvrpc.TiKV)
-		if options.TxnScope != oracle.GlobalTxnScope {
+		if option.TxnScope != oracle.GlobalTxnScope {
 			for _, store := range allStores {
 				if store.IsLabelsMatch([]*metapb.StoreLabel{
 					{
 						Key:   DCLabelKey,
-						Value: options.TxnScope,
+						Value: option.TxnScope,
 					},
 				}) {
 					stores = append(stores, store)
@@ -113,32 +162,32 @@ func extractStartTs(store *KVStore, options kv.TransactionOption) (uint64, error
 			stores = allStores
 		}
 		safeTS := store.getMinSafeTSByStores(stores)
-		startTs = *options.MinStartTS
+		startTs = *option.MinStartTS
 		// If the safeTS is larger than the minStartTS, we will use safeTS as StartTS, otherwise we will use
 		// minStartTS directly.
-		if oracle.CompareTS(startTs, safeTS) < 0 {
+		if startTs < safeTS {
 			startTs = safeTS
 		}
-	} else if options.MaxPrevSec != nil {
+	} else if option.MaxPrevSec != nil {
 		bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
-		minStartTS, err := store.getStalenessTimestamp(bo, options.TxnScope, *options.MaxPrevSec)
+		minStartTS, err := store.getStalenessTimestamp(bo, option.TxnScope, *option.MaxPrevSec)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		options.MinStartTS = &minStartTS
-		return extractStartTs(store, options)
+		option.MinStartTS = &minStartTS
+		return ExtractStartTs(store, option)
 	} else {
 		bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
-		startTs, err = store.getTimestampWithRetry(bo, options.TxnScope)
+		startTs, err = store.getTimestampWithRetry(bo, option.TxnScope)
 	}
 	return startTs, err
 }
 
-func newTiKVTxnWithOptions(store *KVStore, options kv.TransactionOption) (*KVTxn, error) {
+func newTiKVTxnWithOptions(store *KVStore, options StartTSOption) (*KVTxn, error) {
 	if options.TxnScope == "" {
 		options.TxnScope = oracle.GlobalTxnScope
 	}
-	startTs, err := extractStartTs(store, options)
+	startTs, err := ExtractStartTs(store, options)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -218,27 +267,6 @@ func (txn *KVTxn) Delete(k []byte) error {
 	return txn.us.GetMemBuffer().Delete(k)
 }
 
-// SetOption sets an option with a value, when val is nil, uses the default
-// value of this option.
-func (txn *KVTxn) SetOption(opt int, val interface{}) {
-	txn.us.SetOption(opt, val)
-	txn.snapshot.SetOption(opt, val)
-	switch opt {
-	case tikv.SchemaAmender:
-		txn.schemaAmender = val.(SchemaAmender)
-	}
-}
-
-// GetOption returns the option
-func (txn *KVTxn) GetOption(opt int) interface{} {
-	return txn.us.GetOption(opt)
-}
-
-// DelOption deletes an option.
-func (txn *KVTxn) DelOption(opt int) {
-	txn.us.DelOption(opt)
-}
-
 // SetSchemaLeaseChecker sets a hook to check schema version.
 func (txn *KVTxn) SetSchemaLeaseChecker(checker SchemaLeaseChecker) {
 	txn.schemaLeaseChecker = checker
@@ -265,15 +293,32 @@ func (txn *KVTxn) SetPriority(pri Priority) {
 	txn.GetSnapshot().SetPriority(pri)
 }
 
+// SetSchemaAmender sets an amender to update mutations after schema change.
+func (txn *KVTxn) SetSchemaAmender(sa SchemaAmender) {
+	txn.schemaAmender = sa
+}
+
 // SetCommitCallback sets up a function that will be called when the transaction
 // is finished.
 func (txn *KVTxn) SetCommitCallback(f func(string, error)) {
 	txn.commitCallback = f
 }
 
+// SetEnableAsyncCommit indicates if the transaction will try to use async commit.
+func (txn *KVTxn) SetEnableAsyncCommit(b bool) {
+	txn.enableAsyncCommit = b
+}
+
 // SetEnable1PC indicates if the transaction will try to use 1 phase commit.
 func (txn *KVTxn) SetEnable1PC(b bool) {
 	txn.enable1PC = b
+}
+
+// SetCausalConsistency indicates if the transaction does not need to
+// guarantee linearizability. Default value is false which means
+// linearizability is guaranteed.
+func (txn *KVTxn) SetCausalConsistency(b bool) {
+	txn.causalConsistency = b
 }
 
 // SetScope sets the geographical scope of the transaction.
@@ -289,6 +334,12 @@ func (txn *KVTxn) SetKVFilter(filter KVFilter) {
 // IsPessimistic returns true if it is pessimistic.
 func (txn *KVTxn) IsPessimistic() bool {
 	return txn.isPessimistic
+}
+
+// IsCasualConsistency returns if the transaction allows linearizability
+// inconsistency.
+func (txn *KVTxn) IsCasualConsistency() bool {
+	return txn.causalConsistency
 }
 
 // GetScope returns the geographical scope of the transaction.
@@ -423,7 +474,7 @@ func (txn *KVTxn) rollbackPessimisticLocks() error {
 	if txn.lockedCnt == 0 {
 		return nil
 	}
-	bo := NewBackofferWithVars(context.Background(), cleanupMaxBackoff, txn.vars)
+	bo := retry.NewBackofferWithVars(context.Background(), cleanupMaxBackoff, txn.vars)
 	keys := txn.collectLockedKeys()
 	return txn.committer.pessimisticRollbackMutations(bo, &PlainMutations{keys: keys})
 }
@@ -564,16 +615,16 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tikv.LockCtx, keysInput
 		lockCtx.Stats = &util.LockKeysDetails{
 			LockKeys: int32(len(keys)),
 		}
-		bo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, txn.vars)
+		bo := retry.NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, txn.vars)
 		txn.committer.forUpdateTS = lockCtx.ForUpdateTS
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
 		txn.committer.isFirstLock = txn.lockedCnt == 0 && len(keys) == 1
 		err = txn.committer.pessimisticLockMutations(bo, lockCtx, &PlainMutations{keys: keys})
-		if bo.totalSleep > 0 {
-			atomic.AddInt64(&lockCtx.Stats.BackoffTime, int64(bo.totalSleep)*int64(time.Millisecond))
+		if bo.GetTotalSleep() > 0 {
+			atomic.AddInt64(&lockCtx.Stats.BackoffTime, int64(bo.GetTotalSleep())*int64(time.Millisecond))
 			lockCtx.Stats.Mu.Lock()
-			lockCtx.Stats.Mu.BackoffTypes = append(lockCtx.Stats.Mu.BackoffTypes, bo.types...)
+			lockCtx.Stats.Mu.BackoffTypes = append(lockCtx.Stats.Mu.BackoffTypes, bo.GetTypes()...)
 			lockCtx.Stats.Mu.Unlock()
 		}
 		if lockCtx.Killed != nil {
@@ -591,16 +642,24 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tikv.LockCtx, keysInput
 			keyMayBeLocked := !(tikverr.IsErrWriteConflict(err) || tikverr.IsErrKeyExist(err))
 			// If there is only 1 key and lock fails, no need to do pessimistic rollback.
 			if len(keys) > 1 || keyMayBeLocked {
+				dl, ok := errors.Cause(err).(*tikverr.ErrDeadlock)
+				if ok && lockCtx.OnDeadlock != nil {
+					// Call OnDeadlock before pessimistic rollback.
+					lockCtx.OnDeadlock(dl)
+				}
 				wg := txn.asyncPessimisticRollback(ctx, keys)
-				if dl, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok && hashInKeys(dl.DeadlockKeyHash, keys) {
-					dl.IsRetryable = true
-					// Wait for the pessimistic rollback to finish before we retry the statement.
-					wg.Wait()
-					// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
-					time.Sleep(time.Millisecond * 5)
-					failpoint.Inject("SingleStmtDeadLockRetrySleep", func() {
-						time.Sleep(300 * time.Millisecond)
-					})
+				if ok {
+					logutil.Logger(ctx).Debug("deadlock error received", zap.Uint64("startTS", txn.startTS), zap.Stringer("deadlockInfo", dl))
+					if hashInKeys(dl.DeadlockKeyHash, keys) {
+						dl.IsRetryable = true
+						// Wait for the pessimistic rollback to finish before we retry the statement.
+						wg.Wait()
+						// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
+						time.Sleep(time.Millisecond * 5)
+						failpoint.Inject("SingleStmtDeadLockRetrySleep", func() {
+							time.Sleep(300 * time.Millisecond)
+						})
+					}
 				}
 			}
 			if assignedPrimaryKey {
@@ -618,7 +677,7 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tikv.LockCtx, keysInput
 		// PointGet and BatchPointGet will return value in pessimistic lock response, the value may not exist.
 		// For other lock modes, the locked key values always exist.
 		if lockCtx.ReturnValues {
-			val, _ := lockCtx.Values[string(key)]
+			val := lockCtx.Values[string(key)]
 			if len(val.Value) == 0 {
 				valExists = tikv.SetKeyLockedValueNotExists
 			}
@@ -642,6 +701,8 @@ func deduplicateKeys(keys [][]byte) [][]byte {
 	}
 	return deduped
 }
+
+const pessimisticRollbackMaxBackoff = 20000
 
 func (txn *KVTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte) *sync.WaitGroup {
 	// Clone a new committer for execute in background.
@@ -671,7 +732,7 @@ func (txn *KVTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte) *
 			}
 		})
 
-		err := committer.pessimisticRollbackMutations(NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, txn.vars), &PlainMutations{keys: keys})
+		err := committer.pessimisticRollbackMutations(retry.NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, txn.vars), &PlainMutations{keys: keys})
 		if err != nil {
 			logutil.Logger(ctx).Warn("[kv] pessimisticRollback failed.", zap.Error(err))
 		}

@@ -1063,7 +1063,6 @@ func (s *testStateChangeSuite) TestParallelAddGeneratedColumnAndAlterModifyColum
 		_, err = s.se.Execute(context.Background(), "set global tidb_enable_change_column_type = 0")
 		c.Assert(err, IsNil)
 	}()
-	domain.GetDomain(s.se).GetGlobalVarsCache().Disable()
 
 	sql1 := "ALTER TABLE t ADD COLUMN f INT GENERATED ALWAYS AS(a+1);"
 	sql2 := "ALTER TABLE t MODIFY COLUMN a tinyint;"
@@ -1083,7 +1082,6 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumnAndAddPK(c *C) {
 		_, err = s.se.Execute(context.Background(), "set global tidb_enable_change_column_type = 0")
 		c.Assert(err, IsNil)
 	}()
-	domain.GetDomain(s.se).GetGlobalVarsCache().Disable()
 
 	sql1 := "ALTER TABLE t ADD PRIMARY KEY (b) NONCLUSTERED;"
 	sql2 := "ALTER TABLE t MODIFY COLUMN b tinyint;"

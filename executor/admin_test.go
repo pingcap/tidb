@@ -76,6 +76,22 @@ func (s *testSuite5) TestAdminCheckIndex(c *C) {
 	check()
 }
 
+func (s *testSuite5) TestAdminCheckIndexInTemporaryMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists temporary_admin_test;")
+	tk.MustExec("create global temporary table temporary_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2)) ON COMMIT DELETE ROWS;")
+	tk.MustExec("insert temporary_admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);")
+	tk.MustGetErrCode("admin check table temporary_admin_test;", mysql.ErrAdminCheckTable)
+	tk.MustExec("drop table if exists temporary_admin_test;")
+
+	tk.MustExec("drop table if exists non_temporary_admin_test;")
+	tk.MustExec("create table non_temporary_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2));")
+	tk.MustExec("insert non_temporary_admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);")
+	tk.MustExec("admin check table non_temporary_admin_test;")
+	tk.MustExec("drop table if exists non_temporary_admin_test;")
+}
+
 func (s *testSuite5) TestAdminRecoverIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -119,7 +135,7 @@ func (s *testSuite5) TestAdminRecoverIndex(c *C) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(1), kv.IntHandle(1))
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(1), kv.IntHandle(1))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -142,7 +158,7 @@ func (s *testSuite5) TestAdminRecoverIndex(c *C) {
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(10), kv.IntHandle(10))
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(10), kv.IntHandle(10))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -156,15 +172,15 @@ func (s *testSuite5) TestAdminRecoverIndex(c *C) {
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(1), kv.IntHandle(1))
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(1), kv.IntHandle(1))
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(2), kv.IntHandle(2))
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(2), kv.IntHandle(2))
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(3), kv.IntHandle(3))
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(3), kv.IntHandle(3))
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(10), kv.IntHandle(10))
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(10), kv.IntHandle(10))
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(20), kv.IntHandle(20))
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(20), kv.IntHandle(20))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -220,7 +236,7 @@ func (s *testSuite5) TestClusteredIndexAdminRecoverIndex(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	cHandle := testutil.MustNewCommonHandle(c, "1", "3")
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(2), cHandle)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(2), cHandle)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -253,7 +269,7 @@ func (s *testSuite5) TestAdminRecoverPartitionTableIndex(c *C) {
 		sc := s.ctx.GetSessionVars().StmtCtx
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-		err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(idxValue), kv.IntHandle(idxValue))
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(idxValue), kv.IntHandle(idxValue))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
@@ -329,13 +345,13 @@ func (s *testSuite5) TestAdminRecoverIndex1(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums("1"), kv.IntHandle(1))
+	err = indexOpr.Delete(sc, txn, types.MakeDatums("1"), kv.IntHandle(1))
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums("2"), kv.IntHandle(2))
+	err = indexOpr.Delete(sc, txn, types.MakeDatums("2"), kv.IntHandle(2))
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums("3"), kv.IntHandle(3))
+	err = indexOpr.Delete(sc, txn, types.MakeDatums("3"), kv.IntHandle(3))
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums("10"), kv.IntHandle(4))
+	err = indexOpr.Delete(sc, txn, types.MakeDatums("10"), kv.IntHandle(4))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -729,7 +745,7 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-		err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(i), kv.IntHandle(i))
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(i), kv.IntHandle(i))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
@@ -768,7 +784,7 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 		// TODO: fix admin recover for partition table.
 		txn, err = s.store.Begin()
 		c.Assert(err, IsNil)
-		err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(i+8), kv.IntHandle(i+8))
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(i+8), kv.IntHandle(i+8))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
@@ -791,7 +807,7 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 		// TODO: fix admin recover for partition table.
 		txn, err = s.store.Begin()
 		c.Assert(err, IsNil)
-		err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(i+8), kv.IntHandle(i))
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(i+8), kv.IntHandle(i))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
@@ -826,7 +842,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	// Index c2 is missing 11.
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(-10), kv.IntHandle(-1))
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(-10), kv.IntHandle(-1))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -857,7 +873,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	// Index c2 has two more values than table data: 10, 13, and these handles have correlative record.
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(0), kv.IntHandle(0))
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(0), kv.IntHandle(0))
 	c.Assert(err, IsNil)
 	// Make sure the index value "19" is smaller "21". Then we scan to "19" before "21".
 	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(19), kv.IntHandle(10), nil)
@@ -874,9 +890,9 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	// Two indices have the same handle.
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(13), kv.IntHandle(2))
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(13), kv.IntHandle(2))
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(12), kv.IntHandle(2))
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(12), kv.IntHandle(2))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -890,7 +906,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err, IsNil)
 	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(12), kv.IntHandle(2), nil)
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(20), kv.IntHandle(10))
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(20), kv.IntHandle(10))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -901,7 +917,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	// Recover records.
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(19), kv.IntHandle(10))
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(19), kv.IntHandle(10))
 	c.Assert(err, IsNil)
 	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(20), kv.IntHandle(10), nil)
 	c.Assert(err, IsNil)

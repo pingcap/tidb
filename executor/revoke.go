@@ -88,8 +88,14 @@ func (e *RevokeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 
+	sessVars := e.ctx.GetSessionVars()
 	// Revoke for each user.
 	for _, user := range e.Users {
+		if user.User.CurrentUser {
+			user.User.Username = sessVars.User.AuthUsername
+			user.User.Hostname = sessVars.User.AuthHostname
+		}
+
 		// Check if user exists.
 		exists, err := userExists(e.ctx, user.User.Username, user.User.Hostname)
 		if err != nil {
