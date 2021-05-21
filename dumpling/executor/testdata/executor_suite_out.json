@@ -755,9 +755,7 @@
       },
       {
         "SQL": "SELECT * FROM t WHERE a = 3000000",
-        "Plan": [
-          "dual"
-        ],
+        "Plan": null,
         "Res": null
       },
       {
@@ -769,9 +767,7 @@
       },
       {
         "SQL": "SELECT * FROM t WHERE a = 3000001",
-        "Plan": [
-          "dual"
-        ],
+        "Plan": null,
         "Res": null
       },
       {
