@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 	"math/rand"
@@ -35,96 +36,52 @@ func TestT(t *testing.T) {
 }
 
 func (s *testUtilsSuite) TestResourceGroupTagEncoding(c *C) {
-	sqlDigest := ""
+	sqlDigest := parser.NewDigest(nil)
 	tag := EncodeResourceGroupTag(sqlDigest)
 	c.Assert(len(tag), Equals, 0)
 	decodedSQLDigest, err := DecodeResourceGroupTag(tag)
 	c.Assert(err, IsNil)
 	c.Assert(len(decodedSQLDigest), Equals, 0)
 
-	sqlDigest = "aa"
+	sqlDigest = parser.NewDigest([]byte{'a', 'a'})
 	tag = EncodeResourceGroupTag(sqlDigest)
 	// version(1) + prefix(1) + length(1) + content(2hex -> 1byte)
 	c.Assert(len(tag), Equals, 4)
 	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
 	c.Assert(err, IsNil)
-	c.Assert(decodedSQLDigest, Equals, sqlDigest)
+	c.Assert(decodedSQLDigest, DeepEquals, sqlDigest.Bytes())
 
-	sqlDigest = genRandHex(64)
+	sqlDigest = parser.NewDigest(genRandHex(64))
 	tag = EncodeResourceGroupTag(sqlDigest)
 	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
 	c.Assert(err, IsNil)
-	c.Assert(decodedSQLDigest, Equals, sqlDigest)
+	c.Assert(decodedSQLDigest, DeepEquals, sqlDigest.Bytes())
 
-	sqlDigest = genRandHex(510)
+	sqlDigest = parser.NewDigest(genRandHex(510))
 	tag = EncodeResourceGroupTag(sqlDigest)
 	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
 	c.Assert(err, IsNil)
-	c.Assert(decodedSQLDigest, Equals, sqlDigest)
-
-	// The max supported length is 255 bytes (510 hex digits).
-	sqlDigest = genRandHex(512)
-	tag = EncodeResourceGroupTag(sqlDigest)
-	c.Assert(len(tag), Equals, 0)
-
-	// A hex string can't have odd length.
-	sqlDigest = genRandHex(15)
-	tag = EncodeResourceGroupTag(sqlDigest)
-	c.Assert(len(tag), Equals, 0)
-
-	// Non-hexadecimal character is invalid
-	sqlDigest = "aabbccddgg"
-	tag = EncodeResourceGroupTag(sqlDigest)
-	c.Assert(len(tag), Equals, 0)
-
-	// A tag should start with a supported version
-	tag = []byte("\x00")
-	_, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, NotNil)
-
-	// The fields should have format like `[prefix, length, content...]`, otherwise decoding it should returns error.
-	tag = []byte("\x01\x01")
-	_, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, NotNil)
-
-	tag = []byte("\x01\x01\x02")
-	_, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, NotNil)
-
-	tag = []byte("\x01\x01\x02AB")
-	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, IsNil)
-	c.Assert(decodedSQLDigest, Equals, "4142")
-
-	tag = []byte("\x01\x01\x00")
-	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, IsNil)
-	c.Assert(len(decodedSQLDigest), Equals, 0)
-
-	// Unsupported field
-	tag = []byte("\x01\x99")
-	_, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, NotNil)
+	c.Assert(decodedSQLDigest, DeepEquals, sqlDigest.Bytes())
 }
 
-func genRandHex(length int) string {
+func genRandHex(length int) []byte {
 	const chars = "0123456789abcdef"
 	res := make([]byte, length)
 	for i := 0; i < length; i++ {
 		res[i] = chars[rand.Intn(len(chars))]
 	}
-	return string(res)
+	return res
 }
 
-func genRandDigest(str string) []byte {
+func genDigest(str string) []byte {
 	hasher := sha256.New()
 	hasher.Write([]byte(str))
 	return hasher.Sum(nil)
 }
 
 func (s *testUtilsSuite) TestResourceGroupTagEncodingPB(c *C) {
-	digest1 := genRandDigest("abc")
-	digest2 := genRandDigest("abcdefg")
+	digest1 := genDigest("abc")
+	digest2 := genDigest("abcdefg")
 	// Test for manualEncode
 	data := manualEncodeResourceGroupTag(digest1, digest2)
 	c.Assert(len(data), Equals, 69)
@@ -220,8 +177,8 @@ func manualDecodeResourceGroupTag(buf []byte) (sqlDigest []byte, planDigest []by
 }
 
 func BenchmarkResourceGroupManualEncode(b *testing.B) {
-	digest1 := genRandDigest("abc")
-	digest2 := genRandDigest("abcdefg")
+	digest1 := genDigest("abc")
+	digest2 := genDigest("abcdefg")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		manualEncodeResourceGroupTag(digest1, digest2)
@@ -229,8 +186,8 @@ func BenchmarkResourceGroupManualEncode(b *testing.B) {
 }
 
 func BenchmarkResourceGroupTagPBEncode(b *testing.B) {
-	digest1 := genRandDigest("abc")
-	digest2 := genRandDigest("abcdefg")
+	digest1 := genDigest("abc")
+	digest2 := genDigest("abcdefg")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		resourceTag := &tipb.ResourceGroupTag{
@@ -242,8 +199,8 @@ func BenchmarkResourceGroupTagPBEncode(b *testing.B) {
 }
 
 func BenchmarkResourceGroupTagManualDecode(b *testing.B) {
-	digest1 := genRandDigest("abc")
-	digest2 := genRandDigest("abcdefg")
+	digest1 := genDigest("abc")
+	digest2 := genDigest("abcdefg")
 	data := manualEncodeResourceGroupTag(digest1, digest2)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -252,8 +209,8 @@ func BenchmarkResourceGroupTagManualDecode(b *testing.B) {
 }
 
 func BenchmarkResourceGroupTagPBDecode(b *testing.B) {
-	digest1 := genRandDigest("abc")
-	digest2 := genRandDigest("abcdefg")
+	digest1 := genDigest("abc")
+	digest2 := genDigest("abcdefg")
 	resourceTag := &tipb.ResourceGroupTag{
 		SqlDigest:  digest1,
 		PlanDigest: digest2,
@@ -267,7 +224,7 @@ func BenchmarkResourceGroupTagPBDecode(b *testing.B) {
 }
 
 func BenchmarkHexDecode(b *testing.B) {
-	digest1 := genRandDigest("abc")
+	digest1 := genDigest("abc")
 	b.ResetTimer()
 	hash := fmt.Sprintf("%x", digest1)
 	for i := 0; i < b.N; i++ {

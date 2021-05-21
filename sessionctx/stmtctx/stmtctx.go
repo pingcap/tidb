@@ -145,7 +145,7 @@ type StatementContext struct {
 	digestMemo       struct {
 		sync.Once
 		normalized string
-		digest     string
+		digest     *parser.Digest
 	}
 	// planNormalized use for cache the normalized plan, avoid duplicate builds.
 	planNormalized        string
@@ -229,7 +229,7 @@ func (sc *StatementContext) ResetStmtCache() {
 
 // SQLDigest gets normalized and digest for provided sql.
 // it will cache result after first calling.
-func (sc *StatementContext) SQLDigest() (normalized, sqlDigest string) {
+func (sc *StatementContext) SQLDigest() (normalized string, sqlDigest *parser.Digest) {
 	sc.digestMemo.Do(func() {
 		sc.digestMemo.normalized, sc.digestMemo.digest = parser.NormalizeDigest(sc.OriginalSQL)
 	})
@@ -237,7 +237,7 @@ func (sc *StatementContext) SQLDigest() (normalized, sqlDigest string) {
 }
 
 // InitSQLDigest sets the normalized and digest for sql.
-func (sc *StatementContext) InitSQLDigest(normalized, digest string) {
+func (sc *StatementContext) InitSQLDigest(normalized string, digest *parser.Digest) {
 	sc.digestMemo.Do(func() {
 		sc.digestMemo.normalized, sc.digestMemo.digest = normalized, digest
 	})

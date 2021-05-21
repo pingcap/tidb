@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"math"
 	"runtime"
 	"runtime/trace"
@@ -64,7 +65,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"go.uber.org/zap"
 )
 
@@ -975,6 +975,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.LockCtx {
 	_, sqlDigest := seVars.StmtCtx.SQLDigest()
+
 	return &tikvstore.LockCtx{
 		Killed:                &seVars.Killed,
 		ForUpdateTS:           seVars.TxnCtx.GetForUpdateTS(),

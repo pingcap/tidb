@@ -14,6 +14,9 @@
 package deadlockhistory
 
 import (
+	"crypto/sha256"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/tipb/go-tipb"
 	"testing"
 	"time"
 
@@ -22,7 +25,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/resourcegrouptag"
 )
 
 type testDeadlockHistorySuite struct{}
@@ -227,7 +229,18 @@ func (s *testDeadlockHistorySuite) TestGetDatum(c *C) {
 	c.Assert(res[3][7].GetValue(), Equals, uint64(201)) // TRX_HOLDING_LOCK
 }
 
+func genDigest(str string) *parser.Digest {
+	hasher := sha256.New()
+	hasher.Write([]byte(str))
+	return parser.NewDigest(hasher.Sum(nil))
+}
+
 func (s *testDeadlockHistorySuite) TestErrDeadlockToDeadlockRecord(c *C) {
+	digest1, digest2 := parser.NewDigest([]byte("aabbccdd")), parser.NewDigest([]byte("ddccbbaa"))
+	tag1 := tipb.ResourceGroupTag{SqlDigest: digest1.Bytes()}
+	tag2 := tipb.ResourceGroupTag{SqlDigest: digest2.Bytes()}
+	tag1Data, _ := tag1.Marshal()
+	tag2Data, _ := tag2.Marshal()
 	err := &tikverr.ErrDeadlock{
 		Deadlock: &kvrpcpb.Deadlock{
 			LockTs:          101,
@@ -238,13 +251,13 @@ func (s *testDeadlockHistorySuite) TestErrDeadlockToDeadlockRecord(c *C) {
 					Txn:              100,
 					WaitForTxn:       101,
 					Key:              []byte("k2"),
-					ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag("aabbccdd"),
+					ResourceGroupTag: tag1Data,
 				},
 				{
 					Txn:              101,
 					WaitForTxn:       100,
 					Key:              []byte("k1"),
-					ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag("ddccbbaa"),
+					ResourceGroupTag: tag2Data,
 				},
 			},
 		},
@@ -256,13 +269,13 @@ func (s *testDeadlockHistorySuite) TestErrDeadlockToDeadlockRecord(c *C) {
 		WaitChain: []WaitChainItem{
 			{
 				TryLockTxn:     100,
-				SQLDigest:      "aabbccdd",
+				SQLDigest:      digest1.String(),
 				Key:            []byte("k2"),
 				TxnHoldingLock: 101,
 			},
 			{
 				TryLockTxn:     101,
-				SQLDigest:      "ddccbbaa",
+				SQLDigest:      digest2.String(),
 				Key:            []byte("k1"),
 				TxnHoldingLock: 100,
 			},

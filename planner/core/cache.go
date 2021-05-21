@@ -14,6 +14,7 @@
 package core
 
 import (
+	"github.com/pingcap/parser"
 	"math"
 	"sync/atomic"
 	"time"
@@ -199,7 +200,7 @@ type CachedPrepareStmt struct {
 	Executor       interface{}
 	NormalizedSQL  string
 	NormalizedPlan string
-	SQLDigest      string
+	SQLDigest      *parser.Digest
 	PlanDigest     string
 	ForUpdateRead  bool
 }
