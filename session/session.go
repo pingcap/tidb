@@ -2552,7 +2552,6 @@ var builtinGlobalVariable = []string{
 	variable.NetBufferLength,
 	variable.QueryCacheType,
 	variable.QueryCacheSize,
-	variable.CharacterSetServer,
 	variable.AutoIncrementIncrement,
 	variable.AutoIncrementOffset,
 	variable.CollationServer,
@@ -2691,9 +2690,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 				continue // skip variables that are not loaded.
 			}
 		}
-		// `collation_server` is related to `character_set_server`, set `character_set_server` will also set `collation_server`.
-		// We have to make sure we set the `collation_server` with right value.
-		if _, ok := vars.GetSystemVar(varName); !ok || varName == variable.CollationServer {
+		if _, ok := vars.GetSystemVar(varName); !ok {
 			err = vars.SetSystemVarWithRelaxedValidation(varName, varVal)
 			if err != nil {
 				return err
