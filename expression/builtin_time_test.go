@@ -2928,7 +2928,7 @@ func (s *testEvaluatorSuite) TestTiDBBoundedStaleness(c *C) {
 
 	// Test whether it's deterministic.
 	safeTime1 := t2.Add(-1 * time.Second)
-	safeTS1 := oracle.ComposeTS(safeTime1.Unix()*1000, 0)
+	safeTS1 := oracle.GoTimeToTS(safeTime1)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
 		fmt.Sprintf("return(%v)", safeTS1)), IsNil)
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(t1Str), types.NewDatum(t2Str)}))
@@ -2941,7 +2941,7 @@ func (s *testEvaluatorSuite) TestTiDBBoundedStaleness(c *C) {
 	c.Assert(resultTime, Equals, safeTime1.Format(types.TimeFormat))
 	// SafeTS updated.
 	safeTime2 := t2.Add(1 * time.Second)
-	safeTS2 := oracle.ComposeTS(safeTime2.Unix()*1000, 0)
+	safeTS2 := oracle.GoTimeToTS(safeTime2)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
 		fmt.Sprintf("return(%v)", safeTS2)), IsNil)
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(t1Str), types.NewDatum(t2Str)}))
@@ -2955,7 +2955,7 @@ func (s *testEvaluatorSuite) TestTiDBBoundedStaleness(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestGetIntervalFromDecimal(c *C) {
-	du := baseDateArithmitical{}
+	du := baseDateArithmetical{}
 
 	tests := []struct {
 		param  string

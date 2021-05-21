@@ -73,7 +73,7 @@ type Context interface {
 	// It should be called right before we builds an executor.
 	InitTxnWithStartTS(startTS uint64) error
 
-	// NewTxnWithStalenessOption initializes a transaction with StalenessTxnOption
+	// NewTxnWithStalenessOption initializes a transaction with StalenessTxnOption.
 	NewTxnWithStalenessOption(ctx context.Context, option StalenessTxnOption) error
 
 	// GetStore returns the store of session.
