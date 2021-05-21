@@ -15,7 +15,9 @@ package resourcegrouptag
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 	"math/rand"
@@ -131,6 +133,14 @@ func (s *testUtilsSuite) TestResourceGroupTagEncodingPB(c *C) {
 	c.Assert(sqlDigest, DeepEquals, digest1)
 	c.Assert(planDigest, DeepEquals, digest2)
 
+	// Test for manualEncode sql_digest only
+	data = manualEncodeResourceGroupTag(digest1, nil)
+	c.Assert(len(data), Equals, 35)
+	sqlDigest, planDigest, err = manualDecodeResourceGroupTag(data)
+	c.Assert(err, IsNil)
+	c.Assert(sqlDigest, DeepEquals, digest1)
+	c.Assert(planDigest, IsNil)
+
 	// Test for protobuf
 	resourceTag := &tipb.ResourceGroupTag{
 		SqlDigest:  digest1,
@@ -138,11 +148,26 @@ func (s *testUtilsSuite) TestResourceGroupTagEncodingPB(c *C) {
 	}
 	buf, err := resourceTag.Marshal()
 	c.Assert(err, IsNil)
+	c.Assert(len(buf), Equals, 68)
 	tag := &tipb.ResourceGroupTag{}
 	err = tag.Unmarshal(buf)
 	c.Assert(err, IsNil)
 	c.Assert(tag.SqlDigest, DeepEquals, digest1)
 	c.Assert(tag.PlanDigest, DeepEquals, digest2)
+
+	// Test for protobuf sql_digest only
+	resourceTag = &tipb.ResourceGroupTag{
+		SqlDigest: digest1,
+	}
+	buf, err = resourceTag.Marshal()
+	c.Assert(err, IsNil)
+	c.Assert(len(buf), Equals, 34)
+	tag = &tipb.ResourceGroupTag{}
+	err = tag.Unmarshal(buf)
+	c.Assert(err, IsNil)
+	c.Assert(tag.SqlDigest, DeepEquals, digest1)
+	c.Assert(tag.PlanDigest, IsNil)
+
 }
 
 func manualEncodeResourceGroupTag(sqlDigest []byte, planDigest []byte) []byte {
@@ -153,9 +178,11 @@ func manualEncodeResourceGroupTag(sqlDigest []byte, planDigest []byte) []byte {
 		buf = codec.EncodeVarint(buf, int64(len(sqlDigest)))
 		buf = append(buf, sqlDigest...)
 	}
-	buf = append(buf, 2) // plan digest flag
-	buf = codec.EncodeVarint(buf, int64(len(planDigest)))
-	buf = append(buf, planDigest...)
+	if len(planDigest) > 0 {
+		buf = append(buf, 2) // plan digest flag
+		buf = codec.EncodeVarint(buf, int64(len(planDigest)))
+		buf = append(buf, planDigest...)
+	}
 	return buf
 }
 
@@ -236,5 +263,14 @@ func BenchmarkResourceGroupTagPBDecode(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		tag := &tipb.ResourceGroupTag{}
 		tag.Unmarshal(data)
+	}
+}
+
+func BenchmarkHexDecode(b *testing.B) {
+	digest1 := genRandDigest("abc")
+	b.ResetTimer()
+	hash := fmt.Sprintf("%x", digest1)
+	for i := 0; i < b.N; i++ {
+		hex.DecodeString(hash)
 	}
 }
