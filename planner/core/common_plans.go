@@ -841,7 +841,7 @@ func (h *AnalyzeTableID) Equals(t *AnalyzeTableID) bool {
 }
 
 // analyzeInfo is used to store the database name, table name and partition name of analyze task.
-type analyzeInfo struct {
+type AnalyzeInfo struct {
 	DBName        string
 	TableName     string
 	PartitionName string
@@ -857,14 +857,14 @@ type AnalyzeColumnsTask struct {
 	ColsInfo         []*model.ColumnInfo
 	TblInfo          *model.TableInfo
 	Indexes          []*model.IndexInfo
-	analyzeInfo
+	AnalyzeInfo
 }
 
 // AnalyzeIndexTask is used for analyze index.
 type AnalyzeIndexTask struct {
 	IndexInfo *model.IndexInfo
 	TblInfo   *model.TableInfo
-	analyzeInfo
+	AnalyzeInfo
 }
 
 // Analyze represents an analyze plan

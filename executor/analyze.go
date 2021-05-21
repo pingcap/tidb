@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -523,19 +524,19 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 		ranges = ranger.FullIntRange(false)
 	}
 	collExtStats := colExec.ctx.GetSessionVars().EnableExtendedStats
-	if colExec.analyzeVer == statistics.Version3 {
+	if colExec.StatsVersion == statistics.Version3 {
 		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStats(ranges, collExtStats)
 		if err != nil {
 			return []analyzeResult{{Err: err, job: colExec.job}}
 		}
 		cLen := len(colExec.analyzePB.ColReq.ColumnsInfo)
 		colGroupResult := analyzeResult{
-			TableID:  colExec.tableID,
+			TableID:  colExec.TableID,
 			Hist:     hists[cLen:],
 			TopNs:    topns[cLen:],
 			Fms:      fmSketches[cLen:],
 			job:      colExec.job,
-			StatsVer: colExec.analyzeVer,
+			StatsVer: colExec.StatsVersion,
 			Count:    count,
 			IsIndex:  1,
 		}
@@ -547,13 +548,13 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 			cLen -= 1
 		}
 		colResult := analyzeResult{
-			TableID:  colExec.tableID,
+			TableID:  colExec.TableID,
 			Hist:     hists[:cLen],
 			TopNs:    topns[:cLen],
 			Fms:      fmSketches[:cLen],
 			ExtStats: extStats,
 			job:      colExec.job,
-			StatsVer: colExec.analyzeVer,
+			StatsVer: colExec.StatsVersion,
 			Count:    count,
 		}
 
@@ -566,7 +567,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 
 	if hasPkHist(colExec.handleCols) {
 		PKresult := analyzeResult{
-			TableID:  colExec.tableID,
+			TableID:  colExec.TableID,
 			Hist:     hists[:1],
 			Cms:      cms[:1],
 			TopNs:    topNs[:1],
@@ -577,14 +578,14 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 		}
 		PKresult.Count = int64(PKresult.Hist[0].TotalRowCount())
 		restResult := analyzeResult{
-			TableID:  colExec.tableID,
+			TableID:  colExec.TableID,
 			Hist:     hists[1:],
 			Cms:      cms[1:],
 			TopNs:    topNs[1:],
 			Fms:      fms[1:],
 			ExtStats: extStats,
 			job:      colExec.job,
-			StatsVer: colExec.analyzeVer,
+			StatsVer: colExec.StatsVersion,
 		}
 		restResult.Count = PKresult.Count
 		return []analyzeResult{PKresult, restResult}
@@ -592,28 +593,28 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 	var result []analyzeResult
 	if colExec.analyzePB.Tp == tipb.AnalyzeType_TypeMixed {
 		result = append(result, analyzeResult{
-			TableID:  colExec.tableID,
+			TableID:  colExec.TableID,
 			Hist:     []*statistics.Histogram{hists[0]},
 			Cms:      []*statistics.CMSketch{cms[0]},
 			TopNs:    []*statistics.TopN{topNs[0]},
 			Fms:      []*statistics.FMSketch{nil},
 			IsIndex:  1,
 			job:      colExec.job,
-			StatsVer: colExec.analyzeVer,
+			StatsVer: colExec.StatsVersion,
 		})
 		hists = hists[1:]
 		cms = cms[1:]
 		topNs = topNs[1:]
 	}
 	colResult := analyzeResult{
-		TableID:  colExec.tableID,
+		TableID:  colExec.TableID,
 		Hist:     hists,
 		Cms:      cms,
 		TopNs:    topNs,
 		Fms:      fms,
 		ExtStats: extStats,
 		job:      colExec.job,
-		StatsVer: colExec.analyzeVer,
+		StatsVer: colExec.StatsVersion,
 	}
 	colResult.Count = int64(colResult.Hist[0].TotalRowCount())
 	if colResult.StatsVer >= statistics.Version2 {
@@ -625,7 +626,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 // AnalyzeColumnsExec represents Analyze columns push down executor.
 type AnalyzeColumnsExec struct {
 	ctx           sessionctx.Context
-	tableID       core.AnalyzeTableID
+	tableInfo     *model.TableInfo
 	colsInfo      []*model.ColumnInfo
 	handleCols    core.HandleCols
 	concurrency   int
@@ -634,8 +635,8 @@ type AnalyzeColumnsExec struct {
 	resultHandler *tableResultHandler
 	opts          map[ast.AnalyzeOptionType]uint64
 	job           *statistics.AnalyzeJob
-	analyzeVer    int
 	indexes       []*model.IndexInfo
+	core.AnalyzeInfo
 }
 
 func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
@@ -661,7 +662,7 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
-	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.tableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges, nil)
+	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges, nil)
 	// Always set KeepOrder of the request to be true, in order to compute
 	// correct `correlation` of columns.
 	kvReq, err := reqBuilder.
@@ -697,6 +698,15 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range, needExtS
 			err = err1
 		}
 	}()
+	ch := make(chan []int64, 2)
+	go e.handleVirtualColsFullScan(ch)
+	columns, _, err := expression.ColumnInfos2ColumnsAndNames(e.ctx, model.NewCIStr(e.AnalyzeInfo.DBName), e.tableInfo.Name, e.colsInfo, e.tableInfo)
+	if err != nil {
+		return 0, nil, nil, nil, nil, err
+	}
+
+	schema := expression.NewSchema(columns...)
+
 	l := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
 	rootRowCollector := &statistics.RowSampleCollector{
 		NullCount:     make([]int64, l),
@@ -729,12 +739,68 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range, needExtS
 		e.job.Update(subCollector.Count)
 		rootRowCollector.MergeCollector(subCollector)
 	}
+
+	// handling virtual columns
+	var hasVirtualCol bool
+	var chk *chunk.Chunk
+	fieldTps := make([]*types.FieldType, 0, len(schema.Columns))
+	virtualColIdx := make([]int, 0)
+	for i, col := range schema.Columns {
+		fieldTps = append(fieldTps, col.RetType)
+		if col.VirtualExpr != nil {
+			hasVirtualCol = true
+			virtualColIdx = append(virtualColIdx, i)
+		}
+	}
+	needNormalDecode := true
+	if hasVirtualCol {
+		// decode + eval virtual columns
+		chk = chunk.NewChunkWithCapacity(fieldTps, len(rootRowCollector.Samples))
+		decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().TimeZone)
+		for _, sample := range rootRowCollector.Samples {
+			for i := range sample.Columns {
+				_, err := decoder.DecodeOne(sample.Columns[i].GetBytes(), i, fieldTps[i])
+				if err != nil {
+					// Eval virtual column failed. Give up building virtual column stats.
+					logutil.BgLogger().Warn("Build stats on virtual column failed when analyzing. Stats on virtual column will be incomplete",
+						zap.Int64("table id", e.AnalyzeInfo.TableID.TableID),
+						zap.Int64("partition id", e.AnalyzeInfo.TableID.PartitionID),
+						zap.Error(err))
+					goto NORMALDECODE
+				}
+			}
+		}
+		err := FillVirtualColumnValue(fieldTps, virtualColIdx, schema, e.colsInfo, e.ctx, chk)
+		if err != nil {
+			// Eval virtual column failed. Give up building virtual column stats.
+			logutil.BgLogger().Warn("Build stats on virtual column failed when analyzing. Stats on virtual column will be incomplete",
+				zap.Int64("table id", e.AnalyzeInfo.TableID.TableID),
+				zap.Int64("partition id", e.AnalyzeInfo.TableID.PartitionID),
+				zap.Error(err))
+			goto NORMALDECODE
+		}
+		iter := chunk.NewIterator4Chunk(chk)
+		for row, i := iter.Begin(), 0; row != iter.End(); row, i = iter.Next(), i+1 {
+			datums := row.GetDatumRow(fieldTps)
+			rootRowCollector.Samples[i].Columns = datums
+		}
+		needNormalDecode = false
+	}
+NORMALDECODE:
+	if needNormalDecode {
+		// normal decode
+		for _, sample := range rootRowCollector.Samples {
+			for i := range sample.Columns {
+				sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone)
+				if err != nil {
+					return 0, nil, nil, nil, nil, err
+				}
+			}
+		}
+	}
+
 	for _, sample := range rootRowCollector.Samples {
 		for i := range sample.Columns {
-			sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone)
-			if err != nil {
-				return 0, nil, nil, nil, nil, err
-			}
 			if sample.Columns[i].Kind() == types.KindBytes {
 				sample.Columns[i].SetBytes(sample.Columns[i].GetBytes())
 			}
@@ -751,11 +817,69 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range, needExtS
 	sort.Slice(rootRowCollector.Samples, func(i, j int) bool {
 		return rootRowCollector.Samples[i].Handle.Compare(rootRowCollector.Samples[j].Handle) < 0
 	})
+	colLen := len(e.colsInfo)
+
+	// For virtual columns, they can't be evaled in TiKV. In TiKV, they are all regarded as NULL.
+	// So NULL count and FM Sketch for virtual columns are useless. We use other method to collect them and override the
+	// original data when building stats.
+	overrideNDVs := <-ch
+	overrideNullCnts := <-ch
+	overrideNDVsForIdx := make([]int64, 0, len(e.indexes))
+	if len(overrideNDVs) == 0 {
+		// Collect NULL count and NDV for virtual column failed. Give up building virtual column stats.
+		for range e.colsInfo {
+			overrideNDVs = append(overrideNDVs, -1)
+		}
+		for range e.indexes {
+			overrideNDVsForIdx = append(overrideNDVsForIdx, -1)
+		}
+		logutil.BgLogger().Warn("Build stats on virtual column failed when analyzing. Stats on virtual column will be absent",
+			zap.Int64("table id", e.AnalyzeInfo.TableID.TableID),
+			zap.Int64("partition id", e.AnalyzeInfo.TableID.PartitionID),
+			zap.Error(err))
+	} else {
+		for i, cnt := range overrideNullCnts {
+			if cnt >= 0 {
+				rootRowCollector.NullCount[i] = cnt
+				rootRowCollector.FMSketches[i] = nil
+			}
+		}
+		// NULL count and NDV for index composed only by virtual column(s) should be override.
+		// NDV for multi-column index containing virtual column might need to be override (when the max NDV of virtual columns is larger than NDV from FM Sketch).
+		// NULL count for multi-column index don't need to be override (it's always 0).
+		for i, idx := range e.indexes {
+			containVirtual := false
+			maxNDV := int64(0)
+			for _, col := range idx.Columns {
+				if e.colsInfo[col.Offset].IsGenerated() && !e.colsInfo[col.Offset].GeneratedStored {
+					containVirtual = true
+					if overrideNDVs[col.Offset] > maxNDV {
+						maxNDV = overrideNDVs[col.Offset]
+					}
+				}
+			}
+			if !containVirtual {
+				overrideNDVsForIdx = append(overrideNDVsForIdx, -1)
+				continue
+			}
+			if maxNDV < rootRowCollector.FMSketches[colLen+i].NDV() {
+				overrideNDVsForIdx = append(overrideNDVsForIdx, -1)
+			} else {
+				overrideNDVsForIdx = append(overrideNDVsForIdx, maxNDV)
+				rootRowCollector.FMSketches[colLen+i] = nil
+			}
+			if len(idx.Columns) == 1 {
+				rootRowCollector.NullCount[colLen+i] = overrideNullCnts[idx.Columns[0].Offset]
+			}
+		}
+	}
 
 	hists = make([]*statistics.Histogram, 0, len(e.colsInfo))
 	topns = make([]*statistics.TopN, 0, len(e.colsInfo))
 	fmSketches = make([]*statistics.FMSketch, 0, len(e.colsInfo))
 	sampleCollectors := make([]*statistics.SampleCollector, 0, len(e.colsInfo))
+
+	// build column stats
 	for i, col := range e.colsInfo {
 		sampleItems := make([]*statistics.SampleItem, 0, rootRowCollector.MaxSampleSize)
 		for j, row := range rootRowCollector.Samples {
@@ -775,7 +899,9 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range, needExtS
 			TotalSize: rootRowCollector.TotalSizes[i],
 		}
 		sampleCollectors = append(sampleCollectors, collector)
-		hg, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collector, &col.FieldType, true)
+
+		hg, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]),
+			col.ID, collector, &col.FieldType, true, overrideNDVs[i])
 		if err != nil {
 			return 0, nil, nil, nil, nil, err
 		}
@@ -783,7 +909,8 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range, needExtS
 		topns = append(topns, topn)
 		fmSketches = append(fmSketches, rootRowCollector.FMSketches[i])
 	}
-	colLen := len(e.colsInfo)
+
+	// build index stats
 	for i, idx := range e.indexes {
 		sampleItems := make([]*statistics.SampleItem, 0, rootRowCollector.MaxSampleSize)
 		for _, row := range rootRowCollector.Samples {
@@ -808,7 +935,8 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range, needExtS
 			FMSketch:  rootRowCollector.FMSketches[colLen+i],
 			TotalSize: rootRowCollector.TotalSizes[colLen+i],
 		}
-		hg, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), idx.ID, collector, types.NewFieldType(mysql.TypeBlob), false)
+		hg, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]),
+			idx.ID, collector, types.NewFieldType(mysql.TypeBlob), false, overrideNDVsForIdx[i])
 		if err != nil {
 			return 0, nil, nil, nil, nil, err
 		}
@@ -819,11 +947,72 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range, needExtS
 	count = rootRowCollector.Count
 	if needExtStats {
 		statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-		extStats, err = statsHandle.BuildExtendedStats(e.tableID.GetStatisticsID(), e.colsInfo, sampleCollectors)
+		extStats, err = statsHandle.BuildExtendedStats(e.TableID.GetStatisticsID(), e.colsInfo, sampleCollectors)
 		if err != nil {
 			return 0, nil, nil, nil, nil, err
 		}
 	}
+	return
+}
+
+// handleVirtualColsFullScan collects NDV and NULL counts for virtual columns by running SQL directly because these
+// information can't be directly collected in TiKV like normal columns.
+// In return values: len(NDVs) == len(nullCnts) == e.colsInfo        Non-virtual columns will be -1 in the result.
+func (e *AnalyzeColumnsExec) handleVirtualColsFullScan(c chan []int64) (NDVs []int64, nullCnts []int64) {
+	NDVs = make([]int64, 0, len(e.colsInfo))
+	nullCnts = make([]int64, 0, len(e.colsInfo))
+
+	// Construct the SQL, for a table `t` with two virtual columns `a` and `c`, the SQL will be like
+	// select count(distinct a), sum(a is null), count(distinct c), sum(c is null) from t;
+	selFields := "count(distinct %n), sum(%n is null),"
+	args := make([]interface{}, 0)
+	i := 0
+	for _, col := range e.colsInfo {
+		if col.IsGenerated() && !col.GeneratedStored {
+			i++
+			args = append(args, col.Name.O, col.Name.O)
+		}
+	}
+	args = append(args, e.AnalyzeInfo.TableName)
+	selFields = strings.Repeat(selFields, i)
+	sql := "select " + selFields[:len(selFields)-1] + " from %n"
+	if e.AnalyzeInfo.PartitionName != "" {
+		sql += " partition %n"
+		args = append(args, e.AnalyzeInfo.PartitionName)
+	}
+
+	// TODO: modify concurrency
+	result, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql, args...)
+	if err != nil {
+		return nil, nil
+	}
+	chk := result.NewChunk()
+	err = result.Next(context.TODO(), chk)
+	if err != nil {
+		return nil, nil
+	}
+	row := chk.GetRow(0)
+	j := 0
+	for _, col := range e.colsInfo {
+		if col.IsGenerated() && !col.GeneratedStored {
+			NDVs = append(NDVs, row.GetInt64(j*2))
+			nullCnt := int64(0)
+			// If there is no data, sum(a is null) will be NULL. So let nullCnt be 0.
+			if !row.IsNull(j*2 + 1) {
+				nullCnt, err = row.GetMyDecimal(j*2 + 1).ToInt()
+				if err != nil {
+					return nil, nil
+				}
+			}
+			nullCnts = append(nullCnts, nullCnt)
+			j++
+		} else {
+			NDVs = append(NDVs, -1)
+			nullCnts = append(nullCnts, -1)
+		}
+	}
+	c <- NDVs
+	c <- nullCnts
 	return
 }
 
@@ -921,7 +1110,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		fms = append(fms, nil)
 	}
 	for i, col := range e.colsInfo {
-		if e.analyzeVer < 2 {
+		if e.StatsVersion < 2 {
 			// In analyze version 2, we don't collect TopN this way. We will collect TopN from samples in `BuildColumnHistAndTopN()` below.
 			err := collectors[i].ExtractTopN(uint32(e.opts[ast.AnalyzeOptNumTopN]), e.ctx.GetSessionVars().StmtCtx, &col.FieldType, timeZone)
 			if err != nil {
@@ -944,10 +1133,11 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		var hg *statistics.Histogram
 		var err error
 		var topn *statistics.TopN
-		if e.analyzeVer < 2 {
+		if e.StatsVersion < 2 {
 			hg, err = statistics.BuildColumn(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), col.ID, collectors[i], &col.FieldType)
 		} else {
-			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collectors[i], &col.FieldType, true)
+			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]),
+				col.ID, collectors[i], &col.FieldType, true, -1)
 			topNs = append(topNs, topn)
 		}
 		if err != nil {
@@ -960,7 +1150,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 	}
 	if needExtStats {
 		statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-		extStats, err = statsHandle.BuildExtendedStats(e.tableID.GetStatisticsID(), e.colsInfo, collectors)
+		extStats, err = statsHandle.BuildExtendedStats(e.TableID.GetStatisticsID(), e.colsInfo, collectors)
 		if err != nil {
 			return nil, nil, nil, nil, nil, err
 		}
@@ -1676,7 +1866,7 @@ func analyzePKIncremental(colExec *analyzePKIncrementalExec) analyzeResult {
 		return analyzeResult{Err: err, job: colExec.job}
 	}
 	result := analyzeResult{
-		TableID:  colExec.tableID,
+		TableID:  colExec.TableID,
 		Hist:     []*statistics.Histogram{hist},
 		Cms:      []*statistics.CMSketch{nil},
 		TopNs:    []*statistics.TopN{nil},

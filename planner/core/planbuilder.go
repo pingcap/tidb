@@ -1658,7 +1658,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		if id == tbl.TableInfo.ID {
 			id = -1
 		}
-		info := analyzeInfo{
+		info := AnalyzeInfo{
 			DBName:        tbl.Schema.O,
 			TableName:     tbl.Name.O,
 			PartitionName: names[i],
@@ -1669,7 +1669,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		newTask := AnalyzeColumnsTask{
 			HandleCols:  BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo),
 			ColsInfo:    tbl.TableInfo.Columns,
-			analyzeInfo: info,
+			AnalyzeInfo: info,
 			TblInfo:     tbl.TableInfo,
 			Indexes:     idxInfos,
 		}
@@ -1725,7 +1725,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				if id == tbl.TableInfo.ID {
 					id = -1
 				}
-				info := analyzeInfo{
+				info := AnalyzeInfo{
 					DBName:        tbl.Schema.O,
 					TableName:     tbl.Name.O,
 					PartitionName: names[i],
@@ -1735,7 +1735,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				}
 				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
 					IndexInfo:   idx,
-					analyzeInfo: info,
+					AnalyzeInfo: info,
 					TblInfo:     tbl.TableInfo,
 				})
 			}
@@ -1746,7 +1746,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				if id == tbl.TableInfo.ID {
 					id = -1
 				}
-				info := analyzeInfo{
+				info := AnalyzeInfo{
 					DBName:        tbl.Schema.O,
 					TableName:     tbl.Name.O,
 					PartitionName: names[i],
@@ -1758,7 +1758,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 					HandleCols:       handleCols,
 					CommonHandleInfo: commonHandleInfo,
 					ColsInfo:         colInfo,
-					analyzeInfo:      info,
+					AnalyzeInfo:      info,
 					TblInfo:          tbl.TableInfo,
 				})
 			}
@@ -1798,14 +1798,14 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 					if id == tblInfo.ID {
 						id = -1
 					}
-					info := analyzeInfo{
+					info := AnalyzeInfo{
 						DBName:        as.TableNames[0].Schema.O,
 						TableName:     as.TableNames[0].Name.O,
 						PartitionName: names[i], TableID: AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
 						Incremental:  as.Incremental,
 						StatsVersion: version,
 					}
-					p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+					p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, AnalyzeInfo: info, TblInfo: tblInfo})
 				}
 				continue
 			}
@@ -1818,7 +1818,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 			if id == tblInfo.ID {
 				id = -1
 			}
-			info := analyzeInfo{
+			info := AnalyzeInfo{
 				DBName:        as.TableNames[0].Schema.O,
 				TableName:     as.TableNames[0].Name.O,
 				PartitionName: names[i],
@@ -1826,7 +1826,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 				Incremental:   as.Incremental,
 				StatsVersion:  version,
 			}
-			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
+			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, AnalyzeInfo: info, TblInfo: tblInfo})
 		}
 	}
 	return p, nil
@@ -1860,7 +1860,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 				if id == tblInfo.ID {
 					id = -1
 				}
-				info := analyzeInfo{
+				info := AnalyzeInfo{
 					DBName:        as.TableNames[0].Schema.O,
 					TableName:     as.TableNames[0].Name.O,
 					PartitionName: names[i],
@@ -1868,7 +1868,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 					Incremental:   as.Incremental,
 					StatsVersion:  version,
 				}
-				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
+				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, AnalyzeInfo: info, TblInfo: tblInfo})
 			}
 		}
 	}
@@ -1878,7 +1878,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 			if id == tblInfo.ID {
 				id = -1
 			}
-			info := analyzeInfo{
+			info := AnalyzeInfo{
 				DBName:        as.TableNames[0].Schema.O,
 				TableName:     as.TableNames[0].Name.O,
 				PartitionName: names[i],
@@ -1886,7 +1886,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 				Incremental:   as.Incremental,
 				StatsVersion:  version,
 			}
-			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, AnalyzeInfo: info, TblInfo: tblInfo})
 		}
 	}
 	return p, nil
