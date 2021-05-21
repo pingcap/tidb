@@ -245,7 +245,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetStreaming(e.partialStreamings[workID]).
 					SetFromSessionVars(e.ctx.GetSessionVars()).
 					SetMemTracker(e.memTracker).
-					SetFromInfoSchema(e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema))
+					SetFromInfoSchema(e.ctx.GetInfoSchema().(infoschema.InfoSchema))
 
 				worker := &partialIndexWorker{
 					stats:        e.stats,

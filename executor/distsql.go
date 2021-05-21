@@ -278,11 +278,8 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromInfoSchema(e.ctx.GetInfoSchema().(infoschema.InfoSchema)).
 		SetMemTracker(e.memTracker)
-	// for tests, infoschema may be null
-	if is, ok := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema); ok {
-		builder.SetFromInfoSchema(is)
-	}
 	kvReq, err := builder.Build()
 	if err != nil {
 		e.feedback.Invalidate()
@@ -530,11 +527,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetKeepOrder(e.keepOrder).
 			SetStreaming(e.indexStreaming).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
+			SetFromInfoSchema(e.ctx.GetInfoSchema().(infoschema.InfoSchema)).
 			SetMemTracker(tracker)
-		// for tests, infoschema may be null
-		if is, ok := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema); ok {
-			builder.SetFromInfoSchema(is)
-		}
 
 		for partTblIdx, kvRange := range kvRanges {
 			// check if executor is closed

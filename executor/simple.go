@@ -1456,6 +1456,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 	kvReq, err := builder.
 		SetDAGRequest(dagReq).
 		SetFromSessionVars(sctx.GetSessionVars()).
+		SetFromInfoSchema(sctx.GetInfoSchema().(infoschema.InfoSchema)).
 		SetStoreType(kv.TiDB).
 		SetTiDBServerID(connID.ServerID).
 		Build()
@@ -1544,7 +1545,7 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) (err error) {
 	if err := h.DeleteTableStatsFromKV(statsIDs); err != nil {
 		return err
 	}
-	return h.Update(e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema))
+	return h.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema))
 }
 
 func (e *SimpleExec) autoNewTxn() bool {

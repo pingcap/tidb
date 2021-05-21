@@ -144,6 +144,11 @@ func (c *Context) GetMPPClient() kv.MPPClient {
 	return c.Store.GetMPPClient()
 }
 
+// GetInfoSchema implements sessionctx.Context GetInfoSchema interface.
+func (c *Context) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
+	return nil
+}
+
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
 func (c *Context) GetGlobalSysVar(ctx sessionctx.Context, name string) (string, error) {
 	v := variable.GetSysVar(name)

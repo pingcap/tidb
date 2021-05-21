@@ -228,13 +228,10 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromInfoSchema(e.ctx.GetInfoSchema().(infoschema.InfoSchema)).
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetAllowBatchCop(e.batchCop)
-	// infoschema maybe null for tests
-	if is, ok := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema); ok {
-		reqBuilder.SetFromInfoSchema(is)
-	}
 	kvReq, err := reqBuilder.Build()
 	if err != nil {
 		return nil, err
