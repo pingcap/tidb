@@ -1636,7 +1636,7 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 	if p.ctx.GetSessionVars().BroadcastJoinThresholdSize == 0 || p.ctx.GetSessionVars().BroadcastJoinThresholdCount == 0 {
 		return p.ctx.GetSessionVars().AllowBCJ
 	}
-	if p.JoinType == InnerJoin && len(p.EqualConditions) == 0 && p.ctx.GetSessionVars().ForceCARTESIANJoinAsBCJ {
+	if len(p.EqualConditions) == 0 && p.ctx.GetSessionVars().ForceCARTESIANJoinAsBCJ {
 		return true
 	}
 	if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
