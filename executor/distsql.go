@@ -1094,11 +1094,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 		if chk.NumRows() == 0 {
 			task.indexOrder.Range(func(h kv.Handle, val interface{}) bool {
 				idxRow := task.idxRows.GetRow(val.(int))
-				if w.idxLookup.ctx.GetSessionVars().EnableRedactLog {
-					err = errors.New("index is not equal to record")
-				} else {
-					err = errors.Errorf("handle %#v, index:%#v != record:%#v", h, idxRow.GetDatum(0, w.idxColTps[0]), nil)
-				}
+				err = ErrDataInConsistentExtraIndex.GenWithStackByArgs(h, idxRow.GetDatum(0, w.idxColTps[0]), nil)
 				return false
 			})
 			if err != nil {
@@ -1133,18 +1129,12 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
 				cmpRes, err := idxVal.CompareDatum(sctx, &val)
 				if err != nil {
-					if w.idxLookup.ctx.GetSessionVars().EnableRedactLog {
-						return errors.New("index is not equal to record")
-					}
-					return errors.Errorf("col %s, handle %#v, index:%#v != record:%#v, compare err:%#v", col.Name,
+					return ErrDataInConsistentMisMatchIndex.GenWithStackByArgs(col.Name,
 						handle, idxRow.GetDatum(i, tp), val, err)
 				}
 				if cmpRes != 0 {
-					if w.idxLookup.ctx.GetSessionVars().EnableRedactLog {
-						return errors.New("index is not equal to record")
-					}
-					return errors.Errorf("col %s, handle %#v, index:%#v != record:%#v", col.Name,
-						handle, idxRow.GetDatum(i, tp), val)
+					return ErrDataInConsistentMisMatchIndex.GenWithStackByArgs(col.Name,
+						handle, idxRow.GetDatum(i, tp), val, err)
 				}
 			}
 		}

@@ -989,7 +989,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrWriteOnSnapshot:            mysql.Message("write on snapshot", nil),
 	ErrInvalidKey:                 mysql.Message("invalid key", nil),
 	ErrInvalidIndexKey:            mysql.Message("invalid index key", nil),
-	ErrDataInConsistent:           mysql.Message("data isn't equal", nil),
+	ErrDataInConsistent:           mysql.Message("index:%#v != record:%#v", []int{0, 1}),
 	ErrDDLReorgElementNotExist:    mysql.Message("DDL reorg element does not exist", nil),
 	ErrDDLJobNotFound:             mysql.Message("DDL Job:%v not found", nil),
 	ErrCancelFinishedDDLJob:       mysql.Message("This job:%v is finished, so can't be cancelled", nil),
@@ -997,6 +997,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrUnknownAllocatorType:       mysql.Message("Invalid allocator type", nil),
 	ErrAutoRandReadFailed:         mysql.Message("Failed to read auto-random value from storage engine", nil),
 	ErrInvalidIncrementAndOffset:  mysql.Message("Invalid auto_increment settings: auto_increment_increment: %d, auto_increment_offset: %d, both of them must be in range [1..65535]", nil),
+	ErrDataInConsistentExtraIndex: mysql.Message("handle %#v, index:%#v != record:%#v", []int{0, 1, 2}),
+	ErrDataInConsistentMisMatchIndex: mysql.Message("col %s, handle %#v, index:%#v != record:%#v, compare err:%#v", []int{1, 2, 3, 4}),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
