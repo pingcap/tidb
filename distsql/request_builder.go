@@ -15,6 +15,7 @@ package distsql
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/config"
 	"math"
 	"sort"
 
@@ -243,6 +244,9 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 			},
 		}
 	}
+	if config.GetGlobalConfig().TopStmt.Enable {
+		builder.SetResourceGroupTag(sv.StmtCtx.GetResourceGroupTag())
+	}
 	return builder
 }
 
@@ -273,6 +277,12 @@ func (builder *RequestBuilder) SetFromInfoSchema(is infoschema.InfoSchema) *Requ
 		return builder
 	}
 	builder.is = is
+	return builder
+}
+
+// SetResourceGroupTag sets the request resource group tag.
+func (builder *RequestBuilder) SetResourceGroupTag(tag []byte) *RequestBuilder {
+	builder.Request.ResourceGroupTag = tag
 	return builder
 }
 

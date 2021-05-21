@@ -16,7 +16,7 @@ package core
 import (
 	"bytes"
 	"crypto/sha256"
-	"fmt"
+	"github.com/pingcap/parser"
 	"hash"
 	"sync"
 
@@ -120,10 +120,10 @@ type planDigester struct {
 }
 
 // NormalizePlan is used to normalize the plan and generate plan digest.
-func NormalizePlan(p Plan) (normalized, digest string) {
+func NormalizePlan(p Plan) (normalized string, digest *parser.Digest) {
 	selectPlan := getSelectPlan(p)
 	if selectPlan == nil {
-		return "", ""
+		return "", nil
 	}
 	d := digesterPool.Get().(*planDigester)
 	defer digesterPool.Put(d)
@@ -134,7 +134,7 @@ func NormalizePlan(p Plan) (normalized, digest string) {
 		panic(err)
 	}
 	d.buf.Reset()
-	digest = fmt.Sprintf("%x", d.hasher.Sum(nil))
+	digest = parser.NewDigest(d.hasher.Sum(nil))
 	d.hasher.Reset()
 	return
 }

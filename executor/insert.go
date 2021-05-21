@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tidb/config"
 	"runtime/trace"
 	"time"
 
@@ -62,6 +63,9 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
+	}
+	if snapshot := txn.GetSnapshot(); snapshot != nil && config.GetGlobalConfig().TopStmt.Enable {
+		snapshot.SetOption(kv.ResourceGroupTag, sessVars.StmtCtx.GetResourceGroupTag())
 	}
 	txnSize := txn.Size()
 	sessVars.StmtCtx.AddRecordRows(uint64(len(rows)))

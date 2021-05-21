@@ -919,7 +919,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	diskMax := sessVars.StmtCtx.DiskTracker.MaxConsumed()
-	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
+	planDigest := getPlanDigest(a.Ctx, a.Plan)
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		SQL:               sql.String(),
@@ -1011,14 +1011,14 @@ func getPlanTree(sctx sessionctx.Context, p plannercore.Plan) string {
 }
 
 // getPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
-func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, planDigest string) {
-	normalized, planDigest = sctx.GetSessionVars().StmtCtx.GetPlanDigest()
+func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) string {
+	normalized, planDigest := sctx.GetSessionVars().StmtCtx.GetPlanDigest()
 	if len(normalized) > 0 {
-		return
+		return ""
 	}
 	normalized, planDigest = plannercore.NormalizePlan(p)
 	sctx.GetSessionVars().StmtCtx.SetPlanDigest(normalized, planDigest)
-	return
+	return planDigest.String()
 }
 
 // getEncodedPlan gets the encoded plan, and generates the hint string if indicated.
@@ -1092,11 +1092,11 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	var planDigestGen func() string
 	if a.Plan.TP() == plancodec.TypePointGet {
 		planDigestGen = func() string {
-			_, planDigest := getPlanDigest(a.Ctx, a.Plan)
+			planDigest := getPlanDigest(a.Ctx, a.Plan)
 			return planDigest
 		}
 	} else {
-		_, planDigest = getPlanDigest(a.Ctx, a.Plan)
+		planDigest = getPlanDigest(a.Ctx, a.Plan)
 	}
 
 	execDetail := stmtCtx.GetExecDetails()

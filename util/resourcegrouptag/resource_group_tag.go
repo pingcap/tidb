@@ -7,12 +7,17 @@ import (
 )
 
 // EncodeResourceGroupTag encodes sqlDigest into resource group tag.
-func EncodeResourceGroupTag(sqlDigest *parser.Digest) []byte {
-	if sqlDigest == nil {
+func EncodeResourceGroupTag(sqlDigest, planDigest *parser.Digest) []byte {
+	if sqlDigest == nil && planDigest == nil {
 		return nil
 	}
-	tag := &tipb.ResourceGroupTag{
-		SqlDigest: sqlDigest.Bytes(),
+
+	tag := &tipb.ResourceGroupTag{}
+	if sqlDigest != nil {
+		tag.SqlDigest = sqlDigest.Bytes()
+	}
+	if planDigest != nil {
+		tag.PlanDigest = planDigest.Bytes()
 	}
 	b, _ := tag.Marshal()
 	return b

@@ -201,6 +201,6 @@ type CachedPrepareStmt struct {
 	NormalizedSQL  string
 	NormalizedPlan string
 	SQLDigest      *parser.Digest
-	PlanDigest     string
+	PlanDigest     *parser.Digest
 	ForUpdateRead  bool
 }
