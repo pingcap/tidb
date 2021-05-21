@@ -113,7 +113,7 @@ func GetClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, er
 				tblClusteredInfo.ClusterPKType = "NON_INT"
 			} else {
 				// if both CLUSTERED IS TURE and CLUSTERPKTYPE IS NA met, this else is hit
-				// it means the status of INFORMATION_SCHEMA.tables if not consistant with session.Context
+				// it means the status of INFORMATION_SCHEMA.tables if not consistent with session.Context
 				// WE SHOULD treat this issue SERIOUSLY
 			}
 		}
