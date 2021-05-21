@@ -275,26 +275,6 @@ func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64,
 	}
 }
 
-func (s *KVStore) getStalenessTimestamp(bo *Backoffer, txnScope string, prevSec uint64) (uint64, error) {
-	failpoint.Inject("MockStalenessTimestamp", func(val failpoint.Value) {
-		if v, ok := val.(int); ok {
-			failpoint.Return(uint64(v), nil)
-		} else {
-			panic("MockStalenessTimestamp should be a number, try use this failpoint with \"return(ts)\"")
-		}
-	})
-	for {
-		startTS, err := s.oracle.GetStaleTimestamp(bo.GetCtx(), txnScope, prevSec)
-		if err == nil {
-			return startTS, nil
-		}
-		err = bo.Backoff(retry.BoPDRPC, errors.Errorf("get staleness timestamp failed: %v", err))
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-	}
-}
-
 func (s *KVStore) nextReplicaReadSeed() uint32 {
 	return atomic.AddUint32(&s.replicaReadSeed, 1)
 }

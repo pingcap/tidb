@@ -57,9 +57,7 @@ func (s *extractStartTsSuite) TestExtractStartTS(c *C) {
 	i := uint64(100)
 	// to prevent time change during test case execution
 	// we use failpoint to make it "fixed"
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockStalenessTimestamp", "return(200)"), IsNil)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockCurrentTimestamp", `return(300)`), IsNil)
-
 	cases := []struct {
 		expectedTS uint64
 		option     tikv.StartTSOption
@@ -74,7 +72,5 @@ func (s *extractStartTsSuite) TestExtractStartTS(c *C) {
 		result, _ := tikv.ExtractStartTS(s.store, cs.option)
 		c.Assert(result, Equals, expected)
 	}
-
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockStalenessTimestamp"), IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockCurrentTimestamp"), IsNil)
 }

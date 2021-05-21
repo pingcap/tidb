@@ -2008,6 +2008,9 @@ func (s *session) NewTxnWithStartTS(ctx context.Context, startTS uint64) error {
 	}
 	txnScope := s.GetSessionVars().CheckAndGetTxnScope()
 	txn, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetStartTS(startTS))
+	if err != nil {
+		return err
+	}
 	txn.SetVars(s.sessionVars.KVVars)
 	txn.SetOption(kv.IsStalenessReadOnly, true)
 	txn.SetOption(kv.TxnScope, txnScope)
