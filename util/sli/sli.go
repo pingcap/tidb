@@ -119,10 +119,8 @@ func (t *TxnWriteThroughputSLI) String() string {
 		t.invalid, t.affectRow, t.writeSize, t.readKeys, t.writeKeys, t.writeTime.String())
 }
 
-func ObserveReadSLI(readRow uint64, readByte uint64, readTime float64) {
-	if readRow <= smallTxnAffectRow && readByte <= smallTxnSize {
+func ObserveReadSLI(readRow uint64, readTime float64) {
+	if readRow <= smallTxnAffectRow {
 		tikvmetrics.TiKVSmallReadDuration.Observe(readTime)
-	} else {
-		tikvmetrics.TiKVLargeReadThroughput.Observe(float64(readByte) / readTime)
 	}
 }

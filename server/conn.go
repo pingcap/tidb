@@ -1518,7 +1518,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return err
 	}
-
 	if len(stmts) == 0 {
 		return cc.writeOK(ctx)
 	}
