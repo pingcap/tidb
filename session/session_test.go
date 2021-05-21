@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -4542,4 +4543,35 @@ func (s *testSessionSuite) TestInTxnPSProtoPointGet(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("commit")
+}
+
+func (s *testSessionSuite) TestTempTableMaxRAM(c *C) {
+	// Test the @@temptable_max_ram system variable.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create global temporary table t (c1 int, c2 varchar(512)) on commit delete rows")
+
+	tk.MustQuery("select @@global.temptable_max_ram").Check(testkit.Rows(strconv.Itoa(variable.DefTempTableMaxRAM)))
+	c.Assert(tk.Se.GetSessionVars().TempTableMaxRAM, Equals, variable.DefTempTableMaxRAM)
+
+	// Min value 2097152
+	_, err := tk.Exec("set @@global.temptable_max_ram = 123")
+	c.Assert(err, NotNil)
+	// Not a session scope system variable.
+	_, err = tk.Exec("set @@session.temptable_max_ram = 2097152")
+	c.Assert(err, NotNil)
+
+	// A positive test case.
+	tk.MustExec("set @@global.temptable_max_ram = 2097152")
+	tk.MustQuery("select @@global.temptable_max_ram").Check(testkit.Rows("2097152"))
+	c.Assert(tk.Se.GetSessionVars().TempTableMaxRAM, Equals, 2097152)
+
+	// Manually hack the value for testing.
+	tk.Se.GetSessionVars().TempTableMaxRAM = 1024
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1, repeat('x', 512))")
+	tk.MustExec("insert into t values (1, repeat('x', 512))")
+	_, err = tk.Exec("insert into t values (1, repeat('x', 512))")
+	// Table size exceed
+	c.Assert(err, NotNil)
 }

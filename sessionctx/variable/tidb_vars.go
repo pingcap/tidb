@@ -675,6 +675,7 @@ const (
 	DefTiDBTrackAggregateMemoryUsage   = true
 	DefTiDBEnableExchangePartition     = false
 	DefCTEMaxRecursionDepth            = 1000
+	DefTempTableMaxRAM                 = 1 << 30 // 1GB
 )
 
 // Process global variables.

@@ -2562,6 +2562,7 @@ var builtinGlobalVariable = []string{
 	variable.WindowingUseHighPrecision,
 	variable.SQLSelectLimit,
 	variable.DefaultWeekFormat,
+	variable.TempTableMaxRAM,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipASCIICheck,
