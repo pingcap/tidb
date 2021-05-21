@@ -62,9 +62,14 @@ import (
 )
 
 var _ = Suite(&testTableSuite{&testTableSuiteBase{}})
+var _ = Suite(&testDataLockWaitSuite{&testTableSuiteBase{}})
 var _ = SerialSuites(&testClusterTableSuite{testTableSuiteBase: &testTableSuiteBase{}})
 
 type testTableSuite struct {
+	*testTableSuiteBase
+}
+
+type testDataLockWaitSuite struct {
 	*testTableSuiteBase
 }
 
@@ -1537,44 +1542,6 @@ func (s *testTableSuite) TestTrx(c *C) {
 	)
 }
 
-func (s *testTableSuite) TestDataLockWait(c *C) {
-	client, pdClient, _, err := unistore.New("")
-	c.Assert(err, IsNil)
-	kvstore, err := tikv.NewTestTiKVStore(client, pdClient, nil, nil, 0)
-	c.Assert(err, IsNil)
-	oldStore := s.store
-	s.store, err = mockstorage.NewMockStorageWithLockWaits(kvstore, []*deadlock.WaitForEntry{
-		{Txn: 1, WaitForTxn: 2, KeyHash: 3, Key: []byte("a"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag("c")},
-		{Txn: 4, WaitForTxn: 5, KeyHash: 6, Key: []byte("b"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag("d")},
-	})
-	c.Assert(err, IsNil)
-	tk := s.newTestKitWithRoot(c)
-	tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS;").Check(testkit.Rows("3 a 1 2 c", "6 b 4 5 d"))
-
-	s.store = oldStore
-}
-
-func (s *testTableSuite) TestDataLockPrivilege(c *C) {
-	tk := s.newTestKitWithRoot(c)
-	tk.MustExec("create user 'testuser'@'localhost'")
-	c.Assert(tk.Se.Auth(&auth.UserIdentity{
-		Username: "testuser",
-		Hostname: "localhost",
-	}, nil, nil), IsTrue)
-	err := tk.QueryToErr("select * from information_schema.DATA_LOCK_WAITS")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
-
-	tk = s.newTestKitWithRoot(c)
-	tk.MustExec("create user 'testuser2'@'localhost'")
-	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
-	c.Assert(tk.Se.Auth(&auth.UserIdentity{
-		Username: "testuser2",
-		Hostname: "localhost",
-	}, nil, nil), IsTrue)
-	_ = tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS")
-}
-
 func (s *testTableSuite) TestInfoschemaDeadlockPrivilege(c *C) {
 	tk := s.newTestKitWithRoot(c)
 	tk.MustExec("create user 'testuser'@'localhost'")
@@ -1594,4 +1561,52 @@ func (s *testTableSuite) TestInfoschemaDeadlockPrivilege(c *C) {
 		Hostname: "localhost",
 	}, nil, nil), IsTrue)
 	_ = tk.MustQuery("select * from information_schema.deadlocks")
+}
+
+func (s *testDataLockWaitSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+
+	client, pdClient, cluster, err := unistore.New("")
+	c.Assert(err, IsNil)
+	unistore.BootstrapWithSingleStore(cluster)
+	kvstore, err := tikv.NewTestTiKVStore(client, pdClient, nil, nil, 0)
+	c.Assert(err, IsNil)
+	_, digest1 := parser.NormalizeDigest("select * from t1 for update;")
+	_, digest2 := parser.NormalizeDigest("update t1 set f1=1 where id=2;")
+	s.store, err = mockstorage.NewMockStorageWithLockWaits(kvstore, []*deadlock.WaitForEntry{
+		{Txn: 1, WaitForTxn: 2, KeyHash: 3, Key: []byte("a"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest1)},
+		{Txn: 4, WaitForTxn: 5, KeyHash: 6, Key: []byte("b"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest2)},
+	})
+	c.Assert(err, IsNil)
+	session.DisableStats4Test()
+	s.dom, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+}
+
+func (s *testDataLockWaitSuite) TestDataLockWait(c *C) {
+	_, digest1 := parser.NormalizeDigest("select * from t1 for update;")
+	_, digest2 := parser.NormalizeDigest("update t1 set f1=1 where id=2;")
+	tk := s.newTestKitWithRoot(c)
+	tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS;").Check(testkit.Rows("3 a 1 2 "+digest1, "6 b 4 5 "+digest2))
+}
+
+func (s *testDataLockWaitSuite) TestDataLockPrivilege(c *C) {
+	tk := s.newTestKitWithRoot(c)
+	tk.MustExec("create user 'testuser'@'localhost'")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "testuser",
+		Hostname: "localhost",
+	}, nil, nil), IsTrue)
+	err := tk.QueryToErr("select * from information_schema.DATA_LOCK_WAITS")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+
+	tk = s.newTestKitWithRoot(c)
+	tk.MustExec("create user 'testuser2'@'localhost'")
+	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "testuser2",
+		Hostname: "localhost",
+	}, nil, nil), IsTrue)
+	_ = tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS")
 }

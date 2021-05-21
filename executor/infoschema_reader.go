@@ -1009,26 +1009,30 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err 
 }
 
 func (e *memtableRetriever) setDataForTableLockWait(ctx sessionctx.Context) error {
+	hasPriv := false
 	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
-			waits, err := ctx.GetStore().GetLockWaits()
-			if err != nil {
-				return err
-			}
-			for _, wait := range waits {
-				digest, err := resourcegrouptag.DecodeResourceGroupTag(wait.ResourceGroupTag)
-				if err != nil {
-					return err
-				}
-				e.rows = append(e.rows, types.MakeDatums(
-					wait.KeyHash,
-					wait.Key,
-					wait.Txn,
-					wait.WaitForTxn,
-					digest,
-				))
-			}
+		hasPriv = pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv)
+	}
+
+	if !hasPriv {
+		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
+	waits, err := ctx.GetStore().GetLockWaits()
+	if err != nil {
+		return err
+	}
+	for _, wait := range waits {
+		digest, err := resourcegrouptag.DecodeResourceGroupTag(wait.ResourceGroupTag)
+		if err != nil {
+			return err
 		}
+		e.rows = append(e.rows, types.MakeDatums(
+			wait.KeyHash,
+			wait.Key,
+			wait.Txn,
+			wait.WaitForTxn,
+			digest,
+		))
 	}
 	return nil
 }
