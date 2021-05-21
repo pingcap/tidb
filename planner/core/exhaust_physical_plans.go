@@ -1752,7 +1752,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	}
 
 	if len(p.EqualConditions) == 0 {
-		if p.JoinType != InnerJoin || !p.ctx.GetSessionVars().AllowCARTESIANBCJ || !useBCJ {
+		if !p.ctx.GetSessionVars().AllowCARTESIANBCJ || !useBCJ {
 			return nil
 		}
 	}
