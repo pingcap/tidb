@@ -47,6 +47,55 @@ func (s *testStmtSummarySuite) TestToEvictedCountDatum(c *C) {
 	match(c, s.ssMap.ToEvictedCountDatum()[0], expectedEvictedCount...)
 }
 
+// test stmtSummaryByDigestEvicted.addEvicted
+// test stmtSummaryByDigestEvicted.toEvictedCountDatum, under multiple intervals.
+func (s *testStmtSummarySuite) TestEvictedAdd(c *C) {
+	s.ssMap.Clear()
+	s.ssMap.SetRefreshInterval("60", false)
+	s.ssMap.SetHistorySize("100", false)
+	now := time.Now().Unix()
+	s.ssMap.beginTimeForCurInterval = now + 60
+	// set capacity to 1
+	err := s.ssMap.summaryMap.SetCapacity(1)
+	c.Assert(err, IsNil)
+
+	// test stmtSummaryByDigest's history length
+	for i := 0; i < 100; i++ {
+		if i == 0 {
+			c.Assert(s.ssMap.summaryMap.Size(), Equals, 0)
+		} else {
+			c.Assert(s.ssMap.summaryMap.Size(), Equals, 1)
+			val := s.ssMap.summaryMap.Values()[0]
+			c.Assert(val, NotNil)
+			digest := val.(*stmtSummaryByDigest)
+			c.Assert(digest.history.Len(), Equals, i)
+		}
+		s.ssMap.AddStatement(generateAnyExecInfo())
+		s.ssMap.beginTimeForCurInterval += 60
+	}
+
+	banditSei := generateAnyExecInfo()
+	banditSei.SchemaName = "Bandit schema that will kick out original digest"
+	s.ssMap.AddStatement(banditSei)
+	evictedCountDatums := s.ssMap.ToEvictedCountDatum()
+	n := s.ssMap.beginTimeForCurInterval - 60
+	for _, evictedCountDatum := range evictedCountDatums {
+		expectedDatum := []interface{}{
+			types.NewTime(types.FromGoTime(time.Unix(n, 0)), mysql.TypeTimestamp, types.DefaultFsp),
+			types.NewTime(types.FromGoTime(time.Unix(n+60, 0)), mysql.TypeTimestamp, types.DefaultFsp),
+			int64(1),
+		}
+		match(c, evictedCountDatum, expectedDatum...)
+		n -= 60
+	}
+
+	s.ssMap.Clear()
+	other := s.ssMap.other
+	// test empty history in digestValue
+	other.AddEvicted(new(stmtSummaryByDigestKey), new(stmtSummaryByDigest), 100)
+	c.Assert(other.history.Len(), Equals, 0)
+}
+
 // test stmtSummaryByDigestEvictedElement.matchAndAdd
 // test stmtSummaryByDigestEvictedElement.addEvicted
 func (s *testStmtSummarySuite) TestEvictedElementAdd(c *C) {
@@ -90,10 +139,6 @@ func (s *testStmtSummarySuite) TestEvictedElementAdd(c *C) {
 	digestElement.beginTime, digestElement.endTime = now, now+60
 	c.Assert(stmtEvictedElement.matchAndAdd(digestKey, digestElement), Equals, isMatch)
 	c.Assert(len(stmtEvictedElement.digestKeyMap), Equals, 1)
-
-	// test clear
-	s.ssMap.Clear()
-	c.Assert(s.ssMap.other.history.Len(), Equals, 0)
 }
 
 func (s *testStmtSummarySuite) TestNewStmtSummaryByDigestEvictedElement(c *C) {

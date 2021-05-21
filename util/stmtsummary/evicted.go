@@ -45,7 +45,7 @@ func newStmtSummaryByDigestEvictedElement(beginTime int64, endTime int64) *stmtS
 func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDigestKey, evictedValue *stmtSummaryByDigest, historySize int) {
 	evictedValue.Lock()
 	defer evictedValue.Unlock()
-	if evictedValue == nil {
+	if evictedValue == nil || evictedValue.history == nil {
 		return
 	}
 
@@ -59,6 +59,7 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 			record := newStmtSummaryByDigestEvictedElement(eBeginTime, eEndTime)
 			record.addEvicted(evictedKey, evictedElement)
 			ssbde.history.PushFront(record)
+			h = ssbde.history.Back()
 			continue
 		}
 
@@ -141,7 +142,7 @@ func (seElement *stmtSummaryByDigestEvictedElement) matchAndAdd(digestKey *stmtS
 // ToEvictedCountDatum converts history evicted record to `evicted count` record's datum
 func (ssbde *stmtSummaryByDigestEvicted) ToEvictedCountDatum() [][]types.Datum {
 	records := make([][]types.Datum, 0, ssbde.history.Len())
-	for e := ssbde.history.Front(); e != nil; e = e.Next() {
+	for e := ssbde.history.Back(); e != nil; e = e.Prev() {
 		if record := e.Value.(*stmtSummaryByDigestEvictedElement).toEvictedCountDatum(); record != nil {
 			records = append(records, record)
 		}
