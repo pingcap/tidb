@@ -2053,7 +2053,6 @@ func (e *memtableRetriever) setDataForClusterTiDBTrx(ctx sessionctx.Context) err
 
 func (e *memtableRetriever) setDataForStatementsSummaryEvicted(ctx sessionctx.Context) {
 	e.rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
-	return
 }
 
 type hugeMemTableRetriever struct {
