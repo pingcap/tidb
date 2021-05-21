@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,7 +43,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
-	txninfo "github.com/pingcap/tidb/session/txninfo"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -82,7 +83,7 @@ var _ = SerialSuites(&testSessionSerialSuite{})
 var _ = SerialSuites(&testBackupRestoreSuite{})
 var _ = Suite(&testClusteredSuite{})
 var _ = SerialSuites(&testClusteredSerialSuite{})
-var _ = SerialSuites(&testTxnStateSuite{})
+var _ = SerialSuites(&testTxnStateSerialSuite{})
 
 type testSessionSuiteBase struct {
 	cluster cluster.Cluster
@@ -4376,33 +4377,56 @@ func (s *testSessionSuite3) TestGlobalTemporaryTable(c *C) {
 	tk.MustQuery("select * from g_tmp").Check(testkit.Rows())
 }
 
-type testTxnStateSuite struct {
+type testTxnStateSerialSuite struct {
 	testSessionSuiteBase
 }
 
-func (s *testTxnStateSuite) TestBasic(c *C) {
+func (s *testTxnStateSerialSuite) TestBasic(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t(a) values (1);")
 	info := tk.Se.TxnInfo()
 	c.Assert(info, IsNil)
+
 	tk.MustExec("begin pessimistic;")
-	tk.MustExec("select * from t for update;")
+	startTSStr := tk.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string)
+	startTS, err := strconv.ParseUint(startTSStr, 10, 64)
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock", "pause"), IsNil)
+	ch := make(chan interface{})
+	go func() {
+		tk.MustExec("select * from t for update;")
+		ch <- nil
+	}()
+	time.Sleep(100 * time.Millisecond)
 	info = tk.Se.TxnInfo()
 	_, expectedDigest := parser.NormalizeDigest("select * from t for update;")
 	c.Assert(info.CurrentSQLDigest, Equals, expectedDigest)
+	c.Assert(info.State, Equals, txninfo.TxnLockWaiting)
+	c.Assert((*time.Time)(info.BlockStartTime), NotNil)
+	c.Assert(info.StartTS, Equals, startTS)
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock"), IsNil)
+	<-ch
+
+	info = tk.Se.TxnInfo()
+	c.Assert(info.CurrentSQLDigest, Equals, "")
 	c.Assert(info.State, Equals, txninfo.TxnRunningNormal)
-	c.Assert(info.BlockStartTime, IsNil)
+	c.Assert((*time.Time)(info.BlockStartTime), IsNil)
+	c.Assert(info.StartTS, Equals, startTS)
+
 	// len and size will be covered in TestLenAndSize
 	c.Assert(info.ConnectionID, Equals, tk.Se.GetSessionVars().ConnectionID)
 	c.Assert(info.Username, Equals, "")
 	c.Assert(info.CurrentDB, Equals, "test")
+	c.Assert(info.StartTS, Equals, startTS)
 	tk.MustExec("commit;")
 	info = tk.Se.TxnInfo()
 	c.Assert(info, IsNil)
 }
 
-func (s *testTxnStateSuite) TestEntriesCountAndSize(c *C) {
+func (s *testTxnStateSerialSuite) TestEntriesCountAndSize(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("begin pessimistic;")
@@ -4417,7 +4441,7 @@ func (s *testTxnStateSuite) TestEntriesCountAndSize(c *C) {
 	tk.MustExec("commit;")
 }
 
-func (s *testTxnStateSuite) TestBlocked(c *C) {
+func (s *testTxnStateSerialSuite) TestBlocked(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(a int);")
@@ -4435,7 +4459,7 @@ func (s *testTxnStateSuite) TestBlocked(c *C) {
 	tk.MustExec("commit;")
 }
 
-func (s *testTxnStateSuite) TestCommitting(c *C) {
+func (s *testTxnStateSerialSuite) TestCommitting(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(a int);")
@@ -4447,8 +4471,10 @@ func (s *testTxnStateSuite) TestCommitting(c *C) {
 		tk2.MustExec("begin pessimistic")
 		c.Assert(tk2.Se.TxnInfo(), NotNil)
 		tk2.MustExec("select * from t where a = 2 for update;")
-		failpoint.Enable("github.com/pingcap/tidb/session/mockSlowCommit", "sleep(200)")
-		defer failpoint.Disable("github.com/pingcap/tidb/session/mockSlowCommit")
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockSlowCommit", "sleep(200)"), IsNil)
+		defer func() {
+			c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockSlowCommit"), IsNil)
+		}()
 		tk2.MustExec("commit;")
 		ch <- struct{}{}
 	}()
@@ -4458,7 +4484,7 @@ func (s *testTxnStateSuite) TestCommitting(c *C) {
 	<-ch
 }
 
-func (s *testTxnStateSuite) TestRollbacking(c *C) {
+func (s *testTxnStateSerialSuite) TestRollbacking(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t(a) values (1), (2);")

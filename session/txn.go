@@ -138,12 +138,21 @@ func (txn *LazyTxn) storeTxnInfo(info *txninfo.TxnInfo) {
 	atomic.StorePointer(&txn.atomicTxnInfo, unsafe.Pointer(info))
 }
 
-func (txn *LazyTxn) recreateTxnInfo(startTS uint64, state txninfo.TxnRunningState, entriesCount, entriesSize uint64) {
+func (txn *LazyTxn) recreateTxnInfo(
+	startTS uint64,
+	state txninfo.TxnRunningState,
+	entriesCount,
+	entriesSize uint64,
+	currentSQLDigest string,
+	allSQLDigests []string,
+) {
 	info := &txninfo.TxnInfo{
-		StartTS:      startTS,
-		State:        state,
-		EntriesCount: entriesCount,
-		EntriesSize:  entriesSize,
+		StartTS:          startTS,
+		State:            state,
+		EntriesCount:     entriesCount,
+		EntriesSize:      entriesSize,
+		CurrentSQLDigest: currentSQLDigest,
+		AllSQLDigests:    allSQLDigests,
 	}
 	txn.storeTxnInfo(info)
 }
@@ -206,7 +215,13 @@ func (txn *LazyTxn) GoString() string {
 func (txn *LazyTxn) changeInvalidToValid(kvTxn kv.Transaction) {
 	txn.Transaction = kvTxn
 	txn.initStmtBuf()
-	txn.recreateTxnInfo(kvTxn.StartTS(), txninfo.TxnRunningNormal, uint64(txn.Transaction.Len()), uint64(txn.Transaction.Size()))
+	txn.recreateTxnInfo(
+		kvTxn.StartTS(),
+		txninfo.TxnRunningNormal,
+		uint64(txn.Transaction.Len()),
+		uint64(txn.Transaction.Size()),
+		"",
+		nil)
 	txn.txnFuture = nil
 }
 
@@ -232,7 +247,14 @@ func (txn *LazyTxn) changePendingToValid(ctx context.Context) error {
 	txn.Transaction = t
 	txn.initStmtBuf()
 
-	txn.recreateTxnInfo(t.StartTS(), txninfo.TxnRunningNormal, uint64(txn.Transaction.Len()), uint64(txn.Transaction.Size()))
+	// The txnInfo may already recorded the first statement (usually "begin") when it's pending, so keep them.
+	txn.recreateTxnInfo(
+		t.StartTS(),
+		txninfo.TxnRunningNormal,
+		uint64(txn.Transaction.Len()),
+		uint64(txn.Transaction.Size()),
+		txn.txnInfo.CurrentSQLDigest,
+		txn.txnInfo.AllSQLDigests)
 	return nil
 }
 
@@ -244,7 +266,13 @@ func (txn *LazyTxn) changeToInvalid() {
 	txn.Transaction = nil
 	txn.txnFuture = nil
 
-	txn.recreateTxnInfo(0, txninfo.TxnRunningNormal, 0, 0)
+	txn.recreateTxnInfo(
+		0,
+		txninfo.TxnRunningNormal,
+		0,
+		0,
+		"",
+		nil)
 }
 
 func (txn *LazyTxn) onStmtStart(currentSQLDigest string) {
