@@ -1018,7 +1018,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_CastRealAsInt, tipb.ScalarFuncSig_CastRealAsDecimal, tipb.ScalarFuncSig_CastRealAsString, tipb.ScalarFuncSig_CastRealAsTime,
 			tipb.ScalarFuncSig_CastStringAsInt, tipb.ScalarFuncSig_CastStringAsDecimal, tipb.ScalarFuncSig_CastStringAsString, tipb.ScalarFuncSig_CastStringAsTime,
 			tipb.ScalarFuncSig_CastDecimalAsInt, tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastDecimalAsString, tipb.ScalarFuncSig_CastDecimalAsTime,
-			tipb.ScalarFuncSig_CastTimeAsInt, tipb.ScalarFuncSig_CastTimeAsDecimal, tipb.ScalarFuncSig_CastTimeAsTime:
+			tipb.ScalarFuncSig_CastTimeAsInt, tipb.ScalarFuncSig_CastTimeAsDecimal, tipb.ScalarFuncSig_CastTimeAsTime, tipb.ScalarFuncSig_CastIntAsReal, tipb.ScalarFuncSig_CastRealAsReal:
 			return true
 		}
 	case ast.DateAdd:

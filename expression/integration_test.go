@@ -213,6 +213,74 @@ func (s *testIntegrationSuite) TestFuncLpadAndRpad(c *C) {
 	result.Check(testkit.Rows("<nil> <nil>"))
 }
 
+func (s *testIntegrationSuite) TestBuiltinFuncJsonPretty(c *C) {
+	ctx := context.Background()
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec("CREATE TABLE t  (`id` int NOT NULL AUTO_INCREMENT, `j` json,vc VARCHAR(500) ,  PRIMARY KEY (`id`));")
+	tk.MustExec(`INSERT INTO t ( id, j, vc ) VALUES
+	( 1, '{"a":1,"b":"qwe","c":[1,2,3,"123",null],"d":{"d1":1,"d2":2}}', '{"a":1,"b":"qwe","c":[1,2,3,"123",null],"d":{"d1":1,"d2":2}}' ),
+	( 2, '[1,2,34]', '{' );`)
+
+	// valid json format in json and varchar
+	checkResult := []string{
+		`{
+  "a": 1,
+  "b": "qwe",
+  "c": [
+    1,
+    2,
+    3,
+    "123",
+    null
+  ],
+  "d": {
+    "d1": 1,
+    "d2": 2
+  }
+}`,
+		`{
+  "a": 1,
+  "b": "qwe",
+  "c": [
+    1,
+    2,
+    3,
+    "123",
+    null
+  ],
+  "d": {
+    "d1": 1,
+    "d2": 2
+  }
+}`,
+	}
+	tk.
+		MustQuery("select JSON_PRETTY(t.j),JSON_PRETTY(vc) from  t where id = 1;").
+		Check(testkit.Rows(strings.Join(checkResult, " ")))
+
+	// invalid json format in varchar
+	rs, _ := tk.Exec("select JSON_PRETTY(t.j),JSON_PRETTY(vc) from  t where id = 2;")
+	_, err := session.GetRows4Test(ctx, tk.Se, rs)
+	terr := errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrInvalidJSONText))
+
+	// invalid json format in one row
+	rs, _ = tk.Exec("select JSON_PRETTY(t.j),JSON_PRETTY(vc) from  t where id in (1,2);")
+	_, err = session.GetRows4Test(ctx, tk.Se, rs)
+	terr = errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrInvalidJSONText))
+
+	// invalid json string
+	rs, _ = tk.Exec(`select JSON_PRETTY("[1,2,3]}");`)
+	_, err = session.GetRows4Test(ctx, tk.Se, rs)
+	terr = errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrInvalidJSONText))
+}
+
 func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 	ctx := context.Background()
 	defer s.cleanEnv(c)
@@ -9434,4 +9502,77 @@ func (s *testIntegrationSuite) TestEnumIndex(c *C) {
 		testkit.Rows("2"))
 	tk.MustQuery("select /*+ use_index(t,idx) */ col3 from t where col2 = 'b' and col1 is not null;").Check(
 		testkit.Rows("2"))
+}
+
+func (s *testIntegrationSuite) TestControlFunctionWithEnumOrSet(c *C) {
+	defer s.cleanEnv(c)
+
+	// issue 23114
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists e;")
+	tk.MustExec("create table e(e enum('c', 'b', 'a'));")
+	tk.MustExec("insert into e values ('a'),('b'),('a'),('b');")
+	tk.MustQuery("select e from e where if(e>1, e, e);").Sort().Check(
+		testkit.Rows("a", "a", "b", "b"))
+	tk.MustQuery("select e from e where case e when 1 then e else e end;").Sort().Check(
+		testkit.Rows("a", "a", "b", "b"))
+	tk.MustQuery("select e from e where case 1 when e then e end;").Check(testkit.Rows())
+
+	tk.MustQuery("select if(e>1,e,e)='a' from e").Sort().Check(
+		testkit.Rows("0", "0", "1", "1"))
+	tk.MustQuery("select if(e>1,e,e)=1 from e").Sort().Check(
+		testkit.Rows("0", "0", "0", "0"))
+	// if and if
+	tk.MustQuery("select if(e>2,e,e) and if(e<=2,e,e) from e;").Sort().Check(
+		testkit.Rows("1", "1", "1", "1"))
+	tk.MustQuery("select if(e>2,e,e) and (if(e<3,0,e) or if(e>=2,0,e)) from e;").Sort().Check(
+		testkit.Rows("0", "0", "1", "1"))
+	tk.MustQuery("select * from e where if(e>2,e,e) and if(e<=2,e,e);").Sort().Check(
+		testkit.Rows("a", "a", "b", "b"))
+	tk.MustQuery("select * from e where if(e>2,e,e) and (if(e<3,0,e) or if(e>=2,0,e));").Sort().Check(
+		testkit.Rows("a", "a"))
+
+	// issue 24494
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int,b enum(\"b\",\"y\",\"1\"));")
+	tk.MustExec("insert into t values(0,\"y\"),(1,\"b\"),(null,null),(2,\"1\");")
+	tk.MustQuery("SELECT count(*) FROM t where if(a,b ,null);").Check(testkit.Rows("2"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int,b enum(\"b\"),c enum(\"c\"));")
+	tk.MustExec("insert into t values(1,1,1),(2,1,1),(1,1,1),(2,1,1);")
+	tk.MustQuery("select a from t where if(a=1,b,c)=\"b\";").Check(testkit.Rows("1", "1"))
+	tk.MustQuery("select a from t where if(a=1,b,c)=\"c\";").Check(testkit.Rows("2", "2"))
+	tk.MustQuery("select a from t where if(a=1,b,c)=1;").Sort().Check(testkit.Rows("1", "1", "2", "2"))
+	tk.MustQuery("select a from t where if(a=1,b,c);").Sort().Check(testkit.Rows("1", "1", "2", "2"))
+
+	tk.MustExec("drop table if exists e;")
+	tk.MustExec("create table e(e enum('c', 'b', 'a'));")
+	tk.MustExec("insert into e values(3)")
+	tk.MustQuery("select elt(1,e) = 'a' from e").Check(testkit.Rows("1"))
+	tk.MustQuery("select elt(1,e) = 3 from e").Check(testkit.Rows("1"))
+	tk.MustQuery("select e from e where elt(1,e)").Check(testkit.Rows("a"))
+
+	// test set type
+	tk.MustExec("drop table if exists s;")
+	tk.MustExec("create table s(s set('c', 'b', 'a'));")
+	tk.MustExec("insert into s values ('a'),('b'),('a'),('b');")
+	tk.MustQuery("select s from s where if(s>1, s, s);").Sort().Check(
+		testkit.Rows("a", "a", "b", "b"))
+	tk.MustQuery("select s from s where case s when 1 then s else s end;").Sort().Check(
+		testkit.Rows("a", "a", "b", "b"))
+	tk.MustQuery("select s from s where case 1 when s then s end;").Check(testkit.Rows())
+
+	tk.MustQuery("select if(s>1,s,s)='a' from s").Sort().Check(
+		testkit.Rows("0", "0", "1", "1"))
+	tk.MustQuery("select if(s>1,s,s)=4 from s").Sort().Check(
+		testkit.Rows("0", "0", "1", "1"))
+
+	tk.MustExec("drop table if exists s;")
+	tk.MustExec("create table s(s set('c', 'b', 'a'));")
+	tk.MustExec("insert into s values('a')")
+	tk.MustQuery("select elt(1,s) = 'a' from s").Check(testkit.Rows("1"))
+	tk.MustQuery("select elt(1,s) = 4 from s").Check(testkit.Rows("1"))
+	tk.MustQuery("select s from s where elt(1,s)").Check(testkit.Rows("a"))
 }

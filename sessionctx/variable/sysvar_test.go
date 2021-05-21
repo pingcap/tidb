@@ -555,3 +555,30 @@ func (*testSysVarSuite) TestInstanceScopedVars(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, vars.TxnScope.GetVarValue())
 }
+
+// Calling GetSysVars/GetSysVar needs to return a deep copy, otherwise there will be data races.
+// This is a bit unfortunate, since the only time the race occurs is in the testsuite (Enabling/Disabling SEM) and
+// during startup (setting the .Value of ScopeNone variables). In future it might also be able
+// to fix this by delaying the LoadSysVarCacheLoop start time until after the server is fully initialized.
+func (*testSysVarSuite) TestDeepCopyGetSysVars(c *C) {
+	// Check GetSysVar
+	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "datarace", Value: On, Type: TypeBool}
+	RegisterSysVar(&sv)
+	svcopy := GetSysVar("datarace")
+	svcopy.Name = "datarace2"
+	c.Assert(sv.Name, Equals, "datarace")
+	c.Assert(GetSysVar("datarace").Name, Equals, "datarace")
+	UnregisterSysVar("datarace")
+
+	// Check GetSysVars
+	sv = SysVar{Scope: ScopeGlobal | ScopeSession, Name: "datarace", Value: On, Type: TypeBool}
+	RegisterSysVar(&sv)
+	for name, svcopy := range GetSysVars() {
+		if name == "datarace" {
+			svcopy.Name = "datarace2"
+		}
+	}
+	c.Assert(sv.Name, Equals, "datarace")
+	c.Assert(GetSysVar("datarace").Name, Equals, "datarace")
+	UnregisterSysVar("datarace")
+}

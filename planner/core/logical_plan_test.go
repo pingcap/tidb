@@ -1296,6 +1296,12 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "BACKUP_ADMIN", true},
 			},
 		},
+		{
+			sql: "RENAME USER user1 to user1_tmp",
+			ans: []visitInfo{
+				{mysql.CreateUserPriv, "", "", "", ErrSpecificAccessDenied, false, "", false},
+			},
+		},
 	}
 
 	for _, tt := range tests {
