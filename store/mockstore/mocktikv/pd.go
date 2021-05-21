@@ -119,6 +119,7 @@ func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store,
 	default:
 	}
 	store := c.cluster.GetStore(storeID)
+	// It's same as PD's implementation.
 	if store == nil {
 		return nil, fmt.Errorf("invalid store ID %d, not found", storeID)
 	}
