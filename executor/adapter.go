@@ -923,7 +923,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		SQL:               sql.String(),
-		Digest:            digest,
+		Digest:            digest.String(),
 		TimeTotal:         costTime,
 		TimeParse:         sessVars.DurationParse,
 		TimeCompile:       sessVars.DurationCompile,
@@ -981,7 +981,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:        sql.String(),
-			Digest:     digest,
+			Digest:     digest.String(),
 			Start:      sessVars.StartTime,
 			Duration:   costTime,
 			Detail:     sessVars.StmtCtx.GetExecDetails(),
@@ -1079,7 +1079,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		}
 		prevSQL = sessVars.PrevStmt.String()
 	}
-	sessVars.SetPrevStmtDigest(digest)
+	sessVars.SetPrevStmtDigest(digest.String())
 
 	// No need to encode every time, so encode lazily.
 	planGenerator := func() (string, string) {
@@ -1120,7 +1120,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		Charset:         charset,
 		Collation:       collation,
 		NormalizedSQL:   normalizedSQL,
-		Digest:          digest,
+		Digest:          digest.String(),
 		PrevSQL:         prevSQL,
 		PrevSQLDigest:   prevSQLDigest,
 		PlanGenerator:   planGenerator,

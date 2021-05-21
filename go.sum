@@ -111,6 +111,8 @@ github.com/corona10/goimagehash v1.0.2/go.mod h1:/l9umBhvcHQXVtQO1V6Gp1yD20STawk
 github.com/cpuguy83/go-md2man v1.0.10/go.mod h1:SmD6nW6nTyfqj6ABTjUi3V3JVMnlJmwcJI5acqYI6dE=
 github.com/cpuguy83/go-md2man/v2 v2.0.0-20190314233015-f79a8a8ca69d/go.mod h1:maD7wRr/U5Z6m/iR4s+kqSMx2CaBsrgA7czyZG/E6dU=
 github.com/cpuguy83/go-md2man/v2 v2.0.0/go.mod h1:maD7wRr/U5Z6m/iR4s+kqSMx2CaBsrgA7czyZG/E6dU=
+github.com/crazycs520/parser v0.0.0-20210521055836-aac8c026347f h1:rysp5oQNInNDCQajyHhskf7hqozsfMS71riVoAwf+H4=
+github.com/crazycs520/parser v0.0.0-20210521055836-aac8c026347f/go.mod h1:xZC8I7bug4GJ5KtHhgAikjTfU4kBv1Sbo3Pf1MZ6lVw=
 github.com/crazycs520/tipb v0.0.0-20210521015927-2b3fd46a9cb4 h1:kYQX8FiFN02M17hGg0jcsM1/A3L6jTOtd/HO7i12bms=
 github.com/crazycs520/tipb v0.0.0-20210521015927-2b3fd46a9cb4/go.mod h1:nsEhnMokcn7MRqd2J60yxpn/ac3ZH8A6GOJ9NslabUo=
 github.com/creack/pty v1.1.7/go.mod h1:lj5s0c3V2DBrqTV7llrYr5NG6My20zk30Fl46Y7DoTY=
