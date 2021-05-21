@@ -3010,7 +3010,7 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", vars.ConnectionID), zap.Int64("schemaVersion", snap.SchemaMetaVersion()))
 		return snap
 	}
-	if vars.TxnCtx != nil && vars.TxnCtx.IsExplicit {
+	if vars.TxnCtx != nil && vars.GetStatusFlag(mysql.ServerStatusInTrans) {
 		if is, ok := vars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok {
 			return is
 		}
