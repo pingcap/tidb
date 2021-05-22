@@ -278,6 +278,7 @@ var (
 	// ErrPartitionNoTemporary returns when partition at temporary mode
 	ErrPartitionNoTemporary = dbterror.ClassDDL.NewStd(mysql.ErrPartitionNoTemporary)
 
+	// ErrOptOnTemporaryTable returns when exec unsupported opt at temporary mode
 	ErrOptOnTemporaryTable = dbterror.ClassDDL.NewStd(mysql.ErrOptOnTemporaryTable)
 
 	errUnsupportedOnCommitPreserve = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support ON COMMIT PRESERVE ROWS for now", nil))
