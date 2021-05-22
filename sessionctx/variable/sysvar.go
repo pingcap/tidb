@@ -120,7 +120,8 @@ type SysVar struct {
 	// Updating aliases calls the SET function of the aliases, but does not update their aliases (preventing SET recursion)
 	Aliases []string
 	// skipInit defines if the sysvar should be loaded into the session on init.
-	// This is only evaluated for sysvars that include session scope.
+	// This is only important to set for sysvars that include session scope,
+	// since global scoped sysvars are not-applicable.
 	skipInit bool
 }
 
