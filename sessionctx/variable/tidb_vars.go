@@ -570,7 +570,7 @@ const (
 	DefSkipASCIICheck                  = false
 	DefOptAggPushDown                  = false
 	DefOptBCJ                          = false
-	DefOptCARTESIANBCJ                 = false
+	DefOptCARTESIANBCJ                 = true
 	DefOptForceCARTESIANBCJ            = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
