@@ -38,7 +38,7 @@ func (test *StorageRCTestSuite) TestStorageBasic(c *check.C) {
 	storage := NewStorageRC(fields, chkSize)
 	c.Assert(storage, check.NotNil)
 
-	// close before open
+	// Close before open.
 	err := storage.DerefAndClose()
 	c.Assert(err, check.NotNil)
 
@@ -51,7 +51,7 @@ func (test *StorageRCTestSuite) TestStorageBasic(c *check.C) {
 	err = storage.DerefAndClose()
 	c.Assert(err, check.NotNil)
 
-	// open twice
+	// Open twice.
 	err = storage.OpenAndRef()
 	c.Assert(err, check.IsNil)
 	err = storage.OpenAndRef()
@@ -134,7 +134,7 @@ func (test *StorageRCTestSuite) TestSpillToDisk(c *check.C) {
 	memTracker.FallbackOldAndSetNewAction(action)
 	diskTracker := storage.GetDiskTracker()
 
-	// all in memory
+	// All data is in memory.
 	err = storage.Add(inChk)
 	c.Assert(err, check.IsNil)
 	outChk, err1 := storage.GetChunk(0)
@@ -148,7 +148,7 @@ func (test *StorageRCTestSuite) TestSpillToDisk(c *check.C) {
 	c.Assert(diskTracker.BytesConsumed(), check.Equals, int64(0))
 	c.Assert(diskTracker.MaxConsumed(), check.Equals, int64(0))
 
-	// add again, will trigger spill to disk
+	// Add again, and will trigger spill to disk.
 	err = storage.Add(inChk)
 	c.Assert(err, check.IsNil)
 	action.WaitForTest()
@@ -197,7 +197,7 @@ func (test *StorageRCTestSuite) TestReopen(c *check.C) {
 	out64s := outChk.Column(0).Int64s()
 	c.Assert(reflect.DeepEqual(in64s, out64s), check.IsTrue)
 
-	// reopen multiple times
+	// Reopen multiple times.
 	for i := 0; i < 100; i++ {
 		err = storage.Reopen()
 		c.Assert(err, check.IsNil)

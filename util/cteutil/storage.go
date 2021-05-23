@@ -72,9 +72,9 @@ type Storage interface {
 	Done() bool
 	SetDone()
 
-	SetIter(iter int)
 	// Readers use iter information to determine
 	// whether they need to read data from the beginning.
+	SetIter(iter int)
 	GetIter() int
 
 	// We use this channel to notify reader that Storage is ready to read.
@@ -89,18 +89,15 @@ type Storage interface {
 
 // StorageRC implements Storage interface using RowContainer.
 type StorageRC struct {
-	// meta info
 	mu      sync.Mutex
 	refCnt  int
 	tp      []*types.FieldType
 	chkSize int
 
-	// data info
 	begCh chan struct{}
 	done  bool
 	iter  int
 
-	// data
 	rc *chunk.RowContainer
 }
 
