@@ -588,7 +588,7 @@ type windowTestCase struct {
 	ndv              int // the number of distinct group-by keys
 	rows             int
 	concurrency      int
-	pipelined        bool
+	pipelined        int
 	dataSourceSorted bool
 	ctx              sessionctx.Context
 	rawDataSmall     string
@@ -604,7 +604,7 @@ func defaultWindowTestCase() *windowTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	return &windowTestCase{ast.WindowFuncRowNumber, 1, nil, 1000, 10000000, 1, false, true, ctx, strings.Repeat("x", 16),
+	return &windowTestCase{ast.WindowFuncRowNumber, 1, nil, 1000, 10000000, 1, 0, true, ctx, strings.Repeat("x", 16),
 		[]*expression.Column{
 			{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
 			{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
@@ -661,7 +661,7 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 	}
 }
 
-func BenchmarkWindowRows(b *testing.B) {
+func baseBenchmarkWindowRows(b *testing.B, pipelined int) {
 	b.ReportAllocs()
 	rows := []int{1000, 100000}
 	ndvs := []int{1, 10, 1000}
@@ -675,10 +675,7 @@ func BenchmarkWindowRows(b *testing.B) {
 				cas.concurrency = con
 				cas.dataSourceSorted = false
 				cas.windowFunc = ast.WindowFuncRowNumber // cheapest
-				b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-					benchmarkWindowExecWithCase(b, cas)
-				})
-				cas.pipelined = true
+				cas.pipelined = pipelined
 				b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 					benchmarkWindowExecWithCase(b, cas)
 				})
@@ -687,7 +684,12 @@ func BenchmarkWindowRows(b *testing.B) {
 	}
 }
 
-func BenchmarkWindowFunctions(b *testing.B) {
+func BenchmarkWindowRows(b *testing.B) {
+	baseBenchmarkWindowRows(b, 0)
+	baseBenchmarkWindowRows(b, 1)
+}
+
+func baseBenchmarkWindowFunctions(b *testing.B, pipelined int) {
 	b.ReportAllocs()
 	windowFuncs := []string{
 		ast.WindowFuncRowNumber,
@@ -711,10 +713,7 @@ func BenchmarkWindowFunctions(b *testing.B) {
 			cas.concurrency = con
 			cas.dataSourceSorted = false
 			cas.windowFunc = windowFunc
-			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-				benchmarkWindowExecWithCase(b, cas)
-			})
-			cas.pipelined = true
+			cas.pipelined = pipelined
 			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 				benchmarkWindowExecWithCase(b, cas)
 			})
@@ -722,7 +721,12 @@ func BenchmarkWindowFunctions(b *testing.B) {
 	}
 }
 
-func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
+func BenchmarkWindowFunctions(b *testing.B) {
+	baseBenchmarkWindowFunctions(b, 0)
+	baseBenchmarkWindowFunctions(b, 1)
+}
+
+func baseBenchmarkWindowFunctionsWithFrame(b *testing.B, pipelined int) {
 	b.ReportAllocs()
 	windowFuncs := []string{
 		ast.WindowFuncRowNumber,
@@ -748,10 +752,7 @@ func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
 					if i < len(frames) {
 						cas.frame = frames[i]
 					}
-					b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-						benchmarkWindowExecWithCase(b, cas)
-					})
-					cas.pipelined = true
+					cas.pipelined = pipelined
 					b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 						benchmarkWindowExecWithCase(b, cas)
 					})
@@ -759,9 +760,15 @@ func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
 			}
 		}
 	}
+
 }
 
-func BenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b *testing.B) {
+func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
+	baseBenchmarkWindowFunctionsWithFrame(b, 0)
+	baseBenchmarkWindowFunctionsWithFrame(b, 1)
+}
+
+func baseBenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b *testing.B, pipelined int) {
 	b.ReportAllocs()
 	windowFunc := ast.AggFuncMax
 	frame := &core.WindowFrame{Type: ast.Rows, Start: &core.FrameBound{UnBounded: true}, End: &core.FrameBound{UnBounded: true}}
@@ -773,12 +780,18 @@ func BenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b *testing.B) {
 	cas.windowFunc = windowFunc
 	cas.numFunc = 1
 	cas.frame = frame
+	cas.pipelined = pipelined
 	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 		benchmarkWindowExecWithCase(b, cas)
 	})
 }
 
-func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.FrameType) {
+func BenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b *testing.B) {
+	baseBenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b, 0)
+	baseBenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b, 1)
+}
+
+func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.FrameType, pipelined int) {
 	b.ReportAllocs()
 	windowFuncs := []struct {
 		aggFunc     string
@@ -810,10 +823,7 @@ func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.F
 		cas.windowFunc = windowFunc.aggFunc
 		cas.frame = frame
 		cas.columns[0].RetType.Tp = windowFunc.aggColTypes
-		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-			benchmarkWindowExecWithCase(b, cas)
-		})
-		cas.pipelined = true
+		cas.pipelined = pipelined
 		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 			benchmarkWindowExecWithCase(b, cas)
 		})
@@ -821,8 +831,10 @@ func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.F
 }
 
 func BenchmarkWindowFunctionsWithSlidingWindow(b *testing.B) {
-	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Rows)
-	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Ranges)
+	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Rows, 0)
+	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Ranges, 0)
+	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Rows, 1)
+	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Ranges, 1)
 }
 
 type hashJoinTestCase struct {

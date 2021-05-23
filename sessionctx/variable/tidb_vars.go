@@ -647,7 +647,7 @@ const (
 	DefTiDBStreamAggConcurrency        = 1
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefEnableWindowFunction            = true
-	DefEnablePipelinedWindowFunction   = false
+	DefEnablePipelinedWindowFunction   = true
 	DefEnableStrictDoubleTypeCheck     = true
 	DefEnableVectorizedExpression      = true
 	DefTiDBOptJoinReorderThreshold     = 0

@@ -23,32 +23,32 @@ import (
 func (s *testSuite7) TestWindowFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_window_concurrency = 1")
+	tk.MustExec("set @@tidb_enable_pipelined_window_function = 0")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_pipelined_window_function=1;")
+	}()
 	doTestWindowFunctions(tk)
 }
 
 func (s *testSuite7) TestWindowParallelFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_window_concurrency = 4")
+	tk.MustExec("set @@tidb_enable_pipelined_window_function = 0")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_pipelined_window_function=1;")
+	}()
 	doTestWindowFunctions(tk)
 }
 
 func (s *testSuite7) TestPipelinedWindowFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_window_concurrency = 1")
-	tk.MustExec("set @@tidb_enable_pipelined_window_function = 1")
-	defer func() {
-		tk.MustExec("set @@tidb_enable_pipelined_window_function=0;")
-	}()
 	doTestWindowFunctions(tk)
 }
 
 func (s *testSuite7) TestPipelinedWindowParallelFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_window_concurrency = 4")
-	tk.MustExec("set @@tidb_enable_pipelined_window_function = 1")
-	defer func() {
-		tk.MustExec("set @@tidb_enable_pipelined_window_function=0;")
-	}()
 	doTestWindowFunctions(tk)
 }
 
@@ -244,6 +244,10 @@ func (s *testSuite7) TestWindowFunctionsDataReference(c *C) {
 func (s *testSuite7) TestSlidingWindowFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
+	tk.MustExec("set @@tidb_enable_pipelined_window_function=0;")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_pipelined_window_function=1;")
+	}()
 	idTypes := []string{"FLOAT", "DOUBLE"}
 	useHighPrecisions := []string{"ON", "OFF"}
 	for _, idType := range idTypes {
@@ -258,10 +262,6 @@ func (s *testSuite7) TestSlidingWindowFunctions(c *C) {
 
 func (s *testSuite7) TestPipelinedSlidingWindowFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_pipelined_window_function=1;")
-	defer func() {
-		tk.MustExec("set @@tidb_enable_pipelined_window_function=0;")
-	}()
 	tk.MustExec("use test;")
 	idTypes := []string{"FLOAT", "DOUBLE"}
 	useHighPrecisions := []string{"ON", "OFF"}
