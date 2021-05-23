@@ -1756,6 +1756,10 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 			return nil
 		}
 	}
+	if (len(p.LeftConditions) != 0 && p.JoinType != LeftOuterJoin) || (len(p.RightConditions) != 0 && p.JoinType != RightOuterJoin) {
+		return nil
+	}
+
 	if prop.PartitionTp == property.BroadcastType {
 		return nil
 	}
