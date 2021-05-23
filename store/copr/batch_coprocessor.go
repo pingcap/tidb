@@ -96,7 +96,7 @@ func (rs *batchCopResponse) RespTime() time.Duration {
 
 // balanceBatchCopTask balance the regions between available stores, the basic rule is
 // 1. the first region of each original batch cop task belongs to its original store
-// 2. for the remaining regions:
+// 2. for the remaining regions: qwq
 //    if there is only 1 available store, then put the region to the related store
 //    otherwise, use a greedy algorithm to put it into the store with highest weight
 func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
