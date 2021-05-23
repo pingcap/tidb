@@ -1636,7 +1636,7 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 	if p.ctx.GetSessionVars().BroadcastJoinThresholdSize == 0 || p.ctx.GetSessionVars().BroadcastJoinThresholdCount == 0 {
 		return p.ctx.GetSessionVars().AllowBCJ
 	}
-	if len(p.EqualConditions) == 0 && p.ctx.GetSessionVars().ForceCARTESIANJoinAsBCJ {
+	if len(p.EqualConditions) == 0 && p.ctx.GetSessionVars().AllowCARTESIANBCJ == 2 {
 		return true
 	}
 	if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
@@ -1752,7 +1752,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	}
 
 	if len(p.EqualConditions) == 0 {
-		if !p.ctx.GetSessionVars().AllowCARTESIANBCJ || !useBCJ {
+		if p.ctx.GetSessionVars().AllowCARTESIANBCJ < 1 || !useBCJ {
 			return nil
 		}
 	}

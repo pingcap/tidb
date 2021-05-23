@@ -591,8 +591,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptCARTESIANBCJ, Value: BoolToOnOff(DefOptCARTESIANBCJ), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptForceCARTESIANBCJ, Value: BoolToOnOff(DefOptForceCARTESIANBCJ), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptCARTESIANBCJ, Value: strconv.Itoa(DefOptCARTESIANBCJ), Type: TypeInt, MinValue: 0, MaxValue: 2},
 	{Scope: ScopeSession, Name: TiDBOptDistinctAggPushDown, Value: BoolToOnOff(config.GetGlobalConfig().Performance.DistinctAggPushDown), Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBOptWriteRowID, Value: BoolToOnOff(DefOptWriteRowID)},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBuildStatsConcurrency, Value: strconv.Itoa(DefBuildStatsConcurrency)},
