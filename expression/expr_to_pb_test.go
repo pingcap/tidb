@@ -613,6 +613,9 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	decimalColumn := dg.genColumn(mysql.TypeNewDecimal, 4)
 	stringColumn := dg.genColumn(mysql.TypeString, 5)
 	datetimeColumn := dg.genColumn(mysql.TypeDatetime, 6)
+	binaryStringColumn := dg.genColumn(mysql.TypeString, 7)
+	binaryStringColumn.RetType.Collate = charset.CollationBin
+
 	function, err := NewFunction(mock.NewContext(), ast.JSONLength, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
@@ -724,8 +727,38 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+	// Substring2ArgsUTF8
+	function, err = NewFunction(mock.NewContext(), ast.Substr, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// Substring3ArgsUTF8
+	function, err = NewFunction(mock.NewContext(), ast.Substr, types.NewFieldType(mysql.TypeString), stringColumn, intColumn, intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeDouble), realColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeLonglong), intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
 	canPush := CanExprsPushDown(sc, exprs, client, kv.TiFlash)
 	c.Assert(canPush, Equals, true)
+
+	exprs = exprs[:0]
+
+	// Substring2Args: can not be pushed
+	function, err = NewFunction(mock.NewContext(), ast.Substr, types.NewFieldType(mysql.TypeString), binaryStringColumn, intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// Substring3Args: can not be pushed
+	function, err = NewFunction(mock.NewContext(), ast.Substr, types.NewFieldType(mysql.TypeString), binaryStringColumn, intColumn, intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
 
 	function, err = NewFunction(mock.NewContext(), ast.JSONDepth, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	c.Assert(err, IsNil)
@@ -736,23 +769,57 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+	// RoundDecimal: can not be pushed
+	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
 	pushed, remained := PushDownExprs(sc, exprs, client, kv.TiFlash)
-	c.Assert(len(pushed), Equals, len(exprs)-2)
-	c.Assert(len(remained), Equals, 2)
+	c.Assert(len(pushed), Equals, 0)
+	c.Assert(len(remained), Equals, len(exprs))
 }
 
 func (s *testEvaluatorSuite) TestExprOnlyPushDownToFlash(c *C) {
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 	dg := new(dataGen4Expr2PbTest)
-	function, err := NewFunction(mock.NewContext(), ast.TimestampDiff, types.NewFieldType(mysql.TypeLonglong),
-		dg.genColumn(mysql.TypeString, 1), dg.genColumn(mysql.TypeDatetime, 2), dg.genColumn(mysql.TypeDatetime, 3))
+	exprs := make([]Expression, 0)
+
+	//jsonColumn := dg.genColumn(mysql.TypeJSON, 1)
+	intColumn := dg.genColumn(mysql.TypeLonglong, 2)
+	//realColumn := dg.genColumn(mysql.TypeDouble, 3)
+	decimalColumn := dg.genColumn(mysql.TypeNewDecimal, 4)
+	stringColumn := dg.genColumn(mysql.TypeString, 5)
+	datetimeColumn := dg.genColumn(mysql.TypeDatetime, 6)
+	binaryStringColumn := dg.genColumn(mysql.TypeString, 7)
+	binaryStringColumn.RetType.Collate = charset.CollationBin
+
+	function, err := NewFunction(mock.NewContext(), ast.Substr, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
 	c.Assert(err, IsNil)
-	var exprs = make([]Expression, 0)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Substring, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.DateAdd, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.TimestampDiff, types.NewFieldType(mysql.TypeLonglong), stringColumn, datetimeColumn, datetimeColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.FromUnixTime, types.NewFieldType(mysql.TypeDatetime), decimalColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Extract, types.NewFieldType(mysql.TypeLonglong), stringColumn, datetimeColumn)
+	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
 	pushed, remained := PushDownExprs(sc, exprs, client, kv.UnSpecified)
-	c.Assert(len(pushed), Equals, 1)
+	c.Assert(len(pushed), Equals, len(exprs))
 	c.Assert(len(remained), Equals, 0)
 
 	canPush := CanExprsPushDown(sc, exprs, client, kv.TiFlash)
@@ -761,12 +828,12 @@ func (s *testEvaluatorSuite) TestExprOnlyPushDownToFlash(c *C) {
 	c.Assert(canPush, Equals, false)
 
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
-	c.Assert(len(pushed), Equals, 1)
+	c.Assert(len(pushed), Equals, len(exprs))
 	c.Assert(len(remained), Equals, 0)
 
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiKV)
 	c.Assert(len(pushed), Equals, 0)
-	c.Assert(len(remained), Equals, 1)
+	c.Assert(len(remained), Equals, len(exprs))
 }
 
 func (s *testEvaluatorSuite) TestExprOnlyPushDownToTiKV(c *C) {
