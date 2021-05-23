@@ -240,6 +240,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 	realResp := rpcResp.Resp.(*mpp.DispatchTaskResponse)
 
 	if realResp.Error != nil {
+		logutil.BgLogger().Error("mpp dispatch response meet error", zap.String("error", realResp.Error.Msg))
 		m.sendError(errors.New(realResp.Error.Msg))
 		return
 	}
