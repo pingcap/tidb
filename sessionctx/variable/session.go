@@ -500,7 +500,7 @@ type SessionVars struct {
 	AllowBatchCop int
 
 	// AllowMPPExecution means if we should use mpp way to execute query. Default value is "ON", means to be determined by the optimizer.
-	// Value set to "ENFORCE" means to use mpp whenever possible. Value set to means never use mpp.
+	// Value set to "ENFORCE" means to use mpp whenever possible. Value set to "OFF" means never use mpp.
 	allowMPPExecution string
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
@@ -1501,7 +1501,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBAllowBatchCop:
 		s.AllowBatchCop = int(tidbOptInt64(val, DefTiDBAllowBatchCop))
 	case TiDBAllowMPPExecution:
-		s.AllowMPPExecution = TiDBOptOn(val)
+		s.allowMPPExecution = val
 	case TiDBIndexLookupSize:
 		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
 	case TiDBHashJoinConcurrency:

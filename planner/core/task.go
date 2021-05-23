@@ -2008,13 +2008,13 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	}.Init(ctx, t.p.SelectBlockOffset())
 	p.stats = t.p.statsInfo()
 
-	p.cost = t.cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
+	cst := t.cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
 	if p.ctx.GetSessionVars().IsMPPEnforced() {
-		p.cost = 0
+		cst = 0
 	}
 	rt := &rootTask{
 		p:   p,
-		cst: p.cost,
+		cst: cst,
 	}
 	return rt
 }
