@@ -1040,6 +1040,13 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		case tipb.ScalarFuncSig_ExtractDatetime:
 			return true
 		}
+	case ast.StrToDate:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_StrToDateDate, tipb.ScalarFuncSig_StrToDateDatetime:
+			return true
+		default:
+			return false
+		}
 	case ast.Replace:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_Replace:
