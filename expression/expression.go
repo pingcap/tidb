@@ -1005,9 +1005,12 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
 		ast.JSONLength:
 		return true
-	case ast.Substr, ast.Substring:
+	case ast.Substr, ast.Substring, ast.Left, ast.Right, ast.CharLength:
 		switch function.Function.PbCode() {
 		case
+			tipb.ScalarFuncSig_LeftUTF8,
+			tipb.ScalarFuncSig_RightUTF8,
+			tipb.ScalarFuncSig_CharLengthUTF8,
 			tipb.ScalarFuncSig_Substring2ArgsUTF8,
 			tipb.ScalarFuncSig_Substring3ArgsUTF8:
 			return true
