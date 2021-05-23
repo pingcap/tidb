@@ -482,6 +482,10 @@ type SessionVars struct {
 
 	// AllowBCJ means allow broadcast join.
 	AllowBCJ bool
+
+	// AllowCARTESIANBCJ means allow broadcast join for CARTESIAN join
+	AllowCARTESIANBCJ int
+
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
@@ -953,6 +957,7 @@ func NewSessionVars() *SessionVars {
 		StmtCtx:                     new(stmtctx.StatementContext),
 		AllowAggPushDown:            false,
 		AllowBCJ:                    false,
+		AllowCARTESIANBCJ:           DefOptCARTESIANBCJ,
 		BroadcastJoinThresholdSize:  DefBroadcastJoinThresholdSize,
 		BroadcastJoinThresholdCount: DefBroadcastJoinThresholdSize,
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
@@ -1438,6 +1443,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowAggPushDown = TiDBOptOn(val)
 	case TiDBOptBCJ:
 		s.AllowBCJ = TiDBOptOn(val)
+	case TiDBOptCARTESIANBCJ:
+		s.AllowCARTESIANBCJ = int(tidbOptInt64(val, DefOptCARTESIANBCJ))
 	case TiDBBCJThresholdSize:
 		s.BroadcastJoinThresholdSize = tidbOptInt64(val, DefBroadcastJoinThresholdSize)
 	case TiDBBCJThresholdCount:

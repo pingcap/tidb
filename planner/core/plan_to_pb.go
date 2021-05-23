@@ -366,7 +366,25 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 	if err != nil {
 		return nil, err
 	}
-	otherConditions, err := expression.ExpressionsToPBList(sc, p.OtherConditions, client)
+
+	var otherConditionsInJoin expression.CNFExprs
+	var otherEqConditionsFromIn expression.CNFExprs
+	if p.JoinType == AntiSemiJoin {
+		for _, condition := range p.OtherConditions {
+			if expression.IsEQCondFromIn(condition) {
+				otherEqConditionsFromIn = append(otherEqConditionsFromIn, condition)
+			} else {
+				otherConditionsInJoin = append(otherConditionsInJoin, condition)
+			}
+		}
+	} else {
+		otherConditionsInJoin = p.OtherConditions
+	}
+	otherConditions, err := expression.ExpressionsToPBList(sc, otherConditionsInJoin, client)
+	if err != nil {
+		return nil, err
+	}
+	otherEqConditions, err := expression.ExpressionsToPBList(sc, otherEqConditionsFromIn, client)
 	if err != nil {
 		return nil, err
 	}
@@ -397,17 +415,18 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 		buildFiledTypes = append(buildFiledTypes, expression.ToPBFieldType(retType))
 	}
 	join := &tipb.Join{
-		JoinType:        pbJoinType,
-		JoinExecType:    tipb.JoinExecType_TypeHashJoin,
-		InnerIdx:        int64(p.InnerChildIdx),
-		LeftJoinKeys:    left,
-		RightJoinKeys:   right,
-		ProbeTypes:      probeFiledTypes,
-		BuildTypes:      buildFiledTypes,
-		LeftConditions:  leftConditions,
-		RightConditions: rightConditions,
-		OtherConditions: otherConditions,
-		Children:        []*tipb.Executor{lChildren, rChildren},
+		JoinType:                pbJoinType,
+		JoinExecType:            tipb.JoinExecType_TypeHashJoin,
+		InnerIdx:                int64(p.InnerChildIdx),
+		LeftJoinKeys:            left,
+		RightJoinKeys:           right,
+		ProbeTypes:              probeFiledTypes,
+		BuildTypes:              buildFiledTypes,
+		LeftConditions:          leftConditions,
+		RightConditions:         rightConditions,
+		OtherConditions:         otherConditions,
+		OtherEqConditionsFromIn: otherEqConditions,
+		Children:                []*tipb.Executor{lChildren, rChildren},
 	}
 
 	executorID := p.ExplainID().String()
