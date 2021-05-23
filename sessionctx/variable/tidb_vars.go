@@ -51,7 +51,6 @@ const (
 
 	TiDBOptCARTESIANBCJ = "tidb_opt_cartesian_bcj"
 
-	TiDBOptForceCARTESIANBCJ = "tidb_opt_force_cartesian_bcj"
 	// tidb_opt_distinct_agg_push_down is used to decide whether agg with distinct should be pushed to tikv/tiflash.
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
 
