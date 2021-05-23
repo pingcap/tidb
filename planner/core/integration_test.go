@@ -3124,3 +3124,129 @@ func (s *testIntegrationSuite) TestIssue23846(c *C) {
 	tk.MustQuery("select count(*) from t where a=0x00A4EEF4FA55D6706ED5").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from t where a=0x00A4EEF4FA55D6706ED5").Check(testkit.Rows("\x00\xa4\xee\xf4\xfaU\xd6pn\xd5")) // not empty
 }
+
+func (s *testIntegrationSuite) TestEnforceMPP(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// test value limit of tidb_opt_tiflash_concurrency_factor
+	err := tk.ExecToErr("set @@tidb_opt_tiflash_concurrency_factor = 0")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, `[variable:1231]Variable 'tidb_opt_tiflash_concurrency_factor' can't be set to the value of '0'`)
+
+	tk.MustExec("set @@tidb_opt_tiflash_concurrency_factor = 1")
+	tk.MustQuery("select @@tidb_opt_tiflash_concurrency_factor").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_opt_tiflash_concurrency_factor = 24")
+	tk.MustQuery("select @@tidb_opt_tiflash_concurrency_factor").Check(testkit.Rows("24"))
+
+	// test set tidb_allow_mpp
+	tk.MustExec("set @@session.tidb_allow_mpp = 0")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("OFF"))
+	tk.MustExec("set @@session.tidb_allow_mpp = 1")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("ON"))
+	tk.MustExec("set @@session.tidb_allow_mpp = 2")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("ENFORCE"))
+
+	tk.MustExec("set @@session.tidb_allow_mpp = off")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("OFF"))
+	tk.MustExec("set @@session.tidb_allow_mpp = oN")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("ON"))
+	tk.MustExec("set @@session.tidb_allow_mpp = enForcE")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("ENFORCE"))
+
+	tk.MustExec("set @@global.tidb_allow_mpp = faLsE")
+	tk.MustQuery("select @@global.tidb_allow_mpp").Check(testkit.Rows("OFF"))
+	tk.MustExec("set @@global.tidb_allow_mpp = True")
+	tk.MustQuery("select @@global.tidb_allow_mpp").Check(testkit.Rows("ON"))
+
+	err = tk.ExecToErr("set @@global.tidb_allow_mpp = enforceWithTypo")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, `[variable:1231]Variable 'tidb_allow_mpp' can't be set to the value of 'enforceWithTypo'`)
+
+	// test query
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create index idx on t(a)")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	// ban mpp
+	tk.MustExec("set @@session.tidb_allow_mpp = 0")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("OFF"))
+
+	// read from tiflash, batch cop.
+	tk.MustQuery("explain select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1").Check(testkit.Rows(
+		"StreamAgg_20 1.00 root  funcs:count(Column#5)->Column#3",
+		"└─TableReader_21 1.00 root  data:StreamAgg_9",
+		"  └─StreamAgg_9 1.00 batchCop[tiflash]  funcs:count(1)->Column#5",
+		"    └─Selection_19 10.00 batchCop[tiflash]  eq(test.t.a, 1)",
+		"      └─TableFullScan_18 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
+
+	// open mpp
+	tk.MustExec("set @@session.tidb_allow_mpp = 1")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("ON"))
+
+	// should use tikv to index read
+	tk.MustQuery("explain select count(*) from t where a=1;").Check(testkit.Rows(
+		"StreamAgg_30 1.00 root  funcs:count(Column#6)->Column#3",
+		"└─IndexReader_31 1.00 root  index:StreamAgg_10",
+		"  └─StreamAgg_10 1.00 cop[tikv]  funcs:count(1)->Column#6",
+		"    └─IndexRangeScan_29 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"))
+
+	// read from tikv, indexRead
+	tk.MustQuery("explain select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1;").Check(testkit.Rows(
+		"StreamAgg_18 1.00 root  funcs:count(Column#5)->Column#3",
+		"└─IndexReader_19 1.00 root  index:StreamAgg_10",
+		"  └─StreamAgg_10 1.00 cop[tikv]  funcs:count(1)->Column#5",
+		"    └─IndexRangeScan_17 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"))
+
+	// read from tiflash, mpp with large cost
+	tk.MustQuery("explain select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1").Check(testkit.Rows(
+		"HashAgg_21 1.00 root  funcs:count(Column#5)->Column#3",
+		"└─TableReader_23 1.00 root  data:ExchangeSender_22",
+		"  └─ExchangeSender_22 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+		"    └─HashAgg_9 1.00 batchCop[tiflash]  funcs:count(1)->Column#5",
+		"      └─Selection_20 10.00 batchCop[tiflash]  eq(test.t.a, 1)",
+		"        └─TableFullScan_19 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
+
+	// enforce mpp
+	tk.MustExec("set @@session.tidb_allow_mpp = 2")
+	tk.MustQuery("select @@session.tidb_allow_mpp").Check(testkit.Rows("ENFORCE"))
+
+	// should use mpp
+	tk.MustQuery("explain select count(*) from t where a=1;").Check(testkit.Rows(
+		"HashAgg_24 1.00 root  funcs:count(Column#5)->Column#3",
+		"└─TableReader_26 1.00 root  data:ExchangeSender_25",
+		"  └─ExchangeSender_25 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+		"    └─HashAgg_9 1.00 batchCop[tiflash]  funcs:count(1)->Column#5",
+		"      └─Selection_23 10.00 batchCop[tiflash]  eq(test.t.a, 1)",
+		"        └─TableFullScan_22 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
+
+	// read from tikv, indexRead
+	tk.MustQuery("explain select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1;").Check(testkit.Rows(
+		"StreamAgg_18 1.00 root  funcs:count(Column#5)->Column#3",
+		"└─IndexReader_19 1.00 root  index:StreamAgg_10",
+		"  └─StreamAgg_10 1.00 cop[tikv]  funcs:count(1)->Column#5",
+		"    └─IndexRangeScan_17 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"))
+
+	// read from tiflash
+	tk.MustQuery("explain select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1").Check(testkit.Rows(
+		"HashAgg_21 1.00 root  funcs:count(Column#5)->Column#3",
+		"└─TableReader_23 1.00 root  data:ExchangeSender_22",
+		"  └─ExchangeSender_22 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+		"    └─HashAgg_9 1.00 batchCop[tiflash]  funcs:count(1)->Column#5",
+		"      └─Selection_20 10.00 batchCop[tiflash]  eq(test.t.a, 1)",
+		"        └─TableFullScan_19 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
+}

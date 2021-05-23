@@ -2007,10 +2007,16 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		StoreType: kv.TiFlash,
 	}.Init(ctx, t.p.SelectBlockOffset())
 	p.stats = t.p.statsInfo()
-	return &rootTask{
-		p:   p,
-		cst: t.cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor,
+
+	cst := t.cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
+	if p.ctx.GetSessionVars().IsMPPEnforced() {
+		cst = 0
 	}
+	rt := &rootTask{
+		p:   p,
+		cst: cst,
+	}
+	return rt
 }
 
 func (t *mppTask) needEnforce(prop *property.PhysicalProperty) bool {
