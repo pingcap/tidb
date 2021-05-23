@@ -47,9 +47,9 @@ type testIntegrationSuite struct {
 }
 
 func (s *testIntegrationSuite) SetUpSuite(c *C) {
-	//var err error
-	s.testData, _ = testutil.LoadTestSuiteData("testdata", "integration_suite")
-	//c.Assert(err, IsNil)
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "integration_suite")
+	c.Assert(err, IsNil)
 }
 
 func (s *testIntegrationSuite) TearDownSuite(c *C) {
