@@ -800,7 +800,7 @@ type SessionVars struct {
 	PartitionPruneMode atomic2.String
 
 	// TxnScope indicates the scope of the transactions. It should be `global` or equal to `dc-location` in configuration.
-	TxnScope oracle.TxnScope
+	TxnScope kv.TxnScopeVar
 
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
@@ -863,12 +863,12 @@ func (s *SessionVars) IsMPPEnforced() bool {
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
 func (s *SessionVars) CheckAndGetTxnScope() string {
 	if s.InRestrictedSQL {
-		return oracle.GlobalTxnScope
+		return kv.GlobalTxnScope
 	}
-	if s.TxnScope.GetVarValue() == oracle.LocalTxnScope {
+	if s.TxnScope.GetVarValue() == kv.LocalTxnScope {
 		return s.TxnScope.GetTxnScope()
 	}
-	return oracle.GlobalTxnScope
+	return kv.GlobalTxnScope
 }
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
@@ -1055,7 +1055,7 @@ func NewSessionVars() *SessionVars {
 		EnableAlterPlacement:        DefTiDBEnableAlterPlacement,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
-		TxnScope:                    oracle.GetTxnScope(),
+		TxnScope:                    kv.GetTxnScopeVar(),
 		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
 		EnableAsyncCommit:           DefTiDBEnableAsyncCommit,
 		Enable1PC:                   DefTiDBEnable1PC,
