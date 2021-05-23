@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// RegionInfo contains region related information for batchCopTask
 type RegionInfo struct {
 	Region    RegionVerID
 	Meta      *metapb.Region
