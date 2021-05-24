@@ -2332,7 +2332,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			if err != nil {
 				return nil, err
 			}
-			p.StartTS = startTS
+			p.StaleTxnStartTS = startTS
 		}
 	}
 	return p, nil

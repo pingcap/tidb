@@ -706,11 +706,11 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.initCap = chunk.ZeroCapacity
 	e := &SimpleExec{
-		baseExecutor: base,
-		Statement:    v.Statement,
-		IsFromRemote: v.IsFromRemote,
-		is:           b.is,
-		startTS:      v.StartTS,
+		baseExecutor:    base,
+		Statement:       v.Statement,
+		IsFromRemote:    v.IsFromRemote,
+		is:              b.is,
+		staleTxnStartTS: v.StaleTxnStartTS,
 	}
 	return e
 }

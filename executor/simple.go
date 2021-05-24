@@ -72,8 +72,8 @@ type SimpleExec struct {
 	done         bool
 	is           infoschema.InfoSchema
 
-	// startTS is used to execute the staleness txn during a read-only begin statement.
-	startTS uint64
+	// staleTxnStartTS is the StartTS that is used to execute the staleness txn during a read-only begin statement.
+	staleTxnStartTS uint64
 }
 
 func (e *baseExecutor) getSysSession() (sessionctx.Context, error) {
@@ -574,7 +574,7 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 			return expression.ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
 		}
 		if s.AsOf != nil {
-			if err := e.ctx.NewTxnWithStartTS(ctx, e.startTS); err != nil {
+			if err := e.ctx.NewTxnWithStartTS(ctx, e.staleTxnStartTS); err != nil {
 				return err
 			}
 			// With START TRANSACTION, autocommit remains disabled until you end

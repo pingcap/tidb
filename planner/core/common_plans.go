@@ -724,8 +724,8 @@ type Simple struct {
 	//   Used for `global kill`. See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
 	IsFromRemote bool
 
-	// StartTS is used to build a staleness transaction by 'START TRANSACTION READ ONLY' statement.
-	StartTS uint64
+	// StaleTxnStartTS the StartTS that is used to build a staleness transaction by 'START TRANSACTION READ ONLY' statement.
+	StaleTxnStartTS uint64
 }
 
 // PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.
