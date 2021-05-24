@@ -6,7 +6,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// EncodeResourceGroupTag encodes sqlDigest into resource group tag.
+// EncodeResourceGroupTag encodes sql digest and plan digest into resource group tag.
 func EncodeResourceGroupTag(sqlDigest, planDigest *parser.Digest) []byte {
 	if sqlDigest == nil && planDigest == nil {
 		return nil

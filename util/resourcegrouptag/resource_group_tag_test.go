@@ -15,16 +15,16 @@ package resourcegrouptag
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tipb/go-tipb"
 	"math/rand"
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 type testUtilsSuite struct{}
@@ -127,17 +127,34 @@ func (s *testUtilsSuite) TestResourceGroupTagEncodingPB(c *C) {
 
 }
 
+func encodeVarint(b []byte, v int64) []byte {
+	var data [binary.MaxVarintLen64]byte
+	n := binary.PutVarint(data[:], v)
+	return append(b, data[:n]...)
+}
+
+func decodeVarint(b []byte) ([]byte, int64, error) {
+	v, n := binary.Varint(b)
+	if n > 0 {
+		return b[n:], v, nil
+	}
+	if n < 0 {
+		return nil, 0, errors.New("value larger than 64 bits")
+	}
+	return nil, 0, errors.New("insufficient bytes to decode value")
+}
+
 func manualEncodeResourceGroupTag(sqlDigest []byte, planDigest []byte) []byte {
 	buf := make([]byte, 1, len(sqlDigest)+len(planDigest)+8)
 	buf[0] = 1 // version
 	if len(sqlDigest) > 0 {
 		buf = append(buf, 1) // sql digest flag
-		buf = codec.EncodeVarint(buf, int64(len(sqlDigest)))
+		buf = encodeVarint(buf, int64(len(sqlDigest)))
 		buf = append(buf, sqlDigest...)
 	}
 	if len(planDigest) > 0 {
 		buf = append(buf, 2) // plan digest flag
-		buf = codec.EncodeVarint(buf, int64(len(planDigest)))
+		buf = encodeVarint(buf, int64(len(planDigest)))
 		buf = append(buf, planDigest...)
 	}
 	return buf
@@ -154,7 +171,7 @@ func manualDecodeResourceGroupTag(buf []byte) (sqlDigest []byte, planDigest []by
 	var l int64
 	for len(buf) > 0 {
 		flag := buf[0]
-		buf, l, err = codec.DecodeVarint(buf[1:])
+		buf, l, err = decodeVarint(buf[1:])
 		if err != nil {
 			return nil, nil, errors.New("invalid")
 		}

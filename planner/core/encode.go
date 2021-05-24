@@ -16,11 +16,11 @@ package core
 import (
 	"bytes"
 	"crypto/sha256"
-	"github.com/pingcap/parser"
 	"hash"
 	"sync"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/plancodec"
 )

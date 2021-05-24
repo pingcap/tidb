@@ -14,7 +14,6 @@
 package stmtctx
 
 import (
-	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"math"
 	"sort"
 	"strconv"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/resourcegrouptag"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )

@@ -15,13 +15,13 @@ package distsql
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/config"
 	"math"
 	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -244,9 +244,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 			},
 		}
 	}
-	if config.GetGlobalConfig().TopStmt.Enable {
-		builder.SetResourceGroupTag(sv.StmtCtx.GetResourceGroupTag())
-	}
+	builder.SetResourceGroupTag(sv.StmtCtx)
 	return builder
 }
 
@@ -281,8 +279,10 @@ func (builder *RequestBuilder) SetFromInfoSchema(is infoschema.InfoSchema) *Requ
 }
 
 // SetResourceGroupTag sets the request resource group tag.
-func (builder *RequestBuilder) SetResourceGroupTag(tag []byte) *RequestBuilder {
-	builder.Request.ResourceGroupTag = tag
+func (builder *RequestBuilder) SetResourceGroupTag(sc *stmtctx.StatementContext) *RequestBuilder {
+	if config.GetGlobalConfig().TopStmt.Enable {
+		builder.Request.ResourceGroupTag = sc.GetResourceGroupTag()
+	}
 	return builder
 }
 
