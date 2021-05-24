@@ -1374,8 +1374,11 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 	} else if ctx.GetSessionVars().IDAllocator == nil {
 		// Use an independent allocator for global temporary tables.
 		if t.meta.TempTableType == model.TempTableGlobal {
-			alloc := ctx.GetSessionVars().GetTemporaryTable(t.meta).GetAutoIDAllocator()
-			return autoid.Allocators{alloc}
+			if alloc := ctx.GetSessionVars().GetTemporaryTable(t.meta).GetAutoIDAllocator(); alloc != nil {
+				return autoid.Allocators{alloc}
+			}
+			// If the session is not in a txn, for example, in "show create table", use the original allocator.
+			// Otherwise the would be a nil pointer dereference,
 		}
 		return t.allocs
 	}

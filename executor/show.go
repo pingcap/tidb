@@ -775,7 +775,13 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	sqlMode := ctx.GetSessionVars().SQLMode
-	fmt.Fprintf(buf, "CREATE TABLE %s (\n", stringutil.Escape(tableInfo.Name.O, sqlMode))
+	tableName := stringutil.Escape(tableInfo.Name.O, sqlMode)
+	switch tableInfo.TempTableType {
+	case model.TempTableGlobal:
+		fmt.Fprintf(buf, "CREATE /* GLOBAL TEMPORARY */ TABLE %s (\n", tableName)
+	default:
+		fmt.Fprintf(buf, "CREATE TABLE %s (\n", tableName)
+	}
 	var pkCol *model.ColumnInfo
 	var hasAutoIncID bool
 	needAddComma := false
@@ -1009,6 +1015,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	if len(tableInfo.Comment) > 0 {
 		fmt.Fprintf(buf, " COMMENT='%s'", format.OutputFormat(tableInfo.Comment))
 	}
+
+	if tableInfo.TempTableType == model.TempTableGlobal {
+		fmt.Fprintf(buf, " /* ON COMMIT DELETE ROWS */")
+	}
+
 	// add partition info here.
 	appendPartitionInfo(tableInfo.Partition, buf)
 	return nil
