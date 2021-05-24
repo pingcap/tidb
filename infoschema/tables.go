@@ -245,7 +245,7 @@ var tableIDMap = map[string]int64{
 	ClusterTableTiDBTrx:                     autoid.InformationSchemaDBID + 71,
 	TableDeadlocks:                          autoid.InformationSchemaDBID + 72,
 	ClusterTableDeadlocks:                   autoid.InformationSchemaDBID + 73,
-	TableStatementsSummaryEvicted:           autoid.InformationSchemaDBID + 72,
+	TableStatementsSummaryEvicted:           autoid.InformationSchemaDBID + 74,
 }
 
 type columnInfo struct {
