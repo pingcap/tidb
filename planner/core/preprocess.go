@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
@@ -1348,28 +1347,10 @@ func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
 
 	tso := uint64(0)
 	if node != nil {
-		tsRes, err := evalAstExpr(p.ctx, node.TsExpr)
-		if err != nil {
-			p.err = err
+		tso, p.err = calculateTsExpr(p.ctx, node)
+		if p.err != nil {
 			return
 		}
-
-		toTypeTimestamp := types.NewFieldType(mysql.TypeTimestamp)
-		// We need at least the millionsecond here, so set fsp to 3.
-		toTypeTimestamp.Decimal = 3
-		ts, err := tsRes.ConvertTo(p.ctx.GetSessionVars().StmtCtx, toTypeTimestamp)
-		if err != nil {
-			p.err = err
-			return
-		}
-
-		tsTime, err := ts.GetMysqlTime().GoTime(p.ctx.GetSessionVars().TimeZone)
-		if err != nil {
-			p.err = err
-			return
-		}
-
-		tso = oracle.GoTimeToTS(tsTime)
 	}
 	if p.InfoSchema == nil {
 		if tso != 0 {
