@@ -1,3 +1,16 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package stmtsummary
 
 import (
@@ -55,7 +68,7 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 		eEndTime := evictedElement.endTime
 
 		// no record in ssbde.history, direct insert
-		if ssbde.history.Len() == 0 && historySize != 0{
+		if ssbde.history.Len() == 0 && historySize != 0 {
 			record := newStmtSummaryByDigestEvictedElement(eBeginTime, eEndTime)
 			record.addEvicted(evictedKey, evictedElement)
 			ssbde.history.PushFront(record)
@@ -95,7 +108,7 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 		}
 
 		// prevent exceeding history size
-		for ssbde.history.Len() > historySize && ssbde.history.Len() > 0{
+		for ssbde.history.Len() > historySize && ssbde.history.Len() > 0 {
 			ssbde.history.Remove(ssbde.history.Front())
 		}
 	}
