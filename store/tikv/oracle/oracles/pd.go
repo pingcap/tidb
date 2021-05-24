@@ -21,8 +21,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -93,7 +93,7 @@ type tsFuture struct {
 func (f *tsFuture) Wait() (uint64, error) {
 	now := time.Now()
 	physical, logical, err := f.TSFuture.Wait()
-	metrics.TSFutureWaitDuration.Observe(time.Since(now).Seconds())
+	metrics.TiKVTSFutureWaitDuration.Observe(time.Since(now).Seconds())
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -135,7 +135,7 @@ func (o *pdOracle) getTimestamp(ctx context.Context, txnScope string) (uint64, e
 }
 
 func (o *pdOracle) getArrivalTimestamp() uint64 {
-	return oracle.ComposeTS(oracle.GetPhysical(time.Now()), 0)
+	return oracle.GoTimeToTS(time.Now())
 }
 
 func (o *pdOracle) setLastTS(ts uint64, txnScope string) {
@@ -288,7 +288,7 @@ func (o *pdOracle) getStaleTimestamp(txnScope string, prevSecond uint64) (uint64
 
 	staleTime := physicalTime.Add(-arrivalTime.Sub(time.Now().Add(-time.Duration(prevSecond) * time.Second)))
 
-	return oracle.ComposeTS(oracle.GetPhysical(staleTime), 0), nil
+	return oracle.GoTimeToTS(staleTime), nil
 }
 
 // GetStaleTimestamp generate a TSO which represents for the TSO prevSecond secs ago.

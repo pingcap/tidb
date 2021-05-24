@@ -153,6 +153,12 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 				"nest1": "n-value1",
 				"nest2": "n-value2",
 			},
+			// We need hide the follow config
+			// TODO: we need remove it when index usage is GA.
+			"performance": map[string]string{
+				"index-usage-sync-lease": "0s",
+				"INDEX-USAGE-SYNC-LEASE": "0s",
+			},
 		}
 		return configuration, nil
 	}
@@ -164,7 +170,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 
 	// mock servers
 	servers := []string{}
-	for _, typ := range []string{"tidb", "tikv", "pd"} {
+	for _, typ := range []string{"tidb", "tikv", "tiflash", "pd"} {
 		for _, server := range testServers {
 			servers = append(servers, strings.Join([]string{typ, server.address, server.address}, ","))
 		}
@@ -208,6 +214,15 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 	warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(len(warnings), Equals, 0, Commentf("unexpected warnigns: %+v", warnings))
 	c.Assert(requestCounter, Equals, int32(9))
+
+	// TODO: we need remove it when index usage is GA.
+	rs := tk.MustQuery("show config").Rows()
+	for _, r := range rs {
+		s, ok := r[2].(string)
+		c.Assert(ok, IsTrue)
+		c.Assert(strings.Contains(s, "index-usage-sync-lease"), IsFalse)
+		c.Assert(strings.Contains(s, "INDEX-USAGE-SYNC-LEASE"), IsFalse)
+	}
 
 	// type => server index => row
 	rows := map[string][][]string{}
@@ -864,7 +879,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 		},
 	}
 
-	var servers []string
+	var servers = make([]string, 0, len(testServers))
 	for _, s := range testServers {
 		servers = append(servers, strings.Join([]string{s.typ, s.address, s.address}, ","))
 	}

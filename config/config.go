@@ -14,6 +14,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -59,9 +60,9 @@ const (
 	DefHost = "0.0.0.0"
 	// DefStatusHost is the default status host of TiDB
 	DefStatusHost = "0.0.0.0"
-	// Def TableColumnCountLimit is limit of the number of columns in a table
+	// DefTableColumnCountLimit is limit of the number of columns in a table
 	DefTableColumnCountLimit = 1017
-	// Def TableColumnCountLimit is maximum limitation of the number of columns in a table
+	// DefMaxOfTableColumnCountLimit is maximum limitation of the number of columns in a table
 	DefMaxOfTableColumnCountLimit = 4096
 )
 
@@ -72,7 +73,7 @@ var (
 		"tikv":     true,
 		"unistore": true,
 	}
-	// checkTableBeforeDrop enable to execute `admin check table` before `drop table`.
+	// CheckTableBeforeDrop enable to execute `admin check table` before `drop table`.
 	CheckTableBeforeDrop = false
 	// checkBeforeDropLDFlag is a go build flag.
 	checkBeforeDropLDFlag = "None"
@@ -176,6 +177,11 @@ type Config struct {
 	// EnableTCP4Only enables net.Listen("tcp4",...)
 	// Note that: it can make lvs with toa work and thus tidb can get real client ip.
 	EnableTCP4Only bool `toml:"enable-tcp4-only" json:"enable-tcp4-only"`
+	// The client will forward the requests through the follower
+	// if one of the following conditions happens:
+	// 1. there is a network partition problem between TiDB and PD leader.
+	// 2. there is a network partition problem between TiDB and TiKV leader.
+	EnableForwarding bool `toml:"enable-forwarding" json:"enable-forwarding"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -201,6 +207,8 @@ func (c *Config) getTiKVConfig() *tikvcfg.Config {
 		StoresRefreshInterval: c.StoresRefreshInterval,
 		OpenTracingEnable:     c.OpenTracing.Enable,
 		Path:                  c.Path,
+		EnableForwarding:      c.EnableForwarding,
+		TxnScope:              c.Labels["zone"],
 	}
 }
 
@@ -356,6 +364,8 @@ type Security struct {
 	ClusterVerifyCN        []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
 	// If set to "plaintext", the spilled files will not be encrypted.
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
+	// EnableSEM prevents SUPER users from having full access.
+	EnableSEM bool `toml:"enable-sem" json:"enable-sem"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -407,9 +417,10 @@ type Performance struct {
 	TxnEntrySizeLimit     uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
 	TxnTotalSizeLimit     uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
 	TCPKeepAlive          bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
+	TCPNoDelay            bool    `toml:"tcp-no-delay" json:"tcp-no-delay"`
 	CrossJoin             bool    `toml:"cross-join" json:"cross-join"`
 	RunAutoAnalyze        bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
-	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
+	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
 	CommitterConcurrency  int     `toml:"committer-concurrency" json:"committer-concurrency"`
 	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	MemProfileInterval    string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
@@ -528,7 +539,7 @@ type Experimental struct {
 	// Whether enable creating expression index.
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 	// Whether enable global kill.
-	EnableGlobalKill bool `toml:"enable-global-kill" json:"enable-global-kill"`
+	EnableGlobalKill bool `toml:"enable-global-kill" json:"-"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()
@@ -593,6 +604,7 @@ var defaultConf = Config{
 		ServerMemoryQuota:     0,
 		MemoryUsageAlarmRatio: 0.8,
 		TCPKeepAlive:          true,
+		TCPNoDelay:            true,
 		CrossJoin:             true,
 		StatsLease:            "3s",
 		RunAutoAnalyze:        true,
@@ -657,10 +669,12 @@ var defaultConf = Config{
 	EnableGlobalIndex:          false,
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
+		EnableSEM:                   false,
 	},
 	DeprecateIntegerDisplayWidth: false,
 	EnableEnumLengthLimit:        true,
 	StoresRefreshInterval:        defTiKVCfg.StoresRefreshInterval,
+	EnableForwarding:             defTiKVCfg.EnableForwarding,
 }
 
 var (
@@ -700,6 +714,7 @@ var deprecatedConfig = map[string]struct{}{
 	"experimental.allow-auto-random": {},
 	"enable-redact-log":              {}, // use variable tidb_redact_log instead
 	"tikv-client.copr-cache.enable":  {},
+	"alter-primary-key":              {}, // use NONCLUSTERED keyword instead
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -723,7 +738,7 @@ var IsOOMActionSetByUser bool
 // The function enforceCmdArgs is used to merge the config file with command arguments:
 // For example, if you start TiDB by the command "./tidb-server --port=3000", the port number should be
 // overwritten to 3000 and ignore the port number in the config file.
-func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFunc ConfReloadFunc, enforceCmdArgs func(*Config)) {
+func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCmdArgs func(*Config)) {
 	cfg := GetGlobalConfig()
 	var err error
 	if confPath != "" {
@@ -982,3 +997,44 @@ const (
 	OOMActionCancel = "cancel"
 	OOMActionLog    = "log"
 )
+
+// hideConfig is used to filter a single line of config for hiding.
+var hideConfig = []string{
+	"index-usage-sync-lease",
+}
+
+// HideConfig is used to filter the configs that needs to be hidden.
+func HideConfig(s string) string {
+	configs := strings.Split(s, "\n")
+	hideMap := make([]bool, len(configs))
+	for i, c := range configs {
+		for _, hc := range hideConfig {
+			if strings.Contains(c, hc) {
+				hideMap[i] = true
+				break
+			}
+		}
+	}
+	var buf bytes.Buffer
+	for i, c := range configs {
+		if hideMap[i] {
+			continue
+		}
+		if i != 0 {
+			buf.WriteString("\n")
+		}
+		buf.WriteString(c)
+	}
+	return buf.String()
+}
+
+// ContainHiddenConfig checks whether it contains the configuration that needs to be hidden.
+func ContainHiddenConfig(s string) bool {
+	s = strings.ToLower(s)
+	for _, hc := range hideConfig {
+		if strings.Contains(s, hc) {
+			return true
+		}
+	}
+	return false
+}

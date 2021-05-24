@@ -50,7 +50,8 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/store/tikv"
+	storeerr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
@@ -194,8 +195,10 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		}
 	}
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
+	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
-	if cc.ctx.GetSessionVars().EnableTiFlashFallbackTiKV && err != nil && errors.ErrorEqual(err, tikv.ErrTiFlashServerTimeout) && retryable {
+	_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
+	if allowTiFlashFallback && err != nil && errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) && retryable {
 		// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
 		// server and fallback to TiKV.
 		prevErr := err
@@ -210,8 +213,8 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	return err
 }
 
-// The first return value indicates whether the call of executePreparedStmtAndWriteResult has no side effect and can be retried
-// to correct error. Currently the first return value is used to fallback to TiKV when TiFlash is down.
+// The first return value indicates whether the call of executePreparedStmtAndWriteResult has no side effect and can be retried.
+// Currently the first return value is used to fallback to TiKV when TiFlash is down.
 func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []types.Datum, useCursor bool) (bool, error) {
 	rs, err := stmt.Execute(ctx, args)
 	if err != nil {

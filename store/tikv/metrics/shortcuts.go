@@ -87,6 +87,9 @@ var (
 	SecondaryLockCleanupFailureCounterCommit   prometheus.Counter
 	SecondaryLockCleanupFailureCounterRollback prometheus.Counter
 
+	TwoPCTxnCounterOk    prometheus.Counter
+	TwoPCTxnCounterError prometheus.Counter
+
 	AsyncCommitTxnCounterOk    prometheus.Counter
 	AsyncCommitTxnCounterError prometheus.Counter
 
@@ -165,6 +168,9 @@ func initShortcuts() {
 
 	SecondaryLockCleanupFailureCounterCommit = TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit")
 	SecondaryLockCleanupFailureCounterRollback = TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback")
+
+	TwoPCTxnCounterOk = TiKVTwoPCTxnCounter.WithLabelValues("ok")
+	TwoPCTxnCounterError = TiKVTwoPCTxnCounter.WithLabelValues("err")
 
 	AsyncCommitTxnCounterOk = TiKVAsyncCommitTxnCounter.WithLabelValues("ok")
 	AsyncCommitTxnCounterError = TiKVAsyncCommitTxnCounter.WithLabelValues("err")

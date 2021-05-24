@@ -355,7 +355,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrViewSelectClause:                         mysql.Message("View's SELECT contains a '%s' clause", nil),
 	ErrViewSelectVariable:                       mysql.Message("View's SELECT contains a variable or parameter", nil),
 	ErrViewSelectTmptable:                       mysql.Message("View's SELECT refers to a temporary table '%-.192s'", nil),
-	ErrViewWrongList:                            mysql.Message("View's SELECT and view's field list have different column counts", nil),
+	ErrViewWrongList:                            mysql.Message("In definition of view, derived table or common table expression, SELECT list and column names list have different column counts", nil),
 	ErrWarnViewMerge:                            mysql.Message("View merge algorithm can't be used here for now (assumed undefined algorithm)", nil),
 	ErrWarnViewWithoutKey:                       mysql.Message("View being updated does not have complete key of underlying table in it", nil),
 	ErrViewInvalid:                              mysql.Message("View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them", nil),
@@ -399,6 +399,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrViewNoInsertFieldList:                    mysql.Message("Can not insert into join view '%-.192s.%-.192s' without fields list", nil),
 	ErrViewDeleteMergeView:                      mysql.Message("Can not delete from join view '%-.192s.%-.192s'", nil),
 	ErrCannotUser:                               mysql.Message("Operation %s failed for %.256s", nil),
+	ErrGrantRole:                                mysql.Message("Unknown authorization ID %.256s", nil),
 	ErrXaerNota:                                 mysql.Message("XAERNOTA: Unknown XID", nil),
 	ErrXaerInval:                                mysql.Message("XAERINVAL: Invalid arguments (or unsupported command)", nil),
 	ErrXaerRmfail:                               mysql.Message("XAERRMFAIL: The command cannot be executed when global transaction is in the  %.64s state", nil),
@@ -899,6 +900,14 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrFunctionalIndexDataIsTooLong:                          mysql.Message("Data too long for expression index '%s'", nil),
 	ErrFunctionalIndexNotApplicable:                          mysql.Message("Cannot use expression index '%s' due to type or collation conversion", nil),
 	ErrUnsupportedConstraintCheck:                            mysql.Message("%s is not supported", nil),
+	ErrDynamicPrivilegeNotRegistered:                         mysql.Message("Dynamic privilege '%s' is not registered with the server.", nil),
+	ErrIllegalPrivilegeLevel:                                 mysql.Message("Illegal privilege level specified for %s", nil),
+	ErrCTERecursiveRequiresUnion:                             mysql.Message("Recursive Common Table Expression '%s' should contain a UNION", nil),
+	ErrCTERecursiveRequiresNonRecursiveFirst:                 mysql.Message("Recursive Common Table Expression '%s' should have one or more non-recursive query blocks followed by one or more recursive ones", nil),
+	ErrCTERecursiveForbidsAggregation:                        mysql.Message("Recursive Common Table Expression '%s' can contain neither aggregation nor window functions in recursive query block", nil),
+	ErrCTERecursiveForbiddenJoinOrder:                        mysql.Message("In recursive query block of Recursive Common Table Expression '%s', the recursive table must neither be in the right argument of a LEFT JOIN, nor be forced to be non-first with join order hints", nil),
+	ErrInvalidRequiresSingleReference:                        mysql.Message("In recursive query block of Recursive Common Table Expression '%s', the recursive table must be referenced only once, and not in any subquery", nil),
+	ErrCTEMaxRecursionDepth:                                  mysql.Message("Recursive query aborted after %d iterations. Try increasing @@cte_max_recursion_depth to a larger value", nil),
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed:         mysql.Message("Only one DEFAULT partition allowed", nil),
 	ErrWrongPartitionTypeExpectedSystemTime: mysql.Message("Wrong partitioning type, expected type: `SYSTEM_TIME`", nil),
@@ -965,7 +974,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrUnknownTypeLength:          mysql.Message("Unknown length for type %d", nil),
 	ErrUnknownFractionLength:      mysql.Message("Unknown length for type %d and fraction %d", nil),
 	ErrInvalidDDLJobVersion:       mysql.Message("Version %d of DDL job is greater than current one: %d", nil),
-	ErrInvalidSplitRegionRanges:   mysql.Message("Failed to split region ranges", nil),
+	ErrInvalidSplitRegionRanges:   mysql.Message("Failed to split region ranges: %s", nil),
 	ErrReorgPanic:                 mysql.Message("Reorg worker panic", nil),
 	ErrInvalidDDLState:            mysql.Message("Invalid %s state: %v", nil),
 	ErrCancelledDDLJob:            mysql.Message("Cancelled DDL job", nil),
@@ -1017,7 +1026,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBuildExecutor:                       mysql.Message("Failed to build executor", nil),
 	ErrBatchInsertFail:                     mysql.Message("Batch insert failed, please clean the table and try again.", nil),
 	ErrGetStartTS:                          mysql.Message("Can not get start ts", nil),
-	ErrPrivilegeCheckFail:                  mysql.Message("privilege check fail", nil), // this error message should begin lowercased to be compatible with the test
+	ErrPrivilegeCheckFail:                  mysql.Message("privilege check for '%s' fail", nil), // this error message should begin lowercased to be compatible with the test
 	ErrInvalidWildCard:                     mysql.Message("Wildcard fields without any table name appears in wrong place", nil),
 	ErrMixOfGroupFuncAndFieldsIncompatible: mysql.Message("In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by", nil),
 	ErrUnsupportedSecondArgumentType:       mysql.Message("JSON_OBJECTAGG: unsupported second argument type %v", nil),
@@ -1034,6 +1043,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 
 	ErrJSONObjectKeyTooLong:  mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
 	ErrPartitionStatsMissing: mysql.Message("Build table: %s global-level stats failed due to missing partition-level stats", nil),
+	ErrNotSupportedWithSem:   mysql.Message("Feature '%s' is not supported when security enhanced mode is enabled", nil),
 
 	ErrInvalidPlacementSpec:   mysql.Message("Invalid placement policy '%s': %s", nil),
 	ErrPlacementPolicyCheck:   mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),

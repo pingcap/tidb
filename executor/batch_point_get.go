@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -47,6 +47,8 @@ type BatchPointGetExec struct {
 	handles     []kv.Handle
 	physIDs     []int64
 	partPos     int
+	singlePart  bool
+	partTblID   int64
 	idxVals     [][]types.Datum
 	startTS     uint64
 	snapshotTS  uint64
@@ -118,7 +120,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	isStaleness := e.ctx.GetSessionVars().TxnCtx.IsStaleness
 	snapshot.SetOption(kv.IsStalenessReadOnly, isStaleness)
-	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != oracle.GlobalTxnScope {
+	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != kv.GlobalTxnScope {
 		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
@@ -130,11 +132,11 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
 		if e.lock {
-			batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
+			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
 		} else if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) && e.ctx.GetSessionVars().EnablePointGetCache {
 			batchGetter = newCacheBatchGetter(e.ctx, e.tblInfo.ID, snapshot)
 		} else {
-			batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), nil, snapshot)
+			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), nil, snapshot)
 		}
 	}
 	e.snapshot = snapshot
@@ -209,9 +211,16 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			}
 
 			physID := getPhysID(e.tblInfo, idxVals[e.partPos].GetInt64())
+			// If this BatchPointGetExec is built only for the specific table partition, skip those filters not matching this partition.
+			if e.singlePart && e.partTblID != physID {
+				continue
+			}
 			idxKey, err1 := EncodeUniqueIndexKey(e.ctx, e.tblInfo, e.idxInfo, idxVals, physID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
+			}
+			if idxKey == nil {
+				continue
 			}
 			s := hack.String(idxKey)
 			if _, found := dedup[s]; found {
@@ -321,7 +330,8 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		sort.Slice(e.handles, less)
 	}
 
-	keys := make([]kv.Key, len(e.handles))
+	keys := make([]kv.Key, 0, len(e.handles))
+	newHandles := make([]kv.Handle, 0, len(e.handles))
 	for i, handle := range e.handles {
 		var tID int64
 		if len(e.physIDs) > 0 {
@@ -337,9 +347,15 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				tID = getPhysID(e.tblInfo, d.GetInt64())
 			}
 		}
+		// If this BatchPointGetExec is built only for the specific table partition, skip those handles not matching this partition.
+		if e.singlePart && e.partTblID != tID {
+			continue
+		}
 		key := tablecodec.EncodeRowKeyWithHandle(tID, handle)
-		keys[i] = key
+		keys = append(keys, key)
+		newHandles = append(newHandles, handle)
 	}
+	e.handles = newHandles
 
 	var values map[string][]byte
 	// Lock keys (include exists and non-exists keys) before fetch all values for Repeatable Read Isolation.
@@ -400,8 +416,7 @@ func LockKeys(ctx context.Context, seCtx sessionctx.Context, lockWaitTime int64,
 	txnCtx := seCtx.GetSessionVars().TxnCtx
 	lctx := newLockCtx(seCtx.GetSessionVars(), lockWaitTime)
 	if txnCtx.IsPessimistic {
-		lctx.ReturnValues = true
-		lctx.Values = make(map[string]kv.ReturnedValue, len(keys))
+		lctx.InitReturnValues(len(keys))
 	}
 	err := doLockKeys(ctx, seCtx, lctx, keys...)
 	if err != nil {
@@ -411,9 +426,8 @@ func LockKeys(ctx context.Context, seCtx sessionctx.Context, lockWaitTime int64,
 		// When doLockKeys returns without error, no other goroutines access the map,
 		// it's safe to read it without mutex.
 		for _, key := range keys {
-			rv := lctx.Values[string(key)]
-			if !rv.AlreadyLocked {
-				txnCtx.SetPessimisticLockCache(key, rv.Value)
+			if v, ok := lctx.GetValueNotLocked(key); ok {
+				txnCtx.SetPessimisticLockCache(key, v)
 			}
 		}
 	}
@@ -436,7 +450,7 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]
 }
 
 func getPhysID(tblInfo *model.TableInfo, intVal int64) int64 {
-	pi := tblInfo.Partition
+	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return tblInfo.ID
 	}

@@ -62,7 +62,7 @@ func (s *testSuite7) TestStmtLabel(c *C) {
 	for _, tt := range tests {
 		stmtNode, err := parser.New().ParseOneStmt(tt.sql, "", "")
 		c.Check(err, IsNil)
-		is := infoschema.GetInfoSchema(tk.Se)
+		is := tk.Se.GetInfoSchema().(infoschema.InfoSchema)
 		err = plannercore.Preprocess(tk.Se.(sessionctx.Context), stmtNode, is)
 		c.Assert(err, IsNil)
 		_, _, err = planner.Optimize(context.TODO(), tk.Se, stmtNode, is)

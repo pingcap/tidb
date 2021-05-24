@@ -100,7 +100,7 @@ func GetPrewriteValue(ctx sessionctx.Context, createIfNotExists bool) *binlog.Pr
 	vars := ctx.GetSessionVars()
 	v, ok := vars.TxnCtx.Binlog.(*binlog.PrewriteValue)
 	if !ok && createIfNotExists {
-		schemaVer := ctx.GetSessionVars().TxnCtx.SchemaVersion
+		schemaVer := ctx.GetInfoSchema().SchemaMetaVersion()
 		v = &binlog.PrewriteValue{SchemaVersion: schemaVer}
 		vars.TxnCtx.Binlog = v
 	}
@@ -154,17 +154,15 @@ func WaitBinlogRecover(timeout time.Duration) error {
 	defer ticker.Stop()
 	start := time.Now()
 	for {
-		select {
-		case <-ticker.C:
-			if atomic.LoadInt32(&skippedCommitterCounter) == 0 {
-				logutil.BgLogger().Warn("[binloginfo] binlog recovered")
-				return nil
-			}
-			if time.Since(start) > timeout {
-				logutil.BgLogger().Warn("[binloginfo] waiting for binlog recovering timed out",
-					zap.Duration("duration", timeout))
-				return errors.New("timeout")
-			}
+		<-ticker.C
+		if atomic.LoadInt32(&skippedCommitterCounter) == 0 {
+			logutil.BgLogger().Warn("[binloginfo] binlog recovered")
+			return nil
+		}
+		if time.Since(start) > timeout {
+			logutil.BgLogger().Warn("[binloginfo] waiting for binlog recovering timed out",
+				zap.Duration("duration", timeout))
+			return errors.New("timeout")
 		}
 	}
 }

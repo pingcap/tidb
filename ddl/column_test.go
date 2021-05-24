@@ -54,8 +54,7 @@ func (s *testColumnSuite) SetUpSuite(c *C) {
 
 	s.dbInfo = testSchemaInfo(c, d, "test_column")
 	testCreateSchema(c, testNewContext(d), d, s.dbInfo)
-	err := d.Stop()
-	c.Assert(err, IsNil)
+	c.Assert(d.Stop(), IsNil)
 }
 
 func (s *testColumnSuite) TearDownSuite(c *C) {
@@ -1171,8 +1170,6 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 	}{
 		{"int", "bigint", nil},
 		{"int", "int unsigned", errUnsupportedModifyColumn.GenWithStackByArgs("can't change unsigned integer to signed or vice versa, and tidb_enable_change_column_type is false")},
-		{"varchar(10)", "text", nil},
-		{"varbinary(10)", "blob", nil},
 		{"text", "blob", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8mb4 to binary")},
 		{"varchar(10)", "varchar(8)", errUnsupportedModifyColumn.GenWithStackByArgs("length 8 is less than origin 10, and tidb_enable_change_column_type is false")},
 		{"varchar(10)", "varchar(11)", nil},

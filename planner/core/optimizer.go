@@ -20,13 +20,17 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/lock"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	utilhint "github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/set"
@@ -38,6 +42,9 @@ var OptimizeAstNode func(ctx context.Context, sctx sessionctx.Context, node ast.
 
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = atomic.NewBool(true)
+
+// IsReadOnly check whether the ast.Node is a read only statement.
+var IsReadOnly func(node ast.Node, vars *variable.SessionVars) bool
 
 const (
 	flagGcSubstitute uint64 = 1 << iota
@@ -94,9 +101,16 @@ func BuildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Nod
 // CheckPrivilege checks the privilege for a user.
 func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs []visitInfo) error {
 	for _, v := range vs {
-		if !pm.RequestVerification(activeRoles, v.db, v.table, v.column, v.privilege) {
+		if v.privilege == mysql.ExtendedPriv {
+			if !pm.RequestDynamicVerification(activeRoles, v.dynamicPriv, v.dynamicWithGrant) {
+				if v.err == nil {
+					return ErrPrivilegeCheckFail.GenWithStackByArgs(v.dynamicPriv)
+				}
+				return v.err
+			}
+		} else if !pm.RequestVerification(activeRoles, v.db, v.table, v.column, v.privilege) {
 			if v.err == nil {
-				return ErrPrivilegeCheckFail
+				return ErrPrivilegeCheckFail.GenWithStackByArgs(v.privilege.String())
 			}
 			return v.err
 		}
@@ -144,10 +158,36 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	return finalPlan, cost, nil
 }
 
+// mergeContinuousSelections merge continuous selections which may occur after changing plans.
+func mergeContinuousSelections(p PhysicalPlan) {
+	if sel, ok := p.(*PhysicalSelection); ok {
+		for {
+			childSel := sel.children[0]
+			if tmp, ok := childSel.(*PhysicalSelection); ok {
+				sel.Conditions = append(sel.Conditions, tmp.Conditions...)
+				sel.SetChild(0, tmp.children[0])
+			} else {
+				break
+			}
+		}
+	}
+	for _, child := range p.Children() {
+		mergeContinuousSelections(child)
+	}
+	// merge continuous selections in a coprocessor task of tiflash
+	tableReader, isTableReader := p.(*PhysicalTableReader)
+	if isTableReader && tableReader.StoreType == kv.TiFlash {
+		mergeContinuousSelections(tableReader.tablePlan)
+		tableReader.TablePlans = flattenPushDownPlan(tableReader.tablePlan)
+	}
+}
+
 func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	plan = eliminatePhysicalProjection(plan)
 	plan = InjectExtraProjection(plan)
+	mergeContinuousSelections(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
+	plan = eliminateLockForTemporaryTable(plan)
 	plan = enableParallelApply(sctx, plan)
 	return plan
 }
@@ -282,6 +322,29 @@ func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) Physical
 		}
 		return p
 	})
+}
+
+// eliminateLockForTemporaryTable eliminates lock for the temporary table.
+func eliminateLockForTemporaryTable(p PhysicalPlan) PhysicalPlan {
+	iteratePhysicalPlan(p, func(p PhysicalPlan) bool {
+		if len(p.Children()) > 1 {
+			return false
+		}
+		switch x := p.(type) {
+		case *PointGetPlan:
+			if x.TblInfo.TempTableType != model.TempTableNone {
+				x.Lock = false
+				x.LockWaitTime = 0
+			}
+		case *BatchPointGetPlan:
+			if x.TblInfo.TempTableType != model.TempTableNone {
+				x.Lock = false
+				x.LockWaitTime = 0
+			}
+		}
+		return true
+	})
+	return p
 }
 
 func iteratePhysicalPlan(p PhysicalPlan, f func(p PhysicalPlan) bool) {

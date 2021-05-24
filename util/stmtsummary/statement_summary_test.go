@@ -27,9 +27,10 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var _ = Suite(&testStmtSummarySuite{})
@@ -60,6 +61,10 @@ func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	TestingT(t)
 }
+
+const (
+	boTxnLockName = stringutil.StringerStr("txnlock")
+)
 
 // Test stmtSummaryByDigest.AddStatement.
 func (s *testStmtSummarySuite) TestAddStatement(c *C) {
@@ -181,7 +186,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 			CalleeAddress: "202",
 			BackoffTime:   180,
 			RequestCount:  20,
-			CommitDetail: &execdetails.CommitDetails{
+			CommitDetail: &util.CommitDetails{
 				GetCommitTsTime:   500,
 				PrewriteTime:      50000,
 				CommitTime:        5000,
@@ -191,7 +196,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 					sync.Mutex
 					BackoffTypes []fmt.Stringer
 				}{
-					BackoffTypes: []fmt.Stringer{tikv.BoTxnLock},
+					BackoffTypes: []fmt.Stringer{boTxnLockName},
 				},
 				ResolveLockTime:   10000,
 				WriteKeys:         100000,
@@ -199,7 +204,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				PrewriteRegionNum: 100,
 				TxnRetry:          10,
 			},
-			ScanDetail: &execdetails.ScanDetail{
+			ScanDetail: &util.ScanDetail{
 				TotalKeys:                 6000,
 				ProcessedKeys:             1500,
 				RocksdbDeleteSkippedCount: 100,
@@ -208,7 +213,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				RocksdbBlockReadCount:     10,
 				RocksdbBlockReadByte:      1000,
 			},
-			TimeDetail: execdetails.TimeDetail{
+			TimeDetail: util.TimeDetail{
 				ProcessTime: 1500,
 				WaitTime:    150,
 			},
@@ -267,7 +272,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummaryElement.sumTxnRetry += int64(stmtExecInfo2.ExecDetail.CommitDetail.TxnRetry)
 	expectedSummaryElement.maxTxnRetry = stmtExecInfo2.ExecDetail.CommitDetail.TxnRetry
 	expectedSummaryElement.sumBackoffTimes += 1
-	expectedSummaryElement.backoffTypes[tikv.BoTxnLock] = 1
+	expectedSummaryElement.backoffTypes[boTxnLockName] = 1
 	expectedSummaryElement.sumMem += stmtExecInfo2.MemMax
 	expectedSummaryElement.maxMem = stmtExecInfo2.MemMax
 	expectedSummaryElement.sumDisk += stmtExecInfo2.DiskMax
@@ -308,7 +313,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 			CalleeAddress: "302",
 			BackoffTime:   18,
 			RequestCount:  2,
-			CommitDetail: &execdetails.CommitDetails{
+			CommitDetail: &util.CommitDetails{
 				GetCommitTsTime:   50,
 				PrewriteTime:      5000,
 				CommitTime:        500,
@@ -318,7 +323,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 					sync.Mutex
 					BackoffTypes []fmt.Stringer
 				}{
-					BackoffTypes: []fmt.Stringer{tikv.BoTxnLock},
+					BackoffTypes: []fmt.Stringer{boTxnLockName},
 				},
 				ResolveLockTime:   1000,
 				WriteKeys:         10000,
@@ -326,7 +331,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				PrewriteRegionNum: 10,
 				TxnRetry:          1,
 			},
-			ScanDetail: &execdetails.ScanDetail{
+			ScanDetail: &util.ScanDetail{
 				TotalKeys:                 600,
 				ProcessedKeys:             150,
 				RocksdbDeleteSkippedCount: 100,
@@ -335,7 +340,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				RocksdbBlockReadCount:     10,
 				RocksdbBlockReadByte:      1000,
 			},
-			TimeDetail: execdetails.TimeDetail{
+			TimeDetail: util.TimeDetail{
 				ProcessTime: 150,
 				WaitTime:    15,
 			},
@@ -373,7 +378,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummaryElement.sumPrewriteRegionNum += int64(stmtExecInfo3.ExecDetail.CommitDetail.PrewriteRegionNum)
 	expectedSummaryElement.sumTxnRetry += int64(stmtExecInfo3.ExecDetail.CommitDetail.TxnRetry)
 	expectedSummaryElement.sumBackoffTimes += 1
-	expectedSummaryElement.backoffTypes[tikv.BoTxnLock] = 2
+	expectedSummaryElement.backoffTypes[boTxnLockName] = 2
 	expectedSummaryElement.sumMem += stmtExecInfo3.MemMax
 	expectedSummaryElement.sumDisk += stmtExecInfo3.DiskMax
 	expectedSummaryElement.sumAffectedRows += stmtExecInfo3.StmtCtx.AffectedRows()
@@ -564,7 +569,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 			CalleeAddress: "129",
 			BackoffTime:   80,
 			RequestCount:  10,
-			CommitDetail: &execdetails.CommitDetails{
+			CommitDetail: &util.CommitDetails{
 				GetCommitTsTime:   100,
 				PrewriteTime:      10000,
 				CommitTime:        1000,
@@ -574,7 +579,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 					sync.Mutex
 					BackoffTypes []fmt.Stringer
 				}{
-					BackoffTypes: []fmt.Stringer{tikv.BoTxnLock},
+					BackoffTypes: []fmt.Stringer{boTxnLockName},
 				},
 				ResolveLockTime:   2000,
 				WriteKeys:         20000,
@@ -582,7 +587,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 				PrewriteRegionNum: 20,
 				TxnRetry:          2,
 			},
-			ScanDetail: &execdetails.ScanDetail{
+			ScanDetail: &util.ScanDetail{
 				TotalKeys:                 1000,
 				ProcessedKeys:             500,
 				RocksdbDeleteSkippedCount: 100,
@@ -591,7 +596,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 				RocksdbBlockReadCount:     10,
 				RocksdbBlockReadByte:      1000,
 			},
-			TimeDetail: execdetails.TimeDetail{
+			TimeDetail: util.TimeDetail{
 				ProcessTime: 500,
 				WaitTime:    50,
 			},
@@ -649,7 +654,7 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 		stmtExecInfo1.ExecDetail.CommitDetail.WriteSize, stmtExecInfo1.ExecDetail.CommitDetail.WriteSize,
 		stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum, stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 0, 0, 1,
-		"txnLock:1", stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax,
+		fmt.Sprintf("%s:1", boTxnLockName), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax,
 		0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
 		t, t, 0, 0, 0, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL, "plan_digest", ""}
 	match(c, datums[0], expectedDatum...)
@@ -958,12 +963,13 @@ func (s *testStmtSummarySuite) TestGetMoreThanOnceBindableStmt(c *C) {
 func (s *testStmtSummarySuite) TestFormatBackoffTypes(c *C) {
 	backoffMap := make(map[fmt.Stringer]int)
 	c.Assert(formatBackoffTypes(backoffMap), IsNil)
+	bo1 := stringutil.StringerStr("pdrpc")
+	backoffMap[bo1] = 1
+	c.Assert(formatBackoffTypes(backoffMap), Equals, "pdrpc:1")
+	bo2 := stringutil.StringerStr("txnlock")
+	backoffMap[bo2] = 2
 
-	backoffMap[tikv.BoPDRPC] = 1
-	c.Assert(formatBackoffTypes(backoffMap), Equals, "pdRPC:1")
-
-	backoffMap[tikv.BoTxnLock] = 2
-	c.Assert(formatBackoffTypes(backoffMap), Equals, "txnLock:2,pdRPC:1")
+	c.Assert(formatBackoffTypes(backoffMap), Equals, "txnlock:2,pdrpc:1")
 }
 
 // Test refreshing current statement summary periodically.

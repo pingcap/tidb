@@ -176,6 +176,8 @@ var (
 	ErrDropLastPartition = dbterror.ClassDDL.NewStd(mysql.ErrDropLastPartition)
 	// ErrTooManyPartitions returns too many partitions were defined.
 	ErrTooManyPartitions = dbterror.ClassDDL.NewStd(mysql.ErrTooManyPartitions)
+	// ErrPartitionConstDomain returns partition constant is out of partition function domain.
+	ErrPartitionConstDomain = dbterror.ClassDDL.NewStd(mysql.ErrPartitionConstDomain)
 	// ErrPartitionFunctionIsNotAllowed returns this partition function is not allowed.
 	ErrPartitionFunctionIsNotAllowed = dbterror.ClassDDL.NewStd(mysql.ErrPartitionFunctionIsNotAllowed)
 	// ErrPartitionFuncNotAllowed returns partition function returns the wrong type.
@@ -272,4 +274,10 @@ var (
 	ErrUnknownEngine = dbterror.ClassDDL.NewStd(mysql.ErrUnknownStorageEngine)
 
 	errExchangePartitionDisabled = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Exchange Partition is disabled, please set 'tidb_enable_exchange_partition' if you need to need to enable it", nil))
+
+	// ErrPartitionNoTemporary returns when partition at temporary mode
+	ErrPartitionNoTemporary = dbterror.ClassDDL.NewStd(mysql.ErrPartitionNoTemporary)
+
+	errUnsupportedOnCommitPreserve = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support ON COMMIT PRESERVE ROWS for now", nil))
+	errUnsupportedEngineTemporary  = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support this kind of engine for temporary table", nil))
 )

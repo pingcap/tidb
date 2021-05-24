@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -492,12 +491,13 @@ func (s *testSuite5) TestShowTableStatus(c *C) {
 	// It's not easy to test the result contents because every time the test runs, "Create_time" changed.
 	tk.MustExec("show table status;")
 	rs, err := tk.Exec("show table status;")
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	c.Assert(rs, NotNil)
 	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	err = rs.Close()
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Equals, 1)
 
 	for i := range rows {
 		row := rows[i]
@@ -514,10 +514,34 @@ func (s *testSuite5) TestShowTableStatus(c *C) {
 		  partition p2 values less than (maxvalue)
   		);`)
 	rs, err = tk.Exec("show table status from test like 'tp';")
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	c.Assert(rows[0].GetString(16), Equals, "partitioned")
+
+	tk.MustExec("create database UPPER_CASE")
+	tk.MustExec("use UPPER_CASE")
+	tk.MustExec("create table t (i int)")
+	rs, err = tk.Exec("show table status")
+	c.Assert(err, IsNil)
+	c.Assert(rs, NotNil)
+	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(err, IsNil)
+	err = rs.Close()
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Equals, 1)
+
+	tk.MustExec("use upper_case")
+	rs, err = tk.Exec("show table status")
+	c.Assert(err, IsNil)
+	c.Assert(rs, NotNil)
+	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(err, IsNil)
+	err = rs.Close()
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Equals, 1)
+
+	tk.MustExec("drop database UPPER_CASE")
 }
 
 func (s *testSuite5) TestShowSlow(c *C) {
@@ -1025,16 +1049,14 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 	))
 }
 
-func (s *testSerialSuite) TestAutoRandomWithLargeSignedShowTableRegions(c *C) {
+func (s *testSuite5) TestAutoRandomWithLargeSignedShowTableRegions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists auto_random_db;")
 	defer tk.MustExec("drop database if exists auto_random_db;")
 	tk.MustExec("use auto_random_db;")
 	tk.MustExec("drop table if exists t;")
 
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-	tk.MustExec("create table t (a bigint unsigned auto_random primary key);")
+	tk.MustExec("create table t (a bigint unsigned auto_random primary key clustered);")
 	tk.MustExec("set @@global.tidb_scatter_region=1;")
 	// 18446744073709541615 is MaxUint64 - 10000.
 	// 18446744073709551615 is the MaxUint64.
@@ -1080,9 +1102,10 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	res := tk.MustQuery("show builtins;")
 	c.Assert(res, NotNil)
 	rows := res.Rows()
-	c.Assert(267, Equals, len(rows))
+	const builtinFuncNum = 269
+	c.Assert(builtinFuncNum, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
-	c.Assert("yearweek", Equals, rows[266][0].(string))
+	c.Assert("yearweek", Equals, rows[builtinFuncNum-1][0].(string))
 }
 
 func (s *testSuite5) TestShowClusterConfig(c *C) {
@@ -1131,6 +1154,17 @@ func (s *testSuite5) TestInvisibleCoprCacheConfig(c *C) {
 			"\t\t\t\"capacity-mb\": 1000\n" +
 			"\t\t},\n"
 	c.Assert(strings.Contains(configValue, coprCacheVal), Equals, true)
+}
+
+func (s *testSuite5) TestInvisibleGlobalKillConfig(c *C) {
+	se1, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKitWithSession(c, s.store, se1)
+	rows := tk.MustQuery("show variables like '%config%'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	configValue := rows[0][1].(string)
+	globalKillVal := "global-kill"
+	c.Assert(strings.Contains(configValue, globalKillVal), Equals, false)
 }
 
 func (s *testSerialSuite1) TestShowCreateTableWithIntegerDisplayLengthWarnings(c *C) {
@@ -1200,34 +1234,42 @@ func (s *testSerialSuite1) TestShowCreateTableWithIntegerDisplayLengthWarnings(c
 func (s *testSuite5) TestShowVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	var showSQL string
+	sessionVars := make([]string, 0, len(variable.GetSysVars()))
+	globalVars := make([]string, 0, len(variable.GetSysVars()))
 	for _, v := range variable.GetSysVars() {
-		if variable.FilterImplicitFeatureSwitch(v) {
+		if v.Hidden {
 			continue
 		}
-		// When ScopeSession only. `show global variables` must return empty.
+
 		if v.Scope == variable.ScopeSession {
-			showSQL = "show variables like '" + v.Name + "'"
-			res := tk.MustQuery(showSQL)
-			c.Check(res.Rows(), HasLen, 1)
-			showSQL = "show global variables like '" + v.Name + "'"
-			res = tk.MustQuery(showSQL)
-			c.Check(res.Rows(), HasLen, 0)
+			sessionVars = append(sessionVars, v.Name)
 		} else {
-			showSQL = "show global variables like '" + v.Name + "'"
-			res := tk.MustQuery(showSQL)
-			c.Check(res.Rows(), HasLen, 1)
-			showSQL = "show variables like '" + v.Name + "'"
-			res = tk.MustQuery(showSQL)
-			c.Check(res.Rows(), HasLen, 1)
+			globalVars = append(globalVars, v.Name)
 		}
 	}
-	// Test for switch variable which shouldn't seen by users.
-	for _, one := range variable.FeatureSwitchVariables {
-		res := tk.MustQuery("show variables like '" + one + "'")
-		c.Check(res.Rows(), HasLen, 0)
-		res = tk.MustQuery("show global variables like '" + one + "'")
-		c.Check(res.Rows(), HasLen, 0)
-	}
+
+	// When ScopeSession only. `show global variables` must return empty.
+	sessionVarsStr := strings.Join(sessionVars, "','")
+	showSQL = "show variables where variable_name in('" + sessionVarsStr + "')"
+	res := tk.MustQuery(showSQL)
+	c.Check(res.Rows(), HasLen, len(sessionVars))
+	showSQL = "show global variables where variable_name in('" + sessionVarsStr + "')"
+	res = tk.MustQuery(showSQL)
+	c.Check(res.Rows(), HasLen, 0)
+
+	globalVarsStr := strings.Join(globalVars, "','")
+	showSQL = "show variables where variable_name in('" + globalVarsStr + "')"
+	res = tk.MustQuery(showSQL)
+	c.Check(res.Rows(), HasLen, len(globalVars))
+	showSQL = "show global variables where variable_name in('" + globalVarsStr + "')"
+	res = tk.MustQuery(showSQL)
+	c.Check(res.Rows(), HasLen, len(globalVars))
+
+	// Test a known hidden variable.
+	res = tk.MustQuery("show variables like '" + variable.TiDBPartitionPruneMode + "'")
+	c.Check(res.Rows(), HasLen, 0)
+	res = tk.MustQuery("show global variables like '" + variable.TiDBPartitionPruneMode + "'")
+	c.Check(res.Rows(), HasLen, 0)
 }
 
 func (s *testSuite5) TestIssue19507(c *C) {
@@ -1235,20 +1277,20 @@ func (s *testSuite5) TestIssue19507(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t2(a int primary key, b int unique, c int not null, unique index (c));")
 	tk.MustQuery("SHOW INDEX IN t2;").Check(
-		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|NULL",
-			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
-			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL"))
+		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|NULL|YES",
+			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL|NO",
+			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL|NO"))
 
 	tk.MustExec("CREATE INDEX t2_b_c_index ON t2 (b, c);")
 	tk.MustExec("CREATE INDEX t2_c_b_index ON t2 (c, b);")
 	tk.MustQuery("SHOW INDEX IN t2;").Check(
-		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|NULL",
-			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
-			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL",
-			"t2|1|t2_b_c_index|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL",
-			"t2|1|t2_b_c_index|2|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
-			"t2|1|t2_c_b_index|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
-			"t2|1|t2_c_b_index|2|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL"))
+		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|NULL|YES",
+			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL|NO",
+			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL|NO",
+			"t2|1|t2_b_c_index|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL|NO",
+			"t2|1|t2_b_c_index|2|c|A|0|<nil>|<nil>||BTREE|||YES|NULL|NO",
+			"t2|1|t2_c_b_index|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL|NO",
+			"t2|1|t2_c_b_index|2|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL|NO"))
 }
 
 // TestShowPerformanceSchema tests for Issue 19231
@@ -1258,6 +1300,6 @@ func (s *testSuite5) TestShowPerformanceSchema(c *C) {
 	// However, its not possible to create a new performance_schema table since its a special in memory table.
 	// Instead the test below uses the default index on the table.
 	tk.MustQuery("SHOW INDEX FROM performance_schema.events_statements_summary_by_digest").Check(
-		testkit.Rows("events_statements_summary_by_digest 0 SCHEMA_NAME 1 SCHEMA_NAME A 0 <nil> <nil> YES BTREE   YES NULL",
-			"events_statements_summary_by_digest 0 SCHEMA_NAME 2 DIGEST A 0 <nil> <nil> YES BTREE   YES NULL"))
+		testkit.Rows("events_statements_summary_by_digest 0 SCHEMA_NAME 1 SCHEMA_NAME A 0 <nil> <nil> YES BTREE   YES NULL NO",
+			"events_statements_summary_by_digest 0 SCHEMA_NAME 2 DIGEST A 0 <nil> <nil> YES BTREE   YES NULL NO"))
 }

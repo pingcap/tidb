@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util"
@@ -68,6 +69,10 @@ type testSuite struct {
 
 type mockSessionManager struct {
 	PS []*util.ProcessInfo
+}
+
+func (msm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
+	panic("unimplemented!")
 }
 
 func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
@@ -249,108 +254,108 @@ var testSQLs = []struct {
 		overlaySQL:  "binding for select * from t where i>99 using select * from t use index(index_t) where i>99",
 		querySQL:    "select * from t where i          >      30.0",
 		originSQL:   "select * from `test` . `t` where `i` > ?",
-		bindSQL:     "SELECT * FROM test.t USE INDEX (index_t) WHERE i > 99",
+		bindSQL:     "SELECT * FROM `test`.`t` USE INDEX (`index_t`) WHERE `i` > 99",
 		dropSQL:     "binding for select * from t where i>100",
-		memoryUsage: float64(118),
+		memoryUsage: float64(126),
 	},
 	{
 		createSQL:   "binding for select * from t union all select * from t using select * from t use index(index_t) union all select * from t use index()",
 		overlaySQL:  "",
 		querySQL:    "select * from t union all         select * from t",
 		originSQL:   "select * from `test` . `t` union all select * from `test` . `t`",
-		bindSQL:     "SELECT * FROM test.t USE INDEX (index_t) UNION ALL SELECT * FROM test.t USE INDEX ()",
+		bindSQL:     "SELECT * FROM `test`.`t` USE INDEX (`index_t`) UNION ALL SELECT * FROM `test`.`t` USE INDEX ()",
 		dropSQL:     "binding for select * from t union all select * from t",
-		memoryUsage: float64(172),
+		memoryUsage: float64(182),
 	},
 	{
 		createSQL:   "binding for (select * from t) union all (select * from t) using (select * from t use index(index_t)) union all (select * from t use index())",
 		overlaySQL:  "",
 		querySQL:    "(select * from t) union all         (select * from t)",
 		originSQL:   "( select * from `test` . `t` ) union all ( select * from `test` . `t` )",
-		bindSQL:     "(SELECT * FROM test.t USE INDEX (index_t)) UNION ALL (SELECT * FROM test.t USE INDEX ())",
+		bindSQL:     "(SELECT * FROM `test`.`t` USE INDEX (`index_t`)) UNION ALL (SELECT * FROM `test`.`t` USE INDEX ())",
 		dropSQL:     "binding for (select * from t) union all (select * from t)",
-		memoryUsage: float64(184),
+		memoryUsage: float64(194),
 	},
 	{
 		createSQL:   "binding for select * from t intersect select * from t using select * from t use index(index_t) intersect select * from t use index()",
 		overlaySQL:  "",
 		querySQL:    "select * from t intersect         select * from t",
 		originSQL:   "select * from `test` . `t` intersect select * from `test` . `t`",
-		bindSQL:     "SELECT * FROM test.t USE INDEX (index_t) INTERSECT SELECT * FROM test.t USE INDEX ()",
+		bindSQL:     "SELECT * FROM `test`.`t` USE INDEX (`index_t`) INTERSECT SELECT * FROM `test`.`t` USE INDEX ()",
 		dropSQL:     "binding for select * from t intersect select * from t",
-		memoryUsage: float64(172),
+		memoryUsage: float64(182),
 	},
 	{
 		createSQL:   "binding for select * from t except select * from t using select * from t use index(index_t) except select * from t use index()",
 		overlaySQL:  "",
 		querySQL:    "select * from t except         select * from t",
 		originSQL:   "select * from `test` . `t` except select * from `test` . `t`",
-		bindSQL:     "SELECT * FROM test.t USE INDEX (index_t) EXCEPT SELECT * FROM test.t USE INDEX ()",
+		bindSQL:     "SELECT * FROM `test`.`t` USE INDEX (`index_t`) EXCEPT SELECT * FROM `test`.`t` USE INDEX ()",
 		dropSQL:     "binding for select * from t except select * from t",
-		memoryUsage: float64(166),
+		memoryUsage: float64(176),
 	},
 	{
 		createSQL:   "binding for select * from t using select /*+ use_index(t,index_t)*/ * from t",
 		overlaySQL:  "",
 		querySQL:    "select * from t ",
 		originSQL:   "select * from `test` . `t`",
-		bindSQL:     "SELECT /*+ use_index(t index_t)*/ * FROM test.t",
+		bindSQL:     "SELECT /*+ use_index(`t` `index_t`)*/ * FROM `test`.`t`",
 		dropSQL:     "binding for select * from t",
-		memoryUsage: float64(98),
+		memoryUsage: float64(106),
 	},
 	{
 		createSQL:   "binding for delete from t where i = 1 using delete /*+ use_index(t,index_t) */ from t where i = 1",
 		overlaySQL:  "",
 		querySQL:    "delete    from t where   i = 2",
 		originSQL:   "delete from `test` . `t` where `i` = ?",
-		bindSQL:     "DELETE /*+ use_index(t index_t)*/ FROM test.t WHERE i = 1",
+		bindSQL:     "DELETE /*+ use_index(`t` `index_t`)*/ FROM `test`.`t` WHERE `i` = 1",
 		dropSQL:     "binding for delete from t where i = 1",
-		memoryUsage: float64(120),
+		memoryUsage: float64(130),
 	},
 	{
 		createSQL:   "binding for delete t, t1 from t inner join t1 on t.s = t1.s where t.i = 1 using delete /*+ use_index(t,index_t), hash_join(t,t1) */ t, t1 from t inner join t1 on t.s = t1.s where t.i = 1",
 		overlaySQL:  "",
 		querySQL:    "delete t,   t1 from t inner join t1 on t.s = t1.s  where   t.i = 2",
 		originSQL:   "delete `test` . `t` , `test` . `t1` from `test` . `t` join `test` . `t1` on `t` . `s` = `t1` . `s` where `t` . `i` = ?",
-		bindSQL:     "DELETE /*+ use_index(t index_t) hash_join(t, t1)*/ test.t,test.t1 FROM test.t JOIN test.t1 ON t.s = t1.s WHERE t.i = 1",
+		bindSQL:     "DELETE /*+ use_index(`t` `index_t`) hash_join(`t`, `t1`)*/ `test`.`t`,`test`.`t1` FROM `test`.`t` JOIN `test`.`t1` ON `t`.`s` = `t1`.`s` WHERE `t`.`i` = 1",
 		dropSQL:     "binding for delete t, t1 from t inner join t1 on t.s = t1.s where t.i = 1",
-		memoryUsage: float64(261),
+		memoryUsage: float64(297),
 	},
 	{
 		createSQL:   "binding for update t set s = 'a' where i = 1 using update /*+ use_index(t,index_t) */ t set s = 'a' where i = 1",
 		overlaySQL:  "",
 		querySQL:    "update   t  set s='b' where i=2",
 		originSQL:   "update `test` . `t` set `s` = ? where `i` = ?",
-		bindSQL:     "UPDATE /*+ use_index(t index_t)*/ test.t SET s='a' WHERE i = 1",
+		bindSQL:     "UPDATE /*+ use_index(`t` `index_t`)*/ `test`.`t` SET `s`='a' WHERE `i` = 1",
 		dropSQL:     "binding for update t set s = 'a' where i = 1",
-		memoryUsage: float64(132),
+		memoryUsage: float64(144),
 	},
 	{
 		createSQL:   "binding for update t, t1 set t.s = 'a' where t.i = t1.i using update /*+ inl_join(t1) */ t, t1 set t.s = 'a' where t.i = t1.i",
 		overlaySQL:  "",
 		querySQL:    "update   t  , t1 set t.s='b' where t.i=t1.i",
 		originSQL:   "update ( `test` . `t` ) join `test` . `t1` set `t` . `s` = ? where `t` . `i` = `t1` . `i`",
-		bindSQL:     "UPDATE /*+ inl_join(t1)*/ (test.t) JOIN test.t1 SET t.s='a' WHERE t.i = t1.i",
+		bindSQL:     "UPDATE /*+ inl_join(`t1`)*/ (`test`.`t`) JOIN `test`.`t1` SET `t`.`s`='a' WHERE `t`.`i` = `t1`.`i`",
 		dropSQL:     "binding for update t, t1 set t.s = 'a' where t.i = t1.i",
-		memoryUsage: float64(190),
+		memoryUsage: float64(212),
 	},
 	{
 		createSQL:   "binding for insert into t1 select * from t where t.i = 1 using insert into t1 select /*+ use_index(t,index_t) */ * from t where t.i = 1",
 		overlaySQL:  "",
 		querySQL:    "insert  into   t1 select * from t where t.i  = 2",
 		originSQL:   "insert into `test` . `t1` select * from `test` . `t` where `t` . `i` = ?",
-		bindSQL:     "INSERT INTO test.t1 SELECT /*+ use_index(t index_t)*/ * FROM test.t WHERE t.i = 1",
+		bindSQL:     "INSERT INTO `test`.`t1` SELECT /*+ use_index(`t` `index_t`)*/ * FROM `test`.`t` WHERE `t`.`i` = 1",
 		dropSQL:     "binding for insert into t1 select * from t where t.i = 1",
-		memoryUsage: float64(178),
+		memoryUsage: float64(194),
 	},
 	{
 		createSQL:   "binding for replace into t1 select * from t where t.i = 1 using replace into t1 select /*+ use_index(t,index_t) */ * from t where t.i = 1",
 		overlaySQL:  "",
 		querySQL:    "replace  into   t1 select * from t where t.i  = 2",
 		originSQL:   "replace into `test` . `t1` select * from `test` . `t` where `t` . `i` = ?",
-		bindSQL:     "REPLACE INTO test.t1 SELECT /*+ use_index(t index_t)*/ * FROM test.t WHERE t.i = 1",
+		bindSQL:     "REPLACE INTO `test`.`t1` SELECT /*+ use_index(`t` `index_t`)*/ * FROM `test`.`t` WHERE `t`.`i` = 1",
 		dropSQL:     "binding for replace into t1 select * from t where t.i = 1",
-		memoryUsage: float64(180),
+		memoryUsage: float64(196),
 	},
 }
 
@@ -655,7 +660,7 @@ func (s *testSuite) TestBindingSymbolList(c *C) {
 	c.Assert(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select `a` , `b` from `test` . `t` where `a` = ? limit ...")
 	bind := bindData.Bindings[0]
-	c.Check(bind.BindSQL, Equals, "SELECT a,b FROM test.t USE INDEX (ib) WHERE a = 1 LIMIT 0,1")
+	c.Check(bind.BindSQL, Equals, "SELECT `a`,`b` FROM `test`.`t` USE INDEX (`ib`) WHERE `a` = 1 LIMIT 0,1")
 	c.Check(bindData.Db, Equals, "test")
 	c.Check(bind.Status, Equals, "using")
 	c.Check(bind.Charset, NotNil)
@@ -743,7 +748,7 @@ func (s *testSuite) TestBestPlanInBaselines(c *C) {
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select `a` , `b` from `test` . `t` where `a` = ? limit ...")
 	bind := bindData.Bindings[0]
-	c.Check(bind.BindSQL, Equals, "SELECT /*+ use_index(@sel_1 test.t ia)*/ a,b FROM test.t WHERE a = 1 LIMIT 0,1")
+	c.Check(bind.BindSQL, Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `ia`)*/ `a`,`b` FROM `test`.`t` WHERE `a` = 1 LIMIT 0,1")
 	c.Check(bindData.Db, Equals, "test")
 	c.Check(bind.Status, Equals, "using")
 
@@ -775,7 +780,7 @@ func (s *testSuite) TestErrorBind(c *C) {
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from `test` . `t` where `i` > ?")
 	bind := bindData.Bindings[0]
-	c.Check(bind.BindSQL, Equals, "SELECT * FROM test.t USE INDEX (index_t) WHERE i > 100")
+	c.Check(bind.BindSQL, Equals, "SELECT * FROM `test`.`t` USE INDEX (`index_t`) WHERE `i` > 100")
 	c.Check(bindData.Db, Equals, "test")
 	c.Check(bind.Status, Equals, "using")
 	c.Check(bind.Charset, NotNil)
@@ -913,13 +918,13 @@ func (s *testSuite) TestDMLCapturePlanBaseline(c *C) {
 	rows = tk.MustQuery("show global bindings").Sort().Rows()
 	c.Assert(len(rows), Equals, 4)
 	c.Assert(rows[0][0], Equals, "delete from `test` . `t` where `b` = ? and `c` > ?")
-	c.Assert(rows[0][1], Equals, "DELETE /*+ use_index(@`del_1` `test`.`t` `idx_b`)*/ FROM `test`.`t` WHERE `b`=1 AND `c`>1")
+	c.Assert(rows[0][1], Equals, "DELETE /*+ use_index(@`del_1` `test`.`t` `idx_b`)*/ FROM `test`.`t` WHERE `b` = 1 AND `c` > 1")
 	c.Assert(rows[1][0], Equals, "insert into `test` . `t1` select * from `test` . `t` where `t` . `b` = ? and `t` . `c` > ?")
-	c.Assert(rows[1][1], Equals, "INSERT INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b`=1 AND `t`.`c`>1")
+	c.Assert(rows[1][1], Equals, "INSERT INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b` = 1 AND `t`.`c` > 1")
 	c.Assert(rows[2][0], Equals, "replace into `test` . `t1` select * from `test` . `t` where `t` . `b` = ? and `t` . `c` > ?")
-	c.Assert(rows[2][1], Equals, "REPLACE INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b`=1 AND `t`.`c`>1")
+	c.Assert(rows[2][1], Equals, "REPLACE INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b` = 1 AND `t`.`c` > 1")
 	c.Assert(rows[3][0], Equals, "update `test` . `t` set `a` = ? where `b` = ? and `c` > ?")
-	c.Assert(rows[3][1], Equals, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx_b`)*/ `test`.`t` SET `a`=1 WHERE `b`=1 AND `c`>1")
+	c.Assert(rows[3][1], Equals, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx_b`)*/ `test`.`t` SET `a`=1 WHERE `b` = 1 AND `c` > 1")
 }
 
 func (s *testSuite) TestCapturePlanBaseline(c *C) {
@@ -948,7 +953,7 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` > ?")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a`>10")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` > 10")
 }
 
 func (s *testSuite) TestCaptureDBCaseSensitivity(c *C) {
@@ -968,7 +973,7 @@ func (s *testSuite) TestCaptureDBCaseSensitivity(c *C) {
 	// so there would be no new binding captured.
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(t )*/ * FROM SPM.t")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(`t` )*/ * FROM `SPM`.`t`")
 	c.Assert(rows[0][8], Equals, "manual")
 }
 
@@ -1104,7 +1109,7 @@ func (s *testSuite) TestCapturePreparedStmt(c *C) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `b` = ? and `c` > ?")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b`=? AND `c`>?")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b` = ? AND `c` > ?")
 
 	c.Assert(tk.MustUseIndex("select /*+ use_index(t,idx_b) */ * from t where b = 1 and c > 1", "idx_c(c)"), IsTrue)
 	tk.MustExec("admin flush bindings")
@@ -1112,7 +1117,7 @@ func (s *testSuite) TestCapturePreparedStmt(c *C) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `b` = ? and `c` > ?")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b`=? AND `c`>?")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b` = ? AND `c` > ?")
 }
 
 func (s *testSuite) TestDropSingleBindings(c *C) {
@@ -1129,11 +1134,11 @@ func (s *testSuite) TestDropSingleBindings(c *C) {
 	// The size of bindings is equal to one. Because for one normalized sql,
 	// the `create binding` clears all the origin bindings.
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][1], Equals, "SELECT * FROM test.t USE INDEX (idx_b)")
+	c.Assert(rows[0][1], Equals, "SELECT * FROM `test`.`t` USE INDEX (`idx_b`)")
 	tk.MustExec("drop binding for select * from t using select * from t use index(idx_a)")
 	rows = tk.MustQuery("show bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][1], Equals, "SELECT * FROM test.t USE INDEX (idx_b)")
+	c.Assert(rows[0][1], Equals, "SELECT * FROM `test`.`t` USE INDEX (`idx_b`)")
 	tk.MustExec("drop table t")
 	tk.MustExec("drop binding for select * from t using select * from t use index(idx_b)")
 	rows = tk.MustQuery("show bindings").Rows()
@@ -1147,11 +1152,11 @@ func (s *testSuite) TestDropSingleBindings(c *C) {
 	// The size of bindings is equal to one. Because for one normalized sql,
 	// the `create binding` clears all the origin bindings.
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][1], Equals, "SELECT * FROM test.t USE INDEX (idx_b)")
+	c.Assert(rows[0][1], Equals, "SELECT * FROM `test`.`t` USE INDEX (`idx_b`)")
 	tk.MustExec("drop global binding for select * from t using select * from t use index(idx_a)")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][1], Equals, "SELECT * FROM test.t USE INDEX (idx_b)")
+	c.Assert(rows[0][1], Equals, "SELECT * FROM `test`.`t` USE INDEX (`idx_b`)")
 	tk.MustExec("drop table t")
 	tk.MustExec("drop global binding for select * from t using select * from t use index(idx_b)")
 	rows = tk.MustQuery("show global bindings").Rows()
@@ -1234,12 +1239,12 @@ func (s *testSuite) TestAddEvolveTasks(c *C) {
 	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0")
+	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0")
 	c.Assert(rows[1][3], Equals, "pending verify")
 	tk.MustExec("admin evolve bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0")
+	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0")
 	status := rows[1][3].(string)
 	c.Assert(status == "using" || status == "rejected", IsTrue)
 }
@@ -1258,7 +1263,7 @@ func (s *testSuite) TestRuntimeHintsInEvolveTasks(c *C) {
 	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0") // MAX_EXECUTION_TIME is ignored
+	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0") // MAX_EXECUTION_TIME is ignored
 
 	s.cleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 and c = 0 using select /*+ MAX_EXECUTION_TIME(5000) */* from t use index(idx_a) where a >= 1 and b >= 1 and c = 0")
@@ -1266,7 +1271,7 @@ func (s *testSuite) TestRuntimeHintsInEvolveTasks(c *C) {
 	tk.MustExec("admin flush bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000)*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0")
+	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0")
 }
 
 func (s *testSuite) TestBindingCache(c *C) {
@@ -1450,7 +1455,7 @@ func (s *testSuite) TestEvolveInvalidBindings(c *C) {
 	tk.MustExec("insert into mysql.bind_info values('select * from test . t where a > ?', 'SELECT /*+ USE_INDEX(t,idx_a) */ * FROM test.t WHERE a > 10', 'test', 'rejected', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
 		bindinfo.Manual + "')")
 	tk.MustQuery("select bind_sql, status from mysql.bind_info where source != 'builtin'").Sort().Check(testkit.Rows(
-		"SELECT /*+ USE_INDEX(t )*/ * FROM test.t WHERE a > 10 using",
+		"SELECT /*+ USE_INDEX(`t` )*/ * FROM `test`.`t` WHERE `a` > 10 using",
 		"SELECT /*+ USE_INDEX(t,idx_a) */ * FROM test.t WHERE a > 10 rejected",
 	))
 	// Reload cache from mysql.bind_info.
@@ -1463,7 +1468,7 @@ func (s *testSuite) TestEvolveInvalidBindings(c *C) {
 	rows := tk.MustQuery("show global bindings").Sort().Rows()
 	c.Assert(len(rows), Equals, 2)
 	// Make sure this "using" binding is not overrided.
-	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(t )*/ * FROM test.t WHERE a > 10")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(`t` )*/ * FROM `test`.`t` WHERE `a` > 10")
 	status := rows[0][3].(string)
 	c.Assert(status == "using", IsTrue)
 	c.Assert(rows[1][1], Equals, "SELECT /*+ USE_INDEX(t,idx_a) */ * FROM test.t WHERE a > 10")
@@ -1661,7 +1666,7 @@ func (s *testSuite) TestNotEvolvePlanForReadStorageHint(c *C) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	// None evolve task, because of the origin binding is a read_from_storage binding.
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][1], Equals, "SELECT /*+ read_from_storage(tiflash[t])*/ * FROM test.t WHERE a >= 1 AND b >= 1")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ read_from_storage(tiflash[`t`])*/ * FROM `test`.`t` WHERE `a` >= 1 AND `b` >= 1")
 	c.Assert(rows[0][3], Equals, "using")
 }
 
@@ -1714,7 +1719,7 @@ func (s *testSuite) TestReCreateBindAfterEvolvePlan(c *C) {
 	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a`>=0 AND `b`>=0")
+	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` >= 0 AND `b` >= 0")
 	c.Assert(rows[1][3], Equals, "pending verify")
 
 	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 using select * from t use index(idx_b) where a >= 1 and b >= 1")
@@ -1914,8 +1919,8 @@ func (s *testSuite) TestCapturedBindingCharset(c *C) {
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "update `test` . `t` set `name` = (_charset) ? where `name` <= (_charset) ?")
-	c.Assert(rows[0][1], Equals, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx`)*/ `test`.`t` SET `name`=_ASCII'hello' WHERE `name`<=_ASCII'abc'")
+	c.Assert(rows[0][0], Equals, "update `test` . `t` set `name` = ? where `name` <= ?")
+	c.Assert(rows[0][1], Equals, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx`)*/ `test`.`t` SET `name`='hello' WHERE `name` <= 'abc'")
 	// Charset and Collation are empty now, they are not used currently.
 	c.Assert(rows[0][6], Equals, "")
 	c.Assert(rows[0][7], Equals, "")
@@ -1958,7 +1963,7 @@ func (s *testSuite) TestUpdateSubqueryCapture(c *C) {
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	bindSQL := "UPDATE /*+ use_index(@`upd_1` `test`.`t1` `idx_b`), use_index(@`sel_1` `test`.`t2` ), hash_join(@`upd_1` `test`.`t1`), use_index(@`sel_2` `test`.`t2` )*/ `test`.`t1` SET `b`=1 WHERE `b`=2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b`=1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b`=1))"
+	bindSQL := "UPDATE /*+ use_index(@`upd_1` `test`.`t1` `idx_b`), use_index(@`sel_1` `test`.`t2` ), hash_join(@`upd_1` `test`.`t1`), use_index(@`sel_2` `test`.`t2` )*/ `test`.`t1` SET `b`=1 WHERE `b` = 2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1))"
 	c.Assert(rows[0][1], Equals, bindSQL)
 	tk.MustExec(bindSQL)
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
@@ -1984,7 +1989,7 @@ func (s *testSuite) TestIssue20417(c *C) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t`")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(t idxb)*/ * FROM test.t")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(`t` `idxb`)*/ * FROM `test`.`t`")
 	c.Assert(tk.MustUseIndex("select * from t", "idxb(b)"), IsTrue)
 	c.Assert(tk.MustUseIndex("select * from test.t", "idxb(b)"), IsTrue)
 
@@ -2004,7 +2009,7 @@ func (s *testSuite) TestIssue20417(c *C) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `b` = ? and `c` = ?")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxb`)*/ * FROM `test`.`t` WHERE `b`=2 AND `c`=213124")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxb`)*/ * FROM `test`.`t` WHERE `b` = 2 AND `c` = 213124")
 	tk.MustExec("set @@tidb_capture_plan_baselines = off")
 
 	// Test for evolve baseline
@@ -2014,20 +2019,20 @@ func (s *testSuite) TestIssue20417(c *C) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `c` = ?")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@sel_1 test.t idxb)*/ * FROM test.t WHERE c = 3924541")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxb`)*/ * FROM `test`.`t` WHERE `c` = 3924541")
 	tk.MustExec("select /*+ use_index(t idxc)*/ * from t where c=3924541")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idxb")
 	tk.MustExec("admin flush bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
 	c.Assert(rows[1][0], Equals, "select * from `test` . `t` where `c` = ?")
-	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`), use_index(`t` `idxc`)*/ * FROM `test`.`t` WHERE `c`=3924541")
+	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`), use_index(`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541")
 	c.Assert(rows[1][3], Equals, "pending verify")
 	tk.MustExec("admin evolve bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
 	c.Assert(rows[1][0], Equals, "select * from `test` . `t` where `c` = ?")
-	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`), use_index(`t` `idxc`)*/ * FROM `test`.`t` WHERE `c`=3924541")
+	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`), use_index(`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541")
 	status := rows[1][3].(string)
 	c.Assert(status == "using" || status == "rejected", IsTrue)
 	tk.MustExec("set @@tidb_evolve_plan_baselines=0")
@@ -2078,4 +2083,17 @@ func (s *testSuite) TestSPMWithoutUseDatabase(c *C) {
 	c.Assert(tk1.MustUseIndex("select * from test.t", "a"), IsTrue)
 	tk1.MustExec("select * from test.t")
 	tk1.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("1"))
+}
+
+func (s *testSuite) TestBindingWithoutCharset(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10) CHARACTER SET utf8)")
+	tk.MustExec("create global binding for select * from t where a = 'aa' using select * from t where a = 'aa'")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` = ?")
+	c.Assert(rows[0][1], Equals, "SELECT * FROM `test`.`t` WHERE `a` = 'aa'")
 }

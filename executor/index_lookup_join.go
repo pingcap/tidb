@@ -95,6 +95,7 @@ type innerCtx struct {
 	readerBuilder *dataReaderBuilder
 	rowTypes      []*types.FieldType
 	keyCols       []int
+	keyColIDs     []int64 // the original ID in its table, used by dynamic partition pruning
 	hashCols      []int
 	colLens       []int
 	hasPrefixCol  bool
@@ -472,9 +473,10 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 }
 
 type indexJoinLookUpContent struct {
-	keys    []types.Datum
-	row     chunk.Row
-	keyCols []int
+	keys      []types.Datum
+	row       chunk.Row
+	keyCols   []int
+	keyColIDs []int64 // the original ID in its table, used by dynamic partition pruning
 }
 
 func (iw *innerWorker) handleTask(ctx context.Context, task *lookUpJoinTask) error {
@@ -525,21 +527,27 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 			keyBuf = keyBuf[:0]
 			keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx, keyBuf, dHashKey...)
 			if err != nil {
+				if terror.ErrorEqual(err, types.ErrWrongValue) {
+					// we ignore rows with invalid datetime
+					task.encodedLookUpKeys[chkIdx].AppendNull(0)
+					continue
+				}
 				return nil, err
 			}
 			// Store the encoded lookup key in chunk, so we can use it to lookup the matched inners directly.
 			task.encodedLookUpKeys[chkIdx].AppendBytes(0, keyBuf)
 			if iw.hasPrefixCol {
-				for i := range iw.outerCtx.keyCols {
+				for i, outerOffset := range iw.keyOff2IdxOff {
 					// If it's a prefix column. Try to fix it.
-					if iw.colLens[i] != types.UnspecifiedLength {
-						ranger.CutDatumByPrefixLen(&dLookUpKey[i], iw.colLens[i], iw.rowTypes[iw.keyCols[i]])
+					joinKeyColPrefixLen := iw.colLens[outerOffset]
+					if joinKeyColPrefixLen != types.UnspecifiedLength {
+						ranger.CutDatumByPrefixLen(&dLookUpKey[i], joinKeyColPrefixLen, iw.rowTypes[iw.keyCols[i]])
 					}
 				}
 				// dLookUpKey is sorted and deduplicated at sortAndDedupLookUpContents.
 				// So we don't need to do it here.
 			}
-			lookUpContents = append(lookUpContents, &indexJoinLookUpContent{keys: dLookUpKey, row: chk.GetRow(rowIdx), keyCols: iw.keyCols})
+			lookUpContents = append(lookUpContents, &indexJoinLookUpContent{keys: dLookUpKey, row: chk.GetRow(rowIdx), keyCols: iw.keyCols, keyColIDs: iw.keyColIDs})
 		}
 	}
 

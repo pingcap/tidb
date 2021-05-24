@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -230,14 +229,9 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.TaskID = sv.StmtCtx.TaskID
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.GetReplicaRead()
-	if sv.SnapshotInfoschema != nil {
-		builder.Request.SchemaVar = infoschema.GetInfoSchemaBySessionVars(sv).SchemaMetaVersion()
-	} else {
-		builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
-	}
 	builder.txnScope = sv.TxnCtx.TxnScope
 	builder.IsStaleness = sv.TxnCtx.IsStaleness
-	if builder.IsStaleness && builder.txnScope != oracle.GlobalTxnScope {
+	if builder.IsStaleness && builder.txnScope != kv.GlobalTxnScope {
 		builder.MatchStoreLabels = []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
@@ -270,19 +264,21 @@ func (builder *RequestBuilder) SetTiDBServerID(serverID uint64) *RequestBuilder 
 
 // SetFromInfoSchema sets the following fields from infoSchema:
 // "bundles"
-func (builder *RequestBuilder) SetFromInfoSchema(is infoschema.InfoSchema) *RequestBuilder {
-	if is == nil {
+func (builder *RequestBuilder) SetFromInfoSchema(pis interface{}) *RequestBuilder {
+	is, ok := pis.(infoschema.InfoSchema)
+	if !ok {
 		return builder
 	}
 	builder.is = is
+	builder.Request.SchemaVar = is.SchemaMetaVersion()
 	return builder
 }
 
 func (builder *RequestBuilder) verifyTxnScope() error {
 	if builder.txnScope == "" {
-		builder.txnScope = oracle.GlobalTxnScope
+		builder.txnScope = kv.GlobalTxnScope
 	}
-	if builder.txnScope == oracle.GlobalTxnScope || builder.is == nil {
+	if builder.txnScope == kv.GlobalTxnScope || builder.is == nil {
 		return nil
 	}
 	visitPhysicalTableID := make(map[int64]struct{})
@@ -392,17 +388,21 @@ func encodeHandleKey(ran *ranger.Range) ([]byte, []byte) {
 	return low, high
 }
 
-// SplitRangesBySign split the ranges into two parts:
-// 1. signedRanges is less or equal than maxInt64
-// 2. unsignedRanges is greater than maxInt64
-// We do that because the encoding of tikv key takes every key as a int. As a result MaxUInt64 is indeed
-// small than zero. So we must
-// 1. pick the range that straddles the MaxInt64
-// 2. split that range into two parts : smaller than max int64 and greater than it.
-// 3. if the ascent order is required, return signed first, vice versa.
-// 4. if no order is required, is better to return the unsigned one. That's because it's the normal order
-// of tikv scan.
-func SplitRangesBySign(ranges []*ranger.Range, keepOrder bool, desc bool, isCommonHandle bool) ([]*ranger.Range, []*ranger.Range) {
+// SplitRangesAcrossInt64Boundary split the ranges into two groups:
+// 1. signedRanges is less or equal than MaxInt64
+// 2. unsignedRanges is greater than MaxInt64
+//
+// We do this because every key of tikv is encoded as an int64. As a result, MaxUInt64 is small than zero when
+// interpreted as an int64 variable.
+//
+// This function does the following:
+// 1. split ranges into two groups as described above.
+// 2. if there's a range that straddles the int64 boundary, split it into two ranges, which results in one smaller and
+//    one greater than MaxInt64.
+//
+// if `KeepOrder` is false, we merge the two groups of ranges into one group, to save an rpc call later
+// if `desc` is false, return signed ranges first, vice versa.
+func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc bool, isCommonHandle bool) ([]*ranger.Range, []*ranger.Range) {
 	if isCommonHandle || len(ranges) == 0 || ranges[0].LowVal[0].Kind() == types.KindInt64 {
 		return ranges, nil
 	}
@@ -421,6 +421,7 @@ func SplitRangesBySign(ranges []*ranger.Range, keepOrder bool, desc bool, isComm
 		}
 		return signedRanges, unsignedRanges
 	}
+	// need to split the range that straddles the int64 boundary
 	signedRanges := make([]*ranger.Range, 0, idx+1)
 	unsignedRanges := make([]*ranger.Range, 0, len(ranges)-idx)
 	signedRanges = append(signedRanges, ranges[0:idx]...)
@@ -596,7 +597,7 @@ func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tids []int64, ra
 
 // VerifyTxnScope verify whether the txnScope and visited physical table break the leader rule's dcLocation.
 func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.InfoSchema) bool {
-	if txnScope == "" || txnScope == oracle.GlobalTxnScope {
+	if txnScope == "" || txnScope == kv.GlobalTxnScope {
 		return true
 	}
 	bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))

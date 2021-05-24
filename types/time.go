@@ -1260,18 +1260,6 @@ func AdjustYear(y int64, adjustZero bool) (int64, error) {
 	return y, nil
 }
 
-func adjustYearForFloat(y float64, shouldAdjust bool) float64 {
-	if y == 0 && !shouldAdjust {
-		return y
-	}
-	if y >= 0 && y <= 69 {
-		y = 2000 + y
-	} else if y >= 70 && y <= 99 {
-		y = 1900 + y
-	}
-	return y
-}
-
 // NewDuration construct duration with time.
 func NewDuration(hour, minute, second, microsecond int, fsp int8) Duration {
 	return Duration{
@@ -2248,7 +2236,7 @@ func parseSingleTimeValue(unit string, format string, strictCheck bool) (int64, 
 				return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
 			}
 		} else {
-			if dv, err = strconv.ParseInt(dvPre[:]+"000000"[:6-dvPreLen], 10, 64); err != nil {
+			if dv, err = strconv.ParseInt(dvPre+"000000"[:6-dvPreLen], 10, 64); err != nil {
 				return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
 			}
 		}
