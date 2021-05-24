@@ -137,7 +137,7 @@ type Config struct {
 	DelayCleanTableLock uint64      `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
 	SplitRegionMaxNum   uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
 	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
-	TopStmt             TopSQL      `toml:"top-sql" json:"top-sql"`
+	TopSQL              TopSQL      `toml:"top-sql" json:"top-sql"`
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
 	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
@@ -667,7 +667,7 @@ var defaultConf = Config{
 		RefreshInterval:     1800,
 		HistorySize:         24,
 	},
-	TopStmt: TopSQL{
+	TopSQL: TopSQL{
 		Enable:          true,
 		RefreshInterval: 1,
 		MaxStmtCount:    5000,
@@ -961,7 +961,7 @@ func TableLockEnabled() bool {
 
 // TopSQLEnabled uses to check whether enabled the top SQL feature.
 func TopSQLEnabled() bool {
-	return GetGlobalConfig().TopStmt.Enable
+	return GetGlobalConfig().TopSQL.Enable
 }
 
 // TableLockDelayClean uses to get the time of delay clean table lock.

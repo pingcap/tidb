@@ -312,9 +312,10 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 			Keys:    pending,
 			Version: s.version,
 		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
-			Priority:     s.priority.ToPB(),
-			NotFillCache: s.notFillCache,
-			TaskId:       s.mu.taskID,
+			Priority:         s.priority.ToPB(),
+			NotFillCache:     s.notFillCache,
+			TaskId:           s.mu.taskID,
+			ResourceGroupTag: s.resourceGroupTag,
 		})
 		isStaleness = s.mu.isStaleness
 		matchStoreLabels = s.mu.matchStoreLabels
@@ -464,9 +465,10 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 			Key:     k,
 			Version: s.version,
 		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
-			Priority:     s.priority.ToPB(),
-			NotFillCache: s.notFillCache,
-			TaskId:       s.mu.taskID,
+			Priority:         s.priority.ToPB(),
+			NotFillCache:     s.notFillCache,
+			TaskId:           s.mu.taskID,
+			ResourceGroupTag: s.resourceGroupTag,
 		})
 	isStaleness = s.mu.isStaleness
 	matchStoreLabels = s.mu.matchStoreLabels

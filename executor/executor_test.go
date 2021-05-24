@@ -32,6 +32,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
@@ -59,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -147,6 +149,7 @@ var _ = SerialSuites(&testSerialSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testStaleTxnSerialSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testCoprCache{})
 var _ = SerialSuites(&testPrepareSuite{})
+var _ = SerialSuites(&testResourceTagSuite{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -167,6 +170,7 @@ type testCoprCache struct {
 	cls   cluster.Cluster
 }
 type testPrepareSuite struct{ testData testutil.TestData }
+type testResourceTagSuite struct{ *baseTestSuite }
 
 type baseTestSuite struct {
 	cluster cluster.Cluster
@@ -8294,4 +8298,105 @@ func (s testSerialSuite) TestExprBlackListForEnum(c *C) {
 	c.Assert(checkFuncPushDown(rows, "index:idx(b, a)"), IsTrue)
 	rows = tk.MustQuery("desc format='brief' select * from t where b = 1 and a > 'a'").Rows()
 	c.Assert(checkFuncPushDown(rows, "index:idx(b, a)"), IsTrue)
+}
+
+func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int, unique index idx(a));")
+	tbInfo := testGetTableByName(c, tk.Se, "test", "t")
+
+	// Enable Top SQL
+	cfg := config.GetGlobalConfig()
+	newCfg := *cfg
+	newCfg.TopSQL.Enable = true
+	config.StoreGlobalConfig(&newCfg)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
+
+	var sqlDigest, planDigest *parser.Digest
+	unistore.UnistoreRPCClientSendHook = func(req *tikvrpc.Request) {
+		var startKey []byte
+		var ctx *kvrpcpb.Context
+		switch req.Type {
+		case tikvrpc.CmdGet:
+			request := req.Get()
+			startKey = request.Key
+			ctx = request.Context
+		case tikvrpc.CmdBatchGet:
+			request := req.BatchGet()
+			startKey = request.Keys[0]
+			ctx = request.Context
+		case tikvrpc.CmdPrewrite:
+			request := req.Prewrite()
+			startKey = request.Mutations[0].Key
+			ctx = request.Context
+		case tikvrpc.CmdCommit:
+			request := req.Commit()
+			startKey = request.Keys[0]
+			ctx = request.Context
+		case tikvrpc.CmdCop:
+			request := req.Cop()
+			startKey = request.Ranges[0].Start
+			ctx = request.Context
+		case tikvrpc.CmdPessimisticLock:
+			request := req.PessimisticLock()
+			startKey = request.PrimaryLock
+			ctx = request.Context
+		}
+		tid := tablecodec.DecodeTableID(startKey)
+		if tid != tbInfo.Meta().ID {
+			return
+		}
+		if ctx == nil {
+			return
+		}
+		tag := &tipb.ResourceGroupTag{}
+		err := tag.Unmarshal(ctx.ResourceGroupTag)
+		c.Assert(err, IsNil)
+		sqlDigest = parser.NewDigest(tag.SqlDigest)
+		planDigest = parser.NewDigest(tag.PlanDigest)
+	}
+
+	resetVars := func() {
+		sqlDigest = parser.NewDigest(nil)
+		planDigest = parser.NewDigest(nil)
+	}
+
+	cases := []struct {
+		sql    string
+		ignore bool
+	}{
+		{sql: "insert into t values(1,1),(2,2),(3,3)"},
+		{sql: "select * from t use index (idx) where a=1"},
+		{sql: "select * from t use index (idx) where a in (1,2,3)"},
+		{sql: "select * from t use index (idx) where a>1"},
+		{sql: "select * from t where b>1"},
+		{sql: "begin pessimistic", ignore: true},
+		{sql: "insert into t values(4,4)"},
+		{sql: "commit", ignore: true},
+	}
+	for _, ca := range cases {
+		resetVars()
+		commentf := Commentf("%v", ca.sql)
+		if strings.HasPrefix(ca.sql, "select") {
+			tk.MustQuery(ca.sql)
+		} else {
+			tk.MustExec(ca.sql)
+		}
+		if ca.ignore {
+			continue
+		}
+		_, expectSQLDigest := parser.NormalizeDigest(ca.sql)
+		c.Assert(sqlDigest.String(), Equals, expectSQLDigest.String(), commentf)
+
+		info := tk.Se.ShowProcess()
+		c.Assert(info, NotNil)
+		p, ok := info.Plan.(plannercore.Plan)
+		c.Assert(ok, IsTrue)
+		_, expectPlanDigest := plannercore.NormalizePlan(p)
+		c.Assert(planDigest.String(), Equals, expectPlanDigest.String())
+	}
 }

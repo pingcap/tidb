@@ -333,6 +333,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		return nil, err
 	}
 
+	getPlanDigest(a.Ctx, a.Plan)
+
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
 		return nil, err
@@ -1012,12 +1014,13 @@ func getPlanTree(sctx sessionctx.Context, p plannercore.Plan) string {
 
 // getPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
 func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) string {
-	normalized, planDigest := sctx.GetSessionVars().StmtCtx.GetPlanDigest()
-	if len(normalized) > 0 {
-		return ""
+	sc := sctx.GetSessionVars().StmtCtx
+	normalized, planDigest := sc.GetPlanDigest()
+	if planDigest != nil {
+		return planDigest.String()
 	}
 	normalized, planDigest = plannercore.NormalizePlan(p)
-	sctx.GetSessionVars().StmtCtx.SetPlanDigest(normalized, planDigest)
+	sc.SetPlanDigest(normalized, planDigest)
 	return planDigest.String()
 }
 

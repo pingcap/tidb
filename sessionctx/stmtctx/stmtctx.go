@@ -263,7 +263,9 @@ func (sc *StatementContext) GetResourceGroupTag() []byte {
 
 // SetPlanDigest sets the normalized plan and plan digest.
 func (sc *StatementContext) SetPlanDigest(normalized string, planDigest *parser.Digest) {
-	sc.planNormalized, sc.planDigest = normalized, planDigest
+	if planDigest != nil {
+		sc.planNormalized, sc.planDigest = normalized, planDigest
+	}
 }
 
 // GetEncodedPlan gets the encoded plan, it is used to avoid repeated encode.

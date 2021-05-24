@@ -123,7 +123,7 @@ type planDigester struct {
 func NormalizePlan(p Plan) (normalized string, digest *parser.Digest) {
 	selectPlan := getSelectPlan(p)
 	if selectPlan == nil {
-		return "", nil
+		return "", parser.NewDigest(nil)
 	}
 	d := digesterPool.Get().(*planDigester)
 	defer digesterPool.Put(d)

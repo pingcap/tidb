@@ -507,12 +507,13 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, ta
 	}
 
 	req := tikvrpc.NewRequest(task.cmdType, &copReq, kvrpcpb.Context{
-		IsolationLevel: isolationLevelToPB(b.req.IsolationLevel),
-		Priority:       priorityToPB(b.req.Priority),
-		NotFillCache:   b.req.NotFillCache,
-		RecordTimeStat: true,
-		RecordScanStat: true,
-		TaskId:         b.req.TaskID,
+		IsolationLevel:   isolationLevelToPB(b.req.IsolationLevel),
+		Priority:         priorityToPB(b.req.Priority),
+		NotFillCache:     b.req.NotFillCache,
+		RecordTimeStat:   true,
+		RecordScanStat:   true,
+		TaskId:           b.req.TaskID,
+		ResourceGroupTag: b.req.ResourceGroupTag,
 	})
 	req.StoreTp = tikvrpc.TiFlash
 
