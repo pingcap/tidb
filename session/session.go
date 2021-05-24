@@ -2554,12 +2554,10 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	if err != nil {
 		return err
 	}
-
 	for varName, sv := range variable.GetSysVars() {
 		if sv.SkipInit() {
 			continue
 		}
-
 		// The item should be in the sessionCache, but due to a strange current behavior there are some Global-only
 		// vars that are in builtinGlobalVariable. For compatibility we need to fall back to the Global cache on these items.
 		// TODO: don't load these globals into the session!
