@@ -2860,6 +2860,37 @@ func (s *testSuite7) TestDeferConstraintCheckForInsert(c *C) {
 	tk.MustExec("insert into t values (1, 3)")
 	_, err = tk.Exec("commit")
 	c.Assert(err, NotNil)
+
+	// Cover the temporary table.
+	for val := range []int{0, 1} {
+		tk.MustExec("set tidb_constraint_check_in_place = ?", val)
+
+		tk.MustExec("drop table t")
+		tk.MustExec("create global temporary table t (a int primary key, b int) on commit delete rows")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t values (1, 1)")
+		_, err = tk.Exec(`insert into t values (1, 3)`)
+		c.Assert(err, NotNil)
+		tk.MustExec("insert into t values (2, 2)")
+		_, err = tk.Exec("update t set a = a + 1 where a = 1")
+		c.Assert(err, NotNil)
+		_, err = tk.Exec("insert into t values (1, 3) on duplicated key update a = a + 1")
+		c.Assert(err, NotNil)
+		tk.MustExec("commit")
+
+		tk.MustExec("drop table t")
+		tk.MustExec("create global temporary table t (a int, b int unique) on commit delete rows")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t values (1, 1)")
+		_, err = tk.Exec(`insert into t values (3, 1)`)
+		c.Assert(err, NotNil)
+		tk.MustExec("insert into t values (2, 2)")
+		_, err = tk.Exec("update t set b = b + 1 where a = 1")
+		c.Assert(err, NotNil)
+		_, err = tk.Exec("insert into t values (3, 1) on duplicated key update b = b + 1")
+		c.Assert(err, NotNil)
+		tk.MustExec("commit")
+	}
 }
 
 func (s *testSuite7) TestPessimisticDeleteYourWrites(c *C) {

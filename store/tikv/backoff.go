@@ -23,17 +23,8 @@ import (
 // Backoffer is a utility for retrying queries.
 type Backoffer = retry.Backoffer
 
-// BackoffType defines the backoff type.
-type BackoffType = retry.BackoffType
-
-// Back off types.
-const (
-	BoRegionMiss  = retry.BoRegionMiss
-	BoTiFlashRPC  = retry.BoTiFlashRPC
-	BoTxnLockFast = retry.BoTxnLockFast
-	BoTxnLock     = retry.BoTxnLock
-	BoPDRPC       = retry.BoPDRPC
-)
+// BackoffConfig defines the backoff configuration.
+type BackoffConfig = retry.Config
 
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
@@ -60,6 +51,31 @@ func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 // TxnStartKey is a key for transaction start_ts info in context.Context.
 func TxnStartKey() interface{} {
 	return retry.TxnStartKey
+}
+
+// BoRegionMiss returns the default backoff config for RegionMiss.
+func BoRegionMiss() *BackoffConfig {
+	return retry.BoRegionMiss
+}
+
+// BoTiFlashRPC returns the default backoff config for TiFlashRPC.
+func BoTiFlashRPC() *BackoffConfig {
+	return retry.BoTiFlashRPC
+}
+
+// BoTxnLock returns the default backoff config for TxnLock.
+func BoTxnLock() *BackoffConfig {
+	return retry.BoTxnLock
+}
+
+// BoPDRPC returns the default backoff config for PDRPC.
+func BoPDRPC() *BackoffConfig {
+	return retry.BoPDRPC
+}
+
+// BoTiKVRPC returns the default backoff config for TiKVRPC.
+func BoTiKVRPC() *BackoffConfig {
+	return retry.BoTiKVRPC
 }
 
 // NewGcResolveLockMaxBackoffer creates a Backoffer for Gc to resolve lock.
