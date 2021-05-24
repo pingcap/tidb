@@ -1073,10 +1073,15 @@ func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
 }
 
 // GetPartitionByRow returns a Table, which is actually a Partition.
-func (t *partitionedTable) GetPartitionByRow(ctx sessionctx.Context, r []types.Datum) (table.PhysicalTable, error) {
+func (t *partitionedTable) GetPartitionByRow(ctx sessionctx.Context, r []types.Datum, tbl interface{}) (table.PhysicalTable, error) {
 	pid, err := t.locatePartition(ctx, t.Meta().GetPartitionInfo(), r)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if pt, ok := tbl.(*partitionTableWithGivenSets); ok {
+		if _, ok = pt.partitions[pid]; !ok {
+			return nil, errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
+		}
 	}
 	return t.partitions[pid], nil
 }
@@ -1177,6 +1182,10 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 	}
 	if partitionSelection != nil {
 		if _, ok := partitionSelection[to]; !ok {
+			return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
+		}
+		// Should not have been read from this partition! Checked already in GetPartitionByRow()
+		if _, ok := partitionSelection[from]; !ok {
 			return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}

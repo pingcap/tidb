@@ -233,7 +233,7 @@ type PhysicalTable interface {
 type PartitionedTable interface {
 	Table
 	GetPartition(physicalID int64) PhysicalTable
-	GetPartitionByRow(sessionctx.Context, []types.Datum) (PhysicalTable, error)
+	GetPartitionByRow(sessionctx.Context, []types.Datum, interface{}) (PhysicalTable, error)
 	GetAllPartitionIDs() []int64
 }
 

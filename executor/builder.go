@@ -2845,7 +2845,7 @@ func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, sch
 		for i, date := range content.keys {
 			locateKey[keyColOffsets[i]] = date
 		}
-		p, err := partitionTbl.GetPartitionByRow(ctx, locateKey)
+		p, err := partitionTbl.GetPartitionByRow(ctx, locateKey, tbl)
 		if err != nil {
 			return nil, false, nil, err
 		}
@@ -3332,7 +3332,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 				for i, date := range content.keys {
 					locateKey[content.keyCols[i]] = date
 				}
-				p, err := pt.GetPartitionByRow(e.ctx, locateKey)
+				p, err := pt.GetPartitionByRow(e.ctx, locateKey, tbl)
 				if err != nil {
 					return nil, err
 				}
@@ -3386,7 +3386,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			for i, date := range content.keys {
 				locateKey[content.keyCols[i]] = date
 			}
-			p, err := pt.GetPartitionByRow(e.ctx, locateKey)
+			p, err := pt.GetPartitionByRow(e.ctx, locateKey, tbl)
 			if err != nil {
 				return nil, err
 			}

@@ -143,7 +143,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 
 		physicalID := t.Meta().ID
 		if pt, ok := t.(table.PartitionedTable); ok {
-			p, err := pt.GetPartitionByRow(sctx, oldData)
+			p, err := pt.GetPartitionByRow(sctx, oldData, t)
 			if err != nil {
 				return false, err
 			}
