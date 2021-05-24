@@ -43,12 +43,12 @@ func newStmtSummaryByDigestEvictedElement(beginTime int64, endTime int64) *stmtS
 
 // AddEvicted is used add an evicted record to stmtSummaryByDigestEvicted
 func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDigestKey, evictedValue *stmtSummaryByDigest, historySize int) {
-	evictedValue.Lock()
-	defer evictedValue.Unlock()
 	if evictedValue == nil || evictedValue.history == nil {
 		return
 	}
 
+	evictedValue.Lock()
+	defer evictedValue.Unlock()
 	for e, h := evictedValue.history.Back(), ssbde.history.Back(); e != nil; e = e.Prev() {
 		evictedElement := e.Value.(*stmtSummaryByDigestElement)
 		eBeginTime := evictedElement.beginTime
