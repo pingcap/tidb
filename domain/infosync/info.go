@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/types"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
@@ -252,7 +253,9 @@ func UpdateTiFlashTableSyncProgress(ctx context.Context, tid int64, progress flo
 		return nil
 	}
 	key := fmt.Sprintf("%s/%v", TiFlashTableSyncProgressPath, tid)
-	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, strconv.FormatFloat(progress, 'f', 2, 64))
+	// truncate progress with 2 decimal digits so that it will not be rounded to 1 when the progress is 0.995
+	progressString := types.TruncateFloatToString(progress, 2)
+	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, progressString)
 }
 
 // DeleteTiFlashTableSyncProgress is used to delete the tiflash table replica sync progress.
@@ -551,12 +554,12 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	pl := is.manager.ShowProcessList()
 
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
-	currentVer, err := store.CurrentVersion(oracle.GlobalTxnScope)
+	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
 		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
 		return
 	}
-	now := time.Unix(0, oracle.ExtractPhysical(currentVer.Ver)*1e6)
+	now := oracle.GetTimeFromTS(currentVer.Ver)
 	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
 
 	minStartTS := oracle.GoTimeToTS(now)

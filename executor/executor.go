@@ -28,6 +28,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -47,6 +48,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table"
@@ -56,10 +59,12 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"go.uber.org/zap"
 )
 
@@ -948,7 +953,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	lockWaitTime := e.ctx.GetSessionVars().LockWaitTimeout
 	if e.Lock.LockType == ast.SelectLockForUpdateNoWait {
-		lockWaitTime = kv.LockNoWait
+		lockWaitTime = tikv.LockNoWait
 	} else if e.Lock.LockType == ast.SelectLockForUpdateWaitN {
 		lockWaitTime = int64(e.Lock.WaitSec) * 1000
 	}
@@ -969,6 +974,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.LockCtx {
+	_, sqlDigest := seVars.StmtCtx.SQLDigest()
 	return &tikvstore.LockCtx{
 		Killed:                &seVars.Killed,
 		ForUpdateTS:           seVars.TxnCtx.GetForUpdateTS(),
@@ -978,6 +984,14 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.Loc
 		LockKeysDuration:      &seVars.StmtCtx.LockKeysDuration,
 		LockKeysCount:         &seVars.StmtCtx.LockKeysCount,
 		LockExpired:           &seVars.TxnCtx.LockExpire,
+		ResourceGroupTag:      resourcegrouptag.EncodeResourceGroupTag(sqlDigest),
+		OnDeadlock: func(deadlock *tikverr.ErrDeadlock) {
+			// TODO: Support collecting retryable deadlocks according to the config.
+			if !deadlock.IsRetryable {
+				rec := deadlockhistory.ErrDeadlockToDeadlockRecord(deadlock)
+				deadlockhistory.GlobalDeadlockHistory.Push(rec)
+			}
+		},
 	}
 }
 
@@ -1216,6 +1230,11 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	failpoint.Inject("mockSelectionExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("mock SelectionExec.baseExecutor.Open returned error"))
+		}
+	})
 	return e.open(ctx)
 }
 
@@ -1235,8 +1254,10 @@ func (e *SelectionExec) open(ctx context.Context) error {
 
 // Close implements plannercore.Plan Close interface.
 func (e *SelectionExec) Close() error {
-	e.memTracker.Consume(-e.childResult.MemoryUsage())
-	e.childResult = nil
+	if e.childResult != nil {
+		e.memTracker.Consume(-e.childResult.MemoryUsage())
+		e.childResult = nil
+	}
 	e.selected = nil
 	return e.baseExecutor.Close()
 }
@@ -1650,8 +1671,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 		sc.Priority = stmt.Priority
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
-		// Make sure the sql_mode is strict when checking column default value.
 		sc.InCreateOrAlterStmt = true
+		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || sc.AllowInvalidDate
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true
 		sc.BadNullAsWarning = true

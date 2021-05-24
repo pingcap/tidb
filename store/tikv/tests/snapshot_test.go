@@ -24,9 +24,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"go.uber.org/zap"
@@ -143,7 +142,7 @@ func (s *testSnapshotSuite) TestSnapshotCache(c *C) {
 	c.Assert(err, IsNil)
 
 	_, err = snapshot.Get(ctx, []byte("y"))
-	c.Assert(tidbkv.IsErrNotFound(err), IsTrue)
+	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/snapshot-get-cache-fail"), IsNil)
 }
@@ -192,9 +191,9 @@ func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
 	txn1 := s.beginTxn(c)
 	// txn1 is not blocked by txn in the large txn protocol.
 	_, err = txn1.Get(ctx, x)
-	c.Assert(tidbkv.IsErrNotFound(errors.Trace(err)), IsTrue)
+	c.Assert(tikverr.IsErrNotFound(errors.Trace(err)), IsTrue)
 
-	res, err := txn1.BatchGet(ctx, [][]byte{x, y, []byte("z")})
+	res, err := toTiDBTxn(&txn1).BatchGet(ctx, toTiDBKeys([][]byte{x, y, []byte("z")}))
 	c.Assert(err, IsNil)
 	c.Assert(res, HasLen, 0)
 
@@ -224,7 +223,7 @@ func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
 	c.Assert(committer.GetPrimaryKey(), BytesEquals, x)
 	// Point get secondary key. Shouldn't be blocked by the lock and read old data.
 	_, err = snapshot.Get(ctx, y)
-	c.Assert(tidbkv.IsErrNotFound(errors.Trace(err)), IsTrue)
+	c.Assert(tikverr.IsErrNotFound(errors.Trace(err)), IsTrue)
 	c.Assert(time.Since(start), Less, 500*time.Millisecond)
 
 	// Commit the primary key
@@ -270,11 +269,11 @@ func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
 	tikv.RecordRegionRequestRuntimeStats(reqStats.Stats, tikvrpc.CmdGet, time.Second)
 	tikv.RecordRegionRequestRuntimeStats(reqStats.Stats, tikvrpc.CmdGet, time.Millisecond)
 	snapshot := s.store.GetSnapshot(0)
-	snapshot.SetOption(kv.CollectRuntimeStats, &tikv.SnapshotRuntimeStats{})
+	snapshot.SetRuntimeStats(&tikv.SnapshotRuntimeStats{})
 	snapshot.MergeRegionRequestStats(reqStats.Stats)
 	snapshot.MergeRegionRequestStats(reqStats.Stats)
 	bo := tikv.NewBackofferWithVars(context.Background(), 2000, nil)
-	err := bo.BackoffWithMaxSleep(tikv.BoTxnLockFast, 30, errors.New("test"))
+	err := bo.BackoffWithMaxSleepTxnLockFast(30, errors.New("test"))
 	c.Assert(err, IsNil)
 	snapshot.RecordBackoffInfo(bo)
 	snapshot.RecordBackoffInfo(bo)

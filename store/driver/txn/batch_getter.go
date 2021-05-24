@@ -11,13 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package unionstore
+package txn
 
 import (
 	"context"
 
 	"github.com/pingcap/errors"
-	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/kv"
 )
 
 // BatchBufferGetter is the interface for BatchGet.
@@ -29,14 +29,14 @@ type BatchBufferGetter interface {
 // BatchGetter is the interface for BatchGet.
 type BatchGetter interface {
 	// BatchGet gets a batch of values.
-	BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error)
+	BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error)
 }
 
 // Getter is the interface for the Get method.
 type Getter interface {
 	// Get gets the value for key k from kv store.
 	// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
-	Get(k []byte) ([]byte, error)
+	Get(ctx context.Context, k kv.Key) ([]byte, error)
 }
 
 // BufferBatchGetter is the type for BatchGet with MemBuffer.
@@ -52,23 +52,23 @@ func NewBufferBatchGetter(buffer BatchBufferGetter, middleCache Getter, snapshot
 }
 
 // BatchGet implements the BatchGetter interface.
-func (b *BufferBatchGetter) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
+func (b *BufferBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
 	if b.buffer.Len() == 0 {
 		return b.snapshot.BatchGet(ctx, keys)
 	}
 	bufferValues := make([][]byte, len(keys))
-	shrinkKeys := make([][]byte, 0, len(keys))
+	shrinkKeys := make([]kv.Key, 0, len(keys))
 	for i, key := range keys {
-		val, err := b.buffer.Get(key)
+		val, err := b.buffer.Get(ctx, key)
 		if err == nil {
 			bufferValues[i] = val
 			continue
 		}
-		if !tidbkv.IsErrNotFound(err) {
+		if !kv.IsErrNotFound(err) {
 			return nil, errors.Trace(err)
 		}
 		if b.middle != nil {
-			val, err = b.middle.Get(key)
+			val, err = b.middle.Get(ctx, key)
 			if err == nil {
 				bufferValues[i] = val
 				continue

@@ -15,13 +15,20 @@ package copr
 
 import (
 	"context"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/driver/backoff"
 	"github.com/pingcap/tidb/store/tikv"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
 )
+
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	TestingT(t)
+}
 
 type testCoprocessorSuite struct {
 }
@@ -37,7 +44,7 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	cache := tikv.NewRegionCache(pdCli)
 	defer cache.Close()
 
-	bo := tikv.NewBackofferWithVars(context.Background(), 3000, nil)
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
 
 	req := &kv.Request{}
 	flashReq := &kv.Request{}
@@ -206,7 +213,7 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	pdCli := &tikv.CodecPDClient{Client: mocktikv.NewPDClient(cluster)}
 	cache := tikv.NewRegionCache(pdCli)
 	defer cache.Close()
-	bo := tikv.NewBackofferWithVars(context.Background(), 3000, nil)
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
 
 	req := &kv.Request{}
 	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "z"), req)

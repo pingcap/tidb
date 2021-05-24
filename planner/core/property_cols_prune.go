@@ -148,21 +148,34 @@ func (p *LogicalProjection) PreparePossibleProperties(schema *expression.Schema,
 		}
 	}
 	tmpSchema := expression.NewSchema(oldCols...)
-	for i := len(childProperties) - 1; i >= 0; i-- {
-		for j, col := range childProperties[i] {
+	newProperties := make([][]*expression.Column, 0, len(childProperties))
+	for _, childProperty := range childProperties {
+		newChildProperty := make([]*expression.Column, 0, len(childProperty))
+		for _, col := range childProperty {
 			pos := tmpSchema.ColumnIndex(col)
 			if pos >= 0 {
-				childProperties[i][j] = newCols[pos]
+				newChildProperty = append(newChildProperty, newCols[pos])
 			} else {
-				childProperties[i] = childProperties[i][:j]
 				break
 			}
 		}
-		if len(childProperties[i]) == 0 {
-			childProperties = append(childProperties[:i], childProperties[i+1:]...)
+		if len(newChildProperty) != 0 {
+			newProperties = append(newProperties, newChildProperty)
 		}
 	}
-	return childProperties
+	return newProperties
+}
+
+func clonePossibleProperties(props [][]*expression.Column) [][]*expression.Column {
+	res := make([][]*expression.Column, len(props))
+	for i, prop := range props {
+		clonedProp := make([]*expression.Column, len(prop))
+		for j, col := range prop {
+			clonedProp[j] = col.Clone().(*expression.Column)
+		}
+		res[i] = clonedProp
+	}
+	return res
 }
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
@@ -170,8 +183,10 @@ func (p *LogicalJoin) PreparePossibleProperties(schema *expression.Schema, child
 	leftProperties := childrenProperties[0]
 	rightProperties := childrenProperties[1]
 	// TODO: We should consider properties propagation.
-	p.leftProperties = leftProperties
-	p.rightProperties = rightProperties
+	// Clone the Columns in the property before saving them, otherwise the upper Projection may
+	// modify them and lead to unexpected results.
+	p.leftProperties = clonePossibleProperties(leftProperties)
+	p.rightProperties = clonePossibleProperties(rightProperties)
 	if p.JoinType == LeftOuterJoin || p.JoinType == LeftOuterSemiJoin {
 		rightProperties = nil
 	} else if p.JoinType == RightOuterJoin {
@@ -200,13 +215,22 @@ func (la *LogicalAggregation) PreparePossibleProperties(schema *expression.Schem
 		return nil
 	}
 	resultProperties := make([][]*expression.Column, 0, len(childProps))
+	clonedProperties := make([][]*expression.Column, 0, len(childProps))
 	groupByCols := la.GetGroupByCols()
 	for _, possibleChildProperty := range childProps {
 		sortColOffsets := getMaxSortPrefix(possibleChildProperty, groupByCols)
 		if len(sortColOffsets) == len(groupByCols) {
-			resultProperties = append(resultProperties, possibleChildProperty[:len(groupByCols)])
+			prop := possibleChildProperty[:len(groupByCols)]
+			resultProperties = append(resultProperties, prop)
+			// Clone the Columns in the property before saving them, otherwise the upper Projection may
+			// modify them and lead to unexpected results.
+			clonedProp := make([]*expression.Column, len(prop))
+			for i, col := range prop {
+				clonedProp[i] = col.Clone().(*expression.Column)
+			}
+			clonedProperties = append(clonedProperties, clonedProp)
 		}
 	}
-	la.possibleProperties = resultProperties
-	return la.possibleProperties
+	la.possibleProperties = clonedProperties
+	return resultProperties
 }

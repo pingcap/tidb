@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -10,24 +10,28 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// +build !leak
 
-package tikv
+package testleak
 
 import (
-	"context"
-	"errors"
+	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/pingcap/check"
 )
 
-type testBackoffSuite struct {
+// BeforeTest is a dummy implementation when build tag 'leak' is not set.
+func BeforeTest() {
 }
 
-var _ = Suite(&testBackoffSuite{})
+// AfterTest is a dummy implementation when build tag 'leak' is not set.
+func AfterTest(c *check.C) func() {
+	return func() {
+	}
+}
 
-func (s *testBackoffSuite) TestBackoffWithMax(c *C) {
-	b := NewBackofferWithVars(context.TODO(), 2000, nil)
-	err := b.BackoffWithMaxSleep(BoTxnLockFast, 30, errors.New("test"))
-	c.Assert(err, IsNil)
-	c.Assert(b.totalSleep, Equals, 30)
+// AfterTestT is used after all the test cases is finished.
+func AfterTestT(t *testing.T) func() {
+	return func() {
+	}
 }
