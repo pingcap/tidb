@@ -140,7 +140,7 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 		tk.MustExec(`drop table if exists t`)
 	}()
 
-	time.Sleep(2 * time.Second)
+	time.Sleep(2800 * time.Millisecond)
 
 	now := time.Now()
 
@@ -169,13 +169,13 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 		},
 		{
 			name:   "TimestampExactRead3",
-			sql:    `select * from t as of timestamp NOW() - INTERVAL 1 SECOND;`,
-			preSec: 1,
+			sql:    `select * from t as of timestamp NOW() - INTERVAL 2 SECOND;`,
+			preSec: 2,
 		},
 		{
 			name:   "TimestampExactRead4",
-			sql:    `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND);`,
-			preSec: 1,
+			sql:    `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 2 SECOND);`,
+			preSec: 2,
 		},
 		{
 			name:   "TimestampExactRead5",
@@ -209,8 +209,8 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 		},
 		{
 			name:   "TimestampExactRead10",
-			sql:    `select * from (select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND)) as c;`,
-			preSec: 1,
+			sql:    `select * from (select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 2 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 2 SECOND)) as c;`,
+			preSec: 2,
 		},
 		// Cannot be supported the SubSelect
 		{
@@ -223,9 +223,9 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		if testcase.expectPhysicalTS > 0 {
-			c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSO", fmt.Sprintf(`return("int64(%d)")`, testcase.expectPhysicalTS)), IsNil)
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSO", fmt.Sprintf(`return(%d)`, testcase.expectPhysicalTS)), IsNil)
 		} else if testcase.preSec > 0 {
-			c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSOWithTolerance", fmt.Sprintf(`return("int64(%d)")`, time.Now().Unix()-testcase.preSec)), IsNil)
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSOWithTolerance", fmt.Sprintf(`return(%d)`, time.Now().Unix()-testcase.preSec)), IsNil)
 		}
 		_, err := tk.Exec(testcase.sql)
 		if len(testcase.errorStr) != 0 {
