@@ -52,7 +52,7 @@
         "Plan": [
           "Projection 9990.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
           "└─HashJoin 9990.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "  ├─Selection(Build) 7992.00 root  from_unixtime(cast(test.t.b, decimal(20,0) BINARY))",
+          "  ├─Selection(Build) 7992.00 root  from_unixtime(cast(test.t.b))",
           "  │ └─TableReader 7992.00 root  data:Selection",
           "  │   └─Selection 7992.00 cop[tikv]  not(isnull(test.t.a))",
           "  │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
@@ -87,7 +87,7 @@
         "Plan": [
           "HashJoin 10000.00 root  left outer join, equal:[eq(test.t.a, test.t.a)]",
           "├─TableReader(Build) 8000.00 root  data:Selection",
-          "│ └─Selection 8000.00 cop[tikv]  ge(cast(test.t.b, date BINARY), 2019-01-01 00:00:00.000000)",
+          "│ └─Selection 8000.00 cop[tikv]  ge(cast(test.t.b), 2019-01-01 00:00:00.000000)",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
@@ -1016,10 +1016,10 @@
       {
         "SQL": "select /*+ use_index_merge(t1 primary, c) */ * from t1 where t1.a = 1 and t1.b = '111' or t1.c = 3.3",
         "Plan": [
-          "IndexMerge 1.67 root  ",
+          "IndexMerge 2.11 root  ",
           "├─TableRangeScan(Build) 1.00 cop[tikv] table:t1 range:[1 \"111\",1 \"111\"], keep order:false",
           "├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, index:c(c) range:[3.3000000000,3.3000000000], keep order:false",
-          "└─TableRowIDScan(Probe) 1.67 cop[tikv] table:t1 keep order:false"
+          "└─TableRowIDScan(Probe) 2.11 cop[tikv] table:t1 keep order:false"
         ],
         "Res": [
           "1 111 1.1000000000 11",
@@ -1478,36 +1478,6 @@
           "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
-        ]
-      }
-    ]
-  },
-  {
-    "Name": "TestMultiColMaxOneRow",
-    "Cases": [
-      {
-        "SQL": "select (select c from t2 where t2.a = t1.a and t2.b = 1) from t1",
-        "Plan": [
-          "HashJoin 10000.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
-          "├─TableReader(Build) 10.00 root  data:Selection",
-          "│ └─Selection 10.00 cop[tikv]  eq(test.t2.b, 1)",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select (select c from t2 where t2.a = t1.a and (t2.b = 1 or t2.b = 2)) from t1",
-        "Plan": [
-          "Projection 10000.00 root  test.t2.c",
-          "└─Apply 10000.00 root  CARTESIAN left outer join",
-          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─MaxOneRow(Probe) 1.00 root  ",
-          "    └─IndexLookUp 0.02 root  ",
-          "      ├─Selection(Build) 0.02 cop[tikv]  or(eq(test.t2.b, 1), eq(test.t2.b, 2))",
-          "      │ └─IndexRangeScan 10.00 cop[tikv] table:t2, index:PRIMARY(a, b) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
-          "      └─TableRowIDScan(Probe) 0.02 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       }
     ]
