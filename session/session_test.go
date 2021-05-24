@@ -4389,7 +4389,7 @@ func (s *testTxnStateSerialSuite) TestBasic(c *C) {
 	c.Assert(info, IsNil)
 
 	tk.MustExec("begin pessimistic;")
-	startTSStr := tk.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string)
+	startTSStr := tk.MustQuery("select @@tidb_current_ts;").Rows()[0][0].(string)
 	startTS, err := strconv.ParseUint(startTSStr, 10, 64)
 	c.Assert(err, IsNil)
 
@@ -4415,6 +4415,9 @@ func (s *testTxnStateSerialSuite) TestBasic(c *C) {
 	c.Assert(info.State, Equals, txninfo.TxnRunningNormal)
 	c.Assert((*time.Time)(info.BlockStartTime), IsNil)
 	c.Assert(info.StartTS, Equals, startTS)
+	_, beginDigest := parser.NormalizeDigest("begin pessimistic;")
+	_, selectTSDigest := parser.NormalizeDigest("select @@tidb_current_ts;")
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest, selectTSDigest, expectedDigest})
 
 	// len and size will be covered in TestLenAndSize
 	c.Assert(info.ConnectionID, Equals, tk.Se.GetSessionVars().ConnectionID)
@@ -4422,6 +4425,27 @@ func (s *testTxnStateSerialSuite) TestBasic(c *C) {
 	c.Assert(info.CurrentDB, Equals, "test")
 	c.Assert(info.StartTS, Equals, startTS)
 	tk.MustExec("commit;")
+	info = tk.Se.TxnInfo()
+	c.Assert(info, IsNil)
+
+	// Test autocommit transaction
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "pause"), IsNil)
+	go func() {
+		tk.MustExec("insert into t values (2)")
+		ch <- nil
+	}()
+	time.Sleep(100 * time.Millisecond)
+	info = tk.Se.TxnInfo()
+	_, expectedDigest = parser.NormalizeDigest("insert into t values (2)")
+	c.Assert(info.CurrentSQLDigest, Equals, expectedDigest)
+	c.Assert(info.State, Equals, txninfo.TxnCommitting)
+	c.Assert((*time.Time)(info.BlockStartTime), IsNil)
+	c.Assert(info.StartTS, Greater, startTS)
+	c.Assert(len(info.AllSQLDigests), Equals, 1)
+	c.Assert(info.AllSQLDigests[0], Equals, expectedDigest)
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
+	<-ch
 	info = tk.Se.TxnInfo()
 	c.Assert(info, IsNil)
 }
