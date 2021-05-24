@@ -1110,8 +1110,8 @@ type partitionTableWithGivenSets struct {
 	partitions map[int64]struct{}
 }
 
-// NewPartitionTableithGivenSets creates a new partition table from a partition table.
-func NewPartitionTableithGivenSets(tbl table.PartitionedTable, partitions map[int64]struct{}) table.PartitionedTable {
+// NewPartitionTableWithGivenSets creates a new partition table from a partition table.
+func NewPartitionTableWithGivenSets(tbl table.PartitionedTable, partitions map[int64]struct{}) table.PartitionedTable {
 	if raw, ok := tbl.(*partitionedTable); ok {
 		return &partitionTableWithGivenSets{
 			partitionedTable: raw,

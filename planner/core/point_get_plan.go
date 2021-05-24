@@ -1343,7 +1343,7 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 					}
 					pids[pid] = struct{}{}
 				}
-				pt = tables.NewPartitionTableithGivenSets(pt, pids)
+				pt = tables.NewPartitionTableWithGivenSets(pt, pids)
 			}
 			updatePlan.PartitionedTable = append(updatePlan.PartitionedTable, pt)
 		}
