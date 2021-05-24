@@ -1060,6 +1060,7 @@ func setTableScanToTableRowIDScan(p PhysicalPlan) {
 type rootTask struct {
 	p   PhysicalPlan
 	cst float64
+	isEmpty bool
 }
 
 func (t *rootTask) copy() task {
@@ -1322,6 +1323,9 @@ func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	t = attachPlan2Task(p, t)
 	t.addCost(p.GetCost(t.count()))
 	p.cost = t.cost()
+	if root, ok := tasks[0].(*rootTask); ok && root.isEmpty {
+		t.(*rootTask).isEmpty = true
+	}
 	return t
 }
 
@@ -1336,6 +1340,8 @@ func (p *PhysicalUnionAll) attach2MppTasks(tasks ...task) task {
 				childMaxCost = childCost
 			}
 			childPlans = append(childPlans, mpp.plan())
+		} else if root, ok := tk.(*rootTask); ok && root.isEmpty{
+			continue
 		} else {
 			return invalidTask
 		}
@@ -1347,8 +1353,12 @@ func (p *PhysicalUnionAll) attach2MppTasks(tasks ...task) task {
 }
 
 func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
-	if _, ok := tasks[0].(*mppTask); ok {
-		return p.attach2MppTasks(tasks...)
+	for _, t := range tasks {
+		if _, ok := t.(*mppTask); ok {
+			return p.attach2MppTasks(tasks...)
+		} else if _, ok := t.(*rootTask); ok {
+			continue
+		}
 	}
 	t := &rootTask{p: p}
 	childPlans := make([]PhysicalPlan, 0, len(tasks))

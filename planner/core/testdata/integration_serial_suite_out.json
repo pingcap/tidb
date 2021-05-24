@@ -945,208 +945,6 @@
     ]
   },
   {
-    "Name": "TestBroadcastJoin",
-    "Cases": [
-      {
-        "SQL": "explain format = 'brief' select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
-        "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "    └─HashJoin 8.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
-          "      ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
-          "      └─Selection(Probe) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "        └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false"
-        ]
-      },
-      {
-        "SQL": "explain format = 'brief' select /*+ broadcast_join(fact_t,d1_t,d2_t,d3_t) */ count(*) from fact_t, d1_t, d2_t, d3_t where fact_t.d1_k = d1_t.d1_k and fact_t.d2_k = d2_t.d2_k and fact_t.d3_k = d3_t.d3_k",
-        "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#18)->Column#17",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#18",
-          "    └─HashJoin 8.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d3_k, test.d3_t.d3_k)]",
-          "      ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d3_t.d3_k))",
-          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d3_t keep order:false, global read",
-          "      └─HashJoin(Probe) 8.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d2_k, test.d2_t.d2_k)]",
-          "        ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d2_t.d2_k))",
-          "        │ └─TableFullScan 2.00 batchCop[tiflash] table:d2_t keep order:false, global read",
-          "        └─HashJoin(Probe) 8.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
-          "          ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "          │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
-          "          └─Selection(Probe) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
-          "            └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false"
-        ]
-      },
-      {
-        "SQL": "explain format = 'brief' select /*+ broadcast_join(fact_t,d1_t), broadcast_join_local(d1_t) */ count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
-        "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "    └─HashJoin 8.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
-          "      ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false",
-          "      └─Selection(Probe) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "        └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false, global read"
-        ]
-      },
-      {
-        "SQL": "explain format = 'brief' select /*+ broadcast_join(fact_t,d1_t,d2_t,d3_t), broadcast_join_local(d2_t) */ count(*) from fact_t, d1_t, d2_t, d3_t where fact_t.d1_k = d1_t.d1_k and fact_t.d2_k = d2_t.d2_k and fact_t.d3_k = d3_t.d3_k",
-        "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#18)->Column#17",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#18",
-          "    └─HashJoin 8.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d3_k, test.d3_t.d3_k)]",
-          "      ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d3_t.d3_k))",
-          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d3_t keep order:false, global read",
-          "      └─HashJoin(Probe) 8.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d2_k, test.d2_t.d2_k)]",
-          "        ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d2_t.d2_k))",
-          "        │ └─TableFullScan 2.00 batchCop[tiflash] table:d2_t keep order:false",
-          "        └─HashJoin(Probe) 8.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
-          "          ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "          │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
-          "          └─Selection(Probe) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
-          "            └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false, global read"
-        ]
-      },
-      {
-        "SQL": "explain format = 'brief' select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k",
-        "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "    └─HashJoin 8.00 batchCop[tiflash]  left outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
-          "      ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
-          "      └─TableFullScan(Probe) 8.00 batchCop[tiflash] table:fact_t keep order:false"
-        ]
-      },
-      {
-        "SQL": "explain format = 'brief' select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k",
-        "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "    └─HashJoin 8.00 batchCop[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
-          "      ├─TableFullScan(Build) 2.00 batchCop[tiflash] table:d1_t keep order:false",
-          "      └─Selection(Probe) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "        └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false, global read"
-        ]
-      },
-      {
-        "SQL": "explain format = 'brief' select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col1 > d1_t.value",
-        "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "    └─HashJoin 8.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.fact_t.col1, test.d1_t.value)",
-          "      ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
-          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
-          "      └─Selection(Probe) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
-          "        └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false"
-        ]
-      },
-      {
-        "SQL": "explain format = 'brief' select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col1 > 10",
-        "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "    └─HashJoin 8.00 batchCop[tiflash]  left outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], left cond:[gt(test.fact_t.col1, 10)]",
-          "      ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
-          "      └─TableFullScan(Probe) 8.00 batchCop[tiflash] table:fact_t keep order:false"
-        ]
-      },
-      {
-        "SQL": "explain format = 'brief' select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col2 > 10 and fact_t.col1 > d1_t.value",
-        "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "    └─HashJoin 8.00 batchCop[tiflash]  left outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], left cond:[gt(test.fact_t.col2, 10)], other cond:gt(test.fact_t.col1, test.d1_t.value)",
-          "      ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
-          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
-          "      └─TableFullScan(Probe) 8.00 batchCop[tiflash] table:fact_t keep order:false"
-        ]
-      },
-      {
-        "SQL": "explain format = 'brief' select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k and d1_t.value > 10",
-        "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "    └─HashJoin 8.00 batchCop[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], right cond:gt(test.d1_t.value, 10)",
-          "      ├─TableFullScan(Build) 2.00 batchCop[tiflash] table:d1_t keep order:false",
-          "      └─Selection(Probe) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "        └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false, global read"
-        ]
-      },
-      {
-        "SQL": "explain format = 'brief' select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k and d1_t.value > 10 and fact_t.col1 > d1_t.value",
-        "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#12",
-          "    └─HashJoin 8.00 batchCop[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], right cond:gt(test.d1_t.value, 10), other cond:gt(test.fact_t.col1, test.d1_t.value)",
-          "      ├─Selection(Build) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
-          "      │ └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false, global read",
-          "      └─TableFullScan(Probe) 2.00 batchCop[tiflash] table:d1_t keep order:false"
-        ]
-      },
-      {
-        "SQL": "explain format = 'brief' select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t where exists (select 1 from d1_t where d1_k = fact_t.d1_k)",
-        "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#13)->Column#12",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#13",
-          "    └─HashJoin 6.40 batchCop[tiflash]  semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
-          "      ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
-          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
-          "      └─Selection(Probe) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k))",
-          "        └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false"
-        ]
-      },
-      {
-        "SQL": "explain format = 'brief' select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t where exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)",
-        "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#13)->Column#12",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#13",
-          "    └─HashJoin 6.40 batchCop[tiflash]  semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.d1_t.value, test.fact_t.col1)",
-          "      ├─Selection(Build) 2.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
-          "      │ └─TableFullScan 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
-          "      └─Selection(Probe) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
-          "        └─TableFullScan 8.00 batchCop[tiflash] table:fact_t keep order:false"
-        ]
-      },
-      {
-        "SQL": "explain format = 'brief' select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k)",
-        "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#13)->Column#12",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#13",
-          "    └─HashJoin 6.40 batchCop[tiflash]  anti semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
-          "      ├─TableFullScan(Build) 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
-          "      └─TableFullScan(Probe) 8.00 batchCop[tiflash] table:fact_t keep order:false"
-        ]
-      },
-      {
-        "SQL": "explain format = 'brief' select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)",
-        "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#13)->Column#12",
-          "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#13",
-          "    └─HashJoin 6.40 batchCop[tiflash]  anti semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.d1_t.value, test.fact_t.col1)",
-          "      ├─TableFullScan(Build) 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
-          "      └─TableFullScan(Probe) 8.00 batchCop[tiflash] table:fact_t keep order:false"
-        ]
-      }
-    ]
-  },
-  {
     "Name": "TestJoinNotSupportedByTiFlash",
     "Cases": [
       {
@@ -1959,6 +1757,67 @@
           "    │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: Broadcast",
           "    │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
           "    └─TableFullScan(Probe) 10000.00 cop[tiflash] table:A keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestMppUnionAll",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select count(*) from (select a , b from t union all select a , b from t1) tt",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
+          "└─TableReader 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 cop[tiflash]  funcs:count(1)->Column#12",
+          "      └─Union 20000.00 cop[tiflash]  ",
+          "        ├─Projection 10000.00 cop[tiflash]  cast(test.t.a, int(11) BINARY)->Column#9, test.t.b",
+          "        │ └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─Projection 10000.00 cop[tiflash]  test.t1.a, cast(test.t1.b, int(11) BINARY)->Column#10",
+          "          └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*) from (select a , b from t union all select a , b from t1 union all select a, b from t where false) tt",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#16)->Column#15",
+          "└─TableReader 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 cop[tiflash]  funcs:count(1)->Column#16",
+          "      └─Union 20000.00 cop[tiflash]  ",
+          "        ├─Projection 10000.00 cop[tiflash]  cast(test.t.a, int(11) BINARY)->Column#13, test.t.b",
+          "        │ └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─Projection 10000.00 cop[tiflash]  test.t1.a, cast(test.t1.b, int(11) BINARY)->Column#14",
+          "          └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*) from (select a , b from t union all select a , c from t1) tt",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#14)->Column#11",
+          "└─TableReader 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 cop[tiflash]  funcs:count(1)->Column#14",
+          "      └─Union 20000.00 cop[tiflash]  ",
+          "        ├─Projection 10000.00 cop[tiflash]  cast(Column#9, int(11) BINARY)->Column#9, Column#10",
+          "        │ └─Projection 10000.00 cop[tiflash]  test.t.a, cast(test.t.b, double BINARY)->Column#10",
+          "        │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─Projection 10000.00 cop[tiflash]  test.t1.a, cast(test.t1.c, double BINARY)->Column#10",
+          "          └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*) from (select a , b from t union all select a , c from t1 where false) tt",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#14)->Column#11",
+          "└─TableReader 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#14",
+          "      └─Union 10000.00 batchCop[tiflash]  ",
+          "        └─Projection 10000.00 batchCop[tiflash]  cast(Column#9, int(11) BINARY)->Column#9, Column#10",
+          "          └─Projection 10000.00 batchCop[tiflash]  test.t.a, cast(test.t.b, double BINARY)->Column#10",
+          "            └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       }
     ]
