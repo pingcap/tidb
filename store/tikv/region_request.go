@@ -32,9 +32,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
 )
@@ -222,12 +224,12 @@ func (s *RegionRequestSender) SendReqCtx(
 	rpcCtx *RPCContext,
 	err error,
 ) {
-	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
+	if span := opentracing.SpanFromContext(bo.GetCtx()); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("regionRequest.SendReqCtx", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		// TODO(MyonKeminta): Make sure trace works without cloning the backoffer.
 		// bo = bo.Clone()
-		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
+		bo.SetCtx(opentracing.ContextWithSpan(bo.GetCtx(), span1))
 	}
 
 	failpoint.Inject("tikvStoreSendReqResult", func(val failpoint.Value) {
@@ -246,17 +248,13 @@ func (s *RegionRequestSender) SendReqCtx(
 					Resp: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
 				}, nil, nil)
 			}
-		case "callBackofferHook":
-			if bo.vars != nil && bo.vars.Hook != nil {
-				bo.vars.Hook("callBackofferHook", bo.vars)
-			}
 		case "requestTiDBStoreError":
 			if et == tikvrpc.TiDB {
-				failpoint.Return(nil, nil, kv.ErrTiKVServerTimeout)
+				failpoint.Return(nil, nil, tikverr.ErrTiKVServerTimeout)
 			}
 		case "requestTiFlashError":
 			if et == tikvrpc.TiFlash {
-				failpoint.Return(nil, nil, kv.ErrTiFlashServerTimeout)
+				failpoint.Return(nil, nil, tikverr.ErrTiFlashServerTimeout)
 			}
 		}
 	})
@@ -264,7 +262,7 @@ func (s *RegionRequestSender) SendReqCtx(
 	tryTimes := 0
 	for {
 		if (tryTimes > 0) && (tryTimes%1000 == 0) {
-			logutil.Logger(bo.ctx).Warn("retry get ", zap.Uint64("region = ", regionID.GetID()), zap.Int("times = ", tryTimes))
+			logutil.Logger(bo.GetCtx()).Warn("retry get ", zap.Uint64("region = ", regionID.GetID()), zap.Int("times = ", tryTimes))
 		}
 
 		rpcCtx, err = s.getRPCContext(bo, req, regionID, et, opts...)
@@ -274,7 +272,7 @@ func (s *RegionRequestSender) SendReqCtx(
 
 		failpoint.Inject("invalidCacheAndRetry", func() {
 			// cooperate with github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff
-			if c := bo.ctx.Value("injectedBackoff"); c != nil {
+			if c := bo.GetCtx().Value("injectedBackoff"); c != nil {
 				resp, err = tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}})
 				failpoint.Return(resp, nil, err)
 			}
@@ -286,12 +284,12 @@ func (s *RegionRequestSender) SendReqCtx(
 
 			// TODO: Change the returned error to something like "region missing in cache",
 			// and handle this error like EpochNotMatch, which means to re-split the request and retry.
-			logutil.Logger(bo.ctx).Debug("throwing pseudo region error due to region not found in cache", zap.Stringer("region", &regionID))
+			logutil.Logger(bo.GetCtx()).Debug("throwing pseudo region error due to region not found in cache", zap.Stringer("region", &regionID))
 			resp, err = tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}})
 			return resp, nil, err
 		}
 
-		logutil.Eventf(bo.ctx, "send %s request to region %d at %s", req.Type, regionID.id, rpcCtx.Addr)
+		logutil.Eventf(bo.GetCtx(), "send %s request to region %d at %s", req.Type, regionID.id, rpcCtx.Addr)
 		s.storeAddr = rpcCtx.Addr
 		var retry bool
 		resp, retry, err = s.sendReqToRegion(bo, rpcCtx, req, timeout)
@@ -300,8 +298,9 @@ func (s *RegionRequestSender) SendReqCtx(
 		}
 
 		// recheck whether the session/query is killed during the Next()
-		if bo.vars != nil && bo.vars.Killed != nil && atomic.LoadUint32(bo.vars.Killed) == 1 {
-			return nil, nil, kv.ErrQueryInterrupted
+		boVars := bo.GetVars()
+		if boVars != nil && boVars.Killed != nil && atomic.LoadUint32(boVars.Killed) == 1 {
+			return nil, nil, tikverr.ErrQueryInterrupted
 		}
 		failpoint.Inject("mockRetrySendReqToRegion", func(val failpoint.Value) {
 			if val.(bool) {
@@ -391,7 +390,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		defer s.releaseStoreToken(rpcCtx.Store)
 	}
 
-	ctx := bo.ctx
+	ctx := bo.GetCtx()
 	if rawHook := ctx.Value(RPCCancellerCtxKey{}); rawHook != nil {
 		var cancel context.CancelFunc
 		ctx, cancel = rawHook.(*RPCCanceller).WithCancel(ctx)
@@ -409,7 +408,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 	}
 
 	var sessionID uint64
-	if v := bo.ctx.Value(util.SessionID); v != nil {
+	if v := bo.GetCtx().Value(util.SessionID); v != nil {
 		sessionID = v.(uint64)
 	}
 
@@ -442,7 +441,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 			RecordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
 			failpoint.Inject("tikvStoreRespResult", func(val failpoint.Value) {
 				if val.(bool) {
-					if req.Type == tikvrpc.CmdCop && bo.totalSleep == 0 {
+					if req.Type == tikvrpc.CmdCop && bo.GetTotalSleep() == 0 {
 						failpoint.Return(&tikvrpc.Response{
 							Resp: &coprocessor.Response{RegionError: &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}},
 						}, false, nil)
@@ -476,10 +475,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 			if val.(bool) {
 				ctx1, cancel := context.WithCancel(context.Background())
 				cancel()
-				select {
-				case <-ctx1.Done():
-				}
-
+				<-ctx1.Done()
 				ctx = ctx1
 				err = ctx.Err()
 				resp = nil
@@ -529,8 +525,7 @@ func (s *RegionRequestSender) getStoreToken(st *Store, limit int64) error {
 		return nil
 	}
 	metrics.TiKVStoreLimitErrorCounter.WithLabelValues(st.addr, strconv.FormatUint(st.storeID, 10)).Inc()
-	return kv.ErrTokenLimit.GenWithStackByArgs(st.storeID)
-
+	return &tikverr.ErrTokenLimit{StoreID: st.storeID}
 }
 
 func (s *RegionRequestSender) releaseStoreToken(st *Store) {
@@ -544,22 +539,22 @@ func (s *RegionRequestSender) releaseStoreToken(st *Store) {
 }
 
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
-	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
+	if span := opentracing.SpanFromContext(bo.GetCtx()); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("regionRequest.onSendFail", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		// TODO(MyonKeminta): Make sure trace works without cloning the backoffer.
 		// bo = bo.Clone()
-		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
+		bo.SetCtx(opentracing.ContextWithSpan(bo.GetCtx(), span1))
 	}
 	// If it failed because the context is cancelled by ourself, don't retry.
 	if errors.Cause(err) == context.Canceled {
 		return errors.Trace(err)
 	} else if atomic.LoadUint32(&ShuttingDown) > 0 {
-		return kv.ErrTiDBShuttingDown
+		return tikverr.ErrTiDBShuttingDown
 	}
 	if status.Code(errors.Cause(err)) == codes.Canceled {
 		select {
-		case <-bo.ctx.Done():
+		case <-bo.GetCtx().Done():
 			return errors.Trace(err)
 		default:
 			// If we don't cancel, but the error code is Canceled, it must be from grpc remote.
@@ -578,9 +573,9 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	// TODO: the number of retry time should be limited:since region may be unavailable
 	// when some unrecoverable disaster happened.
 	if ctx.Store != nil && ctx.Store.storeType == tikvrpc.TiFlash {
-		err = bo.Backoff(BoTiFlashRPC, errors.Errorf("send tiflash request error: %v, ctx: %v, try next peer later", err, ctx))
+		err = bo.Backoff(retry.BoTiFlashRPC, errors.Errorf("send tiflash request error: %v, ctx: %v, try next peer later", err, ctx))
 	} else {
-		err = bo.Backoff(BoTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %v, try next peer later", err, ctx))
+		err = bo.Backoff(retry.BoTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %v, try next peer later", err, ctx))
 	}
 	return errors.Trace(err)
 }
@@ -632,13 +627,13 @@ func regionErrorToLabel(e *errorpb.Error) string {
 	return "unknown"
 }
 
-func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed *uint32, regionErr *errorpb.Error) (retry bool, err error) {
-	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
+func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed *uint32, regionErr *errorpb.Error) (shouldRetry bool, err error) {
+	if span := opentracing.SpanFromContext(bo.GetCtx()); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tikv.onRegionError", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		// TODO(MyonKeminta): Make sure trace works without cloning the backoffer.
 		// bo = bo.Clone()
-		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
+		bo.SetCtx(opentracing.ContextWithSpan(bo.GetCtx(), span1))
 	}
 
 	metrics.TiKVRegionErrorCounter.WithLabelValues(regionErrorToLabel(regionErr)).Inc()
@@ -654,7 +649,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 			// isolated and removed from the Raft group. So it's necessary to reload
 			// the region from PD.
 			s.regionCache.InvalidateCachedRegionWithReason(ctx.Region, NoLeader)
-			if err = bo.Backoff(BoRegionMiss, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
+			if err = bo.Backoff(retry.BoRegionMiss, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
 				return false, errors.Trace(err)
 			}
 		} else {
@@ -690,9 +685,9 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 			zap.String("reason", regionErr.GetServerIsBusy().GetReason()),
 			zap.Stringer("ctx", ctx))
 		if ctx != nil && ctx.Store != nil && ctx.Store.storeType == tikvrpc.TiFlash {
-			err = bo.Backoff(boTiFlashServerBusy, errors.Errorf("server is busy, ctx: %v", ctx))
+			err = bo.Backoff(retry.BoTiFlashServerBusy, errors.Errorf("server is busy, ctx: %v", ctx))
 		} else {
-			err = bo.Backoff(boTiKVServerBusy, errors.Errorf("server is busy, ctx: %v", ctx))
+			err = bo.Backoff(retry.BoTiKVServerBusy, errors.Errorf("server is busy, ctx: %v", ctx))
 		}
 		if err != nil {
 			return false, errors.Trace(err)
@@ -701,7 +696,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 	}
 	if regionErr.GetStaleCommand() != nil {
 		logutil.BgLogger().Debug("tikv reports `StaleCommand`", zap.Stringer("ctx", ctx))
-		err = bo.Backoff(boStaleCmd, errors.Errorf("stale command, ctx: %v", ctx))
+		err = bo.Backoff(retry.BoStaleCmd, errors.Errorf("stale command, ctx: %v", ctx))
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -718,7 +713,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 	}
 	if regionErr.GetMaxTimestampNotSynced() != nil {
 		logutil.BgLogger().Warn("tikv reports `MaxTimestampNotSynced`", zap.Stringer("ctx", ctx))
-		err = bo.Backoff(boMaxTsNotSynced, errors.Errorf("max timestamp not synced, ctx: %v", ctx))
+		err = bo.Backoff(retry.BoMaxTsNotSynced, errors.Errorf("max timestamp not synced, ctx: %v", ctx))
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -735,16 +730,4 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 		s.regionCache.InvalidateCachedRegion(ctx.Region)
 	}
 	return false, nil
-}
-
-// IsolationLevelToPB converts isolation level to wire type.
-func IsolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
-	switch level {
-	case kv.RC:
-		return kvrpcpb.IsolationLevel_RC
-	case kv.SI:
-		return kvrpcpb.IsolationLevel_SI
-	default:
-		return kvrpcpb.IsolationLevel_SI
-	}
 }

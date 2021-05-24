@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sem"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -843,6 +844,12 @@ func (s *testPrivilegeSuite) TestRevokePrivileges(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "hasgrant", Hostname: "localhost", AuthUsername: "hasgrant", AuthHostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se, "REVOKE SELECT ON mysql.* FROM 'withoutgrant'")
 	mustExec(c, se, "REVOKE ALL ON mysql.* FROM withoutgrant")
+
+	// For issue https://github.com/pingcap/tidb/issues/23850
+	mustExec(c, se, "CREATE USER u4")
+	mustExec(c, se, "GRANT ALL ON *.* TO u4 WITH GRANT OPTION")
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost", AuthUsername: "u4", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "REVOKE ALL ON *.* FROM CURRENT_USER()")
 }
 
 func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
@@ -1006,14 +1013,14 @@ func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
 	_, err = se.ExecuteInternal(context.Background(), "drop table information_schema.tables")
 	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "update information_schema.tables set table_name = 'tst' where table_name = 'mysql'")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "privilege check"), IsTrue)
 
 	// Test performance_schema.
 	mustExec(c, se, `select * from performance_schema.events_statements_summary_by_digest`)
 	_, err = se.ExecuteInternal(context.Background(), "drop table performance_schema.events_statements_summary_by_digest")
 	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "update performance_schema.events_statements_summary_by_digest set schema_name = 'tst'")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "privilege check"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "delete from performance_schema.events_statements_summary_by_digest")
 	c.Assert(strings.Contains(err.Error(), "DELETE command denied to user"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "create table performance_schema.t(a int)")
@@ -1025,7 +1032,7 @@ func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
 	_, err = se.ExecuteInternal(context.Background(), "drop table metrics_schema.tidb_query_duration")
 	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "update metrics_schema.tidb_query_duration set instance = 'tst'")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "privilege check"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "delete from metrics_schema.tidb_query_duration")
 	c.Assert(strings.Contains(err.Error(), "DELETE command denied to user"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "create table metric_schema.t(a int)")
@@ -1041,9 +1048,9 @@ func (s *testPrivilegeSuite) TestAdminCommand(c *C) {
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_admin", Hostname: "localhost"}, nil, nil), IsTrue)
 	_, err := se.ExecuteInternal(context.Background(), "ADMIN SHOW DDL JOBS")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "privilege check"), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "ADMIN CHECK TABLE t")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "privilege check"), IsTrue)
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
 	_, err = se.ExecuteInternal(context.Background(), "ADMIN SHOW DDL JOBS")
@@ -1339,5 +1346,267 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeRestrictedTables(c *C) {
 	mustExec(c, cloudAdminSe, "USE metrics_schema")
 	mustExec(c, cloudAdminSe, "SELECT * FROM metrics_schema.uptime")
 	mustExec(c, cloudAdminSe, "CREATE TABLE mysql.abcd (a int)")
+}
 
+func (s *testPrivilegeSuite) TestSecurityEnhancedModeInfoschema(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER uroot1, uroot2, uroot3")
+	tk.MustExec("GRANT SUPER ON *.* to uroot1 WITH GRANT OPTION") // super not process
+	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
+	tk.MustExec("GRANT SUPER, PROCESS, RESTRICTED_TABLES_ADMIN ON *.* to uroot2 WITH GRANT OPTION")
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "uroot1",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	sem.Enable()
+	defer sem.Disable()
+
+	// Even though we have super, we still can't read protected information from tidb_servers_info, cluster_* tables
+	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.tidb_servers_info WHERE ip IS NOT NULL`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.cluster_info WHERE status_address IS NOT NULL`).Check(testkit.Rows("0"))
+	// 36 = a UUID. Normally it is an IP address.
+	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.CLUSTER_STATEMENTS_SUMMARY WHERE length(instance) != 36`).Check(testkit.Rows("0"))
+
+	// That is unless we have the RESTRICTED_TABLES_ADMIN privilege
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "uroot2",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	// flip from is NOT NULL etc
+	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.tidb_servers_info WHERE ip IS NULL`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.cluster_info WHERE status_address IS NULL`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.CLUSTER_STATEMENTS_SUMMARY WHERE length(instance) = 36`).Check(testkit.Rows("0"))
+}
+
+func (s *testPrivilegeSuite) TestSecurityEnhancedModeStatusVars(c *C) {
+	// Without TiKV the status var list does not include tidb_gc_leader_desc
+	// So we can only test that the dynamic privilege is grantable.
+	// We will have to use an integration test to run SHOW STATUS LIKE 'tidb_gc_leader_desc'
+	// and verify if it appears.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER unostatus, ustatus")
+	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
+	tk.MustExec("GRANT RESTRICTED_STATUS_ADMIN ON *.* to ustatus")
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "unostatus",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+}
+
+func (s *testPrivilegeSuite) TestRenameUser(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, "DROP USER IF EXISTS 'ru1'@'localhost'")
+	mustExec(c, rootSe, "DROP USER IF EXISTS ru3")
+	mustExec(c, rootSe, "DROP USER IF EXISTS ru6@localhost")
+	mustExec(c, rootSe, "CREATE USER 'ru1'@'localhost'")
+	mustExec(c, rootSe, "CREATE USER ru3")
+	mustExec(c, rootSe, "CREATE USER ru6@localhost")
+	se1 := newSession(c, s.store, s.dbName)
+	c.Assert(se1.Auth(&auth.UserIdentity{Username: "ru1", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	// Check privileges (need CREATE USER)
+	_, err := se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru4")
+	c.Assert(err, ErrorMatches, ".*Access denied; you need .at least one of. the CREATE USER privilege.s. for this operation")
+	mustExec(c, rootSe, "GRANT UPDATE ON mysql.user TO 'ru1'@'localhost'")
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru4")
+	c.Assert(err, ErrorMatches, ".*Access denied; you need .at least one of. the CREATE USER privilege.s. for this operation")
+	mustExec(c, rootSe, "GRANT CREATE USER ON *.* TO 'ru1'@'localhost'")
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru4")
+	c.Assert(err, IsNil)
+
+	// Test a few single rename (both Username and Hostname)
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER 'ru4'@'%' TO 'ru3'@'localhost'")
+	c.Assert(err, IsNil)
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER 'ru3'@'localhost' TO 'ru3'@'%'")
+	c.Assert(err, IsNil)
+	// Including negative tests, i.e. non existing from user and existing to user
+	_, err = rootSe.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru1@localhost")
+	c.Assert(err, ErrorMatches, ".*Operation RENAME USER failed for ru3@%.*")
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru4 TO ru5@localhost")
+	c.Assert(err, ErrorMatches, ".*Operation RENAME USER failed for ru4@%.*")
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru3")
+	c.Assert(err, ErrorMatches, ".*Operation RENAME USER failed for ru3@%.*")
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru5@localhost, ru4 TO ru7")
+	c.Assert(err, ErrorMatches, ".*Operation RENAME USER failed for ru4@%.*")
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru5@localhost, ru6@localhost TO ru1@localhost")
+	c.Assert(err, ErrorMatches, ".*Operation RENAME USER failed for ru6@localhost.*")
+
+	// Test multi rename, this is a full swap of ru3 and ru6, i.e. need to read its previous state in the same transaction.
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER 'ru3' TO 'ru3_tmp', ru6@localhost TO ru3, 'ru3_tmp' to ru6@localhost")
+	c.Assert(err, IsNil)
+
+	// Cleanup
+	mustExec(c, rootSe, "DROP USER ru6@localhost")
+	mustExec(c, rootSe, "DROP USER ru3")
+	mustExec(c, rootSe, "DROP USER 'ru1'@'localhost'")
+}
+
+func (s *testPrivilegeSuite) TestSecurityEnhancedModeSysVars(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER svroot1, svroot2")
+	tk.MustExec("GRANT SUPER ON *.* to svroot1 WITH GRANT OPTION")
+	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
+	tk.MustExec("GRANT SUPER, RESTRICTED_VARIABLES_ADMIN ON *.* to svroot2")
+
+	sem.Enable()
+	defer sem.Disable()
+
+	// svroot1 has SUPER but in SEM will be restricted
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "svroot1",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	tk.MustQuery(`SHOW VARIABLES LIKE 'tidb_force_priority'`).Check(testkit.Rows())
+	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_enable_telemetry'`).Check(testkit.Rows())
+
+	_, err := tk.Exec("SET tidb_force_priority = 'NO_PRIORITY'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
+	_, err = tk.Exec("SET GLOBAL tidb_enable_telemetry = OFF")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
+
+	_, err = tk.Exec("SELECT @@session.tidb_force_priority")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
+	_, err = tk.Exec("SELECT @@global.tidb_enable_telemetry")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
+
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "svroot2",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	tk.MustQuery(`SHOW VARIABLES LIKE 'tidb_force_priority'`).Check(testkit.Rows("tidb_force_priority NO_PRIORITY"))
+	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_enable_telemetry'`).Check(testkit.Rows("tidb_enable_telemetry ON"))
+
+	// should not actually make any change.
+	tk.MustExec("SET tidb_force_priority = 'NO_PRIORITY'")
+	tk.MustExec("SET GLOBAL tidb_enable_telemetry = ON")
+
+	tk.MustQuery(`SELECT @@session.tidb_force_priority`).Check(testkit.Rows("NO_PRIORITY"))
+	tk.MustQuery(`SELECT @@global.tidb_enable_telemetry`).Check(testkit.Rows("1"))
+}
+
+// TestViewDefiner tests that default roles are correctly applied in the algorithm definer
+// See: https://github.com/pingcap/tidb/issues/24414
+func (s *testPrivilegeSuite) TestViewDefiner(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE DATABASE issue24414")
+	tk.MustExec("USE issue24414")
+	tk.MustExec(`create table table1(
+		col1 int,
+		col2 int,
+		col3 int
+		)`)
+	tk.MustExec(`insert into table1 values (1,1,1),(2,2,2)`)
+	tk.MustExec(`CREATE ROLE 'ACL-mobius-admin'`)
+	tk.MustExec(`CREATE USER 'mobius-admin'`)
+	tk.MustExec(`CREATE USER 'mobius-admin-no-role'`)
+	tk.MustExec(`GRANT Select,Insert,Update,Delete,Create,Drop,Alter,Index,Create View,Show View ON issue24414.* TO 'ACL-mobius-admin'@'%'`)
+	tk.MustExec(`GRANT Select,Insert,Update,Delete,Create,Drop,Alter,Index,Create View,Show View ON issue24414.* TO 'mobius-admin-no-role'@'%'`)
+	tk.MustExec(`GRANT 'ACL-mobius-admin'@'%' to 'mobius-admin'@'%'`)
+	tk.MustExec(`SET DEFAULT ROLE ALL TO 'mobius-admin'`)
+	// create tables
+	tk.MustExec(`CREATE ALGORITHM = UNDEFINED DEFINER = 'mobius-admin'@'127.0.0.1' SQL SECURITY DEFINER VIEW test_view (col1 , col2 , col3) AS SELECT * from table1`)
+	tk.MustExec(`CREATE ALGORITHM = UNDEFINED DEFINER = 'mobius-admin-no-role'@'127.0.0.1' SQL SECURITY DEFINER VIEW test_view2 (col1 , col2 , col3) AS SELECT * from table1`)
+
+	// all examples should work
+	tk.MustExec("select * from test_view")
+	tk.MustExec("select * from test_view2")
+}
+
+func (s *testPrivilegeSuite) TestSecurityEnhancedModeRestrictedUsers(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER ruroot1, ruroot2, ruroot3")
+	tk.MustExec("CREATE ROLE notimportant")
+	tk.MustExec("GRANT SUPER, CREATE USER ON *.* to ruroot1 WITH GRANT OPTION")
+	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
+	tk.MustExec("GRANT SUPER, RESTRICTED_USER_ADMIN,  CREATE USER  ON *.* to ruroot2 WITH GRANT OPTION")
+	tk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* to ruroot3")
+	tk.MustExec("GRANT notimportant TO ruroot2, ruroot3")
+
+	sem.Enable()
+	defer sem.Disable()
+
+	stmts := []string{
+		"SET PASSWORD for ruroot3 = 'newpassword'",
+		"REVOKE notimportant FROM ruroot3",
+		"REVOKE SUPER ON *.* FROM ruroot3",
+		"DROP USER ruroot3",
+	}
+
+	// ruroot1 has SUPER but in SEM will be restricted
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "ruroot1",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	for _, stmt := range stmts {
+		err := tk.ExecToErr(stmt)
+		c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	}
+
+	// Switch to ruroot2, it should be permitted
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "ruroot2",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	for _, stmt := range stmts {
+		err := tk.ExecToErr(stmt)
+		c.Assert(err, IsNil)
+	}
+}
+
+func (s *testPrivilegeSuite) TestDynamicPrivsRegistration(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	pm := privilege.GetPrivilegeManager(se)
+
+	count := len(privileges.GetDynamicPrivileges())
+
+	c.Assert(pm.IsDynamicPrivilege("ACDC_ADMIN"), IsFalse)
+	c.Assert(privileges.RegisterDynamicPrivilege("ACDC_ADMIN"), IsNil)
+	c.Assert(pm.IsDynamicPrivilege("ACDC_ADMIN"), IsTrue)
+	c.Assert(len(privileges.GetDynamicPrivileges()), Equals, count+1)
+
+	c.Assert(pm.IsDynamicPrivilege("iAmdynamIC"), IsFalse)
+	c.Assert(privileges.RegisterDynamicPrivilege("IAMdynamic"), IsNil)
+	c.Assert(pm.IsDynamicPrivilege("IAMdyNAMIC"), IsTrue)
+	c.Assert(len(privileges.GetDynamicPrivileges()), Equals, count+2)
+
+	c.Assert(privileges.RegisterDynamicPrivilege("THIS_PRIVILEGE_NAME_IS_TOO_LONG_THE_MAX_IS_32_CHARS").Error(), Equals, "privilege name is longer than 32 characters")
+	c.Assert(pm.IsDynamicPrivilege("THIS_PRIVILEGE_NAME_IS_TOO_LONG_THE_MAX_IS_32_CHARS"), IsFalse)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER privassigntest")
+	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
+
+	// Check that all privileges registered are assignable to users,
+	// including the recently registered ACDC_ADMIN
+	for _, priv := range privileges.GetDynamicPrivileges() {
+		sqlGrant, err := sqlexec.EscapeSQL("GRANT %n ON *.* TO privassigntest", priv)
+		c.Assert(err, IsNil)
+		tk.MustExec(sqlGrant)
+	}
+	// Check that all privileges registered are revokable
+	for _, priv := range privileges.GetDynamicPrivileges() {
+		sqlGrant, err := sqlexec.EscapeSQL("REVOKE %n ON *.* FROM privassigntest", priv)
+		c.Assert(err, IsNil)
+		tk.MustExec(sqlGrant)
+	}
 }

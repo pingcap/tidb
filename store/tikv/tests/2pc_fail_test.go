@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 )
 
 // TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when
@@ -40,7 +40,7 @@ func (s *testCommitterSuite) TestFailCommitPrimaryRpcErrors(c *C) {
 
 	// We don't need to call "Rollback" after "Commit" fails.
 	err = t1.Rollback()
-	c.Assert(err, Equals, kv.ErrInvalidTxn)
+	c.Assert(err, Equals, tikverr.ErrInvalidTxn)
 }
 
 // TestFailCommitPrimaryRegionError tests RegionError is handled properly when

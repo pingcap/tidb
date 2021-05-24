@@ -143,7 +143,7 @@ func (s *TestDDLSuite) SetUpSuite(c *C) {
 	s.procs = make([]*server, *serverNum)
 
 	// Set server restart retry count.
-	s.retryCount = 5
+	s.retryCount = 20
 
 	createLogFiles(c, *serverNum)
 	err = s.startServers()

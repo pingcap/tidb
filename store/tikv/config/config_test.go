@@ -15,6 +15,7 @@ package config
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 )
 
 var _ = SerialSuites(&testConfigSuite{})
@@ -30,4 +31,22 @@ func (s *testConfigSuite) TestParsePath(c *C) {
 	_, disableGC, err = ParsePath("tikv://node1:2379?disableGC=true")
 	c.Assert(err, IsNil)
 	c.Assert(disableGC, IsTrue)
+}
+
+func (s *testConfigSuite) TestTxnScopeValue(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("bj")`), IsNil)
+	isGlobal, v := GetTxnScopeFromConfig()
+	c.Assert(isGlobal, IsFalse)
+	c.Assert(v, Equals, "bj")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("")`), IsNil)
+	isGlobal, v = GetTxnScopeFromConfig()
+	c.Assert(isGlobal, IsTrue)
+	c.Assert(v, Equals, "global")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("global")`), IsNil)
+	isGlobal, v = GetTxnScopeFromConfig()
+	c.Assert(isGlobal, IsFalse)
+	c.Assert(v, Equals, "global")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope"), IsNil)
 }

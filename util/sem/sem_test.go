@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 
 	. "github.com/pingcap/check"
 )
@@ -66,4 +67,37 @@ func (s *testSecurity) TestIsRestrictedPrivilege(c *C) {
 	c.Assert(IsRestrictedPrivilege("CONNECTION_ADMIN"), IsFalse)
 	c.Assert(IsRestrictedPrivilege("BACKUP_ADMIN"), IsFalse)
 	c.Assert(IsRestrictedPrivilege("aa"), IsFalse)
+}
+
+func (s *testSecurity) TestIsInvisibleStatusVar(c *C) {
+	c.Assert(IsInvisibleStatusVar(tidbGCLeaderDesc), IsTrue)
+	c.Assert(IsInvisibleStatusVar("server_id"), IsFalse)
+	c.Assert(IsInvisibleStatusVar("ddl_schema_version"), IsFalse)
+	c.Assert(IsInvisibleStatusVar("Ssl_version"), IsFalse)
+}
+
+func (s *testSecurity) TestIsInvisibleSysVar(c *C) {
+	c.Assert(IsInvisibleSysVar(variable.Hostname), IsFalse)                   // changes the value to default, but is not invisible
+	c.Assert(IsInvisibleSysVar(variable.TiDBEnableEnhancedSecurity), IsFalse) // should be able to see the mode is on.
+
+	c.Assert(IsInvisibleSysVar(variable.TiDBAllowRemoveAutoInc), IsTrue)
+	c.Assert(IsInvisibleSysVar(variable.TiDBCheckMb4ValueInUTF8), IsTrue)
+	c.Assert(IsInvisibleSysVar(variable.TiDBConfig), IsTrue)
+	c.Assert(IsInvisibleSysVar(variable.TiDBEnableSlowLog), IsTrue)
+	c.Assert(IsInvisibleSysVar(variable.TiDBExpensiveQueryTimeThreshold), IsTrue)
+	c.Assert(IsInvisibleSysVar(variable.TiDBForcePriority), IsTrue)
+	c.Assert(IsInvisibleSysVar(variable.TiDBGeneralLog), IsTrue)
+	c.Assert(IsInvisibleSysVar(variable.TiDBMetricSchemaRangeDuration), IsTrue)
+	c.Assert(IsInvisibleSysVar(variable.TiDBMetricSchemaStep), IsTrue)
+	c.Assert(IsInvisibleSysVar(variable.TiDBOptWriteRowID), IsTrue)
+	c.Assert(IsInvisibleSysVar(variable.TiDBPProfSQLCPU), IsTrue)
+	c.Assert(IsInvisibleSysVar(variable.TiDBRecordPlanInSlowLog), IsTrue)
+	c.Assert(IsInvisibleSysVar(variable.TiDBSlowQueryFile), IsTrue)
+	c.Assert(IsInvisibleSysVar(variable.TiDBSlowLogThreshold), IsTrue)
+	c.Assert(IsInvisibleSysVar(variable.TiDBEnableCollectExecutionInfo), IsTrue)
+	c.Assert(IsInvisibleSysVar(variable.TiDBMemoryUsageAlarmRatio), IsTrue)
+	c.Assert(IsInvisibleSysVar(variable.TiDBEnableTelemetry), IsTrue)
+	c.Assert(IsInvisibleSysVar(variable.TiDBRowFormatVersion), IsTrue)
+	c.Assert(IsInvisibleSysVar(variable.TiDBRedactLog), IsTrue)
+	c.Assert(IsInvisibleSysVar(variable.TiDBSlowLogMasking), IsTrue)
 }

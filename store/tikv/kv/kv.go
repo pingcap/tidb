@@ -4,17 +4,8 @@ import (
 	"sync"
 	"time"
 
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/util"
-)
-
-// IsoLevel is the transaction's isolation level.
-type IsoLevel int
-
-const (
-	// SI stands for 'snapshot isolation'.
-	SI IsoLevel = iota
-	// RC stands for 'read committed'.
-	RC
 )
 
 // ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.
@@ -37,4 +28,6 @@ type LockCtx struct {
 	ValuesLock            sync.Mutex
 	LockExpired           *uint32
 	Stats                 *util.LockKeysDetails
+	ResourceGroupTag      []byte
+	OnDeadlock            func(*tikverr.ErrDeadlock)
 }

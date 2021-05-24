@@ -723,6 +723,9 @@ type Simple struct {
 	//   and executing in co-processor.
 	//   Used for `global kill`. See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
 	IsFromRemote bool
+
+	// StalenessTxnOption is the transaction option that will be built when planner builder calls buildSimple.
+	StalenessTxnOption *sessionctx.StalenessTxnOption
 }
 
 // PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.
@@ -856,6 +859,7 @@ type AnalyzeColumnsTask struct {
 	CommonHandleInfo *model.IndexInfo
 	ColsInfo         []*model.ColumnInfo
 	TblInfo          *model.TableInfo
+	Indexes          []*model.IndexInfo
 	analyzeInfo
 }
 

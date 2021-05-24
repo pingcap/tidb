@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/store/tikv"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/memory"
@@ -154,6 +155,7 @@ type Transaction interface {
 	// String implements fmt.Stringer interface.
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
+	// Will block until all keys are locked successfully or an error occurs.
 	LockKeys(ctx context.Context, lockCtx *LockCtx, keys ...Key) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
@@ -173,12 +175,10 @@ type Transaction interface {
 	GetMemBuffer() MemBuffer
 	// GetSnapshot returns the Snapshot binding to this transaction.
 	GetSnapshot() Snapshot
-	// GetUnionStore returns the UnionStore binding to this transaction.
-	GetUnionStore() UnionStore
 	// SetVars sets variables to the transaction.
-	SetVars(vars *Variables)
+	SetVars(vars interface{})
 	// GetVars gets variables from the transaction.
-	GetVars() *Variables
+	GetVars() interface{}
 	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
 	// Do not use len(value) == 0 or value == nil to represent non-exist.
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
@@ -195,7 +195,7 @@ type Transaction interface {
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(ctx context.Context, req *Request, vars *Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) Response
+	Send(ctx context.Context, req *Request, vars interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) Response
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool
@@ -257,7 +257,7 @@ type Request struct {
 	// sent to multiple storage units concurrently.
 	Concurrency int
 	// IsolationLevel is the isolation level, default is SI.
-	IsolationLevel tikvstore.IsoLevel
+	IsolationLevel IsoLevel
 	// Priority is the priority of this KV request, its value may be PriorityNormal/PriorityLow/PriorityHigh.
 	Priority int
 	// memTracker is used to trace and control memory usage in co-processor layer.
@@ -274,7 +274,7 @@ type Request struct {
 	// call would not corresponds to a whole region result.
 	Streaming bool
 	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
-	ReplicaRead tikvstore.ReplicaReadType
+	ReplicaRead ReplicaReadType
 	// StoreType represents this request is sent to the which type of store.
 	StoreType StoreType
 	// Cacheable is true if the request can be cached. Currently only deterministic DAG requests can be cached.
@@ -340,38 +340,13 @@ type Driver interface {
 	Open(path string) (Storage, error)
 }
 
-// TransactionOption indicates the option when beginning a transaction
-type TransactionOption struct {
-	TxnScope string
-	StartTS  *uint64
-	PrevSec  *uint64
-}
-
-// SetStartTs set startTS
-func (to TransactionOption) SetStartTs(startTS uint64) TransactionOption {
-	to.StartTS = &startTS
-	return to
-}
-
-// SetPrevSec set prevSec
-func (to TransactionOption) SetPrevSec(prevSec uint64) TransactionOption {
-	to.PrevSec = &prevSec
-	return to
-}
-
-// SetTxnScope set txnScope
-func (to TransactionOption) SetTxnScope(txnScope string) TransactionOption {
-	to.TxnScope = txnScope
-	return to
-}
-
 // Storage defines the interface for storage.
 // Isolation should be at least SI(SNAPSHOT ISOLATION)
 type Storage interface {
 	// Begin a global transaction
 	Begin() (Transaction, error)
 	// Begin a transaction with given option
-	BeginWithOption(option TransactionOption) (Transaction, error)
+	BeginWithOption(option tikv.StartTSOption) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) Snapshot
@@ -397,6 +372,8 @@ type Storage interface {
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
 	// GetMemCache return memory manager of the storage.
 	GetMemCache() MemManager
+	// GetMinSafeTS return the minimal SafeTS of the storage with given txnScope.
+	GetMinSafeTS(txnScope string) uint64
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.
@@ -425,10 +402,19 @@ type SplittableStore interface {
 	CheckRegionInScattering(regionID uint64) (bool, error)
 }
 
-// Used for pessimistic lock wait time
-// these two constants are special for lock protocol with tikv
-// 0 means always wait, -1 means nowait, others meaning lock wait in milliseconds
-var (
-	LockAlwaysWait = int64(0)
-	LockNoWait     = int64(-1)
+// Priority value for transaction priority.
+const (
+	PriorityNormal = iota
+	PriorityLow
+	PriorityHigh
+)
+
+// IsoLevel is the transaction's isolation level.
+type IsoLevel int
+
+const (
+	// SI stands for 'snapshot isolation'.
+	SI IsoLevel = iota
+	// RC stands for 'read committed'.
+	RC
 )

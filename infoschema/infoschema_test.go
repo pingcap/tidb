@@ -15,7 +15,6 @@ package infoschema_test
 
 import (
 	"context"
-	"sync"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -57,7 +56,6 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	defer dom.Close()
 
-	handle := infoschema.NewHandle(store)
 	dbName := model.NewCIStr("Test")
 	tbName := model.NewCIStr("T")
 	colName := model.NewCIStr("A")
@@ -116,7 +114,7 @@ func (*testSuite) TestT(c *C) {
 	})
 	c.Assert(err, IsNil)
 
-	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(dbInfos, nil, 1)
+	builder, err := infoschema.NewBuilder(dom.Store()).InitWithDBInfos(dbInfos, nil, 1)
 	c.Assert(err, IsNil)
 
 	txn, err := store.Begin()
@@ -126,8 +124,7 @@ func (*testSuite) TestT(c *C) {
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
 
-	builder.Build()
-	is := handle.Get()
+	is := builder.Build()
 
 	schemaNames := is.AllSchemaNames()
 	c.Assert(schemaNames, HasLen, 4)
@@ -213,14 +210,10 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
-	builder.Build()
-	is = handle.Get()
+	is = builder.Build()
 	schema, ok = is.SchemaByID(dbID)
 	c.Assert(ok, IsTrue)
 	c.Assert(len(schema.Tables), Equals, 1)
-
-	emptyHandle := handle.EmptyClone()
-	c.Assert(emptyHandle.Get(), IsNil)
 }
 
 func (testSuite) TestMockInfoSchema(c *C) {
@@ -258,32 +251,6 @@ func checkApplyCreateNonExistsTableDoesNotPanic(c *C, txn kv.Transaction, builde
 	c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
 }
 
-// TestConcurrent makes sure it is safe to concurrently create handle on multiple stores.
-func (testSuite) TestConcurrent(c *C) {
-	defer testleak.AfterTest(c)()
-	storeCount := 5
-	stores := make([]kv.Storage, storeCount)
-	for i := 0; i < storeCount; i++ {
-		store, err := mockstore.NewMockStore()
-		c.Assert(err, IsNil)
-		stores[i] = store
-	}
-	defer func() {
-		for _, store := range stores {
-			store.Close()
-		}
-	}()
-	var wg sync.WaitGroup
-	wg.Add(storeCount)
-	for _, store := range stores {
-		go func(s kv.Storage) {
-			defer wg.Done()
-			_ = infoschema.NewHandle(s)
-		}(store)
-	}
-	wg.Wait()
-}
-
 // TestInfoTables makes sure that all tables of information_schema could be found in infoschema handle.
 func (*testSuite) TestInfoTables(c *C) {
 	defer testleak.AfterTest(c)()
@@ -293,12 +260,10 @@ func (*testSuite) TestInfoTables(c *C) {
 		err := store.Close()
 		c.Assert(err, IsNil)
 	}()
-	handle := infoschema.NewHandle(store)
-	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(nil, nil, 0)
+
+	builder, err := infoschema.NewBuilder(store).InitWithDBInfos(nil, nil, 0)
 	c.Assert(err, IsNil)
-	builder.Build()
-	is := handle.Get()
-	c.Assert(is, NotNil)
+	is := builder.Build()
 
 	infoTables := []string{
 		"SCHEMATA",
@@ -332,6 +297,7 @@ func (*testSuite) TestInfoTables(c *C) {
 		"TABLESPACES",
 		"COLLATION_CHARACTER_SET_APPLICABILITY",
 		"PROCESSLIST",
+		"TIDB_TRX",
 	}
 	for _, t := range infoTables {
 		tb, err1 := is.TableByName(util.InformationSchemaName, model.NewCIStr(t))
@@ -359,12 +325,9 @@ func (*testSuite) TestGetBundle(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	handle := infoschema.NewHandle(store)
-	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(nil, nil, 0)
+	builder, err := infoschema.NewBuilder(store).InitWithDBInfos(nil, nil, 0)
 	c.Assert(err, IsNil)
-	builder.Build()
-
-	is := handle.Get()
+	is := builder.Build()
 
 	bundle := &placement.Bundle{
 		ID: placement.PDBundleID,
