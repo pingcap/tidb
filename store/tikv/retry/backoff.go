@@ -266,7 +266,7 @@ func (b *Backoffer) GetTotalSleep() int {
 
 // GetTypes returns type list.
 func (b *Backoffer) GetTypes() []string {
-	typs := make([]string, len(b.configs))
+	typs := make([]string, 0, len(b.configs))
 	for _, cfg := range b.configs {
 		typs = append(typs, cfg.String())
 	}
