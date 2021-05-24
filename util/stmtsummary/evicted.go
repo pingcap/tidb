@@ -55,17 +55,12 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 		eEndTime := evictedElement.endTime
 
 		// no record in ssbde.history, direct insert
-		if ssbde.history.Len() == 0 {
+		if ssbde.history.Len() == 0 && historySize != 0{
 			record := newStmtSummaryByDigestEvictedElement(eBeginTime, eEndTime)
 			record.addEvicted(evictedKey, evictedElement)
 			ssbde.history.PushFront(record)
 			h = ssbde.history.Back()
 			continue
-		}
-
-		// prevent exceeding history size
-		for ssbde.history.Len() >= historySize && ssbde.history.Len() > 1 {
-			ssbde.history.Remove(ssbde.history.Front())
 		}
 
 		// look for matching history interval
@@ -97,6 +92,11 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 					}
 				}
 			}
+		}
+
+		// prevent exceeding history size
+		for ssbde.history.Len() > historySize && ssbde.history.Len() > 0{
+			ssbde.history.Remove(ssbde.history.Front())
 		}
 	}
 }
