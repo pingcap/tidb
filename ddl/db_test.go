@@ -5310,12 +5310,7 @@ func (s *testSerialDBSuite) TestSetTableFlashReplicaForSystemTable(c *C) {
 			sysTables = append(sysTables, rows[i][0].(string))
 		}
 		for _, one := range sysTables {
-			// Issue: https://github.com/pingcap/tidb/issues/24742
-			// Skip the `stats_extended` system table temporarily.
-			if one == "stats_extended" {
-				continue
-			}
-			_, err := tk.Exec(fmt.Sprintf("alter table %s set tiflash replica 1", one))
+			_, err := tk.Exec(fmt.Sprintf("alter table `%s` set tiflash replica 1", one))
 			c.Assert(err.Error(), Equals, "[ddl:8200]ALTER table replica for tables in system database is currently unsupported")
 		}
 		sysTables = sysTables[:0]
