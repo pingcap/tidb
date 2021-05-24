@@ -1636,8 +1636,14 @@ func getPartitionExpr(ctx sessionctx.Context, tbl *model.TableInfo) *tables.Part
 	if !ok {
 		return nil
 	}
+
+	partTable, ok := table.(partitionTable)
+	if !ok {
+		return nil
+	}
+
 	// PartitionExpr don't need columns and names for hash partition.
-	partitionExpr, err := table.(partitionTable).PartitionExpr()
+	partitionExpr, err := partTable.PartitionExpr()
 	if err != nil {
 		return nil
 	}
