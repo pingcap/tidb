@@ -8317,6 +8317,7 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 	defer failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
 
 	var sqlDigest, planDigest *parser.Digest
+	checkFn := func() {}
 	unistore.UnistoreRPCClientSendHook = func(req *tikvrpc.Request) {
 		var startKey []byte
 		var ctx *kvrpcpb.Context
@@ -8358,6 +8359,7 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 		c.Assert(err, IsNil)
 		sqlDigest = parser.NewDigest(tag.SqlDigest)
 		planDigest = parser.NewDigest(tag.PlanDigest)
+		checkFn()
 	}
 
 	resetVars := func() {
@@ -8377,10 +8379,32 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 		{sql: "begin pessimistic", ignore: true},
 		{sql: "insert into t values(4,4)"},
 		{sql: "commit", ignore: true},
+		{sql: "update t set a=5,b=5 where a=5"},
+		{sql: "replace into t values(6,6)"},
 	}
 	for _, ca := range cases {
 		resetVars()
 		commentf := Commentf("%v", ca.sql)
+
+		_, expectSQLDigest := parser.NormalizeDigest(ca.sql)
+		var expectPlanDigest *parser.Digest
+		checkCnt := 0
+		checkFn = func() {
+			if ca.ignore {
+				return
+			}
+			if expectPlanDigest == nil {
+				info := tk.Se.ShowProcess()
+				c.Assert(info, NotNil)
+				p, ok := info.Plan.(plannercore.Plan)
+				c.Assert(ok, IsTrue)
+				_, expectPlanDigest = plannercore.NormalizePlan(p)
+			}
+			c.Assert(sqlDigest.String(), Equals, expectSQLDigest.String(), commentf)
+			c.Assert(planDigest.String(), Equals, expectPlanDigest.String())
+			checkCnt++
+		}
+
 		if strings.HasPrefix(ca.sql, "select") {
 			tk.MustQuery(ca.sql)
 		} else {
@@ -8389,14 +8413,6 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 		if ca.ignore {
 			continue
 		}
-		_, expectSQLDigest := parser.NormalizeDigest(ca.sql)
-		c.Assert(sqlDigest.String(), Equals, expectSQLDigest.String(), commentf)
-
-		info := tk.Se.ShowProcess()
-		c.Assert(info, NotNil)
-		p, ok := info.Plan.(plannercore.Plan)
-		c.Assert(ok, IsTrue)
-		_, expectPlanDigest := plannercore.NormalizePlan(p)
-		c.Assert(planDigest.String(), Equals, expectPlanDigest.String())
+		c.Assert(checkCnt > 0, IsTrue, commentf)
 	}
 }

@@ -259,13 +259,13 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		memUsageOfChk = chk.MemoryUsage()
 		e.memTracker.Consume(memUsageOfChk)
 		if e.collectRuntimeStatsEnabled() {
-			txn, err := e.ctx.Txn(false)
+			txn, err := e.ctx.Txn(true)
 			if err == nil && txn.GetSnapshot() != nil {
 				txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
 			}
 		}
 		if config.TopSQLEnabled() {
-			txn, err := e.ctx.Txn(false)
+			txn, err := e.ctx.Txn(true)
 			if err == nil {
 				txn.SetOption(kv.ResourceGroupTag, e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTag())
 			}
