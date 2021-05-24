@@ -28,7 +28,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/klauspost/cpuid"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -630,13 +629,6 @@ type SessionVars struct {
 
 	writeStmtBufs WriteStmtBufs
 
-	// L2CacheSize indicates the size of CPU L2 cache, using byte as unit.
-	L2CacheSize int
-
-	// EnableRadixJoin indicates whether to use radix hash join to execute
-	// HashJoin.
-	EnableRadixJoin bool
-
 	// ConstraintCheckInPlace indicates whether to check the constraint when the SQL executing.
 	ConstraintCheckInPlace bool
 
@@ -993,9 +985,7 @@ func NewSessionVars() *SessionVars {
 		MemoryFactor:                DefOptMemoryFactor,
 		DiskFactor:                  DefOptDiskFactor,
 		ConcurrencyFactor:           DefOptConcurrencyFactor,
-		EnableRadixJoin:             false,
 		EnableVectorizedExpression:  DefEnableVectorizedExpression,
-		L2CacheSize:                 cpuid.CPU.Cache.L2,
 		CommandValue:                uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
 		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
