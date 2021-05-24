@@ -5301,20 +5301,24 @@ func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
 
 func (s *testSerialDBSuite) TestSetTableFlashReplicaForSystemTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use mysql")
 	sysTables := make([]string, 0, 24)
-	rows := tk.MustQuery("show tables").Rows()
-	for i := 0; i < len(rows); i++ {
-		sysTables = append(sysTables, rows[i][0].(string))
-	}
-	for _, one := range sysTables {
-		// Issue: https://github.com/pingcap/tidb/issues/24742
-		// Skip the `stats_extended` system table temporarily.
-		if one == "stats_extended" {
-			continue
+	memOrSysDB := []string{"MySQL", "INFORMATION_SCHEMA", "PERFORMANCE_SCHEMA", "METRICS_SCHEMA"}
+	for _, db := range memOrSysDB {
+		tk.MustExec("use " + db)
+		rows := tk.MustQuery("show tables").Rows()
+		for i := 0; i < len(rows); i++ {
+			sysTables = append(sysTables, rows[i][0].(string))
 		}
-		_, err := tk.Exec(fmt.Sprintf("alter table %s set tiflash replica 1", one))
-		c.Assert(err.Error(), Equals, "[ddl:8200]ALTER table replica for tables in system database is currently unsupported")
+		for _, one := range sysTables {
+			// Issue: https://github.com/pingcap/tidb/issues/24742
+			// Skip the `stats_extended` system table temporarily.
+			if one == "stats_extended" {
+				continue
+			}
+			_, err := tk.Exec(fmt.Sprintf("alter table %s set tiflash replica 1", one))
+			c.Assert(err.Error(), Equals, "[ddl:8200]ALTER table replica for tables in system database is currently unsupported")
+		}
+		sysTables = sysTables[:0]
 	}
 }
 

@@ -876,8 +876,8 @@ func (w *worker) onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64
 		return ver, errors.Trace(err)
 	}
 
-	// Ban setting replica count for tables in MySQL system database.
-	if tidb_util.IsSysDB(job.SchemaName) {
+	// Ban setting replica count for tables in system database.
+	if tidb_util.IsMemOrSysDB(job.SchemaName) {
 		return ver, errors.Trace(errUnsupportedAlterReplicaForSysTable)
 	}
 
