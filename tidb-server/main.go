@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/profile"
 	"github.com/pingcap/tidb/util/sem"
@@ -690,4 +691,12 @@ func stringToList(repairString string) []string {
 
 func setProfiler() {
 	tracecpu.GlobalStmtProfiler.Run()
+	fn := func(origin string) string {
+		result, err := plancodec.DecodeNormalizedPlan(origin)
+		if err != nil {
+			return ""
+		}
+		return result
+	}
+	tracecpu.GlobalStmtProfiler.SetCollector(tracecpu.NewMockStatsCollector(fn))
 }

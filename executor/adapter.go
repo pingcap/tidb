@@ -200,8 +200,6 @@ type ExecStmt struct {
 	// OutputNames will be set if using cached plan
 	OutputNames []*types.FieldName
 	PsStmt      *plannercore.CachedPrepareStmt
-	// cache for plan digest
-	planDigest string
 }
 
 // PointGet short path for point exec directly from plan, keep only necessary steps
@@ -339,14 +337,14 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	if config.GetGlobalConfig().TopStmt.Enable && a.Plan != nil {
 		// ExecuteExec will rewrite `a.Plan`, so goroutine set label should be executed after `a.buildExecutor`.
-		normalizedSQL, sqlDigest := a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
-		planDigest := a.getPlanDigest()
+		_, sqlDigest := a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
+		normalizedPlan, planDigest := getPlanDigest(a.Ctx, a.Plan)
 		if len(planDigest) > 0 {
 			ctx = pprof.WithLabels(ctx, pprof.Labels(
-				tracecpu.LabelSQL, normalizedSQL,
 				tracecpu.LabelSQLDigest, sqlDigest,
 				tracecpu.LabelPlanDigest, planDigest))
 			pprof.SetGoroutineLabels(ctx)
+			tracecpu.GlobalStmtProfiler.RegisterPlan(planDigest, normalizedPlan)
 		}
 	}
 
@@ -885,11 +883,15 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 	}
 }
 
-func (a *ExecStmt) getPlanDigest() string {
-	if len(a.planDigest) == 0 {
-		_, a.planDigest = plannercore.NormalizePlan(a.Plan)
+// getPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
+func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, planDigest string) {
+	normalized, planDigest = sctx.GetSessionVars().StmtCtx.GetPlanDigest()
+	if len(normalized) > 0 {
+		return
 	}
-	return a.planDigest
+	normalized, planDigest = plannercore.NormalizePlan(p)
+	sctx.GetSessionVars().StmtCtx.SetPlanDigest(normalized, planDigest)
+	return
 }
 
 // LogSlowQuery is used to print the slow query in the log files.
@@ -943,7 +945,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	diskMax := sessVars.StmtCtx.DiskTracker.MaxConsumed()
-	planDigest := a.getPlanDigest()
+	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		SQL:               sql.String(),
@@ -1105,11 +1107,11 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	var planDigestGen func() string
 	if a.Plan.TP() == plancodec.TypePointGet {
 		planDigestGen = func() string {
-			planDigest := a.getPlanDigest()
+			_, planDigest := getPlanDigest(a.Ctx, a.Plan)
 			return planDigest
 		}
 	} else {
-		planDigest = a.getPlanDigest()
+		_, planDigest = getPlanDigest(a.Ctx, a.Plan)
 	}
 
 	execDetail := stmtCtx.GetExecDetails()

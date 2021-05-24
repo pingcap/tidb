@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
 	"strings"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/util/tracecpu"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 
@@ -1382,6 +1384,14 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	}
 	for _, warn := range warns {
 		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+	}
+	if config.GetGlobalConfig().TopStmt.Enable {
+		normalized, digest := parser.NormalizeDigest(sql)
+		if len(normalized) > 0 {
+			ctx = pprof.WithLabels(ctx, pprof.Labels(tracecpu.LabelSQLDigest, digest))
+			pprof.SetGoroutineLabels(ctx)
+			tracecpu.GlobalStmtProfiler.RegisterSQL(digest, normalized)
+		}
 	}
 	return stmts[0], nil
 }

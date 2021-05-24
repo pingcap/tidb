@@ -147,6 +147,9 @@ type StatementContext struct {
 		normalized string
 		digest     string
 	}
+	// planNormalized use for cache the normalized plan, avoid duplicate builds.
+	planNormalized        string
+	planDigest            string
 	encodedPlan           string
 	planHint              string
 	planHintSet           bool
@@ -243,6 +246,16 @@ func (sc *StatementContext) InitSQLDigest(normalized, digest string) {
 // GetEncodedPlan gets the encoded plan, it is used to avoid repeated encode.
 func (sc *StatementContext) GetEncodedPlan() string {
 	return sc.encodedPlan
+}
+
+// GetPlanDigest gets the normalized plan and plan digest.
+func (sc *StatementContext) GetPlanDigest() (normalized, planDigest string) {
+	return sc.planNormalized, sc.planDigest
+}
+
+// SetPlanDigest sets the normalized plan and plan digest.
+func (sc *StatementContext) SetPlanDigest(normalized, planDigest string) {
+	sc.planNormalized, sc.planDigest = normalized, planDigest
 }
 
 // SetEncodedPlan sets the encoded plan, it is used to avoid repeated encode.

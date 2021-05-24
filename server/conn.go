@@ -1031,8 +1031,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		normalizedSQL, digest := getLastStmtInConn{cc}.PProfLabel()
 		if len(normalizedSQL) > 0 {
 			defer pprof.SetGoroutineLabels(ctx)
-			ctx = pprof.WithLabels(ctx, pprof.Labels(tracecpu.LabelSQL, normalizedSQL, tracecpu.LabelSQLDigest, digest))
+			ctx = pprof.WithLabels(ctx, pprof.Labels(tracecpu.LabelSQLDigest, digest))
 			pprof.SetGoroutineLabels(ctx)
+			tracecpu.GlobalStmtProfiler.RegisterSQL(digest, normalizedSQL)
 		}
 	} else if variable.EnablePProfSQLCPU.Load() {
 		normalizedSQL, _ := getLastStmtInConn{cc}.PProfLabel()

@@ -1628,8 +1628,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.SQLDigest()
 			normalizedSQL, digest := sc.SQLDigest()
 			if len(normalizedSQL) > 0 {
-				goctx := pprof.WithLabels(context.Background(), pprof.Labels(tracecpu.LabelSQL, normalizedSQL, tracecpu.LabelSQLDigest, digest))
+				goctx := pprof.WithLabels(context.Background(), pprof.Labels(tracecpu.LabelSQLDigest, digest))
 				pprof.SetGoroutineLabels(goctx)
+				tracecpu.GlobalStmtProfiler.RegisterSQL(digest, normalizedSQL)
 			}
 		}
 	}

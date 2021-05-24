@@ -34,6 +34,7 @@ type StmtProfiler struct {
 		sync.Mutex
 		ept *exportProfileTask
 	}
+	collector SQLStatsCollector
 }
 
 func NewStmtProfiler() *StmtProfiler {
@@ -41,6 +42,24 @@ func NewStmtProfiler() *StmtProfiler {
 		taskCh:     make(chan *profileTask, 128),
 		cacheBufCh: make(chan *profileTask, 128),
 	}
+}
+
+func (sp *StmtProfiler) SetCollector(c SQLStatsCollector) {
+	sp.collector = c
+}
+
+func (sp *StmtProfiler) RegisterSQL(sqlDigest, normalizedSQL string) {
+	if sp.collector == nil {
+		return
+	}
+	sp.collector.RegisterSQL(sqlDigest, normalizedSQL)
+}
+
+func (sp *StmtProfiler) RegisterPlan(planDigest string, normalizedPlan string) {
+	if sp.collector == nil {
+		return
+	}
+	sp.collector.RegisterPlan(planDigest, normalizedPlan)
 }
 
 func (sp *StmtProfiler) Run() {
@@ -87,19 +106,10 @@ func (sp *StmtProfiler) startAnalyzeProfileWorker() {
 			logutil.BgLogger().Error("parse profile error", zap.Error(err))
 			continue
 		}
+		stats := sp.parseCPUProfileTags(p)
 		sp.handleExportProfileTask(p)
-		stmtMap := sp.parseCPUProfileTags(p)
-		if len(stmtMap) == 0 {
-			continue
-		}
-		total := int64(0)
-		logutil.BgLogger().Info("-------- [ BEGIN ] ----------")
-		for digest, stmt := range stmtMap {
-			logutil.BgLogger().Info(fmt.Sprintf("%s , %v", stmt.normalizedSQL, digest))
-			for p, v := range stmt.plans {
-				logutil.BgLogger().Info(fmt.Sprintf("    %s : %s", time.Duration(v), p))
-				total += v
-			}
+		if sp.collector != nil {
+			sp.collector.Collect(task.end, stats)
 		}
 		sp.putTaskToBuffer(task)
 	}
@@ -130,26 +140,21 @@ func (sp *StmtProfiler) putTaskToBuffer(task *profileTask) {
 	}
 }
 
-func (sp *StmtProfiler) parseCPUProfileTags(p *profile.Profile) (stmtMap map[string]*stmtStats) {
-	stmtMap = make(map[string]*stmtStats)
+func (sp *StmtProfiler) parseCPUProfileTags(p *profile.Profile) []SQLStats {
+	stmtMap := make(map[string]*stmtStats)
 	idx := len(p.SampleType) - 1
 	for _, s := range p.Sample {
 		digests, ok := s.Label[LabelSQLDigest]
 		if !ok || len(digests) == 0 {
 			continue
 		}
-		sqls, ok := s.Label[LabelSQL]
-		if !ok || len(sqls) != len(digests) {
-			continue
-		}
-		for i, digest := range digests {
+		for _, digest := range digests {
 			stmt, ok := stmtMap[digest]
 			if !ok {
 				stmt = &stmtStats{
-					plans:         make(map[string]int64),
-					total:         0,
-					isInternal:    false,
-					normalizedSQL: sqls[i],
+					plans:      make(map[string]int64),
+					total:      0,
+					isInternal: false,
 				}
 				stmtMap[digest] = stmt
 			}
@@ -161,17 +166,28 @@ func (sp *StmtProfiler) parseCPUProfileTags(p *profile.Profile) (stmtMap map[str
 			}
 		}
 	}
-	for _, stmt := range stmtMap {
+	return sp.createSQLStats(stmtMap)
+}
+
+func (sp *StmtProfiler) createSQLStats(stmtMap map[string]*stmtStats) []SQLStats {
+	stats := make([]SQLStats, 0, len(stmtMap))
+	for sqlDigest, stmt := range stmtMap {
 		stmt.tune()
+		for planDigest, val := range stmt.plans {
+			stats = append(stats, SQLStats{
+				sqlDigest:  sqlDigest,
+				planDigest: planDigest,
+				cpuTimeMs:  uint32(time.Duration(val).Milliseconds()),
+			})
+		}
 	}
-	return stmtMap
+	return stats
 }
 
 type stmtStats struct {
-	plans         map[string]int64
-	total         int64
-	isInternal    bool
-	normalizedSQL string
+	plans      map[string]int64
+	total      int64
+	isInternal bool
 }
 
 // tune use to adjust stats
