@@ -254,7 +254,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 				return errors.Trace(err)
 			}
 			if msBeforeExpired > 0 {
-				err = bo.BackoffWithMaxSleep(retry.BoTxnLockFast, int(msBeforeExpired), errors.Errorf("key is locked during scanning"))
+				err = bo.BackoffWithMaxSleepTxnLockFast(int(msBeforeExpired), errors.Errorf("key is locked during scanning"))
 				if err != nil {
 					return errors.Trace(err)
 				}
