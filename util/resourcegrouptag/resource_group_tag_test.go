@@ -124,5 +124,4 @@ func (s *testUtilsSuite) TestResourceGroupTagEncodingPB(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tag.SqlDigest, DeepEquals, digest1)
 	c.Assert(tag.PlanDigest, IsNil)
-
 }

@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -132,9 +131,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 			},
 		})
 	}
-	if config.GetGlobalConfig().TopStmt.Enable {
-		snapshot.SetOption(kv.ResourceGroupTag, stmtCtx.GetResourceGroupTag())
-	}
+	setResourceGroupTagForSnapshot(stmtCtx, snapshot)
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock

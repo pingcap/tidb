@@ -161,9 +161,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 			},
 		})
 	}
-	if config.GetGlobalConfig().TopStmt.Enable {
-		e.snapshot.SetOption(kv.ResourceGroupTag, e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTag())
-	}
+	setResourceGroupTagForSnapshot(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
 	return nil
 }
 

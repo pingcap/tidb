@@ -64,9 +64,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	if err != nil {
 		return err
 	}
-	if snapshot := txn.GetSnapshot(); snapshot != nil && config.GetGlobalConfig().TopStmt.Enable {
-		snapshot.SetOption(kv.ResourceGroupTag, sessVars.StmtCtx.GetResourceGroupTag())
-	}
+	setResourceGroupTagForSnapshot(sessVars.StmtCtx, txn.GetSnapshot())
 	txnSize := txn.Size()
 	sessVars.StmtCtx.AddRecordRows(uint64(len(rows)))
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
