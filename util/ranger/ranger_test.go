@@ -347,11 +347,14 @@ create table t(
 	d varchar(10),
 	e binary(10),
 	f varchar(10) collate utf8mb4_general_ci,
+	g enum('A','B','C') collate utf8mb4_general_ci,
 	index idx_ab(a(50), b),
 	index idx_cb(c, a),
 	index idx_d(d(2)),
 	index idx_e(e(2)),
-	index idx_f(f)
+	index idx_f(f),
+	index idx_de(d(2), e),
+	index idx_g(g)
 )`)
 
 	tests := []struct {
@@ -619,6 +622,20 @@ create table t(
 			accessConds: "[]",
 			filterConds: "[like(test.t.f, @%, 92)]",
 			resultStr:   "[[NULL,+inf]]",
+		},
+		{
+			indexPos:    5,
+			exprStr:     "d in ('aab', 'aac') and e = 'a'",
+			accessConds: "[in(test.t.d, aab, aac) eq(test.t.e, a)]",
+			filterConds: "[in(test.t.d, aab, aac)]",
+			resultStr:   "[[\"aa\" 0x61,\"aa\" 0x61]]",
+		},
+		{
+			indexPos:    6,
+			exprStr:     "g = 'a'",
+			accessConds: "[eq(test.t.g, a)]",
+			filterConds: "[]",
+			resultStr:   "[[\"A\",\"A\"]]",
 		},
 	}
 
@@ -1504,12 +1521,13 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 	// test index range
 	testKit.MustExec("DROP TABLE IF EXISTS t")
 	testKit.MustExec("CREATE TABLE t (a year(4), key(a))")
-	testKit.MustExec("INSERT INTO t VALUES (1), (70), (99), (0), ('0')")
+	testKit.MustExec("INSERT INTO t VALUES (1), (70), (99), (0), ('0'), (NULL)")
 	testKit.MustQuery("SELECT * FROM t WHERE a < 15698").Check(testkit.Rows("0", "1970", "1999", "2000", "2001"))
 	testKit.MustQuery("SELECT * FROM t WHERE a <= 0").Check(testkit.Rows("0"))
 	testKit.MustQuery("SELECT * FROM t WHERE a <= 1").Check(testkit.Rows("0", "1970", "1999", "2000", "2001"))
 	testKit.MustQuery("SELECT * FROM t WHERE a < 2000").Check(testkit.Rows("0", "1970", "1999"))
 	testKit.MustQuery("SELECT * FROM t WHERE a > -1").Check(testkit.Rows("0", "1970", "1999", "2000", "2001"))
+	testKit.MustQuery("SELECT * FROM t WHERE a <=> NULL").Check(testkit.Rows("<nil>"))
 
 	tests := []struct {
 		indexPos    int

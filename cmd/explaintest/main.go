@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
@@ -663,8 +662,6 @@ func main() {
 			log.Fatal(fmt.Sprintf("%s failed", sql), zap.Error(err))
 		}
 	}
-	// Wait global variables to reload.
-	time.Sleep(domain.GlobalVariableCacheExpiry)
 
 	if _, err = mdb.Exec("set sql_mode='STRICT_TRANS_TABLES'"); err != nil {
 		log.Fatal("set sql_mode='STRICT_TRANS_TABLES' failed", zap.Error(err))

@@ -59,7 +59,6 @@ type uSnapshot interface {
 type KVUnionStore struct {
 	memBuffer *MemDB
 	snapshot  uSnapshot
-	opts      options
 }
 
 // NewUnionStore builds a new unionStore.
@@ -67,7 +66,6 @@ func NewUnionStore(snapshot uSnapshot) *KVUnionStore {
 	return &KVUnionStore{
 		snapshot:  snapshot,
 		memBuffer: newMemDB(),
-		opts:      make(map[int]interface{}),
 	}
 }
 
@@ -131,30 +129,8 @@ func (us *KVUnionStore) UnmarkPresumeKeyNotExists(k []byte) {
 	us.memBuffer.UpdateFlags(k, kv.DelPresumeKeyNotExists)
 }
 
-// SetOption implements the unionStore SetOption interface.
-func (us *KVUnionStore) SetOption(opt int, val interface{}) {
-	us.opts[opt] = val
-}
-
-// DelOption implements the unionStore DelOption interface.
-func (us *KVUnionStore) DelOption(opt int) {
-	delete(us.opts, opt)
-}
-
-// GetOption implements the unionStore GetOption interface.
-func (us *KVUnionStore) GetOption(opt int) interface{} {
-	return us.opts[opt]
-}
-
 // SetEntrySizeLimit sets the size limit for each entry and total buffer.
 func (us *KVUnionStore) SetEntrySizeLimit(entryLimit, bufferLimit uint64) {
 	us.memBuffer.entrySizeLimit = entryLimit
 	us.memBuffer.bufferSizeLimit = bufferLimit
-}
-
-type options map[int]interface{}
-
-func (opts options) Get(opt int) (interface{}, bool) {
-	v, ok := opts[opt]
-	return v, ok
 }

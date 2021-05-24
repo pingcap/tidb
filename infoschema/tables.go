@@ -167,6 +167,8 @@ const (
 	TableClientErrorsSummaryByHost = "CLIENT_ERRORS_SUMMARY_BY_HOST"
 	// TableTiDBTrx is current running transaction status table.
 	TableTiDBTrx = "TIDB_TRX"
+	// TableDeadlocks is the string constatnt of deadlock table.
+	TableDeadlocks = "DEADLOCKS"
 )
 
 var tableIDMap = map[string]int64{
@@ -241,6 +243,8 @@ var tableIDMap = map[string]int64{
 	TableClientErrorsSummaryByHost:          autoid.InformationSchemaDBID + 69,
 	TableTiDBTrx:                            autoid.InformationSchemaDBID + 70,
 	ClusterTableTiDBTrx:                     autoid.InformationSchemaDBID + 71,
+	TableDeadlocks:                          autoid.InformationSchemaDBID + 72,
+	ClusterTableDeadlocks:                   autoid.InformationSchemaDBID + 73,
 	TableStatementsSummaryEvicted:           autoid.InformationSchemaDBID + 72,
 }
 
@@ -1356,6 +1360,17 @@ var tableTiDBTrxCols = []columnInfo{
 	{name: "DB", tp: mysql.TypeVarchar, size: 64, comment: "The schema this transaction works on"},
 }
 
+var tableDeadlocksCols = []columnInfo{
+	{name: "DEADLOCK_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, comment: "The ID to dinstinguish different deadlock events"},
+	{name: "OCCUR_TIME", tp: mysql.TypeTimestamp, decimal: 6, size: 26, comment: "The physical time when the deadlock occurs"},
+	{name: "RETRYABLE", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the deadlock is retryable. Retryable deadlocks are usually not reported to the client"},
+	{name: "TRY_LOCK_TRX_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, comment: "The transaction ID (start ts) of the transaction that's trying to acquire the lock"},
+	{name: "CURRENT_SQL_DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "The digest of the SQL that's being blocked"},
+	{name: "KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The key on which a transaction is waiting for another"},
+	{name: "ALL_SQLS", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
+	{name: "TRX_HOLDING_LOCK", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, comment: "The transaction ID (start ts) of the transaction that's currently holding the lock"},
+}
+
 var tableStatementsSummaryEvictedCols = []columnInfo{
 	{name: "BEGIN_TIME", tp: mysql.TypeTimestamp, size: 26},
 	{name: "END_TIME", tp: mysql.TypeTimestamp, size: 26},
@@ -1733,6 +1748,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClientErrorsSummaryByUser:          tableClientErrorsSummaryByUserCols,
 	TableClientErrorsSummaryByHost:          tableClientErrorsSummaryByHostCols,
 	TableTiDBTrx:                            tableTiDBTrxCols,
+	TableDeadlocks:                          tableDeadlocksCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
