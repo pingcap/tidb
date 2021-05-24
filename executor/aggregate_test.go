@@ -1308,12 +1308,14 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 	tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
 	tk.MustExec("set tidb_init_chunk_size=1;")
 	tk.MustExec("set tidb_max_chunk_size=32;")
+	randSeed := time.Now().UnixNano()
+	r := rand.New(rand.NewSource(randSeed))
 	var insertSQL string
 	for i := 0; i < 1000; i++ {
 		if i == 0 {
-			insertSQL += fmt.Sprintf("(%d, %d)", rand.Intn(100), rand.Intn(100))
+			insertSQL += fmt.Sprintf("(%d, %d)", r.Intn(100), r.Intn(100))
 		} else {
-			insertSQL += fmt.Sprintf(",(%d, %d)", rand.Intn(100), rand.Intn(100))
+			insertSQL += fmt.Sprintf(",(%d, %d)", r.Intn(100), r.Intn(100))
 		}
 	}
 	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSQL))
@@ -1322,7 +1324,7 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 	for _, sql := range sqls {
 		var expected [][]interface{}
 		for _, con := range concurrencies {
-			comment := Commentf("sql: %s; concurrency: %d", sql, con)
+			comment := Commentf("sql: %s; concurrency: %d, seed: ", sql, con, randSeed)
 			tk.MustExec(fmt.Sprintf("set @@tidb_streamagg_concurrency=%d;", con))
 			if con == 1 {
 				expected = tk.MustQuery(sql).Sort().Rows()

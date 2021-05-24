@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sem"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -1400,6 +1401,54 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeStatusVars(c *C) {
 	}, nil, nil)
 }
 
+func (s *testPrivilegeSuite) TestRenameUser(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, "DROP USER IF EXISTS 'ru1'@'localhost'")
+	mustExec(c, rootSe, "DROP USER IF EXISTS ru3")
+	mustExec(c, rootSe, "DROP USER IF EXISTS ru6@localhost")
+	mustExec(c, rootSe, "CREATE USER 'ru1'@'localhost'")
+	mustExec(c, rootSe, "CREATE USER ru3")
+	mustExec(c, rootSe, "CREATE USER ru6@localhost")
+	se1 := newSession(c, s.store, s.dbName)
+	c.Assert(se1.Auth(&auth.UserIdentity{Username: "ru1", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	// Check privileges (need CREATE USER)
+	_, err := se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru4")
+	c.Assert(err, ErrorMatches, ".*Access denied; you need .at least one of. the CREATE USER privilege.s. for this operation")
+	mustExec(c, rootSe, "GRANT UPDATE ON mysql.user TO 'ru1'@'localhost'")
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru4")
+	c.Assert(err, ErrorMatches, ".*Access denied; you need .at least one of. the CREATE USER privilege.s. for this operation")
+	mustExec(c, rootSe, "GRANT CREATE USER ON *.* TO 'ru1'@'localhost'")
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru4")
+	c.Assert(err, IsNil)
+
+	// Test a few single rename (both Username and Hostname)
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER 'ru4'@'%' TO 'ru3'@'localhost'")
+	c.Assert(err, IsNil)
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER 'ru3'@'localhost' TO 'ru3'@'%'")
+	c.Assert(err, IsNil)
+	// Including negative tests, i.e. non existing from user and existing to user
+	_, err = rootSe.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru1@localhost")
+	c.Assert(err, ErrorMatches, ".*Operation RENAME USER failed for ru3@%.*")
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru4 TO ru5@localhost")
+	c.Assert(err, ErrorMatches, ".*Operation RENAME USER failed for ru4@%.*")
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru3")
+	c.Assert(err, ErrorMatches, ".*Operation RENAME USER failed for ru3@%.*")
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru5@localhost, ru4 TO ru7")
+	c.Assert(err, ErrorMatches, ".*Operation RENAME USER failed for ru4@%.*")
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru5@localhost, ru6@localhost TO ru1@localhost")
+	c.Assert(err, ErrorMatches, ".*Operation RENAME USER failed for ru6@localhost.*")
+
+	// Test multi rename, this is a full swap of ru3 and ru6, i.e. need to read its previous state in the same transaction.
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER 'ru3' TO 'ru3_tmp', ru6@localhost TO ru3, 'ru3_tmp' to ru6@localhost")
+	c.Assert(err, IsNil)
+
+	// Cleanup
+	mustExec(c, rootSe, "DROP USER ru6@localhost")
+	mustExec(c, rootSe, "DROP USER ru3")
+	mustExec(c, rootSe, "DROP USER 'ru1'@'localhost'")
+}
+
 func (s *testPrivilegeSuite) TestSecurityEnhancedModeSysVars(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE USER svroot1, svroot2")
@@ -1531,7 +1580,33 @@ func (s *testPrivilegeSuite) TestDynamicPrivsRegistration(c *C) {
 	count := len(privileges.GetDynamicPrivileges())
 
 	c.Assert(pm.IsDynamicPrivilege("ACDC_ADMIN"), IsFalse)
-	privileges.RegisterDynamicPrivilege("ACDC_ADMIN")
+	c.Assert(privileges.RegisterDynamicPrivilege("ACDC_ADMIN"), IsNil)
 	c.Assert(pm.IsDynamicPrivilege("ACDC_ADMIN"), IsTrue)
 	c.Assert(len(privileges.GetDynamicPrivileges()), Equals, count+1)
+
+	c.Assert(pm.IsDynamicPrivilege("iAmdynamIC"), IsFalse)
+	c.Assert(privileges.RegisterDynamicPrivilege("IAMdynamic"), IsNil)
+	c.Assert(pm.IsDynamicPrivilege("IAMdyNAMIC"), IsTrue)
+	c.Assert(len(privileges.GetDynamicPrivileges()), Equals, count+2)
+
+	c.Assert(privileges.RegisterDynamicPrivilege("THIS_PRIVILEGE_NAME_IS_TOO_LONG_THE_MAX_IS_32_CHARS").Error(), Equals, "privilege name is longer than 32 characters")
+	c.Assert(pm.IsDynamicPrivilege("THIS_PRIVILEGE_NAME_IS_TOO_LONG_THE_MAX_IS_32_CHARS"), IsFalse)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER privassigntest")
+	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
+
+	// Check that all privileges registered are assignable to users,
+	// including the recently registered ACDC_ADMIN
+	for _, priv := range privileges.GetDynamicPrivileges() {
+		sqlGrant, err := sqlexec.EscapeSQL("GRANT %n ON *.* TO privassigntest", priv)
+		c.Assert(err, IsNil)
+		tk.MustExec(sqlGrant)
+	}
+	// Check that all privileges registered are revokable
+	for _, priv := range privileges.GetDynamicPrivileges() {
+		sqlGrant, err := sqlexec.EscapeSQL("REVOKE %n ON *.* FROM privassigntest", priv)
+		c.Assert(err, IsNil)
+		tk.MustExec(sqlGrant)
+	}
 }

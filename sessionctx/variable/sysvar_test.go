@@ -451,6 +451,20 @@ func (*testSysVarSuite) TestGetScopeNoneSystemVar(c *C) {
 	c.Assert(val, Equals, "")
 }
 
+func (*testSysVarSuite) TestSkipInit(c *C) {
+	sv := SysVar{Scope: ScopeGlobal, Name: "skipinit1", Value: On, Type: TypeBool}
+	c.Assert(sv.SkipInit(), IsTrue)
+
+	sv = SysVar{Scope: ScopeGlobal | ScopeSession, Name: "skipinit1", Value: On, Type: TypeBool}
+	c.Assert(sv.SkipInit(), IsFalse)
+
+	sv = SysVar{Scope: ScopeSession, Name: "skipinit1", Value: On, Type: TypeBool}
+	c.Assert(sv.SkipInit(), IsFalse)
+
+	sv = SysVar{Scope: ScopeSession, Name: "skipinit1", Value: On, Type: TypeBool, skipInit: true}
+	c.Assert(sv.SkipInit(), IsTrue)
+}
+
 func (*testSysVarSuite) TestInstanceScopedVars(c *C) {
 	// This tests instance scoped variables through GetSessionOrGlobalSystemVar().
 	// Eventually these should be changed to use getters so that the switch
@@ -554,4 +568,31 @@ func (*testSysVarSuite) TestInstanceScopedVars(c *C) {
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBTxnScope)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, vars.TxnScope.GetVarValue())
+}
+
+// Calling GetSysVars/GetSysVar needs to return a deep copy, otherwise there will be data races.
+// This is a bit unfortunate, since the only time the race occurs is in the testsuite (Enabling/Disabling SEM) and
+// during startup (setting the .Value of ScopeNone variables). In future it might also be able
+// to fix this by delaying the LoadSysVarCacheLoop start time until after the server is fully initialized.
+func (*testSysVarSuite) TestDeepCopyGetSysVars(c *C) {
+	// Check GetSysVar
+	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "datarace", Value: On, Type: TypeBool}
+	RegisterSysVar(&sv)
+	svcopy := GetSysVar("datarace")
+	svcopy.Name = "datarace2"
+	c.Assert(sv.Name, Equals, "datarace")
+	c.Assert(GetSysVar("datarace").Name, Equals, "datarace")
+	UnregisterSysVar("datarace")
+
+	// Check GetSysVars
+	sv = SysVar{Scope: ScopeGlobal | ScopeSession, Name: "datarace", Value: On, Type: TypeBool}
+	RegisterSysVar(&sv)
+	for name, svcopy := range GetSysVars() {
+		if name == "datarace" {
+			svcopy.Name = "datarace2"
+		}
+	}
+	c.Assert(sv.Name, Equals, "datarace")
+	c.Assert(GetSysVar("datarace").Name, Equals, "datarace")
+	UnregisterSysVar("datarace")
 }
