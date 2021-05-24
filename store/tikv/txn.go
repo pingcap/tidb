@@ -133,6 +133,7 @@ type KVTxn struct {
 	causalConsistency  bool
 	scope              string
 	kvFilter           KVFilter
+	resourceGroupTag   []byte
 }
 
 // ExtractStartTs use `option` to get the proper startTS for a transaction
@@ -291,6 +292,12 @@ func (txn *KVTxn) SetSchemaVer(schemaVer SchemaVer) {
 func (txn *KVTxn) SetPriority(pri Priority) {
 	txn.priority = pri
 	txn.GetSnapshot().SetPriority(pri)
+}
+
+// SetResourceGroupTag sets the resource tag for both write and read.
+func (txn *KVTxn) SetResourceGroupTag(tag []byte) {
+	txn.resourceGroupTag = tag
+	txn.GetSnapshot().SetResourceGroupTag(tag)
 }
 
 // SetSchemaAmender sets an amender to update mutations after schema change.

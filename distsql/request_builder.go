@@ -280,7 +280,7 @@ func (builder *RequestBuilder) SetFromInfoSchema(is infoschema.InfoSchema) *Requ
 
 // SetResourceGroupTag sets the request resource group tag.
 func (builder *RequestBuilder) SetResourceGroupTag(sc *stmtctx.StatementContext) *RequestBuilder {
-	if config.GetGlobalConfig().TopStmt.Enable {
+	if config.TopSQLEnabled() {
 		builder.Request.ResourceGroupTag = sc.GetResourceGroupTag()
 	}
 	return builder

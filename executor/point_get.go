@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/distsql"
@@ -161,7 +160,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 			},
 		})
 	}
-	setResourceGroupTagForSnapshot(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
+	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
 	return nil
 }
 

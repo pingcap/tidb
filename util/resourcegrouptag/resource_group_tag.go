@@ -19,7 +19,10 @@ func EncodeResourceGroupTag(sqlDigest, planDigest *parser.Digest) []byte {
 	if planDigest != nil {
 		tag.PlanDigest = planDigest.Bytes()
 	}
-	b, _ := tag.Marshal()
+	b, err := tag.Marshal()
+	if err != nil {
+		return nil
+	}
 	return b
 }
 
