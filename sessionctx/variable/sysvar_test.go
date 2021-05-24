@@ -451,6 +451,20 @@ func (*testSysVarSuite) TestGetScopeNoneSystemVar(c *C) {
 	c.Assert(val, Equals, "")
 }
 
+func (*testSysVarSuite) TestSkipInit(c *C) {
+	sv := SysVar{Scope: ScopeGlobal, Name: "skipinit1", Value: On, Type: TypeBool}
+	c.Assert(sv.SkipInit(), IsTrue)
+
+	sv = SysVar{Scope: ScopeGlobal | ScopeSession, Name: "skipinit1", Value: On, Type: TypeBool}
+	c.Assert(sv.SkipInit(), IsFalse)
+
+	sv = SysVar{Scope: ScopeSession, Name: "skipinit1", Value: On, Type: TypeBool}
+	c.Assert(sv.SkipInit(), IsFalse)
+
+	sv = SysVar{Scope: ScopeSession, Name: "skipinit1", Value: On, Type: TypeBool, skipInit: true}
+	c.Assert(sv.SkipInit(), IsTrue)
+}
+
 func (*testSysVarSuite) TestInstanceScopedVars(c *C) {
 	// This tests instance scoped variables through GetSessionOrGlobalSystemVar().
 	// Eventually these should be changed to use getters so that the switch
