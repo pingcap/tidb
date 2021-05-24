@@ -152,13 +152,17 @@ func (sv *SysVar) GetSessionFromHook(s *SessionVars) (string, error) {
 	if sv.GetSession != nil {
 		return sv.GetSession(s)
 	}
-	if val, ok := s.stmtVars[sv.Name]; ok {
+	var (
+		ok  bool
+		val string
+	)
+	if val, ok = s.stmtVars[sv.Name]; ok {
 		return val, nil
 	}
-	if val, ok := s.systems[sv.Name]; !ok {
+	if val, ok = s.systems[sv.Name]; !ok {
 		return val, errors.New("sysvar has not yet loaded")
 	}
-	return s.systems[sv.Name], nil
+	return val, nil
 }
 
 // SetSessionFromHook calls the SetSession func if it exists.
