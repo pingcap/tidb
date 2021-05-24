@@ -15,15 +15,12 @@ package resourcegrouptag
 
 import (
 	"crypto/sha256"
-	"encoding/binary"
-	"encoding/hex"
-	"errors"
-	"fmt"
 	"math/rand"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -75,29 +72,13 @@ func genRandHex(length int) []byte {
 
 func genDigest(str string) []byte {
 	hasher := sha256.New()
-	hasher.Write([]byte(str))
+	hasher.Write(hack.Slice(str))
 	return hasher.Sum(nil)
 }
 
 func (s *testUtilsSuite) TestResourceGroupTagEncodingPB(c *C) {
 	digest1 := genDigest("abc")
 	digest2 := genDigest("abcdefg")
-	// Test for manualEncode
-	data := manualEncodeResourceGroupTag(digest1, digest2)
-	c.Assert(len(data), Equals, 69)
-	sqlDigest, planDigest, err := manualDecodeResourceGroupTag(data)
-	c.Assert(err, IsNil)
-	c.Assert(sqlDigest, DeepEquals, digest1)
-	c.Assert(planDigest, DeepEquals, digest2)
-
-	// Test for manualEncode sql_digest only
-	data = manualEncodeResourceGroupTag(digest1, nil)
-	c.Assert(len(data), Equals, 35)
-	sqlDigest, planDigest, err = manualDecodeResourceGroupTag(data)
-	c.Assert(err, IsNil)
-	c.Assert(sqlDigest, DeepEquals, digest1)
-	c.Assert(planDigest, IsNil)
-
 	// Test for protobuf
 	resourceTag := &tipb.ResourceGroupTag{
 		SqlDigest:  digest1,
