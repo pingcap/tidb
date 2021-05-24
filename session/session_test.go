@@ -4424,7 +4424,21 @@ func (s *testTxnStateSerialSuite) TestBasic(c *C) {
 	c.Assert(info.Username, Equals, "")
 	c.Assert(info.CurrentDB, Equals, "test")
 	c.Assert(info.StartTS, Equals, startTS)
-	tk.MustExec("commit;")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "pause"), IsNil)
+	go func() {
+		tk.MustExec("commit;")
+		ch <- nil
+	}()
+	time.Sleep(100 * time.Millisecond)
+	_, commitDigest := parser.NormalizeDigest("commit;")
+	info = tk.Se.TxnInfo()
+	c.Assert(info.CurrentSQLDigest, Equals, commitDigest)
+	c.Assert(info.State, Equals, txninfo.TxnCommitting)
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest, selectTSDigest, expectedDigest, commitDigest})
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
+	<-ch
 	info = tk.Se.TxnInfo()
 	c.Assert(info, IsNil)
 
@@ -4524,6 +4538,61 @@ func (s *testTxnStateSerialSuite) TestRollbacking(c *C) {
 	time.Sleep(100 * time.Millisecond)
 	c.Assert(tk.Se.TxnInfo().State, Equals, txninfo.TxnRollingBack)
 	<-ch
+}
+
+func (s *testTxnStateSerialSuite) TestTxnInfoWithPreparedStmt(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("prepare s1 from 'insert into t values (?)'")
+	tk.MustExec("set @v = 1")
+
+	tk.MustExec("begin pessimistic")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock", "pause"), IsNil)
+	ch := make(chan interface{})
+	go func() {
+		tk.MustExec("execute s1 using @v")
+		ch <- nil
+	}()
+	time.Sleep(100 * time.Millisecond)
+	info := tk.Se.TxnInfo()
+	_, expectDigest := parser.NormalizeDigest("insert into t values (?)")
+	c.Assert(info.CurrentSQLDigest, Equals, expectDigest)
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock"), IsNil)
+	<-ch
+	info = tk.Se.TxnInfo()
+	c.Assert(info.CurrentSQLDigest, Equals, "")
+	_, beginDigest := parser.NormalizeDigest("begin pessimistic")
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest, expectDigest})
+
+	tk.MustExec("rollback")
+}
+
+func (s *testTxnStateSerialSuite) TestTxnInfoWithScalarSubquery(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (1, 10), (2, 1)")
+
+	tk.MustExec("begin pessimistic")
+	_, beginDigest := parser.NormalizeDigest("begin pessimistic")
+	tk.MustExec("select * from t where a = (select b from t where a = 2)")
+	_, s1Digest := parser.NormalizeDigest("select * from t where a = (select b from t where a = 2)")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock", "pause"), IsNil)
+	ch := make(chan interface{})
+	go func() {
+		tk.MustExec("update t set b = b + 1 where a = (select b from t where a = 2)")
+		ch <- nil
+	}()
+	_, s2Digest := parser.NormalizeDigest("update t set b = b + 1 where a = (select b from t where a = 1)")
+	time.Sleep(100 * time.Millisecond)
+	info := tk.Se.TxnInfo()
+	c.Assert(info.CurrentSQLDigest, Equals, s2Digest)
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest, s1Digest, s2Digest})
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock"), IsNil)
+	<-ch
+	tk.MustExec("rollback")
 }
 
 func (s *testSessionSuite) TestReadDMLBatchSize(c *C) {
