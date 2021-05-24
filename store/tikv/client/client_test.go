@@ -56,6 +56,7 @@ func (s *OneByOneSuite) TearDownSuite(c *C) {
 		withTiKVGlobalLock.RUnlock()
 	}
 }
+
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	TestingT(t)
