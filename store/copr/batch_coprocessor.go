@@ -250,19 +250,19 @@ func buildBatchCopTasks(bo *Backoffer, cache *tikv.RegionCache, ranges *tikv.Key
 	const cmdType = tikvrpc.CmdBatchCop
 	rangesLen := ranges.Len()
 	for {
+
+		locations, err := cache.SplitKeyRangesByLocations(bo.TiKVBackoffer(), ranges)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		var tasks []*copTask
-		appendTask := func(regionWithRangeInfo *tikv.KeyLocation, ranges *tikv.KeyRanges) {
+		for _, lo := range locations {
 			tasks = append(tasks, &copTask{
-				region:    regionWithRangeInfo.Region,
-				ranges:    ranges,
+				region:    lo.Location.Region,
+				ranges:    lo.Ranges,
 				cmdType:   cmdType,
 				storeType: storeType,
 			})
-		}
-
-		err := tikv.SplitKeyRanges(bo.TiKVBackoffer(), cache, ranges, appendTask)
-		if err != nil {
-			return nil, errors.Trace(err)
 		}
 
 		var batchTasks []*batchCopTask
