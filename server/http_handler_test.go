@@ -1228,6 +1228,8 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, false)
 	dbt.mustExec("insert t2 values (unhex('f09f8c80'));")
+	// restore original value.
+	config.GetGlobalConfig().CheckMb4ValueInUTF8 = true
 }
 
 func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
