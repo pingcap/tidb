@@ -1775,7 +1775,7 @@ func (s SchemasSorter) Less(i, j int) bool {
 }
 
 func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
-	is := ctx.GetSessionVars().GetInfoSchema().(InfoSchema)
+	is := ctx.GetInfoSchema().(InfoSchema)
 	dbs := is.AllSchemas()
 	sort.Sort(SchemasSorter(dbs))
 	switch it.meta.Name.O {
