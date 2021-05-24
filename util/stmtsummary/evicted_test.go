@@ -12,26 +12,27 @@ import (
 // Test stmtSummaryByDigestEvictedElement.ToEvictedCountDatum
 // Test stmtSummaryByDigestMap.ToEvictedCountDatum
 func (s *testStmtSummarySuite) TestToEvictedCountDatum(c *C) {
-	s.ssMap.Clear()
+	ssMap := newStmtSummaryByDigestMap()
+	ssMap.Clear()
 	now := time.Now().Unix()
-	s.ssMap.beginTimeForCurInterval = now + 60
+	ssMap.beginTimeForCurInterval = now + 60
 
 	// set summaryMap capacity to 1.
-	err := s.ssMap.summaryMap.SetCapacity(1)
+	err := ssMap.summaryMap.SetCapacity(1)
 	if err != nil {
 		log.Fatal(err.Error())
 	}
-	s.ssMap.Clear()
+	ssMap.Clear()
 
 	sei0 := generateAnyExecInfo()
 	sei1 := generateAnyExecInfo()
 
 	sei0.SchemaName = "I'll occupy this cache! :("
-	s.ssMap.AddStatement(sei0)
-	n := s.ssMap.beginTimeForCurInterval
-	intervalSeconds := s.ssMap.refreshInterval()
+	ssMap.AddStatement(sei0)
+	n := ssMap.beginTimeForCurInterval
+	intervalSeconds := ssMap.refreshInterval()
 	sei1.SchemaName = "sorry, it's mine now. =)"
-	s.ssMap.AddStatement(sei1)
+	ssMap.AddStatement(sei1)
 
 	expectedEvictedCount := []interface{}{
 		types.NewTime(types.FromGoTime(time.Unix(n, 0)), mysql.TypeTimestamp, types.DefaultFsp),
@@ -40,45 +41,50 @@ func (s *testStmtSummarySuite) TestToEvictedCountDatum(c *C) {
 	}
 
 	// test stmtSummaryByDigestEvictedElement.toEvictedCountDatum()
-	element := s.ssMap.other.history.Front().Value.(*stmtSummaryByDigestEvictedElement)
+	element := ssMap.other.history.Front().Value.(*stmtSummaryByDigestEvictedElement)
 	match(c, element.toEvictedCountDatum(), expectedEvictedCount...)
 
 	// test stmtSummaryByDigestMap.toEvictedCountDatum
-	match(c, s.ssMap.ToEvictedCountDatum()[0], expectedEvictedCount...)
+	match(c, ssMap.ToEvictedCountDatum()[0], expectedEvictedCount...)
 }
 
 // test stmtSummaryByDigestEvicted.addEvicted
-// test stmtSummaryByDigestEvicted.toEvictedCountDatum, under multiple intervals.
-func (s *testStmtSummarySuite) TestEvictedAdd(c *C) {
-	s.ssMap.Clear()
-	s.ssMap.SetRefreshInterval("60", false)
-	s.ssMap.SetHistorySize("100", false)
+// test evicted count's detail
+func (s *testStmtSummarySuite) TestEvictedCountDetailed(c *C) {
+	ssMap := newStmtSummaryByDigestMap()
+	ssMap.Clear()
+	err := ssMap.SetRefreshInterval("60", false)
+	c.Assert(err, IsNil)
+	err = ssMap.SetHistorySize("100", false)
+	c.Assert(err, IsNil)
 	now := time.Now().Unix()
-	s.ssMap.beginTimeForCurInterval = now + 60
+	interval := int64(60)
+	ssMap.beginTimeForCurInterval = now + interval
 	// set capacity to 1
-	err := s.ssMap.summaryMap.SetCapacity(1)
+	err = ssMap.summaryMap.SetCapacity(1)
 	c.Assert(err, IsNil)
 
 	// test stmtSummaryByDigest's history length
 	for i := 0; i < 100; i++ {
 		if i == 0 {
-			c.Assert(s.ssMap.summaryMap.Size(), Equals, 0)
+			c.Assert(ssMap.summaryMap.Size(), Equals, 0)
 		} else {
-			c.Assert(s.ssMap.summaryMap.Size(), Equals, 1)
-			val := s.ssMap.summaryMap.Values()[0]
+			c.Assert(ssMap.summaryMap.Size(), Equals, 1)
+			val := ssMap.summaryMap.Values()[0]
 			c.Assert(val, NotNil)
 			digest := val.(*stmtSummaryByDigest)
 			c.Assert(digest.history.Len(), Equals, i)
 		}
-		s.ssMap.AddStatement(generateAnyExecInfo())
-		s.ssMap.beginTimeForCurInterval += 60
+		ssMap.AddStatement(generateAnyExecInfo())
+		ssMap.beginTimeForCurInterval += interval
 	}
+	ssMap.beginTimeForCurInterval -= interval
 
 	banditSei := generateAnyExecInfo()
-	banditSei.SchemaName = "Bandit schema that will kick out original digest"
-	s.ssMap.AddStatement(banditSei)
-	evictedCountDatums := s.ssMap.ToEvictedCountDatum()
-	n := s.ssMap.beginTimeForCurInterval - 60
+	banditSei.SchemaName = "kick you out >:("
+	ssMap.AddStatement(banditSei)
+	evictedCountDatums := ssMap.ToEvictedCountDatum()
+	n := ssMap.beginTimeForCurInterval
 	for _, evictedCountDatum := range evictedCountDatums {
 		expectedDatum := []interface{}{
 			types.NewTime(types.FromGoTime(time.Unix(n, 0)), mysql.TypeTimestamp, types.DefaultFsp),
@@ -89,30 +95,88 @@ func (s *testStmtSummarySuite) TestEvictedAdd(c *C) {
 		n -= 60
 	}
 
-	s.ssMap.Clear()
-	other := s.ssMap.other
-	// test empty history in digestValue
+	// test more than one eviction in single interval
+	banditSei.SchemaName = "Yet another kicker"
+	n = ssMap.beginTimeForCurInterval
+	expectedDatum := []interface{}{
+		types.NewTime(types.FromGoTime(time.Unix(n, 0)), mysql.TypeTimestamp, types.DefaultFsp),
+		types.NewTime(types.FromGoTime(time.Unix(n+60, 0)), mysql.TypeTimestamp, types.DefaultFsp),
+		int64(2),
+	}
+	ssMap.AddStatement(banditSei)
+	evictedCountDatums = ssMap.ToEvictedCountDatum()
+	match(c, evictedCountDatums[0], expectedDatum...)
+
+	ssMap.Clear()
+	other := ssMap.other
+	// test poisoning with empty-history digestValue
 	other.AddEvicted(new(stmtSummaryByDigestKey), new(stmtSummaryByDigest), 100)
 	c.Assert(other.history.Len(), Equals, 0)
+	return
+}
+
+// test stmtSummaryByDigestEvictedElement.addEvicted
+func (s *testStmtSummarySuite) TestEvictCountMultiple(c *C) {
+	ssMap := newStmtSummaryByDigestMap()
+	err := ssMap.SetRefreshInterval("60", false)
+	c.Assert(err, IsNil)
+	err = ssMap.SetMaxStmtCount("1", false)
+	c.Assert(err, IsNil)
+	err = ssMap.SetHistorySize("100", false)
+	c.Assert(err, IsNil)
+
+	now := time.Now().Unix()
+	interval := int64(60)
+	ssMap.beginTimeForCurInterval = now + interval
+	// insert one statement every other interval.
+	for i := 0; i < 50; i++ {
+		ssMap.AddStatement(generateAnyExecInfo())
+		ssMap.beginTimeForCurInterval += interval * 2
+	}
+	c.Assert(ssMap.summaryMap.Size(), Equals, 1)
+	val := ssMap.summaryMap.Values()[0]
+	c.Assert(val, NotNil)
+	digest := val.(*stmtSummaryByDigest)
+	c.Assert(digest.history.Len(), Equals, 50)
+
+	err = ssMap.SetHistorySize("100", false)
+	c.Assert(err, IsNil)
+	// update begin time
+	ssMap.beginTimeForCurInterval += interval * 2
+	banditSei := generateAnyExecInfo()
+	banditSei.SchemaName = "Kick you out >:("
+	ssMap.AddStatement(banditSei)
+
+	evictedCountDatums := ssMap.ToEvictedCountDatum()
+	c.Assert(len(evictedCountDatums), Equals, 50)
+
+	// update begin time
+	ssMap.beginTimeForCurInterval += interval * 2
+	banditSei.SchemaName = "Yet another kicker"
+	ssMap.AddStatement(banditSei)
+
+	evictedCountDatums = ssMap.ToEvictedCountDatum()
+	c.Assert(len(evictedCountDatums), Equals, 51)
 }
 
 // test stmtSummaryByDigestEvictedElement.matchAndAdd
 // test stmtSummaryByDigestEvictedElement.addEvicted
 func (s *testStmtSummarySuite) TestEvictedElementAdd(c *C) {
-	s.ssMap.Clear()
+	ssMap := newStmtSummaryByDigestMap()
+	ssMap.Clear()
 	now := time.Now().Unix()
-	s.ssMap.beginTimeForCurInterval = now + 60
+	ssMap.beginTimeForCurInterval = now + 60
 	// set capacity to 1
-	err := s.ssMap.summaryMap.SetCapacity(1)
+	err := ssMap.summaryMap.SetCapacity(1)
 	c.Assert(err, IsNil)
 
-	s.ssMap.AddStatement(generateAnyExecInfo())
+	ssMap.AddStatement(generateAnyExecInfo())
 	digestKeys := make([]*stmtSummaryByDigestKey, 0)
 	digestValues := make([]*stmtSummaryByDigest, 0)
-	for _, k := range s.ssMap.summaryMap.Keys() {
+	for _, k := range ssMap.summaryMap.Keys() {
 		digestKeys = append(digestKeys, k.(*stmtSummaryByDigestKey))
 	}
-	for _, v := range s.ssMap.summaryMap.Values() {
+	for _, v := range ssMap.summaryMap.Values() {
 		digestValues = append(digestValues, v.(*stmtSummaryByDigest))
 	}
 	c.Assert(digestKeys[0], NotNil)
