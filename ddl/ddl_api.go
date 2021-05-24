@@ -4372,6 +4372,10 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Ban setting replica count for tables in system database.
+	if util.IsMemOrSysDB(schema.Name.L) {
+		return errors.Trace(errUnsupportedAlterReplicaForSysTable)
+	}
 
 	tbReplicaInfo := tb.Meta().TiFlashReplica
 	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
