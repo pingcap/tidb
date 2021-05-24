@@ -54,8 +54,7 @@ func (s *testColumnSuite) SetUpSuite(c *C) {
 
 	s.dbInfo = testSchemaInfo(c, d, "test_column")
 	testCreateSchema(c, testNewContext(d), d, s.dbInfo)
-	err := d.Stop()
-	c.Assert(err, IsNil)
+	c.Assert(d.Stop(), IsNil)
 }
 
 func (s *testColumnSuite) TearDownSuite(c *C) {

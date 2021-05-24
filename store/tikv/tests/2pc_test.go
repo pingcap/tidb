@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	drivertxn "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
@@ -603,12 +602,12 @@ func (s *testCommitterSuite) TestRejectCommitTS(c *C) {
 	// Use max.Uint64 to read the data and success.
 	// That means the final commitTS > startTS+2, it's not the one we provide.
 	// So we cover the rety commitTS logic.
-	txn1, err := s.store.BeginWithOption(tidbkv.DefaultTransactionOption().SetStartTs(committer.GetStartTS() + 2))
+	txn1, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetStartTs(committer.GetStartTS() + 2))
 	c.Assert(err, IsNil)
 	_, err = txn1.Get(bo.GetCtx(), []byte("x"))
 	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 
-	txn2, err := s.store.BeginWithOption(tidbkv.DefaultTransactionOption().SetStartTs(math.MaxUint64))
+	txn2, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetStartTs(math.MaxUint64))
 	c.Assert(err, IsNil)
 	val, err := txn2.Get(bo.GetCtx(), []byte("x"))
 	c.Assert(err, IsNil)
@@ -713,8 +712,7 @@ func (s *testCommitterSuite) TestPessimisticLockReturnValues(c *C) {
 	txn = s.begin(c)
 	txn.SetPessimistic(true)
 	lockCtx := &kv.LockCtx{ForUpdateTS: txn.StartTS(), WaitStartTime: time.Now()}
-	lockCtx.ReturnValues = true
-	lockCtx.Values = map[string]kv.ReturnedValue{}
+	lockCtx.InitReturnValues(2)
 	c.Assert(txn.LockKeys(context.Background(), lockCtx, key, key2), IsNil)
 	c.Assert(lockCtx.Values, HasLen, 2)
 	c.Assert(lockCtx.Values[string(key)].Value, BytesEquals, key)
@@ -725,7 +723,7 @@ func (s *testCommitterSuite) TestPessimisticLockReturnValues(c *C) {
 func (s *testCommitterSuite) TestElapsedTTL(c *C) {
 	key := []byte("key")
 	txn := s.begin(c)
-	txn.SetStartTS(oracle.ComposeTS(oracle.GetPhysical(time.Now().Add(time.Second*10)), 1))
+	txn.SetStartTS(oracle.GoTimeToTS(time.Now().Add(time.Second*10)) + 1)
 	txn.SetPessimistic(true)
 	time.Sleep(time.Millisecond * 100)
 	lockCtx := &kv.LockCtx{

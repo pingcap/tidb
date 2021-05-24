@@ -42,7 +42,8 @@ func (l *localOracle) IsExpired(lockTS, TTL uint64, _ *oracle.Option) bool {
 	if l.hook != nil {
 		now = l.hook.currentTime
 	}
-	return oracle.GetPhysical(now) >= oracle.ExtractPhysical(lockTS)+int64(TTL)
+	expire := oracle.GetTimeFromTS(lockTS).Add(time.Duration(TTL) * time.Millisecond)
+	return !now.Before(expire)
 }
 
 func (l *localOracle) GetTimestamp(ctx context.Context, _ *oracle.Option) (uint64, error) {
@@ -52,8 +53,7 @@ func (l *localOracle) GetTimestamp(ctx context.Context, _ *oracle.Option) (uint6
 	if l.hook != nil {
 		now = l.hook.currentTime
 	}
-	physical := oracle.GetPhysical(now)
-	ts := oracle.ComposeTS(physical, 0)
+	ts := oracle.GoTimeToTS(now)
 	if l.lastTimeStampTS == ts {
 		l.n++
 		return ts + l.n, nil
@@ -80,9 +80,7 @@ func (l *localOracle) GetLowResolutionTimestampAsync(ctx context.Context, opt *o
 
 // GetStaleTimestamp return physical
 func (l *localOracle) GetStaleTimestamp(ctx context.Context, txnScope string, prevSecond uint64) (ts uint64, err error) {
-	physical := oracle.GetPhysical(time.Now().Add(-time.Second * time.Duration(prevSecond)))
-	ts = oracle.ComposeTS(physical, 0)
-	return ts, nil
+	return oracle.GoTimeToTS(time.Now().Add(-time.Second * time.Duration(prevSecond))), nil
 }
 
 type future struct {
