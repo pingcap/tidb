@@ -36,11 +36,6 @@ type StmtProfiler struct {
 	}
 }
 
-type profileTask struct {
-	buf *bytes.Buffer
-	end int64
-}
-
 func NewStmtProfiler() *StmtProfiler {
 	return &StmtProfiler{
 		taskCh:     make(chan *profileTask, 128),
@@ -108,6 +103,11 @@ func (sp *StmtProfiler) startAnalyzeProfileWorker() {
 		}
 		sp.putTaskToBuffer(task)
 	}
+}
+
+type profileTask struct {
+	buf *bytes.Buffer
+	end int64
 }
 
 func (sp *StmtProfiler) newProfileTask() *profileTask {
