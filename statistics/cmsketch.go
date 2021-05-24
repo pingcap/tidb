@@ -521,6 +521,8 @@ func (c *TopN) String() string {
 	return builder.String()
 }
 
+// Num returns the ndv of the TopN.
+//   TopN is declared directly in Histogram. So the Len is occupied by the Histogram. We use Num instead.
 func (c *TopN) Num() int {
 	if c == nil {
 		return 0
