@@ -49,22 +49,25 @@ type TxnInfo struct {
 	// The following fields are immutable and can be safely read across threads.
 
 	StartTS uint64
-	// digest of SQL currently running
+	// Digest of SQL currently running
 	CurrentSQLDigest string
-	AllSQLDigests    []string
+	// Digests of all SQLs executed in the transaction.
+	AllSQLDigests []string
 
-	// The following fields are mutable and needs atomic read for goroutines other than the transaction itself.
+	// The following fields are mutable and needs to be read or written by atomic operations. But since only the
+	// transaction's thread can modify its value, it's ok for the transaction's thread to read it without atomic
+	// operations.
 
-	// current executing State
+	// Current execution state of the transaction.
 	State TxnRunningState
-	// last trying to block start time. Invalid if State is not TxnLockWaiting. It's an unsafe pointer to time.Time or nil.
+	// Last trying to block start time. Invalid if State is not TxnLockWaiting. It's an unsafe pointer to time.Time or nil.
 	BlockStartTime unsafe.Pointer
 	// How many entries are in MemDB
 	EntriesCount uint64
 	// MemDB used memory
 	EntriesSize uint64
 
-	// the following fields will be filled in `session` instead of `LazyTxn`
+	// The following fields will be filled in `session` instead of `LazyTxn`
 
 	// Which session this transaction belongs to
 	ConnectionID uint64
@@ -90,7 +93,7 @@ func (info *TxnInfo) Clone() *TxnInfo {
 	}
 }
 
-// ToDatum Converts the `TxnInfo` to `Datum` to show in the `TIDB_TRX` table
+// ToDatum Converts the `TxnInfo` to `Datum` to show in the `TIDB_TRX` table.
 func (info *TxnInfo) ToDatum() []types.Datum {
 	// TODO: The timezone represented to the user is not correct and it will be always UTC time.
 	humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6).UTC()

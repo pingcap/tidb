@@ -64,18 +64,12 @@ type LazyTxn struct {
 	// we need these fields because kv.Transaction provides no thread safety promise
 	// but we hope getting TxnInfo is a thread safe op
 
+	// atomicTxnInfo provides information about the transaction in a thread-safe way. To atomically replace the struct,
+	// it's stored as an unsafe.Pointer.
 	atomicTxnInfo unsafe.Pointer
-	txnInfo       *txninfo.TxnInfo
-
-	//infoStartTS uint64
-	//// current executing state
-	//State txninfo.TxnRunningState
-	//// last trying to block start time
-	//blockStartTime unsafe.Pointer // *time.Time, cannot use atomic.Value here because it is possible to be nil
-	//// how many entries are there in the memBuffer, should be equal to self.(kv.Transaction).Len()
-	//EntriesCount uint64
-	//// how many memory space do the entries in the memBuffer take, should be equal to self.(kv.Transaction).Size()
-	//EntriesSize uint64
+	// txnInfo points to the same thing as atomicTxnInfo. It's just used internally by LazyTxn to avoid casting
+	// atomicTxnInfo from the untyped unsafe.Pointer every time using it.
+	txnInfo *txninfo.TxnInfo
 }
 
 // GetTableInfo returns the cached index name.
