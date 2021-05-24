@@ -14,6 +14,7 @@
 package txninfo
 
 import (
+	"strings"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -111,6 +112,8 @@ func (info *TxnInfo) ToDatum() []types.Datum {
 		panic("this should never happen")
 	}
 
+	allSQLs := "[" + strings.Join(info.AllSQLDigests, ", ") + "]"
+
 	state := types.NewMysqlEnumDatum(e)
 
 	datums := types.MakeDatums(
@@ -125,6 +128,7 @@ func (info *TxnInfo) ToDatum() []types.Datum {
 		info.EntriesSize,
 		info.ConnectionID,
 		info.Username,
-		info.CurrentDB)...)
+		info.CurrentDB,
+		allSQLs)...)
 	return datums
 }

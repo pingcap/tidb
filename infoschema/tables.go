@@ -1355,6 +1355,7 @@ var tableTiDBTrxCols = []columnInfo{
 	{name: "SESSION_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag, comment: "Which session this transaction belongs to"},
 	{name: "USER", tp: mysql.TypeVarchar, size: 16, comment: "The user who open this session"},
 	{name: "DB", tp: mysql.TypeVarchar, size: 64, comment: "The schema this transaction works on"},
+	{name: "ALL_SQLS", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
 }
 
 var tableDeadlocksCols = []columnInfo{

@@ -1531,7 +1531,7 @@ func (s *testTableSuite) TestTrx(c *C) {
 	sm.txnInfo[1] = &txninfo.TxnInfo{
 		StartTS:          425070846483628033,
 		CurrentSQLDigest: "",
-		AllSQLDigests:    nil,
+		AllSQLDigests:    []string{"sql1", "sql2"},
 		State:            txninfo.TxnLockWaiting,
 		BlockStartTime:   unsafe.Pointer(&blockTime2),
 		ConnectionID:     10,
@@ -1540,8 +1540,8 @@ func (s *testTableSuite) TestTrx(c *C) {
 	}
 	tk.Se.SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.TIDB_TRX;").Check(testkit.Rows(
-		"424768545227014155 2021-05-07 04:56:48.001000 "+digest+" Normal <nil> 1 19 2 root test",
-		"425070846483628033 2021-05-20 13:16:35.778000 <nil> LockWaiting 2021-05-20 13:18:30.123456 0 0 10 user1 db1"))
+		"424768545227014155 2021-05-07 04:56:48.001000 "+digest+" Normal <nil> 1 19 2 root test []",
+		"425070846483628033 2021-05-20 13:16:35.778000 <nil> LockWaiting 2021-05-20 13:18:30.123456 0 0 10 user1 db1 [sql1, sql2]"))
 }
 
 func (s *testTableSuite) TestInfoschemaDeadlockPrivilege(c *C) {
