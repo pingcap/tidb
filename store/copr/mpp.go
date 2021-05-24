@@ -149,7 +149,7 @@ func (m *mppIterator) run(ctx context.Context) {
 		}
 		m.mu.Unlock()
 		m.wg.Add(1)
-		bo := backoff.NewBackoffer(ctx, CopNextMaxBackoff)
+		bo := backoff.NewBackoffer(ctx, copNextMaxBackoff)
 		go m.handleDispatchReq(ctx, bo, task)
 	}
 	m.wg.Wait()
