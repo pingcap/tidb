@@ -1716,6 +1716,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		Columns:          ds.Columns,
 		SinglePart:       ds.isPartition,
 		PartTblID:        ds.physicalTableID,
+		PartitionExpr:    getPartitionExpr(ds.ctx, ds.TableInfo()),
 	}.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.SortItems[0].Desc
@@ -1742,7 +1743,6 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		batchPointGetPlan.IdxCols = candidate.path.IdxCols
 		batchPointGetPlan.IdxColLens = candidate.path.IdxColLens
 		batchPointGetPlan.PartitionColPos = getHashPartitionColumnPos(candidate.path.Index, hashPartColName)
-		batchPointGetPlan.PartitionExpr = getPartitionExpr(batchPointGetPlan.ctx, batchPointGetPlan.TblInfo)
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.IndexValues = append(batchPointGetPlan.IndexValues, ran.LowVal)
 		}
