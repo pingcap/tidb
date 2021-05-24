@@ -2378,10 +2378,6 @@ func (s *testSuiteP2) TestClusteredIndexIsPointGet(c *C) {
 		"select * from t where a='x' and c='x'":         true,
 		"select * from t where a='x' and c='x' and b=1": false,
 	}
-<<<<<<< HEAD
-=======
-	infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
->>>>>>> origin
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
