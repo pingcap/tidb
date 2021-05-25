@@ -1736,8 +1736,14 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	switch s.TemporaryKeyword {
 	case ast.TemporaryGlobal:
 		tbInfo.TempTableType = model.TempTableGlobal
+		// "create global temporary table ... on commit preserve rows"
+		if !s.OnCommitDelete {
+			return nil, errors.Trace(errUnsupportedOnCommitPreserve)
+		}
 	case ast.TemporaryLocal:
-		tbInfo.TempTableType = model.TempTableLocal
+		// TODO: set "tbInfo.TempTableType = model.TempTableLocal" after local temporary table is supported.
+		tbInfo.TempTableType = model.TempTableNone
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("local TEMPORARY TABLE is not supported yet, TEMPORARY will be parsed but ignored"))
 	case ast.TemporaryNone:
 		tbInfo.TempTableType = model.TempTableNone
 	}
@@ -2217,6 +2223,12 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.PreSplitRegions = op.UintValue
 		case ast.TableOptionCharset, ast.TableOptionCollate:
 			// We don't handle charset and collate here since they're handled in `getCharsetAndCollateInTableOption`.
+		case ast.TableOptionEngine:
+			if tbInfo.TempTableType != model.TempTableNone {
+				if op.StrValue != "" && !strings.EqualFold(op.StrValue, "memory") {
+					return errors.Trace(errUnsupportedEngineTemporary)
+				}
+			}
 		}
 	}
 	shardingBits := shardingBits(tbInfo)
@@ -4359,6 +4371,10 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// Ban setting replica count for tables in system database.
+	if util.IsMemOrSysDB(schema.Name.L) {
+		return errors.Trace(errUnsupportedAlterReplicaForSysTable)
 	}
 
 	tbReplicaInfo := tb.Meta().TiFlashReplica
