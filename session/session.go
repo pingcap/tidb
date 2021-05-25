@@ -2881,7 +2881,7 @@ var _ telemetry.TemporaryTableFeatureChecker = &session{}
 
 // TemporaryTableExists is used by the telemetry package to avoid circle dependency.
 func (s *session) TemporaryTableExists() bool {
-	is := domain.GetDomain(s).InfoSchema()
+	is := s.GetInfoSchema()
 	for _, dbInfo := range is.AllSchemas() {
 		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
 			if tbInfo.Meta().TempTableType != model.TempTableNone {
