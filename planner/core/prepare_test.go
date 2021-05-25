@@ -201,7 +201,7 @@ func (s *testPlanSerialSuite) TestPrepareCacheDeferredFunction(c *C) {
 	for i := 0; i < 2; i++ {
 		stmt, err := s.ParseOneStmt(sql1, "", "")
 		c.Check(err, IsNil)
-		is := tk.Se.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
+		is := tk.Se.GetInfoSchema().(infoschema.InfoSchema)
 		builder, _ := core.NewPlanBuilder(tk.Se, is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Check(err, IsNil)
@@ -277,9 +277,6 @@ func (s *testPrepareSerialSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
 	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows("-1"))
 	tk.MustExec("set @@global.max_prepared_stmt_count = 2")
 	tk.MustQuery("select @@global.max_prepared_stmt_count").Check(testkit.Rows("2"))
-
-	// Disable global variable cache, so load global session variable take effect immediate.
-	dom.GetGlobalVarsCache().Disable()
 
 	// test close session to give up all prepared stmt
 	tk.MustExec(`prepare stmt2 from "select 1"`)

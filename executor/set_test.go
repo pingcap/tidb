@@ -18,7 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -570,7 +570,7 @@ func (s *testSuite5) TestSetCharset(c *C) {
 
 	check := func(args ...string) {
 		for i, v := range characterSetVariables {
-			sVar, err := variable.GetSessionSystemVar(sessionVars, v)
+			sVar, err := variable.GetSessionOrGlobalSystemVar(sessionVars, v)
 			c.Assert(err, IsNil)
 			c.Assert(sVar, Equals, args[i], Commentf("%d: %s", i, characterSetVariables[i]))
 		}
@@ -1320,7 +1320,7 @@ func (s *testSuite5) TestSetClusterConfig(c *C) {
 	httpCnt := 0
 	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
 		httpCnt++
-		return &http.Response{StatusCode: http.StatusOK, Body: ioutil.NopCloser(nil)}, nil
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(nil)}, nil
 	})
 	tk.MustExec("set config tikv log.level='info'")
 	c.Assert(httpCnt, Equals, 2)
@@ -1338,7 +1338,7 @@ func (s *testSuite5) TestSetClusterConfig(c *C) {
 		"Warning 1105 something wrong", "Warning 1105 something wrong"))
 
 	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusBadRequest, Body: ioutil.NopCloser(bytes.NewBufferString("WRONG"))}, nil
+		return &http.Response{StatusCode: http.StatusBadRequest, Body: io.NopCloser(bytes.NewBufferString("WRONG"))}, nil
 	})
 	tk.MustExec("set config tikv log.level='info'")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
