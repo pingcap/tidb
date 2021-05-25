@@ -44,9 +44,6 @@ var (
 	TxnTotalSizeLimit uint64 = config.DefTxnTotalSizeLimit
 )
 
-// FlagsOp  describes KeyFlags modify operation. TODO:remove it when br is ready
-type FlagsOp = tikvstore.FlagsOp
-
 // Getter is the interface for the Get method.
 type Getter interface {
 	// Get gets the value for key k from kv store.
@@ -108,11 +105,11 @@ type MemBuffer interface {
 	RUnlock()
 
 	// GetFlags returns the latest flags associated with key.
-	GetFlags(Key) (tikvstore.KeyFlags, error)
+	GetFlags(Key) (KeyFlags, error)
 	// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
-	SetWithFlags(Key, []byte, ...tikvstore.FlagsOp) error
+	SetWithFlags(Key, []byte, ...FlagsOp) error
 	// DeleteWithFlags delete key with the given KeyFlags
-	DeleteWithFlags(Key, ...tikvstore.FlagsOp) error
+	DeleteWithFlags(Key, ...FlagsOp) error
 
 	// Staging create a new staging buffer inside the MemBuffer.
 	// Subsequent writes will be temporarily stored in this new staging buffer.
@@ -124,7 +121,7 @@ type MemBuffer interface {
 	// If the changes are not published by `Release`, they will be discarded.
 	Cleanup(StagingHandle)
 	// InspectStage used to inspect the value updates in the given stage.
-	InspectStage(StagingHandle, func(Key, tikvstore.KeyFlags, []byte))
+	InspectStage(StagingHandle, func(Key, KeyFlags, []byte))
 
 	// SnapshotGetter returns a Getter for a snapshot of MemBuffer.
 	SnapshotGetter() Getter
@@ -291,6 +288,8 @@ type Request struct {
 	IsStaleness bool
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels []*metapb.StoreLabel
+	// ResourceGroupTag indicates the kv request task group.
+	ResourceGroupTag []byte
 }
 
 // ResultSubset represents a result subset from a single storage unit.

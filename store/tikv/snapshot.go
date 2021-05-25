@@ -109,6 +109,8 @@ type KVSnapshot struct {
 		matchStoreLabels []*metapb.StoreLabel
 	}
 	sampleStep uint32
+	// resourceGroupTag is use to set the kv request resource group tag.
+	resourceGroupTag []byte
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
@@ -311,9 +313,10 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 			Keys:    pending,
 			Version: s.version,
 		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
-			Priority:     s.priority.ToPB(),
-			NotFillCache: s.notFillCache,
-			TaskId:       s.mu.taskID,
+			Priority:         s.priority.ToPB(),
+			NotFillCache:     s.notFillCache,
+			TaskId:           s.mu.taskID,
+			ResourceGroupTag: s.resourceGroupTag,
 		})
 		isStaleness = s.mu.isStaleness
 		matchStoreLabels = s.mu.matchStoreLabels
@@ -463,9 +466,10 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 			Key:     k,
 			Version: s.version,
 		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
-			Priority:     s.priority.ToPB(),
-			NotFillCache: s.notFillCache,
-			TaskId:       s.mu.taskID,
+			Priority:         s.priority.ToPB(),
+			NotFillCache:     s.notFillCache,
+			TaskId:           s.mu.taskID,
+			ResourceGroupTag: s.resourceGroupTag,
 		})
 	isStaleness = s.mu.isStaleness
 	matchStoreLabels = s.mu.matchStoreLabels
@@ -628,6 +632,11 @@ func (s *KVSnapshot) SetMatchStoreLabels(labels []*metapb.StoreLabel) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mu.matchStoreLabels = labels
+}
+
+// SetResourceGroupTag sets resource group of the kv request.
+func (s *KVSnapshot) SetResourceGroupTag(tag []byte) {
+	s.resourceGroupTag = tag
 }
 
 // SnapCacheHitCount gets the snapshot cache hit count. Only for test.
