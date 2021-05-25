@@ -540,7 +540,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 	// Lexpr cannot compare with rexpr by different collate
 	opString := new(strings.Builder)
 	v.Op.Format(opString)
-	er. err = expression.CheckIllegalMixCollation(opString.String(),[]expression.Expression{lexpr, rexpr}, 0)
+	er.err = expression.CheckIllegalMixCollation(opString.String(), []expression.Expression{lexpr, rexpr}, 0)
 	if er.err != nil {
 		return v, true
 	}
