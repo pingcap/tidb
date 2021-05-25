@@ -1140,7 +1140,7 @@ func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
 	c.Assert(jobs, DeepEquals, data)
 }
 
-func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
+func (ts *HTTPHandlerTestSerialSuite) TestPostSettings(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
