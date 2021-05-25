@@ -958,7 +958,14 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 
 	buf.WriteString("\n")
 
-	buf.WriteString(") ENGINE=InnoDB")
+	switch tableInfo.TempTableType {
+	case model.TempTableNone:
+		buf.WriteString(") ENGINE=InnoDB")
+	default:
+		// For now the only supported engine for temporary table is memory.
+		buf.WriteString(") ENGINE=memory")
+	}
+
 	// We need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	if len(tblCollate) == 0 || tblCollate == "binary" {
