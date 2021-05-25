@@ -378,6 +378,23 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 	return err
 }
 
+func setTxnReadTS(s *SessionVars, sVal string) error {
+	if sVal == "" {
+		s.TxnReadTS = 0
+		return nil
+	}
+	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
+	if err != nil {
+		return err
+	}
+	t1, err := t.GoTime(s.TimeZone)
+	if err != nil {
+		return err
+	}
+	s.TxnReadTS = oracle.GoTimeToTS(t1)
+	return err
+}
+
 // serverGlobalVariable is used to handle variables that acts in server and global scope.
 type serverGlobalVariable struct {
 	sync.Mutex
