@@ -256,7 +256,10 @@ func (sc *StatementContext) GetResourceGroupTag() []byte {
 	if len(sc.resourceGroupTag) > 0 {
 		return sc.resourceGroupTag
 	}
-	_, sqlDigest := sc.SQLDigest()
+	normalized, sqlDigest := sc.SQLDigest()
+	if len(normalized) == 0 {
+		return nil
+	}
 	sc.resourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(sqlDigest, sc.planDigest)
 	return sc.resourceGroupTag
 }
