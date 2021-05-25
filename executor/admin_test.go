@@ -24,6 +24,7 @@ import (
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -95,8 +96,12 @@ func (s *testSuite5) TestAdminCheckIndexInTemporaryMode(c *C) {
 	tk.MustExec("drop table if exists temporary_admin_checksum_table_without_index_test;")
 	tk.MustExec("create global temporary table temporary_admin_checksum_table_with_index_test (id int, count int, PRIMARY KEY(id), KEY(count)) ON COMMIT DELETE ROWS;")
 	tk.MustExec("create global temporary table temporary_admin_checksum_table_without_index_test (id int, count int, PRIMARY KEY(id)) ON COMMIT DELETE ROWS;")
-	tk.MustGetErrCode("admin checksum table temporary_admin_checksum_table_with_index_test;", mysql.ErrAdminCheckTable)
-	tk.MustGetErrCode("admin checksum table temporary_admin_checksum_table_without_index_test;", mysql.ErrAdminCheckTable)
+	_, err := tk.Exec("admin checksum table temporary_admin_checksum_table_with_index_test;")
+	fmt.Println(core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table"))
+	fmt.Println(err.Error())
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
+	_, err = tk.Exec("admin checksum table temporary_admin_checksum_table_without_index_test;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
 	tk.MustExec("drop table if exists temporary_admin_checksum_table_with_index_test;")
 	tk.MustExec("drop table if exists temporary_admin_checksum_table_without_index_test;")
 }
