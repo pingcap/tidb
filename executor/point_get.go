@@ -369,6 +369,10 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		// fallthrough to snapshot get.
 	}
 
+	// Global temporary table is always empty, so no need to send the request.
+	if e.tblInfo.TempTableType == model.TempTableGlobal {
+		return nil, nil
+	}
 	lock := e.tblInfo.Lock
 	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
 		if e.ctx.GetSessionVars().EnablePointGetCache {
@@ -379,10 +383,6 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 			}
 			return val, nil
 		}
-	}
-	// Global temporary table is always empty, so no need to send the request.
-	if e.tblInfo.TempTableType == model.TempTableGlobal {
-		return nil, nil
 	}
 	// if not read lock or table was unlock then snapshot get
 	return e.snapshot.Get(ctx, key)
