@@ -2225,7 +2225,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			// We don't handle charset and collate here since they're handled in `getCharsetAndCollateInTableOption`.
 		case ast.TableOptionEngine:
 			if tbInfo.TempTableType != model.TempTableNone {
-				if op.StrValue != "" && !strings.EqualFold(op.StrValue, "memory") && !strings.EqualFold(op.StrValue, "innodb") {
+				if op.StrValue != "" && !strings.EqualFold(op.StrValue, "memory") {
 					return errors.Trace(errUnsupportedEngineTemporary)
 				}
 			}
