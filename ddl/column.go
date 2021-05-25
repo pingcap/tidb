@@ -710,8 +710,8 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 			return toUnsigned != originUnsigned
 		case mysql.TypeString:
 			// Due to the behavior of padding \x00 at binary type, always change column data when binary length changed
-			if mysql.HasBinaryFlag(oldCol.Flag) {
-				return needTruncationOrToggleSign() || newCol.Flen > oldCol.Flen
+			if types.IsBinaryStr(&oldCol.FieldType) {
+				return newCol.Flen != oldCol.Flen
 			}
 		}
 

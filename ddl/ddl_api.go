@@ -3581,8 +3581,8 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needReorg 
 		}
 
 		// Due to the behavior of padding \x00 at binary type, we need to reorg when binary length changed
-		isBinaryChar := func(tp *types.FieldType) bool { return tp.Tp == mysql.TypeString && mysql.HasBinaryFlag(tp.Flag) }
-		if isBinaryChar(origin) && isBinaryChar(to) {
+		isBinaryType := func(tp *types.FieldType) bool { return tp.Tp == mysql.TypeString && types.IsBinaryStr(tp) }
+		if isBinaryType(origin) && isBinaryType(to) {
 			return true, "can't change binary types of different length"
 		}
 	}
