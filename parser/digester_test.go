@@ -14,6 +14,11 @@
 package parser_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"testing"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 )
@@ -71,7 +76,7 @@ func (s *testSQLDigestSuite) TestNormalize(c *C) {
 
 		normalized2, digest2 := parser.NormalizeDigest(test.input)
 		c.Assert(normalized2, Equals, normalized)
-		c.Assert(digest2, Equals, digest, Commentf("%+v", test))
+		c.Assert(digest2.String(), Equals, digest.String(), Commentf("%+v", test))
 	}
 }
 
@@ -86,12 +91,12 @@ func (s *testSQLDigestSuite) TestNormalizeDigest(c *C) {
 	for _, test := range tests {
 		normalized, digest := parser.NormalizeDigest(test.sql)
 		c.Assert(normalized, Equals, test.normalized)
-		c.Assert(digest, Equals, test.digest)
+		c.Assert(digest.String(), Equals, test.digest)
 
 		normalized = parser.Normalize(test.sql)
 		digest = parser.DigestNormalized(normalized)
 		c.Assert(normalized, Equals, test.normalized)
-		c.Assert(digest, Equals, test.digest)
+		c.Assert(digest.String(), Equals, test.digest)
 	}
 }
 
@@ -106,10 +111,10 @@ func (s *testSQLDigestSuite) TestDigestHashEqForSimpleSQL(c *C) {
 		for _, sql := range sqlGroup {
 			dig := parser.DigestHash(sql)
 			if d == "" {
-				d = dig
+				d = dig.String()
 				continue
 			}
-			c.Assert(d, Equals, dig)
+			c.Assert(d, Equals, dig.String())
 		}
 	}
 }
@@ -123,10 +128,42 @@ func (s *testSQLDigestSuite) TestDigestHashNotEqForSimpleSQL(c *C) {
 		for _, sql := range sqlGroup {
 			dig := parser.DigestHash(sql)
 			if d == "" {
-				d = dig
+				d = dig.String()
 				continue
 			}
-			c.Assert(d, Not(Equals), dig)
+			c.Assert(d, Not(Equals), dig.String())
 		}
+	}
+}
+
+func (s *testSQLDigestSuite) TestGenDigest(c *C) {
+	hash := genRandDigest("abc")
+	digest := parser.NewDigest(hash)
+	c.Assert(digest.String(), Equals, fmt.Sprintf("%x", hash))
+	c.Assert(digest.Bytes(), DeepEquals, hash)
+	digest = parser.NewDigest(nil)
+	c.Assert(digest.String(), Equals, "")
+	c.Assert(digest.Bytes(), IsNil)
+}
+
+func genRandDigest(str string) []byte {
+	hasher := sha256.New()
+	hasher.Write([]byte(str))
+	return hasher.Sum(nil)
+}
+
+func BenchmarkDigestHexEncode(b *testing.B) {
+	digest1 := genRandDigest("abc")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		hex.EncodeToString(digest1)
+	}
+}
+
+func BenchmarkDigestSprintf(b *testing.B) {
+	digest1 := genRandDigest("abc")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		fmt.Sprintf("%x", digest1)
 	}
 }
