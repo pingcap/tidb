@@ -151,7 +151,11 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	case kv.InfoSchema:
 		txn.SetSchemaVer(val.(tikv.SchemaVer))
 	case kv.CollectRuntimeStats:
-		txn.KVTxn.GetSnapshot().SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
+		if val == nil {
+			txn.KVTxn.GetSnapshot().SetRuntimeStats(nil)
+		} else {
+			txn.KVTxn.GetSnapshot().SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
+		}
 	case kv.SchemaAmender:
 		txn.SetSchemaAmender(val.(tikv.SchemaAmender))
 	case kv.SampleStep:

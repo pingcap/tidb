@@ -83,7 +83,11 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 	case kv.TaskID:
 		s.KVSnapshot.SetTaskID(val.(uint64))
 	case kv.CollectRuntimeStats:
-		s.KVSnapshot.SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
+		if val == nil {
+			s.KVSnapshot.SetRuntimeStats(nil)
+		} else {
+			s.KVSnapshot.SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
+		}
 	case kv.IsStalenessReadOnly:
 		s.KVSnapshot.SetIsStatenessReadOnly(val.(bool))
 	case kv.MatchStoreLabels:
