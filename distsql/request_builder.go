@@ -230,10 +230,6 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.TaskID = sv.StmtCtx.TaskID
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.GetReplicaRead()
-	// in tests, it may be null
-	if is, ok := sv.GetInfoSchema().(infoschema.InfoSchema); ok {
-		builder.Request.SchemaVar = is.SchemaMetaVersion()
-	}
 	builder.txnScope = sv.TxnCtx.TxnScope
 	builder.IsStaleness = sv.TxnCtx.IsStaleness
 	if builder.IsStaleness && builder.txnScope != kv.GlobalTxnScope {
@@ -270,11 +266,13 @@ func (builder *RequestBuilder) SetTiDBServerID(serverID uint64) *RequestBuilder 
 
 // SetFromInfoSchema sets the following fields from infoSchema:
 // "bundles"
-func (builder *RequestBuilder) SetFromInfoSchema(is infoschema.InfoSchema) *RequestBuilder {
-	if is == nil {
+func (builder *RequestBuilder) SetFromInfoSchema(pis interface{}) *RequestBuilder {
+	is, ok := pis.(infoschema.InfoSchema)
+	if !ok {
 		return builder
 	}
 	builder.is = is
+	builder.Request.SchemaVar = is.SchemaMetaVersion()
 	return builder
 }
 
