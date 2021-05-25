@@ -1636,6 +1636,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		if err != nil {
 			return
 		}
+		// For `execute stmt` SQL, should reset the SQL digest with the prepare SQL digest.
 		if config.TopSQLEnabled() {
 			sc.OriginalSQL = s.Text()
 			normalizedSQL, digest := sc.SQLDigest()

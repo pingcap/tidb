@@ -61,6 +61,14 @@ func NewSQLStatsProfiler() *sqlStatsProfiler {
 	}
 }
 
+func (sp *sqlStatsProfiler) Run() {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	logutil.BgLogger().Info("cpu profiler started")
+	go sp.startCPUProfileWorker()
+	go sp.startAnalyzeProfileWorker()
+}
+
 func (sp *sqlStatsProfiler) SetCollector(c SQLStatsCollector) {
 	sp.collector = c
 }
@@ -77,14 +85,6 @@ func (sp *sqlStatsProfiler) RegisterPlan(planDigest string, normalizedPlan strin
 		return
 	}
 	sp.collector.RegisterPlan(planDigest, normalizedPlan)
-}
-
-func (sp *sqlStatsProfiler) Run() {
-	sp.mu.Lock()
-	defer sp.mu.Unlock()
-	logutil.BgLogger().Info("cpu profiler started")
-	go sp.startCPUProfileWorker()
-	go sp.startAnalyzeProfileWorker()
 }
 
 func (sp *sqlStatsProfiler) startCPUProfileWorker() {
@@ -339,14 +339,15 @@ type exportProfileTask struct {
 }
 
 func (t *exportProfileTask) mergeProfile(p *profile.Profile) {
-	if t.err != nil {
+	if t.err != nil || p == nil {
 		return
 	}
-	if t.cpuProfile == nil {
-		t.cpuProfile = p
-	} else {
-		t.cpuProfile, t.err = profile.Merge([]*profile.Profile{t.cpuProfile, p})
+	ps := make([]*profile.Profile, 0, 2)
+	if t.cpuProfile != nil {
+		ps = append(ps, t.cpuProfile)
 	}
+	ps = append(ps, p)
+	t.cpuProfile, t.err = profile.Merge(ps)
 }
 
 // ProfileHTTPHandler is same as pprof.Profile.

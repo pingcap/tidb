@@ -14,7 +14,7 @@
 package tracecpu
 
 // SQLStatsCollector uses to collect SQL stats.
-// TODO: add a collector.
+// TODO: add a collector to collect and store the SQL stats.
 type SQLStatsCollector interface {
 	Collect(ts int64, stats []SQLStats)
 	RegisterSQL(sqlDigest, normalizedSQL string)
