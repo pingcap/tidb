@@ -122,7 +122,7 @@ func (s *partitionTableSuite) TestPointGetwithRangeAndListPartitionTable(c *C) {
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 
 	// list partition table
-	tk.MustExec(`create table tlist(a int, b int, unique index idx_a(a), index idx_b(b)) partition by list(a)( 
+	tk.MustExec(`create table tlist(a int, b int, unique index idx_a(a), index idx_b(b)) partition by list(a)(
 		partition p0 values in (NULL, 1, 2, 3, 4),
 			partition p1 values in (5, 6, 7, 8),
 			partition p2 values in (9, 10, 11, 12));`)
@@ -1735,6 +1735,81 @@ func (s *partitionTableSuite) TestParallelApply(c *C) {
 			}
 		}
 	}
+}
+
+func (s *partitionTableSuite) TestDirectReadingWithUnionScan(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_unionscan")
+	defer tk.MustExec(`drop database test_unionscan`)
+	tk.MustExec("use test_unionscan")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	tk.MustExec(`create table trange(a int, b int, index idx_a(a)) partition by range(a) (
+		partition p0 values less than (10),
+		partition p1 values less than (30),
+		partition p2 values less than (50))`)
+	tk.MustExec(`create table thash(a int, b int, index idx_a(a)) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table tnormal(a int, b int, index idx_a(a))`)
+
+	vals := make([]string, 0, 1000)
+	for i := 0; i < 1000; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(50), rand.Intn(50)))
+	}
+	for _, tb := range []string{`trange`, `tnormal`, `thash`} {
+		sql := fmt.Sprintf(`insert into %v values `+strings.Join(vals, ", "), tb)
+		tk.MustExec(sql)
+	}
+
+	randCond := func(col string) string {
+		la, ra := rand.Intn(50), rand.Intn(50)
+		if la > ra {
+			la, ra = ra, la
+		}
+		return fmt.Sprintf(`%v>=%v and %v<=%v`, col, la, col, ra)
+	}
+
+	tk.MustExec(`begin`)
+	for i := 0; i < 1000; i++ {
+		if i == 0 || rand.Intn(2) == 0 { // insert some inflight rows
+			val := fmt.Sprintf("(%v, %v)", rand.Intn(50), rand.Intn(50))
+			for _, tb := range []string{`trange`, `tnormal`, `thash`} {
+				sql := fmt.Sprintf(`insert into %v values `+val, tb)
+				tk.MustExec(sql)
+			}
+		} else {
+			var sql string
+			switch rand.Intn(3) {
+			case 0: // table scan
+				sql = `select * from %v ignore index(idx_a) where ` + randCond(`b`)
+			case 1: // index reader
+				sql = `select a from %v use index(idx_a) where ` + randCond(`a`)
+			case 2: // index lookup
+				sql = `select * from %v use index(idx_a) where ` + randCond(`a`) + ` and ` + randCond(`b`)
+			}
+			switch rand.Intn(2) {
+			case 0: // order by a
+				sql += ` order by a`
+			case 1: // order by b
+				sql += ` order by b`
+			}
+
+			var result [][]interface{}
+			for _, tb := range []string{`trange`, `tnormal`, `thash`} {
+				q := fmt.Sprintf(sql, tb)
+				tk.HasPlan(q, `UnionScan`)
+				if result == nil {
+					result = tk.MustQuery(q).Sort().Rows()
+				} else {
+					tk.MustQuery(q).Sort().Check(result)
+				}
+			}
+		}
+	}
+	tk.MustExec(`rollback`)
 }
 
 func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
