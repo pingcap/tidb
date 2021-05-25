@@ -2340,10 +2340,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			if err != nil {
 				return nil, err
 			}
-			p.StalenessTxnOption = &sessionctx.StalenessTxnOption{
-				Mode:    ast.TimestampBoundReadTimestamp,
-				StartTS: startTS,
-			}
+			p.StaleTxnStartTS = startTS
 		}
 	}
 	return p, nil

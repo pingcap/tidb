@@ -30,14 +30,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	tikv "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/retry"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"go.uber.org/zap"
@@ -58,11 +56,8 @@ type SchemaAmender interface {
 // `TxnScope` must be set for each object
 // Every other fields are optional, but currently at most one of them can be set
 type StartTSOption struct {
-	TxnScope   string
-	StartTS    *uint64
-	PrevSec    *uint64
-	MinStartTS *uint64
-	MaxPrevSec *uint64
+	TxnScope string
+	StartTS  *uint64
 }
 
 // DefaultStartTSOption creates a default StartTSOption, ie. Work in GlobalTxnScope and get start ts when got used
@@ -70,27 +65,9 @@ func DefaultStartTSOption() StartTSOption {
 	return StartTSOption{TxnScope: oracle.GlobalTxnScope}
 }
 
-// SetMaxPrevSec returns a new StartTSOption with MaxPrevSec set to maxPrevSec
-func (to StartTSOption) SetMaxPrevSec(maxPrevSec uint64) StartTSOption {
-	to.MaxPrevSec = &maxPrevSec
-	return to
-}
-
-// SetMinStartTS returns a new StartTSOption with MinStartTS set to minStartTS
-func (to StartTSOption) SetMinStartTS(minStartTS uint64) StartTSOption {
-	to.MinStartTS = &minStartTS
-	return to
-}
-
-// SetStartTs returns a new StartTSOption with StartTS set to startTS
-func (to StartTSOption) SetStartTs(startTS uint64) StartTSOption {
+// SetStartTS returns a new StartTSOption with StartTS set to the given startTS
+func (to StartTSOption) SetStartTS(startTS uint64) StartTSOption {
 	to.StartTS = &startTS
-	return to
-}
-
-// SetPrevSec returns a new StartTSOption with PrevSec set to prevSec
-func (to StartTSOption) SetPrevSec(prevSec uint64) StartTSOption {
-	to.PrevSec = &prevSec
 	return to
 }
 
@@ -135,68 +112,29 @@ type KVTxn struct {
 	kvFilter           KVFilter
 }
 
-// ExtractStartTs use `option` to get the proper startTS for a transaction
-func ExtractStartTs(store *KVStore, option StartTSOption) (uint64, error) {
-	var startTs uint64
-	var err error
+// ExtractStartTS use `option` to get the proper startTS for a transaction.
+func ExtractStartTS(store *KVStore, option StartTSOption) (uint64, error) {
 	if option.StartTS != nil {
-		startTs = *option.StartTS
-	} else if option.PrevSec != nil {
-		bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
-		startTs, err = store.getStalenessTimestamp(bo, option.TxnScope, *option.PrevSec)
-	} else if option.MinStartTS != nil {
-		stores := make([]*Store, 0)
-		allStores := store.regionCache.getStoresByType(tikvrpc.TiKV)
-		if option.TxnScope != oracle.GlobalTxnScope {
-			for _, store := range allStores {
-				if store.IsLabelsMatch([]*metapb.StoreLabel{
-					{
-						Key:   DCLabelKey,
-						Value: option.TxnScope,
-					},
-				}) {
-					stores = append(stores, store)
-				}
-			}
-		} else {
-			stores = allStores
-		}
-		safeTS := store.getMinSafeTSByStores(stores)
-		startTs = *option.MinStartTS
-		// If the safeTS is larger than the minStartTS, we will use safeTS as StartTS, otherwise we will use
-		// minStartTS directly.
-		if startTs < safeTS {
-			startTs = safeTS
-		}
-	} else if option.MaxPrevSec != nil {
-		bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
-		minStartTS, err := store.getStalenessTimestamp(bo, option.TxnScope, *option.MaxPrevSec)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		option.MinStartTS = &minStartTS
-		return ExtractStartTs(store, option)
-	} else {
-		bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
-		startTs, err = store.getTimestampWithRetry(bo, option.TxnScope)
+		return *option.StartTS, nil
 	}
-	return startTs, err
+	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
+	return store.getTimestampWithRetry(bo, option.TxnScope)
 }
 
 func newTiKVTxnWithOptions(store *KVStore, options StartTSOption) (*KVTxn, error) {
 	if options.TxnScope == "" {
 		options.TxnScope = oracle.GlobalTxnScope
 	}
-	startTs, err := ExtractStartTs(store, options)
+	startTS, err := ExtractStartTS(store, options)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	snapshot := newTiKVSnapshot(store, startTs, store.nextReplicaReadSeed())
+	snapshot := newTiKVSnapshot(store, startTS, store.nextReplicaReadSeed())
 	newTiKVTxn := &KVTxn{
 		snapshot:  snapshot,
 		us:        unionstore.NewUnionStore(snapshot),
 		store:     store,
-		startTS:   startTs,
+		startTS:   startTS,
 		startTime: time.Now(),
 		valid:     true,
 		vars:      tikv.DefaultVars,
