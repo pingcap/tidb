@@ -764,10 +764,21 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	tb := testGetTableByName(c, tk.Se, "test", "t")
 	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
 	c.Assert(err, IsNil)
+
+	dml := "insert into t values"
 	for i := 0; i < 50; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values(%v, 0)", i))
+		dml += fmt.Sprintf("(%v, 0)", i)
+		if i != 49 {
+			dml += ","
+		}
 	}
+	tk.MustExec(dml)
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("50"))
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/copr/ReduceCopNextMaxBackoff", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/copr/ReduceCopNextMaxBackoff"), IsNil)
+	}()
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"), IsNil)
 	// test COM_STMT_EXECUTE
@@ -777,6 +788,7 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	c.Assert(cc.handleStmtPrepare(ctx, "select sum(a) from t"), IsNil)
 	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), IsNil)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
+
 	// test COM_STMT_FETCH (cursor mode)
 	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x1, 0x0, 0x0, 0x0}), IsNil)
 	c.Assert(cc.handleStmtFetch(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), NotNil)

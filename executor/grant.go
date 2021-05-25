@@ -74,7 +74,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// Make sure the table exist.
 	if e.Level.Level == ast.GrantLevelTable {
 		dbNameStr := model.NewCIStr(dbName)
-		schema := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+		schema := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
 		tbl, err := schema.TableByName(dbNameStr, model.NewCIStr(e.Level.TableName))
 		if err != nil {
 			return err
