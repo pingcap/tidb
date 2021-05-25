@@ -265,12 +265,15 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		preparedObj.Executor = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
-		ret := &PreprocessorReturn{}
+		// FIXME:
+		// ret := &PreprocesorReturn{}
+		// err := Preprocess(sctx, prepared.Stmt, InPrepare, WithPreprocessorReturn(ret))
+		ret := &PreprocessorReturn{InfoSchema: is}
 		err := Preprocess(sctx, prepared.Stmt, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
 			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
-		prepared.SchemaVersion = ret.InfoSchema.SchemaMetaVersion()
+		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
 	err := e.getPhysicalPlan(ctx, sctx, is, preparedObj)
 	if err != nil {
