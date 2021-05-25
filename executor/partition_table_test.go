@@ -111,6 +111,80 @@ func (s *partitionTableSuite) TestPartitionUnionScanIndexJoin(c *C) {
 	tk.MustExec("commit")
 }
 
+func (s *partitionTableSuite) TestPointGetwithRangeAndListPartitionTable(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_pointget_list_hash")
+	tk.MustExec("use test_pointget_list_hash")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+
+	// list partition table
+	tk.MustExec(`create table tlist(a int, b int, unique index idx_a(a), index idx_b(b)) partition by list(a)(
+		partition p0 values in (NULL, 1, 2, 3, 4),
+			partition p1 values in (5, 6, 7, 8),
+			partition p2 values in (9, 10, 11, 12));`)
+
+	// range partition table
+	tk.MustExec(`create table trange1(a int, unique key(a)) partition by range(a) (
+		partition p0 values less than (30),
+		partition p1 values less than (60),
+		partition p2 values less than (90),
+		partition p3 values less than (120));`)
+
+	// range partition table + unsigned int
+	tk.MustExec(`create table trange2(a int unsigned, unique key(a)) partition by range(a) (
+		partition p0 values less than (30),
+		partition p1 values less than (60),
+		partition p2 values less than (90),
+		partition p3 values less than (120));`)
+
+	// insert data into list partition table
+	tk.MustExec("insert into tlist values(1,1), (2,2), (3, 3), (4, 4), (5,5), (6, 6), (7,7), (8, 8), (9, 9), (10, 10), (11, 11), (12, 12), (NULL, NULL);")
+
+	vals := make([]string, 0, 100)
+	// insert data into range partition table and hash partition table
+	for i := 0; i < 100; i++ {
+		vals = append(vals, fmt.Sprintf("(%v)", i+1))
+	}
+	tk.MustExec("insert into trange1 values " + strings.Join(vals, ","))
+	tk.MustExec("insert into trange2 values " + strings.Join(vals, ","))
+
+	// test PointGet
+	for i := 0; i < 100; i++ {
+		// explain select a from t where a = {x}; // x >= 1 and x <= 100 Check if PointGet is used
+		// select a from t where a={x}; // the result is {x}
+		x := rand.Intn(100) + 1
+		queryRange1 := fmt.Sprintf("select a from trange1 where a=%v", x)
+		c.Assert(tk.HasPlan(queryRange1, "Point_Get"), IsTrue) // check if PointGet is used
+		tk.MustQuery(queryRange1).Check(testkit.Rows(fmt.Sprintf("%v", x)))
+
+		queryRange2 := fmt.Sprintf("select a from trange1 where a=%v", x)
+		c.Assert(tk.HasPlan(queryRange2, "Point_Get"), IsTrue) // check if PointGet is used
+		tk.MustQuery(queryRange2).Check(testkit.Rows(fmt.Sprintf("%v", x)))
+
+		y := rand.Intn(12) + 1
+		queryList := fmt.Sprintf("select a from tlist where a=%v", y)
+		c.Assert(tk.HasPlan(queryList, "Point_Get"), IsTrue) // check if PointGet is used
+		tk.MustQuery(queryList).Check(testkit.Rows(fmt.Sprintf("%v", y)))
+	}
+
+	// test table dual
+	queryRange1 := "select a from trange1 where a=200"
+	c.Assert(tk.HasPlan(queryRange1, "TableDual"), IsTrue) // check if TableDual is used
+	tk.MustQuery(queryRange1).Check(testkit.Rows())
+
+	queryRange2 := "select a from trange2 where a=200"
+	c.Assert(tk.HasPlan(queryRange2, "TableDual"), IsTrue) // check if TableDual is used
+	tk.MustQuery(queryRange2).Check(testkit.Rows())
+
+	queryList := "select a from tlist where a=200"
+	c.Assert(tk.HasPlan(queryList, "TableDual"), IsTrue) // check if TableDual is used
+	tk.MustQuery(queryList).Check(testkit.Rows())
+}
+
 func (s *partitionTableSuite) TestPartitionReaderUnderApply(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
@@ -210,7 +284,7 @@ func (s *partitionTableSuite) TestPartitionInfoDisable(c *C) {
   PARTITION p202010 VALUES LESS THAN ("2020-11-01"),
   PARTITION p202011 VALUES LESS THAN ("2020-12-01")
 )`)
-	is := tk.Se.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	is := tk.Se.GetInfoSchema().(infoschema.InfoSchema)
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t_info_null"))
 	c.Assert(err, IsNil)
 
@@ -240,8 +314,8 @@ func (s *partitionTableSuite) TestOrderByandLimit(c *C) {
 
 	// range partition table
 	tk.MustExec(`create table trange(a int, b int, index idx_a(a)) partition by range(a) (
-		partition p0 values less than(300), 
-		partition p1 values less than (500), 
+		partition p0 values less than(300),
+		partition p1 values less than (500),
 		partition p2 values less than(1100));`)
 
 	// hash partition table
@@ -436,12 +510,126 @@ func (s *partitionTableSuite) TestView(c *C) {
 	}
 }
 
+func (s *partitionTableSuite) TestDirectReadingwithIndexJoin(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_dr_join")
+	tk.MustExec("use test_dr_join")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	// hash and range partition
+	tk.MustExec("create table thash (a int, b int, c int, primary key(a), index idx_b(b)) partition by hash(a) partitions 4;")
+	tk.MustExec(`create table trange (a int, b int, c int, primary key(a), index idx_b(b)) partition by range(a) (
+		  partition p0 values less than(1000),
+		  partition p1 values less than(2000),
+		  partition p2 values less than(3000),
+		  partition p3 values less than(4000));`)
+
+	// regualr table
+	tk.MustExec(`create table tnormal (a int, b int, c int, primary key(a), index idx_b(b));`)
+	tk.MustExec(`create table touter (a int, b int, c int);`)
+
+	// generate some random data to be inserted
+	vals := make([]string, 0, 2000)
+	for i := 0; i < 2000; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v, %v)", rand.Intn(4000), rand.Intn(4000), rand.Intn(4000)))
+	}
+	tk.MustExec("insert ignore into trange values " + strings.Join(vals, ","))
+	tk.MustExec("insert ignore into thash values " + strings.Join(vals, ","))
+	tk.MustExec("insert ignore into tnormal values " + strings.Join(vals, ","))
+	tk.MustExec("insert ignore into touter values " + strings.Join(vals, ","))
+
+	// test indexLookUp + hash
+	queryPartition := "select /*+ INL_JOIN(touter, thash) */ * from touter join thash use index(idx_b) on touter.b = thash.b"
+	queryRegular := "select /*+ INL_JOIN(touter, tnormal) */ * from touter join tnormal use index(idx_b) on touter.b = tnormal.b"
+	tk.MustQuery("explain format = 'brief' " + queryPartition).Check(testkit.Rows(
+		"IndexJoin 12487.50 root  inner join, inner:IndexLookUp, outer key:test_dr_join.touter.b, inner key:test_dr_join.thash.b, equal cond:eq(test_dr_join.touter.b, test_dr_join.thash.b)",
+		"├─TableReader(Build) 9990.00 root  data:Selection",
+		"│ └─Selection 9990.00 cop[tikv]  not(isnull(test_dr_join.touter.b))",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
+		"└─IndexLookUp(Probe) 1.25 root partition:all ",
+		"  ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test_dr_join.thash.b))",
+		"  │ └─IndexRangeScan 1.25 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(test_dr_join.thash.b, test_dr_join.touter.b)], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 1.25 cop[tikv] table:thash keep order:false, stats:pseudo")) // check if IndexLookUp is used
+	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	// test tableReader + hash
+	queryPartition = "select /*+ INL_JOIN(touter, thash) */ * from touter join thash on touter.a = thash.a"
+	queryRegular = "select /*+ INL_JOIN(touter, tnormal) */ * from touter join tnormal on touter.a = tnormal.a"
+	tk.MustQuery("explain format = 'brief' " + queryPartition).Check(testkit.Rows(
+		"IndexJoin 12487.50 root  inner join, inner:TableReader, outer key:test_dr_join.touter.a, inner key:test_dr_join.thash.a, equal cond:eq(test_dr_join.touter.a, test_dr_join.thash.a)",
+		"├─TableReader(Build) 9990.00 root  data:Selection",
+		"│ └─Selection 9990.00 cop[tikv]  not(isnull(test_dr_join.touter.a))",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
+		"└─TableReader(Probe) 1.00 root partition:all data:TableRangeScan",
+		"  └─TableRangeScan 1.00 cop[tikv] table:thash range: decided by [test_dr_join.touter.a], keep order:false, stats:pseudo")) // check if tableReader is used
+	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	// test indexReader + hash
+	queryPartition = "select /*+ INL_JOIN(touter, thash) */ thash.b from touter join thash use index(idx_b) on touter.b = thash.b;"
+	queryRegular = "select /*+ INL_JOIN(touter, tnormal) */ tnormal.b from touter join tnormal use index(idx_b) on touter.b = tnormal.b;"
+	tk.MustQuery("explain format = 'brief' " + queryPartition).Check(testkit.Rows(
+		"IndexJoin 12487.50 root  inner join, inner:IndexReader, outer key:test_dr_join.touter.b, inner key:test_dr_join.thash.b, equal cond:eq(test_dr_join.touter.b, test_dr_join.thash.b)",
+		"├─TableReader(Build) 9990.00 root  data:Selection",
+		"│ └─Selection 9990.00 cop[tikv]  not(isnull(test_dr_join.touter.b))",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
+		"└─IndexReader(Probe) 1.25 root partition:all index:Selection",
+		"  └─Selection 1.25 cop[tikv]  not(isnull(test_dr_join.thash.b))",
+		"    └─IndexRangeScan 1.25 cop[tikv] table:thash, index:idx_b(b) range: decided by [eq(test_dr_join.thash.b, test_dr_join.touter.b)], keep order:false, stats:pseudo")) // check if indexReader is used
+	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	// test indexLookUp + range
+	// explain select /*+ INL_JOIN(touter, tinner) */ * from touter join tinner use index(a) on touter.a = tinner.a;
+	queryPartition = "select /*+ INL_JOIN(touter, trange) */ * from touter join trange use index(idx_b) on touter.b = trange.b;"
+	queryRegular = "select /*+ INL_JOIN(touter, tnormal) */ * from touter join tnormal use index(idx_b) on touter.b = tnormal.b;"
+	tk.MustQuery("explain format = 'brief' " + queryPartition).Check(testkit.Rows(
+		"IndexJoin 12487.50 root  inner join, inner:IndexLookUp, outer key:test_dr_join.touter.b, inner key:test_dr_join.trange.b, equal cond:eq(test_dr_join.touter.b, test_dr_join.trange.b)",
+		"├─TableReader(Build) 9990.00 root  data:Selection",
+		"│ └─Selection 9990.00 cop[tikv]  not(isnull(test_dr_join.touter.b))",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
+		"└─IndexLookUp(Probe) 1.25 root partition:all ",
+		"  ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test_dr_join.trange.b))",
+		"  │ └─IndexRangeScan 1.25 cop[tikv] table:trange, index:idx_b(b) range: decided by [eq(test_dr_join.trange.b, test_dr_join.touter.b)], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 1.25 cop[tikv] table:trange keep order:false, stats:pseudo")) // check if IndexLookUp is used
+	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	// test tableReader + range
+	queryPartition = "select /*+ INL_JOIN(touter, trange) */ * from touter join trange on touter.a = trange.a;"
+	queryRegular = "select /*+ INL_JOIN(touter, tnormal) */ * from touter join tnormal on touter.a = tnormal.a;"
+	tk.MustQuery("explain format = 'brief' " + queryPartition).Check(testkit.Rows(
+		"IndexJoin 12487.50 root  inner join, inner:TableReader, outer key:test_dr_join.touter.a, inner key:test_dr_join.trange.a, equal cond:eq(test_dr_join.touter.a, test_dr_join.trange.a)",
+		"├─TableReader(Build) 9990.00 root  data:Selection",
+		"│ └─Selection 9990.00 cop[tikv]  not(isnull(test_dr_join.touter.a))",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
+		"└─TableReader(Probe) 1.00 root partition:all data:TableRangeScan",
+		"  └─TableRangeScan 1.00 cop[tikv] table:trange range: decided by [test_dr_join.touter.a], keep order:false, stats:pseudo")) // check if tableReader is used
+	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+
+	// test indexReader + range
+	// explain select /*+ INL_JOIN(touter, tinner) */ tinner.a from touter join tinner on touter.a = tinner.a;
+	queryPartition = "select /*+ INL_JOIN(touter, trange) */ trange.b from touter join trange use index(idx_b) on touter.b = trange.b;"
+	queryRegular = "select /*+ INL_JOIN(touter, tnormal) */ tnormal.b from touter join tnormal use index(idx_b) on touter.b = tnormal.b;"
+	tk.MustQuery("explain format = 'brief' " + queryPartition).Check(testkit.Rows(
+		"IndexJoin 12487.50 root  inner join, inner:IndexReader, outer key:test_dr_join.touter.b, inner key:test_dr_join.trange.b, equal cond:eq(test_dr_join.touter.b, test_dr_join.trange.b)",
+		"├─TableReader(Build) 9990.00 root  data:Selection",
+		"│ └─Selection 9990.00 cop[tikv]  not(isnull(test_dr_join.touter.b))",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo",
+		"└─IndexReader(Probe) 1.25 root partition:all index:Selection",
+		"  └─Selection 1.25 cop[tikv]  not(isnull(test_dr_join.trange.b))",
+		"    └─IndexRangeScan 1.25 cop[tikv] table:trange, index:idx_b(b) range: decided by [eq(test_dr_join.trange.b, test_dr_join.touter.b)], keep order:false, stats:pseudo")) // check if indexReader is used
+	tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+}
+
 func (s *partitionTableSuite) TestDynamicPruningUnderIndexJoin(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
 	}
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
+
 	tk.MustExec("create database pruing_under_index_join")
 	tk.MustExec("use pruing_under_index_join")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
@@ -825,6 +1013,231 @@ type testData4Expression struct {
 	partitions []string
 }
 
+func (s *partitionTableSuite) TestDateColWithUnequalExpression(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists db_datetime_unequal_expression")
+	tk.MustExec("create database db_datetime_unequal_expression")
+	tk.MustExec("use db_datetime_unequal_expression")
+	tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+	tk.MustExec(`create table tp(a datetime, b int) partition by range columns (a) (partition p0 values less than("2012-12-10 00:00:00"), partition p1 values less than("2022-12-30 00:00:00"), partition p2 values less than("2025-12-12 00:00:00"))`)
+	tk.MustExec(`create table t(a datetime, b int) partition by range columns (a) (partition p0 values less than("2012-12-10 00:00:00"), partition p1 values less than("2022-12-30 00:00:00"), partition p2 values less than("2025-12-12 00:00:00"))`)
+	tk.MustExec(`insert into tp values("2015-09-09 00:00:00", 1), ("2020-08-08 19:00:01", 2), ("2024-01-01 01:01:01", 3)`)
+	tk.MustExec(`insert into t values("2015-09-09 00:00:00", 1), ("2020-08-08 19:00:01", 2), ("2024-01-01 01:01:01", 3)`)
+	tk.MustExec("analyze table tp")
+	tk.MustExec("analyze table t")
+
+	tests := []testData4Expression{
+		{
+			sql:        "select * from %s where a != '2024-01-01 01:01:01'",
+			partitions: []string{"all"},
+		},
+		{
+			sql:        "select * from %s where a != '2024-01-01 01:01:01' and a > '2015-09-09 00:00:00'",
+			partitions: []string{"p1,p2"},
+		},
+	}
+
+	for _, t := range tests {
+		tpSQL := fmt.Sprintf(t.sql, "tp")
+		tSQL := fmt.Sprintf(t.sql, "t")
+		tk.MustPartition(tpSQL, t.partitions[0]).Sort().Check(tk.MustQuery(tSQL).Sort().Rows())
+	}
+}
+
+func (s *partitionTableSuite) TestToDaysColWithExpression(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists db_to_days_expression")
+	tk.MustExec("create database db_to_days_expression")
+	tk.MustExec("use db_to_days_expression")
+	tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("create table tp(a date, b int) partition by range(to_days(a)) (partition p0 values less than (737822), partition p1 values less than (738019), partition p2 values less than (738154))")
+	tk.MustExec("create table t(a date, b int)")
+	tk.MustExec("insert into tp values('2020-01-01', 1), ('2020-03-02', 2), ('2020-05-05', 3), ('2020-11-11', 4)")
+	tk.MustExec("insert into t values('2020-01-01', 1), ('2020-03-02', 2), ('2020-05-05', 3), ('2020-11-11', 4)")
+	tk.MustExec("analyze table tp")
+	tk.MustExec("analyze table t")
+
+	tests := []testData4Expression{
+		{
+			sql:        "select * from %s where a < '2020-08-16'",
+			partitions: []string{"p0,p1"},
+		},
+		{
+			sql:        "select * from %s where a between '2020-05-01' and '2020-10-01'",
+			partitions: []string{"p1,p2"},
+		},
+	}
+
+	for _, t := range tests {
+		tpSQL := fmt.Sprintf(t.sql, "tp")
+		tSQL := fmt.Sprintf(t.sql, "t")
+		tk.MustPartition(tpSQL, t.partitions[0]).Sort().Check(tk.MustQuery(tSQL).Sort().Rows())
+	}
+}
+
+func (s *partitionTableSuite) TestWeekdayWithExpression(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists db_weekday_expression")
+	tk.MustExec("create database db_weekday_expression")
+	tk.MustExec("use db_weekday_expression")
+	tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("create table tp(a datetime, b int) partition by range(weekday(a)) (partition p0 values less than(3), partition p1 values less than(5), partition p2 values less than(8))")
+	tk.MustExec("create table t(a datetime, b int)")
+	tk.MustExec(`insert into tp values("2020-08-17 00:00:00", 1), ("2020-08-18 00:00:00", 2), ("2020-08-19 00:00:00", 4), ("2020-08-20 00:00:00", 5), ("2020-08-21 00:00:00", 6), ("2020-08-22 00:00:00", 0)`)
+	tk.MustExec(`insert into t values("2020-08-17 00:00:00", 1), ("2020-08-18 00:00:00", 2), ("2020-08-19 00:00:00", 4), ("2020-08-20 00:00:00", 5), ("2020-08-21 00:00:00", 6), ("2020-08-22 00:00:00", 0)`)
+	tk.MustExec("analyze table tp")
+	tk.MustExec("analyze table t")
+
+	tests := []testData4Expression{
+		{
+			sql:        "select * from %s where a = '2020-08-17 00:00:00'",
+			partitions: []string{"p0"},
+		},
+		{
+			sql:        "select * from %s where a= '2020-08-20 00:00:00' and a < '2020-08-22 00:00:00'",
+			partitions: []string{"p1"},
+		},
+		{
+			sql:        " select * from %s where a < '2020-08-19 00:00:00'",
+			partitions: []string{"all"},
+		},
+	}
+
+	for _, t := range tests {
+		tpSQL := fmt.Sprintf(t.sql, "tp")
+		tSQL := fmt.Sprintf(t.sql, "t")
+		tk.MustPartition(tpSQL, t.partitions[0]).Sort().Check(tk.MustQuery(tSQL).Sort().Rows())
+	}
+}
+
+func (s *partitionTableSuite) TestFloorUnixTimestampAndIntColWithExpression(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists db_floor_unix_timestamp_int_expression")
+	tk.MustExec("create database db_floor_unix_timestamp_int_expression")
+	tk.MustExec("use db_floor_unix_timestamp_int_expression")
+	tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("create table tp(a timestamp, b int) partition by range(floor(unix_timestamp(a))) (partition p0 values less than(1580670000), partition p1 values less than(1597622400), partition p2 values less than(1629158400))")
+	tk.MustExec("create table t(a timestamp, b int)")
+	tk.MustExec("insert into tp values('2020-01-01 19:00:00', 1),('2020-08-15 00:00:00', -1), ('2020-08-18 05:00:01', 2), ('2020-10-01 14:13:15', 3)")
+	tk.MustExec("insert into t values('2020-01-01 19:00:00', 1),('2020-08-15 00:00:00', -1), ('2020-08-18 05:00:01', 2), ('2020-10-01 14:13:15', 3)")
+	tk.MustExec("analyze table tp")
+	tk.MustExec("analyze table t")
+
+	tests := []testData4Expression{
+		{
+			sql:        "select * from %s where a > '2020-09-11 00:00:00'",
+			partitions: []string{"p2"},
+		},
+		{
+			sql:        "select * from %s where a < '2020-07-07 01:00:00'",
+			partitions: []string{"p0,p1"},
+		},
+	}
+
+	for _, t := range tests {
+		tpSQL := fmt.Sprintf(t.sql, "tp")
+		tSQL := fmt.Sprintf(t.sql, "t")
+		tk.MustPartition(tpSQL, t.partitions[0]).Sort().Check(tk.MustQuery(tSQL).Sort().Rows())
+	}
+}
+
+func (s *partitionTableSuite) TestUnixTimestampAndIntColWithExpression(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists db_unix_timestamp_int_expression")
+	tk.MustExec("create database db_unix_timestamp_int_expression")
+	tk.MustExec("use db_unix_timestamp_int_expression")
+	tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("create table tp(a timestamp, b int) partition by range(unix_timestamp(a)) (partition p0 values less than(1580670000), partition p1 values less than(1597622400), partition p2 values less than(1629158400))")
+	tk.MustExec("create table t(a timestamp, b int)")
+	tk.MustExec("insert into tp values('2020-01-01 19:00:00', 1),('2020-08-15 00:00:00', -1), ('2020-08-18 05:00:01', 2), ('2020-10-01 14:13:15', 3)")
+	tk.MustExec("insert into t values('2020-01-01 19:00:00', 1),('2020-08-15 00:00:00', -1), ('2020-08-18 05:00:01', 2), ('2020-10-01 14:13:15', 3)")
+	tk.MustExec("analyze table tp")
+	tk.MustExec("analyze table t")
+
+	tests := []testData4Expression{
+		{
+			sql:        "select * from %s where a > '2020-09-11 00:00:00'",
+			partitions: []string{"p2"},
+		},
+		{
+			sql:        "select * from %s where a < '2020-07-07 01:00:00'",
+			partitions: []string{"p0,p1"},
+		},
+	}
+
+	for _, t := range tests {
+		tpSQL := fmt.Sprintf(t.sql, "tp")
+		tSQL := fmt.Sprintf(t.sql, "t")
+		tk.MustPartition(tpSQL, t.partitions[0]).Sort().Check(tk.MustQuery(tSQL).Sort().Rows())
+	}
+}
+
+func (s *partitionTableSuite) TestDatetimeColAndIntColWithExpression(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists db_datetime_int_expression")
+	tk.MustExec("create database db_datetime_int_expression")
+	tk.MustExec("use db_datetime_int_expression")
+	tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("create table tp(a datetime, b int) partition by range columns(a) (partition p0 values less than('2020-02-02 00:00:00'), partition p1 values less than('2020-09-01 00:00:00'), partition p2 values less than('2020-12-20 00:00:00'))")
+	tk.MustExec("create table t(a datetime, b int)")
+	tk.MustExec("insert into tp values('2020-01-01 12:00:00', 1), ('2020-08-22 10:00:00', 2), ('2020-09-09 11:00:00', 3), ('2020-10-01 00:00:00', 4)")
+	tk.MustExec("insert into t values('2020-01-01 12:00:00', 1), ('2020-08-22 10:00:00', 2), ('2020-09-09 11:00:00', 3), ('2020-10-01 00:00:00', 4)")
+	tk.MustExec("analyze table tp")
+	tk.MustExec("analyze table t")
+
+	tests := []testData4Expression{
+		{
+			sql:        "select * from %s where a < '2020-09-01 00:00:00'",
+			partitions: []string{"p0,p1"},
+		},
+		{
+			sql:        "select * from %s where a > '2020-07-07 01:00:00'",
+			partitions: []string{"p1,p2"},
+		},
+	}
+
+	for _, t := range tests {
+		tpSQL := fmt.Sprintf(t.sql, "tp")
+		tSQL := fmt.Sprintf(t.sql, "t")
+		tk.MustPartition(tpSQL, t.partitions[0]).Sort().Check(tk.MustQuery(tSQL).Sort().Rows())
+	}
+}
+
+func (s *partitionTableSuite) TestVarcharColAndIntColWithExpression(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists db_varchar_int_expression")
+	tk.MustExec("create database db_varchar_int_expression")
+	tk.MustExec("use db_varchar_int_expression")
+	tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("create table tp(a varchar(255), b int) partition by range columns(a) (partition p0 values less than('ddd'), partition p1 values less than('ggggg'), partition p2 values less than('mmmmmm'))")
+	tk.MustExec("create table t(a varchar(255), b int)")
+	tk.MustExec("insert into tp values('aaa', 1), ('bbbb', 2), ('ccc', 3), ('dfg', 4), ('kkkk', 5), ('10', 6)")
+	tk.MustExec("insert into t values('aaa', 1), ('bbbb', 2), ('ccc', 3), ('dfg', 4), ('kkkk', 5), ('10', 6)")
+	tk.MustExec("analyze table tp")
+	tk.MustExec("analyze table t")
+
+	tests := []testData4Expression{
+		{
+			sql:        "select * from %s where a < '10'",
+			partitions: []string{"p0"},
+		},
+		{
+			sql:        "select * from %s where a > 0",
+			partitions: []string{"all"},
+		},
+		{
+			sql:        "select * from %s where a < 0",
+			partitions: []string{"all"},
+		},
+	}
+
+	for _, t := range tests {
+		tpSQL := fmt.Sprintf(t.sql, "tp")
+		tSQL := fmt.Sprintf(t.sql, "t")
+		tk.MustPartition(tpSQL, t.partitions[0]).Sort().Check(tk.MustQuery(tSQL).Sort().Rows())
+	}
+}
+
 func (s *partitionTableSuite) TestDynamicPruneModeWithExpression(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop database if exists db_equal_expression")
@@ -1184,6 +1597,221 @@ func (s *partitionTableSuite) TestSplitRegion(c *C) {
 	tk.MustPartition(`select * from thash where a in (1, 10001, 20001)`, "p1").Sort().Check(result)
 }
 
+func (s *partitionTableSuite) TestParallelApply(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_parallel_apply")
+	tk.MustExec("use test_parallel_apply")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+
+	tk.MustExec(`create table touter (a int, b int)`)
+	tk.MustExec(`create table tinner (a int, b int, key(a))`)
+	tk.MustExec(`create table thash (a int, b int, key(a)) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table trange (a int, b int, key(a)) partition by range(a) (
+			  partition p0 values less than(10000),
+			  partition p1 values less than(20000),
+			  partition p2 values less than(30000),
+			  partition p3 values less than(40000))`)
+
+	vouter := make([]string, 0, 100)
+	for i := 0; i < 100; i++ {
+		vouter = append(vouter, fmt.Sprintf("(%v, %v)", rand.Intn(40000), rand.Intn(40000)))
+	}
+	tk.MustExec("insert into touter values " + strings.Join(vouter, ", "))
+
+	vals := make([]string, 0, 2000)
+	for i := 0; i < 100; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(40000), rand.Intn(40000)))
+	}
+	tk.MustExec("insert into tinner values " + strings.Join(vals, ", "))
+	tk.MustExec("insert into thash values " + strings.Join(vals, ", "))
+	tk.MustExec("insert into trange values " + strings.Join(vals, ", "))
+
+	// parallel apply + hash partition + IndexReader as its inner child
+	tk.MustQuery(`explain format='brief' select * from touter where touter.a > (select sum(thash.a) from thash use index(a) where thash.a>touter.b)`).Check(testkit.Rows(
+		`Projection 10000.00 root  test_parallel_apply.touter.a, test_parallel_apply.touter.b`,
+		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(20,0) BINARY), Column#7)`,
+		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
+		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
+		`  └─StreamAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
+		`    └─IndexReader 1.00 root partition:all index:StreamAgg`, // IndexReader is a inner child of Apply
+		`      └─StreamAgg 1.00 cop[tikv]  funcs:sum(test_parallel_apply.thash.a)->Column#9`,
+		`        └─Selection 8000.00 cop[tikv]  gt(test_parallel_apply.thash.a, test_parallel_apply.touter.b)`,
+		`          └─IndexFullScan 10000.00 cop[tikv] table:thash, index:a(a) keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from touter where touter.a > (select sum(thash.a) from thash use index(a) where thash.a>touter.b)`).Sort().Check(
+		tk.MustQuery(`select * from touter where touter.a > (select sum(tinner.a) from tinner use index(a) where tinner.a>touter.b)`).Sort().Rows())
+
+	// parallel apply + hash partition + TableReader as its inner child
+	tk.MustQuery(`explain format='brief' select * from touter where touter.a > (select sum(thash.b) from thash ignore index(a) where thash.a>touter.b)`).Check(testkit.Rows(
+		`Projection 10000.00 root  test_parallel_apply.touter.a, test_parallel_apply.touter.b`,
+		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(20,0) BINARY), Column#7)`,
+		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
+		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
+		`  └─StreamAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
+		`    └─TableReader 1.00 root partition:all data:StreamAgg`, // TableReader is a inner child of Apply
+		`      └─StreamAgg 1.00 cop[tikv]  funcs:sum(test_parallel_apply.thash.b)->Column#9`,
+		`        └─Selection 8000.00 cop[tikv]  gt(test_parallel_apply.thash.a, test_parallel_apply.touter.b)`,
+		`          └─TableFullScan 10000.00 cop[tikv] table:thash keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from touter where touter.a > (select sum(thash.b) from thash ignore index(a) where thash.a>touter.b)`).Sort().Check(
+		tk.MustQuery(`select * from touter where touter.a > (select sum(tinner.b) from tinner ignore index(a) where tinner.a>touter.b)`).Sort().Rows())
+
+	// parallel apply + hash partition + IndexLookUp as its inner child
+	tk.MustQuery(`explain format='brief' select * from touter where touter.a > (select sum(tinner.b) from tinner use index(a) where tinner.a>touter.b)`).Check(testkit.Rows(
+		`Projection 10000.00 root  test_parallel_apply.touter.a, test_parallel_apply.touter.b`,
+		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(20,0) BINARY), Column#7)`,
+		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
+		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
+		`  └─HashAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
+		`    └─IndexLookUp 1.00 root  `, // IndexLookUp is a inner child of Apply
+		`      ├─Selection(Build) 8000.00 cop[tikv]  gt(test_parallel_apply.tinner.a, test_parallel_apply.touter.b)`,
+		`      │ └─IndexFullScan 10000.00 cop[tikv] table:tinner, index:a(a) keep order:false, stats:pseudo`,
+		`      └─HashAgg(Probe) 1.00 cop[tikv]  funcs:sum(test_parallel_apply.tinner.b)->Column#9`,
+		`        └─TableRowIDScan 8000.00 cop[tikv] table:tinner keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from touter where touter.a > (select sum(thash.b) from thash use index(a) where thash.a>touter.b)`).Sort().Check(
+		tk.MustQuery(`select * from touter where touter.a > (select sum(tinner.b) from tinner use index(a) where tinner.a>touter.b)`).Sort().Rows())
+
+	// parallel apply + range partition + IndexReader as its inner child
+	tk.MustQuery(`explain format='brief' select * from touter where touter.a > (select sum(trange.a) from trange use index(a) where trange.a>touter.b)`).Check(testkit.Rows(
+		`Projection 10000.00 root  test_parallel_apply.touter.a, test_parallel_apply.touter.b`,
+		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(20,0) BINARY), Column#7)`,
+		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
+		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
+		`  └─StreamAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
+		`    └─IndexReader 1.00 root partition:all index:StreamAgg`, // IndexReader is a inner child of Apply
+		`      └─StreamAgg 1.00 cop[tikv]  funcs:sum(test_parallel_apply.trange.a)->Column#9`,
+		`        └─Selection 8000.00 cop[tikv]  gt(test_parallel_apply.trange.a, test_parallel_apply.touter.b)`,
+		`          └─IndexFullScan 10000.00 cop[tikv] table:trange, index:a(a) keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from touter where touter.a > (select sum(trange.a) from trange use index(a) where trange.a>touter.b)`).Sort().Check(
+		tk.MustQuery(`select * from touter where touter.a > (select sum(tinner.a) from tinner use index(a) where tinner.a>touter.b)`).Sort().Rows())
+
+	// parallel apply + range partition + TableReader as its inner child
+	tk.MustQuery(`explain format='brief' select * from touter where touter.a > (select sum(trange.b) from trange ignore index(a) where trange.a>touter.b)`).Check(testkit.Rows(
+		`Projection 10000.00 root  test_parallel_apply.touter.a, test_parallel_apply.touter.b`,
+		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(20,0) BINARY), Column#7)`,
+		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
+		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
+		`  └─StreamAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
+		`    └─TableReader 1.00 root partition:all data:StreamAgg`, // TableReader is a inner child of Apply
+		`      └─StreamAgg 1.00 cop[tikv]  funcs:sum(test_parallel_apply.trange.b)->Column#9`,
+		`        └─Selection 8000.00 cop[tikv]  gt(test_parallel_apply.trange.a, test_parallel_apply.touter.b)`,
+		`          └─TableFullScan 10000.00 cop[tikv] table:trange keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from touter where touter.a > (select sum(trange.b) from trange ignore index(a) where trange.a>touter.b)`).Sort().Check(
+		tk.MustQuery(`select * from touter where touter.a > (select sum(tinner.b) from tinner ignore index(a) where tinner.a>touter.b)`).Sort().Rows())
+
+	// parallel apply + range partition + IndexLookUp as its inner child
+	tk.MustQuery(`explain format='brief' select * from touter where touter.a > (select sum(tinner.b) from tinner use index(a) where tinner.a>touter.b)`).Check(testkit.Rows(
+		`Projection 10000.00 root  test_parallel_apply.touter.a, test_parallel_apply.touter.b`,
+		`└─Apply 10000.00 root  CARTESIAN inner join, other cond:gt(cast(test_parallel_apply.touter.a, decimal(20,0) BINARY), Column#7)`,
+		`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
+		`  │ └─TableFullScan 10000.00 cop[tikv] table:touter keep order:false, stats:pseudo`,
+		`  └─HashAgg(Probe) 1.00 root  funcs:sum(Column#9)->Column#7`,
+		`    └─IndexLookUp 1.00 root  `, // IndexLookUp is a inner child of Apply
+		`      ├─Selection(Build) 8000.00 cop[tikv]  gt(test_parallel_apply.tinner.a, test_parallel_apply.touter.b)`,
+		`      │ └─IndexFullScan 10000.00 cop[tikv] table:tinner, index:a(a) keep order:false, stats:pseudo`,
+		`      └─HashAgg(Probe) 1.00 cop[tikv]  funcs:sum(test_parallel_apply.tinner.b)->Column#9`,
+		`        └─TableRowIDScan 8000.00 cop[tikv] table:tinner keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from touter where touter.a > (select sum(trange.b) from trange use index(a) where trange.a>touter.b)`).Sort().Check(
+		tk.MustQuery(`select * from touter where touter.a > (select sum(tinner.b) from tinner use index(a) where tinner.a>touter.b)`).Sort().Rows())
+
+	// random queries
+	ops := []string{"!=", ">", "<", ">=", "<="}
+	aggFuncs := []string{"sum", "count", "max", "min"}
+	tbls := []string{"tinner", "thash", "trange"}
+	for i := 0; i < 50; i++ {
+		var r [][]interface{}
+		op := ops[rand.Intn(len(ops))]
+		agg := aggFuncs[rand.Intn(len(aggFuncs))]
+		x := rand.Intn(10000)
+		for _, tbl := range tbls {
+			q := fmt.Sprintf(`select * from touter where touter.a > (select %v(%v.b) from %v where %v.a%vtouter.b-%v)`, agg, tbl, tbl, tbl, op, x)
+			if r == nil {
+				r = tk.MustQuery(q).Sort().Rows()
+			} else {
+				tk.MustQuery(q).Sort().Check(r)
+			}
+		}
+	}
+}
+
+func (s *partitionTableSuite) TestDirectReadingWithUnionScan(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_unionscan")
+	defer tk.MustExec(`drop database test_unionscan`)
+	tk.MustExec("use test_unionscan")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	tk.MustExec(`create table trange(a int, b int, index idx_a(a)) partition by range(a) (
+		partition p0 values less than (10),
+		partition p1 values less than (30),
+		partition p2 values less than (50))`)
+	tk.MustExec(`create table thash(a int, b int, index idx_a(a)) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table tnormal(a int, b int, index idx_a(a))`)
+
+	vals := make([]string, 0, 1000)
+	for i := 0; i < 1000; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(50), rand.Intn(50)))
+	}
+	for _, tb := range []string{`trange`, `tnormal`, `thash`} {
+		sql := fmt.Sprintf(`insert into %v values `+strings.Join(vals, ", "), tb)
+		tk.MustExec(sql)
+	}
+
+	randCond := func(col string) string {
+		la, ra := rand.Intn(50), rand.Intn(50)
+		if la > ra {
+			la, ra = ra, la
+		}
+		return fmt.Sprintf(`%v>=%v and %v<=%v`, col, la, col, ra)
+	}
+
+	tk.MustExec(`begin`)
+	for i := 0; i < 1000; i++ {
+		if i == 0 || rand.Intn(2) == 0 { // insert some inflight rows
+			val := fmt.Sprintf("(%v, %v)", rand.Intn(50), rand.Intn(50))
+			for _, tb := range []string{`trange`, `tnormal`, `thash`} {
+				sql := fmt.Sprintf(`insert into %v values `+val, tb)
+				tk.MustExec(sql)
+			}
+		} else {
+			var sql string
+			switch rand.Intn(3) {
+			case 0: // table scan
+				sql = `select * from %v ignore index(idx_a) where ` + randCond(`b`)
+			case 1: // index reader
+				sql = `select a from %v use index(idx_a) where ` + randCond(`a`)
+			case 2: // index lookup
+				sql = `select * from %v use index(idx_a) where ` + randCond(`a`) + ` and ` + randCond(`b`)
+			}
+			switch rand.Intn(2) {
+			case 0: // order by a
+				sql += ` order by a`
+			case 1: // order by b
+				sql += ` order by b`
+			}
+
+			var result [][]interface{}
+			for _, tb := range []string{`trange`, `tnormal`, `thash`} {
+				q := fmt.Sprintf(sql, tb)
+				tk.HasPlan(q, `UnionScan`)
+				if result == nil {
+					result = tk.MustQuery(q).Sort().Rows()
+				} else {
+					tk.MustQuery(q).Sort().Check(result)
+				}
+			}
+		}
+	}
+	tk.MustExec(`rollback`)
+}
+
 func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
@@ -1232,7 +1860,7 @@ func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
 	tk.MustExec("insert into tregular2 values " + strings.Join(vals, ","))
 
 	// test range partition
-	for i := 0; i < 2000; i++ {
+	for i := 0; i < 200; i++ {
 		// select /*+ stream_agg() */ a from t where a > ? group by a;
 		// select /*+ hash_agg() */ a from t where a > ? group by a;
 		// select /*+ stream_agg() */ a from t where a in(?, ?, ?) group by a;
@@ -1264,7 +1892,7 @@ func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
 	}
 
 	// test hash partition
-	for i := 0; i < 2000; i++ {
+	for i := 0; i < 200; i++ {
 		// select /*+ stream_agg() */ a from t where a > ? group by a;
 		// select /*+ hash_agg() */ a from t where a > ? group by a;
 		// select /*+ stream_agg() */ a from t where a in(?, ?, ?) group by a;
@@ -1296,7 +1924,7 @@ func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
 	}
 
 	// test list partition
-	for i := 0; i < 2000; i++ {
+	for i := 0; i < 200; i++ {
 		// select /*+ stream_agg() */ a from t where a > ? group by a;
 		// select /*+ hash_agg() */ a from t where a > ? group by a;
 		// select /*+ stream_agg() */ a from t where a in(?, ?, ?) group by a;
@@ -1451,4 +2079,173 @@ func (s *globalIndexSuite) TestIssue21731(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists p, t")
 	tk.MustExec("create table t (a int, b int, unique index idx(a)) partition by list columns(b) (partition p0 values in (1), partition p1 values in (2));")
+}
+
+type testOutput struct {
+	SQL  string
+	Plan []string
+	Res  []string
+}
+
+func (s *testSuiteWithData) verifyPartitionResult(tk *testkit.TestKit, input []string, output []testOutput) {
+	for i, tt := range input {
+		var isSelect bool = false
+		if strings.HasPrefix(strings.ToLower(tt), "select ") {
+			isSelect = true
+		}
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			if isSelect {
+				output[i].Plan = s.testData.ConvertRowsToStrings(tk.UsedPartitions(tt).Rows())
+				output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+			} else {
+				// Just verify SELECT (also avoid double INSERTs during record)
+				output[i].Res = nil
+				output[i].Plan = nil
+			}
+		})
+		if isSelect {
+			tk.UsedPartitions(tt).Check(testkit.Rows(output[i].Plan...))
+			tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
+		} else {
+			tk.MustExec(tt)
+		}
+	}
+}
+
+func (s *testSuiteWithData) TestRangePartitionBoundariesEq(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("SET @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("CREATE DATABASE TestRangePartitionBoundaries")
+	defer tk.MustExec("DROP DATABASE TestRangePartitionBoundaries")
+	tk.MustExec("USE TestRangePartitionBoundaries")
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec(`CREATE TABLE t
+(a INT, b varchar(255))
+PARTITION BY RANGE (a) (
+ PARTITION p0 VALUES LESS THAN (1000000),
+ PARTITION p1 VALUES LESS THAN (2000000),
+ PARTITION p2 VALUES LESS THAN (3000000));
+`)
+
+	var input []string
+	var output []testOutput
+	s.testData.GetTestCases(c, &input, &output)
+	s.verifyPartitionResult(tk, input, output)
+}
+
+func (s *testSuiteWithData) TestRangePartitionBoundariesNe(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("SET @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("CREATE DATABASE TestRangePartitionBoundariesNe")
+	defer tk.MustExec("DROP DATABASE TestRangePartitionBoundariesNe")
+	tk.MustExec("USE TestRangePartitionBoundariesNe")
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec(`CREATE TABLE t
+(a INT, b varchar(255))
+PARTITION BY RANGE (a) (
+ PARTITION p0 VALUES LESS THAN (1),
+ PARTITION p1 VALUES LESS THAN (2),
+ PARTITION p2 VALUES LESS THAN (3),
+ PARTITION p3 VALUES LESS THAN (4),
+ PARTITION p4 VALUES LESS THAN (5),
+ PARTITION p5 VALUES LESS THAN (6),
+ PARTITION p6 VALUES LESS THAN (7))`)
+
+	var input []string
+	var output []testOutput
+	s.testData.GetTestCases(c, &input, &output)
+	s.verifyPartitionResult(tk, input, output)
+}
+
+func (s *testSuiteWithData) TestRangePartitionBoundariesBetweenM(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("CREATE DATABASE IF NOT EXISTS TestRangePartitionBoundariesBetweenM")
+	defer tk.MustExec("DROP DATABASE TestRangePartitionBoundariesBetweenM")
+	tk.MustExec("USE TestRangePartitionBoundariesBetweenM")
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec(`CREATE TABLE t
+(a INT, b varchar(255))
+PARTITION BY RANGE (a) (
+ PARTITION p0 VALUES LESS THAN (1000000),
+ PARTITION p1 VALUES LESS THAN (2000000),
+ PARTITION p2 VALUES LESS THAN (3000000))`)
+
+	var input []string
+	var output []testOutput
+	s.testData.GetTestCases(c, &input, &output)
+	s.verifyPartitionResult(tk, input, output)
+}
+
+func (s *testSuiteWithData) TestRangePartitionBoundariesBetweenS(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("CREATE DATABASE IF NOT EXISTS TestRangePartitionBoundariesBetweenS")
+	defer tk.MustExec("DROP DATABASE TestRangePartitionBoundariesBetweenS")
+	tk.MustExec("USE TestRangePartitionBoundariesBetweenS")
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec(`CREATE TABLE t
+(a INT, b varchar(255))
+PARTITION BY RANGE (a) (
+ PARTITION p0 VALUES LESS THAN (1),
+ PARTITION p1 VALUES LESS THAN (2),
+ PARTITION p2 VALUES LESS THAN (3),
+ PARTITION p3 VALUES LESS THAN (4),
+ PARTITION p4 VALUES LESS THAN (5),
+ PARTITION p5 VALUES LESS THAN (6),
+ PARTITION p6 VALUES LESS THAN (7))`)
+
+	var input []string
+	var output []testOutput
+	s.testData.GetTestCases(c, &input, &output)
+	s.verifyPartitionResult(tk, input, output)
+}
+
+func (s *testSuiteWithData) TestRangePartitionBoundariesLtM(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("create database TestRangePartitionBoundariesLtM")
+	defer tk.MustExec("drop database TestRangePartitionBoundariesLtM")
+	tk.MustExec("use TestRangePartitionBoundariesLtM")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t
+(a INT, b varchar(255))
+PARTITION BY RANGE (a) (
+ PARTITION p0 VALUES LESS THAN (1000000),
+ PARTITION p1 VALUES LESS THAN (2000000),
+ PARTITION p2 VALUES LESS THAN (3000000))`)
+
+	var input []string
+	var output []testOutput
+	s.testData.GetTestCases(c, &input, &output)
+	s.verifyPartitionResult(tk, input, output)
+}
+
+func (s *testSuiteWithData) TestRangePartitionBoundariesLtS(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("create database TestRangePartitionBoundariesLtS")
+	defer tk.MustExec("drop database TestRangePartitionBoundariesLtS")
+	tk.MustExec("use TestRangePartitionBoundariesLtS")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t
+(a INT, b varchar(255))
+PARTITION BY RANGE (a) (
+ PARTITION p0 VALUES LESS THAN (1),
+ PARTITION p1 VALUES LESS THAN (2),
+ PARTITION p2 VALUES LESS THAN (3),
+ PARTITION p3 VALUES LESS THAN (4),
+ PARTITION p4 VALUES LESS THAN (5),
+ PARTITION p5 VALUES LESS THAN (6),
+ PARTITION p6 VALUES LESS THAN (7))`)
+
+	var input []string
+	var output []testOutput
+	s.testData.GetTestCases(c, &input, &output)
+	s.verifyPartitionResult(tk, input, output)
 }
