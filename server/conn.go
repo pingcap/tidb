@@ -1623,6 +1623,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	sc := vars.StmtCtx
 	for i, stmt := range stmts {
 		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
+		// TODO: handle the PreprocessorReturn.
 		if err = plannercore.Preprocess(cc.ctx, stmt); err != nil {
 			return nil, err
 		}

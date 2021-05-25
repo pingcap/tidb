@@ -98,7 +98,7 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 	}
 	node.Accept(&v)
 	// it must be non-nil
-	if v.InfoSchema == nil {
+	if v.PreprocesorReturn != nil && v.InfoSchema == nil {
 		v.handleAsOf(nil)
 	}
 	return errors.Trace(v.err)
@@ -596,7 +596,7 @@ func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 		}
 		sName := model.NewCIStr(currentDB)
 		tName := table.Name
-		tableInfo, err := p.InfoSchema.TableByName(sName, tName)
+		tableInfo, err := p.getProcessorInfoSchema().TableByName(sName, tName)
 		if err != nil {
 			p.err = err
 			return
@@ -615,7 +615,8 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		if stmt.ReferTable.Schema.String() != "" {
 			schema = stmt.ReferTable.Schema
 		}
-		tableInfo, err := p.is.TableByName(schema, stmt.ReferTable.Name)
+		// get the infoschema from the context.
+		tableInfo, err := p.getProcessorInfoSchema().TableByName(schema, stmt.ReferTable.Name)
 		if err != nil {
 			p.err = err
 			return
@@ -1210,7 +1211,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
-	table, err := p.InfoSchema.TableByName(tn.Schema, tn.Name)
+	table, err := p.getProcessorInfoSchema().TableByName(tn.Schema, tn.Name)
 	if err != nil {
 		// We should never leak that the table doesn't exist (i.e. attach ErrTableNotExists)
 		// unless we know that the user has permissions to it, should it exist.
@@ -1232,7 +1233,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 	tableInfo := table.Meta()
-	dbInfo, _ := p.InfoSchema.SchemaByName(tn.Schema)
+	dbInfo, _ := p.getProcessorInfoSchema().SchemaByName(tn.Schema)
 	// tableName should be checked as sequence object.
 	if p.flag&inSequenceFunction > 0 {
 		if !tableInfo.IsSequence() {
@@ -1363,13 +1364,16 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 // if asof not nil, will use the timestamp to get the history infoschema from the infocache.
 func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
 	dom := domain.GetDomain(p.ctx)
-
+	fmt.Printf("Debug, %#+v", p)
 	tso := uint64(0)
 	if node != nil {
 		tso, p.err = calculateTsExpr(p.ctx, node)
 		if p.err != nil {
 			return
 		}
+	}
+	if p.PreprocesorReturn == nil {
+		return
 	}
 	if p.InfoSchema == nil {
 		if tso != 0 {
@@ -1387,4 +1391,16 @@ func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
 	if p.TSO != tso {
 		p.err = ErrDifferentAsOf.GenWithStack("can not set different time in the as of")
 	}
+}
+
+// getProcessorInfoSchema get the infoschema from the preprecessor.
+// there some situations:
+//    - the stmt specifies the schema version.
+//    - session variable
+//    - transcation context
+func (p *preprocessor) getProcessorInfoSchema() infoschema.InfoSchema {
+	if p.PreprocesorReturn != nil && p.InfoSchema != nil {
+		return p.InfoSchema
+	}
+	return p.ctx.GetInfoSchema().(infoschema.InfoSchema)
 }
