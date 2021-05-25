@@ -381,9 +381,9 @@ type memIndexLookUpReader struct {
 	idxReader *memIndexReader
 
 	// partition mode
-	partitionMode     bool
-	partitionKVRanges [][]kv.KeyRange
-	partitionTables   []table.PhysicalTable
+	partitionMode     bool                  // if it is accessing a partition table
+	partitionTables   []table.PhysicalTable // partition tables to access
+	partitionKVRanges [][]kv.KeyRange       // kv ranges for these partition tables
 }
 
 func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpExecutor) *memIndexLookUpReader {
@@ -420,12 +420,12 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 	kvRanges := [][]kv.KeyRange{m.idxReader.kvRanges}
 	tbls := []table.Table{m.table}
 	if m.partitionMode {
+		m.idxReader.desc = false // keep-order if always false for IndexLookUp reading partitions so this parameter makes no sense
 		kvRanges = m.partitionKVRanges
 		tbls = tbls[:0]
 		for _, p := range m.partitionTables {
 			tbls = append(tbls, p)
 		}
-		m.idxReader.desc = false // keep-order if always false for IndexLookUp reading partitions so this parameter makes no sense
 	}
 
 	tblKVRanges := make([]kv.KeyRange, 0, 16)
@@ -440,7 +440,6 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 			continue
 		}
 		numHandles += len(handles)
-
 		tblKVRanges = append(tblKVRanges, distsql.TableHandlesToKVRanges(getPhysicalTableID(tbl), handles)...)
 	}
 	if numHandles == 0 {
