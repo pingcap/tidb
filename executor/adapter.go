@@ -890,20 +890,6 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 	}
 }
 
-// getPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
-func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (string, string) {
-	normalized, planDigest := sctx.GetSessionVars().StmtCtx.GetPlanDigest()
-	if len(normalized) > 0 && planDigest != nil {
-		return normalized, planDigest.String()
-	}
-	normalized, planDigest = plannercore.NormalizePlan(p)
-	if len(normalized) == 0 || planDigest == nil {
-		return "", ""
-	}
-	sctx.GetSessionVars().StmtCtx.SetPlanDigest(normalized, planDigest)
-	return normalized, planDigest.String()
-}
-
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
@@ -1044,6 +1030,20 @@ func getPlanTree(sctx sessionctx.Context, p plannercore.Plan) string {
 		return planTree
 	}
 	return variable.SlowLogPlanPrefix + planTree + variable.SlowLogPlanSuffix
+}
+
+// getPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
+func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (string, string) {
+	normalized, planDigest := sctx.GetSessionVars().StmtCtx.GetPlanDigest()
+	if len(normalized) > 0 && planDigest != nil {
+		return normalized, planDigest.String()
+	}
+	normalized, planDigest = plannercore.NormalizePlan(p)
+	if len(normalized) == 0 || planDigest == nil {
+		return "", ""
+	}
+	sctx.GetSessionVars().StmtCtx.SetPlanDigest(normalized, planDigest)
+	return normalized, planDigest.String()
 }
 
 // getEncodedPlan gets the encoded plan, and generates the hint string if indicated.

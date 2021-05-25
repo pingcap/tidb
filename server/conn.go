@@ -1036,10 +1036,10 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 			tracecpu.GlobalStmtProfiler.RegisterSQL(digest, normalizedSQL)
 		}
 	} else if variable.EnablePProfSQLCPU.Load() {
-		normalizedSQL := getLastStmtInConn{cc}.PProfLabel()
-		if len(normalizedSQL) > 0 {
+		label := getLastStmtInConn{cc}.PProfLabel()
+		if len(label) > 0 {
 			defer pprof.SetGoroutineLabels(ctx)
-			ctx = pprof.WithLabels(ctx, pprof.Labels("sql", normalizedSQL))
+			ctx = pprof.WithLabels(ctx, pprof.Labels("sql", label))
 			pprof.SetGoroutineLabels(ctx)
 		}
 	}

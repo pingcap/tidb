@@ -246,11 +246,6 @@ func (sc *StatementContext) InitSQLDigest(normalized string, digest *parser.Dige
 	})
 }
 
-// GetEncodedPlan gets the encoded plan, it is used to avoid repeated encode.
-func (sc *StatementContext) GetEncodedPlan() string {
-	return sc.encodedPlan
-}
-
 // GetPlanDigest gets the normalized plan and plan digest.
 func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *parser.Digest) {
 	return sc.planNormalized, sc.planDigest
@@ -276,6 +271,11 @@ func (sc *StatementContext) SetPlanDigest(normalized string, planDigest *parser.
 	if planDigest != nil {
 		sc.planNormalized, sc.planDigest = normalized, planDigest
 	}
+}
+
+// GetEncodedPlan gets the encoded plan, it is used to avoid repeated encode.
+func (sc *StatementContext) GetEncodedPlan() string {
+	return sc.encodedPlan
 }
 
 // SetEncodedPlan sets the encoded plan, it is used to avoid repeated encode.
