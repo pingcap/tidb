@@ -1033,7 +1033,6 @@ func (w *worker) doModifyColumnTypeWithData(
 				return ver, errors.Trace(err)
 			}
 			logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
-			// When encounter these error above, we change the job to rolling back job directly.
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
