@@ -167,7 +167,7 @@ type StatementContext struct {
 	// stmtCache is used to store some statement-related values.
 	stmtCache map[StmtCacheKey]interface{}
 	// resourceGroupTag cache for the current statement resource group tag.
-	resourceGroupTag []byte
+	resourceGroupTag atomic.Value
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -253,15 +253,17 @@ func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *pars
 
 // GetResourceGroupTag gets the resource group of the statement.
 func (sc *StatementContext) GetResourceGroupTag() []byte {
-	if len(sc.resourceGroupTag) > 0 {
-		return sc.resourceGroupTag
+	tag, _ := sc.resourceGroupTag.Load().([]byte)
+	if len(tag) > 0 {
+		return tag
 	}
 	normalized, sqlDigest := sc.SQLDigest()
 	if len(normalized) == 0 {
 		return nil
 	}
-	sc.resourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(sqlDigest, sc.planDigest)
-	return sc.resourceGroupTag
+	tag = resourcegrouptag.EncodeResourceGroupTag(sqlDigest, sc.planDigest)
+	sc.resourceGroupTag.Store(tag)
+	return tag
 }
 
 // SetPlanDigest sets the normalized plan and plan digest.
