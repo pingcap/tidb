@@ -210,6 +210,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	ctx = a.setPProfLabel(ctx)
 	startTs := uint64(math.MaxUint64)
 	err := a.Ctx.InitTxnWithStartTS(startTs)
 	if err != nil {
@@ -284,6 +285,23 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	return is.SchemaMetaVersion(), nil
 }
 
+func (a *ExecStmt) setPProfLabel(ctx context.Context) context.Context {
+	if !config.GetGlobalConfig().TopStmt.Enable || a.Plan == nil {
+		return ctx
+	}
+	// ExecuteExec will rewrite `a.Plan`, so set goroutine label should be executed after `a.buildExecutor`.
+	_, sqlDigest := a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
+	normalizedPlan, planDigest := getPlanDigest(a.Ctx, a.Plan)
+	if len(planDigest) > 0 {
+		ctx = pprof.WithLabels(ctx, pprof.Labels(
+			tracecpu.LabelSQLDigest, sqlDigest,
+			tracecpu.LabelPlanDigest, planDigest))
+		pprof.SetGoroutineLabels(ctx)
+		tracecpu.GlobalStmtProfiler.RegisterPlan(planDigest, normalizedPlan)
+	}
+	return ctx
+}
+
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
@@ -335,18 +353,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		return nil, err
 	}
 
-	if config.GetGlobalConfig().TopStmt.Enable && a.Plan != nil {
-		// ExecuteExec will rewrite `a.Plan`, so goroutine set label should be executed after `a.buildExecutor`.
-		_, sqlDigest := a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
-		normalizedPlan, planDigest := getPlanDigest(a.Ctx, a.Plan)
-		if len(planDigest) > 0 {
-			ctx = pprof.WithLabels(ctx, pprof.Labels(
-				tracecpu.LabelSQLDigest, sqlDigest,
-				tracecpu.LabelPlanDigest, planDigest))
-			pprof.SetGoroutineLabels(ctx)
-			tracecpu.GlobalStmtProfiler.RegisterPlan(planDigest, normalizedPlan)
-		}
-	}
+	ctx = a.setPProfLabel(ctx)
 
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
