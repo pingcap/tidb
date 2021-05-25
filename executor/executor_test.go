@@ -8353,10 +8353,13 @@ func (s testSerialSuite) TestTemporaryTableNoNetwork(c *C) {
 
 	// Check the temporary table do not send request to TiKV.
 	// Table reader
+	tk.HasPlan("select * from tmp_t", "TableReader")
 	tk.MustQuery("select * from tmp_t").Check(testkit.Rows("1 1", "2 2"))
 	// Index reader
+	tk.HasPlan("select /*+ USE_INDEX(tmp_t, a) */ a from tmp_t", "IndexReader")
 	tk.MustQuery("select /*+ USE_INDEX(tmp_t, a) */ a from tmp_t").Check(testkit.Rows("1", "2"))
 	// Index lookup
+	tk.HasPlan("select id from tmp_t where a = 1", "IndexLookUp")
 	tk.MustQuery("select id from tmp_t where a = 1").Check(testkit.Rows("1"))
 
 	tk.MustExec("rollback")
