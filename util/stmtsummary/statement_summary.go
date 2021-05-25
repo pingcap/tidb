@@ -239,16 +239,11 @@ type StmtExecInfo struct {
 func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	sysVars := newSysVars()
 
-	now := time.Now().Unix()
-	intervalSeconds := sysVars.getVariable(typeRefreshInterval)
-	beginTimeForCurrentInterval := now - now%intervalSeconds
-
 	ssbde := newStmtSummaryByDigestEvicted()
 
 	maxStmtCount := uint(sysVars.getVariable(typeMaxStmtCount))
 	newSsMap := &stmtSummaryByDigestMap{
 		summaryMap:              kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
-		beginTimeForCurInterval: beginTimeForCurrentInterval,
 		sysVars:                 sysVars,
 		other:                   ssbde,
 	}
@@ -294,7 +289,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 			// of 60 (or 600, 1800, 3600, etc), begin time shows 'XX:XX:00', not 'XX:XX:01'~'XX:XX:59'.
 			ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
 			// refresh ssMap.other
-			ssMap.other.AddEvicted(nil, newInduceSsbd(ssMap.beginTimeForCurInterval, ssMap.beginTimeForCurInterval+intervalSeconds), ssMap.historySize())
+		//	ssMap.other.AddEvicted(nil, newInduceSsbd(ssMap.beginTimeForCurInterval, ssMap.beginTimeForCurInterval+intervalSeconds), ssMap.historySize())
 		}
 
 		beginTime := ssMap.beginTimeForCurInterval
