@@ -17,7 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -60,7 +60,7 @@ func (s *testAnalyzeSuite) TearDownSuite(c *C) {
 
 func (s *testAnalyzeSuite) loadTableStats(fileName string, dom *domain.Domain) error {
 	statsPath := filepath.Join("testdata", fileName)
-	bytes, err := ioutil.ReadFile(statsPath)
+	bytes, err := os.ReadFile(statsPath)
 	if err != nil {
 		return err
 	}

@@ -610,6 +610,21 @@ func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 }
 
 func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
+	if stmt.ReferTable != nil {
+		schema := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
+		if stmt.ReferTable.Schema.String() != "" {
+			schema = stmt.ReferTable.Schema
+		}
+		tableInfo, err := p.is.TableByName(schema, stmt.ReferTable.Name)
+		if err != nil {
+			p.err = err
+			return
+		}
+		if tableInfo.Meta().TempTableType != model.TempTableNone {
+			p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("create table like")
+			return
+		}
+	}
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
