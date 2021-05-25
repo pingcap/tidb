@@ -17,7 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"sort"
@@ -1557,7 +1557,7 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		pdVersion, err := ioutil.ReadAll(resp.Body)
+		pdVersion, err := io.ReadAll(resp.Body)
 		terror.Log(resp.Body.Close())
 		if err != nil {
 			return nil, errors.Trace(err)
