@@ -1161,6 +1161,8 @@ func (s *session) getTiDBTableValue(name, val string) (string, error) {
 	return validatedVal, nil
 }
 
+var _ sqlexec.SQLParser = &session{}
+
 func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
