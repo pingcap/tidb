@@ -775,7 +775,13 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	sqlMode := ctx.GetSessionVars().SQLMode
-	fmt.Fprintf(buf, "CREATE TABLE %s (\n", stringutil.Escape(tableInfo.Name.O, sqlMode))
+	tableName := stringutil.Escape(tableInfo.Name.O, sqlMode)
+	switch tableInfo.TempTableType {
+	case model.TempTableGlobal:
+		fmt.Fprintf(buf, "CREATE GLOBAL TEMPORARY TABLE %s (\n", tableName)
+	default:
+		fmt.Fprintf(buf, "CREATE TABLE %s (\n", tableName)
+	}
 	var pkCol *model.ColumnInfo
 	var hasAutoIncID bool
 	needAddComma := false
@@ -952,7 +958,14 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 
 	buf.WriteString("\n")
 
-	buf.WriteString(") ENGINE=InnoDB")
+	switch tableInfo.TempTableType {
+	case model.TempTableNone:
+		buf.WriteString(") ENGINE=InnoDB")
+	default:
+		// For now the only supported engine for temporary table is memory.
+		buf.WriteString(") ENGINE=memory")
+	}
+
 	// We need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	if len(tblCollate) == 0 || tblCollate == "binary" {
@@ -1009,6 +1022,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	if len(tableInfo.Comment) > 0 {
 		fmt.Fprintf(buf, " COMMENT='%s'", format.OutputFormat(tableInfo.Comment))
 	}
+
+	if tableInfo.TempTableType == model.TempTableGlobal {
+		fmt.Fprintf(buf, " ON COMMIT DELETE ROWS")
+	}
+
 	// add partition info here.
 	appendPartitionInfo(tableInfo.Partition, buf)
 	return nil
