@@ -933,7 +933,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				physicalID := id
 				if pt, ok := e.tblID2Table[id]; ok {
 					// On a partitioned table, we have to use physical ID to encode the lock key!
-					p, err := pt.GetPartitionByRow(e.ctx, row.GetDatumRow(e.base().retFieldTypes), pt)
+					p, err := pt.GetPartitionByRow(e.ctx, row.GetDatumRow(e.base().retFieldTypes))
 					if err != nil {
 						return err
 					}

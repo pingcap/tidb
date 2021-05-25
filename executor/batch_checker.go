@@ -94,8 +94,9 @@ func getKeysNeedCheck(ctx context.Context, sctx sessionctx.Context, t table.Tabl
 
 func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.Datum, nUnique int, handleCols []*table.Column,
 	pkIdxInfo *model.IndexInfo, result []toBeCheckedRow) ([]toBeCheckedRow, error) {
+	var err error
 	if p, ok := t.(table.PartitionedTable); ok {
-		pt, err := p.GetPartitionByRow(ctx, row, t)
+		t, err = p.GetPartitionByRow(ctx, row)
 		if err != nil {
 			if terr, ok := errors.Cause(err).(*terror.Error); ctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
@@ -104,7 +105,6 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 			}
 			return nil, err
 		}
-		t = pt
 	}
 
 	uniqueKeys := make([]*keyValueWithDupInfo, 0, nUnique)
