@@ -15,6 +15,7 @@ package stmtsummary
 
 import (
 	"bytes"
+	"container/list"
 	"fmt"
 	"time"
 
@@ -23,6 +24,22 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
+
+func newInduceSsbd(beginTime int64, endTime int64) *stmtSummaryByDigest {
+	newSsbd := &stmtSummaryByDigest{
+		history: list.New(),
+	}
+	newSsbd.history.PushBack(newInduceSsbde(beginTime, endTime))
+	return newSsbd
+}
+func newInduceSsbde(beginTime int64, endTime int64) *stmtSummaryByDigestElement {
+	newSsbde := &stmtSummaryByDigestElement{
+		beginTime:  beginTime,
+		endTime:    endTime,
+		minLatency: time.Duration.Round(1<<63-1, time.Nanosecond),
+	}
+	return newSsbde
+}
 
 // generate new stmtSummaryByDigestKey and stmtSummaryByDigest
 func (s *testStmtSummarySuite) generateStmtSummaryByDigestKeyValue(schema string, beginTime int64, endTime int64) (*stmtSummaryByDigestKey, *stmtSummaryByDigest) {
@@ -155,6 +172,43 @@ func (s *testStmtSummarySuite) TestSimpleStmtSummaryByDigestEvicted(c *C) {
 	evictedKey, evictedValue = s.generateStmtSummaryByDigestKeyValue("b", 3, 4)
 	ssbde.AddEvicted(evictedKey, evictedValue, 3)
 	c.Assert(getAllEvicted(ssbde), Equals, "{begin: 5, end: 6, count: 1}, {begin: 3, end: 4, count: 1}, {begin: 1, end: 2, count: 2}")
+
+	// test evicted element with multi-time range value.
+	ssbde = newStmtSummaryByDigestEvicted()
+	evictedKey, evictedValue = s.generateStmtSummaryByDigestKeyValue("a", 1, 2)
+	evictedValue.history.PushBack(newInduceSsbde(2, 3))
+	evictedValue.history.PushBack(newInduceSsbde(5, 6))
+	evictedValue.history.PushBack(newInduceSsbde(8, 9))
+	ssbde.AddEvicted(evictedKey, evictedValue, 3)
+	c.Assert(getAllEvicted(ssbde), Equals, "{begin: 8, end: 9, count: 1}, {begin: 5, end: 6, count: 1}, {begin: 2, end: 3, count: 1}")
+
+	evictedKey = &stmtSummaryByDigestKey{schemaName: "b"}
+	ssbde.AddEvicted(evictedKey, evictedValue, 4)
+	c.Assert(getAllEvicted(ssbde), Equals, "{begin: 8, end: 9, count: 2}, {begin: 5, end: 6, count: 2}, {begin: 2, end: 3, count: 2}, {begin: 1, end: 2, count: 1}")
+
+	evictedKey, evictedValue = s.generateStmtSummaryByDigestKeyValue("c", 4, 5)
+	evictedValue.history.PushBack(newInduceSsbde(5, 6))
+	evictedValue.history.PushBack(newInduceSsbde(7, 8))
+	ssbde.AddEvicted(evictedKey, evictedValue, 4)
+	c.Assert(getAllEvicted(ssbde), Equals, "{begin: 8, end: 9, count: 2}, {begin: 7, end: 8, count: 1}, {begin: 5, end: 6, count: 3}, {begin: 4, end: 5, count: 1}")
+
+	evictedKey, evictedValue = s.generateStmtSummaryByDigestKeyValue("d", 7, 8)
+	ssbde.AddEvicted(evictedKey, evictedValue, 4)
+	c.Assert(getAllEvicted(ssbde), Equals, "{begin: 8, end: 9, count: 2}, {begin: 7, end: 8, count: 2}, {begin: 5, end: 6, count: 3}, {begin: 4, end: 5, count: 1}")
+
+	// test for too old
+	evictedKey, evictedValue = s.generateStmtSummaryByDigestKeyValue("d", 0, 1)
+	evictedValue.history.PushBack(newInduceSsbde(1, 2))
+	evictedValue.history.PushBack(newInduceSsbde(2, 3))
+	evictedValue.history.PushBack(newInduceSsbde(4, 5))
+	ssbde.AddEvicted(evictedKey, evictedValue, 4)
+	c.Assert(getAllEvicted(ssbde), Equals, "{begin: 8, end: 9, count: 2}, {begin: 7, end: 8, count: 2}, {begin: 5, end: 6, count: 3}, {begin: 4, end: 5, count: 2}")
+
+	// test for too young
+	evictedKey, evictedValue = s.generateStmtSummaryByDigestKeyValue("d", 1, 2)
+	evictedValue.history.PushBack(newInduceSsbde(9, 10))
+	ssbde.AddEvicted(evictedKey, evictedValue, 4)
+	c.Assert(getAllEvicted(ssbde), Equals, "{begin: 9, end: 10, count: 1}, {begin: 8, end: 9, count: 2}, {begin: 7, end: 8, count: 2}, {begin: 5, end: 6, count: 3}")
 }
 
 // Test stmtSummaryByDigestEvictedElement.ToEvictedCountDatum

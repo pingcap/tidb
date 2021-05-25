@@ -243,9 +243,9 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 
 	maxStmtCount := uint(sysVars.getVariable(typeMaxStmtCount))
 	newSsMap := &stmtSummaryByDigestMap{
-		summaryMap:              kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
-		sysVars:                 sysVars,
-		other:                   ssbde,
+		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
+		sysVars:    sysVars,
+		other:      ssbde,
 	}
 	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
 		historySize := newSsMap.historySize()
@@ -288,8 +288,6 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 			// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
 			// of 60 (or 600, 1800, 3600, etc), begin time shows 'XX:XX:00', not 'XX:XX:01'~'XX:XX:59'.
 			ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
-			// refresh ssMap.other
-		//	ssMap.other.AddEvicted(nil, newInduceSsbd(ssMap.beginTimeForCurInterval, ssMap.beginTimeForCurInterval+intervalSeconds), ssMap.historySize())
 		}
 
 		beginTime := ssMap.beginTimeForCurInterval
@@ -1035,20 +1033,4 @@ func convertEmptyToNil(str string) interface{} {
 		return nil
 	}
 	return str
-}
-
-func newInduceSsbd(beginTime int64, endTime int64) *stmtSummaryByDigest {
-	newSsbd := &stmtSummaryByDigest{
-		history: list.New(),
-	}
-	newSsbd.history.PushBack(newInduceSsbde(beginTime, endTime))
-	return newSsbd
-}
-func newInduceSsbde(beginTime int64, endTime int64) *stmtSummaryByDigestElement {
-	newSsbde := &stmtSummaryByDigestElement{
-		beginTime:  beginTime,
-		endTime:    endTime,
-		minLatency: time.Duration.Round(1<<63-1, time.Nanosecond),
-	}
-	return newSsbde
 }
