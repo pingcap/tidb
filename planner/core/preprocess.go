@@ -1362,7 +1362,7 @@ func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
 			p.TSO = tso
 			p.InfoSchema = is
 		} else {
-			p.InfoSchema = dom.InfoSchema()
+			p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
 		}
 	}
 	if p.TSO != tso {
