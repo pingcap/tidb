@@ -274,10 +274,6 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetAllowBatchCop(e.batchCop)
-	// infoschema maybe null for tests
-	if is, ok := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema); ok {
-		reqBuilder.SetFromInfoSchema(is)
-	}
 	return reqBuilder.Build()
 }
 
