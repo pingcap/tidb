@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -740,7 +739,7 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(`{"id":84,"region_count":3,"flash_region_count":3}`)))
 	c.Assert(err, IsNil)
 	c.Assert(resp, NotNil)
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
 	c.Assert(string(body), Equals, "[schema:1146]Table which ID = 84 does not exist.")
 
@@ -750,7 +749,7 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
 	c.Assert(err, IsNil)
 	c.Assert(resp, NotNil)
-	body, err = ioutil.ReadAll(resp.Body)
+	body, err = io.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
 	c.Assert(string(body), Equals, "")
 
@@ -1237,7 +1236,7 @@ func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
 	for retry := 0; retry < retryTime; retry++ {
 		resp, err := ts.fetchStatus("/debug/pprof/heap")
 		if err == nil {
-			_, err = ioutil.ReadAll(resp.Body)
+			_, err = io.ReadAll(resp.Body)
 			c.Assert(err, IsNil)
 			err = resp.Body.Close()
 			c.Assert(err, IsNil)
@@ -1398,7 +1397,7 @@ func (ts *HTTPHandlerTestSuite) TestZipInfoForSQL(c *C) {
 	resp, err = ts.formStatus("/debug/sub-optimal-plan", urlValues)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusInternalServerError)
-	b, err = ioutil.ReadAll(resp.Body)
+	b, err = io.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
 	c.Assert(string(b), Equals, "use database non_exists_db failed, err: [schema:1049]Unknown database 'non_exists_db'\n")
 	c.Assert(resp.Body.Close(), IsNil)
@@ -1420,7 +1419,7 @@ func (ts *HTTPHandlerTestSuite) TestFailpointHandler(c *C) {
 	resp, err = ts.fetchStatus("/fail/")
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	b, err := ioutil.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
 	c.Assert(strings.Contains(string(b), "github.com/pingcap/tidb/server/enableTestAPI=return"), IsTrue)
 	c.Assert(resp.Body.Close(), IsNil)
@@ -1488,7 +1487,7 @@ func (ts *HTTPHandlerTestSuite) TestDDLHookHandler(c *C) {
 	resp, err = ts.postStatus("/test/ddl/hook", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`ddl_hook=ctc_hook`)))
 	c.Assert(err, IsNil)
 	c.Assert(resp, NotNil)
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
 	c.Assert(string(body), Equals, "\"success!\"")
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
@@ -1496,7 +1495,7 @@ func (ts *HTTPHandlerTestSuite) TestDDLHookHandler(c *C) {
 	resp, err = ts.postStatus("/test/ddl/hook", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`ddl_hook=default_hook`)))
 	c.Assert(err, IsNil)
 	c.Assert(resp, NotNil)
-	body, err = ioutil.ReadAll(resp.Body)
+	body, err = io.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
 	c.Assert(string(body), Equals, "\"success!\"")
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
