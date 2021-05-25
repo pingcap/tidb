@@ -1,3 +1,16 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package tracecpu
 
 import (
@@ -77,7 +90,7 @@ func (sp *sqlStatsProfiler) Run() {
 func (sp *sqlStatsProfiler) startCPUProfileWorker() {
 	defer util.Recover("top-sql", "profileWorker", nil, false)
 	for {
-		if sp.isEnabled() {
+		if sp.IsEnabled() {
 			sp.doCPUProfile()
 		} else {
 			time.Sleep(time.Second)
@@ -231,7 +244,8 @@ func (sp *sqlStatsProfiler) hasExportProfileTask() bool {
 	return has
 }
 
-func (sp *sqlStatsProfiler) isEnabled() bool {
+// IsEnabled return true if it is(should be) enabled. It exports for tests.
+func (sp *sqlStatsProfiler) IsEnabled() bool {
 	return config.GetGlobalConfig().TopSQL.Enable || sp.hasExportProfileTask()
 }
 
@@ -239,7 +253,7 @@ func (sp *sqlStatsProfiler) isEnabled() bool {
 // Because the GlobalSQLStatsProfiler keep calling pprof.StartCPUProfile to fetch SQL cpu stats, other place (such pprof profile HTTP API handler) call pprof.StartCPUProfile will be failed,
 // other place should call tracecpu.StartCPUProfile instead of pprof.StartCPUProfile.
 func StartCPUProfile(w io.Writer) error {
-	if GlobalSQLStatsProfiler.isEnabled() {
+	if GlobalSQLStatsProfiler.IsEnabled() {
 		return GlobalSQLStatsProfiler.startExportCPUProfile(w)
 	}
 	return pprof.StartCPUProfile(w)
@@ -248,7 +262,7 @@ func StartCPUProfile(w io.Writer) error {
 // StopCPUProfile same like pprof.StopCPUProfile.
 // other place should call tracecpu.StopCPUProfile instead of pprof.StopCPUProfile.
 func StopCPUProfile() error {
-	if GlobalSQLStatsProfiler.isEnabled() {
+	if GlobalSQLStatsProfiler.IsEnabled() {
 		return GlobalSQLStatsProfiler.stopExportCPUProfile()
 	}
 	pprof.StopCPUProfile()
@@ -296,7 +310,7 @@ func (sp *sqlStatsProfiler) stopExportCPUProfile() error {
 	if ept.err != nil {
 		return ept.err
 	}
-	if w := ept.w; w != nil {
+	if w := ept.w; w != nil && ept.cpuProfile != nil {
 		sp.removeLabel(ept.cpuProfile)
 		return ept.cpuProfile.Write(w)
 	}

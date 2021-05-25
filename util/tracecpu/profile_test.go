@@ -1,3 +1,16 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package tracecpu_test
 
 import (
@@ -53,19 +66,12 @@ func (s *testSuite) TestSQLStatsProfile(c *C) {
 			s.mockExecuteSQL(sql, plan)
 		}(req.sql, req.plan)
 	}
-	wg.Wait()
 
 	// test for StartCPUProfile.
-	buf := bytes.NewBuffer(nil)
-	err := tracecpu.StartCPUProfile(buf)
-	c.Assert(err, IsNil)
-	time.Sleep(time.Second)
-	err = tracecpu.StopCPUProfile()
-	c.Assert(err, IsNil)
-	_, err = profile.Parse(buf)
-	c.Assert(err, IsNil)
+	s.testFetchProfile(c, time.Second+time.Millisecond*200)
 
 	// test for collect SQL stats.
+	wg.Wait()
 	for _, req := range reqs {
 		stats := collector.getSQLStats(req.sql, req.plan)
 		c.Assert(stats, NotNil)
@@ -76,14 +82,45 @@ func (s *testSuite) TestSQLStatsProfile(c *C) {
 	}
 }
 
+func (s *testSuite) TestIsEnabled(c *C) {
+	c.Assert(tracecpu.GlobalSQLStatsProfiler.IsEnabled(), IsTrue)
+	config.GetGlobalConfig().TopSQL.Enable = false
+	c.Assert(tracecpu.GlobalSQLStatsProfiler.IsEnabled(), IsFalse)
+
+	config.GetGlobalConfig().TopSQL.Enable = true
+	err := tracecpu.StartCPUProfile(bytes.NewBuffer(nil))
+	c.Assert(err, IsNil)
+	c.Assert(tracecpu.GlobalSQLStatsProfiler.IsEnabled(), IsTrue)
+	config.GetGlobalConfig().TopSQL.Enable = false
+	c.Assert(tracecpu.GlobalSQLStatsProfiler.IsEnabled(), IsTrue)
+	err = tracecpu.StopCPUProfile()
+	c.Assert(err, IsNil)
+
+	config.GetGlobalConfig().TopSQL.Enable = false
+	c.Assert(tracecpu.GlobalSQLStatsProfiler.IsEnabled(), IsFalse)
+	config.GetGlobalConfig().TopSQL.Enable = true
+	c.Assert(tracecpu.GlobalSQLStatsProfiler.IsEnabled(), IsTrue)
+}
+
+func (s *testSuite) testFetchProfile(c *C, d time.Duration) {
+	buf := bytes.NewBuffer(nil)
+	err := tracecpu.StartCPUProfile(buf)
+	c.Assert(err, IsNil)
+	time.Sleep(d)
+	err = tracecpu.StopCPUProfile()
+	c.Assert(err, IsNil)
+	_, err = profile.Parse(buf)
+	c.Assert(err, IsNil)
+}
+
 func (s *testSuite) mockExecuteSQL(sql, plan string) {
 	ctx := context.Background()
 	sqlDigest := genDigest(sql)
 	ctx = tracecpu.SetGoroutineLabelsWithSQL(ctx, sql, sqlDigest)
-	s.mockExecute(time.Millisecond * 20)
+	s.mockExecute(time.Millisecond * 100)
 	planDigest := genDigest(plan)
 	tracecpu.SetGoroutineLabelsWithSQLAndPlan(ctx, sqlDigest, planDigest, plan)
-	s.mockExecute(time.Millisecond * 50)
+	s.mockExecute(time.Millisecond * 200)
 }
 
 func genDigest(str string) string {
