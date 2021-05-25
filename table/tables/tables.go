@@ -1378,7 +1378,7 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 				return autoid.Allocators{alloc}
 			}
 			// If the session is not in a txn, for example, in "show create table", use the original allocator.
-			// Otherwise the would be a nil pointer dereference,
+			// Otherwise the would be a nil pointer dereference.
 		}
 		return t.allocs
 	}
