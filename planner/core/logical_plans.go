@@ -344,8 +344,15 @@ func (la *LogicalAggregation) IsPartialModeAgg() bool {
 
 // IsCompleteModeAgg returns if all of the AggFuncs are CompleteMode.
 func (la *LogicalAggregation) IsCompleteModeAgg() bool {
-	// Since all of the AggFunc share the same AggMode, we only need to check the first one.
-	return la.AggFuncs[0].Mode == aggregation.CompleteMode
+	// not all of the AggFuncs has the same AggMode
+	// for example: when cascades planner is on, after PushAggDownGather transformed,
+	// some AggFuncs are CompleteMode, and the others are FinalMode.
+	for _, aggFunc := range la.AggFuncs {
+		if aggFunc.Mode == aggregation.CompleteMode {
+			return true
+		}
+	}
+	return false
 }
 
 // GetGroupByCols returns the columns that are group-by items.
@@ -391,7 +398,7 @@ func (la *LogicalAggregation) GetUsedCols() (usedCols []*expression.Column) {
 type LogicalSelection struct {
 	baseLogicalPlan
 
-	// Originally the WHERE or ON condition is parsed into a single expression,
+	// Conditions the original WHERE or ON condition is parsed into a single expression,
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
@@ -494,12 +501,12 @@ type DataSource struct {
 	// possibleAccessPaths stores all the possible access path for physical plan, including table scan.
 	possibleAccessPaths []*util.AccessPath
 
-	// The data source may be a partition, rather than a real table.
+	// isPartition The data source may be a partition, rather than a real table.
 	isPartition     bool
 	physicalTableID int64
 	partitionNames  []model.CIStr
 
-	// handleCol represents the handle column for the datasource, either the
+	// handleCols represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
 	// handleCol *expression.Column
 	handleCols HandleCols
@@ -557,7 +564,7 @@ type LogicalTableScan struct {
 // LogicalIndexScan is the logical index scan operator for TiKV.
 type LogicalIndexScan struct {
 	logicalSchemaProducer
-	// DataSource should be read-only here.
+	// Source should be read-only here.
 	Source       *DataSource
 	IsDoubleRead bool
 
