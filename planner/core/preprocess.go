@@ -90,6 +90,7 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 }
 
 // Preprocess resolves table names of the node, and checks some statements validation.
+// prepreocssReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
 func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
 	v := preprocessor{ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0)}
 	for _, optFn := range preprocessOpt {
@@ -1342,6 +1343,9 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 	}
 }
 
+// handleAsOf try to extract the inforschema.
+// if asof is nil, will use the ctx.GetInforschema to get the infoschema.
+// if asof not nil, will use the timestamp to get the history infoschema from the infocache.
 func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
 	dom := domain.GetDomain(p.ctx)
 

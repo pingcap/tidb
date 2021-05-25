@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -72,7 +71,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	return &ExecStmt{
 		GoCtx:         ctx,
 		TSO:           ret.TSO,
-		InfoSchema:    c.Ctx.GetInfoSchema().(infoschema.InfoSchema),
+		InfoSchema:    ret.InfoSchema,
 		Plan:          finalPlan,
 		LowerPriority: lowerPriority,
 		Text:          stmtNode.Text(),
