@@ -22,7 +22,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"io/ioutil"
 	"math/big"
 	"net/http"
 	"os"
@@ -342,7 +341,7 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 func newTLSHttpClient(c *C, caFile, certFile, keyFile string) *http.Client {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	c.Assert(err, IsNil)
-	caCert, err := ioutil.ReadFile(caFile)
+	caCert, err := os.ReadFile(caFile)
 	c.Assert(err, IsNil)
 	caCertPool := x509.NewCertPool()
 	caCertPool.AppendCertsFromPEM(caCert)
@@ -500,7 +499,7 @@ func generateCert(sn int, commonName string, parentCert *x509.Certificate, paren
 // See https://godoc.org/github.com/go-sql-driver/mysql#RegisterTLSConfig for details.
 func registerTLSConfig(configName string, caCertPath string, clientCertPath string, clientKeyPath string, serverName string, verifyServer bool) error {
 	rootCertPool := x509.NewCertPool()
-	data, err := ioutil.ReadFile(caCertPath)
+	data, err := os.ReadFile(caCertPath)
 	if err != nil {
 		return err
 	}
