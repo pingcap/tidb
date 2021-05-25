@@ -233,15 +233,12 @@ func (s *testStaleTxnSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key);")
 
-	schemaVer1 := tk.Se.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
-	time.Sleep(time.Second)
+	// test as of
+	schemaVer1 := tk.Se.GetInfoSchema().SchemaMetaVersion()
+	time1 := time.Now()
 	tk.MustExec("drop table if exists t")
-	schemaVer2 := tk.Se.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
-	// confirm schema changed
-	c.Assert(schemaVer1, Less, schemaVer2)
-
-	tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3) - INTERVAL 1 SECOND`)
-	schemaVer3 := tk.Se.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
-	// got an old infoSchema
-	c.Assert(schemaVer3, Equals, schemaVer1)
+	c.Assert(schemaVer1, Less, tk.Se.GetInfoSchema().SchemaMetaVersion())
+	tk.MustExec(fmt.Sprintf(`START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
+	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer1)
+	tk.MustExec("commit")
 }

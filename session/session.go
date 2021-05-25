@@ -408,7 +408,7 @@ func (s *session) StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64) 
 
 // FieldList returns fields list of a table.
 func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
-	is := s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	is := s.GetInfoSchema().(infoschema.InfoSchema)
 	dbName := model.NewCIStr(s.GetSessionVars().CurrentDB)
 	tName := model.NewCIStr(tableName)
 	pm := privilege.GetPrivilegeManager(s)
@@ -515,7 +515,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		physicalTableIDs = append(physicalTableIDs, id)
 	}
 	// Set this option for 2 phase commit to validate schema lease.
-	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs))
+	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs))
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
 	s.txn.SetOption(kv.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
 	if s.GetSessionVars().EnableAmendPessimisticTxn {
@@ -1523,12 +1523,12 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	s.currentPlan = stmt.Plan
 
 	// Execute the physical plan.
-	logStmt(stmt, s.sessionVars)
+	logStmt(stmt, s)
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
 			logutil.Logger(ctx).Warn("run statement failed",
-				zap.Int64("schemaVersion", s.sessionVars.GetInfoSchema().SchemaMetaVersion()),
+				zap.Int64("schemaVersion", s.GetInfoSchema().SchemaMetaVersion()),
 				zap.Error(err),
 				zap.String("session", s.String()))
 		}
@@ -1703,7 +1703,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
 	s.PrepareTSFuture(ctx)
-	prepareExec := executor.NewPrepareExec(s, s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema), sql)
+	prepareExec := executor.NewPrepareExec(s, s.GetInfoSchema().(infoschema.InfoSchema), sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
 		return
@@ -1731,7 +1731,7 @@ func (s *session) preparedStmtExec(ctx context.Context,
 		}
 	}
 	sessionExecuteCompileDurationGeneral.Observe(time.Since(s.sessionVars.StartTime).Seconds())
-	logQuery(st.OriginText(), s.sessionVars)
+	logQuery(st.OriginText(), s)
 	return runStmt(ctx, s, st)
 }
 
@@ -1744,7 +1744,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 	if prepareStmt.ForUpdateRead {
 		is = domain.GetDomain(s).InfoSchema()
 	} else {
-		is = s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+		is = s.GetInfoSchema().(infoschema.InfoSchema)
 	}
 	execAst := &ast.ExecuteStmt{ExecID: stmtID}
 	if err := executor.ResetContextOfStmt(s, execAst); err != nil {
@@ -1774,7 +1774,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 	stmtCtx.OriginalSQL = stmt.Text
 	stmtCtx.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
 	stmtCtx.SetPlanDigest(prepareStmt.NormalizedPlan, prepareStmt.PlanDigest)
-	logQuery(stmt.GetTextToLog(), s.sessionVars)
+	logQuery(stmt.GetTextToLog(), s)
 
 	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
 		telemetry.CurrentExecuteCount.Inc()
@@ -1824,7 +1824,7 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 		return false, nil
 	}
 	// check schema version
-	is := s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	is := s.GetInfoSchema().(infoschema.InfoSchema)
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		prepared.CachedPlan = nil
 		return false, nil
@@ -1992,9 +1992,8 @@ func (s *session) checkBeforeNewTxn(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		vars := s.GetSessionVars()
 		logutil.Logger(ctx).Info("Try to create a new txn inside a transaction auto commit",
-			zap.Int64("schemaVersion", vars.GetInfoSchema().SchemaMetaVersion()),
+			zap.Int64("schemaVersion", s.GetInfoSchema().SchemaMetaVersion()),
 			zap.Uint64("txnStartTS", txnStartTS),
 			zap.String("txnScope", txnScope))
 	}
@@ -2707,14 +2706,15 @@ func (s *session) ShowProcess() *util.ProcessInfo {
 
 // logStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD/DDL etc and normal SQL
 // if variable.ProcessGeneralLog is set.
-func logStmt(execStmt *executor.ExecStmt, vars *variable.SessionVars) {
+func logStmt(execStmt *executor.ExecStmt, s *session) {
+	vars := s.GetSessionVars()
 	switch stmt := execStmt.StmtNode.(type) {
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
 		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateTableStmt,
 		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt,
 		*ast.RenameUserStmt:
 		user := vars.User
-		schemaVersion := vars.GetInfoSchema().SchemaMetaVersion()
+		schemaVersion := s.GetInfoSchema().SchemaMetaVersion()
 		if ss, ok := execStmt.StmtNode.(ast.SensitiveStmtNode); ok {
 			logutil.BgLogger().Info("CRUCIAL OPERATION",
 				zap.Uint64("conn", vars.ConnectionID),
@@ -2730,11 +2730,12 @@ func logStmt(execStmt *executor.ExecStmt, vars *variable.SessionVars) {
 				zap.Stringer("user", user))
 		}
 	default:
-		logQuery(execStmt.GetTextToLog(), vars)
+		logQuery(execStmt.GetTextToLog(), s)
 	}
 }
 
-func logQuery(query string, vars *variable.SessionVars) {
+func logQuery(query string, s *session) {
+	vars := s.GetSessionVars()
 	if variable.ProcessGeneralLog.Load() && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
 		if !vars.EnableRedactLog {
@@ -2743,7 +2744,7 @@ func logQuery(query string, vars *variable.SessionVars) {
 		logutil.BgLogger().Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),
 			zap.Stringer("user", vars.User),
-			zap.Int64("schemaVersion", vars.GetInfoSchema().SchemaMetaVersion()),
+			zap.Int64("schemaVersion", s.GetInfoSchema().SchemaMetaVersion()),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
 			zap.Uint64("forUpdateTS", vars.TxnCtx.GetForUpdateTS()),
 			zap.Bool("isReadConsistency", vars.IsIsolation(ast.ReadCommitted)),
@@ -2781,7 +2782,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 		txnScope = kv.GlobalTxnScope
 	}
 	if txnScope != kv.GlobalTxnScope {
-		is := s.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+		is := s.GetInfoSchema().(infoschema.InfoSchema)
 		deltaMap := s.GetSessionVars().TxnCtx.TableDeltaMap
 		for physicalTableID := range deltaMap {
 			var tableName string
@@ -2849,4 +2850,21 @@ func (s *session) SetPort(port string) {
 // GetTxnWriteThroughputSLI implements the Context interface.
 func (s *session) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
 	return &s.txn.writeSLI
+}
+
+// GetInfoSchema returns snapshotInfoSchema if snapshot schema is set.
+// Transaction infoschema is returned if inside an explicit txn.
+// Otherwise the latest infoschema is returned.
+func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
+	vars := s.GetSessionVars()
+	if snap, ok := vars.SnapshotInfoschema.(infoschema.InfoSchema); ok {
+		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", vars.ConnectionID), zap.Int64("schemaVersion", snap.SchemaMetaVersion()))
+		return snap
+	}
+	if vars.TxnCtx != nil && vars.InTxn() {
+		if is, ok := vars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok {
+			return is
+		}
+	}
+	return domain.GetDomain(s).InfoSchema()
 }

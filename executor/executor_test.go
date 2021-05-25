@@ -17,7 +17,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"net"
 	"os"
@@ -2346,7 +2345,7 @@ func (s *testSuiteP2) TestIsPointGet(c *C) {
 		"select * from help_topic where help_topic_id=1":    true,
 		"select * from help_topic where help_category_id=1": false,
 	}
-	infoSchema := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
 
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
@@ -2378,7 +2377,7 @@ func (s *testSuiteP2) TestClusteredIndexIsPointGet(c *C) {
 		"select * from t where a='x' and c='x'":         true,
 		"select * from t where a='x' and c='x' and b=1": false,
 	}
-	infoSchema := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
@@ -6998,7 +6997,7 @@ func (s *testSlowQuery) TestSlowQuerySensitiveQuery(c *C) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 
-	f, err := ioutil.TempFile("", "tidb-slow-*.log")
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	c.Assert(err, IsNil)
 	f.Close()
 	newCfg.Log.SlowQueryFile = f.Name()
@@ -7032,7 +7031,7 @@ func (s *testSlowQuery) TestSlowQueryPrepared(c *C) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 
-	f, err := ioutil.TempFile("", "tidb-slow-*.log")
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	c.Assert(err, IsNil)
 	f.Close()
 	newCfg.Log.SlowQueryFile = f.Name()
@@ -7068,7 +7067,7 @@ func (s *testSlowQuery) TestSlowQueryPrepared(c *C) {
 
 func (s *testSlowQuery) TestLogSlowLogIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	f, err := ioutil.TempFile("", "tidb-slow-*.log")
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	c.Assert(err, IsNil)
 	f.Close()
 
@@ -7094,7 +7093,7 @@ func (s *testSlowQuery) TestLogSlowLogIndex(c *C) {
 func (s *testSlowQuery) TestSlowQuery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	f, err := ioutil.TempFile("", "tidb-slow-*.log")
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	c.Assert(err, IsNil)
 	_, err = f.WriteString(`
 # Time: 2020-10-13T20:08:13.970563+08:00
