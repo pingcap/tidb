@@ -4391,7 +4391,7 @@ func (s *testTxnStateSuite) TestBasic(c *C) {
 	tk.MustExec("select * from t for update;")
 	info = tk.Se.TxnInfo()
 	_, expectedDigest := parser.NormalizeDigest("select * from t for update;")
-	c.Assert(info.CurrentSQLDigest, Equals, expectedDigest)
+	c.Assert(info.CurrentSQLDigest, Equals, expectedDigest.String())
 	c.Assert(info.State, Equals, txninfo.TxnRunningNormal)
 	c.Assert(info.BlockStartTime, IsNil)
 	// len and size will be covered in TestLenAndSize
