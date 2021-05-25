@@ -1832,11 +1832,12 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 	if num == 0 {
 		return t, nil
 	}
+	originNum := num
 
 	// Check datetime type.
 	if num >= 10000101000000 {
 		t.SetType(mysql.TypeDatetime)
-		return getTime(sc, num, num, t.Type())
+		return getTime(sc, num, originNum, t.Type())
 	}
 
 	// Check MMDD.
@@ -1844,7 +1845,6 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 		return t, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.FormatInt(num, 10)))
 	}
 
-	originNum := num
 	// Adjust year
 	// YYMMDD, year: 2000-2069
 	if num <= (70-1)*10000+1231 {
