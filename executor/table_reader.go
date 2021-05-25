@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -228,13 +227,10 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetAllowBatchCop(e.batchCop)
-	// infoschema maybe null for tests
-	if is, ok := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema); ok {
-		reqBuilder.SetFromInfoSchema(is)
-	}
 	kvReq, err := reqBuilder.Build()
 	if err != nil {
 		return nil, err

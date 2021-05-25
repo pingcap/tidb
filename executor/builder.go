@@ -706,11 +706,11 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.initCap = chunk.ZeroCapacity
 	e := &SimpleExec{
-		baseExecutor:       base,
-		Statement:          v.Statement,
-		IsFromRemote:       v.IsFromRemote,
-		is:                 b.is,
-		StalenessTxnOption: v.StalenessTxnOption,
+		baseExecutor:    base,
+		Statement:       v.Statement,
+		IsFromRemote:    v.IsFromRemote,
+		is:              b.is,
+		staleTxnStartTS: v.StaleTxnStartTS,
 	}
 	return e
 }
@@ -3462,7 +3462,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetFromInfoSchema(e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)).
+		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		Build()
 	if err != nil {
 		return nil, err

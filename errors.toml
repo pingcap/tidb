@@ -401,6 +401,11 @@ error = '''
 Unknown SEQUENCE: '%-.300s'
 '''
 
+["ddl:8006"]
+error = '''
+`%s` is unsupported on temporary tables.
+'''
+
 ["ddl:8200"]
 error = '''
 Unsupported partition by range columns
@@ -1144,6 +1149,11 @@ Window function '%s' ignores the frame clause of window '%s' and aggregates over
 ["planner:3637"]
 error = '''
 Variable '%s' cannot be set using SET_VAR hint.
+'''
+
+["planner:8006"]
+error = '''
+`%s` is unsupported on temporary tables.
 '''
 
 ["planner:8108"]
