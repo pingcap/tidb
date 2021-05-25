@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/store/tikv/client"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -217,7 +218,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			ResourceGroupTag: s.snapshot.resourceGroupTag,
 		})
 		s.snapshot.mu.RUnlock()
-		resp, err := sender.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
+		resp, err := sender.SendReq(bo, req, loc.Region, client.ReadTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}

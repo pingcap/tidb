@@ -158,16 +158,22 @@ func buildCopTasks(bo *Backoffer, cache *tikv.RegionCache, ranges *tikv.KeyRange
 	}
 
 	rangesLen := ranges.Len()
+
+	locs, err := cache.SplitKeyRangesByLocations(bo.TiKVBackoffer(), ranges)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	var tasks []*copTask
-	appendTask := func(regionWithRangeInfo *tikv.KeyLocation, ranges *tikv.KeyRanges) {
+	for _, loc := range locs {
 		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
 		// to make sure the message can be sent successfully.
-		rLen := ranges.Len()
+		rLen := loc.Ranges.Len()
 		for i := 0; i < rLen; {
 			nextI := mathutil.Min(i+rangesPerTask, rLen)
 			tasks = append(tasks, &copTask{
-				region: regionWithRangeInfo.Region,
-				ranges: ranges.Slice(i, nextI),
+				region: loc.Location.Region,
+				ranges: loc.Ranges.Slice(i, nextI),
 				// Channel buffer is 2 for handling region split.
 				// In a common case, two region split tasks will not be blocked.
 				respChan:  make(chan *copResponse, 2),
@@ -176,11 +182,6 @@ func buildCopTasks(bo *Backoffer, cache *tikv.RegionCache, ranges *tikv.KeyRange
 			})
 			i = nextI
 		}
-	}
-
-	err := tikv.SplitKeyRanges(bo.TiKVBackoffer(), cache, ranges, appendTask)
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
 
 	if req.Desc {
