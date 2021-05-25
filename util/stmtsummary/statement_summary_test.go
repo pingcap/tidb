@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var _ = Suite(&testStmtSummarySuite{})
@@ -63,7 +62,7 @@ func TestT(t *testing.T) {
 }
 
 const (
-	boTxnLockName = stringutil.StringerStr("txnlock")
+	boTxnLockName = "txnlock"
 )
 
 // Test stmtSummaryByDigest.AddStatement.
@@ -77,7 +76,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 
 	// first statement
 	stmtExecInfo1 := generateAnyExecInfo()
-	stmtExecInfo1.ExecDetail.CommitDetail.Mu.BackoffTypes = make([]fmt.Stringer, 0)
+	stmtExecInfo1.ExecDetail.CommitDetail.Mu.BackoffTypes = make([]string, 0)
 	key := &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo1.SchemaName,
 		digest:     stmtExecInfo1.Digest,
@@ -133,7 +132,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		maxPrewriteRegionNum: stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
 		sumTxnRetry:          int64(stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry),
 		maxTxnRetry:          stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry,
-		backoffTypes:         make(map[fmt.Stringer]int),
+		backoffTypes:         make(map[string]int),
 		sumMem:               stmtExecInfo1.MemMax,
 		maxMem:               stmtExecInfo1.MemMax,
 		sumDisk:              stmtExecInfo1.DiskMax,
@@ -194,9 +193,9 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				CommitBackoffTime: 1000,
 				Mu: struct {
 					sync.Mutex
-					BackoffTypes []fmt.Stringer
+					BackoffTypes []string
 				}{
-					BackoffTypes: []fmt.Stringer{boTxnLockName},
+					BackoffTypes: []string{boTxnLockName},
 				},
 				ResolveLockTime:   10000,
 				WriteKeys:         100000,
@@ -321,9 +320,9 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				CommitBackoffTime: 100,
 				Mu: struct {
 					sync.Mutex
-					BackoffTypes []fmt.Stringer
+					BackoffTypes []string
 				}{
-					BackoffTypes: []fmt.Stringer{boTxnLockName},
+					BackoffTypes: []string{boTxnLockName},
 				},
 				ResolveLockTime:   1000,
 				WriteKeys:         10000,
@@ -577,9 +576,9 @@ func generateAnyExecInfo() *StmtExecInfo {
 				CommitBackoffTime: 200,
 				Mu: struct {
 					sync.Mutex
-					BackoffTypes []fmt.Stringer
+					BackoffTypes []string
 				}{
-					BackoffTypes: []fmt.Stringer{boTxnLockName},
+					BackoffTypes: []string{boTxnLockName},
 				},
 				ResolveLockTime:   2000,
 				WriteKeys:         20000,
@@ -961,12 +960,12 @@ func (s *testStmtSummarySuite) TestGetMoreThanOnceBindableStmt(c *C) {
 
 // Test `formatBackoffTypes`.
 func (s *testStmtSummarySuite) TestFormatBackoffTypes(c *C) {
-	backoffMap := make(map[fmt.Stringer]int)
+	backoffMap := make(map[string]int)
 	c.Assert(formatBackoffTypes(backoffMap), IsNil)
-	bo1 := stringutil.StringerStr("pdrpc")
+	bo1 := "pdrpc"
 	backoffMap[bo1] = 1
 	c.Assert(formatBackoffTypes(backoffMap), Equals, "pdrpc:1")
-	bo2 := stringutil.StringerStr("txnlock")
+	bo2 := "txnlock"
 	backoffMap[bo2] = 2
 
 	c.Assert(formatBackoffTypes(backoffMap), Equals, "txnlock:2,pdrpc:1")
