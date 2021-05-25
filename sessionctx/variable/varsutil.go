@@ -201,9 +201,6 @@ func GetGlobalSystemVar(s *SessionVars, name string) (string, error) {
 	return sv.GetGlobalFromHook(s)
 }
 
-// epochShiftBits is used to reserve logical part of the timestamp.
-const epochShiftBits = 18
-
 // SetSessionSystemVar sets system variable and updates SessionVars states.
 func SetSessionSystemVar(vars *SessionVars, name string, value string) error {
 	sysVar := GetSysVar(name)
@@ -396,11 +393,6 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 	}
 	s.TxnReadTS = oracle.GoTimeToTS(t1)
 	return err
-}
-
-// GoTimeToTS converts a Go time to uint64 timestamp.
-func GoTimeToTS(t time.Time) uint64 {
-	return oracle.GoTimeToTS(t)
 }
 
 // serverGlobalVariable is used to handle variables that acts in server and global scope.
