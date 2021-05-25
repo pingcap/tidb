@@ -26,9 +26,10 @@ const (
 	labelPlanDigest = "plan_digest"
 )
 
-var GlobalStmtProfiler = NewStmtProfiler()
+// GlobalSQLStatsProfiler is the global SQL stats profiler.
+var GlobalSQLStatsProfiler = NewSQLStatsProfiler()
 
-type StmtProfiler struct {
+type sqlStatsProfiler struct {
 	taskCh     chan *profileTask
 	cacheBufCh chan *profileTask
 
@@ -39,32 +40,33 @@ type StmtProfiler struct {
 	collector SQLStatsCollector
 }
 
-func NewStmtProfiler() *StmtProfiler {
-	return &StmtProfiler{
+// NewSQLStatsProfiler create a sqlStatsProfiler.
+func NewSQLStatsProfiler() *sqlStatsProfiler {
+	return &sqlStatsProfiler{
 		taskCh:     make(chan *profileTask, 128),
 		cacheBufCh: make(chan *profileTask, 128),
 	}
 }
 
-func (sp *StmtProfiler) SetCollector(c SQLStatsCollector) {
+func (sp *sqlStatsProfiler) SetCollector(c SQLStatsCollector) {
 	sp.collector = c
 }
 
-func (sp *StmtProfiler) RegisterSQL(sqlDigest, normalizedSQL string) {
+func (sp *sqlStatsProfiler) RegisterSQL(sqlDigest, normalizedSQL string) {
 	if sp.collector == nil {
 		return
 	}
 	sp.collector.RegisterSQL(sqlDigest, normalizedSQL)
 }
 
-func (sp *StmtProfiler) RegisterPlan(planDigest string, normalizedPlan string) {
+func (sp *sqlStatsProfiler) RegisterPlan(planDigest string, normalizedPlan string) {
 	if sp.collector == nil {
 		return
 	}
 	sp.collector.RegisterPlan(planDigest, normalizedPlan)
 }
 
-func (sp *StmtProfiler) Run() {
+func (sp *sqlStatsProfiler) Run() {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	logutil.BgLogger().Info("cpu profiler started")
@@ -72,7 +74,8 @@ func (sp *StmtProfiler) Run() {
 	go sp.startAnalyzeProfileWorker()
 }
 
-func (sp *StmtProfiler) startCPUProfileWorker() {
+func (sp *sqlStatsProfiler) startCPUProfileWorker() {
+	defer util.Recover("top-sql", "profileWorker", nil, false)
 	for {
 		if sp.isEnabled() {
 			sp.doCPUProfile()
@@ -82,7 +85,7 @@ func (sp *StmtProfiler) startCPUProfileWorker() {
 	}
 }
 
-func (sp *StmtProfiler) doCPUProfile() {
+func (sp *sqlStatsProfiler) doCPUProfile() {
 	interval := config.GetGlobalConfig().TopSQL.RefreshInterval
 	task := sp.newProfileTask()
 	if err := pprof.StartCPUProfile(task.buf); err != nil {
@@ -94,12 +97,13 @@ func (sp *StmtProfiler) doCPUProfile() {
 	sp.sendProfileTask(task)
 }
 
-func (sp *StmtProfiler) sendProfileTask(task *profileTask) {
+func (sp *sqlStatsProfiler) sendProfileTask(task *profileTask) {
 	task.end = time.Now().Unix()
 	sp.taskCh <- task
 }
 
-func (sp *StmtProfiler) startAnalyzeProfileWorker() {
+func (sp *sqlStatsProfiler) startAnalyzeProfileWorker() {
+	defer util.Recover("top-sql", "analyzeProfileWorker", nil, false)
 	for {
 		task := <-sp.taskCh
 		reader := bytes.NewReader(task.buf.Bytes())
@@ -122,7 +126,7 @@ type profileTask struct {
 	end int64
 }
 
-func (sp *StmtProfiler) newProfileTask() *profileTask {
+func (sp *sqlStatsProfiler) newProfileTask() *profileTask {
 	var task *profileTask
 	select {
 	case task = <-sp.cacheBufCh:
@@ -135,15 +139,15 @@ func (sp *StmtProfiler) newProfileTask() *profileTask {
 	return task
 }
 
-func (sp *StmtProfiler) putTaskToBuffer(task *profileTask) {
+func (sp *sqlStatsProfiler) putTaskToBuffer(task *profileTask) {
 	select {
 	case sp.cacheBufCh <- task:
 	default:
 	}
 }
 
-func (sp *StmtProfiler) parseCPUProfileTags(p *profile.Profile) []SQLStats {
-	stmtMap := make(map[string]*stmtStats)
+func (sp *sqlStatsProfiler) parseCPUProfileTags(p *profile.Profile) []SQLStats {
+	sqlMap := make(map[string]*sqlStats)
 	idx := len(p.SampleType) - 1
 	for _, s := range p.Sample {
 		digests, ok := s.Label[labelSQLDigest]
@@ -151,14 +155,14 @@ func (sp *StmtProfiler) parseCPUProfileTags(p *profile.Profile) []SQLStats {
 			continue
 		}
 		for _, digest := range digests {
-			stmt, ok := stmtMap[digest]
+			stmt, ok := sqlMap[digest]
 			if !ok {
-				stmt = &stmtStats{
+				stmt = &sqlStats{
 					plans:      make(map[string]int64),
 					total:      0,
 					isInternal: false,
 				}
-				stmtMap[digest] = stmt
+				sqlMap[digest] = stmt
 			}
 			stmt.total += s.Value[idx]
 
@@ -168,32 +172,32 @@ func (sp *StmtProfiler) parseCPUProfileTags(p *profile.Profile) []SQLStats {
 			}
 		}
 	}
-	return sp.createSQLStats(stmtMap)
+	return sp.createSQLStats(sqlMap)
 }
 
-func (sp *StmtProfiler) createSQLStats(stmtMap map[string]*stmtStats) []SQLStats {
-	stats := make([]SQLStats, 0, len(stmtMap))
-	for sqlDigest, stmt := range stmtMap {
+func (sp *sqlStatsProfiler) createSQLStats(sqlMap map[string]*sqlStats) []SQLStats {
+	stats := make([]SQLStats, 0, len(sqlMap))
+	for sqlDigest, stmt := range sqlMap {
 		stmt.tune()
 		for planDigest, val := range stmt.plans {
 			stats = append(stats, SQLStats{
-				sqlDigest:  sqlDigest,
-				planDigest: planDigest,
-				cpuTimeMs:  uint32(time.Duration(val).Milliseconds()),
+				SQLDigest:  sqlDigest,
+				PlanDigest: planDigest,
+				CPUTimeMs:  uint32(time.Duration(val).Milliseconds()),
 			})
 		}
 	}
 	return stats
 }
 
-type stmtStats struct {
+type sqlStats struct {
 	plans      map[string]int64
 	total      int64
 	isInternal bool
 }
 
 // tune use to adjust stats
-func (s *stmtStats) tune() {
+func (s *sqlStats) tune() {
 	if len(s.plans) == 0 {
 		s.plans[""] = s.total
 		return
@@ -211,7 +215,7 @@ func (s *stmtStats) tune() {
 	}
 }
 
-func (sp *StmtProfiler) handleExportProfileTask(p *profile.Profile) {
+func (sp *sqlStatsProfiler) handleExportProfileTask(p *profile.Profile) {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	if sp.mu.ept == nil {
@@ -220,51 +224,61 @@ func (sp *StmtProfiler) handleExportProfileTask(p *profile.Profile) {
 	sp.mu.ept.mergeProfile(p)
 }
 
-func (sp *StmtProfiler) hasExportProfileTask() bool {
+func (sp *sqlStatsProfiler) hasExportProfileTask() bool {
 	sp.mu.Lock()
 	has := sp.mu.ept != nil
 	sp.mu.Unlock()
 	return has
 }
 
-func (sp *StmtProfiler) isEnabled() bool {
+func (sp *sqlStatsProfiler) isEnabled() bool {
 	return config.GetGlobalConfig().TopSQL.Enable || sp.hasExportProfileTask()
 }
 
+// StartCPUProfile same like pprof.StartCPUProfile.
+// Because the GlobalSQLStatsProfiler keep calling pprof.StartCPUProfile to fetch SQL cpu stats, other place (such pprof profile HTTP API handler) call pprof.StartCPUProfile will be failed,
+// other place should call tracecpu.StartCPUProfile instead of pprof.StartCPUProfile.
 func StartCPUProfile(w io.Writer) error {
-	if GlobalStmtProfiler.isEnabled() {
-		return GlobalStmtProfiler.startExportCPUProfile(w)
+	if GlobalSQLStatsProfiler.isEnabled() {
+		return GlobalSQLStatsProfiler.startExportCPUProfile(w)
 	}
 	return pprof.StartCPUProfile(w)
 }
 
+// StopCPUProfile same like pprof.StopCPUProfile.
+// other place should call tracecpu.StopCPUProfile instead of pprof.StopCPUProfile.
 func StopCPUProfile() error {
-	if GlobalStmtProfiler.isEnabled() {
-		return GlobalStmtProfiler.stopExportCPUProfile()
+	if GlobalSQLStatsProfiler.isEnabled() {
+		return GlobalSQLStatsProfiler.stopExportCPUProfile()
 	}
 	pprof.StopCPUProfile()
 	return nil
 }
 
+// SetGoroutineLabelsWithSQL sets the SQL digest label into the goroutine.
 func SetGoroutineLabelsWithSQL(ctx context.Context, normalizedSQL, sqlDigest string) context.Context {
+	if len(normalizedSQL) == 0 || len(sqlDigest) == 0 {
+		return ctx
+	}
 	if variable.EnablePProfSQLCPU.Load() {
 		ctx = pprof.WithLabels(context.Background(), pprof.Labels(labelSQLDigest, sqlDigest, labelSQL, util.QueryStrForLog(normalizedSQL)))
 	} else {
 		ctx = pprof.WithLabels(context.Background(), pprof.Labels(labelSQLDigest, sqlDigest))
 	}
 	pprof.SetGoroutineLabels(ctx)
-	GlobalStmtProfiler.RegisterSQL(sqlDigest, normalizedSQL)
+	GlobalSQLStatsProfiler.RegisterSQL(sqlDigest, normalizedSQL)
 	return ctx
 }
 
+// SetGoroutineLabelsWithSQLAndPlan sets the SQL and plan digest label into the goroutine.
 func SetGoroutineLabelsWithSQLAndPlan(ctx context.Context, sqlDigest, planDigest, normalizedPlan string) context.Context {
 	ctx = pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest, labelPlanDigest, planDigest))
 	pprof.SetGoroutineLabels(ctx)
-	GlobalStmtProfiler.RegisterPlan(planDigest, normalizedPlan)
+	GlobalSQLStatsProfiler.RegisterPlan(planDigest, normalizedPlan)
 	return ctx
 }
 
-func (sp *StmtProfiler) startExportCPUProfile(w io.Writer) error {
+func (sp *sqlStatsProfiler) startExportCPUProfile(w io.Writer) error {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	if sp.mu.ept != nil {
@@ -274,7 +288,7 @@ func (sp *StmtProfiler) startExportCPUProfile(w io.Writer) error {
 	return nil
 }
 
-func (sp *StmtProfiler) stopExportCPUProfile() error {
+func (sp *sqlStatsProfiler) stopExportCPUProfile() error {
 	sp.mu.Lock()
 	ept := sp.mu.ept
 	sp.mu.ept = nil
@@ -289,7 +303,7 @@ func (sp *StmtProfiler) stopExportCPUProfile() error {
 	return nil
 }
 
-func (sp *StmtProfiler) removeLabel(p *profile.Profile) {
+func (sp *sqlStatsProfiler) removeLabel(p *profile.Profile) {
 	if p == nil {
 		return
 	}
@@ -321,6 +335,8 @@ func (t *exportProfileTask) mergeProfile(p *profile.Profile) {
 	}
 }
 
+// ProfileHTTPHandler is same as pprof.Profile.
+// The difference is ProfileHTTPHandler uses tracecpu.StartCPUProfile/StopCPUProfile to fetch profile data.
 func ProfileHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	sec, err := strconv.ParseInt(r.FormValue("seconds"), 10, 64)
@@ -361,5 +377,8 @@ func serveError(w http.ResponseWriter, status int, txt string) {
 	w.Header().Set("X-Go-Pprof", "1")
 	w.Header().Del("Content-Disposition")
 	w.WriteHeader(status)
-	fmt.Fprintln(w, txt)
+	_, err := fmt.Fprintln(w, txt)
+	if err != nil {
+		logutil.BgLogger().Info("write http response error", zap.Error(err))
+	}
 }

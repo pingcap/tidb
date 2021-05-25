@@ -1386,8 +1386,8 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	}
 	if config.TopSQLEnabled() {
 		normalized, digest := parser.NormalizeDigest(sql)
-		if len(normalized) > 0 && digest != nil {
-			ctx = tracecpu.SetGoroutineLabelsWithSQL(ctx, normalized, digest.String())
+		if digest != nil {
+			tracecpu.SetGoroutineLabelsWithSQL(ctx, normalized, digest.String())
 		}
 	}
 	return stmts[0], nil

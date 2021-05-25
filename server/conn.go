@@ -1021,7 +1021,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cmd := data[0]
 	data = data[1:]
 	if config.TopSQLEnabled() {
-		normalizedSQL, digest := getLastStmtInConn{cc}.PProfLabelNormalizedAndDigest()
+		normalizedSQL, digest := getLastStmtInConn{cc}.pprofLabelNormalizedAndDigest()
 		if len(normalizedSQL) > 0 {
 			defer pprof.SetGoroutineLabels(ctx)
 			ctx = tracecpu.SetGoroutineLabelsWithSQL(ctx, normalizedSQL, digest)
@@ -2174,7 +2174,7 @@ var (
 )
 
 // PProfLabelNormalizedAndDigest return sql and sql_digest label used to tag pprof.
-func (cc getLastStmtInConn) PProfLabelNormalizedAndDigest() (string, string) {
+func (cc getLastStmtInConn) pprofLabelNormalizedAndDigest() (string, string) {
 	if len(cc.lastPacket) == 0 {
 		return "", ""
 	}

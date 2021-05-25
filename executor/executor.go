@@ -1639,7 +1639,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		if config.TopSQLEnabled() {
 			sc.OriginalSQL = s.Text()
 			normalizedSQL, digest := sc.SQLDigest()
-			if len(normalizedSQL) > 0 && digest != nil {
+			if digest != nil {
 				tracecpu.SetGoroutineLabelsWithSQL(context.Background(), normalizedSQL, digest.String())
 			}
 		}
