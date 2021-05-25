@@ -168,7 +168,6 @@ func GetSessionOrGlobalSystemVar(s *SessionVars, name string) (string, error) {
 		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	if sv.HasNoneScope() {
-		s.systems[sv.Name] = sv.Value
 		return sv.Value, nil
 	}
 	if sv.HasSessionScope() {
