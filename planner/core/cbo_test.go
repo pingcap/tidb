@@ -295,7 +295,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		ret := &core.PreprocesorReturn{}
+		ret := &core.PreprocessorReturn{}
 		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
@@ -330,7 +330,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		ret := &core.PreprocesorReturn{}
+		ret := &core.PreprocessorReturn{}
 		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
@@ -402,7 +402,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		stmt := stmts[0]
 		err = executor.ResetContextOfStmt(ctx, stmt)
 		c.Assert(err, IsNil)
-		ret := &core.PreprocesorReturn{}
+		ret := &core.PreprocessorReturn{}
 		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
@@ -491,7 +491,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		c.Assert(err, IsNil)
 		stmt := stmts[0]
 
-		ret := &core.PreprocesorReturn{}
+		ret := &core.PreprocessorReturn{}
 		err = core.Preprocess(ctx, stmt, core.InPrepare, core.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
@@ -726,7 +726,7 @@ func BenchmarkOptimize(b *testing.B) {
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		ret := &core.PreprocesorReturn{}
+		ret := &core.PreprocessorReturn{}
 		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil)
 

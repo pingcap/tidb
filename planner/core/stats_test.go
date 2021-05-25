@@ -74,7 +74,7 @@ func (s *testStatsSuite) TestGroupNDVs(c *C) {
 		comment := Commentf("case:%v sql: %s", i, tt)
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
-		ret := &core.PreprocesorReturn{}
+		ret := &core.PreprocessorReturn{}
 		err = core.Preprocess(tk.Se, stmt, core.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil)
 		builder, _ := core.NewPlanBuilder(tk.Se, ret.InfoSchema, &hint.BlockHintProcessor{})

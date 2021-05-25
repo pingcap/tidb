@@ -316,7 +316,7 @@ func (s *testPointGetSuite) TestPointGetId(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		ret := &core.PreprocesorReturn{}
+		ret := &core.PreprocessorReturn{}
 		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)

@@ -53,9 +53,9 @@ func InTxnRetry(p *preprocessor) {
 }
 
 // WithPreprocessorReturn returns a PreprocessOpt to initialize the PreprocesorReturn.
-func WithPreprocessorReturn(ret *PreprocesorReturn) PreprocessOpt {
+func WithPreprocessorReturn(ret *PreprocessorReturn) PreprocessOpt {
 	return func(p *preprocessor) {
-		p.PreprocesorReturn = ret
+		p.PreprocessorReturn = ret
 	}
 }
 
@@ -96,10 +96,14 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
 	}
+	// PreprocessorReturn must be non-nil before preprocessing
+	if v.PreprocessorReturn == nil {
+		v.PreprocessorReturn = &PreprocessorReturn{}
+	}
 	node.Accept(&v)
-	// it must be non-nil
-	if v.PreprocesorReturn != nil && v.InfoSchema == nil {
-		v.handleAsOf(nil)
+	// InfoSchema must be non-nil after preprocessing
+	if v.InfoSchema == nil {
+		v.ensureInfoSchema()
 	}
 	return errors.Trace(v.err)
 }
@@ -122,8 +126,8 @@ const (
 	inSequenceFunction
 )
 
-// PreprocesorReturn is used to retain information obtained in the preprocessor.
-type PreprocesorReturn struct {
+// PreprocessorReturn is used to retain information obtained in the preprocessor.
+type PreprocessorReturn struct {
 	TSO        uint64
 	InfoSchema infoschema.InfoSchema
 }
@@ -140,7 +144,7 @@ type preprocessor struct {
 	tableAliasInJoin []map[string]interface{}
 
 	// values that may be returned
-	*PreprocesorReturn
+	*PreprocessorReturn
 	err error
 }
 
@@ -582,10 +586,6 @@ func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
 
 func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 	for _, table := range stmt.Tables {
-		p.handleTableName(table)
-		if p.err != nil {
-			return
-		}
 		currentDB := p.ctx.GetSessionVars().CurrentDB
 		if table.Schema.String() != "" {
 			currentDB = table.Schema.L
@@ -596,7 +596,7 @@ func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 		}
 		sName := model.NewCIStr(currentDB)
 		tName := table.Name
-		tableInfo, err := p.getProcessorInfoSchema().TableByName(sName, tName)
+		tableInfo, err := p.ensureInfoSchema().TableByName(sName, tName)
 		if err != nil {
 			p.err = err
 			return
@@ -616,7 +616,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			schema = stmt.ReferTable.Schema
 		}
 		// get the infoschema from the context.
-		tableInfo, err := p.getProcessorInfoSchema().TableByName(schema, stmt.ReferTable.Name)
+		tableInfo, err := p.ensureInfoSchema().TableByName(schema, stmt.ReferTable.Name)
 		if err != nil {
 			p.err = err
 			return
@@ -1187,6 +1187,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		}
 		tn.Schema = model.NewCIStr(currentDB)
 	}
+
 	if p.flag&inCreateOrDropTable > 0 {
 		// The table may not exist in create table or drop table statement.
 		if p.flag&inRepairTable > 0 {
@@ -1211,7 +1212,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
-	table, err := p.getProcessorInfoSchema().TableByName(tn.Schema, tn.Name)
+	table, err := p.ensureInfoSchema().TableByName(tn.Schema, tn.Name)
 	if err != nil {
 		// We should never leak that the table doesn't exist (i.e. attach ErrTableNotExists)
 		// unless we know that the user has permissions to it, should it exist.
@@ -1233,7 +1234,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 	tableInfo := table.Meta()
-	dbInfo, _ := p.getProcessorInfoSchema().SchemaByName(tn.Schema)
+	dbInfo, _ := p.ensureInfoSchema().SchemaByName(tn.Schema)
 	// tableName should be checked as sequence object.
 	if p.flag&inSequenceFunction > 0 {
 		if !tableInfo.IsSequence() {
@@ -1359,12 +1360,10 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 	}
 }
 
-// handleAsOf try to extract the inforschema.
-// if asof is nil, will use the ctx.GetInforschema to get the infoschema.
-// if asof not nil, will use the timestamp to get the history infoschema from the infocache.
+// handleAsOf tries to validate the timestamp.
+// If it is not nil, timestamp is used to get the history infoschema from the infocache.
 func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
 	dom := domain.GetDomain(p.ctx)
-	fmt.Printf("Debug, %#+v", p)
 	tso := uint64(0)
 	if node != nil {
 		tso, p.err = calculateTsExpr(p.ctx, node)
@@ -1372,35 +1371,28 @@ func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
 			return
 		}
 	}
-	if p.PreprocesorReturn == nil {
-		return
-	}
-	if p.InfoSchema == nil {
-		if tso != 0 {
-			is, err := dom.GetSnapshotInfoSchema(tso)
-			if err != nil {
-				p.err = err
-				return
-			}
-			p.TSO = tso
-			p.InfoSchema = is
-		} else {
-			p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	if tso != 0 && p.InfoSchema == nil {
+		is, err := dom.GetSnapshotInfoSchema(tso)
+		if err != nil {
+			p.err = err
+			return
 		}
+		p.TSO = tso
+		p.InfoSchema = is
 	}
 	if p.TSO != tso {
 		p.err = ErrDifferentAsOf.GenWithStack("can not set different time in the as of")
 	}
 }
 
-// getProcessorInfoSchema get the infoschema from the preprecessor.
+// ensureInfoSchema get the infoschema from the preprecessor.
 // there some situations:
 //    - the stmt specifies the schema version.
 //    - session variable
 //    - transcation context
-func (p *preprocessor) getProcessorInfoSchema() infoschema.InfoSchema {
-	if p.PreprocesorReturn != nil && p.InfoSchema != nil {
-		return p.InfoSchema
+func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
+	if p.InfoSchema == nil {
+		p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	}
-	return p.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	return p.InfoSchema
 }

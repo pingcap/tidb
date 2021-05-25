@@ -60,7 +60,7 @@ func (s *testSuite7) TestStmtLabel(c *C) {
 	for _, tt := range tests {
 		stmtNode, err := parser.New().ParseOneStmt(tt.sql, "", "")
 		c.Check(err, IsNil)
-		preprocessorReturn := &plannercore.PreprocesorReturn{}
+		preprocessorReturn := &plannercore.PreprocessorReturn{}
 		err = plannercore.Preprocess(tk.Se, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		c.Check(err, IsNil)
 		c.Assert(err, IsNil)
