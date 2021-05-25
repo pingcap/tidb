@@ -404,10 +404,10 @@ func testNormalizeDigest(tk *testkit.TestKit, c *C, sql1, sql2 string, isSame bo
 	comment := Commentf("sql1: %v, sql2: %v\n%v !=\n%v\n", sql1, sql2, normalized1, normalized2)
 	if isSame {
 		c.Assert(normalized1, Equals, normalized2, comment)
-		c.Assert(digest1, Equals, digest2, comment)
+		c.Assert(digest1.String(), Equals, digest2.String(), comment)
 	} else {
 		c.Assert(normalized1 != normalized2, IsTrue, comment)
-		c.Assert(digest1 != digest2, IsTrue, comment)
+		c.Assert(digest1.String() != digest2.String(), IsTrue, comment)
 	}
 }
 
