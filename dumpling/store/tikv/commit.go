@@ -46,7 +46,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 		StartVersion:  c.startTS,
 		Keys:          keys,
 		CommitVersion: c.commitTS,
-	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
+	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog, ResourceGroupTag: c.resourceGroupTag})
 
 	sender := NewRegionRequestSender(c.store.regionCache, c.store.GetTiKVClient())
 	resp, err := sender.SendReq(bo, req, batch.region, ReadTimeoutShort)
