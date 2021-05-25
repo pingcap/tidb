@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/store/tikv/client"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -2308,8 +2309,8 @@ func createKVHealthClient(ctx context.Context, addr string) (*grpc.ClientConn, h
 		ctx,
 		addr,
 		opt,
-		grpc.WithInitialWindowSize(grpcInitialWindowSize),
-		grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
+		grpc.WithInitialWindowSize(client.GrpcInitialWindowSize),
+		grpc.WithInitialConnWindowSize(client.GrpcInitialConnWindowSize),
 		grpc.WithConnectParams(grpc.ConnectParams{
 			Backoff: backoff.Config{
 				BaseDelay:  100 * time.Millisecond, // Default was 1s.

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/store/tikv/client"
 	"github.com/pingcap/tidb/store/tikv/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -158,7 +159,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	req := c.buildPrewriteRequest(batch, txnSize)
 	for {
 		sender := NewRegionRequestSender(c.store.regionCache, c.store.GetTiKVClient())
-		resp, err := sender.SendReq(bo, req, batch.region, ReadTimeoutShort)
+		resp, err := sender.SendReq(bo, req, batch.region, client.ReadTimeoutShort)
 
 		// If we fail to receive response for async commit prewrite, it will be undetermined whether this
 		// transaction has been successfully committed.
