@@ -31,7 +31,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -160,13 +159,14 @@ func (e *PointGetExecutor) Open(context.Context) error {
 			},
 		})
 	}
+	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
 	return nil
 }
 
 // Close implements the Executor interface.
 func (e *PointGetExecutor) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {
-		e.snapshot.DelOption(kv.CollectRuntimeStats)
+		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
 	if e.idxInfo != nil && e.tblInfo != nil {
 		actRows := int64(0)
@@ -321,19 +321,14 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 	if e.lock {
 		seVars := e.ctx.GetSessionVars()
 		lockCtx := newLockCtx(seVars, e.lockWaitTime)
-		lockCtx.ReturnValues = true
-		lockCtx.Values = map[string]tikvstore.ReturnedValue{}
+		lockCtx.InitReturnValues(1)
 		err := doLockKeys(ctx, e.ctx, lockCtx, key)
 		if err != nil {
 			return err
 		}
-		lockCtx.ValuesLock.Lock()
-		defer lockCtx.ValuesLock.Unlock()
-		for key, val := range lockCtx.Values {
-			if !val.AlreadyLocked {
-				seVars.TxnCtx.SetPessimisticLockCache(kv.Key(key), val.Value)
-			}
-		}
+		lockCtx.IterateValuesNotLocked(func(k, v []byte) {
+			seVars.TxnCtx.SetPessimisticLockCache(kv.Key(k), v)
+		})
 		if len(e.handleVal) > 0 {
 			seVars.TxnCtx.SetPessimisticLockCache(e.idxKey, e.handleVal)
 		}
@@ -374,6 +369,10 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		// fallthrough to snapshot get.
 	}
 
+	// Global temporary table is always empty, so no need to send the request.
+	if e.tblInfo.TempTableType == model.TempTableGlobal {
+		return nil, nil
+	}
 	lock := e.tblInfo.Lock
 	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
 		if e.ctx.GetSessionVars().EnablePointGetCache {
@@ -397,7 +396,7 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 	var tblID int64
 	var tblName string
 	var partName string
-	is := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	is := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	if e.partInfo != nil {
 		tblID = e.partInfo.ID
 		tblInfo, _, partInfo := is.FindTableByPartitionID(tblID)
@@ -441,6 +440,18 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 			var str string
 			str, err = idxVals[i].ToString()
 			idxVals[i].SetString(str, colInfo.FieldType.Collate)
+		} else if colInfo.Tp == mysql.TypeEnum && (idxVals[i].Kind() == types.KindString || idxVals[i].Kind() == types.KindBytes || idxVals[i].Kind() == types.KindBinaryLiteral) {
+			var str string
+			var e types.Enum
+			str, err = idxVals[i].ToString()
+			if err != nil {
+				return nil, kv.ErrNotExist
+			}
+			e, err = types.ParseEnumName(colInfo.FieldType.Elems, str, colInfo.FieldType.Collate)
+			if err != nil {
+				return nil, kv.ErrNotExist
+			}
+			idxVals[i].SetMysqlEnum(e, colInfo.FieldType.Collate)
 		} else {
 			// If a truncated error or an overflow error is thrown when converting the type of `idxVal[i]` to
 			// the type of `colInfo`, the `idxVal` does not exist in the `idxInfo` for sure.

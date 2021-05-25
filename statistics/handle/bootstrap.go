@@ -131,7 +131,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 			var topnCount int64
 			// If this is stats of the Version2, we need to consider the topn's count as well.
 			// See the comments of Version2 for more details.
-			if statsVer == statistics.Version2 {
+			if statsVer >= statistics.Version2 {
 				var err error
 				topnCount, err = h.initTopNCountSum(tblID, id)
 				if err != nil {
