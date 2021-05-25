@@ -29,6 +29,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -974,7 +975,11 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.LockCtx {
+	var planDigest *parser.Digest
 	_, sqlDigest := seVars.StmtCtx.SQLDigest()
+	if config.TopSQLEnabled() {
+		_, planDigest = seVars.StmtCtx.GetPlanDigest()
+	}
 	return &tikvstore.LockCtx{
 		Killed:                &seVars.Killed,
 		ForUpdateTS:           seVars.TxnCtx.GetForUpdateTS(),
@@ -984,7 +989,7 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.Loc
 		LockKeysDuration:      &seVars.StmtCtx.LockKeysDuration,
 		LockKeysCount:         &seVars.StmtCtx.LockKeysCount,
 		LockExpired:           &seVars.TxnCtx.LockExpire,
-		ResourceGroupTag:      resourcegrouptag.EncodeResourceGroupTag(sqlDigest),
+		ResourceGroupTag:      resourcegrouptag.EncodeResourceGroupTag(sqlDigest, planDigest),
 		OnDeadlock: func(deadlock *tikverr.ErrDeadlock) {
 			// TODO: Support collecting retryable deadlocks according to the config.
 			if !deadlock.IsRetryable {
@@ -1793,4 +1798,10 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 		req.SetCol(idx, virCols.Column(i))
 	}
 	return nil
+}
+
+func setResourceGroupTagForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
+	if snapshot != nil && config.TopSQLEnabled() {
+		snapshot.SetOption(kv.ResourceGroupTag, sc.GetResourceGroupTag())
+	}
 }
