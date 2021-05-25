@@ -28,7 +28,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/klauspost/cpuid"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -47,14 +46,12 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
-	"go.uber.org/zap"
 )
 
 // PreparedStmtCount is exported for test.
@@ -465,6 +462,9 @@ type SessionVars struct {
 	// SnapshotTS is used for reading history data. For simplicity, SnapshotTS only supports distsql request.
 	SnapshotTS uint64
 
+	// TxnReadTS is used for staleness transaction, it provides next staleness transaction startTS.
+	TxnReadTS uint64
+
 	// SnapshotInfoschema is used with SnapshotTS, when the schema version at snapshotTS less than current schema
 	// version, we load an old version schema for query.
 	SnapshotInfoschema interface{}
@@ -631,13 +631,6 @@ type SessionVars struct {
 	EnableChunkRPC bool
 
 	writeStmtBufs WriteStmtBufs
-
-	// L2CacheSize indicates the size of CPU L2 cache, using byte as unit.
-	L2CacheSize int
-
-	// EnableRadixJoin indicates whether to use radix hash join to execute
-	// HashJoin.
-	EnableRadixJoin bool
 
 	// ConstraintCheckInPlace indicates whether to check the constraint when the SQL executing.
 	ConstraintCheckInPlace bool
@@ -884,30 +877,6 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 	}
 }
 
-// FIXME: remove this interface
-// infoschemaMetaVersion is a workaround. Due to circular dependency,
-// can not return the complete interface. But SchemaMetaVersion is widely used for logging.
-// So we give a convenience for that
-type infoschemaMetaVersion interface {
-	SchemaMetaVersion() int64
-}
-
-// GetInfoSchema returns snapshotInfoSchema if snapshot schema is set.
-// Otherwise, transaction infoschema is returned.
-// Nil if there is no available infoschema.
-func (s *SessionVars) GetInfoSchema() infoschemaMetaVersion {
-	if snap, ok := s.SnapshotInfoschema.(infoschemaMetaVersion); ok {
-		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", s.ConnectionID), zap.Int64("schemaVersion", snap.SchemaMetaVersion()))
-		return snap
-	}
-	if s.TxnCtx != nil {
-		if is, ok := s.TxnCtx.InfoSchema.(infoschemaMetaVersion); ok {
-			return is
-		}
-	}
-	return nil
-}
-
 // PartitionPruneMode presents the prune mode used.
 type PartitionPruneMode string
 
@@ -1019,9 +988,7 @@ func NewSessionVars() *SessionVars {
 		MemoryFactor:                DefOptMemoryFactor,
 		DiskFactor:                  DefOptDiskFactor,
 		ConcurrencyFactor:           DefOptConcurrencyFactor,
-		EnableRadixJoin:             false,
 		EnableVectorizedExpression:  DefEnableVectorizedExpression,
-		L2CacheSize:                 cpuid.CPU.Cache.L2,
 		CommandValue:                uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
 		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
@@ -1269,7 +1236,7 @@ func (s *SessionVars) GetStatusFlag(flag uint16) bool {
 func (s *SessionVars) SetInTxn(val bool) {
 	s.SetStatusFlag(mysql.ServerStatusInTrans, val)
 	if val {
-		s.TxnCtx.IsExplicit = true
+		s.TxnCtx.IsExplicit = val
 	}
 }
 
@@ -1426,6 +1393,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 // Errors are not expected to be returned because this could cause upgrade issues.
 func (s *SessionVars) SetSystemVarWithRelaxedValidation(name string, val string) error {
 	sv := GetSysVar(name)
+	if sv == nil {
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
 	val = sv.ValidateWithRelaxedValidation(s, val, ScopeSession)
 	return sv.SetSessionFromHook(s, val)
 }
