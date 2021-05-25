@@ -40,7 +40,7 @@ func (actionCleanup) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batc
 	req := tikvrpc.NewRequest(tikvrpc.CmdBatchRollback, &pb.BatchRollbackRequest{
 		Keys:         batch.mutations.GetKeys(),
 		StartVersion: c.startTS,
-	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
+	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog, ResourceGroupTag: c.resourceGroupTag})
 	resp, err := c.store.SendReq(bo, req, batch.region, ReadTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
