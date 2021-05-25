@@ -65,7 +65,7 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice) (expression.Expression, error) {
 	var is infoschema.InfoSchema
 	// in tests, it may be null
-	if s, ok := sctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema); ok {
+	if s, ok := sctx.GetInfoSchema().(infoschema.InfoSchema); ok {
 		is = s
 	}
 	b, savedBlockNames := NewPlanBuilder(sctx, is, &hint.BlockHintProcessor{})
