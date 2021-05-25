@@ -99,17 +99,7 @@ var (
 	sessionExecuteCompileDurationGeneral  = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblGeneral)
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
-
-	tiKVGCAutoConcurrency = "tikv_gc_auto_concurrency"
 )
-
-var gcVariableMap = map[string]string{
-	variable.TiDBGCRunInterval:  "tikv_gc_run_interval",
-	variable.TiDBGCLifetime:     "tikv_gc_life_time",
-	variable.TiDBGCConcurrency:  "tikv_gc_concurrency",
-	variable.TiDBGCEnable:       "tikv_gc_enable",
-	variable.TiDBGCScanLockMode: "tikv_gc_scan_lock_mode",
-}
 
 // Session context, it is consistent with the lifecycle of a client connection.
 type Session interface {
@@ -971,26 +961,8 @@ func (s *session) getTableValue(ctx context.Context, tblName string, varName str
 	return value, nil
 }
 
-var gcVariableComments = map[string]string{
-	variable.TiDBGCRunInterval:  "GC run interval, at least 10m, in Go format.",
-	variable.TiDBGCLifetime:     "All versions within life time will not be collected by GC, at least 10m, in Go format.",
-	variable.TiDBGCConcurrency:  "How many goroutines used to do GC parallel, [1, 128], default 2",
-	variable.TiDBGCEnable:       "Current GC enable status",
-	tiKVGCAutoConcurrency:       "Let TiDB pick the concurrency automatically. If set false, tikv_gc_concurrency will be used",
-	variable.TiDBGCScanLockMode: "Mode of scanning locks, \"physical\" or \"legacy\"",
-}
-
 // replaceTableValue executes restricted sql updates the variable value
 func (s *session) replaceTableValue(ctx context.Context, tblName string, varName, val string) error {
-	if tblName == mysql.TiDBTable { // maintain comment metadata
-		comment := gcVariableComments[varName]
-		stmt, err := s.ParseWithParams(ctx, `REPLACE INTO %n.%n (variable_name, variable_value, comment) VALUES (%?, %?, %?)`, mysql.SystemDB, tblName, varName, val, comment)
-		if err != nil {
-			return err
-		}
-		_, _, err = s.ExecRestrictedStmt(ctx, stmt)
-		return err
-	}
 	stmt, err := s.ParseWithParams(ctx, `REPLACE INTO %n.%n (variable_name, variable_value) VALUES (%?, %?)`, mysql.SystemDB, tblName, varName, val)
 	if err != nil {
 		return err
@@ -1000,19 +972,8 @@ func (s *session) replaceTableValue(ctx context.Context, tblName string, varName
 	return err
 }
 
-func (s *session) varFromTiDBTable(name string) bool {
-	switch name {
-	case variable.TiDBGCConcurrency, variable.TiDBGCEnable, variable.TiDBGCRunInterval, variable.TiDBGCLifetime, variable.TiDBGCScanLockMode:
-		return true
-	}
-	return false
-}
-
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(name string) (string, error) {
-	if name == variable.TiDBSlowLogMasking {
-		name = variable.TiDBRedactLog
-	}
 	if s.Value(sessionctx.Initing) != nil {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return "", nil
@@ -1039,10 +1000,6 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 			return sv.Value, nil
 		}
 	}
-	// Fetch mysql.tidb values if required
-	if s.varFromTiDBTable(name) {
-		return s.getTiDBTableValue(name, sysVar)
-	}
 	return sysVar, nil
 }
 
@@ -1058,8 +1015,7 @@ func (s *session) SetGlobalSysVar(name, value string) (err error) {
 	if err = sv.SetGlobalFromHook(s.sessionVars, value, false); err != nil {
 		return err
 	}
-
-	return s.updateGlobalSysVar(sv, value)
+	return s.replaceTableValue(context.TODO(), mysql.GlobalVariablesTable, sv.Name, value)
 }
 
 // SetGlobalSysVarOnly updates the sysvar, but does not call the validation function or update aliases.
@@ -1072,93 +1028,22 @@ func (s *session) SetGlobalSysVarOnly(name, value string) (err error) {
 	if err = sv.SetGlobalFromHook(s.sessionVars, value, true); err != nil {
 		return err
 	}
-	return s.updateGlobalSysVar(sv, value)
-}
-
-func (s *session) updateGlobalSysVar(sv *variable.SysVar, value string) error {
-	// update mysql.tidb if required.
-	if s.varFromTiDBTable(sv.Name) {
-		if err := s.setTiDBTableValue(sv.Name, value); err != nil {
-			return err
-		}
-	}
 	return s.replaceTableValue(context.TODO(), mysql.GlobalVariablesTable, sv.Name, value)
 }
 
-// setTiDBTableValue handles tikv_* sysvars which need to update mysql.tidb
-// for backwards compatibility. Validation has already been performed.
-func (s *session) setTiDBTableValue(name, val string) error {
-	if name == variable.TiDBGCConcurrency {
-		autoConcurrency := "false"
-		if val == "-1" {
-			autoConcurrency = "true"
-		}
-		err := s.replaceTableValue(context.TODO(), mysql.TiDBTable, tiKVGCAutoConcurrency, autoConcurrency)
-		if err != nil {
-			return err
-		}
+// SetTiDBTableValue implements GlobalVarAccessor.SetTiDBTableValue interface.
+func (s *session) SetTiDBTableValue(name, value, comment string) error {
+	stmt, err := s.ParseWithParams(context.TODO(), `REPLACE INTO mysql.tidb (variable_name, variable_value, comment) VALUES (%?, %?, %?)`, name, value, comment)
+	if err != nil {
+		return err
 	}
-	val = onOffToTrueFalse(val)
-	err := s.replaceTableValue(context.TODO(), mysql.TiDBTable, gcVariableMap[name], val)
+	_, _, err = s.ExecRestrictedStmt(context.TODO(), stmt)
 	return err
 }
 
-// In mysql.tidb the convention has been to store the string value "true"/"false",
-// but sysvars use the convention ON/OFF.
-func trueFalseToOnOff(str string) string {
-	if strings.EqualFold("true", str) {
-		return variable.On
-	} else if strings.EqualFold("false", str) {
-		return variable.Off
-	}
-	return str
-}
-
-// In mysql.tidb the convention has been to store the string value "true"/"false",
-// but sysvars use the convention ON/OFF.
-func onOffToTrueFalse(str string) string {
-	if strings.EqualFold("ON", str) {
-		return "true"
-	} else if strings.EqualFold("OFF", str) {
-		return "false"
-	}
-	return str
-}
-
-// getTiDBTableValue handles tikv_* sysvars which need
-// to read from mysql.tidb for backwards compatibility.
-func (s *session) getTiDBTableValue(name, val string) (string, error) {
-	if name == variable.TiDBGCConcurrency {
-		// Check if autoconcurrency is set
-		autoConcurrencyVal, err := s.getTableValue(context.TODO(), mysql.TiDBTable, tiKVGCAutoConcurrency)
-		if err == nil && strings.EqualFold(autoConcurrencyVal, "true") {
-			return "-1", nil // convention for "AUTO"
-		}
-	}
-	tblValue, err := s.getTableValue(context.TODO(), mysql.TiDBTable, gcVariableMap[name])
-	if err != nil {
-		return val, nil // mysql.tidb value does not exist.
-	}
-	// Run validation on the tblValue. This will return an error if it can't be validated,
-	// but will also make it more consistent: disTribuTeD -> DISTRIBUTED etc
-	tblValue = trueFalseToOnOff(tblValue)
-	validatedVal, err := variable.GetSysVar(name).Validate(s.sessionVars, tblValue, variable.ScopeGlobal)
-	if err != nil {
-		logutil.Logger(context.Background()).Warn("restoring sysvar value since validating mysql.tidb value failed",
-			zap.Error(err),
-			zap.String("name", name),
-			zap.String("tblName", gcVariableMap[name]),
-			zap.String("tblValue", tblValue),
-			zap.String("restoredValue", val))
-		err = s.replaceTableValue(context.TODO(), mysql.TiDBTable, gcVariableMap[name], val)
-		return val, err
-	}
-	if validatedVal != val {
-		// The sysvar value is out of sync.
-		err = s.replaceTableValue(context.TODO(), mysql.GlobalVariablesTable, gcVariableMap[name], validatedVal)
-		return validatedVal, err
-	}
-	return validatedVal, nil
+// GetTiDBTableValue implements GlobalVarAccessor.GetTiDBTableValue interface.
+func (s *session) GetTiDBTableValue(name string) (string, error) {
+	return s.getTableValue(context.TODO(), mysql.TiDBTable, name)
 }
 
 func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error) {

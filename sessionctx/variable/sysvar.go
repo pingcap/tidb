@@ -1551,6 +1551,8 @@ var defaultSysVars = []*SysVar{
 		return normalizedValue, nil
 	}, GetSession: func(s *SessionVars) (string, error) {
 		return s.systems[TiDBRedactLog], nil
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return s.GlobalVarsAccessor.GetGlobalSysVar(TiDBRedactLog)
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRedactLog, Value: BoolToOnOff(DefTiDBRedactLog), Aliases: []string{TiDBSlowLogMasking}, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableRedactLog = TiDBOptOn(val)
@@ -1623,11 +1625,43 @@ var defaultSysVars = []*SysVar{
 	}},
 
 	/* tikv gc metrics */
-	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: On, Type: TypeBool},
-	{Scope: ScopeGlobal, Name: TiDBGCRunInterval, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: math.MaxInt64},
-	{Scope: ScopeGlobal, Name: TiDBGCLifetime, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: math.MaxInt64},
-	{Scope: ScopeGlobal, Name: TiDBGCConcurrency, Value: "-1", Type: TypeInt, MinValue: 1, MaxValue: 128, AllowAutoValue: true},
-	{Scope: ScopeGlobal, Name: TiDBGCScanLockMode, Value: "PHYSICAL", Type: TypeEnum, PossibleValues: []string{"PHYSICAL", "LEGACY"}},
+	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: On, Type: TypeBool, GetGlobal: func(s *SessionVars) (string, error) {
+		return getTikvTableValue(s, "tikv_gc_enable", On)
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		return setTikvTableValue(s, "tikv_gc_enable", val, "Current GC enable status")
+	}},
+	{Scope: ScopeGlobal, Name: TiDBGCRunInterval, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: math.MaxInt64, GetGlobal: func(s *SessionVars) (string, error) {
+		return getTikvTableValue(s, "tikv_gc_run_interval", "10m0s")
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		return setTikvTableValue(s, "tikv_gc_run_interval", val, "GC run interval, at least 10m, in Go format.")
+	}},
+	{Scope: ScopeGlobal, Name: TiDBGCLifetime, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: math.MaxInt64, GetGlobal: func(s *SessionVars) (string, error) {
+		return getTikvTableValue(s, "tikv_gc_life_time", "10m0s")
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		return setTikvTableValue(s, "tikv_gc_life_time", val, "All versions within life time will not be collected by GC, at least 10m, in Go format.")
+	}},
+	{Scope: ScopeGlobal, Name: TiDBGCConcurrency, Value: "-1", Type: TypeInt, MinValue: 1, MaxValue: 128, AllowAutoValue: true, GetGlobal: func(s *SessionVars) (string, error) {
+		autoConcurrencyVal, err := getTikvTableValue(s, "tikv_gc_auto_concurrency", "-1")
+		if err == nil && strings.EqualFold(autoConcurrencyVal, "true") {
+			return "-1", nil // convention for "AUTO"
+		}
+		return getTikvTableValue(s, "tikv_gc_concurrency", "-1")
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		autoConcurrency := "OFF"
+		if val == "-1" {
+			autoConcurrency = "ON"
+		}
+		// Update both autoconcurrency and concurrency.
+		if err := setTikvTableValue(s, "tikv_gc_auto_concurrency", autoConcurrency, "Let TiDB pick the concurrency automatically. If set false, tikv_gc_concurrency will be used"); err != nil {
+			return err
+		}
+		return setTikvTableValue(s, "tikv_gc_concurrency", val, "How many goroutines used to do GC parallel, [1, 128], default 2")
+	}},
+	{Scope: ScopeGlobal, Name: TiDBGCScanLockMode, Value: "PHYSICAL", Type: TypeEnum, PossibleValues: []string{"PHYSICAL", "LEGACY"}, GetGlobal: func(s *SessionVars) (string, error) {
+		return getTikvTableValue(s, "tikv_gc_scan_lock_mode", "PHYSICAL")
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		return setTikvTableValue(s, "tikv_gc_scan_lock_mode", val, "Mode of scanning locks, \"physical\" or \"legacy\"")
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
@@ -1906,6 +1940,24 @@ const (
 	SystemTimeZone = "system_time_zone"
 	// CTEMaxRecursionDepth is the name of 'cte_max_recursion_depth' system variable.
 	CTEMaxRecursionDepth = "cte_max_recursion_depth"
+	// SQLModeVar is the name of the 'sql_mode' system variable.
+	SQLModeVar = "sql_mode"
+	// CharacterSetResults is the name of the 'character_set_results' system variable.
+	CharacterSetResults = "character_set_results"
+	// MaxAllowedPacket is the name of the 'max_allowed_packet' system variable.
+	MaxAllowedPacket = "max_allowed_packet"
+	// TimeZone is the name of the 'time_zone' system variable.
+	TimeZone = "time_zone"
+	// TxnIsolation is the name of the 'tx_isolation' system variable.
+	TxnIsolation = "tx_isolation"
+	// TransactionIsolation is the name of the 'transaction_isolation' system variable.
+	TransactionIsolation = "transaction_isolation"
+	// TxnIsolationOneShot is the name of the 'tx_isolation_one_shot' system variable.
+	TxnIsolationOneShot = "tx_isolation_one_shot"
+	// MaxExecutionTime is the name of the 'max_execution_time' system variable.
+	MaxExecutionTime = "max_execution_time"
+	// ReadOnly is the name of the 'read_only' system variable.
+	ReadOnly = "read_only"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
@@ -1916,4 +1968,8 @@ type GlobalVarAccessor interface {
 	SetGlobalSysVar(name string, value string) error
 	// SetGlobalSysVarOnly sets the global system variable without calling the validation function or updating aliases.
 	SetGlobalSysVarOnly(name string, value string) error
+	// GetTiDBTableValue gets a value from mysql.tidb for the key 'name'
+	GetTiDBTableValue(name string) (string, error)
+	// SetTiDBTableValue sets a value+comment for the mysql.tidb key 'name'
+	SetTiDBTableValue(name, value, comment string) error
 }
