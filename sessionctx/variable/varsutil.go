@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -200,9 +201,6 @@ func GetGlobalSystemVar(s *SessionVars, name string) (string, error) {
 	return sv.GetGlobalFromHook(s)
 }
 
-// epochShiftBits is used to reserve logical part of the timestamp.
-const epochShiftBits = 18
-
 // SetSessionSystemVar sets system variable and updates SessionVars states.
 func SetSessionSystemVar(vars *SessionVars, name string, value string) error {
 	sysVar := GetSysVar(name)
@@ -376,14 +374,8 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 	}
 
 	t1, err := t.GoTime(s.TimeZone)
-	s.SnapshotTS = GoTimeToTS(t1)
+	s.SnapshotTS = oracle.GoTimeToTS(t1)
 	return err
-}
-
-// GoTimeToTS converts a Go time to uint64 timestamp.
-func GoTimeToTS(t time.Time) uint64 {
-	ts := (t.UnixNano() / int64(time.Millisecond)) << epochShiftBits
-	return uint64(ts)
 }
 
 // serverGlobalVariable is used to handle variables that acts in server and global scope.
