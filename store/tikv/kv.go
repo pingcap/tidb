@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
@@ -189,11 +188,11 @@ func (s *KVStore) runSafePointChecker() {
 
 // Begin a global transaction.
 func (s *KVStore) Begin() (*KVTxn, error) {
-	return s.BeginWithOption(tidbkv.DefaultTransactionOption())
+	return s.BeginWithOption(DefaultStartTSOption())
 }
 
-// BeginWithOption begins a transaction with the given TransactionOption
-func (s *KVStore) BeginWithOption(options tidbkv.TransactionOption) (*KVTxn, error) {
+// BeginWithOption begins a transaction with the given StartTSOption
+func (s *KVStore) BeginWithOption(options StartTSOption) (*KVTxn, error) {
 	return newTiKVTxnWithOptions(s, options)
 }
 
@@ -241,13 +240,6 @@ func (s *KVStore) CurrentTimestamp(txnScope string) (uint64, error) {
 }
 
 func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64, error) {
-	failpoint.Inject("MockCurrentTimestamp", func(val failpoint.Value) {
-		if v, ok := val.(int); ok {
-			failpoint.Return(uint64(v), nil)
-		} else {
-			panic("MockCurrentTimestamp should be a number, try use this failpoint with \"return(ts)\"")
-		}
-	})
 	if span := opentracing.SpanFromContext(bo.GetCtx()); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("TiKVStore.getTimestampWithRetry", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -270,26 +262,6 @@ func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64,
 			return startTS, nil
 		}
 		err = bo.Backoff(retry.BoPDRPC, errors.Errorf("get timestamp failed: %v", err))
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-	}
-}
-
-func (s *KVStore) getStalenessTimestamp(bo *Backoffer, txnScope string, prevSec uint64) (uint64, error) {
-	failpoint.Inject("MockStalenessTimestamp", func(val failpoint.Value) {
-		if v, ok := val.(int); ok {
-			failpoint.Return(uint64(v), nil)
-		} else {
-			panic("MockStalenessTimestamp should be a number, try use this failpoint with \"return(ts)\"")
-		}
-	})
-	for {
-		startTS, err := s.oracle.GetStaleTimestamp(bo.GetCtx(), txnScope, prevSec)
-		if err == nil {
-			return startTS, nil
-		}
-		err = bo.Backoff(retry.BoPDRPC, errors.Errorf("get staleness timestamp failed: %v", err))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -389,6 +361,7 @@ func (s *KVStore) getSafeTS(storeID uint64) uint64 {
 	return safeTS.(uint64)
 }
 
+// setSafeTS sets safeTs for store storeID, export for testing
 func (s *KVStore) setSafeTS(storeID, safeTS uint64) {
 	s.safeTSMap.Store(storeID, safeTS)
 }
