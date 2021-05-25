@@ -14,12 +14,17 @@
 package variable
 
 import (
+	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 )
 
 func TestT(t *testing.T) {
@@ -167,4 +172,410 @@ func (*testSysVarSuite) TestEnumValidation(c *C) {
 	val, err = sv.Validate(vars, "2", ScopeSession)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "AUTO")
+}
+
+func (*testSysVarSuite) TestSynonyms(c *C) {
+	sysVar := GetSysVar(TxnIsolation)
+	c.Assert(sysVar, NotNil)
+
+	vars := NewSessionVars()
+
+	// It does not permit SERIALIZABLE by default.
+	_, err := sysVar.Validate(vars, "SERIALIZABLE", ScopeSession)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
+
+	// Enable Skip isolation check
+	c.Assert(GetSysVar(TiDBSkipIsolationLevelCheck).SetSessionFromHook(vars, "ON"), IsNil)
+
+	// Serializable is now permitted.
+	_, err = sysVar.Validate(vars, "SERIALIZABLE", ScopeSession)
+	c.Assert(err, IsNil)
+
+	// Currently TiDB returns a warning because of SERIALIZABLE, but in future
+	// it may also return a warning because TxnIsolation is deprecated.
+
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	c.Assert(warn.Error(), Equals, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
+
+	c.Assert(sysVar.SetSessionFromHook(vars, "SERIALIZABLE"), IsNil)
+
+	// When we set TxnIsolation, it also updates TransactionIsolation.
+	c.Assert(vars.systems[TxnIsolation], Equals, "SERIALIZABLE")
+	c.Assert(vars.systems[TransactionIsolation], Equals, vars.systems[TxnIsolation])
+}
+
+func (*testSysVarSuite) TestDeprecation(c *C) {
+	sysVar := GetSysVar(TiDBIndexLookupConcurrency)
+	c.Assert(sysVar, NotNil)
+
+	vars := NewSessionVars()
+
+	_, err := sysVar.Validate(vars, "1234", ScopeSession)
+	c.Assert(err, IsNil)
+
+	// There was no error but there is a deprecation warning.
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	c.Assert(warn.Error(), Equals, "[variable:1287]'tidb_index_lookup_concurrency' is deprecated and will be removed in a future release. Please use tidb_executor_concurrency instead")
+}
+
+func (*testSysVarSuite) TestScope(c *C) {
+	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	c.Assert(sv.HasSessionScope(), IsTrue)
+	c.Assert(sv.HasGlobalScope(), IsTrue)
+	c.Assert(sv.HasNoneScope(), IsFalse)
+
+	sv = SysVar{Scope: ScopeGlobal, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	c.Assert(sv.HasSessionScope(), IsFalse)
+	c.Assert(sv.HasGlobalScope(), IsTrue)
+	c.Assert(sv.HasNoneScope(), IsFalse)
+
+	sv = SysVar{Scope: ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	c.Assert(sv.HasSessionScope(), IsTrue)
+	c.Assert(sv.HasGlobalScope(), IsFalse)
+	c.Assert(sv.HasNoneScope(), IsFalse)
+
+	sv = SysVar{Scope: ScopeNone, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	c.Assert(sv.HasSessionScope(), IsFalse)
+	c.Assert(sv.HasGlobalScope(), IsFalse)
+	c.Assert(sv.HasNoneScope(), IsTrue)
+}
+
+func (*testSysVarSuite) TestBuiltInCase(c *C) {
+	// All Sysvars should have lower case names.
+	// This tests builtins.
+	for name := range GetSysVars() {
+		c.Assert(name, Equals, strings.ToLower(name))
+	}
+}
+
+func (*testSysVarSuite) TestSQLSelectLimit(c *C) {
+	sv := GetSysVar(SQLSelectLimit)
+	vars := NewSessionVars()
+	val, err := sv.Validate(vars, "-10", ScopeSession)
+	c.Assert(err, IsNil) // it has autoconvert out of range.
+	c.Assert(val, Equals, "0")
+
+	val, err = sv.Validate(vars, "9999", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "9999")
+
+	c.Assert(sv.SetSessionFromHook(vars, "9999"), IsNil) // sets
+	c.Assert(vars.SelectLimit, Equals, uint64(9999))
+}
+
+func (*testSysVarSuite) TestSQLModeVar(c *C) {
+	sv := GetSysVar(SQLModeVar)
+	vars := NewSessionVars()
+	val, err := sv.Validate(vars, "strict_trans_tabLES  ", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "STRICT_TRANS_TABLES")
+
+	_, err = sv.Validate(vars, "strict_trans_tabLES,nonsense_option", ScopeSession)
+	c.Assert(err.Error(), Equals, "ERROR 1231 (42000): Variable 'sql_mode' can't be set to the value of 'NONSENSE_OPTION'")
+
+	val, err = sv.Validate(vars, "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION")
+
+	c.Assert(sv.SetSessionFromHook(vars, val), IsNil) // sets to strict from above
+	c.Assert(vars.StrictSQLMode, IsTrue)
+
+	sqlMode, err := mysql.GetSQLMode(val)
+	c.Assert(err, IsNil)
+	c.Assert(vars.SQLMode, Equals, sqlMode)
+
+	// Set it to non strict.
+	val, err = sv.Validate(vars, "ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION")
+
+	c.Assert(sv.SetSessionFromHook(vars, val), IsNil) // sets to non-strict from above
+	c.Assert(vars.StrictSQLMode, IsFalse)
+	sqlMode, err = mysql.GetSQLMode(val)
+	c.Assert(err, IsNil)
+	c.Assert(vars.SQLMode, Equals, sqlMode)
+}
+
+func (*testSysVarSuite) TestMaxExecutionTime(c *C) {
+	sv := GetSysVar(MaxExecutionTime)
+	vars := NewSessionVars()
+
+	val, err := sv.Validate(vars, "-10", ScopeSession)
+	c.Assert(err, IsNil) // it has autoconvert out of range.
+	c.Assert(val, Equals, "0")
+
+	val, err = sv.Validate(vars, "99999", ScopeSession)
+	c.Assert(err, IsNil) // it has autoconvert out of range.
+	c.Assert(val, Equals, "99999")
+
+	c.Assert(sv.SetSessionFromHook(vars, "99999"), IsNil) // sets
+	c.Assert(vars.MaxExecutionTime, Equals, uint64(99999))
+}
+
+func (*testSysVarSuite) TestCollationServer(c *C) {
+	sv := GetSysVar(CollationServer)
+	vars := NewSessionVars()
+
+	val, err := sv.Validate(vars, "LATIN1_bin", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "latin1_bin") // test normalization
+
+	_, err = sv.Validate(vars, "BOGUSCOLLation", ScopeSession)
+	c.Assert(err.Error(), Equals, "[ddl:1273]Unknown collation: 'BOGUSCOLLation'")
+
+	c.Assert(sv.SetSessionFromHook(vars, "latin1_bin"), IsNil)
+	c.Assert(vars.systems[CharacterSetServer], Equals, "latin1") // check it also changes charset.
+
+	c.Assert(sv.SetSessionFromHook(vars, "utf8mb4_bin"), IsNil)
+	c.Assert(vars.systems[CharacterSetServer], Equals, "utf8mb4") // check it also changes charset.
+}
+
+func (*testSysVarSuite) TestTimeZone(c *C) {
+	sv := GetSysVar(TimeZone)
+	vars := NewSessionVars()
+
+	// TiDB uses the Golang TZ library, so TZs are case-sensitive.
+	// Unfortunately this is not strictly MySQL compatible. i.e.
+	// This should not fail:
+	// val, err := sv.Validate(vars, "America/EDMONTON", ScopeSession)
+	// See: https://github.com/pingcap/tidb/issues/8087
+
+	val, err := sv.Validate(vars, "America/Edmonton", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "America/Edmonton")
+
+	val, err = sv.Validate(vars, "+10:00", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "+10:00")
+
+	val, err = sv.Validate(vars, "UTC", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "UTC")
+
+	val, err = sv.Validate(vars, "+00:00", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "+00:00")
+
+	c.Assert(sv.SetSessionFromHook(vars, "UTC"), IsNil) // sets
+	tz, err := parseTimeZone("UTC")
+	c.Assert(err, IsNil)
+	c.Assert(vars.TimeZone, Equals, tz)
+
+}
+
+func (*testSysVarSuite) TestForeignKeyChecks(c *C) {
+	sv := GetSysVar(ForeignKeyChecks)
+	vars := NewSessionVars()
+
+	val, err := sv.Validate(vars, "on", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "OFF") // warns and refuses to set ON.
+
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	c.Assert(warn.Error(), Equals, "[variable:8047]variable 'foreign_key_checks' does not yet support value: on")
+
+}
+
+func (*testSysVarSuite) TestTxnIsolation(c *C) {
+	sv := GetSysVar(TxnIsolation)
+	vars := NewSessionVars()
+
+	_, err := sv.Validate(vars, "on", ScopeSession)
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tx_isolation' can't be set to the value of 'on'")
+
+	val, err := sv.Validate(vars, "read-COMMitted", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "READ-COMMITTED")
+
+	_, err = sv.Validate(vars, "Serializable", ScopeSession)
+	c.Assert(err.Error(), Equals, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
+
+	_, err = sv.Validate(vars, "read-uncommitted", ScopeSession)
+	c.Assert(err.Error(), Equals, "[variable:8048]The isolation level 'READ-UNCOMMITTED' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
+
+	vars.systems[TiDBSkipIsolationLevelCheck] = "ON"
+
+	val, err = sv.Validate(vars, "Serializable", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "SERIALIZABLE")
+}
+
+func (*testSysVarSuite) TestTiDBMultiStatementMode(c *C) {
+	sv := GetSysVar(TiDBMultiStatementMode)
+	vars := NewSessionVars()
+
+	val, err := sv.Validate(vars, "on", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "ON")
+	c.Assert(sv.SetSessionFromHook(vars, val), IsNil)
+	c.Assert(vars.MultiStatementMode, Equals, 1)
+
+	val, err = sv.Validate(vars, "0", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "OFF")
+	c.Assert(sv.SetSessionFromHook(vars, val), IsNil)
+	c.Assert(vars.MultiStatementMode, Equals, 0)
+
+	val, err = sv.Validate(vars, "Warn", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "WARN")
+	c.Assert(sv.SetSessionFromHook(vars, val), IsNil)
+	c.Assert(vars.MultiStatementMode, Equals, 2)
+}
+
+func (*testSysVarSuite) TestReadOnlyNoop(c *C) {
+	vars := NewSessionVars()
+	for _, name := range []string{TxReadOnly, TransactionReadOnly} {
+		sv := GetSysVar(name)
+		val, err := sv.Validate(vars, "on", ScopeSession)
+		c.Assert(err.Error(), Equals, "[variable:1235]function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions")
+		c.Assert(val, Equals, "OFF")
+	}
+}
+
+func (*testSysVarSuite) TestSkipInit(c *C) {
+	sv := SysVar{Scope: ScopeGlobal, Name: "skipinit1", Value: On, Type: TypeBool}
+	c.Assert(sv.SkipInit(), IsTrue)
+
+	sv = SysVar{Scope: ScopeGlobal | ScopeSession, Name: "skipinit1", Value: On, Type: TypeBool}
+	c.Assert(sv.SkipInit(), IsFalse)
+
+	sv = SysVar{Scope: ScopeSession, Name: "skipinit1", Value: On, Type: TypeBool}
+	c.Assert(sv.SkipInit(), IsFalse)
+
+	sv = SysVar{Scope: ScopeSession, Name: "skipinit1", Value: On, Type: TypeBool, skipInit: true}
+	c.Assert(sv.SkipInit(), IsTrue)
+}
+
+func (*testSysVarSuite) TestInstanceScopedVars(c *C) {
+	// This tests instance scoped variables through GetSessionOrGlobalSystemVar().
+	// Eventually these should be changed to use getters so that the switch
+	// statement in GetSessionOnlySysVars can be removed.
+
+	vars := NewSessionVars()
+
+	val, err := GetSessionOrGlobalSystemVar(vars, TiDBCurrentTS)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, fmt.Sprintf("%d", vars.TxnCtx.StartTS))
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBLastTxnInfo)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, vars.LastTxnInfo)
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBLastQueryInfo)
+	c.Assert(err, IsNil)
+	info, err := json.Marshal(vars.LastQueryInfo)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, string(info))
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBGeneralLog)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, BoolToOnOff(ProcessGeneralLog.Load()))
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBPProfSQLCPU)
+	c.Assert(err, IsNil)
+	expected := "0"
+	if EnablePProfSQLCPU.Load() {
+		expected = "1"
+	}
+	c.Assert(val, Equals, expected)
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBExpensiveQueryTimeThreshold)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveQueryTimeThreshold)))
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBMemoryUsageAlarmRatio)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()))
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBConfig)
+	c.Assert(err, IsNil)
+	conf := config.GetGlobalConfig()
+	j, err := json.MarshalIndent(conf, "", "\t")
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, config.HideConfig(string(j)))
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBForcePriority)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))])
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBDDLSlowOprThreshold)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, strconv.FormatUint(uint64(atomic.LoadUint32(&DDLSlowOprThreshold)), 10))
+
+	val, err = GetSessionOrGlobalSystemVar(vars, PluginDir)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, config.GetGlobalConfig().Plugin.Dir)
+
+	val, err = GetSessionOrGlobalSystemVar(vars, PluginLoad)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, config.GetGlobalConfig().Plugin.Load)
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBSlowLogThreshold)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10))
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBRecordPlanInSlowLog)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, strconv.FormatUint(uint64(atomic.LoadUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog)), 10))
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBEnableSlowLog)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, BoolToOnOff(config.GetGlobalConfig().Log.EnableSlowLog))
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBQueryLogMaxLen)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10))
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBCheckMb4ValueInUTF8)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8))
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBCapturePlanBaseline)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, CapturePlanBaseline.GetVal())
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBFoundInPlanCache)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, BoolToOnOff(vars.PrevFoundInPlanCache))
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBFoundInBinding)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, BoolToOnOff(vars.PrevFoundInBinding))
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBEnableCollectExecutionInfo)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, BoolToOnOff(config.GetGlobalConfig().EnableCollectExecutionInfo))
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBTxnScope)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, vars.TxnScope.GetVarValue())
+}
+
+// Calling GetSysVars/GetSysVar needs to return a deep copy, otherwise there will be data races.
+// This is a bit unfortunate, since the only time the race occurs is in the testsuite (Enabling/Disabling SEM) and
+// during startup (setting the .Value of ScopeNone variables). In future it might also be able
+// to fix this by delaying the LoadSysVarCacheLoop start time until after the server is fully initialized.
+func (*testSysVarSuite) TestDeepCopyGetSysVars(c *C) {
+	// Check GetSysVar
+	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "datarace", Value: On, Type: TypeBool}
+	RegisterSysVar(&sv)
+	svcopy := GetSysVar("datarace")
+	svcopy.Name = "datarace2"
+	c.Assert(sv.Name, Equals, "datarace")
+	c.Assert(GetSysVar("datarace").Name, Equals, "datarace")
+	UnregisterSysVar("datarace")
+
+	// Check GetSysVars
+	sv = SysVar{Scope: ScopeGlobal | ScopeSession, Name: "datarace", Value: On, Type: TypeBool}
+	RegisterSysVar(&sv)
+	for name, svcopy := range GetSysVars() {
+		if name == "datarace" {
+			svcopy.Name = "datarace2"
+		}
+	}
+	c.Assert(sv.Name, Equals, "datarace")
+	c.Assert(GetSysVar("datarace").Name, Equals, "datarace")
+	UnregisterSysVar("datarace")
 }

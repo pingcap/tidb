@@ -17,6 +17,7 @@ import (
 	"context"
 
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
@@ -46,10 +47,6 @@ func (t *mockTxn) LockKeys(_ context.Context, _ *LockCtx, _ ...Key) error {
 
 func (t *mockTxn) SetOption(opt int, val interface{}) {
 	t.opts[opt] = val
-}
-
-func (t *mockTxn) DelOption(opt int) {
-	delete(t.opts, opt)
 }
 
 func (t *mockTxn) GetOption(opt int) interface{} {
@@ -106,10 +103,6 @@ func (t *mockTxn) GetSnapshot() Snapshot {
 	return nil
 }
 
-func (t *mockTxn) GetUnionStore() UnionStore {
-	return nil
-}
-
 func (t *mockTxn) NewStagingBuffer() MemBuffer {
 	return nil
 }
@@ -158,7 +151,7 @@ func (s *mockStorage) Begin() (Transaction, error) {
 	return newMockTxn(), nil
 }
 
-func (s *mockStorage) BeginWithOption(option TransactionOption) (Transaction, error) {
+func (s *mockStorage) BeginWithOption(option tikv.StartTSOption) (Transaction, error) {
 	return newMockTxn(), nil
 }
 
@@ -217,6 +210,10 @@ func (s *mockStorage) GetMemCache() MemManager {
 	return nil
 }
 
+func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
+	return 0
+}
+
 // newMockStorage creates a new mockStorage.
 func newMockStorage() Storage {
 	return &mockStorage{}
@@ -258,4 +255,3 @@ func (s *mockSnapshot) IterReverse(k Key) (Iterator, error) {
 }
 
 func (s *mockSnapshot) SetOption(opt int, val interface{}) {}
-func (s *mockSnapshot) DelOption(opt int)                  {}

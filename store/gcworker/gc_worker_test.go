@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	pd "github.com/tikv/pd/client"
 )
@@ -258,10 +259,10 @@ func (s *testGCWorkerSuite) TestMinStartTS(c *C) {
 		strconv.FormatUint(now, 10))
 	c.Assert(err, IsNil)
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "b"),
-		strconv.FormatUint(now-oracle.EncodeTSO(20000), 10))
+		strconv.FormatUint(now-oracle.ComposeTS(20000, 0), 10))
 	c.Assert(err, IsNil)
-	sp = s.gcWorker.calcSafePointByMinStartTS(ctx, now-oracle.EncodeTSO(10000))
-	c.Assert(sp, Equals, now-oracle.EncodeTSO(20000))
+	sp = s.gcWorker.calcSafePointByMinStartTS(ctx, now-oracle.ComposeTS(10000, 0))
+	c.Assert(sp, Equals, now-oracle.ComposeTS(20000, 0)-1)
 }
 
 func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
@@ -412,7 +413,7 @@ func (s *testGCWorkerSuite) TestStatusVars(c *C) {
 
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	ctx := context.Background()
-	bo := tikv.NewBackofferWithVars(ctx, tikv.GcOneRegionMaxBackoff, nil)
+	bo := tikv.NewBackofferWithVars(ctx, gcOneRegionMaxBackoff, nil)
 	loc, err := s.tikvStore.GetRegionCache().LocateKey(bo, []byte(""))
 	c.Assert(err, IsNil)
 	var regionErr *errorpb.Error
@@ -943,7 +944,7 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionEnlargeCausedByRegionM
 			mCluster.Merge(s.initRegion.regionID, region2)
 			regionMeta, _ := mCluster.GetRegion(s.initRegion.regionID)
 			err := s.tikvStore.GetRegionCache().OnRegionEpochNotMatch(
-				tikv.NewNoopBackoff(context.Background()),
+				retry.NewNoopBackoff(context.Background()),
 				&tikv.RPCContext{Region: regionID, Store: &tikv.Store{}},
 				[]*metapb.Region{regionMeta})
 			c.Assert(err, IsNil)
@@ -1586,5 +1587,54 @@ func (s *testGCWorkerSuite) TestGCPlacementRules(c *C) {
 	dr := util.DelRangeTask{JobID: 1, ElementID: 1}
 	pid, err := s.gcWorker.doGCPlacementRules(dr)
 	c.Assert(pid, Equals, int64(1))
+	c.Assert(err, IsNil)
+}
+
+func (s *testGCWorkerSuite) TestGCWithPendingTxn(c *C) {
+	ctx := context.Background()
+	gcSafePointCacheInterval = 0
+	err := s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
+	c.Assert(err, IsNil)
+
+	k1 := []byte("tk1")
+	v1 := []byte("v1")
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.SetOption(kv.Pessimistic, true)
+	lockCtx := &kv.LockCtx{ForUpdateTS: txn.StartTS(), WaitStartTime: time.Now()}
+
+	// Lock the key.
+	err = txn.Set(k1, v1)
+	c.Assert(err, IsNil)
+	err = txn.LockKeys(ctx, lockCtx, k1)
+	c.Assert(err, IsNil)
+
+	// Prepare to run gc with txn's startTS as the safepoint ts.
+	spkv := s.tikvStore.GetSafePointKV()
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(txn.StartTS(), 10))
+	c.Assert(err, IsNil)
+	s.mustSetTiDBServiceSafePoint(c, txn.StartTS(), txn.StartTS())
+	veryLong := gcDefaultLifeTime * 100
+	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(c)).Add(-veryLong))
+	c.Assert(err, IsNil)
+	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
+	s.oracle.AddOffset(time.Minute * 10)
+	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanTrue)
+	c.Assert(err, IsNil)
+
+	// Trigger the tick let the gc job start.
+	err = s.gcWorker.leaderTick(ctx)
+	c.Assert(err, IsNil)
+	// Wait for GC finish
+	select {
+	case err = <-s.gcWorker.done:
+		s.gcWorker.gcIsRunning = false
+		break
+	case <-time.After(time.Second * 10):
+		err = errors.New("receive from s.gcWorker.done timeout")
+	}
+	c.Assert(err, IsNil)
+
+	err = txn.Commit(ctx)
 	c.Assert(err, IsNil)
 }

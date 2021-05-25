@@ -11,8 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package tikv provides tcp connection to kvserver.
-package tikv
+// Package client provides tcp connection to kvserver.
+package client
 
 import (
 	"context"
@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -662,7 +663,7 @@ func (c *batchCommandsClient) recreateStreamingClient(err error, streamClient *b
 	*epoch++
 
 	c.failPendingRequests(err) // fail all pending requests.
-	b := NewBackofferWithVars(context.Background(), math.MaxInt32, nil)
+	b := retry.NewBackofferWithVars(context.Background(), math.MaxInt32, nil)
 	for { // try to re-create the streaming in the loop.
 		if c.isStopped() {
 			return true
@@ -672,7 +673,7 @@ func (c *batchCommandsClient) recreateStreamingClient(err error, streamClient *b
 			break
 		}
 
-		err2 := b.Backoff(BoTiKVRPC, err1)
+		err2 := b.Backoff(retry.BoTiKVRPC, err1)
 		// As timeout is set to math.MaxUint32, err2 should always be nil.
 		// This line is added to make the 'make errcheck' pass.
 		terror.Log(err2)

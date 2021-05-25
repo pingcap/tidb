@@ -14,12 +14,14 @@
 package expression
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -27,20 +29,13 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 )
-
-func init() {
-	// Some test depends on the values of timeutil.SystemLocation()
-	// If we don't SetSystemTZ() here, the value would change unpredictable.
-	// Affectd by the order whether a testsuite runs before or after integration test.
-	// Note, SetSystemTZ() is a sync.Once operation.
-	timeutil.SetSystemTZ("system")
-}
 
 func (s *testEvaluatorSuite) TestDate(c *C) {
 	tblDate := []struct {
@@ -812,7 +807,7 @@ func (s *testEvaluatorSuite) TestTime(c *C) {
 }
 
 func resetStmtContext(ctx sessionctx.Context) {
-	ctx.GetSessionVars().StmtCtx.ResetNowTs()
+	ctx.GetSessionVars().StmtCtx.ResetStmtCache()
 }
 
 func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
@@ -2862,8 +2857,105 @@ func (s *testEvaluatorSuite) TestTidbParseTso(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestTiDBBoundedStaleness(c *C) {
+	t1, err := time.Parse(types.TimeFormat, "2015-09-21 09:53:04")
+	c.Assert(err, IsNil)
+	// time.Parse uses UTC time zone by default, we need to change it to Local manually.
+	t1 = t1.Local()
+	t1Str := t1.Format(types.TimeFormat)
+	t2 := time.Now()
+	t2Str := t2.Format(types.TimeFormat)
+	timeZone := time.Local
+	s.ctx.GetSessionVars().TimeZone = timeZone
+	tests := []struct {
+		leftTime     interface{}
+		rightTime    interface{}
+		injectSafeTS uint64
+		isNull       bool
+		expect       time.Time
+	}{
+		// SafeTS is in the range.
+		{
+			leftTime:     t1Str,
+			rightTime:    t2Str,
+			injectSafeTS: oracle.GoTimeToTS(t2.Add(-1 * time.Second)),
+			isNull:       false,
+			expect:       t2.Add(-1 * time.Second),
+		},
+		// SafeTS is less than the left time.
+		{
+			leftTime:     t1Str,
+			rightTime:    t2Str,
+			injectSafeTS: oracle.GoTimeToTS(t1.Add(-1 * time.Second)),
+			isNull:       false,
+			expect:       t1,
+		},
+		// SafeTS is bigger than the right time.
+		{
+			leftTime:     t1Str,
+			rightTime:    t2Str,
+			injectSafeTS: oracle.GoTimeToTS(t2.Add(time.Second)),
+			isNull:       false,
+			expect:       t2,
+		},
+		// Wrong time order.
+		{
+			leftTime:     t2Str,
+			rightTime:    t1Str,
+			injectSafeTS: 0,
+			isNull:       true,
+			expect:       time.Time{},
+		},
+	}
+
+	fc := funcs[ast.TiDBBoundedStaleness]
+	for _, test := range tests {
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+			fmt.Sprintf("return(%v)", test.injectSafeTS)), IsNil)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(test.leftTime), types.NewDatum(test.rightTime)}))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		if test.isNull {
+			c.Assert(d.IsNull(), IsTrue)
+		} else {
+			goTime, err := d.GetMysqlTime().GoTime(timeZone)
+			c.Assert(err, IsNil)
+			c.Assert(goTime.Format(types.TimeFormat), Equals, test.expect.Format(types.TimeFormat))
+		}
+		resetStmtContext(s.ctx)
+	}
+
+	// Test whether it's deterministic.
+	safeTime1 := t2.Add(-1 * time.Second)
+	safeTS1 := oracle.GoTimeToTS(safeTime1)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		fmt.Sprintf("return(%v)", safeTS1)), IsNil)
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(t1Str), types.NewDatum(t2Str)}))
+	c.Assert(err, IsNil)
+	d, err := evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err, IsNil)
+	goTime, err := d.GetMysqlTime().GoTime(timeZone)
+	c.Assert(err, IsNil)
+	resultTime := goTime.Format(types.TimeFormat)
+	c.Assert(resultTime, Equals, safeTime1.Format(types.TimeFormat))
+	// SafeTS updated.
+	safeTime2 := t2.Add(1 * time.Second)
+	safeTS2 := oracle.GoTimeToTS(safeTime2)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		fmt.Sprintf("return(%v)", safeTS2)), IsNil)
+	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(t1Str), types.NewDatum(t2Str)}))
+	c.Assert(err, IsNil)
+	d, err = evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err, IsNil)
+	// Still safeTime1
+	c.Assert(resultTime, Equals, safeTime1.Format(types.TimeFormat))
+	resetStmtContext(s.ctx)
+	failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS")
+}
+
 func (s *testEvaluatorSuite) TestGetIntervalFromDecimal(c *C) {
-	du := baseDateArithmitical{}
+	du := baseDateArithmetical{}
 
 	tests := []struct {
 		param  string

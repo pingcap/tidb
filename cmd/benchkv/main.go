@@ -17,7 +17,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	_ "net/http/pprof"
 	"sync"
@@ -129,7 +129,7 @@ func main() {
 	terror.MustNil(err)
 
 	defer terror.Call(resp.Body.Close)
-	text, err1 := ioutil.ReadAll(resp.Body)
+	text, err1 := io.ReadAll(resp.Body)
 	terror.Log(errors.Trace(err1))
 
 	fmt.Println(string(text))

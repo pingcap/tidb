@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -157,11 +156,6 @@ func (rc *reorgCtx) clean() {
 }
 
 func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.TableInfo, lease time.Duration, f func() error) error {
-	// lease = 0 means it's in an integration test. In this case we don't delay so the test won't run too slowly.
-	if lease > 0 {
-		delayForAsyncCommit()
-	}
-
 	job := reorgInfo.Job
 	// This is for tests compatible, because most of the early tests try to build the reorg job manually
 	// without reorg meta info, which will cause nil pointer in here.
@@ -173,6 +167,12 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		}
 	}
 	if w.reorgCtx.doneCh == nil {
+		// Since reorg job will be interrupted for polling the cancel action outside. we don't need to wait for 2.5s
+		// for the later entrances.
+		// lease = 0 means it's in an integration test. In this case we don't delay so the test won't run too slowly.
+		if lease > 0 {
+			delayForAsyncCommit()
+		}
 		// start a reorganization job
 		w.wg.Add(1)
 		w.reorgCtx.doneCh = make(chan error, 1)
@@ -534,7 +534,7 @@ func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, prior
 }
 
 func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
-	ver, err = store.CurrentVersion(oracle.GlobalTxnScope)
+	ver, err = store.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
 		return ver, errors.Trace(err)
 	} else if ver.Ver <= 0 {
