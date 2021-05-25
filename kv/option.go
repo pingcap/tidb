@@ -59,6 +59,8 @@ const (
 	IsStalenessReadOnly
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels
+	// ResourceGroupTag indicates the resource group of the kv request.
+	ResourceGroupTag
 )
 
 // ReplicaReadType is the type of replica to read data from
