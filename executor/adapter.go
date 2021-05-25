@@ -271,7 +271,7 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 // RebuildPlan rebuilds current execute statement plan.
 // It returns the current information schema version that 'a' is using.
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
-	is := a.Ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	is := a.Ctx.GetInfoSchema().(infoschema.InfoSchema)
 	a.InfoSchema = is
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
 		return 0, err
@@ -286,7 +286,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 }
 
 func (a *ExecStmt) setPProfLabel(ctx context.Context) context.Context {
-	if !config.GetGlobalConfig().TopStmt.Enable || a.Plan == nil {
+	if a.Plan == nil || !config.TopSQLEnabled() {
 		return ctx
 	}
 	// ExecuteExec will rewrite `a.Plan`, so set goroutine label should be executed after `a.buildExecutor`.
@@ -294,7 +294,7 @@ func (a *ExecStmt) setPProfLabel(ctx context.Context) context.Context {
 	normalizedPlan, planDigest := getPlanDigest(a.Ctx, a.Plan)
 	if len(planDigest) > 0 {
 		ctx = pprof.WithLabels(ctx, pprof.Labels(
-			tracecpu.LabelSQLDigest, sqlDigest,
+			tracecpu.LabelSQLDigest, sqlDigest.String(),
 			tracecpu.LabelPlanDigest, planDigest))
 		pprof.SetGoroutineLabels(ctx)
 		tracecpu.GlobalStmtProfiler.RegisterPlan(planDigest, normalizedPlan)
@@ -891,14 +891,17 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 }
 
 // getPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
-func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, planDigest string) {
-	normalized, planDigest = sctx.GetSessionVars().StmtCtx.GetPlanDigest()
-	if len(normalized) > 0 {
-		return
+func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (string, string) {
+	normalized, planDigest := sctx.GetSessionVars().StmtCtx.GetPlanDigest()
+	if len(normalized) > 0 && planDigest != nil {
+		return normalized, planDigest.String()
 	}
 	normalized, planDigest = plannercore.NormalizePlan(p)
+	if len(normalized) == 0 || planDigest == nil {
+		return "", ""
+	}
 	sctx.GetSessionVars().StmtCtx.SetPlanDigest(normalized, planDigest)
-	return
+	return normalized, planDigest.String()
 }
 
 // LogSlowQuery is used to print the slow query in the log files.
@@ -956,7 +959,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		SQL:               sql.String(),
-		Digest:            digest,
+		Digest:            digest.String(),
 		TimeTotal:         costTime,
 		TimeParse:         sessVars.DurationParse,
 		TimeCompile:       sessVars.DurationCompile,
@@ -1014,7 +1017,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:        sql.String(),
-			Digest:     digest,
+			Digest:     digest.String(),
 			Start:      sessVars.StartTime,
 			Duration:   costTime,
 			Detail:     sessVars.StmtCtx.GetExecDetails(),
@@ -1101,7 +1104,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		}
 		prevSQL = sessVars.PrevStmt.String()
 	}
-	sessVars.SetPrevStmtDigest(digest)
+	sessVars.SetPrevStmtDigest(digest.String())
 
 	// No need to encode every time, so encode lazily.
 	planGenerator := func() (string, string) {
@@ -1142,7 +1145,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		Charset:         charset,
 		Collation:       collation,
 		NormalizedSQL:   normalizedSQL,
-		Digest:          digest,
+		Digest:          digest.String(),
 		PrevSQL:         prevSQL,
 		PrevSQLDigest:   prevSQLDigest,
 		PlanGenerator:   planGenerator,

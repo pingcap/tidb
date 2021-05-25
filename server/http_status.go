@@ -21,7 +21,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -194,7 +194,7 @@ func (s *Server) startHTTPServer() {
 			_, err := w.Write([]byte(strconv.Itoa(util.GetGOGC())))
 			terror.Log(err)
 		case http.MethodPost:
-			body, err := ioutil.ReadAll(r.Body)
+			body, err := io.ReadAll(r.Body)
 			if err != nil {
 				terror.Log(err)
 				return

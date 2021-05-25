@@ -30,6 +30,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -50,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table"
@@ -59,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
@@ -974,7 +977,11 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.LockCtx {
+	var planDigest *parser.Digest
 	_, sqlDigest := seVars.StmtCtx.SQLDigest()
+	if config.TopSQLEnabled() {
+		_, planDigest = seVars.StmtCtx.GetPlanDigest()
+	}
 	return &tikvstore.LockCtx{
 		Killed:                &seVars.Killed,
 		ForUpdateTS:           seVars.TxnCtx.GetForUpdateTS(),
@@ -984,7 +991,14 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.Loc
 		LockKeysDuration:      &seVars.StmtCtx.LockKeysDuration,
 		LockKeysCount:         &seVars.StmtCtx.LockKeysCount,
 		LockExpired:           &seVars.TxnCtx.LockExpire,
-		ResourceGroupTag:      resourcegrouptag.EncodeResourceGroupTag(sqlDigest),
+		ResourceGroupTag:      resourcegrouptag.EncodeResourceGroupTag(sqlDigest, planDigest),
+		OnDeadlock: func(deadlock *tikverr.ErrDeadlock) {
+			// TODO: Support collecting retryable deadlocks according to the config.
+			if !deadlock.IsRetryable {
+				rec := deadlockhistory.ErrDeadlockToDeadlockRecord(deadlock)
+				deadlockhistory.GlobalDeadlockHistory.Push(rec)
+			}
+		},
 	}
 }
 
@@ -1623,14 +1637,14 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		if err != nil {
 			return
 		}
-		if config.GetGlobalConfig().TopStmt.Enable {
+		if config.TopSQLEnabled() {
 			sc.OriginalSQL = s.Text()
 			sc.SQLDigest()
 			normalizedSQL, digest := sc.SQLDigest()
 			if len(normalizedSQL) > 0 {
-				goctx := pprof.WithLabels(context.Background(), pprof.Labels(tracecpu.LabelSQLDigest, digest))
+				goctx := pprof.WithLabels(context.Background(), pprof.Labels(tracecpu.LabelSQLDigest, digest.String()))
 				pprof.SetGoroutineLabels(goctx)
-				tracecpu.GlobalStmtProfiler.RegisterSQL(digest, normalizedSQL)
+				tracecpu.GlobalStmtProfiler.RegisterSQL(digest.String(), normalizedSQL)
 			}
 		}
 	}
@@ -1796,4 +1810,10 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 		req.SetCol(idx, virCols.Column(i))
 	}
 	return nil
+}
+
+func setResourceGroupTagForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
+	if snapshot != nil && config.TopSQLEnabled() {
+		snapshot.SetOption(kv.ResourceGroupTag, sc.GetResourceGroupTag())
+	}
 }

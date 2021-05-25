@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"sort"
@@ -1991,7 +1990,7 @@ func BenchmarkReadLastLinesOfHugeLine(b *testing.B) {
 		hugeLine[i] = 'a' + byte(i%26)
 	}
 	fileName := "tidb.log"
-	err := ioutil.WriteFile(fileName, hugeLine, 0644)
+	err := os.WriteFile(fileName, hugeLine, 0644)
 	if err != nil {
 		b.Fatal(err)
 	}

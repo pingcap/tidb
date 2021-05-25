@@ -1027,7 +1027,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
-	if config.GetGlobalConfig().TopStmt.Enable {
+	if config.TopSQLEnabled() {
 		normalizedSQL, digest := getLastStmtInConn{cc}.PProfLabelNormalizedAndDigest()
 		if len(normalizedSQL) > 0 {
 			defer pprof.SetGoroutineLabels(ctx)
@@ -2191,11 +2191,13 @@ func (cc getLastStmtInConn) PProfLabelNormalizedAndDigest() (string, string) {
 	case mysql.ComStmtReset:
 		return "ResetStmt", ""
 	case mysql.ComQuery, mysql.ComStmtPrepare:
-		return parser.NormalizeDigest(string(hack.String(data)))
+		normalized, digest := parser.NormalizeDigest(string(hack.String(data)))
+		return normalized, digest.String()
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
 		str := cc.preparedStmt2StringNoArgs(stmtID)
-		return parser.NormalizeDigest(str)
+		normalized, digest := parser.NormalizeDigest(str)
+		return normalized, digest.String()
 	default:
 		return "", ""
 	}

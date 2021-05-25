@@ -81,7 +81,7 @@ func (sp *StmtProfiler) startCPUProfileWorker() {
 }
 
 func (sp *StmtProfiler) doCPUProfile() {
-	interval := config.GetGlobalConfig().TopStmt.RefreshInterval
+	interval := config.GetGlobalConfig().TopSQL.RefreshInterval
 	task := sp.newProfileTask()
 	if err := pprof.StartCPUProfile(task.buf); err != nil {
 		return
@@ -226,7 +226,7 @@ func (sp *StmtProfiler) hasExportProfileTask() bool {
 }
 
 func (sp *StmtProfiler) isEnabled() bool {
-	return config.GetGlobalConfig().TopStmt.Enable || sp.hasExportProfileTask()
+	return config.GetGlobalConfig().TopSQL.Enable || sp.hasExportProfileTask()
 }
 
 func StartCPUProfile(w io.Writer) error {
