@@ -69,6 +69,8 @@ func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
 	return &usageInfo, nil
 }
 
+// TemporaryTableFeatureChecker is defined to avoid package circle dependency.
+// The session struct implements this interface.
 type TemporaryTableFeatureChecker interface {
 	TemporaryTableExists() bool
 }
