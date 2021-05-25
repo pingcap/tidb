@@ -159,6 +159,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 			},
 		})
 	}
+	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
 	return nil
 }
 
@@ -391,7 +392,7 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 	var tblID int64
 	var tblName string
 	var partName string
-	is := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	is := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	if e.partInfo != nil {
 		tblID = e.partInfo.ID
 		tblInfo, _, partInfo := is.FindTableByPartitionID(tblID)

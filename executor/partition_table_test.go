@@ -122,7 +122,7 @@ func (s *partitionTableSuite) TestPointGetwithRangeAndListPartitionTable(c *C) {
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 
 	// list partition table
-	tk.MustExec(`create table tlist(a int, b int, unique index idx_a(a), index idx_b(b)) partition by list(a)( 
+	tk.MustExec(`create table tlist(a int, b int, unique index idx_a(a), index idx_b(b)) partition by list(a)(
 		partition p0 values in (NULL, 1, 2, 3, 4),
 			partition p1 values in (5, 6, 7, 8),
 			partition p2 values in (9, 10, 11, 12));`)
@@ -172,15 +172,15 @@ func (s *partitionTableSuite) TestPointGetwithRangeAndListPartitionTable(c *C) {
 	}
 
 	// test table dual
-	queryRange1 := fmt.Sprintf("select a from trange1 where a=200")
+	queryRange1 := "select a from trange1 where a=200"
 	c.Assert(tk.HasPlan(queryRange1, "TableDual"), IsTrue) // check if TableDual is used
 	tk.MustQuery(queryRange1).Check(testkit.Rows())
 
-	queryRange2 := fmt.Sprintf("select a from trange2 where a=200")
+	queryRange2 := "select a from trange2 where a=200"
 	c.Assert(tk.HasPlan(queryRange2, "TableDual"), IsTrue) // check if TableDual is used
 	tk.MustQuery(queryRange2).Check(testkit.Rows())
 
-	queryList := fmt.Sprintf("select a from tlist where a=200")
+	queryList := "select a from tlist where a=200"
 	c.Assert(tk.HasPlan(queryList, "TableDual"), IsTrue) // check if TableDual is used
 	tk.MustQuery(queryList).Check(testkit.Rows())
 }
@@ -284,7 +284,7 @@ func (s *partitionTableSuite) TestPartitionInfoDisable(c *C) {
   PARTITION p202010 VALUES LESS THAN ("2020-11-01"),
   PARTITION p202011 VALUES LESS THAN ("2020-12-01")
 )`)
-	is := tk.Se.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	is := tk.Se.GetInfoSchema().(infoschema.InfoSchema)
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t_info_null"))
 	c.Assert(err, IsNil)
 

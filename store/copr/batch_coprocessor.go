@@ -24,6 +24,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -389,7 +390,13 @@ func (b *batchCopIterator) run(ctx context.Context) {
 	// We run workers for every batch cop.
 	for _, task := range b.tasks {
 		b.wg.Add(1)
-		bo := backoff.NewBackofferWithVars(ctx, copNextMaxBackoff, b.vars)
+		boMaxSleep := copNextMaxBackoff
+		failpoint.Inject("ReduceCopNextMaxBackoff", func(value failpoint.Value) {
+			if value.(bool) {
+				boMaxSleep = 2
+			}
+		})
+		bo := backoff.NewBackofferWithVars(ctx, boMaxSleep, b.vars)
 		go b.handleTask(ctx, bo, task)
 	}
 	b.wg.Wait()
@@ -507,12 +514,13 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, ta
 	}
 
 	req := tikvrpc.NewRequest(task.cmdType, &copReq, kvrpcpb.Context{
-		IsolationLevel: isolationLevelToPB(b.req.IsolationLevel),
-		Priority:       priorityToPB(b.req.Priority),
-		NotFillCache:   b.req.NotFillCache,
-		RecordTimeStat: true,
-		RecordScanStat: true,
-		TaskId:         b.req.TaskID,
+		IsolationLevel:   isolationLevelToPB(b.req.IsolationLevel),
+		Priority:         priorityToPB(b.req.Priority),
+		NotFillCache:     b.req.NotFillCache,
+		RecordTimeStat:   true,
+		RecordScanStat:   true,
+		TaskId:           b.req.TaskID,
+		ResourceGroupTag: b.req.ResourceGroupTag,
 	})
 	req.StoreTp = tikvrpc.TiFlash
 

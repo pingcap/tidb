@@ -700,12 +700,13 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	}
 
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, options.GetTiKVReplicaReadType(worker.req.ReplicaRead), &worker.replicaReadSeed, kvrpcpb.Context{
-		IsolationLevel: isolationLevelToPB(worker.req.IsolationLevel),
-		Priority:       priorityToPB(worker.req.Priority),
-		NotFillCache:   worker.req.NotFillCache,
-		RecordTimeStat: true,
-		RecordScanStat: true,
-		TaskId:         worker.req.TaskID,
+		IsolationLevel:   isolationLevelToPB(worker.req.IsolationLevel),
+		Priority:         priorityToPB(worker.req.Priority),
+		NotFillCache:     worker.req.NotFillCache,
+		RecordTimeStat:   true,
+		RecordScanStat:   true,
+		TaskId:           worker.req.TaskID,
+		ResourceGroupTag: worker.req.ResourceGroupTag,
 	})
 	req.StoreTp = getEndPointType(task.storeType)
 	startTime := time.Now()
