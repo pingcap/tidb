@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
@@ -341,7 +341,7 @@ func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
 	}
 	keys := make([]kv.Key, 0, txn.countHint())
 	buf := txn.Transaction.GetMemBuffer()
-	buf.InspectStage(txn.stagingHandle, func(k kv.Key, flags tikvstore.KeyFlags, v []byte) {
+	buf.InspectStage(txn.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) {
 		if !keyNeedToLock(k, v, flags) {
 			return
 		}
@@ -350,7 +350,7 @@ func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
 	return keys, nil
 }
 
-func keyNeedToLock(k, v []byte, flags tikvstore.KeyFlags) bool {
+func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	isTableKey := bytes.HasPrefix(k, tablecodec.TablePrefix())
 	if !isTableKey {
 		// meta key always need to lock.
@@ -436,14 +436,14 @@ type txnFuture struct {
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	startTS, err := tf.future.Wait()
 	if err == nil {
-		return tf.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(tf.txnScope).SetStartTs(startTS))
+		return tf.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(tf.txnScope).SetStartTS(startTS))
 	} else if config.GetGlobalConfig().Store == "unistore" {
 		return nil, err
 	}
 
 	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
-	return tf.store.BeginWithOption(kv.DefaultTransactionOption().SetTxnScope(tf.txnScope))
+	return tf.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(tf.txnScope))
 }
 
 func (s *session) getTxnFuture(ctx context.Context) *txnFuture {

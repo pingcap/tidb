@@ -347,12 +347,14 @@ create table t(
 	d varchar(10),
 	e binary(10),
 	f varchar(10) collate utf8mb4_general_ci,
+	g enum('A','B','C') collate utf8mb4_general_ci,
 	index idx_ab(a(50), b),
 	index idx_cb(c, a),
 	index idx_d(d(2)),
 	index idx_e(e(2)),
 	index idx_f(f),
-	index idx_de(d(2), e)
+	index idx_de(d(2), e),
+	index idx_g(g)
 )`)
 
 	tests := []struct {
@@ -627,6 +629,13 @@ create table t(
 			accessConds: "[in(test.t.d, aab, aac) eq(test.t.e, a)]",
 			filterConds: "[in(test.t.d, aab, aac)]",
 			resultStr:   "[[\"aa\" 0x61,\"aa\" 0x61]]",
+		},
+		{
+			indexPos:    6,
+			exprStr:     "g = 'a'",
+			accessConds: "[eq(test.t.g, a)]",
+			filterConds: "[]",
+			resultStr:   "[[\"A\",\"A\"]]",
 		},
 	}
 

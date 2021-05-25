@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/store/tikv/client"
 	"github.com/pingcap/tidb/store/tikv/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
@@ -107,6 +108,8 @@ type twoPhaseCommitter struct {
 	doingAmend bool
 
 	binlog BinlogExecutor
+
+	resourceGroupTag []byte
 }
 
 type memBufferMutations struct {
@@ -428,6 +431,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	c.lockTTL = txnLockTTL(txn.startTime, size)
 	c.priority = txn.priority.ToPB()
 	c.syncLog = txn.syncLog
+	c.resourceGroupTag = txn.resourceGroupTag
 	c.setDetail(commitDetail)
 	return nil
 }
@@ -791,7 +795,7 @@ func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, tt
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		resp, err := store.SendReq(bo, req, loc.Region, ReadTimeoutShort)
+		resp, err := store.SendReq(bo, req, loc.Region, client.ReadTimeoutShort)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -1428,7 +1432,7 @@ func (c *twoPhaseCommitter) checkSchemaValid(ctx context.Context, checkTS uint64
 
 func (c *twoPhaseCommitter) calculateMaxCommitTS(ctx context.Context) error {
 	// Amend txn with current time first, then we can make sure we have another SafeWindow time to commit
-	currentTS := oracle.EncodeTSO(int64(time.Since(c.txn.startTime)/time.Millisecond)) + c.startTS
+	currentTS := oracle.ComposeTS(int64(time.Since(c.txn.startTime)/time.Millisecond), 0) + c.startTS
 	_, _, err := c.checkSchemaValid(ctx, currentTS, c.txn.schemaVer, true)
 	if err != nil {
 		logutil.Logger(ctx).Info("Schema changed for async commit txn",
@@ -1438,7 +1442,7 @@ func (c *twoPhaseCommitter) calculateMaxCommitTS(ctx context.Context) error {
 	}
 
 	safeWindow := config.GetGlobalConfig().TiKVClient.AsyncCommit.SafeWindow
-	maxCommitTS := oracle.EncodeTSO(int64(safeWindow/time.Millisecond)) + currentTS
+	maxCommitTS := oracle.ComposeTS(int64(safeWindow/time.Millisecond), 0) + currentTS
 	logutil.BgLogger().Debug("calculate MaxCommitTS",
 		zap.Time("startTime", c.txn.startTime),
 		zap.Duration("safeWindow", safeWindow),

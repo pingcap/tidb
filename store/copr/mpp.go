@@ -310,7 +310,7 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 
 	// Drain result from root task.
 	// We don't need to process any special error. When we meet errors, just let it fail.
-	rpcResp, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutUltraLong)
+	rpcResp, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), req.Meta.GetAddress(), wrappedReq, readTimeoutUltraLong)
 
 	if err != nil {
 		logutil.BgLogger().Error("establish mpp connection meet error", zap.String("error", err.Error()))
@@ -340,7 +340,7 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 				return
 			}
 
-			if err1 := bo.BackoffTiKVRPC(errors.Errorf("recv stream response error: %v", err)); err1 != nil {
+			if err1 := bo.Backoff(tikv.BoTiKVRPC(), errors.Errorf("recv stream response error: %v", err)); err1 != nil {
 				if errors.Cause(err) == context.Canceled {
 					logutil.BgLogger().Info("stream recv timeout", zap.Error(err))
 				} else {
@@ -383,9 +383,8 @@ func (m *mppIterator) handleMPPStreamResponse(bo *Backoffer, response *mpp.MPPDa
 	resp.detail.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
 	resp.detail.BackoffTimes = make(map[string]int, len(backoffTimes))
 	for backoff := range backoffTimes {
-		backoffName := backoff.String()
-		resp.detail.BackoffTimes[backoffName] = backoffTimes[backoff]
-		resp.detail.BackoffSleep[backoffName] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
+		resp.detail.BackoffTimes[backoff] = backoffTimes[backoff]
+		resp.detail.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
 	}
 	resp.detail.CalleeAddress = req.Meta.GetAddress()
 
