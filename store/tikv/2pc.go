@@ -107,6 +107,8 @@ type twoPhaseCommitter struct {
 	doingAmend bool
 
 	binlog BinlogExecutor
+
+	resourceGroupTag []byte
 }
 
 type memBufferMutations struct {
@@ -428,6 +430,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	c.lockTTL = txnLockTTL(txn.startTime, size)
 	c.priority = txn.priority.ToPB()
 	c.syncLog = txn.syncLog
+	c.resourceGroupTag = txn.resourceGroupTag
 	c.setDetail(commitDetail)
 	return nil
 }
