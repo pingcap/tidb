@@ -251,19 +251,19 @@ func buildBatchCopTasks(bo *Backoffer, cache *tikv.RegionCache, ranges *tikv.Key
 	const cmdType = tikvrpc.CmdBatchCop
 	rangesLen := ranges.Len()
 	for {
+
+		locations, err := cache.SplitKeyRangesByLocations(bo.TiKVBackoffer(), ranges)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		var tasks []*copTask
-		appendTask := func(regionWithRangeInfo *tikv.KeyLocation, ranges *tikv.KeyRanges) {
+		for _, lo := range locations {
 			tasks = append(tasks, &copTask{
-				region:    regionWithRangeInfo.Region,
-				ranges:    ranges,
+				region:    lo.Location.Region,
+				ranges:    lo.Ranges,
 				cmdType:   cmdType,
 				storeType: storeType,
 			})
-		}
-
-		err := tikv.SplitKeyRanges(bo.TiKVBackoffer(), cache, ranges, appendTask)
-		if err != nil {
-			return nil, errors.Trace(err)
 		}
 
 		var batchTasks []*batchCopTask
@@ -491,6 +491,8 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *Backoffer,
 	return buildBatchCopTasks(bo, b.store.GetRegionCache(), tikv.NewKeyRanges(ranges), b.req.StoreType)
 }
 
+const readTimeoutUltraLong = 3600 * time.Second // For requests that may scan many regions for tiflash.
+
 func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
 	sender := tikv.NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient())
 	var regionInfos = make([]*coprocessor.RegionInfo, 0, len(task.regionInfos))
@@ -525,7 +527,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, ta
 	req.StoreTp = tikvrpc.TiFlash
 
 	logutil.BgLogger().Debug("send batch request to ", zap.String("req info", req.String()), zap.Int("cop task len", len(task.regionInfos)))
-	resp, retry, cancel, err := sender.SendReqToAddr(bo.TiKVBackoffer(), task.ctx, task.regionInfos, req, tikv.ReadTimeoutUltraLong)
+	resp, retry, cancel, err := sender.SendReqToAddr(bo.TiKVBackoffer(), task.ctx, task.regionInfos, req, readTimeoutUltraLong)
 	// If there are store errors, we should retry for all regions.
 	if retry {
 		return b.retryBatchCopTask(ctx, bo, task)

@@ -462,6 +462,9 @@ type SessionVars struct {
 	// SnapshotTS is used for reading history data. For simplicity, SnapshotTS only supports distsql request.
 	SnapshotTS uint64
 
+	// TxnReadTS is used for staleness transaction, it provides next staleness transaction startTS.
+	TxnReadTS uint64
+
 	// SnapshotInfoschema is used with SnapshotTS, when the schema version at snapshotTS less than current schema
 	// version, we load an old version schema for query.
 	SnapshotInfoschema interface{}
@@ -1390,6 +1393,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 // Errors are not expected to be returned because this could cause upgrade issues.
 func (s *SessionVars) SetSystemVarWithRelaxedValidation(name string, val string) error {
 	sv := GetSysVar(name)
+	if sv == nil {
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
 	val = sv.ValidateWithRelaxedValidation(s, val, ScopeSession)
 	return sv.SetSessionFromHook(s, val)
 }

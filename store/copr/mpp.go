@@ -310,7 +310,7 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 
 	// Drain result from root task.
 	// We don't need to process any special error. When we meet errors, just let it fail.
-	rpcResp, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutUltraLong)
+	rpcResp, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), req.Meta.GetAddress(), wrappedReq, readTimeoutUltraLong)
 
 	if err != nil {
 		logutil.BgLogger().Error("establish mpp connection meet error", zap.String("error", err.Error()))
