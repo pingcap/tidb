@@ -379,6 +379,11 @@ type memIndexLookUpReader struct {
 	retFieldTypes []*types.FieldType
 
 	idxReader *memIndexReader
+
+	// partition mode
+	partitionMode     bool                  // if it is accessing a partition table
+	partitionTables   []table.PhysicalTable // partition tables to access
+	partitionKVRanges [][]kv.KeyRange       // kv ranges for these partition tables
 }
 
 func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpExecutor) *memIndexLookUpReader {
@@ -404,16 +409,43 @@ func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpEx
 		conditions:    us.conditions,
 		retFieldTypes: retTypes(us),
 		idxReader:     memIdxReader,
+
+		partitionMode:     idxLookUpReader.partitionTableMode,
+		partitionKVRanges: idxLookUpReader.partitionKVRanges,
+		partitionTables:   idxLookUpReader.prunedPartitions,
 	}
 }
 
 func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
-	handles, err := m.idxReader.getMemRowsHandle()
-	if err != nil || len(handles) == 0 {
-		return nil, err
+	kvRanges := [][]kv.KeyRange{m.idxReader.kvRanges}
+	tbls := []table.Table{m.table}
+	if m.partitionMode {
+		m.idxReader.desc = false // keep-order if always false for IndexLookUp reading partitions so this parameter makes no sense
+		kvRanges = m.partitionKVRanges
+		tbls = tbls[:0]
+		for _, p := range m.partitionTables {
+			tbls = append(tbls, p)
+		}
 	}
 
-	tblKVRanges := distsql.TableHandlesToKVRanges(getPhysicalTableID(m.table), handles)
+	tblKVRanges := make([]kv.KeyRange, 0, 16)
+	numHandles := 0
+	for i, tbl := range tbls {
+		m.idxReader.kvRanges = kvRanges[i]
+		handles, err := m.idxReader.getMemRowsHandle()
+		if err != nil {
+			return nil, err
+		}
+		if len(handles) == 0 {
+			continue
+		}
+		numHandles += len(handles)
+		tblKVRanges = append(tblKVRanges, distsql.TableHandlesToKVRanges(getPhysicalTableID(tbl), handles)...)
+	}
+	if numHandles == 0 {
+		return nil, nil
+	}
+
 	colIDs := make(map[int64]int, len(m.columns))
 	for i, col := range m.columns {
 		colIDs[col.ID] = i
@@ -440,7 +472,7 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 		columns:       m.columns,
 		kvRanges:      tblKVRanges,
 		conditions:    m.conditions,
-		addedRows:     make([][]types.Datum, 0, len(handles)),
+		addedRows:     make([][]types.Datum, 0, numHandles),
 		retFieldTypes: m.retFieldTypes,
 		colIDs:        colIDs,
 		pkColIDs:      pkColIDs,
