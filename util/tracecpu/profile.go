@@ -15,6 +15,7 @@ import (
 	"github.com/google/pprof/profile"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -246,7 +247,11 @@ func StopCPUProfile() error {
 }
 
 func SetGoroutineLabelsWithSQL(ctx context.Context, normalizedSQL, sqlDigest string) context.Context {
-	ctx = pprof.WithLabels(context.Background(), pprof.Labels(labelSQLDigest, sqlDigest))
+	if variable.EnablePProfSQLCPU.Load() {
+		ctx = pprof.WithLabels(context.Background(), pprof.Labels(labelSQLDigest, sqlDigest, labelSQL, util.QueryStrForLog(normalizedSQL)))
+	} else {
+		ctx = pprof.WithLabels(context.Background(), pprof.Labels(labelSQLDigest, sqlDigest))
+	}
 	pprof.SetGoroutineLabels(ctx)
 	GlobalStmtProfiler.RegisterSQL(sqlDigest, normalizedSQL)
 	return ctx
