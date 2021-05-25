@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -57,14 +57,6 @@ type wrapTxn struct {
 
 func (txn *wrapTxn) Valid() bool {
 	return txn.Transaction != nil && txn.Transaction.Valid()
-}
-
-// GetUnionStore implements GetUnionStore
-func (txn *wrapTxn) GetUnionStore() kv.UnionStore {
-	if txn.Transaction == nil {
-		return nil
-	}
-	return txn.Transaction.GetUnionStore()
 }
 
 func (txn *wrapTxn) CacheTableInfo(id int64, info *model.TableInfo) {
@@ -152,6 +144,20 @@ func (c *Context) GetMPPClient() kv.MPPClient {
 	return c.Store.GetMPPClient()
 }
 
+// GetInfoSchema implements sessionctx.Context GetInfoSchema interface.
+func (c *Context) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
+	vars := c.GetSessionVars()
+	if snap, ok := vars.SnapshotInfoschema.(sessionctx.InfoschemaMetaVersion); ok {
+		return snap
+	}
+	if vars.TxnCtx != nil && vars.InTxn() {
+		if is, ok := vars.TxnCtx.InfoSchema.(sessionctx.InfoschemaMetaVersion); ok {
+			return is
+		}
+	}
+	return nil
+}
+
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
 func (c *Context) GetGlobalSysVar(ctx sessionctx.Context, name string) (string, error) {
 	v := variable.GetSysVar(name)
@@ -212,7 +218,7 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		return nil
 	}
 	if c.Store != nil {
-		txn, err := c.Store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(oracle.GlobalTxnScope).SetStartTs(startTS))
+		txn, err := c.Store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(kv.GlobalTxnScope).SetStartTs(startTS))
 		if err != nil {
 			return errors.Trace(err)
 		}

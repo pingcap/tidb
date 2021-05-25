@@ -306,7 +306,7 @@ func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
 		return ""
 	}
 
-	is := infoschema.GetInfoSchema(sctx)
+	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	tmp, ok := is.TableByID(ts.Table.ID)
 	if !ok {
 		return "partition table not found" + strconv.FormatInt(ts.Table.ID, 10)
@@ -366,7 +366,7 @@ func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) string {
 	}
 
 	var buffer bytes.Buffer
-	is := infoschema.GetInfoSchema(sctx)
+	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	tmp, ok := is.TableByID(ts.Table.ID)
 	if !ok {
 		fmt.Fprintf(&buffer, "partition table not found: %d", ts.Table.ID)
@@ -394,7 +394,7 @@ func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) string
 	}
 
 	var buffer bytes.Buffer
-	is := infoschema.GetInfoSchema(sctx)
+	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	tmp, ok := is.TableByID(ts.Table.ID)
 	if !ok {
 		fmt.Fprintf(&buffer, "partition table not found: %d", ts.Table.ID)
@@ -417,7 +417,7 @@ func (p *PhysicalIndexMergeReader) accessObject(sctx sessionctx.Context) string 
 		return ""
 	}
 
-	is := infoschema.GetInfoSchema(sctx)
+	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	tmp, ok := is.TableByID(ts.Table.ID)
 	if !ok {
 		return "partition table not found" + strconv.FormatInt(ts.Table.ID, 10)

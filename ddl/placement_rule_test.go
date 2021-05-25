@@ -52,7 +52,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				{
 					Role:  placement.Voter,
 					Count: 3,
-					LabelConstraints: []placement.Constraint{
+					Constraints: []placement.Constraint{
 						{Key: "zone", Op: "in", Values: []string{"sh"}},
 					},
 				},
@@ -67,9 +67,9 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				Constraints: "",
 			}},
 			output: []*placement.Rule{{
-				Role:             placement.Voter,
-				Count:            3,
-				LabelConstraints: []placement.Constraint{},
+				Role:        placement.Voter,
+				Count:       3,
+				Constraints: []placement.Constraint{},
 			}},
 		},
 
@@ -83,14 +83,14 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				{
 					Role:  placement.Voter,
 					Count: 1,
-					LabelConstraints: []placement.Constraint{
+					Constraints: []placement.Constraint{
 						{Key: "zone", Op: "in", Values: []string{"sh"}},
 					},
 				},
 				{
 					Role:  placement.Voter,
 					Count: 2,
-					LabelConstraints: []placement.Constraint{
+					Constraints: []placement.Constraint{
 						{Key: "zone", Op: "in", Values: []string{"sh"}},
 					},
 				},
@@ -108,7 +108,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				{
 					Role:  placement.Voter,
 					Count: 3,
-					LabelConstraints: []placement.Constraint{
+					Constraints: []placement.Constraint{
 						{Key: "zone", Op: "notIn", Values: []string{"sh"}},
 						{Key: "zone", Op: "notIn", Values: []string{"bj"}},
 					},
@@ -127,7 +127,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				{
 					Role:  placement.Voter,
 					Count: 3,
-					LabelConstraints: []placement.Constraint{
+					Constraints: []placement.Constraint{
 						{Key: "zone", Op: "in", Values: []string{"sh"}},
 						{Key: "zone", Op: "notIn", Values: []string{"bj"}},
 					},
@@ -154,7 +154,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				{
 					Role:  placement.Voter,
 					Count: 3,
-					LabelConstraints: []placement.Constraint{
+					Constraints: []placement.Constraint{
 						{Key: "zone", Op: "in", Values: []string{"sh"}},
 						{Key: "zone", Op: "notIn", Values: []string{"bj"}},
 					},
@@ -162,7 +162,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				{
 					Role:  placement.Follower,
 					Count: 2,
-					LabelConstraints: []placement.Constraint{
+					Constraints: []placement.Constraint{
 						{Key: "zone", Op: "notIn", Values: []string{"sh"}},
 						{Key: "zone", Op: "in", Values: []string{"bj"}},
 					},
@@ -189,7 +189,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				{
 					Role:  placement.Voter,
 					Count: 2,
-					LabelConstraints: []placement.Constraint{
+					Constraints: []placement.Constraint{
 						{Key: "zone", Op: "notIn", Values: []string{"sh"}},
 						{Key: "zone", Op: "in", Values: []string{"bj"}},
 					},
@@ -214,14 +214,14 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 			},
 			output: []*placement.Rule{
 				{
-					Role:             placement.Voter,
-					Count:            1,
-					LabelConstraints: []placement.Constraint{{Key: "zone", Op: "notIn", Values: []string{"sh"}}},
+					Role:        placement.Voter,
+					Count:       1,
+					Constraints: []placement.Constraint{{Key: "zone", Op: "notIn", Values: []string{"sh"}}},
 				},
 				{
-					Role:             placement.Voter,
-					Count:            1,
-					LabelConstraints: []placement.Constraint{{Key: "zone", Op: "in", Values: []string{"bj"}}},
+					Role:        placement.Voter,
+					Count:       1,
+					Constraints: []placement.Constraint{{Key: "zone", Op: "in", Values: []string{"bj"}}},
 				},
 				{
 					Role:  placement.Voter,
@@ -306,7 +306,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				{
 					Role:  placement.Voter,
 					Count: 3,
-					LabelConstraints: []placement.Constraint{
+					Constraints: []placement.Constraint{
 						{Key: "zone", Op: "in", Values: []string{"sh"}},
 						{Key: "zone", Op: "notIn", Values: []string{"bj"}},
 					},

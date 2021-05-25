@@ -53,9 +53,7 @@ func (e *basePercentile) AllocPartialResult() (pr PartialResult, memDelta int64)
 	return
 }
 
-func (e *basePercentile) ResetPartialResult(pr PartialResult) {
-	return
-}
+func (e *basePercentile) ResetPartialResult(pr PartialResult) {}
 
 func (e *basePercentile) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	return

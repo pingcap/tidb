@@ -28,6 +28,14 @@ import (
 	"github.com/pingcap/tipb/go-binlog"
 )
 
+// InfoschemaMetaVersion is a workaround. Due to circular dependency,
+// can not return the complete interface. But SchemaMetaVersion is widely used for logging.
+// So we give a convenience for that.
+// FIXME: remove this interface
+type InfoschemaMetaVersion interface {
+	SchemaMetaVersion() int64
+}
+
 // Context is an interface for transaction and executive args environment.
 type Context interface {
 	// NewTxn creates a new transaction for further execution.
@@ -56,6 +64,8 @@ type Context interface {
 	// ClearValue clears the value associated with this context for key.
 	ClearValue(key fmt.Stringer)
 
+	GetInfoSchema() InfoschemaMetaVersion
+
 	GetSessionVars() *variable.SessionVars
 
 	GetSessionManager() util.SessionManager
@@ -73,7 +83,7 @@ type Context interface {
 	// It should be called right before we builds an executor.
 	InitTxnWithStartTS(startTS uint64) error
 
-	// NewTxnWithStalenessOption initializes a transaction with StalenessTxnOption
+	// NewTxnWithStalenessOption initializes a transaction with StalenessTxnOption.
 	NewTxnWithStalenessOption(ctx context.Context, option StalenessTxnOption) error
 
 	// GetStore returns the store of session.

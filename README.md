@@ -55,7 +55,6 @@ In addition, you may enjoy following:
 - [@PingCAP](https://twitter.com/PingCAP) on Twitter
 - Question tagged [#tidb on StackOverflow](https://stackoverflow.com/questions/tagged/tidb)
 - The PingCAP Team [English Blog](https://en.pingcap.com/blog) and [Chinese Blog](https://pingcap.com/blog-cn/)
-- [TiDB Monthly](https://pingcap.com/weekly/)
 
 For support, please contact [PingCAP](http://bit.ly/contact_us_via_github).
 

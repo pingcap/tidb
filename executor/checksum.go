@@ -269,7 +269,7 @@ func (c *checksumContext) HandleResponse(update *tipb.ChecksumResponse) {
 
 func getChecksumTableConcurrency(ctx sessionctx.Context) (int, error) {
 	sessionVars := ctx.GetSessionVars()
-	concurrency, err := variable.GetSessionSystemVar(sessionVars, variable.TiDBChecksumTableConcurrency)
+	concurrency, err := variable.GetSessionOrGlobalSystemVar(sessionVars, variable.TiDBChecksumTableConcurrency)
 	if err != nil {
 		return 0, err
 	}
