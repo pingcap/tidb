@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -278,11 +277,8 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		SetMemTracker(e.memTracker)
-	// for tests, infoschema may be null
-	if is, ok := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema); ok {
-		builder.SetFromInfoSchema(is)
-	}
 	kvReq, err := builder.Build()
 	if err != nil {
 		e.feedback.Invalidate()
@@ -530,11 +526,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetKeepOrder(e.keepOrder).
 			SetStreaming(e.indexStreaming).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
+			SetFromInfoSchema(e.ctx.GetInfoSchema()).
 			SetMemTracker(tracker)
-		// for tests, infoschema may be null
-		if is, ok := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema); ok {
-			builder.SetFromInfoSchema(is)
-		}
 
 		for partTblIdx, kvRange := range kvRanges {
 			// check if executor is closed
@@ -1212,7 +1205,9 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				obtainedHandlesMap.Set(handle, true)
 			}
 
-			logutil.Logger(ctx).Error("inconsistent index handles", zap.String("index", w.idxLookup.index.Name.O),
+			logutil.Logger(ctx).Error("inconsistent index handles",
+				zap.String("table_name", w.idxLookup.index.Table.O),
+				zap.String("index", w.idxLookup.index.Name.O),
 				zap.Int("index_cnt", handleCnt), zap.Int("table_cnt", len(task.rows)),
 				zap.String("missing_handles", fmt.Sprint(GetLackHandles(task.handles, obtainedHandlesMap))),
 				zap.String("total_handles", fmt.Sprint(task.handles)))

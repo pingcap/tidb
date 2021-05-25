@@ -531,7 +531,8 @@ func (p *UserPrivileges) GetAllRoles(user, host string) []*auth.RoleIdentity {
 }
 
 // IsDynamicPrivilege returns true if the DYNAMIC privilege is built-in or has been registered by a plugin
-func (p *UserPrivileges) IsDynamicPrivilege(privNameInUpper string) bool {
+func (p *UserPrivileges) IsDynamicPrivilege(privName string) bool {
+	privNameInUpper := strings.ToUpper(privName)
 	for _, priv := range dynamicPrivs {
 		if privNameInUpper == priv {
 			return true
@@ -541,7 +542,11 @@ func (p *UserPrivileges) IsDynamicPrivilege(privNameInUpper string) bool {
 }
 
 // RegisterDynamicPrivilege is used by plugins to add new privileges to TiDB
-func RegisterDynamicPrivilege(privNameInUpper string) error {
+func RegisterDynamicPrivilege(privName string) error {
+	privNameInUpper := strings.ToUpper(privName)
+	if len(privNameInUpper) > 32 {
+		return errors.New("privilege name is longer than 32 characters")
+	}
 	dynamicPrivLock.Lock()
 	defer dynamicPrivLock.Unlock()
 	for _, priv := range dynamicPrivs {
