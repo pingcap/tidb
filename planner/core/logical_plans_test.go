@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -206,4 +207,29 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 		c.Assert(fmt.Sprintf("%s", remained), Equals, tt.remained, comment)
 	}
 	collate.SetNewCollationEnabledForTest(false)
+}
+
+func (s *testUnitTestSuit) TestIsCompleteModeAgg(c *C) {
+	defer testleak.AfterTest(c)()
+
+	aggFuncs := make([]*aggregation.AggFuncDesc, 2)
+	aggFuncs[0] = &aggregation.AggFuncDesc{
+		Mode:        aggregation.FinalMode,
+		HasDistinct: true,
+	}
+	aggFuncs[1] = &aggregation.AggFuncDesc{
+		Mode:        aggregation.CompleteMode,
+		HasDistinct: true,
+	}
+
+	newAgg := &LogicalAggregation{
+		AggFuncs: aggFuncs,
+	}
+	c.Assert(newAgg.IsCompleteModeAgg(), Equals, true)
+
+	aggFuncs[1] = &aggregation.AggFuncDesc{
+		Mode:        aggregation.FinalMode,
+		HasDistinct: true,
+	}
+	c.Assert(newAgg.IsCompleteModeAgg(), Equals, false)
 }
