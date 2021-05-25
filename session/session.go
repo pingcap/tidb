@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
 	"strings"
@@ -1388,9 +1387,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	if config.TopSQLEnabled() {
 		normalized, digest := parser.NormalizeDigest(sql)
 		if len(normalized) > 0 && digest != nil {
-			ctx = pprof.WithLabels(ctx, pprof.Labels(tracecpu.LabelSQLDigest, digest.String()))
-			pprof.SetGoroutineLabels(ctx)
-			tracecpu.GlobalStmtProfiler.RegisterSQL(digest.String(), normalized)
+			ctx = tracecpu.SetGoroutineLabelsWithSQL(ctx, normalized, digest.String())
 		}
 	}
 	return stmts[0], nil

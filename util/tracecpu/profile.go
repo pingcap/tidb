@@ -2,6 +2,7 @@ package tracecpu
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -19,9 +20,9 @@ import (
 )
 
 const (
-	LabelSQL        = "sql"
-	LabelSQLDigest  = "sql_digest"
-	LabelPlanDigest = "plan_digest"
+	labelSQL        = "sql"
+	labelSQLDigest  = "sql_digest"
+	labelPlanDigest = "plan_digest"
 )
 
 var GlobalStmtProfiler = NewStmtProfiler()
@@ -144,7 +145,7 @@ func (sp *StmtProfiler) parseCPUProfileTags(p *profile.Profile) []SQLStats {
 	stmtMap := make(map[string]*stmtStats)
 	idx := len(p.SampleType) - 1
 	for _, s := range p.Sample {
-		digests, ok := s.Label[LabelSQLDigest]
+		digests, ok := s.Label[labelSQLDigest]
 		if !ok || len(digests) == 0 {
 			continue
 		}
@@ -160,7 +161,7 @@ func (sp *StmtProfiler) parseCPUProfileTags(p *profile.Profile) []SQLStats {
 			}
 			stmt.total += s.Value[idx]
 
-			plans := s.Label[LabelPlanDigest]
+			plans := s.Label[labelPlanDigest]
 			for _, plan := range plans {
 				stmt.plans[plan] += s.Value[idx]
 			}
@@ -244,6 +245,20 @@ func StopCPUProfile() error {
 	return nil
 }
 
+func SetGoroutineLabelsWithSQL(ctx context.Context, normalizedSQL, sqlDigest string) context.Context {
+	ctx = pprof.WithLabels(context.Background(), pprof.Labels(labelSQLDigest, sqlDigest))
+	pprof.SetGoroutineLabels(ctx)
+	GlobalStmtProfiler.RegisterSQL(sqlDigest, normalizedSQL)
+	return ctx
+}
+
+func SetGoroutineLabelsWithSQLAndPlan(ctx context.Context, sqlDigest, planDigest, normalizedPlan string) context.Context {
+	ctx = pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest, labelPlanDigest, planDigest))
+	pprof.SetGoroutineLabels(ctx)
+	GlobalStmtProfiler.RegisterPlan(planDigest, normalizedPlan)
+	return ctx
+}
+
 func (sp *StmtProfiler) startExportCPUProfile(w io.Writer) error {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
@@ -276,7 +291,7 @@ func (sp *StmtProfiler) removeLabel(p *profile.Profile) {
 	keepLabelSQL := variable.EnablePProfSQLCPU.Load()
 	for _, s := range p.Sample {
 		for k := range s.Label {
-			if keepLabelSQL && k == LabelSQL {
+			if keepLabelSQL && k == labelSQL {
 				continue
 			}
 			delete(s.Label, k)

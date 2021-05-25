@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"math"
 	"runtime"
-	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
 	"strings"
@@ -1641,9 +1640,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.OriginalSQL = s.Text()
 			normalizedSQL, digest := sc.SQLDigest()
 			if len(normalizedSQL) > 0 && digest != nil {
-				goCtx := pprof.WithLabels(context.Background(), pprof.Labels(tracecpu.LabelSQLDigest, digest.String()))
-				pprof.SetGoroutineLabels(goCtx)
-				tracecpu.GlobalStmtProfiler.RegisterSQL(digest.String(), normalizedSQL)
+				tracecpu.SetGoroutineLabelsWithSQL(context.Background(), normalizedSQL, digest.String())
 			}
 		}
 	}

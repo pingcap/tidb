@@ -1031,9 +1031,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		normalizedSQL, digest := getLastStmtInConn{cc}.PProfLabelNormalizedAndDigest()
 		if len(normalizedSQL) > 0 {
 			defer pprof.SetGoroutineLabels(ctx)
-			ctx = pprof.WithLabels(ctx, pprof.Labels(tracecpu.LabelSQLDigest, digest))
-			pprof.SetGoroutineLabels(ctx)
-			tracecpu.GlobalStmtProfiler.RegisterSQL(digest, normalizedSQL)
+			ctx = tracecpu.SetGoroutineLabelsWithSQL(ctx, normalizedSQL, digest)
 		}
 	} else if variable.EnablePProfSQLCPU.Load() {
 		label := getLastStmtInConn{cc}.PProfLabel()
@@ -2175,6 +2173,13 @@ func (cc getLastStmtInConn) PProfLabel() string {
 	}
 }
 
+var (
+	pprofLabelOfUseDB      = parser.DigestNormalized("UseDB")
+	pprofLabelOfListFields = parser.DigestNormalized("ListFields")
+	pprofLabelOfCloseStmt  = parser.DigestNormalized("CloseStmt")
+	pprofLabelOfResetStmt  = parser.DigestNormalized("ResetStmt")
+)
+
 // PProfLabelNormalizedAndDigest return sql and sql_digest label used to tag pprof.
 func (cc getLastStmtInConn) PProfLabelNormalizedAndDigest() (string, string) {
 	if len(cc.lastPacket) == 0 {
@@ -2183,13 +2188,13 @@ func (cc getLastStmtInConn) PProfLabelNormalizedAndDigest() (string, string) {
 	cmd, data := cc.lastPacket[0], cc.lastPacket[1:]
 	switch cmd {
 	case mysql.ComInitDB:
-		return "UseDB", ""
+		return "UseDB", pprofLabelOfUseDB.String()
 	case mysql.ComFieldList:
-		return "ListFields", ""
+		return "ListFields", pprofLabelOfListFields.String()
 	case mysql.ComStmtClose:
-		return "CloseStmt", ""
+		return "CloseStmt", pprofLabelOfCloseStmt.String()
 	case mysql.ComStmtReset:
-		return "ResetStmt", ""
+		return "ResetStmt", pprofLabelOfResetStmt.String()
 	case mysql.ComQuery, mysql.ComStmtPrepare:
 		normalized, digest := parser.NormalizeDigest(string(hack.String(data)))
 		return normalized, digest.String()

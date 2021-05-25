@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"runtime/pprof"
 	"runtime/trace"
 	"strings"
 	"sync/atomic"
@@ -293,11 +292,7 @@ func (a *ExecStmt) setPProfLabel(ctx context.Context) context.Context {
 	_, sqlDigest := a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
 	normalizedPlan, planDigest := getPlanDigest(a.Ctx, a.Plan)
 	if len(planDigest) > 0 {
-		ctx = pprof.WithLabels(ctx, pprof.Labels(
-			tracecpu.LabelSQLDigest, sqlDigest.String(),
-			tracecpu.LabelPlanDigest, planDigest))
-		pprof.SetGoroutineLabels(ctx)
-		tracecpu.GlobalStmtProfiler.RegisterPlan(planDigest, normalizedPlan)
+		ctx = tracecpu.SetGoroutineLabelsWithSQLAndPlan(ctx, sqlDigest.String(), planDigest, normalizedPlan)
 	}
 	return ctx
 }
@@ -1034,15 +1029,13 @@ func getPlanTree(sctx sessionctx.Context, p plannercore.Plan) string {
 
 // getPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
 func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (string, string) {
-	normalized, planDigest := sctx.GetSessionVars().StmtCtx.GetPlanDigest()
+	sc := sctx.GetSessionVars().StmtCtx
+	normalized, planDigest := sc.GetPlanDigest()
 	if len(normalized) > 0 && planDigest != nil {
 		return normalized, planDigest.String()
 	}
 	normalized, planDigest = plannercore.NormalizePlan(p)
-	if len(normalized) == 0 || planDigest == nil {
-		return "", ""
-	}
-	sctx.GetSessionVars().StmtCtx.SetPlanDigest(normalized, planDigest)
+	sc.SetPlanDigest(normalized, planDigest)
 	return normalized, planDigest.String()
 }
 
