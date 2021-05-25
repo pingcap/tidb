@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -199,7 +200,7 @@ type CachedPrepareStmt struct {
 	Executor       interface{}
 	NormalizedSQL  string
 	NormalizedPlan string
-	SQLDigest      string
-	PlanDigest     string
+	SQLDigest      *parser.Digest
+	PlanDigest     *parser.Digest
 	ForUpdateRead  bool
 }

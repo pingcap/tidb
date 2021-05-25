@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/store/tikv/client"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -192,9 +193,10 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		}
 		sreq := &pb.ScanRequest{
 			Context: &pb.Context{
-				Priority:       s.snapshot.priority.ToPB(),
-				NotFillCache:   s.snapshot.notFillCache,
-				IsolationLevel: s.snapshot.isolationLevel.ToPB(),
+				Priority:         s.snapshot.priority.ToPB(),
+				NotFillCache:     s.snapshot.notFillCache,
+				IsolationLevel:   s.snapshot.isolationLevel.ToPB(),
+				ResourceGroupTag: s.snapshot.resourceGroupTag,
 			},
 			StartKey:   s.nextStartKey,
 			EndKey:     reqEndKey,
@@ -210,12 +212,13 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		}
 		s.snapshot.mu.RLock()
 		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdScan, sreq, s.snapshot.mu.replicaRead, &s.snapshot.replicaReadSeed, pb.Context{
-			Priority:     s.snapshot.priority.ToPB(),
-			NotFillCache: s.snapshot.notFillCache,
-			TaskId:       s.snapshot.mu.taskID,
+			Priority:         s.snapshot.priority.ToPB(),
+			NotFillCache:     s.snapshot.notFillCache,
+			TaskId:           s.snapshot.mu.taskID,
+			ResourceGroupTag: s.snapshot.resourceGroupTag,
 		})
 		s.snapshot.mu.RUnlock()
-		resp, err := sender.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
+		resp, err := sender.SendReq(bo, req, loc.Region, client.ReadTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}
