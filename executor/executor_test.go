@@ -17,7 +17,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"net"
 	"os"
@@ -6998,7 +6997,7 @@ func (s *testSlowQuery) TestSlowQuerySensitiveQuery(c *C) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 
-	f, err := ioutil.TempFile("", "tidb-slow-*.log")
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	c.Assert(err, IsNil)
 	f.Close()
 	newCfg.Log.SlowQueryFile = f.Name()
@@ -7032,7 +7031,7 @@ func (s *testSlowQuery) TestSlowQueryPrepared(c *C) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 
-	f, err := ioutil.TempFile("", "tidb-slow-*.log")
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	c.Assert(err, IsNil)
 	f.Close()
 	newCfg.Log.SlowQueryFile = f.Name()
@@ -7068,7 +7067,7 @@ func (s *testSlowQuery) TestSlowQueryPrepared(c *C) {
 
 func (s *testSlowQuery) TestLogSlowLogIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	f, err := ioutil.TempFile("", "tidb-slow-*.log")
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	c.Assert(err, IsNil)
 	f.Close()
 
@@ -7094,7 +7093,7 @@ func (s *testSlowQuery) TestLogSlowLogIndex(c *C) {
 func (s *testSlowQuery) TestSlowQuery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	f, err := ioutil.TempFile("", "tidb-slow-*.log")
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	c.Assert(err, IsNil)
 	_, err = f.WriteString(`
 # Time: 2020-10-13T20:08:13.970563+08:00
