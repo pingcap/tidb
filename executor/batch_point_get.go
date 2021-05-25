@@ -29,8 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -91,7 +89,9 @@ func (e *BatchPointGetExec) buildVirtualColumnInfo() {
 // Open implements the Executor interface.
 func (e *BatchPointGetExec) Open(context.Context) error {
 	e.snapshotTS = e.startTS
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	sessVars := e.ctx.GetSessionVars()
+	txnCtx := sessVars.TxnCtx
+	stmtCtx := sessVars.StmtCtx
 	if e.lock {
 		e.snapshotTS = txnCtx.GetForUpdateTS()
 	}
@@ -114,15 +114,15 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 			SnapshotRuntimeStats: snapshotStats,
 		}
 		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		stmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
-	snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+	snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
 	isStaleness := e.ctx.GetSessionVars().TxnCtx.IsStaleness
 	snapshot.SetOption(kv.IsStalenessReadOnly, isStaleness)
-	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != oracle.GlobalTxnScope {
+	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != kv.GlobalTxnScope {
 		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
@@ -130,6 +130,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 			},
 		})
 	}
+	setResourceGroupTagForTxn(stmtCtx, snapshot)
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
@@ -418,8 +419,7 @@ func LockKeys(ctx context.Context, seCtx sessionctx.Context, lockWaitTime int64,
 	txnCtx := seCtx.GetSessionVars().TxnCtx
 	lctx := newLockCtx(seCtx.GetSessionVars(), lockWaitTime)
 	if txnCtx.IsPessimistic {
-		lctx.ReturnValues = true
-		lctx.Values = make(map[string]tikvstore.ReturnedValue, len(keys))
+		lctx.InitReturnValues(len(keys))
 	}
 	err := doLockKeys(ctx, seCtx, lctx, keys...)
 	if err != nil {
@@ -429,9 +429,8 @@ func LockKeys(ctx context.Context, seCtx sessionctx.Context, lockWaitTime int64,
 		// When doLockKeys returns without error, no other goroutines access the map,
 		// it's safe to read it without mutex.
 		for _, key := range keys {
-			rv := lctx.Values[string(key)]
-			if !rv.AlreadyLocked {
-				txnCtx.SetPessimisticLockCache(key, rv.Value)
+			if v, ok := lctx.GetValueNotLocked(key); ok {
+				txnCtx.SetPessimisticLockCache(key, v)
 			}
 		}
 	}
