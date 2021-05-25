@@ -74,6 +74,9 @@ type SimpleExec struct {
 	IsFromRemote bool
 	done         bool
 	is           infoschema.InfoSchema
+
+	// StalenessTxnOption is used to execute the staleness txn during a read-only begin statement.
+	StalenessTxnOption *sessionctx.StalenessTxnOption
 }
 
 func (e *baseExecutor) getSysSession() (sessionctx.Context, error) {
@@ -566,12 +569,15 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 }
 
 func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
-	// If `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND` is the first statement in TxnCtx, we should
+	// If `START TRANSACTION READ ONLY` is the first statement in TxnCtx, we should
 	// always create a new Txn instead of reusing it.
 	if s.ReadOnly {
 		enableNoopFuncs := e.ctx.GetSessionVars().EnableNoopFuncs
-		if !enableNoopFuncs && s.Bound == nil {
+		if !enableNoopFuncs && s.AsOf == nil && s.Bound == nil {
 			return expression.ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
+		}
+		if s.AsOf != nil {
+			return e.executeStartTransactionReadOnlyWithBoundedStaleness(ctx, s)
 		}
 		if s.Bound != nil {
 			return e.executeStartTransactionReadOnlyWithTimestampBound(ctx, s)
@@ -614,6 +620,22 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	return nil
 }
 
+func (e *SimpleExec) executeStartTransactionReadOnlyWithBoundedStaleness(ctx context.Context, s *ast.BeginStmt) error {
+	if e.StalenessTxnOption == nil {
+		return errors.New("Failed to get timestamp during start transaction read only as of timestamp")
+	}
+	if err := e.ctx.NewTxnWithStalenessOption(ctx, *e.StalenessTxnOption); err != nil {
+		return err
+	}
+
+	// With START TRANSACTION, autocommit remains disabled until you end
+	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
+	// reverts to its previous state.
+	e.ctx.GetSessionVars().SetInTxn(true)
+	return nil
+}
+
+// TODO: deprecate this syntax and only keep `AS OF TIMESTAMP` statement.
 func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx context.Context, s *ast.BeginStmt) error {
 	opt := sessionctx.StalenessTxnOption{}
 	opt.Mode = s.Bound.Mode
@@ -632,8 +654,7 @@ func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx conte
 		if err != nil {
 			return err
 		}
-		startTS := oracle.GoTimeToTS(gt)
-		opt.StartTS = startTS
+		opt.StartTS = oracle.GoTimeToTS(gt)
 	case ast.TimestampBoundExactStaleness:
 		// TODO: support funcCallExpr in future
 		v, ok := s.Bound.Timestamp.(*driver.ValueExpr)
@@ -668,8 +689,7 @@ func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx conte
 		if err != nil {
 			return err
 		}
-		startTS := oracle.GoTimeToTS(gt)
-		opt.StartTS = startTS
+		opt.StartTS = oracle.GoTimeToTS(gt)
 	}
 	err := e.ctx.NewTxnWithStalenessOption(ctx, opt)
 	if err != nil {
@@ -1436,6 +1456,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 	kvReq, err := builder.
 		SetDAGRequest(dagReq).
 		SetFromSessionVars(sctx.GetSessionVars()).
+		SetFromInfoSchema(sctx.GetInfoSchema()).
 		SetStoreType(kv.TiDB).
 		SetTiDBServerID(connID.ServerID).
 		Build()
@@ -1524,7 +1545,7 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) (err error) {
 	if err := h.DeleteTableStatsFromKV(statsIDs); err != nil {
 		return err
 	}
-	return h.Update(e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema))
+	return h.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema))
 }
 
 func (e *SimpleExec) autoNewTxn() bool {

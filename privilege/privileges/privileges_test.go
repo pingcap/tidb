@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sem"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -1579,7 +1580,33 @@ func (s *testPrivilegeSuite) TestDynamicPrivsRegistration(c *C) {
 	count := len(privileges.GetDynamicPrivileges())
 
 	c.Assert(pm.IsDynamicPrivilege("ACDC_ADMIN"), IsFalse)
-	privileges.RegisterDynamicPrivilege("ACDC_ADMIN")
+	c.Assert(privileges.RegisterDynamicPrivilege("ACDC_ADMIN"), IsNil)
 	c.Assert(pm.IsDynamicPrivilege("ACDC_ADMIN"), IsTrue)
 	c.Assert(len(privileges.GetDynamicPrivileges()), Equals, count+1)
+
+	c.Assert(pm.IsDynamicPrivilege("iAmdynamIC"), IsFalse)
+	c.Assert(privileges.RegisterDynamicPrivilege("IAMdynamic"), IsNil)
+	c.Assert(pm.IsDynamicPrivilege("IAMdyNAMIC"), IsTrue)
+	c.Assert(len(privileges.GetDynamicPrivileges()), Equals, count+2)
+
+	c.Assert(privileges.RegisterDynamicPrivilege("THIS_PRIVILEGE_NAME_IS_TOO_LONG_THE_MAX_IS_32_CHARS").Error(), Equals, "privilege name is longer than 32 characters")
+	c.Assert(pm.IsDynamicPrivilege("THIS_PRIVILEGE_NAME_IS_TOO_LONG_THE_MAX_IS_32_CHARS"), IsFalse)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER privassigntest")
+	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
+
+	// Check that all privileges registered are assignable to users,
+	// including the recently registered ACDC_ADMIN
+	for _, priv := range privileges.GetDynamicPrivileges() {
+		sqlGrant, err := sqlexec.EscapeSQL("GRANT %n ON *.* TO privassigntest", priv)
+		c.Assert(err, IsNil)
+		tk.MustExec(sqlGrant)
+	}
+	// Check that all privileges registered are revokable
+	for _, priv := range privileges.GetDynamicPrivileges() {
+		sqlGrant, err := sqlexec.EscapeSQL("REVOKE %n ON *.* FROM privassigntest", priv)
+		c.Assert(err, IsNil)
+		tk.MustExec(sqlGrant)
+	}
 }
