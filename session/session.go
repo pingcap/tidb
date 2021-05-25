@@ -961,9 +961,10 @@ func (s *session) getTableValue(ctx context.Context, tblName string, varName str
 	return value, nil
 }
 
-// replaceTableValue executes restricted sql updates the variable value
-func (s *session) replaceTableValue(ctx context.Context, tblName string, varName, val string) error {
-	stmt, err := s.ParseWithParams(ctx, `REPLACE INTO %n.%n (variable_name, variable_value) VALUES (%?, %?)`, mysql.SystemDB, tblName, varName, val)
+// replaceGlobalVariablesTableValue executes restricted sql updates the variable value
+// It will then notify the etcd channel that the value has changed.
+func (s *session) replaceGlobalVariablesTableValue(ctx context.Context, varName, val string) error {
+	stmt, err := s.ParseWithParams(ctx, `REPLACE INTO %n.%n (variable_name, variable_value) VALUES (%?, %?)`, mysql.SystemDB, mysql.GlobalVariablesTable, varName, val)
 	if err != nil {
 		return err
 	}
@@ -1015,7 +1016,7 @@ func (s *session) SetGlobalSysVar(name, value string) (err error) {
 	if err = sv.SetGlobalFromHook(s.sessionVars, value, false); err != nil {
 		return err
 	}
-	return s.replaceTableValue(context.TODO(), mysql.GlobalVariablesTable, sv.Name, value)
+	return s.replaceGlobalVariablesTableValue(context.TODO(), sv.Name, value)
 }
 
 // SetGlobalSysVarOnly updates the sysvar, but does not call the validation function or update aliases.
@@ -1028,7 +1029,7 @@ func (s *session) SetGlobalSysVarOnly(name, value string) (err error) {
 	if err = sv.SetGlobalFromHook(s.sessionVars, value, true); err != nil {
 		return err
 	}
-	return s.replaceTableValue(context.TODO(), mysql.GlobalVariablesTable, sv.Name, value)
+	return s.replaceGlobalVariablesTableValue(context.TODO(), sv.Name, value)
 }
 
 // SetTiDBTableValue implements GlobalVarAccessor.SetTiDBTableValue interface.
@@ -2118,7 +2119,7 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 
 // loadCollationParameter loads collation parameter from mysql.tidb
 func loadCollationParameter(se *session) (bool, error) {
-	para, err := loadParameter(se, tidbNewCollationEnabled)
+	para, err := se.getTableValue(context.TODO(), mysql.TiDBTable, tidbNewCollationEnabled)
 	if err != nil {
 		return false, err
 	}
@@ -2139,7 +2140,7 @@ func loadCollationParameter(se *session) (bool, error) {
 // version is v4.0.9.
 // See the comment upon the function `upgradeToVer54` for details.
 func loadDefMemQuotaQuery(se *session) (int64, error) {
-	_, err := loadParameter(se, tidbDefMemoryQuotaQuery)
+	_, err := se.getTableValue(context.TODO(), mysql.TiDBTable, tidbDefMemoryQuotaQuery)
 	if err != nil {
 		if err == errResultIsEmpty {
 			return 1 << 30, nil
@@ -2151,7 +2152,7 @@ func loadDefMemQuotaQuery(se *session) (int64, error) {
 }
 
 func loadDefOOMAction(se *session) (string, error) {
-	defOOMAction, err := loadParameter(se, tidbDefOOMAction)
+	defOOMAction, err := se.getTableValue(context.TODO(), mysql.TiDBTable, tidbDefOOMAction)
 	if err != nil {
 		if err == errResultIsEmpty {
 			return config.GetGlobalConfig().OOMAction, nil
@@ -2168,11 +2169,6 @@ func loadDefOOMAction(se *session) (string, error) {
 var (
 	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 )
-
-// loadParameter loads read-only parameter from mysql.tidb
-func loadParameter(se *session, name string) (string, error) {
-	return se.getTableValue(context.TODO(), mysql.TiDBTable, name)
-}
 
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {

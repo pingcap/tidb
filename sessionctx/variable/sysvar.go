@@ -135,7 +135,13 @@ type SysVar struct {
 func (sv *SysVar) GetGlobalFromHook(s *SessionVars) (string, error) {
 	// Call the Getter if there is one defined.
 	if sv.GetGlobal != nil {
-		return sv.GetGlobal(s)
+		val, err := sv.GetGlobal(s)
+		if err != nil {
+			return val, err
+		}
+		// Ensure that the results from the getter are validated
+		// Since some are read directly from tables.
+		return sv.ValidateWithRelaxedValidation(s, val, ScopeGlobal), nil
 	}
 	if sv.HasNoneScope() {
 		return sv.Value, nil
@@ -150,7 +156,13 @@ func (sv *SysVar) GetSessionFromHook(s *SessionVars) (string, error) {
 	}
 	// Call the Getter if there is one defined.
 	if sv.GetSession != nil {
-		return sv.GetSession(s)
+		val, err := sv.GetSession(s)
+		if err != nil {
+			return val, err
+		}
+		// Ensure that the results from the getter are validated
+		// Since some are read directly from tables.
+		return sv.ValidateWithRelaxedValidation(s, val, ScopeSession), nil
 	}
 	var (
 		ok  bool
@@ -1475,7 +1487,8 @@ var defaultSysVars = []*SysVar{
 		atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
 		return nil
 	}, GetSession: func(s *SessionVars) (string, error) {
-		return strconv.FormatUint(uint64(atomic.LoadUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog)), 10), nil
+		enabled := atomic.LoadUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog) == 1
+		return BoolToOnOff(enabled), nil
 	}},
 	{Scope: ScopeSession, Name: TiDBEnableSlowLog, Value: BoolToOnOff(logutil.DefaultTiDBEnableSlowLog), Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
 		config.GetGlobalConfig().Log.EnableSlowLog = TiDBOptOn(val)
@@ -1641,8 +1654,8 @@ var defaultSysVars = []*SysVar{
 		return setTikvTableValue(s, "tikv_gc_life_time", val, "All versions within life time will not be collected by GC, at least 10m, in Go format.")
 	}},
 	{Scope: ScopeGlobal, Name: TiDBGCConcurrency, Value: "-1", Type: TypeInt, MinValue: 1, MaxValue: 128, AllowAutoValue: true, GetGlobal: func(s *SessionVars) (string, error) {
-		autoConcurrencyVal, err := getTikvTableValue(s, "tikv_gc_auto_concurrency", "-1")
-		if err == nil && strings.EqualFold(autoConcurrencyVal, "true") {
+		autoConcurrencyVal, err := getTikvTableValue(s, "tikv_gc_auto_concurrency", On)
+		if err == nil && autoConcurrencyVal == On {
 			return "-1", nil // convention for "AUTO"
 		}
 		return getTikvTableValue(s, "tikv_gc_concurrency", "-1")
