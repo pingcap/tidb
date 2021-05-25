@@ -159,6 +159,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 			},
 		})
 	}
+	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
 	return nil
 }
 

@@ -92,6 +92,8 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetIsStatenessReadOnly(val.(bool))
 	case kv.MatchStoreLabels:
 		s.KVSnapshot.SetMatchStoreLabels(val.([]*metapb.StoreLabel))
+	case kv.ResourceGroupTag:
+		s.KVSnapshot.SetResourceGroupTag(val.([]byte))
 	}
 }
 

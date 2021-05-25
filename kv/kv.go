@@ -286,6 +286,8 @@ type Request struct {
 	IsStaleness bool
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels []*metapb.StoreLabel
+	// ResourceGroupTag indicates the kv request task group.
+	ResourceGroupTag []byte
 }
 
 // ResultSubset represents a result subset from a single storage unit.

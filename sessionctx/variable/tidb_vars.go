@@ -203,6 +203,9 @@ const (
 
 	// TiDBTxnScope indicates whether using global transactions or local transactions.
 	TiDBTxnScope = "txn_scope"
+
+	// TiDBTxnReadTS indicates the next transaction should be staleness transaction and provide the startTS
+	TiDBTxnReadTS = "tx_read_ts"
 )
 
 // TiDB system variable names that both in session and global scope.

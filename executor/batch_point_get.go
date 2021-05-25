@@ -89,7 +89,9 @@ func (e *BatchPointGetExec) buildVirtualColumnInfo() {
 // Open implements the Executor interface.
 func (e *BatchPointGetExec) Open(context.Context) error {
 	e.snapshotTS = e.startTS
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	sessVars := e.ctx.GetSessionVars()
+	txnCtx := sessVars.TxnCtx
+	stmtCtx := sessVars.StmtCtx
 	if e.lock {
 		e.snapshotTS = txnCtx.GetForUpdateTS()
 	}
@@ -112,12 +114,12 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 			SnapshotRuntimeStats: snapshotStats,
 		}
 		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		stmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
-	snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+	snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
 	isStaleness := e.ctx.GetSessionVars().TxnCtx.IsStaleness
 	snapshot.SetOption(kv.IsStalenessReadOnly, isStaleness)
 	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != kv.GlobalTxnScope {
@@ -128,6 +130,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 			},
 		})
 	}
+	setResourceGroupTagForTxn(stmtCtx, snapshot)
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
