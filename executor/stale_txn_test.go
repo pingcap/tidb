@@ -301,29 +301,23 @@ func (s *testStaleTxnSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key);")
 
-	schemaVer1 := tk.Se.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
-	time.Sleep(time.Second)
+	// test exact
+	schemaVer1 := tk.Se.GetInfoSchema().SchemaMetaVersion()
+	time1 := time.Now()
 	tk.MustExec("drop table if exists t")
-	schemaVer2 := tk.Se.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
-	// confirm schema changed
-	c.Assert(schemaVer1, Less, schemaVer2)
+	c.Assert(schemaVer1, Less, tk.Se.GetInfoSchema().SchemaMetaVersion())
+	tk.MustExec(fmt.Sprintf(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
+	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer1)
+	tk.MustExec("commit")
 
-	tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:01'`)
-	schemaVer3 := tk.Se.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
-	// got an old infoSchema
-	c.Assert(schemaVer3, Equals, schemaVer1)
-
-	schemaVer4 := tk.Se.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
-	time.Sleep(time.Second)
+	// test as of
+	schemaVer2 := tk.Se.GetInfoSchema().SchemaMetaVersion()
+	time2 := time.Now()
 	tk.MustExec("create table t (id int primary key);")
-	schemaVer5 := tk.Se.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
-	// confirm schema changed
-	c.Assert(schemaVer4, Less, schemaVer5)
-
-	tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW() - INTERVAL 1 SECOND`)
-	schemaVer6 := tk.Se.GetSessionVars().GetInfoSchema().SchemaMetaVersion()
-	// got an old infoSchema
-	c.Assert(schemaVer6, Equals, schemaVer4)
+	c.Assert(schemaVer2, Less, tk.Se.GetInfoSchema().SchemaMetaVersion())
+	tk.MustExec(fmt.Sprintf(`START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time2.Format("2006-1-2 15:04:05.000")))
+	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer2)
+	tk.MustExec("commit")
 }
 
 func (s *testStaleTxnSerialSuite) TestSetTransactionReadOnlyAsOf(c *C) {
