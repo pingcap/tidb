@@ -778,7 +778,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	tableName := stringutil.Escape(tableInfo.Name.O, sqlMode)
 	switch tableInfo.TempTableType {
 	case model.TempTableGlobal:
-		fmt.Fprintf(buf, "CREATE /* GLOBAL TEMPORARY */ TABLE %s (\n", tableName)
+		fmt.Fprintf(buf, "CREATE GLOBAL TEMPORARY TABLE %s (\n", tableName)
 	default:
 		fmt.Fprintf(buf, "CREATE TABLE %s (\n", tableName)
 	}
@@ -1017,7 +1017,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if tableInfo.TempTableType == model.TempTableGlobal {
-		fmt.Fprintf(buf, " /* ON COMMIT DELETE ROWS */")
+		fmt.Fprintf(buf, " ON COMMIT DELETE ROWS")
 	}
 
 	// add partition info here.
