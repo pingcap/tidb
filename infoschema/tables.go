@@ -17,7 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"sort"
@@ -165,6 +165,8 @@ const (
 	TableClientErrorsSummaryByHost = "CLIENT_ERRORS_SUMMARY_BY_HOST"
 	// TableTiDBTrx is current running transaction status table.
 	TableTiDBTrx = "TIDB_TRX"
+	// TableDeadlocks is the string constatnt of deadlock table.
+	TableDeadlocks = "DEADLOCKS"
 )
 
 var tableIDMap = map[string]int64{
@@ -239,6 +241,8 @@ var tableIDMap = map[string]int64{
 	TableClientErrorsSummaryByHost:          autoid.InformationSchemaDBID + 69,
 	TableTiDBTrx:                            autoid.InformationSchemaDBID + 70,
 	ClusterTableTiDBTrx:                     autoid.InformationSchemaDBID + 71,
+	TableDeadlocks:                          autoid.InformationSchemaDBID + 72,
+	ClusterTableDeadlocks:                   autoid.InformationSchemaDBID + 73,
 }
 
 type columnInfo struct {
@@ -1353,6 +1357,17 @@ var tableTiDBTrxCols = []columnInfo{
 	{name: "DB", tp: mysql.TypeVarchar, size: 64, comment: "The schema this transaction works on"},
 }
 
+var tableDeadlocksCols = []columnInfo{
+	{name: "DEADLOCK_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, comment: "The ID to dinstinguish different deadlock events"},
+	{name: "OCCUR_TIME", tp: mysql.TypeTimestamp, decimal: 6, size: 26, comment: "The physical time when the deadlock occurs"},
+	{name: "RETRYABLE", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the deadlock is retryable. Retryable deadlocks are usually not reported to the client"},
+	{name: "TRY_LOCK_TRX_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, comment: "The transaction ID (start ts) of the transaction that's trying to acquire the lock"},
+	{name: "CURRENT_SQL_DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "The digest of the SQL that's being blocked"},
+	{name: "KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The key on which a transaction is waiting for another"},
+	{name: "ALL_SQLS", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
+	{name: "TRX_HOLDING_LOCK", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, comment: "The transaction ID (start ts) of the transaction that's currently holding the lock"},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1542,7 +1557,7 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		pdVersion, err := ioutil.ReadAll(resp.Body)
+		pdVersion, err := io.ReadAll(resp.Body)
 		terror.Log(resp.Body.Close())
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1723,6 +1738,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClientErrorsSummaryByUser:          tableClientErrorsSummaryByUserCols,
 	TableClientErrorsSummaryByHost:          tableClientErrorsSummaryByHostCols,
 	TableTiDBTrx:                            tableTiDBTrxCols,
+	TableDeadlocks:                          tableDeadlocksCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -1759,7 +1775,7 @@ func (s SchemasSorter) Less(i, j int) bool {
 }
 
 func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
-	is := ctx.GetSessionVars().GetInfoSchema().(InfoSchema)
+	is := ctx.GetInfoSchema().(InfoSchema)
 	dbs := is.AllSchemas()
 	sort.Sort(SchemasSorter(dbs))
 	switch it.meta.Name.O {
