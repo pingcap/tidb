@@ -448,18 +448,6 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 		if err != nil {
 			return err
 		}
-	case *Update:
-		// Temporarily turn off the cache for UPDATE to solve #21884.
-
-		//ok, err = IsPointUpdateByAutoCommit(sctx, p)
-		//if err != nil {
-		//	return err
-		//}
-		//if ok {
-		//	// make constant expression store paramMarker
-		//	sctx.GetSessionVars().StmtCtx.PointExec = true
-		//	p, names, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
-		//}
 	}
 	if ok {
 		// just cache point plan now
@@ -1357,22 +1345,4 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 // used for fast plan like point get
 func IsAutoCommitTxn(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().IsAutocommit() && !ctx.GetSessionVars().InTxn()
-}
-
-// IsPointUpdateByAutoCommit checks if plan p is point update and is in autocommit context
-func IsPointUpdateByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
-	if !IsAutoCommitTxn(ctx) {
-		return false, nil
-	}
-
-	// check plan
-	updPlan, ok := p.(*Update)
-	if !ok {
-		return false, nil
-	}
-	if _, isFastSel := updPlan.SelectPlan.(*PointGetPlan); isFastSel {
-		return true, nil
-	}
-
-	return false, nil
 }
