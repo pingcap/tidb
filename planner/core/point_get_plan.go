@@ -1567,7 +1567,7 @@ func findPartitionIdx(idxInfo *model.IndexInfo, pos int, pairs []nameValuePair) 
 	return 0
 }
 
-// getPartitionColumnPos gets the partition column's position in the index.
+// getPartitionColumnPos gets the partition column's position in the unique index.
 func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.PartitionExpr, tbl *model.TableInfo) (int, error) {
 	// regular table
 	if partitionExpr == nil {
@@ -1617,7 +1617,7 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.Partition
 	panic("unique index must include all partition columns")
 }
 
-// getHashPartitionColumnPos gets the hash partition column's position in the index.
+// getHashPartitionColumnPos gets the hash partition column's position in the unique index.
 func getHashPartitionColumnPos(idx *model.IndexInfo, partitionColName *ast.ColumnName) int {
 	if partitionColName == nil {
 		return 0
