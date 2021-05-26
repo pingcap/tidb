@@ -4402,7 +4402,7 @@ func (s *testTxnStateSerialSuite) TestBasic(c *C) {
 	time.Sleep(100 * time.Millisecond)
 	info = tk.Se.TxnInfo()
 	_, expectedDigest := parser.NormalizeDigest("select * from t for update;")
-	c.Assert(info.CurrentSQLDigest, Equals, expectedDigest)
+	c.Assert(info.CurrentSQLDigest, Equals, expectedDigest.String())
 	c.Assert(info.State, Equals, txninfo.TxnLockWaiting)
 	c.Assert((*time.Time)(info.BlockStartTime), NotNil)
 	c.Assert(info.StartTS, Equals, startTS)
@@ -4417,7 +4417,7 @@ func (s *testTxnStateSerialSuite) TestBasic(c *C) {
 	c.Assert(info.StartTS, Equals, startTS)
 	_, beginDigest := parser.NormalizeDigest("begin pessimistic;")
 	_, selectTSDigest := parser.NormalizeDigest("select @@tidb_current_ts;")
-	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest, selectTSDigest, expectedDigest})
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest.String(), selectTSDigest.String(), expectedDigest.String()})
 
 	// len and size will be covered in TestLenAndSize
 	c.Assert(info.ConnectionID, Equals, tk.Se.GetSessionVars().ConnectionID)
@@ -4433,9 +4433,9 @@ func (s *testTxnStateSerialSuite) TestBasic(c *C) {
 	time.Sleep(100 * time.Millisecond)
 	_, commitDigest := parser.NormalizeDigest("commit;")
 	info = tk.Se.TxnInfo()
-	c.Assert(info.CurrentSQLDigest, Equals, commitDigest)
+	c.Assert(info.CurrentSQLDigest, Equals, commitDigest.String())
 	c.Assert(info.State, Equals, txninfo.TxnCommitting)
-	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest, selectTSDigest, expectedDigest, commitDigest})
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest.String(), selectTSDigest.String(), expectedDigest.String(), commitDigest.String()})
 
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
 	<-ch
@@ -4451,12 +4451,12 @@ func (s *testTxnStateSerialSuite) TestBasic(c *C) {
 	time.Sleep(100 * time.Millisecond)
 	info = tk.Se.TxnInfo()
 	_, expectedDigest = parser.NormalizeDigest("insert into t values (2)")
-	c.Assert(info.CurrentSQLDigest, Equals, expectedDigest)
+	c.Assert(info.CurrentSQLDigest, Equals, expectedDigest.String())
 	c.Assert(info.State, Equals, txninfo.TxnCommitting)
 	c.Assert((*time.Time)(info.BlockStartTime), IsNil)
 	c.Assert(info.StartTS, Greater, startTS)
 	c.Assert(len(info.AllSQLDigests), Equals, 1)
-	c.Assert(info.AllSQLDigests[0], Equals, expectedDigest)
+	c.Assert(info.AllSQLDigests[0], Equals, expectedDigest.String())
 
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
 	<-ch
@@ -4556,14 +4556,14 @@ func (s *testTxnStateSerialSuite) TestTxnInfoWithPreparedStmt(c *C) {
 	time.Sleep(100 * time.Millisecond)
 	info := tk.Se.TxnInfo()
 	_, expectDigest := parser.NormalizeDigest("insert into t values (?)")
-	c.Assert(info.CurrentSQLDigest, Equals, expectDigest)
+	c.Assert(info.CurrentSQLDigest, Equals, expectDigest.String())
 
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock"), IsNil)
 	<-ch
 	info = tk.Se.TxnInfo()
 	c.Assert(info.CurrentSQLDigest, Equals, "")
 	_, beginDigest := parser.NormalizeDigest("begin pessimistic")
-	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest, expectDigest})
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest.String(), expectDigest.String()})
 
 	tk.MustExec("rollback")
 }
@@ -4587,8 +4587,8 @@ func (s *testTxnStateSerialSuite) TestTxnInfoWithScalarSubquery(c *C) {
 	_, s2Digest := parser.NormalizeDigest("update t set b = b + 1 where a = (select b from t where a = 1)")
 	time.Sleep(100 * time.Millisecond)
 	info := tk.Se.TxnInfo()
-	c.Assert(info.CurrentSQLDigest, Equals, s2Digest)
-	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest, s1Digest, s2Digest})
+	c.Assert(info.CurrentSQLDigest, Equals, s2Digest.String())
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest.String(), s1Digest.String(), s2Digest.String()})
 
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock"), IsNil)
 	<-ch
@@ -4617,8 +4617,8 @@ func (s *testTxnStateSerialSuite) TestTxnInfoWithPSProtocol(c *C) {
 	c.Assert(info, NotNil)
 	c.Assert(info.StartTS, Greater, uint64(0))
 	c.Assert(info.State, Equals, txninfo.TxnCommitting)
-	c.Assert(info.CurrentSQLDigest, Equals, digest)
-	c.Assert(info.AllSQLDigests, DeepEquals, []string{digest})
+	c.Assert(info.CurrentSQLDigest, Equals, digest.String())
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{digest.String()})
 
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
 	<-ch
@@ -4648,11 +4648,11 @@ func (s *testTxnStateSerialSuite) TestTxnInfoWithPSProtocol(c *C) {
 	time.Sleep(100 * time.Millisecond)
 	info = tk.Se.TxnInfo()
 	c.Assert(info.StartTS, Greater, uint64(0))
-	c.Assert(info.CurrentSQLDigest, Equals, digest2)
+	c.Assert(info.CurrentSQLDigest, Equals, digest2.String())
 	c.Assert(info.State, Equals, txninfo.TxnLockWaiting)
 	c.Assert((*time.Time)(info.BlockStartTime), NotNil)
 	_, beginDigest := parser.NormalizeDigest("begin pessimistic")
-	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest, digest1, digest2})
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest.String(), digest1.String(), digest2.String()})
 
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock"), IsNil)
 	<-ch

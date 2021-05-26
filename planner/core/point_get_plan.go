@@ -463,10 +463,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 			if tidbutil.IsMemDB(fp.dbName) {
 				return nil
 			}
-			// ignore lock for temporary table.
-			if fp.TblInfo.TempTableType == model.TempTableNone {
-				fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
-			}
+			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
 			p = fp
 			return
 		}
@@ -484,10 +481,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 				p = tableDual.Init(ctx, &property.StatsInfo{}, 0)
 				return
 			}
-			// ignore lock for temporary table.
-			if fp.TblInfo.TempTableType == model.TempTableNone {
-				fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
-			}
+			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
 			p = fp
 			return
 		}
@@ -1017,7 +1011,7 @@ func checkFastPlanPrivilege(ctx sessionctx.Context, dbName, tableName string, ch
 		})
 	}
 
-	infoSchema := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	return CheckTableLock(ctx, infoSchema, visitInfos)
 }
 
@@ -1323,7 +1317,7 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 		VirtualAssignmentsOffset:  len(orderedList),
 	}.Init(ctx)
 	updatePlan.names = pointPlan.OutputNames()
-	is := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	t, _ := is.TableByID(tbl.ID)
 	updatePlan.tblID2Table = map[int64]table.Table{
 		tbl.ID: t,
@@ -1343,7 +1337,7 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 					}
 					pids[pid] = struct{}{}
 				}
-				pt = tables.NewPartitionTableithGivenSets(pt, pids)
+				pt = tables.NewPartitionTableWithGivenSets(pt, pids)
 			}
 			updatePlan.PartitionedTable = append(updatePlan.PartitionedTable, pt)
 		}
@@ -1569,7 +1563,7 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionColName *ast.ColumnNam
 }
 
 func getPartitionExpr(ctx sessionctx.Context, tbl *model.TableInfo) *tables.PartitionExpr {
-	is := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	table, ok := is.TableByID(tbl.ID)
 	if !ok {
 		return nil
@@ -1591,7 +1585,7 @@ func getHashPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *a
 	if pi.Type != model.PartitionTypeHash {
 		return nil
 	}
-	is := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	table, ok := is.TableByID(tbl.ID)
 	if !ok {
 		return nil

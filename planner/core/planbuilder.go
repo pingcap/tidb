@@ -1668,12 +1668,20 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			Incremental:   as.Incremental,
 			StatsVersion:  version,
 		}
-		taskSlice = append(taskSlice, AnalyzeColumnsTask{
+		newTask := AnalyzeColumnsTask{
+			HandleCols:  BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo),
 			ColsInfo:    tbl.TableInfo.Columns,
 			analyzeInfo: info,
 			TblInfo:     tbl.TableInfo,
 			Indexes:     idxInfos,
-		})
+		}
+		if newTask.HandleCols == nil {
+			extraCol := model.NewExtraHandleColInfo()
+			// Always place _tidb_rowid at the end of colsInfo, this is corresponding to logics in `analyzeColumnsPushdown`.
+			newTask.ColsInfo = append(newTask.ColsInfo, extraCol)
+			newTask.HandleCols = &IntHandleCols{col: colInfoToColumn(extraCol, len(newTask.ColsInfo)-1)}
+		}
+		taskSlice = append(taskSlice, newTask)
 	}
 	return taskSlice
 }
@@ -1934,7 +1942,7 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 		return nil, errors.Errorf("Only support fast analyze in tikv storage.")
 	}
 	statsVersion := b.ctx.GetSessionVars().AnalyzeVersion
-	if b.ctx.GetSessionVars().EnableFastAnalyze && statsVersion == statistics.Version2 {
+	if b.ctx.GetSessionVars().EnableFastAnalyze && statsVersion >= statistics.Version2 {
 		return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently.")
 	}
 	for _, tbl := range as.TableNames {
@@ -2207,6 +2215,14 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			err = ErrDBaccessDenied.GenWithStackByArgs(user.AuthUsername, user.AuthHostname, mysql.SystemDB)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, mysql.SystemDB, "", "", err)
+	case ast.ShowRegions:
+		tableInfo, err := b.is.TableByName(show.Table.Schema, show.Table.Name)
+		if err != nil {
+			return nil, err
+		}
+		if tableInfo.Meta().TempTableType != model.TempTableNone {
+			return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions")
+		}
 	}
 	schema, names := buildShowSchema(show, isView, isSequence)
 	p.SetSchema(schema)
@@ -2332,10 +2348,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			if err != nil {
 				return nil, err
 			}
-			p.StalenessTxnOption = &sessionctx.StalenessTxnOption{
-				Mode:    ast.TimestampBoundReadTimestamp,
-				StartTS: startTS,
-			}
+			p.StaleTxnStartTS = startTS
 		}
 	}
 	return p, nil
@@ -2592,7 +2605,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 			givenPartitionSets[id] = struct{}{}
 		}
 		pt := tableInPlan.(table.PartitionedTable)
-		insertPlan.Table = tables.NewPartitionTableithGivenSets(pt, givenPartitionSets)
+		insertPlan.Table = tables.NewPartitionTableWithGivenSets(pt, givenPartitionSets)
 	} else if len(insert.PartitionNames) != 0 {
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
@@ -3102,6 +3115,9 @@ func (b *PlanBuilder) buildIndexAdvise(node *ast.IndexAdviseStmt) Plan {
 }
 
 func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) {
+	if node.Table.TableInfo.TempTableType != model.TempTableNone {
+		return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("split table")
+	}
 	if node.SplitSyntaxOpt != nil && node.SplitSyntaxOpt.HasPartition && node.Table.TableInfo.Partition == nil {
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
