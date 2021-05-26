@@ -107,7 +107,7 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 			return nil, err
 		}
 	}
-	if statsVer == statistics.Version2 {
+	if statsVer >= statistics.Version2 {
 		if processor.topNCurValuePair.Count != 0 {
 			processor.topNValuePairs = append(processor.topNValuePairs, processor.topNCurValuePair)
 		}
@@ -126,7 +126,7 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 	hg := statistics.HistogramToProto(processor.statsBuilder.Hist())
 	var cm *tipb.CMSketch
 	if processor.cms != nil {
-		if statsVer == statistics.Version2 {
+		if statsVer >= statistics.Version2 {
 			for _, valueCnt := range processor.topNValuePairs {
 				h1, h2 := murmur3.Sum128(valueCnt.Encoded)
 				processor.cms.SubValue(h1, h2, valueCnt.Count)
@@ -207,7 +207,7 @@ func (p *analyzeIndexProcessor) Process(key, _ []byte) error {
 		}
 	}
 
-	if p.statsVer == statistics.Version2 {
+	if p.statsVer >= statistics.Version2 {
 		if bytes.Equal(p.topNCurValuePair.Encoded, p.rowBuf) {
 			p.topNCurValuePair.Count++
 		} else {
@@ -547,7 +547,7 @@ func handleAnalyzeMixedReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 		colResp.Collectors = append(colResp.Collectors, statistics.SampleCollectorToProto(c))
 	}
 	// common handle
-	if statsVer == statistics.Version2 {
+	if statsVer >= statistics.Version2 {
 		if e.topNCurValuePair.Count != 0 {
 			e.topNValuePairs = append(e.topNValuePairs, e.topNCurValuePair)
 		}
@@ -566,7 +566,7 @@ func handleAnalyzeMixedReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 	hg := statistics.HistogramToProto(e.statsBuilder.Hist())
 	var cm *tipb.CMSketch
 	if e.cms != nil {
-		if statsVer == statistics.Version2 {
+		if statsVer >= statistics.Version2 {
 			for _, valueCnt := range e.topNValuePairs {
 				h1, h2 := murmur3.Sum128(valueCnt.Encoded)
 				e.cms.SubValue(h1, h2, valueCnt.Count)
@@ -623,7 +623,7 @@ func (e *analyzeMixedExec) Process(key, value []byte) error {
 		}
 	}
 
-	if e.statsVer == statistics.Version2 {
+	if e.statsVer >= statistics.Version2 {
 		if bytes.Equal(e.topNCurValuePair.Encoded, e.rowBuf) {
 			e.topNCurValuePair.Count++
 		} else {
