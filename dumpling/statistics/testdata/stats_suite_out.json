@@ -423,6 +423,57 @@
     ]
   },
   {
+    "Name": "TestTopNOutOfHist",
+    "Cases": [
+      [
+        "test topn_before_hist  a 0 1 4",
+        "test topn_before_hist  a 0 2 2",
+        "test topn_before_hist  idx 1 1 4",
+        "test topn_before_hist  idx 1 2 2",
+        "test topn_after_hist  a 0 2 2",
+        "test topn_after_hist  a 0 6 4",
+        "test topn_after_hist  idx 1 2 2",
+        "test topn_after_hist  idx 1 6 4",
+        "test topn_before_hist_no_index  a 0 1 4",
+        "test topn_before_hist_no_index  a 0 2 2",
+        "test topn_after_hist_no_index  a 0 2 2",
+        "test topn_after_hist_no_index  a 0 6 4"
+      ],
+      [
+        "test topn_before_hist  a 0 0 2 1 3 4 0",
+        "test topn_before_hist  a 0 1 3 1 5 5 0",
+        "test topn_before_hist  idx 1 0 2 1 3 4 0",
+        "test topn_before_hist  idx 1 1 3 1 5 5 0",
+        "test topn_after_hist  a 0 0 2 1 3 4 0",
+        "test topn_after_hist  a 0 1 3 1 5 5 0",
+        "test topn_after_hist  idx 1 0 2 1 3 4 0",
+        "test topn_after_hist  idx 1 1 3 1 5 5 0",
+        "test topn_before_hist_no_index  a 0 0 2 1 3 4 0",
+        "test topn_before_hist_no_index  a 0 1 3 1 5 5 0",
+        "test topn_after_hist_no_index  a 0 0 2 1 3 4 0",
+        "test topn_after_hist_no_index  a 0 1 3 1 5 5 0"
+      ],
+      [
+        "IndexReader_6 4.00 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 4.00 cop[tikv] table:topn_before_hist, index:idx(a) range:[1,1], keep order:false"
+      ],
+      [
+        "IndexReader_6 4.00 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 4.00 cop[tikv] table:topn_after_hist, index:idx(a) range:[6,6], keep order:false"
+      ],
+      [
+        "TableReader_7 4.00 root  data:Selection_6",
+        "└─Selection_6 4.00 cop[tikv]  eq(test.topn_after_hist_no_index.a, 6)",
+        "  └─TableFullScan_5 9.00 cop[tikv] table:topn_after_hist_no_index keep order:false"
+      ],
+      [
+        "TableReader_7 4.00 root  data:Selection_6",
+        "└─Selection_6 4.00 cop[tikv]  eq(test.topn_before_hist_no_index.a, 1)",
+        "  └─TableFullScan_5 9.00 cop[tikv] table:topn_before_hist_no_index keep order:false"
+      ]
+    ]
+  },
+  {
     "Name": "TestColumnIndexNullEstimation",
     "Cases": [
       [
