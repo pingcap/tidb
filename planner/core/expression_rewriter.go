@@ -108,13 +108,15 @@ func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNo
 // asScalar means whether this expression must be treated as a scalar expression.
 // And this function returns a result expression, a new plan that may have apply or semi-join.
 func (b *PlanBuilder) rewrite(ctx context.Context, exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (expression.Expression, LogicalPlan, error) {
-	expr, resultPlan, err := b.rewriteWithPreprocess(ctx, exprNode, p, aggMapper, nil, asScalar, nil)
+	expr, resultPlan, err := b.rewriteWithPreprocess(ctx, exprNode, p, aggMapper, nil, asScalar, nil, -1)
 	return expr, resultPlan, err
 }
 
 // rewriteWithPreprocess is for handling the situation that we need to adjust the input ast tree
 // before really using its node in `expressionRewriter.Leave`. In that case, we first call
 // er.preprocess(expr), which returns a new expr. Then we use the new expr in `Leave`.
+// originSchemaLen is the length of original select fields. Currently this is only for checking if PositionExpr is referencing
+// a column not in the original select fields (eg. auxiliary fields). Pass -1 to disable this check.
 func (b *PlanBuilder) rewriteWithPreprocess(
 	ctx context.Context,
 	exprNode ast.ExprNode,
@@ -122,6 +124,7 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	windowMapper map[*ast.WindowFuncExpr]int,
 	asScalar bool,
 	preprocess func(ast.Node) ast.Node,
+	originSchemaLen int,
 ) (expression.Expression, LogicalPlan, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
@@ -139,6 +142,7 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	rewriter.windowMap = windowMapper
 	rewriter.asScalar = asScalar
 	rewriter.preprocess = preprocess
+	rewriter.originSchemaLen = originSchemaLen
 
 	expr, resultPlan, err := b.rewriteExprNode(rewriter, exprNode, asScalar)
 	return expr, resultPlan, err
@@ -169,6 +173,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 	rewriter.tryFoldCounter = 0
 	rewriter.ctxStack = rewriter.ctxStack[:0]
 	rewriter.ctxNameStk = rewriter.ctxNameStk[:0]
+	rewriter.originSchemaLen = -1
 	rewriter.ctx = ctx
 	return
 }
@@ -216,12 +221,16 @@ type expressionRewriter struct {
 	p          LogicalPlan
 	schema     *expression.Schema
 	names      []*types.FieldName
-	err        error
-	aggrMap    map[*ast.AggregateFuncExpr]int
-	windowMap  map[*ast.WindowFuncExpr]int
-	b          *PlanBuilder
-	sctx       sessionctx.Context
-	ctx        context.Context
+	// originSchemaLen is the length of the original schema(specified in the SQL), which means not contain auxiliary columns.
+	// Currently it's only used to check if the 'order by + position' usage is valid. Note that it could be -1, which means
+	// this check is not needed.
+	originSchemaLen int
+	err             error
+	aggrMap         map[*ast.AggregateFuncExpr]int
+	windowMap       map[*ast.WindowFuncExpr]int
+	b               *PlanBuilder
+	sctx            sessionctx.Context
+	ctx             context.Context
 
 	// asScalar indicates the return value must be a scalar value.
 	// NOTE: This value can be changed during expression rewritten.
@@ -1350,7 +1359,7 @@ func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
 		}
 		er.err = err
 	}
-	if er.err == nil && pos > 0 && pos <= er.schema.Len() {
+	if er.err == nil && pos > 0 && pos <= er.schema.Len() && (er.originSchemaLen < 0 || pos <= er.originSchemaLen) {
 		er.ctxStackAppend(er.schema.Columns[pos-1], er.names[pos-1])
 	} else {
 		er.err = ErrUnknownColumn.GenWithStackByArgs(str, clauseMsg[er.b.curClause])

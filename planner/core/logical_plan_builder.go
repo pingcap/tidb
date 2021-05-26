@@ -1223,7 +1223,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 			newNames = append(newNames, name)
 			continue
 		}
-		newExpr, np, err := b.rewriteWithPreprocess(ctx, field.Expr, p, mapper, windowMapper, true, nil)
+		newExpr, np, err := b.rewriteWithPreprocess(ctx, field.Expr, p, mapper, windowMapper, true, nil, -1)
 		if err != nil {
 			return nil, nil, 0, err
 		}
@@ -1629,11 +1629,13 @@ func (t *itemTransformer) Leave(inNode ast.Node) (ast.Node, bool) {
 }
 
 func (b *PlanBuilder) buildSort(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int) (*LogicalSort, error) {
-	return b.buildSortWithCheck(ctx, p, byItems, aggMapper, windowMapper, nil, 0, false)
+	return b.buildSortWithCheck(ctx, p, byItems, aggMapper, windowMapper, nil, -1, false)
 }
 
+// buildSortWithCheck does more checks when building LogicalSort compared to call buildSort() directly.
+// Pass (nil, -1, false) to (projExprs, originSchemaLen, hasDistinct) respectively to disable these checks.
 func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int,
-	projExprs []expression.Expression, oldLen int, hasDistinct bool) (*LogicalSort, error) {
+	projExprs []expression.Expression, originSchemaLen int, hasDistinct bool) (*LogicalSort, error) {
 	if _, isUnion := p.(*LogicalUnionAll); isUnion {
 		b.curClause = globalOrderByClause
 	} else {
@@ -1645,14 +1647,14 @@ func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p LogicalPlan, byI
 	for i, item := range byItems {
 		newExpr, _ := item.Expr.Accept(transformer)
 		item.Expr = newExpr.(ast.ExprNode)
-		it, np, err := b.rewriteWithPreprocess(ctx, item.Expr, p, aggMapper, windowMapper, true, nil)
+		it, np, err := b.rewriteWithPreprocess(ctx, item.Expr, p, aggMapper, windowMapper, true, nil, originSchemaLen)
 		if err != nil {
 			return nil, err
 		}
 
 		// check whether ORDER BY items show up in SELECT DISTINCT fields, see #12442
 		if hasDistinct && projExprs != nil {
-			err = b.checkOrderByInDistinct(item, i, it, p, projExprs, oldLen)
+			err = b.checkOrderByInDistinct(item, i, it, p, projExprs, originSchemaLen)
 			if err != nil {
 				return nil, err
 			}
@@ -3485,7 +3487,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
 			p, err = b.buildSortWithCheck(ctx, p, sel.OrderBy.Items, orderMap, windowMapper, projExprs, oldLen, sel.Distinct)
 		} else {
-			p, err = b.buildSort(ctx, p, sel.OrderBy.Items, orderMap, windowMapper)
+			p, err = b.buildSortWithCheck(ctx, p, sel.OrderBy.Items, orderMap, windowMapper, nil, oldLen, false)
 		}
 		if err != nil {
 			return nil, err
@@ -4536,7 +4538,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 					return expr
 				}
 			}
-			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, false, rewritePreprocess)
+			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, false, rewritePreprocess, -1)
 			if err != nil {
 				return nil, nil, false, err
 			}
@@ -4616,7 +4618,9 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}
 
 	if delete.Order != nil {
-		p, err = b.buildSort(ctx, p, delete.Order.Items, nil, nil)
+		// Delete stmt doesn't allow 'order by + position' to reference a column,
+		// so we pass 0 as originSchemaLen to make expression rewriter report error.
+		p, err = b.buildSortWithCheck(ctx, p, delete.Order.Items, nil, nil, nil, 0, false)
 		if err != nil {
 			return nil, err
 		}

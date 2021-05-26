@@ -2812,7 +2812,7 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 		if _, ok := assign.Expr.(*ast.SubqueryExpr); ok {
 			usingPlan = LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 		}
-		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, usingPlan, nil, nil, true, checkRefColumn)
+		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, usingPlan, nil, nil, true, checkRefColumn, -1)
 		if err != nil {
 			return err
 		}
@@ -2890,7 +2890,7 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 				if _, ok := valueItem.(*ast.SubqueryExpr); ok {
 					usingPlan = LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 				}
-				expr, _, err = b.rewriteWithPreprocess(ctx, valueItem, usingPlan, nil, nil, true, checkRefColumn)
+				expr, _, err = b.rewriteWithPreprocess(ctx, valueItem, usingPlan, nil, nil, true, checkRefColumn, -1)
 			}
 			if err != nil {
 				return err
