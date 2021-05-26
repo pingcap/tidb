@@ -645,7 +645,7 @@ func (s *testStatsSuite) TestTopNOutOfHist(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec("set tidb_analyze_version=2")
+	testKit.MustExec("set tidb_analyze_version=3")
 
 	testKit.MustExec("drop table if exists topn_before_hist")
 	testKit.MustExec("create table topn_before_hist(a int, index idx(a))")
