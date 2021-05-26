@@ -1653,17 +1653,15 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.MemTracker.SetActionOnExceed(action)
 	}
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
-		s, err = planner.GetPreparedStmt(execStmt, vars)
+		prepareStmt, err := planner.GetPreparedStmt(execStmt, vars)
 		if err != nil {
-			return
+			return err
 		}
+		s = prepareStmt.PreparedAst.Stmt
+		sc.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
 		// For `execute stmt` SQL, should reset the SQL digest with the prepare SQL digest.
-		if config.TopSQLEnabled() {
-			sc.OriginalSQL = s.Text()
-			normalizedSQL, digest := sc.SQLDigest()
-			if digest != nil {
-				tracecpu.SetGoroutineLabelsWithSQL(context.Background(), normalizedSQL, digest.String())
-			}
+		if config.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
+			tracecpu.SetGoroutineLabelsWithSQL(context.Background(), prepareStmt.NormalizedSQL, prepareStmt.SQLDigest.String())
 		}
 	}
 	// execute missed stmtID uses empty sql
