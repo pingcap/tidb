@@ -314,17 +314,17 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), copStats.ScanDetail)
 	}
 
-	has_executor := false
+	hasExecutor := false
 	for _, detail := range r.selectResp.GetExecutionSummaries() {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
 			if detail.ExecutorId != nil {
-				has_executor = true
+				hasExecutor = true
 			}
 			break
 		}
 	}
-	if has_executor == true {
+	if hasExecutor == true {
 		var recorededPlanIDs = make(map[int]int)
 		for i, detail := range r.selectResp.GetExecutionSummaries() {
 			if detail != nil && detail.TimeProcessedNs != nil &&
