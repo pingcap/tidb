@@ -641,6 +641,42 @@ func (s *testStatsSuite) TestStatsVer2(c *C) {
 	}
 }
 
+func (s *testStatsSuite) TestTopNOutOfHist(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set tidb_analyze_version=3")
+
+	testKit.MustExec("drop table if exists topn_before_hist")
+	testKit.MustExec("create table topn_before_hist(a int, index idx(a))")
+	testKit.MustExec("insert into topn_before_hist values(1), (1), (1), (1), (2), (2), (3), (4), (5)")
+	testKit.MustExec("analyze table topn_before_hist with 2 topn, 3 buckets")
+
+	testKit.MustExec("create table topn_after_hist(a int, index idx(a))")
+	testKit.MustExec("insert into topn_after_hist values(2), (2), (3), (4), (5), (6), (6), (6), (6)")
+	testKit.MustExec("analyze table topn_after_hist with 2 topn, 3 buckets")
+
+	testKit.MustExec("create table topn_before_hist_no_index(a int)")
+	testKit.MustExec("insert into topn_before_hist_no_index values(1), (1), (1), (1), (2), (2), (3), (4), (5)")
+	testKit.MustExec("analyze table topn_before_hist_no_index with 2 topn, 3 buckets")
+
+	testKit.MustExec("create table topn_after_hist_no_index(a int)")
+	testKit.MustExec("insert into topn_after_hist_no_index values(2), (2), (3), (4), (5), (6), (6), (6), (6)")
+	testKit.MustExec("analyze table topn_after_hist_no_index with 2 topn, 3 buckets")
+
+	var (
+		input  []string
+		output [][]string
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	for i := range input {
+		s.testData.OnRecord(func() {
+			output[i] = s.testData.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
+	}
+}
+
 func (s *testStatsSuite) TestColumnIndexNullEstimation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
