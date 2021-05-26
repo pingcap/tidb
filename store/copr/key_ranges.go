@@ -11,14 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package copr
 
 import (
 	"bytes"
 	"fmt"
 	"sort"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/store/tikv/kv"
 )
@@ -141,21 +140,4 @@ func (r *KeyRanges) ToPBRanges() []*coprocessor.KeyRange {
 		})
 	})
 	return ranges
-}
-
-// SplitRegionRanges get the split ranges from pd region.
-func SplitRegionRanges(bo *Backoffer, cache *RegionCache, keyRanges []kv.KeyRange) ([]kv.KeyRange, error) {
-	ranges := NewKeyRanges(keyRanges)
-
-	locations, err := cache.SplitKeyRangesByLocations(bo, ranges)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	var ret []kv.KeyRange
-	for _, loc := range locations {
-		for i := 0; i < loc.Ranges.Len(); i++ {
-			ret = append(ret, loc.Ranges.At(i))
-		}
-	}
-	return ret, nil
 }

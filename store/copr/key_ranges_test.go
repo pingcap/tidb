@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package copr
 
 import (
 	. "github.com/pingcap/check"
@@ -125,19 +125,4 @@ func (s *testKeyRangesSuite) testSplit(c *C, ranges *KeyRanges, checkLeft bool, 
 			s.checkEqual(c, right, expect.mid, false)
 		}
 	}
-}
-
-func buildKeyRanges(keys ...string) []kv.KeyRange {
-	var ranges []kv.KeyRange
-	for i := 0; i < len(keys); i += 2 {
-		ranges = append(ranges, kv.KeyRange{
-			StartKey: []byte(keys[i]),
-			EndKey:   []byte(keys[i+1]),
-		})
-	}
-	return ranges
-}
-
-func buildCopRanges(keys ...string) *KeyRanges {
-	return NewKeyRanges(buildKeyRanges(keys...))
 }

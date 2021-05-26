@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/copr"
+	"github.com/pingcap/tidb/store/driver/backoff"
 	"github.com/pingcap/tidb/store/tikv"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/table"
@@ -331,9 +333,10 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 	}
 
 	maxSleep := 10000 // ms
-	bo := tikv.NewBackofferWithVars(context.Background(), maxSleep, nil)
+	bo := backoff.NewBackofferWithVars(context.Background(), maxSleep, nil)
 	tikvRange := *(*tikvstore.KeyRange)(unsafe.Pointer(&kvRange))
-	ranges, err := s.GetRegionCache().SplitRegionRanges(bo, []tikvstore.KeyRange{tikvRange})
+	rc := copr.NewRegionCache(s.GetRegionCache())
+	ranges, err := rc.SplitRegionRanges(bo, []tikvstore.KeyRange{tikvRange})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

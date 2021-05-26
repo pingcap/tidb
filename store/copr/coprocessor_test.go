@@ -41,7 +41,7 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	_, regionIDs, _ := mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
 	pdCli := &tikv.CodecPDClient{Client: mocktikv.NewPDClient(cluster)}
-	cache := tikv.NewRegionCache(pdCli)
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
 
 	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
@@ -158,48 +158,48 @@ func (s *testCoprocessorSuite) TestSplitRegionRanges(c *C) {
 	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
 	pdCli := &tikv.CodecPDClient{Client: mocktikv.NewPDClient(cluster)}
-	cache := tikv.NewRegionCache(pdCli)
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
 
-	bo := tikv.NewBackofferWithVars(context.Background(), 3000, nil)
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
 
-	ranges, err := tikv.SplitRegionRanges(bo, cache, buildKeyRanges("a", "c"))
+	ranges, err := cache.SplitRegionRanges(bo, buildKeyRanges("a", "c"))
 	c.Assert(err, IsNil)
 	c.Assert(ranges, HasLen, 1)
 	s.rangeEqual(c, ranges, "a", "c")
 
-	ranges, err = tikv.SplitRegionRanges(bo, cache, buildKeyRanges("h", "y"))
+	ranges, err = cache.SplitRegionRanges(bo, buildKeyRanges("h", "y"))
 	c.Assert(err, IsNil)
 	c.Assert(len(ranges), Equals, 3)
 	s.rangeEqual(c, ranges, "h", "n", "n", "t", "t", "y")
 
-	ranges, err = tikv.SplitRegionRanges(bo, cache, buildKeyRanges("s", "z"))
+	ranges, err = cache.SplitRegionRanges(bo, buildKeyRanges("s", "z"))
 	c.Assert(err, IsNil)
 	c.Assert(len(ranges), Equals, 2)
 	s.rangeEqual(c, ranges, "s", "t", "t", "z")
 
-	ranges, err = tikv.SplitRegionRanges(bo, cache, buildKeyRanges("s", "s"))
+	ranges, err = cache.SplitRegionRanges(bo, buildKeyRanges("s", "s"))
 	c.Assert(err, IsNil)
 	c.Assert(len(ranges), Equals, 1)
 	s.rangeEqual(c, ranges, "s", "s")
 
-	ranges, err = tikv.SplitRegionRanges(bo, cache, buildKeyRanges("t", "t"))
+	ranges, err = cache.SplitRegionRanges(bo, buildKeyRanges("t", "t"))
 	c.Assert(err, IsNil)
 	c.Assert(len(ranges), Equals, 1)
 	s.rangeEqual(c, ranges, "t", "t")
 
-	ranges, err = tikv.SplitRegionRanges(bo, cache, buildKeyRanges("t", "u"))
+	ranges, err = cache.SplitRegionRanges(bo, buildKeyRanges("t", "u"))
 	c.Assert(err, IsNil)
 	c.Assert(len(ranges), Equals, 1)
 	s.rangeEqual(c, ranges, "t", "u")
 
-	ranges, err = tikv.SplitRegionRanges(bo, cache, buildKeyRanges("u", "z"))
+	ranges, err = cache.SplitRegionRanges(bo, buildKeyRanges("u", "z"))
 	c.Assert(err, IsNil)
 	c.Assert(len(ranges), Equals, 1)
 	s.rangeEqual(c, ranges, "u", "z")
 
 	// min --> max
-	ranges, err = tikv.SplitRegionRanges(bo, cache, buildKeyRanges("a", "z"))
+	ranges, err = cache.SplitRegionRanges(bo, buildKeyRanges("a", "z"))
 	c.Assert(err, IsNil)
 	c.Assert(ranges, HasLen, 4)
 	s.rangeEqual(c, ranges, "a", "g", "g", "n", "n", "t", "t", "z")
@@ -211,7 +211,7 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	storeID, regionIDs, peerIDs := mocktikv.BootstrapWithMultiRegions(cluster, []byte("m"))
 	pdCli := &tikv.CodecPDClient{Client: mocktikv.NewPDClient(cluster)}
-	cache := tikv.NewRegionCache(pdCli)
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
 	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
 
@@ -249,8 +249,8 @@ func buildKeyRanges(keys ...string) []tikvstore.KeyRange {
 	return ranges
 }
 
-func buildCopRanges(keys ...string) *tikv.KeyRanges {
-	return tikv.NewKeyRanges(buildKeyRanges(keys...))
+func buildCopRanges(keys ...string) *KeyRanges {
+	return NewKeyRanges(buildKeyRanges(keys...))
 }
 
 func (s *testCoprocessorSuite) taskEqual(c *C, task *copTask, regionID uint64, keys ...string) {
