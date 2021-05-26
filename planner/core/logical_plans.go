@@ -1172,6 +1172,7 @@ type LogicalShowDDLJobs struct {
 
 // CTEClass holds the information and plan for a CTE.
 type CTEClass struct {
+	// The union between seed part and recursive part is DISTINCT or DISTINCT ALL.
 	IsDistinct               bool
 	seedPartLogicalPlan      LogicalPlan
 	recursivePartLogicalPlan LogicalPlan

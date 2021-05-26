@@ -308,6 +308,7 @@ func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsCla
 		return
 	}
 	defer func() {
+		// After build the resultSetNode, need to reset it so that it can be referenced by outer level.
 		for _, cte := range b.outerCTEs {
 			cte.recursiveRef = false
 		}
@@ -3638,55 +3639,64 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	return statsTbl
 }
 
+func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
+	for i := len(b.outerCTEs) - 1; i >= 0; i-- {
+		cte := b.outerCTEs[i]
+		if cte.def.Name.L == tn.Name.L {
+			if cte.isBuilding {
+				if cte.nonRecursive {
+					// Can't see this CTE, try outer definition.
+					continue
+				}
+
+				// Building the recursive part.
+				cte.useRecursive = true
+				if cte.seedLP == nil {
+					return nil, ErrCTERecursiveRequiresNonRecursiveFirst.FastGenByArgs(tn.Name.String())
+				}
+
+				if cte.enterSubquery || cte.recursiveRef {
+					return nil, ErrInvalidRequiresSingleReference.FastGenByArgs(tn.Name.String())
+				}
+
+				cte.recursiveRef = true
+				p := LogicalCTETable{name: cte.def.Name.String(), idForStorage: cte.storageID}.Init(b.ctx, b.getSelectOffset())
+				p.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
+				p.SetOutputNames(cte.seedLP.OutputNames())
+				return p, nil
+			}
+
+			b.handleHelper.pushMap(nil)
+			var p LogicalPlan
+			lp := LogicalCTE{cte: &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP, recursivePartLogicalPlan: cte.recurLP, IDForStorage: cte.storageID, optFlag: cte.optFlag}}.Init(b.ctx, b.getSelectOffset())
+			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
+			p = lp
+			p.SetOutputNames(cte.seedLP.OutputNames())
+			if len(asName.String()) > 0 {
+				var on types.NameSlice
+				for _, name := range p.OutputNames() {
+					cpOn := *name
+					cpOn.TblName = *asName
+					on = append(on, &cpOn)
+				}
+				p.SetOutputNames(on)
+			}
+			return p, nil
+		}
+	}
+
+	return nil, nil
+}
+
 func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
 	dbName := tn.Schema
 	sessionVars := b.ctx.GetSessionVars()
 
 	if dbName.L == "" {
-		// Try CTE
-		for i := len(b.outerCTEs) - 1; i >= 0; i-- {
-			cte := b.outerCTEs[i]
-			if cte.def.Name.L == tn.Name.L {
-				if cte.isBuilding {
-					if cte.nonRecursive {
-						// Can't see this CTE, try outer definition.
-						continue
-					}
-
-					// Building the recursive part.
-					cte.useRecursive = true
-					if cte.seedLP == nil {
-						return nil, ErrCTERecursiveRequiresNonRecursiveFirst.FastGenByArgs(tn.Name.String())
-					}
-
-					if cte.enterSubquery || cte.recursiveRef {
-						return nil, ErrInvalidRequiresSingleReference.FastGenByArgs(tn.Name.String())
-					}
-
-					cte.recursiveRef = true
-					p := LogicalCTETable{name: cte.def.Name.String(), idForStorage: cte.storageID}.Init(b.ctx, b.getSelectOffset())
-					p.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
-					p.SetOutputNames(cte.seedLP.OutputNames())
-					return p, nil
-				}
-
-				b.handleHelper.pushMap(nil)
-				var p LogicalPlan
-				lp := LogicalCTE{cte: &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP, recursivePartLogicalPlan: cte.recurLP, IDForStorage: cte.storageID, optFlag: cte.optFlag}}.Init(b.ctx, b.getSelectOffset())
-				lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
-				p = lp
-				p.SetOutputNames(cte.seedLP.OutputNames())
-				if len(asName.String()) > 0 {
-					var on types.NameSlice
-					for _, name := range p.OutputNames() {
-						cpOn := *name
-						cpOn.TblName = *asName
-						on = append(on, &cpOn)
-					}
-					p.SetOutputNames(on)
-				}
-				return p, nil
-			}
+		// Try CTE.
+		p, err := b.tryBuildCTE(ctx, tn, asName)
+		if err != nil || p != nil {
+			return p, err
 		}
 		dbName = model.NewCIStr(sessionVars.CurrentDB)
 	}
@@ -5740,7 +5750,7 @@ func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpressi
 			return nil, err
 		}
 
-		p, err = b.adjustCTEPlanSchema(p, cte)
+		p, err = b.adjustCTEPlanOutputName(p, cte)
 		if err != nil {
 			return nil, err
 		}
@@ -5751,14 +5761,12 @@ func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpressi
 	return nil, nil
 }
 
+// buildRecursiveCTE handles the with clause `with recursive xxx as xx`.
 func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNode) error {
 	cInfo := b.outerCTEs[len(b.outerCTEs)-1]
 	switch x := (cte).(type) {
 	case *ast.SetOprStmt:
 		// 1. Handle the WITH clause if exists.
-		// 2. Build plans for each part of SetOprStmt.
-		// 3. If it fail to build a plan, it may be the recursive part. Then we build the seed part plan, and rebuild it.
-		// 4. Finally, we get the seed part plan and recursive part plan.
 		if x.With != nil {
 			l := len(b.outerCTEs)
 			defer func() {
@@ -5771,8 +5779,10 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 				return err
 			}
 		}
+		// Set it to nil, so that when builds the seed part, it won't build again. Reset it in defer so that the AST doesn't change after this function.
 		x.With = nil
 
+		// 2. Build plans for each part of SetOprStmt.
 		recursive := make([]LogicalPlan, 0)
 		tmpAfterSetOptsForRecur := []*ast.SetOprType{nil}
 
@@ -5793,6 +5803,7 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 
 			if expectSeed {
 				if cInfo.useRecursive {
+					// 3. If it fail to build a plan, it may be the recursive part. Then we build the seed part plan, and rebuild it.
 					if i == 0 {
 						return ErrCTERecursiveRequiresNonRecursiveFirst.GenWithStackByArgs(cInfo.def.Name.String())
 					}
@@ -5822,7 +5833,7 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 						return err
 					}
 					x.SelectList.Selects = saveSelect
-					p, err = b.adjustCTEPlanSchema(p, cInfo.def)
+					p, err = b.adjustCTEPlanOutputName(p, cInfo.def)
 					if err != nil {
 						return err
 					}
@@ -5852,7 +5863,6 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 				recursive = append(recursive, p)
 				tmpAfterSetOptsForRecur = append(tmpAfterSetOptsForRecur, afterOpr)
 			}
-
 		}
 
 		if len(recursive) == 0 {
@@ -5861,7 +5871,7 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 			if err != nil {
 				return err
 			}
-			p, err = b.adjustCTEPlanSchema(p, cInfo.def)
+			p, err = b.adjustCTEPlanOutputName(p, cInfo.def)
 			if err != nil {
 				return err
 			}
@@ -5878,6 +5888,7 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 		if err != nil {
 			return err
 		}
+		// 4. Finally, we get the seed part plan and recursive part plan.
 		cInfo.recurLP = recurPart
 		return nil
 	default:
@@ -5889,7 +5900,7 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 			}
 			return err
 		}
-		p, err = b.adjustCTEPlanSchema(p, cInfo.def)
+		p, err = b.adjustCTEPlanOutputName(p, cInfo.def)
 		if err != nil {
 			return err
 		}
@@ -5898,7 +5909,7 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 	}
 }
 
-func (b *PlanBuilder) adjustCTEPlanSchema(p LogicalPlan, def *ast.CommonTableExpression) (LogicalPlan, error) {
+func (b *PlanBuilder) adjustCTEPlanOutputName(p LogicalPlan, def *ast.CommonTableExpression) (LogicalPlan, error) {
 	outPutNames := p.OutputNames()
 	for _, name := range outPutNames {
 		name.TblName = def.Name
@@ -5916,6 +5927,8 @@ func (b *PlanBuilder) adjustCTEPlanSchema(p LogicalPlan, def *ast.CommonTableExp
 	return p, nil
 }
 
+// prepareCTECheckForSubQuery prepares the check that the recursive CTE can't be referenced in subQuery. It's used before building a subQuery.
+// For example: with recursive cte(n) as (select 1 union select * from (select * from cte) c1) select * from cte;
 func (b *PlanBuilder) prepareCTECheckForSubQuery() []*cteInfo {
 	modifiedCTE := make([]*cteInfo, 0)
 	for _, cte := range b.outerCTEs {
@@ -5927,12 +5940,14 @@ func (b *PlanBuilder) prepareCTECheckForSubQuery() []*cteInfo {
 	return modifiedCTE
 }
 
+// resetCTECheckForSubQuery resets the related variable. It's used after leaving a subQuery.
 func resetCTECheckForSubQuery(ci []*cteInfo) {
 	for _, cte := range ci {
 		cte.enterSubquery = false
 	}
 }
 
+// genCTETableNameForError find the nearest CTE name.
 func (b *PlanBuilder) genCTETableNameForError() string {
 	name := ""
 	for i := len(b.outerCTEs) - 1; i >= 0; i-- {
