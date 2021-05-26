@@ -77,8 +77,10 @@ type TxnInfo struct {
 	CurrentDB string
 }
 
-// Clone clones the TxnInfo. It's safe to call concurrently with the transaction.
-func (info *TxnInfo) Clone() *TxnInfo {
+// GetSnapInfo gets a snapshot of the TxnInfo for read. It's safe to call concurrently with the transaction.
+// Note that this function doesn't do deep copy and some fields of the result may be unsafe to write. Use it at your own
+// risk.
+func (info *TxnInfo) GetSnapInfo() *TxnInfo {
 	return &TxnInfo{
 		StartTS:          info.StartTS,
 		CurrentSQLDigest: info.CurrentSQLDigest,

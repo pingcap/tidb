@@ -273,7 +273,7 @@ func (txn *LazyTxn) onStmtStart(currentSQLDigest string) {
 		return
 	}
 
-	info := txn.txnInfo.Clone()
+	info := txn.txnInfo.GetSnapInfo()
 	info.CurrentSQLDigest = currentSQLDigest
 	// Keeps at most 50 history sqls to avoid consuming too much memory.
 	const maxTransactionStmtHistory int = 50
@@ -285,7 +285,7 @@ func (txn *LazyTxn) onStmtStart(currentSQLDigest string) {
 }
 
 func (txn *LazyTxn) onStmtEnd() {
-	info := txn.txnInfo.Clone()
+	info := txn.txnInfo.GetSnapInfo()
 	info.CurrentSQLDigest = ""
 	txn.storeTxnInfo(info)
 }
@@ -433,7 +433,7 @@ func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 // Info dump the TxnState to Datum for displaying in `TIDB_TRX`
 // This function is supposed to be thread safe
 func (txn *LazyTxn) Info() *txninfo.TxnInfo {
-	info := txn.loadTxnInfo().Clone()
+	info := txn.loadTxnInfo().GetSnapInfo()
 	if info.StartTS == 0 {
 		return nil
 	}
