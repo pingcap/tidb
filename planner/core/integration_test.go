@@ -3571,6 +3571,7 @@ func (s *testIntegrationSuite) TestPanicWhileQueryTableWithIsNull(c *C) {
 	tk.MustExec("INSERT INTO NT_HP27193 (COL2, COL4, COL3, COL5) VALUES ('m',  '2020-05-04 13:15:27', 8,  2602)")
 	_, err = tk.Exec("select col1 from NT_HP27193 where col1 is null;")
 	c.Assert(err, IsNil)
+	tk.MustExec("drop table if exists NT_HP27193")
 }
 
 func (s *testIntegrationSuite) TestIssue23846(c *C) {
