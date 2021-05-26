@@ -1574,8 +1574,8 @@ func (s *testDataLockWaitSuite) SetUpSuite(c *C) {
 	_, digest1 := parser.NormalizeDigest("select * from t1 for update;")
 	_, digest2 := parser.NormalizeDigest("update t1 set f1=1 where id=2;")
 	s.store, err = mockstorage.NewMockStorageWithLockWaits(kvstore, []*deadlock.WaitForEntry{
-		{Txn: 1, WaitForTxn: 2, KeyHash: 3, Key: []byte("a"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest1)},
-		{Txn: 4, WaitForTxn: 5, KeyHash: 6, Key: []byte("b"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest2)},
+		{Txn: 1, WaitForTxn: 2, KeyHash: 3, Key: []byte("a"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest1, nil)},
+		{Txn: 4, WaitForTxn: 5, KeyHash: 6, Key: []byte("b"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest2, nil)},
 	})
 	c.Assert(err, IsNil)
 	session.DisableStats4Test()
@@ -1587,7 +1587,7 @@ func (s *testDataLockWaitSuite) TestDataLockWait(c *C) {
 	_, digest1 := parser.NormalizeDigest("select * from t1 for update;")
 	_, digest2 := parser.NormalizeDigest("update t1 set f1=1 where id=2;")
 	tk := s.newTestKitWithRoot(c)
-	tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS;").Check(testkit.Rows("3 a 1 2 "+digest1, "6 b 4 5 "+digest2))
+	tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS;").Check(testkit.Rows("3 a 1 2 "+digest1.String(), "6 b 4 5 "+digest2.String()))
 }
 
 func (s *testDataLockWaitSuite) TestDataLockPrivilege(c *C) {

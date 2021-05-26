@@ -16,6 +16,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1031,7 +1032,7 @@ func (e *memtableRetriever) setDataForTableLockWait(ctx sessionctx.Context) erro
 			wait.Key,
 			wait.Txn,
 			wait.WaitForTxn,
-			digest,
+			hex.EncodeToString(digest),
 		))
 	}
 	return nil
