@@ -1027,8 +1027,8 @@ func setTableScanToTableRowIDScan(p PhysicalPlan) {
 
 // rootTask is the final sink node of a plan graph. It should be a single goroutine on tidb.
 type rootTask struct {
-	p   PhysicalPlan
-	cst float64
+	p       PhysicalPlan
+	cst     float64
 	isEmpty bool
 }
 
@@ -1291,7 +1291,7 @@ func (p *PhysicalUnionAll) attach2MppTasks(tasks ...task) task {
 				childMaxCost = childCost
 			}
 			childPlans = append(childPlans, mpp.plan())
-		} else if root, ok := tk.(*rootTask); ok && root.isEmpty{
+		} else if root, ok := tk.(*rootTask); ok && root.isEmpty {
 			continue
 		} else {
 			return invalidTask
