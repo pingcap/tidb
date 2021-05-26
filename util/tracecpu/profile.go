@@ -102,6 +102,8 @@ func (sp *sqlStatsProfiler) doCPUProfile() {
 	interval := config.GetGlobalConfig().TopSQL.RefreshInterval
 	task := sp.newProfileTask()
 	if err := pprof.StartCPUProfile(task.buf); err != nil {
+		// Sleep a while before retry.
+		time.Sleep(time.Millisecond)
 		return
 	}
 	ns := int(time.Second)*interval - time.Now().Nanosecond()
