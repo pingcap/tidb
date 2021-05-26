@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/deadlockhistory"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/sem"
@@ -62,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.etcd.io/etcd/clientv3"
+	"go.uber.org/zap"
 )
 
 type memtableRetriever struct {
@@ -1023,16 +1025,20 @@ func (e *memtableRetriever) setDataForTableLockWait(ctx sessionctx.Context) erro
 		return err
 	}
 	for _, wait := range waits {
+		var digestStr interface{}
 		digest, err := resourcegrouptag.DecodeResourceGroupTag(wait.ResourceGroupTag)
 		if err != nil {
-			return err
+			logutil.BgLogger().Warn("failed to decode resource group tag", zap.Error(err))
+			digestStr = nil
+		} else {
+			digestStr = hex.EncodeToString(digest)
 		}
 		e.rows = append(e.rows, types.MakeDatums(
 			wait.KeyHash,
 			wait.Key,
 			wait.Txn,
 			wait.WaitForTxn,
-			hex.EncodeToString(digest),
+			digestStr,
 		))
 	}
 	return nil

@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	deadlockPB "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
 	derr "github.com/pingcap/tidb/store/driver/error"
@@ -345,7 +344,11 @@ func (s *tikvStore) GetLockWaits() ([]*deadlockPB.WaitForEntry, error) {
 		if store.IsNotTombstone() {
 			resp, err := s.GetTiKVClient().SendRequest(context.TODO(), store.Addr, tikvrpc.NewRequest(tikvrpc.CmdLockWaitInfo, &kvrpcpb.GetLockWaitInfoRequest{}), time.Second*30)
 			if err != nil {
-				log.Warn("query lock wait info failed", zap.Error(err))
+				logutil.BgLogger().Warn("query lock wait info failed", zap.Error(err))
+				continue
+			}
+			if resp.Resp == nil {
+				logutil.BgLogger().Warn("lock wait info from store is nil")
 				continue
 			}
 			entries := resp.Resp.(*kvrpcpb.GetLockWaitInfoResponse).Entries
