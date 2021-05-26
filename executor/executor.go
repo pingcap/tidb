@@ -1006,7 +1006,8 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.Loc
 // locked by others. used for (select for update nowait) situation
 // except 0 means alwaysWait 1 means nowait
 func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.LockCtx, keys ...kv.Key) error {
-	sctx := se.GetSessionVars().StmtCtx
+	sessVars := se.GetSessionVars()
+	sctx := sessVars.StmtCtx
 	if !sctx.InUpdateStmt && !sctx.InDeleteStmt {
 		atomic.StoreUint32(&se.GetSessionVars().TxnCtx.ForUpdate, 1)
 	}
@@ -1015,6 +1016,10 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.L
 	if err != nil {
 		return err
 	}
+
+	// Skip the temporary table keys.
+	keys = filterTemporaryTableKeys(sessVars, keys)
+
 	var lockKeyStats *tikvutil.LockKeysDetails
 	ctx = context.WithValue(ctx, tikvutil.LockKeysDetailCtxKey, &lockKeyStats)
 	err = txn.LockKeys(tikvutil.SetSessionID(ctx, se.GetSessionVars().ConnectionID), lockCtx, keys...)
@@ -1022,6 +1027,22 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.L
 		sctx.MergeLockKeysExecDetails(lockKeyStats)
 	}
 	return err
+}
+
+func filterTemporaryTableKeys(vars *variable.SessionVars, keys []kv.Key) []kv.Key {
+	txnCtx := vars.TxnCtx
+	if txnCtx == nil || txnCtx.GlobalTemporaryTables == nil {
+		return keys
+	}
+
+	newKeys := keys[:]
+	for _, key := range keys {
+		tblID := tablecodec.DecodeTableID(key)
+		if _, ok := txnCtx.GlobalTemporaryTables[tblID]; !ok {
+			newKeys = append(newKeys, key)
+		}
+	}
+	return newKeys
 }
 
 // LimitExec represents limit executor
