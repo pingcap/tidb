@@ -305,7 +305,9 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	}()
 	// Lock a single entry, not the whole cache.
 	if summary != nil {
+		summary.Lock()
 		summary.add(sei, beginTime, intervalSeconds, historySize)
+		summary.Unlock()
 	}
 }
 

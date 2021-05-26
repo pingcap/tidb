@@ -15,7 +15,6 @@ package stmtsummary
 
 import (
 	"container/list"
-	"sync"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
@@ -27,8 +26,6 @@ type stmtSummaryByDigestEvicted struct {
 	// record evicted data in intervals
 	// latest history data is Back()
 	history *list.List
-
-	sync.Mutex
 }
 
 // element being stored in stmtSummaryByDigestEvicted
@@ -64,8 +61,6 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 	}
 
 	evictedValue.Lock()
-	ssbde.Lock()
-	defer ssbde.Unlock()
 	defer evictedValue.Unlock()
 	for e, h := evictedValue.history.Back(), ssbde.history.Back(); e != nil; e = e.Prev() {
 		evictedElement := e.Value.(*stmtSummaryByDigestElement)
