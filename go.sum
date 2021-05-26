@@ -409,6 +409,8 @@ github.com/pingcap/badger v1.5.1-0.20200908111422-2e78ee155d19 h1:IXpGy7y9HyoShA
 github.com/pingcap/badger v1.5.1-0.20200908111422-2e78ee155d19/go.mod h1:LyrqUOHZrUDf9oGi1yoz1+qw9ckSIhQb5eMa1acOLNQ=
 github.com/pingcap/br v5.1.0-alpha.0.20210524083733-58e9e24fcb8e+incompatible h1:rRJG+3sGr4rbC3PUGpIhaO4uVB3ZssyJxZyLW8yFwBE=
 github.com/pingcap/br v5.1.0-alpha.0.20210524083733-58e9e24fcb8e+incompatible/go.mod h1:ymVmo50lQydxib0tmK5hHk4oteB7hZ0IMCArunwy3UQ=
+github.com/pingcap/br v5.1.0-alpha.0.20210526054934-d5f5f9df24f5+incompatible h1:JXkYrdHpoW0Ht6fI+pl9SC7OcNpYvJg8hc/6i+V60Eo=
+github.com/pingcap/br v5.1.0-alpha.0.20210526054934-d5f5f9df24f5+incompatible/go.mod h1:ymVmo50lQydxib0tmK5hHk4oteB7hZ0IMCArunwy3UQ=
 github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8/go.mod h1:B1+S9LNcuMyLH/4HMTViQOJevkGiik3wW2AN9zb2fNQ=
 github.com/pingcap/check v0.0.0-20191107115940-caf2b9e6ccf4/go.mod h1:PYMCGwN0JHjoqGr3HrZoD+b8Tgx8bKnArhSq8YVzUMc=
 github.com/pingcap/check v0.0.0-20191216031241-8a5a85928f12/go.mod h1:PYMCGwN0JHjoqGr3HrZoD+b8Tgx8bKnArhSq8YVzUMc=
