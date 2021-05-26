@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -64,7 +65,8 @@ type DeadlockHistory struct {
 }
 
 // NewDeadlockHistory creates an instance of DeadlockHistory
-func NewDeadlockHistory(capacity int) *DeadlockHistory {
+func NewDeadlockHistory(capacity uint) *DeadlockHistory {
+	logutil.BgLogger().Info("NewDeadlockHistory-capacity", zap.Uint("capacity", capacity))
 	return &DeadlockHistory{
 		deadlocks: make([]*DeadlockRecord, capacity),
 		currentID: 1,
@@ -74,7 +76,7 @@ func NewDeadlockHistory(capacity int) *DeadlockHistory {
 // GlobalDeadlockHistory is the global instance of DeadlockHistory, which is used to maintain recent several recent
 // deadlock events globally.
 // TODO: Make the capacity configurable
-var GlobalDeadlockHistory = NewDeadlockHistory(10)
+var GlobalDeadlockHistory = NewDeadlockHistory(config.GetGlobalConfig().PessimisticTxn.DeadlockHistoryCapacity)
 
 // Push pushes an element into the queue. It will set the `ID` field of the record, and add the pointer directly to
 // the collection. Be aware that do not modify the record's content after pushing.
