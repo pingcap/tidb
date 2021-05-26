@@ -23,10 +23,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/store/tikv/client"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -100,7 +102,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		WaitTimeout:  action.LockWaitTime,
 		ReturnValues: action.ReturnValues,
 		MinCommitTs:  c.forUpdateTS + 1,
-	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
+	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog, ResourceGroupTag: action.LockCtx.ResourceGroupTag})
 	lockWaitStartTime := action.WaitStartTime
 	for {
 		// if lockWaitTime set, refine the request `WaitTimeout` field based on timeout limit
@@ -117,7 +119,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			return &tikverr.ErrWriteConflict{WriteConflict: nil}
 		})
 		startTime := time.Now()
-		resp, err := c.store.SendReq(bo, req, batch.region, ReadTimeoutShort)
+		resp, err := c.store.SendReq(bo, req, batch.region, client.ReadTimeoutShort)
 		if action.LockCtx.Stats != nil {
 			atomic.AddInt64(&action.LockCtx.Stats.LockRPCTime, int64(time.Since(startTime)))
 			atomic.AddInt64(&action.LockCtx.Stats.LockRPCCount, 1)
@@ -130,7 +132,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -219,7 +221,7 @@ func (actionPessimisticRollback) handleSingleBatch(c *twoPhaseCommitter, bo *Bac
 		ForUpdateTs:  c.forUpdateTS,
 		Keys:         batch.mutations.GetKeys(),
 	})
-	resp, err := c.store.SendReq(bo, req, batch.region, ReadTimeoutShort)
+	resp, err := c.store.SendReq(bo, req, batch.region, client.ReadTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -228,7 +230,7 @@ func (actionPessimisticRollback) handleSingleBatch(c *twoPhaseCommitter, bo *Bac
 		return errors.Trace(err)
 	}
 	if regionErr != nil {
-		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+		err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -247,11 +249,11 @@ func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *kv.
 				for _, action := range strings.Split(v, ",") {
 					if action == "delay" {
 						duration := time.Duration(rand.Int63n(int64(time.Second) * 5))
-						logutil.Logger(bo.ctx).Info("[failpoint] injected delay at pessimistic lock",
+						logutil.Logger(bo.GetCtx()).Info("[failpoint] injected delay at pessimistic lock",
 							zap.Uint64("txnStartTS", c.startTS), zap.Duration("duration", duration))
 						time.Sleep(duration)
 					} else if action == "fail" {
-						logutil.Logger(bo.ctx).Info("[failpoint] injected failure at pessimistic lock",
+						logutil.Logger(bo.GetCtx()).Info("[failpoint] injected failure at pessimistic lock",
 							zap.Uint64("txnStartTS", c.startTS))
 						failpoint.Return(errors.New("injected failure at pessimistic lock"))
 					}

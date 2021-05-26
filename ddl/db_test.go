@@ -76,8 +76,9 @@ var _ = Suite(&testDBSuite4{&testDBSuite{}})
 var _ = Suite(&testDBSuite5{&testDBSuite{}})
 var _ = Suite(&testDBSuite6{&testDBSuite{}})
 var _ = Suite(&testDBSuite7{&testDBSuite{}})
-var _ = SerialSuites(&testSerialDBSuite{&testDBSuite{}})
 var _ = Suite(&testDBSuite8{&testDBSuite{}})
+var _ = SerialSuites(&testSerialDBSuite{&testDBSuite{}})
+var _ = SerialSuites(&testSerialDBSuite1{&testDBSuite{}})
 
 const defaultBatchSize = 1024
 const defaultReorgBatchSize = 256
@@ -90,6 +91,7 @@ type testDBSuite struct {
 	s          session.Session
 	lease      time.Duration
 	autoIDStep int64
+	ctx        sessionctx.Context
 }
 
 func setUpSuite(s *testDBSuite, c *C) {
@@ -114,6 +116,7 @@ func setUpSuite(s *testDBSuite, c *C) {
 	c.Assert(err, IsNil)
 	s.s, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
+	s.ctx = s.s.(sessionctx.Context)
 
 	_, err = s.s.Execute(context.Background(), "create database test_db")
 	c.Assert(err, IsNil)
@@ -145,8 +148,9 @@ type testDBSuite4 struct{ *testDBSuite }
 type testDBSuite5 struct{ *testDBSuite }
 type testDBSuite6 struct{ *testDBSuite }
 type testDBSuite7 struct{ *testDBSuite }
-type testSerialDBSuite struct{ *testDBSuite }
 type testDBSuite8 struct{ *testDBSuite }
+type testSerialDBSuite struct{ *testDBSuite }
+type testSerialDBSuite1 struct{ *testDBSuite }
 
 func testAddIndexWithPK(tk *testkit.TestKit) {
 	tk.MustExec("drop table if exists test_add_index_with_pk")
@@ -287,7 +291,7 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 }
 
 // TestAddPrimaryKeyRollback1 is used to test scenarios that will roll back when a duplicate primary key is encountered.
-func (s *testDBSuite5) TestAddPrimaryKeyRollback1(c *C) {
+func (s *testDBSuite8) TestAddPrimaryKeyRollback1(c *C) {
 	hasNullValsInKey := false
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
@@ -296,7 +300,7 @@ func (s *testDBSuite5) TestAddPrimaryKeyRollback1(c *C) {
 }
 
 // TestAddPrimaryKeyRollback2 is used to test scenarios that will roll back when a null primary key is encountered.
-func (s *testDBSuite1) TestAddPrimaryKeyRollback2(c *C) {
+func (s *testDBSuite8) TestAddPrimaryKeyRollback2(c *C) {
 	hasNullValsInKey := true
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
@@ -444,7 +448,7 @@ LOOP:
 	tk.MustExec("drop table t1")
 }
 
-func (s *testDBSuite5) TestCancelAddPrimaryKey(c *C) {
+func (s *testDBSuite8) TestCancelAddPrimaryKey(c *C) {
 	idxName := "primary"
 	addIdxSQL := "alter table t1 add primary key idx_c2 (c2);"
 	testCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL, "", s.dom)
@@ -460,7 +464,7 @@ func (s *testDBSuite5) TestCancelAddPrimaryKey(c *C) {
 	tk.MustExec("drop table t1")
 }
 
-func (s *testDBSuite3) TestCancelAddIndex(c *C) {
+func (s *testDBSuite7) TestCancelAddIndex(c *C) {
 	idxName := "c3_index "
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
 	testCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL, "", s.dom)
@@ -1072,7 +1076,7 @@ func (s *testDBSuite6) TestAddMultiColumnsIndexClusterIndex(c *C) {
 	tk.MustExec("admin check table t;")
 }
 
-func (s *testDBSuite1) TestAddPrimaryKey1(c *C) {
+func (s *testDBSuite6) TestAddPrimaryKey1(c *C) {
 	testAddIndex(c, s.store, s.lease, testPlain,
 		"create table test_add_index (c1 bigint, c2 bigint, c3 bigint, unique key(c1))", "primary")
 }
@@ -1105,7 +1109,7 @@ func (s *testDBSuite4) TestAddPrimaryKey4(c *C) {
 			      partition p4 values less than maxvalue)`, "primary")
 }
 
-func (s *testDBSuite1) TestAddIndex1(c *C) {
+func (s *testDBSuite6) TestAddIndex1(c *C) {
 	testAddIndex(c, s.store, s.lease, testPlain,
 		"create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))", "")
 }
@@ -1127,7 +1131,7 @@ func (s *testDBSuite3) TestAddIndex3(c *C) {
 			      partition by hash (c1) partitions 4;`, "")
 }
 
-func (s *testDBSuite4) TestAddIndex4(c *C) {
+func (s *testDBSuite8) TestAddIndex4(c *C) {
 	testAddIndex(c, s.store, s.lease, testPartition,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by range columns (c1) (
@@ -2035,7 +2039,7 @@ func (s *testDBSuite5) TestCreateIndexType(c *C) {
 	tk.MustExec(sql)
 }
 
-func (s *testDBSuite1) TestColumn(c *C) {
+func (s *testDBSuite6) TestColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use " + s.schemaName)
 	tk.MustExec("create table t2 (c1 int, c2 int, c3 int)")
@@ -2280,10 +2284,8 @@ func (s *testDBSuite6) TestDropColumn(c *C) {
 		testddlutil.ExecMultiSQLInGoroutine(c, s.store, "drop_col_db", []string{"insert into t2 set c1 = 1, c2 = 1, c3 = 1, c4 = 1"}, dmlDone)
 	}
 	for i := 0; i < num; i++ {
-		select {
-		case err := <-ddlDone:
-			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
-		}
+		err := <-ddlDone
+		c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 	}
 
 	// Test for drop partition table column.
@@ -3028,7 +3030,7 @@ func (s *testDBSuite2) TestTableForeignKey(c *C) {
 	tk.MustExec("drop table if exists t1,t2,t3,t4;")
 }
 
-func (s *testDBSuite3) TestFKOnGeneratedColumns(c *C) {
+func (s *testDBSuite8) TestFKOnGeneratedColumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// test add foreign key to generated column
@@ -4904,7 +4906,7 @@ func (s *testDBSuite1) TestModifyColumnTime_TimeToTimestamp(c *C) {
 	testModifyColumnTime(c, s.store, tests)
 }
 
-func (s *testDBSuite1) TestModifyColumnTime_DateToTime(c *C) {
+func (s *testDBSuite7) TestModifyColumnTime_DateToTime(c *C) {
 	tests := []testModifyColumnTimeCase{
 		// date to time
 		{"date", `"2019-01-02"`, "time", "00:00:00", 0},
@@ -5295,6 +5297,24 @@ func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
 	_, err = tk.Exec("alter table t_flash set tiflash replica 2 location labels 'a','b';")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "the tiflash replica count: 2 should be less than the total tiflash server count: 0")
+}
+
+func (s *testSerialDBSuite) TestSetTableFlashReplicaForSystemTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	sysTables := make([]string, 0, 24)
+	memOrSysDB := []string{"MySQL", "INFORMATION_SCHEMA", "PERFORMANCE_SCHEMA", "METRICS_SCHEMA"}
+	for _, db := range memOrSysDB {
+		tk.MustExec("use " + db)
+		rows := tk.MustQuery("show tables").Rows()
+		for i := 0; i < len(rows); i++ {
+			sysTables = append(sysTables, rows[i][0].(string))
+		}
+		for _, one := range sysTables {
+			_, err := tk.Exec(fmt.Sprintf("alter table `%s` set tiflash replica 1", one))
+			c.Assert(err.Error(), Equals, "[ddl:8200]ALTER table replica for tables in system database is currently unsupported")
+		}
+		sysTables = sysTables[:0]
+	}
 }
 
 func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
@@ -6575,7 +6595,7 @@ func (s *testSerialDBSuite) TestModifyColumnTypeWhenInterception(c *C) {
 
 	count := defaultBatchSize * 4
 	// Add some rows.
-	dml := fmt.Sprintf("insert into t values")
+	dml := "insert into t values"
 	for i := 1; i <= count; i++ {
 		dml += fmt.Sprintf("(%d, %f)", i, 11.22)
 		if i != count {

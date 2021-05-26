@@ -21,13 +21,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -230,13 +230,9 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.TaskID = sv.StmtCtx.TaskID
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.GetReplicaRead()
-	// in tests, it may be null
-	if is, ok := sv.GetInfoSchema().(infoschema.InfoSchema); ok {
-		builder.Request.SchemaVar = is.SchemaMetaVersion()
-	}
 	builder.txnScope = sv.TxnCtx.TxnScope
 	builder.IsStaleness = sv.TxnCtx.IsStaleness
-	if builder.IsStaleness && builder.txnScope != oracle.GlobalTxnScope {
+	if builder.IsStaleness && builder.txnScope != kv.GlobalTxnScope {
 		builder.MatchStoreLabels = []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
@@ -244,6 +240,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 			},
 		}
 	}
+	builder.SetResourceGroupTag(sv.StmtCtx)
 	return builder
 }
 
@@ -269,19 +266,29 @@ func (builder *RequestBuilder) SetTiDBServerID(serverID uint64) *RequestBuilder 
 
 // SetFromInfoSchema sets the following fields from infoSchema:
 // "bundles"
-func (builder *RequestBuilder) SetFromInfoSchema(is infoschema.InfoSchema) *RequestBuilder {
-	if is == nil {
+func (builder *RequestBuilder) SetFromInfoSchema(pis interface{}) *RequestBuilder {
+	is, ok := pis.(infoschema.InfoSchema)
+	if !ok {
 		return builder
 	}
 	builder.is = is
+	builder.Request.SchemaVar = is.SchemaMetaVersion()
+	return builder
+}
+
+// SetResourceGroupTag sets the request resource group tag.
+func (builder *RequestBuilder) SetResourceGroupTag(sc *stmtctx.StatementContext) *RequestBuilder {
+	if config.TopSQLEnabled() {
+		builder.Request.ResourceGroupTag = sc.GetResourceGroupTag()
+	}
 	return builder
 }
 
 func (builder *RequestBuilder) verifyTxnScope() error {
 	if builder.txnScope == "" {
-		builder.txnScope = oracle.GlobalTxnScope
+		builder.txnScope = kv.GlobalTxnScope
 	}
-	if builder.txnScope == oracle.GlobalTxnScope || builder.is == nil {
+	if builder.txnScope == kv.GlobalTxnScope || builder.is == nil {
 		return nil
 	}
 	visitPhysicalTableID := make(map[int64]struct{})
@@ -600,7 +607,7 @@ func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tids []int64, ra
 
 // VerifyTxnScope verify whether the txnScope and visited physical table break the leader rule's dcLocation.
 func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.InfoSchema) bool {
-	if txnScope == "" || txnScope == oracle.GlobalTxnScope {
+	if txnScope == "" || txnScope == kv.GlobalTxnScope {
 		return true
 	}
 	bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))

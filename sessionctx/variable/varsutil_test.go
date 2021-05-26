@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -95,7 +95,6 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.MemQuotaIndexLookupReader, Equals, int64(DefTiDBMemQuotaIndexLookupReader))
 	c.Assert(vars.MemQuotaIndexLookupJoin, Equals, int64(DefTiDBMemQuotaIndexLookupJoin))
 	c.Assert(vars.MemQuotaApplyCache, Equals, int64(DefTiDBMemQuotaApplyCache))
-	c.Assert(vars.EnableRadixJoin, Equals, DefTiDBUseRadixJoin)
 	c.Assert(vars.AllowWriteRowID, Equals, DefOptWriteRowID)
 	c.Assert(vars.TiDBOptJoinReorderThreshold, Equals, DefTiDBOptJoinReorderThreshold)
 	c.Assert(vars.EnableFastAnalyze, Equals, DefTiDBUseFastAnalyze)
@@ -105,6 +104,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.ShardAllocateStep, Equals, int64(DefTiDBShardAllocateStep))
 	c.Assert(vars.EnableChangeColumnType, Equals, DefTiDBChangeColumnType)
 	c.Assert(vars.AnalyzeVersion, Equals, DefTiDBAnalyzeVersion)
+	c.Assert(vars.CTEMaxRecursionDepth, Equals, DefCTEMaxRecursionDepth)
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.BatchSize))
@@ -430,19 +430,19 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBReplicaRead)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "follower")
-	c.Assert(v.GetReplicaRead(), Equals, tikvstore.ReplicaReadFollower)
+	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadFollower)
 	err = SetSessionSystemVar(v, TiDBReplicaRead, "leader")
 	c.Assert(err, IsNil)
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBReplicaRead)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "leader")
-	c.Assert(v.GetReplicaRead(), Equals, tikvstore.ReplicaReadLeader)
+	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadLeader)
 	err = SetSessionSystemVar(v, TiDBReplicaRead, "leader-and-follower")
 	c.Assert(err, IsNil)
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBReplicaRead)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "leader-and-follower")
-	c.Assert(v.GetReplicaRead(), Equals, tikvstore.ReplicaReadMixed)
+	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadMixed)
 
 	err = SetSessionSystemVar(v, TiDBEnableStmtSummary, "ON")
 	c.Assert(err, IsNil)

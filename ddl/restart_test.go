@@ -120,7 +120,7 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 
 	testCheckOwner(c, d1, true)
 
-	dbInfo := testSchemaInfo(c, d1, "test")
+	dbInfo := testSchemaInfo(c, d1, "test_restart")
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionCreateSchema,
@@ -157,7 +157,7 @@ func (s *testStatSuite) TestStat(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	dbInfo := testSchemaInfo(c, d, "test")
+	dbInfo := testSchemaInfo(c, d, "test_restart")
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
 
 	// TODO: Get this information from etcd.

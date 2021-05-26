@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/store/tikv"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/memory"
@@ -42,9 +43,6 @@ var (
 	// TxnTotalSizeLimit is limit of the sum of all entry size.
 	TxnTotalSizeLimit uint64 = config.DefTxnTotalSizeLimit
 )
-
-// FlagsOp  describes KeyFlags modify operation. TODO:remove it when br is ready
-type FlagsOp = tikvstore.FlagsOp
 
 // Getter is the interface for the Get method.
 type Getter interface {
@@ -107,11 +105,11 @@ type MemBuffer interface {
 	RUnlock()
 
 	// GetFlags returns the latest flags associated with key.
-	GetFlags(Key) (tikvstore.KeyFlags, error)
+	GetFlags(Key) (KeyFlags, error)
 	// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
-	SetWithFlags(Key, []byte, ...tikvstore.FlagsOp) error
+	SetWithFlags(Key, []byte, ...FlagsOp) error
 	// DeleteWithFlags delete key with the given KeyFlags
-	DeleteWithFlags(Key, ...tikvstore.FlagsOp) error
+	DeleteWithFlags(Key, ...FlagsOp) error
 
 	// Staging create a new staging buffer inside the MemBuffer.
 	// Subsequent writes will be temporarily stored in this new staging buffer.
@@ -123,7 +121,7 @@ type MemBuffer interface {
 	// If the changes are not published by `Release`, they will be discarded.
 	Cleanup(StagingHandle)
 	// InspectStage used to inspect the value updates in the given stage.
-	InspectStage(StagingHandle, func(Key, tikvstore.KeyFlags, []byte))
+	InspectStage(StagingHandle, func(Key, KeyFlags, []byte))
 
 	// SnapshotGetter returns a Getter for a snapshot of MemBuffer.
 	SnapshotGetter() Getter
@@ -161,8 +159,6 @@ type Transaction interface {
 	SetOption(opt int, val interface{})
 	// GetOption returns the option
 	GetOption(opt int) interface{}
-	// DelOption deletes an option.
-	DelOption(opt int)
 	// IsReadOnly checks if the transaction has only performed read operations.
 	IsReadOnly() bool
 	// StartTS returns the transaction start timestamp.
@@ -174,8 +170,6 @@ type Transaction interface {
 	GetMemBuffer() MemBuffer
 	// GetSnapshot returns the Snapshot binding to this transaction.
 	GetSnapshot() Snapshot
-	// GetUnionStore returns the UnionStore binding to this transaction.
-	GetUnionStore() UnionStore
 	// SetVars sets variables to the transaction.
 	SetVars(vars interface{})
 	// GetVars gets variables from the transaction.
@@ -275,7 +269,7 @@ type Request struct {
 	// call would not corresponds to a whole region result.
 	Streaming bool
 	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
-	ReplicaRead tikvstore.ReplicaReadType
+	ReplicaRead ReplicaReadType
 	// StoreType represents this request is sent to the which type of store.
 	StoreType StoreType
 	// Cacheable is true if the request can be cached. Currently only deterministic DAG requests can be cached.
@@ -292,6 +286,8 @@ type Request struct {
 	IsStaleness bool
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels []*metapb.StoreLabel
+	// ResourceGroupTag indicates the kv request task group.
+	ResourceGroupTag []byte
 }
 
 // ResultSubset represents a result subset from a single storage unit.
@@ -324,8 +320,6 @@ type Snapshot interface {
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option. Only ReplicaRead is supported for snapshot
 	SetOption(opt int, val interface{})
-	// DelOption deletes an option.
-	DelOption(opt int)
 }
 
 // BatchGetter is the interface for BatchGet.
@@ -341,59 +335,13 @@ type Driver interface {
 	Open(path string) (Storage, error)
 }
 
-// TransactionOption indicates the option when beginning a transaction
-// `TxnScope` must be set for each object
-// Every other fields are optional, but currently at most one of them can be set
-type TransactionOption struct {
-	TxnScope   string
-	StartTS    *uint64
-	PrevSec    *uint64
-	MinStartTS *uint64
-	MaxPrevSec *uint64
-}
-
-// DefaultTransactionOption creates a default TransactionOption, ie. Work in GlobalTxnScope and get start ts when got used
-func DefaultTransactionOption() TransactionOption {
-	return TransactionOption{TxnScope: oracle.GlobalTxnScope}
-}
-
-// SetMaxPrevSec set maxPrevSec
-func (to TransactionOption) SetMaxPrevSec(maxPrevSec uint64) TransactionOption {
-	to.MaxPrevSec = &maxPrevSec
-	return to
-}
-
-// SetMinStartTS set minStartTS
-func (to TransactionOption) SetMinStartTS(minStartTS uint64) TransactionOption {
-	to.MinStartTS = &minStartTS
-	return to
-}
-
-// SetStartTs set startTS
-func (to TransactionOption) SetStartTs(startTS uint64) TransactionOption {
-	to.StartTS = &startTS
-	return to
-}
-
-// SetPrevSec set prevSec
-func (to TransactionOption) SetPrevSec(prevSec uint64) TransactionOption {
-	to.PrevSec = &prevSec
-	return to
-}
-
-// SetTxnScope set txnScope
-func (to TransactionOption) SetTxnScope(txnScope string) TransactionOption {
-	to.TxnScope = txnScope
-	return to
-}
-
 // Storage defines the interface for storage.
 // Isolation should be at least SI(SNAPSHOT ISOLATION)
 type Storage interface {
 	// Begin a global transaction
 	Begin() (Transaction, error)
 	// Begin a transaction with given option
-	BeginWithOption(option TransactionOption) (Transaction, error)
+	BeginWithOption(option tikv.StartTSOption) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) Snapshot
@@ -419,6 +367,8 @@ type Storage interface {
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
 	// GetMemCache return memory manager of the storage.
 	GetMemCache() MemManager
+	// GetMinSafeTS return the minimal SafeTS of the storage with given txnScope.
+	GetMinSafeTS(txnScope string) uint64
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.
