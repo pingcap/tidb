@@ -77,7 +77,6 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 		}
 
 		// look for matching history interval
-		// if there are no records in ssbde.history, following code will not be executed. Such situation will probably lead to a bug.
 	MATCHING:
 		for ; h != nil; h = h.Prev() {
 			historyElement := h.Value.(*stmtSummaryByDigestEvictedElement)

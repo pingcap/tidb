@@ -1369,10 +1369,11 @@ func (s *testTableSuite) TestSimpleStmtSummaryEvictedCount(c *C) {
 	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval = %v", interval))
 	tk.MustExec("set global tidb_enable_stmt_summary = 0")
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
-	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
 	// first sql
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
+	// second sql
 	tk.MustQuery("show databases;")
-	// query `evicted table` is also a SQL, passing it leads to the eviction of the previous one.
+	// query `evicted table` is also a SQL, passing it leads to the eviction of the previous sqls.
 	tk.MustQuery("select * from `information_schema`.`STATEMENTS_SUMMARY_EVICTED`;").
 		Check(testkit.Rows(
 			fmt.Sprintf("%s %s %v",
