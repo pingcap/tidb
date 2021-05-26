@@ -128,7 +128,7 @@ const (
 
 // PreprocessorReturn is used to retain information obtained in the preprocessor.
 type PreprocessorReturn struct {
-	TSO        uint64
+	SnapshotTS uint64
 	InfoSchema infoschema.InfoSchema
 }
 
@@ -1364,23 +1364,23 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 // If it is not nil, timestamp is used to get the history infoschema from the infocache.
 func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
 	dom := domain.GetDomain(p.ctx)
-	tso := uint64(0)
+	ts := uint64(0)
 	if node != nil {
-		tso, p.err = calculateTsExpr(p.ctx, node)
+		ts, p.err = calculateTsExpr(p.ctx, node)
 		if p.err != nil {
 			return
 		}
 	}
-	if tso != 0 && p.InfoSchema == nil {
-		is, err := dom.GetSnapshotInfoSchema(tso)
+	if ts != 0 && p.InfoSchema == nil {
+		is, err := dom.GetSnapshotInfoSchema(ts)
 		if err != nil {
 			p.err = err
 			return
 		}
-		p.TSO = tso
+		p.SnapshotTS = ts
 		p.InfoSchema = is
 	}
-	if p.TSO != tso {
+	if p.SnapshotTS != ts {
 		p.err = ErrDifferentAsOf.GenWithStack("can not set different time in the as of")
 	}
 }

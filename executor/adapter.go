@@ -179,8 +179,9 @@ func (a *recordSet) OnFetchReturned() {
 type ExecStmt struct {
 	// GoCtx stores parent go context.Context for a stmt.
 	GoCtx context.Context
-	// TSO stores the timestamp for stale read.
-	TSO uint64
+	// SnapshotTS stores the timestamp for stale read.
+	// It is not equivalent to session variables's snapshot ts, it only use to build the executor.
+	SnapshotTS uint64
 	// InfoSchema stores a reference to the schema information.
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
@@ -277,7 +278,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	a.InfoSchema = ret.InfoSchema
-	a.TSO = ret.TSO
+	a.SnapshotTS = ret.SnapshotTS
 	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, a.InfoSchema)
 	if err != nil {
 		return 0, err
@@ -312,7 +313,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	failpoint.Inject("assertStaleTSO", func(val failpoint.Value) {
 		if n, ok := val.(int); ok {
-			startTS := oracle.ExtractPhysical(a.TSO) / 1000
+			startTS := oracle.ExtractPhysical(a.SnapshotTS) / 1000
 			if n != int(startTS) {
 				panic("different tso")
 			}
@@ -322,7 +323,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	failpoint.Inject("assertStaleTSOWithTolerance", func(val failpoint.Value) {
 		if n, ok := val.(int); ok {
 			// Convert to seconds
-			startTS := oracle.ExtractPhysical(a.TSO) / 1000
+			startTS := oracle.ExtractPhysical(a.SnapshotTS) / 1000
 			if int(startTS) <= n-1 || n+1 <= int(startTS) {
 				panic("tso violate tolerance")
 			}
@@ -771,7 +772,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	}
 
 	b := newExecutorBuilder(ctx, a.InfoSchema)
-	b.snapshotTS = a.TSO
+	b.snapshotTS = a.SnapshotTS
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
