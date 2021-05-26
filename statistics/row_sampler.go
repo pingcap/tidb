@@ -18,10 +18,12 @@ import (
 	"context"
 	"math/rand"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -48,6 +50,7 @@ type RowSampleCollector struct {
 type RowSampleItem struct {
 	Columns []types.Datum
 	Weight  int64
+	Handle  kv.Handle
 }
 
 // WeightedRowSampleHeap implements the Heap interface.
@@ -285,6 +288,10 @@ func RowSamplesToProto(samples WeightedRowSampleHeap) []*tipb.RowSample {
 			Weight: sample.Weight,
 		}
 		for _, c := range sample.Columns {
+			if c.IsNull() {
+				pbRow.Row = append(pbRow.Row, []byte{codec.NilFlag})
+				continue
+			}
 			pbRow.Row = append(pbRow.Row, c.GetBytes())
 		}
 		rows = append(rows, pbRow)

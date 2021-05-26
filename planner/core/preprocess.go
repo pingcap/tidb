@@ -125,6 +125,8 @@ type preprocessor struct {
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
+	case *ast.AdminStmt:
+		p.checkAdminCheckTableGrammar(node)
 	case *ast.DeleteStmt:
 		p.stmtTp = TypeDelete
 	case *ast.SelectStmt:
@@ -557,14 +559,54 @@ func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
 	}
 }
 
+func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
+	for _, table := range stmt.Tables {
+		currentDB := p.ctx.GetSessionVars().CurrentDB
+		if table.Schema.String() != "" {
+			currentDB = table.Schema.L
+		}
+		if currentDB == "" {
+			p.err = errors.Trace(ErrNoDB)
+			return
+		}
+		sName := model.NewCIStr(currentDB)
+		tName := table.Name
+		tableInfo, err := p.is.TableByName(sName, tName)
+		if err != nil {
+			p.err = err
+			return
+		}
+		tempTableType := tableInfo.Meta().TempTableType
+		if stmt.Tp == ast.AdminCheckTable && tempTableType != model.TempTableNone {
+			p.err = infoschema.ErrAdminCheckTable
+			return
+		}
+	}
+}
+
 func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
+	if stmt.ReferTable != nil {
+		schema := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
+		if stmt.ReferTable.Schema.String() != "" {
+			schema = stmt.ReferTable.Schema
+		}
+		tableInfo, err := p.is.TableByName(schema, stmt.ReferTable.Name)
+		if err != nil {
+			p.err = err
+			return
+		}
+		if tableInfo.Meta().TempTableType != model.TempTableNone {
+			p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("create table like")
+			return
+		}
+	}
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
 	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
-	if stmt.IsTemporary && !enableNoopFuncs {
+	if stmt.TemporaryKeyword == ast.TemporaryLocal && !enableNoopFuncs {
 		p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("CREATE TEMPORARY TABLE")
 		return
 	}
@@ -676,7 +718,7 @@ func (p *preprocessor) checkDropSequenceGrammar(stmt *ast.DropSequenceStmt) {
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 	p.checkDropTableNames(stmt.Tables)
 	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
-	if stmt.IsTemporary && !enableNoopFuncs {
+	if stmt.TemporaryKeyword == ast.TemporaryLocal && !enableNoopFuncs {
 		p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE")
 		return
 	}

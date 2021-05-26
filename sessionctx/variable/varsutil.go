@@ -14,8 +14,6 @@
 package variable
 
 import (
-	"encoding/json"
-	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,7 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -111,10 +109,11 @@ func int32ToBoolStr(i int32) string {
 }
 
 func checkCollation(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-	if _, err := collate.GetCollationByName(normalizedValue); err != nil {
+	coll, err := collate.GetCollationByName(normalizedValue)
+	if err != nil {
 		return normalizedValue, errors.Trace(err)
 	}
-	return normalizedValue, nil
+	return coll.Name, nil
 }
 
 func checkCharacterSet(normalizedValue string, argName string) (string, error) {
@@ -149,154 +148,68 @@ func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue stri
 	return normalizedValue, nil
 }
 
-// GetSessionSystemVar gets a system variable.
-// If it is a session only variable, use the default value defined in code.
-// Returns error if there is no such variable.
-func GetSessionSystemVar(s *SessionVars, key string) (string, error) {
-	key = strings.ToLower(key)
-	gVal, ok, err := GetSessionOnlySysVars(s, key)
-	if err != nil || ok {
-		return gVal, err
+func checkIsolationLevel(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	if normalizedValue == "SERIALIZABLE" || normalizedValue == "READ-UNCOMMITTED" {
+		returnErr := ErrUnsupportedIsolationLevel.GenWithStackByArgs(normalizedValue)
+		if !TiDBOptOn(vars.systems[TiDBSkipIsolationLevelCheck]) {
+			return normalizedValue, ErrUnsupportedIsolationLevel.GenWithStackByArgs(normalizedValue)
+		}
+		vars.StmtCtx.AppendWarning(returnErr)
 	}
-	gVal, err = s.GlobalVarsAccessor.GetGlobalSysVar(key)
-	if err != nil {
-		return "", err
-	}
-	s.systems[key] = gVal
-	return gVal, nil
+	return normalizedValue, nil
 }
 
-// GetSessionOnlySysVars get the default value defined in code for session only variable.
-// The return bool value indicates whether it's a session only variable.
-func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
-	sysVar := GetSysVar(key)
-	if sysVar == nil {
-		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(key)
+// GetSessionOrGlobalSystemVar gets a system variable.
+// If it is a session only variable, use the default value defined in code.
+// Returns error if there is no such variable.
+func GetSessionOrGlobalSystemVar(s *SessionVars, name string) (string, error) {
+	sv := GetSysVar(name)
+	if sv == nil {
+		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	// For virtual system variables:
-	switch sysVar.Name {
-	case TiDBCurrentTS:
-		return fmt.Sprintf("%d", s.TxnCtx.StartTS), true, nil
-	case TiDBLastTxnInfo:
-		info, err := json.Marshal(s.LastTxnInfo)
-		if err != nil {
-			return "", true, err
-		}
-		return string(info), true, nil
-	case TiDBLastQueryInfo:
-		info, err := json.Marshal(s.LastQueryInfo)
-		if err != nil {
-			return "", true, err
-		}
-		return string(info), true, nil
-	case TiDBGeneralLog:
-		return BoolToOnOff(ProcessGeneralLog.Load()), true, nil
-	case TiDBPProfSQLCPU:
-		val := "0"
-		if EnablePProfSQLCPU.Load() {
-			val = "1"
-		}
-		return val, true, nil
-	case TiDBExpensiveQueryTimeThreshold:
-		return fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveQueryTimeThreshold)), true, nil
-	case TiDBMemoryUsageAlarmRatio:
-		return fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()), true, nil
-	case TiDBConfig:
-		conf := config.GetGlobalConfig()
-		j, err := json.MarshalIndent(conf, "", "\t")
-		if err != nil {
-			return "", false, err
-		}
-		return config.HideConfig(string(j)), true, nil
-	case TiDBForcePriority:
-		return mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))], true, nil
-	case TiDBDDLSlowOprThreshold:
-		return strconv.FormatUint(uint64(atomic.LoadUint32(&DDLSlowOprThreshold)), 10), true, nil
-	case PluginDir:
-		return config.GetGlobalConfig().Plugin.Dir, true, nil
-	case PluginLoad:
-		return config.GetGlobalConfig().Plugin.Load, true, nil
-	case TiDBSlowLogThreshold:
-		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10), true, nil
-	case TiDBRecordPlanInSlowLog:
-		return strconv.FormatUint(uint64(atomic.LoadUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog)), 10), true, nil
-	case TiDBEnableSlowLog:
-		return BoolToOnOff(config.GetGlobalConfig().Log.EnableSlowLog), true, nil
-	case TiDBQueryLogMaxLen:
-		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), true, nil
-	case TiDBCheckMb4ValueInUTF8:
-		return BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8), true, nil
-	case TiDBCapturePlanBaseline:
-		return CapturePlanBaseline.GetVal(), true, nil
-	case TiDBFoundInPlanCache:
-		return BoolToOnOff(s.PrevFoundInPlanCache), true, nil
-	case TiDBFoundInBinding:
-		return BoolToOnOff(s.PrevFoundInBinding), true, nil
-	case TiDBEnableCollectExecutionInfo:
-		return BoolToOnOff(config.GetGlobalConfig().EnableCollectExecutionInfo), true, nil
-	case TiDBTxnScope:
-		return s.TxnScope.GetVarValue(), true, nil
+	if sv.HasNoneScope() {
+		return sv.Value, nil
 	}
-	sVal, ok := s.GetSystemVar(key)
-	if ok {
-		return sVal, true, nil
+	if sv.HasSessionScope() {
+		// Populate the value to s.systems if it is not there already.
+		// in future should be already loaded on session init
+		if sv.GetSession != nil {
+			// shortcut to the getter, we won't use the value
+			return sv.GetSessionFromHook(s)
+		}
+		if _, ok := s.systems[sv.Name]; !ok {
+			if sv.HasGlobalScope() {
+				if val, err := s.GlobalVarsAccessor.GetGlobalSysVar(sv.Name); err == nil {
+					s.systems[sv.Name] = val
+				}
+			} else {
+				s.systems[sv.Name] = sv.Value // no global scope, use default
+			}
+		}
+		return sv.GetSessionFromHook(s)
 	}
-	if sysVar.Scope&ScopeGlobal == 0 {
-		// None-Global variable can use pre-defined default value.
-		return sysVar.Value, true, nil
-	}
-	return "", false, nil
+	return sv.GetGlobalFromHook(s)
 }
 
 // GetGlobalSystemVar gets a global system variable.
-func GetGlobalSystemVar(s *SessionVars, key string) (string, error) {
-	key = strings.ToLower(key)
-	gVal, ok, err := GetScopeNoneSystemVar(key)
-	if err != nil || ok {
-		return gVal, err
+func GetGlobalSystemVar(s *SessionVars, name string) (string, error) {
+	sv := GetSysVar(name)
+	if sv == nil {
+		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	gVal, err = s.GlobalVarsAccessor.GetGlobalSysVar(key)
-	if err != nil {
-		return "", err
-	}
-	return gVal, nil
+	return sv.GetGlobalFromHook(s)
 }
-
-// GetScopeNoneSystemVar checks the validation of `key`,
-// and return the default value if its scope is `ScopeNone`.
-func GetScopeNoneSystemVar(key string) (string, bool, error) {
-	sysVar := GetSysVar(key)
-	if sysVar == nil {
-		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(key)
-	}
-	if sysVar.Scope == ScopeNone {
-		return sysVar.Value, true, nil
-	}
-	return "", false, nil
-}
-
-// epochShiftBits is used to reserve logical part of the timestamp.
-const epochShiftBits = 18
 
 // SetSessionSystemVar sets system variable and updates SessionVars states.
-func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) error {
+func SetSessionSystemVar(vars *SessionVars, name string, value string) error {
 	sysVar := GetSysVar(name)
 	if sysVar == nil {
 		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	sVal := ""
-	var err error
-	if !value.IsNull() {
-		sVal, err = value.ToString()
-	}
+	sVal, err := sysVar.Validate(vars, value, ScopeSession)
 	if err != nil {
 		return err
 	}
-	sVal, err = sysVar.Validate(vars, sVal, ScopeSession)
-	if err != nil {
-		return err
-	}
-	CheckDeprecationSetSystemVar(vars, name)
 	return vars.SetSystemVar(name, sVal)
 }
 
@@ -311,27 +224,7 @@ func SetStmtVar(vars *SessionVars, name string, value string) error {
 	if err != nil {
 		return err
 	}
-	CheckDeprecationSetSystemVar(vars, name)
 	return vars.SetStmtVar(name, sVal)
-}
-
-// ValidateGetSystemVar checks if system variable exists and validates its scope when get system variable.
-func ValidateGetSystemVar(name string, isGlobal bool) error {
-	sysVar := GetSysVar(name)
-	if sysVar == nil {
-		return ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	switch sysVar.Scope {
-	case ScopeGlobal:
-		if !isGlobal {
-			return ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
-		}
-	case ScopeSession:
-		if isGlobal {
-			return ErrIncorrectScope.GenWithStackByArgs(name, "SESSION")
-		}
-	}
-	return nil
 }
 
 const (
@@ -341,18 +234,9 @@ const (
 	maxChunkSizeLowerBound = 32
 )
 
-// CheckDeprecationSetSystemVar checks if the system variable is deprecated.
-func CheckDeprecationSetSystemVar(s *SessionVars, name string) {
-	switch name {
-	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency,
-		TiDBHashJoinConcurrency, TiDBHashAggPartialConcurrency, TiDBHashAggFinalConcurrency,
-		TiDBProjectionConcurrency, TiDBWindowConcurrency, TiDBMergeJoinConcurrency, TiDBStreamAggConcurrency:
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
-	case TIDBMemQuotaHashJoin, TIDBMemQuotaMergeJoin,
-		TIDBMemQuotaSort, TIDBMemQuotaTopn,
-		TIDBMemQuotaIndexLookupReader, TIDBMemQuotaIndexLookupJoin:
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
-	}
+// appendDeprecationWarning adds a warning that the item is deprecated.
+func appendDeprecationWarning(s *SessionVars, name, replacement string) {
+	s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, replacement))
 }
 
 // TiDBOptOn could be used for all tidb session variable options, we use "ON"/1 to turn on those options.
@@ -489,14 +373,25 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 	}
 
 	t1, err := t.GoTime(s.TimeZone)
-	s.SnapshotTS = GoTimeToTS(t1)
+	s.SnapshotTS = oracle.GoTimeToTS(t1)
 	return err
 }
 
-// GoTimeToTS converts a Go time to uint64 timestamp.
-func GoTimeToTS(t time.Time) uint64 {
-	ts := (t.UnixNano() / int64(time.Millisecond)) << epochShiftBits
-	return uint64(ts)
+func setTxnReadTS(s *SessionVars, sVal string) error {
+	if sVal == "" {
+		s.TxnReadTS = 0
+		return nil
+	}
+	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
+	if err != nil {
+		return err
+	}
+	t1, err := t.GoTime(s.TimeZone)
+	if err != nil {
+		return err
+	}
+	s.TxnReadTS = oracle.GoTimeToTS(t1)
+	return err
 }
 
 // serverGlobalVariable is used to handle variables that acts in server and global scope.

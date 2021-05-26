@@ -14,6 +14,7 @@
 package mockstorage
 
 import (
+	"context"
 	"crypto/tls"
 
 	"github.com/pingcap/tidb/kv"
@@ -21,7 +22,6 @@ import (
 	driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 // Wraps tikv.KVStore and make it compatible with kv.Storage.
@@ -32,17 +32,18 @@ type mockStorage struct {
 }
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
-func NewMockStorage(tikvStore *tikv.KVStore) kv.Storage {
+func NewMockStorage(tikvStore *tikv.KVStore) (kv.Storage, error) {
 	coprConfig := config.DefaultConfig().TiKVClient.CoprCache
 	coprStore, err := copr.NewStore(tikvStore, &coprConfig)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	return &mockStorage{
 		KVStore:  tikvStore,
 		Store:    coprStore,
 		memCache: kv.NewCacheDB(),
-	}
+	}, nil
+
 }
 
 func (s *mockStorage) EtcdAddrs() ([]string, error) {
@@ -76,18 +77,14 @@ func (s *mockStorage) Begin() (kv.Transaction, error) {
 	return newTiKVTxn(txn, err)
 }
 
+// ShowStatus returns the specified status of the storage
+func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, error) {
+	return nil, kv.ErrNotImplemented
+}
+
 // BeginWithOption begins a transaction with given option
-func (s *mockStorage) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
-	txnScope := option.TxnScope
-	if txnScope == "" {
-		txnScope = oracle.GlobalTxnScope
-	}
-	if option.StartTS != nil {
-		return newTiKVTxn(s.BeginWithStartTS(txnScope, *option.StartTS))
-	} else if option.PrevSec != nil {
-		return newTiKVTxn(s.BeginWithExactStaleness(txnScope, *option.PrevSec))
-	}
-	return newTiKVTxn(s.BeginWithTxnScope(txnScope))
+func (s *mockStorage) BeginWithOption(option tikv.StartTSOption) (kv.Transaction, error) {
+	return newTiKVTxn(s.KVStore.BeginWithOption(option))
 }
 
 // GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
@@ -100,6 +97,11 @@ func (s *mockStorage) GetSnapshot(ver kv.Version) kv.Snapshot {
 func (s *mockStorage) CurrentVersion(txnScope string) (kv.Version, error) {
 	ver, err := s.KVStore.CurrentTimestamp(txnScope)
 	return kv.NewVersion(ver), err
+}
+
+// GetMinSafeTS return the minimal SafeTS of the storage with given txnScope.
+func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
+	return 0
 }
 
 func newTiKVTxn(txn *tikv.KVTxn, err error) (kv.Transaction, error) {

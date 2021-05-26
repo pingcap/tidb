@@ -117,7 +117,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	)
 	if sqlParser, ok := e.ctx.(sqlexec.SQLParser); ok {
 		// FIXME: ok... yet another parse API, may need some api interface clean.
-		stmts, err = sqlParser.ParseSQL(e.sqlText, charset, collation)
+		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText, charset, collation)
 	} else {
 		p := parser.New()
 		p.SetParserConfig(vars.BuildParserConfig())
@@ -320,7 +320,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		return nil, false, false, err
 	}
 	execStmt.BinaryArgs = args
-	is := infoschema.GetInfoSchema(sctx)
+	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
 		return nil, false, false, err

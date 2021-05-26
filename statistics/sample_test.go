@@ -254,3 +254,60 @@ func (s *testSampleSuite) TestDistributedWeightedSampling(c *C) {
 	}
 	// }
 }
+
+func (s *testSampleSuite) TestBuildStatsOnRowSample(c *C) {
+	ctx := mock.NewContext()
+	sketch := NewFMSketch(1000)
+	data := make([]*SampleItem, 0, 8)
+	for i := 1; i <= 1000; i++ {
+		d := types.NewIntDatum(int64(i))
+		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+		c.Assert(err, IsNil)
+		data = append(data, &SampleItem{Value: d})
+	}
+	for i := 1; i < 10; i++ {
+		d := types.NewIntDatum(int64(2))
+		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+		c.Assert(err, IsNil)
+		data = append(data, &SampleItem{Value: d})
+	}
+	for i := 1; i < 7; i++ {
+		d := types.NewIntDatum(int64(4))
+		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+		c.Assert(err, IsNil)
+		data = append(data, &SampleItem{Value: d})
+	}
+	for i := 1; i < 5; i++ {
+		d := types.NewIntDatum(int64(7))
+		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+		c.Assert(err, IsNil)
+		data = append(data, &SampleItem{Value: d})
+	}
+	for i := 1; i < 3; i++ {
+		d := types.NewIntDatum(int64(11))
+		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+		c.Assert(err, IsNil)
+		data = append(data, &SampleItem{Value: d})
+	}
+	collector := &SampleCollector{
+		Samples:   data,
+		NullCount: 0,
+		Count:     int64(len(data)),
+		FMSketch:  sketch,
+		TotalSize: int64(len(data)) * 8,
+	}
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	hist, topN, err := BuildHistAndTopN(ctx, 5, 4, 1, collector, tp, true)
+	c.Assert(err, IsNil, Commentf("%+v", err))
+	topNStr, err := topN.DecodedString(ctx, []byte{tp.Tp})
+	c.Assert(err, IsNil)
+	c.Assert(topNStr, Equals, "TopN{length: 4, [(2, 10), (4, 7), (7, 5), (11, 3)]}")
+	c.Assert(hist.ToString(0), Equals, "column:1 ndv:1000 totColSize:8168\n"+
+		"num: 200 lower_bound: 1 upper_bound: 204 repeats: 1 ndv: 0\n"+
+		"num: 200 lower_bound: 205 upper_bound: 404 repeats: 1 ndv: 0\n"+
+		"num: 200 lower_bound: 405 upper_bound: 604 repeats: 1 ndv: 0\n"+
+		"num: 200 lower_bound: 605 upper_bound: 804 repeats: 1 ndv: 0\n"+
+		"num: 196 lower_bound: 805 upper_bound: 1000 repeats: 1 ndv: 0",
+	)
+
+}

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor"
@@ -44,14 +45,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -156,7 +155,7 @@ func (t *tikvHandlerTool) getRegionIDByKey(encodedKey []byte) (uint64, error) {
 	return keyLocation.Region.GetID(), nil
 }
 
-func (t *tikvHandlerTool) getMvccByHandle(tb table.PhysicalTable, params map[string]string, values url.Values) (*mvccKV, error) {
+func (t *tikvHandlerTool) getHandle(tb table.PhysicalTable, params map[string]string, values url.Values) (kv.Handle, error) {
 	var handle kv.Handle
 	if intHandleStr, ok := params[pHandle]; ok {
 		if tb.Meta().IsCommonHandle {
@@ -195,83 +194,10 @@ func (t *tikvHandlerTool) getMvccByHandle(tb table.PhysicalTable, params map[str
 			return nil, errors.Trace(err)
 		}
 	}
-	encodedKey := tablecodec.EncodeRecordKey(tb.RecordPrefix(), handle)
-	data, err := t.GetMvccByEncodedKey(encodedKey)
-	if err != nil {
-		return nil, err
-	}
-	regionID, err := t.getRegionIDByKey(encodedKey)
-	if err != nil {
-		return nil, err
-	}
-	return &mvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), Value: data, RegionID: regionID}, err
+	return handle, nil
 }
 
-func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey kv.Key) (*mvccKV, error) {
-	bo := tikv.NewBackofferWithVars(context.Background(), 5000, nil)
-	for {
-		curRegion, err := t.RegionCache.LocateKey(bo, startKey)
-		if err != nil {
-			logutil.BgLogger().Error("get MVCC by startTS failed", zap.Uint64("txnStartTS", startTS),
-				zap.Stringer("startKey", startKey), zap.Error(err))
-			return nil, errors.Trace(err)
-		}
-
-		tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByStartTs, &kvrpcpb.MvccGetByStartTsRequest{
-			StartTs: startTS,
-		})
-		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
-		kvResp, err := t.Store.SendReq(bo, tikvReq, curRegion.Region, time.Hour)
-		if err != nil {
-			logutil.BgLogger().Error("get MVCC by startTS failed",
-				zap.Uint64("txnStartTS", startTS),
-				zap.Stringer("startKey", startKey),
-				zap.Reflect("region", curRegion.Region),
-				zap.Stringer("curRegion", curRegion),
-				zap.Reflect("kvResp", kvResp),
-				zap.Error(err))
-			return nil, errors.Trace(err)
-		}
-		data := kvResp.Resp.(*kvrpcpb.MvccGetByStartTsResponse)
-		if err := data.GetRegionError(); err != nil {
-			logutil.BgLogger().Warn("get MVCC by startTS failed",
-				zap.Uint64("txnStartTS", startTS),
-				zap.Stringer("startKey", startKey),
-				zap.Reflect("region", curRegion.Region),
-				zap.Stringer("curRegion", curRegion),
-				zap.Reflect("kvResp", kvResp),
-				zap.Stringer("error", err))
-			continue
-		}
-
-		if len(data.GetError()) > 0 {
-			logutil.BgLogger().Error("get MVCC by startTS failed",
-				zap.Uint64("txnStartTS", startTS),
-				zap.Stringer("startKey", startKey),
-				zap.Reflect("region", curRegion.Region),
-				zap.Stringer("curRegion", curRegion),
-				zap.Reflect("kvResp", kvResp),
-				zap.String("error", data.GetError()))
-			return nil, errors.New(data.GetError())
-		}
-
-		key := data.GetKey()
-		if len(key) > 0 {
-			resp := &kvrpcpb.MvccGetByKeyResponse{Info: data.Info, RegionError: data.RegionError, Error: data.Error}
-			return &mvccKV{Key: strings.ToUpper(hex.EncodeToString(key)), Value: resp, RegionID: curRegion.Region.GetID()}, nil
-		}
-
-		if len(endKey) > 0 && curRegion.Contains(endKey) {
-			return nil, nil
-		}
-		if len(curRegion.EndKey) == 0 {
-			return nil, nil
-		}
-		startKey = kv.Key(curRegion.EndKey)
-	}
-}
-
-func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handleStr string) (*mvccKV, error) {
+func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handle kv.Handle) (*helper.MvccKV, error) {
 	sc := new(stmtctx.StatementContext)
 	// HTTP request is not a database session, set timezone to UTC directly here.
 	// See https://github.com/pingcap/tidb/blob/master/docs/tidb_http_api.md for more details.
@@ -280,11 +206,7 @@ func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	handle, err := strconv.ParseInt(handleStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	encodedKey, _, err := idx.GenIndexKey(sc, idxRow, kv.IntHandle(handle), nil)
+	encodedKey, _, err := idx.GenIndexKey(sc, idxRow, handle, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -296,7 +218,7 @@ func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, 
 	if err != nil {
 		return nil, err
 	}
-	return &mvccKV{strings.ToUpper(hex.EncodeToString(encodedKey)), regionID, data}, err
+	return &helper.MvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), RegionID: regionID, Value: data}, err
 }
 
 // formValue2DatumRow converts URL query string to a Datum Row.
@@ -367,11 +289,11 @@ func (t *tikvHandlerTool) getPartition(tableVal table.Table, partitionName strin
 }
 
 func (t *tikvHandlerTool) schema() (infoschema.InfoSchema, error) {
-	session, err := session.CreateSession(t.Store)
+	dom, err := session.GetDomain(t.Store)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	return domain.GetDomain(session.(sessionctx.Context)).InfoSchema(), nil
+	return dom.InfoSchema(), nil
 }
 
 func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (*mvccKV, error) {
@@ -447,6 +369,12 @@ type profileHandler struct {
 	*tikvHandlerTool
 }
 
+// ddlHookHandler is the handler for use pre-defined ddl callback.
+// It's convenient to provide some APIs for integration tests.
+type ddlHookHandler struct {
+	store kv.Storage
+}
+
 // valueHandler is the handler for get value.
 type valueHandler struct {
 }
@@ -466,11 +394,10 @@ type mvccTxnHandler struct {
 }
 
 const (
-	opMvccGetByHex          = "hex"
-	opMvccGetByKey          = "key"
-	opMvccGetByIdx          = "idx"
-	opMvccGetByTxn          = "txn"
-	opMvccGetByClusteredKey = "cls_key"
+	opMvccGetByHex = "hex"
+	opMvccGetByKey = "key"
+	opMvccGetByIdx = "idx"
+	opMvccGetByTxn = "txn"
 )
 
 // ServeHTTP handles request of list a database or table's schemas.
@@ -719,14 +646,13 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 		if asyncCommit := req.Form.Get("tidb_enable_async_commit"); asyncCommit != "" {
-			s, err := session.CreateSession(h.Store.(kv.Storage))
+			s, err := session.CreateSession(h.Store)
 			if err != nil {
 				writeError(w, err)
 				return
 			}
-			if s != nil {
-				defer s.Close()
-			}
+			defer s.Close()
+
 			switch asyncCommit {
 			case "0":
 				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.Off)
@@ -742,14 +668,13 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 		if onePC := req.Form.Get("tidb_enable_1pc"); onePC != "" {
-			s, err := session.CreateSession(h.Store.(kv.Storage))
+			s, err := session.CreateSession(h.Store)
 			if err != nil {
 				writeError(w, err)
 				return
 			}
-			if s != nil {
-				defer s.Close()
-			}
+			defer s.Close()
+
 			switch onePC {
 			case "0":
 				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.Off)
@@ -885,14 +810,11 @@ func (h flashReplicaHandler) getTiFlashReplicaInfo(tblInfo *model.TableInfo, rep
 }
 
 func (h flashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infoschema.InfoSchema) ([]*tableFlashReplicaInfo, error) {
-	s, err := session.CreateSession(h.Store.(kv.Storage))
+	s, err := session.CreateSession(h.Store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	if s != nil {
-		defer s.Close()
-	}
+	defer s.Close()
 
 	store := domain.GetDomain(s).Store()
 	txn, err := store.Begin()
@@ -955,16 +877,18 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 		writeError(w, err)
 		return
 	}
-	do, err := session.GetDomain(h.Store.(kv.Storage))
+	do, err := session.GetDomain(h.Store)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	s, err := session.CreateSession(h.Store.(kv.Storage))
+	s, err := session.CreateSession(h.Store)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	defer s.Close()
+
 	available := status.checkTableFlashReplicaAvailable()
 	err = do.DDL().UpdateTableReplicaInfo(s, status.ID, available)
 	if err != nil {
@@ -1130,18 +1054,7 @@ func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 }
 
 func (h ddlHistoryJobHandler) getAllHistoryDDL() ([]*model.Job, error) {
-	s, err := session.CreateSession(h.Store.(kv.Storage))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if s != nil {
-		defer s.Close()
-	}
-
-	store := domain.GetDomain(s.(sessionctx.Context)).Store()
-	txn, err := store.Begin()
-
+	txn, err := h.Store.Begin()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1576,7 +1489,7 @@ func (h mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	switch h.op {
 	case opMvccGetByHex:
 		data, err = h.handleMvccGetByHex(params)
-	case opMvccGetByIdx, opMvccGetByKey, opMvccGetByClusteredKey:
+	case opMvccGetByIdx, opMvccGetByKey:
 		if req.URL == nil {
 			err = errors.BadRequestf("Invalid URL")
 			break
@@ -1620,9 +1533,12 @@ func extractTableAndPartitionName(str string) (string, string) {
 func (h mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.Values) (interface{}, error) {
 	dbName := params[pDBName]
 	tableName := params[pTableName]
-	handleStr := params[pHandle]
 
 	t, err := h.getTable(dbName, tableName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	handle, err := h.getHandle(t, params, values)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1641,7 +1557,7 @@ func (h mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.
 	if idx == nil {
 		return nil, errors.NotFoundf("Index %s not found!", params[pIndexName])
 	}
-	return h.getMvccByIdxValue(idx, values, idxCols, handleStr)
+	return h.getMvccByIdxValue(idx, values, idxCols, handle)
 }
 
 func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.Values) (interface{}, error) {
@@ -1651,10 +1567,21 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	resp, err := h.getMvccByHandle(tb, params, values)
+	handle, err := h.getHandle(tb, params, values)
 	if err != nil {
 		return nil, err
 	}
+
+	encodedKey := tablecodec.EncodeRecordKey(tb.RecordPrefix(), handle)
+	data, err := h.GetMvccByEncodedKey(encodedKey)
+	if err != nil {
+		return nil, err
+	}
+	regionID, err := h.getRegionIDByKey(encodedKey)
+	if err != nil {
+		return nil, err
+	}
+	resp := &helper.MvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), Value: data, RegionID: regionID}
 	if len(values.Get("decode")) == 0 {
 		return resp, nil
 	}
@@ -1721,7 +1648,7 @@ func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface
 	}
 	startKey := tablecodec.EncodeTablePrefix(tableID)
 	endKey := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(math.MaxInt64))
-	return h.getMvccByStartTs(uint64(startTS), startKey, endKey)
+	return h.GetMvccByStartTs(uint64(startTS), startKey, endKey)
 }
 
 // serverInfo is used to report the servers info when do http request.
@@ -1734,7 +1661,7 @@ type serverInfo struct {
 
 // ServeHTTP handles request of ddl server info.
 func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	do, err := session.GetDomain(h.Store.(kv.Storage))
+	do, err := session.GetDomain(h.Store)
 	if err != nil {
 		writeError(w, errors.New("create session error"))
 		log.Error(err)
@@ -1764,7 +1691,7 @@ type clusterServerInfo struct {
 
 // ServeHTTP handles request of all ddl servers info.
 func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	do, err := session.GetDomain(h.Store.(kv.Storage))
+	do, err := session.GetDomain(h.Store)
 	if err != nil {
 		writeError(w, errors.New("create session error"))
 		log.Error(err)
@@ -1865,6 +1792,8 @@ func (h profileHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
+	defer sctx.Close()
+
 	var start, end time.Time
 	if req.FormValue("end") != "" {
 		end, err = time.ParseInLocation(time.RFC3339, req.FormValue("end"), sctx.GetSessionVars().Location())
@@ -1965,4 +1894,31 @@ func (h *testHandler) handleGCResolveLocks(w http.ResponseWriter, req *http.Requ
 			"physicalUsed": physicalUsed,
 		})
 	}
+}
+
+// ServeHTTP handles request of resigning ddl owner.
+func (h ddlHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, errors.Errorf("This api only support POST method."))
+		return
+	}
+
+	dom, err := session.GetDomain(h.store)
+	if err != nil {
+		log.Error(err)
+		writeError(w, err)
+	}
+
+	newCallbackFunc, err := ddl.GetCustomizedHook(req.FormValue("ddl_hook"))
+	if err != nil {
+		log.Error(err)
+		writeError(w, err)
+	}
+	callback := newCallbackFunc(dom)
+
+	dom.DDL().SetHook(callback)
+	writeData(w, "success!")
+
+	ctx := req.Context()
+	logutil.Logger(ctx).Info("change ddl hook success", zap.String("to_ddl_hook", req.FormValue("ddl_hook")))
 }

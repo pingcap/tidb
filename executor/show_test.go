@@ -1102,9 +1102,10 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	res := tk.MustQuery("show builtins;")
 	c.Assert(res, NotNil)
 	rows := res.Rows()
-	c.Assert(268, Equals, len(rows))
+	const builtinFuncNum = 269
+	c.Assert(builtinFuncNum, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
-	c.Assert("yearweek", Equals, rows[267][0].(string))
+	c.Assert("yearweek", Equals, rows[builtinFuncNum-1][0].(string))
 }
 
 func (s *testSuite5) TestShowClusterConfig(c *C) {
@@ -1236,7 +1237,7 @@ func (s *testSuite5) TestShowVar(c *C) {
 	sessionVars := make([]string, 0, len(variable.GetSysVars()))
 	globalVars := make([]string, 0, len(variable.GetSysVars()))
 	for _, v := range variable.GetSysVars() {
-		if variable.FilterImplicitFeatureSwitch(v) {
+		if v.Hidden {
 			continue
 		}
 
@@ -1264,13 +1265,11 @@ func (s *testSuite5) TestShowVar(c *C) {
 	res = tk.MustQuery(showSQL)
 	c.Check(res.Rows(), HasLen, len(globalVars))
 
-	// Test for switch variable which shouldn't seen by users.
-	for _, one := range variable.FeatureSwitchVariables {
-		res := tk.MustQuery("show variables like '" + one + "'")
-		c.Check(res.Rows(), HasLen, 0)
-		res = tk.MustQuery("show global variables like '" + one + "'")
-		c.Check(res.Rows(), HasLen, 0)
-	}
+	// Test a known hidden variable.
+	res = tk.MustQuery("show variables like '" + variable.TiDBPartitionPruneMode + "'")
+	c.Check(res.Rows(), HasLen, 0)
+	res = tk.MustQuery("show global variables like '" + variable.TiDBPartitionPruneMode + "'")
+	c.Check(res.Rows(), HasLen, 0)
 }
 
 func (s *testSuite5) TestIssue19507(c *C) {
@@ -1303,4 +1302,26 @@ func (s *testSuite5) TestShowPerformanceSchema(c *C) {
 	tk.MustQuery("SHOW INDEX FROM performance_schema.events_statements_summary_by_digest").Check(
 		testkit.Rows("events_statements_summary_by_digest 0 SCHEMA_NAME 1 SCHEMA_NAME A 0 <nil> <nil> YES BTREE   YES NULL NO",
 			"events_statements_summary_by_digest 0 SCHEMA_NAME 2 DIGEST A 0 <nil> <nil> YES BTREE   YES NULL NO"))
+}
+
+func (s *testSuite5) TestShowTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create global temporary table t1 (id int) on commit delete rows")
+	tk.MustExec("create global temporary table t3 (i int primary key, j int) on commit delete rows")
+	// For issue https://github.com/pingcap/tidb/issues/24752
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE GLOBAL TEMPORARY TABLE `t1` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"))
+	// No panic, fix issue https://github.com/pingcap/tidb/issues/24788
+	expect := "CREATE GLOBAL TEMPORARY TABLE `t3` (\n" +
+		"  `i` int(11) NOT NULL,\n" +
+		"  `j` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
+	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 " + expect))
+
+	// Verify that the `show create table` result can be used to build the table.
+	createTable := strings.ReplaceAll(expect, "t3", "t4")
+	tk.MustExec(createTable)
 }

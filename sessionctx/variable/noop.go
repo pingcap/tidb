@@ -26,10 +26,10 @@ var noopSysVars = []*SysVar{
 	// It is unsafe to pretend that any variation of "read only" is enabled when the server
 	// does not support it. It is possible that these features will be supported in future,
 	// but until then...
-	{Scope: ScopeGlobal | ScopeSession, Name: TxReadOnly, Value: Off, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal | ScopeSession, Name: TxReadOnly, Value: Off, Type: TypeBool, Aliases: []string{TransactionReadOnly}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TransactionReadOnly, Value: Off, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal | ScopeSession, Name: TransactionReadOnly, Value: Off, Type: TypeBool, Aliases: []string{TxReadOnly}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
 	}},
 	{Scope: ScopeGlobal, Name: OfflineMode, Value: Off, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
@@ -38,7 +38,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: SuperReadOnly, Value: Off, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
 	}},
-	{Scope: ScopeGlobal, Name: serverReadOnly, Value: Off, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal, Name: ReadOnly, Value: Off, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
 	}},
 	{Scope: ScopeGlobal, Name: ConnectTimeout, Value: "10", Type: TypeUnsigned, MinValue: 2, MaxValue: secondsPerYear, AutoConvertOutOfRange: true},
@@ -156,7 +156,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "myisam_mmap_size", Value: "18446744073709551615"},
 	{Scope: ScopeNone, Name: "innodb_buffer_pool_instances", Value: "8"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_length_for_sort_data", Value: "1024", IsHintUpdatable: true},
-	{Scope: ScopeNone, Name: "character_set_system", Value: "utf8"},
+	{Scope: ScopeNone, Name: CharacterSetSystem, Value: "utf8"},
 	{Scope: ScopeGlobal, Name: InnodbOptimizeFullTextOnly, Value: "0"},
 	{Scope: ScopeNone, Name: "character_sets_dir", Value: "/usr/local/mysql-5.6.25-osx10.8-x86_64/share/charsets/"},
 	{Scope: ScopeGlobal | ScopeSession, Name: QueryCacheType, Value: Off, Type: TypeEnum, PossibleValues: []string{Off, On, "DEMAND"}},
@@ -205,8 +205,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "sort_buffer_size", Value: "262144", IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: "innodb_flush_neighbors", Value: "1"},
 	{Scope: ScopeNone, Name: "innodb_use_sys_malloc", Value: "1"},
-	{Scope: ScopeSession, Name: PluginLoad, Value: ""},
-	{Scope: ScopeSession, Name: PluginDir, Value: "/data/deploy/plugin"},
 	{Scope: ScopeNone, Name: "performance_schema_max_socket_classes", Value: "10"},
 	{Scope: ScopeNone, Name: "performance_schema_max_stage_classes", Value: "150"},
 	{Scope: ScopeGlobal, Name: "innodb_purge_batch_size", Value: "300"},
@@ -312,7 +310,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "datetime_format", Value: "%Y-%m-%d %H:%i:%s"},
 	{Scope: ScopeGlobal, Name: "log_syslog", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: "transaction_alloc_block_size", Value: "8192"},
-	{Scope: ScopeGlobal, Name: "innodb_large_prefix", Type: TypeBool, Value: Off},
+	{Scope: ScopeGlobal, Name: "innodb_large_prefix", Type: TypeBool, Value: On},
 	{Scope: ScopeNone, Name: "performance_schema_max_cond_classes", Value: "80"},
 	{Scope: ScopeGlobal, Name: "innodb_io_capacity", Value: "200"},
 	{Scope: ScopeGlobal, Name: "max_binlog_cache_size", Value: "18446744073709547520"},

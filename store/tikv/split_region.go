@@ -24,8 +24,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/tidb/store/tikv/client"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
 	pd "github.com/tikv/pd/client"
@@ -55,7 +58,7 @@ func (s *KVStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter boo
 		return nil, nil
 	}
 	// The first time it enters this function.
-	if bo.totalSleep == 0 {
+	if bo.GetTotalSleep() == 0 {
 		logutil.BgLogger().Info("split batch regions request",
 			zap.Int("split key count", len(keys)),
 			zap.Int("batch count", len(batches)),
@@ -75,8 +78,8 @@ func (s *KVStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter boo
 			util.WithRecovery(func() {
 				select {
 				case ch <- s.batchSendSingleRegion(backoffer, b, scatter, tableID):
-				case <-bo.ctx.Done():
-					ch <- singleBatchResp{err: bo.ctx.Err()}
+				case <-bo.GetCtx().Done():
+					ch <- singleBatchResp{err: bo.GetCtx().Err()}
 				}
 			}, func(r interface{}) {
 				if r != nil {
@@ -109,8 +112,8 @@ func (s *KVStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter boo
 func (s *KVStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool, tableID *int64) singleBatchResp {
 	if val, err := util.MockSplitRegionTimeout.Eval(); err == nil {
 		if val.(bool) {
-			if _, ok := bo.ctx.Deadline(); ok {
-				<-bo.ctx.Done()
+			if _, ok := bo.GetCtx().Deadline(); ok {
+				<-bo.GetCtx().Done()
 			}
 		}
 	}
@@ -121,8 +124,8 @@ func (s *KVStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool
 		Priority: kvrpcpb.CommandPri_Normal,
 	})
 
-	sender := NewRegionRequestSender(s.regionCache, s.client)
-	resp, err := sender.SendReq(bo, req, batch.regionID, ReadTimeoutShort)
+	sender := NewRegionRequestSender(s.regionCache, s.GetTiKVClient())
+	resp, err := sender.SendReq(bo, req, batch.regionID, client.ReadTimeoutShort)
 
 	batchResp := singleBatchResp{resp: resp}
 	if err != nil {
@@ -135,7 +138,7 @@ func (s *KVStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool
 		return batchResp
 	}
 	if regionErr != nil {
-		err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+		err := bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			batchResp.err = errors.Trace(err)
 			return batchResp
@@ -184,16 +187,21 @@ func (s *KVStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool
 		if batchResp.err == nil {
 			batchResp.err = err
 		}
-		if kv.ErrPDServerTimeout.Equal(err) {
+		if _, ok := err.(*tikverr.ErrPDServerTimeout); ok {
 			break
 		}
 	}
 	return batchResp
 }
 
+const (
+	splitRegionBackoff     = 20000
+	maxSplitRegionsBackoff = 120000
+)
+
 // SplitRegions splits regions by splitKeys.
 func (s *KVStore) SplitRegions(ctx context.Context, splitKeys [][]byte, scatter bool, tableID *int64) (regionIDs []uint64, err error) {
-	bo := NewBackofferWithVars(ctx, int(math.Min(float64(len(splitKeys))*splitRegionBackoff, maxSplitRegionsBackoff)), nil)
+	bo := retry.NewBackofferWithVars(ctx, int(math.Min(float64(len(splitKeys))*splitRegionBackoff, maxSplitRegionsBackoff)), nil)
 	resp, err := s.splitBatchRegionsReq(bo, splitKeys, scatter, tableID)
 	regionIDs = make([]uint64, 0, len(splitKeys))
 	if resp != nil && resp.Resp != nil {
@@ -214,18 +222,18 @@ func (s *KVStore) scatterRegion(bo *Backoffer, regionID uint64, tableID *int64) 
 		if tableID != nil {
 			opts = append(opts, pd.WithGroup(fmt.Sprintf("%v", *tableID)))
 		}
-		_, err := s.pdClient.ScatterRegions(bo.ctx, []uint64{regionID}, opts...)
+		_, err := s.pdClient.ScatterRegions(bo.GetCtx(), []uint64{regionID}, opts...)
 
 		if val, err2 := util.MockScatterRegionTimeout.Eval(); err2 == nil {
 			if val.(bool) {
-				err = kv.ErrPDServerTimeout
+				err = tikverr.NewErrPDServerTimeout("")
 			}
 		}
 
 		if err == nil {
 			break
 		}
-		err = bo.Backoff(BoPDRPC, errors.New(err.Error()))
+		err = bo.Backoff(retry.BoPDRPC, errors.New(err.Error()))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -272,6 +280,8 @@ func (s *KVStore) preSplitRegion(ctx context.Context, group groupedMutations) bo
 	return true
 }
 
+const waitScatterRegionFinishBackoff = 120000
+
 // WaitScatterRegionFinish implements SplittableStore interface.
 // backOff is the back off time of the wait scatter region.(Milliseconds)
 // if backOff <= 0, the default wait scatter back off time will be used.
@@ -282,7 +292,7 @@ func (s *KVStore) WaitScatterRegionFinish(ctx context.Context, regionID uint64, 
 	logutil.BgLogger().Info("wait scatter region",
 		zap.Uint64("regionID", regionID), zap.Int("backoff(ms)", backOff))
 
-	bo := NewBackofferWithVars(ctx, backOff, nil)
+	bo := retry.NewBackofferWithVars(ctx, backOff, nil)
 	logFreq := 0
 	for {
 		resp, err := s.pdClient.GetOperator(ctx, regionID)
@@ -293,7 +303,7 @@ func (s *KVStore) WaitScatterRegionFinish(ctx context.Context, regionID uint64, 
 				return nil
 			}
 			if resp.GetHeader().GetError() != nil {
-				err = errors.AddStack(&kv.PDError{
+				err = errors.AddStack(&tikverr.PDError{
 					Err: resp.Header.Error,
 				})
 				logutil.BgLogger().Warn("wait scatter region error",
@@ -309,9 +319,9 @@ func (s *KVStore) WaitScatterRegionFinish(ctx context.Context, regionID uint64, 
 			logFreq++
 		}
 		if err != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(err.Error()))
+			err = bo.Backoff(retry.BoRegionMiss, errors.New(err.Error()))
 		} else {
-			err = bo.Backoff(BoRegionMiss, errors.New("wait scatter region timeout"))
+			err = bo.Backoff(retry.BoRegionMiss, errors.New("wait scatter region timeout"))
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -321,7 +331,7 @@ func (s *KVStore) WaitScatterRegionFinish(ctx context.Context, regionID uint64, 
 
 // CheckRegionInScattering uses to check whether scatter region finished.
 func (s *KVStore) CheckRegionInScattering(regionID uint64) (bool, error) {
-	bo := NewBackofferWithVars(context.Background(), locateRegionMaxBackoff, nil)
+	bo := retry.NewBackofferWithVars(context.Background(), locateRegionMaxBackoff, nil)
 	for {
 		resp, err := s.pdClient.GetOperator(context.Background(), regionID)
 		if err == nil && resp != nil {
@@ -330,7 +340,7 @@ func (s *KVStore) CheckRegionInScattering(regionID uint64) (bool, error) {
 			}
 		}
 		if err != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(err.Error()))
+			err = bo.Backoff(retry.BoRegionMiss, errors.New(err.Error()))
 		} else {
 			return true, nil
 		}

@@ -6,7 +6,7 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by aprettyPrintlicable law or agreed to in writing, software
+// Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
@@ -171,12 +171,12 @@ func (s *testPlanNormalize) TestNormalizedPlanForDiffStore(c *C) {
 		normalizedPlanRows := getPlanRows(normalizedPlan)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
-			output[i].Digest = digest
+			output[i].Digest = digest.String()
 			output[i].Plan = normalizedPlanRows
 		})
 		compareStringSlice(c, normalizedPlanRows, output[i].Plan)
-		c.Assert(digest != lastDigest, IsTrue)
-		lastDigest = digest
+		c.Assert(digest.String() != lastDigest, IsTrue)
+		lastDigest = digest.String()
 	}
 }
 
@@ -404,10 +404,10 @@ func testNormalizeDigest(tk *testkit.TestKit, c *C, sql1, sql2 string, isSame bo
 	comment := Commentf("sql1: %v, sql2: %v\n%v !=\n%v\n", sql1, sql2, normalized1, normalized2)
 	if isSame {
 		c.Assert(normalized1, Equals, normalized2, comment)
-		c.Assert(digest1, Equals, digest2, comment)
+		c.Assert(digest1.String(), Equals, digest2.String(), comment)
 	} else {
 		c.Assert(normalized1 != normalized2, IsTrue, comment)
-		c.Assert(digest1 != digest2, IsTrue, comment)
+		c.Assert(digest1.String() != digest2.String(), IsTrue, comment)
 	}
 }
 

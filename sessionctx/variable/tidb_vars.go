@@ -15,7 +15,6 @@ package variable
 
 import (
 	"math"
-	"os"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
@@ -204,6 +203,9 @@ const (
 
 	// TiDBTxnScope indicates whether using global transactions or local transactions.
 	TiDBTxnScope = "txn_scope"
+
+	// TiDBTxnReadTS indicates the next transaction should be staleness transaction and provide the startTS
+	TiDBTxnReadTS = "tx_read_ts"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -216,7 +218,6 @@ const (
 	// A distsql scan task can be a table scan or a index scan, which may be distributed to many TiKV nodes.
 	// Higher concurrency may reduce latency, but with the cost of higher memory usage and system performance impact.
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
-	// tidb_distsql_scan_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
 
 	// tidb_opt_insubquery_to_join_and_agg is used to enable/disable the optimizer rule of rewriting IN subquery.
@@ -291,6 +292,8 @@ const (
 	// The default value is 0
 	TiDBAllowBatchCop = "tidb_allow_batch_cop"
 
+	// TiDBAllowMPPExecution means if we should use mpp way to execute query. Default value is 1 (or 'ON'), means to be determined by the optimizer.
+	// Value set to 2 (or 'ENFORCE') which means to use mpp whenever possible. Value set to 2 (or 'OFF') means never use mpp.
 	TiDBAllowMPPExecution = "tidb_allow_mpp"
 
 	// TiDBInitChunkSize is used to control the init chunk size during query execution.
@@ -392,10 +395,6 @@ const (
 	// tidb_force_priority defines the operations priority of all statements.
 	// It can be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY", "DELAYED"
 	TiDBForcePriority = "tidb_force_priority"
-
-	// tidb_enable_radix_join indicates to use radix hash join algorithm to execute
-	// HashJoin.
-	TiDBEnableRadixJoin = "tidb_enable_radix_join"
 
 	// tidb_constraint_check_in_place indicates to check the constraint when the SQL executing.
 	// It could hurt the performance of bulking insert when it is ON.
@@ -614,7 +613,7 @@ const (
 	DefBroadcastJoinThresholdCount     = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 1
-	DefTiDBAllowMPPExecution           = true
+	DefTiDBAllowMPPExecution           = "ON"
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
@@ -632,7 +631,6 @@ const (
 	DefTiDBMergeJoinConcurrency        = 1 // disable optimization by default
 	DefTiDBStreamAggConcurrency        = 1
 	DefTiDBForcePriority               = mysql.NoPriority
-	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true
 	DefEnableStrictDoubleTypeCheck     = true
 	DefEnableVectorizedExpression      = true
@@ -693,7 +691,6 @@ var (
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
 	DDLSlowOprThreshold            uint32 = DefTiDBDDLSlowOprThreshold
 	ForcePriority                         = int32(DefTiDBForcePriority)
-	ServerHostname, _                     = os.Hostname()
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
@@ -701,29 +698,3 @@ var (
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
 )
-
-// FeatureSwitchVariables is used to filter result of show variables, these switches should be turn blind to users.
-var FeatureSwitchVariables = []string{
-	TiDBEnableChangeColumnType,
-	TiDBEnablePointGetCache,
-	TiDBEnableAlterPlacement,
-	TiDBEnableChangeMultiSchema,
-	TiDBEnableAsyncCommit,
-	TiDBEnable1PC,
-	TiDBGuaranteeLinearizability,
-	TiDBTrackAggregateMemoryUsage,
-	TiDBAnalyzeVersion,
-	TiDBPartitionPruneMode,
-	TiDBEnableExtendedStats,
-	TiDBEnableIndexMergeJoin,
-}
-
-// FilterImplicitFeatureSwitch is used to filter result of show variables, these switches should be turn blind to users.
-func FilterImplicitFeatureSwitch(sysVar *SysVar) bool {
-	for _, one := range FeatureSwitchVariables {
-		if one == sysVar.Name {
-			return true
-		}
-	}
-	return false
-}

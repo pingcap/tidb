@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -660,6 +661,17 @@ func (e *ShowExec) fetchShowMasterStatus() error {
 	return nil
 }
 
+func (e *ShowExec) sysVarHiddenForSem(sysVarNameInLower string) bool {
+	if !sem.IsEnabled() || !sem.IsInvisibleSysVar(sysVarNameInLower) {
+		return false
+	}
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker == nil || checker.RequestDynamicVerification(e.ctx.GetSessionVars().ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
+		return false
+	}
+	return true
+}
+
 func (e *ShowExec) fetchShowVariables() (err error) {
 	var (
 		value       string
@@ -672,7 +684,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		// 		otherwise, fetch the value from table `mysql.Global_Variables`.
 		for _, v := range variable.GetSysVars() {
 			if v.Scope != variable.ScopeSession {
-				if variable.FilterImplicitFeatureSwitch(v) {
+				if v.Hidden || e.sysVarHiddenForSem(v.Name) {
 					continue
 				}
 				value, err = variable.GetGlobalSystemVar(sessionVars, v.Name)
@@ -689,10 +701,10 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 	// If it is a session only variable, use the default value defined in code,
 	//   otherwise, fetch the value from table `mysql.Global_Variables`.
 	for _, v := range variable.GetSysVars() {
-		if variable.FilterImplicitFeatureSwitch(v) {
+		if v.Hidden || e.sysVarHiddenForSem(v.Name) {
 			continue
 		}
-		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
+		value, err = variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -707,9 +719,16 @@ func (e *ShowExec) fetchShowStatus() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	checker := privilege.GetPrivilegeManager(e.ctx)
 	for status, v := range statusVars {
 		if e.GlobalScope && v.Scope == variable.ScopeSession {
 			continue
+		}
+		// Skip invisible status vars if permission fails.
+		if sem.IsEnabled() && sem.IsInvisibleStatusVar(status) {
+			if checker == nil || !checker.RequestDynamicVerification(sessionVars.ActiveRoles, "RESTRICTED_STATUS_ADMIN", false) {
+				continue
+			}
 		}
 		switch v.Value.(type) {
 		case []interface{}, nil:
@@ -731,7 +750,7 @@ func getDefaultCollate(charsetName string) string {
 		}
 	}
 	// The charset is invalid, return server default.
-	return charset.CollationUTF8MB4
+	return mysql.DefaultCollationName
 }
 
 // ConstructResultOfShowCreateTable constructs the result for show create table.
@@ -756,7 +775,13 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	sqlMode := ctx.GetSessionVars().SQLMode
-	fmt.Fprintf(buf, "CREATE TABLE %s (\n", stringutil.Escape(tableInfo.Name.O, sqlMode))
+	tableName := stringutil.Escape(tableInfo.Name.O, sqlMode)
+	switch tableInfo.TempTableType {
+	case model.TempTableGlobal:
+		fmt.Fprintf(buf, "CREATE GLOBAL TEMPORARY TABLE %s (\n", tableName)
+	default:
+		fmt.Fprintf(buf, "CREATE TABLE %s (\n", tableName)
+	}
 	var pkCol *model.ColumnInfo
 	var hasAutoIncID bool
 	needAddComma := false
@@ -854,10 +879,10 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if pkCol != nil {
-		// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
+		// If PKIsHandle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
 		fmt.Fprintf(buf, "  PRIMARY KEY (%s)", stringutil.Escape(pkCol.Name.O, sqlMode))
-		buf.WriteString(fmt.Sprintf(" /*T![clustered_index] CLUSTERED */"))
+		buf.WriteString(" /*T![clustered_index] CLUSTERED */")
 	}
 
 	publicIndices := make([]*model.IndexInfo, 0, len(tableInfo.Indices))
@@ -898,9 +923,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 		if idxInfo.Primary {
 			if tableInfo.PKIsHandle || tableInfo.IsCommonHandle {
-				buf.WriteString(fmt.Sprintf(" /*T![clustered_index] CLUSTERED */"))
+				buf.WriteString(" /*T![clustered_index] CLUSTERED */")
 			} else {
-				buf.WriteString(fmt.Sprintf(" /*T![clustered_index] NONCLUSTERED */"))
+				buf.WriteString(" /*T![clustered_index] NONCLUSTERED */")
 			}
 		}
 		if i != len(publicIndices)-1 {
@@ -933,7 +958,14 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 
 	buf.WriteString("\n")
 
-	buf.WriteString(") ENGINE=InnoDB")
+	switch tableInfo.TempTableType {
+	case model.TempTableNone:
+		buf.WriteString(") ENGINE=InnoDB")
+	default:
+		// For now the only supported engine for temporary table is memory.
+		buf.WriteString(") ENGINE=memory")
+	}
+
 	// We need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	if len(tblCollate) == 0 || tblCollate == "binary" {
@@ -990,6 +1022,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	if len(tableInfo.Comment) > 0 {
 		fmt.Fprintf(buf, " COMMENT='%s'", format.OutputFormat(tableInfo.Comment))
 	}
+
+	if tableInfo.TempTableType == model.TempTableGlobal {
+		fmt.Fprintf(buf, " ON COMMIT DELETE ROWS")
+	}
+
 	// add partition info here.
 	appendPartitionInfo(tableInfo.Partition, buf)
 	return nil
@@ -1404,6 +1441,10 @@ func (e *ShowExec) fetchShowPrivileges() error {
 	e.appendRow([]interface{}{"Create tablespace", "Server Admin", "To create/alter/drop tablespaces"})
 	e.appendRow([]interface{}{"Update", "Tables", "To update existing rows"})
 	e.appendRow([]interface{}{"Usage", "Server Admin", "No privileges - allow connect only"})
+
+	for _, priv := range privileges.GetDynamicPrivileges() {
+		e.appendRow([]interface{}{priv, "Server Admin", ""})
+	}
 	return nil
 }
 

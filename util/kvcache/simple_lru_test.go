@@ -63,7 +63,11 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]int64, 5)
+	droppedKv := make(map[Key]Value)
 
+	lru.SetOnEvict(func(key Key, value Value) {
+		droppedKv[key] = value
+	})
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = int64(i)
@@ -73,10 +77,12 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 	c.Assert(lru.size, Equals, uint(3))
 
 	// test for non-existent elements
+	c.Assert(len(droppedKv), Equals, 2)
 	for i := 0; i < 2; i++ {
 		element, exists := lru.elements[string(keys[i].Hash())]
 		c.Assert(exists, IsFalse)
 		c.Assert(element, IsNil)
+		c.Assert(droppedKv[keys[i]], Equals, vals[i])
 	}
 
 	// test for existent elements
@@ -104,6 +110,7 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 
 		root = root.Next()
 	}
+
 	// test for end of double-linked list
 	c.Assert(root, IsNil)
 }

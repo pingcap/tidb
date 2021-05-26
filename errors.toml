@@ -193,7 +193,7 @@ View's SELECT contains a '%s' clause
 
 ["ddl:1353"]
 error = '''
-View's SELECT and view's field list have different column counts
+In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
 '''
 
 ["ddl:1481"]
@@ -259,6 +259,11 @@ COALESCE PARTITION can only be used on HASH/KEY partitions
 ["ddl:1517"]
 error = '''
 Duplicate partition name %-.192s
+'''
+
+["ddl:1562"]
+error = '''
+Cannot create temporary table with partitions
 '''
 
 ["ddl:1563"]
@@ -396,6 +401,11 @@ error = '''
 Unknown SEQUENCE: '%-.300s'
 '''
 
+["ddl:8006"]
+error = '''
+`%s` is unsupported on temporary tables.
+'''
+
 ["ddl:8200"]
 error = '''
 Unsupported partition by range columns
@@ -496,6 +506,11 @@ error = '''
 Deadlock found when trying to get lock; try restarting transaction
 '''
 
+["executor:1221"]
+error = '''
+Incorrect usage of %s and %s
+'''
+
 ["executor:1242"]
 error = '''
 Subquery returns more than 1 row
@@ -549,6 +564,11 @@ Unknown authorization ID %.256s
 ["executor:3619"]
 error = '''
 Illegal privilege level specified for %s
+'''
+
+["executor:3636"]
+error = '''
+Recursive query aborted after %d iterations. Try increasing @@cte_max_recursion_depth to a larger value
 '''
 
 ["executor:3929"]
@@ -1006,6 +1026,31 @@ error = '''
 Unresolved name '%s' for %s hint
 '''
 
+["planner:3573"]
+error = '''
+Recursive Common Table Expression '%s' should contain a UNION
+'''
+
+["planner:3574"]
+error = '''
+Recursive Common Table Expression '%s' should have one or more non-recursive query blocks followed by one or more recursive ones
+'''
+
+["planner:3575"]
+error = '''
+Recursive Common Table Expression '%s' can contain neither aggregation nor window functions in recursive query block
+'''
+
+["planner:3576"]
+error = '''
+In recursive query block of Recursive Common Table Expression '%s', the recursive table must neither be in the right argument of a LEFT JOIN, nor be forced to be non-first with join order hints
+'''
+
+["planner:3577"]
+error = '''
+In recursive query block of Recursive Common Table Expression '%s', the recursive table must be referenced only once, and not in any subquery
+'''
+
 ["planner:3579"]
 error = '''
 Window name '%s' is not defined.
@@ -1096,6 +1141,11 @@ error = '''
 Variable '%s' cannot be set using SET_VAR hint.
 '''
 
+["planner:8006"]
+error = '''
+`%s` is unsupported on temporary tables.
+'''
+
 ["planner:8108"]
 error = '''
 Unsupported type %T
@@ -1128,7 +1178,7 @@ Schema has changed
 
 ["planner:8121"]
 error = '''
-privilege check fail
+privilege check for '%s' fail
 '''
 
 ["planner:8122"]
@@ -1274,6 +1324,11 @@ User %s already exists.
 ["schema:4139"]
 error = '''
 Unknown SEQUENCE: '%-.300s'
+'''
+
+["schema:8003"]
+error = '''
+TiDB admin check table failed.
 '''
 
 ["schema:8020"]
