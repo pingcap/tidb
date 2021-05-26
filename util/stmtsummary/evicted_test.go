@@ -302,7 +302,6 @@ func (s *testStmtSummarySuite) TestEvictedCountDetailed(c *C) {
 	// test poisoning with empty-history digestValue
 	other.AddEvicted(new(stmtSummaryByDigestKey), new(stmtSummaryByDigest), 100)
 	c.Assert(other.history.Len(), Equals, 0)
-	return
 }
 
 func (s *testStmtSummarySuite) TestNewStmtSummaryByDigestEvictedElement(c *C) {
