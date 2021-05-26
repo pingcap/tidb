@@ -73,7 +73,7 @@ func (s *testSuite) TestSQLStatsProfile(c *C) {
 	buf := bytes.NewBuffer(nil)
 	err := tracecpu.StartCPUProfile(buf)
 	c.Assert(err, IsNil)
-	s.waitCollectCnt(collector, cnt+1)
+	s.waitCollectCnt(collector, cnt+2)
 	err = tracecpu.StopCPUProfile()
 	c.Assert(err, IsNil)
 	_, err = profile.Parse(buf)
@@ -141,7 +141,7 @@ func (s *testSuite) mockExecuteSQL(sql, plan string) {
 	s.mockExecute(time.Millisecond * 100)
 	planDigest := genDigest(plan)
 	tracecpu.SetGoroutineLabelsWithSQLAndPlan(ctx, sqlDigest, planDigest, plan)
-	s.mockExecute(time.Millisecond * 200)
+	s.mockExecute(time.Millisecond * 300)
 }
 
 func genDigest(str string) string {
@@ -188,7 +188,7 @@ func (c *mockStatsCollector) hash(stat tracecpu.SQLStats) string {
 }
 
 func (c *mockStatsCollector) Collect(ts int64, stats []tracecpu.SQLStats) {
-	c.collectCnt.Inc()
+	defer c.collectCnt.Inc()
 	if len(stats) == 0 {
 		return
 	}
