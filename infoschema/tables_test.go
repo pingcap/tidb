@@ -1542,7 +1542,7 @@ func (s *testTableSuite) TestTrx(c *C) {
 	sm := &mockSessionManager{nil, make([]*txninfo.TxnInfo, 1)}
 	sm.txnInfo[0] = &txninfo.TxnInfo{
 		StartTS:          424768545227014155,
-		CurrentSQLDigest: digest,
+		CurrentSQLDigest: digest.String(),
 		State:            txninfo.TxnRunningNormal,
 		BlockStartTime:   nil,
 		EntriesCount:     1,
@@ -1553,7 +1553,7 @@ func (s *testTableSuite) TestTrx(c *C) {
 	}
 	tk.Se.SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.TIDB_TRX;").Check(
-		testkit.Rows("424768545227014155 2021-05-07 12:56:48 " + digest + " Normal <nil> 1 19 2 root test"),
+		testkit.Rows("424768545227014155 2021-05-07 12:56:48 " + digest.String() + " Normal <nil> 1 19 2 root test"),
 	)
 }
 

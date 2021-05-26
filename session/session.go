@@ -1226,7 +1226,8 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if oldPi != nil && oldPi.Info == pi.Info {
 		pi.Time = oldPi.Time
 	}
-	_, pi.Digest = s.sessionVars.StmtCtx.SQLDigest()
+	_, digest := s.sessionVars.StmtCtx.SQLDigest()
+	pi.Digest = digest.String()
 	// DO NOT reset the currentPlan to nil until this query finishes execution, otherwise reentrant calls
 	// of SetProcessInfo would override Plan and PlanExplainRows to nil.
 	if command == mysql.ComSleep {
@@ -2577,34 +2578,21 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	vars.CommonGlobalLoaded = true
 
 	// Deep copy sessionvar cache
-	// Eventually this whole map will be applied to systems[], which is a MySQL behavior.
 	sessionCache, err := domain.GetDomain(s).GetSysVarCache().GetSessionCache(s)
 	if err != nil {
 		return err
 	}
-	for varName, sv := range variable.GetSysVars() {
-		if sv.SkipInit() {
-			continue
-		}
-		// The item should be in the sessionCache, but due to a strange current behavior there are some Global-only
-		// vars that are in builtinGlobalVariable. For compatibility we need to fall back to the Global cache on these items.
-		// TODO: don't load these globals into the session!
-		var varVal string
-		var ok bool
-		if varVal, ok = sessionCache[varName]; !ok {
-			varVal, err = s.GetGlobalSysVar(varName)
-			if err != nil {
-				continue // skip variables that are not loaded.
-			}
-		}
+	for varName, varVal := range sessionCache {
 		if _, ok := vars.GetSystemVar(varName); !ok {
 			err = vars.SetSystemVarWithRelaxedValidation(varName, varVal)
 			if err != nil {
+				if variable.ErrUnknownSystemVar.Equal(err) {
+					continue // sessionCache is stale; sysvar has likely been unregistered
+				}
 				return err
 			}
 		}
 	}
-
 	// when client set Capability Flags CLIENT_INTERACTIVE, init wait_timeout with interactive_timeout
 	if vars.ClientCapability&mysql.ClientInteractive > 0 {
 		if varVal, ok := vars.GetSystemVar(variable.InteractiveTimeout); ok {
