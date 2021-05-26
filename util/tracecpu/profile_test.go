@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/tracecpu"
+	"github.com/uber-go/atomic"
 )
 
 func TestT(t *testing.T) {
@@ -67,8 +68,16 @@ func (s *testSuite) TestSQLStatsProfile(c *C) {
 		}(req.sql, req.plan)
 	}
 
+	cnt := collector.getCollectCnt()
 	// test for StartCPUProfile.
-	s.testFetchProfile(c, time.Second+time.Millisecond*200)
+	buf := bytes.NewBuffer(nil)
+	err := tracecpu.StartCPUProfile(buf)
+	c.Assert(err, IsNil)
+	s.waitCollectCnt(collector, cnt+1)
+	err = tracecpu.StopCPUProfile()
+	c.Assert(err, IsNil)
+	_, err = profile.Parse(buf)
+	c.Assert(err, IsNil)
 
 	// test for collect SQL stats.
 	wg.Wait()
@@ -84,33 +93,45 @@ func (s *testSuite) TestSQLStatsProfile(c *C) {
 
 func (s *testSuite) TestIsEnabled(c *C) {
 	c.Assert(tracecpu.GlobalSQLStatsProfiler.IsEnabled(), IsTrue)
-	config.GetGlobalConfig().TopSQL.Enable = false
+	s.setTopSQLEnable(false)
 	c.Assert(tracecpu.GlobalSQLStatsProfiler.IsEnabled(), IsFalse)
 
-	config.GetGlobalConfig().TopSQL.Enable = true
+	s.setTopSQLEnable(true)
 	err := tracecpu.StartCPUProfile(bytes.NewBuffer(nil))
 	c.Assert(err, IsNil)
 	c.Assert(tracecpu.GlobalSQLStatsProfiler.IsEnabled(), IsTrue)
-	config.GetGlobalConfig().TopSQL.Enable = false
+	s.setTopSQLEnable(false)
 	c.Assert(tracecpu.GlobalSQLStatsProfiler.IsEnabled(), IsTrue)
 	err = tracecpu.StopCPUProfile()
 	c.Assert(err, IsNil)
 
-	config.GetGlobalConfig().TopSQL.Enable = false
+	s.setTopSQLEnable(false)
 	c.Assert(tracecpu.GlobalSQLStatsProfiler.IsEnabled(), IsFalse)
-	config.GetGlobalConfig().TopSQL.Enable = true
+	s.setTopSQLEnable(true)
 	c.Assert(tracecpu.GlobalSQLStatsProfiler.IsEnabled(), IsTrue)
 }
 
-func (s *testSuite) testFetchProfile(c *C, d time.Duration) {
-	buf := bytes.NewBuffer(nil)
-	err := tracecpu.StartCPUProfile(buf)
-	c.Assert(err, IsNil)
-	time.Sleep(d)
-	err = tracecpu.StopCPUProfile()
-	c.Assert(err, IsNil)
-	_, err = profile.Parse(buf)
-	c.Assert(err, IsNil)
+func (s *testSuite) waitCollectCnt(collector *mockStatsCollector, cnt int64) {
+	timeout := time.After(time.Second * 5)
+	for {
+		// Wait for collector collect sql stats count >= expected count
+		if collector.getCollectCnt() >= cnt {
+			break
+		}
+		select {
+		case <-timeout:
+			break
+		default:
+			time.Sleep(time.Millisecond * 10)
+		}
+	}
+}
+
+func (s *testSuite) setTopSQLEnable(enabled bool) {
+	cfg := config.GetGlobalConfig()
+	newCfg := *cfg
+	newCfg.TopSQL.Enable = enabled
+	config.StoreGlobalConfig(&newCfg)
 }
 
 func (s *testSuite) mockExecuteSQL(sql, plan string) {
@@ -144,14 +165,14 @@ func (s *testSuite) mockExecute(d time.Duration) {
 }
 
 type mockStatsCollector struct {
+	sync.Mutex
 	// sql_digest -> normalized SQL
-	sqlmu  sync.Mutex
 	sqlMap map[string]string
 	// plan_digest -> normalized plan
-	planMu  sync.Mutex
 	planMap map[string]string
-	// sql -> sql stats
+	// (sql + plan_digest) -> sql stats
 	sqlStatsMap map[string]*tracecpu.SQLStats
+	collectCnt  atomic.Int64
 }
 
 func newMockStatsCollector() *mockStatsCollector {
@@ -167,10 +188,12 @@ func (c *mockStatsCollector) hash(stat tracecpu.SQLStats) string {
 }
 
 func (c *mockStatsCollector) Collect(ts int64, stats []tracecpu.SQLStats) {
+	c.collectCnt.Inc()
 	if len(stats) == 0 {
 		return
 	}
-
+	c.Lock()
+	defer c.Unlock()
 	for _, stmt := range stats {
 		hash := c.hash(stmt)
 		stats, ok := c.sqlStatsMap[hash]
@@ -183,41 +206,48 @@ func (c *mockStatsCollector) Collect(ts int64, stats []tracecpu.SQLStats) {
 	}
 }
 
+func (c *mockStatsCollector) getCollectCnt() int64 {
+	return c.collectCnt.Load()
+}
+
 func (c *mockStatsCollector) getSQLStats(sql, plan string) *tracecpu.SQLStats {
+	c.Lock()
 	sqlDigest, planDigest := genDigest(sql), genDigest(plan)
 	hash := c.hash(tracecpu.SQLStats{SQLDigest: sqlDigest, PlanDigest: planDigest})
-	return c.sqlStatsMap[hash]
+	tmp := c.sqlStatsMap[hash]
+	c.Unlock()
+	return tmp
 }
 
 func (c *mockStatsCollector) getSQL(sqlDigest string) string {
-	c.sqlmu.Lock()
+	c.Lock()
 	sql := c.sqlMap[sqlDigest]
-	c.sqlmu.Unlock()
+	c.Unlock()
 	return sql
 }
 
 func (c *mockStatsCollector) getPlan(planDigest string) string {
-	c.planMu.Lock()
+	c.Lock()
 	plan := c.planMap[planDigest]
-	c.planMu.Unlock()
+	c.Unlock()
 	return plan
 }
 
 func (c *mockStatsCollector) RegisterSQL(sqlDigest, normalizedSQL string) {
-	c.sqlmu.Lock()
+	c.Lock()
 	_, ok := c.sqlMap[sqlDigest]
 	if !ok {
 		c.sqlMap[sqlDigest] = normalizedSQL
 	}
-	c.sqlmu.Unlock()
+	c.Unlock()
 
 }
 
 func (c *mockStatsCollector) RegisterPlan(planDigest string, normalizedPlan string) {
-	c.planMu.Lock()
+	c.Lock()
 	_, ok := c.planMap[planDigest]
 	if !ok {
 		c.planMap[planDigest] = normalizedPlan
 	}
-	c.planMu.Unlock()
+	c.Unlock()
 }
