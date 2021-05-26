@@ -50,7 +50,7 @@ type sqlStatsProfiler struct {
 		sync.Mutex
 		ept *exportProfileTask
 	}
-	collector SQLStatsCollector
+	collector TopSQLCollector
 }
 
 // NewSQLStatsProfiler create a sqlStatsProfiler.
@@ -69,7 +69,7 @@ func (sp *sqlStatsProfiler) Run() {
 	go sp.startAnalyzeProfileWorker()
 }
 
-func (sp *sqlStatsProfiler) SetCollector(c SQLStatsCollector) {
+func (sp *sqlStatsProfiler) SetCollector(c TopSQLCollector) {
 	sp.collector = c
 }
 

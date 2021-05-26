@@ -111,7 +111,7 @@ func (s *testSuite) TestIsEnabled(c *C) {
 	c.Assert(tracecpu.GlobalSQLStatsProfiler.IsEnabled(), IsTrue)
 }
 
-func (s *testSuite) waitCollectCnt(collector *mockStatsCollector, cnt int64) {
+func (s *testSuite) waitCollectCnt(collector *mockCollector, cnt int64) {
 	timeout := time.After(time.Second * 5)
 	for {
 		// Wait for collector collect sql stats count >= expected count
@@ -164,7 +164,7 @@ func (s *testSuite) mockExecute(d time.Duration) {
 	}
 }
 
-type mockStatsCollector struct {
+type mockCollector struct {
 	sync.Mutex
 	// sql_digest -> normalized SQL
 	sqlMap map[string]string
@@ -175,19 +175,19 @@ type mockStatsCollector struct {
 	collectCnt  atomic.Int64
 }
 
-func newMockStatsCollector() *mockStatsCollector {
-	return &mockStatsCollector{
+func newMockStatsCollector() *mockCollector {
+	return &mockCollector{
 		sqlMap:      make(map[string]string),
 		planMap:     make(map[string]string),
 		sqlStatsMap: make(map[string]*tracecpu.SQLStats),
 	}
 }
 
-func (c *mockStatsCollector) hash(stat tracecpu.SQLStats) string {
+func (c *mockCollector) hash(stat tracecpu.SQLStats) string {
 	return stat.SQLDigest + stat.PlanDigest
 }
 
-func (c *mockStatsCollector) Collect(ts int64, stats []tracecpu.SQLStats) {
+func (c *mockCollector) Collect(ts int64, stats []tracecpu.SQLStats) {
 	defer c.collectCnt.Inc()
 	if len(stats) == 0 {
 		return
@@ -206,11 +206,11 @@ func (c *mockStatsCollector) Collect(ts int64, stats []tracecpu.SQLStats) {
 	}
 }
 
-func (c *mockStatsCollector) getCollectCnt() int64 {
+func (c *mockCollector) getCollectCnt() int64 {
 	return c.collectCnt.Load()
 }
 
-func (c *mockStatsCollector) getSQLStats(sql, plan string) *tracecpu.SQLStats {
+func (c *mockCollector) getSQLStats(sql, plan string) *tracecpu.SQLStats {
 	c.Lock()
 	sqlDigest, planDigest := genDigest(sql), genDigest(plan)
 	hash := c.hash(tracecpu.SQLStats{SQLDigest: sqlDigest, PlanDigest: planDigest})
@@ -219,21 +219,21 @@ func (c *mockStatsCollector) getSQLStats(sql, plan string) *tracecpu.SQLStats {
 	return tmp
 }
 
-func (c *mockStatsCollector) getSQL(sqlDigest string) string {
+func (c *mockCollector) getSQL(sqlDigest string) string {
 	c.Lock()
 	sql := c.sqlMap[sqlDigest]
 	c.Unlock()
 	return sql
 }
 
-func (c *mockStatsCollector) getPlan(planDigest string) string {
+func (c *mockCollector) getPlan(planDigest string) string {
 	c.Lock()
 	plan := c.planMap[planDigest]
 	c.Unlock()
 	return plan
 }
 
-func (c *mockStatsCollector) RegisterSQL(sqlDigest, normalizedSQL string) {
+func (c *mockCollector) RegisterSQL(sqlDigest, normalizedSQL string) {
 	c.Lock()
 	_, ok := c.sqlMap[sqlDigest]
 	if !ok {
@@ -243,7 +243,7 @@ func (c *mockStatsCollector) RegisterSQL(sqlDigest, normalizedSQL string) {
 
 }
 
-func (c *mockStatsCollector) RegisterPlan(planDigest string, normalizedPlan string) {
+func (c *mockCollector) RegisterPlan(planDigest string, normalizedPlan string) {
 	c.Lock()
 	_, ok := c.planMap[planDigest]
 	if !ok {
