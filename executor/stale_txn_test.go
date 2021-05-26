@@ -105,7 +105,7 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 		tk.MustExec(`drop table if exists t`)
 	}()
 
-	time.Sleep(2800 * time.Millisecond)
+	time.Sleep(3 * time.Second)
 
 	now := time.Now()
 
