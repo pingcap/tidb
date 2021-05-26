@@ -333,6 +333,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		return nil, err
 	}
 
+	getPlanDigest(a.Ctx, a.Plan)
+
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
 		return nil, err
@@ -814,6 +816,7 @@ var (
 // 2. record summary statement.
 // 3. record execute duration metric.
 // 4. update the `PrevStmt` in session variable.
+// 5. reset `DurationParse` in session variable.
 func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	execDetail := sessVars.StmtCtx.GetExecDetails()
@@ -851,6 +854,8 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 	} else {
 		sessionExecuteRunDurationGeneral.Observe(executeDuration.Seconds())
 	}
+	// Reset DurationParse due to the next statement may not need to be parsed (not a text protocol query).
+	sessVars.DurationParse = 0
 }
 
 // CloseRecordSet will finish the execution of current statement and do some record work
@@ -919,11 +924,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	diskMax := sessVars.StmtCtx.DiskTracker.MaxConsumed()
-	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
+	planDigest := getPlanDigest(a.Ctx, a.Plan)
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		SQL:               sql.String(),
-		Digest:            digest,
+		Digest:            digest.String(),
 		TimeTotal:         costTime,
 		TimeParse:         sessVars.DurationParse,
 		TimeCompile:       sessVars.DurationCompile,
@@ -981,7 +986,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:        sql.String(),
-			Digest:     digest,
+			Digest:     digest.String(),
 			Start:      sessVars.StartTime,
 			Duration:   costTime,
 			Detail:     sessVars.StmtCtx.GetExecDetails(),
@@ -1011,14 +1016,15 @@ func getPlanTree(sctx sessionctx.Context, p plannercore.Plan) string {
 }
 
 // getPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
-func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, planDigest string) {
-	normalized, planDigest = sctx.GetSessionVars().StmtCtx.GetPlanDigest()
-	if len(normalized) > 0 {
-		return
+func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) string {
+	sc := sctx.GetSessionVars().StmtCtx
+	_, planDigest := sc.GetPlanDigest()
+	if planDigest != nil {
+		return planDigest.String()
 	}
-	normalized, planDigest = plannercore.NormalizePlan(p)
-	sctx.GetSessionVars().StmtCtx.SetPlanDigest(normalized, planDigest)
-	return
+	normalized, planDigest := plannercore.NormalizePlan(p)
+	sc.SetPlanDigest(normalized, planDigest)
+	return planDigest.String()
 }
 
 // getEncodedPlan gets the encoded plan, and generates the hint string if indicated.
@@ -1079,7 +1085,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		}
 		prevSQL = sessVars.PrevStmt.String()
 	}
-	sessVars.SetPrevStmtDigest(digest)
+	sessVars.SetPrevStmtDigest(digest.String())
 
 	// No need to encode every time, so encode lazily.
 	planGenerator := func() (string, string) {
@@ -1092,11 +1098,11 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	var planDigestGen func() string
 	if a.Plan.TP() == plancodec.TypePointGet {
 		planDigestGen = func() string {
-			_, planDigest := getPlanDigest(a.Ctx, a.Plan)
+			planDigest := getPlanDigest(a.Ctx, a.Plan)
 			return planDigest
 		}
 	} else {
-		_, planDigest = getPlanDigest(a.Ctx, a.Plan)
+		planDigest = getPlanDigest(a.Ctx, a.Plan)
 	}
 
 	execDetail := stmtCtx.GetExecDetails()
@@ -1120,7 +1126,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		Charset:         charset,
 		Collation:       collation,
 		NormalizedSQL:   normalizedSQL,
-		Digest:          digest,
+		Digest:          digest.String(),
 		PrevSQL:         prevSQL,
 		PrevSQLDigest:   prevSQLDigest,
 		PlanGenerator:   planGenerator,

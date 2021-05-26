@@ -706,11 +706,11 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.initCap = chunk.ZeroCapacity
 	e := &SimpleExec{
-		baseExecutor:       base,
-		Statement:          v.Statement,
-		IsFromRemote:       v.IsFromRemote,
-		is:                 b.is,
-		StalenessTxnOption: v.StalenessTxnOption,
+		baseExecutor:    base,
+		Statement:       v.Statement,
+		IsFromRemote:    v.IsFromRemote,
+		is:              b.is,
+		staleTxnStartTS: v.StaleTxnStartTS,
 	}
 	return e
 }
@@ -2022,7 +2022,7 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 		oldHist = idx.TruncateHistogram(bktID)
 	}
 	var oldTopN *statistics.TopN
-	if analyzeTask.idxExec.analyzePB.IdxReq.GetVersion() == statistics.Version2 {
+	if analyzeTask.idxExec.analyzePB.IdxReq.GetVersion() >= statistics.Version2 {
 		oldTopN = idx.TopN.Copy()
 		oldTopN.RemoveVal(oldHist.Bounds.GetRow(len(oldHist.Buckets)*2 - 1).GetBytes(0))
 	}

@@ -1226,7 +1226,8 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if oldPi != nil && oldPi.Info == pi.Info {
 		pi.Time = oldPi.Time
 	}
-	_, pi.Digest = s.sessionVars.StmtCtx.SQLDigest()
+	_, digest := s.sessionVars.StmtCtx.SQLDigest()
+	pi.Digest = digest.String()
 	// DO NOT reset the currentPlan to nil until this query finishes execution, otherwise reentrant calls
 	// of SetProcessInfo would override Plan and PlanExplainRows to nil.
 	if command == mysql.ComSleep {
@@ -2000,6 +2001,35 @@ func (s *session) checkBeforeNewTxn(ctx context.Context) error {
 	return nil
 }
 
+// NewTxnWithStartTS create a transaction with the given StartTS.
+func (s *session) NewTxnWithStartTS(ctx context.Context, startTS uint64) error {
+	if err := s.checkBeforeNewTxn(ctx); err != nil {
+		return err
+	}
+	txnScope := s.GetSessionVars().CheckAndGetTxnScope()
+	txn, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetStartTS(startTS))
+	if err != nil {
+		return err
+	}
+	txn.SetVars(s.sessionVars.KVVars)
+	txn.SetOption(kv.IsStalenessReadOnly, true)
+	txn.SetOption(kv.TxnScope, txnScope)
+	s.txn.changeInvalidToValid(txn)
+	is, err := domain.GetDomain(s).GetSnapshotInfoSchema(txn.StartTS())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	s.sessionVars.TxnCtx = &variable.TransactionContext{
+		InfoSchema:  is,
+		CreateTime:  time.Now(),
+		StartTS:     txn.StartTS(),
+		ShardStep:   int(s.sessionVars.ShardAllocateStep),
+		IsStaleness: true,
+		TxnScope:    txnScope,
+	}
+	return nil
+}
+
 func (s *session) SetValue(key fmt.Stringer, value interface{}) {
 	s.mu.Lock()
 	s.mu.values[key] = value
@@ -2548,34 +2578,21 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	vars.CommonGlobalLoaded = true
 
 	// Deep copy sessionvar cache
-	// Eventually this whole map will be applied to systems[], which is a MySQL behavior.
 	sessionCache, err := domain.GetDomain(s).GetSysVarCache().GetSessionCache(s)
 	if err != nil {
 		return err
 	}
-	for varName, sv := range variable.GetSysVars() {
-		if sv.SkipInit() {
-			continue
-		}
-		// The item should be in the sessionCache, but due to a strange current behavior there are some Global-only
-		// vars that are in builtinGlobalVariable. For compatibility we need to fall back to the Global cache on these items.
-		// TODO: don't load these globals into the session!
-		var varVal string
-		var ok bool
-		if varVal, ok = sessionCache[varName]; !ok {
-			varVal, err = s.GetGlobalSysVar(varName)
-			if err != nil {
-				continue // skip variables that are not loaded.
-			}
-		}
+	for varName, varVal := range sessionCache {
 		if _, ok := vars.GetSystemVar(varName); !ok {
 			err = vars.SetSystemVarWithRelaxedValidation(varName, varVal)
 			if err != nil {
+				if variable.ErrUnknownSystemVar.Equal(err) {
+					continue // sessionCache is stale; sysvar has likely been unregistered
+				}
 				return err
 			}
 		}
 	}
-
 	// when client set Capability Flags CLIENT_INTERACTIVE, init wait_timeout with interactive_timeout
 	if vars.ClientCapability&mysql.ClientInteractive > 0 {
 		if varVal, ok := vars.GetSystemVar(variable.InteractiveTimeout); ok {
@@ -2648,7 +2665,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	}
 
 	// no need to get txn from txnFutureCh since txn should init with startTs
-	txn, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(s.GetSessionVars().CheckAndGetTxnScope()).SetStartTs(startTS))
+	txn, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(s.GetSessionVars().CheckAndGetTxnScope()).SetStartTS(startTS))
 	if err != nil {
 		return err
 	}
@@ -2657,60 +2674,6 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return err
-	}
-	return nil
-}
-
-// NewTxnWithStalenessOption create a transaction with Staleness option
-func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionctx.StalenessTxnOption) error {
-	err := s.checkBeforeNewTxn(ctx)
-	if err != nil {
-		return err
-	}
-	var (
-		txn      kv.Transaction
-		txnScope = s.GetSessionVars().CheckAndGetTxnScope()
-	)
-	switch option.Mode {
-	case ast.TimestampBoundReadTimestamp:
-		txn, err = s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetStartTs(option.StartTS))
-		if err != nil {
-			return err
-		}
-	case ast.TimestampBoundExactStaleness:
-		txn, err = s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetPrevSec(option.PrevSec))
-		if err != nil {
-			return err
-		}
-	case ast.TimestampBoundMaxStaleness:
-		txn, err = s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetMaxPrevSec(option.PrevSec))
-		if err != nil {
-			return err
-		}
-	case ast.TimestampBoundMinReadTimestamp:
-		txn, err = s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetMinStartTS(option.StartTS))
-		if err != nil {
-			return err
-		}
-	default:
-		// For unsupported staleness txn cases, fallback to NewTxn
-		return s.NewTxn(ctx)
-	}
-	txn.SetVars(s.sessionVars.KVVars)
-	txn.SetOption(kv.IsStalenessReadOnly, true)
-	txn.SetOption(kv.TxnScope, txnScope)
-	s.txn.changeInvalidToValid(txn)
-	is, err := domain.GetDomain(s).GetSnapshotInfoSchema(txn.StartTS())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	s.sessionVars.TxnCtx = &variable.TransactionContext{
-		InfoSchema:  is,
-		CreateTime:  time.Now(),
-		StartTS:     txn.StartTS(),
-		ShardStep:   int(s.sessionVars.ShardAllocateStep),
-		IsStaleness: true,
-		TxnScope:    txnScope,
 	}
 	return nil
 }

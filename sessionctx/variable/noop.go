@@ -205,8 +205,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "sort_buffer_size", Value: "262144", IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: "innodb_flush_neighbors", Value: "1"},
 	{Scope: ScopeNone, Name: "innodb_use_sys_malloc", Value: "1"},
-	{Scope: ScopeSession, Name: PluginLoad, Value: ""},
-	{Scope: ScopeSession, Name: PluginDir, Value: "/data/deploy/plugin"},
 	{Scope: ScopeNone, Name: "performance_schema_max_socket_classes", Value: "10"},
 	{Scope: ScopeNone, Name: "performance_schema_max_stage_classes", Value: "150"},
 	{Scope: ScopeGlobal, Name: "innodb_purge_batch_size", Value: "300"},
