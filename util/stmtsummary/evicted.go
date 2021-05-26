@@ -64,14 +64,21 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 	defer evictedValue.Unlock()
 	for e, h := evictedValue.history.Back(), ssbde.history.Back(); e != nil; e = e.Prev() {
 		evictedElement := e.Value.(*stmtSummaryByDigestElement)
-		eBeginTime := evictedElement.beginTime
-		eEndTime := evictedElement.endTime
 
 		// no record in ssbde.history, direct insert
 		if ssbde.history.Len() == 0 && historySize != 0 {
-			record := newStmtSummaryByDigestEvictedElement(eBeginTime, eEndTime)
-			record.addEvicted(evictedKey, evictedElement)
-			ssbde.history.PushFront(record)
+			// use closure to minimize time holding lock
+			func() {
+				evictedElement.Lock()
+				defer evictedElement.Unlock()
+
+				eBeginTime := evictedElement.beginTime
+				eEndTime := evictedElement.endTime
+				record := newStmtSummaryByDigestEvictedElement(eBeginTime, eEndTime)
+				record.addEvicted(evictedKey, evictedElement)
+				ssbde.history.PushFront(record)
+			}()
+
 			h = ssbde.history.Back()
 			continue
 		}
@@ -88,18 +95,30 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 			// not matching, create a new record and insert
 			case isTooYoung:
 				{
-					record := newStmtSummaryByDigestEvictedElement(eBeginTime, eEndTime)
-					record.addEvicted(evictedKey, evictedElement)
-					ssbde.history.InsertAfter(record, h)
+					func() {
+						evictedElement.Lock()
+						defer evictedElement.Unlock()
+						eBeginTime := evictedElement.beginTime
+						eEndTime := evictedElement.endTime
+						record := newStmtSummaryByDigestEvictedElement(eBeginTime, eEndTime)
+						record.addEvicted(evictedKey, evictedElement)
+						ssbde.history.InsertAfter(record, h)
+					}()
 					break MATCHING
 				}
 			default: // isTooOld
 				{
 					if h == ssbde.history.Front() {
 						// if digest older than all records in ssbde.history.
-						record := newStmtSummaryByDigestEvictedElement(eBeginTime, eEndTime)
-						record.addEvicted(evictedKey, evictedElement)
-						ssbde.history.PushFront(record)
+						func() {
+							evictedElement.Lock()
+							defer evictedElement.Unlock()
+							eBeginTime := evictedElement.beginTime
+							eEndTime := evictedElement.endTime
+							record := newStmtSummaryByDigestEvictedElement(eBeginTime, eEndTime)
+							record.addEvicted(evictedKey, evictedElement)
+							ssbde.history.PushFront(record)
+						}()
 						break MATCHING
 					}
 				}
@@ -139,6 +158,8 @@ func (seElement *stmtSummaryByDigestEvictedElement) matchAndAdd(digestKey *stmtS
 	if seElement == nil || digestValue == nil {
 		return isTooYoung
 	}
+	digestValue.Lock()
+	defer digestValue.Unlock()
 	sBeginTime, sEndTime := seElement.beginTime, seElement.endTime
 	eBeginTime, eEndTime := digestValue.beginTime, digestValue.endTime
 	if sBeginTime <= eBeginTime && eEndTime <= sEndTime {
