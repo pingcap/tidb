@@ -166,7 +166,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 // Close implements the Executor interface.
 func (e *PointGetExecutor) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {
-		e.snapshot.DelOption(kv.CollectRuntimeStats)
+		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
 	if e.idxInfo != nil && e.tblInfo != nil {
 		actRows := int64(0)
@@ -369,6 +369,10 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		// fallthrough to snapshot get.
 	}
 
+	// Global temporary table is always empty, so no need to send the request.
+	if e.tblInfo.TempTableType == model.TempTableGlobal {
+		return nil, nil
+	}
 	lock := e.tblInfo.Lock
 	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
 		if e.ctx.GetSessionVars().EnablePointGetCache {

@@ -123,7 +123,9 @@ func (svc *SysVarCache) RebuildSysVarCache(ctx sessionctx.Context) error {
 		if _, ok := tableContents[sv.Name]; ok {
 			sVal = tableContents[sv.Name]
 		}
-		if sv.HasSessionScope() {
+		// session cache stores non-skippable variables, which essentially means session scope.
+		// for historical purposes there are some globals, but these should eventually be removed.
+		if !sv.SkipInit() {
 			newSessionCache[sv.Name] = sVal
 		}
 		if sv.HasGlobalScope() {
