@@ -1872,10 +1872,15 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	if err != nil {
 		return nil, err
 	}
+	s.txn.onStmtStart(preparedStmt.SQLDigest)
+	var rs sqlexec.RecordSet
 	if ok {
-		return s.cachedPlanExec(ctx, stmtID, preparedStmt, args)
+		rs, err = s.cachedPlanExec(ctx, stmtID, preparedStmt, args)
+	} else {
+		rs, err = s.preparedStmtExec(ctx, stmtID, preparedStmt, args)
 	}
-	return s.preparedStmtExec(ctx, stmtID, preparedStmt, args)
+	s.txn.onStmtEnd()
+	return rs, err
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {

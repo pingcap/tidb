@@ -4595,6 +4595,70 @@ func (s *testTxnStateSerialSuite) TestTxnInfoWithScalarSubquery(c *C) {
 	tk.MustExec("rollback")
 }
 
+func (s *testTxnStateSerialSuite) TestTxnInfoWithPSProtocol(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (a int primary key)")
+
+	// Test autocommit transaction
+
+	idInsert, _, _, err := tk.Se.PrepareStmt("insert into t values (?)")
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "pause"), IsNil)
+	ch := make(chan interface{})
+	go func() {
+		_, err := tk.Se.ExecutePreparedStmt(context.Background(), idInsert, types.MakeDatums(1))
+		c.Assert(err, IsNil)
+		ch <- nil
+	}()
+	time.Sleep(100 * time.Millisecond)
+	_, digest := parser.NormalizeDigest("insert into t values (1)")
+	info := tk.Se.TxnInfo()
+	c.Assert(info, NotNil)
+	c.Assert(info.StartTS, Greater, uint64(0))
+	c.Assert(info.State, Equals, txninfo.TxnCommitting)
+	c.Assert(info.CurrentSQLDigest, Equals, digest)
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{digest})
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
+	<-ch
+	info = tk.Se.TxnInfo()
+	c.Assert(info, IsNil)
+
+	// Test non-autocommit transaction
+
+	id1, _, _, err := tk.Se.PrepareStmt("select * from t where a = ?")
+	c.Assert(err, IsNil)
+	_, digest1 := parser.NormalizeDigest("select * from t where a = ?")
+	id2, _, _, err := tk.Se.PrepareStmt("update t set a = a + 1 where a = ?")
+	c.Assert(err, IsNil)
+	_, digest2 := parser.NormalizeDigest("update t set a = a + 1 where a = ?")
+
+	tk.MustExec("begin pessimistic")
+
+	_, err = tk.Se.ExecutePreparedStmt(context.Background(), id1, types.MakeDatums(1))
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock", "pause"), IsNil)
+	go func() {
+		_, err := tk.Se.ExecutePreparedStmt(context.Background(), id2, types.MakeDatums(1))
+		c.Assert(err, IsNil)
+		ch <- nil
+	}()
+	time.Sleep(100 * time.Millisecond)
+	info = tk.Se.TxnInfo()
+	c.Assert(info.StartTS, Greater, uint64(0))
+	c.Assert(info.CurrentSQLDigest, Equals, digest2)
+	c.Assert(info.State, Equals, txninfo.TxnLockWaiting)
+	c.Assert((*time.Time)(info.BlockStartTime), NotNil)
+	_, beginDigest := parser.NormalizeDigest("begin pessimistic")
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest, digest1, digest2})
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock"), IsNil)
+	<-ch
+	tk.MustExec("rollback")
+}
+
 func (s *testSessionSuite) TestReadDMLBatchSize(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set global tidb_dml_batch_size=1000")
