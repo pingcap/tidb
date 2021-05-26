@@ -1791,3 +1791,33 @@ func (s *testPlanSuite) TestPossibleProperties(c *C) {
 		"1 58.0000",
 	))
 }
+
+func (s *testPlanSuite) TestSelectionPartialPushDown(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL  string
+			Plan []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int as (a+1) virtual)")
+	tk.MustExec("create table t2(a int, b int as (a+1) virtual, c int, key idx_a(a))")
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format='brief'" + ts).Rows())
+		})
+		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}

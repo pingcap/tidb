@@ -722,5 +722,14 @@
     "cases": [
       "SELECT col2 FROM PK_S_MULTI_31 AS T1 WHERE (SELECT count(DISTINCT COL1, COL2) FROM PK_S_MULTI_31 AS T2 WHERE T2.COL1>T1.COL1)>2 order by col2;"
     ]
+  },
+  {
+    "name": "TestSelectionPartialPushDown",
+    "cases": [
+      // Make sure row_count(tikv_selection) == row_count(table_reader) and row_count(table_reader) > row_count(tidb_selection)
+      "select * from t1 where a > 1 and b > 1",
+      // Make sure row_count(tikv_selection) == row_count(index_lookup) and row_count(index_lookup) > row_count(tidb_selection)
+      "select * from t2 use index(idx_a) where a > 1 and b > 1 and c > 1"
+    ]
   }
 ]
