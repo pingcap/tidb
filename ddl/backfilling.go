@@ -333,7 +333,7 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 	maxSleep := 10000 // ms
 	bo := tikv.NewBackofferWithVars(context.Background(), maxSleep, nil)
 	tikvRange := *(*tikvstore.KeyRange)(unsafe.Pointer(&kvRange))
-	ranges, err := tikv.SplitRegionRanges(bo, s.GetRegionCache(), []tikvstore.KeyRange{tikvRange})
+	ranges, err := s.GetRegionCache().SplitRegionRanges(bo, []tikvstore.KeyRange{tikvRange})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -9576,3 +9576,20 @@ func (s *testIntegrationSuite) TestControlFunctionWithEnumOrSet(c *C) {
 	tk.MustQuery("select elt(1,s) = 4 from s").Check(testkit.Rows("1"))
 	tk.MustQuery("select s from s where elt(1,s)").Check(testkit.Rows("a"))
 }
+
+func (s *testIntegrationSuite) TestComplexShowVariables(c *C) {
+	// This is an example SHOW VARIABLES from mysql-connector-java-5.1.34
+	// It returns 19 rows in MySQL 5.7 (the language sysvar no longer exists in 5.6+)
+	// and 16 rows in MySQL 8.0 (the aliases for tx_isolation is removed, along with query cache)
+	// In the event that we hide noop sysvars in future, we must keep these variables.
+	tk := testkit.NewTestKit(c, s.store)
+	c.Assert(tk.MustQuery(`SHOW VARIABLES WHERE Variable_name ='language' OR Variable_name = 'net_write_timeout' OR Variable_name = 'interactive_timeout' 
+OR Variable_name = 'wait_timeout' OR Variable_name = 'character_set_client' OR Variable_name = 'character_set_connection' 
+OR Variable_name = 'character_set' OR Variable_name = 'character_set_server' OR Variable_name = 'tx_isolation' 
+OR Variable_name = 'transaction_isolation' OR Variable_name = 'character_set_results' OR Variable_name = 'timezone' 
+OR Variable_name = 'time_zone' OR Variable_name = 'system_time_zone' 
+OR Variable_name = 'lower_case_table_names' OR Variable_name = 'max_allowed_packet' OR Variable_name = 'net_buffer_length' 
+OR Variable_name = 'sql_mode' OR Variable_name = 'query_cache_type'  OR Variable_name = 'query_cache_size' 
+OR Variable_name = 'license' OR Variable_name = 'init_connect'`).Rows(), HasLen, 19)
+
+}
