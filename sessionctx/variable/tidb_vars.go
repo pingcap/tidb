@@ -566,7 +566,7 @@ const (
 	DefAutoIncrementOffset             = 1
 	DefChecksumTableConcurrency        = 4
 	DefSkipUTF8Check                   = false
-	DefBatchMode                       = true
+	DefBatchMode                       = false
 	DefSkipASCIICheck                  = false
 	DefOptAggPushDown                  = false
 	DefOptBCJ                          = false

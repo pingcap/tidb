@@ -46,5 +46,5 @@ var DefaultVars = NewVariables(&ignoreKill)
 // Default values
 const (
 	DefBackoffLockFast = 100
-	DefBackOffWeight   = 2
+	DefBackOffWeight   = 10
 )
