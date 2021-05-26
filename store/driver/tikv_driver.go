@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	deadlockPB "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
 	derr "github.com/pingcap/tidb/store/driver/error"
@@ -340,12 +341,16 @@ func (s *tikvStore) GetLockWaits() ([]*deadlockPB.WaitForEntry, error) {
 	stores := s.GetRegionCache().GetStoresByType(tikvrpc.TiKV)
 	var result []*deadlockPB.WaitForEntry
 	for _, store := range stores {
-		resp, err := s.GetTiKVClient().SendRequest(context.TODO(), store.Addr, tikvrpc.NewRequest(tikvrpc.CmdLockWaitInfo, &kvrpcpb.GetLockWaitInfoRequest{}), time.Second*30)
-		if err != nil {
-			return nil, err
+		// todo: try RegionCache.getStoreAddr with backoff
+		if store.IsNotTombstone() {
+			resp, err := s.GetTiKVClient().SendRequest(context.TODO(), store.Addr, tikvrpc.NewRequest(tikvrpc.CmdLockWaitInfo, &kvrpcpb.GetLockWaitInfoRequest{}), time.Second*30)
+			if err != nil {
+				log.Warn("query lock wait info failed", zap.Error(err))
+				continue
+			}
+			entries := resp.Resp.(*kvrpcpb.GetLockWaitInfoResponse).Entries
+			result = append(result, entries...)
 		}
-		entries := resp.Resp.(*kvrpcpb.GetLockWaitInfoResponse).Entries
-		result = append(result, entries...)
 	}
 	return result, nil
 }
