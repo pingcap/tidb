@@ -220,6 +220,7 @@
   {
     "name": "TestPushDownAggForMPP",
     "cases": [
+      "desc format = 'brief' select id, id, value, value from t group by id, value",
       "desc format = 'brief' select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
       "desc format = 'brief' select /*+ hash_agg()*/ count(*) from  (select id+1 from t)A",
       "desc format = 'brief' select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A",

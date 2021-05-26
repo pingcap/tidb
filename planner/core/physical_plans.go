@@ -1057,7 +1057,7 @@ func (p *basePhysicalAgg) getAggFuncCostFactor() (factor float64) {
 		}
 	}
 	if factor == 0 {
-		factor = 1.0
+		factor = 0.05
 	}
 	return
 }
