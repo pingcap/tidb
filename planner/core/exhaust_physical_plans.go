@@ -1779,11 +1779,11 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	}
 	// It indicates which side is the build side.
 	preferredBuildIndex := 0
-	if p.JoinType == InnerJoin {
+	if p.JoinType == InnerJoin || p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
 		if p.children[0].statsInfo().Count() > p.children[1].statsInfo().Count() {
 			preferredBuildIndex = 1
 		}
-	} else if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin || p.JoinType == LeftOuterJoin {
+	} else if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		preferredBuildIndex = 1
 	}
 	baseJoin.InnerChildIdx = preferredBuildIndex
