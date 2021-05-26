@@ -16,18 +16,15 @@ package tracecpu_test
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/pprof/profile"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/tracecpu"
-	"github.com/uber-go/atomic"
+	"github.com/pingcap/tidb/util/tracecpu/mock"
 )
 
 func TestT(t *testing.T) {
@@ -48,8 +45,8 @@ func (s *testSuite) SetUpSuite(c *C) {
 	tracecpu.GlobalSQLStatsProfiler.Run()
 }
 
-func (s *testSuite) TestSQLStatsProfile(c *C) {
-	collector := newMockStatsCollector()
+func (s *testSuite) TestTopSQLStatsProfile(c *C) {
+	collector := mock.NewTopSQLCollector()
 	tracecpu.GlobalSQLStatsProfiler.SetCollector(collector)
 	reqs := []struct {
 		sql  string
@@ -59,40 +56,36 @@ func (s *testSuite) TestSQLStatsProfile(c *C) {
 		{"select * from t where a>?", "table-scan"},
 		{"insert into t values (?)", ""},
 	}
-	var wg sync.WaitGroup
+
 	for _, req := range reqs {
-		wg.Add(1)
 		go func(sql, plan string) {
-			defer wg.Done()
-			s.mockExecuteSQL(sql, plan)
+			for {
+				s.mockExecuteSQL(sql, plan)
+			}
 		}(req.sql, req.plan)
 	}
 
-	cnt := collector.getCollectCnt()
 	// test for StartCPUProfile.
 	buf := bytes.NewBuffer(nil)
 	err := tracecpu.StartCPUProfile(buf)
 	c.Assert(err, IsNil)
-	s.waitCollectCnt(collector, cnt+2)
+	collector.WaitCollectCnt(2)
 	err = tracecpu.StopCPUProfile()
 	c.Assert(err, IsNil)
 	_, err = profile.Parse(buf)
 	c.Assert(err, IsNil)
 
-	// test for collect SQL stats.
-	wg.Wait()
 	for _, req := range reqs {
-		stats := collector.getSQLStats(req.sql, req.plan)
-		c.Assert(stats, NotNil)
-		sql := collector.getSQL(stats.SQLDigest)
-		plan := collector.getPlan(stats.PlanDigest)
+		stats := collector.GetSQLStatsBySQLWithRetry(req.sql, len(req.plan) > 0)
+		c.Assert(len(stats), Equals, 1)
+		sql := collector.GetSQL(stats[0].SQLDigest)
+		plan := collector.GetPlan(stats[0].PlanDigest)
 		c.Assert(sql, Equals, req.sql)
 		c.Assert(plan, Equals, req.plan)
 	}
 }
 
 func (s *testSuite) TestIsEnabled(c *C) {
-	c.Assert(tracecpu.GlobalSQLStatsProfiler.IsEnabled(), IsTrue)
 	s.setTopSQLEnable(false)
 	c.Assert(tracecpu.GlobalSQLStatsProfiler.IsEnabled(), IsFalse)
 
@@ -111,32 +104,15 @@ func (s *testSuite) TestIsEnabled(c *C) {
 	c.Assert(tracecpu.GlobalSQLStatsProfiler.IsEnabled(), IsTrue)
 }
 
-func (s *testSuite) waitCollectCnt(collector *mockCollector, cnt int64) {
-	timeout := time.After(time.Second * 5)
-	for {
-		// Wait for collector collect sql stats count >= expected count
-		if collector.getCollectCnt() >= cnt {
-			break
-		}
-		select {
-		case <-timeout:
-			break
-		default:
-			time.Sleep(time.Millisecond * 10)
-		}
-	}
-}
-
 func (s *testSuite) setTopSQLEnable(enabled bool) {
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	newCfg.TopSQL.Enable = enabled
-	config.StoreGlobalConfig(&newCfg)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TopSQL.Enable = enabled
+	})
 }
 
 func (s *testSuite) mockExecuteSQL(sql, plan string) {
 	ctx := context.Background()
-	sqlDigest := genDigest(sql)
+	sqlDigest := mock.GenSQLDigest(sql)
 	ctx = tracecpu.SetGoroutineLabelsWithSQL(ctx, sql, sqlDigest)
 	s.mockExecute(time.Millisecond * 100)
 	planDigest := genDigest(plan)
@@ -148,9 +124,7 @@ func genDigest(str string) string {
 	if str == "" {
 		return ""
 	}
-	hasher := sha256.New()
-	hasher.Write(hack.Slice(str))
-	return hex.EncodeToString(hasher.Sum(nil))
+	return parser.DigestNormalized(str).String()
 }
 
 func (s *testSuite) mockExecute(d time.Duration) {
@@ -162,92 +136,4 @@ func (s *testSuite) mockExecute(d time.Duration) {
 			return
 		}
 	}
-}
-
-type mockCollector struct {
-	sync.Mutex
-	// sql_digest -> normalized SQL
-	sqlMap map[string]string
-	// plan_digest -> normalized plan
-	planMap map[string]string
-	// (sql + plan_digest) -> sql stats
-	sqlStatsMap map[string]*tracecpu.SQLStats
-	collectCnt  atomic.Int64
-}
-
-func newMockStatsCollector() *mockCollector {
-	return &mockCollector{
-		sqlMap:      make(map[string]string),
-		planMap:     make(map[string]string),
-		sqlStatsMap: make(map[string]*tracecpu.SQLStats),
-	}
-}
-
-func (c *mockCollector) hash(stat tracecpu.SQLStats) string {
-	return stat.SQLDigest + stat.PlanDigest
-}
-
-func (c *mockCollector) Collect(ts int64, stats []tracecpu.SQLStats) {
-	defer c.collectCnt.Inc()
-	if len(stats) == 0 {
-		return
-	}
-	c.Lock()
-	defer c.Unlock()
-	for _, stmt := range stats {
-		hash := c.hash(stmt)
-		stats, ok := c.sqlStatsMap[hash]
-		if !ok {
-			tmp := stmt
-			stats = &tmp
-			c.sqlStatsMap[hash] = stats
-		}
-		stats.CPUTimeMs += stmt.CPUTimeMs
-	}
-}
-
-func (c *mockCollector) getCollectCnt() int64 {
-	return c.collectCnt.Load()
-}
-
-func (c *mockCollector) getSQLStats(sql, plan string) *tracecpu.SQLStats {
-	c.Lock()
-	sqlDigest, planDigest := genDigest(sql), genDigest(plan)
-	hash := c.hash(tracecpu.SQLStats{SQLDigest: sqlDigest, PlanDigest: planDigest})
-	tmp := c.sqlStatsMap[hash]
-	c.Unlock()
-	return tmp
-}
-
-func (c *mockCollector) getSQL(sqlDigest string) string {
-	c.Lock()
-	sql := c.sqlMap[sqlDigest]
-	c.Unlock()
-	return sql
-}
-
-func (c *mockCollector) getPlan(planDigest string) string {
-	c.Lock()
-	plan := c.planMap[planDigest]
-	c.Unlock()
-	return plan
-}
-
-func (c *mockCollector) RegisterSQL(sqlDigest, normalizedSQL string) {
-	c.Lock()
-	_, ok := c.sqlMap[sqlDigest]
-	if !ok {
-		c.sqlMap[sqlDigest] = normalizedSQL
-	}
-	c.Unlock()
-
-}
-
-func (c *mockCollector) RegisterPlan(planDigest string, normalizedPlan string) {
-	c.Lock()
-	_, ok := c.planMap[planDigest]
-	if !ok {
-		c.planMap[planDigest] = normalizedPlan
-	}
-	c.Unlock()
 }
