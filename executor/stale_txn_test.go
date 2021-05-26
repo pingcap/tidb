@@ -105,10 +105,9 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 		tk.MustExec(`drop table if exists b`)
 		tk.MustExec(`drop table if exists t`)
 	}()
-
-	time.Sleep(3 * time.Second)
-
+	time.Sleep(2 * time.Second)
 	now := time.Now()
+	time.Sleep(2 * time.Second)
 
 	testcases := []struct {
 		name             string
