@@ -754,6 +754,35 @@ func (s *partitionTableSuite) TestBatchGetforRangeandListPartitionTable(c *C) {
 		c.Assert(tk.HasPlan(queryList, "Batch_Point_Get"), IsTrue) // check if BatchGet is used
 		tk.MustQuery(queryList).Sort().Check(tk.MustQuery(queryRegular2).Sort().Rows())
 	}
+
+	// test different data type
+	// unsigned flag
+	// partition table and reguar table pair
+	tk.MustExec(`create table trange3(a int unsigned, unique key(a)) partition by range(a) (
+		partition p0 values less than (30),
+		partition p1 values less than (60),
+		partition p2 values less than (90),
+		partition p3 values less than (120));`)
+	tk.MustExec("create table tregular3(a int unsigned, unique key(a));")
+	vals = make([]string, 0, 100)
+	// insert data into range partition table and hash partition table
+	for i := 0; i < 100; i++ {
+		vals = append(vals, fmt.Sprintf("(%v)", i+1))
+	}
+	tk.MustExec("insert into trange3 values " + strings.Join(vals, ","))
+	tk.MustExec("insert into tregular3 values " + strings.Join(vals, ","))
+	// test BatchGet
+	// explain select a from t where a in ({x1}, {x2}, ... {x10}); // BatchGet is used
+	// select a from t where where a in ({x1}, {x2}, ... {x10});
+	points := make([]string, 0, 10)
+	for i := 0; i < 10; i++ {
+		x := rand.Intn(100) + 1
+		points = append(points, fmt.Sprintf("%v", x))
+	}
+	queryRegular := fmt.Sprintf("select a from tregular3 where a in (%v)", strings.Join(points, ","))
+	queryRange := fmt.Sprintf("select a from trange3 where a in (%v)", strings.Join(points, ","))
+	c.Assert(tk.HasPlan(queryRange, "Batch_Point_Get"), IsTrue) // check if BatchGet is used
+	tk.MustQuery(queryRange).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 }
 
 func (s *partitionTableSuite) TestGlobalStatsAndSQLBinding(c *C) {

@@ -479,7 +479,10 @@ func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, in
 		return pi.Definitions[partIdx].ID, nil
 	case model.PartitionTypeRange:
 		// we've check the type assertions in func TryFastPlan
-		col := partitionExpr.Expr.(*expression.Column)
+		col, ok := partitionExpr.Expr.(*expression.Column)
+		if !ok {
+			return 0, errors.Errorf("unsupported partition type in BatchGet")
+		}
 		unsigned := mysql.HasUnsignedFlag(col.GetType().Flag)
 		ranges := partitionExpr.ForRangePruning
 		length := len(ranges.LessThan)
