@@ -80,23 +80,37 @@ func (c *Config) String() string {
 
 const txnLockFastName = "txnLockFast"
 
-// Backoff Config samples.
+// Backoff Config variables.
 var (
+	BoTiKVRPC,
+	BoTiFlashRPC,
+	BoTxnLock,
+	BoPDRPC,
+	BoRegionMiss,
+	BoTiKVServerBusy,
+	BoTiFlashServerBusy,
+	BoTxnNotFound,
+	BoStaleCmd,
+	BoMaxTsNotSynced,
+	BoTxnLockFast *Config
+)
+
+func init() {
 	// TODO: distinguish tikv and tiflash in metrics
-	BoTiKVRPC    = NewConfig("tikvRPC", metrics.BackoffHistogramRPC, NewBackoffFnCfg(100, 2000, EqualJitter), tikverr.ErrTiKVServerTimeout)
+	BoTiKVRPC = NewConfig("tikvRPC", metrics.BackoffHistogramRPC, NewBackoffFnCfg(100, 2000, EqualJitter), tikverr.ErrTiKVServerTimeout)
 	BoTiFlashRPC = NewConfig("tiflashRPC", metrics.BackoffHistogramRPC, NewBackoffFnCfg(100, 2000, EqualJitter), tikverr.ErrTiFlashServerTimeout)
-	BoTxnLock    = NewConfig("txnLock", metrics.BackoffHistogramLock, NewBackoffFnCfg(200, 3000, EqualJitter), tikverr.ErrResolveLockTimeout)
-	BoPDRPC      = NewConfig("pdRPC", metrics.BackoffHistogramPD, NewBackoffFnCfg(500, 3000, EqualJitter), tikverr.NewErrPDServerTimeout(""))
+	BoTxnLock = NewConfig("txnLock", metrics.BackoffHistogramLock, NewBackoffFnCfg(200, 3000, EqualJitter), tikverr.ErrResolveLockTimeout)
+	BoPDRPC = NewConfig("pdRPC", metrics.BackoffHistogramPD, NewBackoffFnCfg(500, 3000, EqualJitter), tikverr.NewErrPDServerTimeout(""))
 	// change base time to 2ms, because it may recover soon.
-	BoRegionMiss        = NewConfig("regionMiss", metrics.BackoffHistogramRegionMiss, NewBackoffFnCfg(2, 500, NoJitter), tikverr.ErrRegionUnavailable)
-	BoTiKVServerBusy    = NewConfig("tikvServerBusy", metrics.BackoffHistogramServerBusy, NewBackoffFnCfg(2000, 10000, EqualJitter), tikverr.ErrTiKVServerBusy)
+	BoRegionMiss = NewConfig("regionMiss", metrics.BackoffHistogramRegionMiss, NewBackoffFnCfg(2, 500, NoJitter), tikverr.ErrRegionUnavailable)
+	BoTiKVServerBusy = NewConfig("tikvServerBusy", metrics.BackoffHistogramServerBusy, NewBackoffFnCfg(2000, 10000, EqualJitter), tikverr.ErrTiKVServerBusy)
 	BoTiFlashServerBusy = NewConfig("tiflashServerBusy", metrics.BackoffHistogramServerBusy, NewBackoffFnCfg(2000, 10000, EqualJitter), tikverr.ErrTiFlashServerBusy)
-	BoTxnNotFound       = NewConfig("txnNotFound", metrics.BackoffHistogramEmpty, NewBackoffFnCfg(2, 500, NoJitter), tikverr.ErrResolveLockTimeout)
-	BoStaleCmd          = NewConfig("staleCommand", metrics.BackoffHistogramStaleCmd, NewBackoffFnCfg(2, 1000, NoJitter), tikverr.ErrTiKVStaleCommand)
-	BoMaxTsNotSynced    = NewConfig("maxTsNotSynced", metrics.BackoffHistogramEmpty, NewBackoffFnCfg(2, 500, NoJitter), tikverr.ErrTiKVMaxTimestampNotSynced)
+	BoTxnNotFound = NewConfig("txnNotFound", metrics.BackoffHistogramEmpty, NewBackoffFnCfg(2, 500, NoJitter), tikverr.ErrResolveLockTimeout)
+	BoStaleCmd = NewConfig("staleCommand", metrics.BackoffHistogramStaleCmd, NewBackoffFnCfg(2, 1000, NoJitter), tikverr.ErrTiKVStaleCommand)
+	BoMaxTsNotSynced = NewConfig("maxTsNotSynced", metrics.BackoffHistogramEmpty, NewBackoffFnCfg(2, 500, NoJitter), tikverr.ErrTiKVMaxTimestampNotSynced)
 	// TxnLockFast's `base` load from vars.BackoffLockFast when create BackoffFn.
 	BoTxnLockFast = NewConfig(txnLockFastName, metrics.BackoffHistogramLockFast, NewBackoffFnCfg(2, 3000, EqualJitter), tikverr.ErrResolveLockTimeout)
-)
+}
 
 const (
 	// NoJitter makes the backoff sequence strict exponential.
