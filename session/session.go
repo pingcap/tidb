@@ -1161,6 +1161,8 @@ func (s *session) getTiDBTableValue(name, val string) (string, error) {
 	return validatedVal, nil
 }
 
+var _ sqlexec.SQLParser = &session{}
+
 func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
@@ -2578,34 +2580,21 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	vars.CommonGlobalLoaded = true
 
 	// Deep copy sessionvar cache
-	// Eventually this whole map will be applied to systems[], which is a MySQL behavior.
 	sessionCache, err := domain.GetDomain(s).GetSysVarCache().GetSessionCache(s)
 	if err != nil {
 		return err
 	}
-	for varName, sv := range variable.GetSysVars() {
-		if sv.SkipInit() {
-			continue
-		}
-		// The item should be in the sessionCache, but due to a strange current behavior there are some Global-only
-		// vars that are in builtinGlobalVariable. For compatibility we need to fall back to the Global cache on these items.
-		// TODO: don't load these globals into the session!
-		var varVal string
-		var ok bool
-		if varVal, ok = sessionCache[varName]; !ok {
-			varVal, err = s.GetGlobalSysVar(varName)
-			if err != nil {
-				continue // skip variables that are not loaded.
-			}
-		}
+	for varName, varVal := range sessionCache {
 		if _, ok := vars.GetSystemVar(varName); !ok {
 			err = vars.SetSystemVarWithRelaxedValidation(varName, varVal)
 			if err != nil {
+				if variable.ErrUnknownSystemVar.Equal(err) {
+					continue // sessionCache is stale; sysvar has likely been unregistered
+				}
 				return err
 			}
 		}
 	}
-
 	// when client set Capability Flags CLIENT_INTERACTIVE, init wait_timeout with interactive_timeout
 	if vars.ClientCapability&mysql.ClientInteractive > 0 {
 		if varVal, ok := vars.GetSystemVar(variable.InteractiveTimeout); ok {

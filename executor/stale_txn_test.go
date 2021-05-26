@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -355,4 +356,51 @@ func (s *testStaleTxnSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
 	tk.MustExec(fmt.Sprintf(`START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer1)
 	tk.MustExec("commit")
+}
+
+func (s *testStaleTxnSerialSuite) TestSetTransactionReadOnlyAsOf(c *C) {
+	t1, err := time.Parse(types.TimeFormat, "2016-09-21 09:53:04")
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, s.store)
+	testcases := []struct {
+		sql          string
+		expectedTS   uint64
+		injectSafeTS uint64
+	}{
+		{
+			sql:          `SET TRANSACTION READ ONLY as of timestamp '2021-04-21 00:42:12'`,
+			expectedTS:   424394603102208000,
+			injectSafeTS: 0,
+		},
+		{
+			sql:          `SET TRANSACTION READ ONLY as of timestamp tidb_bounded_staleness('2015-09-21 00:07:01', '2021-04-27 11:26:13')`,
+			expectedTS:   oracle.GoTimeToTS(t1),
+			injectSafeTS: oracle.GoTimeToTS(t1),
+		},
+	}
+	for _, testcase := range testcases {
+		if testcase.injectSafeTS > 0 {
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+				fmt.Sprintf("return(%v)", testcase.injectSafeTS)), IsNil)
+		}
+		tk.MustExec(testcase.sql)
+		c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, testcase.expectedTS)
+		tk.MustExec("begin")
+		c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(0))
+		c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Equals, testcase.expectedTS)
+		tk.MustExec("commit")
+		tk.MustExec("begin")
+		c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Not(Equals), testcase.expectedTS)
+
+		failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS")
+	}
+
+	err = tk.ExecToErr(`SET TRANSACTION READ ONLY as of timestamp tidb_bounded_staleness(invalid1, invalid2')`)
+	c.Assert(err, NotNil)
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(0))
+
+	tk.MustExec(`SET TRANSACTION READ ONLY as of timestamp '2021-04-21 00:42:12'`)
+	err = tk.ExecToErr(`START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00'`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "start transaction read only as of is forbidden after set transaction read only as of")
 }

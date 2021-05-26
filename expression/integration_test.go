@@ -9504,6 +9504,17 @@ func (s *testIntegrationSuite) TestEnumIndex(c *C) {
 		testkit.Rows("2"))
 }
 
+// Previously global values were cached. This is incorrect.
+// See: https://github.com/pingcap/tidb/issues/24368
+func (s *testIntegrationSuite) TestGlobalCacheCorrectness(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("SHOW VARIABLES LIKE 'max_connections'").Check(testkit.Rows("max_connections 151"))
+	tk.MustExec("SET GLOBAL max_connections=1234")
+	tk.MustQuery("SHOW VARIABLES LIKE 'max_connections'").Check(testkit.Rows("max_connections 1234"))
+	// restore
+	tk.MustExec("SET GLOBAL max_connections=151")
+}
+
 func (s *testIntegrationSuite) TestControlFunctionWithEnumOrSet(c *C) {
 	defer s.cleanEnv(c)
 

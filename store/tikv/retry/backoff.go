@@ -144,7 +144,7 @@ func (b *Backoffer) BackoffWithMaxSleep(typ int, maxSleepMs int, err error) erro
 	case boMaxTsNotSynced:
 		return b.BackoffWithCfgAndMaxSleep(BoMaxTsNotSynced, maxSleepMs, err)
 	}
-	cfg := NewConfig("", metrics.BackoffHistogramEmpty, nil, tikverr.ErrUnknown)
+	cfg := NewConfig("", &metrics.BackoffHistogramEmpty, nil, tikverr.ErrUnknown)
 	return b.BackoffWithCfgAndMaxSleep(cfg, maxSleepMs, err)
 }
 
@@ -185,7 +185,9 @@ func (b *Backoffer) BackoffWithCfgAndMaxSleep(cfg *Config, maxSleepMs int, err e
 		b.fn[cfg.name] = f
 	}
 	realSleep := f(b.ctx, maxSleepMs)
-	cfg.metric.Observe(float64(realSleep) / 1000)
+	if cfg.metric != nil {
+		(*cfg.metric).Observe(float64(realSleep) / 1000)
+	}
 	b.totalSleep += realSleep
 	if b.backoffSleepMS == nil {
 		b.backoffSleepMS = make(map[string]int)
