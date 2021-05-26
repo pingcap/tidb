@@ -1716,6 +1716,27 @@ func (s *testColumnTypeChangeSuite) TestAlterPrimaryKeyToNull(c *C) {
 	tk.MustGetErrCode("alter table t change column a a bigint null;", mysql.ErrPrimaryCantHaveNull)
 }
 
+// Close https://github.com/pingcap/tidb/issues/24839.
+func (s testColumnTypeChangeSuite) TestChangeUnsignedIntToDatetime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int(10) unsigned default null, b bigint unsigned, c tinyint unsigned);")
+	tk.MustExec("insert into t values (1, 1, 1);")
+	tk.MustGetErrCode("alter table t modify column a datetime;", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify column b datetime;", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify column c datetime;", mysql.ErrTruncatedWrongValue)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int(10) unsigned default null, b bigint unsigned, c tinyint unsigned);")
+	tk.MustExec("insert into t values (4294967295, 18446744073709551615, 255);")
+	tk.MustGetErrCode("alter table t modify column a datetime;", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify column b datetime;", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify column c datetime;", mysql.ErrTruncatedWrongValue)
+}
+
 // Close issue #23202
 func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)

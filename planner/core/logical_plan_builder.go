@@ -2864,7 +2864,7 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 					continue
 				}
 			}
-			checkExprInGroupByOrIsSingleValue(p, item.Expr, offset, ErrExprInOrderBy, gbyOrSingleValueColNames, gbyExprs, notInGbyOrSingleValueColNames)
+			checkExprInGroupByOrIsSingleValue(p, getInnerFromParenthesesAndUnaryPlus(item.Expr), offset, ErrExprInOrderBy, gbyOrSingleValueColNames, gbyExprs, notInGbyOrSingleValueColNames)
 		}
 	}
 	if len(notInGbyOrSingleValueColNames) == 0 {
@@ -3752,7 +3752,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				}
 				pids[pid] = struct{}{}
 			}
-			pt = tables.NewPartitionTableithGivenSets(pt, pids)
+			pt = tables.NewPartitionTableWithGivenSets(pt, pids)
 		}
 		b.partitionedTable = append(b.partitionedTable, pt)
 	} else if len(tn.PartitionNames) != 0 {

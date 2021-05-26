@@ -158,16 +158,22 @@ func buildCopTasks(bo *Backoffer, cache *tikv.RegionCache, ranges *tikv.KeyRange
 	}
 
 	rangesLen := ranges.Len()
+
+	locs, err := cache.SplitKeyRangesByLocations(bo.TiKVBackoffer(), ranges)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	var tasks []*copTask
-	appendTask := func(regionWithRangeInfo *tikv.KeyLocation, ranges *tikv.KeyRanges) {
+	for _, loc := range locs {
 		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
 		// to make sure the message can be sent successfully.
-		rLen := ranges.Len()
+		rLen := loc.Ranges.Len()
 		for i := 0; i < rLen; {
 			nextI := mathutil.Min(i+rangesPerTask, rLen)
 			tasks = append(tasks, &copTask{
-				region: regionWithRangeInfo.Region,
-				ranges: ranges.Slice(i, nextI),
+				region: loc.Location.Region,
+				ranges: loc.Ranges.Slice(i, nextI),
 				// Channel buffer is 2 for handling region split.
 				// In a common case, two region split tasks will not be blocked.
 				respChan:  make(chan *copResponse, 2),
@@ -176,11 +182,6 @@ func buildCopTasks(bo *Backoffer, cache *tikv.RegionCache, ranges *tikv.KeyRange
 			})
 			i = nextI
 		}
-	}
-
-	err := tikv.SplitKeyRanges(bo.TiKVBackoffer(), cache, ranges, appendTask)
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
 
 	if req.Desc {
@@ -699,12 +700,13 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	}
 
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, options.GetTiKVReplicaReadType(worker.req.ReplicaRead), &worker.replicaReadSeed, kvrpcpb.Context{
-		IsolationLevel: isolationLevelToPB(worker.req.IsolationLevel),
-		Priority:       priorityToPB(worker.req.Priority),
-		NotFillCache:   worker.req.NotFillCache,
-		RecordTimeStat: true,
-		RecordScanStat: true,
-		TaskId:         worker.req.TaskID,
+		IsolationLevel:   isolationLevelToPB(worker.req.IsolationLevel),
+		Priority:         priorityToPB(worker.req.Priority),
+		NotFillCache:     worker.req.NotFillCache,
+		RecordTimeStat:   true,
+		RecordScanStat:   true,
+		TaskId:           worker.req.TaskID,
+		ResourceGroupTag: worker.req.ResourceGroupTag,
 	})
 	req.StoreTp = getEndPointType(task.storeType)
 	startTime := time.Now()
@@ -833,9 +835,9 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *ti
 
 			err1 := errors.Errorf("recv stream response error: %v, task: %s", err, task)
 			if task.storeType == kv.TiFlash {
-				err1 = bo.Backoff(tikv.BoTiFlashRPC, err1)
+				err1 = bo.Backoff(tikv.BoTiFlashRPC(), err1)
 			} else {
-				err1 = bo.BackoffTiKVRPC(err1)
+				err1 = bo.Backoff(tikv.BoTiKVRPC(), err1)
 			}
 
 			if err1 != nil {
@@ -869,7 +871,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		}
 		errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
 			task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
-		if err := bo.Backoff(tikv.BoRegionMiss, errors.New(errStr)); err != nil {
+		if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
@@ -884,7 +886,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			return nil, errors.Trace(err1)
 		}
 		if msBeforeExpired > 0 {
-			if err := bo.BackoffWithMaxSleep(tikv.BoTxnLockFast, int(msBeforeExpired), errors.New(lockErr.String())); err != nil {
+			if err := bo.BackoffWithMaxSleepTxnLockFast(int(msBeforeExpired), errors.New(lockErr.String())); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -915,9 +917,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	resp.detail.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
 	resp.detail.BackoffTimes = make(map[string]int, len(backoffTimes))
 	for backoff := range backoffTimes {
-		backoffName := backoff.String()
-		resp.detail.BackoffTimes[backoffName] = backoffTimes[backoff]
-		resp.detail.BackoffSleep[backoffName] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
+		resp.detail.BackoffTimes[backoff] = backoffTimes[backoff]
+		resp.detail.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
 	}
 	if rpcCtx != nil {
 		resp.detail.CalleeAddress = rpcCtx.Addr

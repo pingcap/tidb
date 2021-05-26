@@ -39,10 +39,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
-	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -74,6 +71,9 @@ type SimpleExec struct {
 	IsFromRemote bool
 	done         bool
 	is           infoschema.InfoSchema
+
+	// staleTxnStartTS is the StartTS that is used to execute the staleness txn during a read-only begin statement.
+	staleTxnStartTS uint64
 }
 
 func (e *baseExecutor) getSysSession() (sessionctx.Context, error) {
@@ -566,16 +566,38 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 }
 
 func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
-	// If `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND` is the first statement in TxnCtx, we should
+	// If `START TRANSACTION READ ONLY` is the first statement in TxnCtx, we should
 	// always create a new Txn instead of reusing it.
 	if s.ReadOnly {
 		enableNoopFuncs := e.ctx.GetSessionVars().EnableNoopFuncs
-		if !enableNoopFuncs && s.Bound == nil {
+		if !enableNoopFuncs && s.AsOf == nil {
 			return expression.ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
 		}
-		if s.Bound != nil {
-			return e.executeStartTransactionReadOnlyWithTimestampBound(ctx, s)
+		if s.AsOf != nil {
+			// start transaction read only as of failed due to we set tx_read_ts before
+			if e.ctx.GetSessionVars().TxnReadTS > 0 {
+				return errors.New("start transaction read only as of is forbidden after set transaction read only as of")
+			}
+			if err := e.ctx.NewStaleTxnWithStartTS(ctx, e.staleTxnStartTS); err != nil {
+				return err
+			}
+			// With START TRANSACTION, autocommit remains disabled until you end
+			// the transaction with COMMIT or ROLLBACK. The autocommit mode then
+			// reverts to its previous state.
+			e.ctx.GetSessionVars().SetInTxn(true)
+			return nil
 		}
+	}
+	// When TxnReadTS is not 0, it indicates the transaction is staleness transaction
+	if e.ctx.GetSessionVars().TxnReadTS > 0 {
+		startTS := e.ctx.GetSessionVars().TxnReadTS
+		// clear TxnReadTS after we used it.
+		e.ctx.GetSessionVars().TxnReadTS = 0
+		if err := e.ctx.NewStaleTxnWithStartTS(ctx, startTS); err != nil {
+			return err
+		}
+		e.ctx.GetSessionVars().SetInTxn(true)
+		return nil
 	}
 
 	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
@@ -611,75 +633,6 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	if s.CausalConsistencyOnly {
 		txn.SetOption(kv.GuaranteeLinearizability, false)
 	}
-	return nil
-}
-
-func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx context.Context, s *ast.BeginStmt) error {
-	opt := sessionctx.StalenessTxnOption{}
-	opt.Mode = s.Bound.Mode
-	switch s.Bound.Mode {
-	case ast.TimestampBoundReadTimestamp:
-		// TODO: support funcCallExpr in future
-		v, ok := s.Bound.Timestamp.(*driver.ValueExpr)
-		if !ok {
-			return errors.New("Invalid value for Bound Timestamp")
-		}
-		t, err := types.ParseTime(e.ctx.GetSessionVars().StmtCtx, v.GetString(), v.GetType().Tp, types.GetFsp(v.GetString()))
-		if err != nil {
-			return err
-		}
-		gt, err := t.GoTime(e.ctx.GetSessionVars().TimeZone)
-		if err != nil {
-			return err
-		}
-		startTS := oracle.GoTimeToTS(gt)
-		opt.StartTS = startTS
-	case ast.TimestampBoundExactStaleness:
-		// TODO: support funcCallExpr in future
-		v, ok := s.Bound.Timestamp.(*driver.ValueExpr)
-		if !ok {
-			return errors.New("Invalid value for Bound Timestamp")
-		}
-		d, err := types.ParseDuration(e.ctx.GetSessionVars().StmtCtx, v.GetString(), types.GetFsp(v.GetString()))
-		if err != nil {
-			return err
-		}
-		opt.PrevSec = uint64(d.Seconds())
-	case ast.TimestampBoundMaxStaleness:
-		v, ok := s.Bound.Timestamp.(*driver.ValueExpr)
-		if !ok {
-			return errors.New("Invalid value for Bound Timestamp")
-		}
-		d, err := types.ParseDuration(e.ctx.GetSessionVars().StmtCtx, v.GetString(), types.GetFsp(v.GetString()))
-		if err != nil {
-			return err
-		}
-		opt.PrevSec = uint64(d.Seconds())
-	case ast.TimestampBoundMinReadTimestamp:
-		v, ok := s.Bound.Timestamp.(*driver.ValueExpr)
-		if !ok {
-			return errors.New("Invalid value for Bound Timestamp")
-		}
-		t, err := types.ParseTime(e.ctx.GetSessionVars().StmtCtx, v.GetString(), v.GetType().Tp, types.GetFsp(v.GetString()))
-		if err != nil {
-			return err
-		}
-		gt, err := t.GoTime(e.ctx.GetSessionVars().TimeZone)
-		if err != nil {
-			return err
-		}
-		startTS := oracle.GoTimeToTS(gt)
-		opt.StartTS = startTS
-	}
-	err := e.ctx.NewTxnWithStalenessOption(ctx, opt)
-	if err != nil {
-		return err
-	}
-
-	// With START TRANSACTION, autocommit remains disabled until you end
-	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
-	// reverts to its previous state.
-	e.ctx.GetSessionVars().SetInTxn(true)
 	return nil
 }
 
@@ -1436,6 +1389,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 	kvReq, err := builder.
 		SetDAGRequest(dagReq).
 		SetFromSessionVars(sctx.GetSessionVars()).
+		SetFromInfoSchema(sctx.GetInfoSchema()).
 		SetStoreType(kv.TiDB).
 		SetTiDBServerID(connID.ServerID).
 		Build()
@@ -1524,7 +1478,7 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) (err error) {
 	if err := h.DeleteTableStatsFromKV(statsIDs); err != nil {
 		return err
 	}
-	return h.Update(e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema))
+	return h.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema))
 }
 
 func (e *SimpleExec) autoNewTxn() bool {

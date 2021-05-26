@@ -63,6 +63,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	if err != nil {
 		return err
 	}
+	setResourceGroupTagForTxn(sessVars.StmtCtx, txn)
 	txnSize := txn.Size()
 	sessVars.StmtCtx.AddRecordRows(uint64(len(rows)))
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
@@ -215,7 +216,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 	if e.collectRuntimeStatsEnabled() {
 		if snapshot := txn.GetSnapshot(); snapshot != nil {
 			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
-			defer snapshot.DelOption(kv.CollectRuntimeStats)
+			defer snapshot.SetOption(kv.CollectRuntimeStats, nil)
 		}
 	}
 	prefetchStart := time.Now()
