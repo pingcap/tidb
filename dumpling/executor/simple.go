@@ -578,7 +578,7 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 			if e.ctx.GetSessionVars().TxnReadTS > 0 {
 				return errors.New("start transaction read only as of is forbidden after set transaction read only as of")
 			}
-			if err := e.ctx.NewTxnWithStartTS(ctx, e.staleTxnStartTS); err != nil {
+			if err := e.ctx.NewStaleTxnWithStartTS(ctx, e.staleTxnStartTS); err != nil {
 				return err
 			}
 			// With START TRANSACTION, autocommit remains disabled until you end
@@ -593,7 +593,7 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 		startTS := e.ctx.GetSessionVars().TxnReadTS
 		// clear TxnReadTS after we used it.
 		e.ctx.GetSessionVars().TxnReadTS = 0
-		if err := e.ctx.NewTxnWithStartTS(ctx, startTS); err != nil {
+		if err := e.ctx.NewStaleTxnWithStartTS(ctx, startTS); err != nil {
 			return err
 		}
 		e.ctx.GetSessionVars().SetInTxn(true)
