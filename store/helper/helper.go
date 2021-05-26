@@ -48,7 +48,7 @@ import (
 // Methods copied from kv.Storage and tikv.Storage due to limitation of go1.13.
 type Storage interface {
 	Begin() (kv.Transaction, error)
-	BeginWithOption(option kv.TransactionOption) (kv.Transaction, error)
+	BeginWithOption(option tikv.StartTSOption) (kv.Transaction, error)
 	GetSnapshot(ver kv.Version) kv.Snapshot
 	GetClient() kv.Client
 	GetMPPClient() kv.MPPClient
@@ -71,6 +71,7 @@ type Storage interface {
 	SetTiKVClient(client tikv.Client)
 	GetTiKVClient() tikv.Client
 	Closed() <-chan struct{}
+	GetMinSafeTS(txnScope string) uint64
 }
 
 // Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.
@@ -106,6 +107,78 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 		return nil, errors.Trace(err)
 	}
 	return kvResp.Resp.(*kvrpcpb.MvccGetByKeyResponse), nil
+}
+
+// MvccKV wraps the key's mvcc info in tikv.
+type MvccKV struct {
+	Key      string                        `json:"key"`
+	RegionID uint64                        `json:"region_id"`
+	Value    *kvrpcpb.MvccGetByKeyResponse `json:"value"`
+}
+
+// GetMvccByStartTs gets Mvcc info by startTS from tikv.
+func (h *Helper) GetMvccByStartTs(startTS uint64, startKey, endKey kv.Key) (*MvccKV, error) {
+	bo := tikv.NewBackofferWithVars(context.Background(), 5000, nil)
+	for {
+		curRegion, err := h.RegionCache.LocateKey(bo, startKey)
+		if err != nil {
+			logutil.BgLogger().Error("get MVCC by startTS failed", zap.Uint64("txnStartTS", startTS),
+				zap.Stringer("startKey", startKey), zap.Error(err))
+			return nil, errors.Trace(err)
+		}
+
+		tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByStartTs, &kvrpcpb.MvccGetByStartTsRequest{
+			StartTs: startTS,
+		})
+		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
+		kvResp, err := h.Store.SendReq(bo, tikvReq, curRegion.Region, time.Hour)
+		if err != nil {
+			logutil.BgLogger().Error("get MVCC by startTS failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.Stringer("startKey", startKey),
+				zap.Reflect("region", curRegion.Region),
+				zap.Stringer("curRegion", curRegion),
+				zap.Reflect("kvResp", kvResp),
+				zap.Error(err))
+			return nil, errors.Trace(err)
+		}
+		data := kvResp.Resp.(*kvrpcpb.MvccGetByStartTsResponse)
+		if err := data.GetRegionError(); err != nil {
+			logutil.BgLogger().Warn("get MVCC by startTS failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.Stringer("startKey", startKey),
+				zap.Reflect("region", curRegion.Region),
+				zap.Stringer("curRegion", curRegion),
+				zap.Reflect("kvResp", kvResp),
+				zap.Stringer("error", err))
+			continue
+		}
+
+		if len(data.GetError()) > 0 {
+			logutil.BgLogger().Error("get MVCC by startTS failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.Stringer("startKey", startKey),
+				zap.Reflect("region", curRegion.Region),
+				zap.Stringer("curRegion", curRegion),
+				zap.Reflect("kvResp", kvResp),
+				zap.String("error", data.GetError()))
+			return nil, errors.New(data.GetError())
+		}
+
+		key := data.GetKey()
+		if len(key) > 0 {
+			resp := &kvrpcpb.MvccGetByKeyResponse{Info: data.Info, RegionError: data.RegionError, Error: data.Error}
+			return &MvccKV{Key: strings.ToUpper(hex.EncodeToString(key)), Value: resp, RegionID: curRegion.Region.GetID()}, nil
+		}
+
+		if len(endKey) > 0 && curRegion.Contains(endKey) {
+			return nil, nil
+		}
+		if len(curRegion.EndKey) == 0 {
+			return nil, nil
+		}
+		startKey = kv.Key(curRegion.EndKey)
+	}
 }
 
 // StoreHotRegionInfos records all hog region stores.

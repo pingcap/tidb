@@ -259,10 +259,10 @@ func (s *testGCWorkerSuite) TestMinStartTS(c *C) {
 		strconv.FormatUint(now, 10))
 	c.Assert(err, IsNil)
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "b"),
-		strconv.FormatUint(now-oracle.EncodeTSO(20000), 10))
+		strconv.FormatUint(now-oracle.ComposeTS(20000, 0), 10))
 	c.Assert(err, IsNil)
-	sp = s.gcWorker.calcSafePointByMinStartTS(ctx, now-oracle.EncodeTSO(10000))
-	c.Assert(sp, Equals, now-oracle.EncodeTSO(20000)-1)
+	sp = s.gcWorker.calcSafePointByMinStartTS(ctx, now-oracle.ComposeTS(10000, 0))
+	c.Assert(sp, Equals, now-oracle.ComposeTS(20000, 0)-1)
 }
 
 func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
