@@ -486,6 +486,9 @@ type SessionVars struct {
 	// AllowCARTESIANBCJ means allow broadcast join for CARTESIAN join
 	AllowCARTESIANBCJ int
 
+	// OuterJoinFixedBuildSide means for left out join, always use right table as build side, and for right out join, always use left table as build side
+	OuterJoinFixedBuildSide bool
+
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
@@ -969,6 +972,7 @@ func NewSessionVars() *SessionVars {
 		AllowAggPushDown:            false,
 		AllowBCJ:                    false,
 		AllowCARTESIANBCJ:           DefOptCARTESIANBCJ,
+		OuterJoinFixedBuildSide:     DefOptOuterJoinFixedBuildSide,
 		BroadcastJoinThresholdSize:  DefBroadcastJoinThresholdSize,
 		BroadcastJoinThresholdCount: DefBroadcastJoinThresholdSize,
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
@@ -1456,6 +1460,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowBCJ = TiDBOptOn(val)
 	case TiDBOptCARTESIANBCJ:
 		s.AllowCARTESIANBCJ = int(tidbOptInt64(val, DefOptCARTESIANBCJ))
+	case TiDBOptOuterJoinFixedBuildSide:
+		s.OuterJoinFixedBuildSide = TiDBOptOn(val)
 	case TiDBBCJThresholdSize:
 		s.BroadcastJoinThresholdSize = tidbOptInt64(val, DefBroadcastJoinThresholdSize)
 	case TiDBBCJThresholdCount:

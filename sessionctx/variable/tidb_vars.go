@@ -51,6 +51,8 @@ const (
 
 	TiDBOptCARTESIANBCJ = "tidb_opt_cartesian_bcj"
 
+	TiDBOptOuterJoinFixedBuildSide = "tidb_opt_outer_join_fixed_build_side"
+
 	// tidb_opt_distinct_agg_push_down is used to decide whether agg with distinct should be pushed to tikv/tiflash.
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
 
@@ -572,6 +574,7 @@ const (
 	DefOptAggPushDown                  = false
 	DefOptBCJ                          = false
 	DefOptCARTESIANBCJ                 = 1
+	DefOptOuterJoinFixedBuildSide      = true
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1

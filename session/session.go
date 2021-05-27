@@ -2505,6 +2505,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBAllowMPPExecution,
 	variable.TiDBOptBCJ,
 	variable.TiDBOptCARTESIANBCJ,
+	variable.TiDBOptOuterJoinFixedBuildSide,
 	variable.TiDBBCJThresholdSize,
 	variable.TiDBBCJThresholdCount,
 	variable.TiDBRowFormatVersion,
