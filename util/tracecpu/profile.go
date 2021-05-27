@@ -162,7 +162,7 @@ func (sp *sqlStatsProfiler) putTaskToBuffer(task *profileTask) {
 }
 
 // parseCPUProfileBySQLLabels uses to aggregate the cpu-profile sample data by sql_digest and plan_digest labels,
-// output the SQLStats slice.
+// output the SQLStats slice. Want to know more information about profile labels, see https://rakyll.org/profiler-labels/
 // The sql_digest label is been set by `SetGoroutineLabelsWithSQL` function after parse the SQL.
 // The plan_digest label is been set by `SetGoroutineLabelsWithSQLAndPlan` function after build the SQL plan.
 // Since `sqlStatsProfiler` only care about the cpu time that consume by (sql_digest,plan_digest), the other sample data
