@@ -127,7 +127,7 @@ func (sp *sqlStatsProfiler) startAnalyzeProfileWorker() {
 			logutil.BgLogger().Error("parse profile error", zap.Error(err))
 			continue
 		}
-		stats := sp.parseCPUProfileTags(p)
+		stats := sp.parseCPUProfileBySQLLabels(p)
 		sp.handleExportProfileTask(p)
 		if sp.collector != nil {
 			sp.collector.Collect(task.end, stats)
@@ -161,7 +161,13 @@ func (sp *sqlStatsProfiler) putTaskToBuffer(task *profileTask) {
 	}
 }
 
-func (sp *sqlStatsProfiler) parseCPUProfileTags(p *profile.Profile) []SQLStats {
+// parseCPUProfileBySQLLabels uses to aggregate the cpu-profile sample data by sql_digest and plan_digest labels,
+// output the SQLStats slice.
+// The sql_digest label is been set by `SetGoroutineLabelsWithSQL` function after parse the SQL.
+// The plan_digest label is been set by `SetGoroutineLabelsWithSQLAndPlan` function after build the SQL plan.
+// Since `sqlStatsProfiler` only care about the cpu time that consume by (sql_digest,plan_digest), the other sample data
+// without those label will be ignore.
+func (sp *sqlStatsProfiler) parseCPUProfileBySQLLabels(p *profile.Profile) []SQLStats {
 	sqlMap := make(map[string]*sqlStats)
 	idx := len(p.SampleType) - 1
 	for _, s := range p.Sample {
@@ -173,9 +179,8 @@ func (sp *sqlStatsProfiler) parseCPUProfileTags(p *profile.Profile) []SQLStats {
 			stmt, ok := sqlMap[digest]
 			if !ok {
 				stmt = &sqlStats{
-					plans:      make(map[string]int64),
-					total:      0,
-					isInternal: false,
+					plans: make(map[string]int64),
+					total: 0,
 				}
 				sqlMap[digest] = stmt
 			}
@@ -206,12 +211,25 @@ func (sp *sqlStatsProfiler) createSQLStats(sqlMap map[string]*sqlStats) []SQLSta
 }
 
 type sqlStats struct {
-	plans      map[string]int64
-	total      int64
-	isInternal bool
+	plans map[string]int64
+	total int64
 }
 
-// tune use to adjust stats
+// tune use to adjust sql stats. Consider following situation:
+// The `sqlStats` maybe:
+//     plans: {
+//         "table_scan": 200ms, // The cpu time of the sql that plan with `table_scan` is 200ms.
+//         "index_scan": 300ms, // The cpu time of the sql that plan with `table_scan` is 300ms.
+//       },
+//     total:      600ms,       // The total cpu time of the sql is 600ms.
+// total_time - table_scan_time - index_scan_time = 100ms, and this 100ms means those sample data only contain the
+// sql_digest label, doesn't contain the plan_digest label. This is cause by the `pprof profile` is base on sample.
+// After this tune function, the `sqlStats` become to:
+//     plans: {
+//         "table_scan": 240ms, // 200 + (200/(200+300))*100
+//         "index_scan": 360ms, // 300 + (300/(200+300))*100
+//       },
+//     total:      600ms,
 func (s *sqlStats) tune() {
 	if len(s.plans) == 0 {
 		s.plans[""] = s.total
@@ -319,6 +337,9 @@ func (sp *sqlStatsProfiler) stopExportCPUProfile() error {
 	return nil
 }
 
+// removeLabel uses to remove labels for export cpu profile data.
+// Since the sql_digest and plan_digest label is strange for other users.
+// If `variable.EnablePProfSQLCPU` is true means wanto keep the `sql` label, otherwise, remove the `sql` label too.
 func (sp *sqlStatsProfiler) removeLabel(p *profile.Profile) {
 	if p == nil {
 		return
@@ -326,10 +347,14 @@ func (sp *sqlStatsProfiler) removeLabel(p *profile.Profile) {
 	keepLabelSQL := variable.EnablePProfSQLCPU.Load()
 	for _, s := range p.Sample {
 		for k := range s.Label {
-			if keepLabelSQL && k == labelSQL {
-				continue
+			switch k {
+			case labelSQL:
+				if !keepLabelSQL {
+					delete(s.Label, k)
+				}
+			case labelSQLDigest, labelPlanDigest:
+				delete(s.Label, k)
 			}
-			delete(s.Label, k)
 		}
 	}
 }
@@ -376,6 +401,12 @@ func ProfileHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		serveError(w, http.StatusInternalServerError, "Could not enable CPU profiling: "+err.Error())
 		return
 	}
+	// TODO: fix me.
+	//  |<-- 1s -->|
+	// -|----------|----------|----------|----------|----------|-----------|-----> Background profile task timeline.
+	//                            |________________________________|
+	//       (start cpu profile)  v                                v (stop cpu profile)    // expected profile timeline
+	//                        |________________________________|                           // actual profile timeline
 	time.Sleep(time.Second * time.Duration(sec))
 	err = StopCPUProfile()
 	if err != nil {
