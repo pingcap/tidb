@@ -1036,7 +1036,6 @@ func (e *memtableRetriever) setDataForTableDataLockWaits(ctx sessionctx.Context)
 			digestStr = hex.EncodeToString(digest)
 		}
 		e.rows = append(e.rows, types.MakeDatums(
-			wait.KeyHash,
 			wait.Key,
 			wait.Txn,
 			wait.WaitForTxn,
