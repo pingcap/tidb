@@ -9582,4 +9582,10 @@ func (s *testIntegrationSuite) TestControlFunctionWithEnumOrSet(c *C) {
 	tk.MustExec("insert into t values(1,1,1),(2,1,1),(1,1,1),(2,1,1);")
 	tk.MustQuery("select if(A, null,b)=1 from t;").Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>"))
 	tk.MustQuery("select if(A, null,b)='a' from t;").Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int,b set(\"b\"),c set(\"c\"));")
+	tk.MustExec("insert into t values(1,1,1),(2,1,1),(1,1,1),(2,1,1);")
+	tk.MustQuery("select if(A, null,b)=1 from t;").Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>"))
+	tk.MustQuery("select if(A, null,b)='a' from t;").Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>"))
 }
