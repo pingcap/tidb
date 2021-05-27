@@ -31,9 +31,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/arena"
@@ -688,6 +688,10 @@ func (ts *ConnTestSuite) TestShutdownOrNotify(c *C) {
 	c.Assert(cc.status, Equals, connStatusWaitShutdown)
 }
 
+type snapshotCache interface {
+	SnapCacheHitCount() int
+}
+
 func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	cc := &clientConn{
 		alloc: arena.NewAllocator(1024),
@@ -698,7 +702,7 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	cc.ctx = &TiDBContext{Session: tk.Se}
 	ctx := context.Background()
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table prefetch (a int, b int, c int, primary key (a, b))")
 	tk.MustExec("insert prefetch values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
 	tk.MustExec("begin optimistic")
@@ -717,7 +721,7 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(txn.Valid(), IsTrue)
 	snap := txn.GetSnapshot()
-	c.Assert(snap.(*tikv.KVSnapshot).SnapCacheHitCount(), Equals, 4)
+	c.Assert(snap.(snapshotCache).SnapCacheHitCount(), Equals, 4)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 2", "2 2 4", "3 3 4"))
 
@@ -760,10 +764,21 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	tb := testGetTableByName(c, tk.Se, "test", "t")
 	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
 	c.Assert(err, IsNil)
+
+	dml := "insert into t values"
 	for i := 0; i < 50; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values(%v, 0)", i))
+		dml += fmt.Sprintf("(%v, 0)", i)
+		if i != 49 {
+			dml += ","
+		}
 	}
+	tk.MustExec(dml)
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("50"))
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/copr/ReduceCopNextMaxBackoff", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/copr/ReduceCopNextMaxBackoff"), IsNil)
+	}()
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"), IsNil)
 	// test COM_STMT_EXECUTE
@@ -773,6 +788,7 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	c.Assert(cc.handleStmtPrepare(ctx, "select sum(a) from t"), IsNil)
 	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), IsNil)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
+
 	// test COM_STMT_FETCH (cursor mode)
 	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x1, 0x0, 0x0, 0x0}), IsNil)
 	c.Assert(cc.handleStmtFetch(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), NotNil)
@@ -802,11 +818,11 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 	tk.MustExec("set @@tidb_allow_batch_cop=1; set @@tidb_allow_mpp=0;")
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"), IsNil)
-	testFallbackWork(c, tk, cc, "select sum(a) from t")
+	testFallbackWork(c, tk, cc, "select count(*) from t")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0"), IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/batchCopRecvTimeout", "return(true)"), IsNil)
-	testFallbackWork(c, tk, cc, "select sum(a) from t")
+	testFallbackWork(c, tk, cc, "select count(*) from t")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/batchCopRecvTimeout"), IsNil)
 
 	// TiFlash MPP query (MPP + streaming)

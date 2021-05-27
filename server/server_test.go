@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -41,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"go.uber.org/zap"
@@ -113,7 +111,7 @@ func (cli *testServerClient) getDSN(overriders ...configOverrider) string {
 	config.Net = "tcp"
 	config.Addr = fmt.Sprintf("127.0.0.1:%d", cli.port)
 	config.DBName = "test"
-	config.Params = map[string]string{variable.TiDBIntPrimaryKeyDefaultAsClustered: "true"}
+	config.Params = make(map[string]string)
 	for _, overrider := range overriders {
 		if overrider != nil {
 			overrider(config)
@@ -182,13 +180,6 @@ func (cli *testServerClient) runTestsOnNewDB(c *C, overrider configOverrider, db
 type DBTest struct {
 	*C
 	db *sql.DB
-}
-
-func (dbt *DBTest) fail(method, query string, err error) {
-	if len(query) > 300 {
-		query = "[query too large to print]"
-	}
-	dbt.Fatalf("Error on %s %s: %s", method, query, err.Error())
 }
 
 func (dbt *DBTest) mustPrepare(query string) *sql.Stmt {
@@ -507,14 +498,14 @@ func (cli *testServerClient) runTestLoadDataForSlowLog(c *C, server *Server) {
 		}
 
 		// Test for record slow log for load data statement.
-		rows := dbt.mustQuery(fmt.Sprintf("select plan from information_schema.slow_query where query like 'load data local infile %% into table t_slow;' order by time desc limit 1"))
+		rows := dbt.mustQuery("select plan from information_schema.slow_query where query like 'load data local infile % into table t_slow;' order by time desc limit 1")
 		expectedPlan := ".*LoadData.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.* commit_txn.*"
 		checkPlan(rows, expectedPlan)
 		// Test for record statements_summary for load data statement.
-		rows = dbt.mustQuery(fmt.Sprintf("select plan from information_schema.STATEMENTS_SUMMARY where QUERY_SAMPLE_TEXT like 'load data local infile %%' limit 1"))
+		rows = dbt.mustQuery("select plan from information_schema.STATEMENTS_SUMMARY where QUERY_SAMPLE_TEXT like 'load data local infile %' limit 1")
 		checkPlan(rows, expectedPlan)
 		// Test log normal statement after executing load date.
-		rows = dbt.mustQuery(fmt.Sprintf("select plan from information_schema.slow_query where query = 'insert ignore into t_slow values (1,1);' order by time desc limit 1"))
+		rows = dbt.mustQuery("select plan from information_schema.slow_query where query = 'insert ignore into t_slow values (1,1);' order by time desc limit 1")
 		expectedPlan = ".*Insert.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.*"
 		checkPlan(rows, expectedPlan)
 	})
@@ -584,6 +575,63 @@ func (cli *testServerClient) runTestLoadDataAutoRandom(c *C) {
 		rows := dbt.mustQuery("select count(*) from t")
 		cli.checkRows(c, rows, "50000")
 		rows = dbt.mustQuery("select bit_xor(c2), bit_xor(c3) from t")
+		res := strconv.Itoa(cksum1)
+		res = res + " "
+		res = res + strconv.Itoa(cksum2)
+		cli.checkRows(c, rows, res)
+	})
+}
+
+func (cli *testServerClient) runTestLoadDataAutoRandomWithSpecialTerm(c *C) {
+	path := "/tmp/load_data_txn_error_term.csv"
+
+	fp, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+
+	defer func() {
+		_ = os.Remove(path)
+	}()
+
+	cksum1 := 0
+	cksum2 := 0
+	for i := 0; i < 50000; i++ {
+		n1 := rand.Intn(1000)
+		n2 := rand.Intn(1000)
+		str1 := strconv.Itoa(n1)
+		str2 := strconv.Itoa(n2)
+		row := "'" + str1 + "','" + str2 + "'"
+		_, err := fp.WriteString(row)
+		c.Assert(err, IsNil)
+		if i != 49999 {
+			_, err = fp.WriteString("|")
+		}
+		c.Assert(err, IsNil)
+
+		if i == 0 {
+			cksum1 = n1
+			cksum2 = n2
+		} else {
+			cksum1 = cksum1 ^ n1
+			cksum2 = cksum2 ^ n2
+		}
+	}
+
+	err = fp.Close()
+	c.Assert(err, IsNil)
+
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params = map[string]string{"sql_mode": "''"}
+	}, "load_data_batch_dml", func(dbt *DBTest) {
+		// Set batch size, and check if load data got a invalid txn error.
+		dbt.mustExec("set @@session.tidb_dml_batch_size = 128")
+		dbt.mustExec("drop table if exists t1")
+		dbt.mustExec("create table t1(c1 bigint auto_random primary key, c2 bigint, c3 bigint)")
+		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t1 fields terminated by ',' enclosed by '\\'' lines terminated by '|' (c2, c3)", path))
+		rows := dbt.mustQuery("select count(*) from t1")
+		cli.checkRows(c, rows, "50000")
+		rows = dbt.mustQuery("select bit_xor(c2), bit_xor(c3) from t1")
 		res := strconv.Itoa(cksum1)
 		res = res + " "
 		res = res + strconv.Itoa(cksum2)
@@ -1562,7 +1610,7 @@ func (cli *testServerClient) runTestIssue3662(c *C) {
 		config.DBName = "non_existing_schema"
 	}))
 	c.Assert(err, IsNil)
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
@@ -1580,7 +1628,7 @@ func (cli *testServerClient) runTestIssue3680(c *C) {
 		config.User = "non_existing_user"
 	}))
 	c.Assert(err, IsNil)
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
@@ -1627,7 +1675,7 @@ func (cli *testServerClient) runTestIssue3682(c *C) {
 		config.DBName = "non_existing_schema"
 	}))
 	c.Assert(err, IsNil)
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
@@ -1813,7 +1861,7 @@ func (cli *testServerClient) runTestTLSConnection(t *C, overrider configOverride
 	dsn := cli.getDSN(overrider)
 	db, err := sql.Open("mysql", dsn)
 	t.Assert(err, IsNil)
-	go func() {
+	defer func() {
 		err := db.Close()
 		t.Assert(err, IsNil)
 	}()
@@ -1827,7 +1875,7 @@ func (cli *testServerClient) runTestTLSConnection(t *C, overrider configOverride
 func (cli *testServerClient) runReloadTLS(t *C, overrider configOverrider, errorNoRollback bool) error {
 	db, err := sql.Open("mysql", cli.getDSN(overrider))
 	t.Assert(err, IsNil)
-	go func() {
+	defer func() {
 		err := db.Close()
 		t.Assert(err, IsNil)
 	}()
@@ -1864,7 +1912,7 @@ func (cli *testServerClient) runTestSumAvg(c *C) {
 func (cli *testServerClient) getMetrics(t *C) []byte {
 	resp, err := cli.fetchStatus("/metrics")
 	t.Assert(err, IsNil)
-	content, err := ioutil.ReadAll(resp.Body)
+	content, err := io.ReadAll(resp.Body)
 	t.Assert(err, IsNil)
 	err = resp.Body.Close()
 	t.Assert(err, IsNil)
@@ -1906,7 +1954,7 @@ func (cli *testServerClient) waitUntilServerOnline() {
 		// fetch http status
 		resp, err := cli.fetchStatus("/status")
 		if err == nil {
-			_, err = ioutil.ReadAll(resp.Body)
+			_, err = io.ReadAll(resp.Body)
 			if err != nil {
 				panic(err)
 			}
@@ -1921,6 +1969,54 @@ func (cli *testServerClient) waitUntilServerOnline() {
 	if retry == retryTime {
 		log.Fatal("failed to connect HTTP status in every 10 ms", zap.Int("retryTime", retryTime))
 	}
+}
+
+func (cli *testServerClient) runTestInitConnect(c *C) {
+
+	cli.runTests(c, nil, func(dbt *DBTest) {
+		dbt.mustExec(`SET GLOBAL init_connect="insert into test.ts VALUES (NOW());SET @a=1;"`)
+		dbt.mustExec(`CREATE USER init_nonsuper`)
+		dbt.mustExec(`CREATE USER init_super`)
+		dbt.mustExec(`GRANT SELECT, INSERT, DROP ON test.* TO init_nonsuper`)
+		dbt.mustExec(`GRANT SELECT, INSERT, DROP, SUPER ON *.* TO init_super`)
+		dbt.mustExec(`CREATE TABLE ts (a TIMESTAMP)`)
+	})
+
+	// test init_nonsuper
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "init_nonsuper"
+	}, func(dbt *DBTest) {
+		rows := dbt.mustQuery(`SELECT @a`)
+		c.Assert(rows.Next(), IsTrue)
+		var a int
+		err := rows.Scan(&a)
+		c.Assert(err, IsNil)
+		dbt.Check(a, Equals, 1)
+		c.Assert(rows.Close(), IsNil)
+	})
+
+	// test init_super
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "init_super"
+	}, func(dbt *DBTest) {
+		rows := dbt.mustQuery(`SELECT IFNULL(@a,"")`)
+		c.Assert(rows.Next(), IsTrue)
+		var a string
+		err := rows.Scan(&a)
+		c.Assert(err, IsNil)
+		dbt.Check(a, Equals, "") // null
+		c.Assert(rows.Close(), IsNil)
+		// change the init-connect to invalid.
+		dbt.mustExec(`SET GLOBAL init_connect="invalidstring"`)
+	})
+
+	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+		config.User = "init_nonsuper"
+	}))
+	c.Assert(err, IsNil, Commentf("Error connecting")) // doesn't fail because of lazy loading
+	defer db.Close()                                   // may already be closed
+	_, err = db.Exec("SELECT 1")                       // fails because of init sql
+	c.Assert(err, NotNil)
 }
 
 // Client errors are only incremented when using the TiDB Server protocol,

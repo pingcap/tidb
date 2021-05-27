@@ -16,8 +16,10 @@ package privileges
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
@@ -28,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sem"
 	"go.uber.org/zap"
 )
 
@@ -35,6 +38,17 @@ import (
 var SkipWithGrant = false
 
 var _ privilege.Manager = (*UserPrivileges)(nil)
+var dynamicPrivs = []string{
+	"BACKUP_ADMIN",
+	"SYSTEM_VARIABLES_ADMIN",
+	"ROLE_ADMIN",
+	"CONNECTION_ADMIN",
+	"RESTRICTED_TABLES_ADMIN",    // Can see system tables when SEM is enabled
+	"RESTRICTED_STATUS_ADMIN",    // Can see all status vars when SEM is enabled.
+	"RESTRICTED_VARIABLES_ADMIN", // Can see all variables when SEM is enabled
+	"RESTRICTED_USER_ADMIN",      // User can not have their access revoked by SUPER users.
+}
+var dynamicPrivLock sync.Mutex
 
 // UserPrivileges implements privilege.Manager interface.
 // This is used to check privilege for the current user.
@@ -42,6 +56,34 @@ type UserPrivileges struct {
 	user string
 	host string
 	*Handle
+}
+
+// RequestDynamicVerificationWithUser implements the Manager interface.
+func (p *UserPrivileges) RequestDynamicVerificationWithUser(privName string, grantable bool, user *auth.UserIdentity) bool {
+	if SkipWithGrant {
+		return true
+	}
+
+	if user == nil {
+		return false
+	}
+
+	mysqlPriv := p.Handle.Get()
+	roles := mysqlPriv.getDefaultRoles(user.Username, user.Hostname)
+	return mysqlPriv.RequestDynamicVerification(roles, user.Username, user.Hostname, privName, grantable)
+}
+
+// RequestDynamicVerification implements the Manager interface.
+func (p *UserPrivileges) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool {
+	if SkipWithGrant {
+		return true
+	}
+	if p.user == "" && p.host == "" {
+		return true
+	}
+
+	mysqlPriv := p.Handle.Get()
+	return mysqlPriv.RequestDynamicVerification(activeRoles, p.user, p.host, privName, grantable)
 }
 
 // RequestVerification implements the Manager interface.
@@ -57,6 +99,22 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 	// Skip check for system databases.
 	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
 	dbLowerName := strings.ToLower(db)
+	tblLowerName := strings.ToLower(table)
+	// If SEM is enabled and the user does not have the RESTRICTED_TABLES_ADMIN privilege
+	// There are some hard rules which overwrite system tables and schemas as read-only at most.
+	if sem.IsEnabled() && !p.RequestDynamicVerification(activeRoles, "RESTRICTED_TABLES_ADMIN", false) {
+		if sem.IsInvisibleTable(dbLowerName, tblLowerName) {
+			return false
+		}
+		if util.IsMemOrSysDB(dbLowerName) {
+			switch priv {
+			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
+				mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+				return false
+			}
+		}
+	}
+
 	switch dbLowerName {
 	case util.InformationSchemaName.L:
 		switch priv {
@@ -99,7 +157,8 @@ func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, p
 	}
 
 	mysqlPriv := p.Handle.Get()
-	return mysqlPriv.RequestVerification(nil, user.Username, user.Hostname, db, table, column, priv)
+	roles := mysqlPriv.getDefaultRoles(user.Username, user.Hostname)
+	return mysqlPriv.RequestVerification(roles, user.Username, user.Hostname, db, table, column, priv)
 }
 
 // GetEncodedPassword implements the Manager interface.
@@ -372,6 +431,13 @@ func (p *UserPrivileges) DBIsVisible(activeRoles []*auth.RoleIdentity, db string
 	if SkipWithGrant {
 		return true
 	}
+	// If SEM is enabled, respect hard rules about certain schemas being invisible
+	// Before checking if the user has permissions granted to them.
+	if sem.IsEnabled() && !p.RequestDynamicVerification(activeRoles, "RESTRICTED_TABLES_ADMIN", false) {
+		if sem.IsInvisibleSchema(db) {
+			return false
+		}
+	}
 	mysqlPriv := p.Handle.Get()
 	if mysqlPriv.DBIsVisible(p.user, p.host, db) {
 		return true
@@ -462,4 +528,43 @@ func (p *UserPrivileges) GetAllRoles(user, host string) []*auth.RoleIdentity {
 
 	mysqlPrivilege := p.Handle.Get()
 	return mysqlPrivilege.getAllRoles(user, host)
+}
+
+// IsDynamicPrivilege returns true if the DYNAMIC privilege is built-in or has been registered by a plugin
+func (p *UserPrivileges) IsDynamicPrivilege(privName string) bool {
+	privNameInUpper := strings.ToUpper(privName)
+	for _, priv := range dynamicPrivs {
+		if privNameInUpper == priv {
+			return true
+		}
+	}
+	return false
+}
+
+// RegisterDynamicPrivilege is used by plugins to add new privileges to TiDB
+func RegisterDynamicPrivilege(privName string) error {
+	privNameInUpper := strings.ToUpper(privName)
+	if len(privNameInUpper) > 32 {
+		return errors.New("privilege name is longer than 32 characters")
+	}
+	dynamicPrivLock.Lock()
+	defer dynamicPrivLock.Unlock()
+	for _, priv := range dynamicPrivs {
+		if privNameInUpper == priv {
+			return errors.New("privilege is already registered")
+		}
+	}
+	dynamicPrivs = append(dynamicPrivs, privNameInUpper)
+	return nil
+}
+
+// GetDynamicPrivileges returns the list of registered DYNAMIC privileges
+// for use in meta data commands (i.e. SHOW PRIVILEGES)
+func GetDynamicPrivileges() []string {
+	dynamicPrivLock.Lock()
+	defer dynamicPrivLock.Unlock()
+
+	privCopy := make([]string, len(dynamicPrivs))
+	copy(privCopy, dynamicPrivs)
+	return privCopy
 }

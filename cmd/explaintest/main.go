@@ -19,7 +19,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
@@ -30,7 +29,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
@@ -94,7 +92,6 @@ func newTester(name string) *tester {
 	t.enableQueryLog = true
 	t.ctx = mock.NewContext()
 	t.ctx.GetSessionVars().EnableWindowFunction = true
-	t.ctx.GetSessionVars().IntPrimaryKeyDefaultAsClustered = true
 	return t
 }
 
@@ -165,7 +162,7 @@ LOOP:
 }
 
 func (t *tester) loadQueries() ([]query, error) {
-	data, err := ioutil.ReadFile(t.testFileName())
+	data, err := os.ReadFile(t.testFileName())
 	if err != nil {
 		return nil, err
 	}
@@ -429,12 +426,12 @@ func (t *tester) create(tableName string, qText string) error {
 		return err
 	}
 
-	js, err := ioutil.ReadAll(resp.Body)
+	js, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
 
-	return ioutil.WriteFile(t.statsFileName(tableName), js, 0644)
+	return os.WriteFile(t.statsFileName(tableName), js, 0644)
 }
 
 func (t *tester) commit() error {
@@ -533,7 +530,7 @@ func (t *tester) flushResult() error {
 	if !record {
 		return nil
 	}
-	return ioutil.WriteFile(t.resultFileName(), t.buf.Bytes(), 0644)
+	return os.WriteFile(t.resultFileName(), t.buf.Bytes(), 0644)
 }
 
 func (t *tester) statsFileName(tableName string) string {
@@ -552,7 +549,7 @@ func (t *tester) resultFileName() string {
 
 func loadAllTests() ([]string, error) {
 	// tests must be in t folder
-	files, err := ioutil.ReadDir("./t")
+	files, err := os.ReadDir("./t")
 	if err != nil {
 		return nil, err
 	}
@@ -658,15 +655,12 @@ func main() {
 		"set @@tidb_projection_concurrency=4",
 		"set @@tidb_distsql_scan_concurrency=15",
 		"set @@global.tidb_enable_clustered_index=0;",
-		"set @@tidb_int_primary_key_default_as_clustered=1",
 	}
 	for _, sql := range resets {
 		if _, err = mdb.Exec(sql); err != nil {
 			log.Fatal(fmt.Sprintf("%s failed", sql), zap.Error(err))
 		}
 	}
-	// Wait global variables to reload.
-	time.Sleep(domain.GlobalVariableCacheExpiry)
 
 	if _, err = mdb.Exec("set sql_mode='STRICT_TRANS_TABLES'"); err != nil {
 		log.Fatal("set sql_mode='STRICT_TRANS_TABLES' failed", zap.Error(err))

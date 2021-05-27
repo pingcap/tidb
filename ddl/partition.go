@@ -129,16 +129,17 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 			// For available state, the new added partition should wait it's replica to
 			// be finished. Otherwise the query to this partition will be blocked.
-			needWait, err := checkPartitionReplica(addingDefinitions, d)
+			needRetry, err := checkPartitionReplica(tblInfo.TiFlashReplica.Count, addingDefinitions, d)
 			if err != nil {
 				ver, err = convertAddTablePartitionJob2RollbackJob(t, job, err, tblInfo)
 				return ver, err
 			}
-			if needWait {
+			if needRetry {
 				// The new added partition hasn't been replicated.
 				// Do nothing to the job this time, wait next worker round.
 				time.Sleep(tiflashCheckTiDBHTTPAPIHalfInterval)
-				return ver, nil
+				// Set the error here which will lead this job exit when it's retry times beyond the limitation.
+				return ver, errors.Errorf("[ddl] add partition wait for tiflash replica to complete")
 			}
 		}
 
@@ -222,12 +223,28 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 	return nil
 }
 
-func checkPartitionReplica(addingDefinitions []model.PartitionDefinition, d *ddlCtx) (needWait bool, err error) {
+func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.PartitionDefinition, d *ddlCtx) (needWait bool, err error) {
+	failpoint.Inject("mockWaitTiFlashReplica", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(true, nil)
+		}
+	})
+
 	ctx := context.Background()
 	pdCli := d.store.(tikv.Storage).GetRegionCache().PDClient()
 	stores, err := pdCli.GetAllStores(ctx)
 	if err != nil {
 		return needWait, errors.Trace(err)
+	}
+	// Check whether stores have `count` tiflash engines.
+	tiFlashStoreCount := uint64(0)
+	for _, store := range stores {
+		if storeHasEngineTiFlashLabel(store) {
+			tiFlashStoreCount++
+		}
+	}
+	if replicaCount > tiFlashStoreCount {
+		return false, errors.Errorf("[ddl] the tiflash replica count: %d should be less than the total tiflash server count: %d", replicaCount, tiFlashStoreCount)
 	}
 	for _, pd := range addingDefinitions {
 		startKey, endKey := tablecodec.GetTableHandleKeyRange(pd.ID)
@@ -894,18 +911,15 @@ func getTableInfoWithDroppingPartitions(t *model.TableInfo) *model.TableInfo {
 }
 
 func dropRuleBundles(d *ddlCtx, physicalTableIDs []int64) error {
-	if d.infoHandle != nil && d.infoHandle.IsValid() {
-		bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
-		for _, ID := range physicalTableIDs {
-			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(ID))
-			if ok && !oldBundle.IsEmpty() {
-				bundles = append(bundles, placement.BuildPlacementDropBundle(ID))
-			}
+	bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
+	for _, ID := range physicalTableIDs {
+		oldBundle, ok := d.infoCache.GetLatest().BundleByName(placement.GroupID(ID))
+		if ok && !oldBundle.IsEmpty() {
+			bundles = append(bundles, placement.BuildPlacementDropBundle(ID))
 		}
-		err := infosync.PutRuleBundles(context.TODO(), bundles)
-		return err
 	}
-	return nil
+	err := infosync.PutRuleBundles(context.TODO(), bundles)
+	return err
 }
 
 // onDropTablePartition deletes old partition meta.
@@ -1078,22 +1092,20 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		}
 	}
 
-	if d.infoHandle != nil && d.infoHandle.IsValid() {
-		bundles := make([]*placement.Bundle, 0, len(oldIDs))
+	bundles := make([]*placement.Bundle, 0, len(oldIDs))
 
-		for i, oldID := range oldIDs {
-			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(oldID))
-			if ok && !oldBundle.IsEmpty() {
-				bundles = append(bundles, placement.BuildPlacementDropBundle(oldID))
-				bundles = append(bundles, placement.BuildPlacementCopyBundle(oldBundle, newPartitions[i].ID))
-			}
+	for i, oldID := range oldIDs {
+		oldBundle, ok := d.infoCache.GetLatest().BundleByName(placement.GroupID(oldID))
+		if ok && !oldBundle.IsEmpty() {
+			bundles = append(bundles, placement.BuildPlacementDropBundle(oldID))
+			bundles = append(bundles, placement.BuildPlacementCopyBundle(oldBundle, newPartitions[i].ID))
 		}
+	}
 
-		err = infosync.PutRuleBundles(context.TODO(), bundles)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
+	err = infosync.PutRuleBundles(context.TODO(), bundles)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
 	newIDs := make([]int64, len(oldIDs))
@@ -1282,27 +1294,25 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	// the follow code is a swap function for rules of two partitions
 	// though partitions has exchanged their ID, swap still take effect
-	if d.infoHandle != nil && d.infoHandle.IsValid() {
-		bundles := make([]*placement.Bundle, 0, 2)
-		ptBundle, ptOK := d.infoHandle.Get().BundleByName(placement.GroupID(partDef.ID))
-		ptOK = ptOK && !ptBundle.IsEmpty()
-		ntBundle, ntOK := d.infoHandle.Get().BundleByName(placement.GroupID(nt.ID))
-		ntOK = ntOK && !ntBundle.IsEmpty()
-		if ptOK && ntOK {
-			bundles = append(bundles, placement.BuildPlacementCopyBundle(ptBundle, nt.ID))
-			bundles = append(bundles, placement.BuildPlacementCopyBundle(ntBundle, partDef.ID))
-		} else if ptOK {
-			bundles = append(bundles, placement.BuildPlacementDropBundle(partDef.ID))
-			bundles = append(bundles, placement.BuildPlacementCopyBundle(ptBundle, nt.ID))
-		} else if ntOK {
-			bundles = append(bundles, placement.BuildPlacementDropBundle(nt.ID))
-			bundles = append(bundles, placement.BuildPlacementCopyBundle(ntBundle, partDef.ID))
-		}
-		err = infosync.PutRuleBundles(context.TODO(), bundles)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
+	bundles := make([]*placement.Bundle, 0, 2)
+	ptBundle, ptOK := d.infoCache.GetLatest().BundleByName(placement.GroupID(partDef.ID))
+	ptOK = ptOK && !ptBundle.IsEmpty()
+	ntBundle, ntOK := d.infoCache.GetLatest().BundleByName(placement.GroupID(nt.ID))
+	ntOK = ntOK && !ntBundle.IsEmpty()
+	if ptOK && ntOK {
+		bundles = append(bundles, placement.BuildPlacementCopyBundle(ptBundle, nt.ID))
+		bundles = append(bundles, placement.BuildPlacementCopyBundle(ntBundle, partDef.ID))
+	} else if ptOK {
+		bundles = append(bundles, placement.BuildPlacementDropBundle(partDef.ID))
+		bundles = append(bundles, placement.BuildPlacementCopyBundle(ptBundle, nt.ID))
+	} else if ntOK {
+		bundles = append(bundles, placement.BuildPlacementDropBundle(nt.ID))
+		bundles = append(bundles, placement.BuildPlacementCopyBundle(ntBundle, partDef.ID))
+	}
+	err = infosync.PutRuleBundles(context.TODO(), bundles)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
 	ver, err = updateSchemaVersion(t, job)
@@ -1455,6 +1465,13 @@ func getInValues(pi *model.PartitionInfo, index int) []string {
 func checkAddPartitionTooManyPartitions(piDefs uint64) error {
 	if piDefs > uint64(PartitionCountLimit) {
 		return errors.Trace(ErrTooManyPartitions)
+	}
+	return nil
+}
+
+func checkAddPartitionOnTemporaryMode(tbInfo *model.TableInfo) error {
+	if tbInfo.Partition != nil && tbInfo.TempTableType != model.TempTableNone {
+		return ErrPartitionNoTemporary
 	}
 	return nil
 }

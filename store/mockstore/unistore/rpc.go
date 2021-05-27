@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	us "github.com/ngaut/unistore/tikv"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -33,7 +32,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/kv"
+	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/codec"
 	"golang.org/x/net/context"
@@ -60,6 +59,9 @@ type RPCClient struct {
 	rpcCli Client
 }
 
+// UnistoreRPCClientSendHook exports for test.
+var UnistoreRPCClientSendHook func(*tikvrpc.Request)
+
 // SendRequest sends a request to mock cluster.
 func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	failpoint.Inject("rpcServerBusy", func(val failpoint.Value) {
@@ -68,7 +70,13 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		}
 	})
 
-	if req.StoreTp == kv.TiDB {
+	failpoint.Inject("unistoreRPCClientSendHook", func(val failpoint.Value) {
+		if val.(bool) && UnistoreRPCClientSendHook != nil {
+			UnistoreRPCClientSendHook(req)
+		}
+	})
+
+	if req.StoreTp == tikvrpc.TiDB {
 		return c.redirectRequestToRPCServer(ctx, addr, req, timeout)
 	}
 
@@ -83,7 +91,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		return nil, context.Canceled
 	}
 
-	storeID, err := c.usSvr.GetStoreIdByAddr(addr)
+	storeID, err := c.usSvr.GetStoreIDByAddr(addr)
 	if err != nil {
 		return nil, err
 	}
@@ -258,13 +266,16 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case tikvrpc.CmdDebugGetRegionProperties:
 		resp.Resp, err = c.handleDebugGetRegionProperties(ctx, req.DebugGetRegionProperties())
 		return resp, err
+	case tikvrpc.CmdStoreSafeTS:
+		resp.Resp, err = c.usSvr.GetStoreSafeTS(ctx, req.StoreSafeTS())
+		return resp, err
 	default:
 		err = errors.Errorf("not support this request type %v", req.Type)
 	}
 	if err != nil {
 		return nil, err
 	}
-	var regErr *errorpb.Error = nil
+	var regErr *errorpb.Error
 	if req.Type != tikvrpc.CmdBatchCop && req.Type != tikvrpc.CmdMPPConn && req.Type != tikvrpc.CmdMPPTask {
 		regErr, err = resp.GetRegionError()
 	}
@@ -294,7 +305,7 @@ func (c *RPCClient) handleCopStream(ctx context.Context, req *coprocessor.Reques
 
 func (c *RPCClient) handleEstablishMPPConnection(ctx context.Context, r *mpp.EstablishMPPConnectionRequest, timeout time.Duration, storeID uint64) (*tikvrpc.MPPStreamResponse, error) {
 	mockServer := new(mockMPPConnectStreamServer)
-	err := c.usSvr.EstablishMPPConnectionWithStoreId(r, mockServer, storeID)
+	err := c.usSvr.EstablishMPPConnectionWithStoreID(r, mockServer, storeID)
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +330,7 @@ func (c *RPCClient) handleEstablishMPPConnection(ctx context.Context, r *mpp.Est
 }
 
 func (c *RPCClient) handleDispatchMPPTask(ctx context.Context, r *mpp.DispatchTaskRequest, storeID uint64) (*mpp.DispatchTaskResponse, error) {
-	return c.usSvr.DispatchMPPTaskWithStoreId(ctx, r, storeID)
+	return c.usSvr.DispatchMPPTaskWithStoreID(ctx, r, storeID)
 }
 
 func (c *RPCClient) handleBatchCop(ctx context.Context, r *coprocessor.BatchRequest, timeout time.Duration) (*tikvrpc.BatchCopStreamResponse, error) {
@@ -459,7 +470,7 @@ func (mock *mockBatchCopClient) Recv() (*coprocessor.BatchResponse, error) {
 	if mock.idx < len(mock.batchResponses) {
 		ret := mock.batchResponses[mock.idx]
 		mock.idx++
-		var err error = nil
+		var err error
 		if len(ret.OtherError) > 0 {
 			err = errors.New(ret.OtherError)
 			ret = nil

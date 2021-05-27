@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -492,12 +491,13 @@ func (s *testSuite5) TestShowTableStatus(c *C) {
 	// It's not easy to test the result contents because every time the test runs, "Create_time" changed.
 	tk.MustExec("show table status;")
 	rs, err := tk.Exec("show table status;")
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	c.Assert(rs, NotNil)
 	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	err = rs.Close()
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Equals, 1)
 
 	for i := range rows {
 		row := rows[i]
@@ -514,10 +514,34 @@ func (s *testSuite5) TestShowTableStatus(c *C) {
 		  partition p2 values less than (maxvalue)
   		);`)
 	rs, err = tk.Exec("show table status from test like 'tp';")
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	c.Assert(rows[0].GetString(16), Equals, "partitioned")
+
+	tk.MustExec("create database UPPER_CASE")
+	tk.MustExec("use UPPER_CASE")
+	tk.MustExec("create table t (i int)")
+	rs, err = tk.Exec("show table status")
+	c.Assert(err, IsNil)
+	c.Assert(rs, NotNil)
+	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(err, IsNil)
+	err = rs.Close()
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Equals, 1)
+
+	tk.MustExec("use upper_case")
+	rs, err = tk.Exec("show table status")
+	c.Assert(err, IsNil)
+	c.Assert(rs, NotNil)
+	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(err, IsNil)
+	err = rs.Close()
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Equals, 1)
+
+	tk.MustExec("drop database UPPER_CASE")
 }
 
 func (s *testSuite5) TestShowSlow(c *C) {
@@ -1078,9 +1102,10 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	res := tk.MustQuery("show builtins;")
 	c.Assert(res, NotNil)
 	rows := res.Rows()
-	c.Assert(267, Equals, len(rows))
+	const builtinFuncNum = 269
+	c.Assert(builtinFuncNum, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
-	c.Assert("yearweek", Equals, rows[266][0].(string))
+	c.Assert("yearweek", Equals, rows[builtinFuncNum-1][0].(string))
 }
 
 func (s *testSuite5) TestShowClusterConfig(c *C) {
@@ -1209,34 +1234,42 @@ func (s *testSerialSuite1) TestShowCreateTableWithIntegerDisplayLengthWarnings(c
 func (s *testSuite5) TestShowVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	var showSQL string
+	sessionVars := make([]string, 0, len(variable.GetSysVars()))
+	globalVars := make([]string, 0, len(variable.GetSysVars()))
 	for _, v := range variable.GetSysVars() {
-		if variable.FilterImplicitFeatureSwitch(v) {
+		if v.Hidden {
 			continue
 		}
-		// When ScopeSession only. `show global variables` must return empty.
+
 		if v.Scope == variable.ScopeSession {
-			showSQL = "show variables like '" + v.Name + "'"
-			res := tk.MustQuery(showSQL)
-			c.Check(res.Rows(), HasLen, 1)
-			showSQL = "show global variables like '" + v.Name + "'"
-			res = tk.MustQuery(showSQL)
-			c.Check(res.Rows(), HasLen, 0)
+			sessionVars = append(sessionVars, v.Name)
 		} else {
-			showSQL = "show global variables like '" + v.Name + "'"
-			res := tk.MustQuery(showSQL)
-			c.Check(res.Rows(), HasLen, 1)
-			showSQL = "show variables like '" + v.Name + "'"
-			res = tk.MustQuery(showSQL)
-			c.Check(res.Rows(), HasLen, 1)
+			globalVars = append(globalVars, v.Name)
 		}
 	}
-	// Test for switch variable which shouldn't seen by users.
-	for _, one := range variable.FeatureSwitchVariables {
-		res := tk.MustQuery("show variables like '" + one + "'")
-		c.Check(res.Rows(), HasLen, 0)
-		res = tk.MustQuery("show global variables like '" + one + "'")
-		c.Check(res.Rows(), HasLen, 0)
-	}
+
+	// When ScopeSession only. `show global variables` must return empty.
+	sessionVarsStr := strings.Join(sessionVars, "','")
+	showSQL = "show variables where variable_name in('" + sessionVarsStr + "')"
+	res := tk.MustQuery(showSQL)
+	c.Check(res.Rows(), HasLen, len(sessionVars))
+	showSQL = "show global variables where variable_name in('" + sessionVarsStr + "')"
+	res = tk.MustQuery(showSQL)
+	c.Check(res.Rows(), HasLen, 0)
+
+	globalVarsStr := strings.Join(globalVars, "','")
+	showSQL = "show variables where variable_name in('" + globalVarsStr + "')"
+	res = tk.MustQuery(showSQL)
+	c.Check(res.Rows(), HasLen, len(globalVars))
+	showSQL = "show global variables where variable_name in('" + globalVarsStr + "')"
+	res = tk.MustQuery(showSQL)
+	c.Check(res.Rows(), HasLen, len(globalVars))
+
+	// Test a known hidden variable.
+	res = tk.MustQuery("show variables like '" + variable.TiDBPartitionPruneMode + "'")
+	c.Check(res.Rows(), HasLen, 0)
+	res = tk.MustQuery("show global variables like '" + variable.TiDBPartitionPruneMode + "'")
+	c.Check(res.Rows(), HasLen, 0)
 }
 
 func (s *testSuite5) TestIssue19507(c *C) {
@@ -1269,4 +1302,26 @@ func (s *testSuite5) TestShowPerformanceSchema(c *C) {
 	tk.MustQuery("SHOW INDEX FROM performance_schema.events_statements_summary_by_digest").Check(
 		testkit.Rows("events_statements_summary_by_digest 0 SCHEMA_NAME 1 SCHEMA_NAME A 0 <nil> <nil> YES BTREE   YES NULL NO",
 			"events_statements_summary_by_digest 0 SCHEMA_NAME 2 DIGEST A 0 <nil> <nil> YES BTREE   YES NULL NO"))
+}
+
+func (s *testSuite5) TestShowTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create global temporary table t1 (id int) on commit delete rows")
+	tk.MustExec("create global temporary table t3 (i int primary key, j int) on commit delete rows")
+	// For issue https://github.com/pingcap/tidb/issues/24752
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE GLOBAL TEMPORARY TABLE `t1` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"))
+	// No panic, fix issue https://github.com/pingcap/tidb/issues/24788
+	expect := "CREATE GLOBAL TEMPORARY TABLE `t3` (\n" +
+		"  `i` int(11) NOT NULL,\n" +
+		"  `j` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
+	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 " + expect))
+
+	// Verify that the `show create table` result can be used to build the table.
+	createTable := strings.ReplaceAll(expect, "t3", "t4")
+	tk.MustExec(createTable)
 }

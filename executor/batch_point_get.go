@@ -27,9 +27,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -48,6 +47,8 @@ type BatchPointGetExec struct {
 	handles     []kv.Handle
 	physIDs     []int64
 	partPos     int
+	singlePart  bool
+	partTblID   int64
 	idxVals     [][]types.Datum
 	startTS     uint64
 	snapshotTS  uint64
@@ -88,7 +89,9 @@ func (e *BatchPointGetExec) buildVirtualColumnInfo() {
 // Open implements the Executor interface.
 func (e *BatchPointGetExec) Open(context.Context) error {
 	e.snapshotTS = e.startTS
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	sessVars := e.ctx.GetSessionVars()
+	txnCtx := sessVars.TxnCtx
+	stmtCtx := sessVars.StmtCtx
 	if e.lock {
 		e.snapshotTS = txnCtx.GetForUpdateTS()
 	}
@@ -110,32 +113,37 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		e.stats = &runtimeStatsWithSnapshot{
 			SnapshotRuntimeStats: snapshotStats,
 		}
-		snapshot.SetOption(tikvstore.CollectRuntimeStats, snapshotStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		stmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		snapshot.SetOption(tikvstore.ReplicaRead, tikvstore.ReplicaReadFollower)
+		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
-	snapshot.SetOption(tikvstore.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+	snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
 	isStaleness := e.ctx.GetSessionVars().TxnCtx.IsStaleness
-	snapshot.SetOption(tikvstore.IsStalenessReadOnly, isStaleness)
-	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != oracle.GlobalTxnScope {
-		snapshot.SetOption(tikvstore.MatchStoreLabels, []*metapb.StoreLabel{
+	snapshot.SetOption(kv.IsStalenessReadOnly, isStaleness)
+	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != kv.GlobalTxnScope {
+		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
 				Value: e.ctx.GetSessionVars().TxnCtx.TxnScope,
 			},
 		})
 	}
+	setResourceGroupTagForTxn(stmtCtx, snapshot)
+	// Avoid network requests for the temporary table.
+	if e.tblInfo.TempTableType == model.TempTableGlobal {
+		snapshot = globalTemporaryTableSnapshot{snapshot}
+	}
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
 		if e.lock {
-			batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
+			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
 		} else if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) && e.ctx.GetSessionVars().EnablePointGetCache {
 			batchGetter = newCacheBatchGetter(e.ctx, e.tblInfo.ID, snapshot)
 		} else {
-			batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), nil, snapshot)
+			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), nil, snapshot)
 		}
 	}
 	e.snapshot = snapshot
@@ -143,10 +151,20 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	return nil
 }
 
+// Global temporary table would always be empty, so get the snapshot data of it is meanless.
+// globalTemporaryTableSnapshot inherits kv.Snapshot and override the BatchGet methods to return empty.
+type globalTemporaryTableSnapshot struct {
+	kv.Snapshot
+}
+
+func (s globalTemporaryTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+	return make(map[string][]byte), nil
+}
+
 // Close implements the Executor interface.
 func (e *BatchPointGetExec) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {
-		e.snapshot.DelOption(tikvstore.CollectRuntimeStats)
+		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
 	e.inited = 0
 	e.index = 0
@@ -210,9 +228,16 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			}
 
 			physID := getPhysID(e.tblInfo, idxVals[e.partPos].GetInt64())
+			// If this BatchPointGetExec is built only for the specific table partition, skip those filters not matching this partition.
+			if e.singlePart && e.partTblID != physID {
+				continue
+			}
 			idxKey, err1 := EncodeUniqueIndexKey(e.ctx, e.tblInfo, e.idxInfo, idxVals, physID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
+			}
+			if idxKey == nil {
+				continue
 			}
 			s := hack.String(idxKey)
 			if _, found := dedup[s]; found {
@@ -322,7 +347,8 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		sort.Slice(e.handles, less)
 	}
 
-	keys := make([]kv.Key, len(e.handles))
+	keys := make([]kv.Key, 0, len(e.handles))
+	newHandles := make([]kv.Handle, 0, len(e.handles))
 	for i, handle := range e.handles {
 		var tID int64
 		if len(e.physIDs) > 0 {
@@ -338,9 +364,15 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				tID = getPhysID(e.tblInfo, d.GetInt64())
 			}
 		}
+		// If this BatchPointGetExec is built only for the specific table partition, skip those handles not matching this partition.
+		if e.singlePart && e.partTblID != tID {
+			continue
+		}
 		key := tablecodec.EncodeRowKeyWithHandle(tID, handle)
-		keys[i] = key
+		keys = append(keys, key)
+		newHandles = append(newHandles, handle)
 	}
+	e.handles = newHandles
 
 	var values map[string][]byte
 	// Lock keys (include exists and non-exists keys) before fetch all values for Repeatable Read Isolation.
@@ -401,8 +433,7 @@ func LockKeys(ctx context.Context, seCtx sessionctx.Context, lockWaitTime int64,
 	txnCtx := seCtx.GetSessionVars().TxnCtx
 	lctx := newLockCtx(seCtx.GetSessionVars(), lockWaitTime)
 	if txnCtx.IsPessimistic {
-		lctx.ReturnValues = true
-		lctx.Values = make(map[string]kv.ReturnedValue, len(keys))
+		lctx.InitReturnValues(len(keys))
 	}
 	err := doLockKeys(ctx, seCtx, lctx, keys...)
 	if err != nil {
@@ -412,9 +443,8 @@ func LockKeys(ctx context.Context, seCtx sessionctx.Context, lockWaitTime int64,
 		// When doLockKeys returns without error, no other goroutines access the map,
 		// it's safe to read it without mutex.
 		for _, key := range keys {
-			rv := lctx.Values[string(key)]
-			if !rv.AlreadyLocked {
-				txnCtx.SetPessimisticLockCache(key, rv.Value)
+			if v, ok := lctx.GetValueNotLocked(key); ok {
+				txnCtx.SetPessimisticLockCache(key, v)
 			}
 		}
 	}
@@ -437,7 +467,7 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]
 }
 
 func getPhysID(tblInfo *model.TableInfo, intVal int64) int64 {
-	pi := tblInfo.Partition
+	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return tblInfo.ID
 	}

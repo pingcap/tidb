@@ -14,14 +14,19 @@
 package tikv
 
 import (
+	"bytes"
 	"context"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/unionstore"
+	pd "github.com/tikv/pd/client"
 )
 
 // StoreProbe wraps KVSTore and exposes internal states for testing purpose.
@@ -32,6 +37,66 @@ type StoreProbe struct {
 // NewLockResolver creates a new LockResolver instance.
 func (s StoreProbe) NewLockResolver() LockResolverProbe {
 	return LockResolverProbe{LockResolver: newLockResolver(s.KVStore)}
+}
+
+// GetTimestampWithRetry returns latest timestamp.
+func (s StoreProbe) GetTimestampWithRetry(bo *Backoffer, scope string) (uint64, error) {
+	return s.getTimestampWithRetry(bo, scope)
+}
+
+// Begin starts a transaction.
+func (s StoreProbe) Begin() (TxnProbe, error) {
+	txn, err := s.KVStore.Begin()
+	return TxnProbe{KVTxn: txn}, err
+}
+
+// GetSnapshot returns a snapshot.
+func (s StoreProbe) GetSnapshot(ts uint64) SnapshotProbe {
+	snap := s.KVStore.GetSnapshot(ts)
+	return SnapshotProbe{KVSnapshot: snap}
+}
+
+// SetRegionCachePDClient replaces pd client inside region cache.
+func (s StoreProbe) SetRegionCachePDClient(client pd.Client) {
+	s.regionCache.pdClient = client
+}
+
+// ClearTxnLatches clears store's txn latch scheduler.
+func (s StoreProbe) ClearTxnLatches() {
+	s.txnLatches = nil
+}
+
+// SendTxnHeartbeat renews a txn's ttl.
+func (s StoreProbe) SendTxnHeartbeat(ctx context.Context, key []byte, startTS uint64, ttl uint64) (uint64, error) {
+	bo := retry.NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil)
+	return sendTxnHeartBeat(bo, s.KVStore, key, startTS, ttl)
+}
+
+// LoadSafePoint from safepoint kv.
+func (s StoreProbe) LoadSafePoint() (uint64, error) {
+	return loadSafePoint(s.GetSafePointKV())
+}
+
+// SaveSafePoint saves safepoint to kv.
+func (s StoreProbe) SaveSafePoint(v uint64) error {
+	return saveSafePoint(s.GetSafePointKV(), v)
+}
+
+// SetRegionCacheStore is used to set a store in region cache, for testing only
+func (s StoreProbe) SetRegionCacheStore(id uint64, storeType tikvrpc.EndpointType, state uint64, labels []*metapb.StoreLabel) {
+	s.regionCache.storeMu.Lock()
+	defer s.regionCache.storeMu.Unlock()
+	s.regionCache.storeMu.stores[id] = &Store{
+		storeID:   id,
+		storeType: storeType,
+		state:     state,
+		labels:    labels,
+	}
+}
+
+// SetSafeTS is used to set safeTS for the store with `storeID`
+func (s StoreProbe) SetSafeTS(storeID, safeTS uint64) {
+	s.setSafeTS(storeID, safeTS)
 }
 
 // TxnProbe wraps a txn and exports internal states for testing purpose.
@@ -50,7 +115,7 @@ func (txn TxnProbe) GetCommitTS() uint64 {
 }
 
 // GetUnionStore returns transaction's embedded unionstore.
-func (txn TxnProbe) GetUnionStore() kv.UnionStore {
+func (txn TxnProbe) GetUnionStore() *unionstore.KVUnionStore {
 	return txn.us
 }
 
@@ -75,14 +140,25 @@ func (txn TxnProbe) SetCommitter(committer CommitterProbe) {
 	txn.committer = committer.twoPhaseCommitter
 }
 
-// ClearStoreTxnLatches clears store's txn latch scheduler.
-func (txn TxnProbe) ClearStoreTxnLatches() {
-	txn.store.txnLatches = nil
-}
-
 // CollectLockedKeys returns all locked keys of a transaction.
 func (txn TxnProbe) CollectLockedKeys() [][]byte {
 	return txn.collectLockedKeys()
+}
+
+// BatchGetSingleRegion gets a batch of keys from a region.
+func (txn TxnProbe) BatchGetSingleRegion(bo *Backoffer, region RegionVerID, keys [][]byte, collect func([]byte, []byte)) error {
+	snapshot := txn.GetSnapshot()
+	return snapshot.batchGetSingleRegion(bo, batchKeys{region: region, keys: keys}, collect)
+}
+
+// NewScanner returns a scanner to iterate given key range.
+func (txn TxnProbe) NewScanner(start, end []byte, batchSize int, reverse bool) (*Scanner, error) {
+	return newScanner(txn.GetSnapshot(), start, end, batchSize, reverse)
+}
+
+// GetStartTime returns the time when txn starts.
+func (txn TxnProbe) GetStartTime() time.Time {
+	return txn.startTime
 }
 
 func newTwoPhaseCommitterWithInit(txn *KVTxn, sessionID uint64) (*twoPhaseCommitter, error) {
@@ -128,12 +204,17 @@ func (c CommitterProbe) SetMutations(muts CommitterMutations) {
 
 // SetCommitTS resets the committer's commit ts.
 func (c CommitterProbe) SetCommitTS(ts uint64) {
-	c.commitTS = ts
+	atomic.StoreUint64(&c.commitTS, ts)
 }
 
 // GetCommitTS returns the commit ts of the committer.
 func (c CommitterProbe) GetCommitTS() uint64 {
-	return c.commitTS
+	return atomic.LoadUint64(&c.commitTS)
+}
+
+// GetMinCommitTS returns the minimal commit ts can be used.
+func (c CommitterProbe) GetMinCommitTS() uint64 {
+	return c.minCommitTS
 }
 
 // SetMinCommitTS sets the minimal commit ts can be used.
@@ -141,9 +222,19 @@ func (c CommitterProbe) SetMinCommitTS(ts uint64) {
 	c.minCommitTS = ts
 }
 
+// SetMaxCommitTS sets the max commit ts can be used.
+func (c CommitterProbe) SetMaxCommitTS(ts uint64) {
+	c.maxCommitTS = ts
+}
+
 // SetSessionID sets the session id of the committer.
 func (c CommitterProbe) SetSessionID(id uint64) {
 	c.sessionID = id
+}
+
+// GetForUpdateTS returns the pessimistic ForUpdate ts.
+func (c CommitterProbe) GetForUpdateTS() uint64 {
+	return c.forUpdateTS
 }
 
 // SetForUpdateTS sets pessimistic ForUpdate ts.
@@ -161,10 +252,25 @@ func (c CommitterProbe) GetLockTTL() uint64 {
 	return c.lockTTL
 }
 
+// SetLockTTL sets the lock ttl duration.
+func (c CommitterProbe) SetLockTTL(ttl uint64) {
+	c.lockTTL = ttl
+}
+
+// SetLockTTLByTimeAndSize sets the lock ttl duration by time and size.
+func (c CommitterProbe) SetLockTTLByTimeAndSize(start time.Time, size int) {
+	c.lockTTL = txnLockTTL(start, size)
+}
+
 // SetTxnSize resets the txn size of the committer and updates lock TTL.
 func (c CommitterProbe) SetTxnSize(sz int) {
 	c.txnSize = sz
 	c.lockTTL = txnLockTTL(c.txn.startTime, sz)
+}
+
+// SetUseAsyncCommit enables async commit feature.
+func (c CommitterProbe) SetUseAsyncCommit() {
+	c.useAsyncCommit = 1
 }
 
 // Execute runs the commit process.
@@ -172,14 +278,19 @@ func (c CommitterProbe) Execute(ctx context.Context) error {
 	return c.execute(ctx)
 }
 
-// PrewriteMutations performs the first phase of commit.
-func (c CommitterProbe) PrewriteMutations(ctx context.Context) error {
-	return c.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), c.mutations)
+// PrewriteAllMutations performs the first phase of commit.
+func (c CommitterProbe) PrewriteAllMutations(ctx context.Context) error {
+	return c.PrewriteMutations(ctx, c.mutations)
+}
+
+// PrewriteMutations performs the first phase of commit for given keys.
+func (c CommitterProbe) PrewriteMutations(ctx context.Context, mutations CommitterMutations) error {
+	return c.prewriteMutations(retry.NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), mutations)
 }
 
 // CommitMutations performs the second phase of commit.
 func (c CommitterProbe) CommitMutations(ctx context.Context) error {
-	return c.commitMutations(NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), nil), c.mutationsOfKeys([][]byte{c.primaryKey}))
+	return c.commitMutations(retry.NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), nil), c.mutationsOfKeys([][]byte{c.primaryKey}))
 }
 
 // MutationsOfKeys returns mutations match the keys.
@@ -189,7 +300,7 @@ func (c CommitterProbe) MutationsOfKeys(keys [][]byte) CommitterMutations {
 
 // PessimisticRollbackMutations rolls mutations back.
 func (c CommitterProbe) PessimisticRollbackMutations(ctx context.Context, muts CommitterMutations) error {
-	return c.pessimisticRollbackMutations(NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, nil), muts)
+	return c.pessimisticRollbackMutations(retry.NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, nil), muts)
 }
 
 // Cleanup cleans dirty data of a committer.
@@ -213,6 +324,12 @@ func (c CommitterProbe) BuildPrewriteRequest(regionID, regionConf, regionVersion
 	var batch batchMutations
 	batch.mutations = mutations
 	batch.region = RegionVerID{regionID, regionConf, regionVersion}
+	for _, key := range mutations.GetKeys() {
+		if bytes.Equal(key, c.primary()) {
+			batch.isPrimary = true
+			break
+		}
+	}
 	return c.buildPrewriteRequest(batch, txnSize)
 }
 
@@ -266,6 +383,39 @@ func (c CommitterProbe) SetPrimaryKeyBlocker(ac, bk chan struct{}) {
 	c.testingKnobs.bkAfterCommitPrimary = bk
 }
 
+// CleanupMutations performs the clean up phase.
+func (c CommitterProbe) CleanupMutations(ctx context.Context) error {
+	bo := retry.NewBackofferWithVars(ctx, cleanupMaxBackoff, nil)
+	return c.cleanupMutations(bo, c.mutations)
+}
+
+// SnapshotProbe exposes some snapshot utilities for testing purpose.
+type SnapshotProbe struct {
+	*KVSnapshot
+}
+
+// MergeRegionRequestStats merges RPC runtime stats into snapshot's stats.
+func (s SnapshotProbe) MergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats) {
+	s.mergeRegionRequestStats(stats)
+}
+
+// RecordBackoffInfo records backoff stats into snapshot's stats.
+func (s SnapshotProbe) RecordBackoffInfo(bo *Backoffer) {
+	s.recordBackoffInfo(bo)
+}
+
+// MergeExecDetail merges exec stats into snapshot's stats.
+func (s SnapshotProbe) MergeExecDetail(detail *pb.ExecDetailsV2) {
+	s.mergeExecDetail(detail)
+}
+
+// FormatStats dumps information of stats.
+func (s SnapshotProbe) FormatStats() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mu.stats.String()
+}
+
 // LockProbe exposes some lock utilities for testing purpose.
 type LockProbe struct {
 }
@@ -286,6 +436,11 @@ func (l LockProbe) NewLockStatus(keys [][]byte, useAsyncCommit bool, minCommitTS
 	}
 }
 
+// GetPrimaryKeyFromTxnStatus returns the primary key of the transaction.
+func (l LockProbe) GetPrimaryKeyFromTxnStatus(s TxnStatus) []byte {
+	return s.primaryLock.Key
+}
+
 // LockResolverProbe wraps a LockResolver and exposes internal stats for testing purpose.
 type LockResolverProbe struct {
 	*LockResolver
@@ -298,13 +453,13 @@ func (l LockResolverProbe) ResolveLockAsync(bo *Backoffer, lock *Lock, status Tx
 
 // ResolveLock resolves single lock.
 func (l LockResolverProbe) ResolveLock(ctx context.Context, lock *Lock) error {
-	bo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, nil)
+	bo := retry.NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, nil)
 	return l.resolveLock(bo, lock, TxnStatus{}, false, make(map[RegionVerID]struct{}))
 }
 
 // ResolvePessimisticLock resolves single pessimistic lock.
 func (l LockResolverProbe) ResolvePessimisticLock(ctx context.Context, lock *Lock) error {
-	bo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, nil)
+	bo := retry.NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, nil)
 	return l.resolvePessimisticLock(bo, lock, make(map[RegionVerID]struct{}))
 }
 
@@ -329,6 +484,25 @@ func (l LockResolverProbe) SetMeetLockCallback(f func([]*Lock)) {
 	l.testingKnobs.meetLock = f
 }
 
+// CheckAllSecondaries checks the secondary locks of an async commit transaction to find out the final
+// status of the transaction.
+func (l LockResolverProbe) CheckAllSecondaries(bo *Backoffer, lock *Lock, status *TxnStatus) error {
+	_, err := l.checkAllSecondaries(bo, lock, status)
+	return err
+}
+
+// IsErrorNotFound checks if an error is caused by txnNotFoundErr.
+func (l LockResolverProbe) IsErrorNotFound(err error) bool {
+	_, ok := errors.Cause(err).(txnNotFoundErr)
+	return ok
+}
+
+// IsNonAsyncCommitLock checks if an error is nonAsyncCommitLock error.
+func (l LockResolverProbe) IsNonAsyncCommitLock(err error) bool {
+	_, ok := errors.Cause(err).(*nonAsyncCommitLock)
+	return ok
+}
+
 // ConfigProbe exposes configurations and global variables for testing purpose.
 type ConfigProbe struct{}
 
@@ -340,4 +514,79 @@ func (c ConfigProbe) GetTxnCommitBatchSize() uint64 {
 // GetBigTxnThreshold returns the txn size to be considered as big txn.
 func (c ConfigProbe) GetBigTxnThreshold() int {
 	return bigTxnThreshold
+}
+
+// GetScanBatchSize returns the batch size to scan ranges.
+func (c ConfigProbe) GetScanBatchSize() int {
+	return scanBatchSize
+}
+
+// GetDefaultLockTTL returns the default lock TTL.
+func (c ConfigProbe) GetDefaultLockTTL() uint64 {
+	return defaultLockTTL
+}
+
+// GetTTLFactor returns the factor to calculate txn TTL.
+func (c ConfigProbe) GetTTLFactor() int {
+	return ttlFactor
+}
+
+// GetGetMaxBackoff returns the max sleep for get command.
+func (c ConfigProbe) GetGetMaxBackoff() int {
+	return getMaxBackoff
+}
+
+// LoadPreSplitDetectThreshold returns presplit detect threshold config.
+func (c ConfigProbe) LoadPreSplitDetectThreshold() uint32 {
+	return atomic.LoadUint32(&preSplitDetectThreshold)
+}
+
+// StorePreSplitDetectThreshold updates presplit detect threshold config.
+func (c ConfigProbe) StorePreSplitDetectThreshold(v uint32) {
+	atomic.StoreUint32(&preSplitDetectThreshold, v)
+}
+
+// LoadPreSplitSizeThreshold returns presplit size threshold config.
+func (c ConfigProbe) LoadPreSplitSizeThreshold() uint32 {
+	return atomic.LoadUint32(&preSplitSizeThreshold)
+}
+
+// StorePreSplitSizeThreshold updates presplit size threshold config.
+func (c ConfigProbe) StorePreSplitSizeThreshold(v uint32) {
+	atomic.StoreUint32(&preSplitSizeThreshold, v)
+}
+
+// SetOracleUpdateInterval sets the interval of updating cached ts.
+func (c ConfigProbe) SetOracleUpdateInterval(v int) {
+	oracleUpdateInterval = v
+}
+
+// GetRawBatchPutSize returns the raw batch put size config.
+func (c ConfigProbe) GetRawBatchPutSize() int {
+	return rawBatchPutSize
+}
+
+// RawKVClientProbe wraps RawKVClient and exposes internal states for testing purpose.
+type RawKVClientProbe struct {
+	*RawKVClient
+}
+
+// GetRegionCache returns the internal region cache container.
+func (c RawKVClientProbe) GetRegionCache() *RegionCache {
+	return c.regionCache
+}
+
+// SetRegionCache resets the internal region cache container.
+func (c RawKVClientProbe) SetRegionCache(regionCache *RegionCache) {
+	c.regionCache = regionCache
+}
+
+// SetPDClient resets the interval PD client.
+func (c RawKVClientProbe) SetPDClient(client pd.Client) {
+	c.pdClient = client
+}
+
+// SetRPCClient resets the internal RPC client.
+func (c RawKVClientProbe) SetRPCClient(client Client) {
+	c.rpcClient = client
 }

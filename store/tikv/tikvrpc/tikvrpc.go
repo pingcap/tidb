@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
@@ -68,6 +67,8 @@ const (
 	CmdCheckLockObserver
 	CmdRemoveLockObserver
 	CmdPhysicalScanLock
+
+	CmdStoreSafeTS
 
 	CmdCop CmdType = 512 + iota
 	CmdCopStream
@@ -165,6 +166,8 @@ func (t CmdType) String() string {
 		return "DebugGetRegionProperties"
 	case CmdTxnHeartBeat:
 		return "TxnHeartBeat"
+	case CmdStoreSafeTS:
+		return "StoreSafeTS"
 	}
 	return "Unknown"
 }
@@ -176,7 +179,7 @@ type Request struct {
 	kvrpcpb.Context
 	ReplicaReadType kv.ReplicaReadType // different from `kvrpcpb.Context.ReplicaRead`
 	ReplicaReadSeed *uint32            // pointer to follower read seed in snapshot/coprocessor
-	StoreTp         tidbkv.StoreType
+	StoreTp         EndpointType
 	// ForwardedHost is the address of a store which will handle the request. It's different from
 	// the address the request sent to.
 	// If it's not empty, the store which receive the request will forward it to
@@ -417,6 +420,11 @@ func (req *Request) CheckSecondaryLocks() *kvrpcpb.CheckSecondaryLocksRequest {
 // TxnHeartBeat returns TxnHeartBeatRequest in request.
 func (req *Request) TxnHeartBeat() *kvrpcpb.TxnHeartBeatRequest {
 	return req.Req.(*kvrpcpb.TxnHeartBeatRequest)
+}
+
+// StoreSafeTS returns StoreSafeTSRequest in request.
+func (req *Request) StoreSafeTS() *kvrpcpb.StoreSafeTSRequest {
+	return req.Req.(*kvrpcpb.StoreSafeTSRequest)
 }
 
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.
@@ -914,6 +922,8 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.Resp, err = client.KvCheckSecondaryLocks(ctx, req.CheckSecondaryLocks())
 	case CmdTxnHeartBeat:
 		resp.Resp, err = client.KvTxnHeartBeat(ctx, req.TxnHeartBeat())
+	case CmdStoreSafeTS:
+		resp.Resp, err = client.GetStoreSafeTS(ctx, req.StoreSafeTS())
 	default:
 		return nil, errors.Errorf("invalid request type: %v", req.Type)
 	}

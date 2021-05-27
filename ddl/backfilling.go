@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -158,7 +159,7 @@ func newBackfillWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 		sessCtx:   sessCtx,
 		taskCh:    make(chan *reorgBackfillTask, 1),
 		resultCh:  make(chan *backfillResult, 1),
-		priority:  tikvstore.PriorityLow,
+		priority:  kv.PriorityLow,
 	}
 }
 
@@ -331,7 +332,8 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 
 	maxSleep := 10000 // ms
 	bo := tikv.NewBackofferWithVars(context.Background(), maxSleep, nil)
-	ranges, err := tikv.SplitRegionRanges(bo, s.GetRegionCache(), []kv.KeyRange{kvRange})
+	tikvRange := *(*tikvstore.KeyRange)(unsafe.Pointer(&kvRange))
+	ranges, err := s.GetRegionCache().SplitRegionRanges(bo, []tikvstore.KeyRange{tikvRange})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -339,7 +341,8 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]", startKey.String(), endKey.String())
 		return nil, errors.Trace(errInvalidSplitRegionRanges.GenWithStackByArgs(errMsg))
 	}
-	return ranges, nil
+	res := *(*[]kv.KeyRange)(unsafe.Pointer(&ranges))
+	return res, nil
 }
 
 func (w *worker) waitTaskResults(workers []*backfillWorker, taskCnt int,
@@ -674,7 +677,7 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 
 	ver := kv.Version{Ver: version}
 	snap := store.GetSnapshot(ver)
-	snap.SetOption(tikvstore.Priority, priority)
+	snap.SetOption(kv.Priority, priority)
 
 	it, err := snap.Iter(firstKey, upperBound)
 	if err != nil {

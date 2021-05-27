@@ -60,9 +60,9 @@ const (
 	DefHost = "0.0.0.0"
 	// DefStatusHost is the default status host of TiDB
 	DefStatusHost = "0.0.0.0"
-	// Def TableColumnCountLimit is limit of the number of columns in a table
+	// DefTableColumnCountLimit is limit of the number of columns in a table
 	DefTableColumnCountLimit = 1017
-	// Def TableColumnCountLimit is maximum limitation of the number of columns in a table
+	// DefMaxOfTableColumnCountLimit is maximum limitation of the number of columns in a table
 	DefMaxOfTableColumnCountLimit = 4096
 )
 
@@ -73,7 +73,7 @@ var (
 		"tikv":     true,
 		"unistore": true,
 	}
-	// checkTableBeforeDrop enable to execute `admin check table` before `drop table`.
+	// CheckTableBeforeDrop enable to execute `admin check table` before `drop table`.
 	CheckTableBeforeDrop = false
 	// checkBeforeDropLDFlag is a go build flag.
 	checkBeforeDropLDFlag = "None"
@@ -126,6 +126,8 @@ type Config struct {
 	IndexLimit                 int                `toml:"index-limit" json:"index-limit"`
 	TableColumnCountLimit      uint32             `toml:"table-column-count-limit" json:"table-column-count-limit"`
 	GracefulWaitBeforeShutdown int                `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
+	// AlterPrimaryKey is used to control alter primary key feature.
+	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
 	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
@@ -135,6 +137,7 @@ type Config struct {
 	DelayCleanTableLock uint64      `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
 	SplitRegionMaxNum   uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
 	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
+	TopSQL              TopSQL      `toml:"top-sql" json:"top-sql"`
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
 	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
@@ -196,7 +199,6 @@ func (c *Config) getTiKVConfig() *tikvcfg.Config {
 	return &tikvcfg.Config{
 		CommitterConcurrency:  c.Performance.CommitterConcurrency,
 		MaxTxnTTL:             c.Performance.MaxTxnTTL,
-		ServerMemoryQuota:     defTiKVCfg.ServerMemoryQuota,
 		TiKVClient:            c.TiKVClient,
 		Security:              c.Security.ClusterSecurity(),
 		PDClient:              c.PDClient,
@@ -206,6 +208,7 @@ func (c *Config) getTiKVConfig() *tikvcfg.Config {
 		OpenTracingEnable:     c.OpenTracing.Enable,
 		Path:                  c.Path,
 		EnableForwarding:      c.EnableForwarding,
+		TxnScope:              c.Labels["zone"],
 	}
 }
 
@@ -361,6 +364,8 @@ type Security struct {
 	ClusterVerifyCN        []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
 	// If set to "plaintext", the spilled files will not be encrypted.
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
+	// EnableSEM prevents SUPER users from having full access.
+	EnableSEM bool `toml:"enable-sem" json:"enable-sem"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -415,7 +420,7 @@ type Performance struct {
 	TCPNoDelay            bool    `toml:"tcp-no-delay" json:"tcp-no-delay"`
 	CrossJoin             bool    `toml:"cross-join" json:"cross-join"`
 	RunAutoAnalyze        bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
-	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
+	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
 	CommitterConcurrency  int     `toml:"committer-concurrency" json:"committer-concurrency"`
 	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	MemProfileInterval    string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
@@ -522,6 +527,16 @@ type StmtSummary struct {
 	HistorySize int `toml:"history-size" json:"history-size"`
 }
 
+// TopSQL is the config for top sql.
+type TopSQL struct {
+	// Enable statement summary or not.
+	Enable bool `toml:"enable" json:"enable"`
+	// The refresh interval of statement summary.
+	RefreshInterval int `toml:"refresh-interval" json:"refresh-interval"`
+	// The maximum number of statements kept in memory.
+	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
+}
+
 // IsolationRead is the config for isolation read.
 type IsolationRead struct {
 	// Engines filters tidb-server access paths by engine type.
@@ -560,6 +575,7 @@ var defaultConf = Config{
 	MaxIndexLength:               3072,
 	IndexLimit:                   64,
 	TableColumnCountLimit:        1017,
+	AlterPrimaryKey:              false,
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	EnableTableLock:              false,
 	DelayCleanTableLock:          0,
@@ -650,6 +666,11 @@ var defaultConf = Config{
 		RefreshInterval:     1800,
 		HistorySize:         24,
 	},
+	TopSQL: TopSQL{
+		Enable:          true,
+		RefreshInterval: 1,
+		MaxStmtCount:    5000,
+	},
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
@@ -663,6 +684,7 @@ var defaultConf = Config{
 	EnableGlobalIndex:          false,
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
+		EnableSEM:                   false,
 	},
 	DeprecateIntegerDisplayWidth: false,
 	EnableEnumLengthLimit:        true,
@@ -936,6 +958,11 @@ func TableLockEnabled() bool {
 	return GetGlobalConfig().EnableTableLock
 }
 
+// TopSQLEnabled uses to check whether enabled the top SQL feature.
+func TopSQLEnabled() bool {
+	return GetGlobalConfig().TopSQL.Enable
+}
+
 // TableLockDelayClean uses to get the time of delay clean table lock.
 var TableLockDelayClean = func() uint64 {
 	return GetGlobalConfig().DelayCleanTableLock
@@ -991,7 +1018,7 @@ const (
 	OOMActionLog    = "log"
 )
 
-/// hideConfig is used to filter a single line of config for hiding.
+// hideConfig is used to filter a single line of config for hiding.
 var hideConfig = []string{
 	"index-usage-sync-lease",
 }

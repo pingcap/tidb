@@ -21,7 +21,6 @@ import (
 	"math/rand"
 	"net"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -287,23 +286,9 @@ func (g *defaultGener) gen() interface{} {
 type charInt64Gener struct{}
 
 func (g *charInt64Gener) gen() interface{} {
-	rand := time.Now().Nanosecond()
-	rand = rand % 1024
-	return int64(rand)
-}
-
-// charsetStringGener is used to generate "ascii" or "gbk"
-type charsetStringGener struct{}
-
-func (g *charsetStringGener) gen() interface{} {
-	rand := time.Now().Nanosecond() % 3
-	if rand == 0 {
-		return "ascii"
-	}
-	if rand == 1 {
-		return "utf8"
-	}
-	return "gbk"
+	nanosecond := time.Now().Nanosecond()
+	nanosecond = nanosecond % 1024
+	return int64(nanosecond)
 }
 
 // selectStringGener select one string randomly from the candidates array
@@ -864,12 +849,6 @@ func newRandDurDecimal() *randDurDecimal {
 func (g *randDurDecimal) gen() interface{} {
 	d := new(types.MyDecimal)
 	return d.FromFloat64(float64(g.randGen.Intn(types.TimeMaxHour)*10000 + g.randGen.Intn(60)*100 + g.randGen.Intn(60)))
-}
-
-type randDurString struct{}
-
-func (g *randDurString) gen() interface{} {
-	return strconv.Itoa(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
 }
 
 // locationGener is used to generate location for the built-in function GetFormat.

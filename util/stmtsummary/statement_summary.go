@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
@@ -171,7 +172,7 @@ type stmtSummaryByDigestElement struct {
 	sumTxnRetry          int64
 	maxTxnRetry          int
 	sumBackoffTimes      int64
-	backoffTypes         map[fmt.Stringer]int
+	backoffTypes         map[string]int
 	authUsers            map[string]struct{}
 	// other
 	sumMem               int64
@@ -227,7 +228,8 @@ type StmtExecInfo struct {
 	ExecRetryCount uint
 	ExecRetryTime  time.Duration
 	execdetails.StmtExecDetails
-	Prepared bool
+	TiKVExecDetails util.ExecDetails
+	Prepared        bool
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -633,7 +635,7 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		minLatency:    sei.TotalLatency,
 		firstSeen:     sei.StartTime,
 		lastSeen:      sei.StartTime,
-		backoffTypes:  make(map[fmt.Stringer]int),
+		backoffTypes:  make(map[string]int),
 		authUsers:     make(map[string]struct{}),
 		planInCache:   false,
 		planCacheHits: 0,
@@ -843,9 +845,9 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		ssElement.execRetryCount += sei.ExecRetryCount
 		ssElement.execRetryTime += sei.ExecRetryTime
 	}
-	ssElement.sumKVTotal += time.Duration(atomic.LoadInt64(&sei.StmtExecDetails.WaitKVRespDuration))
-	ssElement.sumPDTotal += time.Duration(atomic.LoadInt64(&sei.StmtExecDetails.WaitPDRespDuration))
-	ssElement.sumBackoffTotal += time.Duration(atomic.LoadInt64(&sei.StmtExecDetails.BackoffDuration))
+	ssElement.sumKVTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitKVRespDuration))
+	ssElement.sumPDTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitPDRespDuration))
+	ssElement.sumBackoffTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.BackoffDuration))
 	ssElement.sumWriteSQLRespTotal += sei.StmtExecDetails.WriteSQLRespDuration
 }
 
@@ -969,9 +971,9 @@ func formatSQL(sql string) string {
 }
 
 // Format the backoffType map to a string or nil.
-func formatBackoffTypes(backoffMap map[fmt.Stringer]int) interface{} {
+func formatBackoffTypes(backoffMap map[string]int) interface{} {
 	type backoffStat struct {
-		backoffType fmt.Stringer
+		backoffType string
 		count       int
 	}
 
