@@ -518,8 +518,8 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 	hasValue := make([]bool, len(e.Table.Cols()))
 	for i := 0; i < e.rowLen; i++ {
 		casted, err := table.CastValue(e.ctx, vals[i], e.insertColumns[i].ToInfo(), false, false)
-		if e.handleErr(nil, &vals[i], 0, err) != nil {
-			return nil, err
+		if er := e.handleErr(nil, &vals[i], 0, err); er != nil {
+			return nil, er
 		}
 
 		offset := e.insertColumns[i].Offset

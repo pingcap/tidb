@@ -326,6 +326,13 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("insert into t(name, b) values(\"测试\", 3)")
 	_, err = tk.Exec("insert into t(name, b) values(\"测试\", 3)")
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '测试' for key 'PRIMARY'")
+
+	// issue 24927
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c int)")
+	_, err = tk.Exec("insert into t select '1111111111111111111111111111'")
+	c.Assert(err, NotNil)
+	c.Assert(types.ErrWarnDataOutOfRange.Equal(err), IsTrue)
 }
 
 func (s *testSuiteP2) TestMultiBatch(c *C) {
