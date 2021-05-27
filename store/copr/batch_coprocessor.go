@@ -21,7 +21,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -33,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -346,7 +344,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 	}
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
-	ranges := toTiKVKeyRanges(req.KeyRanges)
+	ranges := NewKeyRanges(req.KeyRanges)
 	tasks, err := buildBatchCopTasks(bo, c.store.GetRegionCache(), ranges, req.StoreType)
 	if err != nil {
 		return copErrorResponse{err}
@@ -482,9 +480,9 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 
 // Merge all ranges and request again.
 func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
-	var ranges []tikvstore.KeyRange
+	var ranges []kv.KeyRange
 	for _, ri := range batchTask.regionInfos {
-		ri.Ranges.Do(func(ran *tikvstore.KeyRange) {
+		ri.Ranges.Do(func(ran *kv.KeyRange) {
 			ranges = append(ranges, *ran)
 		})
 	}
@@ -624,9 +622,4 @@ func (b *batchCopIterator) sendToRespCh(resp *batchCopResponse) (exit bool) {
 		exit = true
 	}
 	return
-}
-
-func toTiKVKeyRanges(ranges []kv.KeyRange) *KeyRanges {
-	res := *(*[]tikvstore.KeyRange)(unsafe.Pointer(&ranges))
-	return NewKeyRanges(res)
 }

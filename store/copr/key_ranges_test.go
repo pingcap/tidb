@@ -15,7 +15,7 @@ package copr
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/kv"
 )
 
 type testKeyRangesSuite struct {

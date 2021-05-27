@@ -76,7 +76,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	}
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
-	ranges := toTiKVKeyRanges(req.KeyRanges)
+	ranges := NewKeyRanges(req.KeyRanges)
 	tasks, err := buildCopTasks(bo, c.store.GetRegionCache(), ranges, req)
 	if err != nil {
 		return copErrorResponse{err}
@@ -905,7 +905,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	if resp.pbResp.Range != nil {
 		resp.startKey = resp.pbResp.Range.Start
 	} else if task.ranges != nil && task.ranges.Len() > 0 {
-		resp.startKey = kv.Key(task.ranges.At(0).StartKey)
+		resp.startKey = task.ranges.At(0).StartKey
 	}
 	if resp.detail == nil {
 		resp.detail = new(CopRuntimeStats)

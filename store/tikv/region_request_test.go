@@ -600,7 +600,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestSwitchPeerWhenNoLeader(c *C) {
 func (s *testRegionRequestToThreeStoresSuite) loadAndGetLeaderStore(c *C) (*Store, string) {
 	region, err := s.regionRequestSender.regionCache.findRegionByKey(s.bo, []byte("a"), false)
 	c.Assert(err, IsNil)
-	leaderStore, leaderPeer, _, leaderStoreIdx := region.WorkStorePeer(region.GetStore())
+	leaderStore, leaderPeer, _, leaderStoreIdx := region.WorkStorePeer(region.getStore())
 	c.Assert(leaderPeer.Id, Equals, s.leaderPeer)
 	leaderAddr, err := s.regionRequestSender.regionCache.getStoreAddr(s.bo, region, leaderStore, leaderStoreIdx)
 	c.Assert(err, IsNil)

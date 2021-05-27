@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
 )
 
@@ -238,10 +237,10 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	s.taskEqual(c, tasks[0], regionIDs[2], "q", "z")
 }
 
-func buildKeyRanges(keys ...string) []tikvstore.KeyRange {
-	var ranges []tikvstore.KeyRange
+func buildKeyRanges(keys ...string) []kv.KeyRange {
+	var ranges []kv.KeyRange
 	for i := 0; i < len(keys); i += 2 {
-		ranges = append(ranges, tikvstore.KeyRange{
+		ranges = append(ranges, kv.KeyRange{
 			StartKey: []byte(keys[i]),
 			EndKey:   []byte(keys[i+1]),
 		})
@@ -262,7 +261,7 @@ func (s *testCoprocessorSuite) taskEqual(c *C, task *copTask, regionID uint64, k
 	}
 }
 
-func (s *testCoprocessorSuite) rangeEqual(c *C, ranges []tikvstore.KeyRange, keys ...string) {
+func (s *testCoprocessorSuite) rangeEqual(c *C, ranges []kv.KeyRange, keys ...string) {
 	for i := 0; i < len(ranges); i++ {
 		r := ranges[i]
 		c.Assert(string(r.StartKey), Equals, keys[2*i])

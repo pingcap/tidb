@@ -432,12 +432,3 @@ func (s *KVStore) updateSafeTS(ctx context.Context) {
 
 // Variables defines the variables used by TiKV storage.
 type Variables = kv.Variables
-
-// // KeyRanges is like []KeyRange, but may has extra elements at head/tail.
-// // It's for avoiding alloc big slice during build copTask.
-// type KeyRanges = kv.KeyRanges
-
-// // NewKeyRanges constructs a KeyRanges instance.
-// func NewKeyRanges(ranges []kv.KeyRange) *kv.KeyRanges {
-// 	return kv.NewKeyRanges(ranges)
-// }

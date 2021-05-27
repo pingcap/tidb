@@ -4,8 +4,8 @@ import (
 	"bytes"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"go.uber.org/zap"
@@ -118,7 +118,7 @@ func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *tikv.Store
 				zap.Reflect("oldPeers", ri.Meta.Peers),
 				zap.Reflect("newPeers", r.GetMeta().Peers),
 				zap.Error(err))
-			return
+			continue
 		}
 		c.OnSendFailForRegion(bo.TiKVBackoffer(), store, ri.Region, r, scheduleReload, err)
 	}
