@@ -370,7 +370,7 @@ type Storage interface {
 	GetMemCache() MemManager
 	// GetMinSafeTS return the minimal SafeTS of the storage with given txnScope.
 	GetMinSafeTS(txnScope string) uint64
-	// GetLockWaits return all lock wait information
+	// GetLockWaits returns all lock wait information
 	GetLockWaits() ([]*deadlockPB.WaitForEntry, error)
 }
 
