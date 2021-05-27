@@ -56,74 +56,70 @@ func newStmtSummaryByDigestEvictedElement(beginTime int64, endTime int64) *stmtS
 
 // AddEvicted is used add an evicted record to stmtSummaryByDigestEvicted
 func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDigestKey, evictedValue *stmtSummaryByDigest, historySize int) {
-	if evictedValue == nil || evictedValue.history == nil {
+	if evictedValue == nil {
 		return
 	}
 
 	evictedValue.Lock()
 	defer evictedValue.Unlock()
+
+	if evictedValue.history == nil {
+		return
+	}
 	for e, h := evictedValue.history.Back(), ssbde.history.Back(); e != nil; e = e.Prev() {
 		evictedElement := e.Value.(*stmtSummaryByDigestElement)
 
-		// no record in ssbde.history, direct insert
-		if ssbde.history.Len() == 0 && historySize != 0 {
-			// use closure to minimize time holding lock
-			func() {
-				evictedElement.Lock()
-				defer evictedElement.Unlock()
+		// use closure to minimize time holding lock
+		func() {
+			evictedElement.Lock()
+			defer evictedElement.Unlock()
+			// no record in ssbde.history, direct insert
+			if ssbde.history.Len() == 0 && historySize != 0 {
 
 				eBeginTime := evictedElement.beginTime
 				eEndTime := evictedElement.endTime
 				record := newStmtSummaryByDigestEvictedElement(eBeginTime, eEndTime)
 				record.addEvicted(evictedKey, evictedElement)
 				ssbde.history.PushFront(record)
-			}()
 
-			h = ssbde.history.Back()
-			continue
-		}
+				h = ssbde.history.Back()
+				return
+			}
 
-		// look for matching history interval
-	MATCHING:
-		for ; h != nil; h = h.Prev() {
-			historyElement := h.Value.(*stmtSummaryByDigestEvictedElement)
+			// look for matching history interval
+		MATCHING:
+			for ; h != nil; h = h.Prev() {
+				historyElement := h.Value.(*stmtSummaryByDigestEvictedElement)
 
-			switch historyElement.matchAndAdd(evictedKey, evictedElement) {
-			case isMatch:
-				// automatically added
-				break MATCHING
-			// not matching, create a new record and insert
-			case isTooYoung:
-				{
-					func() {
-						evictedElement.Lock()
-						defer evictedElement.Unlock()
+				switch historyElement.matchAndAdd(evictedKey, evictedElement) {
+				case isMatch:
+					// automatically added
+					break MATCHING
+				// not matching, create a new record and insert
+				case isTooYoung:
+					{
 						eBeginTime := evictedElement.beginTime
 						eEndTime := evictedElement.endTime
 						record := newStmtSummaryByDigestEvictedElement(eBeginTime, eEndTime)
 						record.addEvicted(evictedKey, evictedElement)
 						ssbde.history.InsertAfter(record, h)
-					}()
-					break MATCHING
-				}
-			default: // isTooOld
-				{
-					if h == ssbde.history.Front() {
-						// if digest older than all records in ssbde.history.
-						func() {
-							evictedElement.Lock()
-							defer evictedElement.Unlock()
+						break MATCHING
+					}
+				default: // isTooOld
+					{
+						if h == ssbde.history.Front() {
+							// if digest older than all records in ssbde.history.
 							eBeginTime := evictedElement.beginTime
 							eEndTime := evictedElement.endTime
 							record := newStmtSummaryByDigestEvictedElement(eBeginTime, eEndTime)
 							record.addEvicted(evictedKey, evictedElement)
 							ssbde.history.PushFront(record)
-						}()
-						break MATCHING
+							break MATCHING
+						}
 					}
 				}
 			}
-		}
+		}()
 
 		// prevent exceeding history size
 		for ssbde.history.Len() > historySize && ssbde.history.Len() > 0 {
@@ -158,8 +154,6 @@ func (seElement *stmtSummaryByDigestEvictedElement) matchAndAdd(digestKey *stmtS
 	if seElement == nil || digestValue == nil {
 		return isTooYoung
 	}
-	digestValue.Lock()
-	defer digestValue.Unlock()
 	sBeginTime, sEndTime := seElement.beginTime, seElement.endTime
 	eBeginTime, eEndTime := digestValue.beginTime, digestValue.endTime
 	if sBeginTime <= eBeginTime && eEndTime <= sEndTime {
