@@ -1610,9 +1610,3 @@ func (s *testDataLockWaitSuite) TestDataLockPrivilege(c *C) {
 	}, nil, nil), IsTrue)
 	_ = tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS")
 }
-
-func (s *testDataLockWaitSuite) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
-	testleak.AfterTest(c)()
-}

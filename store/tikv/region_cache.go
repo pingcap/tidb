@@ -2079,11 +2079,6 @@ func (s *Store) getResolveState() resolveState {
 	return resolveState(atomic.LoadUint64(&s.state))
 }
 
-// IsNotTombstone returns whether the store is in tombstone state
-func (s *Store) IsNotTombstone() bool {
-	return s.getResolveState() != tombstone
-}
-
 func (s *Store) setResolveState(state resolveState) {
 	atomic.StoreUint64(&s.state, uint64(state))
 }
