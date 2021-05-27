@@ -523,6 +523,10 @@ func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 	for _, sel := range stmt.Selects[:len(stmt.Selects)-1] {
 		switch s := sel.(type) {
 		case *ast.SelectStmt:
+			if s.SelectIntoOpt != nil {
+				p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")
+				return
+			}
 			if s.IsInBraces {
 				continue
 			}
