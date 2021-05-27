@@ -781,6 +781,80 @@ func CompareBinary(left, right BinaryJSON) int {
 	return cmp
 }
 
+// MergePatchBinary implements RFC7396
+// https://datatracker.ietf.org/doc/html/rfc7396
+func MergePatchBinary(bjs []*BinaryJSON) (*BinaryJSON, error) {
+	var err error
+	length := len(bjs)
+
+	// according to the implements of RFC7396
+	// when the last item is not object
+	// we can return the last item directly
+	if bjs[length-1] == nil || bjs[length-1].TypeCode != TypeCodeObject {
+		return bjs[length-1], nil
+	}
+
+	target := bjs[0]
+	for _, patch := range bjs[1:] {
+		target, err = mergePatchBinary(target, patch)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return target, nil
+}
+
+func mergePatchBinary(target, patch *BinaryJSON) (result *BinaryJSON, err error) {
+	if patch == nil {
+		return nil, nil
+	}
+
+	if patch.TypeCode == TypeCodeObject {
+		if target == nil {
+			return nil, nil
+		}
+		tmpResult := target.Copy()
+		result = &tmpResult
+		if result.TypeCode != TypeCodeObject {
+			err = result.UnmarshalJSON([]byte("{}"))
+			if err != nil {
+				return result, err
+			}
+		}
+		elemCount := patch.GetElemCount()
+		for i := 0; i < elemCount; i++ {
+			key := patch.objectGetKey(i)
+			val := patch.objectGetVal(i)
+			path, err := ParseJSONPathExpr("$." + string(key))
+			if err != nil {
+				return result, err
+			}
+			targetKV, exists := result.objectSearchKey(key)
+			if val.TypeCode == TypeCodeLiteral && val.Value[0] == LiteralNil {
+				if exists {
+					tmp, err := result.Remove([]PathExpression{path})
+					if err != nil {
+						return result, err
+					}
+					result = &tmp
+				}
+			} else {
+				tmp, err := mergePatchBinary(&targetKV, &val)
+				if err != nil {
+					return result, err
+				}
+				tmp1, err := result.Modify([]PathExpression{path}, []BinaryJSON{*tmp}, ModifySet)
+				if err != nil {
+					return result, err
+				}
+				result = &tmp1
+			}
+		}
+		return result, nil
+	}
+	return patch, nil
+}
+
 // MergeBinary merges multiple BinaryJSON into one according the following rules:
 // 1) adjacent arrays are merged to a single array;
 // 2) adjacent object are merged to a single object;

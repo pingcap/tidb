@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -9594,13 +9595,199 @@ func (s *testIntegrationSuite) TestComplexShowVariables(c *C) {
 	// and 16 rows in MySQL 8.0 (the aliases for tx_isolation is removed, along with query cache)
 	// In the event that we hide noop sysvars in future, we must keep these variables.
 	tk := testkit.NewTestKit(c, s.store)
-	c.Assert(tk.MustQuery(`SHOW VARIABLES WHERE Variable_name ='language' OR Variable_name = 'net_write_timeout' OR Variable_name = 'interactive_timeout' 
-OR Variable_name = 'wait_timeout' OR Variable_name = 'character_set_client' OR Variable_name = 'character_set_connection' 
-OR Variable_name = 'character_set' OR Variable_name = 'character_set_server' OR Variable_name = 'tx_isolation' 
-OR Variable_name = 'transaction_isolation' OR Variable_name = 'character_set_results' OR Variable_name = 'timezone' 
-OR Variable_name = 'time_zone' OR Variable_name = 'system_time_zone' 
-OR Variable_name = 'lower_case_table_names' OR Variable_name = 'max_allowed_packet' OR Variable_name = 'net_buffer_length' 
-OR Variable_name = 'sql_mode' OR Variable_name = 'query_cache_type'  OR Variable_name = 'query_cache_size' 
+	c.Assert(tk.MustQuery(`SHOW VARIABLES WHERE Variable_name ='language' OR Variable_name = 'net_write_timeout' OR Variable_name = 'interactive_timeout'
+OR Variable_name = 'wait_timeout' OR Variable_name = 'character_set_client' OR Variable_name = 'character_set_connection'
+OR Variable_name = 'character_set' OR Variable_name = 'character_set_server' OR Variable_name = 'tx_isolation'
+OR Variable_name = 'transaction_isolation' OR Variable_name = 'character_set_results' OR Variable_name = 'timezone'
+OR Variable_name = 'time_zone' OR Variable_name = 'system_time_zone'
+OR Variable_name = 'lower_case_table_names' OR Variable_name = 'max_allowed_packet' OR Variable_name = 'net_buffer_length'
+OR Variable_name = 'sql_mode' OR Variable_name = 'query_cache_type'  OR Variable_name = 'query_cache_size'
 OR Variable_name = 'license' OR Variable_name = 'init_connect'`).Rows(), HasLen, 19)
 
+}
+
+func (s *testIntegrationSuite) TestBuiltinFuncJSONMergePatch_InColumn(c *C) {
+	ctx := context.Background()
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tests := []struct {
+		input    [2]interface{}
+		expected interface{}
+		success  bool
+		errCode  int
+	}{
+		// RFC 7396 document: https://datatracker.ietf.org/doc/html/rfc7396
+		// RFC 7396 Example Test Cases
+		{[2]interface{}{`{"a":"b"}`, `{"a":"c"}`}, `{"a": "c"}`, true, 0},
+		{[2]interface{}{`{"a":"b"}`, `{"b":"c"}`}, `{"a": "b", "b": "c"}`, true, 0},
+		{[2]interface{}{`{"a":"b"}`, `{"a":null}`}, `{}`, true, 0},
+		{[2]interface{}{`{"a":"b", "b":"c"}`, `{"a":null}`}, `{"b": "c"}`, true, 0},
+		{[2]interface{}{`{"a":["b"]}`, `{"a":"c"}`}, `{"a": "c"}`, true, 0},
+		{[2]interface{}{`{"a":"c"}`, `{"a":["b"]}`}, `{"a": ["b"]}`, true, 0},
+		{[2]interface{}{`{"a":{"b":"c"}}`, `{"a":{"b":"d","c":null}}`}, `{"a": {"b": "d"}}`, true, 0},
+		{[2]interface{}{`{"a":[{"b":"c"}]}`, `{"a": [1]}`}, `{"a": [1]}`, true, 0},
+		{[2]interface{}{`["a","b"]`, `["c","d"]`}, `["c", "d"]`, true, 0},
+		{[2]interface{}{`{"a":"b"}`, `["c"]`}, `["c"]`, true, 0},
+		{[2]interface{}{`{"a":"foo"}`, `null`}, `null`, true, 0},
+		{[2]interface{}{`{"a":"foo"}`, `"bar"`}, `"bar"`, true, 0},
+		{[2]interface{}{`{"e":null}`, `{"a":1}`}, `{"e": null, "a": 1}`, true, 0},
+		{[2]interface{}{`[1,2]`, `{"a":"b","c":null}`}, `{"a": "b"}`, true, 0},
+		{[2]interface{}{`{}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a": {"bb": {}}}`, true, 0},
+		// RFC 7396 Example Document
+		{[2]interface{}{`{"title":"Goodbye!","author":{"givenName":"John","familyName":"Doe"},"tags":["example","sample"],"content":"This will be unchanged"}`, `{"title":"Hello!","phoneNumber":"+01-123-456-7890","author":{"familyName":null},"tags":["example"]}`}, `{"title":"Hello!","author":{"givenName":"John"},"tags":["example"],"content":"This will be unchanged","phoneNumber":"+01-123-456-7890"}`, true, 0},
+
+		// From mysql Example Test Cases
+		{[2]interface{}{nil, `{"a":1}`}, nil, true, 0},
+		{[2]interface{}{`{"a":1}`, nil}, nil, true, 0},
+		{[2]interface{}{`{"a":"foo"}`, `true`}, `true`, true, 0},
+		{[2]interface{}{`{"a":"foo"}`, `false`}, `false`, true, 0},
+		{[2]interface{}{`{"a":"foo"}`, `123`}, `123`, true, 0},
+		{[2]interface{}{`{"a":"foo"}`, `123.1`}, `123.1`, true, 0},
+		{[2]interface{}{`{"a":"foo"}`, `[1,2,3]`}, `[1,2,3]`, true, 0},
+		{[2]interface{}{"null", `{"a":1}`}, `{"a":1}`, true, 0},
+		{[2]interface{}{`{"a":1}`, "null"}, `null`, true, 0},
+
+		// Invalid json text
+		{[2]interface{}{`{"a":1}`, `[1]}`}, nil, false, mysql.ErrInvalidJSONText},
+	}
+
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec("CREATE TABLE t ( `id` INT NOT NULL AUTO_INCREMENT, `j` json NULL, `vc` VARCHAR ( 5000 ) NULL, PRIMARY KEY ( `id` ) );")
+	for id, t := range tests {
+		tk.MustExec("insert into t values(?,?,?)", id+1, t.input[0], t.input[1])
+		if t.success {
+			result := tk.MustQuery("select json_merge_patch(j,vc) from t where id = ?", id+1)
+			if t.expected == nil {
+				result.Check(testkit.Rows("<nil>"))
+			} else {
+				j, e := json.ParseBinaryFromString(t.expected.(string))
+				c.Assert(e, IsNil)
+				result.Check(testkit.Rows(j.String()))
+			}
+		} else {
+			rs, _ := tk.Exec("select json_merge_patch(j,vc) from  t where id = ?;", id+1)
+			_, err := session.GetRows4Test(ctx, tk.Se, rs)
+			terr := errors.Cause(err).(*terror.Error)
+			c.Assert(terr.Code(), Equals, errors.ErrCode(t.errCode))
+		}
+	}
+}
+
+func (s *testIntegrationSuite) TestBuiltinFuncJSONMergePatch_InExpression(c *C) {
+	ctx := context.Background()
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tests := []struct {
+		input    []interface{}
+		expected interface{}
+		success  bool
+		errCode  int
+	}{
+		// RFC 7396 document: https://datatracker.ietf.org/doc/html/rfc7396
+		// RFC 7396 Example Test Cases
+		{[]interface{}{`{"a":"b"}`, `{"a":"c"}`}, `{"a": "c"}`, true, 0},
+		{[]interface{}{`{"a":"b"}`, `{"b":"c"}`}, `{"a": "b","b": "c"}`, true, 0},
+		{[]interface{}{`{"a":"b"}`, `{"a":null}`}, `{}`, true, 0},
+		{[]interface{}{`{"a":"b", "b":"c"}`, `{"a":null}`}, `{"b": "c"}`, true, 0},
+		{[]interface{}{`{"a":["b"]}`, `{"a":"c"}`}, `{"a": "c"}`, true, 0},
+		{[]interface{}{`{"a":"c"}`, `{"a":["b"]}`}, `{"a": ["b"]}`, true, 0},
+		{[]interface{}{`{"a":{"b":"c"}}`, `{"a":{"b":"d","c":null}}`}, `{"a": {"b": "d"}}`, true, 0},
+		{[]interface{}{`{"a":[{"b":"c"}]}`, `{"a": [1]}`}, `{"a": [1]}`, true, 0},
+		{[]interface{}{`["a","b"]`, `["c","d"]`}, `["c", "d"]`, true, 0},
+		{[]interface{}{`{"a":"b"}`, `["c"]`}, `["c"]`, true, 0},
+		{[]interface{}{`{"a":"foo"}`, `null`}, `null`, true, 0},
+		{[]interface{}{`{"a":"foo"}`, `"bar"`}, `"bar"`, true, 0},
+		{[]interface{}{`{"e":null}`, `{"a":1}`}, `{"e": null,"a": 1}`, true, 0},
+		{[]interface{}{`[1,2]`, `{"a":"b","c":null}`}, `{"a":"b"}`, true, 0},
+		{[]interface{}{`{}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb": {}}}`, true, 0},
+		// RFC 7396 Example Document
+		{[]interface{}{`{"title":"Goodbye!","author":{"givenName":"John","familyName":"Doe"},"tags":["example","sample"],"content":"This will be unchanged"}`, `{"title":"Hello!","phoneNumber":"+01-123-456-7890","author":{"familyName":null},"tags":["example"]}`}, `{"title":"Hello!","author":{"givenName":"John"},"tags":["example"],"content":"This will be unchanged","phoneNumber":"+01-123-456-7890"}`, true, 0},
+
+		// test cases
+		{[]interface{}{nil, `1`}, `1`, true, 0},
+		{[]interface{}{`1`, nil}, nil, true, 0},
+		{[]interface{}{nil, `null`}, `null`, true, 0},
+		{[]interface{}{`null`, nil}, nil, true, 0},
+		{[]interface{}{nil, `true`}, `true`, true, 0},
+		{[]interface{}{`true`, nil}, nil, true, 0},
+		{[]interface{}{nil, `false`}, `false`, true, 0},
+		{[]interface{}{`false`, nil}, nil, true, 0},
+		{[]interface{}{nil, `[1,2,3]`}, `[1,2,3]`, true, 0},
+		{[]interface{}{`[1,2,3]`, nil}, nil, true, 0},
+		{[]interface{}{nil, `{"a":"foo"}`}, nil, true, 0},
+		{[]interface{}{`{"a":"foo"}`, nil}, nil, true, 0},
+
+		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `{"b":"123"}`, `{"c":1}`}, `{"b":"123","c":1}`, true, 0},
+		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `{"c":1}`}, `{"c":1}`, true, 0},
+		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `true`}, `true`, true, 0},
+		{[]interface{}{`{"a":"foo"}`, `{"d":1}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb":{}},"d":1}`, true, 0},
+		{[]interface{}{`null`, `true`, `[1,2,3]`}, `[1,2,3]`, true, 0},
+
+		// From mysql Example Test Cases
+		{[]interface{}{nil, `null`, `[1,2,3]`, `{"a":1}`}, `{"a": 1}`, true, 0},
+		{[]interface{}{`null`, nil, `[1,2,3]`, `{"a":1}`}, `{"a": 1}`, true, 0},
+		{[]interface{}{`null`, `[1,2,3]`, nil, `{"a":1}`}, nil, true, 0},
+		{[]interface{}{`null`, `[1,2,3]`, `{"a":1}`, nil}, nil, true, 0},
+
+		{[]interface{}{nil, `null`, `{"a":1}`, `[1,2,3]`}, `[1,2,3]`, true, 0},
+		{[]interface{}{`null`, nil, `{"a":1}`, `[1,2,3]`}, `[1,2,3]`, true, 0},
+		{[]interface{}{`null`, `{"a":1}`, nil, `[1,2,3]`}, `[1,2,3]`, true, 0},
+		{[]interface{}{`null`, `{"a":1}`, `[1,2,3]`, nil}, nil, true, 0},
+
+		{[]interface{}{nil, `null`, `{"a":1}`, `true`}, `true`, true, 0},
+		{[]interface{}{`null`, nil, `{"a":1}`, `true`}, `true`, true, 0},
+		{[]interface{}{`null`, `{"a":1}`, nil, `true`}, `true`, true, 0},
+		{[]interface{}{`null`, `{"a":1}`, `true`, nil}, nil, true, 0},
+
+		// non-object last item
+		{[]interface{}{"true", "false", "[]", "{}", "null"}, "null", true, 0},
+		{[]interface{}{"false", "[]", "{}", "null", "true"}, "true", true, 0},
+		{[]interface{}{"true", "[]", "{}", "null", "false"}, "false", true, 0},
+		{[]interface{}{"true", "false", "{}", "null", "[]"}, "[]", true, 0},
+		{[]interface{}{"true", "false", "{}", "null", "1"}, "1", true, 0},
+		{[]interface{}{"true", "false", "{}", "null", "1.8"}, "1.8", true, 0},
+		{[]interface{}{"true", "false", "{}", "null", `"112"`}, `"112"`, true, 0},
+
+		{[]interface{}{`{"a":"foo"}`, nil}, nil, true, 0},
+		{[]interface{}{nil, `{"a":"foo"}`}, nil, true, 0},
+		{[]interface{}{`{"a":"foo"}`, `false`}, `false`, true, 0},
+		{[]interface{}{`{"a":"foo"}`, `123`}, `123`, true, 0},
+		{[]interface{}{`{"a":"foo"}`, `123.1`}, `123.1`, true, 0},
+		{[]interface{}{`{"a":"foo"}`, `[1,2,3]`}, `[1,2,3]`, true, 0},
+		{[]interface{}{`null`, `{"a":1}`}, `{"a":1}`, true, 0},
+		{[]interface{}{`{"a":1}`, `null`}, `null`, true, 0},
+		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `{"b":"123"}`, `{"c":1}`}, `{"b":"123","c":1}`, true, 0},
+		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `{"c":1}`}, `{"c":1}`, true, 0},
+		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `true`}, `true`, true, 0},
+		{[]interface{}{`{"a":"foo"}`, `{"d":1}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb":{}},"d":1}`, true, 0},
+
+		// Invalid json text
+		{[]interface{}{`{"a":1}`, `[1]}`}, nil, false, mysql.ErrInvalidJSONText},
+		{[]interface{}{`{{"a":1}`, `[1]`, `null`}, nil, false, mysql.ErrInvalidJSONText},
+		{[]interface{}{`{"a":1}`, `jjj`, `null`}, nil, false, mysql.ErrInvalidJSONText},
+	}
+
+	for _, t := range tests {
+		marks := make([]string, len(t.input))
+		for i := 0; i < len(marks); i++ {
+			marks[i] = "?"
+		}
+		sql := fmt.Sprintf("select json_merge_patch(%s);", strings.Join(marks, ","))
+		if t.success {
+			result := tk.MustQuery(sql, t.input...)
+			if t.expected == nil {
+				result.Check(testkit.Rows("<nil>"))
+			} else {
+				j, e := json.ParseBinaryFromString(t.expected.(string))
+				c.Assert(e, IsNil)
+				result.Check(testkit.Rows(j.String()))
+			}
+		} else {
+			rs, _ := tk.Exec(sql, t.input...)
+			_, err := session.GetRows4Test(ctx, tk.Se, rs)
+			terr := errors.Cause(err).(*terror.Error)
+			c.Assert(terr.Code(), Equals, errors.ErrCode(t.errCode))
+		}
+	}
 }
