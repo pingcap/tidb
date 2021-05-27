@@ -1642,7 +1642,7 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		}
 
 		version := store.Version
-		if version[0] == 'v' {
+		if len(version) >= 1 && version[0] == 'v' {
 			version = version[1:]
 		}
 

@@ -949,7 +949,7 @@ func (s *testTableSuite) TestFormatVersion(c *C) {
 	resultVersion := []string{"4.0.12", "4.0.12", "5.0.1"}
 
 	f := func(v string) string {
-		if v[0] == 'v' {
+		if len(v) >= 1 && v[0] == 'v' {
 			v = v[1:]
 		}
 
