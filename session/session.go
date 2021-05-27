@@ -2003,8 +2003,8 @@ func (s *session) checkBeforeNewTxn(ctx context.Context) error {
 	return nil
 }
 
-// NewTxnWithStartTS create a transaction with the given StartTS.
-func (s *session) NewTxnWithStartTS(ctx context.Context, startTS uint64) error {
+// NewStaleTxnWithStartTS create a transaction with the given StartTS.
+func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) error {
 	if err := s.checkBeforeNewTxn(ctx); err != nil {
 		return err
 	}
