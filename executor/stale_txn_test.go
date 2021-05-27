@@ -345,16 +345,28 @@ func (s *testStaleTxnSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key);")
 
-	// test as of
 	schemaVer1 := tk.Se.GetInfoSchema().SchemaMetaVersion()
 	time1 := time.Now()
-	tk.MustExec("drop table if exists t")
-	c.Assert(schemaVer1, Less, tk.Se.GetInfoSchema().SchemaMetaVersion())
+	tk.MustExec("alter table t add c int")
+
+	// confirm schema changed
+	schemaVer2 := tk.Se.GetInfoSchema().SchemaMetaVersion()
+	c.Assert(schemaVer1, Less, schemaVer2)
+
+	// get the specific old schema
 	tk.MustExec(fmt.Sprintf(`START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer1)
+
+	// schema changed back to the newest
 	tk.MustExec("commit")
+	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer2)
+
+	// select does not affect the infoschema
+	tk.MustExec(fmt.Sprintf(`SELECT * from t AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
+	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer2)
 }
 
 func (s *testStaleTxnSerialSuite) TestSetTransactionReadOnlyAsOf(c *C) {
