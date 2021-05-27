@@ -1310,7 +1310,6 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		c.Assert(err, IsNil, comment)
 		// to fix, Table 'test.ttt' doesn't exist
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-		c.Assert(err, IsNil, comment)
 		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		builder.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 		_, err = builder.Build(context.TODO(), stmt)
