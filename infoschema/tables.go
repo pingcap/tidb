@@ -167,6 +167,8 @@ const (
 	TableTiDBTrx = "TIDB_TRX"
 	// TableDeadlocks is the string constatnt of deadlock table.
 	TableDeadlocks = "DEADLOCKS"
+	// TableDataLockWaits is current lock waiting status table.
+	TableDataLockWaits = "DATA_LOCK_WAITS"
 )
 
 var tableIDMap = map[string]int64{
@@ -243,6 +245,7 @@ var tableIDMap = map[string]int64{
 	ClusterTableTiDBTrx:                     autoid.InformationSchemaDBID + 71,
 	TableDeadlocks:                          autoid.InformationSchemaDBID + 72,
 	ClusterTableDeadlocks:                   autoid.InformationSchemaDBID + 73,
+	TableDataLockWaits:                      autoid.InformationSchemaDBID + 74,
 }
 
 type columnInfo struct {
@@ -1368,6 +1371,13 @@ var tableDeadlocksCols = []columnInfo{
 	{name: "TRX_HOLDING_LOCK", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, comment: "The transaction ID (start ts) of the transaction that's currently holding the lock"},
 }
 
+var tableDataLockWaitsCols = []columnInfo{
+	{name: "KEY", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, comment: "The key that's being waiting on"},
+	{name: "TRX_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Current transaction that's waiting for the lock"},
+	{name: "CURRENT_HOLDING_TRX_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "The transaction that's holding the lock and blocks the current transaction"},
+	{name: "SQL_DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "Digest of the SQL that's trying to acquire the lock"},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1739,6 +1749,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClientErrorsSummaryByHost:          tableClientErrorsSummaryByHostCols,
 	TableTiDBTrx:                            tableTiDBTrxCols,
 	TableDeadlocks:                          tableDeadlocksCols,
+	TableDataLockWaits:                      tableDataLockWaitsCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

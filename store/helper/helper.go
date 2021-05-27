@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
@@ -72,6 +73,7 @@ type Storage interface {
 	GetTiKVClient() tikv.Client
 	Closed() <-chan struct{}
 	GetMinSafeTS(txnScope string) uint64
+	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
 }
 
 // Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.

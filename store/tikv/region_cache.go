@@ -1268,8 +1268,9 @@ func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
 	return latestRegion
 }
 
+// GetStoresByType gets stores by type `typ`
 // TODO: revise it by get store by closure.
-func (c *RegionCache) getStoresByType(typ tikvrpc.EndpointType) []*Store {
+func (c *RegionCache) GetStoresByType(typ tikvrpc.EndpointType) []*Store {
 	c.storeMu.Lock()
 	defer c.storeMu.Unlock()
 	stores := make([]*Store, 0)
@@ -2234,6 +2235,11 @@ func (s *Store) requestLiveness(bo *Backoffer, c *RegionCache) (l livenessState)
 		return
 	}
 	return
+}
+
+// GetAddr returns the address of the store
+func (s *Store) GetAddr() string {
+	return s.addr
 }
 
 func invokeKVStatusAPI(addr string, timeout time.Duration) (l livenessState) {
