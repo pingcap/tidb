@@ -151,10 +151,6 @@ func (d *DeadlockHistory) GetAllDatum() [][]types.Datum {
 			row[6] = item.TxnHoldingLock
 
 			// TODO: Implement the ALL_SQL_DIGESTS column for the deadlock table.
-			//row[7] = nil
-			//if item.AllSQLDigests != nil {
-			//	row[7] = "[" + strings.Join(item.AllSQLDigests, ", ") + "]"
-			//}
 
 			rows = append(rows, types.MakeDatums(row...))
 		}
