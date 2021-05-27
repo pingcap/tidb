@@ -289,6 +289,11 @@ func StopCPUProfile() error {
 	return nil
 }
 
+// ResetGoroutineLabelsWithOriginalCtx resets the goroutine label with the original ctx.
+func ResetGoroutineLabelsWithOriginalCtx(ctx context.Context) {
+	pprof.SetGoroutineLabels(ctx)
+}
+
 // SetGoroutineLabelsWithSQL sets the SQL digest label into the goroutine.
 func SetGoroutineLabelsWithSQL(ctx context.Context, normalizedSQL, sqlDigest string) context.Context {
 	if len(normalizedSQL) == 0 || len(sqlDigest) == 0 {
