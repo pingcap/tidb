@@ -2193,6 +2193,10 @@ func (cc getLastStmtInConn) pprofLabelNormalizedAndDigest() (string, string) {
 		return normalized, digest.String()
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
+		prepareObj, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
+		if prepareObj != nil && prepareObj.SQLDigest != nil {
+			return prepareObj.NormalizedSQL, prepareObj.SQLDigest.String()
+		}
 		str := cc.preparedStmt2StringNoArgs(stmtID)
 		normalized, digest := parser.NormalizeDigest(str)
 		return normalized, digest.String()

@@ -680,14 +680,30 @@ func (cc *clientConn) preparedStmt2StringNoArgs(stmtID uint32) string {
 	if sv == nil {
 		return ""
 	}
+	preparedObj, invalid := cc.preparedStmtID2CachePreparedStmt(stmtID)
+	if invalid {
+		return "invalidate CachedPrepareStmt type, ID: " + strconv.FormatUint(uint64(stmtID), 10)
+	}
+	if preparedObj == nil {
+		return "prepared statement not found, ID: " + strconv.FormatUint(uint64(stmtID), 10)
+	}
+	return preparedObj.PreparedAst.Stmt.Text()
+}
+
+func (cc *clientConn) preparedStmtID2CachePreparedStmt(stmtID uint32) (_ *plannercore.CachedPrepareStmt, invalid bool) {
+	sv := cc.ctx.GetSessionVars()
+	if sv == nil {
+		return nil, false
+	}
 	preparedPointer, ok := sv.PreparedStmts[stmtID]
 	if !ok {
-		return "prepared statement not found, ID: " + strconv.FormatUint(uint64(stmtID), 10)
+		// not found
+		return nil, false
 	}
 	preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
 	if !ok {
-		return "invalidate CachedPrepareStmt type, ID: " + strconv.FormatUint(uint64(stmtID), 10)
+		// invalid cache. should never happen.
+		return nil, true
 	}
-	preparedAst := preparedObj.PreparedAst
-	return preparedAst.Stmt.Text()
+	return preparedObj, false
 }
