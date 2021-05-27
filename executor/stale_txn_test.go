@@ -174,7 +174,6 @@ func (s *testStaleTxnSuite) TestStalenessAndHistoryRead(c *C) {
 	tk.MustExec(`set @@tidb_snapshot="2020-10-08 16:45:26";`)
 	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(419993151340544000))
 	c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(0))
-
 }
 
 func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
@@ -304,7 +303,7 @@ func (s *testStaleTxnSerialSuite) TestSetTransactionReadOnlyAsOf(c *C) {
 	c.Assert(err.Error(), Equals, "start transaction read only as of is forbidden after set transaction read only as of")
 }
 
-func (s *testStaleTxnSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
+func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 	testcases := []struct {
 		name       string
 		sql        string
