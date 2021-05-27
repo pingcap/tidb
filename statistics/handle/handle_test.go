@@ -523,7 +523,7 @@ func (s *testStatsSuite) TestInitStatsVer2(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("set @@session.tidb_analyze_version=3")
 	tk.MustExec("create table t(a int, b int, c int, index idx(a), index idxab(a, b))")
 	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (4, 4, 4), (4, 4, 4)")
 	tk.MustExec("analyze table t with 2 topn, 3 buckets")
