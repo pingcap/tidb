@@ -8187,14 +8187,14 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 				TryLockTxn:     101,
 				SQLDigest:      "aabbccdd",
 				Key:            []byte("k1"),
-				AllSQLs:        nil,
+				AllSQLDigests:  nil,
 				TxnHoldingLock: 102,
 			},
 			{
 				TryLockTxn:     102,
 				SQLDigest:      "ddccbbaa",
 				Key:            []byte("k2"),
-				AllSQLs:        []string{"sql1"},
+				AllSQLDigests:  []string{"sql1"},
 				TxnHoldingLock: 101,
 			},
 		},
@@ -8208,12 +8208,12 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 		WaitChain: []deadlockhistory.WaitChainItem{
 			{
 				TryLockTxn:     201,
-				AllSQLs:        []string{},
+				AllSQLDigests:  []string{},
 				TxnHoldingLock: 202,
 			},
 			{
 				TryLockTxn:     202,
-				AllSQLs:        []string{"sql1", "sql2, sql3"},
+				AllSQLDigests:  []string{"sql1", "sql2, sql3"},
 				TxnHoldingLock: 203,
 			},
 			{
