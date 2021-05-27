@@ -1628,6 +1628,20 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: TiDBGCLifetime, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: math.MaxInt64},
 	{Scope: ScopeGlobal, Name: TiDBGCConcurrency, Value: "-1", Type: TypeInt, MinValue: 1, MaxValue: 128, AllowAutoValue: true},
 	{Scope: ScopeGlobal, Name: TiDBGCScanLockMode, Value: "PHYSICAL", Type: TypeEnum, PossibleValues: []string{"PHYSICAL", "LEGACY"}},
+
+	// variable for top SQL feature.
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTopSQL, Value: BoolToOnOff(config.DefTopSQLEnable), Type: TypeBool, AllowEmpty: true, GetSession: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(config.GetGlobalConfig().TopSQL.Enable), nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTopSQLAgentAddress, Value: config.DefTopSQLAgentAddress, Type: TypeStr, AllowEmpty: true, GetSession: func(s *SessionVars) (string, error) {
+		return config.GetGlobalConfig().TopSQL.AgentAddress, nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTopSQLPrecisionSeconds, Value: strconv.Itoa(config.DefTopSQLPrecisionSeconds), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt64, AllowEmpty: true, GetSession: func(s *SessionVars) (string, error) {
+		return strconv.Itoa(config.GetGlobalConfig().TopSQL.PrecisionSeconds), nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTopSQLMaxStatementCount, Value: strconv.Itoa(config.DefTopSQLMaxStatementCount), Type: TypeInt, MinValue: 0, MaxValue: 10000, AllowEmpty: true, GetSession: func(s *SessionVars) (string, error) {
+		return strconv.Itoa(config.GetGlobalConfig().TopSQL.MaxStatementCount), nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

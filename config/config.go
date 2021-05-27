@@ -64,6 +64,14 @@ const (
 	DefTableColumnCountLimit = 1017
 	// DefMaxOfTableColumnCountLimit is maximum limitation of the number of columns in a table
 	DefMaxOfTableColumnCountLimit = 4096
+	// DefTopSQLEnable is the default value of TopSQL.Enable
+	DefTopSQLEnable = false
+	// DefTopSQLAgentAddress is the default value of TopSQL.AgentAddress
+	DefTopSQLAgentAddress = ""
+	// DefTopSQLPrecisionSeconds is the default value of TopSQL.PrecisionSeconds
+	DefTopSQLPrecisionSeconds = 1
+	// DefTopSQLMaxStatementCount is the default value of TopSQL.MaxStatementCount
+	DefTopSQLMaxStatementCount = 5000
 )
 
 // Valid config maps
@@ -137,7 +145,7 @@ type Config struct {
 	DelayCleanTableLock uint64      `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
 	SplitRegionMaxNum   uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
 	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
-	TopSQL              TopSQL      `toml:"top-sql" json:"top-sql"`
+	TopSQL              TopSQL      `toml:"-" json:"-"`
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
 	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
@@ -530,11 +538,13 @@ type StmtSummary struct {
 // TopSQL is the config for top sql.
 type TopSQL struct {
 	// Enable statement summary or not.
-	Enable bool `toml:"enable" json:"enable"`
+	Enable bool `toml:"-" json:"-"`
+	// AgentAddress indicate the collect agent address.
+	AgentAddress string `toml:"-" json:"-"`
 	// The refresh interval of statement summary.
-	RefreshInterval int `toml:"refresh-interval" json:"refresh-interval"`
+	PrecisionSeconds int `toml:"-" json:"-"`
 	// The maximum number of statements kept in memory.
-	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
+	MaxStatementCount int `toml:"-" json:"-"`
 }
 
 // IsolationRead is the config for isolation read.
@@ -667,9 +677,10 @@ var defaultConf = Config{
 		HistorySize:         24,
 	},
 	TopSQL: TopSQL{
-		Enable:          true,
-		RefreshInterval: 1,
-		MaxStmtCount:    5000,
+		Enable:            DefTopSQLEnable,
+		AgentAddress:      DefTopSQLAgentAddress,
+		PrecisionSeconds:  DefTopSQLPrecisionSeconds,
+		MaxStatementCount: DefTopSQLMaxStatementCount,
 	},
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
@@ -960,7 +971,8 @@ func TableLockEnabled() bool {
 
 // TopSQLEnabled uses to check whether enabled the top SQL feature.
 func TopSQLEnabled() bool {
-	return GetGlobalConfig().TopSQL.Enable
+	cfg := GetGlobalConfig()
+	return cfg.TopSQL.Enable && cfg.TopSQL.AgentAddress != ""
 }
 
 // TableLockDelayClean uses to get the time of delay clean table lock.
