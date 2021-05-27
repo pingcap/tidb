@@ -1160,7 +1160,6 @@ import (
 	TextStringList                         "text string list"
 	TimeUnit                               "Time unit for 'DATE_ADD', 'DATE_SUB', 'ADDDATE', 'SUBDATE', 'EXTRACT'"
 	TimestampUnit                          "Time unit for 'TIMESTAMPADD' and 'TIMESTAMPDIFF'"
-	TimestampBound                         "Timestamp bound for start transaction with timestamp mode"
 	LockType                               "Table locks type"
 	TransactionChar                        "Transaction characteristic"
 	TransactionChars                       "Transaction characteristic list"
@@ -2654,6 +2653,12 @@ BeginTransactionStmt:
 	{
 		$$ = &ast.BeginStmt{}
 	}
+|	"START" "TRANSACTION" "WITH" "CAUSAL" "CONSISTENCY" "ONLY"
+	{
+		$$ = &ast.BeginStmt{
+			CausalConsistencyOnly: true,
+		}
+	}
 |	"START" "TRANSACTION" "READ" "ONLY"
 	{
 		$$ = &ast.BeginStmt{
@@ -2665,55 +2670,6 @@ BeginTransactionStmt:
 		$$ = &ast.BeginStmt{
 			ReadOnly: true,
 			AsOf:     $5.(*ast.AsOfClause),
-		}
-	}
-|	"START" "TRANSACTION" "READ" "ONLY" "WITH" "TIMESTAMP" "BOUND" TimestampBound
-	{
-		$$ = &ast.BeginStmt{
-			ReadOnly: true,
-			Bound:    $8.(*ast.TimestampBound),
-		}
-	}
-|	"START" "TRANSACTION" "WITH" "CAUSAL" "CONSISTENCY" "ONLY"
-	{
-		$$ = &ast.BeginStmt{
-			CausalConsistencyOnly: true,
-		}
-	}
-
-TimestampBound:
-	"STRONG"
-	{
-		$$ = &ast.TimestampBound{
-			Mode: ast.TimestampBoundStrong,
-		}
-	}
-|	"READ" "TIMESTAMP" Expression
-	{
-		$$ = &ast.TimestampBound{
-			Mode:      ast.TimestampBoundReadTimestamp,
-			Timestamp: $3.(ast.ExprNode),
-		}
-	}
-|	"MIN" "READ" "TIMESTAMP" Expression
-	{
-		$$ = &ast.TimestampBound{
-			Mode:      ast.TimestampBoundMinReadTimestamp,
-			Timestamp: $4.(ast.ExprNode),
-		}
-	}
-|	"MAX" "STALENESS" Expression
-	{
-		$$ = &ast.TimestampBound{
-			Mode:      ast.TimestampBoundMaxStaleness,
-			Timestamp: $3.(ast.ExprNode),
-		}
-	}
-|	"EXACT" "STALENESS" Expression
-	{
-		$$ = &ast.TimestampBound{
-			Mode:      ast.TimestampBoundExactStaleness,
-			Timestamp: $3.(ast.ExprNode),
 		}
 	}
 
@@ -5400,7 +5356,6 @@ AsOfClause:
 	asof "TIMESTAMP" Expression
 	{
 		$$ = &ast.AsOfClause{
-			Mode:   ast.TimestampReadExactTimestamp,
 			TsExpr: $3.(ast.ExprNode),
 		}
 	}
