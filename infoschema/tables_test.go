@@ -1587,7 +1587,7 @@ func (s *testDataLockWaitSuite) TestDataLockWait(c *C) {
 	_, digest1 := parser.NormalizeDigest("select * from t1 for update;")
 	_, digest2 := parser.NormalizeDigest("update t1 set f1=1 where id=2;")
 	tk := s.newTestKitWithRoot(c)
-	tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS;").Check(testkit.Rows("3 a 1 2 "+digest1.String(), "6 b 4 5 "+digest2.String()))
+	tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS;").Check(testkit.Rows("a 1 2 "+digest1.String(), "b 4 5 "+digest2.String()))
 }
 
 func (s *testDataLockWaitSuite) TestDataLockPrivilege(c *C) {
