@@ -1410,7 +1410,7 @@ func (e *memtableRetriever) setNewTiKVRegionPeersCols(region *helper.RegionInfo)
 	}
 	downPeerMap := make(map[int64]int64, len(region.DownPeers))
 	for _, peerStat := range region.DownPeers {
-		downPeerMap[peerStat.ID] = peerStat.DownSec
+		downPeerMap[peerStat.Peer.ID] = peerStat.DownSec
 	}
 	for _, peer := range region.Peers {
 		row := make([]types.Datum, len(infoschema.TableTiKVRegionPeersCols))
@@ -1427,11 +1427,11 @@ func (e *memtableRetriever) setNewTiKVRegionPeersCols(region *helper.RegionInfo)
 		} else {
 			row[4].SetInt64(0)
 		}
-		if pendingPeerIDSet.Exist(peer.ID) {
-			row[5].SetString(pendingPeer, mysql.DefaultCollationName)
-		} else if downSec, ok := downPeerMap[peer.ID]; ok {
+		if downSec, ok := downPeerMap[peer.ID]; ok {
 			row[5].SetString(downPeer, mysql.DefaultCollationName)
 			row[6].SetInt64(downSec)
+		} else if pendingPeerIDSet.Exist(peer.ID) {
+			row[5].SetString(pendingPeer, mysql.DefaultCollationName)
 		} else {
 			row[5].SetString(normalPeer, mysql.DefaultCollationName)
 		}
