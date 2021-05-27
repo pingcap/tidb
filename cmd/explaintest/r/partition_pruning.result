@@ -206,50 +206,43 @@ a
 1
 explain format = 'brief' SELECT * FROM t1 WHERE a = 1;
 id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p1	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[1,1], keep order:false, stats:pseudo
+Point_Get	1.00	root	table:t1, partition:p1	handle:1
 SELECT * FROM t1 WHERE a = 2 order by a;
 a
 2
 explain format = 'brief' SELECT * FROM t1 WHERE a = 2;
 id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p2	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[2,2], keep order:false, stats:pseudo
+Point_Get	1.00	root	table:t1, partition:p2	handle:2
 SELECT * FROM t1 WHERE a = 3 order by a;
 a
 3
 explain format = 'brief' SELECT * FROM t1 WHERE a = 3;
 id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p3	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[3,3], keep order:false, stats:pseudo
+Point_Get	1.00	root	table:t1, partition:p3	handle:3
 SELECT * FROM t1 WHERE a = 4 order by a;
 a
 4
 explain format = 'brief' SELECT * FROM t1 WHERE a = 4;
 id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p4	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[4,4], keep order:false, stats:pseudo
+Point_Get	1.00	root	table:t1, partition:p4	handle:4
 SELECT * FROM t1 WHERE a = 5 order by a;
 a
 5
 explain format = 'brief' SELECT * FROM t1 WHERE a = 5;
 id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p5	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[5,5], keep order:false, stats:pseudo
+Point_Get	1.00	root	table:t1, partition:p5	handle:5
 SELECT * FROM t1 WHERE a = 6 order by a;
 a
 6
 explain format = 'brief' SELECT * FROM t1 WHERE a = 6;
 id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:max	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[6,6], keep order:false, stats:pseudo
+Point_Get	1.00	root	table:t1, partition:max	handle:6
 SELECT * FROM t1 WHERE a = 7 order by a;
 a
 7
 explain format = 'brief' SELECT * FROM t1 WHERE a = 7;
 id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:max	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[7,7], keep order:false, stats:pseudo
+Point_Get	1.00	root	table:t1, partition:max	handle:7
 SELECT * FROM t1 WHERE a >= 1 order by a;
 a
 1
@@ -544,43 +537,37 @@ a
 1
 explain format = 'brief' SELECT * FROM t1 WHERE a = 1;
 id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p1	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[1,1], keep order:false, stats:pseudo
+Point_Get	1.00	root	table:t1, partition:p1	handle:1
 SELECT * FROM t1 WHERE a = 2;
 a
 2
 explain format = 'brief' SELECT * FROM t1 WHERE a = 2;
 id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p2	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[2,2], keep order:false, stats:pseudo
+Point_Get	1.00	root	table:t1, partition:p2	handle:2
 SELECT * FROM t1 WHERE a = 3;
 a
 3
 explain format = 'brief' SELECT * FROM t1 WHERE a = 3;
 id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p3	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[3,3], keep order:false, stats:pseudo
+Point_Get	1.00	root	table:t1, partition:p3	handle:3
 SELECT * FROM t1 WHERE a = 4;
 a
 4
 explain format = 'brief' SELECT * FROM t1 WHERE a = 4;
 id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:p4	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[4,4], keep order:false, stats:pseudo
+Point_Get	1.00	root	table:t1, partition:p4	handle:4
 SELECT * FROM t1 WHERE a = 5;
 a
 5
 explain format = 'brief' SELECT * FROM t1 WHERE a = 5;
 id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:max	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[5,5], keep order:false, stats:pseudo
+Point_Get	1.00	root	table:t1, partition:max	handle:5
 SELECT * FROM t1 WHERE a = 6;
 a
 6
 explain format = 'brief' SELECT * FROM t1 WHERE a = 6;
 id	estRows	task	access object	operator info
-TableReader	1.00	root	partition:max	data:TableRangeScan
-└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[6,6], keep order:false, stats:pseudo
+Point_Get	1.00	root	table:t1, partition:max	handle:6
 SELECT * FROM t1 WHERE a >= 1 order by a;
 a
 1
@@ -1795,9 +1782,7 @@ TableReader	3323.33	root	partition:all	data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t7	keep order:false, stats:pseudo
 explain format = 'brief' select * from t7 where a = 90;
 id	estRows	task	access object	operator info
-TableReader	10.00	root	partition:dual	data:Selection
-└─Selection	10.00	cop[tikv]		eq(test.t7.a, 90)
-  └─TableFullScan	10000.00	cop[tikv]	table:t7	keep order:false, stats:pseudo
+TableDual	0.00	root		rows:0
 explain format = 'brief' select * from t7 where a > 90;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:dual	data:Selection
@@ -1919,9 +1904,7 @@ TableReader	3323.33	root	partition:all	data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t7	keep order:false, stats:pseudo
 explain format = 'brief' select * from t7 where a = 90;
 id	estRows	task	access object	operator info
-TableReader	10.00	root	partition:dual	data:Selection
-└─Selection	10.00	cop[tikv]		eq(test.t7.a, 90)
-  └─TableFullScan	10000.00	cop[tikv]	table:t7	keep order:false, stats:pseudo
+TableDual	0.00	root		rows:0
 explain format = 'brief' select * from t7 where a > 90;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:dual	data:Selection

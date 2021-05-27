@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -524,6 +525,15 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 
 	tk.MustExec("drop database ctwl_db")
 	tk.MustExec("drop database ctwl_db1")
+
+	// Test create table like at temporary mode.
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists temporary_table;")
+	tk.MustExec("create global temporary table temporary_table (a int, b int,index(a)) on commit delete rows")
+	tk.MustExec("drop table if exists temporary_table_t1;")
+	_, err = tk.Exec("create table temporary_table_t1 like temporary_table")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
+	tk.MustExec("drop table if exists temporary_table;")
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.

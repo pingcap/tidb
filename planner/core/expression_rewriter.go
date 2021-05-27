@@ -65,7 +65,7 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice) (expression.Expression, error) {
 	var is infoschema.InfoSchema
 	// in tests, it may be null
-	if s, ok := sctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema); ok {
+	if s, ok := sctx.GetInfoSchema().(infoschema.InfoSchema); ok {
 		is = s
 	}
 	b, savedBlockNames := NewPlanBuilder(sctx, is, &hint.BlockHintProcessor{})
@@ -536,6 +536,15 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 			return v, true
 		}
 	}
+
+	// Lexpr cannot compare with rexpr by different collate
+	opString := new(strings.Builder)
+	v.Op.Format(opString)
+	er.err = expression.CheckIllegalMixCollation(opString.String(), []expression.Expression{lexpr, rexpr}, 0)
+	if er.err != nil {
+		return v, true
+	}
+
 	switch v.Op {
 	// Only EQ, NE and NullEQ can be composed with and.
 	case opcode.EQ, opcode.NE, opcode.NullEQ:
@@ -1239,11 +1248,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	var err error
 	if sysVar.HasNoneScope() {
 		val = sysVar.Value
-	} else if v.IsGlobal || !sysVar.HasSessionScope() {
-		// The condition "|| !sysVar.HasSessionScope()" is a workaround
-		// for issue https://github.com/pingcap/tidb/issues/24368
-		// Where global values are cached incorrectly. When this issue closes,
-		// the if statement here can be simplified.
+	} else if v.IsGlobal {
 		val, err = variable.GetGlobalSystemVar(sessionVars, name)
 	} else {
 		val, err = variable.GetSessionOrGlobalSystemVar(sessionVars, name)
