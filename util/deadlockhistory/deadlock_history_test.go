@@ -148,7 +148,7 @@ func (s *testDeadlockHistorySuite) TestGetDatum(c *C) {
 				TryLockTxn:     101,
 				SQLDigest:      "sql1",
 				Key:            []byte("k1"),
-				AllSQLs:        []string{"sql1", "sql2"},
+				AllSQLDigests:  []string{"sql1", "sql2"},
 				TxnHoldingLock: 102,
 			},
 			// It should work even some information are missing.
@@ -164,12 +164,12 @@ func (s *testDeadlockHistorySuite) TestGetDatum(c *C) {
 		WaitChain: []WaitChainItem{
 			{
 				TryLockTxn:     201,
-				AllSQLs:        []string{},
+				AllSQLDigests:  []string{},
 				TxnHoldingLock: 202,
 			},
 			{
 				TryLockTxn:     202,
-				AllSQLs:        []string{"sql1"},
+				AllSQLDigests:  []string{"sql1"},
 				TxnHoldingLock: 201,
 			},
 		},
@@ -201,7 +201,7 @@ func (s *testDeadlockHistorySuite) TestGetDatum(c *C) {
 	c.Assert(res[0][3].GetValue(), Equals, uint64(101))    // TRY_LOCK_TRX_ID
 	c.Assert(res[0][4].GetValue(), Equals, "sql1")         // SQL_DIGEST
 	c.Assert(res[0][5].GetValue(), Equals, "6B31")         // KEY
-	c.Assert(res[0][6].GetValue(), Equals, "[sql1, sql2]") // ALL_SQLS
+	c.Assert(res[0][6].GetValue(), Equals, "[sql1, sql2]") // ALL_SQL_DIGESTS
 	c.Assert(res[0][7].GetValue(), Equals, uint64(102))    // TRX_HOLDING_LOCK
 
 	c.Assert(res[1][0].GetValue(), Equals, uint64(1))   // ID
@@ -210,21 +210,21 @@ func (s *testDeadlockHistorySuite) TestGetDatum(c *C) {
 	c.Assert(res[1][3].GetValue(), Equals, uint64(102)) // TRY_LOCK_TRX_ID
 	c.Assert(res[1][4].GetValue(), Equals, nil)         // SQL_DIGEST
 	c.Assert(res[1][5].GetValue(), Equals, nil)         // KEY
-	c.Assert(res[1][6].GetValue(), Equals, nil)         // ALL_SQLS
+	c.Assert(res[1][6].GetValue(), Equals, nil)         // ALL_SQL_DIGESTS
 	c.Assert(res[1][7].GetValue(), Equals, uint64(101)) // TRX_HOLDING_LOCK
 
 	c.Assert(res[2][0].GetValue(), Equals, uint64(2))   // ID
 	c.Assert(toGoTime(res[2][1]), Equals, time2)        // OCCUR_TIME
 	c.Assert(res[2][2].GetValue(), Equals, int64(1))    // RETRYABLE
 	c.Assert(res[2][3].GetValue(), Equals, uint64(201)) // TRY_LOCK_TRX_ID
-	c.Assert(res[2][6].GetValue(), Equals, "[]")        // ALL_SQLS
+	c.Assert(res[2][6].GetValue(), Equals, "[]")        // ALL_SQL_DIGESTS
 	c.Assert(res[2][7].GetValue(), Equals, uint64(202)) // TRX_HOLDING_LOCK
 
 	c.Assert(res[3][0].GetValue(), Equals, uint64(2))   // ID
 	c.Assert(toGoTime(res[3][1]), Equals, time2)        // OCCUR_TIME
 	c.Assert(res[3][2].GetValue(), Equals, int64(1))    // RETRYABLE
 	c.Assert(res[3][3].GetValue(), Equals, uint64(202)) // TRY_LOCK_TRX_ID
-	c.Assert(res[3][6].GetValue(), Equals, "[sql1]")    // ALL_SQLS
+	c.Assert(res[3][6].GetValue(), Equals, "[sql1]")    // ALL_SQL_DIGESTS
 	c.Assert(res[3][7].GetValue(), Equals, uint64(201)) // TRX_HOLDING_LOCK
 }
 
