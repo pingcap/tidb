@@ -199,7 +199,6 @@ func (c *Config) getTiKVConfig() *tikvcfg.Config {
 	return &tikvcfg.Config{
 		CommitterConcurrency:  c.Performance.CommitterConcurrency,
 		MaxTxnTTL:             c.Performance.MaxTxnTTL,
-		ServerMemoryQuota:     defTiKVCfg.ServerMemoryQuota,
 		TiKVClient:            c.TiKVClient,
 		Security:              c.Security.ClusterSecurity(),
 		PDClient:              c.PDClient,
