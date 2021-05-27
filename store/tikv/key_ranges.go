@@ -147,64 +147,15 @@ func (r *KeyRanges) ToPBRanges() []*coprocessor.KeyRange {
 func SplitRegionRanges(bo *Backoffer, cache *RegionCache, keyRanges []kv.KeyRange) ([]kv.KeyRange, error) {
 	ranges := NewKeyRanges(keyRanges)
 
-	var ret []kv.KeyRange
-	appendRange := func(regionWithRangeInfo *KeyLocation, ranges *KeyRanges) {
-		for i := 0; i < ranges.Len(); i++ {
-			ret = append(ret, ranges.At(i))
-		}
-	}
-
-	err := SplitKeyRanges(bo, cache, ranges, appendRange)
+	locations, err := cache.SplitKeyRangesByLocations(bo, ranges)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return ret, nil
-}
-
-// SplitKeyRanges splits KeyRanges by the regions info from cache.
-func SplitKeyRanges(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, fn func(regionWithRangeInfo *KeyLocation, ranges *KeyRanges)) error {
-	for ranges.Len() > 0 {
-		loc, err := cache.LocateKey(bo, ranges.At(0).StartKey)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		// Iterate to the first range that is not complete in the region.
-		var i int
-		for ; i < ranges.Len(); i++ {
-			r := ranges.At(i)
-			if !(loc.Contains(r.EndKey) || bytes.Equal(loc.EndKey, r.EndKey)) {
-				break
-			}
-		}
-		// All rest ranges belong to the same region.
-		if i == ranges.Len() {
-			fn(loc, ranges)
-			break
-		}
-
-		r := ranges.At(i)
-		if loc.Contains(r.StartKey) {
-			// Part of r is not in the region. We need to split it.
-			taskRanges := ranges.Slice(0, i)
-			taskRanges.last = &kv.KeyRange{
-				StartKey: r.StartKey,
-				EndKey:   loc.EndKey,
-			}
-			fn(loc, taskRanges)
-
-			ranges = ranges.Slice(i+1, ranges.Len())
-			ranges.first = &kv.KeyRange{
-				StartKey: loc.EndKey,
-				EndKey:   r.EndKey,
-			}
-		} else {
-			// rs[i] is not in the region.
-			taskRanges := ranges.Slice(0, i)
-			fn(loc, taskRanges)
-			ranges = ranges.Slice(i, ranges.Len())
+	var ret []kv.KeyRange
+	for _, loc := range locations {
+		for i := 0; i < loc.Ranges.Len(); i++ {
+			ret = append(ret, loc.Ranges.At(i))
 		}
 	}
-
-	return nil
+	return ret, nil
 }

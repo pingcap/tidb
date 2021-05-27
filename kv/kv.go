@@ -159,8 +159,6 @@ type Transaction interface {
 	SetOption(opt int, val interface{})
 	// GetOption returns the option
 	GetOption(opt int) interface{}
-	// DelOption deletes an option.
-	DelOption(opt int)
 	// IsReadOnly checks if the transaction has only performed read operations.
 	IsReadOnly() bool
 	// StartTS returns the transaction start timestamp.
@@ -288,6 +286,8 @@ type Request struct {
 	IsStaleness bool
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels []*metapb.StoreLabel
+	// ResourceGroupTag indicates the kv request task group.
+	ResourceGroupTag []byte
 }
 
 // ResultSubset represents a result subset from a single storage unit.
@@ -320,8 +320,6 @@ type Snapshot interface {
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option. Only ReplicaRead is supported for snapshot
 	SetOption(opt int, val interface{})
-	// DelOption deletes an option.
-	DelOption(opt int)
 }
 
 // BatchGetter is the interface for BatchGet.

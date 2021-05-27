@@ -1067,6 +1067,7 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 	statistics.Version0: sqlexec.ExecOptionAnalyzeVer1,
 	statistics.Version1: sqlexec.ExecOptionAnalyzeVer1,
 	statistics.Version2: sqlexec.ExecOptionAnalyzeVer2,
+	statistics.Version3: sqlexec.ExecOptionAnalyzeVer3,
 }
 
 func (h *Handle) execAutoAnalyze(statsVer int, sql string, params ...interface{}) {
