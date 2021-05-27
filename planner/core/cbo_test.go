@@ -295,10 +295,10 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is)
+		ret := &core.PreprocessorReturn{}
+		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
 		c.Assert(err, IsNil)
 		planString := core.ToString(p)
 		s.testData.OnRecord(func() {
@@ -330,10 +330,10 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is)
+		ret := &core.PreprocessorReturn{}
+		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
 		c.Assert(err, IsNil)
 		planString := core.ToString(p)
 		s.testData.OnRecord(func() {
@@ -402,10 +402,10 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		stmt := stmts[0]
 		err = executor.ResetContextOfStmt(ctx, stmt)
 		c.Assert(err, IsNil)
-		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is)
+		ret := &core.PreprocessorReturn{}
+		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
 		c.Assert(err, IsNil)
 		planString := core.ToString(p)
 		s.testData.OnRecord(func() {
@@ -491,10 +491,10 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		c.Assert(err, IsNil)
 		stmt := stmts[0]
 
-		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is, core.InPrepare)
+		ret := &core.PreprocessorReturn{}
+		err = core.Preprocess(ctx, stmt, core.InPrepare, core.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
 		c.Assert(err, IsNil)
 
 		c.Assert(core.ToString(p), Equals, best, Commentf("for %s", sql))
@@ -726,14 +726,14 @@ func BenchmarkOptimize(b *testing.B) {
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is)
+		ret := &core.PreprocessorReturn{}
+		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil)
 
 		b.Run(tt.sql, func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+				_, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
 				c.Assert(err, IsNil)
 			}
 			b.ReportAllocs()

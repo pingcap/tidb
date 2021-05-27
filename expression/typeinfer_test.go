@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/domain"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -139,10 +138,10 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 		err = se.NewTxn(context.Background())
 		c.Assert(err, IsNil)
 
-		is := domain.GetDomain(sctx).InfoSchema()
-		err = plannercore.Preprocess(sctx, stmt, is)
+		ret := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(sctx, stmt, plannercore.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil, comment)
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmt, is)
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmt, ret.InfoSchema)
 		c.Assert(err, IsNil, comment)
 		tp := p.Schema().Columns[0].RetType
 
