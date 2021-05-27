@@ -701,6 +701,38 @@ func (c *RegionCache) LocateEndKey(bo *Backoffer, key []byte) (*KeyLocation, err
 	}, nil
 }
 
+func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) (r *Region, err error) {
+	r = c.searchCachedRegion(key, isEndKey)
+	if r == nil {
+		// load region when it is not exists or expired.
+		lr, err := c.loadRegion(bo, key, isEndKey)
+		if err != nil {
+			// no region data, return error if failure.
+			return nil, err
+		}
+		logutil.Eventf(bo.GetCtx(), "load region %d from pd, due to cache-miss", lr.GetID())
+		r = lr
+		c.mu.Lock()
+		c.insertRegionToCache(r)
+		c.mu.Unlock()
+	} else if r.checkNeedReloadAndMarkUpdated() {
+		// load region when it be marked as need reload.
+		lr, err := c.loadRegion(bo, key, isEndKey)
+		if err != nil {
+			// ignore error and use old region info.
+			logutil.Logger(bo.GetCtx()).Error("load region failure",
+				zap.ByteString("key", key), zap.Error(err))
+		} else {
+			logutil.Eventf(bo.GetCtx(), "load region %d from pd, due to need-reload", lr.GetID())
+			r = lr
+			c.mu.Lock()
+			c.insertRegionToCache(r)
+			c.mu.Unlock()
+		}
+	}
+	return r, nil
+}
+
 // OnSendFailForRegion handles send request fail logic on a region.
 func (c *RegionCache) OnSendFailForRegion(bo *Backoffer, store *Store, rid RegionVerID, r *Region, scheduleReload bool, err error) {
 
@@ -734,38 +766,6 @@ func (c *RegionCache) OnSendFailForRegion(bo *Backoffer, store *Store, rid Regio
 	if scheduleReload {
 		r.scheduleReload()
 	}
-}
-
-func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) (r *Region, err error) {
-	r = c.searchCachedRegion(key, isEndKey)
-	if r == nil {
-		// load region when it is not exists or expired.
-		lr, err := c.loadRegion(bo, key, isEndKey)
-		if err != nil {
-			// no region data, return error if failure.
-			return nil, err
-		}
-		logutil.Eventf(bo.GetCtx(), "load region %d from pd, due to cache-miss", lr.GetID())
-		r = lr
-		c.mu.Lock()
-		c.insertRegionToCache(r)
-		c.mu.Unlock()
-	} else if r.checkNeedReloadAndMarkUpdated() {
-		// load region when it be marked as need reload.
-		lr, err := c.loadRegion(bo, key, isEndKey)
-		if err != nil {
-			// ignore error and use old region info.
-			logutil.Logger(bo.GetCtx()).Error("load region failure",
-				zap.ByteString("key", key), zap.Error(err))
-		} else {
-			logutil.Eventf(bo.GetCtx(), "load region %d from pd, due to need-reload", lr.GetID())
-			r = lr
-			c.mu.Lock()
-			c.insertRegionToCache(r)
-			c.mu.Unlock()
-		}
-	}
-	return r, nil
 }
 
 // OnSendFail handles send request fail logic.
