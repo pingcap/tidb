@@ -140,7 +140,7 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 	failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag")
 }
 
-func (s *testStaleTxnSerialSuite) TestStalenessAndHistoryRead(c *C) {
+func (s *testStaleTxnSuite) TestStalenessAndHistoryRead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
@@ -152,7 +152,6 @@ func (s *testStaleTxnSerialSuite) TestStalenessAndHistoryRead(c *C) {
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
 	// set @@tidb_snapshot before staleness txn
-	tk.MustExec(`set @@tidb_snapshot="2016-10-08 16:45:26";`)
 	tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00';`)
 	// 1599321600000 == 2020-09-06 00:00:00
 	c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, int64(1599321600000))
@@ -162,6 +161,20 @@ func (s *testStaleTxnSerialSuite) TestStalenessAndHistoryRead(c *C) {
 	tk.MustExec(`set @@tidb_snapshot="2016-10-08 16:45:26";`)
 	c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, int64(1599321600000))
 	tk.MustExec("commit")
+
+	// test mutex
+	tk.MustExec(`set @@tidb_snapshot="2020-10-08 16:45:26";`)
+	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(419993151340544000))
+	tk.MustExec("SET TRANSACTION READ ONLY AS OF TIMESTAMP '2020-10-08 16:46:26'")
+	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(419993167069184000))
+
+	tk.MustExec("SET TRANSACTION READ ONLY AS OF TIMESTAMP '2020-10-08 16:46:26'")
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(419993167069184000))
+	tk.MustExec(`set @@tidb_snapshot="2020-10-08 16:45:26";`)
+	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(419993151340544000))
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(0))
+
 }
 
 func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
@@ -291,7 +304,7 @@ func (s *testStaleTxnSerialSuite) TestSetTransactionReadOnlyAsOf(c *C) {
 	c.Assert(err.Error(), Equals, "start transaction read only as of is forbidden after set transaction read only as of")
 }
 
-func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
+func (s *testStaleTxnSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 	testcases := []struct {
 		name       string
 		sql        string
@@ -435,7 +448,7 @@ func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *
 	}
 }
 
-func (s *testStaleTxnSerialSuite) TestSpecialSQLInStalenessTxn(c *C) {
+func (s *testStaleTxnSuite) TestSpecialSQLInStalenessTxn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testcases := []struct {
