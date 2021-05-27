@@ -16,6 +16,7 @@ package session_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,6 +25,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
@@ -37,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -171,27 +174,33 @@ func (s *testPessimisticSuite) TestTxnMode(c *C) {
 }
 
 func (s *testPessimisticSuite) TestDeadlock(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists deadlock")
-	tk.MustExec("create table deadlock (k int primary key, v int)")
-	tk.MustExec("insert into deadlock values (1, 1), (2, 1)")
+	deadlockhistory.GlobalDeadlockHistory.Clear()
+
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("drop table if exists deadlock")
+	tk1.MustExec("create table deadlock (k int primary key, v int)")
+	tk1.MustExec("insert into deadlock values (1, 1), (2, 1)")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("update deadlock set v = v + 1 where k = 1")
+	ts1, err := strconv.ParseUint(tk1.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string), 10, 64)
+	c.Assert(err, IsNil)
+
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustExec("begin pessimistic")
+	ts2, err := strconv.ParseUint(tk2.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string), 10, 64)
+	c.Assert(err, IsNil)
 
 	syncCh := make(chan error)
 	go func() {
-		tk1 := testkit.NewTestKitWithInit(c, s.store)
-		tk1.MustExec("begin pessimistic")
-		tk1.MustExec("update deadlock set v = v + 1 where k = 2")
+		tk2.MustExec("update deadlock set v = v + 1 where k = 2")
 		syncCh <- nil
-		_, err := tk1.Exec("update deadlock set v = v + 1 where k = 1")
+		_, err := tk2.Exec("update deadlock set v = v + 1 where k = 1")
 		syncCh <- err
 	}()
-	tk.MustExec("begin pessimistic")
-	tk.MustExec("update deadlock set v = v + 1 where k = 1")
 	<-syncCh
-	_, err1 := tk.Exec("update deadlock set v = v + 1 where k = 2")
+	_, err1 := tk1.Exec("update deadlock set v = v + 1 where k = 2")
 	err2 := <-syncCh
 	// Either err1 or err2 is deadlock error.
-	var err error
 	if err1 != nil {
 		c.Assert(err2, IsNil)
 		err = err1
@@ -201,6 +210,21 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 	e, ok := errors.Cause(err).(*terror.Error)
 	c.Assert(ok, IsTrue)
 	c.Assert(int(e.Code()), Equals, mysql.ErrLockDeadlock)
+
+	_, digest := parser.NormalizeDigest("update deadlock set v = v + 1 where k = 1")
+
+	expectedDeadlockInfo := []string{
+		fmt.Sprintf("%v %v %v", ts1, ts2, digest),
+		fmt.Sprintf("%v %v %v", ts2, ts1, digest),
+	}
+	// The last one is the transaction that encountered the deadlock error.
+	if err1 != nil {
+		// Swap the two to match the correct order.
+		expectedDeadlockInfo[0], expectedDeadlockInfo[1] = expectedDeadlockInfo[1], expectedDeadlockInfo[0]
+	}
+	res := tk1.MustQuery("select deadlock_id, try_lock_trx_id, trx_holding_lock, current_sql_digest from information_schema.deadlocks")
+	res.CheckAt([]int{1, 2, 3}, testkit.Rows(expectedDeadlockInfo...))
+	c.Assert(res.Rows()[0][0], Equals, res.Rows()[1][0])
 }
 
 func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
@@ -2029,14 +2053,14 @@ func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 	tsCh := make(chan uint64)
 	go func() {
 		tk3.MustExec("update tk set c2 = c2 + 1 where c1 = 1")
-		lastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		lastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background(), &oracle.Option{TxnScope: kv.GlobalTxnScope})
 		c.Assert(err, IsNil)
 		tsCh <- lastTS
 		tk3.MustExec("commit")
 		tsCh <- lastTS
 	}()
 	// tk2LastTS should be its forUpdateTS
-	tk2LastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	tk2LastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background(), &oracle.Option{TxnScope: kv.GlobalTxnScope})
 	c.Assert(err, IsNil)
 	tk2.MustExec("commit")
 
@@ -2298,7 +2322,7 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 	err = <-errCh
 	c.Assert(err, Equals, nil)
 	tk.MustExec("commit")
-	tk2.MustExec("admin check table t")
+	tk.MustExec("admin check table t")
 	err = <-errCh
 	c.Assert(err, Equals, nil)
 }

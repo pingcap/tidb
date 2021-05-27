@@ -17,7 +17,6 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 var _ = Suite(testMockSuite{})
@@ -29,7 +28,7 @@ func (s testMockSuite) TestInterface(c *C) {
 	storage := newMockStorage()
 	storage.GetClient()
 	storage.UUID()
-	version, err := storage.CurrentVersion(oracle.GlobalTxnScope)
+	version, err := storage.CurrentVersion(GlobalTxnScope)
 	c.Check(err, IsNil)
 	snapshot := storage.GetSnapshot(version)
 	_, err = snapshot.BatchGet(context.Background(), []Key{Key("abc"), Key("def")})
@@ -45,7 +44,6 @@ func (s testMockSuite) TestInterface(c *C) {
 		mock.GetOption(23)
 	}
 	transaction.StartTS()
-	transaction.DelOption(23)
 	if transaction.IsReadOnly() {
 		_, err = transaction.Get(context.TODO(), Key("lock"))
 		c.Check(err, IsNil)

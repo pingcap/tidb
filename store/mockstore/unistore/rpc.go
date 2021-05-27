@@ -59,11 +59,20 @@ type RPCClient struct {
 	rpcCli Client
 }
 
+// UnistoreRPCClientSendHook exports for test.
+var UnistoreRPCClientSendHook func(*tikvrpc.Request)
+
 // SendRequest sends a request to mock cluster.
 func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	failpoint.Inject("rpcServerBusy", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}))
+		}
+	})
+
+	failpoint.Inject("unistoreRPCClientSendHook", func(val failpoint.Value) {
+		if val.(bool) && UnistoreRPCClientSendHook != nil {
+			UnistoreRPCClientSendHook(req)
 		}
 	})
 
