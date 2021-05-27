@@ -1876,7 +1876,7 @@ const (
 	tombstone
 )
 
-// IsTiFlash returns true if thje storeType is TiFlash
+// IsTiFlash returns true if the storeType is TiFlash
 func (s *Store) IsTiFlash() bool {
 	return s.storeType == tikvrpc.TiFlash
 }
