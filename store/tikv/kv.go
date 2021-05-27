@@ -408,7 +408,7 @@ func (s *KVStore) updateSafeTS(ctx context.Context) {
 	wg.Add(len(stores))
 	for _, store := range stores {
 		storeID := store.storeID
-		storeAddr := store.Addr
+		storeAddr := store.addr
 		go func(ctx context.Context, wg *sync.WaitGroup, storeID uint64, storeAddr string) {
 			defer wg.Done()
 			resp, err := tikvClient.SendRequest(ctx, storeAddr, tikvrpc.NewRequest(tikvrpc.CmdStoreSafeTS, &kvrpcpb.StoreSafeTSRequest{KeyRange: &kvrpcpb.KeyRange{

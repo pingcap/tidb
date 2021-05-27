@@ -518,7 +518,7 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 		cachedRegion.invalidate(Other)
 		logutil.BgLogger().Info("invalidate current region, because others failed on same store",
 			zap.Uint64("region", id.GetID()),
-			zap.String("store", store.Addr))
+			zap.String("store", store.addr))
 		return nil, nil
 	}
 
@@ -636,7 +636,7 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID, loadBa
 			cachedRegion.invalidate(Other)
 			logutil.BgLogger().Info("invalidate current region, because others failed on same store",
 				zap.Uint64("region", id.GetID()),
-				zap.String("store", store.Addr))
+				zap.String("store", store.addr))
 			// TiFlash will always try to find out a valid peer, avoiding to retry too many times.
 			continue
 		}
@@ -843,7 +843,7 @@ func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *Store, reg
 				storeIdx, s := rs.accessStore(accessMode, accessIdx)
 				epoch := rs.storeEpochs[storeIdx]
 				if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
-					logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.Addr))
+					logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
 					metrics.RegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 				}
 				// schedule a store addr resolve.
@@ -906,7 +906,7 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 				// invalidate regions in store.
 				epoch := rs.storeEpochs[storeIdx]
 				if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
-					logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.Addr))
+					logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
 					incEpochStoreIdx = storeIdx
 					metrics.RegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 				}
@@ -1288,7 +1288,7 @@ func (c *RegionCache) GetStoresByType(typ tikvrpc.EndpointType) []*Store {
 				})
 			}
 			stores = append(stores, &Store{
-				Addr:    store.Addr,
+				addr:    store.addr,
 				storeID: store.storeID,
 				labels:  store.labels,
 			})
@@ -1495,7 +1495,7 @@ func (c *RegionCache) getStoreAddr(bo *Backoffer, region *Region, store *Store, 
 	state := store.getResolveState()
 	switch state {
 	case resolved, needCheck:
-		addr = store.Addr
+		addr = store.addr
 		return
 	case unresolved:
 		addr, err = store.initResolve(bo, c)
@@ -1573,7 +1573,7 @@ func (c *RegionCache) changeToActiveStore(region *Region, store *Store, storeIdx
 			break
 		}
 	}
-	addr = store.Addr
+	addr = store.addr
 	return
 }
 
@@ -1665,7 +1665,7 @@ func (c *RegionCache) GetTiFlashStoreAddrs() []string {
 	var addrs []string
 	for _, s := range c.storeMu.stores {
 		if s.storeType == tikvrpc.TiFlash {
-			addrs = append(addrs, s.Addr)
+			addrs = append(addrs, s.addr)
 		}
 	}
 	return addrs
@@ -1939,7 +1939,7 @@ func (r *Region) ContainsByEnd(key []byte) bool {
 
 // Store contains a kv process's address.
 type Store struct {
-	Addr         string               // loaded store address
+	addr         string               // loaded store address
 	saddr        string               // loaded store status address
 	storeID      uint64               // store's id
 	state        uint64               // unsafe store storeState
@@ -1981,7 +1981,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 	defer s.resolveMutex.Unlock()
 	if state != unresolved {
 		if state != tombstone {
-			addr = s.Addr
+			addr = s.addr
 		}
 		return
 	}
@@ -2013,13 +2013,13 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		if addr == "" {
 			return "", errors.Errorf("empty store(%d) address", s.storeID)
 		}
-		s.Addr = addr
+		s.addr = addr
 		s.saddr = store.GetStatusAddress()
 		s.storeType = GetStoreTypeByMeta(store)
 		s.labels = store.GetLabels()
 		// Shouldn't have other one changing its state concurrently, but we still use changeResolveStateTo for safety.
 		s.changeResolveStateTo(unresolved, resolved)
-		return s.Addr, nil
+		return s.addr, nil
 	}
 }
 
@@ -2029,7 +2029,7 @@ func isStoreNotFoundError(err error) bool {
 	return strings.Contains(err.Error(), "invalid store ID") && strings.Contains(err.Error(), "not found")
 }
 
-// reResolve try to resolve Addr for store that need check. Returns false if the region is in tombstone state or is
+// reResolve try to resolve addr for store that need check. Returns false if the region is in tombstone state or is
 // deleted.
 func (s *Store) reResolve(c *RegionCache) (bool, error) {
 	var addr string
@@ -2050,7 +2050,7 @@ func (s *Store) reResolve(c *RegionCache) (bool, error) {
 	if store == nil {
 		// store has be removed in PD, we should invalidate all regions using those store.
 		logutil.BgLogger().Info("invalidate regions in removed store",
-			zap.Uint64("store", s.storeID), zap.String("add", s.Addr))
+			zap.Uint64("store", s.storeID), zap.String("add", s.addr))
 		atomic.AddUint32(&s.epoch, 1)
 		s.setResolveState(tombstone)
 		metrics.RegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
@@ -2059,8 +2059,8 @@ func (s *Store) reResolve(c *RegionCache) (bool, error) {
 
 	storeType := GetStoreTypeByMeta(store)
 	addr = store.GetAddress()
-	if s.Addr != addr || !s.IsSameLabels(store.GetLabels()) {
-		newStore := &Store{storeID: s.storeID, Addr: addr, saddr: store.GetStatusAddress(), storeType: storeType, labels: store.GetLabels(), state: uint64(resolved)}
+	if s.addr != addr || !s.IsSameLabels(store.GetLabels()) {
+		newStore := &Store{storeID: s.storeID, addr: addr, saddr: store.GetStatusAddress(), storeType: storeType, labels: store.GetLabels(), state: uint64(resolved)}
 		c.storeMu.Lock()
 		c.storeMu.stores[newStore.storeID] = newStore
 		c.storeMu.Unlock()
@@ -2106,7 +2106,7 @@ func (s *Store) changeResolveStateTo(from, to resolveState) bool {
 	}
 }
 
-// markNeedCheck marks resolved store to be async resolve to check store Addr change.
+// markNeedCheck marks resolved store to be async resolve to check store addr change.
 func (s *Store) markNeedCheck(notifyCheckCh chan struct{}) {
 	if s.changeResolveStateTo(resolved, needCheck) {
 		select {
@@ -2162,7 +2162,7 @@ func (s *Store) startHealthCheckLoopIfNeeded(c *RegionCache) {
 	// This mechanism doesn't support non-TiKV stores currently.
 	if s.storeType != tikvrpc.TiKV {
 		logutil.BgLogger().Info("[health check] skip running health check loop for non-tikv store",
-			zap.Uint64("storeID", s.storeID), zap.String("addr", s.Addr))
+			zap.Uint64("storeID", s.storeID), zap.String("addr", s.addr))
 		return
 	}
 
@@ -2193,7 +2193,7 @@ func (s *Store) checkUntilHealth(c *RegionCache) {
 				if err != nil {
 					logutil.BgLogger().Warn("[health check] failed to re-resolve unhealthy store", zap.Error(err))
 				} else if !valid {
-					logutil.BgLogger().Info("[health check] store meta deleted, stop checking", zap.Uint64("storeID", s.storeID), zap.String("addr", s.Addr))
+					logutil.BgLogger().Info("[health check] store meta deleted, stop checking", zap.Uint64("storeID", s.storeID), zap.String("addr", s.addr))
 					return
 				}
 			}
@@ -2222,7 +2222,7 @@ func (s *Store) requestLiveness(bo *Backoffer, c *RegionCache) (l livenessState)
 		l = unknown
 		return
 	}
-	addr := s.Addr
+	addr := s.addr
 	rsCh := livenessSf.DoChan(addr, func() (interface{}, error) {
 		return invokeKVStatusAPI(addr, StoreLivenessTimeout), nil
 	})
@@ -2240,6 +2240,11 @@ func (s *Store) requestLiveness(bo *Backoffer, c *RegionCache) (l livenessState)
 		return
 	}
 	return
+}
+
+// GetAddr returns the address of the store
+func (s *Store) GetAddr() string {
+	return s.addr
 }
 
 func invokeKVStatusAPI(addr string, timeout time.Duration) (l livenessState) {

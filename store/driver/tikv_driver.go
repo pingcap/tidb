@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	deadlockPB "github.com/pingcap/kvproto/pkg/deadlock"
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
@@ -336,24 +336,21 @@ func (s *tikvStore) ShowStatus(ctx context.Context, key string) (interface{}, er
 }
 
 // GetLockWaits get return lock waits info
-func (s *tikvStore) GetLockWaits() ([]*deadlockPB.WaitForEntry, error) {
+func (s *tikvStore) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 	stores := s.GetRegionCache().GetStoresByType(tikvrpc.TiKV)
-	var result []*deadlockPB.WaitForEntry
+	var result []*deadlockpb.WaitForEntry
 	for _, store := range stores {
-		// todo: try RegionCache.getStoreAddr with backoff
-		if store.IsNotTombstone() {
-			resp, err := s.GetTiKVClient().SendRequest(context.TODO(), store.Addr, tikvrpc.NewRequest(tikvrpc.CmdLockWaitInfo, &kvrpcpb.GetLockWaitInfoRequest{}), time.Second*30)
-			if err != nil {
-				logutil.BgLogger().Warn("query lock wait info failed", zap.Error(err))
-				continue
-			}
-			if resp.Resp == nil {
-				logutil.BgLogger().Warn("lock wait info from store is nil")
-				continue
-			}
-			entries := resp.Resp.(*kvrpcpb.GetLockWaitInfoResponse).Entries
-			result = append(result, entries...)
+		resp, err := s.GetTiKVClient().SendRequest(context.TODO(), store.GetAddr(), tikvrpc.NewRequest(tikvrpc.CmdLockWaitInfo, &kvrpcpb.GetLockWaitInfoRequest{}), time.Second*30)
+		if err != nil {
+			logutil.BgLogger().Warn("query lock wait info failed", zap.Error(err))
+			continue
 		}
+		if resp.Resp == nil {
+			logutil.BgLogger().Warn("lock wait info from store is nil")
+			continue
+		}
+		entries := resp.Resp.(*kvrpcpb.GetLockWaitInfoResponse).Entries
+		result = append(result, entries...)
 	}
 	return result, nil
 }

@@ -238,13 +238,13 @@ func (s *testRegionCacheSuite) TestResolveStateTransition(c *C) {
 	store = cache.getStoreByStoreID(s.store1)
 	store.initResolve(bo, cache)
 	c.Assert(store.getResolveState(), Equals, resolved)
-	s.cluster.UpdateStoreAddr(s.store1, store.Addr+"0", &metapb.StoreLabel{Key: "k", Value: "v"})
+	s.cluster.UpdateStoreAddr(s.store1, store.addr+"0", &metapb.StoreLabel{Key: "k", Value: "v"})
 	store.markNeedCheck(cache.notifyCheckCh)
 	waitResolve(store)
 	c.Assert(store.getResolveState(), Equals, deleted)
 	newStore := cache.getStoreByStoreID(s.store1)
 	c.Assert(newStore.getResolveState(), Equals, resolved)
-	c.Assert(newStore.Addr, Equals, store.Addr+"0")
+	c.Assert(newStore.addr, Equals, store.addr+"0")
 	c.Assert(newStore.labels, DeepEquals, []*metapb.StoreLabel{{Key: "k", Value: "v"}})
 
 	// Check initResolve()ing a tombstone store. The resolve state should be tombstone.

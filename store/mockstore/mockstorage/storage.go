@@ -17,7 +17,7 @@ import (
 	"context"
 	"crypto/tls"
 
-	deadlockPB "github.com/pingcap/kvproto/pkg/deadlock"
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
 	driver "github.com/pingcap/tidb/store/driver/txn"
@@ -30,7 +30,7 @@ type mockStorage struct {
 	*tikv.KVStore
 	*copr.Store
 	memCache  kv.MemManager
-	LockWaits []*deadlockPB.WaitForEntry
+	LockWaits []*deadlockpb.WaitForEntry
 }
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
@@ -39,7 +39,7 @@ func NewMockStorage(tikvStore *tikv.KVStore) (kv.Storage, error) {
 }
 
 // NewMockStorageWithLockWaits wraps tikv.KVStore as kv.Storage, with mock LockWaits.
-func NewMockStorageWithLockWaits(tikvStore *tikv.KVStore, lockWaits []*deadlockPB.WaitForEntry) (kv.Storage, error) {
+func NewMockStorageWithLockWaits(tikvStore *tikv.KVStore, lockWaits []*deadlockpb.WaitForEntry) (kv.Storage, error) {
 	coprConfig := config.DefaultConfig().TiKVClient.CoprCache
 	coprStore, err := copr.NewStore(tikvStore, &coprConfig)
 	if err != nil {
@@ -118,7 +118,7 @@ func newTiKVTxn(txn *tikv.KVTxn, err error) (kv.Transaction, error) {
 	return driver.NewTiKVTxn(txn), nil
 }
 
-func (s *mockStorage) GetLockWaits() ([]*deadlockPB.WaitForEntry, error) {
+func (s *mockStorage) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 	return s.LockWaits, nil
 }
 

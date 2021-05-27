@@ -16,7 +16,7 @@ package kv
 import (
 	"context"
 
-	deadlockPB "github.com/pingcap/kvproto/pkg/deadlock"
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -215,7 +215,7 @@ func (s *mockStorage) GetMemCache() MemManager {
 	return nil
 }
 
-func (s *mockStorage) GetLockWaits() ([]*deadlockPB.WaitForEntry, error) {
+func (s *mockStorage) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 	return nil, nil
 }
 
@@ -265,6 +265,6 @@ func (s *mockSnapshot) IterReverse(k Key) (Iterator, error) {
 
 func (s *mockSnapshot) SetOption(opt int, val interface{}) {}
 
-func (s *mockSnapshot) GetLockWaits() []deadlockPB.WaitForEntry {
+func (s *mockSnapshot) GetLockWaits() []deadlockpb.WaitForEntry {
 	return nil
 }

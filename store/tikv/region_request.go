@@ -524,7 +524,7 @@ func (s *RegionRequestSender) getStoreToken(st *Store, limit int64) error {
 		st.tokenCount.Add(1)
 		return nil
 	}
-	metrics.TiKVStoreLimitErrorCounter.WithLabelValues(st.Addr, strconv.FormatUint(st.storeID, 10)).Inc()
+	metrics.TiKVStoreLimitErrorCounter.WithLabelValues(st.addr, strconv.FormatUint(st.storeID, 10)).Inc()
 	return &tikverr.ErrTokenLimit{StoreID: st.storeID}
 }
 

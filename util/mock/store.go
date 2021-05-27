@@ -16,7 +16,7 @@ package mock
 import (
 	"context"
 
-	deadlockPB "github.com/pingcap/kvproto/pkg/deadlock"
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -81,6 +81,6 @@ func (s *Store) GetMinSafeTS(txnScope string) uint64 {
 }
 
 // GetLockWaits implements kv.Storage interface.
-func (s *Store) GetLockWaits() ([]*deadlockPB.WaitForEntry, error) {
+func (s *Store) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 	return nil, nil
 }

@@ -163,7 +163,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.ClusterTableDeadlocks:
 			err = e.setDataForClusterDeadlock(sctx)
 		case infoschema.TableDataLockWaits:
-			err = e.setDataForTableLockWait(sctx)
+			err = e.setDataForTableDataLockWaits(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -1011,13 +1011,15 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err 
 	return nil
 }
 
-func (e *memtableRetriever) setDataForTableLockWait(ctx sessionctx.Context) error {
-	hasPriv := false
+func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
 	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		hasPriv = pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv)
+		return pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", priv)
 	}
+	return false
+}
 
-	if !hasPriv {
+func (e *memtableRetriever) setDataForTableDataLockWaits(ctx sessionctx.Context) error {
+	if !hasPriv(ctx, mysql.ProcessPriv) {
 		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 	waits, err := ctx.GetStore().GetLockWaits()
@@ -1228,13 +1230,7 @@ func (e *memtableRetriever) setDataForProcessList(ctx sessionctx.Context) {
 	}
 
 	loginUser := ctx.GetSessionVars().User
-	var hasProcessPriv bool
-	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
-			hasProcessPriv = true
-		}
-	}
-
+	hasProcessPriv := hasPriv(ctx, mysql.ProcessPriv)
 	pl := sm.ShowProcessList()
 
 	records := make([][]types.Datum, 0, len(pl))
@@ -1985,13 +1981,8 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context, tableName string) error {
 	// Seeing client errors should require the PROCESS privilege, with the exception of errors for your own user.
 	// This is similar to information_schema.processlist, which is the closest comparison.
-	var hasProcessPriv bool
+	hasProcessPriv := hasPriv(ctx, mysql.ProcessPriv)
 	loginUser := ctx.GetSessionVars().User
-	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
-			hasProcessPriv = true
-		}
-	}
 
 	var rows [][]types.Datum
 	switch tableName {
@@ -2065,12 +2056,7 @@ func (e *memtableRetriever) setDataForTiDBTrx(ctx sessionctx.Context) {
 	}
 
 	loginUser := ctx.GetSessionVars().User
-	var hasProcessPriv bool
-	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
-			hasProcessPriv = true
-		}
-	}
+	hasProcessPriv := hasPriv(ctx, mysql.ProcessPriv)
 	infoList := sm.ShowTxnList()
 	for _, info := range infoList {
 		// If you have the PROCESS privilege, you can see all running transactions.
@@ -2093,12 +2079,7 @@ func (e *memtableRetriever) setDataForClusterTiDBTrx(ctx sessionctx.Context) err
 }
 
 func (e *memtableRetriever) setDataForDeadlock(ctx sessionctx.Context) error {
-	hasPriv := false
-	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		hasPriv = pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv)
-	}
-
-	if !hasPriv {
+	if !hasPriv(ctx, mysql.ProcessPriv) {
 		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 
