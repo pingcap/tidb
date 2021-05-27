@@ -1270,6 +1270,9 @@ func (s *testSuite5) TestShowVar(c *C) {
 	c.Check(res.Rows(), HasLen, 0)
 	res = tk.MustQuery("show global variables like '" + variable.TiDBPartitionPruneMode + "'")
 	c.Check(res.Rows(), HasLen, 0)
+	// Test Hidden tx_read_ts
+	res = tk.MustQuery("show variables like '%tx_read_ts'")
+	c.Check(res.Rows(), HasLen, 0)
 }
 
 func (s *testSuite5) TestIssue19507(c *C) {
