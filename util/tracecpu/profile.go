@@ -62,8 +62,6 @@ func NewSQLStatsProfiler() *sqlStatsProfiler {
 }
 
 func (sp *sqlStatsProfiler) Run() {
-	sp.mu.Lock()
-	defer sp.mu.Unlock()
 	logutil.BgLogger().Info("cpu profiler started")
 	go sp.startCPUProfileWorker()
 	go sp.startAnalyzeProfileWorker()
@@ -104,6 +102,7 @@ func (sp *sqlStatsProfiler) doCPUProfile() {
 	if err := pprof.StartCPUProfile(task.buf); err != nil {
 		// Sleep a while before retry.
 		time.Sleep(time.Millisecond)
+		sp.putTaskToBuffer(task)
 		return
 	}
 	ns := int(time.Second)*interval - time.Now().Nanosecond()
@@ -125,6 +124,7 @@ func (sp *sqlStatsProfiler) startAnalyzeProfileWorker() {
 		p, err := profile.Parse(reader)
 		if err != nil {
 			logutil.BgLogger().Error("parse profile error", zap.Error(err))
+			sp.putTaskToBuffer(task)
 			continue
 		}
 		stats := sp.parseCPUProfileBySQLLabels(p)
@@ -295,9 +295,9 @@ func SetGoroutineLabelsWithSQL(ctx context.Context, normalizedSQL, sqlDigest str
 		return ctx
 	}
 	if variable.EnablePProfSQLCPU.Load() {
-		ctx = pprof.WithLabels(context.Background(), pprof.Labels(labelSQLDigest, sqlDigest, labelSQL, util.QueryStrForLog(normalizedSQL)))
+		ctx = pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest, labelSQL, util.QueryStrForLog(normalizedSQL)))
 	} else {
-		ctx = pprof.WithLabels(context.Background(), pprof.Labels(labelSQLDigest, sqlDigest))
+		ctx = pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest))
 	}
 	pprof.SetGoroutineLabels(ctx)
 	GlobalSQLStatsProfiler.RegisterSQL(sqlDigest, normalizedSQL)
