@@ -77,10 +77,10 @@ type TxnInfo struct {
 	CurrentDB string
 }
 
-// GetSnapInfo gets a snapshot of the TxnInfo for read. It's safe to call concurrently with the transaction.
+// ShallowClone shallow clones the TxnInfo. It's safe to call concurrently with the transaction.
 // Note that this function doesn't do deep copy and some fields of the result may be unsafe to write. Use it at your own
 // risk.
-func (info *TxnInfo) GetSnapInfo() *TxnInfo {
+func (info *TxnInfo) ShallowClone() *TxnInfo {
 	return &TxnInfo{
 		StartTS:          info.StartTS,
 		CurrentSQLDigest: info.CurrentSQLDigest,
