@@ -667,7 +667,7 @@ var defaultConf = Config{
 		HistorySize:         24,
 	},
 	TopSQL: TopSQL{
-		Enable:          true,
+		Enable:          false,
 		RefreshInterval: 1,
 		MaxStmtCount:    5000,
 	},
