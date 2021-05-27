@@ -539,8 +539,8 @@ type RegionEpoch struct {
 
 // RegionPeerStat stores one field `DownSec` which indicates how long it's down than `RegionPeer`.
 type RegionPeerStat struct {
-	RegionPeer
-	DownSec int64 `json:"down_seconds"`
+	Peer    RegionPeer `json:"peer"`
+	DownSec int64      `json:"down_seconds"`
 }
 
 // RegionInfo stores the information of one region.
