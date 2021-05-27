@@ -3330,33 +3330,8 @@ func (m FulltextSearchModifier) WithQueryExpansion() bool {
 	return m&FulltextSearchModifierWithQueryExpansion == FulltextSearchModifierWithQueryExpansion
 }
 
-// TODO: remove the TimestampBoundMode.
-type TimestampBoundMode int
-
-const (
-	TimestampBoundStrong TimestampBoundMode = iota
-	TimestampBoundMaxStaleness
-	TimestampBoundExactStaleness
-	TimestampBoundReadTimestamp
-	TimestampBoundMinReadTimestamp
-)
-
-type TimestampReadModes int
-
-const (
-	TimestampReadStrong TimestampReadModes = iota
-	TimestampReadBoundTimestamp
-	TimestampReadExactTimestamp
-)
-
-type TimestampBound struct {
-	Mode      TimestampBoundMode
-	Timestamp ExprNode
-}
-
 type AsOfClause struct {
 	node
-	Mode   TimestampReadModes
 	TsExpr ExprNode
 }
 
