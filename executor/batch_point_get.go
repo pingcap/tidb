@@ -131,6 +131,10 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		})
 	}
 	setResourceGroupTagForTxn(stmtCtx, snapshot)
+	// Avoid network requests for the temporary table.
+	if e.tblInfo.TempTableType == model.TempTableGlobal {
+		snapshot = globalTemporaryTableSnapshot{snapshot}
+	}
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
@@ -145,6 +149,16 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	e.snapshot = snapshot
 	e.batchGetter = batchGetter
 	return nil
+}
+
+// Global temporary table would always be empty, so get the snapshot data of it is meanless.
+// globalTemporaryTableSnapshot inherits kv.Snapshot and override the BatchGet methods to return empty.
+type globalTemporaryTableSnapshot struct {
+	kv.Snapshot
+}
+
+func (s globalTemporaryTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+	return make(map[string][]byte), nil
 }
 
 // Close implements the Executor interface.
