@@ -32,7 +32,7 @@ type WaitChainItem struct {
 	TryLockTxn     uint64
 	SQLDigest      string
 	Key            []byte
-	AllSQLs        []string
+	AllSQLDigests  []string
 	TxnHoldingLock uint64
 }
 
@@ -149,8 +149,8 @@ func (d *DeadlockHistory) GetAllDatum() [][]types.Datum {
 			}
 
 			row[6] = nil
-			if item.AllSQLs != nil {
-				row[6] = "[" + strings.Join(item.AllSQLs, ", ") + "]"
+			if item.AllSQLDigests != nil {
+				row[6] = "[" + strings.Join(item.AllSQLDigests, ", ") + "]"
 			}
 
 			row[7] = item.TxnHoldingLock
@@ -185,7 +185,7 @@ func ErrDeadlockToDeadlockRecord(dl *tikverr.ErrDeadlock) *DeadlockRecord {
 			TryLockTxn:     rawItem.Txn,
 			SQLDigest:      hex.EncodeToString(sqlDigest),
 			Key:            rawItem.Key,
-			AllSQLs:        nil,
+			AllSQLDigests:  nil,
 			TxnHoldingLock: rawItem.WaitForTxn,
 		})
 	}
