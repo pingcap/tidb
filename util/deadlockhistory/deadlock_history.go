@@ -129,7 +129,7 @@ func (d *DeadlockHistory) GetAllDatum() [][]types.Datum {
 
 	rows := make([][]types.Datum, 0, rowsCount)
 
-	row := make([]interface{}, 8)
+	row := make([]interface{}, 7)
 	for _, rec := range records {
 		row[0] = rec.ID
 		row[1] = types.NewTime(types.FromGoTime(rec.OccurTime), mysql.TypeTimestamp, types.MaxFsp)
@@ -148,12 +148,13 @@ func (d *DeadlockHistory) GetAllDatum() [][]types.Datum {
 				row[5] = strings.ToUpper(hex.EncodeToString(item.Key))
 			}
 
-			row[6] = nil
-			if item.AllSQLDigests != nil {
-				row[6] = "[" + strings.Join(item.AllSQLDigests, ", ") + "]"
-			}
+			row[6] = item.TxnHoldingLock
 
-			row[7] = item.TxnHoldingLock
+			// TODO: Implement the ALL_SQL_DIGESTS column for the deadlock table.
+			//row[7] = nil
+			//if item.AllSQLDigests != nil {
+			//	row[7] = "[" + strings.Join(item.AllSQLDigests, ", ") + "]"
+			//}
 
 			rows = append(rows, types.MakeDatums(row...))
 		}
