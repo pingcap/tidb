@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -305,6 +307,12 @@ func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsCla
 		p = b.buildTableDual()
 		return
 	}
+	defer func() {
+		// After build the resultSetNode, need to reset it so that it can be referenced by outer level.
+		for _, cte := range b.outerCTEs {
+			cte.recursiveRef = false
+		}
+	}()
 	return b.buildResultSetNode(ctx, from.TableRefs)
 }
 
@@ -316,8 +324,12 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 		var isTableName bool
 		switch v := x.Source.(type) {
 		case *ast.SelectStmt:
+			ci := b.prepareCTECheckForSubQuery()
+			defer resetCTECheckForSubQuery(ci)
 			p, err = b.buildSelect(ctx, v)
 		case *ast.SetOprStmt:
+			ci := b.prepareCTECheckForSubQuery()
+			defer resetCTECheckForSubQuery(ci)
 			p, err = b.buildSetOpr(ctx, v)
 		case *ast.TableName:
 			p, err = b.buildDataSource(ctx, v, &x.AsName)
@@ -667,6 +679,11 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	rightPlan, err := b.buildResultSetNode(ctx, joinNode.Right)
 	if err != nil {
 		return nil, err
+	}
+
+	// The recursive part in CTE must not be on the right side of a LEFT JOIN.
+	if lc, ok := rightPlan.(*LogicalCTETable); ok && joinNode.Tp == ast.LeftJoin {
+		return nil, ErrCTERecursiveForbiddenJoinOrder.GenWithStackByArgs(lc.name)
 	}
 
 	handleMap1 := b.handleHelper.popMap()
@@ -1116,6 +1133,7 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 		UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  expr.GetType(),
 	}
+	newCol.SetCoercibility(expr.Coercibility())
 	return newCol, name, nil
 }
 
@@ -1366,6 +1384,17 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 }
 
 func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (LogicalPlan, error) {
+	if setOpr.With != nil {
+		l := len(b.outerCTEs)
+		defer func() {
+			b.outerCTEs = b.outerCTEs[:l]
+		}()
+		err := b.buildWith(ctx, setOpr.With)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Because INTERSECT has higher precedence than UNION and EXCEPT. We build it first.
 	selectPlans := make([]LogicalPlan, 0, len(setOpr.SelectList.Selects))
 	afterSetOprs := make([]*ast.SetOprType, 0, len(setOpr.SelectList.Selects))
@@ -2252,6 +2281,16 @@ func (r *correlatedAggregateResolver) Enter(n ast.Node) (ast.Node, bool) {
 // ORDER BY, WHERE & GROUP BY.
 // Finally it restore the original SELECT stmt.
 func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) (err error) {
+	if sel.With != nil {
+		l := len(r.b.outerCTEs)
+		defer func() {
+			r.b.outerCTEs = r.b.outerCTEs[:l]
+		}()
+		err := r.b.buildWith(r.ctx, sel.With)
+		if err != nil {
+			return err
+		}
+	}
 	// collect correlated aggregate from sub-queries inside FROM clause.
 	_, err = r.collectFromTableRefs(r.ctx, sel.From)
 	if err != nil {
@@ -3297,6 +3336,14 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		// table hints are only visible in the current SELECT statement.
 		b.popTableHints()
 	}()
+	if b.buildingRecursivePartForCTE {
+		if sel.Distinct || sel.OrderBy != nil || sel.Limit != nil {
+			return nil, ErrNotSupportedYet.GenWithStackByArgs("ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression")
+		}
+		if sel.GroupBy != nil {
+			return nil, ErrCTERecursiveForbidsAggregation.FastGenByArgs(b.genCTETableNameForError())
+		}
+	}
 	enableNoopFuncs := b.ctx.GetSessionVars().EnableNoopFuncs
 	if sel.SelectStmtOpts != nil {
 		if sel.SelectStmtOpts.CalcFoundRows && !enableNoopFuncs {
@@ -3320,6 +3367,17 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	// set for update read to true before building result set node
 	if isForUpdateReadSelectLock(sel.LockInfo) {
 		b.isForUpdateRead = true
+	}
+
+	if sel.With != nil {
+		l := len(b.outerCTEs)
+		defer func() {
+			b.outerCTEs = b.outerCTEs[:l]
+		}()
+		err = b.buildWith(ctx, sel.With)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// For sub-queries, the FROM clause may have already been built in outer query when resolving correlated aggregates.
@@ -3358,6 +3416,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	// For example: select id from t group by id WINDOW w AS (ORDER BY uids DESC) ORDER BY id;
 	// We don't use the WINDOW w, but if the 'uids' column is not in the table t, we still need to report an error.
 	if hasWindowFuncField || sel.WindowSpecs != nil {
+		if b.buildingRecursivePartForCTE {
+			return nil, ErrCTERecursiveForbidsAggregation.FastGenByArgs(b.genCTETableNameForError())
+		}
+
 		windowAggMap, err = b.resolveWindowFunction(sel, p)
 		if err != nil {
 			return nil, err
@@ -3406,16 +3468,21 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	b.handleHelper.pushMap(nil)
 
 	hasAgg := b.detectSelectAgg(sel)
+	needBuildAgg := hasAgg
 	if hasAgg {
+		if b.buildingRecursivePartForCTE {
+			return nil, ErrCTERecursiveForbidsAggregation.GenWithStackByArgs(b.genCTETableNameForError())
+		}
+
 		aggFuncs, totalMap = b.extractAggFuncsInSelectFields(sel.Fields.Fields)
 		// len(aggFuncs) == 0 and sel.GroupBy == nil indicates that all the aggregate functions inside the SELECT fields
 		// are actually correlated aggregates from the outer query, which have already been built in the outer query.
 		// The only thing we need to do is to find them from b.correlatedAggMap in buildProjection.
 		if len(aggFuncs) == 0 && sel.GroupBy == nil {
-			hasAgg = false
+			needBuildAgg = false
 		}
 	}
-	if hasAgg {
+	if needBuildAgg {
 		var aggIndexMap map[int]int
 		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap)
 		if err != nil {
@@ -3572,10 +3639,65 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	return statsTbl
 }
 
+func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
+	for i := len(b.outerCTEs) - 1; i >= 0; i-- {
+		cte := b.outerCTEs[i]
+		if cte.def.Name.L == tn.Name.L {
+			if cte.isBuilding {
+				if cte.nonRecursive {
+					// Can't see this CTE, try outer definition.
+					continue
+				}
+
+				// Building the recursive part.
+				cte.useRecursive = true
+				if cte.seedLP == nil {
+					return nil, ErrCTERecursiveRequiresNonRecursiveFirst.FastGenByArgs(tn.Name.String())
+				}
+
+				if cte.enterSubquery || cte.recursiveRef {
+					return nil, ErrInvalidRequiresSingleReference.FastGenByArgs(tn.Name.String())
+				}
+
+				cte.recursiveRef = true
+				p := LogicalCTETable{name: cte.def.Name.String(), idForStorage: cte.storageID}.Init(b.ctx, b.getSelectOffset())
+				p.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
+				p.SetOutputNames(cte.seedLP.OutputNames())
+				return p, nil
+			}
+
+			b.handleHelper.pushMap(nil)
+			var p LogicalPlan
+			lp := LogicalCTE{cte: &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP, recursivePartLogicalPlan: cte.recurLP, IDForStorage: cte.storageID, optFlag: cte.optFlag}}.Init(b.ctx, b.getSelectOffset())
+			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
+			p = lp
+			p.SetOutputNames(cte.seedLP.OutputNames())
+			if len(asName.String()) > 0 {
+				var on types.NameSlice
+				for _, name := range p.OutputNames() {
+					cpOn := *name
+					cpOn.TblName = *asName
+					on = append(on, &cpOn)
+				}
+				p.SetOutputNames(on)
+			}
+			return p, nil
+		}
+	}
+
+	return nil, nil
+}
+
 func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
 	dbName := tn.Schema
 	sessionVars := b.ctx.GetSessionVars()
+
 	if dbName.L == "" {
+		// Try CTE.
+		p, err := b.tryBuildCTE(ctx, tn, asName)
+		if err != nil || p != nil {
+			return p, err
+		}
 		dbName = model.NewCIStr(sessionVars.CurrentDB)
 	}
 
@@ -3630,7 +3752,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				}
 				pids[pid] = struct{}{}
 			}
-			pt = tables.NewPartitionTableithGivenSets(pt, pids)
+			pt = tables.NewPartitionTableWithGivenSets(pt, pids)
 		}
 		b.partitionedTable = append(b.partitionedTable, pt)
 	} else if len(tn.PartitionNames) != 0 {
@@ -5611,4 +5733,287 @@ func containDifferentJoinTypes(preferJoinType uint) bool {
 		cnt++
 	}
 	return cnt > 1
+}
+
+func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression, isRecursive bool) (p LogicalPlan, err error) {
+	if isRecursive {
+		// buildingRecursivePartForCTE likes a stack. We save it before building a recursive CTE and restore it after building.
+		// We need a stack because we need to handle the nested recursive CTE. And buildingRecursivePartForCTE indicates the innermost CTE.
+		saveCheck := b.buildingRecursivePartForCTE
+		b.buildingRecursivePartForCTE = false
+		err = b.buildRecursiveCTE(ctx, cte.Query.Query)
+		if err != nil {
+			return nil, err
+		}
+		b.buildingRecursivePartForCTE = saveCheck
+	} else {
+		p, err = b.buildResultSetNode(ctx, cte.Query.Query)
+		if err != nil {
+			return nil, err
+		}
+
+		p, err = b.adjustCTEPlanOutputName(p, cte)
+		if err != nil {
+			return nil, err
+		}
+
+		cInfo := b.outerCTEs[len(b.outerCTEs)-1]
+		cInfo.seedLP = p
+	}
+	return nil, nil
+}
+
+// buildRecursiveCTE handles the with clause `with recursive xxx as xx`.
+func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNode) error {
+	cInfo := b.outerCTEs[len(b.outerCTEs)-1]
+	switch x := (cte).(type) {
+	case *ast.SetOprStmt:
+		// 1. Handle the WITH clause if exists.
+		if x.With != nil {
+			l := len(b.outerCTEs)
+			defer func() {
+				b.outerCTEs = b.outerCTEs[:l]
+				sw := x.With
+				x.With = sw
+			}()
+			err := b.buildWith(ctx, x.With)
+			if err != nil {
+				return err
+			}
+		}
+		// Set it to nil, so that when builds the seed part, it won't build again. Reset it in defer so that the AST doesn't change after this function.
+		x.With = nil
+
+		// 2. Build plans for each part of SetOprStmt.
+		recursive := make([]LogicalPlan, 0)
+		tmpAfterSetOptsForRecur := []*ast.SetOprType{nil}
+
+		expectSeed := true
+		for i := 0; i < len(x.SelectList.Selects); i++ {
+			var p LogicalPlan
+			var err error
+
+			var afterOpr *ast.SetOprType
+			switch y := x.SelectList.Selects[i].(type) {
+			case *ast.SelectStmt:
+				p, err = b.buildSelect(ctx, y)
+				afterOpr = y.AfterSetOperator
+			case *ast.SetOprSelectList:
+				p, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: y, With: y.With})
+				afterOpr = y.AfterSetOperator
+			}
+
+			if expectSeed {
+				if cInfo.useRecursive {
+					// 3. If it fail to build a plan, it may be the recursive part. Then we build the seed part plan, and rebuild it.
+					if i == 0 {
+						return ErrCTERecursiveRequiresNonRecursiveFirst.GenWithStackByArgs(cInfo.def.Name.String())
+					}
+
+					// It's the recursive part. Build the seed part, and build this recursive part again.
+					// Before we build the seed part, do some checks.
+					if x.OrderBy != nil {
+						return ErrNotSupportedYet.GenWithStackByArgs("ORDER BY over UNION in recursive Common Table Expression")
+					}
+
+					// Check union type.
+					if afterOpr != nil {
+						if *afterOpr != ast.Union && *afterOpr != ast.UnionAll {
+							return ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("%s between seed part and recursive part, hint: The operator between seed part and recursive part must bu UNION[DISTINCT] or UNION ALL", afterOpr.String()))
+						}
+						cInfo.isDistinct = *afterOpr == ast.Union
+					}
+
+					expectSeed = false
+					cInfo.useRecursive = false
+
+					// Build seed part plan.
+					saveSelect := x.SelectList.Selects
+					x.SelectList.Selects = x.SelectList.Selects[:i]
+					p, err = b.buildSetOpr(ctx, x)
+					if err != nil {
+						return err
+					}
+					x.SelectList.Selects = saveSelect
+					p, err = b.adjustCTEPlanOutputName(p, cInfo.def)
+					if err != nil {
+						return err
+					}
+					cInfo.seedLP = p
+
+					// Rebuild the plan.
+					i--
+					b.buildingRecursivePartForCTE = true
+					continue
+				}
+				if err != nil {
+					return err
+				}
+			} else {
+				if err != nil {
+					return err
+				}
+				if afterOpr != nil {
+					if *afterOpr != ast.Union && *afterOpr != ast.UnionAll {
+						return ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("%s between recursive part's selects, hint: The operator between recursive part's selects must bu UNION[DISTINCT] or UNION ALL", afterOpr.String()))
+					}
+				}
+				if !cInfo.useRecursive {
+					return ErrCTERecursiveRequiresNonRecursiveFirst.GenWithStackByArgs(cInfo.def.Name.String())
+				}
+				cInfo.useRecursive = false
+				recursive = append(recursive, p)
+				tmpAfterSetOptsForRecur = append(tmpAfterSetOptsForRecur, afterOpr)
+			}
+		}
+
+		if len(recursive) == 0 {
+			// In this case, even if SQL specifies "WITH RECURSIVE", the CTE is non-recursive.
+			p, err := b.buildSetOpr(ctx, x)
+			if err != nil {
+				return err
+			}
+			p, err = b.adjustCTEPlanOutputName(p, cInfo.def)
+			if err != nil {
+				return err
+			}
+			cInfo.seedLP = p
+			return nil
+		}
+
+		// Build the recursive part's logical plan.
+		recurPart, err := b.buildUnion(ctx, recursive, tmpAfterSetOptsForRecur)
+		if err != nil {
+			return err
+		}
+		recurPart, err = b.buildProjection4CTEUnion(ctx, cInfo.seedLP, recurPart)
+		if err != nil {
+			return err
+		}
+		// 4. Finally, we get the seed part plan and recursive part plan.
+		cInfo.recurLP = recurPart
+		return nil
+	default:
+		p, err := b.buildResultSetNode(ctx, x)
+		if err != nil {
+			// Refine the error message.
+			if errors.ErrorEqual(err, ErrCTERecursiveRequiresNonRecursiveFirst) {
+				err = ErrCTERecursiveRequiresUnion.GenWithStackByArgs(cInfo.def.Name.String())
+			}
+			return err
+		}
+		p, err = b.adjustCTEPlanOutputName(p, cInfo.def)
+		if err != nil {
+			return err
+		}
+		cInfo.seedLP = p
+		return nil
+	}
+}
+
+func (b *PlanBuilder) adjustCTEPlanOutputName(p LogicalPlan, def *ast.CommonTableExpression) (LogicalPlan, error) {
+	outPutNames := p.OutputNames()
+	for _, name := range outPutNames {
+		name.TblName = def.Name
+		name.DBName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	}
+	if len(def.ColNameList) > 0 {
+		if len(def.ColNameList) != len(p.OutputNames()) {
+			return nil, ddl.ErrViewWrongList
+		}
+		for i, n := range def.ColNameList {
+			outPutNames[i].ColName = n
+		}
+	}
+	p.SetOutputNames(outPutNames)
+	return p, nil
+}
+
+// prepareCTECheckForSubQuery prepares the check that the recursive CTE can't be referenced in subQuery. It's used before building a subQuery.
+// For example: with recursive cte(n) as (select 1 union select * from (select * from cte) c1) select * from cte;
+func (b *PlanBuilder) prepareCTECheckForSubQuery() []*cteInfo {
+	modifiedCTE := make([]*cteInfo, 0)
+	for _, cte := range b.outerCTEs {
+		if cte.isBuilding && !cte.enterSubquery {
+			cte.enterSubquery = true
+			modifiedCTE = append(modifiedCTE, cte)
+		}
+	}
+	return modifiedCTE
+}
+
+// resetCTECheckForSubQuery resets the related variable. It's used after leaving a subQuery.
+func resetCTECheckForSubQuery(ci []*cteInfo) {
+	for _, cte := range ci {
+		cte.enterSubquery = false
+	}
+}
+
+// genCTETableNameForError find the nearest CTE name.
+func (b *PlanBuilder) genCTETableNameForError() string {
+	name := ""
+	for i := len(b.outerCTEs) - 1; i >= 0; i-- {
+		if b.outerCTEs[i].isBuilding {
+			name = b.outerCTEs[i].def.Name.String()
+			break
+		}
+	}
+	return name
+}
+
+func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) error {
+	// Check CTE name must be unique.
+	nameMap := make(map[string]struct{})
+	for _, cte := range w.CTEs {
+		if _, ok := nameMap[cte.Name.L]; ok {
+			return ErrNonUniqTable
+		}
+		nameMap[cte.Name.L] = struct{}{}
+	}
+	for _, cte := range w.CTEs {
+		b.outerCTEs = append(b.outerCTEs, &cteInfo{def: cte, nonRecursive: !w.IsRecursive, isBuilding: true, storageID: b.allocIDForCTEStorage})
+		b.allocIDForCTEStorage++
+		saveFlag := b.optFlag
+		// Init the flag to flagPrunColumns, otherwise it's missing.
+		b.optFlag = flagPrunColumns
+		_, err := b.buildCte(ctx, cte, w.IsRecursive)
+		if err != nil {
+			return err
+		}
+		b.outerCTEs[len(b.outerCTEs)-1].optFlag = b.optFlag
+		b.outerCTEs[len(b.outerCTEs)-1].isBuilding = false
+		b.optFlag = saveFlag
+	}
+	return nil
+}
+
+func (b *PlanBuilder) buildProjection4CTEUnion(ctx context.Context, seed LogicalPlan, recur LogicalPlan) (LogicalPlan, error) {
+	if seed.Schema().Len() != recur.Schema().Len() {
+		return nil, ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
+	}
+	exprs := make([]expression.Expression, len(seed.Schema().Columns))
+	resSchema := getResultCTESchema(seed.Schema(), b.ctx.GetSessionVars())
+	for i, col := range recur.Schema().Columns {
+		if !resSchema.Columns[i].RetType.Equal(col.RetType) {
+			exprs[i] = expression.BuildCastFunction4Union(b.ctx, col, resSchema.Columns[i].RetType)
+		} else {
+			exprs[i] = col
+		}
+	}
+	b.optFlag |= flagEliminateProjection
+	proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(b.ctx, b.getSelectOffset())
+	proj.SetSchema(resSchema)
+	proj.SetChildren(recur)
+	return proj, nil
+}
+
+// The recursive part/CTE's schema is nullable, and the UID should be unique.
+func getResultCTESchema(seedSchema *expression.Schema, svar *variable.SessionVars) *expression.Schema {
+	res := seedSchema.Clone()
+	for _, col := range res.Columns {
+		col.RetType = col.RetType.Clone()
+		col.UniqueID = svar.AllocPlanColumnID()
+		col.RetType.Flag &= ^mysql.NotNullFlag
+	}
+	return res
 }

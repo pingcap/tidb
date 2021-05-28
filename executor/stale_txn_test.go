@@ -18,9 +18,11 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -90,6 +92,118 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 		tk.MustExec("commit")
 	}
 	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+}
+
+func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`drop table if exists b`)
+	tk.MustExec("create table t (id int primary key);")
+	tk.MustExec("create table b (pid int primary key);")
+	defer func() {
+		tk.MustExec(`drop table if exists b`)
+		tk.MustExec(`drop table if exists t`)
+	}()
+	time.Sleep(2 * time.Second)
+	now := time.Now()
+	time.Sleep(2 * time.Second)
+
+	testcases := []struct {
+		name             string
+		sql              string
+		expectPhysicalTS int64
+		preSec           int64
+		// IsStaleness is auto cleanup in select stmt.
+		errorStr string
+	}{
+		{
+			name:             "TimestampExactRead1",
+			sql:              fmt.Sprintf("select * from t as of timestamp '%s';", now.Format("2006-1-2 15:04:05")),
+			expectPhysicalTS: now.Unix(),
+		},
+		{
+			name:   "NomalRead",
+			sql:    `select * from b;`,
+			preSec: 0,
+		},
+		{
+			name:             "TimestampExactRead2",
+			sql:              fmt.Sprintf("select * from t as of timestamp TIMESTAMP('%s');", now.Format("2006-1-2 15:04:05")),
+			expectPhysicalTS: now.Unix(),
+		},
+		{
+			name:   "TimestampExactRead3",
+			sql:    `select * from t as of timestamp NOW() - INTERVAL 2 SECOND;`,
+			preSec: 2,
+		},
+		{
+			name:   "TimestampExactRead4",
+			sql:    `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 2 SECOND);`,
+			preSec: 2,
+		},
+		{
+			name:   "TimestampExactRead5",
+			sql:    `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND);`,
+			preSec: 1,
+		},
+		{
+			name:     "TimestampExactRead6",
+			sql:      `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND), b as of timestamp TIMESTAMP('2020-09-06 00:00:00');`,
+			errorStr: ".*can not set different time in the as of.*",
+		},
+		{
+			name:     "TimestampExactRead7",
+			sql:      `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND), b;`,
+			errorStr: ".*can not set different time in the as of.*",
+		},
+		{
+			name:     "TimestampExactRead8",
+			sql:      `select * from t, b as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND);`,
+			errorStr: ".*can not set different time in the as of.*",
+		},
+		{
+			name:   "NomalRead",
+			sql:    `select * from t, b;`,
+			preSec: 0,
+		},
+		{
+			name:     "TimestampExactRead9",
+			sql:      `select * from (select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND)) as c, b;`,
+			errorStr: ".*can not set different time in the as of.*",
+		},
+		{
+			name:   "TimestampExactRead10",
+			sql:    `select * from (select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 2 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 2 SECOND)) as c;`,
+			preSec: 2,
+		},
+		// Cannot be supported the SubSelect
+		{
+			name:     "TimestampExactRead11",
+			sql:      `select * from (select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND)) as c as of timestamp Now();`,
+			errorStr: ".*You have an error in your SQL syntax.*",
+		},
+	}
+
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		if testcase.expectPhysicalTS > 0 {
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSO", fmt.Sprintf(`return(%d)`, testcase.expectPhysicalTS)), IsNil)
+		} else if testcase.preSec > 0 {
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSOWithTolerance", fmt.Sprintf(`return(%d)`, time.Now().Unix()-testcase.preSec)), IsNil)
+		}
+		_, err := tk.Exec(testcase.sql)
+		if len(testcase.errorStr) != 0 {
+			c.Assert(err, ErrorMatches, testcase.errorStr)
+			continue
+		}
+		c.Assert(err, IsNil, Commentf("sql:%s, error stack %v", testcase.sql, errors.ErrorStack(err)))
+		if testcase.expectPhysicalTS > 0 {
+			c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSO"), IsNil)
+		} else if testcase.preSec > 0 {
+			c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSOWithTolerance"), IsNil)
+		}
+	}
 }
 
 func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
@@ -241,4 +355,249 @@ func (s *testStaleTxnSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
 	tk.MustExec(fmt.Sprintf(`START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer1)
 	tk.MustExec("commit")
+}
+
+func (s *testStaleTxnSerialSuite) TestSetTransactionReadOnlyAsOf(c *C) {
+	t1, err := time.Parse(types.TimeFormat, "2016-09-21 09:53:04")
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, s.store)
+	testcases := []struct {
+		sql          string
+		expectedTS   uint64
+		injectSafeTS uint64
+	}{
+		{
+			sql:          `SET TRANSACTION READ ONLY as of timestamp '2021-04-21 00:42:12'`,
+			expectedTS:   424394603102208000,
+			injectSafeTS: 0,
+		},
+		{
+			sql:          `SET TRANSACTION READ ONLY as of timestamp tidb_bounded_staleness('2015-09-21 00:07:01', '2021-04-27 11:26:13')`,
+			expectedTS:   oracle.GoTimeToTS(t1),
+			injectSafeTS: oracle.GoTimeToTS(t1),
+		},
+	}
+	for _, testcase := range testcases {
+		if testcase.injectSafeTS > 0 {
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+				fmt.Sprintf("return(%v)", testcase.injectSafeTS)), IsNil)
+		}
+		tk.MustExec(testcase.sql)
+		c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, testcase.expectedTS)
+		tk.MustExec("begin")
+		c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(0))
+		c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Equals, testcase.expectedTS)
+		tk.MustExec("commit")
+		tk.MustExec("begin")
+		c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Not(Equals), testcase.expectedTS)
+
+		failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS")
+	}
+
+	err = tk.ExecToErr(`SET TRANSACTION READ ONLY as of timestamp tidb_bounded_staleness(invalid1, invalid2')`)
+	c.Assert(err, NotNil)
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(0))
+
+	tk.MustExec(`SET TRANSACTION READ ONLY as of timestamp '2021-04-21 00:42:12'`)
+	err = tk.ExecToErr(`START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00'`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "start transaction read only as of is forbidden after set transaction read only as of")
+}
+
+func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
+	testcases := []struct {
+		name       string
+		sql        string
+		isValidate bool
+	}{
+		{
+			name:       "select statement",
+			sql:        `select * from t;`,
+			isValidate: true,
+		},
+		{
+			name:       "explain statement",
+			sql:        `explain insert into t (id) values (1);`,
+			isValidate: true,
+		},
+		{
+			name:       "explain analyze insert statement",
+			sql:        `explain analyze insert into t (id) values (1);`,
+			isValidate: false,
+		},
+		{
+			name:       "explain analyze select statement",
+			sql:        `explain analyze select * from t `,
+			isValidate: true,
+		},
+		{
+			name:       "execute insert statement",
+			sql:        `EXECUTE stmt1;`,
+			isValidate: false,
+		},
+		{
+			name:       "execute select statement",
+			sql:        `EXECUTE stmt2;`,
+			isValidate: true,
+		},
+		{
+			name:       "show statement",
+			sql:        `show tables;`,
+			isValidate: true,
+		},
+		{
+			name:       "set union",
+			sql:        `SELECT 1, 2 UNION SELECT 'a', 'b';`,
+			isValidate: true,
+		},
+		{
+			name:       "insert",
+			sql:        `insert into t (id) values (1);`,
+			isValidate: false,
+		},
+		{
+			name:       "delete",
+			sql:        `delete from t where id =1`,
+			isValidate: false,
+		},
+		{
+			name:       "update",
+			sql:        "update t set id =2 where id =1",
+			isValidate: false,
+		},
+		{
+			name:       "point get",
+			sql:        `select * from t where id = 1`,
+			isValidate: true,
+		},
+		{
+			name:       "batch point get",
+			sql:        `select * from t where id in (1,2,3);`,
+			isValidate: true,
+		},
+		{
+			name:       "split table",
+			sql:        `SPLIT TABLE t BETWEEN (0) AND (1000000000) REGIONS 16;`,
+			isValidate: true,
+		},
+		{
+			name:       "do statement",
+			sql:        `DO SLEEP(1);`,
+			isValidate: true,
+		},
+		{
+			name:       "select for update",
+			sql:        "select * from t where id = 1 for update",
+			isValidate: false,
+		},
+		{
+			name:       "select lock in share mode",
+			sql:        "select * from t where id = 1 lock in share mode",
+			isValidate: true,
+		},
+		{
+			name:       "select for update union statement",
+			sql:        "select * from t for update union select * from t;",
+			isValidate: false,
+		},
+		{
+			name:       "replace statement",
+			sql:        "replace into t(id) values (1)",
+			isValidate: false,
+		},
+		{
+			name:       "load data statement",
+			sql:        "LOAD DATA LOCAL INFILE '/mn/asa.csv' INTO TABLE t FIELDS TERMINATED BY x'2c' ENCLOSED BY b'100010' LINES TERMINATED BY '\r\n' IGNORE 1 LINES (id);",
+			isValidate: false,
+		},
+		{
+			name:       "update multi tables",
+			sql:        "update t,t1 set t.id = 1,t1.id = 2 where t.1 = 2 and t1.id = 3;",
+			isValidate: false,
+		},
+		{
+			name:       "delete multi tables",
+			sql:        "delete t from t1 where t.id = t1.id",
+			isValidate: false,
+		},
+		{
+			name:       "insert select",
+			sql:        "insert into t select * from t1;",
+			isValidate: false,
+		},
+	}
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int);")
+	tk.MustExec("create table t1 (id int);")
+	tk.MustExec(`PREPARE stmt1 FROM 'insert into t(id) values (5);';`)
+	tk.MustExec(`PREPARE stmt2 FROM 'select * from t';`)
+	tk.MustExec(`set @@tidb_enable_noop_functions=1;`)
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
+		if testcase.isValidate {
+			_, err := tk.Exec(testcase.sql)
+			c.Assert(err, IsNil)
+			tk.MustExec("commit")
+		} else {
+			err := tk.ExecToErr(testcase.sql)
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Matches, `.*only support read-only statement during read-only staleness transactions.*`)
+		}
+	}
+}
+
+func (s *testStaleTxnSerialSuite) TestSpecialSQLInStalenessTxn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	testcases := []struct {
+		name        string
+		sql         string
+		sameSession bool
+	}{
+		{
+			name:        "ddl",
+			sql:         "create table t (id int, b int,INDEX(b));",
+			sameSession: false,
+		},
+		{
+			name:        "set global session",
+			sql:         `SET GLOBAL sql_mode = 'STRICT_TRANS_TABLES,NO_AUTO_CREATE_USER';`,
+			sameSession: true,
+		},
+		{
+			name:        "analyze table",
+			sql:         "analyze table t",
+			sameSession: true,
+		},
+		{
+			name:        "session binding",
+			sql:         "CREATE SESSION BINDING FOR  SELECT * FROM t WHERE b = 123 USING SELECT * FROM t IGNORE INDEX (b) WHERE b = 123;",
+			sameSession: true,
+		},
+		{
+			name:        "global binding",
+			sql:         "CREATE GLOBAL BINDING FOR  SELECT * FROM t WHERE b = 123 USING SELECT * FROM t IGNORE INDEX (b) WHERE b = 123;",
+			sameSession: true,
+		},
+		{
+			name:        "grant statements",
+			sql:         "GRANT ALL ON test.* TO 'newuser';",
+			sameSession: false,
+		},
+		{
+			name:        "revoke statements",
+			sql:         "REVOKE ALL ON test.* FROM 'newuser';",
+			sameSession: false,
+		},
+	}
+	tk.MustExec("CREATE USER 'newuser' IDENTIFIED BY 'mypassword';")
+	for _, testcase := range testcases {
+		comment := Commentf(testcase.name)
+		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
+		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, true, comment)
+		tk.MustExec(testcase.sql)
+		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, testcase.sameSession, comment)
+	}
 }

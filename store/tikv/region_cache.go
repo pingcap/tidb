@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/store/tikv/client"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -700,6 +701,80 @@ func (c *RegionCache) LocateEndKey(bo *Backoffer, key []byte) (*KeyLocation, err
 	}, nil
 }
 
+// SplitRegionRanges gets the split ranges from pd region.
+func (c *RegionCache) SplitRegionRanges(bo *Backoffer, keyRanges []kv.KeyRange) ([]kv.KeyRange, error) {
+	ranges := NewKeyRanges(keyRanges)
+
+	locations, err := c.SplitKeyRangesByLocations(bo, ranges)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var ret []kv.KeyRange
+	for _, loc := range locations {
+		for i := 0; i < loc.Ranges.Len(); i++ {
+			ret = append(ret, loc.Ranges.At(i))
+		}
+	}
+	return ret, nil
+}
+
+// LocationKeyRanges wrapps a real Location in PD and its logical ranges info.
+type LocationKeyRanges struct {
+	// Location is the real location in PD.
+	Location *KeyLocation
+	// Ranges is the logic ranges the current Location contains.
+	Ranges *KeyRanges
+}
+
+// SplitKeyRangesByLocations splits the KeyRanges by logical info in the cache.
+func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges) ([]*LocationKeyRanges, error) {
+	res := make([]*LocationKeyRanges, 0)
+	for ranges.Len() > 0 {
+		loc, err := c.LocateKey(bo, ranges.At(0).StartKey)
+		if err != nil {
+			return res, errors.Trace(err)
+		}
+
+		// Iterate to the first range that is not complete in the region.
+		var i int
+		for ; i < ranges.Len(); i++ {
+			r := ranges.At(i)
+			if !(loc.Contains(r.EndKey) || bytes.Equal(loc.EndKey, r.EndKey)) {
+				break
+			}
+		}
+		// All rest ranges belong to the same region.
+		if i == ranges.Len() {
+			res = append(res, &LocationKeyRanges{Location: loc, Ranges: ranges})
+			break
+		}
+
+		r := ranges.At(i)
+		if loc.Contains(r.StartKey) {
+			// Part of r is not in the region. We need to split it.
+			taskRanges := ranges.Slice(0, i)
+			taskRanges.last = &kv.KeyRange{
+				StartKey: r.StartKey,
+				EndKey:   loc.EndKey,
+			}
+			res = append(res, &LocationKeyRanges{Location: loc, Ranges: taskRanges})
+
+			ranges = ranges.Slice(i+1, ranges.Len())
+			ranges.first = &kv.KeyRange{
+				StartKey: loc.EndKey,
+				EndKey:   r.EndKey,
+			}
+		} else {
+			// rs[i] is not in the region.
+			taskRanges := ranges.Slice(0, i)
+			res = append(res, &LocationKeyRanges{Location: loc, Ranges: taskRanges})
+			ranges = ranges.Slice(i, ranges.Len())
+		}
+	}
+
+	return res, nil
+}
+
 func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) (r *Region, err error) {
 	r = c.searchCachedRegion(key, isEndKey)
 	if r == nil {
@@ -1193,8 +1268,9 @@ func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
 	return latestRegion
 }
 
+// GetStoresByType gets stores by type `typ`
 // TODO: revise it by get store by closure.
-func (c *RegionCache) getStoresByType(typ tikvrpc.EndpointType) []*Store {
+func (c *RegionCache) GetStoresByType(typ tikvrpc.EndpointType) []*Store {
 	c.storeMu.Lock()
 	defer c.storeMu.Unlock()
 	stores := make([]*Store, 0)
@@ -2161,6 +2237,11 @@ func (s *Store) requestLiveness(bo *Backoffer, c *RegionCache) (l livenessState)
 	return
 }
 
+// GetAddr returns the address of the store
+func (s *Store) GetAddr() string {
+	return s.addr
+}
+
 func invokeKVStatusAPI(addr string, timeout time.Duration) (l livenessState) {
 	start := time.Now()
 	defer func() {
@@ -2234,8 +2315,8 @@ func createKVHealthClient(ctx context.Context, addr string) (*grpc.ClientConn, h
 		ctx,
 		addr,
 		opt,
-		grpc.WithInitialWindowSize(grpcInitialWindowSize),
-		grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
+		grpc.WithInitialWindowSize(client.GrpcInitialWindowSize),
+		grpc.WithInitialConnWindowSize(client.GrpcInitialConnWindowSize),
 		grpc.WithConnectParams(grpc.ConnectParams{
 			Backoff: backoff.Config{
 				BaseDelay:  100 * time.Millisecond, // Default was 1s.

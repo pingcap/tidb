@@ -574,7 +574,11 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 			return expression.ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
 		}
 		if s.AsOf != nil {
-			if err := e.ctx.NewTxnWithStartTS(ctx, e.staleTxnStartTS); err != nil {
+			// start transaction read only as of failed due to we set tx_read_ts before
+			if e.ctx.GetSessionVars().TxnReadTS > 0 {
+				return errors.New("start transaction read only as of is forbidden after set transaction read only as of")
+			}
+			if err := e.ctx.NewStaleTxnWithStartTS(ctx, e.staleTxnStartTS); err != nil {
 				return err
 			}
 			// With START TRANSACTION, autocommit remains disabled until you end
@@ -583,6 +587,17 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 			e.ctx.GetSessionVars().SetInTxn(true)
 			return nil
 		}
+	}
+	// When TxnReadTS is not 0, it indicates the transaction is staleness transaction
+	if e.ctx.GetSessionVars().TxnReadTS > 0 {
+		startTS := e.ctx.GetSessionVars().TxnReadTS
+		// clear TxnReadTS after we used it.
+		e.ctx.GetSessionVars().TxnReadTS = 0
+		if err := e.ctx.NewStaleTxnWithStartTS(ctx, startTS); err != nil {
+			return err
+		}
+		e.ctx.GetSessionVars().SetInTxn(true)
+		return nil
 	}
 
 	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
@@ -738,9 +753,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 	sql := new(strings.Builder)
 	if s.IsCreateRole {
-		sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, Account_locked) VALUES `, mysql.SystemDB, mysql.UserTable)
+		sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, plugin, Account_locked) VALUES `, mysql.SystemDB, mysql.UserTable)
 	} else {
-		sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string) VALUES `, mysql.SystemDB, mysql.UserTable)
+		sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, plugin) VALUES `, mysql.SystemDB, mysql.UserTable)
 	}
 
 	users := make([]*auth.UserIdentity, 0, len(s.Specs))
@@ -769,9 +784,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			return errors.Trace(ErrPasswordFormat)
 		}
 		if s.IsCreateRole {
-			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?)`, spec.User.Hostname, spec.User.Username, pwd, "Y")
+			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?)`, spec.User.Hostname, spec.User.Username, pwd, mysql.AuthNativePassword, "Y")
 		} else {
-			sqlexec.MustFormatSQL(sql, `(%?, %?, %?)`, spec.User.Hostname, spec.User.Username, pwd)
+			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?)`, spec.User.Hostname, spec.User.Username, pwd, mysql.AuthNativePassword)
 		}
 		users = append(users, spec.User)
 	}
