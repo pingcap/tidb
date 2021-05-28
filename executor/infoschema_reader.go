@@ -16,6 +16,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -53,13 +54,16 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/deadlockhistory"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.etcd.io/etcd/clientv3"
+	"go.uber.org/zap"
 )
 
 type memtableRetriever struct {
@@ -158,6 +162,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForDeadlock(sctx)
 		case infoschema.ClusterTableDeadlocks:
 			err = e.setDataForClusterDeadlock(sctx)
+		case infoschema.TableDataLockWaits:
+			err = e.setDataForTableDataLockWaits(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -1005,6 +1011,40 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err 
 	return nil
 }
 
+func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		return pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", priv)
+	}
+	return false
+}
+
+func (e *memtableRetriever) setDataForTableDataLockWaits(ctx sessionctx.Context) error {
+	if !hasPriv(ctx, mysql.ProcessPriv) {
+		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
+	waits, err := ctx.GetStore().GetLockWaits()
+	if err != nil {
+		return err
+	}
+	for _, wait := range waits {
+		var digestStr interface{}
+		digest, err := resourcegrouptag.DecodeResourceGroupTag(wait.ResourceGroupTag)
+		if err != nil {
+			logutil.BgLogger().Warn("failed to decode resource group tag", zap.Error(err))
+			digestStr = nil
+		} else {
+			digestStr = hex.EncodeToString(digest)
+		}
+		e.rows = append(e.rows, types.MakeDatums(
+			wait.Key,
+			wait.Txn,
+			wait.WaitForTxn,
+			digestStr,
+		))
+	}
+	return nil
+}
+
 // DDLJobsReaderExec executes DDLJobs information retrieving.
 type DDLJobsReaderExec struct {
 	baseExecutor
@@ -1189,13 +1229,7 @@ func (e *memtableRetriever) setDataForProcessList(ctx sessionctx.Context) {
 	}
 
 	loginUser := ctx.GetSessionVars().User
-	var hasProcessPriv bool
-	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
-			hasProcessPriv = true
-		}
-	}
-
+	hasProcessPriv := hasPriv(ctx, mysql.ProcessPriv)
 	pl := sm.ShowProcessList()
 
 	records := make([][]types.Datum, 0, len(pl))
@@ -1946,13 +1980,8 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context, tableName string) error {
 	// Seeing client errors should require the PROCESS privilege, with the exception of errors for your own user.
 	// This is similar to information_schema.processlist, which is the closest comparison.
-	var hasProcessPriv bool
+	hasProcessPriv := hasPriv(ctx, mysql.ProcessPriv)
 	loginUser := ctx.GetSessionVars().User
-	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
-			hasProcessPriv = true
-		}
-	}
 
 	var rows [][]types.Datum
 	switch tableName {
@@ -2026,12 +2055,7 @@ func (e *memtableRetriever) setDataForTiDBTrx(ctx sessionctx.Context) {
 	}
 
 	loginUser := ctx.GetSessionVars().User
-	var hasProcessPriv bool
-	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
-			hasProcessPriv = true
-		}
-	}
+	hasProcessPriv := hasPriv(ctx, mysql.ProcessPriv)
 	infoList := sm.ShowTxnList()
 	for _, info := range infoList {
 		// If you have the PROCESS privilege, you can see all running transactions.
@@ -2054,12 +2078,7 @@ func (e *memtableRetriever) setDataForClusterTiDBTrx(ctx sessionctx.Context) err
 }
 
 func (e *memtableRetriever) setDataForDeadlock(ctx sessionctx.Context) error {
-	hasPriv := false
-	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		hasPriv = pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv)
-	}
-
-	if !hasPriv {
+	if !hasPriv(ctx, mysql.ProcessPriv) {
 		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 
