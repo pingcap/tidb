@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -239,6 +240,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 			},
 		}
 	}
+	builder.SetResourceGroupTag(sv.StmtCtx)
 	return builder
 }
 
@@ -271,6 +273,14 @@ func (builder *RequestBuilder) SetFromInfoSchema(pis interface{}) *RequestBuilde
 	}
 	builder.is = is
 	builder.Request.SchemaVar = is.SchemaMetaVersion()
+	return builder
+}
+
+// SetResourceGroupTag sets the request resource group tag.
+func (builder *RequestBuilder) SetResourceGroupTag(sc *stmtctx.StatementContext) *RequestBuilder {
+	if config.TopSQLEnabled() {
+		builder.Request.ResourceGroupTag = sc.GetResourceGroupTag()
+	}
 	return builder
 }
 

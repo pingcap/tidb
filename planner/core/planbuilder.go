@@ -1668,12 +1668,20 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			Incremental:   as.Incremental,
 			StatsVersion:  version,
 		}
-		taskSlice = append(taskSlice, AnalyzeColumnsTask{
+		newTask := AnalyzeColumnsTask{
+			HandleCols:  BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo),
 			ColsInfo:    tbl.TableInfo.Columns,
 			analyzeInfo: info,
 			TblInfo:     tbl.TableInfo,
 			Indexes:     idxInfos,
-		})
+		}
+		if newTask.HandleCols == nil {
+			extraCol := model.NewExtraHandleColInfo()
+			// Always place _tidb_rowid at the end of colsInfo, this is corresponding to logics in `analyzeColumnsPushdown`.
+			newTask.ColsInfo = append(newTask.ColsInfo, extraCol)
+			newTask.HandleCols = &IntHandleCols{col: colInfoToColumn(extraCol, len(newTask.ColsInfo)-1)}
+		}
+		taskSlice = append(taskSlice, newTask)
 	}
 	return taskSlice
 }
@@ -1934,7 +1942,7 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 		return nil, errors.Errorf("Only support fast analyze in tikv storage.")
 	}
 	statsVersion := b.ctx.GetSessionVars().AnalyzeVersion
-	if b.ctx.GetSessionVars().EnableFastAnalyze && statsVersion == statistics.Version2 {
+	if b.ctx.GetSessionVars().EnableFastAnalyze && statsVersion >= statistics.Version2 {
 		return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently.")
 	}
 	for _, tbl := range as.TableNames {
@@ -2207,6 +2215,14 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			err = ErrDBaccessDenied.GenWithStackByArgs(user.AuthUsername, user.AuthHostname, mysql.SystemDB)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, mysql.SystemDB, "", "", err)
+	case ast.ShowRegions:
+		tableInfo, err := b.is.TableByName(show.Table.Schema, show.Table.Name)
+		if err != nil {
+			return nil, err
+		}
+		if tableInfo.Meta().TempTableType != model.TempTableNone {
+			return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions")
+		}
 	}
 	schema, names := buildShowSchema(show, isView, isSequence)
 	p.SetSchema(schema)
@@ -2328,33 +2344,30 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShutdownPriv, "", "", "", nil)
 	case *ast.BeginStmt:
 		if raw.AsOf != nil {
-			startTS, err := b.calculateTsExpr(raw.AsOf)
+			startTS, err := calculateTsExpr(b.ctx, raw.AsOf)
 			if err != nil {
 				return nil, err
 			}
-			p.StalenessTxnOption = &sessionctx.StalenessTxnOption{
-				Mode:    ast.TimestampBoundReadTimestamp,
-				StartTS: startTS,
-			}
+			p.StaleTxnStartTS = startTS
 		}
 	}
 	return p, nil
 }
 
 // calculateTsExpr calculates the TsExpr of AsOfClause to get a StartTS.
-func (b *PlanBuilder) calculateTsExpr(asOfClause *ast.AsOfClause) (uint64, error) {
-	tsVal, err := evalAstExpr(b.ctx, asOfClause.TsExpr)
+func calculateTsExpr(sctx sessionctx.Context, asOfClause *ast.AsOfClause) (uint64, error) {
+	tsVal, err := evalAstExpr(sctx, asOfClause.TsExpr)
 	if err != nil {
 		return 0, err
 	}
 	toTypeTimestamp := types.NewFieldType(mysql.TypeTimestamp)
 	// We need at least the millionsecond here, so set fsp to 3.
 	toTypeTimestamp.Decimal = 3
-	tsTimestamp, err := tsVal.ConvertTo(b.ctx.GetSessionVars().StmtCtx, toTypeTimestamp)
+	tsTimestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx, toTypeTimestamp)
 	if err != nil {
 		return 0, err
 	}
-	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(b.ctx.GetSessionVars().TimeZone)
+	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(sctx.GetSessionVars().TimeZone)
 	if err != nil {
 		return 0, err
 	}
@@ -2592,7 +2605,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 			givenPartitionSets[id] = struct{}{}
 		}
 		pt := tableInPlan.(table.PartitionedTable)
-		insertPlan.Table = tables.NewPartitionTableithGivenSets(pt, givenPartitionSets)
+		insertPlan.Table = tables.NewPartitionTableWithGivenSets(pt, givenPartitionSets)
 	} else if len(insert.PartitionNames) != 0 {
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
@@ -3102,6 +3115,9 @@ func (b *PlanBuilder) buildIndexAdvise(node *ast.IndexAdviseStmt) Plan {
 }
 
 func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) {
+	if node.Table.TableInfo.TempTableType != model.TempTableNone {
+		return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("split table")
+	}
 	if node.SplitSyntaxOpt != nil && node.SplitSyntaxOpt.HasPartition && node.Table.TableInfo.Partition == nil {
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
