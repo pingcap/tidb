@@ -30,7 +30,7 @@ import (
 	"sync"
 	"time"
 
-	deadlockPB "github.com/pingcap/kvproto/pkg/deadlock"
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
@@ -93,7 +93,7 @@ func (d *Detector) Detect(sourceTxn, waitForTxn, keyHash uint64, diagCtx diagnos
 			j := len(err.WaitChain) - i - 1
 			err.WaitChain[i], err.WaitChain[j] = err.WaitChain[j], err.WaitChain[i]
 		}
-		err.WaitChain = append(err.WaitChain, &deadlockPB.WaitForEntry{
+		err.WaitChain = append(err.WaitChain, &deadlockpb.WaitForEntry{
 			Txn:              sourceTxn,
 			Key:              diagCtx.key,
 			KeyHash:          keyHash,
@@ -122,7 +122,7 @@ func (d *Detector) doDetect(nowTime time.Time, sourceTxn, waitForTxn uint64) *Er
 		}
 		if keyHashPair.txn == sourceTxn {
 			return &ErrDeadlock{DeadlockKeyHash: keyHashPair.keyHash,
-				WaitChain: []*deadlockPB.WaitForEntry{
+				WaitChain: []*deadlockpb.WaitForEntry{
 					{
 						Txn:              waitForTxn,
 						Key:              keyHashPair.diagCtx.key,
@@ -134,7 +134,7 @@ func (d *Detector) doDetect(nowTime time.Time, sourceTxn, waitForTxn uint64) *Er
 			}
 		}
 		if err := d.doDetect(nowTime, sourceTxn, keyHashPair.txn); err != nil {
-			err.WaitChain = append(err.WaitChain, &deadlockPB.WaitForEntry{
+			err.WaitChain = append(err.WaitChain, &deadlockpb.WaitForEntry{
 				Txn:              waitForTxn,
 				Key:              keyHashPair.diagCtx.key,
 				KeyHash:          keyHashPair.keyHash,

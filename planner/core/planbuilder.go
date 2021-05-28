@@ -411,6 +411,29 @@ const (
 	renameView
 )
 
+type cteInfo struct {
+	def *ast.CommonTableExpression
+	// nonRecursive is used to decide if a CTE is visible. If a CTE start with `WITH RECURSIVE`, then nonRecursive is false,
+	// so it is visible in its definition.
+	nonRecursive bool
+	// useRecursive is used to record if a subSelect in CTE's definition refer to itself. This help us to identify the seed part and recursive part.
+	useRecursive bool
+	isBuilding   bool
+	// isDistinct indicates if the union between seed part and recursive part is distinct or not.
+	isDistinct bool
+	// seedLP is the seed part's logical plan.
+	seedLP LogicalPlan
+	// recurLP is the recursive part's logical plan.
+	recurLP LogicalPlan
+	// storageID for this CTE.
+	storageID int
+	// optFlag is the optFlag for the whole CTE.
+	optFlag uint64
+	// enterSubquery and recursiveRef are used to check "recursive table must be referenced only once, and not in any subquery".
+	enterSubquery bool
+	recursiveRef  bool
+}
+
 // PlanBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type PlanBuilder struct {
@@ -418,6 +441,7 @@ type PlanBuilder struct {
 	is           infoschema.InfoSchema
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName
+	outerCTEs    []*cteInfo
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
@@ -476,7 +500,9 @@ type PlanBuilder struct {
 	// isForUpdateRead should be true in either of the following situations
 	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
 	// 2. isolation level is RC
-	isForUpdateRead bool
+	isForUpdateRead             bool
+	allocIDForCTEStorage        int
+	buildingRecursivePartForCTE bool
 }
 
 type handleColHelper struct {
@@ -584,6 +610,7 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 	return &PlanBuilder{
 		ctx:                 sctx,
 		is:                  is,
+		outerCTEs:           make([]*cteInfo, 0),
 		colMapper:           make(map[*ast.ColumnNameExpr]int),
 		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
 		hintProcessor:       processor,
@@ -2344,7 +2371,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShutdownPriv, "", "", "", nil)
 	case *ast.BeginStmt:
 		if raw.AsOf != nil {
-			startTS, err := b.calculateTsExpr(raw.AsOf)
+			startTS, err := calculateTsExpr(b.ctx, raw.AsOf)
 			if err != nil {
 				return nil, err
 			}
@@ -2355,19 +2382,19 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 }
 
 // calculateTsExpr calculates the TsExpr of AsOfClause to get a StartTS.
-func (b *PlanBuilder) calculateTsExpr(asOfClause *ast.AsOfClause) (uint64, error) {
-	tsVal, err := evalAstExpr(b.ctx, asOfClause.TsExpr)
+func calculateTsExpr(sctx sessionctx.Context, asOfClause *ast.AsOfClause) (uint64, error) {
+	tsVal, err := evalAstExpr(sctx, asOfClause.TsExpr)
 	if err != nil {
 		return 0, err
 	}
 	toTypeTimestamp := types.NewFieldType(mysql.TypeTimestamp)
 	// We need at least the millionsecond here, so set fsp to 3.
 	toTypeTimestamp.Decimal = 3
-	tsTimestamp, err := tsVal.ConvertTo(b.ctx.GetSessionVars().StmtCtx, toTypeTimestamp)
+	tsTimestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx, toTypeTimestamp)
 	if err != nil {
 		return 0, err
 	}
-	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(b.ctx.GetSessionVars().TimeZone)
+	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(sctx.GetSessionVars().TimeZone)
 	if err != nil {
 		return 0, err
 	}

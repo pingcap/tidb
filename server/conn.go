@@ -63,7 +63,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
@@ -1621,11 +1620,11 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	pointPlans := make([]plannercore.Plan, len(stmts))
 	var idxKeys []kv.Key
 	var rowKeys []kv.Key
-	is := domain.GetDomain(cc.ctx).InfoSchema()
 	sc := vars.StmtCtx
 	for i, stmt := range stmts {
 		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
-		if err = plannercore.Preprocess(cc.ctx, stmt, is); err != nil {
+		// TODO: handle the PreprocessorReturn.
+		if err = plannercore.Preprocess(cc.ctx, stmt); err != nil {
 			return nil, err
 		}
 		p := plannercore.TryFastPlan(cc.ctx.Session, stmt)
