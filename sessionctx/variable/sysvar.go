@@ -1639,7 +1639,7 @@ var defaultSysVars = []*SysVar{
 		TopSQLVariable.Enable.Store(TiDBOptOn(s))
 		return nil
 	}},
-	// todo: add validation
+	// TODO(crazycs520): Add validation
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTopSQLAgentAddress, Value: DefTiDBTopSQLAgentAddress, Type: TypeStr, AllowEmpty: true, GetSession: func(s *SessionVars) (string, error) {
 		return TopSQLVariable.AgentAddress.Load(), nil
 	}, SetSession: func(vars *SessionVars, s string) error {

@@ -182,6 +182,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	case variable.TiDBCapturePlanBaseline:
 		variable.CapturePlanBaseline.Set(valStrToBoolStr, !v.IsGlobal)
 	}
+
 	return nil
 }
 
