@@ -14,7 +14,10 @@
 package txninfo
 
 import (
+	"strings"
+	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -43,19 +46,28 @@ var TxnRunningStateStrs = []string{
 // TxnInfo is information about a running transaction
 // This is supposed to be the datasource of `TIDB_TRX` in infoschema
 type TxnInfo struct {
+	// The following fields are immutable and can be safely read across threads.
+
 	StartTS uint64
-	// digest of SQL current running
+	// Digest of SQL currently running
 	CurrentSQLDigest string
-	// current executing State
+	// Digests of all SQLs executed in the transaction.
+	AllSQLDigests []string
+
+	// The following fields are mutable and needs to be read or written by atomic operations. But since only the
+	// transaction's thread can modify its value, it's ok for the transaction's thread to read it without atomic
+	// operations.
+
+	// Current execution state of the transaction.
 	State TxnRunningState
-	// last trying to block start time
-	BlockStartTime *time.Time
+	// Last trying to block start time. Invalid if State is not TxnLockWaiting. It's an unsafe pointer to time.Time or nil.
+	BlockStartTime unsafe.Pointer
 	// How many entries are in MemDB
 	EntriesCount uint64
 	// MemDB used memory
 	EntriesSize uint64
 
-	// the following fields will be filled in `session` instead of `LazyTxn`
+	// The following fields will be filled in `session` instead of `LazyTxn`
 
 	// Which session this transaction belongs to
 	ConnectionID uint64
@@ -65,24 +77,54 @@ type TxnInfo struct {
 	CurrentDB string
 }
 
-// ToDatum Converts the `TxnInfo` to `Datum` to show in the `TIDB_TRX` table
+// ShallowClone shallow clones the TxnInfo. It's safe to call concurrently with the transaction.
+// Note that this function doesn't do deep copy and some fields of the result may be unsafe to write. Use it at your own
+// risk.
+func (info *TxnInfo) ShallowClone() *TxnInfo {
+	return &TxnInfo{
+		StartTS:          info.StartTS,
+		CurrentSQLDigest: info.CurrentSQLDigest,
+		AllSQLDigests:    info.AllSQLDigests,
+		State:            atomic.LoadInt32(&info.State),
+		BlockStartTime:   atomic.LoadPointer(&info.BlockStartTime),
+		EntriesCount:     atomic.LoadUint64(&info.EntriesCount),
+		EntriesSize:      atomic.LoadUint64(&info.EntriesSize),
+		ConnectionID:     info.ConnectionID,
+		Username:         info.Username,
+		CurrentDB:        info.CurrentDB,
+	}
+}
+
+// ToDatum Converts the `TxnInfo` to `Datum` to show in the `TIDB_TRX` table.
 func (info *TxnInfo) ToDatum() []types.Datum {
-	humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
+	// TODO: The timezone represented to the user is not correct and it will be always UTC time.
+	humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6).UTC()
+
+	var currentDigest interface{}
+	if len(info.CurrentSQLDigest) != 0 {
+		currentDigest = info.CurrentSQLDigest
+	}
+
 	var blockStartTime interface{}
-	if info.BlockStartTime == nil {
+	if t := (*time.Time)(atomic.LoadPointer(&info.BlockStartTime)); t == nil {
 		blockStartTime = nil
 	} else {
-		blockStartTime = types.NewTime(types.FromGoTime(*info.BlockStartTime), mysql.TypeTimestamp, 0)
+		blockStartTime = types.NewTime(types.FromGoTime(*t), mysql.TypeTimestamp, types.MaxFsp)
 	}
+
 	e, err := types.ParseEnumValue(TxnRunningStateStrs, uint64(info.State+1))
 	if err != nil {
 		panic("this should never happen")
 	}
+
+	allSQLs := "[" + strings.Join(info.AllSQLDigests, ", ") + "]"
+
 	state := types.NewMysqlEnumDatum(e)
+
 	datums := types.MakeDatums(
 		info.StartTS,
-		types.NewTime(types.FromGoTime(humanReadableStartTime), mysql.TypeTimestamp, 0),
-		info.CurrentSQLDigest,
+		types.NewTime(types.FromGoTime(humanReadableStartTime), mysql.TypeTimestamp, types.MaxFsp),
+		currentDigest,
 	)
 	datums = append(datums, state)
 	datums = append(datums, types.MakeDatums(
@@ -91,6 +133,7 @@ func (info *TxnInfo) ToDatum() []types.Datum {
 		info.EntriesSize,
 		info.ConnectionID,
 		info.Username,
-		info.CurrentDB)...)
+		info.CurrentDB,
+		allSQLs)...)
 	return datums
 }
