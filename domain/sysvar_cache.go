@@ -16,10 +16,8 @@ package domain
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"sync"
 
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
@@ -164,31 +162,6 @@ func checkEnableServerGlobalVar(name, sVal string) {
 		err = stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(sVal, false)
 	case variable.TiDBCapturePlanBaseline:
 		variable.CapturePlanBaseline.Set(sVal, false)
-	case variable.TiDBEnableTopSQL:
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.TopSQL.Enable = variable.TiDBOptOn(sVal)
-		})
-	case variable.TiDBTopSQLAgentAddress:
-		config.UpdateGlobal(func(conf *config.Config) {
-			// todo: add validate
-			conf.TopSQL.AgentAddress = sVal
-		})
-	case variable.TiDBTopSQLPrecisionSeconds:
-		var val int
-		val, err = strconv.Atoi(sVal)
-		if err == nil {
-			config.UpdateGlobal(func(conf *config.Config) {
-				conf.TopSQL.PrecisionSeconds = val
-			})
-		}
-	case variable.TiDBTopSQLMaxStatementCount:
-		var val int
-		val, err = strconv.Atoi(sVal)
-		if err == nil {
-			config.UpdateGlobal(func(conf *config.Config) {
-				conf.TopSQL.MaxStatementCount = val
-			})
-		}
 	}
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))

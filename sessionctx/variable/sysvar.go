@@ -1632,15 +1632,72 @@ var defaultSysVars = []*SysVar{
 	// variable for top SQL feature.
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTopSQL, Value: BoolToOnOff(config.DefTopSQLEnable), Type: TypeBool, AllowEmpty: true, GetSession: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(config.GetGlobalConfig().TopSQL.Enable), nil
+	}, SetSession: func(vars *SessionVars, s string) error {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TopSQL.Enable = TiDBOptOn(s)
+		})
+		return nil
+	}, SetGlobal: func(vars *SessionVars, s string) error {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TopSQL.Enable = TiDBOptOn(s)
+		})
+		return nil
 	}},
+	// todo: add validation
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTopSQLAgentAddress, Value: config.DefTopSQLAgentAddress, Type: TypeStr, AllowEmpty: true, GetSession: func(s *SessionVars) (string, error) {
 		return config.GetGlobalConfig().TopSQL.AgentAddress, nil
+	}, SetSession: func(vars *SessionVars, s string) error {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TopSQL.AgentAddress = s
+		})
+		return nil
+	}, SetGlobal: func(vars *SessionVars, s string) error {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TopSQL.AgentAddress = s
+		})
+		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTopSQLPrecisionSeconds, Value: strconv.Itoa(config.DefTopSQLPrecisionSeconds), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt64, AllowEmpty: true, GetSession: func(s *SessionVars) (string, error) {
 		return strconv.Itoa(config.GetGlobalConfig().TopSQL.PrecisionSeconds), nil
+	}, SetSession: func(vars *SessionVars, s string) error {
+		val, err := strconv.Atoi(s)
+		if err != nil {
+			return err
+		}
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TopSQL.PrecisionSeconds = val
+		})
+		return nil
+	}, SetGlobal: func(vars *SessionVars, s string) error {
+		val, err := strconv.Atoi(s)
+		if err != nil {
+			return err
+		}
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TopSQL.PrecisionSeconds = val
+		})
+		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTopSQLMaxStatementCount, Value: strconv.Itoa(config.DefTopSQLMaxStatementCount), Type: TypeInt, MinValue: 0, MaxValue: 10000, AllowEmpty: true, GetSession: func(s *SessionVars) (string, error) {
 		return strconv.Itoa(config.GetGlobalConfig().TopSQL.MaxStatementCount), nil
+	}, SetSession: func(vars *SessionVars, s string) error {
+		val, err := strconv.Atoi(s)
+		if err != nil {
+			return err
+		}
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TopSQL.MaxStatementCount = val
+		})
+		return nil
+	}, SetGlobal: func(vars *SessionVars, s string) error {
+		val, err := strconv.Atoi(s)
+		if err != nil {
+			return err
+		}
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TopSQL.MaxStatementCount = val
+		})
+		return nil
 	}},
 }
 

@@ -15,14 +15,12 @@ package executor
 
 import (
 	"context"
-	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plugin"
@@ -183,31 +181,6 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		return stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(valStr, !v.IsGlobal)
 	case variable.TiDBCapturePlanBaseline:
 		variable.CapturePlanBaseline.Set(valStrToBoolStr, !v.IsGlobal)
-	case variable.TiDBEnableTopSQL:
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.TopSQL.Enable = variable.TiDBOptOn(valStr)
-		})
-	case variable.TiDBTopSQLAgentAddress:
-		// todo: add validate
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.TopSQL.AgentAddress = valStr
-		})
-	case variable.TiDBTopSQLPrecisionSeconds:
-		var val int
-		val, err = strconv.Atoi(valStr)
-		if err == nil {
-			config.UpdateGlobal(func(conf *config.Config) {
-				conf.TopSQL.PrecisionSeconds = val
-			})
-		}
-	case variable.TiDBTopSQLMaxStatementCount:
-		var val int
-		val, err = strconv.Atoi(valStr)
-		if err == nil {
-			config.UpdateGlobal(func(conf *config.Config) {
-				conf.TopSQL.MaxStatementCount = val
-			})
-		}
 	}
 	return nil
 }
