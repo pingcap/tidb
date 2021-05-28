@@ -192,32 +192,32 @@ func (s *testRegionRequestToThreeStoresSuite) TestGetRPCContextWithoutAccessIdxe
 	c.Assert(err, IsNil)
 
 	var (
-		seed     uint32 = 0
-		regionID        = RegionVerID{s.regionID, 0, 0}
-		opts            = []StoreSelectorOption{}
+		seed                uint32 = 0
+		regionID                   = RegionVerID{s.regionID, 0, 0}
+		excludedAccessIdxes        = []AccessIndex{}
 	)
 
 	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{}, kv.ReplicaReadMixed, &seed)
-	rpcCtx, err := s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV, opts...)
+	rpcCtx, err := s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV, WithoutAccessIdxes(excludedAccessIdxes))
 	c.Assert(err, IsNil)
 	peedID1 := rpcCtx.Peer.GetId()
 
-	opts = append(opts, WithoutAccessIdxes([]AccessIndex{AccessIndex(rpcCtx.AccessIdx)}))
-	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV, opts...)
+	excludedAccessIdxes = append(excludedAccessIdxes, rpcCtx.AccessIdx)
+	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV, WithoutAccessIdxes(excludedAccessIdxes))
 	c.Assert(err, IsNil)
 	peedID2 := rpcCtx.Peer.GetId()
 	c.Assert(peedID1, Not(Equals), peedID2)
 
-	opts = append(opts, WithoutAccessIdxes([]AccessIndex{AccessIndex(rpcCtx.AccessIdx)}))
-	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV, opts...)
+	excludedAccessIdxes = append(excludedAccessIdxes, rpcCtx.AccessIdx)
+	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV, WithoutAccessIdxes(excludedAccessIdxes))
 	c.Assert(err, IsNil)
 	peedID3 := rpcCtx.Peer.GetId()
 	c.Assert(peedID1, Not(Equals), peedID3)
 	c.Assert(peedID2, Not(Equals), peedID3)
 
 	// All AccessIdxes are excluded, leader peer will be chosen.
-	opts = append(opts, WithoutAccessIdxes([]AccessIndex{AccessIndex(rpcCtx.AccessIdx)}))
-	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV, opts...)
+	excludedAccessIdxes = append(excludedAccessIdxes, rpcCtx.AccessIdx)
+	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV, WithoutAccessIdxes(excludedAccessIdxes))
 	c.Assert(err, IsNil)
 	peedID4 := rpcCtx.Peer.GetId()
 	c.Assert(peedID1, Equals, peedID4)

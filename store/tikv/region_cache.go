@@ -451,7 +451,11 @@ type StoreSelectorOption func(*storeSelectorOp)
 // WithMatchLabels indicates selecting stores with matched labels.
 func WithMatchLabels(labels []*metapb.StoreLabel) StoreSelectorOption {
 	return func(op *storeSelectorOp) {
-		op.labels = labels
+		if op.labels != nil {
+			op.labels = append(op.labels, labels...)
+		} else {
+			op.labels = labels
+		}
 	}
 }
 
