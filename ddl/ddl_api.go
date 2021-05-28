@@ -3609,10 +3609,11 @@ func checkTypeChangeSupported(origin *types.FieldType, to *types.FieldType) bool
 func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
 	canReorg, changeColumnErrMsg, err := CheckModifyTypeCompatible(origin, to)
 	if err != nil {
+		enableChangeColumnType := ctx.GetSessionVars().EnableChangeColumnType
 		if !canReorg {
 			return errors.Trace(err)
 		}
-		enableChangeColumnType := ctx.GetSessionVars().EnableChangeColumnType
+
 		if !enableChangeColumnType {
 			msg := fmt.Sprintf("%s, and tidb_enable_change_column_type is false", changeColumnErrMsg)
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
@@ -3620,10 +3621,6 @@ func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types
 			msg := "tidb_enable_change_column_type is true and this column has primary key flag"
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
-	}
-	if types.IsTypeVarchar(origin.Tp) != types.IsTypeVarchar(to.Tp) {
-		unsupportedMsg := "column type conversion between 'varchar' and 'non-varchar' is currently unsupported yet"
-		return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 	}
 
 	err = checkModifyCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate, needRewriteCollationData)
