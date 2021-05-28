@@ -55,8 +55,10 @@ func (c *TopSQLCollector) Collect(ts int64, stats []tracecpu.SQLStats) {
 		hash := c.hash(stmt)
 		stats, ok := c.sqlStatsMap[hash]
 		if !ok {
-			tmp := stmt
-			stats = &tmp
+			stats = &tracecpu.SQLStats{
+				SQLDigest:  stmt.SQLDigest,
+				PlanDigest: stmt.PlanDigest,
+			}
 			c.sqlStatsMap[hash] = stats
 		}
 		stats.CPUTimeMs += stmt.CPUTimeMs

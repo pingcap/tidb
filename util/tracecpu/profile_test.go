@@ -57,10 +57,17 @@ func (s *testSuite) TestTopSQLStatsProfile(c *C) {
 		{"insert into t values (?)", ""},
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	for _, req := range reqs {
 		go func(sql, plan string) {
 			for {
-				s.mockExecuteSQL(sql, plan)
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					s.mockExecuteSQL(sql, plan)
+				}
 			}
 		}(req.sql, req.plan)
 	}
