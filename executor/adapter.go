@@ -214,7 +214,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	ctx = a.setPProfLabelWithPlan(ctx)
+	ctx = a.setPlanLabelForTopSQL(ctx)
 	startTs := uint64(math.MaxUint64)
 	err := a.Ctx.InitTxnWithStartTS(startTs)
 	if err != nil {
@@ -290,7 +290,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	return a.InfoSchema.SchemaMetaVersion(), nil
 }
 
-func (a *ExecStmt) setPProfLabelWithPlan(ctx context.Context) context.Context {
+func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) context.Context {
 	if a.Plan == nil || !config.TopSQLEnabled() {
 		return ctx
 	}
@@ -371,8 +371,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	if err != nil {
 		return nil, err
 	}
-	// ExecuteExec will rewrite `a.Plan`, so set goroutine label should be executed after `a.buildExecutor`.
-	ctx = a.setPProfLabelWithPlan(ctx)
+	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
+	ctx = a.setPlanLabelForTopSQL(ctx)
 
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
