@@ -411,6 +411,29 @@ const (
 	renameView
 )
 
+type cteInfo struct {
+	def *ast.CommonTableExpression
+	// nonRecursive is used to decide if a CTE is visible. If a CTE start with `WITH RECURSIVE`, then nonRecursive is false,
+	// so it is visible in its definition.
+	nonRecursive bool
+	// useRecursive is used to record if a subSelect in CTE's definition refer to itself. This help us to identify the seed part and recursive part.
+	useRecursive bool
+	isBuilding   bool
+	// isDistinct indicates if the union between seed part and recursive part is distinct or not.
+	isDistinct bool
+	// seedLP is the seed part's logical plan.
+	seedLP LogicalPlan
+	// recurLP is the recursive part's logical plan.
+	recurLP LogicalPlan
+	// storageID for this CTE.
+	storageID int
+	// optFlag is the optFlag for the whole CTE.
+	optFlag uint64
+	// enterSubquery and recursiveRef are used to check "recursive table must be referenced only once, and not in any subquery".
+	enterSubquery bool
+	recursiveRef  bool
+}
+
 // PlanBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type PlanBuilder struct {
@@ -418,6 +441,7 @@ type PlanBuilder struct {
 	is           infoschema.InfoSchema
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName
+	outerCTEs    []*cteInfo
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
@@ -476,7 +500,9 @@ type PlanBuilder struct {
 	// isForUpdateRead should be true in either of the following situations
 	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
 	// 2. isolation level is RC
-	isForUpdateRead bool
+	isForUpdateRead             bool
+	allocIDForCTEStorage        int
+	buildingRecursivePartForCTE bool
 }
 
 type handleColHelper struct {
@@ -584,6 +610,7 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 	return &PlanBuilder{
 		ctx:                 sctx,
 		is:                  is,
+		outerCTEs:           make([]*cteInfo, 0),
 		colMapper:           make(map[*ast.ColumnNameExpr]int),
 		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
 		hintProcessor:       processor,
