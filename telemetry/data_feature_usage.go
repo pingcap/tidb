@@ -23,8 +23,9 @@ import (
 )
 
 type featureUsage struct {
-	Txn          *TxnUsage       `json:"txn"`
-	ClusterIndex map[string]bool `json:"clusterIndex"`
+	Txn            *TxnUsage       `json:"txn"`
+	ClusterIndex   map[string]bool `json:"clusterIndex"`
+	TemporaryTable bool            `json:"temporaryTable"`
 }
 
 func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
@@ -62,7 +63,16 @@ func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
 	// transaction related feature
 	usageInfo.Txn = GetTxnUsageInfo(ctx)
 
+	// Avoid the circle dependency.
+	usageInfo.TemporaryTable = ctx.(TemporaryTableFeatureChecker).TemporaryTableExists()
+
 	return &usageInfo, nil
+}
+
+// TemporaryTableFeatureChecker is defined to avoid package circle dependency.
+// The session struct implements this interface.
+type TemporaryTableFeatureChecker interface {
+	TemporaryTableExists() bool
 }
 
 // TxnUsage records the usage info of transaction related features, including

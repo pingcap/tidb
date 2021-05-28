@@ -149,6 +149,8 @@ const (
 	TableStatementsSummary = "STATEMENTS_SUMMARY"
 	// TableStatementsSummaryHistory is the string constant of statements summary history table.
 	TableStatementsSummaryHistory = "STATEMENTS_SUMMARY_HISTORY"
+	// TableStatementsSummaryEvicted is the string constant of statements summary evicted table.
+	TableStatementsSummaryEvicted = "STATEMENTS_SUMMARY_EVICTED"
 	// TableStorageStats is a table that contains all tables disk usage
 	TableStorageStats = "TABLE_STORAGE_STATS"
 	// TableTiFlashTables is the string constant of tiflash tables table.
@@ -246,6 +248,7 @@ var tableIDMap = map[string]int64{
 	TableDeadlocks:                          autoid.InformationSchemaDBID + 72,
 	ClusterTableDeadlocks:                   autoid.InformationSchemaDBID + 73,
 	TableDataLockWaits:                      autoid.InformationSchemaDBID + 74,
+	TableStatementsSummaryEvicted:           autoid.InformationSchemaDBID + 75,
 }
 
 type columnInfo struct {
@@ -1368,8 +1371,9 @@ var tableDeadlocksCols = []columnInfo{
 	{name: "TRY_LOCK_TRX_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "The transaction ID (start ts) of the transaction that's trying to acquire the lock"},
 	{name: "CURRENT_SQL_DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "The digest of the SQL that's being blocked"},
 	{name: "KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The key on which a transaction is waiting for another"},
-	{name: "ALL_SQL_DIGESTS", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
 	{name: "TRX_HOLDING_LOCK", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "The transaction ID (start ts) of the transaction that's currently holding the lock"},
+	// TODO: Implement the ALL_SQL_DIGESTS column
+	// {name: "ALL_SQL_DIGESTS", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
 }
 
 var tableDataLockWaitsCols = []columnInfo{
@@ -1377,6 +1381,12 @@ var tableDataLockWaitsCols = []columnInfo{
 	{name: "TRX_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Current transaction that's waiting for the lock"},
 	{name: "CURRENT_HOLDING_TRX_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "The transaction that's holding the lock and blocks the current transaction"},
 	{name: "SQL_DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "Digest of the SQL that's trying to acquire the lock"},
+}
+
+var tableStatementsSummaryEvictedCols = []columnInfo{
+	{name: "BEGIN_TIME", tp: mysql.TypeTimestamp, size: 26},
+	{name: "END_TIME", tp: mysql.TypeTimestamp, size: 26},
+	{name: "EVICTED_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1741,6 +1751,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableSequences:                          tableSequencesCols,
 	TableStatementsSummary:                  tableStatementsSummaryCols,
 	TableStatementsSummaryHistory:           tableStatementsSummaryCols,
+	TableStatementsSummaryEvicted:           tableStatementsSummaryEvictedCols,
 	TableStorageStats:                       tableStorageStatsCols,
 	TableTiFlashTables:                      tableTableTiFlashTablesCols,
 	TableTiFlashSegments:                    tableTableTiFlashSegmentsCols,

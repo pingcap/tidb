@@ -1708,7 +1708,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
 	s.PrepareTSFuture(ctx)
-	prepareExec := executor.NewPrepareExec(s, s.GetInfoSchema().(infoschema.InfoSchema), sql)
+	prepareExec := executor.NewPrepareExec(s, sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
 		return
@@ -2847,6 +2847,21 @@ func (s *session) SetPort(port string) {
 // GetTxnWriteThroughputSLI implements the Context interface.
 func (s *session) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
 	return &s.txn.writeSLI
+}
+
+var _ telemetry.TemporaryTableFeatureChecker = &session{}
+
+// TemporaryTableExists is used by the telemetry package to avoid circle dependency.
+func (s *session) TemporaryTableExists() bool {
+	is := domain.GetDomain(s).InfoSchema()
+	for _, dbInfo := range is.AllSchemas() {
+		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
+			if tbInfo.Meta().TempTableType != model.TempTableNone {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // GetInfoSchema returns snapshotInfoSchema if snapshot schema is set.
