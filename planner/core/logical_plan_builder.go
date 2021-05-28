@@ -5737,6 +5737,8 @@ func containDifferentJoinTypes(preferJoinType uint) bool {
 
 func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression, isRecursive bool) (p LogicalPlan, err error) {
 	if isRecursive {
+		// buildingRecursivePartForCTE likes a stack. We save it before building a recursive CTE and restore it after building.
+		// We need a stack because we need to handle the nested recursive CTE. And buildingRecursivePartForCTE indicates the innermost CTE.
 		saveCheck := b.buildingRecursivePartForCTE
 		b.buildingRecursivePartForCTE = false
 		err = b.buildRecursiveCTE(ctx, cte.Query.Query)

@@ -1170,15 +1170,20 @@ type LogicalShowDDLJobs struct {
 	JobNumber int64
 }
 
-// CTEClass holds the information and plan for a CTE.
+// CTEClass holds the information and plan for a CTE. Most of the fields in this struct are the same as cteInfo.
+// But the cteInfo is used when building the plan, and CTEClass is used also for building the executor.
 type CTEClass struct {
 	// The union between seed part and recursive part is DISTINCT or DISTINCT ALL.
-	IsDistinct               bool
+	IsDistinct bool
+	// seedPartLogicalPlan and recursivePartLogicalPlan are the logical plans for the seed part and recursive part of this CTE.
 	seedPartLogicalPlan      LogicalPlan
 	recursivePartLogicalPlan LogicalPlan
-	cteTask                  task
-	IDForStorage             int
-	optFlag                  uint64
+	// cteTask is the physical plan for this CTE, is a wrapper of the PhysicalCTE.
+	cteTask task
+	// storageID for this CTE.
+	IDForStorage int
+	// optFlag is the optFlag for the whole CTE.
+	optFlag uint64
 }
 
 // LogicalCTE is for CTE.
