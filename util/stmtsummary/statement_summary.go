@@ -73,6 +73,9 @@ type stmtSummaryByDigestMap struct {
 
 	// sysVars encapsulates system variables needed to control statement summary.
 	sysVars *systemVars
+
+	// other stores summary of evicted data.
+	other *stmtSummaryByDigestEvicted
 }
 
 // StmtSummaryByDigestMap is a global map containing all statement summaries.
@@ -235,11 +238,20 @@ type StmtExecInfo struct {
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
 func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	sysVars := newSysVars()
+
+	ssbde := newStmtSummaryByDigestEvicted()
+
 	maxStmtCount := uint(sysVars.getVariable(typeMaxStmtCount))
-	return &stmtSummaryByDigestMap{
+	newSsMap := &stmtSummaryByDigestMap{
 		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
 		sysVars:    sysVars,
+		other:      ssbde,
 	}
+	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
+		historySize := newSsMap.historySize()
+		newSsMap.other.AddEvicted(k.(*stmtSummaryByDigestKey), v.(*stmtSummaryByDigest), historySize)
+	})
+	return newSsMap
 }
 
 // AddStatement adds a statement to StmtSummaryByDigestMap.
@@ -291,7 +303,6 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		summary.isInternal = summary.isInternal && sei.IsInternal
 		return summary, beginTime
 	}()
-
 	// Lock a single entry, not the whole cache.
 	if summary != nil {
 		summary.add(sei, beginTime, intervalSeconds, historySize)
@@ -304,6 +315,7 @@ func (ssMap *stmtSummaryByDigestMap) Clear() {
 	defer ssMap.Unlock()
 
 	ssMap.summaryMap.DeleteAll()
+	ssMap.other.Clear()
 	ssMap.beginTimeForCurInterval = 0
 }
 

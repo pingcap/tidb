@@ -149,6 +149,8 @@ const (
 	TableStatementsSummary = "STATEMENTS_SUMMARY"
 	// TableStatementsSummaryHistory is the string constant of statements summary history table.
 	TableStatementsSummaryHistory = "STATEMENTS_SUMMARY_HISTORY"
+	// TableStatementsSummaryEvicted is the string constant of statements summary evicted table.
+	TableStatementsSummaryEvicted = "STATEMENTS_SUMMARY_EVICTED"
 	// TableStorageStats is a table that contains all tables disk usage
 	TableStorageStats = "TABLE_STORAGE_STATS"
 	// TableTiFlashTables is the string constant of tiflash tables table.
@@ -246,6 +248,7 @@ var tableIDMap = map[string]int64{
 	TableDeadlocks:                          autoid.InformationSchemaDBID + 72,
 	ClusterTableDeadlocks:                   autoid.InformationSchemaDBID + 73,
 	TableDataLockWaits:                      autoid.InformationSchemaDBID + 74,
+	TableStatementsSummaryEvicted:           autoid.InformationSchemaDBID + 75,
 }
 
 type columnInfo struct {
@@ -1380,6 +1383,12 @@ var tableDataLockWaitsCols = []columnInfo{
 	{name: "SQL_DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "Digest of the SQL that's trying to acquire the lock"},
 }
 
+var tableStatementsSummaryEvictedCols = []columnInfo{
+	{name: "BEGIN_TIME", tp: mysql.TypeTimestamp, size: 26},
+	{name: "END_TIME", tp: mysql.TypeTimestamp, size: 26},
+	{name: "EVICTED_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1742,6 +1751,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableSequences:                          tableSequencesCols,
 	TableStatementsSummary:                  tableStatementsSummaryCols,
 	TableStatementsSummaryHistory:           tableStatementsSummaryCols,
+	TableStatementsSummaryEvicted:           tableStatementsSummaryEvictedCols,
 	TableStorageStats:                       tableStorageStatsCols,
 	TableTiFlashTables:                      tableTableTiFlashTablesCols,
 	TableTiFlashSegments:                    tableTableTiFlashSegmentsCols,
