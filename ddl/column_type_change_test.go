@@ -482,6 +482,25 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenVarcharAndNonVarc
 	tk.MustExec("alter table t change column a a char(10);")
 	tk.MustExec("alter table t change column b b varchar(10);")
 	tk.MustExec("admin check table t;")
+
+	// https://github.com/pingcap/tidb/issues/23624
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(b varchar(10));")
+	tk.MustExec("insert into t values ('aaa   ');")
+	tk.MustExec("alter table t change column b b char(10);")
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("alter table t change column b b varchar(10);")
+	tk.MustQuery("select b from t use index(idx);").Check(testkit.Rows("aaa"))
+	tk.MustQuery("select b from t ignore index(idx);").Check(testkit.Rows("aaa"))
+	tk.MustExec("admin check table t;")
+
+	// https://github.com/pingcap/tidb/pull/23688#issuecomment-810166597
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a varchar(10));")
+	tk.MustExec("insert into t values ('aaa   ');")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("aaa   "))
+	tk.MustExec("alter table t modify column a char(10);")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("aaa"))
 }
 
 func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromStringToOthers(c *C) {
