@@ -111,7 +111,7 @@ func DefaultTiKVClient() TiKVClient {
 
 		MaxBatchSize:      128,
 		OverloadThreshold: 200,
-		MaxBatchWaitTime:  0,
+		MaxBatchWaitTime:  time.Millisecond,
 		BatchWaitSize:     8,
 
 		EnableChunkRPC: true,
