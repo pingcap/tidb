@@ -1528,7 +1528,7 @@ func (s *testRegionCacheSuite) TestSwitchPeerWhenNoLeader(c *C) {
 			c.Assert(ctx.Peer, Not(DeepEquals), prevCtx.Peer)
 		}
 		s.cache.InvalidateCachedRegionWithReason(loc.Region, NoLeader)
-		c.Assert(s.cache.getCachedRegionWithRLock(loc.Region).invalidReason, Equals, NoLeader)
+		c.Assert(s.cache.GetCachedRegionWithRLock(loc.Region).invalidReason, Equals, NoLeader)
 		prevCtx = ctx
 	}
 }
@@ -1563,7 +1563,7 @@ func BenchmarkOnRequestFail(b *testing.B) {
 				Store:      store,
 				AccessMode: TiKVOnly,
 			}
-			r := cache.getCachedRegionWithRLock(rpcCtx.Region)
+			r := cache.GetCachedRegionWithRLock(rpcCtx.Region)
 			if r != nil {
 				r.getStore().switchNextTiKVPeer(r, rpcCtx.AccessIdx)
 			}
