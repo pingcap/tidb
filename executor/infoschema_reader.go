@@ -148,6 +148,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.ClusterTableStatementsSummary,
 			infoschema.ClusterTableStatementsSummaryHistory:
 			err = e.setDataForStatementsSummary(sctx, e.table.Name.O)
+		case infoschema.TableStatementsSummaryEvicted:
+			e.setDataForStatementsSummaryEvicted(sctx)
 		case infoschema.TablePlacementPolicy:
 			err = e.setDataForPlacementPolicy(sctx)
 		case infoschema.TableClientErrorsSummaryGlobal,
@@ -2097,6 +2099,10 @@ func (e *memtableRetriever) setDataForClusterDeadlock(ctx sessionctx.Context) er
 	}
 	e.rows = rows
 	return nil
+}
+
+func (e *memtableRetriever) setDataForStatementsSummaryEvicted(ctx sessionctx.Context) {
+	e.rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
 }
 
 type hugeMemTableRetriever struct {

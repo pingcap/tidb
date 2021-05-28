@@ -1373,6 +1373,33 @@ func (s *testTableSuite) TestStmtSummarySensitiveQuery(c *C) {
 		))
 }
 
+func (s *testTableSuite) TestSimpleStmtSummaryEvictedCount(c *C) {
+	now := time.Now().Unix()
+	interval := int64(1800)
+	beginTimeForCurInterval := now - now%interval
+	tk := s.newTestKitWithPlanCache(c)
+	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval = %v", interval))
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	// first sql
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
+	// second sql
+	tk.MustQuery("show databases;")
+	// query `evicted table` is also a SQL, passing it leads to the eviction of the previous SQLs.
+	tk.MustQuery("select * from `information_schema`.`STATEMENTS_SUMMARY_EVICTED`;").
+		Check(testkit.Rows(
+			fmt.Sprintf("%s %s %v",
+				time.Unix(beginTimeForCurInterval, 0).Format("2006-01-02 15:04:05"),
+				time.Unix(beginTimeForCurInterval+interval, 0).Format("2006-01-02 15:04:05"),
+				int64(2)),
+		))
+	// TODO: Add more tests.
+
+	// clean up side effects
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 1800")
+}
+
 func (s *testTableSuite) TestPerformanceSchemaforPlanCache(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
