@@ -32,7 +32,7 @@ type WaitChainItem struct {
 	TryLockTxn     uint64
 	SQLDigest      string
 	Key            []byte
-	AllSQLs        []string
+	AllSQLDigests  []string
 	TxnHoldingLock uint64
 }
 
@@ -129,7 +129,7 @@ func (d *DeadlockHistory) GetAllDatum() [][]types.Datum {
 
 	rows := make([][]types.Datum, 0, rowsCount)
 
-	row := make([]interface{}, 8)
+	row := make([]interface{}, 7)
 	for _, rec := range records {
 		row[0] = rec.ID
 		row[1] = types.NewTime(types.FromGoTime(rec.OccurTime), mysql.TypeTimestamp, types.MaxFsp)
@@ -148,12 +148,9 @@ func (d *DeadlockHistory) GetAllDatum() [][]types.Datum {
 				row[5] = strings.ToUpper(hex.EncodeToString(item.Key))
 			}
 
-			row[6] = nil
-			if item.AllSQLs != nil {
-				row[6] = "[" + strings.Join(item.AllSQLs, ", ") + "]"
-			}
+			row[6] = item.TxnHoldingLock
 
-			row[7] = item.TxnHoldingLock
+			// TODO: Implement the ALL_SQL_DIGESTS column for the deadlock table.
 
 			rows = append(rows, types.MakeDatums(row...))
 		}
@@ -185,7 +182,7 @@ func ErrDeadlockToDeadlockRecord(dl *tikverr.ErrDeadlock) *DeadlockRecord {
 			TryLockTxn:     rawItem.Txn,
 			SQLDigest:      hex.EncodeToString(sqlDigest),
 			Key:            rawItem.Key,
-			AllSQLs:        nil,
+			AllSQLDigests:  nil,
 			TxnHoldingLock: rawItem.WaitForTxn,
 		})
 	}
