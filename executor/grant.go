@@ -136,7 +136,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if !ok {
 				return errors.Trace(ErrPasswordFormat)
 			}
-			_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, `INSERT INTO %n.%n (Host, User, authentication_string) VALUES (%?, %?, %?);`, mysql.SystemDB, mysql.UserTable, user.User.Hostname, user.User.Username, pwd)
+			_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, `INSERT INTO %n.%n (Host, User, authentication_string, plugin) VALUES (%?, %?, %?, %?);`, mysql.SystemDB, mysql.UserTable, user.User.Hostname, user.User.Username, pwd, mysql.AuthNativePassword)
 			if err != nil {
 				return err
 			}
