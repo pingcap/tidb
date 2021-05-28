@@ -92,7 +92,7 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 // Preprocess resolves table names of the node, and checks some statements validation.
 // prepreocssReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
 func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
-	v := preprocessor{ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0)}
+	v := preprocessor{ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0), withName: make(map[string]interface{})}
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
 	}
@@ -142,6 +142,7 @@ type preprocessor struct {
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
 	tableAliasInJoin []map[string]interface{}
+	withName         map[string]interface{}
 
 	// values that may be returned
 	*PreprocessorReturn
@@ -242,6 +243,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.FnName.L == ast.NextVal || node.FnName.L == ast.LastVal || node.FnName.L == ast.SetVal {
 			p.flag |= inSequenceFunction
 		}
+
 	case *ast.BRIEStmt:
 		if node.Kind == ast.BRIEKindRestore {
 			p.flag |= inCreateOrDropTable
@@ -260,6 +262,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.GroupByClause:
 		p.checkGroupBy(node)
+	case *ast.WithClause:
+		for _, cte := range node.CTEs {
+			p.withName[cte.Name.L] = struct{}{}
+		}
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -1180,6 +1186,10 @@ func (p *preprocessor) stmtType() string {
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
+		if _, ok := p.withName[tn.Name.L]; ok {
+			return
+		}
+
 		currentDB := p.ctx.GetSessionVars().CurrentDB
 		if currentDB == "" {
 			p.err = errors.Trace(ErrNoDB)
