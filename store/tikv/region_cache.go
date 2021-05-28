@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/pkg/slice"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
@@ -169,11 +170,18 @@ func (r *RegionStore) follower(seed uint32, op *storeSelectorOp) AccessIndex {
 func (r *RegionStore) kvPeer(seed uint32, op *storeSelectorOp) AccessIndex {
 	candidates := make([]AccessIndex, 0, r.accessStoreNum(TiKVOnly))
 	for i := 0; i < r.accessStoreNum(TiKVOnly); i++ {
-		storeIdx, s := r.accessStore(TiKVOnly, AccessIndex(i))
+		accessIdx := AccessIndex(i)
+		// Exclude an AccessIndex by excludedAccessIdxes.
+		if slice.AnyOf(op.excludedAccessIdxes, func(i int) bool {
+			return op.excludedAccessIdxes[i] == accessIdx
+		}) {
+			continue
+		}
+		storeIdx, s := r.accessStore(TiKVOnly, accessIdx)
 		if r.storeEpochs[storeIdx] != atomic.LoadUint32(&s.epoch) || !r.filterStoreCandidate(AccessIndex(i), op) {
 			continue
 		}
-		candidates = append(candidates, AccessIndex(i))
+		candidates = append(candidates, accessIdx)
 	}
 	if len(candidates) == 0 {
 		return r.workTiKVIdx
@@ -433,16 +441,28 @@ func (c *RPCContext) String() string {
 }
 
 type storeSelectorOp struct {
-	labels []*metapb.StoreLabel
+	labels              []*metapb.StoreLabel
+	excludedAccessIdxes []AccessIndex
 }
 
 // StoreSelectorOption configures storeSelectorOp.
 type StoreSelectorOption func(*storeSelectorOp)
 
-// WithMatchLabels indicates selecting stores with matched labels
+// WithMatchLabels indicates selecting stores with matched labels.
 func WithMatchLabels(labels []*metapb.StoreLabel) StoreSelectorOption {
 	return func(op *storeSelectorOp) {
 		op.labels = labels
+	}
+}
+
+// WithoutAccessIdxes indicates selecting stores without excluded AccessIndexes.
+func WithoutAccessIdxes(accessIdxs []AccessIndex) StoreSelectorOption {
+	return func(op *storeSelectorOp) {
+		if op.excludedAccessIdxes != nil {
+			op.excludedAccessIdxes = append(op.excludedAccessIdxes, accessIdxs...)
+		} else {
+			op.excludedAccessIdxes = accessIdxs
+		}
 	}
 }
 

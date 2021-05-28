@@ -24,6 +24,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/coprocessor_v2"
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -183,6 +184,66 @@ func (s *testRegionRequestToThreeStoresSuite) TestStoreTokenLimit(c *C) {
 	c.Assert(ok, IsTrue)
 	c.Assert(e.StoreID, Equals, uint64(1))
 	kv.StoreLimit.Store(oldStoreLimit)
+}
+
+func (s *testRegionRequestToThreeStoresSuite) TestGetRPCContextWithoutAccessIdxes(c *C) {
+	// Load the bootstrapped region into the cache.
+	_, err := s.cache.BatchLoadRegionsFromKey(s.bo, []byte{}, 1)
+	c.Assert(err, IsNil)
+
+	var (
+		seed     uint32 = 0
+		regionID        = RegionVerID{s.regionID, 0, 0}
+		opts            = []StoreSelectorOption{}
+	)
+
+	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{}, kv.ReplicaReadMixed, &seed)
+	rpcCtx, err := s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV, opts...)
+	c.Assert(err, IsNil)
+	peedID1 := rpcCtx.Peer.GetId()
+
+	opts = append(opts, WithoutAccessIdxes([]AccessIndex{AccessIndex(rpcCtx.AccessIdx)}))
+	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV, opts...)
+	c.Assert(err, IsNil)
+	peedID2 := rpcCtx.Peer.GetId()
+	c.Assert(peedID1, Not(Equals), peedID2)
+
+	opts = append(opts, WithoutAccessIdxes([]AccessIndex{AccessIndex(rpcCtx.AccessIdx)}))
+	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV, opts...)
+	c.Assert(err, IsNil)
+	peedID3 := rpcCtx.Peer.GetId()
+	c.Assert(peedID1, Not(Equals), peedID3)
+	c.Assert(peedID2, Not(Equals), peedID3)
+
+	// All AccessIdxes are excluded, leader peer will be chosen.
+	opts = append(opts, WithoutAccessIdxes([]AccessIndex{AccessIndex(rpcCtx.AccessIdx)}))
+	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV, opts...)
+	c.Assert(err, IsNil)
+	peedID4 := rpcCtx.Peer.GetId()
+	c.Assert(peedID1, Equals, peedID4)
+	c.Assert(rpcCtx.Peer.GetId(), Equals, s.leaderPeer)
+}
+
+// Tets whether the Stale Read request will retry the leader or next peer on error.
+func (s *testRegionRequestToThreeStoresSuite) TestStaleReadRetry(c *C) {
+	region, err := s.cache.LocateRegionByID(s.bo, s.regionID)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+	var seed uint32 = 0
+	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{}, kv.ReplicaReadMixed, &seed)
+	req.EnableStaleRead()
+	resp, ctx, err := s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, tikvrpc.TiKV)
+	c.Assert(err, IsNil)
+	c.Assert(resp.Resp, NotNil)
+	c.Assert(ctx, NotNil)
+	peerID := ctx.Peer.GetId()
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockRetrySendReqToRegionOnce", `return()`), IsNil)
+	resp, ctx, err = s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, tikvrpc.TiKV)
+	c.Assert(err, IsNil)
+	c.Assert(resp.Resp, NotNil)
+	c.Assert(ctx, NotNil)
+	c.Assert(peerID, Not(Equals), ctx.Peer.GetId())
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockRetrySendReqToRegionOnce"), IsNil)
 }
 
 func (s *testRegionRequestToSingleStoreSuite) TestOnSendFailedWithStoreRestart(c *C) {

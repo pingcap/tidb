@@ -266,6 +266,7 @@ func (s *RegionRequestSender) SendReqCtx(
 	}
 
 	tryTimes := 0
+	mockRetrySendReqToRegionOnce := false
 	for {
 		if (tryTimes > 0) && (tryTimes%1000 == 0) {
 			logutil.Logger(bo.GetCtx()).Warn("retry get ", zap.Uint64("region = ", regionID.GetID()), zap.Int("times = ", tryTimes))
@@ -313,6 +314,20 @@ func (s *RegionRequestSender) SendReqCtx(
 				retry = true
 			}
 		})
+		// Stale Read request will retry the leader or next peer on error,
+		// so we will exclude the accessIdx of the requested store every time.
+		if req.GetStaleRead() {
+			opts = append(opts, WithoutAccessIdxes([]AccessIndex{rpcCtx.AccessIdx}))
+		}
+		failpoint.Inject("mockRetrySendReqToRegionOnce", func() {
+			if !mockRetrySendReqToRegionOnce {
+				mockRetrySendReqToRegionOnce = true
+				failpoint.Continue()
+			}
+		})
+		if mockRetrySendReqToRegionOnce {
+			return resp, rpcCtx, nil
+		}
 		if retry {
 			tryTimes++
 			continue

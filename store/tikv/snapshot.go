@@ -452,7 +452,6 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 
 	cli := NewClientHelper(s.store, s.resolvedLocks)
 
-	isStaleness := false
 	var matchStoreLabels []*metapb.StoreLabel
 	s.mu.RLock()
 	if s.mu.stats != nil {
@@ -471,7 +470,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 			TaskId:           s.mu.taskID,
 			ResourceGroupTag: s.resourceGroupTag,
 		})
-	isStaleness = s.mu.isStaleness
+	isStaleness := s.mu.isStaleness
 	matchStoreLabels = s.mu.matchStoreLabels
 	s.mu.RUnlock()
 	var ops []StoreSelectorOption
