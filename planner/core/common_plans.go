@@ -410,6 +410,9 @@ REBUILD:
 // short paths for these executions, currently "point select" and "point update"
 func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
 	preparedStmt *CachedPrepareStmt, is infoschema.InfoSchema, p Plan) error {
+	if sctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst {
+		return nil
+	}
 	var (
 		prepared = preparedStmt.PreparedAst
 		ok       bool

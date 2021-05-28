@@ -525,6 +525,11 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 			keyBuf = keyBuf[:0]
 			keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx, keyBuf, dHashKey...)
 			if err != nil {
+				if terror.ErrorEqual(err, types.ErrWrongValue) {
+					// we ignore rows with invalid datetime
+					task.encodedLookUpKeys[chkIdx].AppendNull(0)
+					continue
+				}
 				return nil, err
 			}
 			// Store the encoded lookup key in chunk, so we can use it to lookup the matched inners directly.

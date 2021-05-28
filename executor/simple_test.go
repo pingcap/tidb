@@ -604,6 +604,8 @@ func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
 }
 
 func (s *testSuite3) TestDropPartitionStats(c *C) {
+	c.Skip("unstable")
+	// Use the testSerialSuite to fix the unstable test
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (

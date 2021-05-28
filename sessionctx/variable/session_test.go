@@ -122,6 +122,20 @@ func (*testSessionSuite) TestSession(c *C) {
 	c.Assert(ss.WarningCount(), Equals, uint16(0))
 }
 
+func (*testSessionSuite) TestAllocMPPID(c *C) {
+	ctx := mock.NewContext()
+
+	seVar := ctx.GetSessionVars()
+	c.Assert(seVar, NotNil)
+
+	c.Assert(seVar.AllocMPPTaskID(1), Equals, int64(1))
+	c.Assert(seVar.AllocMPPTaskID(1), Equals, int64(2))
+	c.Assert(seVar.AllocMPPTaskID(1), Equals, int64(3))
+	c.Assert(seVar.AllocMPPTaskID(2), Equals, int64(1))
+	c.Assert(seVar.AllocMPPTaskID(2), Equals, int64(2))
+	c.Assert(seVar.AllocMPPTaskID(2), Equals, int64(3))
+}
+
 func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	ctx := mock.NewContext()
 

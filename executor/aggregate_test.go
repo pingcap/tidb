@@ -1236,10 +1236,18 @@ func (s *testSuiteAgg) TestParallelStreamAggGroupConcat(c *C) {
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
+	tk.MustExec("set tidb_init_chunk_size=1;")
+	tk.MustExec("set tidb_max_chunk_size=32;")
 
-	for i := 0; i < 10000; i++ {
-		tk.MustExec("insert into t values(?, ?);", rand.Intn(100), rand.Intn(100))
+	var insertSQL string
+	for i := 0; i < 1000; i++ {
+		if i == 0 {
+			insertSQL += fmt.Sprintf("(%d, %d)", rand.Intn(100), rand.Intn(100))
+		} else {
+			insertSQL += fmt.Sprintf(",(%d, %d)", rand.Intn(100), rand.Intn(100))
+		}
 	}
+	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSQL))
 
 	sql := "select /*+ stream_agg() */ group_concat(a, b) from t group by b;"
 	concurrencies := []int{1, 2, 4, 8}
@@ -1283,9 +1291,17 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
-	for i := 0; i < 10000; i++ {
-		tk.MustExec("insert into t values (?, ?);", rand.Intn(100), rand.Intn(100))
+	tk.MustExec("set tidb_init_chunk_size=1;")
+	tk.MustExec("set tidb_max_chunk_size=32;")
+	var insertSQL string
+	for i := 0; i < 1000; i++ {
+		if i == 0 {
+			insertSQL += fmt.Sprintf("(%d, %d)", rand.Intn(100), rand.Intn(100))
+		} else {
+			insertSQL += fmt.Sprintf(",(%d, %d)", rand.Intn(100), rand.Intn(100))
+		}
 	}
+	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSQL))
 
 	concurrencies := []int{1, 2, 4, 8}
 	for _, sql := range sqls {
@@ -1373,4 +1389,35 @@ func (s *testSerialSuite) TestRandomPanicAggConsume(c *C) {
 		}
 		c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 	}
+}
+
+func (s *testSuiteAgg) TestIssue23277(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+
+	tk.MustExec("create table t(a tinyint(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t(a smallint(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t(a mediumint(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t(a int(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t(a bigint(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
 }
