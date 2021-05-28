@@ -1571,9 +1571,9 @@ func (s *partitionTableSuite) TestDML(c *C) {
 	tk.MustExec("use test_DML")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 
-	tk.MustExec(`create table tinner (a int primary key, b int)`)
-	tk.MustExec(`create table thash (a int primary key, b int) partition by hash(a) partitions 4`)
-	tk.MustExec(`create table trange (a int primary key, b int) partition by range(a) (
+	tk.MustExec(`create table tinner (a int, b int)`)
+	tk.MustExec(`create table thash (a int, b int) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table trange (a int, b int) partition by range(a) (
 		partition p0 values less than(10000),
 		partition p1 values less than(20000),
 		partition p2 values less than(30000),
