@@ -1661,7 +1661,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
 		// For `execute stmt` SQL, should reset the SQL digest with the prepare SQL digest.
 		if config.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
-			tracecpu.SetGoroutineLabelsWithSQL(context.Background(), prepareStmt.NormalizedSQL, prepareStmt.SQLDigest.String())
+			tracecpu.SetSQLLabels(context.Background(), prepareStmt.NormalizedSQL, prepareStmt.SQLDigest.String())
 		}
 	}
 	// execute missed stmtID uses empty sql

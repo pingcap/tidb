@@ -163,8 +163,8 @@ func (sp *sqlStatsProfiler) putTaskToBuffer(task *profileTask) {
 
 // parseCPUProfileBySQLLabels uses to aggregate the cpu-profile sample data by sql_digest and plan_digest labels,
 // output the SQLStats slice. Want to know more information about profile labels, see https://rakyll.org/profiler-labels/
-// The sql_digest label is been set by `SetGoroutineLabelsWithSQL` function after parse the SQL.
-// The plan_digest label is been set by `SetGoroutineLabelsWithSQLAndPlan` function after build the SQL plan.
+// The sql_digest label is been set by `SetSQLLabels` function after parse the SQL.
+// The plan_digest label is been set by `SetSQLAndPlanLabels` function after build the SQL plan.
 // Since `sqlStatsProfiler` only care about the cpu time that consume by (sql_digest,plan_digest), the other sample data
 // without those label will be ignore.
 func (sp *sqlStatsProfiler) parseCPUProfileBySQLLabels(p *profile.Profile) []SQLStats {
@@ -294,8 +294,8 @@ func ResetGoroutineLabelsWithOriginalCtx(ctx context.Context) {
 	pprof.SetGoroutineLabels(ctx)
 }
 
-// SetGoroutineLabelsWithSQL sets the SQL digest label into the goroutine.
-func SetGoroutineLabelsWithSQL(ctx context.Context, normalizedSQL, sqlDigest string) context.Context {
+// SetSQLLabels sets the SQL digest label into the goroutine.
+func SetSQLLabels(ctx context.Context, normalizedSQL, sqlDigest string) context.Context {
 	if len(normalizedSQL) == 0 || len(sqlDigest) == 0 {
 		return ctx
 	}
@@ -309,8 +309,8 @@ func SetGoroutineLabelsWithSQL(ctx context.Context, normalizedSQL, sqlDigest str
 	return ctx
 }
 
-// SetGoroutineLabelsWithSQLAndPlan sets the SQL and plan digest label into the goroutine.
-func SetGoroutineLabelsWithSQLAndPlan(ctx context.Context, sqlDigest, planDigest, normalizedPlan string) context.Context {
+// SetSQLAndPlanLabels sets the SQL and plan digest label into the goroutine.
+func SetSQLAndPlanLabels(ctx context.Context, sqlDigest, planDigest, normalizedPlan string) context.Context {
 	ctx = pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest, labelPlanDigest, planDigest))
 	pprof.SetGoroutineLabels(ctx)
 	GlobalSQLStatsProfiler.RegisterPlan(planDigest, normalizedPlan)

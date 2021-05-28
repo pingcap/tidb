@@ -1023,7 +1023,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		normalizedSQL, digest := getLastStmtInConn{cc}.pprofLabelNormalizedAndDigest()
 		if len(normalizedSQL) > 0 {
 			defer tracecpu.ResetGoroutineLabelsWithOriginalCtx(ctx)
-			ctx = tracecpu.SetGoroutineLabelsWithSQL(ctx, normalizedSQL, digest)
+			ctx = tracecpu.SetSQLLabels(ctx, normalizedSQL, digest)
 		}
 	} else if variable.EnablePProfSQLCPU.Load() {
 		label := getLastStmtInConn{cc}.PProfLabel()

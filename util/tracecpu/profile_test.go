@@ -120,10 +120,10 @@ func (s *testSuite) setTopSQLEnable(enabled bool) {
 func (s *testSuite) mockExecuteSQL(sql, plan string) {
 	ctx := context.Background()
 	sqlDigest := mock.GenSQLDigest(sql)
-	ctx = tracecpu.SetGoroutineLabelsWithSQL(ctx, sql, sqlDigest)
+	ctx = tracecpu.SetSQLLabels(ctx, sql, sqlDigest)
 	s.mockExecute(time.Millisecond * 100)
 	planDigest := genDigest(plan)
-	tracecpu.SetGoroutineLabelsWithSQLAndPlan(ctx, sqlDigest, planDigest, plan)
+	tracecpu.SetSQLAndPlanLabels(ctx, sqlDigest, planDigest, plan)
 	s.mockExecute(time.Millisecond * 300)
 }
 

@@ -1389,7 +1389,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		normalized, digest := parser.NormalizeDigest(sql)
 		if digest != nil {
 			// Fixme: reset/clean the label when sql execute finish.
-			tracecpu.SetGoroutineLabelsWithSQL(ctx, normalized, digest.String())
+			tracecpu.SetSQLLabels(ctx, normalized, digest.String())
 		}
 	}
 	return stmts[0], nil
