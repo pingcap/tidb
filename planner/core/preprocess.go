@@ -581,7 +581,7 @@ func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 			if stmt.Tp == ast.AdminChecksumTable {
 				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table")
 			} else {
-				p.err = infoschema.ErrAdminCheckTable
+				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("admin check table")
 			}
 			return
 		}
