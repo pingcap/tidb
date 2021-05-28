@@ -1021,7 +1021,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	data = data[1:]
 	if config.TopSQLEnabled() {
 		normalizedSQL, digest := getLastStmtInConn{cc}.pprofLabelNormalizedAndDigest()
-		if len(normalizedSQL) > 0 {
+		if len(digest) > 0 {
 			defer tracecpu.ResetGoroutineLabelsWithOriginalCtx(ctx)
 			ctx = tracecpu.SetSQLLabels(ctx, normalizedSQL, digest)
 		}
@@ -2165,13 +2165,6 @@ func (cc getLastStmtInConn) PProfLabel() string {
 	}
 }
 
-var (
-	pprofLabelOfUseDB      = parser.DigestNormalized("UseDB")
-	pprofLabelOfListFields = parser.DigestNormalized("ListFields")
-	pprofLabelOfCloseStmt  = parser.DigestNormalized("CloseStmt")
-	pprofLabelOfResetStmt  = parser.DigestNormalized("ResetStmt")
-)
-
 // PProfLabelNormalizedAndDigest return sql and sql_digest label used to tag pprof.
 func (cc getLastStmtInConn) pprofLabelNormalizedAndDigest() (string, string) {
 	if len(cc.lastPacket) == 0 {
@@ -2180,13 +2173,13 @@ func (cc getLastStmtInConn) pprofLabelNormalizedAndDigest() (string, string) {
 	cmd, data := cc.lastPacket[0], cc.lastPacket[1:]
 	switch cmd {
 	case mysql.ComInitDB:
-		return "UseDB", pprofLabelOfUseDB.String()
+		return "UseDB", ""
 	case mysql.ComFieldList:
-		return "ListFields", pprofLabelOfListFields.String()
+		return "ListFields", ""
 	case mysql.ComStmtClose:
-		return "CloseStmt", pprofLabelOfCloseStmt.String()
+		return "CloseStmt", ""
 	case mysql.ComStmtReset:
-		return "ResetStmt", pprofLabelOfResetStmt.String()
+		return "ResetStmt", ""
 	case mysql.ComQuery, mysql.ComStmtPrepare:
 		normalized, digest := parser.NormalizeDigest(string(hack.String(data)))
 		return normalized, digest.String()
