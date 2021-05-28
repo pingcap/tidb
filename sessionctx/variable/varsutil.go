@@ -374,7 +374,6 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 
 	t1, err := t.GoTime(s.TimeZone)
 	s.SnapshotTS = oracle.GoTimeToTS(t1)
-	s.TxnReadTS = 0
 	return err
 }
 
@@ -392,7 +391,6 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 		return err
 	}
 	s.TxnReadTS = oracle.GoTimeToTS(t1)
-	s.SnapshotTS = 0
 	return err
 }
 

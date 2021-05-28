@@ -155,6 +155,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			sessionVars.SnapshotTS = oldSnapshotTS
 			return err
 		}
+		e.mutualExclusiveVariables(name)
 		// Clients are often noisy in setting session variables such as
 		// autocommit, timezone, query cache
 		logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
@@ -265,4 +266,18 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string) error {
 	}
 	vars.SnapshotInfoschema = snapInfo
 	return nil
+}
+
+func (e *SetExecutor) mutualExclusiveVariables(name string) {
+	if name != variable.TiDBTxnReadTS && name != variable.TiDBSnapshot {
+		return
+	}
+	vars := e.ctx.GetSessionVars()
+	// tx_read_ts should be mutual exclusive with tidb_snapshot
+	if name == variable.TiDBTxnReadTS && vars.TxnReadTS > 0 {
+		vars.SnapshotTS = 0
+		vars.SnapshotInfoschema = nil
+	} else if name == variable.TiDBSnapshot && vars.SnapshotTS > 0 {
+		vars.TxnReadTS = 0
+	}
 }
