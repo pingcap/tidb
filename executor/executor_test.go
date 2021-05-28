@@ -8362,10 +8362,8 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 	tbInfo := testGetTableByName(c, tk.Se, "test", "t")
 
 	// Enable Top SQL
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TopSQL.Enable = true
-		conf.TopSQL.AgentAddress = "mock-agent"
-	})
+	variable.TopSQLVariable.Enable.Store(true)
+	variable.TopSQLVariable.AgentAddress.Store("mock-agent")
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook", `return(true)`), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
