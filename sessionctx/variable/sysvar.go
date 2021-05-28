@@ -1630,7 +1630,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: TiDBGCScanLockMode, Value: "PHYSICAL", Type: TypeEnum, PossibleValues: []string{"PHYSICAL", "LEGACY"}},
 
 	// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_temptable_max_ram
-	{Scope: ScopeGlobal, Name: TempTableMaxRAM, Value: strconv.Itoa(DefTempTableMaxRAM), Type: TypeInt, MinValue: 2097152, MaxValue: math.MaxInt64, SetGlobal: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal, Name: TempTableMaxRAM, Value: strconv.Itoa(DefTempTableMaxRAM), Type: TypeInt, MinValue: 2097152, MaxValue: math.MaxInt32, SetGlobal: func(s *SessionVars, val string) error {
 		s.TempTableMaxRAM = tidbOptPositiveInt32(val, DefTempTableMaxRAM)
 		return nil
 	}},
