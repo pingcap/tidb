@@ -450,7 +450,6 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 		return nil
 	}
 	processInfo := s.ShowProcess()
-	txnInfo.CurrentSQLDigest = processInfo.Digest
 	txnInfo.ConnectionID = processInfo.ID
 	txnInfo.Username = processInfo.User
 	txnInfo.CurrentDB = processInfo.DB
@@ -1502,6 +1501,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Uncorrelated subqueries will execute once when building plan, so we reset process info before building plan.
 	cmd32 := atomic.LoadUint32(&s.GetSessionVars().CommandValue)
 	s.SetProcessInfo(stmtNode.Text(), time.Now(), byte(cmd32), 0)
+	_, digest := s.sessionVars.StmtCtx.SQLDigest()
+	s.txn.onStmtStart(digest.String())
+	defer s.txn.onStmtEnd()
 
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
@@ -1706,7 +1708,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
 	s.PrepareTSFuture(ctx)
-	prepareExec := executor.NewPrepareExec(s, s.GetInfoSchema().(infoschema.InfoSchema), sql)
+	prepareExec := executor.NewPrepareExec(s, sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
 		return
@@ -1873,10 +1875,15 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	if err != nil {
 		return nil, err
 	}
+	s.txn.onStmtStart(preparedStmt.SQLDigest.String())
+	var rs sqlexec.RecordSet
 	if ok {
-		return s.cachedPlanExec(ctx, stmtID, preparedStmt, args)
+		rs, err = s.cachedPlanExec(ctx, stmtID, preparedStmt, args)
+	} else {
+		rs, err = s.preparedStmtExec(ctx, stmtID, preparedStmt, args)
 	}
-	return s.preparedStmtExec(ctx, stmtID, preparedStmt, args)
+	s.txn.onStmtEnd()
+	return rs, err
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {

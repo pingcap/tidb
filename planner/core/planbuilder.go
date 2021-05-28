@@ -2344,7 +2344,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShutdownPriv, "", "", "", nil)
 	case *ast.BeginStmt:
 		if raw.AsOf != nil {
-			startTS, err := b.calculateTsExpr(raw.AsOf)
+			startTS, err := calculateTsExpr(b.ctx, raw.AsOf)
 			if err != nil {
 				return nil, err
 			}
@@ -2355,19 +2355,19 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 }
 
 // calculateTsExpr calculates the TsExpr of AsOfClause to get a StartTS.
-func (b *PlanBuilder) calculateTsExpr(asOfClause *ast.AsOfClause) (uint64, error) {
-	tsVal, err := evalAstExpr(b.ctx, asOfClause.TsExpr)
+func calculateTsExpr(sctx sessionctx.Context, asOfClause *ast.AsOfClause) (uint64, error) {
+	tsVal, err := evalAstExpr(sctx, asOfClause.TsExpr)
 	if err != nil {
 		return 0, err
 	}
 	toTypeTimestamp := types.NewFieldType(mysql.TypeTimestamp)
 	// We need at least the millionsecond here, so set fsp to 3.
 	toTypeTimestamp.Decimal = 3
-	tsTimestamp, err := tsVal.ConvertTo(b.ctx.GetSessionVars().StmtCtx, toTypeTimestamp)
+	tsTimestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx, toTypeTimestamp)
 	if err != nil {
 		return 0, err
 	}
-	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(b.ctx.GetSessionVars().TimeZone)
+	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(sctx.GetSessionVars().TimeZone)
 	if err != nil {
 		return 0, err
 	}

@@ -79,7 +79,6 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 type PrepareExec struct {
 	baseExecutor
 
-	is      infoschema.InfoSchema
 	name    string
 	sqlText string
 
@@ -89,12 +88,11 @@ type PrepareExec struct {
 }
 
 // NewPrepareExec creates a new PrepareExec.
-func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
+func NewPrepareExec(ctx sessionctx.Context, sqlTxt string) *PrepareExec {
 	base := newBaseExecutor(ctx, nil, 0)
 	base.initCap = chunk.ZeroCapacity
 	return &PrepareExec{
 		baseExecutor: base,
-		is:           is,
 		sqlText:      sqlTxt,
 	}
 }
@@ -159,7 +157,8 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return ErrPsManyParam
 	}
 
-	err = plannercore.Preprocess(e.ctx, stmt, e.is, plannercore.InPrepare)
+	ret := &plannercore.PreprocessorReturn{}
+	err = plannercore.Preprocess(e.ctx, stmt, plannercore.InPrepare, plannercore.WithPreprocessorReturn(ret))
 	if err != nil {
 		return err
 	}
@@ -177,14 +176,14 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		Stmt:          stmt,
 		StmtType:      GetStmtLabel(stmt),
 		Params:        sorter.markers,
-		SchemaVersion: e.is.SchemaMetaVersion(),
+		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
 	}
 
 	if !plannercore.PreparedPlanCacheEnabled() {
 		prepared.UseCache = false
 	} else {
 		if !e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-			prepared.UseCache = plannercore.Cacheable(stmt, e.is)
+			prepared.UseCache = plannercore.Cacheable(stmt, ret.InfoSchema)
 		} else {
 			prepared.UseCache = plannercore.Cacheable(stmt, nil)
 		}
@@ -199,7 +198,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	var p plannercore.Plan
 	e.ctx.GetSessionVars().PlanID = 0
 	e.ctx.GetSessionVars().PlanColumnID = 0
-	destBuilder, _ := plannercore.NewPlanBuilder(e.ctx, e.is, &hint.BlockHintProcessor{})
+	destBuilder, _ := plannercore.NewPlanBuilder(e.ctx, ret.InfoSchema, &hint.BlockHintProcessor{})
 	p, err = destBuilder.Build(ctx, stmt)
 	if err != nil {
 		return err
