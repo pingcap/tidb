@@ -16,6 +16,8 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"math/rand"
+	"sort"
 
 	"github.com/pingcap/check"
 
@@ -123,13 +125,46 @@ func (test *CTETestSuite) TestSpillToDisk(c *check.C) {
 		"select c1 + 1 c1 from cte1 where c1 < 5000) " +
 		"select c1 from cte1;")
 
+	rowNum := 5000
 	var resRows []string
-	for i := 0; i <= 5000; i++ {
+	for i := 0; i <= rowNum; i++ {
 		resRows = append(resRows, fmt.Sprintf("%d", i))
 	}
 	rows.Check(testkit.Rows(resRows...))
 	memTracker := tk.Se.GetSessionVars().StmtCtx.MemTracker
 	diskTracker := tk.Se.GetSessionVars().StmtCtx.DiskTracker
+	c.Assert(memTracker.BytesConsumed(), check.Equals, int64(0))
+	c.Assert(memTracker.MaxConsumed(), check.Greater, int64(0))
+	c.Assert(diskTracker.BytesConsumed(), check.Equals, int64(0))
+	c.Assert(diskTracker.MaxConsumed(), check.Greater, int64(0))
+
+	tk.MustExec("set tidb_mem_quota_query = 1073741824;")
+	insertStr = "insert into t1 values(0, 0)"
+	vals := make([]int, rowNum)
+	vals[0] = 0
+	for i := 1; i < rowNum; i++ {
+		v := rand.Intn(100)
+		vals[i] = v
+		insertStr += fmt.Sprintf(", (%d, %d)", v, v)
+	}
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int, c2 int);")
+	tk.MustExec(insertStr)
+	tk.MustExec("set tidb_mem_quota_query = 5000;")
+	tk.MustExec("set cte_max_recursion_depth = 500000;")
+	rows = tk.MustQuery("with recursive cte1 as ( " +
+		"select c1 from t1 " +
+		"union " +
+		"select c1 + 1 c1 from cte1 where c1 < 5000) " +
+		"select c1 from cte1 order by c1;")
+	sort.Ints(vals)
+	resRows = make([]string, 0, rowNum)
+	for i := vals[0]; i <= rowNum; i++ {
+		resRows = append(resRows, fmt.Sprintf("%d", i))
+	}
+	rows.Check(testkit.Rows(resRows...))
+	memTracker = tk.Se.GetSessionVars().StmtCtx.MemTracker
+	diskTracker = tk.Se.GetSessionVars().StmtCtx.DiskTracker
 	c.Assert(memTracker.BytesConsumed(), check.Equals, int64(0))
 	c.Assert(memTracker.MaxConsumed(), check.Greater, int64(0))
 	c.Assert(diskTracker.BytesConsumed(), check.Equals, int64(0))
@@ -152,6 +187,12 @@ func (test *CTETestSuite) TestUnionDistinct(c *check.C) {
 	tk.MustExec("insert into t1 values(1, 1), (1, 2), (2, 2);")
 	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from t1) select * from cte1 order by c1;")
 	rows.Check(testkit.Rows("1", "2", "3"))
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int);")
+	tk.MustExec("insert into t1 values(1), (1), (1), (2), (2), (2);")
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 where c1 < 4) select * from cte1 order by c1;")
+	rows.Check(testkit.Rows("1", "2", "3", "4"))
 }
 
 func (test *CTETestSuite) TestCTEMaxRecursionDepth(c *check.C) {

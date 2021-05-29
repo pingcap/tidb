@@ -15,8 +15,6 @@ package executor
 
 import (
 	"context"
-	"hash"
-	"hash/fnv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
@@ -68,8 +66,7 @@ type CTEExec struct {
 	iterInTbl  cteutil.Storage
 	iterOutTbl cteutil.Storage
 
-	resHashTbl    baseHashTable
-	iterInHashTbl baseHashTable
+	hashTbl baseHashTable
 
 	// Index of chunk to read from `resTbl`.
 	chkIdx int
@@ -77,6 +74,8 @@ type CTEExec struct {
 	// UNION ALL or UNION DISTINCT.
 	isDistinct bool
 	curIter    int
+	hCtx       *hashContext
+	sel        []int
 }
 
 // Open implements the Executor interface.
@@ -98,7 +97,7 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 			return err
 		}
 		recursiveTypes := e.recursiveExec.base().retFieldTypes
-		e.iterOutTbl = cteutil.NewStorageRC(recursiveTypes, e.maxChunkSize)
+		e.iterOutTbl = cteutil.NewStorageRowContainer(recursiveTypes, e.maxChunkSize)
 		if err = e.iterOutTbl.OpenAndRef(); err != nil {
 			return err
 		}
@@ -107,8 +106,15 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 	}
 
 	if e.isDistinct {
-		e.resHashTbl = newConcurrentMapHashTable()
-		e.iterInHashTbl = newConcurrentMapHashTable()
+		e.hashTbl = newConcurrentMapHashTable()
+		e.hCtx = &hashContext{
+			allTypes: e.base().retFieldTypes,
+		}
+		// We use all columns to compute hash.
+		e.hCtx.keyColIdx = make([]int, len(e.hCtx.allTypes))
+		for i := range e.hCtx.keyColIdx {
+			e.hCtx.keyColIdx[i] = i
+		}
 	}
 	return nil
 }
@@ -117,10 +123,8 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.Reset()
 	e.resTbl.Lock()
-	defer func() {
-		e.resTbl.Unlock()
-	}()
 	if !e.resTbl.Done() {
+		defer e.resTbl.Unlock()
 		setupCTEStorageTracker(e.resTbl, e.ctx)
 		setupCTEStorageTracker(e.iterInTbl, e.ctx)
 
@@ -138,8 +142,10 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			}
 			return err
 		}
+		e.resTbl.SetDone()
+	} else {
+		e.resTbl.Unlock()
 	}
-	e.resTbl.SetDone()
 
 	if e.chkIdx < e.resTbl.NumChunks() {
 		res, err := e.resTbl.GetChunk(e.chkIdx)
@@ -147,7 +153,9 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			return err
 		}
 		// Need to copy chunk to make sure upper operator will not change chunk in resTbl.
-		req.SwapColumns(res.CopyConstruct())
+		// Also we ignore coping rows not selected, because some operators like Projection
+		// doesn't support swap column if chunk.sel is no nil.
+		req.SwapColumns(res.CopyConstructSel())
 		e.chkIdx++
 	}
 	return nil
@@ -176,6 +184,9 @@ func (e *CTEExec) Close() (err error) {
 func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 	e.curIter = 0
 	e.iterInTbl.SetIter(e.curIter)
+	// This means iterInTbl's can be read.
+	defer close(e.iterInTbl.GetBegCh())
+	chks := make([]*chunk.Chunk, 0, 10)
 	for {
 		chk := newFirstChunk(e.seedExec)
 		if err = Next(ctx, e.seedExec, chk); err != nil {
@@ -184,18 +195,21 @@ func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 		if chk.NumRows() == 0 {
 			break
 		}
-		if chk, err = e.tryFilterAndAdd(chk, e.iterInTbl, e.iterInHashTbl); err != nil {
+		if chk, err = e.tryDedupAndAdd(chk, e.iterInTbl, e.hashTbl); err != nil {
 			return err
 		}
-		if _, err = e.tryFilterAndAdd(chk, e.resTbl, e.resHashTbl); err != nil {
+		chks = append(chks, chk)
+	}
+	// Initial resTbl is empty, so no need to deduplicate chk using resTbl.
+	// Just addding is ok.
+	for _, chk := range chks {
+		if err = e.resTbl.Add(chk); err != nil {
 			return err
 		}
 	}
 	e.curIter++
 	e.iterInTbl.SetIter(e.curIter)
 
-	// This means iterInTbl's can be read.
-	close(e.iterInTbl.GetBegCh())
 	return nil
 }
 
@@ -252,7 +266,7 @@ func (e *CTEExec) setupTblsForNewIteration() (err error) {
 		if err != nil {
 			return err
 		}
-		chk, err = e.tryFilterAndAdd(chk, e.resTbl, e.resHashTbl)
+		chk, err = e.tryDedupAndAdd(chk, e.resTbl, e.hashTbl)
 		if err != nil {
 			return err
 		}
@@ -263,9 +277,11 @@ func (e *CTEExec) setupTblsForNewIteration() (err error) {
 	if err = e.iterInTbl.Reopen(); err != nil {
 		return err
 	}
+	defer close(e.iterInTbl.GetBegCh())
 	if e.isDistinct {
+		// Already deduplicated by resTbl, adding directly is ok.
 		for _, chk := range chks {
-			if _, err = e.tryFilterAndAdd(chk, e.iterInTbl, e.iterInHashTbl); err != nil {
+			if err = e.iterInTbl.Add(chk); err != nil {
 				return err
 			}
 		}
@@ -274,7 +290,6 @@ func (e *CTEExec) setupTblsForNewIteration() (err error) {
 			return err
 		}
 	}
-	close(e.iterInTbl.GetBegCh())
 
 	// Clear data in iterOutTbl.
 	return e.iterOutTbl.Reopen()
@@ -283,11 +298,11 @@ func (e *CTEExec) setupTblsForNewIteration() (err error) {
 func (e *CTEExec) reset() {
 	e.curIter = 0
 	e.chkIdx = 0
-	e.iterInHashTbl = nil
-	e.resHashTbl = nil
+	e.hashTbl = nil
 }
 
 func (e *CTEExec) reopenTbls() (err error) {
+	e.hashTbl = newConcurrentMapHashTable()
 	if err := e.resTbl.Reopen(); err != nil {
 		return err
 	}
@@ -309,51 +324,68 @@ func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context) {
 	}
 }
 
-func (e *CTEExec) tryFilterAndAdd(chk *chunk.Chunk,
+func (e *CTEExec) tryDedupAndAdd(chk *chunk.Chunk,
 	storage cteutil.Storage,
-	hashtbl baseHashTable) (res *chunk.Chunk, err error) {
+	hashTbl baseHashTable) (res *chunk.Chunk, err error) {
 	if e.isDistinct {
-		if chk, err = e.filterAndAddHashTable(chk, storage, hashtbl); err != nil {
+		if chk, err = e.deduplicate(chk, storage, hashTbl); err != nil {
 			return nil, err
 		}
-	}
-	if chk.NumRows() == 0 {
-		return chk, nil
 	}
 	return chk, storage.Add(chk)
 }
 
-func (e *CTEExec) filterAndAddHashTable(chk *chunk.Chunk,
+// Compute hash values in chk and put it in hCtx.hashVals.
+// Use the returned sel to choose the computed hash values.
+func (e *CTEExec) computeChunkHash(chk *chunk.Chunk) (sel []int, err error) {
+	numRows := chk.NumRows()
+	e.hCtx.initHash(numRows)
+	// Continue to reset to make sure all hasher is new.
+	for i := numRows; i < len(e.hCtx.hashVals); i++ {
+		e.hCtx.hashVals[i].Reset()
+	}
+	sel = chk.Sel()
+	var hashBitMap []bool
+	if sel != nil {
+		hashBitMap = make([]bool, chk.Capacity())
+		for _, val := range sel {
+			hashBitMap[val] = true
+		}
+	} else {
+		// All rows is selected, sel will be [0....numRows).
+		// e.sel is setup when building executor.
+		sel = e.sel
+	}
+
+	for i := 0; i < chk.NumCols(); i++ {
+		if err = codec.HashChunkSelected(e.ctx.GetSessionVars().StmtCtx, e.hCtx.hashVals,
+			chk, e.hCtx.allTypes[i], i, e.hCtx.buf, e.hCtx.hasNull,
+			hashBitMap, false); err != nil {
+			return nil, err
+		}
+	}
+	return sel, nil
+}
+
+// Use hashTbl to deduplicate rows, also unique row will be added to hashTbl.
+func (e *CTEExec) deduplicate(chk *chunk.Chunk,
 	storage cteutil.Storage,
-	hashtbl baseHashTable) (finalChkNoDup *chunk.Chunk, err error) {
-	rows := chk.NumRows()
-	if rows == 0 {
+	hashTbl baseHashTable) (chkNoDup *chunk.Chunk, err error) {
+	numRows := chk.NumRows()
+	if numRows == 0 {
 		return chk, nil
 	}
 
-	buf := make([]byte, 1)
-	isNull := make([]bool, rows)
-	hasher := make([]hash.Hash64, rows)
-	for i := 0; i < rows; i++ {
-		// New64() just returns a int64 constant,
-		// but we can avoid calling it every time this func is called.
-		hasher[i] = fnv.New64()
-	}
-
-	tps := e.base().retFieldTypes
-	for i := 0; i < chk.NumCols(); i++ {
-		err = codec.HashChunkColumns(e.ctx.GetSessionVars().StmtCtx, hasher, chk, tps[i], i, buf, isNull)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	tmpChkNoDup := chunk.NewChunkWithCapacity(tps, chk.Capacity())
 	chkHashTbl := newConcurrentMapHashTable()
-	idxForOriRows := make([]int, 0, chk.NumRows())
+	selOri, err := e.computeChunkHash(chk)
+	if err != nil {
+		return nil, err
+	}
+	// This sel is for filtering rows duplicated in cur chk.
+	selChk := make([]int, 0, numRows)
 
-	// filter rows duplicated in cur chk
-	for i := 0; i < rows; i++ {
-		key := hasher[i].Sum64()
+	for i := 0; i < numRows; i++ {
+		key := e.hCtx.hashVals[selOri[i]].Sum64()
 		row := chk.GetRow(i)
 
 		hasDup, err := e.checkHasDup(key, row, chk, storage, chkHashTbl)
@@ -364,21 +396,22 @@ func (e *CTEExec) filterAndAddHashTable(chk *chunk.Chunk,
 			continue
 		}
 
-		tmpChkNoDup.AppendRow(row)
+		selChk = append(selChk, selOri[i])
 
 		rowPtr := chunk.RowPtr{ChkIdx: uint32(0), RowIdx: uint32(i)}
 		chkHashTbl.Put(key, rowPtr)
-		idxForOriRows = append(idxForOriRows, i)
 	}
 
 	// filter rows duplicated in RowContainer
+	chk.SetSel(selChk)
 	chkIdx := storage.NumChunks()
-	finalChkNoDup = chunk.NewChunkWithCapacity(tps, chk.Capacity())
-	for i := 0; i < tmpChkNoDup.NumRows(); i++ {
-		key := hasher[idxForOriRows[i]].Sum64()
-		row := tmpChkNoDup.GetRow(i)
+	// This sel is for filtering rows duplicated in cteutil.Storage.
+	selStorage := make([]int, 0, len(selChk))
+	for i := 0; i < len(selChk); i++ {
+		key := e.hCtx.hashVals[selChk[i]].Sum64()
+		row := chk.GetRow(i)
 
-		hasDup, err := e.checkHasDup(key, row, nil, storage, hashtbl)
+		hasDup, err := e.checkHasDup(key, row, nil, storage, hashTbl)
 		if err != nil {
 			return nil, err
 		}
@@ -386,32 +419,28 @@ func (e *CTEExec) filterAndAddHashTable(chk *chunk.Chunk,
 			continue
 		}
 
-		rowIdx := finalChkNoDup.NumRows()
-		finalChkNoDup.AppendRow(row)
+		rowIdx := len(selStorage)
+		selStorage = append(selStorage, selChk[i])
 
 		rowPtr := chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)}
-		hashtbl.Put(key, rowPtr)
+		hashTbl.Put(key, rowPtr)
 	}
-	return finalChkNoDup, nil
+
+	chk.SetSel(selStorage)
+	return chk, nil
 }
 
 func (e *CTEExec) checkHasDup(probeKey uint64,
 	row chunk.Row,
 	curChk *chunk.Chunk,
 	storage cteutil.Storage,
-	hashtbl baseHashTable) (hasDup bool, err error) {
-	ptrs := hashtbl.Get(probeKey)
+	hashTbl baseHashTable) (hasDup bool, err error) {
+	ptrs := hashTbl.Get(probeKey)
 
 	if len(ptrs) == 0 {
 		return false, nil
 	}
 
-	colIdx := make([]int, row.Len())
-	for i := range colIdx {
-		colIdx[i] = i
-	}
-
-	tps := e.base().retFieldTypes
 	for _, ptr := range ptrs {
 		var matchedRow chunk.Row
 		if curChk != nil {
@@ -422,7 +451,9 @@ func (e *CTEExec) checkHasDup(probeKey uint64,
 		if err != nil {
 			return false, err
 		}
-		isEqual, err := codec.EqualChunkRow(e.ctx.GetSessionVars().StmtCtx, row, tps, colIdx, matchedRow, tps, colIdx)
+		isEqual, err := codec.EqualChunkRow(e.ctx.GetSessionVars().StmtCtx,
+			row, e.hCtx.allTypes, e.hCtx.keyColIdx,
+			matchedRow, e.hCtx.allTypes, e.hCtx.keyColIdx)
 		if err != nil {
 			return false, err
 		}

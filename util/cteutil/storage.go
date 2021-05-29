@@ -51,6 +51,7 @@ type Storage interface {
 	Reopen() error
 
 	// Add chunk into underlying storage.
+	// Should return directly if chk is empty.
 	Add(chk *chunk.Chunk) error
 
 	// Get Chunk by index.
@@ -101,8 +102,8 @@ type StorageRC struct {
 	rc *chunk.RowContainer
 }
 
-// NewStorageRC create a new StorageRC.
-func NewStorageRC(tp []*types.FieldType, chkSize int) *StorageRC {
+// NewStorageRowContainer create a new StorageRC.
+func NewStorageRowContainer(tp []*types.FieldType, chkSize int) *StorageRC {
 	return &StorageRC{tp: tp, chkSize: chkSize}
 }
 

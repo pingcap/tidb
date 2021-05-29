@@ -60,7 +60,7 @@ func (e *CTETableReaderExec) Next(ctx context.Context, req *chunk.Chunk) (err er
 			return err
 		}
 		// Need to copy chunk to make sure upper operators will not change chunk in iterInTbl.
-		req.SwapColumns(res.CopyConstruct())
+		req.SwapColumns(res.CopyConstructSel())
 		e.chkIdx++
 	}
 	return nil

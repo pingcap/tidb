@@ -4095,7 +4095,7 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 	// 2. Build iterIntTbl.
 	chkSize := b.ctx.GetSessionVars().MaxChunkSize
 	tps := seedExec.base().retFieldTypes
-	iterOutTbl := cteutil.NewStorageRC(tps, chkSize)
+	iterOutTbl := cteutil.NewStorageRowContainer(tps, chkSize)
 	if err := iterOutTbl.OpenAndRef(); err != nil {
 		b.err = err
 		return nil
@@ -4114,12 +4114,12 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		resTbl = storages.ResTbl
 		iterInTbl = storages.IterInTbl
 	} else {
-		resTbl = cteutil.NewStorageRC(tps, chkSize)
+		resTbl = cteutil.NewStorageRowContainer(tps, chkSize)
 		if err := resTbl.OpenAndRef(); err != nil {
 			b.err = err
 			return nil
 		}
-		iterInTbl = cteutil.NewStorageRC(tps, chkSize)
+		iterInTbl = cteutil.NewStorageRowContainer(tps, chkSize)
 		if err := iterInTbl.OpenAndRef(); err != nil {
 			b.err = err
 			return nil
@@ -4133,6 +4133,11 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		return nil
 	}
 
+	sel := make([]int, chkSize)
+	for i := 0; i < chkSize; i++ {
+		sel[i] = i
+	}
+
 	return &CTEExec{
 		baseExecutor:  newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		seedExec:      seedExec,
@@ -4142,6 +4147,7 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		iterOutTbl:    iterOutTbl,
 		chkIdx:        0,
 		isDistinct:    v.CTE.IsDistinct,
+		sel:           sel,
 	}
 }
 
