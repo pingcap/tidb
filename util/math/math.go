@@ -48,3 +48,8 @@ func StrLenOfInt64Fast(x int64) int {
 	}
 	return size + StrLenOfUint64Fast(uint64(Abs(x)))
 }
+
+// Log2 is used for export purposes
+func Log2(x float64) float64 {
+	return math.Log2(x)
+}

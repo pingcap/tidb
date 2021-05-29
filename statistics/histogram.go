@@ -285,7 +285,7 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 const (
 	// Version0 is the state that no statistics is actually collected, only the meta info.(the total count and the average col size)
 	Version0 = 0
-	// In Version1
+	// Version1 maintains the statistics in the following way.
 	// Column stats: CM Sketch is built in TiKV using full data. Histogram is built from samples. TopN is extracted from CM Sketch.
 	//    TopN + CM Sketch represent all data. Histogram also represents all data.
 	// Index stats: CM Sketch and Histogram is built in TiKV using full data. TopN is extracted from histogram. Then values covered by TopN is removed from CM Sketch.
@@ -293,11 +293,15 @@ const (
 	// Int PK column stats is always Version1 because it only has histogram built from full data.
 	// Fast analyze is always Version1 currently.
 	Version1 = 1
-	// In Version2
+	// Version2 maintains the statistics in the following way.
 	// Column stats: CM Sketch is not used. TopN and Histogram are built from samples. TopN + Histogram represent all data.
 	// Index stats: CM SKetch is not used. TopN and Histograms are built in TiKV using full data. NDV is also collected for each bucket in histogram.
 	//    Then values covered by TopN is removed from Histogram. TopN + Histogram represent all data.
 	Version2 = 2
+	// Version3 is used for testing now. Once it finished, we will fallback the Version3 to Version2.
+	// The difference between Version2 and Version3 is that we construct the index's statistics based on sampling also.
+	// The data structure between them are then same.
+	Version3 = 3
 )
 
 // AnalyzeFlag is set when the statistics comes from analyze and has not been modified by feedback.
@@ -344,6 +348,7 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 }
 
 // RemoveVals remove the given values from the histogram.
+// This function contains an **ASSUMPTION**: valCntPairs is sorted in ascending order.
 func (hg *Histogram) RemoveVals(valCntPairs []TopNMeta) {
 	totalSubCnt := int64(0)
 	var cmpResult int
@@ -352,6 +357,7 @@ func (hg *Histogram) RemoveVals(valCntPairs []TopNMeta) {
 			// If the current val smaller than current bucket's lower bound, skip it.
 			cmpResult = bytes.Compare(hg.Bounds.Column(0).GetRaw(bktIdx*2), valCntPairs[pairIdx].Encoded)
 			if cmpResult > 0 {
+				pairIdx++
 				continue
 			}
 			// If the current val bigger than current bucket's upper bound, break.
@@ -808,7 +814,7 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 		rAvg *= 2
 	}
 	for i := 0; i < rh.Len(); i++ {
-		if statsVer == Version2 {
+		if statsVer >= Version2 {
 			lh.AppendBucketWithNDV(rh.GetLower(i), rh.GetUpper(i), rh.Buckets[i].Count+lCount-offset, rh.Buckets[i].Repeat, rh.Buckets[i].NDV)
 			continue
 		}
@@ -919,14 +925,14 @@ func (c *Column) String() string {
 
 // TotalRowCount returns the total count of this column.
 func (c *Column) TotalRowCount() float64 {
-	if c.StatsVer == Version2 {
+	if c.StatsVer >= Version2 {
 		return c.Histogram.TotalRowCount() + float64(c.TopN.TotalCount())
 	}
 	return c.Histogram.TotalRowCount()
 }
 
 func (c *Column) notNullCount() float64 {
-	if c.StatsVer == Version2 {
+	if c.StatsVer >= Version2 {
 		return c.Histogram.notNullCount() + float64(c.TopN.TotalCount())
 	}
 	return c.Histogram.notNullCount()
@@ -1134,7 +1140,7 @@ func (idx *Index) String() string {
 
 // TotalRowCount returns the total count of this index.
 func (idx *Index) TotalRowCount() float64 {
-	if idx.StatsVer == Version2 {
+	if idx.StatsVer >= Version2 {
 		return idx.Histogram.TotalRowCount() + float64(idx.TopN.TotalCount())
 	}
 	return idx.Histogram.TotalRowCount()
@@ -1171,7 +1177,7 @@ func (idx *Index) equalRowCount(b []byte, modifyCount int64) float64 {
 		return float64(idx.QueryBytes(b))
 	}
 	// If it's version2, query the top-n first.
-	if idx.StatsVer == Version2 {
+	if idx.StatsVer >= Version2 {
 		count, found := idx.TopN.QueryTopN(b)
 		if found {
 			return float64(count)
@@ -1239,7 +1245,7 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, coll *HistColl, inde
 		expBackoffSuccess := false
 		// Due to the limitation of calcFraction and convertDatumToScalar, the histogram actually won't estimate anything.
 		// If the first column's range is point.
-		if rangePosition := GetOrdinalOfRangeCond(sc, indexRange); rangePosition > 0 && idx.StatsVer == Version2 && coll != nil {
+		if rangePosition := GetOrdinalOfRangeCond(sc, indexRange); rangePosition > 0 && idx.StatsVer >= Version2 && coll != nil {
 			var expBackoffSel float64
 			expBackoffSel, expBackoffSuccess, err = idx.expBackoffEstimation(sc, coll, indexRange)
 			if err != nil {
@@ -1498,13 +1504,26 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 }
 
 func (idx *Index) outOfRange(val types.Datum) bool {
-	if idx.Histogram.Len() == 0 {
+	histEmpty, topNEmpty := idx.Histogram.Len() == 0, idx.TopN.Num() == 0
+	// All empty.
+	if histEmpty && topNEmpty {
 		return true
 	}
-	withInLowBoundOrPrefixMatch := chunk.Compare(idx.Bounds.GetRow(0), 0, &val) <= 0 ||
-		matchPrefix(idx.Bounds.GetRow(0), 0, &val)
-	withInHighBound := chunk.Compare(idx.Bounds.GetRow(idx.Bounds.NumRows()-1), 0, &val) >= 0
-	return !withInLowBoundOrPrefixMatch || !withInHighBound
+	// TopN is not empty. Record found.
+	if !topNEmpty && idx.TopN.findTopN(val.GetBytes()) >= 0 {
+		return false
+	}
+	if !histEmpty {
+		withInLowBoundOrPrefixMatch := chunk.Compare(idx.Bounds.GetRow(0), 0, &val) <= 0 ||
+			matchPrefix(idx.Bounds.GetRow(0), 0, &val)
+		withInHighBound := chunk.Compare(idx.Bounds.GetRow(idx.Bounds.NumRows()-1), 0, &val) >= 0
+		// Hist is not empty. Record found.
+		if withInLowBoundOrPrefixMatch && withInHighBound {
+			return false
+		}
+	}
+	// No record found. Is out of range.
+	return true
 }
 
 // matchPrefix checks whether ad is the prefix of value

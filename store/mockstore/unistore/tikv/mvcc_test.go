@@ -16,7 +16,6 @@ package tikv
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"os"
 	"path/filepath"
@@ -89,11 +88,11 @@ func CreateTestDB(dbPath, LogPath string) (*badger.DB, error) {
 }
 
 func NewTestStore(dbPrefix string, logPrefix string, c *C) (*TestStore, error) {
-	dbPath, err := ioutil.TempDir("", dbPrefix)
+	dbPath, err := os.MkdirTemp("", dbPrefix)
 	if err != nil {
 		return nil, err
 	}
-	LogPath, err := ioutil.TempDir("", logPrefix)
+	LogPath, err := os.MkdirTemp("", logPrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -387,12 +386,6 @@ func MustPrewritePessimistic(pk []byte, key []byte, value []byte, startTs uint64
 
 func MustPrewritePessimisticPutErr(pk []byte, key []byte, value []byte, startTs uint64, forUpdateTs uint64, store *TestStore) {
 	err := PrewritePessimistic(pk, key, value, startTs, lockTTL, []bool{true}, forUpdateTs, store)
-	store.c.Assert(err, NotNil)
-}
-
-func MustPrewritePessimisticErr(pk []byte, key []byte, value []byte, startTs uint64, lockTTL uint64,
-	isPessimisticLock []bool, forUpdateTs uint64, store *TestStore) {
-	err := PrewritePessimistic(pk, key, value, startTs, lockTTL, isPessimisticLock, forUpdateTs, store)
 	store.c.Assert(err, NotNil)
 }
 

@@ -25,10 +25,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -122,19 +121,19 @@ func (s *testAsyncCommitCommon) mustGetFromSnapshot(c *C, version uint64, key, e
 func (s *testAsyncCommitCommon) mustGetNoneFromSnapshot(c *C, version uint64, key []byte) {
 	snap := s.store.GetSnapshot(version)
 	_, err := snap.Get(context.Background(), key)
-	c.Assert(errors.Cause(err), Equals, tidbkv.ErrNotExist)
+	c.Assert(errors.Cause(err), Equals, tikverr.ErrNotExist)
 }
 
 func (s *testAsyncCommitCommon) beginAsyncCommitWithLinearizability(c *C) tikv.TxnProbe {
 	txn := s.beginAsyncCommit(c)
-	txn.SetOption(kv.GuaranteeLinearizability, true)
+	txn.SetCausalConsistency(false)
 	return txn
 }
 
 func (s *testAsyncCommitCommon) beginAsyncCommit(c *C) tikv.TxnProbe {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.SetOption(kv.EnableAsyncCommit, true)
+	txn.SetEnableAsyncCommit(true)
 	return tikv.TxnProbe{KVTxn: txn}
 }
 
@@ -160,7 +159,7 @@ func (s *testAsyncCommitSuite) SetUpTest(c *C) {
 func (s *testAsyncCommitSuite) lockKeysWithAsyncCommit(c *C, keys, values [][]byte, primaryKey, primaryValue []byte, commitPrimary bool) (uint64, uint64) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.SetOption(kv.EnableAsyncCommit, true)
+	txn.SetEnableAsyncCommit(true)
 	for i, k := range keys {
 		if len(values[i]) > 0 {
 			err = txn.Set(k, values[i])
@@ -350,7 +349,7 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 		sessionID++
 		ctx := context.WithValue(context.Background(), util.SessionID, sessionID)
 		txn1 := s.beginAsyncCommit(c)
-		txn1.SetOption(kv.Pessimistic, isPessimistic)
+		txn1.SetPessimistic(isPessimistic)
 		s.mustGetFromTxn(c, txn1, []byte("k1"), []byte("v1"))
 		txn1.Set([]byte("k1"), []byte("v2"))
 
@@ -409,7 +408,7 @@ func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
 
 	localTxn := s.beginAsyncCommit(c)
 	err := localTxn.Set([]byte("a"), []byte("a1"))
-	localTxn.SetOption(kv.TxnScope, "bj")
+	localTxn.SetScope("bj")
 	c.Assert(err, IsNil)
 	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 	err = localTxn.Commit(ctx)
@@ -418,11 +417,100 @@ func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
 
 	globalTxn := s.beginAsyncCommit(c)
 	err = globalTxn.Set([]byte("b"), []byte("b1"))
-	globalTxn.SetOption(kv.TxnScope, oracle.GlobalTxnScope)
+	globalTxn.SetScope(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	err = globalTxn.Commit(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(globalTxn.IsAsyncCommit(), IsTrue)
+}
+
+func (s *testAsyncCommitSuite) TestResolveTxnFallbackFromAsyncCommit(c *C) {
+	keys := [][]byte{[]byte("k0"), []byte("k1")}
+	values := [][]byte{[]byte("v00"), []byte("v10")}
+	initTest := func() tikv.CommitterProbe {
+		t0 := s.begin(c)
+		err := t0.Set(keys[0], values[0])
+		c.Assert(err, IsNil)
+		err = t0.Set(keys[1], values[1])
+		c.Assert(err, IsNil)
+		err = t0.Commit(context.Background())
+		c.Assert(err, IsNil)
+
+		t1 := s.beginAsyncCommit(c)
+		err = t1.Set(keys[0], []byte("v01"))
+		c.Assert(err, IsNil)
+		err = t1.Set(keys[1], []byte("v11"))
+		c.Assert(err, IsNil)
+
+		committer, err := t1.NewCommitter(1)
+		c.Assert(err, IsNil)
+		committer.SetLockTTL(1)
+		committer.SetUseAsyncCommit()
+		return committer
+	}
+	prewriteKey := func(committer tikv.CommitterProbe, idx int, fallback bool) {
+		bo := tikv.NewBackofferWithVars(context.Background(), 5000, nil)
+		loc, err := s.store.GetRegionCache().LocateKey(bo, keys[idx])
+		c.Assert(err, IsNil)
+		req := committer.BuildPrewriteRequest(loc.Region.GetID(), loc.Region.GetConfVer(), loc.Region.GetVer(),
+			committer.GetMutations().Slice(idx, idx+1), 1)
+		if fallback {
+			req.Req.(*kvrpcpb.PrewriteRequest).MaxCommitTs = 1
+		}
+		resp, err := s.store.SendReq(bo, req, loc.Region, 5000)
+		c.Assert(err, IsNil)
+		c.Assert(resp.Resp, NotNil)
+	}
+	readKey := func(idx int) {
+		t2 := s.begin(c)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		val, err := t2.Get(ctx, keys[idx])
+		c.Assert(err, IsNil)
+		c.Assert(val, DeepEquals, values[idx])
+	}
+
+	// Case 1: Fallback primary, read primary
+	committer := initTest()
+	prewriteKey(committer, 0, true)
+	prewriteKey(committer, 1, false)
+	readKey(0)
+	readKey(1)
+
+	// Case 2: Fallback primary, read secondary
+	committer = initTest()
+	prewriteKey(committer, 0, true)
+	prewriteKey(committer, 1, false)
+	readKey(1)
+	readKey(0)
+
+	// Case 3: Fallback secondary, read primary
+	committer = initTest()
+	prewriteKey(committer, 0, false)
+	prewriteKey(committer, 1, true)
+	readKey(0)
+	readKey(1)
+
+	// Case 4: Fallback secondary, read secondary
+	committer = initTest()
+	prewriteKey(committer, 0, false)
+	prewriteKey(committer, 1, true)
+	readKey(1)
+	readKey(0)
+
+	// Case 5: Fallback both, read primary
+	committer = initTest()
+	prewriteKey(committer, 0, true)
+	prewriteKey(committer, 1, true)
+	readKey(0)
+	readKey(1)
+
+	// Case 6: Fallback both, read secondary
+	committer = initTest()
+	prewriteKey(committer, 0, true)
+	prewriteKey(committer, 1, true)
+	readKey(1)
+	readKey(0)
 }
 
 type mockResolveClient struct {

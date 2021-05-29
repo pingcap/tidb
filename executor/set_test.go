@@ -18,7 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -157,6 +157,9 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustGetErrMsg("set @@global.collation_server='non_exist_collation'", expectErrMsg)
 	tk.MustGetErrMsg("set @@global.collation_database='non_exist_collation'", expectErrMsg)
 	tk.MustGetErrMsg("set @@global.collation_connection='non_exist_collation'", expectErrMsg)
+
+	expectErrMsg = "[parser:1115]Unknown character set: 'boguscharsetname'"
+	tk.MustGetErrMsg("set names boguscharsetname", expectErrMsg)
 
 	tk.MustExec("set character_set_results = NULL")
 	tk.MustQuery("select @@character_set_results").Check(testkit.Rows(""))
@@ -397,6 +400,14 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	c.Assert(err, ErrorMatches, ".*Variable 'tidb_metric_query_range_duration' can't be set to the value of '9'")
 	tk.MustQuery("select @@session.tidb_metric_query_range_duration;").Check(testkit.Rows("120"))
 
+	tk.MustExec("set @@cte_max_recursion_depth=100")
+	tk.MustQuery("select @@cte_max_recursion_depth").Check(testkit.Rows("100"))
+	tk.MustExec("set @@global.cte_max_recursion_depth=100")
+	tk.MustQuery("select @@global.cte_max_recursion_depth").Check(testkit.Rows("100"))
+	tk.MustExec("set @@cte_max_recursion_depth=-1")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect cte_max_recursion_depth value: '-1'"))
+	tk.MustQuery("select @@cte_max_recursion_depth").Check(testkit.Rows("0"))
+
 	// test for tidb_slow_log_masking
 	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
 	tk.MustExec("set global tidb_slow_log_masking = 1")
@@ -559,7 +570,7 @@ func (s *testSuite5) TestSetCharset(c *C) {
 
 	check := func(args ...string) {
 		for i, v := range characterSetVariables {
-			sVar, err := variable.GetSessionSystemVar(sessionVars, v)
+			sVar, err := variable.GetSessionOrGlobalSystemVar(sessionVars, v)
 			c.Assert(err, IsNil)
 			c.Assert(sVar, Equals, args[i], Commentf("%d: %s", i, characterSetVariables[i]))
 		}
@@ -1309,7 +1320,7 @@ func (s *testSuite5) TestSetClusterConfig(c *C) {
 	httpCnt := 0
 	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
 		httpCnt++
-		return &http.Response{StatusCode: http.StatusOK, Body: ioutil.NopCloser(nil)}, nil
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(nil)}, nil
 	})
 	tk.MustExec("set config tikv log.level='info'")
 	c.Assert(httpCnt, Equals, 2)
@@ -1327,7 +1338,7 @@ func (s *testSuite5) TestSetClusterConfig(c *C) {
 		"Warning 1105 something wrong", "Warning 1105 something wrong"))
 
 	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusBadRequest, Body: ioutil.NopCloser(bytes.NewBufferString("WRONG"))}, nil
+		return &http.Response{StatusCode: http.StatusBadRequest, Body: io.NopCloser(bytes.NewBufferString("WRONG"))}, nil
 	})
 	tk.MustExec("set config tikv log.level='info'")
 	tk.MustQuery("show warnings").Check(testkit.Rows(

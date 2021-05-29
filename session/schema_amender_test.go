@@ -18,6 +18,7 @@ import (
 	"context"
 	"sort"
 	"strconv"
+	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -255,7 +255,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 	defer store.Close()
 	se := &session{
 		store:       store,
-		parser:      parser.New(),
+		parserPool:  &sync.Pool{New: func() interface{} { return parser.New() }},
 		sessionVars: variable.NewSessionVars(),
 	}
 	startStates := []model.SchemaState{model.StateNone, model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization}
@@ -425,7 +425,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 				}
 				c.Assert(err, IsNil)
 			}
-			curVer, err := se.store.CurrentVersion(oracle.GlobalTxnScope)
+			curVer, err := se.store.CurrentVersion(kv.GlobalTxnScope)
 			c.Assert(err, IsNil)
 			se.sessionVars.TxnCtx.SetForUpdateTS(curVer.Ver + 1)
 			mutationVals, err := txn.BatchGet(ctx, checkKeys)

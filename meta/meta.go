@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
@@ -94,8 +93,8 @@ type Meta struct {
 // NewMeta creates a Meta in transaction txn.
 // If the current Meta needs to handle a job, jobListKey is the type of the job's list.
 func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
-	txn.SetOption(tikvstore.Priority, tikvstore.PriorityHigh)
-	txn.SetOption(tikvstore.SyncLog, true)
+	txn.SetOption(kv.Priority, kv.PriorityHigh)
+	txn.SetOption(kv.SyncLog, struct{}{})
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
 	listKey := DefaultJobListKey
 	if len(jobListKeys) != 0 {
@@ -636,13 +635,13 @@ func (m *Meta) getDDLJob(key []byte, index int64) (*model.Job, error) {
 
 	job := &model.Job{
 		// For compatibility, if the job is enqueued by old version TiDB and Priority field is omitted,
-		// set the default priority to tikvstore.PriorityLow.
-		Priority: tikvstore.PriorityLow,
+		// set the default priority to kv.PriorityLow.
+		Priority: kv.PriorityLow,
 	}
 	err = job.Decode(value)
 	// Check if the job.Priority is valid.
-	if job.Priority < tikvstore.PriorityNormal || job.Priority > tikvstore.PriorityHigh {
-		job.Priority = tikvstore.PriorityLow
+	if job.Priority < kv.PriorityNormal || job.Priority > kv.PriorityHigh {
+		job.Priority = kv.PriorityLow
 	}
 	return job, errors.Trace(err)
 }
