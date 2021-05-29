@@ -4133,9 +4133,12 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		return nil
 	}
 
-	sel := make([]int, chkSize)
-	for i := 0; i < chkSize; i++ {
-		sel[i] = i
+	var sel []int
+	if v.CTE.IsDistinct {
+		sel = make([]int, chkSize)
+		for i := 0; i < chkSize; i++ {
+			sel[i] = i
+		}
 	}
 
 	return &CTEExec{

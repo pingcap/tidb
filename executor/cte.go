@@ -153,7 +153,7 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			return err
 		}
 		// Need to copy chunk to make sure upper operator will not change chunk in resTbl.
-		// Also we ignore coping rows not selected, because some operators like Projection
+		// Also we ignore copying rows not selected, because some operators like Projection
 		// doesn't support swap column if chunk.sel is no nil.
 		req.SwapColumns(res.CopyConstructSel())
 		e.chkIdx++
@@ -376,14 +376,16 @@ func (e *CTEExec) deduplicate(chk *chunk.Chunk,
 		return chk, nil
 	}
 
+	// 1. Compute hash values for chunk.
 	chkHashTbl := newConcurrentMapHashTable()
 	selOri, err := e.computeChunkHash(chk)
 	if err != nil {
 		return nil, err
 	}
+
+	// 2. Filter rows duplicated in input chunk.
 	// This sel is for filtering rows duplicated in cur chk.
 	selChk := make([]int, 0, numRows)
-
 	for i := 0; i < numRows; i++ {
 		key := e.hCtx.hashVals[selOri[i]].Sum64()
 		row := chk.GetRow(i)
@@ -401,10 +403,10 @@ func (e *CTEExec) deduplicate(chk *chunk.Chunk,
 		rowPtr := chunk.RowPtr{ChkIdx: uint32(0), RowIdx: uint32(i)}
 		chkHashTbl.Put(key, rowPtr)
 	}
-
-	// filter rows duplicated in RowContainer
 	chk.SetSel(selChk)
 	chkIdx := storage.NumChunks()
+
+	// 3. Filter rows duplicated in RowContainer.
 	// This sel is for filtering rows duplicated in cteutil.Storage.
 	selStorage := make([]int, 0, len(selChk))
 	for i := 0; i < len(selChk); i++ {
