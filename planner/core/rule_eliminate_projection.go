@@ -127,7 +127,7 @@ func doPhysicalProjectionElimination(p PhysicalPlan) (PhysicalPlan, error) {
 		if child, ok := p.Children()[0].(*PhysicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
 			child.SetSchema(p.Schema())
 			for i := range proj.Exprs {
-				proj.Exprs[i], err = ReplaceColumnOfExprInPhysicalProjection(proj.Exprs[i], child, child.Schema())
+				proj.Exprs[i], err = replaceColumnOfExprInPhysicalProjection(proj.Exprs[i], child, child.Schema())
 				if err != nil {
 					return nil, err
 				}
@@ -162,8 +162,8 @@ func eliminatePhysicalProjection(p PhysicalPlan) (PhysicalPlan, error) {
 type projectionEliminator struct {
 }
 
-// ReplaceColumnOfExprInPhysicalProjection replaces column of expression by another PhysicalProjection.
-func ReplaceColumnOfExprInPhysicalProjection(expr expression.Expression, proj *PhysicalProjection, schema *expression.Schema) (expression.Expression, error) {
+// replaceColumnOfExprInPhysicalProjection replaces column of expression by another PhysicalProjection.
+func replaceColumnOfExprInPhysicalProjection(expr expression.Expression, proj *PhysicalProjection, schema *expression.Schema) (expression.Expression, error) {
 	switch v := expr.(type) {
 	case *expression.Column:
 		idx := schema.ColumnIndex(v)
@@ -171,14 +171,14 @@ func ReplaceColumnOfExprInPhysicalProjection(expr expression.Expression, proj *P
 			return proj.Exprs[idx], nil
 		}
 	case *expression.CorrelatedColumn:
-		_, err := ReplaceColumnOfExprInPhysicalProjection(&v.Column, proj, schema)
+		_, err := replaceColumnOfExprInPhysicalProjection(&v.Column, proj, schema)
 		if err != nil {
 			return nil, err
 		}
 	case *expression.ScalarFunction:
 		newArgs := make([]expression.Expression, 0, len(v.GetArgs()))
 		for i := range v.GetArgs() {
-			args, err := ReplaceColumnOfExprInPhysicalProjection(v.GetArgs()[i], proj, schema)
+			args, err := replaceColumnOfExprInPhysicalProjection(v.GetArgs()[i], proj, schema)
 			if err != nil {
 				return nil, err
 			}
