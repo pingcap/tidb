@@ -64,6 +64,70 @@ func (s *testStatsSuite) TestConversion(c *C) {
 	assertTableEqual(c, loadTblInStorage, tbl)
 }
 
+func (s *testStatsSuite) getStatsJSON(c *C, db, tableName string) *handle.JSONTable {
+	is := s.do.InfoSchema()
+	h := s.do.StatsHandle()
+	c.Assert(h.Update(is), IsNil)
+	table, err := is.TableByName(model.NewCIStr(db), model.NewCIStr(tableName))
+	c.Assert(err, IsNil)
+	tableInfo := table.Meta()
+	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo, nil)
+	c.Assert(err, IsNil)
+	return jsonTbl
+}
+
+func (s *testStatsSuite) TestDumpGlobalStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 2")
+	tk.MustExec("insert into t values (1), (2)")
+	tk.MustExec("analyze table t")
+
+	// global-stats is not existed
+	stats := s.getStatsJSON(c, "test", "t")
+	c.Assert(stats.Partitions["p0"], NotNil)
+	c.Assert(stats.Partitions["p1"], NotNil)
+	c.Assert(stats.Partitions["global"], IsNil)
+
+	// global-stats is existed
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("analyze table t")
+	stats = s.getStatsJSON(c, "test", "t")
+	c.Assert(stats.Partitions["p0"], NotNil)
+	c.Assert(stats.Partitions["p1"], NotNil)
+	c.Assert(stats.Partitions["global"], NotNil)
+}
+
+func (s *testStatsSuite) TestLoadGlobalStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 2")
+	tk.MustExec("insert into t values (1), (2)")
+	tk.MustExec("analyze table t")
+	globalStats := s.getStatsJSON(c, "test", "t")
+
+	// remove all statistics
+	tk.MustExec("delete from mysql.stats_meta")
+	tk.MustExec("delete from mysql.stats_histograms")
+	tk.MustExec("delete from mysql.stats_buckets")
+	s.do.StatsHandle().Clear()
+	clearedStats := s.getStatsJSON(c, "test", "t")
+	c.Assert(len(clearedStats.Partitions), Equals, 0)
+
+	// load global-stats back
+	c.Assert(s.do.StatsHandle().LoadStatsFromJSON(s.do.InfoSchema(), globalStats), IsNil)
+	loadedStats := s.getStatsJSON(c, "test", "t")
+	c.Assert(len(loadedStats.Partitions), Equals, 3) // p0, p1, global
+}
+
 func (s *testStatsSuite) TestDumpPartitions(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
@@ -151,7 +215,7 @@ func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
 	cms, _, _, _ := statistics.NewCMSketchAndTopN(5, 2048, fakeData, 20, 100)
 
 	stat := h.GetTableStats(tableInfo)
-	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, nil, statistics.Version2, 1)
+	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, nil, nil, statistics.Version2, 1, false)
 	c.Assert(err, IsNil)
 	c.Assert(h.Update(is), IsNil)
 
@@ -223,10 +287,10 @@ func (s *testStatsSuite) TestDumpExtendedStats(c *C) {
 	assertTableEqual(c, loadTblInStorage, tbl)
 }
 
-func (s *testStatsSuite) TestDumpVer2Stats(c *C) {
+func (s *testStatsSuite) TestDumpVer3Stats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set @@tidb_analyze_version = 3")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10))")
@@ -242,7 +306,7 @@ func (s *testStatsSuite) TestDumpVer2Stats(c *C) {
 	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 
-	storageTbl, err := h.TableStatsFromStorage(tableInfo.Meta(), tableInfo.Meta().ID, false, nil)
+	storageTbl, err := h.TableStatsFromStorage(tableInfo.Meta(), tableInfo.Meta().ID, false, 0)
 	c.Assert(err, IsNil)
 
 	dumpJSONTable, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil)

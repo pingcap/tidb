@@ -505,6 +505,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			// All Intervals are single points
 			accesses[i] = points2EqOrInCond(sctx, points[i], cols[i])
 			newConditions = append(newConditions, accesses[i])
+			sctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
 		}
 	}
 	for i, offset := range offsets {
@@ -517,6 +518,14 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			accesses = accesses[:i]
 			break
 		}
+
+		// Currently, if the access cond is on a prefix index, we will also add this cond to table filters.
+		// A possible optimization is that, if the value in the cond is shorter than the length of the prefix index, we don't
+		// need to add this cond to table filters.
+		// e.g. CREATE TABLE t(a varchar(10), index i(a(5)));  SELECT * FROM t USE INDEX i WHERE a > 'aaa';
+		// However, please notice that if you're implementing this, please (1) set StatementContext.OptimDependOnMutableConst to true,
+		// or (2) don't do this optimization when StatementContext.UseCache is true. That's because this plan is affected by
+		// flen of user variable, we cannot cache this plan.
 		if lengths[i] != types.UnspecifiedLength {
 			filters = append(filters, cond)
 		}

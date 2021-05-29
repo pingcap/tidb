@@ -32,6 +32,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
@@ -40,14 +41,16 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store"
-	"github.com/pingcap/tidb/store/tikv"
+	tidbdriver "github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	goctx "golang.org/x/net/context"
 )
 
@@ -97,11 +100,11 @@ type TestDDLSuite struct {
 }
 
 func (s *TestDDLSuite) SetUpSuite(c *C) {
-	logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
+	err := logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
+	c.Assert(err, IsNil)
 
 	s.quit = make(chan struct{})
 
-	var err error
 	s.store, err = store.New(fmt.Sprintf("tikv://%s%s", *etcd, *tikvPath))
 	c.Assert(err, IsNil)
 
@@ -140,7 +143,7 @@ func (s *TestDDLSuite) SetUpSuite(c *C) {
 	s.procs = make([]*server, *serverNum)
 
 	// Set server restart retry count.
-	s.retryCount = 5
+	s.retryCount = 20
 
 	createLogFiles(c, *serverNum)
 	err = s.startServers()
@@ -162,7 +165,7 @@ func (s *TestDDLSuite) restartServerRegularly() {
 			if *enableRestart {
 				err = s.restartServerRand()
 				if err != nil {
-					log.Fatalf("restartServerRand failed, err %v", errors.ErrorStack(err))
+					log.Fatal("restartServerRand failed", zap.Error(err))
 				}
 			}
 		case <-s.quit:
@@ -183,7 +186,7 @@ func (s *TestDDLSuite) TearDownSuite(c *C) {
 		case <-time.After(100 * time.Second):
 			buf := make([]byte, 2<<20)
 			size := runtime.Stack(buf, true)
-			log.Errorf("%s", buf[:size])
+			log.Error("testing timeout", zap.ByteString("buf", buf[:size]))
 		case <-quitCh:
 		}
 	}()
@@ -223,12 +226,12 @@ func (s *TestDDLSuite) killServer(proc *os.Process) error {
 	// Make sure this tidb is killed, and it makes the next tidb that has the same port as this one start quickly.
 	err := proc.Kill()
 	if err != nil {
-		log.Errorf("kill server failed err %v", err)
+		log.Error("kill server failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 	_, err = proc.Wait()
 	if err != nil {
-		log.Errorf("kill server, wait failed err %v", err)
+		log.Error("kill server, wait failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 
@@ -295,21 +298,29 @@ func (s *TestDDLSuite) startServer(i int, fp *os.File) (*server, error) {
 	for i := 0; i < s.retryCount; i++ {
 		db, err = sql.Open("mysql", fmt.Sprintf("root@(%s)/test_ddl", addr))
 		if err != nil {
-			log.Warnf("open addr %v failed, retry count %d err %v", addr, i, err)
+			log.Warn("open addr failed", zap.String("addr", addr), zap.Int("retry count", i), zap.Error(err))
 			continue
 		}
 		err = db.Ping()
 		if err == nil {
 			break
 		}
-		log.Warnf("ping addr %v failed, retry count %d err %v", addr, i, err)
+		log.Warn("ping addr failed", zap.String("addr", addr), zap.Int("retry count", i), zap.Error(err))
 
-		db.Close()
+		err = db.Close()
+		if err != nil {
+			log.Warn("close db failed", zap.Int("retry count", i), zap.Error(err))
+			break
+		}
 		time.Sleep(sleepTime)
 		sleepTime += sleepTime
 	}
 	if err != nil {
-		log.Errorf("restart server addr %v failed %v, take time %v", addr, err, time.Since(startTime))
+		log.Error("restart server addr failed",
+			zap.String("addr", addr),
+			zap.Duration("take time", time.Since(startTime)),
+			zap.Error(err),
+		)
 		return nil, errors.Trace(err)
 	}
 	db.SetMaxOpenConns(10)
@@ -319,7 +330,7 @@ func (s *TestDDLSuite) startServer(i int, fp *os.File) (*server, error) {
 		return nil, errors.Trace(err)
 	}
 
-	log.Infof("start server %s ok %v", addr, err)
+	log.Info("start server ok", zap.String("addr", addr), zap.Error(err))
 
 	return &server{
 		Cmd:   cmd,
@@ -341,7 +352,7 @@ func (s *TestDDLSuite) restartServerRand() error {
 
 	server := s.procs[i]
 	s.procs[i] = nil
-	log.Warnf("begin to restart %s", server.addr)
+	log.Warn("begin to restart", zap.String("addr", server.addr))
 	err := s.killServer(server.Process)
 	if err != nil {
 		return errors.Trace(err)
@@ -367,11 +378,11 @@ func isRetryError(err error) bool {
 
 	// TODO: Check the specific columns number.
 	if strings.Contains(err.Error(), "Column count doesn't match value count at row") {
-		log.Warnf("err is %v", err)
+		log.Warn("err", zap.Error(err))
 		return false
 	}
 
-	log.Errorf("err is %v, can not retry", err)
+	log.Error("can not retry", zap.Error(err))
 
 	return false
 }
@@ -381,7 +392,11 @@ func (s *TestDDLSuite) exec(query string, args ...interface{}) (sql.Result, erro
 		server := s.getServer()
 		r, err := server.db.Exec(query, args...)
 		if isRetryError(err) {
-			log.Errorf("exec %s in server %s err %v, retry", query, err, server.addr)
+			log.Error("exec in server, retry",
+				zap.String("query", query),
+				zap.String("addr", server.addr),
+				zap.Error(err),
+			)
 			continue
 		}
 
@@ -392,7 +407,11 @@ func (s *TestDDLSuite) exec(query string, args ...interface{}) (sql.Result, erro
 func (s *TestDDLSuite) mustExec(c *C, query string, args ...interface{}) sql.Result {
 	r, err := s.exec(query, args...)
 	if err != nil {
-		log.Fatalf("[mustExec fail]query - %v %v, error - %v", query, args, err)
+		log.Fatal("[mustExec fail]query",
+			zap.String("query", query),
+			zap.Any("args", args),
+			zap.Error(err),
+		)
 	}
 
 	return r
@@ -413,7 +432,11 @@ func (s *TestDDLSuite) execInsert(c *C, query string, args ...interface{}) sql.R
 			}
 		}
 
-		log.Fatalf("[execInsert fail]query - %v %v, error - %v", query, args, err)
+		log.Fatal("[execInsert fail]query",
+			zap.String("query", query),
+			zap.Any("args", args),
+			zap.Error(err),
+		)
 	}
 }
 
@@ -422,7 +445,11 @@ func (s *TestDDLSuite) query(query string, args ...interface{}) (*sql.Rows, erro
 		server := s.getServer()
 		r, err := server.db.Query(query, args...)
 		if isRetryError(err) {
-			log.Errorf("query %s in server %s err %v, retry", query, err, server.addr)
+			log.Error("query in server, retry",
+				zap.String("query", query),
+				zap.String("addr", server.addr),
+				zap.Error(err),
+			)
 			continue
 		}
 
@@ -442,7 +469,7 @@ func (s *TestDDLSuite) getServer() *server {
 		}
 	}
 
-	log.Fatalf("try to get server too many times")
+	log.Fatal("try to get server too many times")
 	return nil
 }
 
@@ -533,7 +560,7 @@ func (s *TestDDLSuite) Bootstrap(c *C) {
 	tk.MustExec("create table test_mixed (c1 int, c2 int, primary key(c1))")
 	tk.MustExec("create table test_inc (c1 int, c2 int, primary key(c1))")
 
-	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists test_insert_common, test_conflict_insert_common, " +
 		"test_update_common, test_conflict_update_common, test_delete_common, test_conflict_delete_common, " +
 		"test_mixed_common, test_inc_common")
@@ -545,7 +572,7 @@ func (s *TestDDLSuite) Bootstrap(c *C) {
 	tk.MustExec("create table test_conflict_delete_common (c1 int, c2 int, primary key(c1, c2))")
 	tk.MustExec("create table test_mixed_common (c1 int, c2 int, primary key(c1, c2))")
 	tk.MustExec("create table test_inc_common (c1 int, c2 int, primary key(c1, c2))")
-	tk.MustExec("set @@tidb_enable_clustered_index = 0")
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 }
 
 func (s *TestDDLSuite) TestSimple(c *C) {
@@ -600,7 +627,7 @@ func (s *TestDDLSuite) TestSimpleInsert(c *C) {
 
 	tbl := s.getTable(c, "test_insert")
 	handles := kv.NewHandleMap()
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		handles.Set(h, struct{}{})
 		c.Assert(data[0].GetValue(), Equals, data[1].GetValue())
 		return true, nil
@@ -651,7 +678,7 @@ func (s *TestDDLSuite) TestSimpleConflictInsert(c *C) {
 
 	tbl := s.getTable(c, tblName)
 	handles := kv.NewHandleMap()
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		handles.Set(h, struct{}{})
 		c.Assert(keysMap, HasKey, data[0].GetValue())
 		c.Assert(data[0].GetValue(), Equals, data[1].GetValue())
@@ -704,7 +731,7 @@ func (s *TestDDLSuite) TestSimpleUpdate(c *C) {
 
 	tbl := s.getTable(c, tblName)
 	handles := kv.NewHandleMap()
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		handles.Set(h, struct{}{})
 		key := data[0].GetInt64()
 		c.Assert(data[1].GetValue(), Equals, keysMap[key])
@@ -777,12 +804,12 @@ func (s *TestDDLSuite) TestSimpleConflictUpdate(c *C) {
 
 	tbl := s.getTable(c, tblName)
 	handles := kv.NewHandleMap()
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		handles.Set(h, struct{}{})
 		c.Assert(keysMap, HasKey, data[0].GetValue())
 
 		if !reflect.DeepEqual(data[1].GetValue(), data[0].GetValue()) && !reflect.DeepEqual(data[1].GetValue(), defaultValue) {
-			log.Fatalf("[TestSimpleConflictUpdate fail]Bad row: %v", data)
+			log.Fatal("[TestSimpleConflictUpdate fail]Bad row", zap.Any("row", data))
 		}
 
 		return true, nil
@@ -827,7 +854,7 @@ func (s *TestDDLSuite) TestSimpleDelete(c *C) {
 
 	tbl := s.getTable(c, tblName)
 	handles := kv.NewHandleMap()
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		handles.Set(h, struct{}{})
 		return true, nil
 	})
@@ -897,7 +924,7 @@ func (s *TestDDLSuite) TestSimpleConflictDelete(c *C) {
 
 	tbl := s.getTable(c, tblName)
 	handles := kv.NewHandleMap()
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		handles.Set(h, struct{}{})
 		c.Assert(keysMap, HasKey, data[0].GetValue())
 		return true, nil
@@ -967,13 +994,13 @@ func (s *TestDDLSuite) TestSimpleMixed(c *C) {
 	tbl := s.getTable(c, tblName)
 	updateCount := int64(0)
 	insertCount := int64(0)
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if reflect.DeepEqual(data[1].GetValue(), data[0].GetValue()) {
 			insertCount++
 		} else if reflect.DeepEqual(data[1].GetValue(), defaultValue) && data[0].GetInt64() < int64(rowCount) {
 			updateCount++
 		} else {
-			log.Fatalf("[TestSimpleMixed fail]invalid row: %v", data)
+			log.Fatal("[TestSimpleMixed fail]invalid row", zap.Any("row", data))
 		}
 
 		return true, nil
@@ -1037,7 +1064,7 @@ func (s *TestDDLSuite) TestSimpleInc(c *C) {
 	c.Assert(err, IsNil)
 
 	tbl := s.getTable(c, "test_inc")
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if reflect.DeepEqual(data[0].GetValue(), int64(0)) {
 			if *enableRestart {
 				c.Assert(data[1].GetValue(), GreaterEqual, int64(rowCount))
@@ -1061,5 +1088,5 @@ func addEnvPath(newPath string) {
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
-	store.Register("tikv", tikv.Driver{})
+	store.Register("tikv", tidbdriver.TiKVDriver{})
 }

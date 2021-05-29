@@ -59,18 +59,16 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *statsCache
 
 func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	sql := "select HIGH_PRIORITY version, table_id, modify_count, count from mysql.stats_meta"
-	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-	if len(rc) > 0 {
-		defer terror.Call(rc[0].Close)
-	}
+	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
 	if err != nil {
 		return statsCache{}, errors.Trace(err)
 	}
+	defer terror.Call(rc.Close)
 	tables := statsCache{tables: make(map[int64]*statistics.Table)}
-	req := rc[0].NewChunk()
+	req := rc.NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
 	for {
-		err := rc[0].Next(context.TODO(), req)
+		err := rc.Next(context.TODO(), req)
 		if err != nil {
 			return statsCache{}, errors.Trace(err)
 		}
@@ -133,7 +131,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 			var topnCount int64
 			// If this is stats of the Version2, we need to consider the topn's count as well.
 			// See the comments of Version2 for more details.
-			if statsVer == statistics.Version2 {
+			if statsVer >= statistics.Version2 {
 				var err error
 				topnCount, err = h.initTopNCountSum(tblID, id)
 				if err != nil {
@@ -159,17 +157,15 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *statsCache) error {
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
-	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-	if len(rc) > 0 {
-		defer terror.Call(rc[0].Close)
-	}
+	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	req := rc[0].NewChunk()
+	defer terror.Call(rc.Close)
+	req := rc.NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
 	for {
-		err := rc[0].Next(context.TODO(), req)
+		err := rc.Next(context.TODO(), req)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -189,7 +185,7 @@ func (h *Handle) initStatsTopN4Chunk(cache *statsCache, iter *chunk.Iterator4Chu
 			continue
 		}
 		idx, ok := table.Indices[row.GetInt64(1)]
-		if !ok || idx.CMSketch == nil {
+		if !ok || (idx.CMSketch == nil && idx.StatsVer <= statistics.Version1) {
 			continue
 		}
 		if idx.TopN == nil {
@@ -207,17 +203,15 @@ func (h *Handle) initStatsTopN4Chunk(cache *statsCache, iter *chunk.Iterator4Chu
 
 func (h *Handle) initStatsTopN(cache *statsCache) error {
 	sql := "select HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1"
-	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-	if len(rc) > 0 {
-		defer terror.Call(rc[0].Close)
-	}
+	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	req := rc[0].NewChunk()
+	defer terror.Call(rc.Close)
+	req := rc.NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
 	for {
-		err := rc[0].Next(context.TODO(), req)
+		err := rc.Next(context.TODO(), req)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -225,6 +219,54 @@ func (h *Handle) initStatsTopN(cache *statsCache) error {
 			break
 		}
 		h.initStatsTopN4Chunk(cache, iter)
+	}
+	return nil
+}
+
+func (h *Handle) initStatsFMSketch4Chunk(cache *statsCache, iter *chunk.Iterator4Chunk) {
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		table, ok := cache.tables[row.GetInt64(0)]
+		if !ok {
+			continue
+		}
+		fms, err := statistics.DecodeFMSketch(row.GetBytes(3))
+		if err != nil {
+			fms = nil
+			terror.Log(errors.Trace(err))
+		}
+
+		isIndex := row.GetInt64(1)
+		id := row.GetInt64(2)
+		if isIndex == 1 {
+			if idxStats, ok := table.Indices[id]; ok {
+				idxStats.FMSketch = fms
+			}
+		} else {
+			if colStats, ok := table.Columns[id]; ok {
+				colStats.FMSketch = fms
+			}
+		}
+	}
+}
+
+func (h *Handle) initStatsFMSketch(cache *statsCache) error {
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, value from mysql.stats_fm_sketch"
+	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer terror.Call(rc.Close)
+	req := rc.NewChunk()
+	iter := chunk.NewIterator4Chunk(req)
+	for {
+		err := rc.Next(context.TODO(), req)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		h.initStatsFMSketch4Chunk(cache, iter)
 	}
 	return nil
 }
@@ -289,32 +331,27 @@ func (h *Handle) initTopNCountSum(tableID, colID int64) (int64, error) {
 	}
 	req := rs[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
-	for {
-		err := rs[0].Next(context.TODO(), req)
-		if err != nil {
-			return 0, err
-		}
-		if req.NumRows() == 0 {
-			break
-		}
-		return iter.Begin().GetMyDecimal(0).ToInt()
+	err = rs[0].Next(context.TODO(), req)
+	if err != nil {
+		return 0, err
 	}
-	return 0, nil
+	if req.NumRows() == 0 {
+		return 0, nil
+	}
+	return iter.Begin().GetMyDecimal(0).ToInt()
 }
 
 func (h *Handle) initStatsBuckets(cache *statsCache) error {
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
-	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-	if len(rc) > 0 {
-		defer terror.Call(rc[0].Close)
-	}
+	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	req := rc[0].NewChunk()
+	defer terror.Call(rc.Close)
+	req := rc.NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
 	for {
-		err := rc[0].Next(context.TODO(), req)
+		err := rc.Next(context.TODO(), req)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -347,13 +384,13 @@ func (h *Handle) initStatsBuckets(cache *statsCache) error {
 func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	h.mu.Lock()
 	defer func() {
-		_, err1 := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "commit")
+		_, err1 := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "commit")
 		if err == nil && err1 != nil {
 			err = err1
 		}
 		h.mu.Unlock()
 	}()
-	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "begin")
+	_, err = h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "begin")
 	if err != nil {
 		return err
 	}
@@ -366,6 +403,10 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 		return errors.Trace(err)
 	}
 	err = h.initStatsTopN(&cache)
+	if err != nil {
+		return err
+	}
+	err = h.initStatsFMSketch(&cache)
 	if err != nil {
 		return err
 	}

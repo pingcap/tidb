@@ -14,6 +14,8 @@
 package ddl
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -66,16 +68,12 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 }
 
 func checkSchemaNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, dbInfo *model.DBInfo) error {
-	// d.infoHandle maybe nil in some test.
-	if d.infoHandle == nil {
-		return checkSchemaNotExistsFromStore(t, schemaID, dbInfo)
-	}
 	// Try to use memory schema info to check first.
 	currVer, err := t.GetSchemaVersion()
 	if err != nil {
 		return err
 	}
-	is := d.infoHandle.Get()
+	is := d.infoCache.GetLatest()
 	if is.SchemaMetaVersion() == currVer {
 		return checkSchemaNotExistsFromInfoSchema(is, schemaID, dbInfo)
 	}
@@ -167,12 +165,12 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		oldIDs := getIDs(tables)
 		bundles := make([]*placement.Bundle, 0, len(oldIDs)+1)
 		for _, ID := range append(oldIDs, dbInfo.ID) {
-			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(ID))
+			oldBundle, ok := d.infoCache.GetLatest().BundleByName(placement.GroupID(ID))
 			if ok && !oldBundle.IsEmpty() {
 				bundles = append(bundles, placement.BuildPlacementDropBundle(ID))
 			}
 		}
-		err := infosync.PutRuleBundles(nil, bundles)
+		err := infosync.PutRuleBundles(context.TODO(), bundles)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

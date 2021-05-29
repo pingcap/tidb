@@ -303,7 +303,7 @@ func genColumnData(table *table, column *column) (string, error) {
 }
 
 func execSQL(db *sql.DB, sql string) error {
-	if len(sql) == 0 {
+	if sql == "" {
 		return nil
 	}
 

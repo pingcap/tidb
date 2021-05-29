@@ -16,11 +16,11 @@ package core
 import (
 	"bytes"
 	"crypto/sha256"
-	"fmt"
 	"hash"
 	"sync"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/plancodec"
 )
@@ -120,18 +120,21 @@ type planDigester struct {
 }
 
 // NormalizePlan is used to normalize the plan and generate plan digest.
-func NormalizePlan(p Plan) (normalized, digest string) {
+func NormalizePlan(p Plan) (normalized string, digest *parser.Digest) {
 	selectPlan := getSelectPlan(p)
 	if selectPlan == nil {
-		return "", ""
+		return "", parser.NewDigest(nil)
 	}
 	d := digesterPool.Get().(*planDigester)
 	defer digesterPool.Put(d)
 	d.normalizePlanTree(selectPlan)
 	normalized = d.buf.String()
-	d.hasher.Write(d.buf.Bytes())
+	_, err := d.hasher.Write(d.buf.Bytes())
+	if err != nil {
+		panic(err)
+	}
 	d.buf.Reset()
-	digest = fmt.Sprintf("%x", d.hasher.Sum(nil))
+	digest = parser.NewDigest(d.hasher.Sum(nil))
 	d.hasher.Reset()
 	return
 }
@@ -184,6 +187,8 @@ func getSelectPlan(p Plan) PhysicalPlan {
 			selectPlan = x.SelectPlan
 		case *Insert:
 			selectPlan = x.SelectPlan
+		case *Explain:
+			selectPlan = getSelectPlan(x.TargetPlan)
 		}
 	}
 	return selectPlan

@@ -15,6 +15,7 @@ package sqlexec
 
 import (
 	"encoding/json"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -82,14 +83,8 @@ func escapeStringBackslash(buf []byte, v string) []byte {
 	return escapeBytesBackslash(buf, hack.Slice(v))
 }
 
-// EscapeSQL will escape input arguments into the sql string, doing necessary processing.
-// It works like printf() in c, there are following format specifiers:
-// 1. %?: automatic conversion by the type of arguments. E.g. []string -> ('s1','s2'..)
-// 2. %%: output %
-// 3. %n: for identifiers, for example ("use %n", db)
-// But it does not prevent you from doing EscapeSQL("select '%?", ";SQL injection!;") => "select '';SQL injection!;'".
-// It is still your responsibility to write safe SQL.
-func EscapeSQL(sql string, args ...interface{}) (string, error) {
+// escapeSQL is the internal impl of EscapeSQL and FormatSQL.
+func escapeSQL(sql string, args ...interface{}) ([]byte, error) {
 	buf := make([]byte, 0, len(sql))
 	argPos := 0
 	for i := 0; i < len(sql); i++ {
@@ -108,14 +103,14 @@ func EscapeSQL(sql string, args ...interface{}) (string, error) {
 		switch ch {
 		case 'n':
 			if argPos >= len(args) {
-				return "", errors.Errorf("missing arguments, need %d-th arg, but only got %d args", argPos+1, len(args))
+				return nil, errors.Errorf("missing arguments, need %d-th arg, but only got %d args", argPos+1, len(args))
 			}
 			arg := args[argPos]
 			argPos++
 
 			v, ok := arg.(string)
 			if !ok {
-				return "", errors.Errorf("expect a string identifier, got %v", arg)
+				return nil, errors.Errorf("expect a string identifier, got %v", arg)
 			}
 			buf = append(buf, '`')
 			buf = append(buf, strings.Replace(v, "`", "``", -1)...)
@@ -123,7 +118,7 @@ func EscapeSQL(sql string, args ...interface{}) (string, error) {
 			i++ // skip specifier
 		case '?':
 			if argPos >= len(args) {
-				return "", errors.Errorf("missing arguments, need %d-th arg, but only got %d args", argPos+1, len(args))
+				return nil, errors.Errorf("missing arguments, need %d-th arg, but only got %d args", argPos+1, len(args))
 			}
 			arg := args[argPos]
 			argPos++
@@ -195,8 +190,22 @@ func EscapeSQL(sql string, args ...interface{}) (string, error) {
 						buf = escapeStringBackslash(buf, k)
 						buf = append(buf, '\'')
 					}
+				case []float32:
+					for i, k := range v {
+						if i > 0 {
+							buf = append(buf, ',')
+						}
+						buf = strconv.AppendFloat(buf, float64(k), 'g', -1, 32)
+					}
+				case []float64:
+					for i, k := range v {
+						if i > 0 {
+							buf = append(buf, ',')
+						}
+						buf = strconv.AppendFloat(buf, k, 'g', -1, 64)
+					}
 				default:
-					return "", errors.Errorf("unsupported %d-th argument: %v", argPos, arg)
+					return nil, errors.Errorf("unsupported %d-th argument: %v", argPos, arg)
 				}
 			}
 			i++ // skip specifier
@@ -207,5 +216,45 @@ func EscapeSQL(sql string, args ...interface{}) (string, error) {
 			buf = append(buf, '%')
 		}
 	}
-	return string(buf), nil
+	return buf, nil
+}
+
+// EscapeSQL will escape input arguments into the sql string, doing necessary processing.
+// It works like printf() in c, there are following format specifiers:
+// 1. %?: automatic conversion by the type of arguments. E.g. []string -> ('s1','s2'..)
+// 2. %%: output %
+// 3. %n: for identifiers, for example ("use %n", db)
+// But it does not prevent you from doing EscapeSQL("select '%?", ";SQL injection!;") => "select '';SQL injection!;'".
+// It is still your responsibility to write safe SQL.
+func EscapeSQL(sql string, args ...interface{}) (string, error) {
+	str, err := escapeSQL(sql, args...)
+	return string(str), err
+}
+
+// MustEscapeSQL is an helper around EscapeSQL. The error returned from escapeSQL can be avoided statically if you do not pass interface{}.
+func MustEscapeSQL(sql string, args ...interface{}) string {
+	r, err := EscapeSQL(sql, args...)
+	if err != nil {
+		panic(err)
+	}
+	return r
+}
+
+// FormatSQL is the io.Writer version of EscapeSQL. Please refer to EscapeSQL for details.
+func FormatSQL(w io.Writer, sql string, args ...interface{}) error {
+	buf, err := escapeSQL(sql, args...)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(buf)
+	return err
+}
+
+// MustFormatSQL is an helper around FormatSQL, like MustEscapeSQL. But it asks that the writer must be strings.Builder,
+// which will not return error when w.Write(...).
+func MustFormatSQL(w *strings.Builder, sql string, args ...interface{}) {
+	err := FormatSQL(w, sql, args...)
+	if err != nil {
+		panic(err)
+	}
 }

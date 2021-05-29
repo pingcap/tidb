@@ -25,10 +25,8 @@ import (
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -123,17 +121,22 @@ func NewBindHandle(ctx sessionctx.Context) *BindHandle {
 func (h *BindHandle) Update(fullLoad bool) (err error) {
 	h.bindInfo.Lock()
 	lastUpdateTime := h.bindInfo.lastUpdateTime
-
-	sql := "select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source from mysql.bind_info"
-	if !fullLoad {
-		sql += " where update_time > \"" + lastUpdateTime.String() + "\""
+	updateTime := lastUpdateTime.String()
+	if fullLoad {
+		updateTime = "0000-00-00 00:00:00"
 	}
-	// We need to apply the updates by order, wrong apply order of same original sql may cause inconsistent state.
-	sql += " order by update_time"
 
-	// No need to acquire the session context lock for ExecRestrictedSQL, it
+	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source
+	FROM mysql.bind_info WHERE update_time > %? ORDER BY update_time`, updateTime)
+	if err != nil {
+		return err
+	}
+
+	// No need to acquire the session context lock for ExecRestrictedStmt, it
 	// uses another background session.
-	rows, _, err := h.sctx.Context.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	rows, _, err := exec.ExecRestrictedStmt(context.Background(), stmt)
+
 	if err != nil {
 		h.bindInfo.Unlock()
 		return err
@@ -207,7 +210,7 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 		}
 
 		sqlDigest := parser.DigestNormalized(record.OriginalSQL)
-		h.setBindRecord(sqlDigest, record)
+		h.setBindRecord(sqlDigest.String(), record)
 	}()
 
 	// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
@@ -215,7 +218,7 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 		return err
 	}
 	// Binding recreation should physically delete previous bindings.
-	_, err = exec.ExecuteInternal(context.TODO(), h.deleteBindInfoSQL(record.OriginalSQL, record.Db, ""))
+	_, err = exec.ExecuteInternal(context.TODO(), `DELETE FROM mysql.bind_info WHERE original_sql = %?`, record.OriginalSQL)
 	if err != nil {
 		return err
 	}
@@ -227,7 +230,17 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 		record.Bindings[i].UpdateTime = now
 
 		// Insert the BindRecord to the storage.
-		_, err = exec.ExecuteInternal(context.TODO(), h.insertBindInfoSQL(record.OriginalSQL, record.Db, record.Bindings[i]))
+		_, err = exec.ExecuteInternal(context.TODO(), `INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?)`,
+			record.OriginalSQL,
+			record.Bindings[i].BindSQL,
+			record.Db,
+			record.Bindings[i].Status,
+			record.Bindings[i].CreateTime.String(),
+			record.Bindings[i].UpdateTime.String(),
+			record.Bindings[i].Charset,
+			record.Bindings[i].Collation,
+			record.Bindings[i].Source,
+		)
 		if err != nil {
 			return err
 		}
@@ -243,7 +256,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 	}
 
 	record.Db = strings.ToLower(record.Db)
-	oldRecord := h.GetBindRecord(parser.DigestNormalized(record.OriginalSQL), record.OriginalSQL, record.Db)
+	oldRecord := h.GetBindRecord(parser.DigestNormalized(record.OriginalSQL).String(), record.OriginalSQL, record.Db)
 	var duplicateBinding *Binding
 	if oldRecord != nil {
 		binding := oldRecord.FindBinding(record.Bindings[0].ID)
@@ -281,7 +294,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 			return
 		}
 
-		h.appendBindRecord(parser.DigestNormalized(record.OriginalSQL), record)
+		h.appendBindRecord(parser.DigestNormalized(record.OriginalSQL).String(), record)
 	}()
 
 	// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
@@ -289,7 +302,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 		return err
 	}
 	if duplicateBinding != nil {
-		_, err = exec.ExecuteInternal(context.TODO(), h.deleteBindInfoSQL(record.OriginalSQL, record.Db, duplicateBinding.BindSQL))
+		_, err = exec.ExecuteInternal(context.TODO(), `DELETE FROM mysql.bind_info WHERE original_sql = %? AND bind_sql = %?`, record.OriginalSQL, duplicateBinding.BindSQL)
 		if err != nil {
 			return err
 		}
@@ -305,7 +318,17 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 		record.Bindings[i].UpdateTime = now
 
 		// Insert the BindRecord to the storage.
-		_, err = exec.ExecuteInternal(context.TODO(), h.insertBindInfoSQL(record.OriginalSQL, record.Db, record.Bindings[i]))
+		_, err = exec.ExecuteInternal(context.TODO(), `INSERT INTO mysql.bind_info VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?)`,
+			record.OriginalSQL,
+			record.Bindings[i].BindSQL,
+			record.Db,
+			record.Bindings[i].Status,
+			record.Bindings[i].CreateTime.String(),
+			record.Bindings[i].UpdateTime.String(),
+			record.Bindings[i].Charset,
+			record.Bindings[i].Collation,
+			record.Bindings[i].Source,
+		)
 		if err != nil {
 			return err
 		}
@@ -344,22 +367,24 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 		if binding != nil {
 			record.Bindings = append(record.Bindings, *binding)
 		}
-		h.removeBindRecord(parser.DigestNormalized(originalSQL), record)
+		h.removeBindRecord(parser.DigestNormalized(originalSQL).String(), record)
 	}()
 
 	// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
 	if err = h.lockBindInfoTable(); err != nil {
-		return
+		return err
 	}
 
-	updateTs := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+	updateTs := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3).String()
 
-	bindSQL := ""
-	if binding != nil {
-		bindSQL = binding.BindSQL
+	if binding == nil {
+		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
+			deleted, updateTs, originalSQL, updateTs)
+	} else {
+		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %?`,
+			deleted, updateTs, originalSQL, updateTs, binding.BindSQL)
 	}
 
-	_, err = exec.ExecuteInternal(context.TODO(), h.logicalDeleteBindInfoSQL(originalSQL, db, updateTs, bindSQL))
 	deleteRows = int(h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows())
 	return err
 }
@@ -375,6 +400,15 @@ func (h *BindHandle) lockBindInfoTable() error {
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
 	_, err := exec.ExecuteInternal(context.TODO(), h.LockBindInfoSQL())
 	return err
+}
+
+// LockBindInfoSQL simulates LOCK TABLE by updating a same row in each pessimistic transaction.
+func (h *BindHandle) LockBindInfoSQL() string {
+	sql, err := sqlexec.EscapeSQL("UPDATE mysql.bind_info SET source= %? WHERE original_sql= %?", Builtin, BuiltinPseudoSQL4BindLock)
+	if err != nil {
+		return ""
+	}
+	return sql
 }
 
 // tmpBindRecordMap is used to temporarily save bind record changes.
@@ -481,7 +515,7 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 	defer h.sctx.Unlock()
 	h.sctx.GetSessionVars().CurrentDB = bindRecord.Db
 	err := bindRecord.prepareHints(h.sctx.Context)
-	return hash, bindRecord, err
+	return hash.String(), bindRecord, err
 }
 
 // setBindRecord sets the BindRecord to the cache, if there already exists a BindRecord,
@@ -575,51 +609,6 @@ func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	return nil
 }
 
-func (h *BindHandle) deleteBindInfoSQL(normdOrigSQL, db, bindSQL string) string {
-	sql := fmt.Sprintf(
-		`DELETE FROM mysql.bind_info WHERE original_sql=%s`,
-		expression.Quote(normdOrigSQL),
-	)
-	if bindSQL == "" {
-		return sql
-	}
-	return sql + fmt.Sprintf(` and bind_sql = %s`, expression.Quote(bindSQL))
-}
-
-func (h *BindHandle) insertBindInfoSQL(orignalSQL string, db string, info Binding) string {
-	return fmt.Sprintf(`INSERT INTO mysql.bind_info VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)`,
-		expression.Quote(orignalSQL),
-		expression.Quote(info.BindSQL),
-		expression.Quote(db),
-		expression.Quote(info.Status),
-		expression.Quote(info.CreateTime.String()),
-		expression.Quote(info.UpdateTime.String()),
-		expression.Quote(info.Charset),
-		expression.Quote(info.Collation),
-		expression.Quote(info.Source),
-	)
-}
-
-// LockBindInfoSQL simulates LOCK TABLE by updating a same row in each pessimistic transaction.
-func (h *BindHandle) LockBindInfoSQL() string {
-	return fmt.Sprintf("UPDATE mysql.bind_info SET source=%s WHERE original_sql=%s",
-		expression.Quote(Builtin),
-		expression.Quote(BuiltinPseudoSQL4BindLock))
-}
-
-func (h *BindHandle) logicalDeleteBindInfoSQL(originalSQL, db string, updateTs types.Time, bindingSQL string) string {
-	updateTsStr := updateTs.String()
-	sql := fmt.Sprintf(`UPDATE mysql.bind_info SET status=%s,update_time=%s WHERE original_sql=%s and update_time<%s`,
-		expression.Quote(deleted),
-		expression.Quote(updateTsStr),
-		expression.Quote(originalSQL),
-		expression.Quote(updateTsStr))
-	if bindingSQL == "" {
-		return sql
-	}
-	return sql + fmt.Sprintf(` and bind_sql = %s`, expression.Quote(bindingSQL))
-}
-
 // CaptureBaselines is used to automatically capture plan baselines.
 func (h *BindHandle) CaptureBaselines() {
 	parser4Capture := parser.New()
@@ -634,8 +623,8 @@ func (h *BindHandle) CaptureBaselines() {
 			continue
 		}
 		dbName := utilparser.GetDefaultDB(stmt, bindableStmt.Schema)
-		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName))
-		if r := h.GetBindRecord(digest, normalizedSQL, dbName); r != nil && r.HasUsingBinding() {
+		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName, bindableStmt.Query))
+		if r := h.GetBindRecord(digest.String(), normalizedSQL, dbName); r != nil && r.HasUsingBinding() {
 			continue
 		}
 		bindSQL := GenerateBindSQL(context.TODO(), stmt, bindableStmt.PlanHint, true, dbName)
@@ -661,7 +650,11 @@ func (h *BindHandle) CaptureBaselines() {
 func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 	origVals := sctx.GetSessionVars().UsePlanBaselines
 	sctx.GetSessionVars().UsePlanBaselines = false
-	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), fmt.Sprintf("explain format='hint' %s", sql))
+
+	// Usually passing a sprintf to ExecuteInternal is not recommended, but in this case
+	// it is safe because ExecuteInternal does not permit MultiStatement execution. Thus,
+	// the statement won't be able to "break out" from EXPLAIN.
+	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), fmt.Sprintf("EXPLAIN FORMAT='hint' %s", sql))
 	sctx.GetSessionVars().UsePlanBaselines = origVals
 	if rs != nil {
 		defer terror.Call(rs.Close)
@@ -695,14 +688,10 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 	// We need to evolve plan based on the current sql, not the original sql which may have different parameters.
 	// So here we would remove the hint and inject the current best plan hint.
 	hint.BindHint(stmtNode, &hint.HintsSet{})
-	var sb strings.Builder
-	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
-	restoreCtx.DefaultDB = defaultDB
-	err := stmtNode.Restore(restoreCtx)
-	if err != nil {
-		logutil.Logger(ctx).Debug("[sql-bind] restore SQL failed when generating bind SQL", zap.Error(err))
+	bindSQL := utilparser.RestoreWithDefaultDB(stmtNode, defaultDB, "")
+	if bindSQL == "" {
+		return ""
 	}
-	bindSQL := sb.String()
 	switch n := stmtNode.(type) {
 	case *ast.DeleteStmt:
 		deleteIdx := strings.Index(bindSQL, "DELETE")
@@ -766,9 +755,17 @@ func (h *BindHandle) SaveEvolveTasksToStore() {
 }
 
 func getEvolveParameters(ctx sessionctx.Context) (time.Duration, time.Time, time.Time, error) {
-	sql := fmt.Sprintf("select variable_name, variable_value from mysql.global_variables where variable_name in ('%s', '%s', '%s')",
-		variable.TiDBEvolvePlanTaskMaxTime, variable.TiDBEvolvePlanTaskStartTime, variable.TiDBEvolvePlanTaskEndTime)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(
+		context.TODO(),
+		"SELECT variable_name, variable_value FROM mysql.global_variables WHERE variable_name IN (%?, %?, %?)",
+		variable.TiDBEvolvePlanTaskMaxTime,
+		variable.TiDBEvolvePlanTaskStartTime,
+		variable.TiDBEvolvePlanTaskEndTime,
+	)
+	if err != nil {
+		return 0, time.Time{}, time.Time{}, err
+	}
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.TODO(), stmt)
 	if err != nil {
 		return 0, time.Time{}, time.Time{}, err
 	}
@@ -839,7 +836,7 @@ func (h *BindHandle) getOnePendingVerifyJob() (string, string, Binding) {
 func (h *BindHandle) getRunningDuration(sctx sessionctx.Context, db, sql string, maxTime time.Duration) (time.Duration, error) {
 	ctx := context.TODO()
 	if db != "" {
-		_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, fmt.Sprintf("use `%s`", db))
+		_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "use %n", db)
 		if err != nil {
 			return 0, err
 		}

@@ -52,7 +52,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				{
 					Role:  placement.Voter,
 					Count: 3,
-					LabelConstraints: []placement.LabelConstraint{
+					Constraints: []placement.Constraint{
 						{Key: "zone", Op: "in", Values: []string{"sh"}},
 					},
 				},
@@ -64,53 +64,13 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				Role:        ast.PlacementRoleVoter,
 				Tp:          ast.PlacementAdd,
 				Replicas:    3,
-				Constraints: `["+zone=sh", "+engine=tiflash"]`,
-			}},
-			err: ".*unsupported label constraint.*",
-		},
-
-		{
-			input: []*ast.PlacementSpec{{
-				Role:        ast.PlacementRoleVoter,
-				Tp:          ast.PlacementAdd,
-				Replicas:    3,
-				Constraints: `["+zone=sh", "+engine=TiFlash"]`,
-			}},
-			err: ".*unsupported label constraint.*",
-		},
-
-		{
-			input: []*ast.PlacementSpec{{
-				Role:        ast.PlacementRoleVoter,
-				Tp:          ast.PlacementAdd,
-				Replicas:    3,
 				Constraints: "",
 			}},
 			output: []*placement.Rule{{
-				Role:             placement.Voter,
-				Count:            3,
-				LabelConstraints: []placement.LabelConstraint{},
+				Role:        placement.Voter,
+				Count:       3,
+				Constraints: []placement.Constraint{},
 			}},
-		},
-
-		{
-			input: []*ast.PlacementSpec{{
-				Role:        ast.PlacementRoleVoter,
-				Tp:          ast.PlacementAdd,
-				Replicas:    3,
-				Constraints: `["+zone=sh", "-zone=sh"]`,
-			}},
-			err: ".*conflicting constraints.*",
-		},
-
-		{
-			input: []*ast.PlacementSpec{{
-				Role:        ast.PlacementRoleVoter,
-				Tp:          ast.PlacementAdd,
-				Replicas:    3,
-				Constraints: `["+zone=sh", "+zone=bj"]`,
-			}},
-			err: ".*conflicting constraints.*",
 		},
 
 		{
@@ -123,36 +83,18 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				{
 					Role:  placement.Voter,
 					Count: 1,
-					LabelConstraints: []placement.LabelConstraint{
+					Constraints: []placement.Constraint{
 						{Key: "zone", Op: "in", Values: []string{"sh"}},
 					},
 				},
 				{
 					Role:  placement.Voter,
 					Count: 2,
-					LabelConstraints: []placement.LabelConstraint{
+					Constraints: []placement.Constraint{
 						{Key: "zone", Op: "in", Values: []string{"sh"}},
 					},
 				},
 			},
-		},
-
-		{
-			input: []*ast.PlacementSpec{{
-				Role:        ast.PlacementRoleVoter,
-				Tp:          ast.PlacementAdd,
-				Constraints: `{"+zone=sh,-zone=sh": 2, "+zone=sh": 1}`,
-			}},
-			err: ".*conflicting constraints.*",
-		},
-
-		{
-			input: []*ast.PlacementSpec{{
-				Role:        ast.PlacementRoleVoter,
-				Tp:          ast.PlacementAdd,
-				Constraints: `{"+zone=sh,+zone=bj": 2, "+zone=sh": 1}`,
-			}},
-			err: ".*conflicting constraints.*",
 		},
 
 		{
@@ -166,7 +108,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				{
 					Role:  placement.Voter,
 					Count: 3,
-					LabelConstraints: []placement.LabelConstraint{
+					Constraints: []placement.Constraint{
 						{Key: "zone", Op: "notIn", Values: []string{"sh"}},
 						{Key: "zone", Op: "notIn", Values: []string{"bj"}},
 					},
@@ -185,7 +127,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				{
 					Role:  placement.Voter,
 					Count: 3,
-					LabelConstraints: []placement.LabelConstraint{
+					Constraints: []placement.Constraint{
 						{Key: "zone", Op: "in", Values: []string{"sh"}},
 						{Key: "zone", Op: "notIn", Values: []string{"bj"}},
 					},
@@ -212,7 +154,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				{
 					Role:  placement.Voter,
 					Count: 3,
-					LabelConstraints: []placement.LabelConstraint{
+					Constraints: []placement.Constraint{
 						{Key: "zone", Op: "in", Values: []string{"sh"}},
 						{Key: "zone", Op: "notIn", Values: []string{"bj"}},
 					},
@@ -220,7 +162,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				{
 					Role:  placement.Follower,
 					Count: 2,
-					LabelConstraints: []placement.LabelConstraint{
+					Constraints: []placement.Constraint{
 						{Key: "zone", Op: "notIn", Values: []string{"sh"}},
 						{Key: "zone", Op: "in", Values: []string{"bj"}},
 					},
@@ -247,7 +189,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				{
 					Role:  placement.Voter,
 					Count: 2,
-					LabelConstraints: []placement.LabelConstraint{
+					Constraints: []placement.Constraint{
 						{Key: "zone", Op: "notIn", Values: []string{"sh"}},
 						{Key: "zone", Op: "in", Values: []string{"bj"}},
 					},
@@ -272,14 +214,14 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 			},
 			output: []*placement.Rule{
 				{
-					Role:             placement.Voter,
-					Count:            1,
-					LabelConstraints: []placement.LabelConstraint{{Key: "zone", Op: "notIn", Values: []string{"sh"}}},
+					Role:        placement.Voter,
+					Count:       1,
+					Constraints: []placement.Constraint{{Key: "zone", Op: "notIn", Values: []string{"sh"}}},
 				},
 				{
-					Role:             placement.Voter,
-					Count:            1,
-					LabelConstraints: []placement.LabelConstraint{{Key: "zone", Op: "in", Values: []string{"bj"}}},
+					Role:        placement.Voter,
+					Count:       1,
+					Constraints: []placement.Constraint{{Key: "zone", Op: "in", Values: []string{"bj"}}},
 				},
 				{
 					Role:  placement.Voter,
@@ -364,7 +306,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				{
 					Role:  placement.Voter,
 					Count: 3,
-					LabelConstraints: []placement.LabelConstraint{
+					Constraints: []placement.Constraint{
 						{Key: "zone", Op: "in", Values: []string{"sh"}},
 						{Key: "zone", Op: "notIn", Values: []string{"bj"}},
 					},

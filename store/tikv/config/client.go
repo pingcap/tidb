@@ -22,7 +22,7 @@ import (
 
 const (
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
-	DefStoreLivenessTimeout = "5s"
+	DefStoreLivenessTimeout = "1s"
 )
 
 // TiKVClient is the config for tikv client.
@@ -70,30 +70,27 @@ type AsyncCommit struct {
 	KeysLimit uint `toml:"keys-limit" json:"keys-limit"`
 	// Use async commit only if the total size of keys does not exceed TotalKeySizeLimit.
 	TotalKeySizeLimit uint64 `toml:"total-key-size-limit" json:"total-key-size-limit"`
-	// The following two fields should never be modified by the user, so tags are not provided
-	// on purpose.
 	// The duration within which is safe for async commit or 1PC to commit with an old schema.
-	// It is only changed in tests.
-	// TODO: 1PC is not part of async commit. These two fields should be moved to a more suitable
-	// place.
-	SafeWindow time.Duration
+	// The following two fields should NOT be modified in most cases. If both async commit
+	// and 1PC are disabled in the whole cluster, they can be set to zero to avoid waiting in DDLs.
+	SafeWindow time.Duration `toml:"safe-window" json:"safe-window"`
 	// The duration in addition to SafeWindow to make DDL safe.
-	AllowedClockDrift time.Duration
+	AllowedClockDrift time.Duration `toml:"allowed-clock-drift" json:"allowed-clock-drift"`
 }
 
 // CoprocessorCache is the config for coprocessor cache.
 type CoprocessorCache struct {
-	// Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
-	// reuses the result when corresponding data in TiKV is unchanged, on a region basis.
-	Enable bool `toml:"enable" json:"enable"`
-	// The capacity in MB of the cache.
+	// The capacity in MB of the cache. Zero means disable coprocessor cache.
 	CapacityMB float64 `toml:"capacity-mb" json:"capacity-mb"`
+
+	// No json fields for below config. Intend to hide them.
+
 	// Only cache requests that containing small number of ranges. May to be changed in future.
-	AdmissionMaxRanges uint64 `toml:"admission-max-ranges" json:"admission-max-ranges"`
+	AdmissionMaxRanges uint64 `toml:"admission-max-ranges" json:"-"`
 	// Only cache requests whose result set is small.
-	AdmissionMaxResultMB float64 `toml:"admission-max-result-mb" json:"admission-max-result-mb"`
+	AdmissionMaxResultMB float64 `toml:"admission-max-result-mb" json:"-"`
 	// Only cache requests takes notable time to process.
-	AdmissionMinProcessMs uint64 `toml:"admission-min-process-ms" json:"admission-min-process-ms"`
+	AdmissionMinProcessMs uint64 `toml:"admission-min-process-ms" json:"-"`
 }
 
 // DefaultTiKVClient returns default config for TiKVClient.
@@ -126,7 +123,6 @@ func DefaultTiKVClient() TiKVClient {
 		TTLRefreshedTxnSize: 32 * 1024 * 1024,
 
 		CoprCache: CoprocessorCache{
-			Enable:                true,
 			CapacityMB:            1000,
 			AdmissionMaxRanges:    500,
 			AdmissionMaxResultMB:  10,

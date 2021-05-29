@@ -15,6 +15,7 @@ package core
 
 import (
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -418,6 +419,21 @@ func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalT
 	if p.tablePlan != nil {
 		p.TablePlans = flattenPushDownPlan(p.tablePlan)
 		p.schema = p.tablePlan.Schema()
+		if p.StoreType == kv.TiFlash && !p.GetTableScan().KeepOrder {
+			// When allow batch cop is 1, only agg / topN uses batch cop.
+			// When allow batch cop is 2, every query uses batch cop.
+			switch ctx.GetSessionVars().AllowBatchCop {
+			case 1:
+				for _, plan := range p.TablePlans {
+					switch plan.(type) {
+					case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalTopN:
+						p.BatchCop = true
+					}
+				}
+			case 2:
+				p.BatchCop = true
+			}
+		}
 	}
 	return &p
 }
@@ -511,4 +527,30 @@ func flattenPushDownPlan(p PhysicalPlan) []PhysicalPlan {
 		plans[i], plans[j] = plans[j], plans[i]
 	}
 	return plans
+}
+
+// Init only assigns type and context.
+func (p LogicalCTE) Init(ctx sessionctx.Context, offset int) *LogicalCTE {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeCTE, &p, offset)
+	return &p
+}
+
+// Init only assigns type and context.
+func (p PhysicalCTE) Init(ctx sessionctx.Context, stats *property.StatsInfo) *PhysicalCTE {
+	p.basePlan = newBasePlan(ctx, plancodec.TypeCTE, 0)
+	p.stats = stats
+	return &p
+}
+
+// Init only assigns type and context.
+func (p LogicalCTETable) Init(ctx sessionctx.Context, offset int) *LogicalCTETable {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeCTETable, &p, offset)
+	return &p
+}
+
+// Init only assigns type and context.
+func (p PhysicalCTETable) Init(ctx sessionctx.Context, stats *property.StatsInfo) *PhysicalCTETable {
+	p.basePlan = newBasePlan(ctx, plancodec.TypeCTETable, 0)
+	p.stats = stats
+	return &p
 }

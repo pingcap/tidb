@@ -38,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/sem"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -150,9 +152,34 @@ func (s *testPrivilegeSuite) TestCheckPointGetDBPrivilege(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tester", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `use test;`)
-	_, err := se.Execute(context.Background(), `select * from test2.t where id = 1`)
+	_, err := se.ExecuteInternal(context.Background(), `select * from test2.t where id = 1`)
 	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
-	_, err = se.Execute(context.Background(), "update test2.t set v = 2 where id = 1")
+	_, err = se.ExecuteInternal(context.Background(), "update test2.t set v = 2 where id = 1")
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+}
+
+func (s *testPrivilegeSuite) TestIssue22946(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, "create database db1;")
+	mustExec(c, rootSe, "create database db2;")
+	mustExec(c, rootSe, "use test;")
+	mustExec(c, rootSe, "create table a(id int);")
+	mustExec(c, rootSe, "use db1;")
+	mustExec(c, rootSe, "create table a(id int primary key,name varchar(20));")
+	mustExec(c, rootSe, "use db2;")
+	mustExec(c, rootSe, "create table b(id int primary key,address varchar(50));")
+	mustExec(c, rootSe, "CREATE USER 'delTest'@'localhost';")
+	mustExec(c, rootSe, "grant all on db1.* to delTest@'localhost';")
+	mustExec(c, rootSe, "grant all on db2.* to delTest@'localhost';")
+	mustExec(c, rootSe, "grant select on test.* to delTest@'localhost';")
+	mustExec(c, rootSe, "flush privileges;")
+
+	se := newSession(c, s.store, s.dbName)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "delTest", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err := se.ExecuteInternal(context.Background(), `delete from db1.a as A where exists(select 1 from db2.b as B where A.id = B.id);`)
+	c.Assert(err, IsNil)
+	mustExec(c, rootSe, "use db1;")
+	_, err = se.ExecuteInternal(context.Background(), "delete from test.a as A;")
 	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
 }
 
@@ -410,7 +437,7 @@ func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
 	// ctx.GetSessionVars().User = "drop@localhost"
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "drop", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `SELECT * FROM todrop;`)
-	_, err := se.Execute(context.Background(), "DROP TABLE todrop;")
+	_, err := se.ExecuteInternal(context.Background(), "DROP TABLE todrop;")
 	c.Assert(err, NotNil)
 
 	se = newSession(c, s.store, s.dbName)
@@ -437,7 +464,7 @@ func (s *testPrivilegeSuite) TestSetPasswdStmt(c *C) {
 
 	// low privileged user trying to set password for other user (fails)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser", Hostname: "localhost", AuthUsername: "nobodyuser", AuthHostname: "%"}, nil, nil), IsTrue)
-	_, err := se.Execute(context.Background(), "SET PASSWORD for 'superuser' = 'newpassword'")
+	_, err := se.ExecuteInternal(context.Background(), "SET PASSWORD for 'superuser' = 'newpassword'")
 	c.Assert(err, NotNil)
 }
 
@@ -460,7 +487,7 @@ func (s *testPrivilegeSuite) TestSelectViewSecurity(c *C) {
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 	mustExec(c, se, "SELECT * FROM test.selectviewsecurity")
 	mustExec(c, se, `REVOKE Select ON test.viewsecurity FROM  'selectusr'@'localhost';`)
-	_, err := se.Execute(context.Background(), "select * from test.selectviewsecurity")
+	_, err := se.ExecuteInternal(context.Background(), "select * from test.selectviewsecurity")
 	c.Assert(err.Error(), Equals, core.ErrViewInvalid.GenWithStackByArgs("test", "selectviewsecurity").Error())
 }
 
@@ -479,7 +506,7 @@ func (s *testPrivilegeSuite) TestRoleAdminSecurity(c *C) {
 	mustExec(c, se, `create role r_test1@localhost`)
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "ar2", Hostname: "localhost"}, nil, nil), IsTrue)
-	_, err := se.Execute(context.Background(), `create role r_test2@localhost`)
+	_, err := se.ExecuteInternal(context.Background(), `create role r_test2@localhost`)
 	c.Assert(terror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
 }
 
@@ -571,10 +598,11 @@ func (s *testPrivilegeSuite) TestCheckCertBasedAuth(c *C) {
 				util.MockPkixAttribute(util.CommonName, "tester1"),
 			},
 		},
-		tls.TLS_AES_128_GCM_SHA256, func(c *x509.Certificate) {
+		tls.TLS_AES_128_GCM_SHA256, func(cert *x509.Certificate) {
 			var url url.URL
-			url.UnmarshalBinary([]byte("spiffe://mesh.pingcap.com/ns/timesh/sa/me1"))
-			c.URIs = append(c.URIs, &url)
+			err := url.UnmarshalBinary([]byte("spiffe://mesh.pingcap.com/ns/timesh/sa/me1"))
+			c.Assert(err, IsNil)
+			cert.URIs = append(cert.URIs, &url)
 		})
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil), IsTrue)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil), IsTrue)
@@ -765,7 +793,7 @@ func (s *testPrivilegeSuite) TestUseDB(c *C) {
 	mustExec(c, se, "GRANT ALL ON *.* TO 'usesuper'")
 	// without grant option
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
-	_, e := se.Execute(context.Background(), "GRANT SELECT ON mysql.* TO 'usenobody'")
+	_, e := se.ExecuteInternal(context.Background(), "GRANT SELECT ON mysql.* TO 'usenobody'")
 	c.Assert(e, NotNil)
 	// with grant option
 	se = newSession(c, s.store, s.dbName)
@@ -775,14 +803,14 @@ func (s *testPrivilegeSuite) TestUseDB(c *C) {
 	mustExec(c, se, "use mysql")
 	// low privileged user
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "usenobody", Hostname: "localhost", AuthUsername: "usenobody", AuthHostname: "%"}, nil, nil), IsTrue)
-	_, err := se.Execute(context.Background(), "use mysql")
+	_, err := se.ExecuteInternal(context.Background(), "use mysql")
 	c.Assert(err, NotNil)
 
 	// try again after privilege granted
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se, "GRANT SELECT ON mysql.* TO 'usenobody'")
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "usenobody", Hostname: "localhost", AuthUsername: "usenobody", AuthHostname: "%"}, nil, nil), IsTrue)
-	_, err = se.Execute(context.Background(), "use mysql")
+	_, err = se.ExecuteInternal(context.Background(), "use mysql")
 	c.Assert(err, IsNil)
 
 	// test `use db` for role.
@@ -794,9 +822,9 @@ func (s *testPrivilegeSuite) TestUseDB(c *C) {
 	mustExec(c, se, `GRANT 'app_developer' TO 'dev'@'localhost'`)
 	mustExec(c, se, `SET DEFAULT ROLE 'app_developer' TO 'dev'@'localhost'`)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "dev", Hostname: "localhost", AuthUsername: "dev", AuthHostname: "localhost"}, nil, nil), IsTrue)
-	_, err = se.Execute(context.Background(), "use app_db")
+	_, err = se.ExecuteInternal(context.Background(), "use app_db")
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use mysql")
+	_, err = se.ExecuteInternal(context.Background(), "use mysql")
 	c.Assert(err, NotNil)
 }
 
@@ -808,7 +836,7 @@ func (s *testPrivilegeSuite) TestRevokePrivileges(c *C) {
 	mustExec(c, se, "GRANT ALL ON mysql.* TO 'withoutgrant'")
 	// Without grant option
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "hasgrant", Hostname: "localhost", AuthUsername: "hasgrant", AuthHostname: "%"}, nil, nil), IsTrue)
-	_, e := se.Execute(context.Background(), "REVOKE SELECT ON mysql.* FROM 'withoutgrant'")
+	_, e := se.ExecuteInternal(context.Background(), "REVOKE SELECT ON mysql.* FROM 'withoutgrant'")
 	c.Assert(e, NotNil)
 	// With grant option
 	se = newSession(c, s.store, s.dbName)
@@ -816,6 +844,12 @@ func (s *testPrivilegeSuite) TestRevokePrivileges(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "hasgrant", Hostname: "localhost", AuthUsername: "hasgrant", AuthHostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se, "REVOKE SELECT ON mysql.* FROM 'withoutgrant'")
 	mustExec(c, se, "REVOKE ALL ON mysql.* FROM withoutgrant")
+
+	// For issue https://github.com/pingcap/tidb/issues/23850
+	mustExec(c, se, "CREATE USER u4")
+	mustExec(c, se, "GRANT ALL ON *.* TO u4 WITH GRANT OPTION")
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost", AuthUsername: "u4", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "REVOKE ALL ON *.* FROM CURRENT_USER()")
 }
 
 func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
@@ -828,7 +862,7 @@ func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
 	mustExec(c, se, `set global innodb_commit_concurrency=16`)
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "setglobal_b", Hostname: "localhost"}, nil, nil), IsTrue)
-	_, err := se.Execute(context.Background(), `set global innodb_commit_concurrency=16`)
+	_, err := se.ExecuteInternal(context.Background(), `set global innodb_commit_concurrency=16`)
 	c.Assert(terror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
 }
 
@@ -839,9 +873,9 @@ func (s *testPrivilegeSuite) TestCreateDropUser(c *C) {
 
 	// should fail
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthUsername: "tcd1", AuthHostname: "%"}, nil, nil), IsTrue)
-	_, err := se.Execute(context.Background(), `CREATE USER acdc`)
+	_, err := se.ExecuteInternal(context.Background(), `CREATE USER acdc`)
 	c.Assert(terror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
-	_, err = se.Execute(context.Background(), `DROP USER tcd2`)
+	_, err = se.ExecuteInternal(context.Background(), `DROP USER tcd2`)
 	c.Assert(terror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
 
 	// should pass
@@ -870,7 +904,7 @@ func (s *testPrivilegeSuite) TestConfigPrivilege(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthHostname: "tcd1", AuthUsername: "%"}, nil, nil), IsTrue)
 	mustExec(c, se, `SET CONFIG TIKV testkey="testval"`)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd2", Hostname: "localhost", AuthHostname: "tcd2", AuthUsername: "%"}, nil, nil), IsTrue)
-	_, err := se.Execute(context.Background(), `SET CONFIG TIKV testkey="testval"`)
+	_, err := se.ExecuteInternal(context.Background(), `SET CONFIG TIKV testkey="testval"`)
 	c.Assert(err, ErrorMatches, ".*you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation")
 	mustExec(c, se, `DROP USER tcd1, tcd2`)
 }
@@ -882,12 +916,51 @@ func (s *testPrivilegeSuite) TestShowCreateTable(c *C) {
 
 	// should fail
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tsct1", Hostname: "localhost", AuthUsername: "tsct1", AuthHostname: "%"}, nil, nil), IsTrue)
-	_, err := se.Execute(context.Background(), `SHOW CREATE TABLE mysql.user`)
+	_, err := se.ExecuteInternal(context.Background(), `SHOW CREATE TABLE mysql.user`)
 	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
 
 	// should pass
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tsct2", Hostname: "localhost", AuthUsername: "tsct2", AuthHostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se, `SHOW CREATE TABLE mysql.user`)
+}
+
+func (s *testPrivilegeSuite) TestReplaceAndInsertOnDuplicate(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER tr_insert`)
+	mustExec(c, se, `CREATE USER tr_update`)
+	mustExec(c, se, `CREATE USER tr_delete`)
+	mustExec(c, se, `CREATE TABLE t1 (a int primary key, b int)`)
+	mustExec(c, se, `GRANT INSERT ON t1 TO tr_insert`)
+	mustExec(c, se, `GRANT UPDATE ON t1 TO tr_update`)
+	mustExec(c, se, `GRANT DELETE ON t1 TO tr_delete`)
+
+	// Restrict the permission to INSERT only.
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tr_insert", Hostname: "localhost", AuthUsername: "tr_insert", AuthHostname: "%"}, nil, nil), IsTrue)
+
+	// REPLACE requires INSERT + DELETE privileges, having INSERT alone is insufficient.
+	_, err := se.ExecuteInternal(context.Background(), `REPLACE INTO t1 VALUES (1, 2)`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(err.Error(), Equals, "[planner:1142]DELETE command denied to user 'tr_insert'@'%' for table 't1'")
+
+	// INSERT ON DUPLICATE requires INSERT + UPDATE privileges, having INSERT alone is insufficient.
+	_, err = se.ExecuteInternal(context.Background(), `INSERT INTO t1 VALUES (3, 4) ON DUPLICATE KEY UPDATE b = 5`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(err.Error(), Equals, "[planner:1142]UPDATE command denied to user 'tr_insert'@'%' for table 't1'")
+
+	// Plain INSERT should work.
+	mustExec(c, se, `INSERT INTO t1 VALUES (6, 7)`)
+
+	// Also check that having DELETE alone is insufficient for REPLACE.
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tr_delete", Hostname: "localhost", AuthUsername: "tr_delete", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err = se.ExecuteInternal(context.Background(), `REPLACE INTO t1 VALUES (8, 9)`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(err.Error(), Equals, "[planner:1142]INSERT command denied to user 'tr_delete'@'%' for table 't1'")
+
+	// Also check that having UPDATE alone is insufficient for INSERT ON DUPLICATE.
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tr_update", Hostname: "localhost", AuthUsername: "tr_update", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err = se.ExecuteInternal(context.Background(), `INSERT INTO t1 VALUES (10, 11) ON DUPLICATE KEY UPDATE b = 12`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(err.Error(), Equals, "[planner:1142]INSERT command denied to user 'tr_update'@'%' for table 't1'")
 }
 
 func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
@@ -905,25 +978,25 @@ func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 	mustExec(c, se, "analyze table mysql.user")
 	// low privileged user
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil), IsTrue)
-	_, err := se.Execute(context.Background(), "analyze table t1")
+	_, err := se.ExecuteInternal(context.Background(), "analyze table t1")
 	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
 	c.Assert(err.Error(), Equals, "[planner:1142]INSERT command denied to user 'anobody'@'%' for table 't1'")
 
-	_, err = se.Execute(context.Background(), "select * from t1")
+	_, err = se.ExecuteInternal(context.Background(), "select * from t1")
 	c.Assert(err.Error(), Equals, "[planner:1142]SELECT command denied to user 'anobody'@'%' for table 't1'")
 
 	// try again after SELECT privilege granted
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se, "GRANT SELECT ON atest.* TO 'anobody'")
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil), IsTrue)
-	_, err = se.Execute(context.Background(), "analyze table t1")
+	_, err = se.ExecuteInternal(context.Background(), "analyze table t1")
 	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
 	c.Assert(err.Error(), Equals, "[planner:1142]INSERT command denied to user 'anobody'@'%' for table 't1'")
 	// Add INSERT privilege and it should work.
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se, "GRANT INSERT ON atest.* TO 'anobody'")
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil), IsTrue)
-	_, err = se.Execute(context.Background(), "analyze table t1")
+	_, err = se.ExecuteInternal(context.Background(), "analyze table t1")
 	c.Assert(err, IsNil)
 
 }
@@ -935,34 +1008,34 @@ func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `select * from information_schema.tables`)
 	mustExec(c, se, `select * from information_schema.key_column_usage`)
-	_, err := se.Execute(context.Background(), "create table information_schema.t(a int)")
+	_, err := se.ExecuteInternal(context.Background(), "create table information_schema.t(a int)")
 	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
-	_, err = se.Execute(context.Background(), "drop table information_schema.tables")
+	_, err = se.ExecuteInternal(context.Background(), "drop table information_schema.tables")
 	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
-	_, err = se.Execute(context.Background(), "update information_schema.tables set table_name = 'tst' where table_name = 'mysql'")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	_, err = se.ExecuteInternal(context.Background(), "update information_schema.tables set table_name = 'tst' where table_name = 'mysql'")
+	c.Assert(strings.Contains(err.Error(), "privilege check"), IsTrue)
 
 	// Test performance_schema.
 	mustExec(c, se, `select * from performance_schema.events_statements_summary_by_digest`)
-	_, err = se.Execute(context.Background(), "drop table performance_schema.events_statements_summary_by_digest")
+	_, err = se.ExecuteInternal(context.Background(), "drop table performance_schema.events_statements_summary_by_digest")
 	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
-	_, err = se.Execute(context.Background(), "update performance_schema.events_statements_summary_by_digest set schema_name = 'tst'")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
-	_, err = se.Execute(context.Background(), "delete from performance_schema.events_statements_summary_by_digest")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
-	_, err = se.Execute(context.Background(), "create table performance_schema.t(a int)")
+	_, err = se.ExecuteInternal(context.Background(), "update performance_schema.events_statements_summary_by_digest set schema_name = 'tst'")
+	c.Assert(strings.Contains(err.Error(), "privilege check"), IsTrue)
+	_, err = se.ExecuteInternal(context.Background(), "delete from performance_schema.events_statements_summary_by_digest")
+	c.Assert(strings.Contains(err.Error(), "DELETE command denied to user"), IsTrue)
+	_, err = se.ExecuteInternal(context.Background(), "create table performance_schema.t(a int)")
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "CREATE command denied"), IsTrue, Commentf(err.Error()))
 
 	// Test metric_schema.
 	mustExec(c, se, `select * from metrics_schema.tidb_query_duration`)
-	_, err = se.Execute(context.Background(), "drop table metrics_schema.tidb_query_duration")
+	_, err = se.ExecuteInternal(context.Background(), "drop table metrics_schema.tidb_query_duration")
 	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
-	_, err = se.Execute(context.Background(), "update metrics_schema.tidb_query_duration set instance = 'tst'")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
-	_, err = se.Execute(context.Background(), "delete from metrics_schema.tidb_query_duration")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
-	_, err = se.Execute(context.Background(), "create table metric_schema.t(a int)")
+	_, err = se.ExecuteInternal(context.Background(), "update metrics_schema.tidb_query_duration set instance = 'tst'")
+	c.Assert(strings.Contains(err.Error(), "privilege check"), IsTrue)
+	_, err = se.ExecuteInternal(context.Background(), "delete from metrics_schema.tidb_query_duration")
+	c.Assert(strings.Contains(err.Error(), "DELETE command denied to user"), IsTrue)
+	_, err = se.ExecuteInternal(context.Background(), "create table metric_schema.t(a int)")
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "CREATE command denied"), IsTrue, Commentf(err.Error()))
 }
@@ -974,13 +1047,13 @@ func (s *testPrivilegeSuite) TestAdminCommand(c *C) {
 	mustExec(c, se, `CREATE TABLE t(a int)`)
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_admin", Hostname: "localhost"}, nil, nil), IsTrue)
-	_, err := se.Execute(context.Background(), "ADMIN SHOW DDL JOBS")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
-	_, err = se.Execute(context.Background(), "ADMIN CHECK TABLE t")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	_, err := se.ExecuteInternal(context.Background(), "ADMIN SHOW DDL JOBS")
+	c.Assert(strings.Contains(err.Error(), "privilege check"), IsTrue)
+	_, err = se.ExecuteInternal(context.Background(), "ADMIN CHECK TABLE t")
+	c.Assert(strings.Contains(err.Error(), "privilege check"), IsTrue)
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
-	_, err = se.Execute(context.Background(), "ADMIN SHOW DDL JOBS")
+	_, err = se.ExecuteInternal(context.Background(), "ADMIN SHOW DDL JOBS")
 	c.Assert(err, IsNil)
 }
 
@@ -1006,6 +1079,10 @@ func (s *testPrivilegeSuite) TestTableNotExistNoPermissions(c *C) {
 			"SHOW",
 		},
 		{
+			"DELETE FROM %s.%s WHERE a=0",
+			"DELETE",
+		},
+		{
 			"DELETE FROM %s.%s",
 			"DELETE",
 		},
@@ -1013,8 +1090,8 @@ func (s *testPrivilegeSuite) TestTableNotExistNoPermissions(c *C) {
 
 	for _, t := range tests {
 
-		_, err1 := se.Execute(context.Background(), fmt.Sprintf(t.stmt, "dbexists", "t1"))
-		_, err2 := se.Execute(context.Background(), fmt.Sprintf(t.stmt, "dbnotexists", "t1"))
+		_, err1 := se.ExecuteInternal(context.Background(), fmt.Sprintf(t.stmt, "dbexists", "t1"))
+		_, err2 := se.ExecuteInternal(context.Background(), fmt.Sprintf(t.stmt, "dbnotexists", "t1"))
 
 		// Check the error is the same whether table exists or not.
 		c.Assert(terror.ErrorEqual(err1, err2), IsTrue)
@@ -1038,7 +1115,8 @@ func (s *testPrivilegeSuite) TestLoadDataPrivilege(c *C) {
 		err = os.Remove(path)
 		c.Assert(err, IsNil)
 	}()
-	fp.WriteString("1\n")
+	_, err = fp.WriteString("1\n")
+	c.Assert(err, IsNil)
 
 	se := newSession(c, s.store, s.dbName)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
@@ -1046,12 +1124,12 @@ func (s *testPrivilegeSuite) TestLoadDataPrivilege(c *C) {
 	mustExec(c, se, `CREATE TABLE t_load(a int)`)
 	mustExec(c, se, `GRANT SELECT on *.* to 'test_load'@'localhost'`)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil), IsTrue)
-	_, err = se.Execute(context.Background(), "LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load")
+	_, err = se.ExecuteInternal(context.Background(), "LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load")
 	c.Assert(strings.Contains(err.Error(), "INSERT command denied to user 'test_load'@'localhost' for table 't_load'"), IsTrue)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `GRANT INSERT on *.* to 'test_load'@'localhost'`)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil), IsTrue)
-	_, err = se.Execute(context.Background(), "LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load")
+	_, err = se.ExecuteInternal(context.Background(), "LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load")
 	c.Assert(err, IsNil)
 }
 
@@ -1059,7 +1137,7 @@ func (s *testPrivilegeSuite) TestSelectIntoNoPremissions(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER 'nofile'@'localhost';`)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "nofile", Hostname: "localhost"}, nil, nil), IsTrue)
-	_, err := se.Execute(context.Background(), `select 1 into outfile '/tmp/doesntmatter-no-permissions'`)
+	_, err := se.ExecuteInternal(context.Background(), `select 1 into outfile '/tmp/doesntmatter-no-permissions'`)
 	message := "Access denied; you need (at least one of) the FILE privilege(s) for this operation"
 	c.Assert(strings.Contains(err.Error(), message), IsTrue)
 }
@@ -1082,7 +1160,7 @@ func (s *testPrivilegeSuite) TestAuthHost(c *C) {
 	mustExec(c, se, "GRANT SELECT ON *.* TO 'test_auth_host'@'192.168.%';")
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_auth_host", Hostname: "192.168.0.10"}, nil, nil), IsTrue)
-	_, err := se.Execute(context.Background(), "create user test_auth_host_a")
+	_, err := se.ExecuteInternal(context.Background(), "create user test_auth_host_a")
 	c.Assert(err, NotNil)
 
 	mustExec(c, rootSe, "DROP USER 'test_auth_host'@'192.168.%';")
@@ -1148,7 +1226,7 @@ func (s *testPrivilegeSuite) TestFieldList(c *C) { // Issue #14237 List fields R
 }
 
 func mustExec(c *C, se session.Session, sql string) {
-	_, err := se.Execute(context.Background(), sql)
+	_, err := se.ExecuteInternal(context.Background(), sql)
 	c.Assert(err, IsNil)
 }
 
@@ -1168,4 +1246,355 @@ func newSession(c *C, store kv.Storage, dbName string) session.Session {
 	mustExec(c, se, "create database if not exists "+dbName)
 	mustExec(c, se, "use "+dbName)
 	return se
+}
+
+func (s *testPrivilegeSuite) TestDynamicPrivs(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, "CREATE USER notsuper")
+	mustExec(c, rootSe, "CREATE USER otheruser")
+	mustExec(c, rootSe, "CREATE ROLE anyrolename")
+
+	se := newSession(c, s.store, s.dbName)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "notsuper", Hostname: "%"}, nil, nil), IsTrue)
+
+	// test SYSTEM_VARIABLES_ADMIN
+	_, err := se.ExecuteInternal(context.Background(), "SET GLOBAL wait_timeout = 86400")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation")
+	mustExec(c, rootSe, "GRANT SYSTEM_VARIABLES_admin ON *.* TO notsuper")
+	mustExec(c, se, "SET GLOBAL wait_timeout = 86400")
+
+	// test ROLE_ADMIN
+	_, err = se.ExecuteInternal(context.Background(), "GRANT anyrolename TO otheruser")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SUPER or ROLE_ADMIN privilege(s) for this operation")
+	mustExec(c, rootSe, "GRANT ROLE_ADMIN ON *.* TO notsuper")
+	mustExec(c, se, "GRANT anyrolename TO otheruser")
+
+	// revoke SYSTEM_VARIABLES_ADMIN, confirm it is dropped
+	mustExec(c, rootSe, "REVOKE SYSTEM_VARIABLES_AdmIn ON *.* FROM notsuper")
+	_, err = se.ExecuteInternal(context.Background(), "SET GLOBAL wait_timeout = 86000")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation")
+
+	// grant super, confirm that it is also a substitute for SYSTEM_VARIABLES_ADMIN
+	mustExec(c, rootSe, "GRANT SUPER ON *.* TO notsuper")
+	mustExec(c, se, "SET GLOBAL wait_timeout = 86400")
+
+	// revoke SUPER, assign SYSTEM_VARIABLES_ADMIN to anyrolename.
+	// confirm that a dynamic privilege can be inherited from a role.
+	mustExec(c, rootSe, "REVOKE SUPER ON *.* FROM notsuper")
+	mustExec(c, rootSe, "GRANT SYSTEM_VARIABLES_AdmIn ON *.* TO anyrolename")
+	mustExec(c, rootSe, "GRANT anyrolename TO notsuper")
+
+	// It's not a default role, this should initially fail:
+	_, err = se.ExecuteInternal(context.Background(), "SET GLOBAL wait_timeout = 86400")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation")
+	mustExec(c, se, "SET ROLE anyrolename")
+	mustExec(c, se, "SET GLOBAL wait_timeout = 87000")
+}
+
+func (s *testPrivilegeSuite) TestDynamicGrantOption(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, "CREATE USER varuser1")
+	mustExec(c, rootSe, "CREATE USER varuser2")
+	mustExec(c, rootSe, "CREATE USER varuser3")
+
+	mustExec(c, rootSe, "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser1")
+	mustExec(c, rootSe, "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser2 WITH GRANT OPTION")
+
+	se1 := newSession(c, s.store, s.dbName)
+
+	c.Assert(se1.Auth(&auth.UserIdentity{Username: "varuser1", Hostname: "%"}, nil, nil), IsTrue)
+	_, err := se1.ExecuteInternal(context.Background(), "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser3")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the GRANT OPTION privilege(s) for this operation")
+
+	se2 := newSession(c, s.store, s.dbName)
+
+	c.Assert(se2.Auth(&auth.UserIdentity{Username: "varuser2", Hostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se2, "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser3")
+}
+
+func (s *testPrivilegeSuite) TestSecurityEnhancedModeRestrictedTables(c *C) {
+	// This provides an integration test of the tests in util/security/security_test.go
+	cloudAdminSe := newSession(c, s.store, s.dbName)
+	mustExec(c, cloudAdminSe, "CREATE USER cloudadmin")
+	mustExec(c, cloudAdminSe, "GRANT RESTRICTED_TABLES_ADMIN, SELECT ON *.* to cloudadmin")
+	mustExec(c, cloudAdminSe, "GRANT CREATE ON mysql.* to cloudadmin")
+	mustExec(c, cloudAdminSe, "CREATE USER uroot")
+	mustExec(c, cloudAdminSe, "GRANT ALL ON *.* to uroot WITH GRANT OPTION") // A "MySQL" all powerful user.
+	c.Assert(cloudAdminSe.Auth(&auth.UserIdentity{Username: "cloudadmin", Hostname: "%"}, nil, nil), IsTrue)
+	urootSe := newSession(c, s.store, s.dbName)
+	c.Assert(urootSe.Auth(&auth.UserIdentity{Username: "uroot", Hostname: "%"}, nil, nil), IsTrue)
+
+	sem.Enable()
+	defer sem.Disable()
+
+	_, err := urootSe.ExecuteInternal(context.Background(), "use metrics_schema")
+	c.Assert(err.Error(), Equals, "[executor:1044]Access denied for user 'uroot'@'%' to database 'metrics_schema'")
+
+	_, err = urootSe.ExecuteInternal(context.Background(), "SELECT * FROM metrics_schema.uptime")
+	c.Assert(err.Error(), Equals, "[planner:1142]SELECT command denied to user 'uroot'@'%' for table 'uptime'")
+
+	_, err = urootSe.ExecuteInternal(context.Background(), "CREATE TABLE mysql.abcd (a int)")
+	c.Assert(err.Error(), Equals, "[planner:1142]CREATE command denied to user 'uroot'@'%' for table 'abcd'")
+
+	mustExec(c, cloudAdminSe, "USE metrics_schema")
+	mustExec(c, cloudAdminSe, "SELECT * FROM metrics_schema.uptime")
+	mustExec(c, cloudAdminSe, "CREATE TABLE mysql.abcd (a int)")
+}
+
+func (s *testPrivilegeSuite) TestSecurityEnhancedModeInfoschema(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER uroot1, uroot2, uroot3")
+	tk.MustExec("GRANT SUPER ON *.* to uroot1 WITH GRANT OPTION") // super not process
+	tk.MustExec("GRANT SUPER, PROCESS, RESTRICTED_TABLES_ADMIN ON *.* to uroot2 WITH GRANT OPTION")
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "uroot1",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	sem.Enable()
+	defer sem.Disable()
+
+	// Even though we have super, we still can't read protected information from tidb_servers_info, cluster_* tables
+	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.tidb_servers_info WHERE ip IS NOT NULL`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.cluster_info WHERE status_address IS NOT NULL`).Check(testkit.Rows("0"))
+	// 36 = a UUID. Normally it is an IP address.
+	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.CLUSTER_STATEMENTS_SUMMARY WHERE length(instance) != 36`).Check(testkit.Rows("0"))
+
+	// That is unless we have the RESTRICTED_TABLES_ADMIN privilege
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "uroot2",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	// flip from is NOT NULL etc
+	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.tidb_servers_info WHERE ip IS NULL`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.cluster_info WHERE status_address IS NULL`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.CLUSTER_STATEMENTS_SUMMARY WHERE length(instance) = 36`).Check(testkit.Rows("0"))
+}
+
+func (s *testPrivilegeSuite) TestSecurityEnhancedModeStatusVars(c *C) {
+	// Without TiKV the status var list does not include tidb_gc_leader_desc
+	// So we can only test that the dynamic privilege is grantable.
+	// We will have to use an integration test to run SHOW STATUS LIKE 'tidb_gc_leader_desc'
+	// and verify if it appears.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER unostatus, ustatus")
+	tk.MustExec("GRANT RESTRICTED_STATUS_ADMIN ON *.* to ustatus")
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "unostatus",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+}
+
+func (s *testPrivilegeSuite) TestRenameUser(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, "DROP USER IF EXISTS 'ru1'@'localhost'")
+	mustExec(c, rootSe, "DROP USER IF EXISTS ru3")
+	mustExec(c, rootSe, "DROP USER IF EXISTS ru6@localhost")
+	mustExec(c, rootSe, "CREATE USER 'ru1'@'localhost'")
+	mustExec(c, rootSe, "CREATE USER ru3")
+	mustExec(c, rootSe, "CREATE USER ru6@localhost")
+	se1 := newSession(c, s.store, s.dbName)
+	c.Assert(se1.Auth(&auth.UserIdentity{Username: "ru1", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	// Check privileges (need CREATE USER)
+	_, err := se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru4")
+	c.Assert(err, ErrorMatches, ".*Access denied; you need .at least one of. the CREATE USER privilege.s. for this operation")
+	mustExec(c, rootSe, "GRANT UPDATE ON mysql.user TO 'ru1'@'localhost'")
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru4")
+	c.Assert(err, ErrorMatches, ".*Access denied; you need .at least one of. the CREATE USER privilege.s. for this operation")
+	mustExec(c, rootSe, "GRANT CREATE USER ON *.* TO 'ru1'@'localhost'")
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru4")
+	c.Assert(err, IsNil)
+
+	// Test a few single rename (both Username and Hostname)
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER 'ru4'@'%' TO 'ru3'@'localhost'")
+	c.Assert(err, IsNil)
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER 'ru3'@'localhost' TO 'ru3'@'%'")
+	c.Assert(err, IsNil)
+	// Including negative tests, i.e. non existing from user and existing to user
+	_, err = rootSe.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru1@localhost")
+	c.Assert(err, ErrorMatches, ".*Operation RENAME USER failed for ru3@%.*")
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru4 TO ru5@localhost")
+	c.Assert(err, ErrorMatches, ".*Operation RENAME USER failed for ru4@%.*")
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru3")
+	c.Assert(err, ErrorMatches, ".*Operation RENAME USER failed for ru3@%.*")
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru5@localhost, ru4 TO ru7")
+	c.Assert(err, ErrorMatches, ".*Operation RENAME USER failed for ru4@%.*")
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru5@localhost, ru6@localhost TO ru1@localhost")
+	c.Assert(err, ErrorMatches, ".*Operation RENAME USER failed for ru6@localhost.*")
+
+	// Test multi rename, this is a full swap of ru3 and ru6, i.e. need to read its previous state in the same transaction.
+	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER 'ru3' TO 'ru3_tmp', ru6@localhost TO ru3, 'ru3_tmp' to ru6@localhost")
+	c.Assert(err, IsNil)
+
+	// Cleanup
+	mustExec(c, rootSe, "DROP USER ru6@localhost")
+	mustExec(c, rootSe, "DROP USER ru3")
+	mustExec(c, rootSe, "DROP USER 'ru1'@'localhost'")
+}
+
+func (s *testPrivilegeSuite) TestSecurityEnhancedModeSysVars(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER svroot1, svroot2")
+	tk.MustExec("GRANT SUPER ON *.* to svroot1 WITH GRANT OPTION")
+	tk.MustExec("GRANT SUPER, RESTRICTED_VARIABLES_ADMIN ON *.* to svroot2")
+
+	sem.Enable()
+	defer sem.Disable()
+
+	// svroot1 has SUPER but in SEM will be restricted
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "svroot1",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	tk.MustQuery(`SHOW VARIABLES LIKE 'tidb_force_priority'`).Check(testkit.Rows())
+	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_enable_telemetry'`).Check(testkit.Rows())
+
+	_, err := tk.Exec("SET tidb_force_priority = 'NO_PRIORITY'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
+	_, err = tk.Exec("SET GLOBAL tidb_enable_telemetry = OFF")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
+
+	_, err = tk.Exec("SELECT @@session.tidb_force_priority")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
+	_, err = tk.Exec("SELECT @@global.tidb_enable_telemetry")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
+
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "svroot2",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	tk.MustQuery(`SHOW VARIABLES LIKE 'tidb_force_priority'`).Check(testkit.Rows("tidb_force_priority NO_PRIORITY"))
+	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_enable_telemetry'`).Check(testkit.Rows("tidb_enable_telemetry ON"))
+
+	// should not actually make any change.
+	tk.MustExec("SET tidb_force_priority = 'NO_PRIORITY'")
+	tk.MustExec("SET GLOBAL tidb_enable_telemetry = ON")
+
+	tk.MustQuery(`SELECT @@session.tidb_force_priority`).Check(testkit.Rows("NO_PRIORITY"))
+	tk.MustQuery(`SELECT @@global.tidb_enable_telemetry`).Check(testkit.Rows("1"))
+}
+
+// TestViewDefiner tests that default roles are correctly applied in the algorithm definer
+// See: https://github.com/pingcap/tidb/issues/24414
+func (s *testPrivilegeSuite) TestViewDefiner(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE DATABASE issue24414")
+	tk.MustExec("USE issue24414")
+	tk.MustExec(`create table table1(
+		col1 int,
+		col2 int,
+		col3 int
+		)`)
+	tk.MustExec(`insert into table1 values (1,1,1),(2,2,2)`)
+	tk.MustExec(`CREATE ROLE 'ACL-mobius-admin'`)
+	tk.MustExec(`CREATE USER 'mobius-admin'`)
+	tk.MustExec(`CREATE USER 'mobius-admin-no-role'`)
+	tk.MustExec(`GRANT Select,Insert,Update,Delete,Create,Drop,Alter,Index,Create View,Show View ON issue24414.* TO 'ACL-mobius-admin'@'%'`)
+	tk.MustExec(`GRANT Select,Insert,Update,Delete,Create,Drop,Alter,Index,Create View,Show View ON issue24414.* TO 'mobius-admin-no-role'@'%'`)
+	tk.MustExec(`GRANT 'ACL-mobius-admin'@'%' to 'mobius-admin'@'%'`)
+	tk.MustExec(`SET DEFAULT ROLE ALL TO 'mobius-admin'`)
+	// create tables
+	tk.MustExec(`CREATE ALGORITHM = UNDEFINED DEFINER = 'mobius-admin'@'127.0.0.1' SQL SECURITY DEFINER VIEW test_view (col1 , col2 , col3) AS SELECT * from table1`)
+	tk.MustExec(`CREATE ALGORITHM = UNDEFINED DEFINER = 'mobius-admin-no-role'@'127.0.0.1' SQL SECURITY DEFINER VIEW test_view2 (col1 , col2 , col3) AS SELECT * from table1`)
+
+	// all examples should work
+	tk.MustExec("select * from test_view")
+	tk.MustExec("select * from test_view2")
+}
+
+func (s *testPrivilegeSuite) TestSecurityEnhancedModeRestrictedUsers(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER ruroot1, ruroot2, ruroot3")
+	tk.MustExec("CREATE ROLE notimportant")
+	tk.MustExec("GRANT SUPER, CREATE USER ON *.* to ruroot1 WITH GRANT OPTION")
+	tk.MustExec("GRANT SUPER, RESTRICTED_USER_ADMIN,  CREATE USER  ON *.* to ruroot2 WITH GRANT OPTION")
+	tk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* to ruroot3")
+	tk.MustExec("GRANT notimportant TO ruroot2, ruroot3")
+
+	sem.Enable()
+	defer sem.Disable()
+
+	stmts := []string{
+		"SET PASSWORD for ruroot3 = 'newpassword'",
+		"REVOKE notimportant FROM ruroot3",
+		"REVOKE SUPER ON *.* FROM ruroot3",
+		"DROP USER ruroot3",
+	}
+
+	// ruroot1 has SUPER but in SEM will be restricted
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "ruroot1",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	for _, stmt := range stmts {
+		err := tk.ExecToErr(stmt)
+		c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	}
+
+	// Switch to ruroot2, it should be permitted
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "ruroot2",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	for _, stmt := range stmts {
+		err := tk.ExecToErr(stmt)
+		c.Assert(err, IsNil)
+	}
+}
+
+func (s *testPrivilegeSuite) TestDynamicPrivsRegistration(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	pm := privilege.GetPrivilegeManager(se)
+
+	count := len(privileges.GetDynamicPrivileges())
+
+	c.Assert(pm.IsDynamicPrivilege("ACDC_ADMIN"), IsFalse)
+	c.Assert(privileges.RegisterDynamicPrivilege("ACDC_ADMIN"), IsNil)
+	c.Assert(pm.IsDynamicPrivilege("ACDC_ADMIN"), IsTrue)
+	c.Assert(len(privileges.GetDynamicPrivileges()), Equals, count+1)
+
+	c.Assert(pm.IsDynamicPrivilege("iAmdynamIC"), IsFalse)
+	c.Assert(privileges.RegisterDynamicPrivilege("IAMdynamic"), IsNil)
+	c.Assert(pm.IsDynamicPrivilege("IAMdyNAMIC"), IsTrue)
+	c.Assert(len(privileges.GetDynamicPrivileges()), Equals, count+2)
+
+	c.Assert(privileges.RegisterDynamicPrivilege("THIS_PRIVILEGE_NAME_IS_TOO_LONG_THE_MAX_IS_32_CHARS").Error(), Equals, "privilege name is longer than 32 characters")
+	c.Assert(pm.IsDynamicPrivilege("THIS_PRIVILEGE_NAME_IS_TOO_LONG_THE_MAX_IS_32_CHARS"), IsFalse)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER privassigntest")
+
+	// Check that all privileges registered are assignable to users,
+	// including the recently registered ACDC_ADMIN
+	for _, priv := range privileges.GetDynamicPrivileges() {
+		sqlGrant, err := sqlexec.EscapeSQL("GRANT %n ON *.* TO privassigntest", priv)
+		c.Assert(err, IsNil)
+		tk.MustExec(sqlGrant)
+	}
+	// Check that all privileges registered are revokable
+	for _, priv := range privileges.GetDynamicPrivileges() {
+		sqlGrant, err := sqlexec.EscapeSQL("REVOKE %n ON *.* FROM privassigntest", priv)
+		c.Assert(err, IsNil)
+		tk.MustExec(sqlGrant)
+	}
 }

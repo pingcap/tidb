@@ -16,6 +16,7 @@ package expression
 import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -207,14 +208,24 @@ func foldConstant(expr Expression) (Expression, bool) {
 			return expr, isDeferredConst
 		}
 		value, err := x.Eval(chunk.Row{})
+		retType := x.RetType.Clone()
+		if !hasNullArg {
+			// set right not null flag for constant value
+			switch value.Kind() {
+			case types.KindNull:
+				retType.Flag &= ^mysql.NotNullFlag
+			default:
+				retType.Flag |= mysql.NotNullFlag
+			}
+		}
 		if err != nil {
 			logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", x.ExplainInfo()), zap.Error(err))
 			return expr, isDeferredConst
 		}
 		if isDeferredConst {
-			return &Constant{Value: value, RetType: x.RetType, DeferredExpr: x}, true
+			return &Constant{Value: value, RetType: retType, DeferredExpr: x}, true
 		}
-		return &Constant{Value: value, RetType: x.RetType}, false
+		return &Constant{Value: value, RetType: retType}, false
 	case *Constant:
 		if x.ParamMarker != nil {
 			return &Constant{

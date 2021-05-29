@@ -15,12 +15,11 @@ package cophandler
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/ngaut/unistore/lockstore"
-	"github.com/ngaut/unistore/tikv/dbreader"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -33,7 +32,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore/unistore/client"
-	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -47,6 +47,7 @@ type MPPCtx struct {
 	RPCClient   client.Client
 	StoreAddr   string
 	TaskHandler *MPPTaskHandler
+	Ctx         context.Context
 }
 
 // HandleCopRequest handles coprocessor request.
@@ -60,7 +61,10 @@ func HandleCopRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemStore
 func HandleCopRequestWithMPPCtx(dbReader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request, mppCtx *MPPCtx) *coprocessor.Response {
 	switch req.Tp {
 	case kv.ReqTypeDAG:
-		return handleCopDAGRequest(dbReader, lockStore, req, mppCtx)
+		if mppCtx != nil && mppCtx.TaskHandler != nil {
+			return HandleMPPDAGReq(dbReader, req, mppCtx)
+		}
+		return handleCopDAGRequest(dbReader, lockStore, req)
 	case kv.ReqTypeAnalyze:
 		return handleCopAnalyzeRequest(dbReader, req)
 	case kv.ReqTypeChecksum:
@@ -80,7 +84,7 @@ type dagContext struct {
 }
 
 // handleCopDAGRequest handles coprocessor DAG request.
-func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request, mppCtx *MPPCtx) (resp *coprocessor.Response) {
+func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request) (resp *coprocessor.Response) {
 	startTime := time.Now()
 	resp = &coprocessor.Response{}
 	failpoint.Inject("mockCopCacheInUnistore", func(cacheVersion failpoint.Value) {
@@ -107,46 +111,11 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 		resp.OtherError = err.Error()
 		return resp
 	}
-	closureExec, err := buildClosureExecutor(dagCtx, dagReq, mppCtx)
+	closureExec, err := buildClosureExecutor(dagCtx, dagReq)
 	if err != nil {
 		return buildResp(nil, nil, nil, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 	}
 	chunks, err := closureExec.execute()
-	if closureExec.exchangeSenderCtx != nil {
-		defer func() {
-			for _, tunnel := range closureExec.exchangeSenderCtx.tunnels {
-				close(tunnel.DataCh)
-				close(tunnel.ErrCh)
-			}
-		}()
-		if err == nil && closureExec.exchangeSenderCtx.exchangeSender.Tp == tipb.ExchangeType_Hash {
-			err = errors.New("Unsupported exchange type")
-		}
-		// TODO: the target side may crash. We should check timeout here.
-		if err != nil {
-			switch closureExec.exchangeSenderCtx.exchangeSender.Tp {
-			case tipb.ExchangeType_Broadcast, tipb.ExchangeType_Hash:
-				for _, tunnel := range closureExec.exchangeSenderCtx.tunnels {
-					tunnel.ErrCh <- err
-				}
-			case tipb.ExchangeType_PassThrough:
-				closureExec.exchangeSenderCtx.tunnels[0].ErrCh <- err
-			}
-		} else {
-			for _, tipbChunk := range chunks {
-				switch closureExec.exchangeSenderCtx.exchangeSender.Tp {
-				case tipb.ExchangeType_Broadcast:
-					for _, tunnel := range closureExec.exchangeSenderCtx.tunnels {
-						tunnel.DataCh <- &tipbChunk
-					}
-				case tipb.ExchangeType_PassThrough:
-					closureExec.exchangeSenderCtx.tunnels[0].DataCh <- &tipbChunk
-				default:
-				}
-			}
-		}
-		return nil
-	}
 	return buildResp(chunks, closureExec, closureExec.ndvs, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 }
 
@@ -234,38 +203,14 @@ func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
 	}
 }
 
-func (e *evalContext) fillColumnInfo(fieldTypes []*tipb.FieldType) {
-	e.columnInfos = make([]*tipb.ColumnInfo, 0, len(fieldTypes))
-	e.fieldTps = make([]*types.FieldType, 0, len(fieldTypes))
-	for i, pbType := range fieldTypes {
-		e.columnInfos = append(e.columnInfos, &tipb.ColumnInfo{ColumnId: int64(i),
-			Tp: pbType.Tp, Collation: pbType.Collate, ColumnLen: pbType.Flen,
-			Decimal: pbType.Decimal, Flag: int32(pbType.Flag)})
-		// todo fill collate and charset field
-		e.fieldTps = append(e.fieldTps, &types.FieldType{Tp: byte(pbType.Tp),
-			Flag: uint(pbType.Flag), Flen: int(pbType.Flen), Decimal: int(pbType.Decimal)})
-	}
-}
-
-func (e *evalContext) fillColumnInfoFromTPs(fieldTypes []*types.FieldType) {
-	e.columnInfos = make([]*tipb.ColumnInfo, 0, len(fieldTypes))
-	e.fieldTps = append(e.fieldTps, fieldTypes...)
-	for i, fieldType := range fieldTypes {
-		pbType := expression.ToPBFieldType(fieldType)
-		e.columnInfos = append(e.columnInfos, &tipb.ColumnInfo{ColumnId: int64(i),
-			Tp: pbType.Tp, Collation: pbType.Collate, ColumnLen: pbType.Flen,
-			Decimal: pbType.Decimal, Flag: int32(pbType.Flag)})
-	}
-}
-
-func (e *evalContext) newRowDecoder() (*rowcodec.ChunkDecoder, error) {
+func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, primaryCols []int64, timeZone *time.Location) (*rowcodec.ChunkDecoder, error) {
 	var (
 		pkCols []int64
-		cols   = make([]rowcodec.ColInfo, 0, len(e.columnInfos))
+		cols   = make([]rowcodec.ColInfo, 0, len(columnInfos))
 	)
-	for i := range e.columnInfos {
-		info := e.columnInfos[i]
-		ft := e.fieldTps[i]
+	for i := range columnInfos {
+		info := columnInfos[i]
+		ft := fieldTps[i]
 		col := rowcodec.ColInfo{
 			ID:         info.ColumnId,
 			Ft:         ft,
@@ -277,38 +222,26 @@ func (e *evalContext) newRowDecoder() (*rowcodec.ChunkDecoder, error) {
 		}
 	}
 	if len(pkCols) == 0 {
-		if e.primaryCols != nil {
-			pkCols = e.primaryCols
+		if primaryCols != nil {
+			pkCols = primaryCols
 		} else {
 			pkCols = []int64{0}
 		}
 	}
 	def := func(i int, chk *chunk.Chunk) error {
-		info := e.columnInfos[i]
+		info := columnInfos[i]
 		if info.PkHandle || len(info.DefaultVal) == 0 {
 			chk.AppendNull(i)
 			return nil
 		}
-		decoder := codec.NewDecoder(chk, e.sc.TimeZone)
-		_, err := decoder.DecodeOne(info.DefaultVal, i, e.fieldTps[i])
+		decoder := codec.NewDecoder(chk, timeZone)
+		_, err := decoder.DecodeOne(info.DefaultVal, i, fieldTps[i])
 		if err != nil {
 			return err
 		}
 		return nil
 	}
-	return rowcodec.NewChunkDecoder(cols, pkCols, def, e.sc.TimeZone), nil
-}
-
-// decodeRelatedColumnVals decodes data to Datum slice according to the row information.
-func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][]byte, row []types.Datum) error {
-	var err error
-	for _, offset := range relatedColOffsets {
-		row[offset], err = tablecodec.DecodeColumnValue(value[offset], e.fieldTps[offset], e.sc.TimeZone)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
+	return rowcodec.NewChunkDecoder(cols, pkCols, def, timeZone), nil
 }
 
 // flagsToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.

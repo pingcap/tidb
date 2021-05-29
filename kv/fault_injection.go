@@ -16,6 +16,8 @@ package kv
 import (
 	"context"
 	"sync"
+
+	"github.com/pingcap/tidb/store/tikv"
 )
 
 // InjectionConfig is used for fault injections for KV components.
@@ -63,9 +65,9 @@ func (s *InjectedStore) Begin() (Transaction, error) {
 	}, err
 }
 
-// BeginWithStartTS creates an injected Transaction with startTS.
-func (s *InjectedStore) BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error) {
-	txn, err := s.Storage.BeginWithStartTS(txnScope, startTS)
+// BeginWithOption creates an injected Transaction with given option.
+func (s *InjectedStore) BeginWithOption(option tikv.StartTSOption) (Transaction, error) {
+	txn, err := s.Storage.BeginWithOption(option)
 	return &InjectedTransaction{
 		Transaction: txn,
 		cfg:         s.cfg,

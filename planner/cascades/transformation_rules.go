@@ -593,10 +593,6 @@ func (r *PushSelDownAggregation) OnTransform(old *memo.ExprIter) (newExprs []*me
 	aggSchema := old.Children[0].Prop.Schema
 	var pushedExprs []expression.Expression
 	var remainedExprs []expression.Expression
-	exprsOriginal := make([]expression.Expression, 0, len(agg.AggFuncs))
-	for _, aggFunc := range agg.AggFuncs {
-		exprsOriginal = append(exprsOriginal, aggFunc.Args[0])
-	}
 	groupByColumns := expression.NewSchema(agg.GetGroupByCols()...)
 	for _, cond := range sel.Conditions {
 		switch cond.(type) {
@@ -1507,10 +1503,7 @@ func NewRuleMergeAggregationProjection() Transformation {
 // Match implements Transformation interface.
 func (r *MergeAggregationProjection) Match(old *memo.ExprIter) bool {
 	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
-	if plannercore.ExprsHasSideEffects(proj.Exprs) {
-		return false
-	}
-	return true
+	return !plannercore.ExprsHasSideEffects(proj.Exprs)
 }
 
 // OnTransform implements Transformation interface.

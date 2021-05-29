@@ -103,6 +103,7 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 		// This part is used to process flag HasStringWithoutDefaultCharset, which means if we have this flag and the
 		// charset is mysql.DefaultCharset, we don't need to write the default.
 		if n.Type.Charset != "" &&
+			!ctx.Flags.HasStringWithoutCharset() &&
 			(!ctx.Flags.HasStringWithoutDefaultCharset() || n.Type.Charset != mysql.DefaultCharset) {
 			ctx.WritePlain("_")
 			ctx.WriteKeyWord(n.Type.Charset)

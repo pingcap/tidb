@@ -50,7 +50,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -177,6 +178,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowProcessList()
 	case ast.ShowEvents:
 		// empty result
+	case ast.ShowStatsExtended:
+		return e.fetchShowStatsExtended()
 	case ast.ShowStatsMeta:
 		return e.fetchShowStatsMeta()
 	case ast.ShowStatsHistograms:
@@ -288,12 +291,17 @@ func (e *ShowExec) fetchShowBind() error {
 }
 
 func (e *ShowExec) fetchShowEngines() error {
-	sql := `SELECT * FROM information_schema.engines`
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
+	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT * FROM information_schema.engines`)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	e.result.AppendRows(rows)
 	return nil
 }
@@ -414,16 +422,32 @@ func (e *ShowExec) fetchShowTableStatus() error {
 		return ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
 
-	sql := fmt.Sprintf(`SELECT
-               table_name, engine, version, row_format, table_rows,
-               avg_row_length, data_length, max_data_length, index_length,
-               data_free, auto_increment, create_time, update_time, check_time,
-               table_collation, IFNULL(checksum,''), create_options, table_comment
-               FROM information_schema.tables
-	       WHERE table_schema='%s' ORDER BY table_name`, e.DBName)
+	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithSnapshot(sql)
+	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT
+		table_name, engine, version, row_format, table_rows,
+		avg_row_length, data_length, max_data_length, index_length,
+		data_free, auto_increment, create_time, update_time, check_time,
+		table_collation, IFNULL(checksum,''), create_options, table_comment
+		FROM information_schema.tables
+		WHERE lower(table_schema)=%? ORDER BY table_name`, e.DBName.L)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
+	var snapshot uint64
+	txn, err := e.ctx.Txn(false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if txn.Valid() {
+		snapshot = txn.StartTS()
+	}
+	if e.ctx.GetSessionVars().SnapshotTS != 0 {
+		snapshot = e.ctx.GetSessionVars().SnapshotTS
+	}
+
+	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt, sqlexec.ExecOptionWithSnapshot(snapshot))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -552,12 +576,17 @@ func (e *ShowExec) fetchShowIndex() error {
 			"",               // Index_comment
 			"YES",            // Index_visible
 			"NULL",           // Expression
+			"YES",            // Clustered
 		})
 	}
 	for _, idx := range tb.Indices() {
 		idxInfo := idx.Meta()
 		if idxInfo.State != model.StatePublic {
 			continue
+		}
+		isClustered := "NO"
+		if tb.Meta().IsCommonHandle && idxInfo.Primary {
+			isClustered = "YES"
 		}
 		for i, col := range idxInfo.Columns {
 			nonUniq := 1
@@ -604,6 +633,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				idx.Meta().Comment,     // Index_comment
 				visible,                // Index_visible
 				expression,             // Expression
+				isClustered,            // Clustered
 			})
 		}
 	}
@@ -631,6 +661,17 @@ func (e *ShowExec) fetchShowMasterStatus() error {
 	return nil
 }
 
+func (e *ShowExec) sysVarHiddenForSem(sysVarNameInLower string) bool {
+	if !sem.IsEnabled() || !sem.IsInvisibleSysVar(sysVarNameInLower) {
+		return false
+	}
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker == nil || checker.RequestDynamicVerification(e.ctx.GetSessionVars().ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
+		return false
+	}
+	return true
+}
+
 func (e *ShowExec) fetchShowVariables() (err error) {
 	var (
 		value       string
@@ -643,7 +684,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		// 		otherwise, fetch the value from table `mysql.Global_Variables`.
 		for _, v := range variable.GetSysVars() {
 			if v.Scope != variable.ScopeSession {
-				if variable.FilterImplicitFeatureSwitch(v) {
+				if v.Hidden || e.sysVarHiddenForSem(v.Name) {
 					continue
 				}
 				value, err = variable.GetGlobalSystemVar(sessionVars, v.Name)
@@ -660,10 +701,10 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 	// If it is a session only variable, use the default value defined in code,
 	//   otherwise, fetch the value from table `mysql.Global_Variables`.
 	for _, v := range variable.GetSysVars() {
-		if variable.FilterImplicitFeatureSwitch(v) {
+		if v.Hidden || e.sysVarHiddenForSem(v.Name) {
 			continue
 		}
-		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
+		value, err = variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -678,9 +719,16 @@ func (e *ShowExec) fetchShowStatus() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	checker := privilege.GetPrivilegeManager(e.ctx)
 	for status, v := range statusVars {
 		if e.GlobalScope && v.Scope == variable.ScopeSession {
 			continue
+		}
+		// Skip invisible status vars if permission fails.
+		if sem.IsEnabled() && sem.IsInvisibleStatusVar(status) {
+			if checker == nil || !checker.RequestDynamicVerification(sessionVars.ActiveRoles, "RESTRICTED_STATUS_ADMIN", false) {
+				continue
+			}
 		}
 		switch v.Value.(type) {
 		case []interface{}, nil:
@@ -701,7 +749,8 @@ func getDefaultCollate(charsetName string) string {
 			return c.DefaultCollation
 		}
 	}
-	return ""
+	// The charset is invalid, return server default.
+	return mysql.DefaultCollationName
 }
 
 // ConstructResultOfShowCreateTable constructs the result for show create table.
@@ -726,7 +775,13 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	sqlMode := ctx.GetSessionVars().SQLMode
-	fmt.Fprintf(buf, "CREATE TABLE %s (\n", stringutil.Escape(tableInfo.Name.O, sqlMode))
+	tableName := stringutil.Escape(tableInfo.Name.O, sqlMode)
+	switch tableInfo.TempTableType {
+	case model.TempTableGlobal:
+		fmt.Fprintf(buf, "CREATE GLOBAL TEMPORARY TABLE %s (\n", tableName)
+	default:
+		fmt.Fprintf(buf, "CREATE TABLE %s (\n", tableName)
+	}
 	var pkCol *model.ColumnInfo
 	var hasAutoIncID bool
 	needAddComma := false
@@ -824,9 +879,10 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if pkCol != nil {
-		// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
+		// If PKIsHandle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
 		fmt.Fprintf(buf, "  PRIMARY KEY (%s)", stringutil.Escape(pkCol.Name.O, sqlMode))
+		buf.WriteString(" /*T![clustered_index] CLUSTERED */")
 	}
 
 	publicIndices := make([]*model.IndexInfo, 0, len(tableInfo.Indices))
@@ -865,6 +921,13 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		if idxInfo.Invisible {
 			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
 		}
+		if idxInfo.Primary {
+			if tableInfo.PKIsHandle || tableInfo.IsCommonHandle {
+				buf.WriteString(" /*T![clustered_index] CLUSTERED */")
+			} else {
+				buf.WriteString(" /*T![clustered_index] NONCLUSTERED */")
+			}
+		}
 		if i != len(publicIndices)-1 {
 			buf.WriteString(",\n")
 		}
@@ -895,7 +958,14 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 
 	buf.WriteString("\n")
 
-	buf.WriteString(") ENGINE=InnoDB")
+	switch tableInfo.TempTableType {
+	case model.TempTableNone:
+		buf.WriteString(") ENGINE=InnoDB")
+	default:
+		// For now the only supported engine for temporary table is memory.
+		buf.WriteString(") ENGINE=memory")
+	}
+
 	// We need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	if len(tblCollate) == 0 || tblCollate == "binary" {
@@ -952,6 +1022,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	if len(tableInfo.Comment) > 0 {
 		fmt.Fprintf(buf, " COMMENT='%s'", format.OutputFormat(tableInfo.Comment))
 	}
+
+	if tableInfo.TempTableType == model.TempTableGlobal {
+		fmt.Fprintf(buf, " ON COMMIT DELETE ROWS")
+	}
+
 	// add partition info here.
 	appendPartitionInfo(tableInfo.Partition, buf)
 	return nil
@@ -1254,22 +1329,37 @@ func (e *ShowExec) fetchShowCreateUser() error {
 		}
 	}
 
-	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User='%s' AND Host='%s';`,
-		mysql.SystemDB, mysql.UserTable, userName, hostName)
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+
+	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT plugin FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.UserTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	if len(rows) == 0 {
+		// FIXME: the error returned is not escaped safely
 		return ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER",
 			fmt.Sprintf("'%s'@'%s'", e.User.Username, e.User.Hostname))
 	}
-	sql = fmt.Sprintf(`SELECT PRIV FROM %s.%s WHERE User='%s' AND Host='%s'`,
-		mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
-	rows, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+
+	authplugin := mysql.AuthNativePassword
+	if len(rows) == 1 && rows[0].GetString(0) != "" {
+		authplugin = rows[0].GetString(0)
+	}
+
+	stmt, err = exec.ParseWithParams(context.TODO(), `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	rows, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	require := "NONE"
 	if len(rows) == 1 {
 		privData := rows[0].GetString(0)
@@ -1280,8 +1370,9 @@ func (e *ShowExec) fetchShowCreateUser() error {
 		}
 		require = privValue.RequireStr()
 	}
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH 'mysql_native_password' AS '%s' REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK",
-		e.User.Username, e.User.Hostname, checker.GetEncodedPassword(e.User.Username, e.User.Hostname), require)
+	// FIXME: the returned string is not escaped safely
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s' AS '%s' REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK",
+		e.User.Username, e.User.Hostname, authplugin, checker.GetEncodedPassword(e.User.Username, e.User.Hostname), require)
 	e.appendRow([]interface{}{showStr})
 	return nil
 }
@@ -1325,7 +1416,6 @@ func (e *ShowExec) fetchShowGrants() error {
 
 func (e *ShowExec) fetchShowPrivileges() error {
 	e.appendRow([]interface{}{"Alter", "Tables", "To alter the table"})
-	e.appendRow([]interface{}{"Alter", "Tables", "To alter the table"})
 	e.appendRow([]interface{}{"Alter routine", "Functions,Procedures", "To alter or drop stored functions/procedures"})
 	e.appendRow([]interface{}{"Create", "Databases,Tables,Indexes", "To create new databases and tables"})
 	e.appendRow([]interface{}{"Create routine", "Databases", "To use CREATE FUNCTION/PROCEDURE"})
@@ -1356,6 +1446,10 @@ func (e *ShowExec) fetchShowPrivileges() error {
 	e.appendRow([]interface{}{"Create tablespace", "Server Admin", "To create/alter/drop tablespaces"})
 	e.appendRow([]interface{}{"Update", "Tables", "To update existing rows"})
 	e.appendRow([]interface{}{"Usage", "Server Admin", "No privileges - allow connect only"})
+
+	for _, priv := range privileges.GetDynamicPrivileges() {
+		e.appendRow([]interface{}{priv, "Server Admin", ""})
+	}
 	return nil
 }
 
@@ -1513,7 +1607,7 @@ func (e *ShowExec) appendRow(row []interface{}) {
 
 func (e *ShowExec) fetchShowTableRegions() error {
 	store := e.ctx.GetStore()
-	tikvStore, ok := store.(tikv.Storage)
+	tikvStore, ok := store.(helper.Storage)
 	if !ok {
 		return nil
 	}
@@ -1567,7 +1661,7 @@ func (e *ShowExec) fetchShowTableRegions() error {
 	return nil
 }
 
-func getTableRegions(tb table.Table, physicalIDs []int64, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
+func getTableRegions(tb table.Table, physicalIDs []int64, tikvStore helper.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
 	regions := make([]regionMeta, 0, len(physicalIDs))
 	uniqueRegionMap := make(map[uint64]struct{})
 	for _, id := range physicalIDs {
@@ -1580,7 +1674,7 @@ func getTableRegions(tb table.Table, physicalIDs []int64, tikvStore tikv.Storage
 	return regions, nil
 }
 
-func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
+func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvStore helper.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
 	regions := make([]regionMeta, 0, len(physicalIDs))
 	uniqueRegionMap := make(map[uint64]struct{})
 	for _, id := range physicalIDs {

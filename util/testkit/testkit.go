@@ -147,7 +147,7 @@ func (tk *TestKit) GetConnectionID() {
 	}
 }
 
-// Exec executes a sql statement.
+// Exec executes a sql statement using the prepared stmt API
 func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	var err error
 	if tk.Se == nil {
@@ -231,6 +231,61 @@ func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 	return false
 }
 
+func containGloabl(rs *Result) bool {
+	partitionNameCol := 2
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][partitionNameCol], "global") {
+			return true
+		}
+	}
+	return false
+}
+
+// MustNoGlobalStats checks if there is no global stats.
+func (tk *TestKit) MustNoGlobalStats(table string) bool {
+	if containGloabl(tk.MustQuery("show stats_meta where table_name like '" + table + "'")) {
+		return false
+	}
+	if containGloabl(tk.MustQuery("show stats_buckets where table_name like '" + table + "'")) {
+		return false
+	}
+	if containGloabl(tk.MustQuery("show stats_histograms where table_name like '" + table + "'")) {
+		return false
+	}
+	return true
+}
+
+// MustPartition checks if the result execution plan must read specific partitions.
+func (tk *TestKit) MustPartition(sql string, partitions string, args ...interface{}) *Result {
+	rs := tk.MustQuery("explain "+sql, args...)
+	ok := len(partitions) == 0
+	for i := range rs.rows {
+		if len(partitions) == 0 && strings.Contains(rs.rows[i][3], "partition:") {
+			ok = false
+		}
+		if len(partitions) != 0 && strings.Compare(rs.rows[i][3], "partition:"+partitions) == 0 {
+			ok = true
+		}
+	}
+	tk.c.Assert(ok, check.IsTrue)
+	return tk.MustQuery(sql, args...)
+}
+
+// UsedPartitions returns the partition names that will be used or all/dual.
+func (tk *TestKit) UsedPartitions(sql string, args ...interface{}) *Result {
+	rs := tk.MustQuery("explain "+sql, args...)
+	var usedPartitions [][]string
+	for i := range rs.rows {
+		index := strings.Index(rs.rows[i][3], "partition:")
+		if index != -1 {
+			p := rs.rows[i][3][index+len("partition:"):]
+			partitions := strings.Split(strings.SplitN(p, " ", 2)[0], ",")
+			usedPartitions = append(usedPartitions, partitions)
+		}
+	}
+	return &Result{rows: usedPartitions, c: tk.c, comment: check.Commentf("sql:%s, args:%v", sql, args)}
+}
+
 // MustUseIndex checks if the result execution plan contains specific index(es).
 func (tk *TestKit) MustUseIndex(sql string, index string, args ...interface{}) bool {
 	rs := tk.MustQuery("explain "+sql, args...)
@@ -272,6 +327,19 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	return tk.ResultSetToResult(rs, comment)
 }
 
+// MayQuery query the statements and returns result rows if result set is returned.
+// If expected result is set it asserts the query result equals expected result.
+func (tk *TestKit) MayQuery(sql string, args ...interface{}) *Result {
+	comment := check.Commentf("sql:%s, args:%v", sql, args)
+	rs, err := tk.Exec(sql, args...)
+	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	if rs == nil {
+		var emptyStringAoA [][]string
+		return &Result{rows: emptyStringAoA, c: tk.c, comment: comment}
+	}
+	return tk.ResultSetToResult(rs, comment)
+}
+
 // QueryToErr executes a sql statement and discard results.
 func (tk *TestKit) QueryToErr(sql string, args ...interface{}) error {
 	comment := check.Commentf("sql:%s, args:%v", sql, args)
@@ -305,7 +373,7 @@ func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 	tk.c.Assert(err, check.NotNil)
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)
-	tk.c.Assert(ok, check.IsTrue, check.Commentf("expect type 'terror.Error', but obtain '%T'", originErr))
+	tk.c.Assert(ok, check.IsTrue, check.Commentf("expect type 'terror.Error', but obtain '%T': %v", originErr, originErr))
 	sqlErr := terror.ToSQLError(tErr)
 	tk.c.Assert(int(sqlErr.Code), check.Equals, errCode, check.Commentf("Assertion failed, origin err:\n  %v", sqlErr))
 }

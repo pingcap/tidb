@@ -35,14 +35,14 @@
       "select * from t for update",
       "update t set t.a = t.a * 1.5 where t.a >= 1000 order by t.a desc limit 10",
       "delete from t where t.a >= 1000 order by t.a desc limit 10",
-      "explain select * from t union all select * from t limit 1, 1",
+      "explain format = 'brief' select * from t union all select * from t limit 1, 1",
       // The correctness of explain result is checked at integration test. There is to improve coverage.
-      "explain select /*+ TIDB_INLJ(t1, t2) */ * from t t1 left join t t2 on t1.a=t2.a where t1.b=1 and t2.b=1 and (t1.c=1 or t2.c=1)",
-      "explain select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a=t2.a where t1.b=1 and t2.b=1 and (t1.c=1 or t2.c=1)",
-      "explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 right join t t2 on t1.a=t2.a where t1.b=1 and t2.b=1 and (t1.c=1 or t2.c=1)",
+      "explain format = 'brief' select /*+ TIDB_INLJ(t1, t2) */ * from t t1 left join t t2 on t1.a=t2.a where t1.b=1 and t2.b=1 and (t1.c=1 or t2.c=1)",
+      "explain format = 'brief' select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a=t2.a where t1.b=1 and t2.b=1 and (t1.c=1 or t2.c=1)",
+      "explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 right join t t2 on t1.a=t2.a where t1.b=1 and t2.b=1 and (t1.c=1 or t2.c=1)",
       "explain format=\"dot\" select /*+ TIDB_SMJ(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
-      "explain select * from t order by b",
-      "explain select * from t order by b limit 1",
+      "explain format = 'brief' select * from t order by b",
+      "explain format = 'brief' select * from t order by b limit 1",
       "explain format=\"dot\" select * from t order by a",
       "insert into t select * from t",
       "show columns from t where `Key` = 'pri' like 't*'",
@@ -378,7 +378,13 @@
       "select count(1) from (select count(1), a as b from t group by a) tt group by b",
       "select a, count(b) from t group by a",
       "select a, count(distinct a, b) from t group by a",
-      "select a, approx_count_distinct(a, b) from t group by a"
+      "select a, approx_count_distinct(a, b) from t group by a",
+      // Test issue23436
+      "select count(distinct a) from t",
+      "select count(distinct a), sum(distinct a) from t",
+      "select count(distinct a), sum(distinct f) from t",
+      "select count(distinct e) from t",
+      "select count(distinct f), avg(b) from t"
     ]
   },
   {

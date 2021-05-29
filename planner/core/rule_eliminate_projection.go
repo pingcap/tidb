@@ -125,6 +125,7 @@ func doPhysicalProjectionElimination(p PhysicalPlan) (PhysicalPlan, error) {
 	}
 	if isProj {
 		if child, ok := p.Children()[0].(*PhysicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
+			child.SetSchema(p.Schema())
 			for i := range proj.Exprs {
 				proj.Exprs[i], err = ReplaceColumnOfExprInPhysicalProjection(proj.Exprs[i], child, child.Schema())
 				if err != nil {

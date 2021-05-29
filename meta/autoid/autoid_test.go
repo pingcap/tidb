@@ -50,7 +50,10 @@ func (*testSuite) TestT(c *C) {
 
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
@@ -254,7 +257,10 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
@@ -412,7 +418,10 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 func (*testSuite) TestConcurrentAlloc(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	autoid.SetStep(100)
 	defer func() {
 		autoid.SetStep(5000)
@@ -500,7 +509,10 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 func (*testSuite) TestRollbackAlloc(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	dbID := int64(1)
 	tblID := int64(2)
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
@@ -545,7 +557,12 @@ func BenchmarkAllocator_Alloc(b *testing.B) {
 	if err != nil {
 		return
 	}
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		if err != nil {
+			b.Fatal(err)
+		}
+	}()
 	dbID := int64(1)
 	tblID := int64(2)
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
@@ -567,7 +584,10 @@ func BenchmarkAllocator_Alloc(b *testing.B) {
 	alloc := autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		alloc.Alloc(ctx, 2, 1, 1, 1)
+		_, _, err := alloc.Alloc(ctx, 2, 1, 1, 1)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -577,7 +597,12 @@ func BenchmarkAllocator_SequenceAlloc(b *testing.B) {
 	if err != nil {
 		return
 	}
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		if err != nil {
+			b.Fatal(err)
+		}
+	}()
 	var seq *model.SequenceInfo
 	var sequenceBase int64
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
@@ -623,14 +648,20 @@ func BenchmarkAllocator_Seek(b *testing.B) {
 	increment := int64(3)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		autoid.CalcSequenceBatchSize(base, 3, increment, offset, math.MinInt64, math.MaxInt64)
+		_, err := autoid.CalcSequenceBatchSize(base, 3, increment, offset, math.MinInt64, math.MaxInt64)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
 func (*testSuite) TestSequenceAutoid(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	var seq *model.SequenceInfo
 	var sequenceBase int64
@@ -751,7 +782,10 @@ func (*testSuite) TestSequenceAutoid(c *C) {
 func (*testSuite) TestConcurrentAllocSequence(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	var seq *model.SequenceInfo
 	var sequenceBase int64
@@ -841,7 +875,10 @@ func (*testSuite) TestAllocComputationIssue(c *C) {
 
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)

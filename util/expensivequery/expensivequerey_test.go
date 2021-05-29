@@ -75,5 +75,5 @@ func (s *testSuite) TestLogFormat(c *C) {
 
 	info.RedactSQL = true
 	logFields = genLogFields(costTime, info)
-	c.Assert(logFields[6].String, Equals, "select * from table where a > ?")
+	c.Assert(logFields[6].String, Equals, "select * from table where `a` > ?")
 }

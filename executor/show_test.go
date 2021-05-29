@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -112,7 +111,8 @@ func (s *testSuite5) TestShowWarnings(c *C) {
 
 	// Test Warning level 'Error'
 	testSQL = `create table show_warnings (a int)`
-	tk.Exec(testSQL)
+	_, _ = tk.Exec(testSQL)
+	// FIXME: Table 'test.show_warnings' already exists
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Error|1050|Table 'test.show_warnings' already exists"))
 	tk.MustQuery("select @@error_count").Check(testutil.RowsWithSep("|", "1"))
@@ -121,7 +121,8 @@ func (s *testSuite5) TestShowWarnings(c *C) {
 	testSQL = `create table show_warnings_2 (a int)`
 	tk.MustExec(testSQL)
 	testSQL = `create table if not exists show_warnings_2 like show_warnings`
-	tk.Exec(testSQL)
+	_, err := tk.Exec(testSQL)
+	c.Assert(err, IsNil)
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1050|Table 'test.show_warnings_2' already exists"))
 	tk.MustQuery("select @@warning_count").Check(testutil.RowsWithSep("|", "1"))
@@ -134,9 +135,20 @@ func (s *testSuite5) TestShowErrors(c *C) {
 	testSQL := `create table if not exists show_errors (a int)`
 	tk.MustExec(testSQL)
 	testSQL = `create table show_errors (a int)`
-	tk.Exec(testSQL)
+	// FIXME: 'test.show_errors' already exists
+	_, _ = tk.Exec(testSQL)
 
 	tk.MustQuery("show errors").Check(testutil.RowsWithSep("|", "Error|1050|Table 'test.show_errors' already exists"))
+}
+
+func (s *testSuite5) TestShowWarningsForExprPushdown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	testSQL := `create table if not exists show_warnings_expr_pushdown (a int, value date)`
+	tk.MustExec(testSQL)
+	tk.MustExec("explain select * from show_warnings_expr_pushdown where date_add(value, interval 1 day) = '2020-01-01'")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'date_add'(signature: AddDateDatetimeInt) can not be pushed to tikv"))
 }
 
 func (s *testSuite5) TestShowGrantsPrivilege(c *C) {
@@ -421,6 +433,15 @@ func (s *testSuite5) TestShowCreateUser(c *C) {
 	// "show create user" for current user doesn't check privileges.
 	rows = tk1.MustQuery("show create user current_user")
 	rows.Check(testkit.Rows("CREATE USER 'check_priv'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+
+	// Creating users with `IDENTIFIED WITH 'caching_sha2_password'` is not supported yet. So manually creating an entry for now.
+	// later this can be changed to test the full path once 'caching_sha2_password' support is completed.
+	tk.MustExec("CREATE USER 'sha_test'@'%' IDENTIFIED BY 'temp_passwd'")
+	tk.MustExec("UPDATE mysql.user SET plugin='caching_sha2_password', authentication_string=0x24412430303524532C06366D1D1E2B2F4437681A057B6807193D1C4B6E772F667A764663534E6C3978716C3057644D73427A787747674679687632644A384F337941704A542F WHERE user='sha_test' AND host='%'")
+	tk.MustExec("FLUSH PRIVILEGES")
+
+	rows = tk.MustQuery("SHOW CREATE USER 'sha_test'@'%'")
+	rows.Check(testkit.Rows("CREATE USER 'sha_test'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$S,\x066m\x1d\x1e+/D7h\x1a\x05{h\a\x19=\x1cKnw/fzvFcSNl9xql0WdMsBzxwGgFyhv2dJ8O3yApJT/' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
 }
 
 func (s *testSuite5) TestUnprivilegedShow(c *C) {
@@ -479,12 +500,13 @@ func (s *testSuite5) TestShowTableStatus(c *C) {
 	// It's not easy to test the result contents because every time the test runs, "Create_time" changed.
 	tk.MustExec("show table status;")
 	rs, err := tk.Exec("show table status;")
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	c.Assert(rs, NotNil)
 	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	err = rs.Close()
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Equals, 1)
 
 	for i := range rows {
 		row := rows[i]
@@ -501,10 +523,34 @@ func (s *testSuite5) TestShowTableStatus(c *C) {
 		  partition p2 values less than (maxvalue)
   		);`)
 	rs, err = tk.Exec("show table status from test like 'tp';")
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	c.Assert(rows[0].GetString(16), Equals, "partitioned")
+
+	tk.MustExec("create database UPPER_CASE")
+	tk.MustExec("use UPPER_CASE")
+	tk.MustExec("create table t (i int)")
+	rs, err = tk.Exec("show table status")
+	c.Assert(err, IsNil)
+	c.Assert(rs, NotNil)
+	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(err, IsNil)
+	err = rs.Close()
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Equals, 1)
+
+	tk.MustExec("use upper_case")
+	rs, err = tk.Exec("show table status")
+	c.Assert(err, IsNil)
+	c.Assert(rs, NotNil)
+	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(err, IsNil)
+	err = rs.Close()
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Equals, 1)
+
+	tk.MustExec("drop database UPPER_CASE")
 }
 
 func (s *testSuite5) TestShowSlow(c *C) {
@@ -673,7 +719,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  `END_TIME` datetime NOT NULL,\n"+
 			"  `USER_TYPE` int(11) DEFAULT NULL,\n"+
 			"  `APP_ID` int(11) DEFAULT NULL,\n"+
-			"  PRIMARY KEY (`LOG_ID`,`END_TIME`),\n"+
+			"  PRIMARY KEY (`LOG_ID`,`END_TIME`) /*T![clustered_index] NONCLUSTERED */,\n"+
 			"  KEY `IDX_EndTime` (`END_TIME`),\n"+
 			"  KEY `IDX_RoundId` (`ROUND_ID`),\n"+
 			"  KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)\n"+
@@ -789,7 +835,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"child CREATE TABLE `child` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
 			"  `parent_id` int(11) NOT NULL,\n"+
-			"  PRIMARY KEY (`id`),\n"+
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  KEY `par_ind` (`parent_id`),\n"+
 			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
@@ -803,7 +849,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"child CREATE TABLE `child` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
 			"  `parent_id` int(11) NOT NULL,\n"+
-			"  PRIMARY KEY (`id`),\n"+
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  KEY `par_ind` (`parent_id`),\n"+
 			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`) ON DELETE SET NULL ON UPDATE CASCADE\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
@@ -820,8 +866,8 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	c.Assert(result, Matches, `(?s).*GENERATED ALWAYS AS \(_utf8'a'\).*`)
 
 	// Test show list partition table
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id)) partition by list  (id) (
     	partition p0 values in (3,5,6,9,17),
     	partition p1 values in (1,2,10,11,19,20),
@@ -887,7 +933,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 			"auto_random_tbl1 CREATE TABLE `auto_random_tbl1` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(3) */,\n"+
 			"  `b` varchar(255) DEFAULT NULL,\n"+
-			"  PRIMARY KEY (`a`)\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
@@ -898,7 +944,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 			"auto_random_tbl2 CREATE TABLE `auto_random_tbl2` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  `b` char(1) DEFAULT NULL,\n"+
-			"  PRIMARY KEY (`a`)\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
@@ -908,7 +954,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 		""+
 			"auto_random_tbl3 CREATE TABLE `auto_random_tbl3` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
-			"  PRIMARY KEY (`a`)\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	// Test show auto_random table option.
@@ -918,7 +964,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 			"auto_random_tbl4 CREATE TABLE `auto_random_tbl4` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  `b` varchar(255) DEFAULT NULL,\n"+
-			"  PRIMARY KEY (`a`)\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=100 */",
 	))
 	// Test implicit auto_random with auto_random table option.
@@ -928,7 +974,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 			"auto_random_tbl5 CREATE TABLE `auto_random_tbl5` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  `b` char(1) DEFAULT NULL,\n"+
-			"  PRIMARY KEY (`a`)\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=50 */",
 	))
 	// Test auto_random table option already with special comment.
@@ -937,12 +983,12 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 		""+
 			"auto_random_tbl6 CREATE TABLE `auto_random_tbl6` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
-			"  PRIMARY KEY (`a`)\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=200 */",
 	))
 }
 
-// Override testAutoRandomSuite to test auto id cache.
+// TestAutoIdCache overrides testAutoRandomSuite to test auto id cache.
 func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -953,7 +999,7 @@ func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n"+
-			"  PRIMARY KEY (`a`)\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=10 */",
 	))
 	tk.MustExec("drop table if exists t")
@@ -963,7 +1009,7 @@ func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
 			"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n"+
 			"  `b` int(11) NOT NULL,\n"+
-			"  PRIMARY KEY (`b`),\n"+
+			"  PRIMARY KEY (`b`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  UNIQUE KEY `a` (`a`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=100 */",
 	))
@@ -973,7 +1019,7 @@ func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) NOT NULL,\n"+
-			"  PRIMARY KEY (`a`)\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=5 */",
 	))
 }
@@ -995,7 +1041,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 			"t CREATE TABLE `t` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  `b` int(11) NOT NULL AUTO_INCREMENT,\n"+
-			"  PRIMARY KEY (`a`),\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  UNIQUE KEY `b` (`b`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=100 /*T![auto_rand_base] AUTO_RANDOM_BASE=100 */",
 	))
@@ -1006,22 +1052,20 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 			"t CREATE TABLE `t` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  `b` int(11) NOT NULL AUTO_INCREMENT,\n"+
-			"  PRIMARY KEY (`a`),\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  UNIQUE KEY `b` (`b`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5100 /*T![auto_rand_base] AUTO_RANDOM_BASE=6001 */",
 	))
 }
 
-func (s *testSerialSuite) TestAutoRandomWithLargeSignedShowTableRegions(c *C) {
+func (s *testSuite5) TestAutoRandomWithLargeSignedShowTableRegions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists auto_random_db;")
 	defer tk.MustExec("drop database if exists auto_random_db;")
 	tk.MustExec("use auto_random_db;")
 	tk.MustExec("drop table if exists t;")
 
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-	tk.MustExec("create table t (a bigint unsigned auto_random primary key);")
+	tk.MustExec("create table t (a bigint unsigned auto_random primary key clustered);")
 	tk.MustExec("set @@global.tidb_scatter_region=1;")
 	// 18446744073709541615 is MaxUint64 - 10000.
 	// 18446744073709551615 is the MaxUint64.
@@ -1043,7 +1087,7 @@ func (s *testSuite5) TestShowEscape(c *C) {
 		""+
 			"t`abl\"e CREATE TABLE `t``abl\"e` (\n"+
 			"  `c``olum\"n` int(11) NOT NULL,\n"+
-			"  PRIMARY KEY (`c``olum\"n`)\n"+
+			"  PRIMARY KEY (`c``olum\"n`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
@@ -1054,7 +1098,7 @@ func (s *testSuite5) TestShowEscape(c *C) {
 		""+
 			"t`abl\"e CREATE TABLE \"t`abl\"\"e\" (\n"+
 			"  \"c`olum\"\"n\" int(11) NOT NULL,\n"+
-			"  PRIMARY KEY (\"c`olum\"\"n\")\n"+
+			"  PRIMARY KEY (\"c`olum\"\"n\") /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
@@ -1067,9 +1111,10 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	res := tk.MustQuery("show builtins;")
 	c.Assert(res, NotNil)
 	rows := res.Rows()
-	c.Assert(267, Equals, len(rows))
+	const builtinFuncNum = 269
+	c.Assert(builtinFuncNum, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
-	c.Assert("yearweek", Equals, rows[266][0].(string))
+	c.Assert("yearweek", Equals, rows[builtinFuncNum-1][0].(string))
 }
 
 func (s *testSuite5) TestShowClusterConfig(c *C) {
@@ -1104,6 +1149,31 @@ func (s *testSuite5) TestShowClusterConfig(c *C) {
 
 	confErr = fmt.Errorf("something unknown error")
 	c.Assert(tk.QueryToErr("show config"), ErrorMatches, confErr.Error())
+}
+
+func (s *testSuite5) TestInvisibleCoprCacheConfig(c *C) {
+	se1, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKitWithSession(c, s.store, se1)
+	rows := tk.MustQuery("show variables like '%config%'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	configValue := rows[0][1].(string)
+	coprCacheVal :=
+		"\t\t\"copr-cache\": {\n" +
+			"\t\t\t\"capacity-mb\": 1000\n" +
+			"\t\t},\n"
+	c.Assert(strings.Contains(configValue, coprCacheVal), Equals, true)
+}
+
+func (s *testSuite5) TestInvisibleGlobalKillConfig(c *C) {
+	se1, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKitWithSession(c, s.store, se1)
+	rows := tk.MustQuery("show variables like '%config%'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	configValue := rows[0][1].(string)
+	globalKillVal := "global-kill"
+	c.Assert(strings.Contains(configValue, globalKillVal), Equals, false)
 }
 
 func (s *testSerialSuite1) TestShowCreateTableWithIntegerDisplayLengthWarnings(c *C) {
@@ -1173,34 +1243,42 @@ func (s *testSerialSuite1) TestShowCreateTableWithIntegerDisplayLengthWarnings(c
 func (s *testSuite5) TestShowVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	var showSQL string
+	sessionVars := make([]string, 0, len(variable.GetSysVars()))
+	globalVars := make([]string, 0, len(variable.GetSysVars()))
 	for _, v := range variable.GetSysVars() {
-		if variable.FilterImplicitFeatureSwitch(v) {
+		if v.Hidden {
 			continue
 		}
-		// When ScopeSession only. `show global variables` must return empty.
+
 		if v.Scope == variable.ScopeSession {
-			showSQL = "show variables like '" + v.Name + "'"
-			res := tk.MustQuery(showSQL)
-			c.Check(res.Rows(), HasLen, 1)
-			showSQL = "show global variables like '" + v.Name + "'"
-			res = tk.MustQuery(showSQL)
-			c.Check(res.Rows(), HasLen, 0)
+			sessionVars = append(sessionVars, v.Name)
 		} else {
-			showSQL = "show global variables like '" + v.Name + "'"
-			res := tk.MustQuery(showSQL)
-			c.Check(res.Rows(), HasLen, 1)
-			showSQL = "show variables like '" + v.Name + "'"
-			res = tk.MustQuery(showSQL)
-			c.Check(res.Rows(), HasLen, 1)
+			globalVars = append(globalVars, v.Name)
 		}
 	}
-	// Test for switch variable which shouldn't seen by users.
-	for _, one := range variable.FeatureSwitchVariables {
-		res := tk.MustQuery("show variables like '" + one + "'")
-		c.Check(res.Rows(), HasLen, 0)
-		res = tk.MustQuery("show global variables like '" + one + "'")
-		c.Check(res.Rows(), HasLen, 0)
-	}
+
+	// When ScopeSession only. `show global variables` must return empty.
+	sessionVarsStr := strings.Join(sessionVars, "','")
+	showSQL = "show variables where variable_name in('" + sessionVarsStr + "')"
+	res := tk.MustQuery(showSQL)
+	c.Check(res.Rows(), HasLen, len(sessionVars))
+	showSQL = "show global variables where variable_name in('" + sessionVarsStr + "')"
+	res = tk.MustQuery(showSQL)
+	c.Check(res.Rows(), HasLen, 0)
+
+	globalVarsStr := strings.Join(globalVars, "','")
+	showSQL = "show variables where variable_name in('" + globalVarsStr + "')"
+	res = tk.MustQuery(showSQL)
+	c.Check(res.Rows(), HasLen, len(globalVars))
+	showSQL = "show global variables where variable_name in('" + globalVarsStr + "')"
+	res = tk.MustQuery(showSQL)
+	c.Check(res.Rows(), HasLen, len(globalVars))
+
+	// Test a known hidden variable.
+	res = tk.MustQuery("show variables like '" + variable.TiDBPartitionPruneMode + "'")
+	c.Check(res.Rows(), HasLen, 0)
+	res = tk.MustQuery("show global variables like '" + variable.TiDBPartitionPruneMode + "'")
+	c.Check(res.Rows(), HasLen, 0)
 }
 
 func (s *testSuite5) TestIssue19507(c *C) {
@@ -1208,18 +1286,51 @@ func (s *testSuite5) TestIssue19507(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t2(a int primary key, b int unique, c int not null, unique index (c));")
 	tk.MustQuery("SHOW INDEX IN t2;").Check(
-		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|NULL",
-			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
-			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL"))
+		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|NULL|YES",
+			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL|NO",
+			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL|NO"))
 
 	tk.MustExec("CREATE INDEX t2_b_c_index ON t2 (b, c);")
 	tk.MustExec("CREATE INDEX t2_c_b_index ON t2 (c, b);")
 	tk.MustQuery("SHOW INDEX IN t2;").Check(
-		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|NULL",
-			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
-			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL",
-			"t2|1|t2_b_c_index|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL",
-			"t2|1|t2_b_c_index|2|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
-			"t2|1|t2_c_b_index|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
-			"t2|1|t2_c_b_index|2|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL"))
+		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|NULL|YES",
+			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL|NO",
+			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL|NO",
+			"t2|1|t2_b_c_index|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL|NO",
+			"t2|1|t2_b_c_index|2|c|A|0|<nil>|<nil>||BTREE|||YES|NULL|NO",
+			"t2|1|t2_c_b_index|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL|NO",
+			"t2|1|t2_c_b_index|2|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL|NO"))
+}
+
+// TestShowPerformanceSchema tests for Issue 19231
+func (s *testSuite5) TestShowPerformanceSchema(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// Ideally we should create a new performance_schema table here with indices that we run the tests on.
+	// However, its not possible to create a new performance_schema table since its a special in memory table.
+	// Instead the test below uses the default index on the table.
+	tk.MustQuery("SHOW INDEX FROM performance_schema.events_statements_summary_by_digest").Check(
+		testkit.Rows("events_statements_summary_by_digest 0 SCHEMA_NAME 1 SCHEMA_NAME A 0 <nil> <nil> YES BTREE   YES NULL NO",
+			"events_statements_summary_by_digest 0 SCHEMA_NAME 2 DIGEST A 0 <nil> <nil> YES BTREE   YES NULL NO"))
+}
+
+func (s *testSuite5) TestShowTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create global temporary table t1 (id int) on commit delete rows")
+	tk.MustExec("create global temporary table t3 (i int primary key, j int) on commit delete rows")
+	// For issue https://github.com/pingcap/tidb/issues/24752
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE GLOBAL TEMPORARY TABLE `t1` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"))
+	// No panic, fix issue https://github.com/pingcap/tidb/issues/24788
+	expect := "CREATE GLOBAL TEMPORARY TABLE `t3` (\n" +
+		"  `i` int(11) NOT NULL,\n" +
+		"  `j` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
+	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 " + expect))
+
+	// Verify that the `show create table` result can be used to build the table.
+	createTable := strings.ReplaceAll(expect, "t3", "t4")
+	tk.MustExec(createTable)
 }

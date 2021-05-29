@@ -19,30 +19,33 @@ import (
 
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/client"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"go.uber.org/zap"
 )
 
 // Scanner support tikv scan
 type Scanner struct {
-	snapshot     *tikvSnapshot
+	snapshot     *KVSnapshot
 	batchSize    int
 	cache        []*pb.KvPair
 	idx          int
-	nextStartKey kv.Key
-	endKey       kv.Key
+	nextStartKey []byte
+	endKey       []byte
 
 	// Use for reverse scan.
-	nextEndKey kv.Key
+	nextEndKey []byte
 	reverse    bool
 
 	valid bool
 	eof   bool
 }
 
-func newScanner(snapshot *tikvSnapshot, startKey []byte, endKey []byte, batchSize int, reverse bool) (*Scanner, error) {
+func newScanner(snapshot *KVSnapshot, startKey []byte, endKey []byte, batchSize int, reverse bool) (*Scanner, error) {
 	// It must be > 1. Otherwise scanner won't skipFirst.
 	if batchSize <= 1 {
 		batchSize = scanBatchSize
@@ -57,7 +60,7 @@ func newScanner(snapshot *tikvSnapshot, startKey []byte, endKey []byte, batchSiz
 		nextEndKey:   endKey,
 	}
 	err := scanner.Next()
-	if kv.IsErrNotFound(err) {
+	if tikverr.IsErrNotFound(err) {
 		return scanner, nil
 	}
 	return scanner, errors.Trace(err)
@@ -69,7 +72,7 @@ func (s *Scanner) Valid() bool {
 }
 
 // Key return key.
-func (s *Scanner) Key() kv.Key {
+func (s *Scanner) Key() []byte {
 	if s.valid {
 		return s.cache[s.idx].Key
 	}
@@ -84,9 +87,11 @@ func (s *Scanner) Value() []byte {
 	return nil
 }
 
+const scannerNextMaxBackoff = 20000
+
 // Next return next element.
 func (s *Scanner) Next() error {
-	bo := NewBackofferWithVars(context.WithValue(context.Background(), txnStartKey, s.snapshot.version.Ver), scannerNextMaxBackoff, s.snapshot.vars)
+	bo := retry.NewBackofferWithVars(context.WithValue(context.Background(), retry.TxnStartKey, s.snapshot.version), scannerNextMaxBackoff, s.snapshot.vars)
 	if !s.valid {
 		return errors.New("scanner iterator is invalid")
 	}
@@ -109,8 +114,8 @@ func (s *Scanner) Next() error {
 		}
 
 		current := s.cache[s.idx]
-		if (!s.reverse && (len(s.endKey) > 0 && kv.Key(current.Key).Cmp(s.endKey) >= 0)) ||
-			(s.reverse && len(s.nextStartKey) > 0 && kv.Key(current.Key).Cmp(s.nextStartKey) < 0) {
+		if (!s.reverse && (len(s.endKey) > 0 && kv.CmpKey(current.Key, s.endKey) >= 0)) ||
+			(s.reverse && len(s.nextStartKey) > 0 && kv.CmpKey(current.Key, s.nextStartKey) < 0) {
 			s.eof = true
 			s.Close()
 			return nil
@@ -140,7 +145,7 @@ func (s *Scanner) Close() {
 }
 
 func (s *Scanner) startTS() uint64 {
-	return s.snapshot.version.Ver
+	return s.snapshot.version
 }
 
 func (s *Scanner) resolveCurrentLock(bo *Backoffer, current *pb.KvPair) error {
@@ -156,11 +161,11 @@ func (s *Scanner) resolveCurrentLock(bo *Backoffer, current *pb.KvPair) error {
 
 func (s *Scanner) getData(bo *Backoffer) error {
 	logutil.BgLogger().Debug("txn getData",
-		zap.Stringer("nextStartKey", s.nextStartKey),
-		zap.Stringer("nextEndKey", s.nextEndKey),
+		zap.String("nextStartKey", kv.StrKey(s.nextStartKey)),
+		zap.String("nextEndKey", kv.StrKey(s.nextEndKey)),
 		zap.Bool("reverse", s.reverse),
 		zap.Uint64("txnStartTS", s.startTS()))
-	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)
+	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.GetTiKVClient())
 	var reqEndKey, reqStartKey []byte
 	var loc *KeyLocation
 	var err error
@@ -188,9 +193,10 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		}
 		sreq := &pb.ScanRequest{
 			Context: &pb.Context{
-				Priority:       s.snapshot.priority,
-				NotFillCache:   s.snapshot.notFillCache,
-				IsolationLevel: pbIsolationLevel(s.snapshot.isolationLevel),
+				Priority:         s.snapshot.priority.ToPB(),
+				NotFillCache:     s.snapshot.notFillCache,
+				IsolationLevel:   s.snapshot.isolationLevel.ToPB(),
+				ResourceGroupTag: s.snapshot.resourceGroupTag,
 			},
 			StartKey:   s.nextStartKey,
 			EndKey:     reqEndKey,
@@ -206,12 +212,13 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		}
 		s.snapshot.mu.RLock()
 		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdScan, sreq, s.snapshot.mu.replicaRead, &s.snapshot.replicaReadSeed, pb.Context{
-			Priority:     s.snapshot.priority,
-			NotFillCache: s.snapshot.notFillCache,
-			TaskId:       s.snapshot.mu.taskID,
+			Priority:         s.snapshot.priority.ToPB(),
+			NotFillCache:     s.snapshot.notFillCache,
+			TaskId:           s.snapshot.mu.taskID,
+			ResourceGroupTag: s.snapshot.resourceGroupTag,
 		})
 		s.snapshot.mu.RUnlock()
-		resp, err := sender.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
+		resp, err := sender.SendReq(bo, req, loc.Region, client.ReadTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -222,14 +229,14 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		if regionErr != nil {
 			logutil.BgLogger().Debug("scanner getData failed",
 				zap.Stringer("regionErr", regionErr))
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
 			continue
 		}
 		if resp.Resp == nil {
-			return errors.Trace(ErrBodyMissing)
+			return errors.Trace(tikverr.ErrBodyMissing)
 		}
 		cmdScanResp := resp.Resp.(*pb.ScanResponse)
 
@@ -245,12 +252,12 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			msBeforeExpired, _, err := newLockResolver(s.snapshot.store).ResolveLocks(bo, s.snapshot.version.Ver, []*Lock{lock})
+			msBeforeExpired, _, err := newLockResolver(s.snapshot.store).ResolveLocks(bo, s.snapshot.version, []*Lock{lock})
 			if err != nil {
 				return errors.Trace(err)
 			}
 			if msBeforeExpired > 0 {
-				err = bo.BackoffWithMaxSleep(boTxnLockFast, int(msBeforeExpired), errors.Errorf("key is locked during scanning"))
+				err = bo.BackoffWithMaxSleepTxnLockFast(int(msBeforeExpired), errors.Errorf("key is locked during scanning"))
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -279,8 +286,8 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			} else {
 				s.nextEndKey = reqStartKey
 			}
-			if (!s.reverse && (len(loc.EndKey) == 0 || (len(s.endKey) > 0 && s.nextStartKey.Cmp(s.endKey) >= 0))) ||
-				(s.reverse && (len(loc.StartKey) == 0 || (len(s.nextStartKey) > 0 && s.nextStartKey.Cmp(s.nextEndKey) >= 0))) {
+			if (!s.reverse && (len(loc.EndKey) == 0 || (len(s.endKey) > 0 && kv.CmpKey(s.nextStartKey, s.endKey) >= 0))) ||
+				(s.reverse && (len(loc.StartKey) == 0 || (len(s.nextStartKey) > 0 && kv.CmpKey(s.nextStartKey, s.nextEndKey) >= 0))) {
 				// Current Region is the last one.
 				s.eof = true
 			}
@@ -292,7 +299,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		// more data.
 		lastKey := kvPairs[len(kvPairs)-1].GetKey()
 		if !s.reverse {
-			s.nextStartKey = kv.Key(lastKey).Next()
+			s.nextStartKey = kv.NextKey(lastKey)
 		} else {
 			s.nextEndKey = lastKey
 		}

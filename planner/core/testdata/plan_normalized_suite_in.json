@@ -42,10 +42,10 @@
 	{
 		"name": "TestNormalizedPlanForDiffStore",
 		"cases": [
-			"explain select /*+ read_from_storage(tiflash[t1]) */ * from t1",
-			"explain select /*+ read_from_storage(tikv[t1]) */ * from t1",
-			"explain select /*+ read_from_storage(tiflash[t1]) */ a+b from t1 where a+b < 1",
-			"explain select /*+ read_from_storage(tikv[t1]) */ a+b from t1 where a+b < 1"
+			"explain format = 'brief' select /*+ read_from_storage(tiflash[t1]) */ * from t1",
+			"explain format = 'brief' select /*+ read_from_storage(tikv[t1]) */ * from t1",
+			"explain format = 'brief' select /*+ read_from_storage(tiflash[t1]) */ a+b from t1 where a+b < 1",
+			"explain format = 'brief' select /*+ read_from_storage(tikv[t1]) */ a+b from t1 where a+b < 1"
 		]
 	}
 ]

@@ -104,12 +104,16 @@ func (t *testTableSuite) TestCheck(c *C) {
 	col := newCol("a")
 	col.Flag = mysql.AutoIncrementFlag
 	cols := []*Column{col, col}
-	CheckOnce(cols)
+	err := CheckOnce(cols)
+	c.Assert(err, NotNil)
 	cols = cols[:1]
-	CheckNotNull(cols, types.MakeDatums(nil))
+	err = CheckNotNull(cols, types.MakeDatums(nil))
+	c.Assert(err, IsNil)
 	cols[0].Flag |= mysql.NotNullFlag
-	CheckNotNull(cols, types.MakeDatums(nil))
-	CheckOnce([]*Column{})
+	err = CheckNotNull(cols, types.MakeDatums(nil))
+	c.Assert(err, NotNil)
+	err = CheckOnce([]*Column{})
+	c.Assert(err, IsNil)
 }
 
 func (t *testTableSuite) TestHandleBadNull(c *C) {
@@ -187,7 +191,7 @@ func (t *testTableSuite) TestGetZeroValue(c *C) {
 		},
 		{
 			types.NewFieldType(mysql.TypeBlob),
-			types.NewBytesDatum([]byte{}),
+			types.NewStringDatum(""),
 		},
 		{
 			types.NewFieldType(mysql.TypeDuration),
