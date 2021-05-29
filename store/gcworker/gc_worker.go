@@ -235,6 +235,7 @@ func createSession(store kv.Storage) session.Session {
 		}
 		// Disable privilege check for gc worker session.
 		privilege.BindPrivilegeManager(se, nil)
+		se.GetSessionVars().CommonGlobalLoaded = true
 		se.GetSessionVars().InRestrictedSQL = true
 		return se
 	}
@@ -330,38 +331,12 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 // prepare checks preconditions for starting a GC job. It returns a bool
 // that indicates whether the GC job should start and the new safePoint.
 func (w *GCWorker) prepare() (bool, uint64, error) {
-	// Add a transaction here is to prevent following situations:
-	// 1. GC check gcEnable is true, continue to do GC
-	// 2. The user sets gcEnable to false
-	// 3. The user gets `tikv_gc_safe_point` value is t1, then the user thinks the data after time t1 won't be clean by GC.
-	// 4. GC update `tikv_gc_safe_point` value to t2, continue do GC in this round.
-	// Then the data record that has been dropped between time t1 and t2, will be cleaned by GC, but the user thinks the data after t1 won't be clean by GC.
-	ctx := context.Background()
-	se := createSession(w.store)
-	defer se.Close()
-	_, err := se.ExecuteInternal(ctx, "BEGIN")
-	if err != nil {
-		return false, 0, errors.Trace(err)
-	}
-	doGC, safePoint, err := w.checkPrepare(ctx)
-	if doGC {
-		err = se.CommitTxn(ctx)
-		if err != nil {
-			return false, 0, errors.Trace(err)
-		}
-	} else {
-		se.RollbackTxn(ctx)
-	}
-	return doGC, safePoint, errors.Trace(err)
-}
-
-func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	enable, err := w.checkGCEnable()
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
 	if !enable {
-		logutil.Logger(ctx).Warn("[gc worker] gc status is disabled.")
+		logutil.BgLogger().Warn("[gc worker] gc status is disabled.")
 		return false, 0, nil
 	}
 	now, err := w.getOracleTime()
@@ -372,7 +347,7 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	if err != nil || !ok {
 		return false, 0, errors.Trace(err)
 	}
-	newSafePoint, newSafePointValue, err := w.calcNewSafePoint(ctx, now)
+	newSafePoint, newSafePointValue, err := w.calcNewSafePoint(context.Background(), now)
 	if err != nil || newSafePoint == nil {
 		return false, 0, errors.Trace(err)
 	}
@@ -1670,42 +1645,21 @@ func (w *GCWorker) doGC(ctx context.Context, safePoint uint64, concurrency int) 
 
 func (w *GCWorker) checkLeader() (bool, error) {
 	metrics.GCWorkerCounter.WithLabelValues("check_leader").Inc()
-	se := createSession(w.store)
-	defer se.Close()
-
-	ctx := context.Background()
-	_, err := se.ExecuteInternal(ctx, "BEGIN")
-	if err != nil {
-		return false, errors.Trace(err)
-	}
 	leader, err := w.loadValueFromSysTable(gcLeaderUUIDKey)
 	if err != nil {
-		se.RollbackTxn(ctx)
 		return false, errors.Trace(err)
 	}
 	logutil.BgLogger().Debug("[gc worker] got leader", zap.String("uuid", leader))
 	if leader == w.uuid {
 		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease))
 		if err != nil {
-			se.RollbackTxn(ctx)
-			return false, errors.Trace(err)
-		}
-		err = se.CommitTxn(ctx)
-		if err != nil {
 			return false, errors.Trace(err)
 		}
 		return true, nil
 	}
 
-	se.RollbackTxn(ctx)
-
-	_, err = se.ExecuteInternal(ctx, "BEGIN")
-	if err != nil {
-		return false, errors.Trace(err)
-	}
 	lease, err := w.loadTime(gcLeaderLeaseKey)
 	if err != nil {
-		se.RollbackTxn(ctx)
 		return false, errors.Trace(err)
 	}
 	if lease == nil || lease.Before(time.Now()) {
@@ -1715,26 +1669,18 @@ func (w *GCWorker) checkLeader() (bool, error) {
 
 		err = w.saveValueToSysTable(gcLeaderUUIDKey, w.uuid)
 		if err != nil {
-			se.RollbackTxn(ctx)
 			return false, errors.Trace(err)
 		}
 		err = w.saveValueToSysTable(gcLeaderDescKey, w.desc)
 		if err != nil {
-			se.RollbackTxn(ctx)
 			return false, errors.Trace(err)
 		}
 		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease))
-		if err != nil {
-			se.RollbackTxn(ctx)
-			return false, errors.Trace(err)
-		}
-		err = se.CommitTxn(ctx)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		return true, nil
 	}
-	se.RollbackTxn(ctx)
 	return false, nil
 }
 
