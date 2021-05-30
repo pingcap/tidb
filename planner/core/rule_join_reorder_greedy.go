@@ -23,8 +23,9 @@ import (
 
 type joinReorderGreedySolver struct {
 	*baseSingleGroupJoinOrderSolver
-	eqEdges       []*expression.ScalarFunction
-	joinTypes     []JoinType
+	eqEdges   []*expression.ScalarFunction
+	joinTypes []JoinType
+	// Maintain the order for plans of the outerJoin. [a,b] indicate a must join before b
 	directedEdges [][]LogicalPlan
 }
 
@@ -55,7 +56,6 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPla
 		})
 	}
 
-	// build a map that maintains the fixed order between nodes
 	for _, edge := range s.directedEdges {
 		nodeSet := s.directMap[edge[0]]
 		if nodeSet == nil {
@@ -87,16 +87,15 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPla
 		}
 	}
 
-	// firstly order node by cost
+	// First sort plans by cost
 	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
 		return s.curJoinGroup[i].cumCost < s.curJoinGroup[j].cumCost
 	})
 
-	// secondly adjust the order through a fixed order between nodes
+	// Then adjust the order for the plans according to join order that maintained in the directMap.
 	for key, set := range s.directMap {
 		keyIdx := -1
 		lowerStart := -1
-		// find the minimum index of the node after the keys in a fixed order
 		for idx, node := range s.curJoinGroup {
 			if key == node.p {
 				keyIdx = idx
@@ -168,8 +167,9 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree() (*jrNode, error) 
 
 func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode LogicalPlan) (LogicalPlan, []expression.Expression) {
 	var usedEdges []*expression.ScalarFunction
-	// the node which are greater in fixed order must join preferentially
-	for _, node := range []LogicalPlan{leftNode, leftNode} {
+	// Check whether all of these plans that must be joining before left node or right have already are joined .
+	// If not then return directly.
+	for _, node := range []LogicalPlan{leftNode, rightNode} {
 		for _, remainPlan := range s.remainJoinGroup {
 			if _, ok := s.directMap[remainPlan.p][node]; ok {
 				return nil, nil

@@ -25,7 +25,7 @@ import (
 // construct a new join order based on a reorder algorithm.
 //
 // For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
-// results in a join group {a, b, LeftJoin(c, d)}.
+// results in a join group {a, b, c, d}.
 func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression, directedEdges [][]LogicalPlan, joinTypes []JoinType) {
 	join, isJoin := p.(*LogicalJoin)
 	directedEdges = make([][]LogicalPlan, 0)
@@ -37,6 +37,9 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 
 	lhsGroup, lhsEqualConds, lhsOtherConds, lhsDirectedEdges, lhsJoinTypes := extractJoinGroup(join.children[0])
 	rhsGroup, rhsEqualConds, rhsOtherConds, rhsDirectedEdges, rhsJoinTypes := extractJoinGroup(join.children[1])
+	// Collect the order for plans of the outerJoin
+	// For example: a left join b indicate a must join before b
+	//              a right join b indicate a must join after b
 	if join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin {
 		var leftPlan LogicalPlan
 		var rightPlan LogicalPlan
@@ -106,7 +109,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		}
 		originalSchema := p.Schema()
 
-		// not support outer join reorder in pd
+		// Not support outer join reorder with pd
 		isSupportDP := true
 		for _, joinType := range joinTypes {
 			if joinType != InnerJoin {
@@ -171,7 +174,8 @@ type baseSingleGroupJoinOrderSolver struct {
 	curJoinGroup    []*jrNode
 	remainJoinGroup []*jrNode
 	otherConds      []expression.Expression
-	directMap       map[LogicalPlan]map[LogicalPlan]struct{}
+	// A map maintain plan and plans which must join after the plan
+	directMap map[LogicalPlan]map[LogicalPlan]struct{}
 }
 
 // baseNodeCumCost calculate the cumulative cost of the node in the join group.
