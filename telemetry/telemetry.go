@@ -67,23 +67,7 @@ func PreviewUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (stri
 	if etcdClient == nil {
 		return "", nil
 	}
-	enabled, err := IsTelemetryEnabled(ctx)
-	if err != nil {
-		return "", err
-	}
-	if !enabled {
-		s := status{
-			CheckAt: time.Now().Format(time.RFC3339),
-		}
-		reported, err := reportUsageData(ctx, etcdClient)
-		if err != nil {
-			s.IsError = true
-			s.ErrorMessage = err.Error()
-		} else {
-			s.IsRequestSent = reported
-
-		}
-		err = updateTelemetryStatus(s, etcdClient)
+	if enabled, err := IsTelemetryEnabled(ctx); err != nil || !enabled {
 		return "", err
 	}
 
