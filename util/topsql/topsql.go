@@ -19,11 +19,12 @@ import (
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 )
 
+// SetupTopSQL sets up the top-sql worker.
 func SetupTopSQL() {
 	tracecpu.GlobalTopSQLCPUProfiler.Run()
 }
 
-// SetSQLLabels sets the SQL digest label into the goroutine.
+// SetSQLLabels sets the SQL digest label.
 func SetSQLLabels(ctx context.Context, normalizedSQL, sqlDigest string) context.Context {
 	if len(normalizedSQL) == 0 || len(sqlDigest) == 0 {
 		return ctx
@@ -33,7 +34,7 @@ func SetSQLLabels(ctx context.Context, normalizedSQL, sqlDigest string) context.
 	return ctx
 }
 
-// SetSQLAndPlanLabels sets the SQL and plan digest label into the goroutine.
+// SetSQLAndPlanLabels sets the SQL and plan digest label.
 func SetSQLAndPlanLabels(ctx context.Context, sqlDigest, planDigest, normalizedPlan string) context.Context {
 	ctx = tracecpu.SetSQLAndPlanLabels(ctx, sqlDigest, planDigest)
 	registerPlan(planDigest, normalizedPlan)
