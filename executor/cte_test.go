@@ -118,13 +118,14 @@ func (test *CTETestSuite) TestSpillToDisk(c *check.C) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(c1 int, c2 int);")
 	tk.MustExec(insertStr)
-	tk.MustExec("set tidb_mem_quota_query = 50000;")
+	tk.MustExec("set tidb_mem_quota_query = 45000;")
 	rows := tk.MustQuery("with recursive cte1 as ( " +
 		"select c1 from t1 " +
 		"union " +
 		"select c1 + 1 c1 from cte1 where c1 < 5000) " +
 		"select c1 from cte1;")
 
+	// Use duplicated rows to test UNION DISTINCT.
 	rowNum := 5000
 	var resRows []string
 	for i := 0; i <= rowNum; i++ {
@@ -150,7 +151,7 @@ func (test *CTETestSuite) TestSpillToDisk(c *check.C) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(c1 int, c2 int);")
 	tk.MustExec(insertStr)
-	tk.MustExec("set tidb_mem_quota_query = 5000;")
+	tk.MustExec("set tidb_mem_quota_query = 45000;")
 	tk.MustExec("set cte_max_recursion_depth = 500000;")
 	rows = tk.MustQuery("with recursive cte1 as ( " +
 		"select c1 from t1 " +
