@@ -231,9 +231,6 @@ func BuildHistAndTopN(
 	}
 	count := collector.Count
 	ndv := collector.FMSketch.NDV()
-	if ndv < 0 {
-		ndv = collector.FMSketch.NDV()
-	}
 	nullCount := collector.NullCount
 	if ndv > count {
 		ndv = count

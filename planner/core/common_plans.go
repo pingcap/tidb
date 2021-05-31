@@ -833,7 +833,7 @@ func (h *AnalyzeTableID) Equals(t *AnalyzeTableID) bool {
 	return h.TableID == t.TableID && h.PartitionID == t.PartitionID
 }
 
-// analyzeInfo is used to store the database name, table name and partition name of analyze task.
+// AnalyzeInfo is used to store the database name, table name and partition name of analyze task.
 type AnalyzeInfo struct {
 	DBName        string
 	TableName     string
