@@ -1028,6 +1028,7 @@ func NewSessionVars() *SessionVars {
 		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
+		TxnMode:                     DefTiDBTxnMode,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1395,29 +1396,6 @@ func (s *SessionVars) SetSystemVarWithRelaxedValidation(name string, val string)
 	}
 	val = sv.ValidateWithRelaxedValidation(s, val, ScopeSession)
 	return sv.SetSessionFromHook(s, val)
-}
-
-// GetReadableTxnMode returns the session variable TxnMode but rewrites it to "OPTIMISTIC" when it's empty.
-func (s *SessionVars) GetReadableTxnMode() string {
-	txnMode := s.TxnMode
-	if txnMode == "" {
-		txnMode = ast.Optimistic
-	}
-	return txnMode
-}
-
-func (s *SessionVars) setTxnMode(val string) error {
-	switch strings.ToUpper(val) {
-	case ast.Pessimistic:
-		s.TxnMode = ast.Pessimistic
-	case ast.Optimistic:
-		s.TxnMode = ast.Optimistic
-	case "":
-		s.TxnMode = ""
-	default:
-		return ErrWrongValueForVar.FastGenByArgs(TiDBTxnMode, val)
-	}
-	return nil
 }
 
 // SetPrevStmtDigest sets the digest of the previous statement.

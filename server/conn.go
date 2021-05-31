@@ -872,7 +872,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			}
 			var txnMode string
 			if cc.ctx != nil {
-				txnMode = cc.ctx.GetSessionVars().GetReadableTxnMode()
+				txnMode = cc.ctx.GetSessionVars().TxnMode
 			}
 			logutil.Logger(ctx).Info("command dispatched failed",
 				zap.String("connInfo", cc.String()),

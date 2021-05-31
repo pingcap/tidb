@@ -63,17 +63,26 @@ func (*testSysVarSuite) TestSysVar(c *C) {
 }
 
 func (*testSysVarSuite) TestTxnMode(c *C) {
-	seVar := NewSessionVars()
-	c.Assert(seVar, NotNil)
-	c.Assert(seVar.TxnMode, Equals, "")
-	err := seVar.setTxnMode("pessimistic")
+	vars := NewSessionVars()
+	c.Assert(vars, NotNil)
+	c.Assert(vars.TxnMode, Equals, "PESSIMISTIC")
+
+	sysVar := GetSysVar(TiDBTxnMode)
+	normalizedVal, err := sysVar.Validate(vars, "peSSIMIstic", ScopeSession)
 	c.Assert(err, IsNil)
-	err = seVar.setTxnMode("optimistic")
+	c.Assert(normalizedVal, Equals, "PESSIMISTIC")
+
+	err = sysVar.SetSessionFromHook(vars, "PESSIMISTIC")
 	c.Assert(err, IsNil)
-	err = seVar.setTxnMode("")
+	c.Assert(vars.TxnMode, Equals, "PESSIMISTIC")
+
+	normalizedVal, err = sysVar.Validate(vars, "opTimistic", ScopeSession)
 	c.Assert(err, IsNil)
-	err = seVar.setTxnMode("something else")
-	c.Assert(err, NotNil)
+	c.Assert(normalizedVal, Equals, "OPTIMISTIC")
+
+	normalizedVal, err = sysVar.Validate(vars, "", ScopeSession) // no longer recommended
+	c.Assert(err, IsNil)
+	c.Assert(normalizedVal, Equals, "OPTIMISTIC")
 }
 
 func (*testSysVarSuite) TestError(c *C) {

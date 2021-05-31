@@ -162,7 +162,7 @@ func (s *testPessimisticSuite) TestTxnMode(c *C) {
 	}
 	tk.MustExec("set @@global.tidb_txn_mode = 'pessimistic'")
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
-	tk1.MustQuery("select @@tidb_txn_mode").Check(testkit.Rows("pessimistic"))
+	tk1.MustQuery("select @@tidb_txn_mode").Check(testkit.Rows("PESSIMISTIC"))
 	tk1.MustExec("set @@autocommit = 0")
 	tk1.MustExec("insert txn_mode values (2)")
 	c.Check(tk1.Se.GetSessionVars().TxnCtx.IsPessimistic, IsTrue)

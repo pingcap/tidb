@@ -1174,8 +1174,17 @@ var defaultSysVars = []*SysVar{
 		s.ConstraintCheckInPlace = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTxnMode, Value: DefTiDBTxnMode, AllowEmptyAll: true, Type: TypeEnum, PossibleValues: []string{"pessimistic", "optimistic"}, SetSession: func(s *SessionVars, val string) error {
-		s.TxnMode = strings.ToUpper(val)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTxnMode, Value: DefTiDBTxnMode, Type: TypeEnum, AllowEmptyAll: true, PossibleValues: []string{"PESSIMISTIC", "OPTIMISTIC"}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if normalizedValue == "" {
+			// The option "" also means OPTIMISTIC for backward compatibility.
+			// But this is not recommended as it could be removed in future.
+			// Set a warning and return OPTIMISTIC anyway.
+			vars.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(normalizedValue, fmt.Sprintf("'%s' or '%s'", "PESSIMISTIC", "OPTIMISTIC")))
+			return "OPTIMISTIC", nil
+		}
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		s.TxnMode = val
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBRowFormatVersion, Value: strconv.Itoa(DefTiDBRowFormatV1), Type: TypeUnsigned, MinValue: 1, MaxValue: 2, SetSession: func(s *SessionVars, val string) error {

@@ -626,7 +626,7 @@ const (
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 1
 	DefTiDBAllowMPPExecution           = "ON"
-	DefTiDBTxnMode                     = ""
+	DefTiDBTxnMode                     = "PESSIMISTIC"
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
 	DefTiDBDDLReorgWorkerCount         = 4

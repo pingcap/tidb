@@ -1597,8 +1597,8 @@ func doDMLWorks(s Session) {
 		// Session only variable should not be inserted.
 		if v.Scope != variable.ScopeSession {
 			vVal := v.Value
-			if v.Name == variable.TiDBTxnMode && config.GetGlobalConfig().Store == "tikv" {
-				vVal = "pessimistic"
+			if v.Name == variable.TiDBTxnMode && config.GetGlobalConfig().Store != "tikv" {
+				vVal = "OPTIMISTIC"
 			}
 			if v.Name == variable.TiDBRowFormatVersion {
 				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)

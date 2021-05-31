@@ -2746,7 +2746,7 @@ func logQuery(query string, s *session) {
 			zap.Uint64("forUpdateTS", vars.TxnCtx.GetForUpdateTS()),
 			zap.Bool("isReadConsistency", vars.IsIsolation(ast.ReadCommitted)),
 			zap.String("current_db", vars.CurrentDB),
-			zap.String("txn_mode", vars.GetReadableTxnMode()),
+			zap.String("txn_mode", vars.TxnMode),
 			zap.String("sql", query))
 	}
 }
