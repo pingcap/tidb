@@ -42,7 +42,7 @@ func NewSortedBuilder(sc *stmtctx.StatementContext, numBuckets, id int64, tp *ty
 		numBuckets:      numBuckets,
 		valuesPerBucket: 1,
 		hist:            NewHistogram(id, 0, 0, 0, tp, int(numBuckets), 0),
-		needBucketNDV:   statsVer == Version2,
+		needBucketNDV:   statsVer >= Version2,
 	}
 }
 
@@ -210,8 +210,25 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 	return BuildColumnHist(ctx, numBuckets, id, collector, tp, collector.Count, collector.FMSketch.NDV(), collector.NullCount)
 }
 
-// BuildColumnHistAndTopN build a histogram and TopN for a column from samples.
-func BuildColumnHistAndTopN(ctx sessionctx.Context, numBuckets, numTopN int, id int64, collector *SampleCollector, tp *types.FieldType) (*Histogram, *TopN, error) {
+// BuildHistAndTopN build a histogram and TopN for a column or an index from samples.
+func BuildHistAndTopN(
+	ctx sessionctx.Context,
+	numBuckets, numTopN int,
+	id int64,
+	collector *SampleCollector,
+	tp *types.FieldType,
+	isColumn bool,
+) (*Histogram, *TopN, error) {
+	var getComparedBytes func(datum types.Datum) ([]byte, error)
+	if isColumn {
+		getComparedBytes = func(datum types.Datum) ([]byte, error) {
+			return codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, datum)
+		}
+	} else {
+		getComparedBytes = func(datum types.Datum) ([]byte, error) {
+			return datum.GetBytes(), nil
+		}
+	}
 	count := collector.Count
 	ndv := collector.FMSketch.NDV()
 	nullCount := collector.NullCount
@@ -237,7 +254,7 @@ func BuildColumnHistAndTopN(ctx sessionctx.Context, numBuckets, numTopN int, id 
 
 	// the topNList is always sorted by count from more to less
 	topNList := make([]TopNMeta, 0, numTopN)
-	cur, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, samples[0].Value)
+	cur, err := getComparedBytes(samples[0].Value)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -246,9 +263,11 @@ func BuildColumnHistAndTopN(ctx sessionctx.Context, numBuckets, numTopN int, id 
 
 	// Iterate through the samples
 	for i := int64(0); i < sampleNum; i++ {
-		corrXYSum += float64(i) * float64(samples[i].Ordinal)
+		if isColumn {
+			corrXYSum += float64(i) * float64(samples[i].Ordinal)
+		}
 
-		sampleBytes, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, samples[i].Value)
+		sampleBytes, err := getComparedBytes(samples[i].Value)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -286,7 +305,9 @@ func BuildColumnHistAndTopN(ctx sessionctx.Context, numBuckets, numTopN int, id 
 	}
 
 	// Calc the correlation of the column between the handle column.
-	hg.Correlation = calcCorrelation(sampleNum, corrXYSum)
+	if isColumn {
+		hg.Correlation = calcCorrelation(sampleNum, corrXYSum)
+	}
 
 	// Handle the counting for the last value. Basically equal to the case 2 above.
 	// now topn is empty: append the "current" count directly
@@ -310,7 +331,7 @@ func BuildColumnHistAndTopN(ctx sessionctx.Context, numBuckets, numTopN int, id 
 
 	// Step2: exclude topn from samples
 	for i := int64(0); i < int64(len(samples)); i++ {
-		sampleBytes, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, samples[i].Value)
+		sampleBytes, err := getComparedBytes(samples[i].Value)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

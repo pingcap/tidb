@@ -32,6 +32,7 @@ type featureUsage struct {
 	// cluster index usage information
 	// key is the first 6 characters of sha2(TABLE_NAME, 256)
 	ClusterIndex *ClusterIndexUsage `json:"clusterIndex"`
+	TemporaryTable bool            `json:"temporaryTable"`
 }
 
 func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
@@ -41,9 +42,14 @@ func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
 		logutil.BgLogger().Info(err.Error())
 		return nil, err
 	}
+  
+  // transaction related feature
 	txnUsage := GetTxnUsageInfo(ctx)
+  
+  // Avoid the circle dependency.
+	temporaryTable = ctx.(TemporaryTableFeatureChecker).TemporaryTableExists()
 
-	return &featureUsage{txnUsage, clusterIdxUsage}, nil
+	return &featureUsage{txnUsage, clusterIdxUsage, temporaryTable}, nil
 }
 
 // ClusterIndexUsage records the usage info of all the tables, no more than 10k tables
@@ -119,7 +125,14 @@ func GetClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, er
 		}
 		usage[row.GetString(0)] = tblClusteredInfo
 	}
+
 	return &usage, nil
+}
+
+// TemporaryTableFeatureChecker is defined to avoid package circle dependency.
+// The session struct implements this interface.
+type TemporaryTableFeatureChecker interface {
+	TemporaryTableExists() bool
 }
 
 // TxnUsage records the usage info of transaction related features, including

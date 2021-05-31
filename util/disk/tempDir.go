@@ -14,7 +14,6 @@
 package disk
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 
@@ -81,7 +80,7 @@ func InitializeTempDir() error {
 		return err
 	}
 
-	subDirs, err := ioutil.ReadDir(tempDir)
+	subDirs, err := os.ReadDir(tempDir)
 	if err != nil {
 		return err
 	}

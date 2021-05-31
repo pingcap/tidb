@@ -16,7 +16,6 @@ package profile
 import (
 	"bytes"
 	"io"
-	"io/ioutil"
 	"runtime/pprof"
 	"strconv"
 	"strings"
@@ -103,7 +102,7 @@ func (c *Collector) ProfileGraph(name string) ([][]types.Datum, error) {
 
 // ParseGoroutines returns the groutine list for given string representation
 func (c *Collector) ParseGoroutines(reader io.Reader) ([][]types.Datum, error) {
-	content, err := ioutil.ReadAll(reader)
+	content, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, err
 	}
