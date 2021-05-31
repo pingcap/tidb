@@ -756,8 +756,8 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range) (
 	hists = make([]*statistics.Histogram, totalLen)
 	topns = make([]*statistics.TopN, totalLen)
 	fmSketches = make([]*statistics.FMSketch, 0, totalLen)
-	buildResultChan := make(chan error, len(e.colsInfo)+len(e.indexes))
-	buildTaskChan := make(chan *samplingBuildTask, len(e.colsInfo)+len(e.indexes))
+	buildResultChan := make(chan error, totalLen)
+	buildTaskChan := make(chan *samplingBuildTask, totalLen)
 	e.samplingBuilderWg = &sync.WaitGroup{}
 	e.samplingBuilderWg.Add(statsConcurrency)
 	sampleCollectors := make([]*statistics.SampleCollector, len(e.colsInfo))
@@ -861,7 +861,6 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 
 type samplingBuildTask struct {
 	id               int64
-	collectorBuilder func() (*statistics.SampleCollector, error)
 	rootRowCollector *statistics.RowSampleCollector
 	tp               *types.FieldType
 	isColumn         bool
