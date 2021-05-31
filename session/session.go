@@ -670,7 +670,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		}
 	})
 	s.sessionVars.TxnCtx.Cleanup()
-	s.sessionVars.TxnReadTS.Cleanup()
+	s.sessionVars.CleanupTxnReadTSIfUsed()
 	return err
 }
 
@@ -688,7 +688,7 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	}
 	s.txn.changeToInvalid()
 	s.sessionVars.TxnCtx.Cleanup()
-	s.sessionVars.TxnReadTS.Cleanup()
+	s.sessionVars.CleanupTxnReadTSIfUsed()
 	s.sessionVars.SetInTxn(false)
 }
 

@@ -2096,13 +2096,9 @@ func (t *TxnReadTS) PeakTxnReadTS() uint64 {
 	return t.readTS
 }
 
-// Cleanup cleans up readTS if used is true
-func (t *TxnReadTS) Cleanup() {
-	if t == nil {
-		return
-	}
-	if t.used {
-		t.used = false
-		t.readTS = 0
+func (s *SessionVars) CleanupTxnReadTSIfUsed() {
+	if s.TxnReadTS.used {
+		s.TxnReadTS = NewTxnReadTS(0)
+		s.SnapshotInfoschema = nil
 	}
 }
