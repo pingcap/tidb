@@ -215,7 +215,7 @@ func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
 	cms, _, _, _ := statistics.NewCMSketchAndTopN(5, 2048, fakeData, 20, 100)
 
 	stat := h.GetTableStats(tableInfo)
-	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, nil, nil, statistics.Version2, 1)
+	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, nil, nil, statistics.Version2, 1, false)
 	c.Assert(err, IsNil)
 	c.Assert(h.Update(is), IsNil)
 
@@ -287,10 +287,10 @@ func (s *testStatsSuite) TestDumpExtendedStats(c *C) {
 	assertTableEqual(c, loadTblInStorage, tbl)
 }
 
-func (s *testStatsSuite) TestDumpVer2Stats(c *C) {
+func (s *testStatsSuite) TestDumpVer3Stats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set @@tidb_analyze_version = 3")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10))")

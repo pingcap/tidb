@@ -36,11 +36,15 @@ const (
 	DefStoresRefreshInterval = 60
 )
 
+func init() {
+	conf := DefaultConfig()
+	StoreGlobalConfig(&conf)
+}
+
 // Config contains configuration options.
 type Config struct {
 	CommitterConcurrency int
 	MaxTxnTTL            uint64
-	ServerMemoryQuota    uint64
 	TiKVClient           TiKVClient
 	Security             Security
 	PDClient             PDClient
@@ -59,7 +63,6 @@ func DefaultConfig() Config {
 	return Config{
 		CommitterConcurrency:  128,
 		MaxTxnTTL:             60 * 60 * 1000, // 1hour
-		ServerMemoryQuota:     0,
 		TiKVClient:            DefaultTiKVClient(),
 		PDClient:              DefaultPDClient(),
 		TxnLocalLatches:       DefaultTxnLocalLatches(),

@@ -911,9 +911,7 @@ func (p *PhysicalMergeJoin) Clone() (PhysicalPlan, error) {
 		return nil, err
 	}
 	cloned.basePhysicalJoin = *base
-	for _, cf := range p.CompareFuncs {
-		cloned.CompareFuncs = append(cloned.CompareFuncs, cf)
-	}
+	cloned.CompareFuncs = append(cloned.CompareFuncs, p.CompareFuncs...)
 	cloned.Desc = p.Desc
 	return cloned, nil
 }
@@ -1360,4 +1358,29 @@ func NewTableSampleInfo(node *ast.TableSample, fullSchema *expression.Schema, pt
 		FullSchema: fullSchema,
 		Partitions: pt,
 	}
+}
+
+// PhysicalCTE is for CTE.
+type PhysicalCTE struct {
+	physicalSchemaProducer
+
+	SeedPlan  PhysicalPlan
+	RecurPlan PhysicalPlan
+	CTE       *CTEClass
+}
+
+// PhysicalCTETable is for CTE table.
+type PhysicalCTETable struct {
+	physicalSchemaProducer
+
+	IDForStorage int
+}
+
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := ExtractCorrelatedCols4PhysicalPlan(p.SeedPlan)
+	if p.RecurPlan != nil {
+		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(p.RecurPlan)...)
+	}
+	return corCols
 }

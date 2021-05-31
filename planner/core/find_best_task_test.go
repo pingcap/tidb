@@ -96,14 +96,14 @@ func (p *mockLogicalPlan4Test) getPhysicalPlan2(prop *property.PhysicalProperty)
 	return physicalPlan2
 }
 
-func (p *mockLogicalPlan4Test) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
+func (p *mockLogicalPlan4Test) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	plan1 := make([]PhysicalPlan, 0, 1)
 	plan2 := make([]PhysicalPlan, 0, 1)
 	if prop.IsEmpty() && p.canGeneratePlan2 {
 		// Generate PhysicalPlan2 when the property is empty.
 		plan2 = append(plan2, p.getPhysicalPlan2(prop))
 		if p.hasHintForPlan2 {
-			return plan2, true
+			return plan2, true, nil
 		}
 	}
 	if all, _ := prop.AllSameOrder(); all {
@@ -115,9 +115,9 @@ func (p *mockLogicalPlan4Test) exhaustPhysicalPlans(prop *property.PhysicalPrope
 		if prop.IsEmpty() {
 			p.ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("the hint is inapplicable for plan2"))
 		}
-		return plan1, false
+		return plan1, false, nil
 	}
-	return append(plan1, plan2...), true
+	return append(plan1, plan2...), true, nil
 }
 
 type mockPhysicalPlan4Test struct {
