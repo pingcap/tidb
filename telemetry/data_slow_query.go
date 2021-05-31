@@ -15,6 +15,7 @@ package telemetry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	pmodel "github.com/prometheus/common/model"
+	"go.uber.org/zap"
 )
 
 type slowQueryStats struct {
@@ -36,6 +38,8 @@ type slowQueryStats struct {
 // Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days  // defined in metrics/server.go
 type SlowQueryBucket map[string]int
 
+const SLOW_QUERY_BUCKET_NUM = 29 //prometheus.ExponentialBuckets(0.001, 2, 28), and 1 more +Inf
+
 var (
 	// LastSQBInfo records last statistic information of slow query buckets
 	LastSQBInfo SlowQueryBucket
@@ -44,7 +48,6 @@ var (
 )
 
 func getSlowQueryStats(ctx sessionctx.Context) (*slowQueryStats, error) {
-
 	slowQueryBucket, err := GetSlowQueryBucket(ctx)
 	if err != nil {
 		logutil.BgLogger().Info(err.Error())
@@ -66,10 +69,26 @@ func GetSlowQueryBucket(ctx sessionctx.Context) (*SlowQueryBucket, error) {
 
 // UpdateCurrentSQB records current slow query buckets
 func UpdateCurrentSQB(ctx sessionctx.Context) (err error) {
-	value, err := querySlowQueryMetric(ctx)
+	defer func() {
+		if r := recover(); r != nil {
+			switch x := r.(type) {
+			case string:
+				err = errors.New(x)
+			case error:
+				err = x
+			default:
+				err = errors.New("unknown failure")
+			}
+		}
+	}()
+
+	value, err := querySlowQueryMetric(ctx) //TODO: judge error here
+	if err != nil {
+		logutil.BgLogger().Info("querySlowQueryMetric got error")
+		return err
+	}
 
 	if value.Type() != pmodel.ValVector {
-		// TODO: add log here
 		return errors.New("Prom vector expected, got " + value.Type().String())
 	}
 	promVec := value.(pmodel.Vector)
@@ -126,26 +145,34 @@ func CalculateDeltaSQB() *SlowQueryBucket {
 	return &deltaMap
 }
 
-// Init LastSQBInfo, follow the definition of metrics/server.go
+// InitSlowQueryStats Init LastSQBInfo, follow the definition of metrics/server.go
 // Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
-func initSlowQueryStats() {
+func InitSlowQueryStats() {
 	LastSQBInfo := make(SlowQueryBucket)
 	CurrentSQBInfo := make(SlowQueryBucket)
 
-	bucketBase := 0.001 // TODO: Double check whethere here's precision issue with 32bit floating number.
-	bucketNum := 28     // From 0.001 to 134217.728, the 29th is
-	for i := 0; i < bucketNum; i++ {
+	bucketBase := 0.001 // From 0.001 to 134217.728, total 28 float number; the 29th is +Inf
+	for i := 0; i < SLOW_QUERY_BUCKET_NUM-1; i++ {
 		LastSQBInfo[strconv.FormatFloat(bucketBase, 'f', 3, 32)] = 0
 		CurrentSQBInfo[strconv.FormatFloat(bucketBase, 'f', 3, 32)] = 0
 		bucketBase += bucketBase
 	}
-	// TODO: ADD +Inf here
 	LastSQBInfo["+Inf"] = 0
 	CurrentSQBInfo["+Inf"] = 0
+
+	logutil.BgLogger().Info("Telemetry slow query stats initialized", zap.String("CurrentSQBInfo", bucketMap2Json(CurrentSQBInfo)))
+	logutil.BgLogger().Info("Telemetry slow query stats initialized", zap.String("LastSQBInfo", bucketMap2Json(LastSQBInfo)))
 }
 
 // postReportSlowQueryStats copy CurrentSQBInfo to LastSQBInfo to be ready for next report
 // this function is designed for being compatible with preview telemetry
 func postReportSlowQueryStats() {
 	LastSQBInfo = CurrentSQBInfo
+	CurrentSQBInfo = make(SlowQueryBucket)
+	logutil.BgLogger().Info("Telemetry slow query stats, postReportSlowQueryStats finished")
+}
+
+func bucketMap2Json(paramMap SlowQueryBucket) string {
+	dataType, _ := json.Marshal(paramMap)
+	return string(dataType)
 }
