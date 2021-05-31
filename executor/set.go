@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/stmtsummary"
 	"go.uber.org/zap"
 )
 
@@ -107,10 +106,8 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	if sysVar == nil {
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	var valStr string
-	var err error
 	if v.IsGlobal {
-		valStr, err = e.getVarValue(v, sysVar)
+		valStr, err := e.getVarValue(v, sysVar)
 		if err != nil {
 			return err
 		}
@@ -125,64 +122,37 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			}
 			return nil
 		})
-		if err != nil {
-			return err
-		}
 		logutil.BgLogger().Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
-	} else {
-		valStr, err = e.getVarValue(v, nil)
-		if err != nil {
-			return err
-		}
-		oldSnapshotTS := sessionVars.SnapshotTS
-		if name == variable.TxnIsolationOneShot && sessionVars.InTxn() {
-			return errors.Trace(ErrCantChangeTxCharacteristics)
-		}
-		err = variable.SetSessionSystemVar(sessionVars, name, valStr)
-		if err != nil {
-			return err
-		}
-		newSnapshotIsSet := sessionVars.SnapshotTS > 0 && sessionVars.SnapshotTS != oldSnapshotTS
-		if newSnapshotIsSet {
-			err = gcutil.ValidateSnapshot(e.ctx, sessionVars.SnapshotTS)
-			if err != nil {
-				sessionVars.SnapshotTS = oldSnapshotTS
-				return err
-			}
-		}
-		err = e.loadSnapshotInfoSchemaIfNeeded(name)
+		return err
+	}
+	valStr, err := e.getVarValue(v, nil)
+	if err != nil {
+		return err
+	}
+	oldSnapshotTS := sessionVars.SnapshotTS
+	if name == variable.TxnIsolationOneShot && sessionVars.InTxn() {
+		return errors.Trace(ErrCantChangeTxCharacteristics)
+	}
+	err = variable.SetSessionSystemVar(sessionVars, name, valStr)
+	if err != nil {
+		return err
+	}
+	newSnapshotIsSet := sessionVars.SnapshotTS > 0 && sessionVars.SnapshotTS != oldSnapshotTS
+	if newSnapshotIsSet {
+		err = gcutil.ValidateSnapshot(e.ctx, sessionVars.SnapshotTS)
 		if err != nil {
 			sessionVars.SnapshotTS = oldSnapshotTS
 			return err
 		}
-		// Clients are often noisy in setting session variables such as
-		// autocommit, timezone, query cache
-		logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	}
-
-	// These are server instance scoped variables, and have special semantics.
-	// i.e. after SET SESSION, other users sessions will reflect the new value.
-	// TODO: in future these could be better managed as a post-set hook.
-
-	valStrToBoolStr := variable.BoolToOnOff(variable.TiDBOptOn(valStr))
-
-	switch name {
-	case variable.TiDBEnableStmtSummary:
-		return stmtsummary.StmtSummaryByDigestMap.SetEnabled(valStr, !v.IsGlobal)
-	case variable.TiDBStmtSummaryInternalQuery:
-		return stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(valStr, !v.IsGlobal)
-	case variable.TiDBStmtSummaryRefreshInterval:
-		return stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(valStr, !v.IsGlobal)
-	case variable.TiDBStmtSummaryHistorySize:
-		return stmtsummary.StmtSummaryByDigestMap.SetHistorySize(valStr, !v.IsGlobal)
-	case variable.TiDBStmtSummaryMaxStmtCount:
-		return stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(valStr, !v.IsGlobal)
-	case variable.TiDBStmtSummaryMaxSQLLength:
-		return stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(valStr, !v.IsGlobal)
-	case variable.TiDBCapturePlanBaseline:
-		variable.CapturePlanBaseline.Set(valStrToBoolStr, !v.IsGlobal)
+	err = e.loadSnapshotInfoSchemaIfNeeded(name)
+	if err != nil {
+		sessionVars.SnapshotTS = oldSnapshotTS
+		return err
 	}
-
+	// Clients are often noisy in setting session variables such as
+	// autocommit, timezone, query cache
+	logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	return nil
 }
 
