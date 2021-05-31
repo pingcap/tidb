@@ -2098,6 +2098,9 @@ func (t *TxnReadTS) PeakTxnReadTS() uint64 {
 
 // CleanupTxnReadTSIfUsed cleans txnReadTS if used
 func (s *SessionVars) CleanupTxnReadTSIfUsed() {
+	if s.TxnReadTS == nil {
+		return
+	}
 	if s.TxnReadTS.used {
 		s.TxnReadTS = NewTxnReadTS(0)
 		s.SnapshotInfoschema = nil
