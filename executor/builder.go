@@ -4092,7 +4092,7 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		return nil
 	}
 
-	// 2. Build iterIntTbl.
+	// 2. Build iterInTbl.
 	chkSize := b.ctx.GetSessionVars().MaxChunkSize
 	tps := seedExec.base().retFieldTypes
 	iterOutTbl := cteutil.NewStorageRowContainer(tps, chkSize)

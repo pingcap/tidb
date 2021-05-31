@@ -1692,7 +1692,7 @@ func (rs *execStmtResult) Close() error {
 func resetCTEStorageMap(se *session) error {
 	tmp := se.GetSessionVars().StmtCtx.CTEStorageMap
 	if tmp == nil {
-		// Close() is already called, so no need to reset. Such TraceExec.
+		// Close() is already called, so no need to reset. Such as TraceExec.
 		return nil
 	}
 	storageMap, ok := tmp.(map[int]*executor.CTEStorages)
@@ -1703,11 +1703,13 @@ func resetCTEStorageMap(se *session) error {
 		// No need to lock IterInTbl.
 		v.ResTbl.Lock()
 		defer v.ResTbl.Unlock()
-		if err := v.ResTbl.DerefAndClose(); err != nil {
-			return err
+		err1 := v.ResTbl.DerefAndClose()
+		err2 := v.IterInTbl.DerefAndClose()
+		if err1 != nil {
+			return err1
 		}
-		if err := v.IterInTbl.DerefAndClose(); err != nil {
-			return err
+		if err2 != nil {
+			return err2
 		}
 	}
 	se.GetSessionVars().StmtCtx.CTEStorageMap = nil

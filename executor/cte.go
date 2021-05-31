@@ -201,7 +201,7 @@ func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 		chks = append(chks, chk)
 	}
 	// Initial resTbl is empty, so no need to deduplicate chk using resTbl.
-	// Just addding is ok.
+	// Just adding is ok.
 	for _, chk := range chks {
 		if err = e.resTbl.Add(chk); err != nil {
 			return err
@@ -367,7 +367,8 @@ func (e *CTEExec) computeChunkHash(chk *chunk.Chunk) (sel []int, err error) {
 	return sel, nil
 }
 
-// Use hashTbl to deduplicate rows, also unique row will be added to hashTbl.
+// Use hashTbl to deduplicate rows, and unique rows will be added to hashTbl.
+// Duplicated rows are only marked to be removed by sel in Chunk, instead of really deleted.
 func (e *CTEExec) deduplicate(chk *chunk.Chunk,
 	storage cteutil.Storage,
 	hashTbl baseHashTable) (chkNoDup *chunk.Chunk, err error) {
@@ -432,6 +433,8 @@ func (e *CTEExec) deduplicate(chk *chunk.Chunk,
 	return chk, nil
 }
 
+// Use the row's probe key to check if it already exists in chk or storage.
+// We also need to compare the row's real encoding value to avoid hash collision.
 func (e *CTEExec) checkHasDup(probeKey uint64,
 	row chunk.Row,
 	curChk *chunk.Chunk,
