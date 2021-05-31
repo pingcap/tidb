@@ -1041,14 +1041,13 @@ func (e *Explain) explainPlanInRowFormatCTE() (err error) {
 	explainedCTEPlan := make(map[int]struct{})
 	for i := 0; i < len(e.ctes); i++ {
 		x := (*CTEDefinition)(e.ctes[i])
+		// skip if the CTE has been explained, the same CTE has same IDForStorage
 		if _, ok := explainedCTEPlan[x.CTE.IDForStorage]; ok {
 			continue
 		}
 		e.prepareOperatorInfo(x, "root", "", "", true)
 		childIndent := texttree.Indent4Child("", true)
-		if x.SeedPlan != nil {
-			err = e.explainPlanInRowFormat(x.SeedPlan, "root", "(Seed Part)", childIndent, x.RecurPlan == nil)
-		}
+		err = e.explainPlanInRowFormat(x.SeedPlan, "root", "(Seed Part)", childIndent, x.RecurPlan == nil)
 		if x.RecurPlan != nil {
 			err = e.explainPlanInRowFormat(x.RecurPlan, "root", "(Recursive Part)", childIndent, true)
 		}

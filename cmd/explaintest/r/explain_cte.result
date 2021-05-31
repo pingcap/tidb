@@ -14,15 +14,15 @@ explain with cte(a) as (select c1 from t1) select * from cte;
 id	estRows	task	access object	operator info
 CTEFullScan_11	1.00	root	CTE:cte	data:CTE_0
 CTE_0	1.00	root		None Recursive CTE
-└─IndexReader_10(Seed Part)	10000.00	root		index:IndexFullScan_9
-  └─IndexFullScan_9	10000.00	cop[tikv]	table:t1, index:PRIMARY(c1)	keep order:false, stats:pseudo
+└─TableReader_8(Seed Part)	10000.00	root		data:TableFullScan_7
+  └─TableFullScan_7	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain with cte(a,b,c,d) as (select * from t1, t2) select * from cte;
 id	estRows	task	access object	operator info
-CTEFullScan_16	1.00	root	CTE:cte	data:CTE_0
+CTEFullScan_18	1.00	root	CTE:cte	data:CTE_0
 CTE_0	1.00	root		None Recursive CTE
 └─HashJoin_10(Seed Part)	100000000.00	root		CARTESIAN inner join
-  ├─TableReader_15(Build)	10000.00	root		data:TableFullScan_14
-  │ └─TableFullScan_14	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  ├─TableReader_17(Build)	10000.00	root		data:TableFullScan_16
+  │ └─TableFullScan_16	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─TableReader_13(Probe)	10000.00	root		data:TableFullScan_12
     └─TableFullScan_12	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain with recursive cte(a) as (select 1 union select a+1 from cte where a < 10) select * from cte;
@@ -38,8 +38,8 @@ explain with recursive cte(a) as (select c2 from t1 union select a+1 from cte wh
 id	estRows	task	access object	operator info
 CTEFullScan_20	1.00	root	CTE:cte	data:CTE_0
 CTE_0	1.00	root		Recursive CTE
-├─IndexReader_16(Seed Part)	10000.00	root		index:IndexFullScan_15
-│ └─IndexFullScan_15	10000.00	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
+├─TableReader_14(Seed Part)	10000.00	root		data:TableFullScan_13
+│ └─TableFullScan_13	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─Projection_17(Recursive Part)	0.80	root		cast(plus(test.t1.c2, 1), int(11))->test.t1.c2
   └─Selection_18	0.80	root		lt(test.t1.c2, 10)
     └─CTETable_19	1.00	root		Scan on CTE_0
@@ -84,8 +84,8 @@ HashJoin_23	1.00	root		CARTESIAN inner join
 ├─CTEFullScan_39(Build)	1.00	root	CTE:cte2	data:CTE_1
 └─CTEFullScan_30(Probe)	1.00	root	CTE:cte1	data:CTE_0
 CTE_1	1.00	root		Recursive CTE
-├─IndexReader_35(Seed Part)	10000.00	root		index:IndexFullScan_34
-│ └─IndexFullScan_34	10000.00	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
+├─TableReader_33(Seed Part)	10000.00	root		data:TableFullScan_32
+│ └─TableFullScan_32	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─Projection_36(Recursive Part)	0.80	root		cast(plus(test.t1.c2, 1), int(11))->test.t1.c2
   └─Selection_37	0.80	root		lt(test.t1.c2, 10)
     └─CTETable_38	1.00	root		Scan on CTE_1
@@ -98,10 +98,10 @@ CTE_0	1.00	root		Recursive CTE
 explain with q(a,b) as (select * from t1) select /*+ merge(q) no_merge(q1) */ * from q, q q1 where q.a=1 and q1.a=2;
 id	estRows	task	access object	operator info
 HashJoin_12	0.64	root		CARTESIAN inner join
-├─Selection_19(Build)	0.80	root		eq(test.t1.c1, 2)
-│ └─CTEFullScan_20	1.00	root	CTE:q1	data:CTE_0
+├─Selection_21(Build)	0.80	root		eq(test.t1.c1, 2)
+│ └─CTEFullScan_22	1.00	root	CTE:q1	data:CTE_0
 └─Selection_14(Probe)	0.80	root		eq(test.t1.c1, 1)
-  └─CTEFullScan_18	1.00	root	CTE:q	data:CTE_0
+  └─CTEFullScan_20	1.00	root	CTE:q	data:CTE_0
 CTE_0	1.00	root		None Recursive CTE
 └─TableReader_17(Seed Part)	10000.00	root		data:TableFullScan_16
   └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -119,11 +119,11 @@ id	estRows	task	access object	operator info
 Apply_19	10000.00	root		CARTESIAN semi join
 ├─TableReader_21(Build)	10000.00	root		data:TableFullScan_20
 │ └─TableFullScan_20	10000.00	cop[tikv]	table:dt	keep order:false, stats:pseudo
-└─Selection_22(Probe)	0.80	root		eq(Column#9, 1)
-  └─CTEFullScan_28	1.00	root	CTE:qn	data:CTE_0
+└─Selection_24(Probe)	0.80	root		eq(Column#8, 1)
+  └─CTEFullScan_30	1.00	root	CTE:qn	data:CTE_0
 CTE_0	1.00	root		Recursive CTE
-├─Projection_23(Seed Part)	1.00	root		plus(mul(test.t1.c1, 0), 1)->Column#5
-│ └─TableDual_24	1.00	root		rows:1
-└─Projection_25(Recursive Part)	0.80	root		plus(Column#6, 1)->Column#8
-  └─Selection_26	0.80	root		eq(Column#6, 0)
-    └─CTETable_27	1.00	root		Scan on CTE_0
+├─Projection_25(Seed Part)	1.00	root		plus(mul(test.t1.c1, 0), 1)->Column#4
+│ └─TableDual_26	1.00	root		rows:1
+└─Projection_27(Recursive Part)	0.80	root		plus(Column#5, 1)->Column#7
+  └─Selection_28	0.80	root		eq(Column#5, 0)
+    └─CTETable_29	1.00	root		Scan on CTE_0

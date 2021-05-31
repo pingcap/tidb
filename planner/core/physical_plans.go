@@ -598,7 +598,6 @@ type PhysicalProjection struct {
 	Exprs                []expression.Expression
 	CalculateNoDelay     bool
 	AvoidColumnEvaluator bool
-	AvoidEliminateForCTE bool
 }
 
 // Clone implements PhysicalPlan interface.
