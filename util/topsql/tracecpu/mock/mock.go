@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/parser"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"github.com/pingcap/tidb/util/topsql/collector"
 	"github.com/uber-go/atomic"
 )
 
@@ -30,7 +30,7 @@ type TopSQLCollector struct {
 	// plan_digest -> normalized plan
 	planMap map[string]string
 	// (sql + plan_digest) -> sql stats
-	sqlStatsMap map[string]*tracecpu.TopSQLRecord
+	sqlStatsMap map[string]*collector.TopSQLRecord
 	collectCnt  atomic.Int64
 }
 
@@ -39,12 +39,12 @@ func NewTopSQLCollector() *TopSQLCollector {
 	return &TopSQLCollector{
 		sqlMap:      make(map[string]string),
 		planMap:     make(map[string]string),
-		sqlStatsMap: make(map[string]*tracecpu.TopSQLRecord),
+		sqlStatsMap: make(map[string]*collector.TopSQLRecord),
 	}
 }
 
 // Collect uses for testing.
-func (c *TopSQLCollector) Collect(ts int64, stats []tracecpu.TopSQLRecord) {
+func (c *TopSQLCollector) Collect(ts int64, stats []collector.TopSQLRecord) {
 	defer c.collectCnt.Inc()
 	if len(stats) == 0 {
 		return
@@ -55,7 +55,7 @@ func (c *TopSQLCollector) Collect(ts int64, stats []tracecpu.TopSQLRecord) {
 		hash := c.hash(stmt)
 		stats, ok := c.sqlStatsMap[hash]
 		if !ok {
-			stats = &tracecpu.TopSQLRecord{
+			stats = &collector.TopSQLRecord{
 				SQLDigest:  stmt.SQLDigest,
 				PlanDigest: stmt.PlanDigest,
 			}
@@ -66,7 +66,7 @@ func (c *TopSQLCollector) Collect(ts int64, stats []tracecpu.TopSQLRecord) {
 }
 
 // GetSQLStatsBySQLWithRetry uses for testing.
-func (c *TopSQLCollector) GetSQLStatsBySQLWithRetry(sql string, planIsNotNull bool) []*tracecpu.TopSQLRecord {
+func (c *TopSQLCollector) GetSQLStatsBySQLWithRetry(sql string, planIsNotNull bool) []*collector.TopSQLRecord {
 	after := time.After(time.Second * 10)
 	for {
 		select {
@@ -83,8 +83,8 @@ func (c *TopSQLCollector) GetSQLStatsBySQLWithRetry(sql string, planIsNotNull bo
 }
 
 // GetSQLStatsBySQL uses for testing.
-func (c *TopSQLCollector) GetSQLStatsBySQL(sql string, planIsNotNull bool) []*tracecpu.TopSQLRecord {
-	stats := make([]*tracecpu.TopSQLRecord, 0, 2)
+func (c *TopSQLCollector) GetSQLStatsBySQL(sql string, planIsNotNull bool) []*collector.TopSQLRecord {
+	stats := make([]*collector.TopSQLRecord, 0, 2)
 	sqlDigest := GenSQLDigest(sql)
 	c.Lock()
 	for _, stmt := range c.sqlStatsMap {
@@ -158,7 +158,7 @@ func (c *TopSQLCollector) WaitCollectCnt(count int64) {
 	}
 }
 
-func (c *TopSQLCollector) hash(stat tracecpu.TopSQLRecord) string {
+func (c *TopSQLCollector) hash(stat collector.TopSQLRecord) string {
 	return stat.SQLDigest + stat.PlanDigest
 }
 

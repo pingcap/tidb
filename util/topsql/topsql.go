@@ -21,28 +21,29 @@ import (
 
 // SetupTopSQL sets up the top-sql worker.
 func SetupTopSQL() {
-	tracecpu.GlobalTopSQLCPUProfiler.Run()
+	tracecpu.GlobalSQLCPUProfiler.Run()
 }
 
 // SetSQLLabels sets the SQL digest label.
-func SetSQLLabels(ctx context.Context, normalizedSQL, sqlDigest string) context.Context {
+func SetSQLLabels(ctx context.Context, normalizedSQL, sqlDigest string) {
 	if len(normalizedSQL) == 0 || len(sqlDigest) == 0 {
-		return ctx
+		return
 	}
-	ctx = tracecpu.SetSQLLabels(ctx, normalizedSQL, sqlDigest)
+	tracecpu.SetSQLLabels(ctx, sqlDigest)
 	registerSQL(sqlDigest, normalizedSQL)
-	return ctx
 }
 
 // SetSQLAndPlanLabels sets the SQL and plan digest label.
-func SetSQLAndPlanLabels(ctx context.Context, sqlDigest, planDigest, normalizedPlan string) context.Context {
-	ctx = tracecpu.SetSQLAndPlanLabels(ctx, sqlDigest, planDigest)
+func SetSQLAndPlanLabels(ctx context.Context, sqlDigest, planDigest, normalizedPlan string) {
+	if len(sqlDigest) == 0 || len(planDigest) == 0 {
+		return
+	}
+	tracecpu.SetSQLAndPlanLabels(ctx, sqlDigest, planDigest)
 	registerPlan(planDigest, normalizedPlan)
-	return ctx
 }
 
 func registerSQL(sqlDigest, normalizedSQL string) {
-	c := tracecpu.GlobalTopSQLCPUProfiler.GetCollector()
+	c := tracecpu.GlobalSQLCPUProfiler.GetCollector()
 	if c == nil {
 		return
 	}
@@ -50,7 +51,7 @@ func registerSQL(sqlDigest, normalizedSQL string) {
 }
 
 func registerPlan(planDigest string, normalizedPlan string) {
-	c := tracecpu.GlobalTopSQLCPUProfiler.GetCollector()
+	c := tracecpu.GlobalSQLCPUProfiler.GetCollector()
 	if c == nil {
 		return
 	}

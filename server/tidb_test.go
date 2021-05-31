@@ -92,7 +92,7 @@ func (ts *tidbTestSuite) SetUpSuite(c *C) {
 
 func (ts *tidbTestTopSQLSuite) SetUpSuite(c *C) {
 	ts.tidbTestSuiteBase.SetUpSuite(c)
-	tracecpu.GlobalTopSQLCPUProfiler.Run()
+	tracecpu.GlobalSQLCPUProfiler.Run()
 }
 
 func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
@@ -1181,7 +1181,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	collector := mock.NewTopSQLCollector()
-	tracecpu.GlobalTopSQLCPUProfiler.SetCollector(collector)
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(collector)
 
 	dbt := &DBTest{c, db}
 	dbt.mustExec("drop database if exists topsql")

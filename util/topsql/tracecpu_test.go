@@ -41,12 +41,12 @@ func (s *testSuite) SetUpSuite(c *C) {
 	variable.TopSQLVariable.Enable.Store(true)
 	variable.TopSQLVariable.AgentAddress.Store("mock")
 	variable.TopSQLVariable.PrecisionSeconds.Store(1)
-	tracecpu.GlobalTopSQLCPUProfiler.Run()
+	tracecpu.GlobalSQLCPUProfiler.Run()
 }
 
 func (s *testSuite) TestTopSQLCPUProfile(c *C) {
 	collector := mock.NewTopSQLCollector()
-	tracecpu.GlobalTopSQLCPUProfiler.SetCollector(collector)
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(collector)
 	reqs := []struct {
 		sql  string
 		plan string
@@ -93,21 +93,21 @@ func (s *testSuite) TestTopSQLCPUProfile(c *C) {
 
 func (s *testSuite) TestIsEnabled(c *C) {
 	s.setTopSQLEnable(false)
-	c.Assert(tracecpu.GlobalTopSQLCPUProfiler.IsEnabled(), IsFalse)
+	c.Assert(tracecpu.GlobalSQLCPUProfiler.IsEnabled(), IsFalse)
 
 	s.setTopSQLEnable(true)
 	err := tracecpu.StartCPUProfile(bytes.NewBuffer(nil))
 	c.Assert(err, IsNil)
-	c.Assert(tracecpu.GlobalTopSQLCPUProfiler.IsEnabled(), IsTrue)
+	c.Assert(tracecpu.GlobalSQLCPUProfiler.IsEnabled(), IsTrue)
 	s.setTopSQLEnable(false)
-	c.Assert(tracecpu.GlobalTopSQLCPUProfiler.IsEnabled(), IsTrue)
+	c.Assert(tracecpu.GlobalSQLCPUProfiler.IsEnabled(), IsTrue)
 	err = tracecpu.StopCPUProfile()
 	c.Assert(err, IsNil)
 
 	s.setTopSQLEnable(false)
-	c.Assert(tracecpu.GlobalTopSQLCPUProfiler.IsEnabled(), IsFalse)
+	c.Assert(tracecpu.GlobalSQLCPUProfiler.IsEnabled(), IsFalse)
 	s.setTopSQLEnable(true)
-	c.Assert(tracecpu.GlobalTopSQLCPUProfiler.IsEnabled(), IsTrue)
+	c.Assert(tracecpu.GlobalSQLCPUProfiler.IsEnabled(), IsTrue)
 }
 
 func (s *testSuite) setTopSQLEnable(enabled bool) {
@@ -117,7 +117,7 @@ func (s *testSuite) setTopSQLEnable(enabled bool) {
 func (s *testSuite) mockExecuteSQL(sql, plan string) {
 	ctx := context.Background()
 	sqlDigest := mock.GenSQLDigest(sql)
-	ctx = topsql.SetSQLLabels(ctx, sql, sqlDigest)
+	topsql.SetSQLLabels(ctx, sql, sqlDigest)
 	s.mockExecute(time.Millisecond * 100)
 	planDigest := genDigest(plan)
 	topsql.SetSQLAndPlanLabels(ctx, sqlDigest, planDigest, plan)

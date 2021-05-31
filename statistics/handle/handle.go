@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime/pprof"
 	"sort"
 	"strconv"
 	"sync"
@@ -43,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -123,7 +123,7 @@ func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.
 func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
 		if variable.TopSQLEnabled() {
-			defer tracecpu.ResetGoroutineLabelsWithOriginalCtx(ctx)
+			defer pprof.SetGoroutineLabels(ctx)
 		}
 		stmt, err := exec.ParseWithParams(ctx, sql, params...)
 		if err != nil {

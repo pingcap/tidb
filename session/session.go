@@ -1504,7 +1504,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
 	if variable.TopSQLEnabled() {
-		ctx = topsql.SetSQLLabels(ctx, normalizedSQL, digest.String())
+		topsql.SetSQLLabels(ctx, normalizedSQL, digest.String())
 	}
 
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
@@ -1883,7 +1883,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
 	}
 	if variable.TopSQLEnabled() && preparedStmt.SQLDigest != nil {
-		ctx = topsql.SetSQLLabels(ctx, preparedStmt.NormalizedSQL, preparedStmt.SQLDigest.String())
+		topsql.SetSQLLabels(ctx, preparedStmt.NormalizedSQL, preparedStmt.SQLDigest.String())
 	}
 	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
 	ok, err = s.IsCachedExecOk(ctx, preparedStmt)

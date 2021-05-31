@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tracecpu
+package collector
 
 // TopSQLCollector uses to collect SQL stats.
 // TODO: add a collector to collect and store the SQL stats.

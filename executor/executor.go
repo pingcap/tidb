@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
 	"strings"
@@ -1660,8 +1661,13 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		s = prepareStmt.PreparedAst.Stmt
 		sc.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
 		// For `execute stmt` SQL, should reset the SQL digest with the prepare SQL digest.
+		goCtx := context.Background()
+		if variable.EnablePProfSQLCPU.Load() && len(prepareStmt.NormalizedSQL) > 0 {
+			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", util.QueryStrForLog(prepareStmt.NormalizedSQL)))
+			pprof.SetGoroutineLabels(goCtx)
+		}
 		if variable.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
-			topsql.SetSQLLabels(context.Background(), prepareStmt.NormalizedSQL, prepareStmt.SQLDigest.String())
+			topsql.SetSQLLabels(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest.String())
 		}
 	}
 	// execute missed stmtID uses empty sql
