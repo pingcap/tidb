@@ -308,7 +308,6 @@ func (s *testStaleTxnSuite) TestStalenessAndHistoryRead(c *C) {
 	c.Assert(tk.Se.GetSessionVars().SnapshotInfoschema, NotNil)
 	tk.MustExec("SET TRANSACTION READ ONLY AS OF TIMESTAMP '2020-10-08 16:46:26'")
 	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
-	c.Assert(tk.Se.GetSessionVars().SnapshotInfoschema, IsNil)
 	c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(419993167069184000))
 
 	tk.MustExec("SET TRANSACTION READ ONLY AS OF TIMESTAMP '2020-10-08 16:46:26'")
