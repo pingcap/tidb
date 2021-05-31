@@ -306,7 +306,7 @@ func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
 		return ""
 	}
 
-	is := sctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	tmp, ok := is.TableByID(ts.Table.ID)
 	if !ok {
 		return "partition table not found" + strconv.FormatInt(ts.Table.ID, 10)
@@ -366,7 +366,7 @@ func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) string {
 	}
 
 	var buffer bytes.Buffer
-	is := sctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	tmp, ok := is.TableByID(ts.Table.ID)
 	if !ok {
 		fmt.Fprintf(&buffer, "partition table not found: %d", ts.Table.ID)
@@ -394,7 +394,7 @@ func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) string
 	}
 
 	var buffer bytes.Buffer
-	is := sctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	tmp, ok := is.TableByID(ts.Table.ID)
 	if !ok {
 		fmt.Fprintf(&buffer, "partition table not found: %d", ts.Table.ID)
@@ -417,7 +417,7 @@ func (p *PhysicalIndexMergeReader) accessObject(sctx sessionctx.Context) string 
 		return ""
 	}
 
-	is := sctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	tmp, ok := is.TableByID(ts.Table.ID)
 	if !ok {
 		return "partition table not found" + strconv.FormatInt(ts.Table.ID, 10)
@@ -842,16 +842,16 @@ func (p *LogicalTableDual) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *DataSource) ExplainInfo() string {
+func (ds *DataSource) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	tblName := p.tableInfo.Name.O
-	if p.TableAsName != nil && p.TableAsName.O != "" {
-		tblName = p.TableAsName.O
+	tblName := ds.tableInfo.Name.O
+	if ds.TableAsName != nil && ds.TableAsName.O != "" {
+		tblName = ds.TableAsName.O
 	}
 	fmt.Fprintf(buffer, "table:%s", tblName)
-	if p.isPartition {
-		if pi := p.tableInfo.GetPartitionInfo(); pi != nil {
-			partitionName := pi.GetNameByID(p.physicalTableID)
+	if ds.isPartition {
+		if pi := ds.tableInfo.GetPartitionInfo(); pi != nil {
+			partitionName := pi.GetNameByID(ds.physicalTableID)
 			fmt.Fprintf(buffer, ", partition:%s", partitionName)
 		}
 	}

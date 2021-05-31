@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/store/tikv/client"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -450,7 +451,7 @@ func WithMatchLabels(labels []*metapb.StoreLabel) StoreSelectorOption {
 func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRead kv.ReplicaReadType, followerStoreSeed uint32, opts ...StoreSelectorOption) (*RPCContext, error) {
 	ts := time.Now().Unix()
 
-	cachedRegion := c.getCachedRegionWithRLock(id)
+	cachedRegion := c.GetCachedRegionWithRLock(id)
 	if cachedRegion == nil {
 		return nil, nil
 	}
@@ -563,7 +564,7 @@ func (c *RegionCache) GetAllValidTiFlashStores(id RegionVerID, currentStore *Sto
 	// make sure currentStore id is always the first in allStores
 	allStores = append(allStores, currentStore.storeID)
 	ts := time.Now().Unix()
-	cachedRegion := c.getCachedRegionWithRLock(id)
+	cachedRegion := c.GetCachedRegionWithRLock(id)
 	if cachedRegion == nil {
 		return allStores
 	}
@@ -596,7 +597,7 @@ func (c *RegionCache) GetAllValidTiFlashStores(id RegionVerID, currentStore *Sto
 func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID, loadBalance bool) (*RPCContext, error) {
 	ts := time.Now().Unix()
 
-	cachedRegion := c.getCachedRegionWithRLock(id)
+	cachedRegion := c.GetCachedRegionWithRLock(id)
 	if cachedRegion == nil {
 		return nil, nil
 	}
@@ -732,68 +733,45 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 	return r, nil
 }
 
-// OnSendFailForBatchRegions handles send request fail logic.
-func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *Store, regionInfos []RegionInfo, scheduleReload bool, err error) {
-	metrics.RegionCacheCounterWithSendFail.Add(float64(len(regionInfos)))
-	if store.storeType != tikvrpc.TiFlash {
-		logutil.Logger(bo.GetCtx()).Info("Should not reach here, OnSendFailForBatchRegions only support TiFlash")
+// OnSendFailForRegion handles send request fail logic on a region.
+func (c *RegionCache) OnSendFailForRegion(bo *Backoffer, store *Store, rid RegionVerID, r *Region, scheduleReload bool, err error) {
+
+	rs := r.getStore()
+
+	accessMode := TiFlashOnly
+	accessIdx := rs.getAccessIndex(accessMode, store)
+	if accessIdx == -1 {
+		logutil.Logger(bo.GetCtx()).Warn("can not get access index for region " + rid.String())
 		return
 	}
-	for _, ri := range regionInfos {
-		if ri.Meta == nil {
-			continue
+	if err != nil {
+		storeIdx, s := rs.accessStore(accessMode, accessIdx)
+		epoch := rs.storeEpochs[storeIdx]
+		if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
+			logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
+			metrics.RegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		}
-		r := c.getCachedRegionWithRLock(ri.Region)
-		if r != nil {
-			peersNum := len(r.meta.Peers)
-			if len(ri.Meta.Peers) != peersNum {
-				logutil.Logger(bo.GetCtx()).Info("retry and refresh current region after send request fail and up/down stores length changed",
-					zap.Stringer("region", &ri.Region),
-					zap.Bool("needReload", scheduleReload),
-					zap.Reflect("oldPeers", ri.Meta.Peers),
-					zap.Reflect("newPeers", r.meta.Peers),
-					zap.Error(err))
-				continue
-			}
+		// schedule a store addr resolve.
+		s.markNeedCheck(c.notifyCheckCh)
+	}
 
-			rs := r.getStore()
+	// try next peer
+	rs.switchNextFlashPeer(r, accessIdx)
+	logutil.Logger(bo.GetCtx()).Info("switch region tiflash peer to next due to send request fail",
+		zap.Stringer("region", &rid),
+		zap.Bool("needReload", scheduleReload),
+		zap.Error(err))
 
-			accessMode := TiFlashOnly
-			accessIdx := rs.getAccessIndex(accessMode, store)
-			if accessIdx == -1 {
-				logutil.Logger(bo.GetCtx()).Warn("can not get access index for region " + ri.Region.String())
-				continue
-			}
-			if err != nil {
-				storeIdx, s := rs.accessStore(accessMode, accessIdx)
-				epoch := rs.storeEpochs[storeIdx]
-				if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
-					logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
-					metrics.RegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
-				}
-				// schedule a store addr resolve.
-				s.markNeedCheck(c.notifyCheckCh)
-			}
-
-			// try next peer
-			rs.switchNextFlashPeer(r, accessIdx)
-			logutil.Logger(bo.GetCtx()).Info("switch region tiflash peer to next due to send request fail",
-				zap.Stringer("region", &ri.Region),
-				zap.Bool("needReload", scheduleReload),
-				zap.Error(err))
-
-			// force reload region when retry all known peers in region.
-			if scheduleReload {
-				r.scheduleReload()
-			}
-		}
+	// force reload region when retry all known peers in region.
+	if scheduleReload {
+		r.scheduleReload()
 	}
 }
 
 // OnSendFail handles send request fail logic.
 func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload bool, err error) {
 	metrics.RegionCacheCounterWithSendFail.Inc()
-	r := c.getCachedRegionWithRLock(ctx.Region)
+	r := c.GetCachedRegionWithRLock(ctx.Region)
 	if r != nil {
 		peersNum := len(r.meta.Peers)
 		if len(ctx.Meta.Peers) != peersNum {
@@ -1061,7 +1039,7 @@ func (c *RegionCache) InvalidateCachedRegion(id RegionVerID) {
 
 // InvalidateCachedRegionWithReason removes a cached Region with the reason why it's invalidated.
 func (c *RegionCache) InvalidateCachedRegionWithReason(id RegionVerID, reason InvalidReason) {
-	cachedRegion := c.getCachedRegionWithRLock(id)
+	cachedRegion := c.GetCachedRegionWithRLock(id)
 	if cachedRegion == nil {
 		return
 	}
@@ -1070,7 +1048,7 @@ func (c *RegionCache) InvalidateCachedRegionWithReason(id RegionVerID, reason In
 
 // UpdateLeader update some region cache with newer leader info.
 func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, currentPeerIdx AccessIndex) {
-	r := c.getCachedRegionWithRLock(regionID)
+	r := c.GetCachedRegionWithRLock(regionID)
 	if r == nil {
 		logutil.BgLogger().Debug("regionCache: cannot find region when updating leader",
 			zap.Uint64("regionID", regionID.GetID()),
@@ -1193,8 +1171,9 @@ func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
 	return latestRegion
 }
 
+// GetStoresByType gets stores by type `typ`
 // TODO: revise it by get store by closure.
-func (c *RegionCache) getStoresByType(typ tikvrpc.EndpointType) []*Store {
+func (c *RegionCache) GetStoresByType(typ tikvrpc.EndpointType) []*Store {
 	c.storeMu.Lock()
 	defer c.storeMu.Unlock()
 	stores := make([]*Store, 0)
@@ -1408,7 +1387,8 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit 
 	}
 }
 
-func (c *RegionCache) getCachedRegionWithRLock(regionID RegionVerID) (r *Region) {
+// GetCachedRegionWithRLock returns region with lock.
+func (c *RegionCache) GetCachedRegionWithRLock(regionID RegionVerID) (r *Region) {
 	c.mu.RLock()
 	r = c.mu.regions[regionID]
 	c.mu.RUnlock()
@@ -1897,6 +1877,11 @@ const (
 	tombstone
 )
 
+// IsTiFlash returns true if the storeType is TiFlash
+func (s *Store) IsTiFlash() bool {
+	return s.storeType == tikvrpc.TiFlash
+}
+
 // initResolve resolves the address of the store that never resolved and returns an
 // empty string if it's a tombstone.
 func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err error) {
@@ -2161,6 +2146,11 @@ func (s *Store) requestLiveness(bo *Backoffer, c *RegionCache) (l livenessState)
 	return
 }
 
+// GetAddr returns the address of the store
+func (s *Store) GetAddr() string {
+	return s.addr
+}
+
 func invokeKVStatusAPI(addr string, timeout time.Duration) (l livenessState) {
 	start := time.Now()
 	defer func() {
@@ -2234,8 +2224,8 @@ func createKVHealthClient(ctx context.Context, addr string) (*grpc.ClientConn, h
 		ctx,
 		addr,
 		opt,
-		grpc.WithInitialWindowSize(grpcInitialWindowSize),
-		grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
+		grpc.WithInitialWindowSize(client.GrpcInitialWindowSize),
+		grpc.WithInitialConnWindowSize(client.GrpcInitialConnWindowSize),
 		grpc.WithConnectParams(grpc.ConnectParams{
 			Backoff: backoff.Config{
 				BaseDelay:  100 * time.Millisecond, // Default was 1s.
