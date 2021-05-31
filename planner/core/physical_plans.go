@@ -1390,10 +1390,12 @@ func (p *PhysicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
+// AccessObject implements physicalScan interface.
 func (p *PhysicalCTE) AccessObject(normalized bool) string {
 	return fmt.Sprintf("CTE:%s", p.cteAsName.L)
 }
 
+// OperatorInfo implements dataAccesser interface.
 func (p *PhysicalCTE) OperatorInfo(normalized bool) string {
 	return fmt.Sprintf("data:%s", (*CTEDefinition)(p).ExplainID())
 }
