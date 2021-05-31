@@ -977,7 +977,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.LockCtx {
 	var planDigest *parser.Digest
 	_, sqlDigest := seVars.StmtCtx.SQLDigest()
-	if config.TopSQLEnabled() {
+	if variable.TopSQLEnabled() {
 		_, planDigest = seVars.StmtCtx.GetPlanDigest()
 	}
 	return &tikvstore.LockCtx{
@@ -1822,7 +1822,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 }
 
 func setResourceGroupTagForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
-	if snapshot != nil && config.TopSQLEnabled() {
+	if snapshot != nil && variable.TopSQLEnabled() {
 		snapshot.SetOption(kv.ResourceGroupTag, sc.GetResourceGroupTag())
 	}
 }
