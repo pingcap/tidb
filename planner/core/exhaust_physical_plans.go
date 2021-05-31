@@ -1787,7 +1787,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		preferredBuildIndex = 1
 	}
 	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
-		if p.ctx.GetSessionVars().OuterJoinFixedBuildSide {
+		if p.ctx.GetSessionVars().MPPOuterJoinWithFixedBuildSide || len(p.OtherConditions) > 0 {
 			if p.JoinType == LeftOuterJoin {
 				preferredBuildIndex = 1
 			}

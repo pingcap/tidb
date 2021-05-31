@@ -592,7 +592,7 @@ var defaultSysVars = []*SysVar{
 		return normalizedValue, nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptCARTESIANBCJ, Value: strconv.Itoa(DefOptCARTESIANBCJ), Type: TypeInt, MinValue: 0, MaxValue: 2},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptOuterJoinFixedBuildSide, Value: BoolToOnOff(DefOptOuterJoinFixedBuildSide), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptMPPOuterJoinWithFixedBuildSide, Value: BoolToOnOff(DefOptMPPOuterJoinWithFixedBuildSide), Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBOptDistinctAggPushDown, Value: BoolToOnOff(config.GetGlobalConfig().Performance.DistinctAggPushDown), Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBOptWriteRowID, Value: BoolToOnOff(DefOptWriteRowID)},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBuildStatsConcurrency, Value: strconv.Itoa(DefBuildStatsConcurrency)},

@@ -324,7 +324,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			break
 		}
 	}
-	if hasExecutor == true {
+	if hasExecutor {
 		var recorededPlanIDs = make(map[int]int)
 		for i, detail := range r.selectResp.GetExecutionSummaries() {
 			if detail != nil && detail.TimeProcessedNs != nil &&
