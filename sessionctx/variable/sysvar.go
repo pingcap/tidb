@@ -129,6 +129,8 @@ type SysVar struct {
 	// This is only important to set for sysvars that include session scope,
 	// since global scoped sysvars are not-applicable.
 	skipInit bool
+	// IsNoop defines if the sysvar is a noop included for MySQL compatibility
+	IsNoop bool
 }
 
 // GetGlobalFromHook calls the GetSession func if it exists.
@@ -518,7 +520,7 @@ func (sv *SysVar) GetNativeValType(val string) (types.Datum, byte, uint) {
 // SkipInit returns true if when a new session is created we should "skip" copying
 // an initial value to it (and call the SetSession func if it exists)
 func (sv *SysVar) SkipInit() bool {
-	if sv.skipInit {
+	if sv.skipInit || sv.IsNoop {
 		return true
 	}
 	// These a special "Global-only" sysvars that for backward compatibility
@@ -599,7 +601,7 @@ func init() {
 		RegisterSysVar(v)
 	}
 	for _, v := range noopSysVars {
-		v.skipInit = true // by definition a noop can skipInit
+		v.IsNoop = true
 		RegisterSysVar(v)
 	}
 }
@@ -825,7 +827,7 @@ var defaultSysVars = []*SysVar{
 	}, GetSession: func(s *SessionVars) (string, error) {
 		return s.TxnScope.GetVarValue(), nil
 	}},
-	{Scope: ScopeSession, Name: TiDBTxnReadTS, Value: "", SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeSession, Name: TiDBTxnReadTS, Value: "", Hidden: true, SetSession: func(s *SessionVars, val string) error {
 		return setTxnReadTS(s, val)
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowMPPExecution, Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "ENFORCE"}, SetSession: func(s *SessionVars, val string) error {
