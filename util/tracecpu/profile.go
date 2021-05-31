@@ -38,7 +38,6 @@ const (
 	labelSQL        = "sql"
 	labelSQLDigest  = "sql_digest"
 	labelPlanDigest = "plan_digest"
-	labelOptimize   = "optimize"
 )
 
 // GlobalTopSQLCPUProfiler is the global SQL stats profiler.
@@ -258,7 +257,7 @@ func (s *sqlStats) tune() {
 	if optimize <= 0 {
 		return
 	}
-	s.plans[labelOptimize] = optimize
+	s.plans[""] += optimize
 }
 
 func (sp *topSQLCPUProfiler) handleExportProfileTask(p *profile.Profile) {

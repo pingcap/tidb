@@ -2172,14 +2172,6 @@ func (cc getLastStmtInConn) pprofLabelNormalizedAndDigest() (string, string) {
 	}
 	cmd, data := cc.lastPacket[0], cc.lastPacket[1:]
 	switch cmd {
-	case mysql.ComInitDB:
-		return "UseDB", ""
-	case mysql.ComFieldList:
-		return "ListFields", ""
-	case mysql.ComStmtClose:
-		return "CloseStmt", ""
-	case mysql.ComStmtReset:
-		return "ResetStmt", ""
 	case mysql.ComQuery, mysql.ComStmtPrepare:
 		normalized, digest := parser.NormalizeDigest(string(hack.String(data)))
 		return normalized, digest.String()
