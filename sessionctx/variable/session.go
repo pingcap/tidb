@@ -2101,7 +2101,7 @@ func (s *SessionVars) CleanupTxnReadTSIfUsed() {
 	if s.TxnReadTS == nil {
 		return
 	}
-	if s.TxnReadTS.used {
+	if s.TxnReadTS.used && s.TxnReadTS.readTS > 0 {
 		s.TxnReadTS = NewTxnReadTS(0)
 		s.SnapshotInfoschema = nil
 	}
