@@ -124,7 +124,7 @@ func (test *CTETestSuite) TestSpillToDisk(c *check.C) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(c1 int, c2 int);")
 	tk.MustExec(insertStr)
-	tk.MustExec("set tidb_mem_quota_query = 45000;")
+	tk.MustExec("set tidb_mem_quota_query = 80000;")
 	rows := tk.MustQuery("with recursive cte1 as ( " +
 		"select c1 from t1 " +
 		"union " +
@@ -156,7 +156,7 @@ func (test *CTETestSuite) TestSpillToDisk(c *check.C) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(c1 int, c2 int);")
 	tk.MustExec(insertStr)
-	tk.MustExec("set tidb_mem_quota_query = 45000;")
+	tk.MustExec("set tidb_mem_quota_query = 80000;")
 	tk.MustExec("set cte_max_recursion_depth = 500000;")
 	rows = tk.MustQuery("with recursive cte1 as ( " +
 		"select c1 from t1 " +

@@ -126,19 +126,15 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	e.resTbl.Lock()
 	if !e.resTbl.Done() {
 		defer e.resTbl.Unlock()
-		setupCTEStorageTracker(e.resTbl, e.ctx)
-		setupCTEStorageTracker(e.iterInTbl, e.ctx)
+		resAction := setupCTEStorageTracker(e.resTbl, e.ctx)
+		iterInAction := setupCTEStorageTracker(e.iterInTbl, e.ctx)
 
-		if config.GetGlobalConfig().OOMUseTmpStorage {
-			actionSpill := e.resTbl.ActionSpill()
-			failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
-				if val.(bool) {
-					actionSpill = e.resTbl.(*cteutil.StorageRC).ActionSpillForTest()
-					defer actionSpill.(*chunk.SpillDiskAction).WaitForTest()
-				}
-			})
-			e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
-		}
+		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
+			if val.(bool) && config.GetGlobalConfig().OOMUseTmpStorage {
+				defer resAction.WaitForTest()
+				defer iterInAction.WaitForTest()
+			}
+		})
 
 		if err = e.computeSeedPart(ctx); err != nil {
 			// Don't put it in defer.
@@ -207,7 +203,7 @@ func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 		if chk.NumRows() == 0 {
 			break
 		}
-		if chk, err = e.tryDedupAndAdd(chk, e.iterInTbl, e.hashTbl); err != nil {
+		if chk, err = e.tryDedupAndAdd(chk, false, e.iterInTbl, e.hashTbl); err != nil {
 			return err
 		}
 		chks = append(chks, chk)
@@ -278,7 +274,10 @@ func (e *CTEExec) setupTblsForNewIteration() (err error) {
 		if err != nil {
 			return err
 		}
-		chk, err = e.tryDedupAndAdd(chk, e.resTbl, e.hashTbl)
+		// Because deduplicated() will change chk in iterOutTbl.
+		// Will cause panic when spill data in iterOutTbl to disk.
+		copyOnDistinct := e.isDistinct
+		chk, err = e.tryDedupAndAdd(chk, copyOnDistinct, e.resTbl, e.hashTbl)
 		if err != nil {
 			return err
 		}
@@ -321,7 +320,7 @@ func (e *CTEExec) reopenTbls() (err error) {
 	return e.iterInTbl.Reopen()
 }
 
-func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context) {
+func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context) (actionSpill *chunk.SpillDiskAction) {
 	memTracker := tbl.GetMemTracker()
 	memTracker.SetLabel(memory.LabelForCTEStorage)
 	memTracker.AttachTo(ctx.GetSessionVars().StmtCtx.MemTracker)
@@ -331,15 +330,25 @@ func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context) {
 	diskTracker.AttachTo(ctx.GetSessionVars().StmtCtx.DiskTracker)
 
 	if config.GetGlobalConfig().OOMUseTmpStorage {
-		actionSpill := tbl.ActionSpill()
+		actionSpill = tbl.ActionSpill()
+		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
+			if val.(bool) {
+				actionSpill = tbl.(*cteutil.StorageRC).ActionSpillForTest()
+			}
+		})
 		ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
+	return actionSpill
 }
 
 func (e *CTEExec) tryDedupAndAdd(chk *chunk.Chunk,
+	copyOnDistinct bool,
 	storage cteutil.Storage,
 	hashTbl baseHashTable) (res *chunk.Chunk, err error) {
 	if e.isDistinct {
+		if copyOnDistinct {
+			chk = chk.CopyConstruct()
+		}
 		if chk, err = e.deduplicate(chk, storage, hashTbl); err != nil {
 			return nil, err
 		}

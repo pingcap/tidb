@@ -85,7 +85,7 @@ type Storage interface {
 
 	GetMemTracker() *memory.Tracker
 	GetDiskTracker() *disk.Tracker
-	ActionSpill() memory.ActionOnExceed
+	ActionSpill() *chunk.SpillDiskAction
 }
 
 // StorageRC implements Storage interface using RowContainer.
@@ -246,7 +246,7 @@ func (s *StorageRC) GetDiskTracker() *memory.Tracker {
 }
 
 // ActionSpill impls Storage ActionSpill interface.
-func (s *StorageRC) ActionSpill() memory.ActionOnExceed {
+func (s *StorageRC) ActionSpill() *chunk.SpillDiskAction {
 	return s.rc.ActionSpill()
 }
 
