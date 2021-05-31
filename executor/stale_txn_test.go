@@ -97,6 +97,14 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`drop table if exists b`)
 	tk.MustExec("create table t (id int primary key);")
@@ -221,6 +229,7 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 		}
 		if len(testcase.setTxnSQL) > 0 {
 			c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(0))
+			c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, IsFalse)
 		}
 	}
 }
@@ -380,6 +389,14 @@ func (s *testStaleTxnSerialSuite) TestSetTransactionReadOnlyAsOf(c *C) {
 	t1, err := time.Parse(types.TimeFormat, "2016-09-21 09:53:04")
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, s.store)
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
 	testcases := []struct {
 		sql          string
 		expectedTS   uint64

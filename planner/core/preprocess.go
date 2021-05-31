@@ -103,15 +103,9 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 	node.Accept(&v)
 	readTS := ctx.GetSessionVars().TxnReadTS
 	if readTS > 0 {
-		dom := domain.GetDomain(ctx)
-		is, err := dom.GetSnapshotInfoSchema(readTS)
-		if err != nil {
-			v.err = err
-		} else {
-			v.PreprocessorReturn.SnapshotTS = readTS
-			v.PreprocessorReturn.InfoSchema = is
-			ctx.GetSessionVars().TxnReadTS = 0
-		}
+		v.PreprocessorReturn.SnapshotTS = readTS
+		ctx.GetSessionVars().TxnReadTS = 0
+		ctx.GetSessionVars().TxnCtx.IsStaleness = true
 	}
 	// InfoSchema must be non-nil after preprocessing
 	if v.InfoSchema == nil {
