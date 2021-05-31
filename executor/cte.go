@@ -274,8 +274,9 @@ func (e *CTEExec) setupTblsForNewIteration() (err error) {
 		if err != nil {
 			return err
 		}
-		// Because deduplicated() will change chk in iterOutTbl.
-		// Will cause panic when spill data in iterOutTbl to disk.
+		// Data should be copied in UNION DISTINCT.
+		// Because deduplicate() will change data in iterOutTbl,
+		// which will cause panic when spilling data into disk concurrently.
 		copyOnDistinct := e.isDistinct
 		chk, err = e.tryDedupAndAdd(chk, copyOnDistinct, e.resTbl, e.hashTbl)
 		if err != nil {
