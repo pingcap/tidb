@@ -3668,11 +3668,12 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 
 			b.handleHelper.pushMap(nil)
 			var p LogicalPlan
-			lp := LogicalCTE{cte: &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP, recursivePartLogicalPlan: cte.recurLP, IDForStorage: cte.storageID, optFlag: cte.optFlag}}.Init(b.ctx, b.getSelectOffset())
+			lp := LogicalCTE{cteAsName: tn.Name, cte: &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP, recursivePartLogicalPlan: cte.recurLP, IDForStorage: cte.storageID, optFlag: cte.optFlag}}.Init(b.ctx, b.getSelectOffset())
 			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 			p = lp
 			p.SetOutputNames(cte.seedLP.OutputNames())
 			if len(asName.String()) > 0 {
+				lp.cteAsName = *asName
 				var on types.NameSlice
 				for _, name := range p.OutputNames() {
 					cpOn := *name
