@@ -1898,13 +1898,13 @@ func (h ddlHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	dom, err := session.GetDomain(h.store)
 	if err != nil {
-		log.Error(err)
+		log.Error("failed to get session domain", zap.Error(err))
 		writeError(w, err)
 	}
 
 	newCallbackFunc, err := ddl.GetCustomizedHook(req.FormValue("ddl_hook"))
 	if err != nil {
-		log.Error(err)
+		log.Error("failed to get customized hook", zap.Error(err))
 		writeError(w, err)
 	}
 	callback := newCallbackFunc(dom)
