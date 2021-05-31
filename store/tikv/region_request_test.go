@@ -710,7 +710,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 	c.Assert(ctx, IsNil)
 	c.Assert(len(s.regionRequestSender.failStoreIDs), Equals, 0)
 	c.Assert(len(s.regionRequestSender.failProxyStoreIDs), Equals, 0)
-	region := s.regionRequestSender.regionCache.getCachedRegionWithRLock(loc.Region)
+	region := s.regionRequestSender.regionCache.GetCachedRegionWithRLock(loc.Region)
 	c.Assert(region, NotNil)
 	c.Assert(region.checkNeedReload(), IsTrue)
 

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -93,6 +94,118 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
 }
 
+func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`drop table if exists b`)
+	tk.MustExec("create table t (id int primary key);")
+	tk.MustExec("create table b (pid int primary key);")
+	defer func() {
+		tk.MustExec(`drop table if exists b`)
+		tk.MustExec(`drop table if exists t`)
+	}()
+	time.Sleep(2 * time.Second)
+	now := time.Now()
+	time.Sleep(2 * time.Second)
+
+	testcases := []struct {
+		name             string
+		sql              string
+		expectPhysicalTS int64
+		preSec           int64
+		// IsStaleness is auto cleanup in select stmt.
+		errorStr string
+	}{
+		{
+			name:             "TimestampExactRead1",
+			sql:              fmt.Sprintf("select * from t as of timestamp '%s';", now.Format("2006-1-2 15:04:05")),
+			expectPhysicalTS: now.Unix(),
+		},
+		{
+			name:   "NomalRead",
+			sql:    `select * from b;`,
+			preSec: 0,
+		},
+		{
+			name:             "TimestampExactRead2",
+			sql:              fmt.Sprintf("select * from t as of timestamp TIMESTAMP('%s');", now.Format("2006-1-2 15:04:05")),
+			expectPhysicalTS: now.Unix(),
+		},
+		{
+			name:   "TimestampExactRead3",
+			sql:    `select * from t as of timestamp NOW() - INTERVAL 2 SECOND;`,
+			preSec: 2,
+		},
+		{
+			name:   "TimestampExactRead4",
+			sql:    `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 2 SECOND);`,
+			preSec: 2,
+		},
+		{
+			name:   "TimestampExactRead5",
+			sql:    `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND);`,
+			preSec: 1,
+		},
+		{
+			name:     "TimestampExactRead6",
+			sql:      `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND), b as of timestamp TIMESTAMP('2020-09-06 00:00:00');`,
+			errorStr: ".*can not set different time in the as of.*",
+		},
+		{
+			name:     "TimestampExactRead7",
+			sql:      `select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND), b;`,
+			errorStr: ".*can not set different time in the as of.*",
+		},
+		{
+			name:     "TimestampExactRead8",
+			sql:      `select * from t, b as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND);`,
+			errorStr: ".*can not set different time in the as of.*",
+		},
+		{
+			name:   "NomalRead",
+			sql:    `select * from t, b;`,
+			preSec: 0,
+		},
+		{
+			name:     "TimestampExactRead9",
+			sql:      `select * from (select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND)) as c, b;`,
+			errorStr: ".*can not set different time in the as of.*",
+		},
+		{
+			name:   "TimestampExactRead10",
+			sql:    `select * from (select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 2 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 2 SECOND)) as c;`,
+			preSec: 2,
+		},
+		// Cannot be supported the SubSelect
+		{
+			name:     "TimestampExactRead11",
+			sql:      `select * from (select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 20 SECOND)) as c as of timestamp Now();`,
+			errorStr: ".*You have an error in your SQL syntax.*",
+		},
+	}
+
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		if testcase.expectPhysicalTS > 0 {
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSO", fmt.Sprintf(`return(%d)`, testcase.expectPhysicalTS)), IsNil)
+		} else if testcase.preSec > 0 {
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSOWithTolerance", fmt.Sprintf(`return(%d)`, time.Now().Unix()-testcase.preSec)), IsNil)
+		}
+		_, err := tk.Exec(testcase.sql)
+		if len(testcase.errorStr) != 0 {
+			c.Assert(err, ErrorMatches, testcase.errorStr)
+			continue
+		}
+		c.Assert(err, IsNil, Commentf("sql:%s, error stack %v", testcase.sql, errors.ErrorStack(err)))
+		if testcase.expectPhysicalTS > 0 {
+			c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSO"), IsNil)
+		} else if testcase.preSec > 0 {
+			c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSOWithTolerance"), IsNil)
+		}
+	}
+}
+
 func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -140,7 +253,7 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 	failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag")
 }
 
-func (s *testStaleTxnSerialSuite) TestStalenessAndHistoryRead(c *C) {
+func (s *testStaleTxnSuite) TestStalenessAndHistoryRead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
@@ -152,7 +265,6 @@ func (s *testStaleTxnSerialSuite) TestStalenessAndHistoryRead(c *C) {
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
 	// set @@tidb_snapshot before staleness txn
-	tk.MustExec(`set @@tidb_snapshot="2016-10-08 16:45:26";`)
 	tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00';`)
 	// 1599321600000 == 2020-09-06 00:00:00
 	c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, int64(1599321600000))
@@ -162,6 +274,22 @@ func (s *testStaleTxnSerialSuite) TestStalenessAndHistoryRead(c *C) {
 	tk.MustExec(`set @@tidb_snapshot="2016-10-08 16:45:26";`)
 	c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, int64(1599321600000))
 	tk.MustExec("commit")
+
+	// test mutex
+	tk.MustExec(`set @@tidb_snapshot="2020-10-08 16:45:26";`)
+	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(419993151340544000))
+	c.Assert(tk.Se.GetSessionVars().SnapshotInfoschema, NotNil)
+	tk.MustExec("SET TRANSACTION READ ONLY AS OF TIMESTAMP '2020-10-08 16:46:26'")
+	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
+	c.Assert(tk.Se.GetSessionVars().SnapshotInfoschema, IsNil)
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(419993167069184000))
+
+	tk.MustExec("SET TRANSACTION READ ONLY AS OF TIMESTAMP '2020-10-08 16:46:26'")
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(419993167069184000))
+	tk.MustExec(`set @@tidb_snapshot="2020-10-08 16:45:26";`)
+	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(419993151340544000))
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(0))
+	c.Assert(tk.Se.GetSessionVars().SnapshotInfoschema, NotNil)
 }
 
 func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
@@ -435,7 +563,7 @@ func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *
 	}
 }
 
-func (s *testStaleTxnSerialSuite) TestSpecialSQLInStalenessTxn(c *C) {
+func (s *testStaleTxnSuite) TestSpecialSQLInStalenessTxn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testcases := []struct {
