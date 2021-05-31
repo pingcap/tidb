@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -108,13 +108,13 @@ func (e *PipelinedWindowExec) Next(ctx context.Context, chk *chunk.Chunk) (err e
 	for !e.done || e.firstResultChunkNotReady() {
 		// we firstly gathering enough rows and consume them, until we are able to produce.
 		// for unbounded frame, it needs consume the whole partition before being able to produce, in this case
-		// e.p.moreToProduce will be false until so.
-		var more bool
-		more, err = e.moreToProduce(e.ctx)
+		// e.p.enoughToProduce will be false until so.
+		var enough bool
+		enough, err = e.enoughToProduce(e.ctx)
 		if err != nil {
 			return
 		}
-		if !more {
+		if !enough {
 			if !e.done && e.rowToConsume == 0 {
 				err = e.getRowsInPartition(ctx)
 				if err != nil {
@@ -124,11 +124,11 @@ func (e *PipelinedWindowExec) Next(ctx context.Context, chk *chunk.Chunk) (err e
 			if e.done || e.newPartition {
 				e.finish()
 				// if we continued, the rows will not be consumed, so next time we should consume it instead of calling e.getRowsInPartition
-				more, err = e.moreToProduce(e.ctx)
+				enough, err = e.enoughToProduce(e.ctx)
 				if err != nil {
 					return
 				}
-				if more {
+				if enough {
 					continue
 				}
 				e.newPartition = false
@@ -234,30 +234,30 @@ func (e *PipelinedWindowExec) copyChk(src, dst *chunk.Chunk) error {
 	return nil
 }
 
-func (p *PipelinedWindowExec) getRow(i uint64) chunk.Row {
-	return p.rows[i-p.rowStart]
+func (e *PipelinedWindowExec) getRow(i uint64) chunk.Row {
+	return e.rows[i-e.rowStart]
 }
 
-func (p *PipelinedWindowExec) getRows(s, e uint64) []chunk.Row {
-	return p.rows[s-p.rowStart : e-p.rowStart]
+func (e *PipelinedWindowExec) getRows(start, end uint64) []chunk.Row {
+	return e.rows[start-e.rowStart : end-e.rowStart]
 }
 
 // finish is called upon a whole partition is consumed
-func (p *PipelinedWindowExec) finish() {
-	p.whole = true
+func (e *PipelinedWindowExec) finish() {
+	e.whole = true
 }
 
-func (p *PipelinedWindowExec) getStart(ctx sessionctx.Context) (uint64, error) {
-	if p.start.UnBounded {
+func (e *PipelinedWindowExec) getStart(ctx sessionctx.Context) (uint64, error) {
+	if e.start.UnBounded {
 		return 0, nil
 	}
-	if p.isRangeFrame {
+	if e.isRangeFrame {
 		var start uint64
-		for start = p.lastStartRow; start < p.rowCnt; start++ {
+		for start = e.lastStartRow; start < e.rowCnt; start++ {
 			var res int64
 			var err error
-			for i := range p.orderByCols {
-				res, _, err = p.start.CmpFuncs[i](ctx, p.orderByCols[i], p.start.CalcFuncs[i], p.getRow(start), p.getRow(p.curRowIdx))
+			for i := range e.orderByCols {
+				res, _, err = e.start.CmpFuncs[i](ctx, e.orderByCols[i], e.start.CalcFuncs[i], e.getRow(start), e.getRow(e.curRowIdx))
 				if err != nil {
 					return 0, err
 				}
@@ -267,36 +267,36 @@ func (p *PipelinedWindowExec) getStart(ctx sessionctx.Context) (uint64, error) {
 			}
 			// For asc, break when the calculated result is greater than the current value.
 			// For desc, break when the calculated result is less than the current value.
-			if res != p.expectedCmpResult {
+			if res != e.expectedCmpResult {
 				break
 			}
 		}
 		return start, nil
 	}
-	switch p.start.Type {
+	switch e.start.Type {
 	case ast.Preceding:
-		if p.curRowIdx > p.start.Num {
-			return p.curRowIdx - p.start.Num, nil
+		if e.curRowIdx > e.start.Num {
+			return e.curRowIdx - e.start.Num, nil
 		}
 		return 0, nil
 	case ast.Following:
-		return p.curRowIdx + p.start.Num, nil
+		return e.curRowIdx + e.start.Num, nil
 	default: // ast.CurrentRow
-		return p.curRowIdx, nil
+		return e.curRowIdx, nil
 	}
 }
 
-func (p *PipelinedWindowExec) getEnd(ctx sessionctx.Context) (uint64, error) {
-	if p.end.UnBounded {
-		return p.rowCnt, nil
+func (e *PipelinedWindowExec) getEnd(ctx sessionctx.Context) (uint64, error) {
+	if e.end.UnBounded {
+		return e.rowCnt, nil
 	}
-	if p.isRangeFrame {
+	if e.isRangeFrame {
 		var end uint64
-		for end = p.lastEndRow; end < p.rowCnt; end++ {
+		for end = e.lastEndRow; end < e.rowCnt; end++ {
 			var res int64
 			var err error
-			for i := range p.orderByCols {
-				res, _, err = p.end.CmpFuncs[i](ctx, p.end.CalcFuncs[i], p.orderByCols[i], p.getRow(p.curRowIdx), p.getRow(end))
+			for i := range e.orderByCols {
+				res, _, err = e.end.CmpFuncs[i](ctx, e.end.CalcFuncs[i], e.orderByCols[i], e.getRow(e.curRowIdx), e.getRow(end))
 				if err != nil {
 					return 0, err
 				}
@@ -306,83 +306,77 @@ func (p *PipelinedWindowExec) getEnd(ctx sessionctx.Context) (uint64, error) {
 			}
 			// For asc, break when the calculated result is greater than the current value.
 			// For desc, break when the calculated result is less than the current value.
-			if res == p.expectedCmpResult {
+			if res == e.expectedCmpResult {
 				break
 			}
 		}
 		return end, nil
 	}
-	switch p.end.Type {
+	switch e.end.Type {
 	case ast.Preceding:
-		if p.curRowIdx >= p.end.Num {
-			return p.curRowIdx - p.end.Num + 1, nil
+		if e.curRowIdx >= e.end.Num {
+			return e.curRowIdx - e.end.Num + 1, nil
 		}
 		return 0, nil
 	case ast.Following:
-		return p.curRowIdx + p.end.Num + 1, nil
+		return e.curRowIdx + e.end.Num + 1, nil
 	default: // ast.CurrentRow:
-		return p.curRowIdx + 1, nil
+		return e.curRowIdx + 1, nil
 	}
 }
 
 // produce produces rows and append it to chk, return produced means number of rows appended into chunk, available means
 // number of rows processed but not fetched
-func (p *PipelinedWindowExec) produce(ctx sessionctx.Context, chk *chunk.Chunk, remained uint64) (produced uint64, err error) {
+func (e *PipelinedWindowExec) produce(ctx sessionctx.Context, chk *chunk.Chunk, remained uint64) (produced uint64, err error) {
 	var (
-		start uint64
-		end   uint64
-		more  bool
+		start  uint64
+		end    uint64
+		enough bool
 	)
 	for remained > 0 {
-		more, err = p.moreToProduce(ctx)
+		enough, err = e.enoughToProduce(ctx)
 		if err != nil {
 			return
 		}
-		if !more {
+		if !enough {
 			break
 		}
-		start, err = p.getStart(ctx)
+		start, err = e.getStart(ctx)
 		if err != nil {
 			return
 		}
-		end, err = p.getEnd(ctx)
+		end, err = e.getEnd(ctx)
 		if err != nil {
 			return
 		}
-		if end > p.rowCnt {
-			if !p.whole {
-				return
-			}
-			end = p.rowCnt
+		if end > e.rowCnt {
+			end = e.rowCnt
 		}
-		if start >= p.rowCnt {
-			if !p.whole {
-				return
-			}
-			start = p.rowCnt
+		if start >= e.rowCnt {
+			start = e.rowCnt
 		}
 		// if start >= end, we should return a default value, and we reset the frame to empty.
 		if start >= end {
-			for i, wf := range p.windowFuncs {
-				if !p.emptyFrame {
-					wf.ResetPartialResult(p.partialResults[i])
+			for i, wf := range e.windowFuncs {
+				if !e.emptyFrame {
+					wf.ResetPartialResult(e.partialResults[i])
 				}
-				err = wf.AppendFinalResult2Chunk(ctx, p.partialResults[i], chk)
+				err = wf.AppendFinalResult2Chunk(ctx, e.partialResults[i], chk)
 				if err != nil {
 					return
 				}
 			}
-			if !p.emptyFrame {
-				p.emptyFrame = true
-				p.initializedSlidingWindow = false
+			if !e.emptyFrame {
+				e.emptyFrame = true
+				e.initializedSlidingWindow = false
 			}
 		} else {
-			p.emptyFrame = false
-			for i, wf := range p.windowFuncs {
-				slidingWindowAggFunc := p.slidingWindowFuncs[i]
-				if p.lastStartRow != start || p.lastEndRow != end {
-					if slidingWindowAggFunc != nil && p.initializedSlidingWindow {
-						err = slidingWindowAggFunc.Slide(ctx, p.getRow, p.lastStartRow, p.lastEndRow, start-p.lastStartRow, end-p.lastEndRow, p.partialResults[i])
+			e.emptyFrame = false
+			for i, wf := range e.windowFuncs {
+				slidingWindowAggFunc := e.slidingWindowFuncs[i]
+				if e.lastStartRow != start || e.lastEndRow != end {
+					if slidingWindowAggFunc != nil && e.initializedSlidingWindow {
+						err = slidingWindowAggFunc.Slide(ctx, e.getRow, e.lastStartRow, e.lastEndRow, start-e.lastStartRow, end-e.lastEndRow, e.partialResults[i])
 					} else {
 						// For MinMaxSlidingWindowAggFuncs, it needs the absolute value of each start of window, to compare
 						// whether elements inside deque are out of current window.
@@ -391,74 +385,74 @@ func (p *PipelinedWindowExec) produce(ctx sessionctx.Context, chk *chunk.Chunk, 
 							minMaxSlidingWindowAggFunc.SetWindowStart(start)
 						}
 						// TODO(zhifeng): track memory usage here
-						wf.ResetPartialResult(p.partialResults[i])
-						_, err = wf.UpdatePartialResult(ctx, p.getRows(start, end), p.partialResults[i])
+						wf.ResetPartialResult(e.partialResults[i])
+						_, err = wf.UpdatePartialResult(ctx, e.getRows(start, end), e.partialResults[i])
 					}
 				}
 				if err != nil {
 					return
 				}
-				err = wf.AppendFinalResult2Chunk(ctx, p.partialResults[i], chk)
+				err = wf.AppendFinalResult2Chunk(ctx, e.partialResults[i], chk)
 				if err != nil {
 					return
 				}
 			}
-			p.initializedSlidingWindow = true
+			e.initializedSlidingWindow = true
 		}
-		p.curRowIdx++
-		p.lastStartRow, p.lastEndRow = start, end
+		e.curRowIdx++
+		e.lastStartRow, e.lastEndRow = start, end
 
 		produced++
 		remained--
 	}
-	extend := p.curRowIdx
-	if p.lastEndRow < extend {
-		extend = p.lastEndRow
+	extend := e.curRowIdx
+	if e.lastEndRow < extend {
+		extend = e.lastEndRow
 	}
-	if p.lastStartRow < extend {
-		extend = p.lastStartRow
+	if e.lastStartRow < extend {
+		extend = e.lastStartRow
 	}
-	if extend > p.rowStart {
-		numDrop := extend - p.rowStart
-		p.dropped += numDrop
-		p.rows = p.rows[numDrop:]
-		p.rowStart = extend
+	if extend > e.rowStart {
+		numDrop := extend - e.rowStart
+		e.dropped += numDrop
+		e.rows = e.rows[numDrop:]
+		e.rowStart = extend
 	}
 	return
 }
 
-func (p *PipelinedWindowExec) moreToProduce(ctx sessionctx.Context) (more bool, err error) {
-	if p.curRowIdx >= p.rowCnt {
+func (e *PipelinedWindowExec) enoughToProduce(ctx sessionctx.Context) (enough bool, err error) {
+	if e.curRowIdx >= e.rowCnt {
 		return false, nil
 	}
-	if p.whole {
+	if e.whole {
 		return true, nil
 	}
-	start, err := p.getStart(ctx)
+	start, err := e.getStart(ctx)
 	if err != nil {
 		return
 	}
-	end, err := p.getEnd(ctx)
+	end, err := e.getEnd(ctx)
 	if err != nil {
 		return
 	}
-	return end < p.rowCnt && start < p.rowCnt, nil
+	return end < e.rowCnt && start < e.rowCnt, nil
 }
 
 // reset resets the processor
-func (p *PipelinedWindowExec) reset() {
-	p.lastStartRow = 0
-	p.lastEndRow = 0
-	p.emptyFrame = false
-	p.curRowIdx = 0
-	p.whole = false
-	numDrop := p.rowCnt - p.rowStart
-	p.dropped += numDrop
-	p.rows = p.rows[numDrop:]
-	p.rowStart = 0
-	p.rowCnt = 0
-	p.initializedSlidingWindow = false
-	for i, windowFunc := range p.windowFuncs {
-		windowFunc.ResetPartialResult(p.partialResults[i])
+func (e *PipelinedWindowExec) reset() {
+	e.lastStartRow = 0
+	e.lastEndRow = 0
+	e.emptyFrame = false
+	e.curRowIdx = 0
+	e.whole = false
+	numDrop := e.rowCnt - e.rowStart
+	e.dropped += numDrop
+	e.rows = e.rows[numDrop:]
+	e.rowStart = 0
+	e.rowCnt = 0
+	e.initializedSlidingWindow = false
+	for i, windowFunc := range e.windowFuncs {
+		windowFunc.ResetPartialResult(e.partialResults[i])
 	}
 }
