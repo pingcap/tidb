@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 
 	// "github.com/pingcap/tidb/types"
 	"github.com/pingcap/errors"
@@ -27,6 +28,7 @@ import (
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	pmodel "github.com/prometheus/common/model"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 	// "go.uber.org/zap"
 )
 
@@ -254,7 +256,11 @@ func RotateSubWindow() {
 			SQLTotal: 0,
 		},
 	}
-	thisSubWindow.SQLUsage, _ = readSQLMetric(time.Now(), thisSubWindow.SQLUsage)
+	var err error
+	thisSubWindow.SQLUsage, err = readSQLMetric(time.Now(), thisSubWindow.SQLUsage)
+	if err != nil {
+		logutil.BgLogger().Error("Error exists when calling prometheus", zap.Error(err))
+	}
 	thisSubWindow.SQLUsage.SQLTotal = getSQLSum(&thisSubWindow.SQLUsage.SQLType)
 
 	subWindowsLock.Lock()
