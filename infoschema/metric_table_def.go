@@ -18,7 +18,7 @@ package infoschema
 var MetricTableMap = map[string]MetricTableDef{
 	"tidb_ops_total": {
 		PromQL:  `sum(tidb_executor_statement_total{$LABEL_CONDITIONS}) by (instance)`,
-		Labels:  []string{"instance", "type"},
+		Labels:  []string{"instance"},
 		Comment: "TiDB SQL total",
 	},
 	"tidb_ops_type": {
