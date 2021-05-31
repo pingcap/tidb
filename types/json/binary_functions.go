@@ -813,44 +813,69 @@ func mergePatchBinary(target, patch *BinaryJSON) (result *BinaryJSON, err error)
 		if target == nil {
 			return nil, nil
 		}
-		tmpResult := target.Copy()
-		result = &tmpResult
-		if result.TypeCode != TypeCodeObject {
-			err = result.UnmarshalJSON([]byte("{}"))
-			if err != nil {
-				return result, err
+
+		keyValMap := make(map[string]BinaryJSON)
+		keys := make([][]byte, 0, len(keyValMap))
+		keyExists := make(map[string]bool)
+		if target.TypeCode == TypeCodeObject {
+			elemCount := target.GetElemCount()
+			for i := 0; i < elemCount; i++ {
+				key := target.objectGetKey(i)
+				val := target.objectGetVal(i)
+				k := string(key)
+
+				keyValMap[k] = val
+				keys = append(keys, key)
+				keyExists[k] = true
 			}
 		}
 		elemCount := patch.GetElemCount()
 		for i := 0; i < elemCount; i++ {
 			key := patch.objectGetKey(i)
 			val := patch.objectGetVal(i)
-			path, err := ParseJSONPathExpr("$." + string(key))
-			if err != nil {
-				return result, err
-			}
-			targetKV, exists := result.objectSearchKey(key)
+			k := string(key)
+
+			targetKV, exists := keyValMap[k]
 			if val.TypeCode == TypeCodeLiteral && val.Value[0] == LiteralNil {
 				if exists {
-					tmp, err := result.Remove([]PathExpression{path})
-					if err != nil {
-						return result, err
-					}
-					result = &tmp
+					delete(keyExists, k)
 				}
 			} else {
 				tmp, err := mergePatchBinary(&targetKV, &val)
 				if err != nil {
 					return result, err
 				}
-				tmp1, err := result.Modify([]PathExpression{path}, []BinaryJSON{*tmp}, ModifySet)
-				if err != nil {
-					return result, err
+
+				keyValMap[k] = *tmp
+				if yes, ok := keyExists[k]; ok {
+					if !yes {
+						keyExists[k] = true
+					}
+				} else {
+					keys = append(keys, key)
+					keyExists[k] = true
 				}
-				result = &tmp1
 			}
 		}
-		return result, nil
+		sort.Slice(keys, func(i, j int) bool {
+			return bytes.Compare(keys[i], keys[j]) < 0
+		})
+		values := make([]BinaryJSON, 0, len(keys))
+		for index := 0; index < len(keys); {
+			k := string(keys[index])
+			if yes, ok := keyExists[k]; !ok || !yes {
+				keys = append(keys[:index], keys[index+1:]...)
+				continue
+			}
+
+			values = append(values, keyValMap[k])
+			index++
+		}
+		binaryObject, err := buildBinaryObject(keys, values)
+		if err != nil {
+			panic("mergePatchBinary should never panic, please contact the TiDB team for help")
+		}
+		return &binaryObject, nil
 	}
 	return patch, nil
 }
