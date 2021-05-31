@@ -304,7 +304,6 @@ func BuildHistAndTopN(
 		}
 		cur, curCnt = sampleBytes, 1
 	}
-	topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
 
 	// Calc the correlation of the column between the handle column.
 	if isColumn {
@@ -330,6 +329,8 @@ func BuildHistAndTopN(
 			topNList = topNList[:numTopN]
 		}
 	}
+
+	topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
 
 	// Step2: exclude topn from samples
 	for i := int64(0); i < int64(len(samples)); i++ {
