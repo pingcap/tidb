@@ -137,7 +137,7 @@ func (f *Fragment) init(p PhysicalPlan) error {
 // We would remove all the union-all operators by 'untwist'ing and copying the plans above union-all.
 // This will make every route from root (ExchangeSender) to leaf nodes (ExchangeReceiver and TableScan)
 // a new ioslated tree (and also a fragment) without union all. These trees (fragments then tasks) will
-// finally be gathered to TiDB or be exchanged to upper tasks again. 
+// finally be gathered to TiDB or be exchanged to upper tasks again.
 // For instance, given a plan "select c1 from t union all select c1 from s"
 // after untwist, there will be two plans in `forest` slice:
 // - ExchangeSender -> Projection (c1) -> TableScan(t)

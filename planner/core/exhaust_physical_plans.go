@@ -2497,7 +2497,7 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	if !prop.IsEmpty() || (prop.IsFlashProp() && prop.TaskTp != property.MppTaskType) {
 		return nil, true, nil
 	}
-    // TODO: UnionAll can pass partition info, but for briefness, we prevent it from pushing down.
+	// TODO: UnionAll can pass partition info, but for briefness, we prevent it from pushing down.
 	if prop.TaskTp == property.MppTaskType && prop.PartitionTp != property.AnyType {
 		return nil, true, nil
 	}
