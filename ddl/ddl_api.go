@@ -4026,7 +4026,13 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 			return errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ic.Name)
 		}
 
-		if err := checkIndexColumn(col, ic.Length); err != nil {
+		prefixLength := types.UnspecifiedLength
+		if types.IsTypePrefixable(col.FieldType.Tp) {
+			// When the index column is changed, prefix length is
+			// only valid if the type is still prefixable.
+			prefixLength = ic.Length
+		}
+		if err := checkIndexColumn(col, prefixLength); err != nil {
 			return err
 		}
 	}
