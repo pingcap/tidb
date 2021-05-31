@@ -1385,7 +1385,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	for _, warn := range warns {
 		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
-	if config.TopSQLEnabled() {
+	if variable.TopSQLEnabled() {
 		normalized, digest := parser.NormalizeDigest(sql)
 		if digest != nil {
 			// Fixme: reset/clean the label when sql execute finish.
@@ -1503,7 +1503,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
-	if config.TopSQLEnabled() {
+	if variable.TopSQLEnabled() {
 		ctx = tracecpu.SetSQLLabels(ctx, normalizedSQL, digest.String())
 	}
 
@@ -1882,7 +1882,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	if !ok {
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
 	}
-	if config.TopSQLEnabled() && preparedStmt.SQLDigest != nil {
+	if variable.TopSQLEnabled() && preparedStmt.SQLDigest != nil {
 		ctx = tracecpu.SetSQLLabels(ctx, preparedStmt.NormalizedSQL, preparedStmt.SQLDigest.String())
 	}
 	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)

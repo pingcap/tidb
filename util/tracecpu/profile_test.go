@@ -22,7 +22,7 @@ import (
 	"github.com/google/pprof/profile"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/tracecpu"
 	"github.com/pingcap/tidb/util/tracecpu/mock"
 )
@@ -37,11 +37,9 @@ var _ = SerialSuites(&testSuite{})
 type testSuite struct{}
 
 func (s *testSuite) SetUpSuite(c *C) {
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	newCfg.TopSQL.Enable = true
-	newCfg.TopSQL.RefreshInterval = 1
-	config.StoreGlobalConfig(&newCfg)
+	variable.TopSQLVariable.Enable.Store(true)
+	variable.TopSQLVariable.AgentAddress.Store("mock")
+	variable.TopSQLVariable.PrecisionSeconds.Store(1)
 	tracecpu.GlobalTopSQLCPUProfiler.Run()
 }
 
@@ -112,9 +110,7 @@ func (s *testSuite) TestIsEnabled(c *C) {
 }
 
 func (s *testSuite) setTopSQLEnable(enabled bool) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TopSQL.Enable = enabled
-	})
+	variable.TopSQLVariable.Enable.Store(enabled)
 }
 
 func (s *testSuite) mockExecuteSQL(sql, plan string) {

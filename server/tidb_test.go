@@ -92,10 +92,6 @@ func (ts *tidbTestSuite) SetUpSuite(c *C) {
 
 func (ts *tidbTestTopSQLSuite) SetUpSuite(c *C) {
 	ts.tidbTestSuiteBase.SetUpSuite(c)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TopSQL.Enable = true
-		conf.TopSQL.RefreshInterval = 1
-	})
 	tracecpu.GlobalTopSQLCPUProfiler.Run()
 }
 
@@ -1194,6 +1190,9 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 	dbt.mustExec("create table t (a int auto_increment, b int, unique index idx(a));")
 	dbt.mustExec("create table t1 (a int auto_increment, b int, unique index idx(a));")
 	dbt.mustExec("create table t2 (a int auto_increment, b int, unique index idx(a));")
+	dbt.mustExec("set @@global.tidb_enable_top_sql='On';")
+	dbt.mustExec("set @@global.tidb_top_sql_agent_address='127.0.0.1:4001';")
+	dbt.mustExec("set @@global.tidb_top_sql_precision_seconds=1;")
 
 	// Test case 1: DML query: insert/update/replace/delete/select
 	cases1 := []struct {

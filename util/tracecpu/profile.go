@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/google/pprof/profile"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -115,7 +114,7 @@ func (sp *topSQLCPUProfiler) startCPUProfileWorker() {
 }
 
 func (sp *topSQLCPUProfiler) doCPUProfile() {
-	intervalSecond := config.GetGlobalConfig().TopSQL.RefreshInterval
+	intervalSecond := variable.TopSQLVariable.PrecisionSeconds.Load()
 	task := sp.newProfileTask()
 	if err := pprof.StartCPUProfile(task.buf); err != nil {
 		// Sleep a while before retry.
@@ -123,7 +122,7 @@ func (sp *topSQLCPUProfiler) doCPUProfile() {
 		sp.putTaskToBuffer(task)
 		return
 	}
-	ns := int(time.Second)*intervalSecond - time.Now().Nanosecond()
+	ns := int64(time.Second)*intervalSecond - int64(time.Now().Nanosecond())
 	time.Sleep(time.Nanosecond * time.Duration(ns))
 	pprof.StopCPUProfile()
 	task.end = time.Now().Unix()
@@ -272,7 +271,7 @@ func (sp *topSQLCPUProfiler) hasExportProfileTask() bool {
 
 // IsEnabled return true if it is(should be) enabled. It exports for tests.
 func (sp *topSQLCPUProfiler) IsEnabled() bool {
-	return config.GetGlobalConfig().TopSQL.Enable || sp.hasExportProfileTask()
+	return variable.TopSQLEnabled() || sp.hasExportProfileTask()
 }
 
 // StartCPUProfile same like pprof.StartCPUProfile.

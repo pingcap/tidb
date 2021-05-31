@@ -291,7 +291,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 }
 
 func (a *ExecStmt) wrapAndSetPlanLabelForTopSQL(ctx context.Context) context.Context {
-	if a.Plan == nil || !config.TopSQLEnabled() {
+	if a.Plan == nil || !variable.TopSQLEnabled() {
 		return ctx
 	}
 	_, sqlDigest := a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
