@@ -434,23 +434,6 @@ func (*testSysVarSuite) TestReadOnlyNoop(c *C) {
 	}
 }
 
-func (*testSysVarSuite) TestGetScopeNoneSystemVar(c *C) {
-	val, ok, err := GetScopeNoneSystemVar(Port)
-	c.Assert(err, IsNil)
-	c.Assert(ok, IsTrue)
-	c.Assert(val, Equals, "4000")
-
-	val, ok, err = GetScopeNoneSystemVar("nonsensevar")
-	c.Assert(err.Error(), Equals, "[variable:1193]Unknown system variable 'nonsensevar'")
-	c.Assert(ok, IsFalse)
-	c.Assert(val, Equals, "")
-
-	val, ok, err = GetScopeNoneSystemVar(CharacterSetClient)
-	c.Assert(err, IsNil)
-	c.Assert(ok, IsFalse)
-	c.Assert(val, Equals, "")
-}
-
 func (*testSysVarSuite) TestSkipInit(c *C) {
 	sv := SysVar{Scope: ScopeGlobal, Name: "skipinit1", Value: On, Type: TypeBool}
 	c.Assert(sv.SkipInit(), IsTrue)
@@ -463,6 +446,21 @@ func (*testSysVarSuite) TestSkipInit(c *C) {
 
 	sv = SysVar{Scope: ScopeSession, Name: "skipinit1", Value: On, Type: TypeBool, skipInit: true}
 	c.Assert(sv.SkipInit(), IsTrue)
+}
+
+// IsNoop is used by the documentation to auto-generate docs for real sysvars.
+func (*testSysVarSuite) TestIsNoop(c *C) {
+	sv := GetSysVar(TiDBMultiStatementMode)
+	c.Assert(sv.IsNoop, IsFalse)
+
+	sv = GetSysVar(InnodbLockWaitTimeout)
+	c.Assert(sv.IsNoop, IsFalse)
+
+	sv = GetSysVar(InnodbFastShutdown)
+	c.Assert(sv.IsNoop, IsTrue)
+
+	sv = GetSysVar(ReadOnly)
+	c.Assert(sv.IsNoop, IsTrue)
 }
 
 func (*testSysVarSuite) TestInstanceScopedVars(c *C) {
