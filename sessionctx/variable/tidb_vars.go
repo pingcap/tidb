@@ -688,7 +688,7 @@ const (
 	DefTiDBTopSQLEnable                = false
 	DefTiDBTopSQLAgentAddress          = ""
 	DefTiDBTopSQLPrecisionSeconds      = 1
-	DefTiDBTopSQLMaxStatementCount     = 5000
+	DefTiDBTopSQLMaxStatementCount     = 200
 )
 
 // Process global variables.
