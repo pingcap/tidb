@@ -14,15 +14,15 @@
 package unionstore
 
 import (
-	tidbkv "github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 	"go.uber.org/zap"
 )
 
 // UnionIter is the iterator on an UnionStore.
 type UnionIter struct {
-	dirtyIt    tidbkv.Iterator
-	snapshotIt tidbkv.Iterator
+	dirtyIt    Iterator
+	snapshotIt Iterator
 
 	dirtyValid    bool
 	snapshotValid bool
@@ -33,7 +33,7 @@ type UnionIter struct {
 }
 
 // NewUnionIter returns a union iterator for BufferStore.
-func NewUnionIter(dirtyIt tidbkv.Iterator, snapshotIt tidbkv.Iterator, reverse bool) (*UnionIter, error) {
+func NewUnionIter(dirtyIt Iterator, snapshotIt Iterator, reverse bool) (*UnionIter, error) {
 	it := &UnionIter{
 		dirtyIt:       dirtyIt,
 		snapshotIt:    snapshotIt,
@@ -91,7 +91,7 @@ func (iter *UnionIter) updateCur() error {
 		if iter.snapshotValid && iter.dirtyValid {
 			snapshotKey := iter.snapshotIt.Key()
 			dirtyKey := iter.dirtyIt.Key()
-			cmp := dirtyKey.Cmp(snapshotKey)
+			cmp := kv.CmpKey(dirtyKey, snapshotKey)
 			if iter.reverse {
 				cmp = -cmp
 			}
@@ -122,7 +122,7 @@ func (iter *UnionIter) updateCur() error {
 				// record from dirty comes first
 				if len(iter.dirtyIt.Value()) == 0 {
 					logutil.BgLogger().Warn("delete a record not exists?",
-						zap.Stringer("key", iter.dirtyIt.Key()))
+						zap.String("key", kv.StrKey(iter.dirtyIt.Key())))
 					// jump over this deletion
 					if err := iter.dirtyNext(); err != nil {
 						return err
@@ -162,7 +162,7 @@ func (iter *UnionIter) Value() []byte {
 }
 
 // Key implements the Iterator Key interface.
-func (iter *UnionIter) Key() tidbkv.Key {
+func (iter *UnionIter) Key() []byte {
 	if !iter.curIsDirty {
 		return iter.snapshotIt.Key()
 	}

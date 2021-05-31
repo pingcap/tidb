@@ -20,11 +20,11 @@ import (
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -259,9 +259,15 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		memUsageOfChk = chk.MemoryUsage()
 		e.memTracker.Consume(memUsageOfChk)
 		if e.collectRuntimeStatsEnabled() {
-			txn, err := e.ctx.Txn(false)
+			txn, err := e.ctx.Txn(true)
 			if err == nil && txn.GetSnapshot() != nil {
-				txn.GetSnapshot().SetOption(tikvstore.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+				txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+			}
+		}
+		if config.TopSQLEnabled() {
+			txn, err := e.ctx.Txn(true)
+			if err == nil {
+				txn.SetOption(kv.ResourceGroupTag, e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTag())
 			}
 		}
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
@@ -408,7 +414,7 @@ func (e *UpdateExec) Close() error {
 	if e.runtimeStats != nil && e.stats != nil {
 		txn, err := e.ctx.Txn(false)
 		if err == nil && txn.GetSnapshot() != nil {
-			txn.GetSnapshot().DelOption(tikvstore.CollectRuntimeStats)
+			txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, nil)
 		}
 	}
 	return e.children[0].Close()

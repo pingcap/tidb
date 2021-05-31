@@ -16,7 +16,6 @@ package unionstore
 import (
 	"bytes"
 
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
@@ -24,8 +23,8 @@ import (
 type MemdbIterator struct {
 	db           *MemDB
 	curr         memdbNodeAddr
-	start        tidbkv.Key
-	end          tidbkv.Key
+	start        []byte
+	end          []byte
 	reverse      bool
 	includeFlags bool
 }
@@ -34,7 +33,7 @@ type MemdbIterator struct {
 // If such entry is not found, it returns an invalid Iterator with no error.
 // It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
 // The Iterator must be Closed after use.
-func (db *MemDB) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterator, error) {
+func (db *MemDB) Iter(k []byte, upperBound []byte) (Iterator, error) {
 	i := &MemdbIterator{
 		db:    db,
 		start: k,
@@ -48,7 +47,7 @@ func (db *MemDB) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterator, err
 // The returned iterator will iterate from greater key to smaller key.
 // If k is nil, the returned iterator will be positioned at the last key.
 // TODO: Add lower bound limit
-func (db *MemDB) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
+func (db *MemDB) IterReverse(k []byte) (Iterator, error) {
 	i := &MemdbIterator{
 		db:      db,
 		end:     k,
@@ -59,7 +58,7 @@ func (db *MemDB) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
 }
 
 // IterWithFlags returns a MemdbIterator.
-func (db *MemDB) IterWithFlags(k tidbkv.Key, upperBound tidbkv.Key) *MemdbIterator {
+func (db *MemDB) IterWithFlags(k []byte, upperBound []byte) *MemdbIterator {
 	i := &MemdbIterator{
 		db:           db,
 		start:        k,
@@ -71,7 +70,7 @@ func (db *MemDB) IterWithFlags(k tidbkv.Key, upperBound tidbkv.Key) *MemdbIterat
 }
 
 // IterReverseWithFlags returns a reversed MemdbIterator.
-func (db *MemDB) IterReverseWithFlags(k tidbkv.Key) *MemdbIterator {
+func (db *MemDB) IterReverseWithFlags(k []byte) *MemdbIterator {
 	i := &MemdbIterator{
 		db:           db,
 		end:          k,
@@ -129,7 +128,7 @@ func (i *MemdbIterator) HasValue() bool {
 }
 
 // Key returns current key.
-func (i *MemdbIterator) Key() tidbkv.Key {
+func (i *MemdbIterator) Key() []byte {
 	return i.curr.getKey()
 }
 
@@ -190,7 +189,7 @@ func (i *MemdbIterator) seekToLast() {
 	i.curr = y
 }
 
-func (i *MemdbIterator) seek(key tidbkv.Key) {
+func (i *MemdbIterator) seek(key []byte) {
 	y := memdbNodeAddr{nil, nullAddr}
 	x := i.db.getNode(i.db.root)
 

@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -322,6 +323,10 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
+	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
+		addTemporaryTable(sctx, m)
+	}
+
 	var colIDs, binlogColIDs []int64
 	var row, binlogOldRow, binlogNewRow []types.Datum
 	numColsCap := len(newData) + 1 // +1 for the extra handle column that we may need to append.
@@ -405,7 +410,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	}
 	memBuffer.Release(sh)
 	if shouldWriteBinlog(sctx, t.meta) {
-		if !t.meta.PKIsHandle {
+		if !t.meta.PKIsHandle && !t.meta.IsCommonHandle {
 			binlogColIDs = append(binlogColIDs, model.ExtraHandleID)
 			binlogOldRow = append(binlogOldRow, types.NewIntDatum(h.IntValue()))
 			binlogNewRow = append(binlogNewRow, types.NewIntDatum(h.IntValue()))
@@ -544,11 +549,11 @@ func NewCommonAddRecordCtx(size int) *CommonAddRecordCtx {
 
 // TryGetCommonPkColumnIds get the IDs of primary key column if the table has common handle.
 func TryGetCommonPkColumnIds(tbl *model.TableInfo) []int64 {
-	var pkColIds []int64
 	if !tbl.IsCommonHandle {
 		return nil
 	}
 	pkIdx := FindPrimaryIndex(tbl)
+	pkColIds := make([]int64, 0, len(pkIdx.Columns))
 	for _, idxCol := range pkIdx.Columns {
 		pkColIds = append(pkColIds, tbl.Columns[idxCol.Offset].ID)
 	}
@@ -572,16 +577,21 @@ func PrimaryPrefixColumnIDs(tbl *model.TableInfo) (prefixCols []int64) {
 
 // TryGetCommonPkColumns get the primary key columns if the table has common handle.
 func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
-	var pkCols []*table.Column
 	if !tbl.Meta().IsCommonHandle {
 		return nil
 	}
 	pkIdx := FindPrimaryIndex(tbl.Meta())
 	cols := tbl.Cols()
+	pkCols := make([]*table.Column, 0, len(pkIdx.Columns))
 	for _, idxCol := range pkIdx.Columns {
 		pkCols = append(pkCols, cols[idxCol.Offset])
 	}
 	return pkCols
+}
+
+func addTemporaryTable(sctx sessionctx.Context, tblInfo *model.TableInfo) {
+	tempTable := sctx.GetSessionVars().GetTemporaryTable(tblInfo)
+	tempTable.SetModified(true)
 }
 
 // AddRecord implements table.Table AddRecord interface.
@@ -594,6 +604,10 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	var opt table.AddRecordOpt
 	for _, fn := range opts {
 		fn.ApplyOn(&opt)
+	}
+
+	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
+		addTemporaryTable(sctx, m)
 	}
 
 	var ctx context.Context
@@ -755,7 +769,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	}
 
 	if setPresume {
-		err = memBuffer.SetWithFlags(key, value, tikvstore.SetPresumeKeyNotExists)
+		err = memBuffer.SetWithFlags(key, value, kv.SetPresumeKeyNotExists)
 	} else {
 		err = memBuffer.Set(key, value)
 	}
@@ -962,15 +976,16 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 }
 
 // GetChangingColVal gets the changing column value when executing "modify/change column" statement.
+// For statement like update-where, it will fetch the old row out and insert it into kv again.
+// Since update statement can see the writable columns, it is responsible for the casting relative column / get the fault value here.
+// old row : a-b-[nil]
+// new row : a-b-[a'/default]
+// Thus the writable new row is corresponding to Write-Only constraints.
 func GetChangingColVal(ctx sessionctx.Context, cols []*table.Column, col *table.Column, rowMap map[int64]types.Datum, defaultVals []types.Datum) (_ types.Datum, isDefaultVal bool, err error) {
 	relativeCol := cols[col.ChangeStateInfo.DependencyColumnOffset]
 	idxColumnVal, ok := rowMap[relativeCol.ID]
 	if ok {
-		// It needs cast values here when filling back column or index values in "modify/change column" statement.
-		if ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue {
-			return idxColumnVal, false, nil
-		}
-		idxColumnVal, err := table.CastValue(ctx, rowMap[relativeCol.ID], col.ColumnInfo, false, false)
+		idxColumnVal, err = table.CastValue(ctx, idxColumnVal, col.ColumnInfo, false, false)
 		// TODO: Consider sql_mode and the error msg(encounter this error check whether to rollback).
 		if err != nil {
 			return idxColumnVal, false, errors.Trace(err)
@@ -992,6 +1007,11 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	if err != nil {
 		return err
 	}
+
+	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
+		addTemporaryTable(ctx, m)
+	}
+
 	// The table has non-public column and this column is doing the operation of "modify/change column".
 	if len(t.Columns) > len(r) && t.Columns[len(r)].ChangeStateInfo != nil {
 		r = append(r, r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset])
@@ -1008,7 +1028,7 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 			colIDs = append(colIDs, col.ID)
 		}
 		var binlogRow []types.Datum
-		if !t.meta.PKIsHandle {
+		if !t.meta.PKIsHandle && !t.meta.IsCommonHandle {
 			colIDs = append(colIDs, model.ExtraHandleID)
 			binlogRow = make([]types.Datum, 0, len(r)+1)
 			binlogRow = append(binlogRow, r...)
@@ -1131,7 +1151,7 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h kv.Handle, rec 
 			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))
 			return err
 		}
-		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn.GetUnionStore(), vals, h); err != nil {
+		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
@@ -1146,7 +1166,7 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h kv.Handle, rec 
 
 // removeRowIndex implements table.Table RemoveRowIndex interface.
 func (t *TableCommon) removeRowIndex(sc *stmtctx.StatementContext, h kv.Handle, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
-	return idx.Delete(sc, txn.GetUnionStore(), vals, h)
+	return idx.Delete(sc, txn, vals, h)
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
@@ -1348,7 +1368,17 @@ func OverflowShardBits(recordID int64, shardRowIDBits uint64, typeBitsLength uin
 
 // Allocators implements table.Table Allocators interface.
 func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
-	if ctx == nil || ctx.GetSessionVars().IDAllocator == nil {
+	if ctx == nil {
+		return t.allocs
+	} else if ctx.GetSessionVars().IDAllocator == nil {
+		// Use an independent allocator for global temporary tables.
+		if t.meta.TempTableType == model.TempTableGlobal {
+			if alloc := ctx.GetSessionVars().GetTemporaryTable(t.meta).GetAutoIDAllocator(); alloc != nil {
+				return autoid.Allocators{alloc}
+			}
+			// If the session is not in a txn, for example, in "show create table", use the original allocator.
+			// Otherwise the would be a nil pointer dereference.
+		}
 		return t.allocs
 	}
 
@@ -1386,7 +1416,10 @@ func shouldWriteBinlog(ctx sessionctx.Context, tblInfo *model.TableInfo) bool {
 	if ctx.GetSessionVars().BinlogClient == nil {
 		return false
 	}
-	return !ctx.GetSessionVars().InRestrictedSQL && !tblInfo.IsCommonHandle
+	if tblInfo.TempTableType != model.TempTableNone {
+		return false
+	}
+	return !ctx.GetSessionVars().InRestrictedSQL
 }
 
 func (t *TableCommon) getMutation(ctx sessionctx.Context) *binlog.TableMutation {
@@ -1448,71 +1481,6 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 	return nil
 }
 
-// CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore check whether recordID key or unique index key exists. if not exists, return nil,
-// otherwise return kv.ErrKeyExists error.
-func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID kv.Handle, data []types.Datum) error {
-	physicalTableID := t.Meta().ID
-	if pt, ok := t.(*partitionedTable); ok {
-		info := t.Meta().GetPartitionInfo()
-		pid, err := pt.locatePartition(sctx, info, data)
-		if err != nil {
-			return err
-		}
-		partition := pt.GetPartition(pid)
-		physicalTableID = partition.GetPhysicalID()
-	}
-	txn, err := sctx.Txn(true)
-	if err != nil {
-		return err
-	}
-
-	// Check primary key exists.
-	{
-		prefix := tablecodec.GenTableRecordPrefix(physicalTableID)
-		recordKey := tablecodec.EncodeRecordKey(prefix, recordID)
-		_, err = txn.Get(ctx, recordKey)
-		if err == nil {
-			handleStr := getDuplicateErrorHandleString(t, recordID, data)
-			return kv.ErrKeyExists.FastGenByArgs(handleStr, "PRIMARY")
-		} else if !kv.ErrNotExist.Equal(err) {
-			return err
-		}
-	}
-
-	// Check unique key exists.
-	{
-		for _, idx := range t.Indices() {
-			if !IsIndexWritable(idx) {
-				continue
-			}
-			if !idx.Meta().Unique {
-				continue
-			}
-			vals, err := idx.FetchValues(data, nil)
-			if err != nil {
-				return err
-			}
-			key, _, err := idx.GenIndexKey(sctx.GetSessionVars().StmtCtx, vals, recordID, nil)
-			if err != nil {
-				return err
-			}
-			_, err = txn.Get(ctx, key)
-			if kv.IsErrNotFound(err) {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			entryKey, err := genIndexKeyStr(vals)
-			if err != nil {
-				return err
-			}
-			return kv.ErrKeyExists.FastGenByArgs(entryKey, idx.Meta().Name.String())
-		}
-	}
-	return nil
-}
-
 func getDuplicateErrorHandleString(t table.Table, handle kv.Handle, row []types.Datum) string {
 	if handle.IsInt() {
 		return kv.GetDuplicateErrorHandleString(handle)
@@ -1541,6 +1509,7 @@ func getDuplicateErrorHandleString(t table.Table, handle kv.Handle, row []types.
 func init() {
 	table.TableFromMeta = TableFromMeta
 	table.MockTableFromMeta = MockTableFromMeta
+	tableutil.TempTableFromMeta = TempTableFromMeta
 }
 
 // sequenceCommon cache the sequence value.
@@ -1805,4 +1774,44 @@ func BuildTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.Co
 		tsExec.PrimaryPrefixColumnIds = PrimaryPrefixColumnIDs(tableInfo)
 	}
 	return tsExec
+}
+
+// TemporaryTable is used to store transaction-specific or session-specific information for global / local temporary tables.
+// For example, stats and autoID should have their own copies of data, instead of being shared by all sessions.
+type TemporaryTable struct {
+	// Whether it's modified in this transaction.
+	modified bool
+	// The stats of this table. So far it's always pseudo stats.
+	stats *statistics.Table
+	// The autoID allocator of this table.
+	autoIDAllocator autoid.Allocator
+}
+
+// TempTableFromMeta builds a TempTable from model.TableInfo.
+func TempTableFromMeta(tblInfo *model.TableInfo) tableutil.TempTable {
+	return &TemporaryTable{
+		modified:        false,
+		stats:           statistics.PseudoTable(tblInfo),
+		autoIDAllocator: autoid.NewAllocatorFromTempTblInfo(tblInfo),
+	}
+}
+
+// GetAutoIDAllocator is implemented from TempTable.GetAutoIDAllocator.
+func (t *TemporaryTable) GetAutoIDAllocator() autoid.Allocator {
+	return t.autoIDAllocator
+}
+
+// SetModified is implemented from TempTable.SetModified.
+func (t *TemporaryTable) SetModified(modified bool) {
+	t.modified = modified
+}
+
+// GetModified is implemented from TempTable.GetModified.
+func (t *TemporaryTable) GetModified() bool {
+	return t.modified
+}
+
+// GetStats is implemented from TempTable.GetStats.
+func (t *TemporaryTable) GetStats() interface{} {
+	return t.stats
 }

@@ -120,6 +120,10 @@ const (
 	TypeIndexFullScan = "IndexFullScan"
 	// TypeIndexRangeScan is the type of IndexRangeScan.
 	TypeIndexRangeScan = "IndexRangeScan"
+	// TypeCTETable is the type of TypeCTETable.
+	TypeCTETable = "CTETable"
+	// TypeCTE is the type of TypeCTE.
+	TypeCTE = "CTE"
 )
 
 // plan id.
@@ -365,6 +369,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeClusterMemTableReader
 	case typeLoadDataID:
 		return TypeLoadData
+	case typeTableSampleID:
+		return TypeTableSample
 	case typeTableFullScan:
 		return TypeTableFullScan
 	case typeTableRangeScan:

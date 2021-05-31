@@ -282,7 +282,7 @@ type LogicalPlan interface {
 	// It will return:
 	// 1. All possible plans that can match the required property.
 	// 2. Whether the SQL hint can work. Return true if there is no hint.
-	exhaustPhysicalPlans(*property.PhysicalProperty) (physicalPlans []PhysicalPlan, hintCanWork bool)
+	exhaustPhysicalPlans(*property.PhysicalProperty) (physicalPlans []PhysicalPlan, hintCanWork bool, err error)
 
 	// ExtractCorrelatedCols extracts correlated columns inside the LogicalPlan.
 	ExtractCorrelatedCols() []*expression.CorrelatedColumn
@@ -341,6 +341,12 @@ type PhysicalPlan interface {
 	// Stats returns the StatsInfo of the plan.
 	Stats() *property.StatsInfo
 
+	// Cost returns the estimated cost of the subplan.
+	Cost() float64
+
+	// SetCost set the cost of the subplan.
+	SetCost(cost float64)
+
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
 
@@ -376,6 +382,17 @@ type basePhysicalPlan struct {
 	childrenReqProps []*property.PhysicalProperty
 	self             PhysicalPlan
 	children         []PhysicalPlan
+	cost             float64
+}
+
+// Cost implements PhysicalPlan interface.
+func (p *basePhysicalPlan) Cost() float64 {
+	return p.cost
+}
+
+// SetCost implements PhysicalPlan interface.
+func (p *basePhysicalPlan) SetCost(cost float64) {
+	p.cost = cost
 }
 
 func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPlan, error) {
@@ -406,7 +423,7 @@ func (p *basePhysicalPlan) ExplainInfo() string {
 	return ""
 }
 
-// ExplainInfo implements Plan interface.
+// ExplainNormalizedInfo implements PhysicalPlan interface.
 func (p *basePhysicalPlan) ExplainNormalizedInfo() string {
 	return ""
 }

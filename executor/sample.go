@@ -208,11 +208,11 @@ func splitIntoMultiRanges(store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRa
 
 	maxSleep := 10000 // ms
 	bo := tikv.NewBackofferWithVars(context.Background(), maxSleep, nil)
-	var ranges []kv.KeyRange
 	regions, err := s.GetRegionCache().LoadRegionsInKeyRange(bo, startKey, endKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	var ranges = make([]kv.KeyRange, 0, len(regions))
 	for _, r := range regions {
 		start, end := r.StartKey(), r.EndKey()
 		if kv.Key(start).Cmp(startKey) < 0 {

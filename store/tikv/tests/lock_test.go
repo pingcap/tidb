@@ -19,13 +19,16 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -130,7 +133,7 @@ func (s *testLockSuite) TestScanLockResolveWithSeek(c *C) {
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		c.Assert(iter.Valid(), IsTrue)
-		c.Assert([]byte(iter.Key()), BytesEquals, []byte{ch})
+		c.Assert(iter.Key(), BytesEquals, []byte{ch})
 		c.Assert(iter.Value(), BytesEquals, []byte{ch})
 		c.Assert(iter.Next(), IsNil)
 	}
@@ -142,12 +145,12 @@ func (s *testLockSuite) TestScanLockResolveWithSeekKeyOnly(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.SetOption(kv.KeyOnly, true)
+	txn.GetSnapshot().SetKeyOnly(true)
 	iter, err := txn.Iter([]byte("a"), nil)
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		c.Assert(iter.Valid(), IsTrue)
-		c.Assert([]byte(iter.Key()), BytesEquals, []byte{ch})
+		c.Assert(iter.Key(), BytesEquals, []byte{ch})
 		c.Assert(iter.Next(), IsNil)
 	}
 }
@@ -156,14 +159,14 @@ func (s *testLockSuite) TestScanLockResolveWithBatchGet(c *C) {
 	s.putAlphabets(c)
 	s.prepareAlphabetLocks(c)
 
-	var keys []tidbkv.Key
+	var keys [][]byte
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		keys = append(keys, []byte{ch})
 	}
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	m, err := txn.BatchGet(context.Background(), keys)
+	m, err := toTiDBTxn(&txn).BatchGet(context.Background(), toTiDBKeys(keys))
 	c.Assert(err, IsNil)
 	c.Assert(len(m), Equals, int('z'-'a'+1))
 	for ch := byte('a'); ch <= byte('z'); ch++ {
@@ -210,7 +213,7 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(tidbkv.Key("key"), []byte("value"))
+	txn.Set([]byte("key"), []byte("value"))
 	s.prewriteTxnWithTTL(c, txn, 1000)
 
 	bo := tikv.NewBackofferWithVars(context.Background(), tikv.PrewriteMaxBackoff, nil)
@@ -248,7 +251,7 @@ func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
 func (s *testLockSuite) TestTxnHeartBeat(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(tidbkv.Key("key"), []byte("value"))
+	txn.Set([]byte("key"), []byte("value"))
 	s.prewriteTxn(c, txn)
 
 	newTTL, err := s.store.SendTxnHeartbeat(context.Background(), []byte("key"), txn.StartTS(), 6666)
@@ -271,8 +274,8 @@ func (s *testLockSuite) TestTxnHeartBeat(c *C) {
 func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(tidbkv.Key("key"), []byte("value"))
-	txn.Set(tidbkv.Key("second"), []byte("xxx"))
+	txn.Set([]byte("key"), []byte("value"))
+	txn.Set([]byte("second"), []byte("xxx"))
 	s.prewriteTxnWithTTL(c, txn, 1000)
 
 	o := s.store.GetOracle()
@@ -322,8 +325,8 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(tidbkv.Key("key"), []byte("value"))
-	txn.Set(tidbkv.Key("second"), []byte("xxx"))
+	txn.Set([]byte("key"), []byte("value"))
+	txn.Set([]byte("second"), []byte("xxx"))
 	committer, err := txn.NewCommitter(0)
 	c.Assert(err, IsNil)
 	// Increase lock TTL to make CI more stable.
@@ -431,7 +434,7 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(tidbkv.Key("key"), []byte("value"))
+	txn.Set([]byte("key"), []byte("value"))
 	time.Sleep(time.Millisecond)
 	s.prewriteTxnWithTTL(c, txn, 3100)
 	l := s.mustGetLock(c, []byte("key"))
@@ -441,10 +444,10 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	txn, err = s.store.Begin()
 	start := time.Now()
 	c.Assert(err, IsNil)
-	txn.Set(tidbkv.Key("key"), []byte("value"))
+	txn.Set([]byte("key"), []byte("value"))
 	for i := 0; i < 2048; i++ {
 		k, v := randKV(1024, 1024)
-		txn.Set(tidbkv.Key(k), []byte(v))
+		txn.Set([]byte(k), []byte(v))
 	}
 	s.prewriteTxn(c, txn)
 	l = s.mustGetLock(c, []byte("key"))
@@ -455,7 +458,7 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	time.Sleep(time.Millisecond * 50)
-	txn.Set(tidbkv.Key("key"), []byte("value"))
+	txn.Set([]byte("key"), []byte("value"))
 	s.prewriteTxn(c, txn)
 	l = s.mustGetLock(c, []byte("key"))
 	s.ttlEquals(c, l.TTL, defaultLockTTL+uint64(time.Since(start)/time.Millisecond))
@@ -465,15 +468,15 @@ func (s *testLockSuite) TestBatchResolveLocks(c *C) {
 	// The first transaction is a normal transaction with a long TTL
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(tidbkv.Key("k1"), []byte("v1"))
-	txn.Set(tidbkv.Key("k2"), []byte("v2"))
+	txn.Set([]byte("k1"), []byte("v1"))
+	txn.Set([]byte("k2"), []byte("v2"))
 	s.prewriteTxnWithTTL(c, txn, 20000)
 
 	// The second transaction is an async commit transaction
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(tidbkv.Key("k3"), []byte("v3"))
-	txn.Set(tidbkv.Key("k4"), []byte("v4"))
+	txn.Set([]byte("k3"), []byte("v3"))
+	txn.Set([]byte("k4"), []byte("v4"))
 	committer, err := txn.NewCommitter(0)
 	c.Assert(err, IsNil)
 	committer.SetUseAsyncCommit()
@@ -494,7 +497,7 @@ func (s *testLockSuite) TestBatchResolveLocks(c *C) {
 	c.Assert(msBeforeLockExpired, Greater, int64(0))
 
 	lr := s.store.NewLockResolver()
-	bo := tikv.NewBackofferWithVars(context.Background(), tikv.GcResolveLockMaxBackoff, nil)
+	bo := tikv.NewGcResolveLockMaxBackoffer(context.Background())
 	loc, err := s.store.GetRegionCache().LocateKey(bo, locks[0].Primary)
 	c.Assert(err, IsNil)
 	// Check BatchResolveLocks resolve the lock even the ttl is not expired.
@@ -505,15 +508,15 @@ func (s *testLockSuite) TestBatchResolveLocks(c *C) {
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	// transaction 1 is rolled back
-	_, err = txn.Get(context.Background(), tidbkv.Key("k1"))
-	c.Assert(err, Equals, tidbkv.ErrNotExist)
-	_, err = txn.Get(context.Background(), tidbkv.Key("k2"))
-	c.Assert(err, Equals, tidbkv.ErrNotExist)
+	_, err = txn.Get(context.Background(), []byte("k1"))
+	c.Assert(err, Equals, tikverr.ErrNotExist)
+	_, err = txn.Get(context.Background(), []byte("k2"))
+	c.Assert(err, Equals, tikverr.ErrNotExist)
 	// transaction 2 is committed
-	v, err := txn.Get(context.Background(), tidbkv.Key("k3"))
+	v, err := txn.Get(context.Background(), []byte("k3"))
 	c.Assert(err, IsNil)
 	c.Assert(bytes.Equal(v, []byte("v3")), IsTrue)
-	v, err = txn.Get(context.Background(), tidbkv.Key("k4"))
+	v, err = txn.Get(context.Background(), []byte("k4"))
 	c.Assert(err, IsNil)
 	c.Assert(bytes.Equal(v, []byte("v4")), IsTrue)
 }
@@ -531,7 +534,7 @@ func init() {
 func (s *testLockSuite) TestZeroMinCommitTS(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(tidbkv.Key("key"), []byte("value"))
+	txn.Set([]byte("key"), []byte("value"))
 	bo := tikv.NewBackofferWithVars(context.Background(), tikv.PrewriteMaxBackoff, nil)
 
 	mockValue := fmt.Sprintf(`return(%d)`, txn.StartTS())
@@ -617,9 +620,9 @@ func (s *testLockSuite) TestResolveTxnFallenBackFromAsyncCommit(c *C) {
 	t3, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	_, err = t3.Get(context.Background(), []byte("fb1"))
-	errMsgMustContain(c, err, "key not exist")
+	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 	_, err = t3.Get(context.Background(), []byte("fb2"))
-	errMsgMustContain(c, err, "key not exist")
+	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 }
 
 func (s *testLockSuite) TestBatchResolveTxnFallenBackFromAsyncCommit(c *C) {
@@ -637,7 +640,135 @@ func (s *testLockSuite) TestBatchResolveTxnFallenBackFromAsyncCommit(c *C) {
 	t3, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	_, err = t3.Get(context.Background(), []byte("fb1"))
-	errMsgMustContain(c, err, "key not exist")
+	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 	_, err = t3.Get(context.Background(), []byte("fb2"))
-	errMsgMustContain(c, err, "key not exist")
+	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
+}
+
+func (s *testLockSuite) TestDeadlockReportWaitChain(c *C) {
+	// Utilities to make the test logic clear and simple.
+	type txnWrapper struct {
+		tikv.TxnProbe
+		wg sync.WaitGroup
+	}
+
+	makeLockCtx := func(txn *txnWrapper, resourceGroupTag string) *kv.LockCtx {
+		return &kv.LockCtx{
+			ForUpdateTS:      txn.StartTS(),
+			WaitStartTime:    time.Now(),
+			LockWaitTime:     1000,
+			ResourceGroupTag: []byte(resourceGroupTag),
+		}
+	}
+
+	// Prepares several transactions and each locks a key.
+	prepareTxns := func(num int) []*txnWrapper {
+		res := make([]*txnWrapper, 0, num)
+		for i := 0; i < num; i++ {
+			txnProbe, err := s.store.Begin()
+			c.Assert(err, IsNil)
+			txn := &txnWrapper{TxnProbe: txnProbe}
+			txn.SetPessimistic(true)
+			tag := fmt.Sprintf("tag-init%v", i)
+			key := []byte{'k', byte(i)}
+			err = txn.LockKeys(context.Background(), makeLockCtx(txn, tag), key)
+			c.Assert(err, IsNil)
+
+			res = append(res, txn)
+		}
+		return res
+	}
+
+	// Let the i-th trnasaction lock the key that has been locked by j-th transaction
+	tryLock := func(txns []*txnWrapper, i int, j int) error {
+		c.Logf("txn %v try locking %v", i, j)
+		txn := txns[i]
+		tag := fmt.Sprintf("tag-%v-%v", i, j)
+		key := []byte{'k', byte(j)}
+		return txn.LockKeys(context.Background(), makeLockCtx(txn, tag), key)
+	}
+
+	// Asserts the i-th transaction waits for the j-th transaction.
+	makeWaitFor := func(txns []*txnWrapper, i int, j int) {
+		txns[i].wg.Add(1)
+		go func() {
+			defer txns[i].wg.Done()
+			err := tryLock(txns, i, j)
+			// After the lock being waited for is released, the transaction returns a WriteConflict error
+			// unconditionally, which is by design.
+			c.Assert(err, NotNil)
+			c.Logf("txn %v wait for %v finished, err: %s", i, j, err.Error())
+			_, ok := errors.Cause(err).(*tikverr.ErrWriteConflict)
+			c.Assert(ok, IsTrue)
+		}()
+	}
+
+	waitAndRollback := func(txns []*txnWrapper, i int) {
+		// It's expected that each transaction should be rolled back after its blocker, so that `Rollback` will not
+		// run when there's concurrent `LockKeys` running.
+		// If it's blocked on the `Wait` forever, it means the transaction's blocker is not rolled back.
+		c.Logf("rollback txn %v", i)
+		txns[i].wg.Wait()
+		err := txns[i].Rollback()
+		c.Assert(err, IsNil)
+	}
+
+	// Check the given WaitForEntry is caused by txn[i] waiting for txn[j].
+	checkWaitChainEntry := func(txns []*txnWrapper, entry *deadlockpb.WaitForEntry, i, j int) {
+		c.Assert(entry.Txn, Equals, txns[i].StartTS())
+		c.Assert(entry.WaitForTxn, Equals, txns[j].StartTS())
+		c.Assert(entry.Key, BytesEquals, []byte{'k', byte(j)})
+		c.Assert(string(entry.ResourceGroupTag), Equals, fmt.Sprintf("tag-%v-%v", i, j))
+	}
+
+	c.Log("test case 1: 1->0->1")
+
+	txns := prepareTxns(2)
+
+	makeWaitFor(txns, 0, 1)
+	// Sleep for a while to make sure it has been blocked.
+	time.Sleep(time.Millisecond * 100)
+
+	// txn2 tries locking k1 and encounters deadlock error.
+	err := tryLock(txns, 1, 0)
+	c.Assert(err, NotNil)
+	dl, ok := errors.Cause(err).(*tikverr.ErrDeadlock)
+	c.Assert(ok, IsTrue)
+
+	waitChain := dl.GetWaitChain()
+	c.Assert(len(waitChain), Equals, 2)
+	checkWaitChainEntry(txns, waitChain[0], 0, 1)
+	checkWaitChainEntry(txns, waitChain[1], 1, 0)
+
+	// Each transaction should be rolled back after its blocker being rolled back
+	waitAndRollback(txns, 1)
+	waitAndRollback(txns, 0)
+
+	c.Log("test case 2: 3->2->0->1->3")
+	txns = prepareTxns(4)
+
+	makeWaitFor(txns, 0, 1)
+	makeWaitFor(txns, 2, 0)
+	makeWaitFor(txns, 1, 3)
+	// Sleep for a while to make sure it has been blocked.
+	time.Sleep(time.Millisecond * 100)
+
+	err = tryLock(txns, 3, 2)
+	c.Assert(err, NotNil)
+	dl, ok = errors.Cause(err).(*tikverr.ErrDeadlock)
+	c.Assert(ok, IsTrue)
+
+	waitChain = dl.GetWaitChain()
+	c.Assert(len(waitChain), Equals, 4)
+	c.Logf("wait chain: \n** %v\n**%v\n**%v\n**%v\n", waitChain[0], waitChain[1], waitChain[2], waitChain[3])
+	checkWaitChainEntry(txns, waitChain[0], 2, 0)
+	checkWaitChainEntry(txns, waitChain[1], 0, 1)
+	checkWaitChainEntry(txns, waitChain[2], 1, 3)
+	checkWaitChainEntry(txns, waitChain[3], 3, 2)
+
+	// Each transaction should be rolled back after its blocker being rolled back
+	waitAndRollback(txns, 3)
+	waitAndRollback(txns, 1)
+	waitAndRollback(txns, 0)
+	waitAndRollback(txns, 2)
 }

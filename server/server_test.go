@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -181,13 +180,6 @@ func (cli *testServerClient) runTestsOnNewDB(c *C, overrider configOverrider, db
 type DBTest struct {
 	*C
 	db *sql.DB
-}
-
-func (dbt *DBTest) fail(method, query string, err error) {
-	if len(query) > 300 {
-		query = "[query too large to print]"
-	}
-	dbt.Fatalf("Error on %s %s: %s", method, query, err.Error())
 }
 
 func (dbt *DBTest) mustPrepare(query string) *sql.Stmt {
@@ -506,14 +498,14 @@ func (cli *testServerClient) runTestLoadDataForSlowLog(c *C, server *Server) {
 		}
 
 		// Test for record slow log for load data statement.
-		rows := dbt.mustQuery(fmt.Sprintf("select plan from information_schema.slow_query where query like 'load data local infile %% into table t_slow;' order by time desc limit 1"))
+		rows := dbt.mustQuery("select plan from information_schema.slow_query where query like 'load data local infile % into table t_slow;' order by time desc limit 1")
 		expectedPlan := ".*LoadData.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.* commit_txn.*"
 		checkPlan(rows, expectedPlan)
 		// Test for record statements_summary for load data statement.
-		rows = dbt.mustQuery(fmt.Sprintf("select plan from information_schema.STATEMENTS_SUMMARY where QUERY_SAMPLE_TEXT like 'load data local infile %%' limit 1"))
+		rows = dbt.mustQuery("select plan from information_schema.STATEMENTS_SUMMARY where QUERY_SAMPLE_TEXT like 'load data local infile %' limit 1")
 		checkPlan(rows, expectedPlan)
 		// Test log normal statement after executing load date.
-		rows = dbt.mustQuery(fmt.Sprintf("select plan from information_schema.slow_query where query = 'insert ignore into t_slow values (1,1);' order by time desc limit 1"))
+		rows = dbt.mustQuery("select plan from information_schema.slow_query where query = 'insert ignore into t_slow values (1,1);' order by time desc limit 1")
 		expectedPlan = ".*Insert.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.*"
 		checkPlan(rows, expectedPlan)
 	})
@@ -1618,7 +1610,7 @@ func (cli *testServerClient) runTestIssue3662(c *C) {
 		config.DBName = "non_existing_schema"
 	}))
 	c.Assert(err, IsNil)
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
@@ -1636,7 +1628,7 @@ func (cli *testServerClient) runTestIssue3680(c *C) {
 		config.User = "non_existing_user"
 	}))
 	c.Assert(err, IsNil)
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
@@ -1683,7 +1675,7 @@ func (cli *testServerClient) runTestIssue3682(c *C) {
 		config.DBName = "non_existing_schema"
 	}))
 	c.Assert(err, IsNil)
-	go func() {
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
@@ -1869,7 +1861,7 @@ func (cli *testServerClient) runTestTLSConnection(t *C, overrider configOverride
 	dsn := cli.getDSN(overrider)
 	db, err := sql.Open("mysql", dsn)
 	t.Assert(err, IsNil)
-	go func() {
+	defer func() {
 		err := db.Close()
 		t.Assert(err, IsNil)
 	}()
@@ -1883,7 +1875,7 @@ func (cli *testServerClient) runTestTLSConnection(t *C, overrider configOverride
 func (cli *testServerClient) runReloadTLS(t *C, overrider configOverrider, errorNoRollback bool) error {
 	db, err := sql.Open("mysql", cli.getDSN(overrider))
 	t.Assert(err, IsNil)
-	go func() {
+	defer func() {
 		err := db.Close()
 		t.Assert(err, IsNil)
 	}()
@@ -1920,7 +1912,7 @@ func (cli *testServerClient) runTestSumAvg(c *C) {
 func (cli *testServerClient) getMetrics(t *C) []byte {
 	resp, err := cli.fetchStatus("/metrics")
 	t.Assert(err, IsNil)
-	content, err := ioutil.ReadAll(resp.Body)
+	content, err := io.ReadAll(resp.Body)
 	t.Assert(err, IsNil)
 	err = resp.Body.Close()
 	t.Assert(err, IsNil)
@@ -1962,7 +1954,7 @@ func (cli *testServerClient) waitUntilServerOnline() {
 		// fetch http status
 		resp, err := cli.fetchStatus("/status")
 		if err == nil {
-			_, err = ioutil.ReadAll(resp.Body)
+			_, err = io.ReadAll(resp.Body)
 			if err != nil {
 				panic(err)
 			}

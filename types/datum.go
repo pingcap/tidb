@@ -767,7 +767,7 @@ func (d *Datum) compareBinaryLiteral(sc *stmtctx.StatementContext, b BinaryLiter
 	case KindMaxValue:
 		return 1, nil
 	case KindString, KindBytes:
-		return CompareString(d.GetString(), b.ToString(), d.collation), nil
+		fallthrough // in this case, d is converted to Binary and then compared with b
 	case KindBinaryLiteral, KindMysqlBit:
 		return CompareString(d.GetBinaryLiteral4Cmp().ToString(), b.ToString(), d.collation), nil
 	default:
@@ -848,7 +848,7 @@ func (d *Datum) ConvertTo(sc *stmtctx.StatementContext, target *FieldType) (Datu
 	case mysql.TypeNewDecimal:
 		return d.convertToMysqlDecimal(sc, target)
 	case mysql.TypeYear:
-		return d.convertToMysqlYear(sc, target)
+		return d.ConvertToMysqlYear(sc, target)
 	case mysql.TypeEnum:
 		return d.convertToMysqlEnum(sc, target)
 	case mysql.TypeBit:
@@ -1182,6 +1182,14 @@ func (d *Datum) convertToMysqlTime(sc *stmtctx.StatementContext, target *FieldTy
 		t, err = ParseTime(sc, d.GetString(), tp, fsp)
 	case KindInt64:
 		t, err = ParseTimeFromNum(sc, d.GetInt64(), tp, fsp)
+	case KindUint64:
+		intOverflow64 := d.GetInt64() < 0
+		if intOverflow64 {
+			uNum := strconv.FormatUint(d.GetUint64(), 10)
+			t, err = ZeroDate, ErrWrongValue.GenWithStackByArgs(TimeStr, uNum)
+		} else {
+			t, err = ParseTimeFromNum(sc, d.GetInt64(), tp, fsp)
+		}
 	case KindMysqlJSON:
 		j := d.GetMysqlJSON()
 		var s string
@@ -1366,7 +1374,8 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 	return dec, err
 }
 
-func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+// ConvertToMysqlYear converts a datum to MySQLYear.
+func (d *Datum) ConvertToMysqlYear(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	var (
 		ret    Datum
 		y      int64
@@ -1409,54 +1418,6 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 	y, err = AdjustYear(y, adjust)
 	ret.SetInt64(y)
 	return ret, errors.Trace(err)
-}
-
-// ConvertDatumToFloatYear converts datum into MySQL year with float type
-func ConvertDatumToFloatYear(sc *stmtctx.StatementContext, d Datum) (Datum, error) {
-	return d.convertToMysqlFloatYear(sc, types.NewFieldType(mysql.TypeYear))
-}
-
-func (d *Datum) convertToMysqlFloatYear(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
-	var (
-		ret    Datum
-		y      float64
-		err    error
-		adjust bool
-	)
-	switch d.k {
-	case KindString, KindBytes:
-		s := d.GetString()
-		trimS := strings.TrimSpace(s)
-		y, err = StrToFloat(sc, trimS, false)
-		if err != nil {
-			ret.SetFloat64(0)
-			return ret, errors.Trace(err)
-		}
-		// condition:
-		// parsed to 0, not a string of length 4, the first valid char is a 0 digit
-		if len(s) != 4 && y == 0 && strings.HasPrefix(trimS, "0") {
-			adjust = true
-		}
-	case KindMysqlTime:
-		y = float64(d.GetMysqlTime().Year())
-	case KindMysqlDuration:
-		y = float64(time.Now().Year())
-	case KindNull:
-		// if datum is NULL, we should keep it as it is, instead of setting it to zero or any other value.
-		ret = *d
-		return ret, nil
-	default:
-		ret, err = d.convertToFloat(sc, NewFieldType(mysql.TypeDouble))
-		if err != nil {
-			_, err = invalidConv(d, target.Tp)
-			ret.SetFloat64(0)
-			return ret, err
-		}
-		y = ret.GetFloat64()
-	}
-	y = adjustYearForFloat(y, adjust)
-	ret.SetFloat64(y)
-	return ret, err
 }
 
 func (d *Datum) convertStringToMysqlBit(sc *stmtctx.StatementContext) (uint64, error) {

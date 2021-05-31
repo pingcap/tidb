@@ -15,12 +15,10 @@ package cophandler
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/ngaut/unistore/tikv/dbreader"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/mpp"
@@ -29,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore/unistore/client"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
@@ -206,6 +205,11 @@ func (b *mppExecBuilder) buildMPPJoin(pb *tipb.Join, children []*tipb.Executor) 
 			return nil, errors.Trace(err)
 		}
 		e.probeKey = probeExpr.(*expression.Column)
+	}
+	e.comKeyTp = types.AggFieldType([]*types.FieldType{e.probeKey.RetType, e.buildKey.RetType})
+	if e.comKeyTp.Tp == mysql.TypeNewDecimal {
+		e.comKeyTp.Flen = mysql.MaxDecimalWidth
+		e.comKeyTp.Decimal = mysql.MaxDecimalScale
 	}
 	return e, nil
 }
@@ -406,10 +410,6 @@ type ExchangerTunnel struct {
 
 	connectedCh chan struct{}
 	ErrCh       chan error
-}
-
-func (tunnel *ExchangerTunnel) debugString() string {
-	return fmt.Sprintf("(%d->%d)", tunnel.sourceTask.TaskId, tunnel.targetTask.TaskId)
 }
 
 // RecvChunk recive tipb chunk
