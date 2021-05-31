@@ -1377,7 +1377,7 @@ func (s *testSuite5) TestSetClusterConfigJSONData(c *C) {
 	}
 }
 
-func (s *testSuite5) TestSetTopSQLVariables(c *C) {
+func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_enable_top_sql='On';")
 	tk.MustQuery("select @@tidb_enable_top_sql;").Check(testkit.Rows("1"))
