@@ -1845,4 +1845,11 @@ func (s *testColumnTypeChangeSuite) TestChangePrefixedIndexColumnToNonPrefixOne(
 	showCreateTable = tk.MustQuery("show create table t").Rows()[0][1].(string)
 	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`(2),`b`)"), IsTrue,
 		Commentf("%s", showCreateTable))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a char(250), unique key idx(a(10)));")
+	tk.MustExec("alter table t modify a char(9);")
+	showCreateTable = tk.MustQuery("show create table t").Rows()[0][1].(string)
+	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`)"), IsTrue,
+		Commentf("%s", showCreateTable))
 }

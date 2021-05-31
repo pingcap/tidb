@@ -4027,9 +4027,9 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 		}
 
 		prefixLength := types.UnspecifiedLength
-		if types.IsTypePrefixable(col.FieldType.Tp) {
-			// When the index column is changed, prefix length is
-			// only valid if the type is still prefixable.
+		if types.IsTypePrefixable(col.FieldType.Tp) && col.FieldType.Flen > ic.Length {
+			// When the index column is changed, prefix length is only valid
+			// if the type is still prefixable and larger than old prefix length.
 			prefixLength = ic.Length
 		}
 		if err := checkIndexColumn(col, prefixLength); err != nil {
