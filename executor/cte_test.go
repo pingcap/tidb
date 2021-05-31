@@ -74,7 +74,7 @@ func (test *CTETestSuite) TestBasicCTE(c *check.C) {
 		"select * from cte1")
 	rows.Check(testkit.Rows("1", "2", "3", "4", "5"))
 
-	// two seed part
+	// Two seed parts.
 	rows = tk.MustQuery("with recursive cte1 as (" +
 		"select 1 c1 " +
 		"union all " +
@@ -84,7 +84,7 @@ func (test *CTETestSuite) TestBasicCTE(c *check.C) {
 		"select * from cte1 order by c1")
 	rows.Check(testkit.Rows("1", "2", "2", "3", "3", "4", "4", "5", "5", "6", "6", "7", "7", "8", "8", "9", "9", "10", "10"))
 
-	// two recursive part
+	// Two recursive parts.
 	rows = tk.MustQuery("with recursive cte1 as (" +
 		"select 1 c1 " +
 		"union all " +
