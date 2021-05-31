@@ -78,7 +78,7 @@ import (
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/tablecodec"
-	util2 "github.com/pingcap/tidb/util"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -2125,10 +2125,10 @@ func (cc getLastStmtInConn) String() string {
 		if cc.ctx.GetSessionVars().EnableRedactLog {
 			sql = parser.Normalize(sql)
 		}
-		return util2.QueryStrForLog(sql)
+		return tidbutil.QueryStrForLog(sql)
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
-		return util2.QueryStrForLog(cc.preparedStmt2String(stmtID))
+		return tidbutil.QueryStrForLog(cc.preparedStmt2String(stmtID))
 	case mysql.ComStmtClose, mysql.ComStmtReset:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
 		return mysql.Command2Str[cmd] + " " + strconv.Itoa(int(stmtID))
@@ -2156,10 +2156,10 @@ func (cc getLastStmtInConn) PProfLabel() string {
 	case mysql.ComStmtReset:
 		return "ResetStmt"
 	case mysql.ComQuery, mysql.ComStmtPrepare:
-		return parser.Normalize(util2.QueryStrForLog(string(hack.String(data))))
+		return parser.Normalize(tidbutil.QueryStrForLog(string(hack.String(data))))
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
-		return util2.QueryStrForLog(cc.preparedStmt2StringNoArgs(stmtID))
+		return tidbutil.QueryStrForLog(cc.preparedStmt2StringNoArgs(stmtID))
 	default:
 		return ""
 	}
