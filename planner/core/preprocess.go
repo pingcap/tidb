@@ -608,8 +608,12 @@ func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 			return
 		}
 		tempTableType := tableInfo.Meta().TempTableType
-		if stmt.Tp == ast.AdminCheckTable && tempTableType != model.TempTableNone {
-			p.err = infoschema.ErrAdminCheckTable
+		if (stmt.Tp == ast.AdminCheckTable || stmt.Tp == ast.AdminChecksumTable) && tempTableType != model.TempTableNone {
+			if stmt.Tp == ast.AdminChecksumTable {
+				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table")
+			} else {
+				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("admin check table")
+			}
 			return
 		}
 	}
