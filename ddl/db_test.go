@@ -3040,12 +3040,12 @@ func (s *testDBSuite2) TestTemporaryTableForeignKey(c *C) {
 	// test add foreign key.
 	tk.MustExec("drop table if exists t2;")
 	tk.MustExec("create table t2 (a int, b int);")
-	_, err := tk.Exec("alter table t1_tmp add foreign key (c) REFERENCES t2(a);")
-	c.Assert(err.Error(), Equals, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("foreign key").Error())
+	failSQL := "alter table t1_tmp add foreign key (c) REFERENCES t2(a);"
+	tk.MustGetErrCode(failSQL, mysql.ErrCannotAddForeign)
 	// Test drop column with foreign key.
 	tk.MustExec("create global temporary table t3 (c int,d int,foreign key (d) references t1 (b)) on commit delete rows;")
-	_, err = tk.Exec("alter table t3 drop foreign key d")
-	c.Assert(err.Error(), Equals, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("foreign key").Error())
+	failSQL = "alter table t3 drop foreign key d"
+	tk.MustGetErrCode(failSQL, mysql.ErrCannotAddForeign)
 	tk.MustExec("drop table if exists t1,t2,t3,t1_tmp;")
 }
 

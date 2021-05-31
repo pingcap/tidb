@@ -5265,7 +5265,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 	if t.Meta().TempTableType != model.TempTableNone {
-		return ErrOptOnTemporaryTable.GenWithStackByArgs("foreign key")
+		return infoschema.ErrCannotAddForeign
 	}
 
 	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols(), t.Meta())
@@ -5300,7 +5300,7 @@ func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 	if t.Meta().TempTableType != model.TempTableNone {
-		return ErrOptOnTemporaryTable.GenWithStackByArgs("foreign key")
+		return infoschema.ErrCannotAddForeign
 	}
 
 	job := &model.Job{
