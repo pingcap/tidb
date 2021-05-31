@@ -395,7 +395,6 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 	s.TxnReadTS = NewTxnReadTS(oracle.GoTimeToTS(t1))
 	// tx_read_ts should be mutual exclusive with tidb_snapshot
 	s.SnapshotTS = 0
-	s.SnapshotInfoschema = nil
 	return err
 }
 

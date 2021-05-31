@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
@@ -680,4 +681,36 @@ func (s *testStaleTxnSuite) TestSpecialSQLInStalenessTxn(c *C) {
 		tk.MustExec(testcase.sql)
 		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, testcase.sameSession, comment)
 	}
+}
+
+func (s *testStaleTxnSuite) TestSetTransactionInfoSchema(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key);")
+
+	schemaVer1 := tk.Se.GetInfoSchema().SchemaMetaVersion()
+	time1 := time.Now()
+	tk.MustExec("alter table t add c int")
+
+	// confirm schema changed
+	schemaVer2 := tk.Se.GetInfoSchema().SchemaMetaVersion()
+	c.Assert(schemaVer1, Less, schemaVer2)
+	tk.MustExec(fmt.Sprintf(`SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
+	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer1)
+	tk.MustExec("select * from t;")
+	tk.MustExec(fmt.Sprintf(`SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
+	tk.MustExec("begin;")
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema).SchemaMetaVersion(), Equals, schemaVer1)
+	tk.MustExec("commit")
+	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer2)
 }
