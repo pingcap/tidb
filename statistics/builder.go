@@ -212,15 +212,7 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 
 // BuildHistAndTopN build a histogram and TopN for a column or an index from samples.
 // overrideNDV is for virtual columns because they are calculated using a different method.
-func BuildHistAndTopN(
-	ctx sessionctx.Context,
-	numBuckets, numTopN int,
-	id int64,
-	collector *SampleCollector,
-	tp *types.FieldType,
-	isColumn bool,
-	overrideNDV int64,
-) (*Histogram, *TopN, error) {
+func BuildHistAndTopN(ctx sessionctx.Context, numBuckets, numTopN int, id int64, collector *SampleCollector, tp *types.FieldType, isColumn bool) (*Histogram, *TopN, error) {
 	var getComparedBytes func(datum types.Datum) ([]byte, error)
 	if isColumn {
 		getComparedBytes = func(datum types.Datum) ([]byte, error) {
@@ -232,7 +224,7 @@ func BuildHistAndTopN(
 		}
 	}
 	count := collector.Count
-	ndv := overrideNDV
+	ndv := collector.FMSketch.NDV()
 	if ndv < 0 {
 		ndv = collector.FMSketch.NDV()
 	}
