@@ -229,7 +229,6 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 		}
 		if len(testcase.setTxnSQL) > 0 {
 			c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(0))
-			c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, IsFalse)
 		}
 	}
 }
@@ -465,6 +464,7 @@ func (s *testStaleTxnSerialSuite) TestSetTransactionReadOnlyAsOf(c *C) {
 	err = tk.ExecToErr(`START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00'`)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "start transaction read only as of is forbidden after set transaction read only as of")
+	tk.MustExec(`SET TRANSACTION READ ONLY as of timestamp '2021-04-21 00:42:12'`)
 }
 
 func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
@@ -590,6 +590,14 @@ func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *
 		},
 	}
 	tk := testkit.NewTestKit(c, s.store)
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int);")
 	tk.MustExec("create table t1 (id int);")
@@ -602,12 +610,22 @@ func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *
 		if testcase.isValidate {
 			_, err := tk.Exec(testcase.sql)
 			c.Assert(err, IsNil)
-			tk.MustExec("commit")
 		} else {
 			err := tk.ExecToErr(testcase.sql)
 			c.Assert(err, NotNil)
 			c.Assert(err.Error(), Matches, `.*only support read-only statement during read-only staleness transactions.*`)
 		}
+		tk.MustExec("commit")
+		tk.MustExec("set transaction read only as of timestamp NOW(3);")
+		if testcase.isValidate {
+			_, err := tk.Exec(testcase.sql)
+			c.Assert(err, IsNil)
+		} else {
+			err := tk.ExecToErr(testcase.sql)
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Matches, `.*only support read-only statement during read-only staleness transactions.*`)
+		}
+		tk.MustExec("set transaction read only as of timestamp ''")
 	}
 }
 

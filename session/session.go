@@ -1556,7 +1556,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {
 	vars := s.GetSessionVars()
-	if !vars.TxnCtx.IsStaleness || vars.TxnReadTS.PeakTxnReadTS() == 0 {
+	if !vars.TxnCtx.IsStaleness && vars.TxnReadTS.PeakTxnReadTS() == 0 {
 		return nil
 	}
 	errMsg := "only support read-only statement during read-only staleness transactions"
