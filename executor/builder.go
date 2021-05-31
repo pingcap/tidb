@@ -3770,39 +3770,38 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) Executor {
 	}
 
 	if b.ctx.GetSessionVars().EnablePipelinedWindowExec {
-		p := processor{
-			windowFuncs:    windowFuncs,
-			partialResults: partialResults,
+		exec := &PipelinedWindowExec{
+			baseExecutor:   base,
+			groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
+			numWindowFuncs: len(v.WindowFuncDescs),
 		}
+
+		exec.windowFuncs = windowFuncs
+		exec.partialResults = partialResults
 		if v.Frame == nil {
-			p.start = &plannercore.FrameBound{
+			exec.start = &plannercore.FrameBound{
 				Type:      ast.Preceding,
 				UnBounded: true,
 			}
-			p.end = &plannercore.FrameBound{
+			exec.end = &plannercore.FrameBound{
 				Type:      ast.Following,
 				UnBounded: true,
 			}
 		} else {
-			p.start = v.Frame.Start
-			p.end = v.Frame.End
+			exec.start = v.Frame.Start
+			exec.end = v.Frame.End
 			if v.Frame.Type == ast.Ranges {
 				cmpResult := int64(-1)
 				if len(v.OrderBy) > 0 && v.OrderBy[0].Desc {
 					cmpResult = 1
 				}
-				p.orderByCols = orderByCols
-				p.expectedCmpResult = cmpResult
-				p.isRangeFrame = true
+				exec.orderByCols = orderByCols
+				exec.expectedCmpResult = cmpResult
+				exec.isRangeFrame = true
 			}
 		}
 
-		return &PipelinedWindowExec{
-			baseExecutor:   base,
-			groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
-			numWindowFuncs: len(v.WindowFuncDescs),
-			p:              p,
-		}
+		return exec
 	} else {
 		var processor windowProcessor
 		if v.Frame == nil {

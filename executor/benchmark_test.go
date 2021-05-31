@@ -692,17 +692,17 @@ func BenchmarkWindowRows(b *testing.B) {
 func baseBenchmarkWindowFunctions(b *testing.B, pipelined int) {
 	b.ReportAllocs()
 	windowFuncs := []string{
-		ast.WindowFuncRowNumber,
-		ast.WindowFuncRank,
-		ast.WindowFuncDenseRank,
-		ast.WindowFuncCumeDist,
-		ast.WindowFuncPercentRank,
-		ast.WindowFuncNtile,
-		ast.WindowFuncLead,
+		// ast.WindowFuncRowNumber,
+		// ast.WindowFuncRank,
+		// ast.WindowFuncDenseRank,
+		// ast.WindowFuncCumeDist,
+		// ast.WindowFuncPercentRank,
+		// ast.WindowFuncNtile,
+		// ast.WindowFuncLead,
 		ast.WindowFuncLag,
-		ast.WindowFuncFirstValue,
-		ast.WindowFuncLastValue,
-		ast.WindowFuncNthValue,
+		// ast.WindowFuncFirstValue,
+		// ast.WindowFuncLastValue,
+		// ast.WindowFuncNthValue,
 	}
 	concs := []int{1, 4}
 	for _, windowFunc := range windowFuncs {

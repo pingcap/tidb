@@ -25,26 +25,52 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
+type dataInfo struct {
+	chk         *chunk.Chunk
+	remaining   uint64
+	accumulated uint64
+}
+
 // PipelinedWindowExec is the executor for window functions.
 type PipelinedWindowExec struct {
 	baseExecutor
+	numWindowFuncs     int
+	windowFuncs        []aggfuncs.AggFunc
+	slidingWindowFuncs []aggfuncs.SlidingWindowAggFunc
+	partialResults     []aggfuncs.PartialResult
+	start              *core.FrameBound
+	end                *core.FrameBound
+	groupChecker       *vecGroupChecker
 
-	groupChecker *vecGroupChecker
 	// childResult stores the child chunk
 	childResult *chunk.Chunk
-	// resultChunks stores the chunks to return
-	resultChunks []*chunk.Chunk
-	// remainingRowsInChunk indicates how many rows the resultChunks[i] is not prepared.
-	remainingRowsInChunk []int
+	data        []dataInfo
+	dataIdx     int
 
-	numWindowFuncs int
 	// done indicates the child executor is drained or something unexpected happened.
 	done         bool
-	p            processor // TODO(zhifeng): you don't need a processor, just make it into the executor
-	rows         []chunk.Row
-	wantMore     bool
+	accumulated  uint64
+	dropped      uint64
 	consumed     bool
+	rowToConsume uint64
 	newPartition bool
+
+	curRowIdx uint64
+	// curStartRow and curEndRow defines the current frame range
+	lastStartRow uint64
+	lastEndRow   uint64
+	rowStart     uint64
+	orderByCols  []*expression.Column
+	// expectedCmpResult is used to decide if one value is included in the frame.
+	expectedCmpResult int64
+
+	// rows keeps rows starting from curStartRow
+	rows                     []chunk.Row
+	rowCnt                   uint64
+	whole                    bool
+	isRangeFrame             bool
+	emptyFrame               bool
+	initializedSlidingWindow bool
 }
 
 // Close implements the Executor Close interface.
@@ -54,14 +80,25 @@ func (e *PipelinedWindowExec) Close() error {
 
 // Open implements the Executor Open interface
 func (e *PipelinedWindowExec) Open(ctx context.Context) (err error) {
-	e.consumed = true
-	e.p.init()
+	e.rowToConsume = 0
+	e.done = false
+	e.accumulated = 0
+	e.dropped = 0
+	e.data = make([]dataInfo, 0)
+	e.dataIdx = 0
+	e.slidingWindowFuncs = make([]aggfuncs.SlidingWindowAggFunc, len(e.windowFuncs))
+	for i, windowFunc := range e.windowFuncs {
+		if slidingWindowAggFunc, ok := windowFunc.(aggfuncs.SlidingWindowAggFunc); ok {
+			e.slidingWindowFuncs[i] = slidingWindowAggFunc
+		}
+	}
 	e.rows = make([]chunk.Row, 0)
 	return e.baseExecutor.Open(ctx)
 }
 
 func (e *PipelinedWindowExec) firstResultChunkNotReady() bool {
-	return len(e.remainingRowsInChunk) > 0 && e.remainingRowsInChunk[0] != 0
+	// chunk can't be ready unless, 1. all of the rows in the chunk is filled, 2. e.rows doesn't contain rows in the chunk
+	return len(e.data) > 0 && (e.data[0].remaining != 0 || e.data[0].accumulated > e.dropped)
 }
 
 // Next implements the Executor Next interface.
@@ -73,22 +110,21 @@ func (e *PipelinedWindowExec) Next(ctx context.Context, chk *chunk.Chunk) (err e
 		// for unbounded frame, it needs consume the whole partition before being able to produce, in this case
 		// e.p.moreToProduce will be false until so.
 		var more bool
-		more, err = e.p.moreToProduce(e.ctx)
+		more, err = e.moreToProduce(e.ctx)
 		if err != nil {
 			return
 		}
-		if !e.done && !more {
-			if e.consumed {
+		if !more {
+			if !e.done && e.rowToConsume == 0 {
 				err = e.getRowsInPartition(ctx)
 				if err != nil {
 					return err
 				}
 			}
-			if e.newPartition {
-				e.p.finish()
-				e.wantMore = false
+			if e.done || e.newPartition {
+				e.finish()
 				// if we continued, the rows will not be consumed, so next time we should consume it instead of calling e.getRowsInPartition
-				more, err = e.p.moreToProduce(e.ctx)
+				more, err = e.moreToProduce(e.ctx)
 				if err != nil {
 					return
 				}
@@ -96,36 +132,32 @@ func (e *PipelinedWindowExec) Next(ctx context.Context, chk *chunk.Chunk) (err e
 					continue
 				}
 				e.newPartition = false
-				e.p.reset()
-				if len(e.rows) == 0 {
+				e.reset()
+				if e.rowToConsume == 0 {
 					// no more data
 					break
 				}
 			}
-			e.wantMore, err = e.p.consume(e.rows)
-			e.consumed = true // TODO(zhifeng): move this into consume() after absorbing p into e
-			if err != nil {
-				return err
-			}
+			e.rowCnt += e.rowToConsume
+			e.rowToConsume = 0
 		}
 
-		// e.p is ready to produce data, we use wantMore here to avoid meaningless produce when the whole frame is required
-		if !e.wantMore && len(e.resultChunks) > 0 && e.remainingRowsInChunk[0] != 0 {
-			produced, err := e.p.produce(e.ctx, e.resultChunks[0], e.remainingRowsInChunk[0])
+		// e.p is ready to produce data
+		if len(e.data) > e.dataIdx && e.data[e.dataIdx].remaining != 0 {
+			produced, err := e.produce(e.ctx, e.data[e.dataIdx].chk, e.data[e.dataIdx].remaining)
 			if err != nil {
 				return err
 			}
-			e.remainingRowsInChunk[0] -= int(produced)
-			if e.remainingRowsInChunk[0] == 0 {
-				break
+			e.data[e.dataIdx].remaining -= produced
+			if e.data[e.dataIdx].remaining == 0 {
+				e.dataIdx++
 			}
 		}
 	}
-	if len(e.resultChunks) > 0 {
-		chk.SwapColumns(e.resultChunks[0])
-		e.resultChunks[0] = nil // GC it. TODO: Reuse it.
-		e.resultChunks = e.resultChunks[1:]
-		e.remainingRowsInChunk = e.remainingRowsInChunk[1:]
+	if len(e.data) > 0 {
+		chk.SwapColumns(e.data[0].chk)
+		e.data = e.data[1:]
+		e.dataIdx--
 	}
 	return nil
 }
@@ -136,7 +168,6 @@ func (e *PipelinedWindowExec) getRowsInPartition(ctx context.Context) (err error
 		// if getRowsInPartition is called for the first time, we ignore it as a new partition
 		e.newPartition = false
 	}
-	e.rows = e.rows[:0]
 	e.consumed = false
 
 	if e.groupChecker.isExhausted() {
@@ -145,7 +176,7 @@ func (e *PipelinedWindowExec) getRowsInPartition(ctx context.Context) (err error
 		if err != nil {
 			err = errors.Trace(err)
 		}
-		// we return immediately to use a combination of true newPartition but empty e.rows to indicate the data source is drained,
+		// we return immediately to use a combination of true newPartition but 0 in e.rowToConsume to indicate the data source is drained,
 		if drained {
 			e.done = true
 			return nil
@@ -160,6 +191,7 @@ func (e *PipelinedWindowExec) getRowsInPartition(ctx context.Context) (err error
 		}
 	}
 	begin, end := e.groupChecker.getNextGroup()
+	e.rowToConsume += uint64(end - begin)
 	for i := begin; i < end; i++ {
 		e.rows = append(e.rows, e.childResult.GetRow(i))
 	}
@@ -185,8 +217,8 @@ func (e *PipelinedWindowExec) fetchChild(ctx context.Context) (EOF bool, err err
 	if err != nil {
 		return false, err
 	}
-	e.resultChunks = append(e.resultChunks, resultChk)
-	e.remainingRowsInChunk = append(e.remainingRowsInChunk, numRows)
+	e.accumulated += uint64(numRows)
+	e.data = append(e.data, dataInfo{chk: resultChk, remaining: uint64(numRows), accumulated: e.accumulated})
 
 	e.childResult = childResult
 	return false, nil
@@ -202,71 +234,20 @@ func (e *PipelinedWindowExec) copyChk(src, dst *chunk.Chunk) error {
 	return nil
 }
 
-type processor struct {
-	windowFuncs        []aggfuncs.AggFunc
-	slidingWindowFuncs []aggfuncs.SlidingWindowAggFunc
-	partialResults     []aggfuncs.PartialResult
-	start              *core.FrameBound
-	end                *core.FrameBound
-	curRowIdx          uint64
-	// curStartRow and curEndRow defines the current frame range
-	lastStartRow uint64
-	lastEndRow   uint64
-	rowStart     uint64
-	orderByCols  []*expression.Column
-	// expectedCmpResult is used to decide if one value is included in the frame.
-	expectedCmpResult int64
-
-	// rows keeps rows starting from curStartRow
-	rows                     []chunk.Row
-	rowCnt                   uint64
-	whole                    bool
-	isRangeFrame             bool
-	emptyFrame               bool
-	initializedSlidingWindow bool
-}
-
-func (p *processor) getRow(i uint64) chunk.Row {
+func (p *PipelinedWindowExec) getRow(i uint64) chunk.Row {
 	return p.rows[i-p.rowStart]
 }
 
-func (p *processor) getRows(s, e uint64) []chunk.Row {
+func (p *PipelinedWindowExec) getRows(s, e uint64) []chunk.Row {
 	return p.rows[s-p.rowStart : e-p.rowStart]
 }
 
-func (p *processor) init() {
-	p.slidingWindowFuncs = make([]aggfuncs.SlidingWindowAggFunc, len(p.windowFuncs))
-	for i, windowFunc := range p.windowFuncs {
-		if slidingWindowAggFunc, ok := windowFunc.(aggfuncs.SlidingWindowAggFunc); ok {
-			p.slidingWindowFuncs[i] = slidingWindowAggFunc
-		}
-	}
-}
-
-// slide consumes more rows, and it returns the number of more rows needed in order to proceed, more = -1 means it can only
-// process when the whole partition is consumed, more = 0 means it is ready now, more = n (n > 0), means it need at least n
-// more rows to process.
-func (p *processor) consume(rows []chunk.Row) (wantMore bool, err error) {
-	num := uint64(len(rows))
-	p.rowCnt += num
-	p.rows = append(p.rows, rows...)
-	rows = rows[:0]
-	if p.end.UnBounded {
-		if !p.whole {
-			// we can't proceed until the whole partition is consumed
-			return true, nil
-		}
-	}
-	// let's just try produce
-	return false, nil
-}
-
 // finish is called upon a whole partition is consumed
-func (p *processor) finish() {
+func (p *PipelinedWindowExec) finish() {
 	p.whole = true
 }
 
-func (p *processor) getStart(ctx sessionctx.Context) (uint64, error) {
+func (p *PipelinedWindowExec) getStart(ctx sessionctx.Context) (uint64, error) {
 	if p.start.UnBounded {
 		return 0, nil
 	}
@@ -305,7 +286,7 @@ func (p *processor) getStart(ctx sessionctx.Context) (uint64, error) {
 	}
 }
 
-func (p *processor) getEnd(ctx sessionctx.Context) (uint64, error) {
+func (p *PipelinedWindowExec) getEnd(ctx sessionctx.Context) (uint64, error) {
 	if p.end.UnBounded {
 		return p.rowCnt, nil
 	}
@@ -346,7 +327,7 @@ func (p *processor) getEnd(ctx sessionctx.Context) (uint64, error) {
 
 // produce produces rows and append it to chk, return produced means number of rows appended into chunk, available means
 // number of rows processed but not fetched
-func (p *processor) produce(ctx sessionctx.Context, chk *chunk.Chunk, remained int) (produced int64, err error) {
+func (p *PipelinedWindowExec) produce(ctx sessionctx.Context, chk *chunk.Chunk, remained uint64) (produced uint64, err error) {
 	var (
 		start uint64
 		end   uint64
@@ -438,15 +419,17 @@ func (p *processor) produce(ctx sessionctx.Context, chk *chunk.Chunk, remained i
 		extend = p.lastStartRow
 	}
 	if extend > p.rowStart {
-		p.rows = p.rows[extend-p.rowStart:]
+		numDrop := extend - p.rowStart
+		p.dropped += numDrop
+		p.rows = p.rows[numDrop:]
 		p.rowStart = extend
 	}
 	return
 }
 
-func (p *processor) moreToProduce(ctx sessionctx.Context) (more bool, err error) {
+func (p *PipelinedWindowExec) moreToProduce(ctx sessionctx.Context) (more bool, err error) {
 	if p.curRowIdx >= p.rowCnt {
-		return
+		return false, nil
 	}
 	if p.whole {
 		return true, nil
@@ -463,15 +446,17 @@ func (p *processor) moreToProduce(ctx sessionctx.Context) (more bool, err error)
 }
 
 // reset resets the processor
-func (p *processor) reset() {
+func (p *PipelinedWindowExec) reset() {
 	p.lastStartRow = 0
 	p.lastEndRow = 0
-	p.rowStart = 0
 	p.emptyFrame = false
 	p.curRowIdx = 0
-	p.rowCnt = 0
 	p.whole = false
-	p.rows = p.rows[:0]
+	numDrop := p.rowCnt - p.rowStart
+	p.dropped += numDrop
+	p.rows = p.rows[numDrop:]
+	p.rowStart = 0
+	p.rowCnt = 0
 	p.initializedSlidingWindow = false
 	for i, windowFunc := range p.windowFuncs {
 		windowFunc.ResetPartialResult(p.partialResults[i])
