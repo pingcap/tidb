@@ -1693,3 +1693,22 @@ func (s *testPlanSuite) TestNthPlanHintWithExplain(c *C) {
 	// hold in the future, you may need to modify this.
 	tk.MustQuery("explain format = 'brief' select * from test.tt where a=1 and b=1").Check(testkit.Rows(output[1].Plan...))
 }
+
+func (s *testPlanSuite) TestPossibleProperties(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists student, sc")
+	tk.MustExec("create table student(id int primary key auto_increment, name varchar(4) not null)")
+	tk.MustExec("create table sc(id int primary key auto_increment, student_id int not null, course_id int not null, score int not null)")
+	tk.MustExec("insert into student values (1,'s1'), (2,'s2')")
+	tk.MustExec("insert into sc (student_id, course_id, score) values (1,1,59), (1,2,57), (1,3,76), (2,1,99), (2,2,100), (2,3,100)")
+	tk.MustQuery("select /*+ stream_agg() */ a.id, avg(b.score) as afs from student a join sc b on a.id = b.student_id where b.score < 60 group by a.id having count(b.course_id) >= 2").Check(testkit.Rows(
+		"1 58.0000",
+	))
+}
