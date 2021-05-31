@@ -15,6 +15,7 @@ package topsql
 
 import (
 	"context"
+	"runtime/pprof"
 
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 )
@@ -24,25 +25,23 @@ func SetupTopSQL() {
 	tracecpu.GlobalSQLCPUProfiler.Run()
 }
 
-// SetSQLLabels sets the SQL digest label.
-func SetSQLLabels(ctx context.Context, normalizedSQL, sqlDigest string) {
+// AttachSQLInfo attach the sql information info top sql.
+func AttachSQLInfo(ctx context.Context, normalizedSQL, sqlDigest, normalizedPlan, planDigest string) {
 	if len(normalizedSQL) == 0 || len(sqlDigest) == 0 {
 		return
 	}
-	tracecpu.SetSQLLabels(ctx, sqlDigest)
-	registerSQL(sqlDigest, normalizedSQL)
-}
+	ctx = tracecpu.CtxWithDigest(ctx, sqlDigest, planDigest)
+	pprof.SetGoroutineLabels(ctx)
 
-// SetSQLAndPlanLabels sets the SQL and plan digest label.
-func SetSQLAndPlanLabels(ctx context.Context, sqlDigest, planDigest, normalizedPlan string) {
-	if len(sqlDigest) == 0 || len(planDigest) == 0 {
-		return
+	if len(planDigest) == 0 {
+		// If plan digest is '', indicate it is the first time to attach the SQL info, since it only know the sql digest.
+		linkSQLTextWithDigest(sqlDigest, normalizedSQL)
+	} else {
+		linkPlanTextWithDigest(planDigest, normalizedPlan)
 	}
-	tracecpu.SetSQLAndPlanLabels(ctx, sqlDigest, planDigest)
-	registerPlan(planDigest, normalizedPlan)
 }
 
-func registerSQL(sqlDigest, normalizedSQL string) {
+func linkSQLTextWithDigest(sqlDigest, normalizedSQL string) {
 	c := tracecpu.GlobalSQLCPUProfiler.GetCollector()
 	if c == nil {
 		return
@@ -50,7 +49,7 @@ func registerSQL(sqlDigest, normalizedSQL string) {
 	c.RegisterSQL(sqlDigest, normalizedSQL)
 }
 
-func registerPlan(planDigest string, normalizedPlan string) {
+func linkPlanTextWithDigest(planDigest string, normalizedPlan string) {
 	c := tracecpu.GlobalSQLCPUProfiler.GetCollector()
 	if c == nil {
 		return

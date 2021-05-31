@@ -293,10 +293,10 @@ func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) {
 	if a.Plan == nil || !variable.TopSQLEnabled() {
 		return
 	}
-	_, sqlDigest := a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
+	normalizedSQL, sqlDigest := a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
 	normalizedPlan, planDigest := getPlanDigest(a.Ctx, a.Plan)
-	if sqlDigest != nil {
-		topsql.SetSQLAndPlanLabels(ctx, sqlDigest.String(), planDigest, normalizedPlan)
+	if len(normalizedPlan) > 0 {
+		topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest.String(), normalizedPlan, planDigest)
 	}
 }
 

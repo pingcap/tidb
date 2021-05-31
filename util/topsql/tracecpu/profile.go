@@ -279,16 +279,12 @@ func StopCPUProfile() error {
 	return nil
 }
 
-// SetSQLLabels sets the SQL digest label into the goroutine.
-func SetSQLLabels(ctx context.Context, sqlDigest string) {
-	ctx = pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest))
-	pprof.SetGoroutineLabels(ctx)
-}
-
-// SetSQLAndPlanLabels sets the SQL and plan digest label into the goroutine.
-func SetSQLAndPlanLabels(ctx context.Context, sqlDigest, planDigest string) {
-	ctx = pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest, labelPlanDigest, planDigest))
-	pprof.SetGoroutineLabels(ctx)
+// CtxWithDigest wrap the ctx with sql digest, if plan digest is not null, wrap with plan digest too.
+func CtxWithDigest(ctx context.Context, sqlDigest, planDigest string) context.Context {
+	if len(planDigest) == 0 {
+		return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest))
+	}
+	return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest, labelPlanDigest, planDigest))
 }
 
 func (sp *sqlCPUProfiler) startExportCPUProfile(w io.Writer) error {

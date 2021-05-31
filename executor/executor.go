@@ -1667,7 +1667,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			pprof.SetGoroutineLabels(goCtx)
 		}
 		if variable.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
-			topsql.SetSQLLabels(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest.String())
+			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest.String(), "", "")
 		}
 	}
 	// execute missed stmtID uses empty sql
