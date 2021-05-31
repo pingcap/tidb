@@ -1170,8 +1170,8 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 	}{
 		{"int", "bigint", nil},
 		{"int", "int unsigned", errUnsupportedModifyColumn.GenWithStackByArgs("can't change unsigned integer to signed or vice versa, and tidb_enable_change_column_type is false")},
-		{"varchar(10)", "text", errUnsupportedModifyColumn.GenWithStackByArgs("changing between varchar and non-varchar string needs reorganization, and tidb_enable_change_column_type is false")},
-		{"varbinary(10)", "blob", errUnsupportedModifyColumn.GenWithStackByArgs("changing between varchar and non-varchar string needs reorganization, and tidb_enable_change_column_type is false")},
+		{"varchar(10)", "text", errUnsupportedModifyColumn.GenWithStackByArgs("conversion between char and varchar string needs reorganization")},
+		{"varbinary(10)", "blob", errUnsupportedModifyColumn.GenWithStackByArgs("conversion between char and varchar string needs reorganization")},
 		{"text", "blob", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8mb4 to binary")},
 		{"varchar(10)", "varchar(8)", errUnsupportedModifyColumn.GenWithStackByArgs("length 8 is less than origin 10, and tidb_enable_change_column_type is false")},
 		{"varchar(10)", "varchar(11)", nil},

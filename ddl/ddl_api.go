@@ -3546,10 +3546,10 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needReorg 
 		originFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(origin.Tp)
 		toFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(to.Tp)
 	}
-	if types.IsString(origin.Tp) && types.IsString(to.Tp) {
-		if types.IsTypeVarchar(origin.Tp) != types.IsTypeVarchar(to.Tp) {
-			return true, "changing between varchar and non-varchar string needs reorganization"
-		}
+
+	if (types.IsTypeVarchar(origin.Tp) && to.Tp == mysql.TypeString) ||
+		(origin.Tp == mysql.TypeString && types.IsTypeVarchar(to.Tp)) {
+		return true, "conversion between char and varchar string needs reorganization"
 	}
 
 	if toFlen > 0 && toFlen < originFlen {
