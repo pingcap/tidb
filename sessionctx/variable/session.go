@@ -2062,6 +2062,7 @@ type TxnReadTS struct {
 	used   bool
 }
 
+// NewTxnReadTS creates TxnReadTS
 func NewTxnReadTS(ts uint64) *TxnReadTS {
 	return &TxnReadTS{
 		readTS: ts,
@@ -2069,6 +2070,7 @@ func NewTxnReadTS(ts uint64) *TxnReadTS {
 	}
 }
 
+// UseTxnReadTS returns readTS, and mark used as true
 func (t *TxnReadTS) UseTxnReadTS() uint64 {
 	if t == nil {
 		return 0
@@ -2077,6 +2079,7 @@ func (t *TxnReadTS) UseTxnReadTS() uint64 {
 	return t.readTS
 }
 
+// SetTxnReadTS update readTS, and refresh used
 func (t *TxnReadTS) SetTxnReadTS(ts uint64) {
 	if t == nil {
 		return
@@ -2085,6 +2088,7 @@ func (t *TxnReadTS) SetTxnReadTS(ts uint64) {
 	t.readTS = ts
 }
 
+// PeakTxnReadTS returns readTS
 func (t *TxnReadTS) PeakTxnReadTS() uint64 {
 	if t == nil {
 		return 0
@@ -2092,6 +2096,7 @@ func (t *TxnReadTS) PeakTxnReadTS() uint64 {
 	return t.readTS
 }
 
+// Cleanup cleans up readTS if used is true
 func (t *TxnReadTS) Cleanup() {
 	if t == nil {
 		return
