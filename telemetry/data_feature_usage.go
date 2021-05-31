@@ -31,8 +31,8 @@ type featureUsage struct {
 	Txn *TxnUsage `json:"txn"`
 	// cluster index usage information
 	// key is the first 6 characters of sha2(TABLE_NAME, 256)
-	ClusterIndex *ClusterIndexUsage `json:"clusterIndex"`
-	TemporaryTable bool            `json:"temporaryTable"`
+	ClusterIndex   *ClusterIndexUsage `json:"clusterIndex"`
+	TemporaryTable bool               `json:"temporaryTable"`
 }
 
 func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
@@ -42,11 +42,11 @@ func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
 		logutil.BgLogger().Info(err.Error())
 		return nil, err
 	}
-  
-  // transaction related feature
+
+	// transaction related feature
 	txnUsage := GetTxnUsageInfo(ctx)
-  
-  // Avoid the circle dependency.
+
+	// Avoid the circle dependency.
 	temporaryTable := ctx.(TemporaryTableFeatureChecker).TemporaryTableExists()
 
 	return &featureUsage{txnUsage, clusterIdxUsage, temporaryTable}, nil
