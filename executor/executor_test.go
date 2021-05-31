@@ -2351,14 +2351,14 @@ func (s *testSuiteP2) TestIsPointGet(c *C) {
 		"select * from help_topic where help_topic_id=1":    true,
 		"select * from help_topic where help_category_id=1": false,
 	}
-	infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
 
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
-		err = plannercore.Preprocess(ctx, stmtNode, infoSchema)
+		preprocessorReturn := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		c.Check(err, IsNil)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, infoSchema)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		c.Check(err, IsNil)
 		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
 		c.Assert(err, IsNil)
@@ -2383,13 +2383,13 @@ func (s *testSuiteP2) TestClusteredIndexIsPointGet(c *C) {
 		"select * from t where a='x' and c='x'":         true,
 		"select * from t where a='x' and c='x' and b=1": false,
 	}
-	infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
-		err = plannercore.Preprocess(ctx, stmtNode, infoSchema)
+		preprocessorReturn := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		c.Check(err, IsNil)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, infoSchema)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		c.Check(err, IsNil)
 		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
 		c.Assert(err, IsNil)
@@ -8180,7 +8180,7 @@ func (s *testSerialSuite) TestIssue24210(c *C) {
 func (s *testSerialSuite) TestDeadlockTable(c *C) {
 	deadlockhistory.GlobalDeadlockHistory.Clear()
 
-	occurTime := time.Date(2021, 5, 10, 1, 2, 3, 456789000, time.UTC)
+	occurTime := time.Date(2021, 5, 10, 1, 2, 3, 456789000, time.Local)
 	rec := &deadlockhistory.DeadlockRecord{
 		OccurTime:   occurTime,
 		IsRetryable: false,
@@ -8189,33 +8189,33 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 				TryLockTxn:     101,
 				SQLDigest:      "aabbccdd",
 				Key:            []byte("k1"),
-				AllSQLs:        nil,
+				AllSQLDigests:  nil,
 				TxnHoldingLock: 102,
 			},
 			{
 				TryLockTxn:     102,
 				SQLDigest:      "ddccbbaa",
 				Key:            []byte("k2"),
-				AllSQLs:        []string{"sql1"},
+				AllSQLDigests:  []string{"sql1"},
 				TxnHoldingLock: 101,
 			},
 		},
 	}
 	deadlockhistory.GlobalDeadlockHistory.Push(rec)
 
-	occurTime2 := time.Date(2022, 6, 11, 2, 3, 4, 987654000, time.UTC)
+	occurTime2 := time.Date(2022, 6, 11, 2, 3, 4, 987654000, time.Local)
 	rec2 := &deadlockhistory.DeadlockRecord{
 		OccurTime:   occurTime2,
 		IsRetryable: true,
 		WaitChain: []deadlockhistory.WaitChainItem{
 			{
 				TryLockTxn:     201,
-				AllSQLs:        []string{},
+				AllSQLDigests:  []string{},
 				TxnHoldingLock: 202,
 			},
 			{
 				TryLockTxn:     202,
-				AllSQLs:        []string{"sql1", "sql2, sql3"},
+				AllSQLDigests:  []string{"sql1", "sql2, sql3"},
 				TxnHoldingLock: 203,
 			},
 			{
@@ -8234,11 +8234,11 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select * from information_schema.deadlocks").Check(
 		testutil.RowsWithSep("/",
-			id1+"/2021-05-10 01:02:03.456789/0/101/aabbccdd/6B31/<nil>/102",
-			id1+"/2021-05-10 01:02:03.456789/0/102/ddccbbaa/6B32/[sql1]/101",
-			id2+"/2022-06-11 02:03:04.987654/1/201/<nil>/<nil>/[]/202",
-			id2+"/2022-06-11 02:03:04.987654/1/202/<nil>/<nil>/[sql1, sql2, sql3]/203",
-			id2+"/2022-06-11 02:03:04.987654/1/203/<nil>/<nil>/<nil>/201",
+			id1+"/2021-05-10 01:02:03.456789/0/101/aabbccdd/6B31/102",
+			id1+"/2021-05-10 01:02:03.456789/0/102/ddccbbaa/6B32/101",
+			id2+"/2022-06-11 02:03:04.987654/1/201/<nil>/<nil>/202",
+			id2+"/2022-06-11 02:03:04.987654/1/202/<nil>/<nil>/203",
+			id2+"/2022-06-11 02:03:04.987654/1/203/<nil>/<nil>/201",
 		))
 }
 

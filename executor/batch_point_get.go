@@ -19,16 +19,19 @@ import (
 	"sort"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -46,6 +49,7 @@ type BatchPointGetExec struct {
 	idxInfo     *model.IndexInfo
 	handles     []kv.Handle
 	physIDs     []int64
+	partExpr    *tables.PartitionExpr
 	partPos     int
 	singlePart  bool
 	partTblID   int64
@@ -227,7 +231,11 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				continue
 			}
 
-			physID := getPhysID(e.tblInfo, idxVals[e.partPos].GetInt64())
+			physID, err := getPhysID(e.tblInfo, e.partExpr, idxVals[e.partPos].GetInt64())
+			if err != nil {
+				continue
+			}
+
 			// If this BatchPointGetExec is built only for the specific table partition, skip those filters not matching this partition.
 			if e.singlePart && e.partTblID != physID {
 				continue
@@ -355,13 +363,19 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			tID = e.physIDs[i]
 		} else {
 			if handle.IsInt() {
-				tID = getPhysID(e.tblInfo, handle.IntValue())
+				tID, err = getPhysID(e.tblInfo, e.partExpr, handle.IntValue())
+				if err != nil {
+					continue
+				}
 			} else {
 				_, d, err1 := codec.DecodeOne(handle.EncodedCol(e.partPos))
 				if err1 != nil {
 					return err1
 				}
-				tID = getPhysID(e.tblInfo, d.GetInt64())
+				tID, err = getPhysID(e.tblInfo, e.partExpr, d.GetInt64())
+				if err != nil {
+					continue
+				}
 			}
 		}
 		// If this BatchPointGetExec is built only for the specific table partition, skip those handles not matching this partition.
@@ -466,13 +480,44 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]
 	return nil, kv.ErrNotExist
 }
 
-func getPhysID(tblInfo *model.TableInfo, intVal int64) int64 {
+func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, intVal int64) (int64, error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
-		return tblInfo.ID
+		return tblInfo.ID, nil
 	}
-	partIdx := math.Abs(intVal % int64(pi.Num))
-	return pi.Definitions[partIdx].ID
+
+	if partitionExpr == nil {
+		return tblInfo.ID, nil
+	}
+
+	switch pi.Type {
+	case model.PartitionTypeHash:
+		partIdx := math.Abs(intVal % int64(pi.Num))
+		return pi.Definitions[partIdx].ID, nil
+	case model.PartitionTypeRange:
+		// we've check the type assertions in func TryFastPlan
+		col, ok := partitionExpr.Expr.(*expression.Column)
+		if !ok {
+			return 0, errors.Errorf("unsupported partition type in BatchGet")
+		}
+		unsigned := mysql.HasUnsignedFlag(col.GetType().Flag)
+		ranges := partitionExpr.ForRangePruning
+		length := len(ranges.LessThan)
+		partIdx := sort.Search(length, func(i int) bool {
+			return ranges.Compare(i, intVal, unsigned) > 0
+		})
+		if partIdx >= 0 && partIdx < length {
+			return pi.Definitions[partIdx].ID, nil
+		}
+	case model.PartitionTypeList:
+		isNull := false // we've guaranteed this in the build process of either TryFastPlan or buildBatchPointGet
+		partIdx := partitionExpr.ForListPruning.LocatePartition(intVal, isNull)
+		if partIdx >= 0 {
+			return pi.Definitions[partIdx].ID, nil
+		}
+	}
+
+	return 0, errors.Errorf("dual partition")
 }
 
 type cacheBatchGetter struct {
