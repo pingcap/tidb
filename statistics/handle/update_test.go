@@ -1453,7 +1453,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 	}{
 		// table was never analyzed and has reach the limit
 		{
-			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
+			tbl:    &statistics.Table{Version: oracle.GoTimeToTS(time.Now())},
 			limit:  0,
 			ratio:  0,
 			start:  "00:00 +0800",
@@ -1464,7 +1464,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 		},
 		// table was never analyzed but has not reach the limit
 		{
-			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
+			tbl:    &statistics.Table{Version: oracle.GoTimeToTS(time.Now())},
 			limit:  time.Hour,
 			ratio:  0,
 			start:  "00:00 +0800",

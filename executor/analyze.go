@@ -193,7 +193,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if needGlobalStats {
 		for globalStatsID, info := range globalStatsMap {
-			globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, e.opts, e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema), globalStatsID.tableID, info.isIndex, info.idxID)
+			globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, e.opts, e.ctx.GetInfoSchema().(infoschema.InfoSchema), globalStatsID.tableID, info.isIndex, info.idxID)
 			if err != nil {
 				if types.ErrPartitionStatsMissing.Equal(err) {
 					// When we find some partition-level stats are missing, we need to report warning.
@@ -212,7 +212,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 		}
 	}
-	return statsHandle.Update(e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema))
+	return statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema))
 }
 
 func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
@@ -391,6 +391,7 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	} else {
 		kvReqBuilder = builder.SetIndexRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.tableID.GetStatisticsID()}, e.idxInfo.ID, ranges)
 	}
+	kvReqBuilder.SetResourceGroupTag(e.ctx.GetSessionVars().StmtCtx)
 	kvReq, err := kvReqBuilder.
 		SetAnalyzeRequest(e.analyzePB).
 		SetStartTS(math.MaxUint64).
@@ -739,6 +740,7 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
 	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges, nil)
+	builder.SetResourceGroupTag(e.ctx.GetSessionVars().StmtCtx)
 	// Always set KeepOrder of the request to be true, in order to compute
 	// correct `correlation` of columns.
 	kvReq, err := reqBuilder.
@@ -758,7 +760,19 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	return result, nil
 }
 
-func (e *AnalyzeColumnsExec) buildSamplingStats(ranges []*ranger.Range, needExtStats bool, indexesWithVirtualColOffsets []int, idxNDVPushDownCh chan analyzeIndexNDVTotalResult) (count int64, hists []*statistics.Histogram, topns []*statistics.TopN, fmSketches []*statistics.FMSketch, extStats *statistics.ExtendedStatsColl, err error) {
+func (e *AnalyzeColumnsExec) buildSamplingStats(
+	ranges []*ranger.Range,
+	needExtStats bool,
+	indexesWithVirtualColOffsets []int,
+	idxNDVPushDownCh chan analyzeIndexNDVTotalResult,
+) (
+	count int64,
+	hists []*statistics.Histogram,
+	topns []*statistics.TopN,
+	fmSketches []*statistics.FMSketch,
+	extStats *statistics.ExtendedStatsColl,
+	err error,
+) {
 	if err = e.open(ranges); err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
@@ -896,12 +910,17 @@ NORMALDECODE:
 		rootRowCollector.FMSketches[colLen+offset] = ret.Fms[0]
 	}
 
+	// The order of the samples are broken when merging samples from sub-collectors.
+	// So now we need to sort the samples according to the handle in order to calculate correlation.
+	sort.Slice(rootRowCollector.Samples, func(i, j int) bool {
+		return rootRowCollector.Samples[i].Handle.Compare(rootRowCollector.Samples[j].Handle) < 0
+	})
+
 	hists = make([]*statistics.Histogram, 0, len(e.colsInfo))
 	topns = make([]*statistics.TopN, 0, len(e.colsInfo))
 	fmSketches = make([]*statistics.FMSketch, 0, len(e.colsInfo))
 	sampleCollectors := make([]*statistics.SampleCollector, 0, len(e.colsInfo))
 
-	// build column stats
 	for i, col := range e.colsInfo {
 		// If the column contains virtual column. We don't store the stats for it currently Since we cannot maintain the FM-Sketch for it.
 		if col.IsGenerated() && !col.GeneratedStored {
@@ -1664,6 +1683,7 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
+	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, snapshot)
 	for _, t := range e.scanTasks {
 		iter, err := snapshot.Iter(kv.Key(t.StartKey), kv.Key(t.EndKey))
 		if err != nil {
@@ -1684,6 +1704,7 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 	snapshot.SetOption(kv.NotFillCache, true)
 	snapshot.SetOption(kv.IsolationLevel, kv.RC)
 	snapshot.SetOption(kv.Priority, kv.PriorityLow)
+	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, snapshot)
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}

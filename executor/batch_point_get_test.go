@@ -20,6 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -154,6 +155,16 @@ func (s *testBatchPointGetSuite) TestIssue18843(c *C) {
 	tk.MustExec("insert into t18843 values (2, null)")
 	tk.MustQuery("select * from t18843 where f in (null)").Check(testkit.Rows())
 	tk.MustQuery("select * from t18843 where f is null").Check(testkit.Rows("2 <nil>"))
+}
+
+func (s *testBatchPointGetSuite) TestIssue24562(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ttt")
+	tk.MustExec("create table ttt(a enum(\"a\",\"b\",\"c\",\"d\"), primary key(a));")
+	tk.MustExec("insert into ttt values(1)")
+	tk.MustQuery("select * from ttt where ttt.a in (\"1\",\"b\")").Check(testkit.Rows())
+	tk.MustQuery("select * from ttt where ttt.a in (1,\"b\")").Check(testkit.Rows("a"))
 }
 
 func (s *testBatchPointGetSuite) TestBatchPointGetUnsignedHandleWithSort(c *C) {
@@ -309,4 +320,28 @@ func (s *testBatchPointGetSuite) TestBatchPointGetLockExistKey(c *C) {
 	for err := range errCh {
 		c.Assert(err, IsNil)
 	}
+}
+
+func (s *testBatchPointGetSuite) TestPointGetForTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create global temporary table t1 (id int primary key, val int) on commit delete rows")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values (1,1)")
+	tk.MustQuery("explain format = 'brief' select * from t1 where id in (1, 2, 3)").
+		Check(testkit.Rows("Batch_Point_Get 3.00 root table:t1 handle:[1 2 3], keep order:false, desc:false"))
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy", "return(true)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy"), IsNil)
+	}()
+
+	// Batch point get.
+	tk.MustQuery("select * from t1 where id in (1, 2, 3)").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t1 where id in (2, 3)").Check(testkit.Rows())
+
+	// Point get.
+	tk.MustQuery("select * from t1 where id = 1").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t1 where id = 2").Check(testkit.Rows())
 }
