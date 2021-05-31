@@ -22,14 +22,18 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tipb/go-tipb"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 const (
 	maxSQLNum = 5000
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 var _ = Suite(&testTopSQLCollector{})
 
@@ -93,32 +97,28 @@ func (svr *testAgentServer) CollectTiDB(stream tipb.TopSQLAgent_CollectTiDBServe
 		} else if err != nil {
 			return err
 		}
-		resp := &tipb.Empty{}
-		stream.Send(resp)
 		svr.batch = append(svr.batch, req)
 	}
+	resp := &emptypb.Empty{}
+	stream.SendAndClose(resp)
 	return nil
-}
-
-func (svr *testAgentServer) CollectTiKV(stream tipb.TopSQLAgent_CollectTiKVServer) error {
-	return errors.New("Unimplemented")
 }
 
 func startTestServer(c *C) (*grpc.Server, *testAgentServer, int) {
 	addr := ":0"
 	lis, err := net.Listen("tcp", addr)
-	c.Assert(err, IsNil, "failed to listen to address %s", addr)
+	c.Assert(err, IsNil, Commentf("failed to listen to address %s", addr))
 	server := grpc.NewServer()
 	agentServer := &testAgentServer{}
 	tipb.RegisterTopSQLAgentServer(server, agentServer)
 	go func() {
 		err := server.Serve(lis)
-		c.Assert(err, IsNil, "failed to start server")
+		c.Assert(err, IsNil, Commentf("failed to start server"))
 	}()
 	return server, agentServer, lis.Addr().(*net.TCPAddr).Port
 }
 
-func (s *testTopSQLCollector)TestCollectAndGet(c *C) {
+func (s *testTopSQLCollector) TestCollectAndGet(c *C) {
 	ts := initializeCache(maxSQLNum, ":23333")
 	for i := 0; i < maxSQLNum; i++ {
 		sqlDigest := "sqlDigest" + strconv.Itoa(i+1)
@@ -130,7 +130,7 @@ func (s *testTopSQLCollector)TestCollectAndGet(c *C) {
 	}
 }
 
-func (s *testTopSQLCollector)TestCollectAndVerifyFrequency(c *C) {
+func (s *testTopSQLCollector) TestCollectAndVerifyFrequency(c *C) {
 	ts := initializeCache(maxSQLNum, ":23333")
 	// traverse the map, and check CPU time and content
 	for i := 0; i < maxSQLNum; i++ {
@@ -147,7 +147,7 @@ func (s *testTopSQLCollector)TestCollectAndVerifyFrequency(c *C) {
 	}
 }
 
-func (s *testTopSQLCollector)TestCollectAndEvict(c *C) {
+func (s *testTopSQLCollector) TestCollectAndEvict(c *C) {
 	ts := initializeCache(maxSQLNum, ":23333")
 	// Collect maxSQLNum records with timestamp 2 and sql plan digest from maxSQLNum/2 to maxSQLNum/2*3.
 	populateCache(ts, maxSQLNum/2, maxSQLNum/2*3, 2)
@@ -157,11 +157,11 @@ func (s *testTopSQLCollector)TestCollectAndEvict(c *C) {
 		planDigest := "planDigest" + strconv.Itoa(i+1)
 		key := encodeCacheKey(sqlDigest, planDigest)
 		_, exist := ts.topSQLMap[key]
-		c.Assert(exist, Equals, false, "cache key '%' should be evicted", key)
+		c.Assert(exist, Equals, false, Commentf("cache key '%' should be evicted", key))
 		_, exist = ts.normalizedSQLMap[sqlDigest]
-		c.Assert(exist, Equals, false, "normalized SQL with digest '%s' should be evicted", sqlDigest)
+		c.Assert(exist, Equals, false, Commentf("normalized SQL with digest '%s' should be evicted", sqlDigest))
 		_, exist = ts.normalizedPlanMap[planDigest]
-		c.Assert(exist, Equals, false, "normalized plan with digest '%s' should be evicted", planDigest)
+		c.Assert(exist, Equals, false, Commentf("normalized plan with digest '%s' should be evicted", planDigest))
 	}
 	// Because CPU time is populated as i+1,
 	// we should expect digest maxSQLNum/2+1 - maxSQLNum to have CPU time maxSQLNum+2, maxSQLNum+4, ..., maxSQLNum*2
@@ -171,7 +171,7 @@ func (s *testTopSQLCollector)TestCollectAndEvict(c *C) {
 		planDigest := "planDigest" + strconv.Itoa(i+1)
 		key := encodeCacheKey(sqlDigest, planDigest)
 		value, exist := ts.topSQLMap[key]
-		c.Assert(exist, Equals, true, "cache key '%s' should exist", exist)
+		c.Assert(exist, Equals, true, Commentf("cache key '%s' should exist", exist))
 		if i < maxSQLNum {
 			c.Assert(value.CPUTimeMsTotal, Equals, uint64((i+1)*2))
 		} else {
@@ -180,7 +180,7 @@ func (s *testTopSQLCollector)TestCollectAndEvict(c *C) {
 	}
 }
 
-func (s *testTopSQLCollector)TestCollectAndSnapshot(c *C) {
+func (s *testTopSQLCollector) TestCollectAndSnapshot(c *C) {
 	ts := initializeCache(maxSQLNum, ":23333")
 	batch := ts.snapshot()
 	for _, req := range batch {
@@ -188,7 +188,7 @@ func (s *testTopSQLCollector)TestCollectAndSnapshot(c *C) {
 		planDigest := req.PlanDigest
 		key := encodeCacheKey(sqlDigest, planDigest)
 		value, exist := ts.topSQLMap[key]
-		c.Assert(exist, Equals, true, "key '%s' should exist")
+		c.Assert(exist, Equals, true, Commentf("key '%s' should exist", key))
 		c.Assert(len(req.CpuTimeMsList), Equals, len(value.CPUTimeMsList))
 		for i, ct := range value.CPUTimeMsList {
 			c.Assert(req.CpuTimeMsList[i], Equals, ct)
@@ -200,7 +200,7 @@ func (s *testTopSQLCollector)TestCollectAndSnapshot(c *C) {
 	}
 }
 
-func (s *testTopSQLCollector)TestCollectAndSendBatch(c *C) {
+func (s *testTopSQLCollector) TestCollectAndSendBatch(c *C) {
 	server, agentServer, port := startTestServer(c)
 	c.Logf("server is listening on :%d", port)
 	defer server.Stop()
@@ -209,17 +209,17 @@ func (s *testTopSQLCollector)TestCollectAndSendBatch(c *C) {
 	batch := ts.snapshot()
 
 	conn, stream, err := newAgentClient(ts.agentGRPCAddress, 30*time.Second)
-	c.Assert(err, IsNil, "failed to create agent client")
+	c.Assert(err, IsNil, Commentf("failed to create agent client"))
 	err = ts.sendBatch(stream, batch)
-	c.Assert(err, IsNil, "failed to send batch to server")
+	c.Assert(err, IsNil, Commentf("failed to send batch to server"))
 	err = conn.Close()
-	c.Assert(err, IsNil, "failed to close connection")
+	c.Assert(err, IsNil, Commentf("failed to close connection"))
 
 	// check for equality of server received batch and the original data
 	for _, req := range agentServer.batch {
 		key := encodeCacheKey(req.SqlDigest, req.PlanDigest)
 		value, exist := ts.topSQLMap[key]
-		c.Assert(exist, Equals, true, "key '%s' should exist in topSQLMap", key)
+		c.Assert(exist, Equals, true, Commentf("key '%s' should exist in topSQLMap", key))
 		for i, ct := range value.CPUTimeMsList {
 			c.Assert(req.CpuTimeMsList[i], Equals, ct)
 		}
@@ -227,10 +227,10 @@ func (s *testTopSQLCollector)TestCollectAndSendBatch(c *C) {
 			c.Assert(req.TimestampList[i], Equals, ts)
 		}
 		normalizedSQL, exist := ts.normalizedSQLMap[req.SqlDigest]
-		c.Assert(exist, Equals, true, "key '%s' should exist in normalizedSQLMap", req.SqlDigest)
+		c.Assert(exist, Equals, true, Commentf("key '%s' should exist in normalizedSQLMap", req.SqlDigest))
 		c.Assert(req.NormalizedSql, Equals, normalizedSQL)
 		normalizedPlan, exist := ts.normalizedPlanMap[req.PlanDigest]
-		c.Assert(exist, Equals, true, "key '%s' should exist in normalizedPlanMap", req.PlanDigest)
+		c.Assert(exist, Equals, true, Commentf("key '%s' should exist in normalizedPlanMap", req.PlanDigest))
 		c.Assert(req.NormalizedPlan, Equals, normalizedPlan)
 	}
 }
