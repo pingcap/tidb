@@ -249,7 +249,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = core.Preprocess(se, stmt, s.is)
+		err = core.Preprocess(se, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
 		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
@@ -1427,7 +1427,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSplitAvg(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = core.Preprocess(se, stmt, s.is)
+		err = core.Preprocess(se, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
 		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil, comment)

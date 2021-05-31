@@ -823,9 +823,6 @@ type SessionVars struct {
 	// Now we only support TiFlash.
 	AllowFallbackToTiKV map[kv.StoreType]struct{}
 
-	// EnableDynamicPrivileges indicates whether to permit experimental support for MySQL 8.0 compatible dynamic privileges.
-	EnableDynamicPrivileges bool
-
 	// CTEMaxRecursionDepth indicates The common table expression (CTE) maximum recursion depth.
 	// see https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_cte_max_recursion_depth
 	CTEMaxRecursionDepth int
@@ -1393,6 +1390,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 // Errors are not expected to be returned because this could cause upgrade issues.
 func (s *SessionVars) SetSystemVarWithRelaxedValidation(name string, val string) error {
 	sv := GetSysVar(name)
+	if sv == nil {
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
 	val = sv.ValidateWithRelaxedValidation(s, val, ScopeSession)
 	return sv.SetSessionFromHook(s, val)
 }
