@@ -146,6 +146,7 @@ var _ = SerialSuites(&tiflashTestSuite{})
 var _ = SerialSuites(&globalIndexSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testStaleTxnSerialSuite{&baseTestSuite{}})
+var _ = Suite(&testStaleTxnSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testCoprCache{})
 var _ = SerialSuites(&testPrepareSuite{})
 var _ = SerialSuites(&testResourceTagSuite{&baseTestSuite{}})
@@ -163,6 +164,7 @@ type partitionTableSuite struct{ *baseTestSuite }
 type globalIndexSuite struct{ *baseTestSuite }
 type testSerialSuite struct{ *baseTestSuite }
 type testStaleTxnSerialSuite struct{ *baseTestSuite }
+type testStaleTxnSuite struct{ *baseTestSuite }
 type testCoprCache struct {
 	store kv.Storage
 	dom   *domain.Domain
