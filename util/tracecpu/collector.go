@@ -16,13 +16,13 @@ package tracecpu
 // TopSQLCollector uses to collect SQL stats.
 // TODO: add a collector to collect and store the SQL stats.
 type TopSQLCollector interface {
-	Collect(ts int64, stats []SQLStats)
+	Collect(ts int64, stats []TopSQLRecord)
 	RegisterSQL(sqlDigest, normalizedSQL string)
 	RegisterPlan(planDigest string, normalizedPlan string)
 }
 
-// SQLStats indicate the SQL stats.
-type SQLStats struct {
+// TopSQLRecord contains the SQL meta and execution information.
+type TopSQLRecord struct {
 	SQLDigest  string
 	PlanDigest string
 	CPUTimeMs  uint32

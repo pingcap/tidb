@@ -174,12 +174,12 @@ func (sp *topSQLCPUProfiler) putTaskToBuffer(task *profileTask) {
 }
 
 // parseCPUProfileBySQLLabels uses to aggregate the cpu-profile sample data by sql_digest and plan_digest labels,
-// output the SQLStats slice. Want to know more information about profile labels, see https://rakyll.org/profiler-labels/
+// output the TopSQLRecord slice. Want to know more information about profile labels, see https://rakyll.org/profiler-labels/
 // The sql_digest label is been set by `SetSQLLabels` function after parse the SQL.
 // The plan_digest label is been set by `SetSQLAndPlanLabels` function after build the SQL plan.
 // Since `topSQLCPUProfiler` only care about the cpu time that consume by (sql_digest,plan_digest), the other sample data
 // without those label will be ignore.
-func (sp *topSQLCPUProfiler) parseCPUProfileBySQLLabels(p *profile.Profile) []SQLStats {
+func (sp *topSQLCPUProfiler) parseCPUProfileBySQLLabels(p *profile.Profile) []TopSQLRecord {
 	sqlMap := make(map[string]*sqlStats)
 	idx := len(p.SampleType) - 1
 	for _, s := range p.Sample {
@@ -207,12 +207,12 @@ func (sp *topSQLCPUProfiler) parseCPUProfileBySQLLabels(p *profile.Profile) []SQ
 	return sp.createSQLStats(sqlMap)
 }
 
-func (sp *topSQLCPUProfiler) createSQLStats(sqlMap map[string]*sqlStats) []SQLStats {
-	stats := make([]SQLStats, 0, len(sqlMap))
+func (sp *topSQLCPUProfiler) createSQLStats(sqlMap map[string]*sqlStats) []TopSQLRecord {
+	stats := make([]TopSQLRecord, 0, len(sqlMap))
 	for sqlDigest, stmt := range sqlMap {
 		stmt.tune()
 		for planDigest, val := range stmt.plans {
-			stats = append(stats, SQLStats{
+			stats = append(stats, TopSQLRecord{
 				SQLDigest:  sqlDigest,
 				PlanDigest: planDigest,
 				CPUTimeMs:  uint32(time.Duration(val).Milliseconds()),
