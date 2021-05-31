@@ -125,20 +125,19 @@ func (test *CTETestSuite) TestSpillToDisk(c *check.C) {
 		"select c1 + 1 c1 from cte1 where c1 < 5000) " +
 		"select c1 from cte1;")
 
-	// Use duplicated rows to test UNION DISTINCT.
+	memTracker := tk.Se.GetSessionVars().StmtCtx.MemTracker
+	diskTracker := tk.Se.GetSessionVars().StmtCtx.DiskTracker
+	c.Assert(memTracker.MaxConsumed(), check.Greater, int64(0))
+	c.Assert(diskTracker.MaxConsumed(), check.Greater, int64(0))
+
 	rowNum := 5000
 	var resRows []string
 	for i := 0; i <= rowNum; i++ {
 		resRows = append(resRows, fmt.Sprintf("%d", i))
 	}
 	rows.Check(testkit.Rows(resRows...))
-	memTracker := tk.Se.GetSessionVars().StmtCtx.MemTracker
-	diskTracker := tk.Se.GetSessionVars().StmtCtx.DiskTracker
-	c.Assert(memTracker.BytesConsumed(), check.Equals, int64(0))
-	c.Assert(memTracker.MaxConsumed(), check.Greater, int64(0))
-	c.Assert(diskTracker.BytesConsumed(), check.Equals, int64(0))
-	c.Assert(diskTracker.MaxConsumed(), check.Greater, int64(0))
 
+	// Use duplicated rows to test UNION DISTINCT.
 	tk.MustExec("set tidb_mem_quota_query = 1073741824;")
 	insertStr = "insert into t1 values(0, 0)"
 	vals := make([]int, rowNum)
@@ -158,18 +157,18 @@ func (test *CTETestSuite) TestSpillToDisk(c *check.C) {
 		"union " +
 		"select c1 + 1 c1 from cte1 where c1 < 5000) " +
 		"select c1 from cte1 order by c1;")
+
+	memTracker = tk.Se.GetSessionVars().StmtCtx.MemTracker
+	diskTracker = tk.Se.GetSessionVars().StmtCtx.DiskTracker
+	c.Assert(memTracker.MaxConsumed(), check.Greater, int64(0))
+	c.Assert(diskTracker.MaxConsumed(), check.Greater, int64(0))
+
 	sort.Ints(vals)
 	resRows = make([]string, 0, rowNum)
 	for i := vals[0]; i <= rowNum; i++ {
 		resRows = append(resRows, fmt.Sprintf("%d", i))
 	}
 	rows.Check(testkit.Rows(resRows...))
-	memTracker = tk.Se.GetSessionVars().StmtCtx.MemTracker
-	diskTracker = tk.Se.GetSessionVars().StmtCtx.DiskTracker
-	c.Assert(memTracker.BytesConsumed(), check.Equals, int64(0))
-	c.Assert(memTracker.MaxConsumed(), check.Greater, int64(0))
-	c.Assert(diskTracker.BytesConsumed(), check.Equals, int64(0))
-	c.Assert(diskTracker.MaxConsumed(), check.Greater, int64(0))
 }
 
 func (test *CTETestSuite) TestUnionDistinct(c *check.C) {
