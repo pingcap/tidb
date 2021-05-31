@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -429,9 +428,6 @@ func (e *GrantExec) grantLevelPriv(priv *ast.PrivElem, user *ast.UserSpec, inter
 
 func (e *GrantExec) grantDynamicPriv(privName string, user *ast.UserSpec, internalSession sessionctx.Context) error {
 	privName = strings.ToUpper(privName)
-	if !e.ctx.GetSessionVars().EnableDynamicPrivileges {
-		return fmt.Errorf("dynamic privileges is an experimental feature. Run 'SET tidb_enable_dynamic_privileges=1'")
-	}
 	if e.Level.Level != ast.GrantLevelGlobal { // DYNAMIC can only be *.*
 		return ErrIllegalPrivilegeLevel.GenWithStackByArgs(privName)
 	}
