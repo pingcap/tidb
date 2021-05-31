@@ -96,7 +96,10 @@ func GetClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, er
 			}
 		}
 	}()
-	ctx.RefreshTxnCtx(context.TODO())
+	err = ctx.RefreshTxnCtx(context.TODO())
+	if err != nil {
+		return nil, err
+	}
 	infoSchema := ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 
 	// check ClusterIndex information for each table
