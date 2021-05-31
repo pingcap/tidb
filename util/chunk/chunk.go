@@ -292,7 +292,7 @@ func (c *Chunk) CopyConstruct() *Chunk {
 }
 
 // CopyConstructSel is just like CopyConstruct,
-// but ignore coping the rows that was not selected.
+// but ignore the rows that was not selected.
 func (c *Chunk) CopyConstructSel() *Chunk {
 	if c.sel == nil {
 		return c.CopyConstruct()
