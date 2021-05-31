@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/failpoint"
 )
 
 var _ = check.Suite(&CTETestSuite{})
@@ -109,6 +110,9 @@ func (test *CTETestSuite) TestBasicCTE(c *check.C) {
 func (test *CTETestSuite) TestSpillToDisk(c *check.C) {
 	tk := testkit.NewTestKit(c, test.store)
 	tk.MustExec("use test;")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testCTEStorageSpill", "return(true)"), check.IsNil)
+	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testCTEStorageSpill"), check.IsNil) }()
 
 	insertStr := "insert into t1 values(0, 0)"
 	for i := 1; i < 5000; i++ {

@@ -17,6 +17,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
@@ -320,6 +321,12 @@ func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context) {
 
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		actionSpill := tbl.ActionSpill()
+		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
+			if val.(bool) {
+				actionSpill = tbl.(*cteutil.StorageRC).ActionSpillForTest()
+				defer actionSpill.(*chunk.SpillDiskAction).WaitForTest()
+			}
+		})
 		ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
 }
