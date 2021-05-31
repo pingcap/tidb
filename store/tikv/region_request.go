@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
+	"github.com/tikv/pd/pkg/slice"
 )
 
 // ShuttingDown is a flag to indicate tidb-server is exiting (Ctrl+C signal
@@ -267,11 +268,25 @@ func (s *RegionRequestSender) SendReqCtx(
 
 	tryTimes := 0
 	mockRetrySendReqToRegionOnce := false
+	excludedAccessIdxes := make([]AccessIndex, 0)
 	for {
 		if (tryTimes > 0) && (tryTimes%1000 == 0) {
 			logutil.Logger(bo.GetCtx()).Warn("retry get ", zap.Uint64("region = ", regionID.GetID()), zap.Int("times = ", tryTimes))
 		}
 
+		// Stale Read request will retry the leader or next peer on error,
+		// so we will exclude the accessIdx of the requested store every time
+		// and claer it when all AccessIdxes are excluded to start a new round.
+		if rpcCtx != nil && req.GetStaleRead() {
+			opts = append(opts, WithoutAccessIdxes([]AccessIndex{rpcCtx.AccessIdx}))
+			if slice.AnyOf(excludedAccessIdxes, func(i int) bool {
+				return excludedAccessIdxes[i] == rpcCtx.AccessIdx
+			}) {
+				excludedAccessIdxes = make([]AccessIndex, 0)
+			} else {
+				excludedAccessIdxes = append(excludedAccessIdxes, rpcCtx.AccessIdx)
+			}
+		}
 		rpcCtx, err = s.getRPCContext(bo, req, regionID, et, opts...)
 		if err != nil {
 			return nil, nil, err
@@ -314,20 +329,13 @@ func (s *RegionRequestSender) SendReqCtx(
 				retry = true
 			}
 		})
-		// Stale Read request will retry the leader or next peer on error,
-		// so we will exclude the accessIdx of the requested store every time.
-		if req.GetStaleRead() {
-			opts = append(opts, WithoutAccessIdxes([]AccessIndex{rpcCtx.AccessIdx}))
-		}
 		failpoint.Inject("mockRetrySendReqToRegionOnce", func() {
 			if !mockRetrySendReqToRegionOnce {
 				mockRetrySendReqToRegionOnce = true
 				failpoint.Continue()
 			}
+			failpoint.Return()
 		})
-		if mockRetrySendReqToRegionOnce {
-			return resp, rpcCtx, nil
-		}
 		if retry {
 			tryTimes++
 			continue
@@ -726,6 +734,13 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 	if regionErr.GetRaftEntryTooLarge() != nil {
 		logutil.BgLogger().Warn("tikv reports `RaftEntryTooLarge`", zap.Stringer("ctx", ctx))
 		return false, errors.New(regionErr.String())
+	}
+	// A stale read request may be sent to a peer which has not been initialized yet, we should retry in this case.
+	if regionErr.GetRegionNotInitialized() != nil {
+		logutil.BgLogger().Warn("tikv reports `RegionNotInitialized` retry later",
+			zap.Uint64("region-id", regionErr.GetRegionNotInitialized().GetRegionId()),
+			zap.Stringer("ctx", ctx))
+		return true, nil
 	}
 	if regionErr.GetRegionNotFound() != nil && seed != nil {
 		logutil.BgLogger().Debug("tikv reports `RegionNotFound` in follow-reader",
