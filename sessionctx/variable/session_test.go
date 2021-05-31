@@ -231,7 +231,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	logItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		SQL:               sql,
-		Digest:            digest,
+		Digest:            digest.String(),
 		TimeTotal:         costTime,
 		TimeParse:         time.Duration(10),
 		TimeCompile:       time.Duration(10),

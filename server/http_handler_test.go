@@ -559,7 +559,7 @@ partition by range (a)
 
 func decodeKeyMvcc(closer io.ReadCloser, c *C, valid bool) {
 	decoder := json.NewDecoder(closer)
-	var data mvccKV
+	var data helper.MvccKV
 	err := decoder.Decode(&data)
 	c.Assert(err, IsNil)
 	if valid {
@@ -580,7 +580,7 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	resp, err := ts.fetchStatus("/mvcc/key/tidb/test/1")
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
-	var data mvccKV
+	var data helper.MvccKV
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
 	c.Assert(data.Value, NotNil)
@@ -601,7 +601,7 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 
 	resp, err = ts.fetchStatus(fmt.Sprintf("/mvcc/txn/%d/tidb/test", startTs))
 	c.Assert(err, IsNil)
-	var p2 mvccKV
+	var p2 helper.MvccKV
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&p2)
 	c.Assert(err, IsNil)
@@ -615,7 +615,7 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	resp, err = ts.fetchStatus("/mvcc/hex/" + hexKey)
 	c.Assert(err, IsNil)
 	decoder = json.NewDecoder(resp.Body)
-	var data2 mvccKV
+	var data2 helper.MvccKV
 	err = decoder.Decode(&data2)
 	c.Assert(err, IsNil)
 	c.Assert(data2, DeepEquals, data)
@@ -669,7 +669,7 @@ func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
 	resp, err := ts.fetchStatus("/mvcc/key/tidb/test/1234")
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
-	var data mvccKV
+	var data helper.MvccKV
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
 	c.Assert(data.Value.Info.Lock, IsNil)
@@ -974,14 +974,14 @@ func (ts *HTTPHandlerTestSuite) TestGetIndexMVCC(c *C) {
 	resp, err = ts.fetchStatus("/mvcc/index/tidb/test/idx1/1?a=1")
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
-	var data1 mvccKV
+	var data1 helper.MvccKV
 	err = decoder.Decode(&data1)
 	c.Assert(err, NotNil)
 
 	resp, err = ts.fetchStatus("/mvcc/index/tidb/test/idx2/1?a=1")
 	c.Assert(err, IsNil)
 	decoder = json.NewDecoder(resp.Body)
-	var data2 mvccKV
+	var data2 helper.MvccKV
 	err = decoder.Decode(&data2)
 	c.Assert(err, NotNil)
 

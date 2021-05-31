@@ -528,3 +528,29 @@ func flattenPushDownPlan(p PhysicalPlan) []PhysicalPlan {
 	}
 	return plans
 }
+
+// Init only assigns type and context.
+func (p LogicalCTE) Init(ctx sessionctx.Context, offset int) *LogicalCTE {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeCTE, &p, offset)
+	return &p
+}
+
+// Init only assigns type and context.
+func (p PhysicalCTE) Init(ctx sessionctx.Context, stats *property.StatsInfo) *PhysicalCTE {
+	p.basePlan = newBasePlan(ctx, plancodec.TypeCTE, 0)
+	p.stats = stats
+	return &p
+}
+
+// Init only assigns type and context.
+func (p LogicalCTETable) Init(ctx sessionctx.Context, offset int) *LogicalCTETable {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeCTETable, &p, offset)
+	return &p
+}
+
+// Init only assigns type and context.
+func (p PhysicalCTETable) Init(ctx sessionctx.Context, stats *property.StatsInfo) *PhysicalCTETable {
+	p.basePlan = newBasePlan(ctx, plancodec.TypeCTETable, 0)
+	p.stats = stats
+	return &p
+}

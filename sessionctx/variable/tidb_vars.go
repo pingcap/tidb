@@ -203,6 +203,9 @@ const (
 
 	// TiDBTxnScope indicates whether using global transactions or local transactions.
 	TiDBTxnScope = "txn_scope"
+
+	// TiDBTxnReadTS indicates the next transaction should be staleness transaction and provide the startTS
+	TiDBTxnReadTS = "tx_read_ts"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -528,6 +531,18 @@ const (
 
 	// TiDBEnableDynamicPrivileges enables MySQL 8.0 compatible dynamic privileges (experimental).
 	TiDBEnableDynamicPrivileges = "tidb_enable_dynamic_privileges"
+
+	// TiDBEnableTopSQL indicates whether the top SQL is enabled.
+	TiDBEnableTopSQL = "tidb_enable_top_sql"
+
+	// TiDBTopSQLAgentAddress indicates the top SQL agent address.
+	TiDBTopSQLAgentAddress = "tidb_top_sql_agent_address"
+
+	// TiDBTopSQLPrecisionSeconds indicates the top SQL precision seconds.
+	TiDBTopSQLPrecisionSeconds = "tidb_top_sql_precision_seconds"
+
+	// TiDBTopSQLMaxStatementCount indicates the max number of statements been collected.
+	TiDBTopSQLMaxStatementCount = "tidb_top_sql_max_statement_count"
 )
 
 // TiDB vars that have only global scope
@@ -670,6 +685,10 @@ const (
 	DefTiDBTrackAggregateMemoryUsage   = true
 	DefTiDBEnableExchangePartition     = false
 	DefCTEMaxRecursionDepth            = 1000
+	DefTiDBTopSQLEnable                = false
+	DefTiDBTopSQLAgentAddress          = ""
+	DefTiDBTopSQLPrecisionSeconds      = 1
+	DefTiDBTopSQLMaxStatementCount     = 200
 )
 
 // Process global variables.
@@ -694,4 +713,27 @@ var (
 	CapturePlanBaseline                   = serverGlobalVariable{globalVal: Off}
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
+	TopSQLVariable                        = TopSQL{
+		Enable:            atomic.NewBool(DefTiDBTopSQLEnable),
+		AgentAddress:      atomic.NewString(DefTiDBTopSQLAgentAddress),
+		PrecisionSeconds:  atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
+		MaxStatementCount: atomic.NewInt64(DefTiDBTopSQLMaxStatementCount),
+	}
 )
+
+// TopSQL is the variable for control top sql feature.
+type TopSQL struct {
+	// Enable statement summary or not.
+	Enable *atomic.Bool
+	// AgentAddress indicate the collect agent address.
+	AgentAddress *atomic.String
+	// The refresh interval of statement summary.
+	PrecisionSeconds *atomic.Int64
+	// The maximum number of statements kept in memory.
+	MaxStatementCount *atomic.Int64
+}
+
+// TopSQLEnabled uses to check whether enabled the top SQL feature.
+func TopSQLEnabled() bool {
+	return TopSQLVariable.Enable.Load() && TopSQLVariable.AgentAddress.Load() != ""
+}

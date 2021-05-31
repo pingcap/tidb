@@ -1564,38 +1564,5 @@
         ]
       }
     ]
-  },
-  {
-    "Name": "TestEliminateLockForTemporaryTable",
-    "Cases": [
-      {
-        "SQL": "select * from t1 where a = 2 for update",
-        "Plan": [
-          "Point_Get 1.00 root table:t1 handle:2"
-        ]
-      },
-      {
-        "SQL": "select * from t1 where a in (1,2) for update",
-        "Plan": [
-          "Batch_Point_Get 2.00 root table:t1 handle:[1 2], keep order:false, desc:false"
-        ]
-      },
-      {
-        "SQL": "select c + 1 from t1 where a = 2 and c = 2 for update",
-        "Plan": [
-          "Projection 0.00 root  plus(test.t1.c, 1)->Column#4",
-          "└─Selection 0.00 root  eq(test.t1.c, 2)",
-          "  └─Point_Get 1.00 root table:t1 handle:2"
-        ]
-      },
-      {
-        "SQL": "select c + 1 from t1 where a in (1,2) and c = 2 for update",
-        "Plan": [
-          "Projection 0.00 root  plus(test.t1.c, 1)->Column#4",
-          "└─Selection 0.00 root  eq(test.t1.c, 2)",
-          "  └─Batch_Point_Get 2.00 root table:t1 handle:[1 2], keep order:false, desc:false"
-        ]
-      }
-    ]
   }
 ]

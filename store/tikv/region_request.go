@@ -259,6 +259,12 @@ func (s *RegionRequestSender) SendReqCtx(
 		}
 	})
 
+	// If the MaxExecutionDurationMs is not set yet, we set it to be the RPC timeout duration
+	// so TiKV can give up the requests whose response TiDB cannot receive due to timeout.
+	if req.Context.MaxExecutionDurationMs == 0 {
+		req.Context.MaxExecutionDurationMs = uint64(timeout.Milliseconds())
+	}
+
 	tryTimes := 0
 	for {
 		if (tryTimes > 0) && (tryTimes%1000 == 0) {

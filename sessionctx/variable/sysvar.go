@@ -129,6 +129,8 @@ type SysVar struct {
 	// This is only important to set for sysvars that include session scope,
 	// since global scoped sysvars are not-applicable.
 	skipInit bool
+	// IsNoop defines if the sysvar is a noop included for MySQL compatibility
+	IsNoop bool
 }
 
 // GetGlobalFromHook calls the GetSession func if it exists.
@@ -518,7 +520,7 @@ func (sv *SysVar) GetNativeValType(val string) (types.Datum, byte, uint) {
 // SkipInit returns true if when a new session is created we should "skip" copying
 // an initial value to it (and call the SetSession func if it exists)
 func (sv *SysVar) SkipInit() bool {
-	if sv.skipInit {
+	if sv.skipInit || sv.IsNoop {
 		return true
 	}
 	// These a special "Global-only" sysvars that for backward compatibility
@@ -599,7 +601,7 @@ func init() {
 		RegisterSysVar(v)
 	}
 	for _, v := range noopSysVars {
-		v.skipInit = true // by definition a noop can skipInit
+		v.IsNoop = true
 		RegisterSysVar(v)
 	}
 }
@@ -824,6 +826,9 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetSession: func(s *SessionVars) (string, error) {
 		return s.TxnScope.GetVarValue(), nil
+	}},
+	{Scope: ScopeSession, Name: TiDBTxnReadTS, Value: "", Hidden: true, SetSession: func(s *SessionVars, val string) error {
+		return setTxnReadTS(s, val)
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowMPPExecution, Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "ENFORCE"}, SetSession: func(s *SessionVars, val string) error {
 		s.allowMPPExecution = val
@@ -1242,10 +1247,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	/* The following variable is defined as session scope but is actually server scope. */
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableDynamicPrivileges, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableDynamicPrivileges = TiDBOptOn(val)
-		return nil
-	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableDynamicPrivileges, Value: On, Type: TypeBool, Hidden: true},
 	{Scope: ScopeSession, Name: TiDBGeneralLog, Value: BoolToOnOff(DefTiDBGeneralLog), Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
 		ProcessGeneralLog.Store(TiDBOptOn(val))
 		return nil
@@ -1625,6 +1627,61 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: TiDBGCLifetime, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: math.MaxInt64},
 	{Scope: ScopeGlobal, Name: TiDBGCConcurrency, Value: "-1", Type: TypeInt, MinValue: 1, MaxValue: 128, AllowAutoValue: true},
 	{Scope: ScopeGlobal, Name: TiDBGCScanLockMode, Value: "PHYSICAL", Type: TypeEnum, PossibleValues: []string{"PHYSICAL", "LEGACY"}},
+
+	// variable for top SQL feature.
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTopSQL, Value: BoolToOnOff(DefTiDBTopSQLEnable), Type: TypeBool, AllowEmpty: true, GetSession: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(TopSQLVariable.Enable.Load()), nil
+	}, SetSession: func(vars *SessionVars, s string) error {
+		TopSQLVariable.Enable.Store(TiDBOptOn(s))
+		return nil
+	}, SetGlobal: func(vars *SessionVars, s string) error {
+		TopSQLVariable.Enable.Store(TiDBOptOn(s))
+		return nil
+	}},
+	// TODO(crazycs520): Add validation
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTopSQLAgentAddress, Value: DefTiDBTopSQLAgentAddress, Type: TypeStr, AllowEmpty: true, GetSession: func(s *SessionVars) (string, error) {
+		return TopSQLVariable.AgentAddress.Load(), nil
+	}, SetSession: func(vars *SessionVars, s string) error {
+		TopSQLVariable.AgentAddress.Store(s)
+		return nil
+	}, SetGlobal: func(vars *SessionVars, s string) error {
+		TopSQLVariable.AgentAddress.Store(s)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTopSQLPrecisionSeconds, Value: strconv.Itoa(DefTiDBTopSQLPrecisionSeconds), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt64, AllowEmpty: true, GetSession: func(s *SessionVars) (string, error) {
+		return strconv.FormatInt(TopSQLVariable.PrecisionSeconds.Load(), 10), nil
+	}, SetSession: func(vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		TopSQLVariable.PrecisionSeconds.Store(val)
+		return nil
+	}, SetGlobal: func(vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		TopSQLVariable.PrecisionSeconds.Store(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTopSQLMaxStatementCount, Value: strconv.Itoa(DefTiDBTopSQLMaxStatementCount), Type: TypeInt, MinValue: 0, MaxValue: 5000, AllowEmpty: true, GetSession: func(s *SessionVars) (string, error) {
+		return strconv.FormatInt(TopSQLVariable.MaxStatementCount.Load(), 10), nil
+	}, SetSession: func(vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		TopSQLVariable.MaxStatementCount.Store(val)
+		return nil
+	}, SetGlobal: func(vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		TopSQLVariable.MaxStatementCount.Store(val)
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
