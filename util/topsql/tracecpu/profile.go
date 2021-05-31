@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/topsql/collector"
 	"go.uber.org/zap"
 )
 
@@ -43,8 +42,22 @@ const (
 // GlobalSQLCPUProfiler is the global SQL stats profiler.
 var GlobalSQLCPUProfiler = newSQLCPUProfiler()
 
+// Collector uses to collect SQL execution cpu time.
+type Collector interface {
+	// Collect uses to collect the SQL execution cpu time.
+	// ts is a Unix time, unit is second.
+	Collect(ts int64, stats []SQLCPUResult)
+}
+
+// SQLCPUResult contains the SQL meta and cpu time.
+type SQLCPUResult struct {
+	SQLDigest  string
+	PlanDigest string
+	CPUTimeMs  uint32
+}
+
 type sqlCPUProfiler struct {
-	taskCh chan *profileTask
+	taskCh chan *profileData
 
 	mu struct {
 		sync.Mutex
@@ -65,7 +78,7 @@ var (
 // newSQLCPUProfiler create a sqlCPUProfiler.
 func newSQLCPUProfiler() *sqlCPUProfiler {
 	return &sqlCPUProfiler{
-		taskCh: make(chan *profileTask, 128),
+		taskCh: make(chan *profileData, 128),
 	}
 }
 
@@ -75,12 +88,12 @@ func (sp *sqlCPUProfiler) Run() {
 	go sp.startAnalyzeProfileWorker()
 }
 
-func (sp *sqlCPUProfiler) SetCollector(c collector.TopSQLCollector) {
+func (sp *sqlCPUProfiler) SetCollector(c Collector) {
 	sp.collector.Store(c)
 }
 
-func (sp *sqlCPUProfiler) GetCollector() collector.TopSQLCollector {
-	c, ok := sp.collector.Load().(collector.TopSQLCollector)
+func (sp *sqlCPUProfiler) GetCollector() Collector {
+	c, ok := sp.collector.Load().(Collector)
 	if !ok || c == nil {
 		return nil
 	}
@@ -133,30 +146,30 @@ func (sp *sqlCPUProfiler) startAnalyzeProfileWorker() {
 	}
 }
 
-type profileTask struct {
+type profileData struct {
 	buf *bytes.Buffer
 	end int64
 }
 
-func (sp *sqlCPUProfiler) newProfileTask() *profileTask {
+func (sp *sqlCPUProfiler) newProfileTask() *profileData {
 	buf := profileBufPool.Get().(*bytes.Buffer)
-	return &profileTask{
+	return &profileData{
 		buf: buf,
 	}
 }
 
-func (sp *sqlCPUProfiler) putTaskToBuffer(task *profileTask) {
+func (sp *sqlCPUProfiler) putTaskToBuffer(task *profileData) {
 	task.buf.Reset()
 	profileBufPool.Put(task.buf)
 }
 
 // parseCPUProfileBySQLLabels uses to aggregate the cpu-profile sample data by sql_digest and plan_digest labels,
-// output the TopSQLRecord slice. Want to know more information about profile labels, see https://rakyll.org/profiler-labels/
+// output the SQLCPUResult slice. Want to know more information about profile labels, see https://rakyll.org/profiler-labels/
 // The sql_digest label is been set by `SetSQLLabels` function after parse the SQL.
 // The plan_digest label is been set by `SetSQLAndPlanLabels` function after build the SQL plan.
 // Since `sqlCPUProfiler` only care about the cpu time that consume by (sql_digest,plan_digest), the other sample data
 // without those label will be ignore.
-func (sp *sqlCPUProfiler) parseCPUProfileBySQLLabels(p *profile.Profile) []collector.TopSQLRecord {
+func (sp *sqlCPUProfiler) parseCPUProfileBySQLLabels(p *profile.Profile) []SQLCPUResult {
 	sqlMap := make(map[string]*sqlStats)
 	idx := len(p.SampleType) - 1
 	for _, s := range p.Sample {
@@ -184,12 +197,12 @@ func (sp *sqlCPUProfiler) parseCPUProfileBySQLLabels(p *profile.Profile) []colle
 	return sp.createSQLStats(sqlMap)
 }
 
-func (sp *sqlCPUProfiler) createSQLStats(sqlMap map[string]*sqlStats) []collector.TopSQLRecord {
-	stats := make([]collector.TopSQLRecord, 0, len(sqlMap))
+func (sp *sqlCPUProfiler) createSQLStats(sqlMap map[string]*sqlStats) []SQLCPUResult {
+	stats := make([]SQLCPUResult, 0, len(sqlMap))
 	for sqlDigest, stmt := range sqlMap {
 		stmt.tune()
 		for planDigest, val := range stmt.plans {
-			stats = append(stats, collector.TopSQLRecord{
+			stats = append(stats, SQLCPUResult{
 				SQLDigest:  sqlDigest,
 				PlanDigest: planDigest,
 				CPUTimeMs:  uint32(time.Duration(val).Milliseconds()),
@@ -217,7 +230,7 @@ type sqlStats struct {
 // optimizer takes time to generated plan.
 // After this tune function, the `sqlStats` become to:
 //     plans: {
-//         "optimize"  : 100ms, // 600 - 200 - 300
+//         ""          : 100ms,  // 600 - 200 - 300 = 100ms, indicate the optimizer generated plan time cost.
 //         "table_scan": 200ms,
 //         "index_scan": 300ms,
 //       },
@@ -377,6 +390,8 @@ func ProfileHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// TODO: fix me.
+	// This can be fixed by always starts a 1 second profiling one by one,
+	// but to aggregate (merge) multiple profiles into one according to the precision.
 	//  |<-- 1s -->|
 	// -|----------|----------|----------|----------|----------|-----------|-----> Background profile task timeline.
 	//                            |________________________________|

@@ -13,19 +13,12 @@
 
 package collector
 
+import "github.com/pingcap/tidb/util/topsql/tracecpu"
+
 // TopSQLCollector uses to collect SQL stats.
 // TODO: add a collector to collect and store the SQL stats.
 type TopSQLCollector interface {
-	// Collect uses to collect the SQL execution information.
-	// ts is a Unix time, unit is second.
-	Collect(ts int64, stats []TopSQLRecord)
+	tracecpu.Collector
 	RegisterSQL(sqlDigest, normalizedSQL string)
 	RegisterPlan(planDigest string, normalizedPlan string)
-}
-
-// TopSQLRecord contains the SQL meta and execution information.
-type TopSQLRecord struct {
-	SQLDigest  string
-	PlanDigest string
-	CPUTimeMs  uint32
 }

@@ -17,6 +17,7 @@ import (
 	"context"
 	"runtime/pprof"
 
+	"github.com/pingcap/tidb/util/topsql/collector"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 )
 
@@ -46,7 +47,10 @@ func linkSQLTextWithDigest(sqlDigest, normalizedSQL string) {
 	if c == nil {
 		return
 	}
-	c.RegisterSQL(sqlDigest, normalizedSQL)
+	topc, ok := c.(collector.TopSQLCollector)
+	if ok {
+		topc.RegisterSQL(sqlDigest, normalizedSQL)
+	}
 }
 
 func linkPlanTextWithDigest(planDigest string, normalizedPlan string) {
@@ -54,5 +58,8 @@ func linkPlanTextWithDigest(planDigest string, normalizedPlan string) {
 	if c == nil {
 		return
 	}
-	c.RegisterPlan(planDigest, normalizedPlan)
+	topc, ok := c.(collector.TopSQLCollector)
+	if ok {
+		topc.RegisterPlan(planDigest, normalizedPlan)
+	}
 }
