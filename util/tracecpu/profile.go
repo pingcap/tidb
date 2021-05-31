@@ -42,7 +42,7 @@ const (
 )
 
 // GlobalTopSQLCPUProfiler is the global SQL stats profiler.
-var GlobalTopSQLCPUProfiler = NewTopSQLCPUProfiler()
+var GlobalTopSQLCPUProfiler = newTopSQLCPUProfiler()
 
 type topSQLCPUProfiler struct {
 	taskCh     chan *profileTask
@@ -55,8 +55,8 @@ type topSQLCPUProfiler struct {
 	collector atomic.Value
 }
 
-// NewTopSQLCPUProfiler create a topSQLCPUProfiler.
-func NewTopSQLCPUProfiler() *topSQLCPUProfiler {
+// newTopSQLCPUProfiler create a topSQLCPUProfiler.
+func newTopSQLCPUProfiler() *topSQLCPUProfiler {
 	return &topSQLCPUProfiler{
 		taskCh:     make(chan *profileTask, 128),
 		cacheBufCh: make(chan *profileTask, 128),
