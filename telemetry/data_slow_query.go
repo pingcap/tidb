@@ -173,6 +173,9 @@ func postReportSlowQueryStats() {
 }
 
 func bucketMap2Json(paramMap SlowQueryBucket) string {
-	dataType, _ := json.Marshal(paramMap)
+	dataType, err := json.Marshal(paramMap)
+	if err != nil {
+		return ""
+	}
 	return string(dataType)
 }
