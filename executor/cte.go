@@ -203,7 +203,7 @@ func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 		if chk.NumRows() == 0 {
 			break
 		}
-		if chk, err = e.tryDedupAndAdd(chk, false, e.iterInTbl, e.hashTbl); err != nil {
+		if chk, err = e.tryDedupAndAdd(chk, e.iterInTbl, e.hashTbl); err != nil {
 			return err
 		}
 		chks = append(chks, chk)
@@ -277,8 +277,10 @@ func (e *CTEExec) setupTblsForNewIteration() (err error) {
 		// Data should be copied in UNION DISTINCT.
 		// Because deduplicate() will change data in iterOutTbl,
 		// which will cause panic when spilling data into disk concurrently.
-		copyOnDistinct := e.isDistinct
-		chk, err = e.tryDedupAndAdd(chk, copyOnDistinct, e.resTbl, e.hashTbl)
+		if e.isDistinct {
+			chk = chk.CopyConstruct()
+		}
+		chk, err = e.tryDedupAndAdd(chk, e.resTbl, e.hashTbl)
 		if err != nil {
 			return err
 		}
@@ -343,13 +345,9 @@ func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context) (action
 }
 
 func (e *CTEExec) tryDedupAndAdd(chk *chunk.Chunk,
-	copyOnDistinct bool,
 	storage cteutil.Storage,
 	hashTbl baseHashTable) (res *chunk.Chunk, err error) {
 	if e.isDistinct {
-		if copyOnDistinct {
-			chk = chk.CopyConstruct()
-		}
 		if chk, err = e.deduplicate(chk, storage, hashTbl); err != nil {
 			return nil, err
 		}
