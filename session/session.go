@@ -382,13 +382,8 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 		return
 	}
 	if s.statsCollector != nil {
-		do, err := GetDomain(s.store)
-		if err != nil {
-			logutil.BgLogger().Debug("domain not found", zap.Error(err))
-			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
-			return
-		}
-		err = s.statsCollector.StoreQueryFeedback(feedback, do.StatsHandle())
+		do := domain.GetDomain(s)
+		err := s.statsCollector.StoreQueryFeedback(feedback, do.StatsHandle())
 		if err != nil {
 			logutil.BgLogger().Debug("store query feedback", zap.Error(err))
 			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
@@ -2465,11 +2460,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	return dom, err
-}
-
-// GetDomain gets the associated domain for store.
-func GetDomain(store kv.Storage) (*domain.Domain, error) {
-	return domap.Get(store)
 }
 
 // runInBootstrapSession create a special session for bootstrap to run.

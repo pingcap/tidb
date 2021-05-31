@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
@@ -116,16 +115,16 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).Name("StatsDump")
 	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).Name("StatsHistoryDump")
 
-	tikvHandlerTool := s.newTikvHandlerTool()
-	router.Handle("/settings", settingsHandler{tikvHandlerTool}).Name("Settings")
+	handlerHelper := s.newHandlerHelper()
+	router.Handle("/settings", settingsHandler{handlerHelper}).Name("Settings")
 	router.Handle("/binlog/recover", binlogRecover{}).Name("BinlogRecover")
 
-	router.Handle("/schema", schemaHandler{tikvHandlerTool}).Name("Schema")
-	router.Handle("/schema/{db}", schemaHandler{tikvHandlerTool})
-	router.Handle("/schema/{db}/{table}", schemaHandler{tikvHandlerTool})
+	router.Handle("/schema", schemaHandler{handlerHelper}).Name("Schema")
+	router.Handle("/schema/{db}", schemaHandler{handlerHelper})
+	router.Handle("/schema/{db}/{table}", schemaHandler{handlerHelper})
 	router.Handle("/tables/{colID}/{colTp}/{colFlag}/{colLen}", valueHandler{})
-	router.Handle("/ddl/history", ddlHistoryJobHandler{tikvHandlerTool}).Name("DDL_History")
-	router.Handle("/ddl/owner/resign", ddlResignOwnerHandler{tikvHandlerTool.Store.(kv.Storage)}).Name("DDL_Owner_Resign")
+	router.Handle("/ddl/history", ddlHistoryJobHandler{handlerHelper}).Name("DDL_History")
+	router.Handle("/ddl/owner/resign", ddlResignOwnerHandler{handlerHelper}).Name("DDL_Owner_Resign")
 
 	// HTTP path for get the TiDB config
 	router.Handle("/config", fn.Wrap(func() (*config.Config, error) {
@@ -133,35 +132,35 @@ func (s *Server) startHTTPServer() {
 	}))
 
 	// HTTP path for get server info.
-	router.Handle("/info", serverInfoHandler{tikvHandlerTool}).Name("Info")
-	router.Handle("/info/all", allServerInfoHandler{tikvHandlerTool}).Name("InfoALL")
+	router.Handle("/info", serverInfoHandler{handlerHelper}).Name("Info")
+	router.Handle("/info/all", allServerInfoHandler{handlerHelper}).Name("InfoALL")
 	// HTTP path for get db and table info that is related to the tableID.
-	router.Handle("/db-table/{tableID}", dbTableHandler{tikvHandlerTool})
+	router.Handle("/db-table/{tableID}", dbTableHandler{handlerHelper})
 	// HTTP path for get table tiflash replica info.
-	router.Handle("/tiflash/replica", flashReplicaHandler{tikvHandlerTool})
+	router.Handle("/tiflash/replica", flashReplicaHandler{handlerHelper})
 
 	if s.cfg.Store == "tikv" {
 		// HTTP path for tikv.
-		router.Handle("/tables/{db}/{table}/regions", tableHandler{tikvHandlerTool, opTableRegions})
-		router.Handle("/tables/{db}/{table}/ranges", tableHandler{tikvHandlerTool, opTableRanges})
-		router.Handle("/tables/{db}/{table}/scatter", tableHandler{tikvHandlerTool, opTableScatter})
-		router.Handle("/tables/{db}/{table}/stop-scatter", tableHandler{tikvHandlerTool, opStopTableScatter})
-		router.Handle("/tables/{db}/{table}/disk-usage", tableHandler{tikvHandlerTool, opTableDiskUsage})
-		router.Handle("/regions/meta", regionHandler{tikvHandlerTool}).Name("RegionsMeta")
-		router.Handle("/regions/hot", regionHandler{tikvHandlerTool}).Name("RegionHot")
-		router.Handle("/regions/{regionID}", regionHandler{tikvHandlerTool})
+		router.Handle("/tables/{db}/{table}/regions", tableHandler{handlerHelper, opTableRegions})
+		router.Handle("/tables/{db}/{table}/ranges", tableHandler{handlerHelper, opTableRanges})
+		router.Handle("/tables/{db}/{table}/scatter", tableHandler{handlerHelper, opTableScatter})
+		router.Handle("/tables/{db}/{table}/stop-scatter", tableHandler{handlerHelper, opStopTableScatter})
+		router.Handle("/tables/{db}/{table}/disk-usage", tableHandler{handlerHelper, opTableDiskUsage})
+		router.Handle("/regions/meta", regionHandler{handlerHelper}).Name("RegionsMeta")
+		router.Handle("/regions/hot", regionHandler{handlerHelper}).Name("RegionHot")
+		router.Handle("/regions/{regionID}", regionHandler{handlerHelper})
 	}
 
 	// HTTP path for get MVCC info
-	router.Handle("/mvcc/key/{db}/{table}", mvccTxnHandler{tikvHandlerTool, opMvccGetByKey})
-	router.Handle("/mvcc/key/{db}/{table}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByKey})
-	router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandlerTool, opMvccGetByTxn})
-	router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
-	router.Handle("/mvcc/index/{db}/{table}/{index}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
-	router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
+	router.Handle("/mvcc/key/{db}/{table}", mvccTxnHandler{handlerHelper, opMvccGetByKey})
+	router.Handle("/mvcc/key/{db}/{table}/{handle}", mvccTxnHandler{handlerHelper, opMvccGetByKey})
+	router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{handlerHelper, opMvccGetByTxn})
+	router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{handlerHelper, opMvccGetByHex})
+	router.Handle("/mvcc/index/{db}/{table}/{index}", mvccTxnHandler{handlerHelper, opMvccGetByIdx})
+	router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{handlerHelper, opMvccGetByIdx})
 
 	// HTTP path for generate metric profile.
-	router.Handle("/metrics/profile", profileHandler{tikvHandlerTool})
+	router.Handle("/metrics/profile", profileHandler{handlerHelper})
 	// HTTP path for web UI.
 	if host, port, err := net.SplitHostPort(s.statusAddr); err == nil {
 		if host == "" {
@@ -289,7 +288,7 @@ func (s *Server) startHTTPServer() {
 		err = zw.Close()
 		terror.Log(err)
 	})
-	fetcher := sqlInfoFetcher{store: tikvHandlerTool.Store}
+	fetcher := sqlInfoFetcher{store: handlerHelper.Store}
 	serverMux.HandleFunc("/debug/sub-optimal-plan", fetcher.zipInfoForSQL)
 
 	// failpoint is enabled only for tests so we can add some http APIs here for tests.
@@ -299,11 +298,11 @@ func (s *Server) startHTTPServer() {
 			new(failpoint.HttpHandler).ServeHTTP(w, r)
 		})
 
-		router.Handle("/test/{mod}/{op}", &testHandler{tikvHandlerTool, 0})
+		router.Handle("/test/{mod}/{op}", &testHandler{handlerHelper, 0})
 	})
 
 	// ddlHook is enabled only for tests so we can substitute the callback in the DDL.
-	router.Handle("/test/ddl/hook", &ddlHookHandler{tikvHandlerTool.Store.(kv.Storage)})
+	router.Handle("/test/ddl/hook", &ddlHookHandler{handlerHelper})
 
 	var (
 		httpRouterPage bytes.Buffer

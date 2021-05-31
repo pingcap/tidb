@@ -114,13 +114,14 @@ func writeData(w http.ResponseWriter, data interface{}) {
 	terror.Log(errors.Trace(err))
 }
 
-type tikvHandlerTool struct {
+type handlerHelper struct {
 	helper.Helper
+	do *domain.Domain
 }
 
-// newTikvHandlerTool checks and prepares for tikv handler.
+// newHandlerHelper is helper/base struct for other handlers.
 // It would panic when any error happens.
-func (s *Server) newTikvHandlerTool() *tikvHandlerTool {
+func (s *Server) newHandlerHelper() *handlerHelper {
 	var tikvStore helper.Storage
 	store, ok := s.driver.(*TiDBDriver)
 	if !ok {
@@ -133,11 +134,12 @@ func (s *Server) newTikvHandlerTool() *tikvHandlerTool {
 
 	regionCache := tikvStore.GetRegionCache()
 
-	return &tikvHandlerTool{
-		helper.Helper{
+	return &handlerHelper{
+		Helper: helper.Helper{
 			RegionCache: regionCache,
 			Store:       tikvStore,
 		},
+		do: s.dom,
 	}
 }
 
@@ -147,7 +149,7 @@ type mvccKV struct {
 	Value    *kvrpcpb.MvccGetByKeyResponse `json:"value"`
 }
 
-func (t *tikvHandlerTool) getRegionIDByKey(encodedKey []byte) (uint64, error) {
+func (t *handlerHelper) getRegionIDByKey(encodedKey []byte) (uint64, error) {
 	keyLocation, err := t.RegionCache.LocateKey(tikv.NewBackofferWithVars(context.Background(), 500, nil), encodedKey)
 	if err != nil {
 		return 0, err
@@ -155,7 +157,7 @@ func (t *tikvHandlerTool) getRegionIDByKey(encodedKey []byte) (uint64, error) {
 	return keyLocation.Region.GetID(), nil
 }
 
-func (t *tikvHandlerTool) getHandle(tb table.PhysicalTable, params map[string]string, values url.Values) (kv.Handle, error) {
+func (t *handlerHelper) getHandle(tb table.PhysicalTable, params map[string]string, values url.Values) (kv.Handle, error) {
 	var handle kv.Handle
 	if intHandleStr, ok := params[pHandle]; ok {
 		if tb.Meta().IsCommonHandle {
@@ -197,7 +199,7 @@ func (t *tikvHandlerTool) getHandle(tb table.PhysicalTable, params map[string]st
 	return handle, nil
 }
 
-func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handle kv.Handle) (*helper.MvccKV, error) {
+func (t *handlerHelper) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handle kv.Handle) (*helper.MvccKV, error) {
 	sc := new(stmtctx.StatementContext)
 	// HTTP request is not a database session, set timezone to UTC directly here.
 	// See https://github.com/pingcap/tidb/blob/master/docs/tidb_http_api.md for more details.
@@ -222,7 +224,7 @@ func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, 
 }
 
 // formValue2DatumRow converts URL query string to a Datum Row.
-func (t *tikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, values url.Values, idxCols []*model.ColumnInfo) ([]types.Datum, error) {
+func (t *handlerHelper) formValue2DatumRow(sc *stmtctx.StatementContext, values url.Values, idxCols []*model.ColumnInfo) ([]types.Datum, error) {
 	data := make([]types.Datum, len(idxCols))
 	for i, col := range idxCols {
 		colName := col.Name.String()
@@ -249,7 +251,7 @@ func (t *tikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, value
 	return data, nil
 }
 
-func (t *tikvHandlerTool) getTableID(dbName, tableName string) (int64, error) {
+func (t *handlerHelper) getTableID(dbName, tableName string) (int64, error) {
 	tbl, err := t.getTable(dbName, tableName)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -257,7 +259,7 @@ func (t *tikvHandlerTool) getTableID(dbName, tableName string) (int64, error) {
 	return tbl.GetPhysicalID(), nil
 }
 
-func (t *tikvHandlerTool) getTable(dbName, tableName string) (table.PhysicalTable, error) {
+func (t *handlerHelper) getTable(dbName, tableName string) (table.PhysicalTable, error) {
 	schema, err := t.schema()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -270,7 +272,7 @@ func (t *tikvHandlerTool) getTable(dbName, tableName string) (table.PhysicalTabl
 	return t.getPartition(tableVal, partitionName)
 }
 
-func (t *tikvHandlerTool) getPartition(tableVal table.Table, partitionName string) (table.PhysicalTable, error) {
+func (t *handlerHelper) getPartition(tableVal table.Table, partitionName string) (table.PhysicalTable, error) {
 	if pt, ok := tableVal.(table.PartitionedTable); ok {
 		if partitionName == "" {
 			return tableVal.(table.PhysicalTable), errors.New("work on partitioned table, please specify the table name like this: table(partition)")
@@ -288,15 +290,11 @@ func (t *tikvHandlerTool) getPartition(tableVal table.Table, partitionName strin
 	return tableVal.(table.PhysicalTable), nil
 }
 
-func (t *tikvHandlerTool) schema() (infoschema.InfoSchema, error) {
-	dom, err := session.GetDomain(t.Store)
-	if err != nil {
-		return nil, err
-	}
-	return dom.InfoSchema(), nil
+func (t *handlerHelper) schema() (infoschema.InfoSchema, error) {
+	return t.do.InfoSchema(), nil
 }
 
-func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (*mvccKV, error) {
+func (t *handlerHelper) handleMvccGetByHex(params map[string]string) (*mvccKV, error) {
 	encodedKey, err := hex.DecodeString(params[pHexKey])
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -314,7 +312,7 @@ func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (*mvccKV,
 
 // settingsHandler is the handler for list tidb server settings.
 type settingsHandler struct {
-	*tikvHandlerTool
+	*handlerHelper
 }
 
 // binlogRecover is used to recover binlog service.
@@ -324,55 +322,55 @@ type binlogRecover struct{}
 
 // schemaHandler is the handler for list database or table schemas.
 type schemaHandler struct {
-	*tikvHandlerTool
+	*handlerHelper
 }
 
 type dbTableHandler struct {
-	*tikvHandlerTool
+	*handlerHelper
 }
 
 type flashReplicaHandler struct {
-	*tikvHandlerTool
+	*handlerHelper
 }
 
 // regionHandler is the common field for http handler. It contains
 // some common functions for all handlers.
 type regionHandler struct {
-	*tikvHandlerTool
+	*handlerHelper
 }
 
 // tableHandler is the handler for list table's regions.
 type tableHandler struct {
-	*tikvHandlerTool
+	*handlerHelper
 	op string
 }
 
 // ddlHistoryJobHandler is the handler for list job history.
 type ddlHistoryJobHandler struct {
-	*tikvHandlerTool
+	*handlerHelper
 }
 
 // ddlResignOwnerHandler is the handler for resigning ddl owner.
 type ddlResignOwnerHandler struct {
-	store kv.Storage
+	*handlerHelper
 }
 
 type serverInfoHandler struct {
-	*tikvHandlerTool
+	*handlerHelper
 }
 
 type allServerInfoHandler struct {
-	*tikvHandlerTool
+	*handlerHelper
 }
 
 type profileHandler struct {
-	*tikvHandlerTool
+	*handlerHelper
 }
 
 // ddlHookHandler is the handler for use pre-defined ddl callback.
 // It's convenient to provide some APIs for integration tests.
 type ddlHookHandler struct {
-	store kv.Storage
+	*handlerHelper
 }
 
 // valueHandler is the handler for get value.
@@ -389,7 +387,7 @@ const (
 
 // mvccTxnHandler is the handler for txn debugger.
 type mvccTxnHandler struct {
-	*tikvHandlerTool
+	*handlerHelper
 	op string
 }
 
@@ -582,7 +580,7 @@ type FrameItem struct {
 	IndexValues []string `json:"index_values,omitempty"`
 }
 
-func (t *tikvHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
+func (t *handlerHelper) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
 	regions := make([]RegionMeta, len(regionIDs))
 	for i, regionID := range regionIDs {
 		region, err := t.RegionCache.PDClient().GetRegionByID(context.TODO(), regionID)
@@ -870,11 +868,6 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 		writeError(w, err)
 		return
 	}
-	do, err := session.GetDomain(h.Store)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
 	s, err := session.CreateSession(h.Store)
 	if err != nil {
 		writeError(w, err)
@@ -883,7 +876,7 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 	defer s.Close()
 
 	available := status.checkTableFlashReplicaAvailable()
-	err = do.DDL().UpdateTableReplicaInfo(s, status.ID, available)
+	err = h.do.DDL().UpdateTableReplicaInfo(s, status.ID, available)
 	if err != nil {
 		writeError(w, err)
 	}
@@ -1061,13 +1054,8 @@ func (h ddlHistoryJobHandler) getAllHistoryDDL() ([]*model.Job, error) {
 }
 
 func (h ddlResignOwnerHandler) resignDDLOwner() error {
-	dom, err := session.GetDomain(h.store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	ownerMgr := dom.DDL().OwnerManager()
-	err = ownerMgr.ResignOwner(context.Background())
+	ownerMgr := h.do.DDL().OwnerManager()
+	err := ownerMgr.ResignOwner(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1654,20 +1642,15 @@ type serverInfo struct {
 
 // ServeHTTP handles request of ddl server info.
 func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	do, err := session.GetDomain(h.Store)
-	if err != nil {
-		writeError(w, errors.New("create session error"))
-		log.Error("failed to get session domain", zap.Error(err))
-		return
-	}
 	info := serverInfo{}
+	var err error
 	info.ServerInfo, err = infosync.GetServerInfo()
 	if err != nil {
 		writeError(w, err)
 		log.Error("failed to get server info", zap.Error(err))
 		return
 	}
-	info.IsOwner = do.DDL().OwnerManager().IsOwner()
+	info.IsOwner = h.do.DDL().OwnerManager().IsOwner()
 	info.MaxProcs = runtime.GOMAXPROCS(0)
 	info.GOGC = util.GetGOGC()
 	writeData(w, info)
@@ -1684,12 +1667,6 @@ type clusterServerInfo struct {
 
 // ServeHTTP handles request of all ddl servers info.
 func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	do, err := session.GetDomain(h.Store)
-	if err != nil {
-		writeError(w, errors.New("create session error"))
-		log.Error("failed to get session domain", zap.Error(err))
-		return
-	}
 	ctx := context.Background()
 	allServersInfo, err := infosync.GetAllServerInfo(ctx)
 	if err != nil {
@@ -1698,7 +1675,7 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	ownerID, err := do.DDL().OwnerManager().GetOwnerID(ctx)
+	ownerID, err := h.do.DDL().OwnerManager().GetOwnerID(ctx)
 	cancel()
 	if err != nil {
 		writeError(w, errors.New("ddl server information not found"))
@@ -1823,7 +1800,7 @@ func (h profileHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // testHandler is the handler for tests. It's convenient to provide some APIs for integration tests.
 type testHandler struct {
-	*tikvHandlerTool
+	*handlerHelper
 	gcIsRunning uint32
 }
 
@@ -1896,20 +1873,14 @@ func (h ddlHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	dom, err := session.GetDomain(h.store)
-	if err != nil {
-		log.Error("failed to get session domain", zap.Error(err))
-		writeError(w, err)
-	}
-
 	newCallbackFunc, err := ddl.GetCustomizedHook(req.FormValue("ddl_hook"))
 	if err != nil {
 		log.Error("failed to get customized hook", zap.Error(err))
 		writeError(w, err)
 	}
-	callback := newCallbackFunc(dom)
 
-	dom.DDL().SetHook(callback)
+	callback := newCallbackFunc(h.do)
+	h.do.DDL().SetHook(callback)
 	writeData(w, "success!")
 
 	ctx := req.Context()

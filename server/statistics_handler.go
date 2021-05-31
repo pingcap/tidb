@@ -33,16 +33,7 @@ type StatsHandler struct {
 }
 
 func (s *Server) newStatsHandler() *StatsHandler {
-	store, ok := s.driver.(*TiDBDriver)
-	if !ok {
-		panic("Illegal driver")
-	}
-
-	do, err := session.GetDomain(store.store)
-	if err != nil {
-		panic("Failed to get domain")
-	}
-	return &StatsHandler{do}
+	return &StatsHandler{do: s.dom}
 }
 
 func (sh StatsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -71,16 +62,7 @@ type StatsHistoryHandler struct {
 }
 
 func (s *Server) newStatsHistoryHandler() *StatsHistoryHandler {
-	store, ok := s.driver.(*TiDBDriver)
-	if !ok {
-		panic("Illegal driver")
-	}
-
-	do, err := session.GetDomain(store.store)
-	if err != nil {
-		panic("Failed to get domain")
-	}
-	return &StatsHistoryHandler{do}
+	return &StatsHistoryHandler{do: s.dom}
 }
 
 func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {

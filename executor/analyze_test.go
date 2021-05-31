@@ -74,8 +74,7 @@ PARTITION BY RANGE ( a ) (
 		c.Assert(err, IsNil)
 		pi := table.Meta().GetPartitionInfo()
 		c.Assert(pi, NotNil)
-		do, err := session.GetDomain(s.store)
-		c.Assert(err, IsNil)
+		do := domain.GetDomain(tk.Se)
 		handle := do.StatsHandle()
 		for _, def := range pi.Definitions {
 			statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)

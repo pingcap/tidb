@@ -68,9 +68,7 @@ func (ds *testDumpStatsSuite) startServer(c *C) {
 	}()
 	ds.waitUntilServerOnline()
 
-	do, err := session.GetDomain(ds.store)
-	c.Assert(err, IsNil)
-	ds.sh = &StatsHandler{do}
+	ds.sh = server.newStatsHandler()
 }
 
 func (ds *testDumpStatsSuite) stopServer(c *C) {

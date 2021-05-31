@@ -665,7 +665,7 @@ func (s *seqTestSuite) TestShowStatsHealthy(c *C) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("insert into t values (1), (2)")
-	do, _ := session.GetDomain(s.store)
+	do := domain.GetDomain(tk.Se)
 	err := do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
 	c.Assert(err, IsNil)
 	tk.MustExec("analyze table t")
