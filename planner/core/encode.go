@@ -34,6 +34,8 @@ var encoderPool = sync.Pool{
 type planEncoder struct {
 	buf          bytes.Buffer
 	encodedPlans map[int]bool
+
+	ctes []*PhysicalCTE
 }
 
 // EncodePlan is used to encodePlan the plan to the plan tree with compressing.
@@ -59,7 +61,32 @@ func (pn *planEncoder) encodePlanTree(p Plan) string {
 	pn.encodedPlans = make(map[int]bool)
 	pn.buf.Reset()
 	pn.encodePlan(p, true, kv.TiKV, 0)
+	pn.encodeCTEPlan()
 	return plancodec.Compress(pn.buf.Bytes())
+}
+
+func (pn *planEncoder) encodeCTEPlan() {
+	explainedCTEPlan := make(map[int]struct{})
+	for i := 0; i < len(pn.ctes); i++ {
+		x := (*CTEDefinition)(pn.ctes[i])
+		if _, ok := explainedCTEPlan[x.CTE.IDForStorage]; ok {
+			continue
+		}
+		taskTypeInfo := plancodec.EncodeTaskType(true, kv.TiKV)
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(x.SCtx(), x, nil)
+		rowCount := 0.0
+		if statsInfo := x.statsInfo(); statsInfo != nil {
+			rowCount = x.statsInfo().RowCount
+		}
+		plancodec.EncodePlanNode(0, x.CTE.IDForStorage, plancodec.TypeCTEDefinition, rowCount, taskTypeInfo, x.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
+		if x.SeedPlan != nil {
+			pn.encodePlan(x.SeedPlan, true, kv.TiKV, 1)
+		}
+		if x.RecurPlan != nil {
+			pn.encodePlan(x.RecurPlan, true, kv.TiKV, 1)
+		}
+		explainedCTEPlan[x.CTE.IDForStorage] = struct{}{}
+	}
 }
 
 func (pn *planEncoder) encodePlan(p Plan, isRoot bool, store kv.StoreType, depth int) {
@@ -102,6 +129,8 @@ func (pn *planEncoder) encodePlan(p Plan, isRoot bool, store kv.StoreType, depth
 		if copPlan.tablePlan != nil {
 			pn.encodePlan(copPlan.tablePlan, false, store, depth)
 		}
+	case *PhysicalCTE:
+		pn.ctes = append(pn.ctes, copPlan)
 	}
 }
 
