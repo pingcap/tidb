@@ -179,7 +179,7 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
-	setupSQLStatsProfiler()
+	setupTopSQLProfiler()
 
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
@@ -688,6 +688,6 @@ func stringToList(repairString string) []string {
 	})
 }
 
-func setupSQLStatsProfiler() {
-	tracecpu.GlobalSQLStatsProfiler.Run()
+func setupTopSQLProfiler() {
+	tracecpu.GlobalTopSQLCPUProfiler.Run()
 }

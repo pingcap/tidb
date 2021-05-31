@@ -96,7 +96,7 @@ func (ts *tidbTestTopSQLSuite) SetUpSuite(c *C) {
 		conf.TopSQL.Enable = true
 		conf.TopSQL.RefreshInterval = 1
 	})
-	tracecpu.GlobalSQLStatsProfiler.Run()
+	tracecpu.GlobalTopSQLCPUProfiler.Run()
 }
 
 func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
@@ -1177,7 +1177,7 @@ func (ts *tidbTestSerialSuite) TestPrepareCount(c *C) {
 	c.Assert(atomic.LoadInt64(&variable.PreparedStmtCount), Equals, prepareCnt)
 }
 
-func (ts *tidbTestTopSQLSuite) TestTopSQLStatsProfile(c *C) {
+func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer func() {
@@ -1185,7 +1185,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLStatsProfile(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	collector := mock.NewTopSQLCollector()
-	tracecpu.GlobalSQLStatsProfiler.SetCollector(collector)
+	tracecpu.GlobalTopSQLCPUProfiler.SetCollector(collector)
 
 	dbt := &DBTest{c, db}
 	dbt.mustExec("drop database if exists topsql")

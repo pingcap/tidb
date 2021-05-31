@@ -37,12 +37,13 @@ const (
 	labelSQL        = "sql"
 	labelSQLDigest  = "sql_digest"
 	labelPlanDigest = "plan_digest"
+	labelOptimize   = "optimize"
 )
 
-// GlobalSQLStatsProfiler is the global SQL stats profiler.
-var GlobalSQLStatsProfiler = NewSQLStatsProfiler()
+// GlobalTopSQLCPUProfiler is the global SQL stats profiler.
+var GlobalTopSQLCPUProfiler = NewTopSQLCPUProfiler()
 
-type sqlStatsProfiler struct {
+type topSQLCPUProfiler struct {
 	taskCh     chan *profileTask
 	cacheBufCh chan *profileTask
 
@@ -53,39 +54,39 @@ type sqlStatsProfiler struct {
 	collector TopSQLCollector
 }
 
-// NewSQLStatsProfiler create a sqlStatsProfiler.
-func NewSQLStatsProfiler() *sqlStatsProfiler {
-	return &sqlStatsProfiler{
+// NewTopSQLCPUProfiler create a topSQLCPUProfiler.
+func NewTopSQLCPUProfiler() *topSQLCPUProfiler {
+	return &topSQLCPUProfiler{
 		taskCh:     make(chan *profileTask, 128),
 		cacheBufCh: make(chan *profileTask, 128),
 	}
 }
 
-func (sp *sqlStatsProfiler) Run() {
+func (sp *topSQLCPUProfiler) Run() {
 	logutil.BgLogger().Info("cpu profiler started")
 	go sp.startCPUProfileWorker()
 	go sp.startAnalyzeProfileWorker()
 }
 
-func (sp *sqlStatsProfiler) SetCollector(c TopSQLCollector) {
+func (sp *topSQLCPUProfiler) SetCollector(c TopSQLCollector) {
 	sp.collector = c
 }
 
-func (sp *sqlStatsProfiler) RegisterSQL(sqlDigest, normalizedSQL string) {
+func (sp *topSQLCPUProfiler) RegisterSQL(sqlDigest, normalizedSQL string) {
 	if sp.collector == nil {
 		return
 	}
 	sp.collector.RegisterSQL(sqlDigest, normalizedSQL)
 }
 
-func (sp *sqlStatsProfiler) RegisterPlan(planDigest string, normalizedPlan string) {
+func (sp *topSQLCPUProfiler) RegisterPlan(planDigest string, normalizedPlan string) {
 	if sp.collector == nil {
 		return
 	}
 	sp.collector.RegisterPlan(planDigest, normalizedPlan)
 }
 
-func (sp *sqlStatsProfiler) startCPUProfileWorker() {
+func (sp *topSQLCPUProfiler) startCPUProfileWorker() {
 	defer util.Recover("top-sql", "profileWorker", nil, false)
 	for {
 		if sp.IsEnabled() {
@@ -96,7 +97,7 @@ func (sp *sqlStatsProfiler) startCPUProfileWorker() {
 	}
 }
 
-func (sp *sqlStatsProfiler) doCPUProfile() {
+func (sp *topSQLCPUProfiler) doCPUProfile() {
 	interval := config.GetGlobalConfig().TopSQL.RefreshInterval
 	task := sp.newProfileTask()
 	if err := pprof.StartCPUProfile(task.buf); err != nil {
@@ -111,12 +112,12 @@ func (sp *sqlStatsProfiler) doCPUProfile() {
 	sp.sendProfileTask(task)
 }
 
-func (sp *sqlStatsProfiler) sendProfileTask(task *profileTask) {
+func (sp *topSQLCPUProfiler) sendProfileTask(task *profileTask) {
 	task.end = time.Now().Unix()
 	sp.taskCh <- task
 }
 
-func (sp *sqlStatsProfiler) startAnalyzeProfileWorker() {
+func (sp *topSQLCPUProfiler) startAnalyzeProfileWorker() {
 	defer util.Recover("top-sql", "analyzeProfileWorker", nil, false)
 	for {
 		task := <-sp.taskCh
@@ -141,7 +142,7 @@ type profileTask struct {
 	end int64
 }
 
-func (sp *sqlStatsProfiler) newProfileTask() *profileTask {
+func (sp *topSQLCPUProfiler) newProfileTask() *profileTask {
 	var task *profileTask
 	select {
 	case task = <-sp.cacheBufCh:
@@ -154,7 +155,7 @@ func (sp *sqlStatsProfiler) newProfileTask() *profileTask {
 	return task
 }
 
-func (sp *sqlStatsProfiler) putTaskToBuffer(task *profileTask) {
+func (sp *topSQLCPUProfiler) putTaskToBuffer(task *profileTask) {
 	select {
 	case sp.cacheBufCh <- task:
 	default:
@@ -165,9 +166,9 @@ func (sp *sqlStatsProfiler) putTaskToBuffer(task *profileTask) {
 // output the SQLStats slice. Want to know more information about profile labels, see https://rakyll.org/profiler-labels/
 // The sql_digest label is been set by `SetSQLLabels` function after parse the SQL.
 // The plan_digest label is been set by `SetSQLAndPlanLabels` function after build the SQL plan.
-// Since `sqlStatsProfiler` only care about the cpu time that consume by (sql_digest,plan_digest), the other sample data
+// Since `topSQLCPUProfiler` only care about the cpu time that consume by (sql_digest,plan_digest), the other sample data
 // without those label will be ignore.
-func (sp *sqlStatsProfiler) parseCPUProfileBySQLLabels(p *profile.Profile) []SQLStats {
+func (sp *topSQLCPUProfiler) parseCPUProfileBySQLLabels(p *profile.Profile) []SQLStats {
 	sqlMap := make(map[string]*sqlStats)
 	idx := len(p.SampleType) - 1
 	for _, s := range p.Sample {
@@ -195,7 +196,7 @@ func (sp *sqlStatsProfiler) parseCPUProfileBySQLLabels(p *profile.Profile) []SQL
 	return sp.createSQLStats(sqlMap)
 }
 
-func (sp *sqlStatsProfiler) createSQLStats(sqlMap map[string]*sqlStats) []SQLStats {
+func (sp *topSQLCPUProfiler) createSQLStats(sqlMap map[string]*sqlStats) []SQLStats {
 	stats := make([]SQLStats, 0, len(sqlMap))
 	for sqlDigest, stmt := range sqlMap {
 		stmt.tune()
@@ -223,11 +224,14 @@ type sqlStats struct {
 //       },
 //     total:      600ms,       // The total cpu time of the sql is 600ms.
 // total_time - table_scan_time - index_scan_time = 100ms, and this 100ms means those sample data only contain the
-// sql_digest label, doesn't contain the plan_digest label. This is cause by the `pprof profile` is base on sample.
+// sql_digest label, doesn't contain the plan_digest label. This is cause by the `pprof profile` is base on sample,
+// and the plan digest can only be set after optimizer generated execution plan. So the remain 100ms means the plan
+// optimizer takes time to generated plan.
 // After this tune function, the `sqlStats` become to:
 //     plans: {
-//         "table_scan": 240ms, // 200 + (200/(200+300))*100
-//         "index_scan": 360ms, // 300 + (300/(200+300))*100
+//         "optimize"  : 100ms, // 600 - 200 - 300
+//         "table_scan": 200ms,
+//         "index_scan": 300ms,
 //       },
 //     total:      600ms,
 func (s *sqlStats) tune() {
@@ -239,16 +243,14 @@ func (s *sqlStats) tune() {
 	for _, v := range s.plans {
 		planTotal += v
 	}
-	remain := s.total - planTotal
-	if remain <= 0 {
+	optimize := s.total - planTotal
+	if optimize <= 0 {
 		return
 	}
-	for k, v := range s.plans {
-		s.plans[k] = v + (v/planTotal)*remain
-	}
+	s.plans[labelOptimize] = optimize
 }
 
-func (sp *sqlStatsProfiler) handleExportProfileTask(p *profile.Profile) {
+func (sp *topSQLCPUProfiler) handleExportProfileTask(p *profile.Profile) {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	if sp.mu.ept == nil {
@@ -257,7 +259,7 @@ func (sp *sqlStatsProfiler) handleExportProfileTask(p *profile.Profile) {
 	sp.mu.ept.mergeProfile(p)
 }
 
-func (sp *sqlStatsProfiler) hasExportProfileTask() bool {
+func (sp *topSQLCPUProfiler) hasExportProfileTask() bool {
 	sp.mu.Lock()
 	has := sp.mu.ept != nil
 	sp.mu.Unlock()
@@ -265,16 +267,16 @@ func (sp *sqlStatsProfiler) hasExportProfileTask() bool {
 }
 
 // IsEnabled return true if it is(should be) enabled. It exports for tests.
-func (sp *sqlStatsProfiler) IsEnabled() bool {
+func (sp *topSQLCPUProfiler) IsEnabled() bool {
 	return config.GetGlobalConfig().TopSQL.Enable || sp.hasExportProfileTask()
 }
 
 // StartCPUProfile same like pprof.StartCPUProfile.
-// Because the GlobalSQLStatsProfiler keep calling pprof.StartCPUProfile to fetch SQL cpu stats, other place (such pprof profile HTTP API handler) call pprof.StartCPUProfile will be failed,
+// Because the GlobalTopSQLCPUProfiler keep calling pprof.StartCPUProfile to fetch SQL cpu stats, other place (such pprof profile HTTP API handler) call pprof.StartCPUProfile will be failed,
 // other place should call tracecpu.StartCPUProfile instead of pprof.StartCPUProfile.
 func StartCPUProfile(w io.Writer) error {
-	if GlobalSQLStatsProfiler.IsEnabled() {
-		return GlobalSQLStatsProfiler.startExportCPUProfile(w)
+	if GlobalTopSQLCPUProfiler.IsEnabled() {
+		return GlobalTopSQLCPUProfiler.startExportCPUProfile(w)
 	}
 	return pprof.StartCPUProfile(w)
 }
@@ -282,8 +284,8 @@ func StartCPUProfile(w io.Writer) error {
 // StopCPUProfile same like pprof.StopCPUProfile.
 // other place should call tracecpu.StopCPUProfile instead of pprof.StopCPUProfile.
 func StopCPUProfile() error {
-	if GlobalSQLStatsProfiler.IsEnabled() {
-		return GlobalSQLStatsProfiler.stopExportCPUProfile()
+	if GlobalTopSQLCPUProfiler.IsEnabled() {
+		return GlobalTopSQLCPUProfiler.stopExportCPUProfile()
 	}
 	pprof.StopCPUProfile()
 	return nil
@@ -305,7 +307,7 @@ func SetSQLLabels(ctx context.Context, normalizedSQL, sqlDigest string) context.
 		ctx = pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest))
 	}
 	pprof.SetGoroutineLabels(ctx)
-	GlobalSQLStatsProfiler.RegisterSQL(sqlDigest, normalizedSQL)
+	GlobalTopSQLCPUProfiler.RegisterSQL(sqlDigest, normalizedSQL)
 	return ctx
 }
 
@@ -313,11 +315,11 @@ func SetSQLLabels(ctx context.Context, normalizedSQL, sqlDigest string) context.
 func SetSQLAndPlanLabels(ctx context.Context, sqlDigest, planDigest, normalizedPlan string) context.Context {
 	ctx = pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest, labelPlanDigest, planDigest))
 	pprof.SetGoroutineLabels(ctx)
-	GlobalSQLStatsProfiler.RegisterPlan(planDigest, normalizedPlan)
+	GlobalTopSQLCPUProfiler.RegisterPlan(planDigest, normalizedPlan)
 	return ctx
 }
 
-func (sp *sqlStatsProfiler) startExportCPUProfile(w io.Writer) error {
+func (sp *topSQLCPUProfiler) startExportCPUProfile(w io.Writer) error {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	if sp.mu.ept != nil {
@@ -327,7 +329,7 @@ func (sp *sqlStatsProfiler) startExportCPUProfile(w io.Writer) error {
 	return nil
 }
 
-func (sp *sqlStatsProfiler) stopExportCPUProfile() error {
+func (sp *topSQLCPUProfiler) stopExportCPUProfile() error {
 	sp.mu.Lock()
 	ept := sp.mu.ept
 	sp.mu.ept = nil
@@ -345,7 +347,7 @@ func (sp *sqlStatsProfiler) stopExportCPUProfile() error {
 // removeLabel uses to remove labels for export cpu profile data.
 // Since the sql_digest and plan_digest label is strange for other users.
 // If `variable.EnablePProfSQLCPU` is true means wanto keep the `sql` label, otherwise, remove the `sql` label too.
-func (sp *sqlStatsProfiler) removeLabel(p *profile.Profile) {
+func (sp *topSQLCPUProfiler) removeLabel(p *profile.Profile) {
 	if p == nil {
 		return
 	}

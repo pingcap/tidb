@@ -42,12 +42,12 @@ func (s *testSuite) SetUpSuite(c *C) {
 	newCfg.TopSQL.Enable = true
 	newCfg.TopSQL.RefreshInterval = 1
 	config.StoreGlobalConfig(&newCfg)
-	tracecpu.GlobalSQLStatsProfiler.Run()
+	tracecpu.GlobalTopSQLCPUProfiler.Run()
 }
 
-func (s *testSuite) TestTopSQLStatsProfile(c *C) {
+func (s *testSuite) TestTopSQLCPUProfile(c *C) {
 	collector := mock.NewTopSQLCollector()
-	tracecpu.GlobalSQLStatsProfiler.SetCollector(collector)
+	tracecpu.GlobalTopSQLCPUProfiler.SetCollector(collector)
 	reqs := []struct {
 		sql  string
 		plan string
@@ -94,21 +94,21 @@ func (s *testSuite) TestTopSQLStatsProfile(c *C) {
 
 func (s *testSuite) TestIsEnabled(c *C) {
 	s.setTopSQLEnable(false)
-	c.Assert(tracecpu.GlobalSQLStatsProfiler.IsEnabled(), IsFalse)
+	c.Assert(tracecpu.GlobalTopSQLCPUProfiler.IsEnabled(), IsFalse)
 
 	s.setTopSQLEnable(true)
 	err := tracecpu.StartCPUProfile(bytes.NewBuffer(nil))
 	c.Assert(err, IsNil)
-	c.Assert(tracecpu.GlobalSQLStatsProfiler.IsEnabled(), IsTrue)
+	c.Assert(tracecpu.GlobalTopSQLCPUProfiler.IsEnabled(), IsTrue)
 	s.setTopSQLEnable(false)
-	c.Assert(tracecpu.GlobalSQLStatsProfiler.IsEnabled(), IsTrue)
+	c.Assert(tracecpu.GlobalTopSQLCPUProfiler.IsEnabled(), IsTrue)
 	err = tracecpu.StopCPUProfile()
 	c.Assert(err, IsNil)
 
 	s.setTopSQLEnable(false)
-	c.Assert(tracecpu.GlobalSQLStatsProfiler.IsEnabled(), IsFalse)
+	c.Assert(tracecpu.GlobalTopSQLCPUProfiler.IsEnabled(), IsFalse)
 	s.setTopSQLEnable(true)
-	c.Assert(tracecpu.GlobalSQLStatsProfiler.IsEnabled(), IsTrue)
+	c.Assert(tracecpu.GlobalTopSQLCPUProfiler.IsEnabled(), IsTrue)
 }
 
 func (s *testSuite) setTopSQLEnable(enabled bool) {
