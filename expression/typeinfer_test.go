@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/domain"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -139,10 +138,10 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 		err = se.NewTxn(context.Background())
 		c.Assert(err, IsNil)
 
-		is := domain.GetDomain(sctx).InfoSchema()
-		err = plannercore.Preprocess(sctx, stmt, is)
+		ret := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(sctx, stmt, plannercore.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil, comment)
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmt, is)
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmt, ret.InfoSchema)
 		c.Assert(err, IsNil, comment)
 		tp := p.Schema().Columns[0].RetType
 
@@ -170,9 +169,9 @@ func (s *testInferTypeSuite) createTestCase4Constants() []typeInferTestCase {
 		{"'1234'", mysql.TypeVarString, charset.CharsetUTF8MB4, 0 | mysql.NotNullFlag, 4, types.UnspecifiedLength},
 		{"_utf8'1234'", mysql.TypeVarString, charset.CharsetUTF8, 0 | mysql.NotNullFlag, 4, types.UnspecifiedLength},
 		{"_binary'1234'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 4, types.UnspecifiedLength},
-		{"b'0001'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 1, 0},
-		{"b'000100001'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 2, 0},
-		{"b'0000000000010000'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 2, 0},
+		{"b'0001'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 3, 0},
+		{"b'000100001'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 6, 0},
+		{"b'0000000000010000'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 6, 0},
 		{"x'10'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag | mysql.NotNullFlag, 3, 0},
 		{"x'ff10'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag | mysql.NotNullFlag, 6, 0},
 		{"x'0000000000000000ff10'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag | mysql.NotNullFlag, 30, 0},
@@ -1698,9 +1697,10 @@ func (s *testInferTypeSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 		{"utc_time(6) ", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 15, 6},
 		{"utc_time(7) ", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 15, 6},
 
-		{"utc_date()  ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 10, 0},
-		{"curdate()", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 10, 0},
-		{"sysdate(4)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
+		{"curdate()      ", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 10, 0},
+		{"current_date() ", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 10, 0},
+		{"utc_date()     ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 10, 0},
+		{"sysdate(4)     ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
 
 		{"date(c_int_d      )", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 		{"date(c_bigint_d   )", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, 10, 0},

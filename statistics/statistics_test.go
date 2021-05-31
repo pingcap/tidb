@@ -278,7 +278,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	count = col.lessRowCount(types.NewIntDatum(1))
 	c.Check(int(count), Equals, 5)
 
-	colv2, topnv2, err := BuildColumnHistAndTopN(ctx, int(bucketCount), topNCount, 2, collector, types.NewFieldType(mysql.TypeLonglong))
+	colv2, topnv2, err := BuildHistAndTopN(ctx, int(bucketCount), topNCount, 2, collector, types.NewFieldType(mysql.TypeLonglong), true)
 	c.Check(err, IsNil)
 	c.Check(topnv2.TopN, NotNil)
 	expectedTopNCount := []uint64{9990, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30}
@@ -465,7 +465,10 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 func buildCMSketch(values []types.Datum) *CMSketch {
 	cms := NewCMSketch(8, 2048)
 	for _, val := range values {
-		cms.insert(&val)
+		err := cms.insert(&val)
+		if err != nil {
+			panic(err)
+		}
 	}
 	return cms
 }

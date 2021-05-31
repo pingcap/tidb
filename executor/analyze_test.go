@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
@@ -69,7 +69,7 @@ PARTITION BY RANGE ( a ) (
 		}
 		tk.MustExec("analyze table t")
 
-		is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
+		is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 		table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 		c.Assert(err, IsNil)
 		pi := table.Meta().GetPartitionInfo()
@@ -96,7 +96,7 @@ PARTITION BY RANGE ( a ) (
 			tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "hello")`, i, i))
 		}
 		tk.MustExec("alter table t analyze partition p0")
-		is = infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
+		is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 		table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 		c.Assert(err, IsNil)
 		pi = table.Meta().GetPartitionInfo()
@@ -121,7 +121,7 @@ func (s *testSuite1) TestAnalyzeReplicaReadFollower(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	ctx := tk.Se.(sessionctx.Context)
-	ctx.GetSessionVars().SetReplicaRead(tikvstore.ReplicaReadFollower)
+	ctx.GetSessionVars().SetReplicaRead(kv.ReplicaReadFollower)
 	tk.MustExec("analyze table t")
 }
 
@@ -176,7 +176,7 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 
 	tk.MustExec("set @@tidb_enable_fast_analyze = 1")
 	tk.MustExec("analyze table t with 30 samples")
-	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
@@ -227,7 +227,7 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 	tk.MustExec(fmt.Sprintf("insert into t values ('%s')", value))
 
 	tk.MustExec("analyze table t")
-	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
@@ -259,7 +259,7 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("analyze table t with 10 cmsketch width")
 
-	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
@@ -435,7 +435,7 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	}
 	tk.MustExec("analyze table t with 5 buckets, 6 samples")
 
-	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()

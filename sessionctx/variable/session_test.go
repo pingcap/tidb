@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/util"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -40,7 +39,7 @@ func (*testSessionSuite) TestSetSystemVariable(c *C) {
 	v.TimeZone = time.UTC
 	tests := []struct {
 		key   string
-		value interface{}
+		value string
 		err   bool
 	}{
 		{variable.TxnIsolation, "SERIALIZABLE", true},
@@ -58,7 +57,7 @@ func (*testSessionSuite) TestSetSystemVariable(c *C) {
 		{variable.TiDBEnableStmtSummary, "1", false},
 	}
 	for _, t := range tests {
-		err := variable.SetSessionSystemVar(v, t.key, types.NewDatum(t.value))
+		err := variable.SetSessionSystemVar(v, t.key, t.value)
 		if t.err {
 			c.Assert(err, NotNil)
 		} else {
@@ -232,7 +231,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	logItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		SQL:               sql,
-		Digest:            digest,
+		Digest:            digest.String(),
 		TimeTotal:         costTime,
 		TimeParse:         time.Duration(10),
 		TimeCompile:       time.Duration(10),

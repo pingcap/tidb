@@ -535,6 +535,9 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
 	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ", "))
 	variable.MemoryUsageAlarmRatio.Store(cfg.Performance.MemoryUsageAlarmRatio)
+	if hostname, err := os.Hostname(); err != nil {
+		variable.SetSysVar(variable.Hostname, hostname)
+	}
 
 	if cfg.Security.EnableSEM {
 		sem.Enable()
@@ -570,7 +573,7 @@ func setGlobalVars() {
 	kvcache.GlobalLRUMemUsageTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
 
 	t, err := time.ParseDuration(cfg.TiKVClient.StoreLivenessTimeout)
-	if err != nil {
+	if err != nil || t < 0 {
 		logutil.BgLogger().Fatal("invalid duration value for store-liveness-timeout",
 			zap.String("currentValue", cfg.TiKVClient.StoreLivenessTimeout))
 	}
@@ -619,7 +622,7 @@ func setupMetrics() {
 		metrics.TimeJumpBackCounter.Inc()
 	}
 	callBackCount := 0
-	sucessCallBack := func() {
+	successCallBack := func() {
 		callBackCount++
 		// It is callback by monitor per second, we increase metrics.KeepAliveCounter per 5s.
 		if callBackCount >= 5 {
@@ -627,7 +630,7 @@ func setupMetrics() {
 			metrics.KeepAliveCounter.Inc()
 		}
 	}
-	go systimemon.StartMonitor(time.Now, systimeErrHandler, sucessCallBack)
+	go systimemon.StartMonitor(time.Now, systimeErrHandler, successCallBack)
 
 	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
 }

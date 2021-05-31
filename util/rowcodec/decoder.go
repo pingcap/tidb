@@ -260,10 +260,7 @@ func (decoder *ChunkDecoder) tryAppendHandleColumn(colIdx int, col *ColInfo, han
 			}
 			coder := codec.NewDecoder(chk, decoder.loc)
 			_, err := coder.DecodeOne(handle.EncodedCol(i), colIdx, col.Ft)
-			if err != nil {
-				return false
-			}
-			return true
+			return err == nil
 		}
 	}
 	return false

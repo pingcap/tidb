@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -88,8 +87,14 @@ func (e *RevokeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 
+	sessVars := e.ctx.GetSessionVars()
 	// Revoke for each user.
 	for _, user := range e.Users {
+		if user.User.CurrentUser {
+			user.User.Username = sessVars.User.AuthUsername
+			user.User.Hostname = sessVars.User.AuthHostname
+		}
+
 		// Check if user exists.
 		exists, err := userExists(e.ctx, user.User.Username, user.User.Hostname)
 		if err != nil {
@@ -187,9 +192,6 @@ func (e *RevokeExec) revokePriv(internalSession sessionctx.Context, priv *ast.Pr
 
 func (e *RevokeExec) revokeDynamicPriv(internalSession sessionctx.Context, privName string, user, host string) error {
 	privName = strings.ToUpper(privName)
-	if !e.ctx.GetSessionVars().EnableDynamicPrivileges {
-		return fmt.Errorf("dynamic privileges is an experimental feature. Run 'SET tidb_enable_dynamic_privileges=1'")
-	}
 	if !privilege.GetPrivilegeManager(e.ctx).IsDynamicPrivilege(privName) { // for MySQL compatibility
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrDynamicPrivilegeNotRegistered.GenWithStackByArgs(privName))
 	}

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/resourcegrouptag"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -140,18 +141,16 @@ type StatementContext struct {
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	TableIDs         []int64
 	IndexNames       []string
-	nowTs            time.Time // use this variable for now/current_timestamp calculation/cache for one stmt
-	stmtTimeCached   bool
 	StmtType         string
 	OriginalSQL      string
 	digestMemo       struct {
 		sync.Once
 		normalized string
-		digest     string
+		digest     *parser.Digest
 	}
 	// planNormalized use for cache the normalized plan, avoid duplicate builds.
 	planNormalized        string
-	planDigest            string
+	planDigest            *parser.Digest
 	encodedPlan           string
 	planHint              string
 	planHintSet           bool
@@ -164,6 +163,11 @@ type StatementContext struct {
 	TblInfo2UnionScan     map[*model.TableInfo]bool
 	TaskID                uint64 // unique ID for an execution of a statement
 	TaskMapBakTS          uint64 // counter for
+
+	// stmtCache is used to store some statement-related values.
+	stmtCache map[StmtCacheKey]interface{}
+	// resourceGroupTag cache for the current statement resource group tag.
+	resourceGroupTag atomic.Value
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -195,24 +199,40 @@ func (sh *StmtHints) TaskMapNeedBackUp() bool {
 	return sh.ForceNthPlan != -1
 }
 
-// GetNowTsCached getter for nowTs, if not set get now time and cache it
-func (sc *StatementContext) GetNowTsCached() time.Time {
-	if !sc.stmtTimeCached {
-		now := time.Now()
-		sc.nowTs = now
-		sc.stmtTimeCached = true
+// StmtCacheKey represents the key type in the StmtCache.
+type StmtCacheKey int
+
+const (
+	// StmtNowTsCacheKey is a variable for now/current_timestamp calculation/cache of one stmt.
+	StmtNowTsCacheKey StmtCacheKey = iota
+	// StmtSafeTSCacheKey is a variable for safeTS calculation/cache of one stmt.
+	StmtSafeTSCacheKey
+)
+
+// GetOrStoreStmtCache gets the cached value of the given key if it exists, otherwise stores the value.
+func (sc *StatementContext) GetOrStoreStmtCache(key StmtCacheKey, value interface{}) interface{} {
+	if sc.stmtCache == nil {
+		sc.stmtCache = make(map[StmtCacheKey]interface{})
 	}
-	return sc.nowTs
+	if _, ok := sc.stmtCache[key]; !ok {
+		sc.stmtCache[key] = value
+	}
+	return sc.stmtCache[key]
 }
 
-// ResetNowTs resetter for nowTs, clear cached time flag
-func (sc *StatementContext) ResetNowTs() {
-	sc.stmtTimeCached = false
+// ResetInStmtCache resets the cache of given key.
+func (sc *StatementContext) ResetInStmtCache(key StmtCacheKey) {
+	delete(sc.stmtCache, key)
+}
+
+// ResetStmtCache resets all cached values.
+func (sc *StatementContext) ResetStmtCache() {
+	sc.stmtCache = make(map[StmtCacheKey]interface{})
 }
 
 // SQLDigest gets normalized and digest for provided sql.
 // it will cache result after first calling.
-func (sc *StatementContext) SQLDigest() (normalized, sqlDigest string) {
+func (sc *StatementContext) SQLDigest() (normalized string, sqlDigest *parser.Digest) {
 	sc.digestMemo.Do(func() {
 		sc.digestMemo.normalized, sc.digestMemo.digest = parser.NormalizeDigest(sc.OriginalSQL)
 	})
@@ -220,20 +240,37 @@ func (sc *StatementContext) SQLDigest() (normalized, sqlDigest string) {
 }
 
 // InitSQLDigest sets the normalized and digest for sql.
-func (sc *StatementContext) InitSQLDigest(normalized, digest string) {
+func (sc *StatementContext) InitSQLDigest(normalized string, digest *parser.Digest) {
 	sc.digestMemo.Do(func() {
 		sc.digestMemo.normalized, sc.digestMemo.digest = normalized, digest
 	})
 }
 
 // GetPlanDigest gets the normalized plan and plan digest.
-func (sc *StatementContext) GetPlanDigest() (normalized, planDigest string) {
+func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *parser.Digest) {
 	return sc.planNormalized, sc.planDigest
 }
 
+// GetResourceGroupTag gets the resource group of the statement.
+func (sc *StatementContext) GetResourceGroupTag() []byte {
+	tag, _ := sc.resourceGroupTag.Load().([]byte)
+	if len(tag) > 0 {
+		return tag
+	}
+	normalized, sqlDigest := sc.SQLDigest()
+	if len(normalized) == 0 {
+		return nil
+	}
+	tag = resourcegrouptag.EncodeResourceGroupTag(sqlDigest, sc.planDigest)
+	sc.resourceGroupTag.Store(tag)
+	return tag
+}
+
 // SetPlanDigest sets the normalized plan and plan digest.
-func (sc *StatementContext) SetPlanDigest(normalized, planDigest string) {
-	sc.planNormalized, sc.planDigest = normalized, planDigest
+func (sc *StatementContext) SetPlanDigest(normalized string, planDigest *parser.Digest) {
+	if planDigest != nil {
+		sc.planNormalized, sc.planDigest = normalized, planDigest
+	}
 }
 
 // GetEncodedPlan gets the encoded plan, it is used to avoid repeated encode.

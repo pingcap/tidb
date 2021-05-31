@@ -18,7 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -157,6 +157,9 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustGetErrMsg("set @@global.collation_server='non_exist_collation'", expectErrMsg)
 	tk.MustGetErrMsg("set @@global.collation_database='non_exist_collation'", expectErrMsg)
 	tk.MustGetErrMsg("set @@global.collation_connection='non_exist_collation'", expectErrMsg)
+
+	expectErrMsg = "[parser:1115]Unknown character set: 'boguscharsetname'"
+	tk.MustGetErrMsg("set names boguscharsetname", expectErrMsg)
 
 	tk.MustExec("set character_set_results = NULL")
 	tk.MustQuery("select @@character_set_results").Check(testkit.Rows(""))
@@ -397,6 +400,14 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	c.Assert(err, ErrorMatches, ".*Variable 'tidb_metric_query_range_duration' can't be set to the value of '9'")
 	tk.MustQuery("select @@session.tidb_metric_query_range_duration;").Check(testkit.Rows("120"))
 
+	tk.MustExec("set @@cte_max_recursion_depth=100")
+	tk.MustQuery("select @@cte_max_recursion_depth").Check(testkit.Rows("100"))
+	tk.MustExec("set @@global.cte_max_recursion_depth=100")
+	tk.MustQuery("select @@global.cte_max_recursion_depth").Check(testkit.Rows("100"))
+	tk.MustExec("set @@cte_max_recursion_depth=-1")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect cte_max_recursion_depth value: '-1'"))
+	tk.MustQuery("select @@cte_max_recursion_depth").Check(testkit.Rows("0"))
+
 	// test for tidb_slow_log_masking
 	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
 	tk.MustExec("set global tidb_slow_log_masking = 1")
@@ -559,7 +570,7 @@ func (s *testSuite5) TestSetCharset(c *C) {
 
 	check := func(args ...string) {
 		for i, v := range characterSetVariables {
-			sVar, err := variable.GetSessionSystemVar(sessionVars, v)
+			sVar, err := variable.GetSessionOrGlobalSystemVar(sessionVars, v)
 			c.Assert(err, IsNil)
 			c.Assert(sVar, Equals, args[i], Commentf("%d: %s", i, characterSetVariables[i]))
 		}
@@ -1309,7 +1320,7 @@ func (s *testSuite5) TestSetClusterConfig(c *C) {
 	httpCnt := 0
 	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
 		httpCnt++
-		return &http.Response{StatusCode: http.StatusOK, Body: ioutil.NopCloser(nil)}, nil
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(nil)}, nil
 	})
 	tk.MustExec("set config tikv log.level='info'")
 	c.Assert(httpCnt, Equals, 2)
@@ -1327,7 +1338,7 @@ func (s *testSuite5) TestSetClusterConfig(c *C) {
 		"Warning 1105 something wrong", "Warning 1105 something wrong"))
 
 	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusBadRequest, Body: ioutil.NopCloser(bytes.NewBufferString("WRONG"))}, nil
+		return &http.Response{StatusCode: http.StatusBadRequest, Body: io.NopCloser(bytes.NewBufferString("WRONG"))}, nil
 	})
 	tk.MustExec("set config tikv log.level='info'")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
@@ -1364,4 +1375,73 @@ func (s *testSuite5) TestSetClusterConfigJSONData(c *C) {
 			c.Assert(err, NotNil)
 		}
 	}
+}
+
+func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_top_sql='On';")
+	tk.MustQuery("select @@tidb_enable_top_sql;").Check(testkit.Rows("1"))
+	c.Assert(variable.TopSQLVariable.Enable.Load(), IsTrue)
+	tk.MustExec("set @@tidb_enable_top_sql='off';")
+	tk.MustQuery("select @@tidb_enable_top_sql;").Check(testkit.Rows("0"))
+	c.Assert(variable.TopSQLVariable.Enable.Load(), IsFalse)
+	tk.MustExec("set @@global.tidb_enable_top_sql='On';")
+	tk.MustQuery("select @@global.tidb_enable_top_sql;").Check(testkit.Rows("1"))
+	c.Assert(variable.TopSQLVariable.Enable.Load(), IsTrue)
+	tk.MustExec("set @@global.tidb_enable_top_sql='off';")
+	tk.MustQuery("select @@global.tidb_enable_top_sql;").Check(testkit.Rows("0"))
+	c.Assert(variable.TopSQLVariable.Enable.Load(), IsFalse)
+
+	tk.MustExec("set @@tidb_top_sql_agent_address='127.0.0.1:4001';")
+	tk.MustQuery("select @@tidb_top_sql_agent_address;").Check(testkit.Rows("127.0.0.1:4001"))
+	c.Assert(variable.TopSQLVariable.AgentAddress.Load(), Equals, "127.0.0.1:4001")
+	tk.MustExec("set @@tidb_top_sql_agent_address='';")
+	tk.MustQuery("select @@tidb_top_sql_agent_address;").Check(testkit.Rows(""))
+	c.Assert(variable.TopSQLVariable.AgentAddress.Load(), Equals, "")
+	tk.MustExec("set @@global.tidb_top_sql_agent_address='127.0.0.1:4001';")
+	tk.MustQuery("select @@global.tidb_top_sql_agent_address;").Check(testkit.Rows("127.0.0.1:4001"))
+	c.Assert(variable.TopSQLVariable.AgentAddress.Load(), Equals, "127.0.0.1:4001")
+	tk.MustExec("set @@global.tidb_top_sql_agent_address='';")
+	tk.MustQuery("select @@global.tidb_top_sql_agent_address;").Check(testkit.Rows(""))
+	c.Assert(variable.TopSQLVariable.AgentAddress.Load(), Equals, "")
+
+	tk.MustExec("set @@tidb_top_sql_precision_seconds=60;")
+	tk.MustQuery("select @@tidb_top_sql_precision_seconds;").Check(testkit.Rows("60"))
+	c.Assert(variable.TopSQLVariable.PrecisionSeconds.Load(), Equals, int64(60))
+	_, err := tk.Exec("set @@tidb_top_sql_precision_seconds='abc';")
+	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_top_sql_precision_seconds'")
+	_, err = tk.Exec("set @@tidb_top_sql_precision_seconds='-1';")
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_top_sql_precision_seconds' can't be set to the value of '-1'")
+	tk.MustQuery("select @@tidb_top_sql_precision_seconds;").Check(testkit.Rows("60"))
+	c.Assert(variable.TopSQLVariable.PrecisionSeconds.Load(), Equals, int64(60))
+	tk.MustExec("set @@global.tidb_top_sql_precision_seconds=2;")
+	tk.MustQuery("select @@global.tidb_top_sql_precision_seconds;").Check(testkit.Rows("2"))
+	c.Assert(variable.TopSQLVariable.PrecisionSeconds.Load(), Equals, int64(2))
+	_, err = tk.Exec("set @@global.tidb_top_sql_precision_seconds='abc';")
+	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_top_sql_precision_seconds'")
+	_, err = tk.Exec("set @@global.tidb_top_sql_precision_seconds='-1';")
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_top_sql_precision_seconds' can't be set to the value of '-1'")
+	tk.MustQuery("select @@global.tidb_top_sql_precision_seconds;").Check(testkit.Rows("2"))
+	c.Assert(variable.TopSQLVariable.PrecisionSeconds.Load(), Equals, int64(2))
+
+	tk.MustExec("set @@tidb_top_sql_max_statement_count=5000;")
+	tk.MustQuery("select @@tidb_top_sql_max_statement_count;").Check(testkit.Rows("5000"))
+	c.Assert(variable.TopSQLVariable.MaxStatementCount.Load(), Equals, int64(5000))
+	_, err = tk.Exec("set @@tidb_top_sql_max_statement_count='abc';")
+	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_top_sql_max_statement_count'")
+	_, err = tk.Exec("set @@tidb_top_sql_max_statement_count='-1';")
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_top_sql_max_statement_count' can't be set to the value of '-1'")
+	tk.MustQuery("select @@tidb_top_sql_max_statement_count;").Check(testkit.Rows("5000"))
+	c.Assert(variable.TopSQLVariable.MaxStatementCount.Load(), Equals, int64(5000))
+	tk.MustExec("set @@global.tidb_top_sql_max_statement_count=2;")
+	tk.MustQuery("select @@global.tidb_top_sql_max_statement_count;").Check(testkit.Rows("2"))
+	c.Assert(variable.TopSQLVariable.MaxStatementCount.Load(), Equals, int64(2))
+	_, err = tk.Exec("set @@global.tidb_top_sql_max_statement_count='abc';")
+	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_top_sql_max_statement_count'")
+	_, err = tk.Exec("set @@global.tidb_top_sql_max_statement_count='-1';")
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_top_sql_max_statement_count' can't be set to the value of '-1'")
+	_, err = tk.Exec("set @@global.tidb_top_sql_max_statement_count='5001';")
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_top_sql_max_statement_count' can't be set to the value of '5001'")
+	tk.MustQuery("select @@global.tidb_top_sql_precision_seconds;").Check(testkit.Rows("2"))
+	c.Assert(variable.TopSQLVariable.MaxStatementCount.Load(), Equals, int64(2))
 }

@@ -15,7 +15,6 @@ package util
 
 import (
 	"bytes"
-	"fmt"
 	"math"
 	"strconv"
 	"sync"
@@ -23,7 +22,6 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/util/memory"
 )
 
 type commitDetailCtxKeyType struct{}
@@ -51,7 +49,7 @@ type CommitDetails struct {
 	CommitBackoffTime      int64
 	Mu                     struct {
 		sync.Mutex
-		BackoffTypes []fmt.Stringer
+		BackoffTypes []string
 	}
 	ResolveLockTime   int64
 	WriteKeys         int
@@ -91,7 +89,7 @@ func (cd *CommitDetails) Clone() *CommitDetails {
 		PrewriteRegionNum:      cd.PrewriteRegionNum,
 		TxnRetry:               cd.TxnRetry,
 	}
-	commit.Mu.BackoffTypes = append([]fmt.Stringer{}, cd.Mu.BackoffTypes...)
+	commit.Mu.BackoffTypes = append([]string{}, cd.Mu.BackoffTypes...)
 	return commit
 }
 
@@ -104,7 +102,7 @@ type LockKeysDetails struct {
 	BackoffTime     int64
 	Mu              struct {
 		sync.Mutex
-		BackoffTypes []fmt.Stringer
+		BackoffTypes []string
 	}
 	LockRPCTime  int64
 	LockRPCCount int64
@@ -136,7 +134,7 @@ func (ld *LockKeysDetails) Clone() *LockKeysDetails {
 		LockRPCCount:    ld.LockRPCCount,
 		RetryCount:      ld.RetryCount,
 	}
-	lock.Mu.BackoffTypes = append([]fmt.Stringer{}, ld.Mu.BackoffTypes...)
+	lock.Mu.BackoffTypes = append([]string{}, ld.Mu.BackoffTypes...)
 	return lock
 }
 
@@ -243,7 +241,7 @@ func (sd *ScanDetail) String() string {
 	buf.WriteString(", read_count: ")
 	buf.WriteString(strconv.FormatUint(sd.RocksdbBlockReadCount, 10))
 	buf.WriteString(", read_byte: ")
-	buf.WriteString(memory.FormatBytes(int64(sd.RocksdbBlockReadByte)))
+	buf.WriteString(FormatBytes(int64(sd.RocksdbBlockReadByte)))
 	buf.WriteString("}}}")
 	return buf.String()
 }

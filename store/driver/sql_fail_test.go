@@ -100,7 +100,6 @@ func (s *testSQLSerialSuite) TestFailBusyServerCop(c *C) {
 }
 
 func TestMain(m *testing.M) {
-	tikv.ReadTimeoutMedium = 2 * time.Second
 	os.Exit(m.Run())
 }
 
