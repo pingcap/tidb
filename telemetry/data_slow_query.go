@@ -34,11 +34,11 @@ type slowQueryStats struct {
 	SQBInfo *SlowQueryBucket `json:"slowQueryBucket"`
 }
 
-// SlowQueryStat records the statistic information of slow query buckets
+// SlowQueryBucket records the statistic information of slow query buckets
 // Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days  // defined in metrics/server.go
 type SlowQueryBucket map[string]int
 
-const SLOW_QUERY_BUCKET_NUM = 29 //prometheus.ExponentialBuckets(0.001, 2, 28), and 1 more +Inf
+const slow_query_bucket_num = 29 //prometheus.ExponentialBuckets(0.001, 2, 28), and 1 more +Inf
 
 var (
 	// LastSQBInfo records last statistic information of slow query buckets
@@ -152,7 +152,7 @@ func InitSlowQueryStats() {
 	CurrentSQBInfo := make(SlowQueryBucket)
 
 	bucketBase := 0.001 // From 0.001 to 134217.728, total 28 float number; the 29th is +Inf
-	for i := 0; i < SLOW_QUERY_BUCKET_NUM-1; i++ {
+	for i := 0; i < slow_query_bucket_num-1; i++ {
 		LastSQBInfo[strconv.FormatFloat(bucketBase, 'f', 3, 32)] = 0
 		CurrentSQBInfo[strconv.FormatFloat(bucketBase, 'f', 3, 32)] = 0
 		bucketBase += bucketBase
