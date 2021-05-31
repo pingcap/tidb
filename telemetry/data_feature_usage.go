@@ -47,7 +47,7 @@ func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
 	txnUsage := GetTxnUsageInfo(ctx)
   
   // Avoid the circle dependency.
-	temporaryTable = ctx.(TemporaryTableFeatureChecker).TemporaryTableExists()
+	temporaryTable := ctx.(TemporaryTableFeatureChecker).TemporaryTableExists()
 
 	return &featureUsage{txnUsage, clusterIdxUsage, temporaryTable}, nil
 }
@@ -96,7 +96,8 @@ func GetClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, er
 			}
 		}
 	}()
-	infoSchema := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	ctx.RefreshTxnCtx(context.TODO())
+	infoSchema := ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 
 	// check ClusterIndex information for each table
 	// row: 0 = table_name_hash, 1 = TIDB_PK_TYPE, 2 = TABLE_SCHEMA (db), 3 = TABLE_NAME
