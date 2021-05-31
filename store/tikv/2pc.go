@@ -1102,13 +1102,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		logutil.SetTag(ctx, "commitTs", commitTS)
 	}
 
-	if c.sessionID > 0 {
-		failpoint.Inject("beforeSchemaCheck", func() {
-			c.ttlManager.close()
-			failpoint.Return()
-		})
-	}
-
 	if !c.isAsyncCommit() {
 		tryAmend := c.isPessimistic && c.sessionID > 0 && c.txn.schemaAmender != nil
 		if !tryAmend {
@@ -1132,7 +1125,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 				if err != nil {
 					logutil.Logger(ctx).Info("schema check after amend failed, it means the schema version changed again",
 						zap.Uint64("startTS", c.startTS),
-						zap.Uint64("amendTS", c.commitTS),
+						zap.Uint64("amendTS", commitTS),
 						zap.Int64("amendedSchemaVersion", relatedSchemaChange.LatestInfoSchema.SchemaMetaVersion()),
 						zap.Uint64("newCommitTS", newCommitTS))
 					return errors.Trace(err)
