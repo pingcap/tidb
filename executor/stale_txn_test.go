@@ -110,6 +110,7 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 	time.Sleep(2 * time.Second)
 
 	testcases := []struct {
+		setTxnSQL        string
 		name             string
 		sql              string
 		expectPhysicalTS int64
@@ -118,12 +119,24 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 		errorStr string
 	}{
 		{
+			name:             "set transaction as of",
+			setTxnSQL:        fmt.Sprintf("set transaction read only as of timestamp '%s';", now.Format("2006-1-2 15:04:05")),
+			sql:              "select * from t;",
+			expectPhysicalTS: now.Unix(),
+		},
+		{
+			name:      "set transaction as of, expect error",
+			setTxnSQL: fmt.Sprintf("set transaction read only as of timestamp '%s';", now.Format("2006-1-2 15:04:05")),
+			sql:       fmt.Sprintf("select * from t as of timestamp '%s';", now.Format("2006-1-2 15:04:05")),
+			errorStr:  ".*can't use select as of while already set transaction as of.*",
+		},
+		{
 			name:             "TimestampExactRead1",
 			sql:              fmt.Sprintf("select * from t as of timestamp '%s';", now.Format("2006-1-2 15:04:05")),
 			expectPhysicalTS: now.Unix(),
 		},
 		{
-			name:   "NomalRead",
+			name:   "NormalRead",
 			sql:    `select * from b;`,
 			preSec: 0,
 		},
@@ -187,6 +200,9 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
+		if len(testcase.setTxnSQL) > 0 {
+			tk.MustExec(testcase.setTxnSQL)
+		}
 		if testcase.expectPhysicalTS > 0 {
 			c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSO", fmt.Sprintf(`return(%d)`, testcase.expectPhysicalTS)), IsNil)
 		} else if testcase.preSec > 0 {
@@ -202,6 +218,9 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 			c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSO"), IsNil)
 		} else if testcase.preSec > 0 {
 			c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSOWithTolerance"), IsNil)
+		}
+		if len(testcase.setTxnSQL) > 0 {
+			c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(0))
 		}
 	}
 }
