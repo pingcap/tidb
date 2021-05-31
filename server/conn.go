@@ -85,7 +85,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/tracecpu"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -1019,13 +1018,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
-	if config.TopSQLEnabled() {
-		normalizedSQL, digest := getLastStmtInConn{cc}.pprofLabelNormalizedAndDigest()
-		if len(digest) > 0 {
-			defer tracecpu.ResetGoroutineLabelsWithOriginalCtx(ctx)
-			ctx = tracecpu.SetSQLLabels(ctx, normalizedSQL, digest)
-		}
-	} else if variable.EnablePProfSQLCPU.Load() {
+	if variable.EnablePProfSQLCPU.Load() {
 		label := getLastStmtInConn{cc}.PProfLabel()
 		if len(label) > 0 {
 			defer pprof.SetGoroutineLabels(ctx)
@@ -2162,29 +2155,5 @@ func (cc getLastStmtInConn) PProfLabel() string {
 		return tidbutil.QueryStrForLog(cc.preparedStmt2StringNoArgs(stmtID))
 	default:
 		return ""
-	}
-}
-
-// PProfLabelNormalizedAndDigest return sql and sql_digest label used to tag pprof.
-func (cc getLastStmtInConn) pprofLabelNormalizedAndDigest() (string, string) {
-	if len(cc.lastPacket) == 0 {
-		return "", ""
-	}
-	cmd, data := cc.lastPacket[0], cc.lastPacket[1:]
-	switch cmd {
-	case mysql.ComQuery, mysql.ComStmtPrepare:
-		normalized, digest := parser.NormalizeDigest(string(hack.String(data)))
-		return normalized, digest.String()
-	case mysql.ComStmtExecute, mysql.ComStmtFetch:
-		stmtID := binary.LittleEndian.Uint32(data[0:4])
-		prepareObj, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
-		if prepareObj != nil && prepareObj.SQLDigest != nil {
-			return prepareObj.NormalizedSQL, prepareObj.SQLDigest.String()
-		}
-		str := cc.preparedStmt2StringNoArgs(stmtID)
-		normalized, digest := parser.NormalizeDigest(str)
-		return normalized, digest.String()
-	default:
-		return "", ""
 	}
 }

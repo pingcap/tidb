@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/tracecpu"
 	"go.uber.org/zap"
 )
 
@@ -178,6 +180,10 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		Params:        sorter.markers,
 		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
 	}
+	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
+	if config.TopSQLEnabled() {
+		ctx = tracecpu.SetSQLLabels(ctx, normalizedSQL, digest.String())
+	}
 
 	if !plannercore.PreparedPlanCacheEnabled() {
 		prepared.UseCache = false
@@ -213,11 +219,10 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		vars.PreparedStmtNameToID[e.name] = e.ID
 	}
 
-	normalized, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 	preparedObj := &plannercore.CachedPrepareStmt{
 		PreparedAst:   prepared,
 		VisitInfos:    destBuilder.GetVisitInfo(),
-		NormalizedSQL: normalized,
+		NormalizedSQL: normalizedSQL,
 		SQLDigest:     digest,
 		ForUpdateRead: destBuilder.GetIsForUpdateRead(),
 	}

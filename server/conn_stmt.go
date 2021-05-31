@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -55,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/tracecpu"
 )
 
 func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
@@ -264,6 +266,12 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 	if stmt == nil {
 		return errors.Annotate(mysql.NewErr(mysql.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch"), cc.preparedStmt2String(stmtID))
+	}
+	if config.TopSQLEnabled() {
+		prepareObj, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
+		if prepareObj != nil && prepareObj.SQLDigest != nil {
+			tracecpu.SetSQLLabels(ctx, prepareObj.NormalizedSQL, prepareObj.SQLDigest.String())
+		}
 	}
 	sql := ""
 	if prepared, ok := cc.ctx.GetStatement(int(stmtID)).(*TiDBStatement); ok {

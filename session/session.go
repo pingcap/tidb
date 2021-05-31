@@ -1502,6 +1502,11 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
+	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
+	if config.TopSQLEnabled() {
+		ctx = tracecpu.SetSQLLabels(ctx, normalizedSQL, digest.String())
+	}
+
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
 		return nil, err
 	}
@@ -1509,7 +1514,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Uncorrelated subqueries will execute once when building plan, so we reset process info before building plan.
 	cmd32 := atomic.LoadUint32(&s.GetSessionVars().CommandValue)
 	s.SetProcessInfo(stmtNode.Text(), time.Now(), byte(cmd32), 0)
-	_, digest := s.sessionVars.StmtCtx.SQLDigest()
 	s.txn.onStmtStart(digest.String())
 	defer s.txn.onStmtEnd()
 
@@ -1877,6 +1881,9 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	preparedStmt, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
 	if !ok {
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
+	}
+	if config.TopSQLEnabled() && preparedStmt.SQLDigest != nil {
+		ctx = tracecpu.SetSQLLabels(ctx, preparedStmt.NormalizedSQL, preparedStmt.SQLDigest.String())
 	}
 	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
 	ok, err = s.IsCachedExecOk(ctx, preparedStmt)
