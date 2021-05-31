@@ -66,7 +66,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
-	"github.com/pingcap/tidb/util/tracecpu"
+	"github.com/pingcap/tidb/util/topsql"
 	"go.uber.org/zap"
 )
 
@@ -1661,7 +1661,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
 		// For `execute stmt` SQL, should reset the SQL digest with the prepare SQL digest.
 		if variable.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
-			tracecpu.SetSQLLabels(context.Background(), prepareStmt.NormalizedSQL, prepareStmt.SQLDigest.String())
+			topsql.SetSQLLabels(context.Background(), prepareStmt.NormalizedSQL, prepareStmt.SQLDigest.String())
 		}
 	}
 	// execute missed stmtID uses empty sql

@@ -64,7 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/sys/linux"
 	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
-	"github.com/pingcap/tidb/util/tracecpu"
+	"github.com/pingcap/tidb/util/topsql"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	pd "github.com/tikv/pd/client"
@@ -179,7 +179,7 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
-	setupTopSQLProfiler()
+	topsql.SetupTopSQL()
 
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
@@ -686,8 +686,4 @@ func stringToList(repairString string) []string {
 	return strings.FieldsFunc(repairString, func(r rune) bool {
 		return r == ',' || r == ' ' || r == '"'
 	})
-}
-
-func setupTopSQLProfiler() {
-	tracecpu.GlobalTopSQLCPUProfiler.Run()
 }

@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/parser"
-	"github.com/pingcap/tidb/util/tracecpu"
+	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/uber-go/atomic"
 )
 

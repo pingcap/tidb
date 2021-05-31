@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/tracecpu"
+	"github.com/pingcap/tidb/util/topsql/tracecpu"
 )
 
 type sqlInfoFetcher struct {

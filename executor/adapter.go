@@ -56,8 +56,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/pingcap/tidb/util/tracecpu"
-
+	"github.com/pingcap/tidb/util/topsql"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -297,7 +296,7 @@ func (a *ExecStmt) wrapAndSetPlanLabelForTopSQL(ctx context.Context) context.Con
 	_, sqlDigest := a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
 	normalizedPlan, planDigest := getPlanDigest(a.Ctx, a.Plan)
 	if len(planDigest) > 0 {
-		ctx = tracecpu.SetSQLAndPlanLabels(ctx, sqlDigest.String(), planDigest, normalizedPlan)
+		ctx = topsql.SetSQLAndPlanLabels(ctx, sqlDigest.String(), planDigest, normalizedPlan)
 	}
 	return ctx
 }

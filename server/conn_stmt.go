@@ -56,7 +56,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/tracecpu"
+	"github.com/pingcap/tidb/util/topsql"
 )
 
 func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
@@ -270,7 +270,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 	if variable.TopSQLEnabled() {
 		prepareObj, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
 		if prepareObj != nil && prepareObj.SQLDigest != nil {
-			tracecpu.SetSQLLabels(ctx, prepareObj.NormalizedSQL, prepareObj.SQLDigest.String())
+			topsql.SetSQLLabels(ctx, prepareObj.NormalizedSQL, prepareObj.SQLDigest.String())
 		}
 	}
 	sql := ""

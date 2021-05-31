@@ -78,28 +78,12 @@ func (sp *topSQLCPUProfiler) SetCollector(c TopSQLCollector) {
 	sp.collector.Store(c)
 }
 
-func (sp *topSQLCPUProfiler) getCollector() TopSQLCollector {
+func (sp *topSQLCPUProfiler) GetCollector() TopSQLCollector {
 	c, ok := sp.collector.Load().(TopSQLCollector)
 	if !ok || c == nil {
 		return nil
 	}
 	return c
-}
-
-func (sp *topSQLCPUProfiler) RegisterSQL(sqlDigest, normalizedSQL string) {
-	c := sp.getCollector()
-	if c == nil {
-		return
-	}
-	c.RegisterSQL(sqlDigest, normalizedSQL)
-}
-
-func (sp *topSQLCPUProfiler) RegisterPlan(planDigest string, normalizedPlan string) {
-	c := sp.getCollector()
-	if c == nil {
-		return
-	}
-	c.RegisterPlan(planDigest, normalizedPlan)
 }
 
 func (sp *topSQLCPUProfiler) startCPUProfileWorker() {
@@ -141,7 +125,7 @@ func (sp *topSQLCPUProfiler) startAnalyzeProfileWorker() {
 		}
 		stats := sp.parseCPUProfileBySQLLabels(p)
 		sp.handleExportProfileTask(p)
-		if c := sp.getCollector(); c != nil {
+		if c := sp.GetCollector(); c != nil {
 			c.Collect(task.end, stats)
 		}
 		sp.putTaskToBuffer(task)
@@ -301,24 +285,19 @@ func ResetGoroutineLabelsWithOriginalCtx(ctx context.Context) {
 
 // SetSQLLabels sets the SQL digest label into the goroutine.
 func SetSQLLabels(ctx context.Context, normalizedSQL, sqlDigest string) context.Context {
-	if len(normalizedSQL) == 0 || len(sqlDigest) == 0 {
-		return ctx
-	}
 	if variable.EnablePProfSQLCPU.Load() {
 		ctx = pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest, labelSQL, util.QueryStrForLog(normalizedSQL)))
 	} else {
 		ctx = pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest))
 	}
 	pprof.SetGoroutineLabels(ctx)
-	GlobalTopSQLCPUProfiler.RegisterSQL(sqlDigest, normalizedSQL)
 	return ctx
 }
 
 // SetSQLAndPlanLabels sets the SQL and plan digest label into the goroutine.
-func SetSQLAndPlanLabels(ctx context.Context, sqlDigest, planDigest, normalizedPlan string) context.Context {
+func SetSQLAndPlanLabels(ctx context.Context, sqlDigest, planDigest string) context.Context {
 	ctx = pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest, labelPlanDigest, planDigest))
 	pprof.SetGoroutineLabels(ctx)
-	GlobalTopSQLCPUProfiler.RegisterPlan(planDigest, normalizedPlan)
 	return ctx
 }
 

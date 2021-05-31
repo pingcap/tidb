@@ -43,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/tracecpu"
+	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )

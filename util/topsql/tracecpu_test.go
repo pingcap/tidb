@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tracecpu_test
+package topsql_test
 
 import (
 	"bytes"
@@ -23,8 +23,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/tracecpu"
-	"github.com/pingcap/tidb/util/tracecpu/mock"
+	"github.com/pingcap/tidb/util/topsql"
+	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"github.com/pingcap/tidb/util/topsql/tracecpu/mock"
 )
 
 func TestT(t *testing.T) {
@@ -116,10 +117,10 @@ func (s *testSuite) setTopSQLEnable(enabled bool) {
 func (s *testSuite) mockExecuteSQL(sql, plan string) {
 	ctx := context.Background()
 	sqlDigest := mock.GenSQLDigest(sql)
-	ctx = tracecpu.SetSQLLabels(ctx, sql, sqlDigest)
+	ctx = topsql.SetSQLLabels(ctx, sql, sqlDigest)
 	s.mockExecute(time.Millisecond * 100)
 	planDigest := genDigest(plan)
-	tracecpu.SetSQLAndPlanLabels(ctx, sqlDigest, planDigest, plan)
+	topsql.SetSQLAndPlanLabels(ctx, sqlDigest, planDigest, plan)
 	s.mockExecute(time.Millisecond * 300)
 }
 

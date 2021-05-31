@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/tracecpu"
+	"github.com/pingcap/tidb/util/topsql"
 	"go.uber.org/zap"
 )
 
@@ -182,7 +182,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 	if variable.TopSQLEnabled() {
-		ctx = tracecpu.SetSQLLabels(ctx, normalizedSQL, digest.String())
+		ctx = topsql.SetSQLLabels(ctx, normalizedSQL, digest.String())
 	}
 
 	if !plannercore.PreparedPlanCacheEnabled() {

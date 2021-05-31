@@ -41,7 +41,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/util/tracecpu"
+	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 
@@ -1389,7 +1389,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		normalized, digest := parser.NormalizeDigest(sql)
 		if digest != nil {
 			// Fixme: reset/clean the label when sql execute finish.
-			tracecpu.SetSQLLabels(ctx, normalized, digest.String())
+			topsql.SetSQLLabels(ctx, normalized, digest.String())
 		}
 	}
 	return stmts[0], nil
@@ -1504,7 +1504,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
 	if variable.TopSQLEnabled() {
-		ctx = tracecpu.SetSQLLabels(ctx, normalizedSQL, digest.String())
+		ctx = topsql.SetSQLLabels(ctx, normalizedSQL, digest.String())
 	}
 
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
@@ -1883,7 +1883,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
 	}
 	if variable.TopSQLEnabled() && preparedStmt.SQLDigest != nil {
-		ctx = tracecpu.SetSQLLabels(ctx, preparedStmt.NormalizedSQL, preparedStmt.SQLDigest.String())
+		ctx = topsql.SetSQLLabels(ctx, preparedStmt.NormalizedSQL, preparedStmt.SQLDigest.String())
 	}
 	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
 	ok, err = s.IsCachedExecOk(ctx, preparedStmt)
