@@ -44,8 +44,7 @@ const (
 var GlobalTopSQLCPUProfiler = newTopSQLCPUProfiler()
 
 type topSQLCPUProfiler struct {
-	taskCh     chan *profileTask
-	cacheBufCh chan *profileTask
+	taskCh chan *profileTask
 
 	mu struct {
 		sync.Mutex
@@ -54,11 +53,19 @@ type topSQLCPUProfiler struct {
 	collector atomic.Value
 }
 
+var (
+	defaultProfileBufSize = 100 * 1024
+	profileBufPool        = sync.Pool{
+		New: func() interface{} {
+			return bytes.NewBuffer(make([]byte, 0, defaultProfileBufSize))
+		},
+	}
+)
+
 // newTopSQLCPUProfiler create a topSQLCPUProfiler.
 func newTopSQLCPUProfiler() *topSQLCPUProfiler {
 	return &topSQLCPUProfiler{
-		taskCh:     make(chan *profileTask, 128),
-		cacheBufCh: make(chan *profileTask, 128),
+		taskCh: make(chan *profileTask, 128),
 	}
 }
 
@@ -108,21 +115,17 @@ func (sp *topSQLCPUProfiler) startCPUProfileWorker() {
 }
 
 func (sp *topSQLCPUProfiler) doCPUProfile() {
-	interval := config.GetGlobalConfig().TopSQL.RefreshInterval
+	intervalSecond := config.GetGlobalConfig().TopSQL.RefreshInterval
 	task := sp.newProfileTask()
 	if err := pprof.StartCPUProfile(task.buf); err != nil {
 		// Sleep a while before retry.
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Second)
 		sp.putTaskToBuffer(task)
 		return
 	}
-	ns := int(time.Second)*interval - time.Now().Nanosecond()
+	ns := int(time.Second)*intervalSecond - time.Now().Nanosecond()
 	time.Sleep(time.Nanosecond * time.Duration(ns))
 	pprof.StopCPUProfile()
-	sp.sendProfileTask(task)
-}
-
-func (sp *topSQLCPUProfiler) sendProfileTask(task *profileTask) {
 	task.end = time.Now().Unix()
 	sp.taskCh <- task
 }
@@ -131,8 +134,7 @@ func (sp *topSQLCPUProfiler) startAnalyzeProfileWorker() {
 	defer util.Recover("top-sql", "analyzeProfileWorker", nil, false)
 	for {
 		task := <-sp.taskCh
-		reader := bytes.NewReader(task.buf.Bytes())
-		p, err := profile.Parse(reader)
+		p, err := profile.ParseData(task.buf.Bytes())
 		if err != nil {
 			logutil.BgLogger().Error("parse profile error", zap.Error(err))
 			sp.putTaskToBuffer(task)
@@ -153,23 +155,15 @@ type profileTask struct {
 }
 
 func (sp *topSQLCPUProfiler) newProfileTask() *profileTask {
-	var task *profileTask
-	select {
-	case task = <-sp.cacheBufCh:
-		task.buf.Reset()
-	default:
-		task = &profileTask{
-			buf: bytes.NewBuffer(make([]byte, 0, 100*1024)),
-		}
+	buf := profileBufPool.Get().(*bytes.Buffer)
+	return &profileTask{
+		buf: buf,
 	}
-	return task
 }
 
 func (sp *topSQLCPUProfiler) putTaskToBuffer(task *profileTask) {
-	select {
-	case sp.cacheBufCh <- task:
-	default:
-	}
+	task.buf.Reset()
+	profileBufPool.Put(task.buf)
 }
 
 // parseCPUProfileBySQLLabels uses to aggregate the cpu-profile sample data by sql_digest and plan_digest labels,
