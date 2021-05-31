@@ -670,6 +670,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		}
 	})
 	s.sessionVars.TxnCtx.Cleanup()
+	s.sessionVars.TxnReadTS.Cleanup()
 	return err
 }
 
@@ -687,6 +688,7 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	}
 	s.txn.changeToInvalid()
 	s.sessionVars.TxnCtx.Cleanup()
+	s.sessionVars.TxnReadTS.Cleanup()
 	s.sessionVars.SetInTxn(false)
 }
 
@@ -1554,7 +1556,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {
 	vars := s.GetSessionVars()
-	if !vars.TxnCtx.IsStaleness {
+	if !vars.TxnCtx.IsStaleness || vars.TxnReadTS.PeakTxnReadTS() == 0 {
 		return nil
 	}
 	errMsg := "only support read-only statement during read-only staleness transactions"

@@ -228,7 +228,7 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 			c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSOWithTolerance"), IsNil)
 		}
 		if len(testcase.setTxnSQL) > 0 {
-			c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(0))
+			c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(0))
 			c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, IsFalse)
 		}
 	}
@@ -419,11 +419,11 @@ func (s *testStaleTxnSerialSuite) TestSetTransactionReadOnlyAsOf(c *C) {
 				fmt.Sprintf("return(%v)", testcase.injectSafeTS)), IsNil)
 		}
 		tk.MustExec(testcase.sql)
-		c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, testcase.expectedTS)
+		c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, testcase.expectedTS)
 		tk.MustExec("begin")
-		c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(0))
 		c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Equals, testcase.expectedTS)
 		tk.MustExec("commit")
+		c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(0))
 		tk.MustExec("begin")
 		c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Not(Equals), testcase.expectedTS)
 
@@ -432,7 +432,7 @@ func (s *testStaleTxnSerialSuite) TestSetTransactionReadOnlyAsOf(c *C) {
 
 	err = tk.ExecToErr(`SET TRANSACTION READ ONLY as of timestamp tidb_bounded_staleness(invalid1, invalid2')`)
 	c.Assert(err, NotNil)
-	c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(0))
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(0))
 
 	tk.MustExec(`SET TRANSACTION READ ONLY as of timestamp '2021-04-21 00:42:12'`)
 	err = tk.ExecToErr(`START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00'`)

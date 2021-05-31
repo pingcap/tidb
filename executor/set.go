@@ -138,7 +138,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			if name == variable.TiDBSnapshot {
 				return sessionVars.SnapshotTS
 			} else if name == variable.TiDBTxnReadTS {
-				return sessionVars.TxnReadTS
+				return sessionVars.TxnReadTS.PeakTxnReadTS()
 			}
 			return 0
 		}
@@ -147,7 +147,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			if name == variable.TiDBSnapshot {
 				sessionVars.SnapshotTS = oldSnapshotTS
 			} else if name == variable.TiDBTxnReadTS {
-				sessionVars.TxnReadTS = oldSnapshotTS
+				sessionVars.TxnReadTS.SetTxnReadTS(oldSnapshotTS)
 			}
 		}
 		if name == variable.TxnIsolationOneShot && sessionVars.InTxn() {
