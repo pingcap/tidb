@@ -129,6 +129,17 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		setupCTEStorageTracker(e.resTbl, e.ctx)
 		setupCTEStorageTracker(e.iterInTbl, e.ctx)
 
+		if config.GetGlobalConfig().OOMUseTmpStorage {
+			actionSpill := e.resTbl.ActionSpill()
+			failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
+				if val.(bool) {
+					actionSpill = e.resTbl.(*cteutil.StorageRC).ActionSpillForTest()
+					defer actionSpill.(*chunk.SpillDiskAction).WaitForTest()
+				}
+			})
+			e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
+		}
+
 		if err = e.computeSeedPart(ctx); err != nil {
 			// Don't put it in defer.
 			// Because it should be called only when the filling process is not completed.
@@ -321,12 +332,6 @@ func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context) {
 
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		actionSpill := tbl.ActionSpill()
-		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
-			if val.(bool) {
-				actionSpill = tbl.(*cteutil.StorageRC).ActionSpillForTest()
-				defer actionSpill.(*chunk.SpillDiskAction).WaitForTest()
-			}
-		})
 		ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
 }
