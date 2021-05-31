@@ -409,6 +409,8 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 
 	t1, err := t.GoTime(s.TimeZone)
 	s.SnapshotTS = oracle.GoTimeToTS(t1)
+	// tx_read_ts should be mutual exclusive with tidb_snapshot
+	s.TxnReadTS = 0
 	return err
 }
 
@@ -426,6 +428,9 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 		return err
 	}
 	s.TxnReadTS = oracle.GoTimeToTS(t1)
+	// tx_read_ts should be mutual exclusive with tidb_snapshot
+	s.SnapshotTS = 0
+	s.SnapshotInfoschema = nil
 	return err
 }
 
