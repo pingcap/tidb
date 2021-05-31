@@ -23,6 +23,7 @@ import (
 	"runtime/pprof"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/pprof/profile"
@@ -51,7 +52,7 @@ type topSQLCPUProfiler struct {
 		sync.Mutex
 		ept *exportProfileTask
 	}
-	collector TopSQLCollector
+	collector atomic.Value
 }
 
 // NewTopSQLCPUProfiler create a topSQLCPUProfiler.
@@ -69,21 +70,31 @@ func (sp *topSQLCPUProfiler) Run() {
 }
 
 func (sp *topSQLCPUProfiler) SetCollector(c TopSQLCollector) {
-	sp.collector = c
+	sp.collector.Store(c)
+}
+
+func (sp *topSQLCPUProfiler) getCollector() TopSQLCollector {
+	c, ok := sp.collector.Load().(TopSQLCollector)
+	if !ok || c == nil {
+		return nil
+	}
+	return c
 }
 
 func (sp *topSQLCPUProfiler) RegisterSQL(sqlDigest, normalizedSQL string) {
-	if sp.collector == nil {
+	c := sp.getCollector()
+	if c == nil {
 		return
 	}
-	sp.collector.RegisterSQL(sqlDigest, normalizedSQL)
+	c.RegisterSQL(sqlDigest, normalizedSQL)
 }
 
 func (sp *topSQLCPUProfiler) RegisterPlan(planDigest string, normalizedPlan string) {
-	if sp.collector == nil {
+	c := sp.getCollector()
+	if c == nil {
 		return
 	}
-	sp.collector.RegisterPlan(planDigest, normalizedPlan)
+	c.RegisterPlan(planDigest, normalizedPlan)
 }
 
 func (sp *topSQLCPUProfiler) startCPUProfileWorker() {
@@ -130,8 +141,8 @@ func (sp *topSQLCPUProfiler) startAnalyzeProfileWorker() {
 		}
 		stats := sp.parseCPUProfileBySQLLabels(p)
 		sp.handleExportProfileTask(p)
-		if sp.collector != nil {
-			sp.collector.Collect(task.end, stats)
+		if c := sp.getCollector(); c != nil {
+			c.Collect(task.end, stats)
 		}
 		sp.putTaskToBuffer(task)
 	}
