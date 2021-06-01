@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -42,7 +43,7 @@ type PipelinedWindowExec struct {
 	end                *core.FrameBound
 	groupChecker       *vecGroupChecker
 
-	// childResult stores the child chunk
+	// childResult stores the child chunk. Note that even if remaining is 0, e.rows might still references rows in data[0].chk after returned it to upper executor, since there is no guarantee what the upper executor will do to the returned chunk, it might destroy the data (as in the benchmark test, it reused the chunk to pull data, and it will be chk.Reset(), causing panicking). So dataIdx, accumulated and dropped are added to ensure that chunk will only be returned if there is no row reference.
 	childResult *chunk.Chunk
 	data        []dataInfo
 	dataIdx     int
@@ -51,16 +52,17 @@ type PipelinedWindowExec struct {
 	done         bool
 	accumulated  uint64
 	dropped      uint64
-	consumed     bool
 	rowToConsume uint64
 	newPartition bool
 
 	curRowIdx uint64
 	// curStartRow and curEndRow defines the current frame range
-	lastStartRow uint64
-	lastEndRow   uint64
-	rowStart     uint64
-	orderByCols  []*expression.Column
+	lastStartRow   uint64
+	lastEndRow     uint64
+	stagedStartRow uint64
+	stagedEndRow   uint64
+	rowStart       uint64
+	orderByCols    []*expression.Column
 	// expectedCmpResult is used to decide if one value is included in the frame.
 	expectedCmpResult int64
 
@@ -168,7 +170,6 @@ func (e *PipelinedWindowExec) getRowsInPartition(ctx context.Context) (err error
 		// if getRowsInPartition is called for the first time, we ignore it as a new partition
 		e.newPartition = false
 	}
-	e.consumed = false
 
 	if e.groupChecker.isExhausted() {
 		var drained, samePartition bool
@@ -253,7 +254,7 @@ func (e *PipelinedWindowExec) getStart(ctx sessionctx.Context) (uint64, error) {
 	}
 	if e.isRangeFrame {
 		var start uint64
-		for start = e.lastStartRow; start < e.rowCnt; start++ {
+		for start = mathutil.MaxUint64(e.lastStartRow, e.stagedStartRow); start < e.rowCnt; start++ {
 			var res int64
 			var err error
 			for i := range e.orderByCols {
@@ -271,6 +272,7 @@ func (e *PipelinedWindowExec) getStart(ctx sessionctx.Context) (uint64, error) {
 				break
 			}
 		}
+		e.stagedStartRow = start
 		return start, nil
 	}
 	switch e.start.Type {
@@ -292,7 +294,7 @@ func (e *PipelinedWindowExec) getEnd(ctx sessionctx.Context) (uint64, error) {
 	}
 	if e.isRangeFrame {
 		var end uint64
-		for end = e.lastEndRow; end < e.rowCnt; end++ {
+		for end = mathutil.MaxUint64(e.lastEndRow, e.stagedEndRow); end < e.rowCnt; end++ {
 			var res int64
 			var err error
 			for i := range e.orderByCols {
@@ -310,6 +312,7 @@ func (e *PipelinedWindowExec) getEnd(ctx sessionctx.Context) (uint64, error) {
 				break
 			}
 		}
+		e.stagedEndRow = end
 		return end, nil
 	}
 	switch e.end.Type {
@@ -405,13 +408,7 @@ func (e *PipelinedWindowExec) produce(ctx sessionctx.Context, chk *chunk.Chunk, 
 		produced++
 		remained--
 	}
-	extend := e.curRowIdx
-	if e.lastEndRow < extend {
-		extend = e.lastEndRow
-	}
-	if e.lastStartRow < extend {
-		extend = e.lastStartRow
-	}
+	extend := mathutil.MinUint64Val(e.curRowIdx, e.lastEndRow, e.lastStartRow)
 	if extend > e.rowStart {
 		numDrop := extend - e.rowStart
 		e.dropped += numDrop
@@ -443,6 +440,8 @@ func (e *PipelinedWindowExec) enoughToProduce(ctx sessionctx.Context) (enough bo
 func (e *PipelinedWindowExec) reset() {
 	e.lastStartRow = 0
 	e.lastEndRow = 0
+	e.stagedStartRow = 0
+	e.stagedEndRow = 0
 	e.emptyFrame = false
 	e.curRowIdx = 0
 	e.whole = false
