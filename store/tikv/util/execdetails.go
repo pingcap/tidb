@@ -204,8 +204,6 @@ type ScanDetail struct {
 	RocksdbBlockReadCount uint64
 	// RocksdbBlockReadByte is the total number of bytes from block reads.
 	RocksdbBlockReadByte uint64
-	// ReadBytes is the total number of bytes from tablescan reads.
-	ReadBytes uint64
 }
 
 // Merge merges scan detail execution details into self.
@@ -217,7 +215,6 @@ func (sd *ScanDetail) Merge(scanDetail *ScanDetail) {
 	atomic.AddUint64(&sd.RocksdbBlockCacheHitCount, scanDetail.RocksdbBlockCacheHitCount)
 	atomic.AddUint64(&sd.RocksdbBlockReadCount, scanDetail.RocksdbBlockReadCount)
 	atomic.AddUint64(&sd.RocksdbBlockReadByte, scanDetail.RocksdbBlockReadByte)
-	atomic.AddUint64(&sd.ReadBytes, scanDetail.ReadBytes)
 }
 
 var zeroScanDetail = ScanDetail{}
@@ -259,7 +256,6 @@ func (sd *ScanDetail) MergeFromScanDetailV2(scanDetail *kvrpcpb.ScanDetailV2) {
 		sd.RocksdbBlockCacheHitCount += scanDetail.RocksdbBlockCacheHitCount
 		sd.RocksdbBlockReadCount += scanDetail.RocksdbBlockReadCount
 		sd.RocksdbBlockReadByte += scanDetail.RocksdbBlockReadByte
-		sd.ReadBytes += scanDetail.ReadBytes
 	}
 }
 

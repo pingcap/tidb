@@ -1525,6 +1525,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	parserWarns := warns[len(prevWarns):]
 
 	var pointPlans []plannercore.Plan
+
 	if len(stmts) > 1 {
 
 		// The client gets to choose if it allows multi-statements, and
