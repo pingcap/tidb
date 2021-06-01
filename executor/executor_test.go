@@ -8176,7 +8176,7 @@ func (s *testSerialSuite) TestIssue24210(c *C) {
 }
 
 func (s *testSerialSuite) TestDeadlockTable(c *C) {
-	deadlockhistory.GlobalDeadlockHistory.Clear()
+	deadlockhistory.GetGlobalDeadlockHistory().Clear()
 
 	occurTime := time.Date(2021, 5, 10, 1, 2, 3, 456789000, time.UTC)
 	rec := &deadlockhistory.DeadlockRecord{
@@ -8199,7 +8199,7 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 			},
 		},
 	}
-	deadlockhistory.GlobalDeadlockHistory.Push(rec)
+	deadlockhistory.GetGlobalDeadlockHistory().Push(rec)
 
 	occurTime2 := time.Date(2022, 6, 11, 2, 3, 4, 987654000, time.UTC)
 	rec2 := &deadlockhistory.DeadlockRecord{
@@ -8222,7 +8222,7 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 			},
 		},
 	}
-	deadlockhistory.GlobalDeadlockHistory.Push(rec2)
+	deadlockhistory.GetGlobalDeadlockHistory().Push(rec2)
 
 	// `Push` sets the record's ID, and ID in a single DeadlockHistory is monotonically increasing. We must get it here
 	// to know what it is.

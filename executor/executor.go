@@ -994,7 +994,7 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.Loc
 			// TODO: Support collecting retryable deadlocks according to the config.
 			if !deadlock.IsRetryable {
 				rec := deadlockhistory.ErrDeadlockToDeadlockRecord(deadlock)
-				deadlockhistory.GlobalDeadlockHistory.Push(rec)
+				deadlockhistory.GetGlobalDeadlockHistory().Push(rec)
 			}
 		},
 	}

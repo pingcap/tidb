@@ -2063,7 +2063,7 @@ func (e *memtableRetriever) setDataForDeadlock(ctx sessionctx.Context) error {
 		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 
-	e.rows = deadlockhistory.GlobalDeadlockHistory.GetAllDatum()
+	e.rows = deadlockhistory.GetGlobalDeadlockHistory().GetAllDatum()
 	return nil
 }
 

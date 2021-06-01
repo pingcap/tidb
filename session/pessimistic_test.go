@@ -174,7 +174,7 @@ func (s *testPessimisticSuite) TestTxnMode(c *C) {
 }
 
 func (s *testPessimisticSuite) TestDeadlock(c *C) {
-	deadlockhistory.GlobalDeadlockHistory.Clear()
+	deadlockhistory.GetGlobalDeadlockHistory().Clear()
 
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustExec("drop table if exists deadlock")
