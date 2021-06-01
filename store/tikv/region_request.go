@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
-	"github.com/tikv/pd/pkg/slice"
 )
 
 // ShuttingDown is a flag to indicate tidb-server is exiting (Ctrl+C signal
@@ -202,7 +201,12 @@ func (s *RegionRequestSender) getRPCContext(
 		if req.ReplicaReadSeed != nil {
 			seed = *req.ReplicaReadSeed
 		}
-		return s.regionCache.GetTiKVRPCContext(bo, regionID, req.ReplicaReadType, seed, opts...)
+		context, err := s.regionCache.GetTiKVRPCContext(bo, regionID, req.ReplicaReadType, seed, opts...)
+		if err != nil {
+			return nil, err
+		}
+		context.isStaleRead = req.GetStaleRead()
+		return context, err
 	case tikvrpc.TiFlash:
 		return s.regionCache.GetTiFlashRPCContext(bo, regionID, true)
 	case tikvrpc.TiDB:
@@ -267,30 +271,20 @@ func (s *RegionRequestSender) SendReqCtx(
 	}
 
 	tryTimes := 0
-	mockRetrySendReqToRegionOnce := false
-	excludedAccessIdxes := make([]AccessIndex, 0)
 	for {
 		if (tryTimes > 0) && (tryTimes%1000 == 0) {
 			logutil.Logger(bo.GetCtx()).Warn("retry get ", zap.Uint64("region = ", regionID.GetID()), zap.Int("times = ", tryTimes))
 		}
 
-		// Stale Read request will retry the leader or next peer on error,
-		// so we will exclude the accessIdx of the requested store every time
-		// and claer it when all AccessIdxes are excluded to start a new round.
-		if rpcCtx != nil && req.GetStaleRead() {
-			opts = append(opts, WithoutAccessIdxes([]AccessIndex{rpcCtx.AccessIdx}))
-			if slice.AnyOf(excludedAccessIdxes, func(i int) bool {
-				return excludedAccessIdxes[i] == rpcCtx.AccessIdx
-			}) {
-				excludedAccessIdxes = make([]AccessIndex, 0)
-			} else {
-				excludedAccessIdxes = append(excludedAccessIdxes, rpcCtx.AccessIdx)
-			}
+		var lastPeerID uint64
+		if rpcCtx != nil {
+			lastPeerID = rpcCtx.lastPeerID
 		}
 		rpcCtx, err = s.getRPCContext(bo, req, regionID, et, opts...)
 		if err != nil {
 			return nil, nil, err
 		}
+		rpcCtx.lastPeerID = lastPeerID
 
 		failpoint.Inject("invalidCacheAndRetry", func() {
 			// cooperate with github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff
@@ -329,13 +323,6 @@ func (s *RegionRequestSender) SendReqCtx(
 				retry = true
 			}
 		})
-		failpoint.Inject("mockRetrySendReqToRegionOnce", func() {
-			if !mockRetrySendReqToRegionOnce {
-				mockRetrySendReqToRegionOnce = true
-				failpoint.Continue()
-			}
-			failpoint.Return()
-		})
 		if retry {
 			tryTimes++
 			continue
@@ -347,7 +334,7 @@ func (s *RegionRequestSender) SendReqCtx(
 			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			retry, err = s.onRegionError(bo, rpcCtx, req.ReplicaReadSeed, regionErr)
+			retry, opts, err = s.onRegionError(bo, rpcCtx, req.ReplicaReadSeed, regionErr)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -656,13 +643,21 @@ func regionErrorToLabel(e *errorpb.Error) string {
 	return "unknown"
 }
 
-func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed *uint32, regionErr *errorpb.Error) (shouldRetry bool, err error) {
+func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed *uint32, regionErr *errorpb.Error) (shouldRetry bool, opts []StoreSelectorOption, err error) {
 	if span := opentracing.SpanFromContext(bo.GetCtx()); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tikv.onRegionError", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		// TODO(MyonKeminta): Make sure trace works without cloning the backoffer.
 		// bo = bo.Clone()
 		bo.SetCtx(opentracing.ContextWithSpan(bo.GetCtx(), span1))
+	}
+	opts = ctx.storeSelectorOptions
+	// Stale Read request will retry the leader or next peer on error,
+	// so we will exclude the PeerID of the requested peer every time.
+	// If the new PeerID keeps being the same with the last one, we
+	// should not continue excluding it to make the opts become bigger.
+	if ctx.isStaleRead && ctx.lastPeerID != ctx.Peer.GetId() {
+		opts = append(opts, WithExcludedPeerIDs([]uint64{ctx.Peer.GetId()}))
 	}
 
 	metrics.TiKVRegionErrorCounter.WithLabelValues(regionErrorToLabel(regionErr)).Inc()
@@ -679,14 +674,14 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 			// the region from PD.
 			s.regionCache.InvalidateCachedRegionWithReason(ctx.Region, NoLeader)
 			if err = bo.Backoff(retry.BoRegionMiss, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
-				return false, errors.Trace(err)
+				return false, opts, errors.Trace(err)
 			}
 		} else {
 			// don't backoff if a new leader is returned.
 			s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId(), ctx.AccessIdx)
 		}
 
-		return true, nil
+		return true, opts, nil
 	}
 
 	if storeNotMatch := regionErr.GetStoreNotMatch(); storeNotMatch != nil {
@@ -696,7 +691,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 			zap.Stringer("ctx", ctx))
 		ctx.Store.markNeedCheck(s.regionCache.notifyCheckCh)
 		s.regionCache.InvalidateCachedRegion(ctx.Region)
-		return true, nil
+		return true, opts, nil
 	}
 
 	if epochNotMatch := regionErr.GetEpochNotMatch(); epochNotMatch != nil {
@@ -707,7 +702,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 			*seed = *seed + 1
 		}
 		err = s.regionCache.OnRegionEpochNotMatch(bo, ctx, epochNotMatch.CurrentRegions)
-		return false, errors.Trace(err)
+		return false, opts, errors.Trace(err)
 	}
 	if regionErr.GetServerIsBusy() != nil {
 		logutil.BgLogger().Warn("tikv reports `ServerIsBusy` retry later",
@@ -719,28 +714,36 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 			err = bo.Backoff(retry.BoTiKVServerBusy, errors.Errorf("server is busy, ctx: %v", ctx))
 		}
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, opts, errors.Trace(err)
 		}
-		return true, nil
+		return true, opts, nil
 	}
 	if regionErr.GetStaleCommand() != nil {
 		logutil.BgLogger().Debug("tikv reports `StaleCommand`", zap.Stringer("ctx", ctx))
 		err = bo.Backoff(retry.BoStaleCmd, errors.Errorf("stale command, ctx: %v", ctx))
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, opts, errors.Trace(err)
 		}
-		return true, nil
+		return true, opts, nil
 	}
 	if regionErr.GetRaftEntryTooLarge() != nil {
 		logutil.BgLogger().Warn("tikv reports `RaftEntryTooLarge`", zap.Stringer("ctx", ctx))
-		return false, errors.New(regionErr.String())
+		return false, opts, errors.New(regionErr.String())
+	}
+	if regionErr.GetDataIsNotReady() != nil && ctx.isStaleRead {
+		logutil.BgLogger().Warn("tikv reports `DataIsNotReady` retry later",
+			zap.Uint64("peer-id", regionErr.GetDataIsNotReady().GetPeerId()),
+			zap.Uint64("region-id", regionErr.GetDataIsNotReady().GetRegionId()),
+			zap.Uint64("safe-ts", regionErr.GetDataIsNotReady().GetSafeTs()),
+			zap.Stringer("ctx", ctx))
+		return true, opts, nil
 	}
 	// A stale read request may be sent to a peer which has not been initialized yet, we should retry in this case.
-	if regionErr.GetRegionNotInitialized() != nil {
+	if regionErr.GetRegionNotInitialized() != nil && ctx.isStaleRead {
 		logutil.BgLogger().Warn("tikv reports `RegionNotInitialized` retry later",
 			zap.Uint64("region-id", regionErr.GetRegionNotInitialized().GetRegionId()),
 			zap.Stringer("ctx", ctx))
-		return true, nil
+		return true, opts, nil
 	}
 	if regionErr.GetRegionNotFound() != nil && seed != nil {
 		logutil.BgLogger().Debug("tikv reports `RegionNotFound` in follow-reader",
@@ -751,9 +754,9 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 		logutil.BgLogger().Warn("tikv reports `MaxTimestampNotSynced`", zap.Stringer("ctx", ctx))
 		err = bo.Backoff(retry.BoMaxTsNotSynced, errors.Errorf("max timestamp not synced, ctx: %v", ctx))
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, opts, errors.Trace(err)
 		}
-		return true, nil
+		return true, opts, nil
 	}
 	// For other errors, we only drop cache here.
 	// Because caller may need to re-split the request.
@@ -765,5 +768,5 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 	if ctx.Region.id != 0 {
 		s.regionCache.InvalidateCachedRegion(ctx.Region)
 	}
-	return false, nil
+	return false, opts, nil
 }

@@ -171,23 +171,22 @@ func (r *RegionStore) kvPeer(region *Region, seed uint32, op *storeSelectorOp) A
 	candidates := make([]AccessIndex, 0, r.accessStoreNum(TiKVOnly))
 	for i := 0; i < r.accessStoreNum(TiKVOnly); i++ {
 		accessIdx := AccessIndex(i)
-		// Exclude an AccessIndex by excludedAccessIdxes.
-		if slice.AnyOf(op.excludedAccessIdxes, func(i int) bool {
-			return op.excludedAccessIdxes[i] == accessIdx
-		}) {
-			continue
-		}
 		storeIdx, s := r.accessStore(TiKVOnly, accessIdx)
 		if r.storeEpochs[storeIdx] != atomic.LoadUint32(&s.epoch) || !r.filterStoreCandidate(AccessIndex(i), op) {
 			continue
 		}
-		// Learner peer is only an intermediate state, so we should not send any request to it.
-		// TODO: better to retry by TiKV response's error message in (*RegionRequestSender).onRegionError.
-		if peer := region.meta.Peers[storeIdx]; peer.GetRole() == metapb.PeerRole_Learner {
+		// Exclude by the excludedPeerIDs.
+		if peer := region.meta.Peers[storeIdx]; slice.AnyOf(op.excludedPeerIDs, func(i int) bool {
+			return op.excludedPeerIDs[i] == peer.GetId()
+		}) ||
+			// Learner peer is only an intermediate state, so we should not send any request to it.
+			// TODO: better to retry by TiKV response's error message in (*RegionRequestSender).onRegionError.
+			peer.GetRole() == metapb.PeerRole_Learner {
 			continue
 		}
 		candidates = append(candidates, accessIdx)
 	}
+	// If there is no candidates, send to current workTiKVIdx which generally is the leader.
 	if len(candidates) == 0 {
 		return r.workTiKVIdx
 	}
@@ -430,6 +429,10 @@ type RPCContext struct {
 	ProxyAccessIdx AccessIndex // valid when ProxyStore is not nil
 	ProxyAddr      string      // valid when ProxyStore is not nil
 	TiKVNum        int         // Number of TiKV nodes among the region's peers. Assuming non-TiKV peers are all TiFlash peers.
+
+	isStaleRead          bool
+	storeSelectorOptions []StoreSelectorOption
+	lastPeerID           uint64
 }
 
 func (c *RPCContext) String() string {
@@ -446,8 +449,8 @@ func (c *RPCContext) String() string {
 }
 
 type storeSelectorOp struct {
-	labels              []*metapb.StoreLabel
-	excludedAccessIdxes []AccessIndex
+	labels          []*metapb.StoreLabel
+	excludedPeerIDs []uint64
 }
 
 // StoreSelectorOption configures storeSelectorOp.
@@ -464,13 +467,13 @@ func WithMatchLabels(labels []*metapb.StoreLabel) StoreSelectorOption {
 	}
 }
 
-// WithoutAccessIdxes indicates selecting stores without excluded AccessIndexes.
-func WithoutAccessIdxes(accessIdxs []AccessIndex) StoreSelectorOption {
+// WithExcludedPeerIDs indicates selecting stores without any matched peerID on it.
+func WithExcludedPeerIDs(storeIDs []uint64) StoreSelectorOption {
 	return func(op *storeSelectorOp) {
-		if op.excludedAccessIdxes != nil {
-			op.excludedAccessIdxes = append(op.excludedAccessIdxes, accessIdxs...)
+		if op.excludedPeerIDs != nil {
+			op.excludedPeerIDs = append(op.excludedPeerIDs, storeIDs...)
 		} else {
-			op.excludedAccessIdxes = accessIdxs
+			op.excludedPeerIDs = storeIDs
 		}
 	}
 }
@@ -572,17 +575,18 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	}
 
 	return &RPCContext{
-		Region:         id,
-		Meta:           cachedRegion.meta,
-		Peer:           peer,
-		AccessIdx:      accessIdx,
-		Store:          store,
-		Addr:           addr,
-		AccessMode:     TiKVOnly,
-		ProxyStore:     proxyStore,
-		ProxyAccessIdx: proxyAccessIdx,
-		ProxyAddr:      proxyAddr,
-		TiKVNum:        regionStore.accessStoreNum(TiKVOnly),
+		Region:               id,
+		Meta:                 cachedRegion.meta,
+		Peer:                 peer,
+		AccessIdx:            accessIdx,
+		Store:                store,
+		Addr:                 addr,
+		AccessMode:           TiKVOnly,
+		ProxyStore:           proxyStore,
+		ProxyAccessIdx:       proxyAccessIdx,
+		ProxyAddr:            proxyAddr,
+		TiKVNum:              regionStore.accessStoreNum(TiKVOnly),
+		storeSelectorOptions: opts,
 	}, nil
 }
 
