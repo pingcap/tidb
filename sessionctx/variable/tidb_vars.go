@@ -106,15 +106,15 @@ const (
 
 	// The following session variables controls the memory quota during query execution.
 	// "tidb_mem_quota_query":				control the memory quota of a query.
-	TIDBMemQuotaQuery      = "tidb_mem_quota_query" // Bytes.
+	TiDBMemQuotaQuery      = "tidb_mem_quota_query" // Bytes.
 	TiDBMemQuotaApplyCache = "tidb_mem_quota_apply_cache"
-	// TODO: remove them below sometime, it should have only one Quota(TIDBMemQuotaQuery).
-	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
-	TIDBMemQuotaMergeJoin         = "tidb_mem_quota_mergejoin"         // Bytes.
-	TIDBMemQuotaSort              = "tidb_mem_quota_sort"              // Bytes.
-	TIDBMemQuotaTopn              = "tidb_mem_quota_topn"              // Bytes.
-	TIDBMemQuotaIndexLookupReader = "tidb_mem_quota_indexlookupreader" // Bytes.
-	TIDBMemQuotaIndexLookupJoin   = "tidb_mem_quota_indexlookupjoin"   // Bytes.
+	// TODO: remove them below sometime, it should have only one Quota(TiDBMemQuotaQuery).
+	TiDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
+	TiDBMemQuotaMergeJoin         = "tidb_mem_quota_mergejoin"         // Bytes.
+	TiDBMemQuotaSort              = "tidb_mem_quota_sort"              // Bytes.
+	TiDBMemQuotaTopn              = "tidb_mem_quota_topn"              // Bytes.
+	TiDBMemQuotaIndexLookupReader = "tidb_mem_quota_indexlookupreader" // Bytes.
+	TiDBMemQuotaIndexLookupJoin   = "tidb_mem_quota_indexlookupjoin"   // Bytes.
 
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
@@ -409,7 +409,7 @@ const (
 	// tidb_enable_vectorized_expression is used to control whether to enable the vectorized expression evaluation.
 	TiDBEnableVectorizedExpression = "tidb_enable_vectorized_expression"
 
-	// TIDBOptJoinReorderThreshold defines the threshold less than which
+	// TiDBOptJoinReorderThreshold defines the threshold less than which
 	// we'll choose a rather time consuming algorithm to calculate the join order.
 	TiDBOptJoinReorderThreshold = "tidb_opt_join_reorder_threshold"
 
@@ -531,6 +531,18 @@ const (
 
 	// TiDBEnableDynamicPrivileges enables MySQL 8.0 compatible dynamic privileges (experimental).
 	TiDBEnableDynamicPrivileges = "tidb_enable_dynamic_privileges"
+
+	// TiDBEnableTopSQL indicates whether the top SQL is enabled.
+	TiDBEnableTopSQL = "tidb_enable_top_sql"
+
+	// TiDBTopSQLAgentAddress indicates the top SQL agent address.
+	TiDBTopSQLAgentAddress = "tidb_top_sql_agent_address"
+
+	// TiDBTopSQLPrecisionSeconds indicates the top SQL precision seconds.
+	TiDBTopSQLPrecisionSeconds = "tidb_top_sql_precision_seconds"
+
+	// TiDBTopSQLMaxStatementCount indicates the max number of statements been collected.
+	TiDBTopSQLMaxStatementCount = "tidb_top_sql_max_statement_count"
 )
 
 // TiDB vars that have only global scope
@@ -673,6 +685,10 @@ const (
 	DefTiDBTrackAggregateMemoryUsage   = true
 	DefTiDBEnableExchangePartition     = false
 	DefCTEMaxRecursionDepth            = 1000
+	DefTiDBTopSQLEnable                = false
+	DefTiDBTopSQLAgentAddress          = ""
+	DefTiDBTopSQLPrecisionSeconds      = 1
+	DefTiDBTopSQLMaxStatementCount     = 200
 )
 
 // Process global variables.
@@ -697,4 +713,27 @@ var (
 	CapturePlanBaseline                   = serverGlobalVariable{globalVal: Off}
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
+	TopSQLVariable                        = TopSQL{
+		Enable:            atomic.NewBool(DefTiDBTopSQLEnable),
+		AgentAddress:      atomic.NewString(DefTiDBTopSQLAgentAddress),
+		PrecisionSeconds:  atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
+		MaxStatementCount: atomic.NewInt64(DefTiDBTopSQLMaxStatementCount),
+	}
 )
+
+// TopSQL is the variable for control top sql feature.
+type TopSQL struct {
+	// Enable statement summary or not.
+	Enable *atomic.Bool
+	// AgentAddress indicate the collect agent address.
+	AgentAddress *atomic.String
+	// The refresh interval of statement summary.
+	PrecisionSeconds *atomic.Int64
+	// The maximum number of statements kept in memory.
+	MaxStatementCount *atomic.Int64
+}
+
+// TopSQLEnabled uses to check whether enabled the top SQL feature.
+func TopSQLEnabled() bool {
+	return TopSQLVariable.Enable.Load() && TopSQLVariable.AgentAddress.Load() != ""
+}

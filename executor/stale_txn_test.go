@@ -253,7 +253,7 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 	failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag")
 }
 
-func (s *testStaleTxnSerialSuite) TestStalenessAndHistoryRead(c *C) {
+func (s *testStaleTxnSuite) TestStalenessAndHistoryRead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
@@ -265,7 +265,6 @@ func (s *testStaleTxnSerialSuite) TestStalenessAndHistoryRead(c *C) {
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
 	// set @@tidb_snapshot before staleness txn
-	tk.MustExec(`set @@tidb_snapshot="2016-10-08 16:45:26";`)
 	tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00';`)
 	// 1599321600000 == 2020-09-06 00:00:00
 	c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, int64(1599321600000))
@@ -275,6 +274,22 @@ func (s *testStaleTxnSerialSuite) TestStalenessAndHistoryRead(c *C) {
 	tk.MustExec(`set @@tidb_snapshot="2016-10-08 16:45:26";`)
 	c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, int64(1599321600000))
 	tk.MustExec("commit")
+
+	// test mutex
+	tk.MustExec(`set @@tidb_snapshot="2020-10-08 16:45:26";`)
+	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(419993151340544000))
+	c.Assert(tk.Se.GetSessionVars().SnapshotInfoschema, NotNil)
+	tk.MustExec("SET TRANSACTION READ ONLY AS OF TIMESTAMP '2020-10-08 16:46:26'")
+	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
+	c.Assert(tk.Se.GetSessionVars().SnapshotInfoschema, IsNil)
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(419993167069184000))
+
+	tk.MustExec("SET TRANSACTION READ ONLY AS OF TIMESTAMP '2020-10-08 16:46:26'")
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(419993167069184000))
+	tk.MustExec(`set @@tidb_snapshot="2020-10-08 16:45:26";`)
+	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(419993151340544000))
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS, Equals, uint64(0))
+	c.Assert(tk.Se.GetSessionVars().SnapshotInfoschema, NotNil)
 }
 
 func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
@@ -345,16 +360,28 @@ func (s *testStaleTxnSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key);")
 
-	// test as of
 	schemaVer1 := tk.Se.GetInfoSchema().SchemaMetaVersion()
 	time1 := time.Now()
-	tk.MustExec("drop table if exists t")
-	c.Assert(schemaVer1, Less, tk.Se.GetInfoSchema().SchemaMetaVersion())
+	tk.MustExec("alter table t add c int")
+
+	// confirm schema changed
+	schemaVer2 := tk.Se.GetInfoSchema().SchemaMetaVersion()
+	c.Assert(schemaVer1, Less, schemaVer2)
+
+	// get the specific old schema
 	tk.MustExec(fmt.Sprintf(`START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer1)
+
+	// schema changed back to the newest
 	tk.MustExec("commit")
+	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer2)
+
+	// select does not affect the infoschema
+	tk.MustExec(fmt.Sprintf(`SELECT * from t AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
+	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer2)
 }
 
 func (s *testStaleTxnSerialSuite) TestSetTransactionReadOnlyAsOf(c *C) {
@@ -548,7 +575,7 @@ func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *
 	}
 }
 
-func (s *testStaleTxnSerialSuite) TestSpecialSQLInStalenessTxn(c *C) {
+func (s *testStaleTxnSuite) TestSpecialSQLInStalenessTxn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testcases := []struct {
