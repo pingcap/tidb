@@ -96,10 +96,9 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 			}
 			if same {
 				continue
-			} else {
-				err = c.doActionOnMutations(bo, actionCommit{retry: true}, batch.mutations)
-				return errors.Trace(err)
 			}
+			err = c.doActionOnMutations(bo, actionCommit{retry: true}, batch.mutations)
+			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
 			return errors.Trace(tikverr.ErrBodyMissing)

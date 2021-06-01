@@ -204,10 +204,9 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			}
 			if same {
 				continue
-			} else {
-				err = c.doActionOnMutations(bo, actionPrewrite{true}, batch.mutations)
-				return errors.Trace(err)
 			}
+			err = c.doActionOnMutations(bo, actionPrewrite{true}, batch.mutations)
+			return errors.Trace(err)
 		}
 
 		if resp.Resp == nil {
