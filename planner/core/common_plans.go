@@ -265,7 +265,9 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		preparedObj.Executor = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
-		err := Preprocess(sctx, prepared.Stmt, is, InPrepare)
+		// FIXME: compatible with prepare https://github.com/pingcap/tidb/issues/24932
+		ret := &PreprocessorReturn{InfoSchema: is}
+		err := Preprocess(sctx, prepared.Stmt, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
 			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
@@ -543,6 +545,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		// The code should never run here as long as we're not using point get for partition table.
 		// And if we change the logic one day, here work as defensive programming to cache the error.
 		if x.PartitionInfo != nil {
+			// TODO: relocate the partition after rebuilding range to make PlanCache support PointGet
 			return errors.New("point get for partition table can not use plan cache")
 		}
 		if x.HandleParam != nil {
@@ -953,6 +956,8 @@ type Explain struct {
 	Rows           [][]string
 	ExplainRows    [][]string
 	explainedPlans map[int]bool
+
+	ctes []*PhysicalCTE
 }
 
 // GetExplainRowsForPlan get explain rows for plan.
@@ -1014,6 +1019,10 @@ func (e *Explain) RenderResult() error {
 			if err != nil {
 				return err
 			}
+			err = e.explainPlanInRowFormatCTE()
+			if err != nil {
+				return err
+			}
 		}
 	case ast.ExplainFormatDOT:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
@@ -1027,6 +1036,26 @@ func (e *Explain) RenderResult() error {
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
 	return nil
+}
+
+func (e *Explain) explainPlanInRowFormatCTE() (err error) {
+	explainedCTEPlan := make(map[int]struct{})
+	for i := 0; i < len(e.ctes); i++ {
+		x := (*CTEDefinition)(e.ctes[i])
+		// skip if the CTE has been explained, the same CTE has same IDForStorage
+		if _, ok := explainedCTEPlan[x.CTE.IDForStorage]; ok {
+			continue
+		}
+		e.prepareOperatorInfo(x, "root", "", "", true)
+		childIndent := texttree.Indent4Child("", true)
+		err = e.explainPlanInRowFormat(x.SeedPlan, "root", "(Seed Part)", childIndent, x.RecurPlan == nil)
+		if x.RecurPlan != nil {
+			err = e.explainPlanInRowFormat(x.RecurPlan, "root", "(Recursive Part)", childIndent, true)
+		}
+		explainedCTEPlan[x.CTE.IDForStorage] = struct{}{}
+	}
+
+	return
 }
 
 // explainPlanInRowFormat generates explain information for root-tasks.
@@ -1132,6 +1161,8 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 		if x.Plan != nil {
 			err = e.explainPlanInRowFormat(x.Plan, "root", "", indent, true)
 		}
+	case *PhysicalCTE:
+		e.ctes = append(e.ctes, x)
 	}
 	return
 }

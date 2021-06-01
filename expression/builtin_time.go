@@ -2108,6 +2108,7 @@ func (c *currentDateFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 		return nil, err
 	}
 	bf.tp.Flen, bf.tp.Decimal = 10, 0
+	bf.tp.Tp = mysql.TypeDate
 	sig := &builtinCurrentDateSig{bf}
 	return sig, nil
 }

@@ -977,7 +977,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.LockCtx {
 	var planDigest *parser.Digest
 	_, sqlDigest := seVars.StmtCtx.SQLDigest()
-	if config.TopSQLEnabled() {
+	if variable.TopSQLEnabled() {
 		_, planDigest = seVars.StmtCtx.GetPlanDigest()
 	}
 	return &tikvstore.LockCtx{
@@ -1629,10 +1629,11 @@ func (e *UnionExec) Close() error {
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
 	sc := &stmtctx.StatementContext{
-		TimeZone:    vars.Location(),
-		MemTracker:  memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery),
-		DiskTracker: disk.NewTracker(memory.LabelForSQLText, -1),
-		TaskID:      stmtctx.AllocateTaskID(),
+		TimeZone:      vars.Location(),
+		MemTracker:    memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery),
+		DiskTracker:   disk.NewTracker(memory.LabelForSQLText, -1),
+		TaskID:        stmtctx.AllocateTaskID(),
+		CTEStorageMap: map[int]*CTEStorages{},
 	}
 	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 	globalConfig := config.GetGlobalConfig()
@@ -1822,7 +1823,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 }
 
 func setResourceGroupTagForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
-	if snapshot != nil && config.TopSQLEnabled() {
+	if snapshot != nil && variable.TopSQLEnabled() {
 		snapshot.SetOption(kv.ResourceGroupTag, sc.GetResourceGroupTag())
 	}
 }

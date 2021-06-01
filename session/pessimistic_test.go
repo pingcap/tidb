@@ -2322,7 +2322,7 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 	err = <-errCh
 	c.Assert(err, Equals, nil)
 	tk.MustExec("commit")
-	tk2.MustExec("admin check table t")
+	tk.MustExec("admin check table t")
 	err = <-errCh
 	c.Assert(err, Equals, nil)
 }
