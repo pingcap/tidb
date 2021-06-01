@@ -69,7 +69,7 @@ func (test *baseCTETestSuite) SetUpSuite(c *check.C) {
 	test.ctx = context.Background()
 }
 
-func (test *CTETestSuite) TearDownSuite(c *check.C) {
+func (test *baseCTETestSuite) TearDownSuite(c *check.C) {
 	test.dom.Close()
 	test.store.Close()
 }
