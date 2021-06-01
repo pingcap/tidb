@@ -52,7 +52,7 @@ type CTESerialTestSuite struct {
 	*baseCTETestSuite
 }
 
-func (test *CTETestSuite) SetUpSuite(c *check.C) {
+func (test *baseCTETestSuite) SetUpSuite(c *check.C) {
 	var err error
 	test.store, err = mockstore.NewMockStore()
 	c.Assert(err, check.IsNil)
