@@ -972,6 +972,12 @@ func (b *builtinGetIntVarSig) evalInt(row chunk.Row) (int64, bool, error) {
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
 	if v, ok := sessionVars.Users[varName]; ok {
+		if v.Kind() != types.KindInt64 && v.Kind() != types.KindUint64 {
+			v, err = v.ConvertTo(b.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLonglong))
+			if err != nil {
+				return 0, true, err
+			}
+		}
 		return v.GetInt64(), false, nil
 	}
 	return 0, true, nil
@@ -1014,6 +1020,12 @@ func (b *builtinGetRealVarSig) evalReal(row chunk.Row) (float64, bool, error) {
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
 	if v, ok := sessionVars.Users[varName]; ok {
+		if v.Kind() != types.KindFloat64 {
+			v, err = v.ConvertTo(b.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeDouble))
+			if err != nil {
+				return 0, true, err
+			}
+		}
 		return v.GetFloat64(), false, nil
 	}
 	return 0, true, nil
@@ -1056,6 +1068,12 @@ func (b *builtinGetDecimalVarSig) evalDecimal(row chunk.Row) (*types.MyDecimal, 
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
 	if v, ok := sessionVars.Users[varName]; ok {
+		if v.Kind() != types.KindMysqlDecimal {
+			v, err = v.ConvertTo(b.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeNewDecimal))
+			if err != nil {
+				return nil, true, err
+			}
+		}
 		return v.GetMysqlDecimal(), false, nil
 	}
 	return nil, true, nil

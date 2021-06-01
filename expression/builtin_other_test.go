@@ -182,7 +182,6 @@ func (s *testEvaluatorSuite) TestSetVar(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestGetVar(c *C) {
-	dec := types.NewDecFromInt(5)
 	sessionVars := []struct {
 		key string
 		val interface{}
@@ -192,7 +191,7 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 		{"c", ""},
 		{"e", int64(3)},
 		{"f", float64(2.5)},
-		{"g", dec},
+		{"g", types.NewDecFromInt(5)},
 	}
 	for _, kv := range sessionVars {
 		s.ctx.GetSessionVars().Users[kv.key] = types.NewDatum(kv.val)
@@ -203,26 +202,62 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 
 	testCases := []struct {
 		args []interface{}
-		res  interface{}
+		res  map[*types.FieldType]interface{}
 	}{
-		{[]interface{}{"a"}, "中"},
-		{[]interface{}{"b"}, "文字符chuan"},
-		{[]interface{}{"c"}, ""},
-		{[]interface{}{"d"}, nil},
-		{[]interface{}{"e"}, int64(3)},
-		{[]interface{}{"f"}, float64(2.5)},
-		{[]interface{}{"g"}, dec},
+		{[]interface{}{"a"}, map[*types.FieldType]interface{}{
+			types.NewFieldType(mysql.TypeLonglong): int64(0),
+			types.NewFieldType(mysql.TypeDouble):   0.0,
+			types.NewFieldType(mysql.TypeString):   "中",
+			// Error: bad number
+			//types.NewFieldType(mysql.TypeNewDecimal): nil,
+		}},
+		{[]interface{}{"b"}, map[*types.FieldType]interface{}{
+			types.NewFieldType(mysql.TypeLonglong): int64(0),
+			types.NewFieldType(mysql.TypeDouble):   0.0,
+			types.NewFieldType(mysql.TypeString):   "文字符chuan",
+			// Error: bad number
+			//types.NewFieldType(mysql.TypeNewDecimal): nil,
+		}},
+		{[]interface{}{"c"}, map[*types.FieldType]interface{}{
+			types.NewFieldType(mysql.TypeLonglong): int64(0),
+			types.NewFieldType(mysql.TypeDouble):   0.0,
+			types.NewFieldType(mysql.TypeString):   "",
+			// Error: bad number
+			//types.NewFieldType(mysql.TypeNewDecimal): nil,
+		}},
+		{[]interface{}{"d"}, map[*types.FieldType]interface{}{
+			types.NewFieldType(mysql.TypeLonglong):   nil,
+			types.NewFieldType(mysql.TypeDouble):     nil,
+			types.NewFieldType(mysql.TypeString):     nil,
+			types.NewFieldType(mysql.TypeNewDecimal): nil,
+		}},
+		{[]interface{}{"e"}, map[*types.FieldType]interface{}{
+			types.NewFieldType(mysql.TypeLonglong):   int64(3),
+			types.NewFieldType(mysql.TypeDouble):     float64(3),
+			types.NewFieldType(mysql.TypeString):     "3",
+			types.NewFieldType(mysql.TypeNewDecimal): types.NewDecFromStringForTest("000000003"),
+		}},
+		{[]interface{}{"f"}, map[*types.FieldType]interface{}{
+			types.NewFieldType(mysql.TypeLonglong):   int64(2),
+			types.NewFieldType(mysql.TypeDouble):     2.5,
+			types.NewFieldType(mysql.TypeString):     "2.5",
+			types.NewFieldType(mysql.TypeNewDecimal): types.NewDecFromStringForTest("2.5"),
+		}},
+		{[]interface{}{"g"}, map[*types.FieldType]interface{}{
+			types.NewFieldType(mysql.TypeLonglong):   int64(5),
+			types.NewFieldType(mysql.TypeDouble):     5.0,
+			types.NewFieldType(mysql.TypeString):     "5",
+			types.NewFieldType(mysql.TypeNewDecimal): types.NewDecFromInt(5),
+		}},
 	}
 	for _, tc := range testCases {
-		tp, ok := s.ctx.GetSessionVars().UserVarTypes[tc.args[0].(string)]
-		if !ok {
-			tp = types.NewFieldType(mysql.TypeVarString)
+		for tp, res := range tc.res {
+			fn, err := BuildGetVarFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...))[0], tp)
+			c.Assert(err, IsNil)
+			d, err := fn.Eval(chunk.Row{})
+			c.Assert(err, IsNil)
+			c.Assert(d.GetValue(), DeepEquals, res)
 		}
-		fn, err := BuildGetVarFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...))[0], tp)
-		c.Assert(err, IsNil)
-		d, err := fn.Eval(chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(d.GetValue(), Equals, tc.res)
 	}
 }
 
