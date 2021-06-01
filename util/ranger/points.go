@@ -228,38 +228,9 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []*point {
 		if col.RetType.EvalType() == types.ETString && (value.Kind() == types.KindString || value.Kind() == types.KindBinaryLiteral) {
 			value.SetString(value.GetString(), col.RetType.Collate)
 		}
-<<<<<<< HEAD
-		if col.GetType().Tp == mysql.TypeYear {
-			*value, err = types.ConvertDatumToFloatYear(r.sc, *value)
-=======
 		// If nulleq with null value, values.ToInt64 will return err
 		if col.GetType().Tp == mysql.TypeYear && !value.IsNull() {
-			// If the original value is adjusted, we need to change the condition.
-			// For example, col < 2156. Since the max year is 2155, 2156 is changed to 2155.
-			// col < 2155 is wrong. It should be col <= 2155.
-			preValue, err1 := value.ToInt64(r.sc)
-			if err1 != nil {
-				return err1
-			}
-			*value, err = value.ConvertToMysqlYear(r.sc, col.RetType)
-			if errors.ErrorEqual(err, types.ErrInvalidYear) {
-				// Keep err for EQ and NE.
-				switch *op {
-				case ast.GT:
-					if value.GetInt64() > preValue {
-						*op = ast.GE
-					}
-					err = nil
-				case ast.LT:
-					if value.GetInt64() < preValue {
-						*op = ast.LE
-					}
-					err = nil
-				case ast.GE, ast.LE:
-					err = nil
-				}
-			}
->>>>>>> 1df03a680... planner: fix incorrect TableDual plan built from nulleq (#24596)
+			*value, err = types.ConvertDatumToFloatYear(r.sc, *value)
 		}
 		return
 	}
