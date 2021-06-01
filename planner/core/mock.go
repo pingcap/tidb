@@ -269,7 +269,7 @@ func MockSignedTable() *model.TableInfo {
 func MockUnsignedTable() *model.TableInfo {
 	// column: a, b
 	// PK: a
-	// indeices: b
+	// indices: b, b_c
 	indices := []*model.IndexInfo{
 		{
 			Name: model.NewCIStr("b"),
