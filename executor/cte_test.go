@@ -242,3 +242,65 @@ func (test *CTETestSuite) TestCTEMaxRecursionDepth(c *check.C) {
 	rows = tk.MustQuery("with cte1(c1) as (select 1 union select 2) select * from cte1 order by c1;")
 	rows.Check(testkit.Rows("1", "2"))
 }
+
+func (test *CTETestSuite) TestCTEWithLimit(c *check.C) {
+	tk := testkit.NewTestKit(c, test.store)
+	tk.MustExec("use test;")
+
+	// Basic recursive tests.
+	rows := tk.MustQuery("with recursive cte1(c1) as (select 1 union select c1 + 1 from cte1 limit 5 offset 0) select * from cte1")
+	rows.Check(testkit.Rows("1", "2", "3", "4", "5"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select c1 + 1 from cte1 limit 5 offset 1) select * from cte1")
+	rows.Check(testkit.Rows("2", "3", "4", "5", "6"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select c1 + 1 from cte1 limit 0 offset 1) select * from cte1")
+	rows.Check(testkit.Rows())
+
+	// Recursive tests with table.
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int);")
+	tk.MustExec("insert into t1 values(1), (2), (3);")
+
+	// Basic non-recursive tests.
+	rows = tk.MustQuery("with cte1 as (select c1 from t1 limit 2 offset 1) select * from cte1")
+	rows.Check(testkit.Rows("2", "3"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select 2 limit 0 offset 1) select * from cte1")
+	rows.Check(testkit.Rows())
+
+	// Error: ERROR 1221 (HY000): Incorrect usage of UNION and LIMIT.
+	// Limit can only be at the end of SQL stmt.
+	err := tk.ExecToErr("with recursive cte1(c1) as (select c1 from t1 limit 1 offset 1 union select c1 + 1 from cte1 limit 0 offset 1) select * from cte1")
+	c.Assert(err.Error(), check.Equals, "[planner:1221]Incorrect usage of UNION and LIMIT")
+
+	// Basic non-recusive tests.
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select 2 order by 1 limit 1 offset 1) select * from cte1")
+	rows.Check(testkit.Rows("2"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select 2 order by 1 limit 0 offset 1) select * from cte1")
+	rows.Check(testkit.Rows())
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select 2 order by 1 limit 2 offset 0) select * from cte1")
+	rows.Check(testkit.Rows("1", "2"))
+
+	// Test with table.
+	tk.MustExec("drop table if exists t1;")
+	insertStr := "insert into t1 values(0)"
+	for i := 1; i < 5000; i++ {
+		insertStr += fmt.Sprintf(", (%d)", i)
+	}
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int);")
+	tk.MustExec(insertStr)
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 1) select * from cte1")
+	rows.Check(testkit.Rows("0"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 1 offset 100) select * from cte1")
+	rows.Check(testkit.Rows("100"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 5 offset 100) select * from cte1")
+	rows.Check(testkit.Rows("100", "101", "102", "103", "104"))
+}
