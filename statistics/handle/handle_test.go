@@ -837,13 +837,14 @@ func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 	c.Assert(len(result.Rows()), Equals, 20)
 }
 
-func (s *testStatsSuite) prepareForGlobalStatsWithOpts(c *C, tk *testkit.TestKit) {
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec(` create table t (a int, key(a)) partition by range (a) ` +
+func (s *testStatsSuite) prepareForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, tblName, dbName string) {
+	tk.MustExec("create database if not exists " + dbName)
+	tk.MustExec("use " + dbName)
+	tk.MustExec("drop table if exists " + tblName)
+	tk.MustExec(` create table ` + tblName + ` (a int, key(a)) partition by range (a) ` +
 		`(partition p0 values less than (100000), partition p1 values less than (200000))`)
-	buf1 := bytes.NewBufferString("insert into t values (0)")
-	buf2 := bytes.NewBufferString("insert into t values (100000)")
+	buf1 := bytes.NewBufferString("insert into " + tblName + " values (0)")
+	buf2 := bytes.NewBufferString("insert into " + tblName + " values (100000)")
 	for i := 0; i < 5000; i += 3 {
 		buf1.WriteString(fmt.Sprintf(", (%v)", i))
 		buf2.WriteString(fmt.Sprintf(", (%v)", 100000+i))
@@ -870,7 +871,7 @@ func (s *testStatsSuite) checkForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, 
 func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
-	s.prepareForGlobalStatsWithOpts(c, tk)
+	s.prepareForGlobalStatsWithOpts(c, tk, "test_gstats_opt", "test_gstats_opt")
 
 	type opt struct {
 		topn    int
@@ -889,7 +890,7 @@ func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
 		{77, 47000, true},
 	}
 	for _, ca := range cases {
-		sql := fmt.Sprintf("analyze table t with %v topn, %v buckets", ca.topn, ca.buckets)
+		sql := fmt.Sprintf("analyze table test_gstats_opt with %v topn, %v buckets", ca.topn, ca.buckets)
 		if !ca.err {
 			tk.MustExec(sql)
 			s.checkForGlobalStatsWithOpts(c, tk, "global", ca.topn, ca.buckets)
@@ -905,25 +906,25 @@ func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
 func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts2(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
-	s.prepareForGlobalStatsWithOpts(c, tk)
+	s.prepareForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2")
 
-	tk.MustExec("analyze table t with 20 topn, 50 buckets")
+	tk.MustExec("analyze table test_gstats_opt2 with 20 topn, 50 buckets")
 	s.checkForGlobalStatsWithOpts(c, tk, "global", 20, 50)
 	s.checkForGlobalStatsWithOpts(c, tk, "p0", 20, 50)
 	s.checkForGlobalStatsWithOpts(c, tk, "p1", 20, 50)
 
 	// analyze a partition to let its options be different with others'
-	tk.MustExec("analyze table t partition p0 with 10 topn, 20 buckets")
+	tk.MustExec("analyze table test_gstats_opt2 partition p0 with 10 topn, 20 buckets")
 	s.checkForGlobalStatsWithOpts(c, tk, "global", 10, 20) // use new options
 	s.checkForGlobalStatsWithOpts(c, tk, "p0", 10, 20)
 	s.checkForGlobalStatsWithOpts(c, tk, "p1", 20, 50)
 
-	tk.MustExec("analyze table t partition p1 with 100 topn, 200 buckets")
+	tk.MustExec("analyze table test_gstats_opt2 partition p1 with 100 topn, 200 buckets")
 	s.checkForGlobalStatsWithOpts(c, tk, "global", 100, 200)
 	s.checkForGlobalStatsWithOpts(c, tk, "p0", 10, 20)
 	s.checkForGlobalStatsWithOpts(c, tk, "p1", 100, 200)
 
-	tk.MustExec("analyze table t partition p0") // default options
+	tk.MustExec("analyze table test_gstats_opt2 partition p0") // default options
 	s.checkForGlobalStatsWithOpts(c, tk, "global", 20, 256)
 	s.checkForGlobalStatsWithOpts(c, tk, "p0", 20, 256)
 	s.checkForGlobalStatsWithOpts(c, tk, "p1", 100, 200)
@@ -1061,8 +1062,8 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 	tk.MustExec("analyze table tint with 2 topn, 2 buckets")
 
 	tk.MustQuery("select modify_count, count from mysql.stats_meta order by table_id asc").Check(testkit.Rows(
-		"0 20",  // global: g.count = p0.count + p1.count
-		"0 9",   // p0
+		"0 20", // global: g.count = p0.count + p1.count
+		"0 9",  // p0
 		"0 11")) // p1
 
 	tk.MustQuery("show stats_topn where table_name='tint' and is_index=0").Check(testkit.Rows(
@@ -1092,7 +1093,7 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 
 	tk.MustQuery("select distinct_count, null_count, tot_col_size from mysql.stats_histograms where is_index=0 order by table_id asc").Check(
 		testkit.Rows("12 1 19", // global, g = p0 + p1
-			"5 1 8",   // p0
+			"5 1 8", // p0
 			"7 0 11")) // p1
 
 	tk.MustQuery("show stats_buckets where is_index=1").Check(testkit.Rows(
@@ -1106,7 +1107,7 @@ func (s *testStatsSuite) TestGlobalStatsData2(c *C) {
 
 	tk.MustQuery("select distinct_count, null_count from mysql.stats_histograms where is_index=1 order by table_id asc").Check(
 		testkit.Rows("12 1", // global, g = p0 + p1
-			"5 1",  // p0
+			"5 1", // p0
 			"7 0")) // p1
 
 	// double + (column + index with 1 column)

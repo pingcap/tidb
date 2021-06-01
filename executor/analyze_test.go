@@ -511,18 +511,18 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 }
 
 func (s *testSerialSuite2) TestFastAnalyze4GlobalStats(c *C) {
-	c.Skip("unstable")
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
+	tk.MustExec(`create database if not exists test_fast_gstats`)
+	tk.MustExec("use test_fast_gstats")
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
 	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
 	// test fast analyze in dynamic mode
 	tk.MustExec("set @@session.tidb_analyze_version = 2;")
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic';")
-	tk.MustExec("drop table if exists t4;")
-	tk.MustExec("create table t4(a int, b int) PARTITION BY HASH(a) PARTITIONS 2;")
-	tk.MustExec("insert into t4 values(1,1),(3,3),(4,4),(2,2),(5,5);")
-	err := tk.ExecToErr("analyze table t4;")
+	tk.MustExec("drop table if exists test_fast_gstats;")
+	tk.MustExec("create table test_fast_gstats(a int, b int) PARTITION BY HASH(a) PARTITIONS 2;")
+	tk.MustExec("insert into test_fast_gstats values(1,1),(3,3),(4,4),(2,2),(5,5);")
+	err := tk.ExecToErr("analyze table test_fast_gstats;")
 	c.Assert(err.Error(), Equals, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently.")
 }
 
@@ -747,21 +747,21 @@ func (s *testSuite10) TestFailedAnalyzeRequest(c *C) {
 }
 
 func (s *testSuite1) TestExtractTopN(c *C) {
-	c.Skip("unstable")
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
+	tk.MustExec("create database if not exists test_extract_topn")
+	tk.MustExec("use test_extract_topn")
+	tk.MustExec("drop table if exists test_extract_topn")
+	tk.MustExec("create table test_extract_topn(a int primary key, b int, index index_b(b))")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	for i := 0; i < 10; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+		tk.MustExec(fmt.Sprintf("insert into test_extract_topn values (%d, %d)", i, i))
 	}
 	for i := 0; i < 10; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, 0)", i+10))
+		tk.MustExec(fmt.Sprintf("insert into test_extract_topn values (%d, 0)", i+10))
 	}
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table test_extract_topn")
 	is := s.dom.InfoSchema()
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test_extract_topn"), model.NewCIStr("test_extract_topn"))
 	c.Assert(err, IsNil)
 	tblInfo := table.Meta()
 	tblStats := s.dom.StatsHandle().GetTableStats(tblInfo)
@@ -774,26 +774,26 @@ func (s *testSuite1) TestExtractTopN(c *C) {
 	idxItem := idxStats.TopN.TopN[0]
 	c.Assert(idxItem.Count, Equals, uint64(11))
 	// The columns are: DBName, table name, column name, is index, value, count.
-	tk.MustQuery("show stats_topn").Sort().Check(testkit.Rows("test t  b 0 0 11",
-		"test t  b 0 1 1",
-		"test t  b 0 2 1",
-		"test t  b 0 3 1",
-		"test t  b 0 4 1",
-		"test t  b 0 5 1",
-		"test t  b 0 6 1",
-		"test t  b 0 7 1",
-		"test t  b 0 8 1",
-		"test t  b 0 9 1",
-		"test t  index_b 1 0 11",
-		"test t  index_b 1 1 1",
-		"test t  index_b 1 2 1",
-		"test t  index_b 1 3 1",
-		"test t  index_b 1 4 1",
-		"test t  index_b 1 5 1",
-		"test t  index_b 1 6 1",
-		"test t  index_b 1 7 1",
-		"test t  index_b 1 8 1",
-		"test t  index_b 1 9 1",
+	tk.MustQuery("show stats_topn").Sort().Check(testkit.Rows("test_extract_topn test_extract_topn  b 0 0 11",
+		"test_extract_topn test_extract_topn  b 0 1 1",
+		"test_extract_topn test_extract_topn  b 0 2 1",
+		"test_extract_topn test_extract_topn  b 0 3 1",
+		"test_extract_topn test_extract_topn  b 0 4 1",
+		"test_extract_topn test_extract_topn  b 0 5 1",
+		"test_extract_topn test_extract_topn  b 0 6 1",
+		"test_extract_topn test_extract_topn  b 0 7 1",
+		"test_extract_topn test_extract_topn  b 0 8 1",
+		"test_extract_topn test_extract_topn  b 0 9 1",
+		"test_extract_topn test_extract_topn  index_b 1 0 11",
+		"test_extract_topn test_extract_topn  index_b 1 1 1",
+		"test_extract_topn test_extract_topn  index_b 1 2 1",
+		"test_extract_topn test_extract_topn  index_b 1 3 1",
+		"test_extract_topn test_extract_topn  index_b 1 4 1",
+		"test_extract_topn test_extract_topn  index_b 1 5 1",
+		"test_extract_topn test_extract_topn  index_b 1 6 1",
+		"test_extract_topn test_extract_topn  index_b 1 7 1",
+		"test_extract_topn test_extract_topn  index_b 1 8 1",
+		"test_extract_topn test_extract_topn  index_b 1 9 1",
 	))
 }
 
