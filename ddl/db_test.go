@@ -5360,6 +5360,8 @@ func (s *testSerialDBSuite) TestSetTiFlashReplicaForTemporaryTable(c *C) {
 	tk.MustQuery("select REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='normal'").Check(testkit.Rows("1"))
 	// Now we don't support `create table like` on temporary tables.
 	tk.MustGetErrCode("create global temporary table temp like normal on commit delete rows", errno.ErrOptOnTemporaryTable)
+	tk.MustExec("set tidb_enable_noop_functions = 1")
+	tk.MustGetErrCode("create temporary table temp like normal", errno.ErrOptOnTemporaryTable)
 }
 
 func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
