@@ -101,6 +101,10 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 		v.PreprocessorReturn = &PreprocessorReturn{}
 	}
 	node.Accept(&v)
+	readTS := ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
+	if readTS > 0 {
+		v.PreprocessorReturn.SnapshotTS = readTS
+	}
 	// InfoSchema must be non-nil after preprocessing
 	if v.InfoSchema == nil {
 		v.ensureInfoSchema()
@@ -1377,6 +1381,11 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 // handleAsOf tries to validate the timestamp.
 // If it is not nil, timestamp is used to get the history infoschema from the infocache.
 func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
+	readTS := p.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS()
+	if readTS > 0 && node != nil {
+		p.err = ErrAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
+		return
+	}
 	dom := domain.GetDomain(p.ctx)
 	ts := uint64(0)
 	if node != nil {
