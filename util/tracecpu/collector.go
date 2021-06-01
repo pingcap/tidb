@@ -114,7 +114,7 @@ func decodeCacheKey(key string) (string, string) {
 	return sqlDigest, PlanDigest
 }
 
-func newAgentClient(addr string, sendingTimeout time.Duration) (*grpc.ClientConn, tipb.TopSQLAgent_CollectTiDBClient, error) {
+func newAgentClient(addr string, sendingTimeout time.Duration) (*grpc.ClientConn, tipb.TopSQLAgent_CollectCPUTimeClient, error) {
 	dialCtx, _ := context.WithTimeout(context.TODO(), time.Second)
 	conn, err := grpc.DialContext(dialCtx, addr, grpc.WithInsecure())
 	if err != nil {
@@ -122,7 +122,7 @@ func newAgentClient(addr string, sendingTimeout time.Duration) (*grpc.ClientConn
 	}
 	client := tipb.NewTopSQLAgentClient(conn)
 	ctx, _ := context.WithTimeout(dialCtx, sendingTimeout)
-	stream, err := client.CollectTiDB(ctx)
+	stream, err := client.CollectCPUTime(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -276,7 +276,7 @@ func (ts *TopSQLCollector) snapshot() []*tipb.CPUTimeRequestTiDB {
 	return batch
 }
 
-func (ts *TopSQLCollector) sendBatch(stream tipb.TopSQLAgent_CollectTiDBClient, batch []*tipb.CPUTimeRequestTiDB) error {
+func (ts *TopSQLCollector) sendBatch(stream tipb.TopSQLAgent_CollectCPUTimeClient, batch []*tipb.CPUTimeRequestTiDB) error {
 	for _, req := range batch {
 		if err := stream.Send(req); err != nil {
 			log.Printf("ERROR: send stream request failed, %v", err)

@@ -21,10 +21,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gogo/protobuf/types"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tipb/go-tipb"
 	"google.golang.org/grpc"
-	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 const (
@@ -89,7 +89,7 @@ type testAgentServer struct {
 	batch []*tipb.CPUTimeRequestTiDB
 }
 
-func (svr *testAgentServer) CollectTiDB(stream tipb.TopSQLAgent_CollectTiDBServer) error {
+func (svr *testAgentServer) CollectCPUTime(stream tipb.TopSQLAgent_CollectCPUTimeServer) error {
 	for {
 		req, err := stream.Recv()
 		if err == io.EOF {
@@ -99,7 +99,7 @@ func (svr *testAgentServer) CollectTiDB(stream tipb.TopSQLAgent_CollectTiDBServe
 		}
 		svr.batch = append(svr.batch, req)
 	}
-	resp := &emptypb.Empty{}
+	resp := &types.Empty{}
 	stream.SendAndClose(resp)
 	return nil
 }
