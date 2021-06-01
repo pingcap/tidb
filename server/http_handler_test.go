@@ -36,7 +36,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
@@ -57,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/versioninfo"
-	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
 
@@ -1155,8 +1154,7 @@ func (ts *HTTPHandlerTestSerialSuite) TestPostSettings(c *C) {
 	resp, err := ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	c.Assert(log.GetLevel(), Equals, log.ErrorLevel)
-	c.Assert(zaplog.GetLevel(), Equals, zap.ErrorLevel)
+	c.Assert(log.GetLevel(), Equals, zap.ErrorLevel)
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "error")
 	c.Assert(variable.ProcessGeneralLog.Load(), IsTrue)
 	val, err := variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
@@ -1175,8 +1173,7 @@ func (ts *HTTPHandlerTestSerialSuite) TestPostSettings(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(variable.ProcessGeneralLog.Load(), IsFalse)
-	c.Assert(log.GetLevel(), Equals, log.FatalLevel)
-	c.Assert(zaplog.GetLevel(), Equals, zap.FatalLevel)
+	c.Assert(log.GetLevel(), Equals, zap.FatalLevel)
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "fatal")
 	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
 	c.Assert(err, IsNil)
@@ -1246,7 +1243,7 @@ func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
 		}
 		time.Sleep(time.Millisecond * 10)
 	}
-	zaplog.Fatal("failed to get profile for %d retries in every 10 ms", zap.Int("retryTime", retryTime))
+	log.Fatal("failed to get profile for %d retries in every 10 ms", zap.Int("retryTime", retryTime))
 }
 
 func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {

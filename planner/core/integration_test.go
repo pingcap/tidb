@@ -3429,6 +3429,15 @@ func (s *testIntegrationSuite) TestIssue22850(c *C) {
 	tk.MustQuery("SELECT @v:=(SELECT 1 FROM t1 t2 LEFT JOIN t1 ON t1.a GROUP BY t1.a) FROM t1").Check(testkit.Rows()) // work fine
 }
 
+func (s *testIntegrationSuite) TestJoinSchemaChange(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int(11))")
+	tk.MustExec("create table t2(a decimal(40,20) unsigned, b decimal(40,20))")
+	tk.MustQuery("select count(*) as x from t1 group by a having x not in (select a from t2 where x = t2.b)").Check(testkit.Rows())
+}
+
 // #22949: test HexLiteral Used in GetVar expr
 func (s *testIntegrationSuite) TestGetVarExprWithHexLiteral(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -3845,30 +3854,4 @@ func (s *testIntegrationSerialSuite) TestEnforceMPP(c *C) {
 		"    └─HashAgg_9 1.00 285050.00 batchCop[tiflash]  funcs:count(1)->Column#5",
 		"      └─Selection_20 10.00 285020.00 batchCop[tiflash]  eq(test.t.a, 1)",
 		"        └─TableFullScan_19 10000.00 255020.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
-}
-
-func (s *testIntegrationSuite) TestEliminateLockForTemporaryTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	tk.MustExec("use test;")
-	tk.MustExec("create global temporary table t1 (a int primary key, b int, c int, index i_b(b))  on commit delete rows;")
-	defer func() {
-		tk.MustExec("drop global temporary table if exists t1;")
-	}()
-	tk.MustExec("begin;")
-	tk.MustExec("insert t1 values (8,8,9);")
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
-		})
-		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
-	}
 }

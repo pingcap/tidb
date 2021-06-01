@@ -448,6 +448,21 @@ func (*testSysVarSuite) TestSkipInit(c *C) {
 	c.Assert(sv.SkipInit(), IsTrue)
 }
 
+// IsNoop is used by the documentation to auto-generate docs for real sysvars.
+func (*testSysVarSuite) TestIsNoop(c *C) {
+	sv := GetSysVar(TiDBMultiStatementMode)
+	c.Assert(sv.IsNoop, IsFalse)
+
+	sv = GetSysVar(InnodbLockWaitTimeout)
+	c.Assert(sv.IsNoop, IsFalse)
+
+	sv = GetSysVar(InnodbFastShutdown)
+	c.Assert(sv.IsNoop, IsTrue)
+
+	sv = GetSysVar(ReadOnly)
+	c.Assert(sv.IsNoop, IsTrue)
+}
+
 func (*testSysVarSuite) TestInstanceScopedVars(c *C) {
 	// This tests instance scoped variables through GetSessionOrGlobalSystemVar().
 	// Eventually these should be changed to use getters so that the switch
