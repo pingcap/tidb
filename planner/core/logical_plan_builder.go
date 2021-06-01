@@ -4556,7 +4556,8 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		name := p.OutputNames()[idx]
 		for _, tl := range tableList {
 			if (tl.Schema.L == "" || tl.Schema.L == name.DBName.L) && (tl.Name.L == name.TblName.L) {
-				if tl.TableInfo == nil /*CTE*/ || tl.TableInfo.IsView() || tl.TableInfo.IsSequence() {
+				// tl.TableInfo == nil means tl is a CTE, it cannot updatable
+				if tl.TableInfo == nil || tl.TableInfo.IsView() || tl.TableInfo.IsSequence() {
 					return nil, nil, false, ErrNonUpdatableTable.GenWithStackByArgs(name.TblName.O, "UPDATE")
 				}
 				// may be a subquery
@@ -4591,7 +4592,8 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 				break
 			}
 		}
-		if !updatable || tn.TableInfo == nil /*CTE*/ || tn.TableInfo.IsView() || tn.TableInfo.IsSequence() {
+		// tl.TableInfo == nil means tl is a CTE, it cannot updatable
+		if !updatable || tn.TableInfo == nil || tn.TableInfo.IsView() || tn.TableInfo.IsSequence() {
 			continue
 		}
 
@@ -4625,7 +4627,8 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 	newList = make([]*expression.Assignment, 0, p.Schema().Len())
 	tblDbMap := make(map[string]string, len(tableList))
 	for _, tbl := range tableList {
-		if tbl.TableInfo == nil { // exclude CTE
+		// exclude CTE
+		if tbl.TableInfo == nil {
 			continue
 		}
 		tblDbMap[tbl.Name.L] = tbl.DBInfo.Name.L
@@ -4871,7 +4874,8 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		var tableList []*ast.TableName
 		tableList = extractTableList(delete.TableRefs.TableRefs, tableList, false)
 		for _, v := range tableList {
-			if v.TableInfo == nil { // CTE
+			// it may be a CTE
+			if v.TableInfo == nil {
 				return nil, ErrNonUpdatableTable.GenWithStackByArgs(v.Name.O, "DELETE")
 			}
 			if v.TableInfo.IsView() {
@@ -5683,7 +5687,8 @@ func collectTableName(node ast.ResultSetNode, updatableName *map[string]bool, in
 		if s, canUpdate = x.Source.(*ast.TableName); canUpdate {
 			if name == "" {
 				name = s.Schema.L + "." + s.Name.L
-				if s.Schema.L == "" { // CTE
+				// it may be a CTE
+				if s.Schema.L == "" {
 					name = s.Name.L
 				}
 			}
