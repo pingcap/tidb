@@ -7362,6 +7362,32 @@ func (s *testIntegrationSuite) TestIssue15992(c *C) {
 	tk.MustExec("drop table t0;")
 }
 
+func (s *testIntegrationSuite) TestCTEWithDML(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(a int);")
+	tk.MustExec("insert into t1 values(2),(3);")
+	tk.MustQuery("with t1 as (select 36 as col from t1 where a=3) select * from t1;").Check(testkit.Rows("36"))
+	tk.MustExec("insert into t1 with t1 as (select 36 as col from t1) select * from t1;")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("2", "3", "36", "36"))
+	tk.MustExec("with cte1(a) as (select 36) update t1 set a = 1 where a in (select a from cte1);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("2", "3", "1", "1"))
+	tk.MustExec("with recursive cte(a) as (select 1 union select a + 1 from cte where a < 10) update cte, t1 set t1.a=1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "1", "1", "1"))
+
+	tk.MustGetErrCode("with recursive cte(a) as (select 1 union select a + 1 from cte where a < 10) update cte set a=1", mysql.ErrNonUpdatableTable)
+	tk.MustGetErrCode("with recursive cte(a) as (select 1 union select a + 1 from cte where a < 10) delete from cte", mysql.ErrNonUpdatableTable)
+	tk.MustGetErrCode("with cte(a) as (select a from t1) delete from cte", mysql.ErrNonUpdatableTable)
+	tk.MustGetErrCode("with cte(a) as (select a from t1) update cte set a=1", mysql.ErrNonUpdatableTable)
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(a int, b int, primary key(a));")
+	tk.MustExec("insert into t1 values (1, 1),(2,1),(3,1);")
+	tk.MustExec("replace into t1 with recursive cte(a,b) as (select 1, 1 union select a + 1,b+1 from cte where a < 5) select * from cte;")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5"))
+}
+
 func (s *testIntegrationSuite) TestIssue16419(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
