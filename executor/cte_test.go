@@ -129,63 +129,43 @@ func (test *CTESerialTestSuite) TestSpillToDisk(c *check.C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testCTEStorageSpill", "return(true)"), check.IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testCTEStorageSpill"), check.IsNil)
+		tk.MustExec("set tidb_mem_quota_query = 1073741824;")
+	}()
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), check.IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"), check.IsNil)
 	}()
 
-	insertStr := "insert into t1 values(0, 0)"
-	for i := 1; i < 5000; i++ {
-		insertStr += fmt.Sprintf(", (%d, %d)", i, i)
+	// Use duplicated rows to test UNION DISTINCT.
+	tk.MustExec("set tidb_mem_quota_query = 1073741824;")
+	insertStr := "insert into t1 values(0)"
+	rowNum := 1000
+	vals := make([]int, rowNum)
+	vals[0] = 0
+	for i := 1; i < rowNum; i++ {
+		v := rand.Intn(100)
+		vals[i] = v
+		insertStr += fmt.Sprintf(", (%d)", v)
 	}
-
 	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1(c1 int, c2 int);")
+	tk.MustExec("create table t1(c1 int);")
 	tk.MustExec(insertStr)
-	tk.MustExec("set tidb_mem_quota_query = 80000;")
-	rows := tk.MustQuery("with recursive cte1 as ( " +
-		"select c1 from t1 " +
-		"union " +
-		"select c1 + 1 c1 from cte1 where c1 < 5000) " +
-		"select c1 from cte1;")
+	tk.MustExec("set tidb_mem_quota_query = 40000;")
+	tk.MustExec("set cte_max_recursion_depth = 500000;")
+	sql := fmt.Sprintf("with recursive cte1 as ( "+
+		"select c1 from t1 "+
+		"union "+
+		"select c1 + 1 c1 from cte1 where c1 < %d) "+
+		"select c1 from cte1 order by c1;", rowNum)
+	rows := tk.MustQuery(sql)
 
 	memTracker := tk.Se.GetSessionVars().StmtCtx.MemTracker
 	diskTracker := tk.Se.GetSessionVars().StmtCtx.DiskTracker
 	c.Assert(memTracker.MaxConsumed(), check.Greater, int64(0))
 	c.Assert(diskTracker.MaxConsumed(), check.Greater, int64(0))
 
-	rowNum := 5000
-	var resRows []string
-	for i := 0; i <= rowNum; i++ {
-		resRows = append(resRows, fmt.Sprintf("%d", i))
-	}
-	rows.Check(testkit.Rows(resRows...))
-
-	// Use duplicated rows to test UNION DISTINCT.
-	tk.MustExec("set tidb_mem_quota_query = 1073741824;")
-	insertStr = "insert into t1 values(0, 0)"
-	vals := make([]int, rowNum)
-	vals[0] = 0
-	for i := 1; i < rowNum; i++ {
-		v := rand.Intn(100)
-		vals[i] = v
-		insertStr += fmt.Sprintf(", (%d, %d)", v, v)
-	}
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1(c1 int, c2 int);")
-	tk.MustExec(insertStr)
-	tk.MustExec("set tidb_mem_quota_query = 80000;")
-	tk.MustExec("set cte_max_recursion_depth = 500000;")
-	rows = tk.MustQuery("with recursive cte1 as ( " +
-		"select c1 from t1 " +
-		"union " +
-		"select c1 + 1 c1 from cte1 where c1 < 5000) " +
-		"select c1 from cte1 order by c1;")
-
-	memTracker = tk.Se.GetSessionVars().StmtCtx.MemTracker
-	diskTracker = tk.Se.GetSessionVars().StmtCtx.DiskTracker
-	c.Assert(memTracker.MaxConsumed(), check.Greater, int64(0))
-	c.Assert(diskTracker.MaxConsumed(), check.Greater, int64(0))
-
 	sort.Ints(vals)
-	resRows = make([]string, 0, rowNum)
+	resRows := make([]string, 0, rowNum)
 	for i := vals[0]; i <= rowNum; i++ {
 		resRows = append(resRows, fmt.Sprintf("%d", i))
 	}
