@@ -98,5 +98,6 @@ var (
 	ErrBadNull             = dbterror.ClassOptimizer.NewStd(mysql.ErrBadNull)
 	ErrNotSupportedWithSem = dbterror.ClassOptimizer.NewStd(mysql.ErrNotSupportedWithSem)
 	ErrDifferentAsOf       = dbterror.ClassOptimizer.NewStd(mysql.ErrUnknown)
+	ErrSetAsOf             = dbterror.ClassOptimizer.NewStd(mysql.ErrUnknown)
 	ErrOptOnTemporaryTable = dbterror.ClassOptimizer.NewStd(mysql.ErrOptOnTemporaryTable)
 )

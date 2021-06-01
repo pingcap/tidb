@@ -417,6 +417,7 @@ func (s *testStaleTxnSerialSuite) TestSetTransactionReadOnlyAsOf(c *C) {
 		tk.MustExec("commit")
 		tk.MustExec("begin")
 		c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Not(Equals), testcase.expectedTS)
+		tk.MustExec("commit")
 
 		failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS")
 	}
@@ -626,5 +627,48 @@ func (s *testStaleTxnSuite) TestSpecialSQLInStalenessTxn(c *C) {
 		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, true, comment)
 		tk.MustExec(testcase.sql)
 		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, testcase.sameSession, comment)
+	}
+}
+
+func (s *testStaleTxnSuite) TestAsOfTimestampCompatibility(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t5(id int);")
+	time1 := time.Now()
+	testcases := []struct {
+		beginSQL string
+		sql      string
+	}{
+		{
+			beginSQL: fmt.Sprintf("START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", time1.Format("2006-1-2 15:04:05.000")),
+			sql:      fmt.Sprintf(`SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")),
+		},
+		{
+			beginSQL: "begin",
+			sql:      fmt.Sprintf(`SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")),
+		},
+		{
+			beginSQL: "start transaction",
+			sql:      fmt.Sprintf(`SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")),
+		},
+		{
+			beginSQL: fmt.Sprintf("START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", time1.Format("2006-1-2 15:04:05.000")),
+			sql:      fmt.Sprintf("select * from t5 as of timestamp '%s'", time1.Format("2006-1-2 15:04:05.000")),
+		},
+		{
+			beginSQL: "begin",
+			sql:      fmt.Sprintf("select * from t5 as of timestamp '%s'", time1.Format("2006-1-2 15:04:05.000")),
+		},
+		{
+			beginSQL: "start transaction",
+			sql:      fmt.Sprintf("select * from t5 as of timestamp '%s'", time1.Format("2006-1-2 15:04:05.000")),
+		},
+	}
+	for _, testcase := range testcases {
+		tk.MustExec(testcase.beginSQL)
+		err := tk.ExecToErr(testcase.sql)
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Matches, ".*as of timestamp can't be set in transaction.*")
+		tk.MustExec("commit")
 	}
 }
