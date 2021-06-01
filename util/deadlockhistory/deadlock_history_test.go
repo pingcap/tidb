@@ -284,11 +284,11 @@ func (s *testDeadlockHistorySuite) TestResize(c *C) {
 	h.Push(dummyRecord) // id=1
 	h.Push(dummyRecord) // id=2
 	c.Assert(len(h.GetAll()), Equals, 1)
-	c.Assert(h.GetAll()[0].ID, Equals, 2)
+	c.Assert(h.GetAll()[0].ID, Equals, uint64(2))
 	h.resize(2)
 	h.Push(dummyRecord) // id=3
 	c.Assert(len(h.GetAll()), Equals, 2)
 	h.resize(1)
 	c.Assert(len(h.GetAll()), Equals, 1)
-	c.Assert(h.GetAll()[0].ID, Equals, 3)
+	c.Assert(h.GetAll()[0].ID, Equals, uint64(3))
 }
