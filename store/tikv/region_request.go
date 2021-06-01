@@ -403,7 +403,6 @@ func (s *RegionRequestSender) getRPCContext(
 }
 
 func (s *RegionRequestSender) reset() {
-	s.storeAddr = ""
 	s.leaderReplicaSelector = nil
 	s.failStoreIDs = nil
 	s.failProxyStoreIDs = nil
