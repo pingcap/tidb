@@ -277,3 +277,18 @@ func (s *testDeadlockHistorySuite) TestErrDeadlockToDeadlockRecord(c *C) {
 	expectedRecord.OccurTime = record.OccurTime
 	c.Assert(record, DeepEquals, expectedRecord)
 }
+
+func (s *testDeadlockHistorySuite) TestResize(c *C) {
+	dummyRecord := &DeadlockRecord{}
+	h := NewDeadlockHistory(1)
+	h.Push(dummyRecord) // id=1
+	h.Push(dummyRecord) // id=2
+	c.Assert(len(h.GetAll()), Equals, 1)
+	c.Assert(h.GetAll()[0].ID, Equals, 2)
+	h.resize(2)
+	h.Push(dummyRecord) // id=3
+	c.Assert(len(h.GetAll()), Equals, 2)
+	h.resize(1)
+	c.Assert(len(h.GetAll()), Equals, 1)
+	c.Assert(h.GetAll()[0].ID, Equals, 3)
+}
