@@ -127,8 +127,6 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	// regions. It invokes `prewriteMutations` recursively here, and the number of batches will be
 	// checked there.
 
-	bo.ResetMaxSleep(PrewriteMaxBackoff)
-
 	if c.sessionID > 0 {
 		if batch.isPrimary {
 			failpoint.Inject("prewritePrimaryFail", func() {
