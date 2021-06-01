@@ -101,8 +101,8 @@ type TopSQLCollector struct {
 // TopSQLCollectorConfig is the config for TopSQLCollector
 type TopSQLCollectorConfig struct {
 	PlanBinaryDecoder   planBinaryDecodeFunc
-	MaxSQLNum           int
-	SendToAgentInterval time.Duration
+	MaxStatementsNum           int
+	CollectInterval time.Duration
 	AgentGRPCAddress    string
 	InstanceID          string
 }
