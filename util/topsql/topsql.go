@@ -34,7 +34,7 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest []byte, 
 	ctx = tracecpu.CtxWithDigest(ctx, sqlDigest, planDigest)
 	pprof.SetGoroutineLabels(ctx)
 
-	if len(normalizedSQL) == 0 || len(planDigest) == 0 {
+	if len(normalizedPlan) == 0 || len(planDigest) == 0 {
 		// If plan digest is '', indicate it is the first time to attach the SQL info, since it only know the sql digest.
 		linkSQLTextWithDigest(sqlDigest, normalizedSQL)
 	} else {
