@@ -205,7 +205,9 @@ func (s *RegionRequestSender) getRPCContext(
 		if err != nil {
 			return nil, err
 		}
-		context.isStaleRead = req.GetStaleRead()
+		if context != nil {
+			context.isStaleRead = req.GetStaleRead()
+		}
 		return context, err
 	case tikvrpc.TiFlash:
 		return s.regionCache.GetTiFlashRPCContext(bo, regionID, true)
