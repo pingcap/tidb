@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
-	"go.uber.org/zap"
 )
 
 // RegionCache wraps tikv.RegionCache.
@@ -119,20 +118,6 @@ func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *tikv.Store
 		if ri.Meta == nil {
 			continue
 		}
-		r := c.GetCachedRegionWithRLock(ri.Region)
-		if r == nil {
-			return
-		}
-		peersNum := len(r.GetMeta().Peers)
-		if len(ri.Meta.Peers) != peersNum {
-			logutil.Logger(bo.GetCtx()).Info("retry and refresh current region after send request fail and up/down stores length changed",
-				zap.Stringer("region", &ri.Region),
-				zap.Bool("needReload", scheduleReload),
-				zap.Reflect("oldPeers", ri.Meta.Peers),
-				zap.Reflect("newPeers", r.GetMeta().Peers),
-				zap.Error(err))
-			continue
-		}
-		c.OnSendFailForRegion(bo.TiKVBackoffer(), store, ri.Region, r, scheduleReload, err)
+		c.OnSendFailForTiFlash(bo.TiKVBackoffer(), store, ri.Region, ri.Meta, scheduleReload, err)
 	}
 }

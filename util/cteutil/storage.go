@@ -51,6 +51,7 @@ type Storage interface {
 	Reopen() error
 
 	// Add chunk into underlying storage.
+	// Should return directly if chk is empty.
 	Add(chk *chunk.Chunk) error
 
 	// Get Chunk by index.
@@ -84,7 +85,7 @@ type Storage interface {
 
 	GetMemTracker() *memory.Tracker
 	GetDiskTracker() *disk.Tracker
-	ActionSpill() memory.ActionOnExceed
+	ActionSpill() *chunk.SpillDiskAction
 }
 
 // StorageRC implements Storage interface using RowContainer.
@@ -101,8 +102,8 @@ type StorageRC struct {
 	rc *chunk.RowContainer
 }
 
-// NewStorageRC create a new StorageRC.
-func NewStorageRC(tp []*types.FieldType, chkSize int) *StorageRC {
+// NewStorageRowContainer create a new StorageRC.
+func NewStorageRowContainer(tp []*types.FieldType, chkSize int) *StorageRC {
 	return &StorageRC{tp: tp, chkSize: chkSize}
 }
 
@@ -245,7 +246,7 @@ func (s *StorageRC) GetDiskTracker() *memory.Tracker {
 }
 
 // ActionSpill impls Storage ActionSpill interface.
-func (s *StorageRC) ActionSpill() memory.ActionOnExceed {
+func (s *StorageRC) ActionSpill() *chunk.SpillDiskAction {
 	return s.rc.ActionSpill()
 }
 
