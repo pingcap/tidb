@@ -3800,41 +3800,39 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) Executor {
 				exec.isRangeFrame = true
 			}
 		}
-
 		return exec
+	}
+	var processor windowProcessor
+	if v.Frame == nil {
+		processor = &aggWindowProcessor{
+			windowFuncs:    windowFuncs,
+			partialResults: partialResults,
+		}
+	} else if v.Frame.Type == ast.Rows {
+		processor = &rowFrameWindowProcessor{
+			windowFuncs:    windowFuncs,
+			partialResults: partialResults,
+			start:          v.Frame.Start,
+			end:            v.Frame.End,
+		}
 	} else {
-		var processor windowProcessor
-		if v.Frame == nil {
-			processor = &aggWindowProcessor{
-				windowFuncs:    windowFuncs,
-				partialResults: partialResults,
-			}
-		} else if v.Frame.Type == ast.Rows {
-			processor = &rowFrameWindowProcessor{
-				windowFuncs:    windowFuncs,
-				partialResults: partialResults,
-				start:          v.Frame.Start,
-				end:            v.Frame.End,
-			}
-		} else {
-			cmpResult := int64(-1)
-			if len(v.OrderBy) > 0 && v.OrderBy[0].Desc {
-				cmpResult = 1
-			}
-			processor = &rangeFrameWindowProcessor{
-				windowFuncs:       windowFuncs,
-				partialResults:    partialResults,
-				start:             v.Frame.Start,
-				end:               v.Frame.End,
-				orderByCols:       orderByCols,
-				expectedCmpResult: cmpResult,
-			}
+		cmpResult := int64(-1)
+		if len(v.OrderBy) > 0 && v.OrderBy[0].Desc {
+			cmpResult = 1
 		}
-		return &WindowExec{baseExecutor: base,
-			processor:      processor,
-			groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
-			numWindowFuncs: len(v.WindowFuncDescs),
+		processor = &rangeFrameWindowProcessor{
+			windowFuncs:       windowFuncs,
+			partialResults:    partialResults,
+			start:             v.Frame.Start,
+			end:               v.Frame.End,
+			orderByCols:       orderByCols,
+			expectedCmpResult: cmpResult,
 		}
+	}
+	return &WindowExec{baseExecutor: base,
+		processor:      processor,
+		groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
+		numWindowFuncs: len(v.WindowFuncDescs),
 	}
 }
 

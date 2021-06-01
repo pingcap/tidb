@@ -5504,6 +5504,22 @@ func appendIfAbsentWindowSpec(specs []*ast.WindowSpec, ns *ast.WindowSpec) []*as
 	return append(specs, ns)
 }
 
+func specEqual(s1, s2 *ast.WindowSpec) (equal bool, err error) {
+	if (s1 == nil && s2 != nil) || (s1 != nil && s2 == nil) {
+		return false, nil
+	}
+	var sb1, sb2 strings.Builder
+	ctx1 := format.NewRestoreCtx(0, &sb1)
+	ctx2 := format.NewRestoreCtx(0, &sb2)
+	if err = s1.Restore(ctx1); err != nil {
+		return
+	}
+	if err = s2.Restore(ctx2); err != nil {
+		return
+	}
+	return sb1.String() == sb2.String(), nil
+}
+
 // groupWindowFuncs groups the window functions according to the window specification name.
 // TODO: We can group the window function by the definition of window specification.
 func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*ast.WindowSpec][]*ast.WindowFuncExpr, []*ast.WindowSpec, error) {
@@ -5546,7 +5562,11 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 				updatedSpec = newSpec
 			} else {
 				for _, spec := range updatedSpecMap[name] {
-					if *spec == *newSpec {
+					eq, err := specEqual(spec, newSpec)
+					if err != nil {
+						return nil, nil, err
+					}
+					if eq {
 						updatedSpec = spec
 						break
 					}
