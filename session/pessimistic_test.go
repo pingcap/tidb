@@ -66,11 +66,13 @@ func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	// Set it to 300ms for testing lock resolve.
 	atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
 	tikv.PrewriteMaxBackoff = 500
+	tikv.VeryLongMaxBackoff = 500
 }
 
 func (s *testPessimisticSuite) TearDownSuite(c *C) {
 	s.testSessionSuiteBase.TearDownSuite(c)
 	tikv.PrewriteMaxBackoff = 20000
+	tikv.VeryLongMaxBackoff = 60000 * 60
 }
 
 func (s *testPessimisticSuite) TestPessimisticTxn(c *C) {
