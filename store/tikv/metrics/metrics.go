@@ -223,15 +223,6 @@ func initMetrics(namespace, subsystem string) {
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 28), // 0.5ms ~ 74h
 		})
 
-	TiKVLargeReadThroughput = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: namespace,
-			Subsystem: subsystem,
-			Name:      "tikv_large_read_throughput",
-			Help:      "Read throughput of TiKV large read.",
-			Buckets:   prometheus.ExponentialBuckets(16, 4, 17), // 16Bytes/s ~ 64GB/s
-		})
-
 	TiKVStatusDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: namespace,
@@ -482,7 +473,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVSecondaryLockCleanupFailureCounter)
 	prometheus.MustRegister(TiKVRegionCacheCounter)
 	prometheus.MustRegister(TiKVSmallReadDuration)
-	prometheus.MustRegister(TiKVLargeReadThroughput)
 	prometheus.MustRegister(TiKVLocalLatchWaitTimeHistogram)
 	prometheus.MustRegister(TiKVStatusDuration)
 	prometheus.MustRegister(TiKVStatusCounter)
