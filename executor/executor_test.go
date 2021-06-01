@@ -146,6 +146,7 @@ var _ = SerialSuites(&tiflashTestSuite{})
 var _ = SerialSuites(&globalIndexSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testStaleTxnSerialSuite{&baseTestSuite{}})
+var _ = Suite(&testStaleTxnSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testCoprCache{})
 var _ = SerialSuites(&testPrepareSuite{})
 var _ = SerialSuites(&testResourceTagSuite{&baseTestSuite{}})
@@ -163,6 +164,7 @@ type partitionTableSuite struct{ *baseTestSuite }
 type globalIndexSuite struct{ *baseTestSuite }
 type testSerialSuite struct{ *baseTestSuite }
 type testStaleTxnSerialSuite struct{ *baseTestSuite }
+type testStaleTxnSuite struct{ *baseTestSuite }
 type testCoprCache struct {
 	store kv.Storage
 	dom   *domain.Domain
@@ -8178,7 +8180,7 @@ func (s *testSerialSuite) TestIssue24210(c *C) {
 func (s *testSerialSuite) TestDeadlockTable(c *C) {
 	deadlockhistory.GlobalDeadlockHistory.Clear()
 
-	occurTime := time.Date(2021, 5, 10, 1, 2, 3, 456789000, time.UTC)
+	occurTime := time.Date(2021, 5, 10, 1, 2, 3, 456789000, time.Local)
 	rec := &deadlockhistory.DeadlockRecord{
 		OccurTime:   occurTime,
 		IsRetryable: false,
@@ -8201,7 +8203,7 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 	}
 	deadlockhistory.GlobalDeadlockHistory.Push(rec)
 
-	occurTime2 := time.Date(2022, 6, 11, 2, 3, 4, 987654000, time.UTC)
+	occurTime2 := time.Date(2022, 6, 11, 2, 3, 4, 987654000, time.Local)
 	rec2 := &deadlockhistory.DeadlockRecord{
 		OccurTime:   occurTime2,
 		IsRetryable: true,
@@ -8362,10 +8364,8 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 	tbInfo := testGetTableByName(c, tk.Se, "test", "t")
 
 	// Enable Top SQL
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	newCfg.TopSQL.Enable = true
-	config.StoreGlobalConfig(&newCfg)
+	variable.TopSQLVariable.Enable.Store(true)
+	variable.TopSQLVariable.AgentAddress.Store("mock-agent")
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook", `return(true)`), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
