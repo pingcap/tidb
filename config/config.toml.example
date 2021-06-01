@@ -136,7 +136,7 @@ enable-enum-length-limit = true
 # Log level: debug, info, warn, error, fatal.
 level = "info"
 
-# Log format, one of json, text, console.
+# Log format, one of json or text.
 format = "text"
 
 # Enable automatic timestamps in log output, if not set, it will be defaulted to true.
