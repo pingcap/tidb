@@ -575,31 +575,21 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 		}
 		if s.AsOf != nil {
 			// start transaction read only as of failed due to we set tx_read_ts before
-			if e.ctx.GetSessionVars().TxnReadTS > 0 {
+			if e.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS() > 0 {
 				return errors.New("start transaction read only as of is forbidden after set transaction read only as of")
 			}
-			if err := e.ctx.NewStaleTxnWithStartTS(ctx, e.staleTxnStartTS); err != nil {
-				return err
-			}
-			// With START TRANSACTION, autocommit remains disabled until you end
-			// the transaction with COMMIT or ROLLBACK. The autocommit mode then
-			// reverts to its previous state.
-			e.ctx.GetSessionVars().SetInTxn(true)
-			return nil
 		}
 	}
-	// When TxnReadTS is not 0, it indicates the transaction is staleness transaction
-	if e.ctx.GetSessionVars().TxnReadTS > 0 {
-		startTS := e.ctx.GetSessionVars().TxnReadTS
-		// clear TxnReadTS after we used it.
-		e.ctx.GetSessionVars().TxnReadTS = 0
-		if err := e.ctx.NewStaleTxnWithStartTS(ctx, startTS); err != nil {
+	if e.staleTxnStartTS > 0 {
+		if err := e.ctx.NewStaleTxnWithStartTS(ctx, e.staleTxnStartTS); err != nil {
 			return err
 		}
+		// With START TRANSACTION, autocommit remains disabled until you end
+		// the transaction with COMMIT or ROLLBACK. The autocommit mode then
+		// reverts to its previous state.
 		e.ctx.GetSessionVars().SetInTxn(true)
 		return nil
 	}
-
 	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
 	// need to call NewTxn, which commits the existing transaction and begins a new one.
 	// If the last un-committed/un-rollback transaction is a time-bounded read-only transaction, we should
