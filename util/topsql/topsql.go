@@ -17,6 +17,7 @@ import (
 	"context"
 	"runtime/pprof"
 
+	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/util/topsql/collector"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 )
@@ -27,19 +28,25 @@ func SetupTopSQL() {
 }
 
 // AttachSQLInfo attach the sql information info top sql.
-func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest []byte, normalizedPlan string, planDigest []byte) {
-	if len(normalizedSQL) == 0 || len(sqlDigest) == 0 {
-		return
+func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.Digest, normalizedPlan string, planDigest *parser.Digest) context.Context {
+	if len(normalizedSQL) == 0 || sqlDigest == nil || len(sqlDigest.Bytes()) == 0 {
+		return ctx
 	}
-	ctx = tracecpu.CtxWithDigest(ctx, sqlDigest, planDigest)
+	var sqlDigestBytes, planDigestBytes []byte
+	sqlDigestBytes = sqlDigest.Bytes()
+	if planDigest != nil {
+		planDigestBytes = planDigest.Bytes()
+	}
+	ctx = tracecpu.CtxWithDigest(ctx, sqlDigestBytes, planDigestBytes)
 	pprof.SetGoroutineLabels(ctx)
 
-	if len(normalizedPlan) == 0 || len(planDigest) == 0 {
+	if len(normalizedPlan) == 0 || len(planDigestBytes) == 0 {
 		// If plan digest is '', indicate it is the first time to attach the SQL info, since it only know the sql digest.
-		linkSQLTextWithDigest(sqlDigest, normalizedSQL)
+		linkSQLTextWithDigest(sqlDigestBytes, normalizedSQL)
 	} else {
-		linkPlanTextWithDigest(planDigest, normalizedPlan)
+		linkPlanTextWithDigest(planDigestBytes, normalizedPlan)
 	}
+	return ctx
 }
 
 func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string) {

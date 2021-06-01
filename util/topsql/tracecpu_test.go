@@ -117,10 +117,10 @@ func (s *testSuite) setTopSQLEnable(enabled bool) {
 func (s *testSuite) mockExecuteSQL(sql, plan string) {
 	ctx := context.Background()
 	sqlDigest := mock.GenSQLDigest(sql)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest.Bytes(), "", nil)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil)
 	s.mockExecute(time.Millisecond * 100)
 	planDigest := genDigest(plan)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest.Bytes(), plan, planDigest.Bytes())
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest)
 	s.mockExecute(time.Millisecond * 300)
 }
 

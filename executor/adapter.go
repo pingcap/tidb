@@ -297,7 +297,7 @@ func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) {
 	normalizedSQL, sqlDigest := a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
 	normalizedPlan, planDigest := getPlanDigest(a.Ctx, a.Plan)
 	if len(normalizedPlan) > 0 {
-		topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest.Bytes(), normalizedPlan, planDigest.Bytes())
+		topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest)
 	}
 }
 

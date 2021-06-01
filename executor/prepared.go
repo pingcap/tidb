@@ -182,7 +182,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 	if variable.TopSQLEnabled() {
-		topsql.AttachSQLInfo(ctx, normalizedSQL, digest.Bytes(), "", nil)
+		topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil)
 	}
 
 	if !plannercore.PreparedPlanCacheEnabled() {
