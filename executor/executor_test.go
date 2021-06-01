@@ -17,7 +17,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"net"
 	"os"
@@ -32,6 +31,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -145,8 +146,10 @@ var _ = SerialSuites(&tiflashTestSuite{})
 var _ = SerialSuites(&globalIndexSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testStaleTxnSerialSuite{&baseTestSuite{}})
+var _ = Suite(&testStaleTxnSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testCoprCache{})
 var _ = SerialSuites(&testPrepareSuite{})
+var _ = SerialSuites(&testResourceTagSuite{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -161,12 +164,14 @@ type partitionTableSuite struct{ *baseTestSuite }
 type globalIndexSuite struct{ *baseTestSuite }
 type testSerialSuite struct{ *baseTestSuite }
 type testStaleTxnSerialSuite struct{ *baseTestSuite }
+type testStaleTxnSuite struct{ *baseTestSuite }
 type testCoprCache struct {
 	store kv.Storage
 	dom   *domain.Domain
 	cls   cluster.Cluster
 }
 type testPrepareSuite struct{ testData testutil.TestData }
+type testResourceTagSuite struct{ *baseTestSuite }
 
 type baseTestSuite struct {
 	cluster cluster.Cluster
@@ -2346,14 +2351,14 @@ func (s *testSuiteP2) TestIsPointGet(c *C) {
 		"select * from help_topic where help_topic_id=1":    true,
 		"select * from help_topic where help_category_id=1": false,
 	}
-	infoSchema := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
-		err = plannercore.Preprocess(ctx, stmtNode, infoSchema)
+		preprocessorReturn := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		c.Check(err, IsNil)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, infoSchema)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		c.Check(err, IsNil)
 		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
 		c.Assert(err, IsNil)
@@ -2378,13 +2383,13 @@ func (s *testSuiteP2) TestClusteredIndexIsPointGet(c *C) {
 		"select * from t where a='x' and c='x'":         true,
 		"select * from t where a='x' and c='x' and b=1": false,
 	}
-	infoSchema := ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
-		err = plannercore.Preprocess(ctx, stmtNode, infoSchema)
+		preprocessorReturn := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		c.Check(err, IsNil)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, infoSchema)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		c.Check(err, IsNil)
 		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
 		c.Assert(err, IsNil)
@@ -3067,9 +3072,10 @@ func (s *testSerialSuite) TestTiDBLastTxnInfoCommitMode(c *C) {
 	c.Assert(rows[0][1], Equals, "false")
 	c.Assert(rows[0][2], Equals, "false")
 
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.SafeWindow = 0
-	})
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/invalidMaxCommitTS", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/invalidMaxCommitTS"), IsNil)
+	}()
 
 	tk.MustExec("set @@tidb_enable_async_commit = 1")
 	tk.MustExec("set @@tidb_enable_1pc = 0")
@@ -5194,6 +5200,23 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 	// Test show table regions.
 	tk.MustQuery(`split table t_regions between (-10000) and (10000) regions 4;`).Check(testkit.Rows("4 1"))
 	re := tk.MustQuery("show table t_regions regions")
+
+	// Test show table regions and split table on temporary table.
+	tk.MustExec("drop table if exists t_regions_temporary_table")
+	tk.MustExec("create global temporary table t_regions_temporary_table (a int key, b int, c int, index idx(b), index idx2(c)) ON COMMIT DELETE ROWS;")
+	// Test show table regions.
+	_, err = tk.Exec("show table t_regions_temporary_table regions")
+	c.Assert(err.Error(), Equals, plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions").Error())
+	// Test split table.
+	_, err = tk.Exec("split table t_regions_temporary_table between (-10000) and (10000) regions 4;")
+	c.Assert(err.Error(), Equals, plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("split table").Error())
+	_, err = tk.Exec("split partition table t_regions_temporary_table partition (p1,p2) index idx between (0) and (20000) regions 2;")
+	c.Assert(err.Error(), Equals, plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("split table").Error())
+	tk.MustExec("drop table if exists t_regions_temporary_table")
+	// Test pre split regions
+	_, err = tk.Exec("create global temporary table temporary_table_pre_split(id int ) pre_split_regions=2 ON COMMIT DELETE ROWS;")
+	c.Assert(err.Error(), Equals, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error())
+
 	rows := re.Rows()
 	// Table t_regions should have 5 regions now.
 	// 4 regions to store record data.
@@ -6997,7 +7020,7 @@ func (s *testSlowQuery) TestSlowQuerySensitiveQuery(c *C) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 
-	f, err := ioutil.TempFile("", "tidb-slow-*.log")
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	c.Assert(err, IsNil)
 	f.Close()
 	newCfg.Log.SlowQueryFile = f.Name()
@@ -7031,7 +7054,7 @@ func (s *testSlowQuery) TestSlowQueryPrepared(c *C) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 
-	f, err := ioutil.TempFile("", "tidb-slow-*.log")
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	c.Assert(err, IsNil)
 	f.Close()
 	newCfg.Log.SlowQueryFile = f.Name()
@@ -7067,7 +7090,7 @@ func (s *testSlowQuery) TestSlowQueryPrepared(c *C) {
 
 func (s *testSlowQuery) TestLogSlowLogIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	f, err := ioutil.TempFile("", "tidb-slow-*.log")
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	c.Assert(err, IsNil)
 	f.Close()
 
@@ -7093,7 +7116,7 @@ func (s *testSlowQuery) TestLogSlowLogIndex(c *C) {
 func (s *testSlowQuery) TestSlowQuery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	f, err := ioutil.TempFile("", "tidb-slow-*.log")
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	c.Assert(err, IsNil)
 	_, err = f.WriteString(`
 # Time: 2020-10-13T20:08:13.970563+08:00
@@ -8157,7 +8180,7 @@ func (s *testSerialSuite) TestIssue24210(c *C) {
 func (s *testSerialSuite) TestDeadlockTable(c *C) {
 	deadlockhistory.GlobalDeadlockHistory.Clear()
 
-	occurTime := time.Date(2021, 5, 10, 1, 2, 3, 456789000, time.UTC)
+	occurTime := time.Date(2021, 5, 10, 1, 2, 3, 456789000, time.Local)
 	rec := &deadlockhistory.DeadlockRecord{
 		OccurTime:   occurTime,
 		IsRetryable: false,
@@ -8166,33 +8189,33 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 				TryLockTxn:     101,
 				SQLDigest:      "aabbccdd",
 				Key:            []byte("k1"),
-				AllSQLs:        nil,
+				AllSQLDigests:  nil,
 				TxnHoldingLock: 102,
 			},
 			{
 				TryLockTxn:     102,
 				SQLDigest:      "ddccbbaa",
 				Key:            []byte("k2"),
-				AllSQLs:        []string{"sql1"},
+				AllSQLDigests:  []string{"sql1"},
 				TxnHoldingLock: 101,
 			},
 		},
 	}
 	deadlockhistory.GlobalDeadlockHistory.Push(rec)
 
-	occurTime2 := time.Date(2022, 6, 11, 2, 3, 4, 987654000, time.UTC)
+	occurTime2 := time.Date(2022, 6, 11, 2, 3, 4, 987654000, time.Local)
 	rec2 := &deadlockhistory.DeadlockRecord{
 		OccurTime:   occurTime2,
 		IsRetryable: true,
 		WaitChain: []deadlockhistory.WaitChainItem{
 			{
 				TryLockTxn:     201,
-				AllSQLs:        []string{},
+				AllSQLDigests:  []string{},
 				TxnHoldingLock: 202,
 			},
 			{
 				TryLockTxn:     202,
-				AllSQLs:        []string{"sql1", "sql2, sql3"},
+				AllSQLDigests:  []string{"sql1", "sql2, sql3"},
 				TxnHoldingLock: 203,
 			},
 			{
@@ -8211,12 +8234,50 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select * from information_schema.deadlocks").Check(
 		testutil.RowsWithSep("/",
-			id1+"/2021-05-10 01:02:03.456789/0/101/aabbccdd/6B31/<nil>/102",
-			id1+"/2021-05-10 01:02:03.456789/0/102/ddccbbaa/6B32/[sql1]/101",
-			id2+"/2022-06-11 02:03:04.987654/1/201/<nil>/<nil>/[]/202",
-			id2+"/2022-06-11 02:03:04.987654/1/202/<nil>/<nil>/[sql1, sql2, sql3]/203",
-			id2+"/2022-06-11 02:03:04.987654/1/203/<nil>/<nil>/<nil>/201",
+			id1+"/2021-05-10 01:02:03.456789/0/101/aabbccdd/6B31/102",
+			id1+"/2021-05-10 01:02:03.456789/0/102/ddccbbaa/6B32/101",
+			id2+"/2022-06-11 02:03:04.987654/1/201/<nil>/<nil>/202",
+			id2+"/2022-06-11 02:03:04.987654/1/202/<nil>/<nil>/203",
+			id2+"/2022-06-11 02:03:04.987654/1/203/<nil>/<nil>/201",
 		))
+}
+
+func (s *testSuite1) TestTemporaryTableNoPessimisticLock(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create global temporary table t (a int primary key, b int) on commit delete rows")
+	tk.MustExec("insert into t values (1, 1)")
+
+	// Do something on the temporary table, pessimistic transaction mode.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (2, 2)")
+	tk.MustExec("update t set b = b + 1 where a = 1")
+	tk.MustExec("delete from t where a > 1")
+	tk.MustQuery("select count(*) from t where b >= 2 for update")
+
+	// Get the temporary table ID.
+	schema := tk.Se.GetInfoSchema().(infoschema.InfoSchema)
+	tbl, err := schema.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	meta := tbl.Meta()
+	c.Assert(meta.TempTableType, Equals, model.TempTableGlobal)
+
+	// Scan the table range to check there is no lock.
+	// It's better to use the rawkv client, but the txnkv client should also works.
+	// If there is a lock, the txnkv client should have reported the lock error.
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	seekKey := tablecodec.EncodeTablePrefix(meta.ID)
+	endKey := tablecodec.EncodeTablePrefix(meta.ID + 1)
+	scanner, err := txn.Iter(seekKey, endKey)
+	c.Assert(err, IsNil)
+	for scanner.Valid() {
+		// No lock written to TiKV here.
+		c.FailNow()
+	}
+
+	tk.MustExec("rollback")
 }
 
 func (s testSerialSuite) TestExprBlackListForEnum(c *C) {
@@ -8293,4 +8354,119 @@ func (s testSerialSuite) TestExprBlackListForEnum(c *C) {
 	c.Assert(checkFuncPushDown(rows, "index:idx(b, a)"), IsTrue)
 	rows = tk.MustQuery("desc format='brief' select * from t where b = 1 and a > 'a'").Rows()
 	c.Assert(checkFuncPushDown(rows, "index:idx(b, a)"), IsTrue)
+}
+
+func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int, unique index idx(a));")
+	tbInfo := testGetTableByName(c, tk.Se, "test", "t")
+
+	// Enable Top SQL
+	variable.TopSQLVariable.Enable.Store(true)
+	variable.TopSQLVariable.AgentAddress.Store("mock-agent")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
+
+	var sqlDigest, planDigest *parser.Digest
+	checkFn := func() {}
+	unistore.UnistoreRPCClientSendHook = func(req *tikvrpc.Request) {
+		var startKey []byte
+		var ctx *kvrpcpb.Context
+		switch req.Type {
+		case tikvrpc.CmdGet:
+			request := req.Get()
+			startKey = request.Key
+			ctx = request.Context
+		case tikvrpc.CmdBatchGet:
+			request := req.BatchGet()
+			startKey = request.Keys[0]
+			ctx = request.Context
+		case tikvrpc.CmdPrewrite:
+			request := req.Prewrite()
+			startKey = request.Mutations[0].Key
+			ctx = request.Context
+		case tikvrpc.CmdCommit:
+			request := req.Commit()
+			startKey = request.Keys[0]
+			ctx = request.Context
+		case tikvrpc.CmdCop:
+			request := req.Cop()
+			startKey = request.Ranges[0].Start
+			ctx = request.Context
+		case tikvrpc.CmdPessimisticLock:
+			request := req.PessimisticLock()
+			startKey = request.PrimaryLock
+			ctx = request.Context
+		}
+		tid := tablecodec.DecodeTableID(startKey)
+		if tid != tbInfo.Meta().ID {
+			return
+		}
+		if ctx == nil {
+			return
+		}
+		tag := &tipb.ResourceGroupTag{}
+		err := tag.Unmarshal(ctx.ResourceGroupTag)
+		c.Assert(err, IsNil)
+		sqlDigest = parser.NewDigest(tag.SqlDigest)
+		planDigest = parser.NewDigest(tag.PlanDigest)
+		checkFn()
+	}
+
+	resetVars := func() {
+		sqlDigest = parser.NewDigest(nil)
+		planDigest = parser.NewDigest(nil)
+	}
+
+	cases := []struct {
+		sql    string
+		ignore bool
+	}{
+		{sql: "insert into t values(1,1),(2,2),(3,3)"},
+		{sql: "select * from t use index (idx) where a=1"},
+		{sql: "select * from t use index (idx) where a in (1,2,3)"},
+		{sql: "select * from t use index (idx) where a>1"},
+		{sql: "select * from t where b>1"},
+		{sql: "begin pessimistic", ignore: true},
+		{sql: "insert into t values(4,4)"},
+		{sql: "commit", ignore: true},
+		{sql: "update t set a=5,b=5 where a=5"},
+		{sql: "replace into t values(6,6)"},
+	}
+	for _, ca := range cases {
+		resetVars()
+		commentf := Commentf("%v", ca.sql)
+
+		_, expectSQLDigest := parser.NormalizeDigest(ca.sql)
+		var expectPlanDigest *parser.Digest
+		checkCnt := 0
+		checkFn = func() {
+			if ca.ignore {
+				return
+			}
+			if expectPlanDigest == nil {
+				info := tk.Se.ShowProcess()
+				c.Assert(info, NotNil)
+				p, ok := info.Plan.(plannercore.Plan)
+				c.Assert(ok, IsTrue)
+				_, expectPlanDigest = plannercore.NormalizePlan(p)
+			}
+			c.Assert(sqlDigest.String(), Equals, expectSQLDigest.String(), commentf)
+			c.Assert(planDigest.String(), Equals, expectPlanDigest.String())
+			checkCnt++
+		}
+
+		if strings.HasPrefix(ca.sql, "select") {
+			tk.MustQuery(ca.sql)
+		} else {
+			tk.MustExec(ca.sql)
+		}
+		if ca.ignore {
+			continue
+		}
+		c.Assert(checkCnt > 0, IsTrue, commentf)
+	}
 }

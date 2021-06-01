@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/store/tikv/client"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -109,6 +110,8 @@ type KVSnapshot struct {
 		matchStoreLabels []*metapb.StoreLabel
 	}
 	sampleStep uint32
+	// resourceGroupTag is use to set the kv request resource group tag.
+	resourceGroupTag []byte
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
@@ -311,9 +314,10 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 			Keys:    pending,
 			Version: s.version,
 		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
-			Priority:     s.priority.ToPB(),
-			NotFillCache: s.notFillCache,
-			TaskId:       s.mu.taskID,
+			Priority:         s.priority.ToPB(),
+			NotFillCache:     s.notFillCache,
+			TaskId:           s.mu.taskID,
+			ResourceGroupTag: s.resourceGroupTag,
 		})
 		isStaleness = s.mu.isStaleness
 		matchStoreLabels = s.mu.matchStoreLabels
@@ -325,7 +329,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 		if len(matchStoreLabels) > 0 {
 			ops = append(ops, WithMatchLabels(matchStoreLabels))
 		}
-		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, ReadTimeoutMedium, tikvrpc.TiKV, "", ops...)
+		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, client.ReadTimeoutMedium, tikvrpc.TiKV, "", ops...)
 
 		if err != nil {
 			return errors.Trace(err)
@@ -385,7 +389,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 				return errors.Trace(err)
 			}
 			if msBeforeExpired > 0 {
-				err = bo.BackoffWithMaxSleep(retry.BoTxnLockFast, int(msBeforeExpired), errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
+				err = bo.BackoffWithMaxSleepTxnLockFast(int(msBeforeExpired), errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -466,9 +470,10 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 			Key:     k,
 			Version: s.version,
 		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
-			Priority:     s.priority.ToPB(),
-			NotFillCache: s.notFillCache,
-			TaskId:       s.mu.taskID,
+			Priority:         s.priority.ToPB(),
+			NotFillCache:     s.notFillCache,
+			TaskId:           s.mu.taskID,
+			ResourceGroupTag: s.resourceGroupTag,
 		})
 	isStaleness = s.mu.isStaleness
 	matchStoreLabels = s.mu.matchStoreLabels
@@ -488,7 +493,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, ReadTimeoutShort, tikvrpc.TiKV, "", ops...)
+		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, client.ReadTimeoutShort, tikvrpc.TiKV, "", ops...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -534,7 +539,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 				return nil, errors.Trace(err)
 			}
 			if msBeforeExpired > 0 {
-				err = bo.BackoffWithMaxSleep(retry.BoTxnLockFast, int(msBeforeExpired), errors.New(keyErr.String()))
+				err = bo.BackoffWithMaxSleepTxnLockFast(int(msBeforeExpired), errors.New(keyErr.String()))
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -634,6 +639,11 @@ func (s *KVSnapshot) SetMatchStoreLabels(labels []*metapb.StoreLabel) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mu.matchStoreLabels = labels
+}
+
+// SetResourceGroupTag sets resource group of the kv request.
+func (s *KVSnapshot) SetResourceGroupTag(tag []byte) {
+	s.resourceGroupTag = tag
 }
 
 // SnapCacheHitCount gets the snapshot cache hit count. Only for test.
@@ -737,8 +747,8 @@ func (s *KVSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRunti
 // SnapshotRuntimeStats records the runtime stats of snapshot.
 type SnapshotRuntimeStats struct {
 	rpcStats       RegionRequestRuntimeStats
-	backoffSleepMS map[retry.BackoffType]int
-	backoffTimes   map[retry.BackoffType]int
+	backoffSleepMS map[string]int
+	backoffTimes   map[string]int
 	scanDetail     *util.ScanDetail
 	timeDetail     *util.TimeDetail
 }
@@ -752,8 +762,8 @@ func (rs *SnapshotRuntimeStats) Clone() *SnapshotRuntimeStats {
 		}
 	}
 	if len(rs.backoffSleepMS) > 0 {
-		newRs.backoffSleepMS = make(map[retry.BackoffType]int)
-		newRs.backoffTimes = make(map[retry.BackoffType]int)
+		newRs.backoffSleepMS = make(map[string]int)
+		newRs.backoffTimes = make(map[string]int)
 		for k, v := range rs.backoffSleepMS {
 			newRs.backoffSleepMS[k] += v
 		}
@@ -774,10 +784,10 @@ func (rs *SnapshotRuntimeStats) Merge(other *SnapshotRuntimeStats) {
 	}
 	if len(other.backoffSleepMS) > 0 {
 		if rs.backoffSleepMS == nil {
-			rs.backoffSleepMS = make(map[retry.BackoffType]int)
+			rs.backoffSleepMS = make(map[string]int)
 		}
 		if rs.backoffTimes == nil {
-			rs.backoffTimes = make(map[retry.BackoffType]int)
+			rs.backoffTimes = make(map[string]int)
 		}
 		for k, v := range other.backoffSleepMS {
 			rs.backoffSleepMS[k] += v
@@ -798,7 +808,7 @@ func (rs *SnapshotRuntimeStats) String() string {
 		}
 		ms := rs.backoffSleepMS[k]
 		d := time.Duration(ms) * time.Millisecond
-		buf.WriteString(fmt.Sprintf("%s_backoff:{num:%d, total_time:%s}", k.String(), v, util.FormatDuration(d)))
+		buf.WriteString(fmt.Sprintf("%s_backoff:{num:%d, total_time:%s}", k, v, util.FormatDuration(d)))
 	}
 	timeDetail := rs.timeDetail.String()
 	if timeDetail != "" {
