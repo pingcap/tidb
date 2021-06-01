@@ -892,11 +892,6 @@ NORMALDECODE:
 		}
 	}
 
-	// The order of the samples are broken when merging samples from sub-collectors.
-	// So now we need to sort the samples according to the handle in order to calculate correlation.
-	sort.Slice(rootRowCollector.Samples, func(i, j int) bool {
-		return rootRowCollector.Samples[i].Handle.Compare(rootRowCollector.Samples[j].Handle) < 0
-	})
 	colLen := len(e.colsInfo)
 
 	indexPushedDownResult := <-idxNDVPushDownCh
@@ -922,6 +917,7 @@ NORMALDECODE:
 
 	for i, col := range e.colsInfo {
 		// If the column contains virtual column. We don't store the stats for it currently Since we cannot maintain the FM-Sketch for it.
+		// Same with original stats of Version1.
 		if col.IsGenerated() && !col.GeneratedStored {
 			hists = append(hists, nil)
 			topns = append(topns, nil)
