@@ -354,13 +354,14 @@ func analyzeIndexNDVPushDown(idxExec *AnalyzeIndexExec) analyzeResult {
 		TableID: idxExec.tableID,
 		Fms:     []*statistics.FMSketch{fms},
 		// We use histogram to get the Index's ID.
-		Hist:     []*statistics.Histogram{statistics.NewHistogram(idxExec.idxInfo.ID, 0, 0, statistics.Version1, types.NewFieldType(mysql.TypeBlob), 0, 0)},
-		IsIndex:  1,
-		job:      idxExec.job,
+		Hist:    []*statistics.Histogram{statistics.NewHistogram(idxExec.idxInfo.ID, 0, 0, statistics.Version1, types.NewFieldType(mysql.TypeBlob), 0, 0)},
+		IsIndex: 1,
+		job:     idxExec.job,
+		// TODO: avoid reusing Version1.
 		StatsVer: statistics.Version1,
 	}
 	if nullHist != nil && nullHist.Len() > 0 {
-		result.Count += nullHist.Buckets[nullHist.Len()-1].Count
+		result.Count = nullHist.Buckets[nullHist.Len()-1].Count
 	}
 	return result
 }
@@ -590,6 +591,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 			for _, col := range idx.Columns {
 				if colExec.colsInfo[col.Offset].IsGenerated() && !colExec.colsInfo[col.Offset].GeneratedStored {
 					containVirtual = true
+					break
 				}
 			}
 			if containVirtual {
@@ -759,6 +761,44 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	return result, nil
 }
 
+func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
+	collector *statistics.RowSampleCollector,
+	fieldTps []*types.FieldType,
+	virtualColIdx []int,
+	schema *expression.Schema,
+) bool {
+	chk := chunk.NewChunkWithCapacity(fieldTps, len(collector.Samples))
+	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().TimeZone)
+	for _, sample := range collector.Samples {
+		for i := range sample.Columns {
+			_, err := decoder.DecodeOne(sample.Columns[i].GetBytes(), i, fieldTps[i])
+			if err != nil {
+				// Eval virtual column failed. Give up building virtual column stats.
+				logutil.BgLogger().Warn("Build stats on virtual column failed when analyzing. Stats on virtual column will be incomplete",
+					zap.Int64("table id", e.AnalyzeInfo.TableID.TableID),
+					zap.Int64("partition id", e.AnalyzeInfo.TableID.PartitionID),
+					zap.Error(err))
+				return false
+			}
+		}
+	}
+	err := FillVirtualColumnValue(fieldTps, virtualColIdx, schema, e.colsInfo, e.ctx, chk)
+	if err != nil {
+		// Eval virtual column failed. Give up building virtual column stats.
+		logutil.BgLogger().Warn("Build stats on virtual column failed when analyzing. Stats on virtual column will be incomplete",
+			zap.Int64("table id", e.AnalyzeInfo.TableID.TableID),
+			zap.Int64("partition id", e.AnalyzeInfo.TableID.PartitionID),
+			zap.Error(err))
+		return false
+	}
+	iter := chunk.NewIterator4Chunk(chk)
+	for row, i := iter.Begin(), 0; row != iter.End(); row, i = iter.Next(), i+1 {
+		datums := row.GetDatumRow(fieldTps)
+		collector.Samples[i].Columns = datums
+	}
+	return true
+}
+
 func (e *AnalyzeColumnsExec) buildSamplingStats(
 	ranges []*ranger.Range,
 	needExtStats bool,
@@ -832,43 +872,8 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			virtualColIdx = append(virtualColIdx, i)
 		}
 	}
-	needNormalDecode := true
-	if hasVirtualCol {
-		// decode + eval virtual columns
-		chk = chunk.NewChunkWithCapacity(fieldTps, len(rootRowCollector.Samples))
-		decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().TimeZone)
-		for _, sample := range rootRowCollector.Samples {
-			for i := range sample.Columns {
-				_, err := decoder.DecodeOne(sample.Columns[i].GetBytes(), i, fieldTps[i])
-				if err != nil {
-					// Eval virtual column failed. Give up building virtual column stats.
-					logutil.BgLogger().Warn("Build stats on virtual column failed when analyzing. Stats on virtual column will be incomplete",
-						zap.Int64("table id", e.AnalyzeInfo.TableID.TableID),
-						zap.Int64("partition id", e.AnalyzeInfo.TableID.PartitionID),
-						zap.Error(err))
-					goto NORMALDECODE
-				}
-			}
-		}
-		err := FillVirtualColumnValue(fieldTps, virtualColIdx, schema, e.colsInfo, e.ctx, chk)
-		if err != nil {
-			// Eval virtual column failed. Give up building virtual column stats.
-			logutil.BgLogger().Warn("Build stats on virtual column failed when analyzing. Stats on virtual column will be incomplete",
-				zap.Int64("table id", e.AnalyzeInfo.TableID.TableID),
-				zap.Int64("partition id", e.AnalyzeInfo.TableID.PartitionID),
-				zap.Error(err))
-			goto NORMALDECODE
-		}
-		iter := chunk.NewIterator4Chunk(chk)
-		for row, i := iter.Begin(), 0; row != iter.End(); row, i = iter.Next(), i+1 {
-			datums := row.GetDatumRow(fieldTps)
-			rootRowCollector.Samples[i].Columns = datums
-		}
-		needNormalDecode = false
-	}
-NORMALDECODE:
-	if needNormalDecode {
-		// normal decode
+	// If there's no virtual column or we meet error during eval virtual column, we fallback to normal decode otherwise.
+	if !hasVirtualCol || !e.decodeSampleDataWithVirtualColumn(rootRowCollector, fieldTps, virtualColIdx, schema) {
 		for _, sample := range rootRowCollector.Samples {
 			for i := range sample.Columns {
 				sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone)
@@ -893,16 +898,6 @@ NORMALDECODE:
 	}
 
 	colLen := len(e.colsInfo)
-
-	indexPushedDownResult := <-idxNDVPushDownCh
-	if indexPushedDownResult.err != nil {
-		return 0, nil, nil, nil, nil, indexPushedDownResult.err
-	}
-	for _, offset := range indexesWithVirtualColOffsets {
-		ret := indexPushedDownResult.results[e.indexes[offset].ID]
-		rootRowCollector.NullCount[colLen+offset] = ret.Count
-		rootRowCollector.FMSketches[colLen+offset] = ret.Fms[0]
-	}
 
 	// The order of the samples are broken when merging samples from sub-collectors.
 	// So now we need to sort the samples according to the handle in order to calculate correlation.
@@ -951,6 +946,16 @@ NORMALDECODE:
 		hists = append(hists, hg)
 		topns = append(topns, topn)
 		fmSketches = append(fmSketches, rootRowCollector.FMSketches[i])
+	}
+
+	indexPushedDownResult := <-idxNDVPushDownCh
+	if indexPushedDownResult.err != nil {
+		return 0, nil, nil, nil, nil, indexPushedDownResult.err
+	}
+	for _, offset := range indexesWithVirtualColOffsets {
+		ret := indexPushedDownResult.results[e.indexes[offset].ID]
+		rootRowCollector.NullCount[colLen+offset] = ret.Count
+		rootRowCollector.FMSketches[colLen+offset] = ret.Fms[0]
 	}
 
 	// build index stats
@@ -1118,13 +1123,12 @@ func (e *AnalyzeColumnsExec) buildSubIndexJobForVirtualCol(indexInfos []*model.I
 		statsVersion := new(int32)
 		*statsVersion = statistics.Version1
 		// No Top-N
-		topnSize := new(int32)
-		*topnSize = 0
+		topnSize := int32(0)
 		idxExec.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
 			// No histogram.
 			BucketSize: 0,
 			NumColumns: int32(len(indexInfo.Columns)),
-			TopNSize:   topnSize,
+			TopNSize:   &topnSize,
 			Version:    statsVersion,
 			SketchSize: maxSketchSize,
 		}
