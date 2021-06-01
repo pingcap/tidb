@@ -286,7 +286,9 @@ func (s *RegionRequestSender) SendReqCtx(
 		if err != nil {
 			return nil, nil, err
 		}
-		rpcCtx.lastPeerID = lastPeerID
+		if rpcCtx != nil {
+			rpcCtx.lastPeerID = lastPeerID
+		}
 
 		failpoint.Inject("invalidCacheAndRetry", func() {
 			// cooperate with github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff
