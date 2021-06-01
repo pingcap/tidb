@@ -694,7 +694,7 @@ func (s *partitionTableSuite) TestBatchGetforRangeandListPartitionTable(c *C) {
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 
 	// list partition table
-	tk.MustExec(`create table tlist(a int, b int, unique index idx_a(a), index idx_b(b)) partition by list(a)( 
+	tk.MustExec(`create table tlist(a int, b int, unique index idx_a(a), index idx_b(b)) partition by list(a)(
 		partition p0 values in (1, 2, 3, 4),
 			partition p1 values in (5, 6, 7, 8),
 			partition p2 values in (9, 10, 11, 12));`)
@@ -1660,6 +1660,24 @@ func (s *partitionTableSuite) TestAddDropPartitions(c *C) {
 	tk.MustPartition(`select * from t where a < 3`, "p1").Sort().Check(testkit.Rows())
 	tk.MustPartition(`select * from t where a < 8`, "p1").Sort().Check(testkit.Rows("7"))
 	tk.MustPartition(`select * from t where a < 20`, "p1,p2,p3").Sort().Check(testkit.Rows("12", "15", "7"))
+}
+
+func (s *partitionTableSuite) PartitionPruningInTransaction(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_pruning_transaction")
+	defer tk.MustExec(`drop database test_pruning_transaction`)
+	tk.MustExec("use test_pruning_transaction")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec(`create table t(a int, b int) partition by range(a) (partition p0 values less than(3), partition p1 values less than (5), partition p2 values less than(11))`)
+	tk.MustExec(`begin`)
+	tk.MustPartition(`select * from t`, "all")
+	tk.MustPartition(`select * from t where a > 4`, "p1,p2") // partition pruning can work in transactions
+	tk.MustPartition(`select * from t where a > 7`, "p2")
+	tk.MustExec(`rollback`)
 }
 
 func (s *partitionTableSuite) TestDML(c *C) {
