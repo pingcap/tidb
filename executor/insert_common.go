@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -1049,8 +1048,8 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	}
 	if e.collectRuntimeStatsEnabled() {
 		if snapshot := txn.GetSnapshot(); snapshot != nil {
-			snapshot.SetOption(tikvstore.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
-			defer snapshot.DelOption(tikvstore.CollectRuntimeStats)
+			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+			defer snapshot.SetOption(kv.CollectRuntimeStats, nil)
 		}
 	}
 	prefetchStart := time.Now()
@@ -1176,7 +1175,7 @@ func (e *InsertRuntimeStat) Clone() execdetails.RuntimeStats {
 	}
 	if e.SnapshotRuntimeStats != nil {
 		snapshotStats := e.SnapshotRuntimeStats.Clone()
-		newRs.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+		newRs.SnapshotRuntimeStats = snapshotStats
 	}
 	if e.BasicRuntimeStats != nil {
 		basicStats := e.BasicRuntimeStats.Clone()
@@ -1194,7 +1193,7 @@ func (e *InsertRuntimeStat) Merge(other execdetails.RuntimeStats) {
 	if tmp.SnapshotRuntimeStats != nil {
 		if e.SnapshotRuntimeStats == nil {
 			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
-			e.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+			e.SnapshotRuntimeStats = snapshotStats
 		} else {
 			e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
 		}

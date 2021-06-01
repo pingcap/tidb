@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"bytes"
 	"context"
 	"sync/atomic"
 	"time"
@@ -21,6 +22,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
 	pd "github.com/tikv/pd/client"
@@ -47,6 +50,12 @@ func (s StoreProbe) Begin() (TxnProbe, error) {
 	return TxnProbe{KVTxn: txn}, err
 }
 
+// GetSnapshot returns a snapshot.
+func (s StoreProbe) GetSnapshot(ts uint64) SnapshotProbe {
+	snap := s.KVStore.GetSnapshot(ts)
+	return SnapshotProbe{KVSnapshot: snap}
+}
+
 // SetRegionCachePDClient replaces pd client inside region cache.
 func (s StoreProbe) SetRegionCachePDClient(client pd.Client) {
 	s.regionCache.pdClient = client
@@ -59,7 +68,7 @@ func (s StoreProbe) ClearTxnLatches() {
 
 // SendTxnHeartbeat renews a txn's ttl.
 func (s StoreProbe) SendTxnHeartbeat(ctx context.Context, key []byte, startTS uint64, ttl uint64) (uint64, error) {
-	bo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil)
+	bo := retry.NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil)
 	return sendTxnHeartBeat(bo, s.KVStore, key, startTS, ttl)
 }
 
@@ -71,6 +80,23 @@ func (s StoreProbe) LoadSafePoint() (uint64, error) {
 // SaveSafePoint saves safepoint to kv.
 func (s StoreProbe) SaveSafePoint(v uint64) error {
 	return saveSafePoint(s.GetSafePointKV(), v)
+}
+
+// SetRegionCacheStore is used to set a store in region cache, for testing only
+func (s StoreProbe) SetRegionCacheStore(id uint64, storeType tikvrpc.EndpointType, state uint64, labels []*metapb.StoreLabel) {
+	s.regionCache.storeMu.Lock()
+	defer s.regionCache.storeMu.Unlock()
+	s.regionCache.storeMu.stores[id] = &Store{
+		storeID:   id,
+		storeType: storeType,
+		state:     state,
+		labels:    labels,
+	}
+}
+
+// SetSafeTS is used to set safeTS for the store with `storeID`
+func (s StoreProbe) SetSafeTS(storeID, safeTS uint64) {
+	s.setSafeTS(storeID, safeTS)
 }
 
 // TxnProbe wraps a txn and exports internal states for testing purpose.
@@ -178,12 +204,12 @@ func (c CommitterProbe) SetMutations(muts CommitterMutations) {
 
 // SetCommitTS resets the committer's commit ts.
 func (c CommitterProbe) SetCommitTS(ts uint64) {
-	c.commitTS = ts
+	atomic.StoreUint64(&c.commitTS, ts)
 }
 
 // GetCommitTS returns the commit ts of the committer.
 func (c CommitterProbe) GetCommitTS() uint64 {
-	return c.commitTS
+	return atomic.LoadUint64(&c.commitTS)
 }
 
 // GetMinCommitTS returns the minimal commit ts can be used.
@@ -259,12 +285,12 @@ func (c CommitterProbe) PrewriteAllMutations(ctx context.Context) error {
 
 // PrewriteMutations performs the first phase of commit for given keys.
 func (c CommitterProbe) PrewriteMutations(ctx context.Context, mutations CommitterMutations) error {
-	return c.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), mutations)
+	return c.prewriteMutations(retry.NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), mutations)
 }
 
 // CommitMutations performs the second phase of commit.
 func (c CommitterProbe) CommitMutations(ctx context.Context) error {
-	return c.commitMutations(NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), nil), c.mutationsOfKeys([][]byte{c.primaryKey}))
+	return c.commitMutations(retry.NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), nil), c.mutationsOfKeys([][]byte{c.primaryKey}))
 }
 
 // MutationsOfKeys returns mutations match the keys.
@@ -274,7 +300,7 @@ func (c CommitterProbe) MutationsOfKeys(keys [][]byte) CommitterMutations {
 
 // PessimisticRollbackMutations rolls mutations back.
 func (c CommitterProbe) PessimisticRollbackMutations(ctx context.Context, muts CommitterMutations) error {
-	return c.pessimisticRollbackMutations(NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, nil), muts)
+	return c.pessimisticRollbackMutations(retry.NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, nil), muts)
 }
 
 // Cleanup cleans dirty data of a committer.
@@ -298,6 +324,12 @@ func (c CommitterProbe) BuildPrewriteRequest(regionID, regionConf, regionVersion
 	var batch batchMutations
 	batch.mutations = mutations
 	batch.region = RegionVerID{regionID, regionConf, regionVersion}
+	for _, key := range mutations.GetKeys() {
+		if bytes.Equal(key, c.primary()) {
+			batch.isPrimary = true
+			break
+		}
+	}
 	return c.buildPrewriteRequest(batch, txnSize)
 }
 
@@ -353,8 +385,35 @@ func (c CommitterProbe) SetPrimaryKeyBlocker(ac, bk chan struct{}) {
 
 // CleanupMutations performs the clean up phase.
 func (c CommitterProbe) CleanupMutations(ctx context.Context) error {
-	bo := NewBackofferWithVars(ctx, cleanupMaxBackoff, nil)
+	bo := retry.NewBackofferWithVars(ctx, cleanupMaxBackoff, nil)
 	return c.cleanupMutations(bo, c.mutations)
+}
+
+// SnapshotProbe exposes some snapshot utilities for testing purpose.
+type SnapshotProbe struct {
+	*KVSnapshot
+}
+
+// MergeRegionRequestStats merges RPC runtime stats into snapshot's stats.
+func (s SnapshotProbe) MergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats) {
+	s.mergeRegionRequestStats(stats)
+}
+
+// RecordBackoffInfo records backoff stats into snapshot's stats.
+func (s SnapshotProbe) RecordBackoffInfo(bo *Backoffer) {
+	s.recordBackoffInfo(bo)
+}
+
+// MergeExecDetail merges exec stats into snapshot's stats.
+func (s SnapshotProbe) MergeExecDetail(detail *pb.ExecDetailsV2) {
+	s.mergeExecDetail(detail)
+}
+
+// FormatStats dumps information of stats.
+func (s SnapshotProbe) FormatStats() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mu.stats.String()
 }
 
 // LockProbe exposes some lock utilities for testing purpose.
@@ -394,13 +453,13 @@ func (l LockResolverProbe) ResolveLockAsync(bo *Backoffer, lock *Lock, status Tx
 
 // ResolveLock resolves single lock.
 func (l LockResolverProbe) ResolveLock(ctx context.Context, lock *Lock) error {
-	bo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, nil)
+	bo := retry.NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, nil)
 	return l.resolveLock(bo, lock, TxnStatus{}, false, make(map[RegionVerID]struct{}))
 }
 
 // ResolvePessimisticLock resolves single pessimistic lock.
 func (l LockResolverProbe) ResolvePessimisticLock(ctx context.Context, lock *Lock) error {
-	bo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, nil)
+	bo := retry.NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, nil)
 	return l.resolvePessimisticLock(bo, lock, make(map[RegionVerID]struct{}))
 }
 
@@ -500,4 +559,34 @@ func (c ConfigProbe) StorePreSplitSizeThreshold(v uint32) {
 // SetOracleUpdateInterval sets the interval of updating cached ts.
 func (c ConfigProbe) SetOracleUpdateInterval(v int) {
 	oracleUpdateInterval = v
+}
+
+// GetRawBatchPutSize returns the raw batch put size config.
+func (c ConfigProbe) GetRawBatchPutSize() int {
+	return rawBatchPutSize
+}
+
+// RawKVClientProbe wraps RawKVClient and exposes internal states for testing purpose.
+type RawKVClientProbe struct {
+	*RawKVClient
+}
+
+// GetRegionCache returns the internal region cache container.
+func (c RawKVClientProbe) GetRegionCache() *RegionCache {
+	return c.regionCache
+}
+
+// SetRegionCache resets the internal region cache container.
+func (c RawKVClientProbe) SetRegionCache(regionCache *RegionCache) {
+	c.regionCache = regionCache
+}
+
+// SetPDClient resets the interval PD client.
+func (c RawKVClientProbe) SetPDClient(client pd.Client) {
+	c.pdClient = client
+}
+
+// SetRPCClient resets the internal RPC client.
+func (c RawKVClientProbe) SetRPCClient(client Client) {
+	c.rpcClient = client
 }

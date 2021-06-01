@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
@@ -307,7 +306,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 			normalizeSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()))
 			normalizeSQL = plannercore.EraseLastSemicolonInSQL(normalizeSQL)
 			hash := parser.DigestNormalized(normalizeSQL)
-			return x.Stmt, normalizeSQL, hash, nil
+			return x.Stmt, normalizeSQL, hash.String(), nil
 		case *ast.SetOprStmt:
 			plannercore.EraseLastSemicolon(x)
 			var normalizeExplainSQL string
@@ -323,7 +322,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 			}
 			normalizeSQL := normalizeExplainSQL[idx:]
 			hash := parser.DigestNormalized(normalizeSQL)
-			return x.Stmt, normalizeSQL, hash, nil
+			return x.Stmt, normalizeSQL, hash.String(), nil
 		}
 	case *ast.SelectStmt, *ast.SetOprStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 		plannercore.EraseLastSemicolon(x)
@@ -336,7 +335,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 			return x, "", "", nil
 		}
 		normalizedSQL, hash := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
-		return x, normalizedSQL, hash, nil
+		return x, normalizedSQL, hash.String(), nil
 	}
 	return nil, "", "", nil
 }
@@ -533,7 +532,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 			warns = append(warns, warn)
 		}
 		stmtHints.HasReplicaReadHint = true
-		stmtHints.ReplicaRead = byte(tikvstore.ReplicaReadFollower)
+		stmtHints.ReplicaRead = byte(kv.ReplicaReadFollower)
 	}
 	// Handle MAX_EXECUTION_TIME
 	if maxExecutionTimeCnt != 0 {

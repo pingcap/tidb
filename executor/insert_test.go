@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -246,6 +247,9 @@ func (s *testSuite10) TestPaddingCommonHandle(c *C) {
 }
 
 func (s *testSuite2) TestInsertReorgDelete(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -334,6 +338,16 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	c.Assert(err.Error(), Equals, `[types:8033]invalid year`)
 }
 
+func (s *testSuite3) TestInsertValueForCastDecimalField(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1(a decimal(15,2));`)
+	tk.MustExec(`insert into t1 values (1111111111111.01);`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`1111111111111.01`))
+	tk.MustQuery(`select cast(a as decimal) from t1;`).Check(testkit.Rows(`9999999999`))
+}
+
 func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -412,7 +426,7 @@ func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (ts timestamp)")
 	tk.MustExec("insert into t values ('2020-10-22T12:00:00Z'), ('2020-10-22T13:00:00Z'), ('2020-10-22T14:00:00Z')")
-	tk.MustQuery(fmt.Sprintf("select count(*) from t where ts > '2020-10-22T12:00:00Z'")).Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from t where ts > '2020-10-22T12:00:00Z'").Check(testkit.Rows("2"))
 
 	// test for datetime with fsp
 	fspCases := []struct {
@@ -1577,13 +1591,137 @@ func (s *testSuite10) TestBinaryLiteralInsertToSet(c *C) {
 	tk.MustQuery("select * from bintest").Check(testkit.Rows("a"))
 }
 
+var _ = SerialSuites(&testSuite13{&baseTestSuite{}})
+
+type testSuite13 struct {
+	*baseTestSuite
+}
+
+func (s *testSuite13) TestGlobalTempTableAutoInc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists temp_test")
+	tk.MustExec("create global temporary table temp_test(id int primary key auto_increment) on commit delete rows")
+	defer tk.MustExec("drop table if exists temp_test")
+
+	// Data is cleared after transaction auto commits.
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select * from temp_test").Check(testkit.Rows())
+
+	// Data is not cleared inside a transaction.
+	tk.MustExec("begin")
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select * from temp_test").Check(testkit.Rows("1"))
+	tk.MustExec("commit")
+
+	// AutoID allocator is cleared.
+	tk.MustExec("begin")
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select * from temp_test").Check(testkit.Rows("1"))
+	// Test whether auto-inc is incremental
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select id from temp_test order by id").Check(testkit.Rows("1", "2"))
+	tk.MustExec("commit")
+
+	// multi-value insert
+	tk.MustExec("begin")
+	tk.MustExec("insert into temp_test(id) values(0), (0)")
+	tk.MustQuery("select id from temp_test order by id").Check(testkit.Rows("1", "2"))
+	tk.MustExec("insert into temp_test(id) values(0), (0)")
+	tk.MustQuery("select id from temp_test order by id").Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustExec("commit")
+
+	// rebase
+	tk.MustExec("begin")
+	tk.MustExec("insert into temp_test(id) values(10)")
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select id from temp_test order by id").Check(testkit.Rows("10", "11"))
+	tk.MustExec("insert into temp_test(id) values(20), (30)")
+	tk.MustExec("insert into temp_test(id) values(0), (0)")
+	tk.MustQuery("select id from temp_test order by id").Check(testkit.Rows("10", "11", "20", "30", "31", "32"))
+	tk.MustExec("commit")
+}
+
+func (s *testSuite13) TestGlobalTempTableRowID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists temp_test")
+	tk.MustExec("create global temporary table temp_test(id int) on commit delete rows")
+	defer tk.MustExec("drop table if exists temp_test")
+
+	// Data is cleared after transaction auto commits.
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select _tidb_rowid from temp_test").Check(testkit.Rows())
+
+	// Data is not cleared inside a transaction.
+	tk.MustExec("begin")
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select _tidb_rowid from temp_test").Check(testkit.Rows("1"))
+	tk.MustExec("commit")
+
+	// AutoID allocator is cleared.
+	tk.MustExec("begin")
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select _tidb_rowid from temp_test").Check(testkit.Rows("1"))
+	// Test whether row id is incremental
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select _tidb_rowid from temp_test order by _tidb_rowid").Check(testkit.Rows("1", "2"))
+	tk.MustExec("commit")
+
+	// multi-value insert
+	tk.MustExec("begin")
+	tk.MustExec("insert into temp_test(id) values(0), (0)")
+	tk.MustQuery("select _tidb_rowid from temp_test order by _tidb_rowid").Check(testkit.Rows("1", "2"))
+	tk.MustExec("insert into temp_test(id) values(0), (0)")
+	tk.MustQuery("select _tidb_rowid from temp_test order by _tidb_rowid").Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustExec("commit")
+}
+
+func (s *testSuite13) TestGlobalTempTableParallel(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists temp_test")
+	tk.MustExec("create global temporary table temp_test(id int primary key auto_increment) on commit delete rows")
+	defer tk.MustExec("drop table if exists temp_test")
+
+	threads := 8
+	loops := 1
+	wg := sync.WaitGroup{}
+	wg.Add(threads)
+
+	insertFunc := func() {
+		defer wg.Done()
+		newTk := testkit.NewTestKitWithInit(c, s.store)
+		newTk.MustExec("begin")
+		for i := 0; i < loops; i++ {
+			newTk.MustExec("insert temp_test value(0)")
+			newTk.MustExec("insert temp_test value(0), (0)")
+		}
+		maxID := strconv.Itoa(loops * 3)
+		newTk.MustQuery("select max(id) from temp_test").Check(testkit.Rows(maxID))
+		newTk.MustExec("commit")
+	}
+
+	for i := 0; i < threads; i++ {
+		go insertFunc()
+	}
+	wg.Wait()
+}
+
 func (s *testSuite10) TestStringtoDecimal(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id decimal(10))")
 	tk.MustGetErrCode("insert into t values('1sdf')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('1edf')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('12Ea')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('1.2A')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('1.2.3.4.5')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('1.2.')", errno.ErrTruncatedWrongValueForField)
 	tk.MustGetErrCode("insert into t values('1,999.00')", errno.ErrTruncatedWrongValueForField)
-	tk.MustExec("insert into t values('1')")
+	tk.MustExec("insert into t values('12e-3')")
+	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '0.012'"))
+	tk.MustQuery("select id from t").Check(testkit.Rows("0"))
 	tk.MustExec("drop table if exists t")
 }

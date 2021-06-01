@@ -21,9 +21,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
-	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 )
 
 type testSafePointSuite struct {
@@ -52,8 +51,8 @@ func (s *testSafePointSuite) beginTxn(c *C) tikv.TxnProbe {
 	return txn
 }
 
-func mymakeKeys(rowNum int, prefix string) []tidbkv.Key {
-	keys := make([]tidbkv.Key, 0, rowNum)
+func mymakeKeys(rowNum int, prefix string) [][]byte {
+	keys := make([][]byte, 0, rowNum)
 	for i := 0; i < rowNum; i++ {
 		k := encodeKey(prefix, s08d("key", i))
 		keys = append(keys, k)
@@ -92,8 +91,9 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 
 	_, geterr2 := txn2.Get(context.TODO(), encodeKey(s.prefix, s08d("key", 0)))
 	c.Assert(geterr2, NotNil)
-	isFallBehind := terror.ErrorEqual(errors.Cause(geterr2), kv.ErrGCTooEarly)
-	isMayFallBehind := terror.ErrorEqual(errors.Cause(geterr2), kv.ErrPDServerTimeout.GenWithStackByArgs("start timestamp may fall behind safe point"))
+
+	_, isFallBehind := errors.Cause(geterr2).(*tikverr.ErrGCTooEarly)
+	isMayFallBehind := terror.ErrorEqual(errors.Cause(geterr2), tikverr.NewErrPDServerTimeout("start timestamp may fall behind safe point"))
 	isBehind := isFallBehind || isMayFallBehind
 	c.Assert(isBehind, IsTrue)
 
@@ -104,8 +104,8 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 
 	_, seekerr := txn3.Iter(encodeKey(s.prefix, ""), nil)
 	c.Assert(seekerr, NotNil)
-	isFallBehind = terror.ErrorEqual(errors.Cause(geterr2), kv.ErrGCTooEarly)
-	isMayFallBehind = terror.ErrorEqual(errors.Cause(geterr2), kv.ErrPDServerTimeout.GenWithStackByArgs("start timestamp may fall behind safe point"))
+	_, isFallBehind = errors.Cause(geterr2).(*tikverr.ErrGCTooEarly)
+	isMayFallBehind = terror.ErrorEqual(errors.Cause(geterr2), tikverr.NewErrPDServerTimeout("start timestamp may fall behind safe point"))
 	isBehind = isFallBehind || isMayFallBehind
 	c.Assert(isBehind, IsTrue)
 
@@ -115,10 +115,10 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 
 	s.waitUntilErrorPlugIn(txn4.StartTS())
 
-	_, batchgeterr := txn4.BatchGet(context.Background(), keys)
+	_, batchgeterr := toTiDBTxn(&txn4).BatchGet(context.Background(), toTiDBKeys(keys))
 	c.Assert(batchgeterr, NotNil)
-	isFallBehind = terror.ErrorEqual(errors.Cause(geterr2), kv.ErrGCTooEarly)
-	isMayFallBehind = terror.ErrorEqual(errors.Cause(geterr2), kv.ErrPDServerTimeout.GenWithStackByArgs("start timestamp may fall behind safe point"))
+	_, isFallBehind = errors.Cause(geterr2).(*tikverr.ErrGCTooEarly)
+	isMayFallBehind = terror.ErrorEqual(errors.Cause(geterr2), tikverr.NewErrPDServerTimeout("start timestamp may fall behind safe point"))
 	isBehind = isFallBehind || isMayFallBehind
 	c.Assert(isBehind, IsTrue)
 }

@@ -17,7 +17,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"runtime"
 	"strconv"
@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/profile"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/signal"
 	"github.com/pingcap/tidb/util/sys/linux"
 	storageSys "github.com/pingcap/tidb/util/sys/storage"
@@ -149,15 +150,13 @@ var (
 	proxyProtocolHeaderTimeout = flag.Uint(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second.")
 )
 
-var (
-	storage  kv.Storage
-	dom      *domain.Domain
-	svr      *server.Server
-	graceful bool
-)
-
 func main() {
+	help := flag.Bool("help", false, "show the usage")
 	flag.Parse()
+	if *help {
+		flag.Usage()
+		os.Exit(0)
+	}
 	if *version {
 		fmt.Println(printer.GetTiDBInfo())
 		os.Exit(0)
@@ -179,11 +178,18 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
-	createStoreAndDomain()
-	createServer()
-	signal.SetupSignalHandler(serverShutdown)
-	runServer()
-	cleanup()
+
+	storage, dom := createStoreAndDomain()
+	svr := createServer(storage, dom)
+
+	exited := make(chan struct{})
+	signal.SetupSignalHandler(func(graceful bool) {
+		svr.Close()
+		cleanup(svr, storage, dom, graceful)
+		close(exited)
+	})
+	terror.MustNil(svr.Run())
+	<-exited
 	syncLog()
 }
 
@@ -258,15 +264,16 @@ func registerMetrics() {
 	metrics.RegisterMetrics()
 }
 
-func createStoreAndDomain() {
+func createStoreAndDomain() (kv.Storage, *domain.Domain) {
 	cfg := config.GetGlobalConfig()
 	fullPath := fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
 	var err error
-	storage, err = kvstore.New(fullPath)
+	storage, err := kvstore.New(fullPath)
 	terror.MustNil(err)
 	// Bootstrap a session to load information schema.
-	dom, err = session.BootstrapSession(storage)
+	dom, err := session.BootstrapSession(storage)
 	terror.MustNil(err)
+	return storage, dom
 }
 
 func setupBinlogClient() {
@@ -522,14 +529,21 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
 	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
 	variable.SetSysVar(variable.TIDBMemQuotaQuery, strconv.FormatInt(cfg.MemQuotaQuery, 10))
-	variable.SetSysVar("lower_case_table_names", strconv.Itoa(cfg.LowerCaseTableNames))
-	variable.SetSysVar(variable.LogBin, variable.BoolToOnOff(config.GetGlobalConfig().Binlog.Enable))
+	variable.SetSysVar(variable.LowerCaseTableNames, strconv.Itoa(cfg.LowerCaseTableNames))
+	variable.SetSysVar(variable.LogBin, variable.BoolToOnOff(cfg.Binlog.Enable))
 	variable.SetSysVar(variable.Port, fmt.Sprintf("%d", cfg.Port))
 	variable.SetSysVar(variable.Socket, cfg.Socket)
 	variable.SetSysVar(variable.DataDir, cfg.Path)
 	variable.SetSysVar(variable.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
 	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ", "))
 	variable.MemoryUsageAlarmRatio.Store(cfg.Performance.MemoryUsageAlarmRatio)
+	if hostname, err := os.Hostname(); err != nil {
+		variable.SetSysVar(variable.Hostname, hostname)
+	}
+
+	if cfg.Security.EnableSEM {
+		sem.Enable()
+	}
 
 	// For CI environment we default enable prepare-plan-cache.
 	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)
@@ -551,23 +565,22 @@ func setGlobalVars() {
 	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
-	c := config.GetGlobalConfig()
-	executor.GlobalDiskUsageTracker.SetBytesLimit(c.TempStorageQuota)
-	if c.Performance.ServerMemoryQuota < 1 {
+	executor.GlobalDiskUsageTracker.SetBytesLimit(cfg.TempStorageQuota)
+	if cfg.Performance.ServerMemoryQuota < 1 {
 		// If MaxMemory equals 0, it means unlimited
 		executor.GlobalMemoryUsageTracker.SetBytesLimit(-1)
 	} else {
-		executor.GlobalMemoryUsageTracker.SetBytesLimit(int64(c.Performance.ServerMemoryQuota))
+		executor.GlobalMemoryUsageTracker.SetBytesLimit(int64(cfg.Performance.ServerMemoryQuota))
 	}
 	kvcache.GlobalLRUMemUsageTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
 
 	t, err := time.ParseDuration(cfg.TiKVClient.StoreLivenessTimeout)
-	if err != nil {
+	if err != nil || t < 0 {
 		logutil.BgLogger().Fatal("invalid duration value for store-liveness-timeout",
-			zap.String("currentValue", config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout))
+			zap.String("currentValue", cfg.TiKVClient.StoreLivenessTimeout))
 	}
 	tikv.StoreLivenessTimeout = t
-	parsertypes.TiDBStrictIntegerDisplayWidth = config.GetGlobalConfig().DeprecateIntegerDisplayWidth
+	parsertypes.TiDBStrictIntegerDisplayWidth = cfg.DeprecateIntegerDisplayWidth
 }
 
 func setupLog() {
@@ -581,7 +594,7 @@ func setupLog() {
 	if len(os.Getenv("GRPC_DEBUG")) > 0 {
 		grpclog.SetLoggerV2(grpclog.NewLoggerV2WithVerbosity(os.Stderr, os.Stderr, os.Stderr, 999))
 	} else {
-		grpclog.SetLoggerV2(grpclog.NewLoggerV2(ioutil.Discard, ioutil.Discard, os.Stderr))
+		grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, io.Discard, os.Stderr))
 	}
 	// trigger internal http(s) client init.
 	util.InternalHTTPClient()
@@ -595,24 +608,20 @@ func printInfo() {
 	log.SetLevel(level)
 }
 
-func createServer() {
+func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
 	cfg := config.GetGlobalConfig()
 	driver := server.NewTiDBDriver(storage)
-	var err error
-	svr, err = server.NewServer(cfg, driver)
+	svr, err := server.NewServer(cfg, driver)
 	// Both domain and storage have started, so we have to clean them before exiting.
-	terror.MustNil(err, closeDomainAndStorage)
+	if err != nil {
+		closeDomainAndStorage(storage, dom)
+		log.Fatal("failed to create the server", zap.Error(err), zap.Stack("stack"))
+	}
 	svr.SetDomain(dom)
 	svr.InitGlobalConnID(dom.ServerID)
 	go dom.ExpensiveQueryHandle().SetSessionManager(svr).Run()
 	dom.InfoSyncer().SetSessionManager(svr)
-}
-
-func serverShutdown(isgraceful bool) {
-	if isgraceful {
-		graceful = true
-	}
-	svr.Close()
+	return svr
 }
 
 func setupMetrics() {
@@ -623,7 +632,7 @@ func setupMetrics() {
 		metrics.TimeJumpBackCounter.Inc()
 	}
 	callBackCount := 0
-	sucessCallBack := func() {
+	successCallBack := func() {
 		callBackCount++
 		// It is callback by monitor per second, we increase metrics.KeepAliveCounter per 5s.
 		if callBackCount >= 5 {
@@ -631,7 +640,7 @@ func setupMetrics() {
 			metrics.KeepAliveCounter.Inc()
 		}
 	}
-	go systimemon.StartMonitor(time.Now, systimeErrHandler, sucessCallBack)
+	go systimemon.StartMonitor(time.Now, systimeErrHandler, successCallBack)
 
 	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
 }
@@ -647,26 +656,21 @@ func setupTracing() {
 	opentracing.SetGlobalTracer(tracer)
 }
 
-func runServer() {
-	err := svr.Run()
-	terror.MustNil(err)
-}
-
-func closeDomainAndStorage() {
+func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	atomic.StoreUint32(&tikv.ShuttingDown, 1)
 	dom.Close()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))
 }
 
-func cleanup() {
+func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, graceful bool) {
 	if graceful {
 		svr.GracefulDown(context.Background(), nil)
 	} else {
 		svr.TryGracefulDown()
 	}
 	plugin.Shutdown(context.Background())
-	closeDomainAndStorage()
+	closeDomainAndStorage(storage, dom)
 	disk.CleanUp()
 }
 

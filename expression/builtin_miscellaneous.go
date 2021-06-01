@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/vitess"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -51,6 +52,7 @@ var (
 	_ functionClass = &releaseAllLocksFunctionClass{}
 	_ functionClass = &uuidFunctionClass{}
 	_ functionClass = &uuidShortFunctionClass{}
+	_ functionClass = &vitessHashFunctionClass{}
 )
 
 var (
@@ -73,6 +75,7 @@ var (
 	_ builtinFunc = &builtinIsIPv4MappedSig{}
 	_ builtinFunc = &builtinIsIPv6Sig{}
 	_ builtinFunc = &builtinUUIDSig{}
+	_ builtinFunc = &builtinVitessHashSig{}
 
 	_ builtinFunc = &builtinNameConstIntSig{}
 	_ builtinFunc = &builtinNameConstRealSig{}
@@ -1045,4 +1048,49 @@ type uuidShortFunctionClass struct {
 
 func (c *uuidShortFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "UUID_SHORT")
+}
+
+type vitessHashFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *vitessHashFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+
+	bf.tp.Flen = 20 //64 bit unsigned
+	bf.tp.Flag |= mysql.UnsignedFlag
+	types.SetBinChsClnFlag(bf.tp)
+
+	sig := &builtinVitessHashSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_VitessHash)
+	return sig, nil
+}
+
+type builtinVitessHashSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinVitessHashSig) Clone() builtinFunc {
+	newSig := &builtinVitessHashSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals VITESS_HASH(int64).
+func (b *builtinVitessHashSig) evalInt(row chunk.Row) (int64, bool, error) {
+	shardKeyInt, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return 0, true, err
+	}
+	var hashed uint64
+	if hashed, err = vitess.HashUint64(uint64(shardKeyInt)); err != nil {
+		return 0, true, err
+	}
+	return int64(hashed), false, nil
 }

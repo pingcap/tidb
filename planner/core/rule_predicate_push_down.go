@@ -42,6 +42,12 @@ func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expr
 		p.Children()[chIdx] = dual
 		return
 	}
+
+	conditions = DeleteTrueExprs(p, conditions)
+	if len(conditions) == 0 {
+		p.Children()[chIdx] = child
+		return
+	}
 	selection := LogicalSelection{Conditions: conditions}.Init(p.SCtx(), p.SelectBlockOffset())
 	selection.SetChildren(child)
 	p.Children()[chIdx] = selection
@@ -73,6 +79,8 @@ func splitSetGetVarFunc(filters []expression.Expression) ([]expression.Expressio
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+	predicates = DeleteTrueExprs(p, predicates)
+	p.Conditions = DeleteTrueExprs(p, p.Conditions)
 	canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
 	retConditions, child := p.children[0].PredicatePushDown(append(canBePushDown, predicates...))
 	retConditions = append(retConditions, canNotBePushDown...)
@@ -100,6 +108,7 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression)
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	predicates = expression.PropagateConstant(ds.ctx, predicates)
+	predicates = DeleteTrueExprs(ds, predicates)
 	ds.allConds = predicates
 	ds.pushedDownConds, predicates = expression.PushDownExprs(ds.ctx.GetSessionVars().StmtCtx, predicates, ds.ctx.GetClient(), kv.UnSpecified)
 	return predicates, ds
@@ -371,7 +380,7 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 	for _, cond := range predicates {
 		newFilter := expression.ColumnSubstitute(cond, p.Schema(), p.Exprs)
 		if !expression.HasGetSetVarFunc(newFilter) {
-			canBePushed = append(canBePushed, expression.ColumnSubstitute(cond, p.Schema(), p.Exprs))
+			canBePushed = append(canBePushed, newFilter)
 		} else {
 			canNotBePushed = append(canNotBePushed, cond)
 		}
@@ -530,6 +539,28 @@ func Conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
 		return dual
 	}
 	return nil
+}
+
+// DeleteTrueExprs deletes the surely true expressions
+func DeleteTrueExprs(p LogicalPlan, conds []expression.Expression) []expression.Expression {
+	newConds := make([]expression.Expression, 0, len(conds))
+	for _, cond := range conds {
+		con, ok := cond.(*expression.Constant)
+		if !ok {
+			newConds = append(newConds, cond)
+			continue
+		}
+		if expression.ContainMutableConst(p.SCtx(), []expression.Expression{con}) {
+			newConds = append(newConds, cond)
+			continue
+		}
+		sc := p.SCtx().GetSessionVars().StmtCtx
+		if isTrue, err := con.Value.ToBool(sc); err == nil && isTrue == 1 {
+			continue
+		}
+		newConds = append(newConds, cond)
+	}
+	return newConds
 }
 
 // outerJoinPropConst propagates constant equal and column equal conditions over outer join.

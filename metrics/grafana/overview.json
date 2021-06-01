@@ -497,9 +497,9 @@
           "tableColumn": "",
           "targets": [
             {
-              "expr": "delta(pd_tso_events{tidb_cluster=\"$tidb_cluster\", type=\"save\",instance=\"$instance\"}[1m]) > bool 0",
+              "expr": "pd_tso_role{tidb_cluster=\"$tidb_cluster\", instance=\"$instance\", dc=\"global\"}",
               "format": "time_series",
-              "interval": "",
+              "instant": true,
               "intervalFactor": 2,
               "legendFormat": "",
               "metric": "pd_server_tso",
@@ -514,13 +514,18 @@
           "valueMaps": [
             {
               "op": "=",
-              "text": "Leader",
-              "value": "1"
+              "text": "Follower",
+              "value": "null"
             },
             {
               "op": "=",
               "text": "Follower",
-              "value": "null"
+              "value": "0"
+            },
+            {
+              "op": "=",
+              "text": "Leader",
+              "value": "1"
             }
           ],
           "valueName": "current"
@@ -5165,25 +5170,20 @@
     "list": [
       {
         "allValue": null,
-        "current": {
-        },
+        "current": {},
         "datasource": "${DS_TEST-CLUSTER}",
         "hide": 2,
         "includeAll": false,
         "label": "tidb_cluster",
         "multi": false,
         "name": "tidb_cluster",
-        "options": [
-
-        ],
+        "options": [],
         "query": "label_values(pd_cluster_status, tidb_cluster)",
         "refresh": 2,
         "regex": "",
         "sort": 1,
         "tagValuesQuery": "",
-        "tags": [
-
-        ],
+        "tags": [],
         "tagsQuery": "",
         "type": "query",
         "useTags": false

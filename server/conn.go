@@ -63,7 +63,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
@@ -71,11 +70,13 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
+	storeerr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
@@ -251,6 +252,18 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 		}
 		return err
 	}
+
+	// MySQL supports an "init_connect" query, which can be run on initial connection.
+	// The query must return a non-error or the client is disconnected.
+	if err := cc.initConnect(ctx); err != nil {
+		logutil.Logger(ctx).Warn("init_connect failed", zap.Error(err))
+		initErr := errNewAbortingConnection.FastGenByArgs(cc.connectionID, "unconnected", cc.user, cc.peerHost, "init_connect command failed")
+		if err1 := cc.writeError(ctx, initErr); err1 != nil {
+			terror.Log(err1)
+		}
+		return initErr
+	}
+
 	data := cc.alloc.AllocWithLen(4, 32)
 	data = append(data, mysql.OKHeader)
 	data = append(data, 0, 0)
@@ -720,6 +733,58 @@ func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error
 	cc.peerHost = host
 	cc.peerPort = port
 	return
+}
+
+// skipInitConnect follows MySQL's rules of when init-connect should be skipped.
+// In 5.7 it is any user with SUPER privilege, but in 8.0 it is:
+// - SUPER or the CONNECTION_ADMIN dynamic privilege.
+// - (additional exception) users with expired passwords (not yet supported)
+// In TiDB CONNECTION_ADMIN is satisfied by SUPER, so we only need to check once.
+func (cc *clientConn) skipInitConnect() bool {
+	checker := privilege.GetPrivilegeManager(cc.ctx.Session)
+	activeRoles := cc.ctx.GetSessionVars().ActiveRoles
+	return checker != nil && checker.RequestDynamicVerification(activeRoles, "CONNECTION_ADMIN", false)
+}
+
+// initConnect runs the initConnect SQL statement if it has been specified.
+// The semantics are MySQL compatible.
+func (cc *clientConn) initConnect(ctx context.Context) error {
+	val, err := cc.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.InitConnect)
+	if err != nil {
+		return err
+	}
+	if val == "" || cc.skipInitConnect() {
+		return nil
+	}
+	logutil.Logger(ctx).Debug("init_connect starting")
+	stmts, err := cc.ctx.Parse(ctx, val)
+	if err != nil {
+		return err
+	}
+	for _, stmt := range stmts {
+		rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
+		if err != nil {
+			return err
+		}
+		// init_connect does not care about the results,
+		// but they need to be drained because of lazy loading.
+		if rs != nil {
+			req := rs.NewChunk()
+			for {
+				if err = rs.Next(ctx, req); err != nil {
+					return err
+				}
+				if req.NumRows() == 0 {
+					break
+				}
+			}
+			if err := rs.Close(); err != nil {
+				return err
+			}
+		}
+	}
+	logutil.Logger(ctx).Debug("init_connect complete")
+	return nil
 }
 
 // Run reads client query and writes query result to client in for loop, if there is a panic during query handling,
@@ -1503,7 +1568,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
 		if err != nil {
 			_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
-			if allowTiFlashFallback && errors.ErrorEqual(err, tikvstore.ErrTiFlashServerTimeout) && retryable {
+			if allowTiFlashFallback && errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) && retryable {
 				// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
 				// server and fallback to TiKV.
 				warns := append(parserWarns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
@@ -1555,11 +1620,11 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	pointPlans := make([]plannercore.Plan, len(stmts))
 	var idxKeys []kv.Key
 	var rowKeys []kv.Key
-	is := domain.GetDomain(cc.ctx).InfoSchema()
 	sc := vars.StmtCtx
 	for i, stmt := range stmts {
 		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
-		if err = plannercore.Preprocess(cc.ctx, stmt, is); err != nil {
+		// TODO: handle the PreprocessorReturn.
+		if err = plannercore.Preprocess(cc.ctx, stmt); err != nil {
 			return nil, err
 		}
 		p := plannercore.TryFastPlan(cc.ctx.Session, stmt)
@@ -1626,6 +1691,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 // Currently the first return value is used to fallback to TiKV when TiFlash is down.
 func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) (bool, error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
+	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	reg.End()
@@ -1803,10 +1869,10 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
 			switch value.(string) {
 			case "firstNext":
-				failpoint.Return(firstNext, tikvstore.ErrTiFlashServerTimeout)
+				failpoint.Return(firstNext, storeerr.ErrTiFlashServerTimeout)
 			case "secondNext":
 				if !firstNext {
-					failpoint.Return(firstNext, tikvstore.ErrTiFlashServerTimeout)
+					failpoint.Return(firstNext, storeerr.ErrTiFlashServerTimeout)
 				}
 			}
 		})

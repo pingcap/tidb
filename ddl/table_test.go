@@ -355,7 +355,7 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 		WithLease(testLease),
 	)
 
-	s.dbInfo = testSchemaInfo(c, s.d, "test")
+	s.dbInfo = testSchemaInfo(c, s.d, "test_table")
 	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 }
 

@@ -583,7 +583,12 @@
       "DataScan(t)->Projection",
       "DataScan(t)->Projection",
       "DataScan(t)->Projection",
-      "DataScan(t)->Aggr(approx_count_distinct(test.t.a, test.t.b),firstrow(test.t.a))->Projection"
+      "DataScan(t)->Aggr(approx_count_distinct(test.t.a, test.t.b),firstrow(test.t.a))->Projection",
+      "DataScan(t)->Aggr(count(test.t.a))->Projection",
+      "DataScan(t)->Aggr(count(test.t.a),sum(test.t.a))->Projection",
+      "DataScan(t)->Aggr(count(test.t.a),sum(test.t.f))->Projection",
+      "DataScan(t)->Aggr(count(distinct test.t.e))->Projection",
+      "DataScan(t)->Aggr(count(test.t.f),avg(test.t.b))->Projection"
     ]
   },
   {
@@ -949,7 +954,7 @@
       "DataScan(t1)->Projection",
       "DataScan(t2)->Projection",
       "DataScan(t1)->Aggr(max(test.t.a),min(test.t.b))->Projection",
-      "DataScan(t1)->Aggr(sum(distinct test.t.a))->Projection",
+      "DataScan(t1)->Aggr(sum(test.t.a))->Projection",
       "DataScan(t1)->Aggr(count(distinct test.t.a, test.t.b))->Projection",
       "DataScan(t1)->Aggr(approx_count_distinct(test.t.a, test.t.b))->Projection",
       "DataScan(t1)->Projection",

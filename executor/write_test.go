@@ -777,6 +777,35 @@ func (s *testSuite4) TestInsertIgnoreOnDup(c *C) {
 	testSQL = `select * from t;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 1", "2 2"))
+
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(`col_25` set('Alice','Bob','Charlie','David') NOT NULL,`col_26` date NOT NULL DEFAULT '2016-04-15', PRIMARY KEY (`col_26`) clustered, UNIQUE KEY `idx_9` (`col_25`,`col_26`),UNIQUE KEY `idx_10` (`col_25`))")
+	tk.MustExec("insert into t2(col_25, col_26) values('Bob', '1989-03-23'),('Alice', '2023-11-24'), ('Charlie', '2023-12-05')")
+	tk.MustExec("insert ignore into t2 (col_25,col_26) values ( 'Bob','1977-11-23' ) on duplicate key update col_25 = 'Alice', col_26 = '2036-12-13'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry 'Alice' for key 'idx_10'"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("Bob 1989-03-23", "Alice 2023-11-24", "Charlie 2023-12-05"))
+
+	tk.MustExec("drop table if exists t4")
+	tk.MustExec("create table t4(id int primary key clustered, k int, v int, unique key uk1(k))")
+	tk.MustExec("insert into t4 values (1, 10, 100), (3, 30, 300)")
+	tk.MustExec("insert ignore into t4 (id, k, v) values(1, 0, 0) on duplicate key update id = 2, k = 30")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '30' for key 'uk1'"))
+	tk.MustQuery("select * from t4").Check(testkit.Rows("1 10 100", "3 30 300"))
+
+	tk.MustExec("drop table if exists t5")
+	tk.MustExec("create table t5(k1 varchar(100), k2 varchar(100), uk1 int, v int, primary key(k1, k2) clustered, unique key ukk1(uk1), unique key ukk2(v))")
+	tk.MustExec("insert into t5(k1, k2, uk1, v) values('1', '1', 1, '100'), ('1', '3', 2, '200')")
+	tk.MustExec("update ignore t5 set k2 = '2', uk1 = 2 where k1 = '1' and k2 = '1'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '2' for key 'ukk1'"))
+	tk.MustQuery("select * from t5").Check(testkit.Rows("1 1 1 100", "1 3 2 200"))
+
+	tk.MustExec("drop table if exists t6")
+	tk.MustExec("create table t6 (a int, b int, c int, primary key(a, b) clustered, unique key idx_14(b), unique key idx_15(b), unique key idx_16(a, b))")
+	tk.MustExec("insert into t6 select 10, 10, 20")
+	tk.MustExec("insert ignore into t6 set a = 20, b = 10 on duplicate key update a = 100")
+	tk.MustQuery("select * from t6").Check(testkit.Rows("100 10 20"))
+	tk.MustExec("insert ignore into t6 set a = 200, b= 10 on duplicate key update c = 1000")
+	tk.MustQuery("select * from t6").Check(testkit.Rows("100 10 1000"))
 }
 
 func (s *testSuite4) TestInsertSetWithDefault(c *C) {
@@ -1525,7 +1554,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	_, err = tk.Exec("UPDATE t SET c2=16777215 WHERE c1>= -8388608 AND c1 < -9 ORDER BY c1 LIMIT 2")
 	c.Assert(err, IsNil)
 
-	tk.MustExec("update (select * from t) t set c1 = 1111111")
+	tk.MustGetErrCode("update (select * from t) t set c1 = 1111111", mysql.ErrNonUpdatableTable)
 
 	// test update ignore for bad null error
 	tk.MustExec("drop table if exists t;")
@@ -1575,8 +1604,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustExec("drop view v")
 
 	tk.MustExec("create sequence seq")
-	_, err = tk.Exec("update seq set minvalue=1")
-	c.Assert(err.Error(), Equals, "update sequence seq is not supported now.")
+	tk.MustGetErrCode("update seq set minvalue=1", mysql.ErrBadField)
 	tk.MustExec("drop sequence seq")
 
 	tk.MustExec("drop table if exists t1, t2")
@@ -2832,6 +2860,37 @@ func (s *testSuite7) TestDeferConstraintCheckForInsert(c *C) {
 	tk.MustExec("insert into t values (1, 3)")
 	_, err = tk.Exec("commit")
 	c.Assert(err, NotNil)
+
+	// Cover the temporary table.
+	for val := range []int{0, 1} {
+		tk.MustExec("set tidb_constraint_check_in_place = ?", val)
+
+		tk.MustExec("drop table t")
+		tk.MustExec("create global temporary table t (a int primary key, b int) on commit delete rows")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t values (1, 1)")
+		_, err = tk.Exec(`insert into t values (1, 3)`)
+		c.Assert(err, NotNil)
+		tk.MustExec("insert into t values (2, 2)")
+		_, err = tk.Exec("update t set a = a + 1 where a = 1")
+		c.Assert(err, NotNil)
+		_, err = tk.Exec("insert into t values (1, 3) on duplicated key update a = a + 1")
+		c.Assert(err, NotNil)
+		tk.MustExec("commit")
+
+		tk.MustExec("drop table t")
+		tk.MustExec("create global temporary table t (a int, b int unique) on commit delete rows")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t values (1, 1)")
+		_, err = tk.Exec(`insert into t values (3, 1)`)
+		c.Assert(err, NotNil)
+		tk.MustExec("insert into t values (2, 2)")
+		_, err = tk.Exec("update t set b = b + 1 where a = 1")
+		c.Assert(err, NotNil)
+		_, err = tk.Exec("insert into t values (3, 1) on duplicated key update b = b + 1")
+		c.Assert(err, NotNil)
+		tk.MustExec("commit")
+	}
 }
 
 func (s *testSuite7) TestPessimisticDeleteYourWrites(c *C) {
@@ -3900,6 +3959,25 @@ func (s *testSerialSuite) TestIssue20840(c *C) {
 	tk.MustExec("replace into t1 values ('A')")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("A"))
 	tk.MustExec("drop table t1")
+}
+
+func (s *testSerialSuite) TestIssueInsertPrefixIndexForNonUTF8Collation(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1 ( c_int int, c_str varchar(40) character set ascii collate ascii_bin, primary key(c_int, c_str(8)) clustered , unique key(c_str))")
+	tk.MustExec("create table t2 ( c_int int, c_str varchar(40) character set latin1 collate latin1_bin, primary key(c_int, c_str(8)) clustered , unique key(c_str))")
+	tk.MustExec("insert into t1 values (3, 'fervent brattain')")
+	tk.MustExec("insert into t2 values (3, 'fervent brattain')")
+	tk.MustExec("admin check table t1")
+	tk.MustExec("admin check table t2")
+
+	tk.MustExec("create table t3 (x varchar(40) CHARACTER SET ascii COLLATE ascii_bin, UNIQUE KEY uk(x(4)))")
+	tk.MustExec("insert into t3 select 'abc '")
+	tk.MustGetErrCode("insert into t3 select 'abc d'", 1062)
 }
 
 func (s *testSerialSuite) TestIssue22496(c *C) {

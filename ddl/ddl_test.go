@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -40,14 +41,6 @@ type DDLForTest interface {
 	SetHook(h Callback)
 	// SetInterceptor sets the interceptor.
 	SetInterceptor(h Interceptor)
-}
-
-// SetHook implements DDL.SetHook interface.
-func (d *ddl) SetHook(h Callback) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	d.mu.hook = h
 }
 
 // SetInterceptor implements DDL.SetInterceptor interface.
@@ -94,6 +87,10 @@ func TestT(t *testing.T) {
 }
 
 func testNewDDLAndStart(ctx context.Context, c *C, options ...Option) *ddl {
+	// init infoCache and a stub infoSchema
+	ic := infoschema.NewCache(2)
+	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0))
+	options = append(options, WithInfoCache(ic))
 	d := newDDL(ctx, options...)
 	err := d.Start(nil)
 	c.Assert(err, IsNil)

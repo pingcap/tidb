@@ -233,7 +233,7 @@ func (s *testColumnTypeChangeSuite) TestRollbackColumnTypeChangeBetweenInteger(c
 	SQL := "alter table t modify column c2 int not null"
 	_, err := tk.Exec(SQL)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1]MockRollingBackInCallBack-none")
+	c.Assert(err.Error(), Equals, "[ddl:1]MockRollingBackInCallBack-queueing")
 	assertRollBackedColUnchanged(c, tk)
 
 	// Mock roll back at model.StateDeleteOnly.
@@ -1702,6 +1702,41 @@ func (s *testColumnTypeChangeSuite) TestChangingAttributeOfColumnWithFK(c *C) {
 	tk.MustExec("drop table if exists orders, users")
 }
 
+func (s *testColumnTypeChangeSuite) TestAlterPrimaryKeyToNull(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a int not null, b int not null, primary key(a, b));")
+	tk.MustGetErrCode("alter table t modify a bigint null;", mysql.ErrPrimaryCantHaveNull)
+	tk.MustGetErrCode("alter table t change column a a bigint null;", mysql.ErrPrimaryCantHaveNull)
+	tk.MustExec("create table t1(a int not null, b int not null, primary key(a));")
+	tk.MustGetErrCode("alter table t modify a bigint null;", mysql.ErrPrimaryCantHaveNull)
+	tk.MustGetErrCode("alter table t change column a a bigint null;", mysql.ErrPrimaryCantHaveNull)
+}
+
+// Close https://github.com/pingcap/tidb/issues/24839.
+func (s testColumnTypeChangeSuite) TestChangeUnsignedIntToDatetime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int(10) unsigned default null, b bigint unsigned, c tinyint unsigned);")
+	tk.MustExec("insert into t values (1, 1, 1);")
+	tk.MustGetErrCode("alter table t modify column a datetime;", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify column b datetime;", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify column c datetime;", mysql.ErrTruncatedWrongValue)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int(10) unsigned default null, b bigint unsigned, c tinyint unsigned);")
+	tk.MustExec("insert into t values (4294967295, 18446744073709551615, 255);")
+	tk.MustGetErrCode("alter table t modify column a datetime;", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify column b datetime;", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify column c datetime;", mysql.ErrTruncatedWrongValue)
+}
+
 // Close issue #23202
 func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -1751,4 +1786,35 @@ func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(job.ErrorCount, Equals, int64(4))
 	c.Assert(job.Error.Error(), Equals, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled")
+}
+
+// Close issue #24253
+func (s *testColumnTypeChangeSuite) TestChangeIntToBitWillPanicInBackfillIndexes(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"  `a` int(11) DEFAULT NULL," +
+		"  `b` varchar(10) DEFAULT NULL," +
+		"  `c` decimal(10,2) DEFAULT NULL," +
+		"  KEY `idx1` (`a`)," +
+		"  UNIQUE KEY `idx2` (`a`)," +
+		"  KEY `idx3` (`a`,`b`)," +
+		"  KEY `idx4` (`a`,`b`,`c`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("insert into t values(19,1,1),(17,2,2)")
+	tk.MustExec("alter table t modify a bit(5) not null")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` bit(5) NOT NULL,\n" +
+		"  `b` varchar(10) DEFAULT NULL,\n" +
+		"  `c` decimal(10,2) DEFAULT NULL,\n" +
+		"  KEY `idx1` (`a`),\n" +
+		"  UNIQUE KEY `idx2` (`a`),\n" +
+		"  KEY `idx3` (`a`,`b`),\n" +
+		"  KEY `idx4` (`a`,`b`,`c`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("\x13 1 1.00", "\x11 2 2.00"))
 }
