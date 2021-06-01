@@ -57,6 +57,7 @@ func (s *testCommitterSuite) SetUpSuite(c *C) {
 	atomic.StoreUint64(&tikv.ManagedLockTTL, 3000) // 3s
 	s.OneByOneSuite.SetUpSuite(c)
 	atomic.StoreUint64(&tikv.CommitMaxBackoff, 1000)
+	atomic.StoreUint64(&tikv.VeryLongMaxBackoff, 1000)
 }
 
 func (s *testCommitterSuite) SetUpTest(c *C) {
@@ -91,6 +92,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 
 func (s *testCommitterSuite) TearDownSuite(c *C) {
 	atomic.StoreUint64(&tikv.CommitMaxBackoff, 20000)
+	atomic.StoreUint64(&tikv.VeryLongMaxBackoff, 60000*60)
 	s.store.Close()
 	s.OneByOneSuite.TearDownSuite(c)
 }

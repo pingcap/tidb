@@ -25,7 +25,8 @@ type Storage interface {
 	// GetRegionCache gets the RegionCache.
 	GetRegionCache() *RegionCache
 
-	// SendReq sends a request to TiKV.
+	// SendReq sends a request to tikv server. If fails to send the request to all replicas,
+	// a sendError may be returned. Caller which receives the error should retry the request.
 	SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
 
 	// GetLockResolver gets the LockResolver.

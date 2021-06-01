@@ -34,7 +34,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type actionPrewrite struct{}
+type actionPrewrite struct{ retry bool }
 
 var _ twoPhaseCommitAction = actionPrewrite{}
 
@@ -127,6 +127,8 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	// regions. It invokes `prewriteMutations` recursively here, and the number of batches will be
 	// checked there.
 
+	bo.ResetMaxSleep(PrewriteMaxBackoff)
+
 	if c.sessionID > 0 {
 		if batch.isPrimary {
 			failpoint.Inject("prewritePrimaryFail", func() {
@@ -152,13 +154,22 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	txnSize := uint64(c.regionTxnSize[batch.region.id])
 	// When we retry because of a region miss, we don't know the transaction size. We set the transaction size here
 	// to MaxUint64 to avoid unexpected "resolve lock lite".
-	if bo.ErrorsNum() > 0 {
+	if action.retry {
 		txnSize = math.MaxUint64
 	}
 
+	tBegin := time.Now()
+	attempts := 0
+
 	req := c.buildPrewriteRequest(batch, txnSize)
+	sender := NewRegionRequestSender(c.store.regionCache, c.store.GetTiKVClient())
 	for {
-		sender := NewRegionRequestSender(c.store.regionCache, c.store.GetTiKVClient())
+		attempts++
+		if time.Since(tBegin) > slowRequestThreshold {
+			logutil.BgLogger().Warn("slow prewrite request", zap.Uint64("startTS", c.startTS), zap.Stringer("region", &batch.region), zap.Int("attempts", attempts))
+			tBegin = time.Now()
+		}
+
 		resp, err := sender.SendReq(bo, req, batch.region, client.ReadTimeoutShort)
 
 		// If we fail to receive response for async commit prewrite, it will be undetermined whether this
@@ -169,21 +180,36 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			c.setUndeterminedErr(errors.Trace(sender.rpcError))
 		}
 
-		if err != nil {
+		if err != nil && !tikverr.IsSendError(err) {
 			return errors.Trace(err)
 		}
-		regionErr, err := resp.GetRegionError()
-		if err != nil {
+		regionErr, e := resp.GetRegionError()
+		if e != nil {
+			return errors.Trace(e)
+		}
+		// Retry recursively immediately if the region range is changed.
+		if regionErr != nil && regionErr.GetEpochNotMatch() != nil {
+			err = c.doActionOnMutations(bo, actionPrewrite{true}, batch.mutations)
 			return errors.Trace(err)
 		}
-		if regionErr != nil {
-			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+		// Retry in the same loop if fails to send request and the region range isn't changed.
+		if regionErr != nil || tikverr.IsSendError(err) {
+			err = bo.Backoff(retry.BoRegionMiss, err)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = c.prewriteMutations(bo, batch.mutations)
-			return errors.Trace(err)
+			same, err := batch.relocate(bo, c.store.regionCache)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if same {
+				continue
+			} else {
+				err = c.doActionOnMutations(bo, actionPrewrite{true}, batch.mutations)
+				return errors.Trace(err)
+			}
 		}
+
 		if resp.Resp == nil {
 			return errors.Trace(tikverr.ErrBodyMissing)
 		}

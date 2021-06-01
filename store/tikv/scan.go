@@ -165,7 +165,6 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		zap.String("nextEndKey", kv.StrKey(s.nextEndKey)),
 		zap.Bool("reverse", s.reverse),
 		zap.Uint64("txnStartTS", s.startTS()))
-	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.GetTiKVClient())
 	var reqEndKey, reqStartKey []byte
 	var loc *KeyLocation
 	var err error
@@ -218,7 +217,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			ResourceGroupTag: s.snapshot.resourceGroupTag,
 		})
 		s.snapshot.mu.RUnlock()
-		resp, err := sender.SendReq(bo, req, loc.Region, client.ReadTimeoutMedium)
+		resp, err := s.snapshot.store.SendReq(bo, req, loc.Region, client.ReadTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}

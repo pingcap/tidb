@@ -1090,9 +1090,9 @@ retryScanAndResolve:
 		if err != nil {
 			return stat, errors.Trace(err)
 		}
-		regionErr, err := resp.GetRegionError()
-		if err != nil {
-			return stat, errors.Trace(err)
+		regionErr, e := resp.GetRegionError()
+		if e != nil {
+			return stat, errors.Trace(e)
 		}
 		if regionErr != nil {
 			err = bo.Backoff(tikv.BoRegionMiss(), errors.New(regionErr.String()))
@@ -1610,9 +1610,9 @@ func (w *GCWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region ti
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	regionErr, err := resp.GetRegionError()
-	if err != nil {
-		return nil, errors.Trace(err)
+	regionErr, e := resp.GetRegionError()
+	if e != nil {
+		return nil, errors.Trace(e)
 	}
 	if regionErr != nil {
 		return regionErr, nil

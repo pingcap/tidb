@@ -368,6 +368,13 @@ func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, reverse bool) (*
 			return nil, nil, errors.Trace(err)
 		}
 		resp, err := sender.SendReq(bo, req, loc.Region, client.ReadTimeoutShort)
+		if tikverr.IsSendError(err) {
+			err = bo.Backoff(retry.BoRegionMiss, err)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+			continue
+		}
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -450,16 +457,16 @@ func (c *RawKVClient) doBatchReq(bo *Backoffer, batch batch, cmdType tikvrpc.Cmd
 	resp, err := sender.SendReq(bo, req, batch.regionID, client.ReadTimeoutShort)
 
 	batchResp := singleBatchResp{}
-	if err != nil {
+	if err != nil && !tikverr.IsSendError(err) {
 		batchResp.err = errors.Trace(err)
 		return batchResp
 	}
-	regionErr, err := resp.GetRegionError()
-	if err != nil {
-		batchResp.err = errors.Trace(err)
+	regionErr, e := resp.GetRegionError()
+	if e != nil {
+		batchResp.err = errors.Trace(e)
 		return batchResp
 	}
-	if regionErr != nil {
+	if regionErr != nil || tikverr.IsSendError(err) {
 		err := bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			batchResp.err = errors.Trace(err)
@@ -513,14 +520,14 @@ func (c *RawKVClient) sendDeleteRangeReq(startKey []byte, endKey []byte) (*tikvr
 		})
 
 		resp, err := sender.SendReq(bo, req, loc.Region, client.ReadTimeoutShort)
-		if err != nil {
+		if err != nil && !tikverr.IsSendError(err) {
 			return nil, nil, errors.Trace(err)
 		}
-		regionErr, err := resp.GetRegionError()
-		if err != nil {
-			return nil, nil, errors.Trace(err)
+		regionErr, e := resp.GetRegionError()
+		if e != nil {
+			return nil, nil, errors.Trace(e)
 		}
-		if regionErr != nil {
+		if regionErr != nil || tikverr.IsSendError(err) {
 			err := bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
@@ -618,14 +625,14 @@ func (c *RawKVClient) doBatchPut(bo *Backoffer, batch batch) error {
 
 	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
 	resp, err := sender.SendReq(bo, req, batch.regionID, client.ReadTimeoutShort)
-	if err != nil {
+	if err != nil && !tikverr.IsSendError(err) {
 		return errors.Trace(err)
 	}
-	regionErr, err := resp.GetRegionError()
-	if err != nil {
-		return errors.Trace(err)
+	regionErr, e := resp.GetRegionError()
+	if e != nil {
+		return errors.Trace(e)
 	}
-	if regionErr != nil {
+	if regionErr != nil || tikverr.IsSendError(err) {
 		err := bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
