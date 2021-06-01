@@ -15,6 +15,7 @@ package stmtsummary
 
 import (
 	"container/list"
+	"sync"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
@@ -23,6 +24,7 @@ import (
 
 // stmtSummaryByDigestEvicted contents digests evicted from stmtSummaryByDigestMap
 type stmtSummaryByDigestEvicted struct {
+	sync.Mutex
 	// record evicted data in intervals
 	// latest history data is Back()
 	history *list.List
@@ -34,8 +36,10 @@ type stmtSummaryByDigestEvictedElement struct {
 	beginTime int64
 	// endTime is the end time of current interval
 	endTime int64
-	// *Kinds* of digest being evicted
+	// digestKeyMap contains *Kinds* of digest being evicted
 	digestKeyMap map[string]struct{}
+	// detail contains detailed information
+	detail *stmtSummaryByDigestElement
 }
 
 // spawn a new pointer to stmtSummaryByDigestEvicted
@@ -51,6 +55,18 @@ func newStmtSummaryByDigestEvictedElement(beginTime int64, endTime int64) *stmtS
 		beginTime:    beginTime,
 		endTime:      endTime,
 		digestKeyMap: make(map[string]struct{}),
+		detail: &stmtSummaryByDigestElement{
+			beginTime: beginTime,
+			endTime:   endTime,
+			// user
+			authUsers: make(map[string]struct{}),
+			// latency
+			minLatency: 24 * time.Hour, // No SQL's latency could be longer than a day I hope...
+			// txn
+			backoffTypes: make(map[string]int),
+			// other
+			firstSeen: time.Now(),
+		},
 	}
 }
 
@@ -62,6 +78,9 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 
 	evictedValue.Lock()
 	defer evictedValue.Unlock()
+
+	ssbde.Lock()
+	defer ssbde.Unlock()
 
 	if evictedValue.history == nil {
 		return
@@ -130,6 +149,8 @@ func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDig
 
 // Clear up all records in stmtSummaryByDigestEvicted
 func (ssbde *stmtSummaryByDigestEvicted) Clear() {
+	ssbde.Lock()
+	defer ssbde.Unlock()
 	ssbde.history.Init()
 }
 
@@ -137,6 +158,7 @@ func (ssbde *stmtSummaryByDigestEvicted) Clear() {
 func (seElement *stmtSummaryByDigestEvictedElement) addEvicted(digestKey *stmtSummaryByDigestKey, digestValue *stmtSummaryByDigestElement) {
 	if digestKey != nil {
 		seElement.digestKeyMap[string(digestKey.Hash())] = struct{}{}
+		addInfo(seElement.detail, digestValue)
 	}
 }
 
@@ -189,4 +211,207 @@ func (seElement *stmtSummaryByDigestEvictedElement) toEvictedCountDatum() []type
 
 func (ssMap *stmtSummaryByDigestMap) ToEvictedCountDatum() [][]types.Datum {
 	return ssMap.other.ToEvictedCountDatum()
+}
+
+func (ssbde *stmtSummaryByDigestEvicted) toCurrentDatum() []types.Datum {
+	var seElement *stmtSummaryByDigestEvictedElement
+	ssbde.Lock()
+	defer ssbde.Unlock()
+
+	if ssbde.history.Len() > 0 {
+		seElement = ssbde.history.Back().Value.(*stmtSummaryByDigestEvictedElement)
+	}
+
+	if seElement == nil {
+		return nil
+	}
+	induceSsbd := new(stmtSummaryByDigest)
+	return seElement.toDatum(induceSsbd)
+}
+
+func (ssbde *stmtSummaryByDigestEvicted) toHistoryDatum(historySize int) [][]types.Datum {
+	// Collect all history summaries to an array.
+	ssbde.Lock()
+	defer ssbde.Unlock()
+	seElements := ssbde.collectHistorySummaries(historySize)
+	rows := make([][]types.Datum, 0, len(seElements))
+	induceSsbd := new(stmtSummaryByDigest)
+	for _, seElement := range seElements {
+		rows = append(rows, seElement.toDatum(induceSsbd))
+	}
+	return rows
+}
+
+func (ssbde *stmtSummaryByDigestEvicted) collectHistorySummaries(historySize int) []*stmtSummaryByDigestEvictedElement {
+	lst := make([]*stmtSummaryByDigestEvictedElement, 0, ssbde.history.Len())
+	for element := ssbde.history.Front(); element != nil && len(lst) < historySize; element = element.Next() {
+		seElement := element.Value.(*stmtSummaryByDigestEvictedElement)
+		lst = append(lst, seElement)
+	}
+	return lst
+}
+
+func (seElement *stmtSummaryByDigestEvictedElement) toDatum(ssbd *stmtSummaryByDigest) []types.Datum {
+	return seElement.detail.toDatum(ssbd)
+}
+
+// addInfo adds information in addWith into addTo.
+func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElement) {
+	addTo.Lock()
+	defer addTo.Unlock()
+
+	// user
+	for user := range addWith.authUsers {
+		addTo.authUsers[user] = struct{}{}
+	}
+
+	// execCount and sumWarnings
+	addTo.execCount += addWith.execCount
+	addTo.sumWarnings += addWith.sumWarnings
+
+	// latency
+	addTo.sumLatency += addWith.sumLatency
+	if addTo.maxLatency < addWith.maxLatency {
+		addTo.maxLatency = addWith.maxLatency
+	}
+	if addTo.minLatency > addWith.minLatency {
+		addTo.minLatency = addWith.minLatency
+	}
+	addTo.sumCompileLatency += addWith.sumCompileLatency
+	if addTo.maxParseLatency < addWith.maxParseLatency {
+		addTo.maxParseLatency = addWith.maxParseLatency
+	}
+	if addTo.maxCompileLatency < addWith.maxCompileLatency {
+		addTo.maxCompileLatency = addWith.maxCompileLatency
+	}
+
+	// coprocessor
+	addTo.sumNumCopTasks += addWith.sumNumCopTasks
+	if addTo.maxCopProcessTime < addWith.maxCopProcessTime {
+		addTo.maxCopProcessTime = addWith.maxCopProcessTime
+		addTo.maxCopProcessAddress = addWith.maxCopProcessAddress
+	}
+	if addTo.maxCopWaitTime < addWith.maxCopWaitTime {
+		addTo.maxCopWaitTime = addWith.maxCopWaitTime
+		addTo.maxCopWaitAddress = addWith.maxCopWaitAddress
+	}
+
+	// TiKV
+	addTo.sumProcessTime += addWith.sumProcessTime
+	if addTo.maxProcessTime < addWith.maxProcessTime {
+		addTo.maxProcessTime = addWith.maxProcessTime
+	}
+	addTo.sumWaitTime += addWith.sumWaitTime
+	if addTo.maxWaitTime < addWith.maxWaitTime {
+		addTo.maxWaitTime = addWith.maxWaitTime
+	}
+	addTo.sumBackoffTime += addWith.sumBackoffTime
+	if addTo.maxBackoffTime < addWith.maxBackoffTime {
+		addTo.maxBackoffTime = addWith.maxBackoffTime
+	}
+
+	addTo.sumTotalKeys += addWith.sumTotalKeys
+	if addTo.maxTotalKeys < addWith.maxTotalKeys {
+		addTo.maxTotalKeys = addWith.maxTotalKeys
+	}
+	addTo.sumProcessedKeys += addWith.sumProcessedKeys
+	if addTo.maxProcessedKeys < addWith.maxProcessedKeys {
+		addTo.maxProcessedKeys = addWith.maxProcessedKeys
+	}
+	addTo.sumRocksdbDeleteSkippedCount += addWith.sumRocksdbDeleteSkippedCount
+	if addTo.maxRocksdbDeleteSkippedCount < addWith.maxRocksdbDeleteSkippedCount {
+		addTo.maxRocksdbDeleteSkippedCount = addWith.maxRocksdbDeleteSkippedCount
+	}
+	addTo.sumRocksdbKeySkippedCount += addWith.sumRocksdbKeySkippedCount
+	if addTo.maxRocksdbKeySkippedCount < addWith.maxRocksdbKeySkippedCount {
+		addTo.maxRocksdbKeySkippedCount = addWith.maxRocksdbKeySkippedCount
+	}
+	addTo.sumRocksdbBlockCacheHitCount += addWith.sumRocksdbBlockCacheHitCount
+	if addTo.maxRocksdbBlockCacheHitCount < addWith.maxRocksdbBlockCacheHitCount {
+		addTo.maxRocksdbBlockCacheHitCount = addWith.maxRocksdbBlockCacheHitCount
+	}
+	addTo.sumRocksdbBlockReadCount += addWith.sumRocksdbBlockReadCount
+	if addTo.maxRocksdbBlockReadCount < addWith.maxRocksdbBlockReadCount {
+		addTo.maxRocksdbBlockReadCount = addWith.maxRocksdbBlockReadCount
+	}
+	addTo.sumRocksdbBlockReadByte += addWith.sumRocksdbBlockReadByte
+	if addTo.maxRocksdbBlockReadByte < addWith.maxRocksdbBlockReadByte {
+		addTo.maxRocksdbBlockReadByte = addWith.maxRocksdbBlockReadByte
+	}
+
+	// txn
+	addTo.commitCount += addWith.commitCount
+	addTo.sumPrewriteTime += addWith.sumPrewriteTime
+	if addTo.maxPrewriteTime < addWith.maxPrewriteTime {
+		addTo.maxPrewriteTime = addWith.maxPrewriteTime
+	}
+	addTo.sumCommitTime += addWith.sumCommitTime
+	if addTo.maxCommitTime < addWith.maxCommitTime {
+		addTo.maxCommitTime = addWith.maxCommitTime
+	}
+	addTo.sumGetCommitTsTime += addWith.sumGetCommitTsTime
+	if addTo.maxGetCommitTsTime < addWith.maxGetCommitTsTime {
+		addTo.maxGetCommitTsTime = addWith.maxGetCommitTsTime
+	}
+	addTo.sumCommitBackoffTime += addWith.sumCommitBackoffTime
+	if addTo.maxCommitBackoffTime < addWith.maxCommitBackoffTime {
+		addTo.maxCommitBackoffTime = addWith.maxCommitBackoffTime
+	}
+	addTo.sumResolveLockTime += addWith.sumResolveLockTime
+	if addTo.maxResolveLockTime < addWith.maxResolveLockTime {
+		addTo.maxResolveLockTime = addWith.maxResolveLockTime
+	}
+	addTo.sumLocalLatchTime += addWith.sumLocalLatchTime
+	if addTo.maxLocalLatchTime < addWith.maxLocalLatchTime {
+		addTo.maxLocalLatchTime = addWith.maxLocalLatchTime
+	}
+	addTo.sumWriteKeys += addWith.sumWriteKeys
+	if addTo.maxWriteKeys < addWith.maxWriteKeys {
+		addTo.maxWriteKeys = addWith.maxWriteKeys
+	}
+	addTo.sumPrewriteRegionNum += addWith.sumPrewriteRegionNum
+	if addTo.maxPrewriteRegionNum < addWith.maxPrewriteRegionNum {
+		addTo.maxPrewriteRegionNum = addWith.maxPrewriteRegionNum
+	}
+	addTo.sumTxnRetry += addWith.sumTxnRetry
+	if addTo.maxTxnRetry < addWith.maxTxnRetry {
+		addTo.maxTxnRetry = addWith.maxTxnRetry
+	}
+	addTo.sumBackoffTimes += addWith.sumBackoffTimes
+	for backoffType, backoffValue := range addWith.backoffTypes {
+		_, ok := addTo.backoffTypes[backoffType]
+		if ok {
+			addTo.backoffTypes[backoffType] += backoffValue
+		} else {
+			addTo.backoffTypes[backoffType] = backoffValue
+		}
+	}
+
+	// plan cache
+	addTo.planCacheHits += addWith.planCacheHits
+
+	// other
+	addTo.sumAffectedRows += addWith.sumAffectedRows
+	addTo.sumMem += addWith.sumMem
+	if addTo.maxMem < addWith.maxMem {
+		addTo.maxMem = addWith.maxMem
+	}
+	addTo.sumDisk += addWith.sumDisk
+	if addTo.maxDisk < addWith.maxDisk {
+		addTo.maxDisk = addWith.maxDisk
+	}
+	if addTo.firstSeen.After(addWith.firstSeen) {
+		addTo.firstSeen = addWith.firstSeen
+	}
+	if addTo.lastSeen.Before(addWith.lastSeen) {
+		addTo.lastSeen = addWith.lastSeen
+	}
+	addTo.execRetryCount += addWith.execRetryCount
+	addTo.execRetryTime += addWith.execRetryTime
+	addTo.sumKVTotal += addWith.sumKVTotal
+	addTo.sumPDTotal += addWith.sumPDTotal
+	addTo.sumBackoffTotal += addWith.sumBackoffTotal
+	addTo.sumWriteSQLRespTotal += addWith.sumWriteSQLRespTotal
+
+	addTo.sumErrors += addWith.sumErrors
 }

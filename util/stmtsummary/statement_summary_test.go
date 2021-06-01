@@ -838,7 +838,8 @@ func (s *testStmtSummarySuite) TestSetMaxStmtCountParallel(c *C) {
 	wg.Wait()
 
 	datums := s.ssMap.ToCurrentDatum(nil, true)
-	c.Assert(len(datums), Equals, 1)
+	// due to evictions happened in cache, an additional record will be appended to the table.
+	c.Assert(len(datums), Equals, 2)
 }
 
 // Test setting EnableStmtSummary to 0.
@@ -1060,6 +1061,16 @@ func (s *testStmtSummarySuite) TestSummaryHistory(c *C) {
 	c.Assert(err, IsNil)
 	datum = s.ssMap.ToHistoryDatum(nil, true)
 	c.Assert(len(datum), Equals, 5)
+
+	// test eviction
+	s.ssMap.Clear()
+	err = s.ssMap.SetMaxStmtCount("3", true)
+	c.Assert(err, IsNil)
+	defer func() {
+		err := s.ssMap.SetMaxStmtCount("", true)
+		c.Assert(err, IsNil)
+	}()
+
 }
 
 // Test summary when PrevSQL is not empty.

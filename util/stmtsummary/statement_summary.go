@@ -349,6 +349,9 @@ func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum(user *auth.UserIdentity, isS
 			rows = append(rows, record)
 		}
 	}
+	if otherDatum := ssMap.other.toCurrentDatum(); otherDatum != nil {
+		rows = append(rows, ssMap.other.toCurrentDatum())
+	}
 	return rows
 }
 
@@ -364,6 +367,7 @@ func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum(user *auth.UserIdentity, isS
 		records := value.(*stmtSummaryByDigest).toHistoryDatum(historySize, user, isSuper)
 		rows = append(rows, records...)
 	}
+	rows = append(rows, ssMap.other.toHistoryDatum(historySize)...)
 	return rows
 }
 
