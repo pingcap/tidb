@@ -2349,7 +2349,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		newCfg := *(config.GetGlobalConfig())
 		newCfg.MemQuotaQuery = newMemoryQuotaQuery
 		config.StoreGlobalConfig(&newCfg)
-		variable.SetSysVar(variable.TIDBMemQuotaQuery, strconv.FormatInt(newCfg.MemQuotaQuery, 10))
+		variable.SetSysVar(variable.TiDBMemQuotaQuery, strconv.FormatInt(newCfg.MemQuotaQuery, 10))
 	}
 	newOOMAction, err := loadDefOOMAction(se)
 	if err != nil {
