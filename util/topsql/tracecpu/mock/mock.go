@@ -14,10 +14,12 @@
 package mock
 
 import (
+	"bytes"
 	"sync"
 	"time"
 
 	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/uber-go/atomic"
 )
@@ -88,9 +90,9 @@ func (c *TopSQLCollector) GetSQLStatsBySQL(sql string, planIsNotNull bool) []*tr
 	sqlDigest := GenSQLDigest(sql)
 	c.Lock()
 	for _, stmt := range c.sqlStatsMap {
-		if stmt.SQLDigest == sqlDigest {
+		if bytes.Equal(stmt.SQLDigest, sqlDigest.Bytes()) {
 			if planIsNotNull {
-				plan := c.planMap[stmt.PlanDigest]
+				plan := c.planMap[string(stmt.PlanDigest)]
 				if len(plan) > 0 {
 					stats = append(stats, stmt)
 				}
@@ -104,38 +106,40 @@ func (c *TopSQLCollector) GetSQLStatsBySQL(sql string, planIsNotNull bool) []*tr
 }
 
 // GetSQL uses for testing.
-func (c *TopSQLCollector) GetSQL(sqlDigest string) string {
+func (c *TopSQLCollector) GetSQL(sqlDigest []byte) string {
 	c.Lock()
-	sql := c.sqlMap[sqlDigest]
+	sql := c.sqlMap[string(sqlDigest)]
 	c.Unlock()
 	return sql
 }
 
 // GetPlan uses for testing.
-func (c *TopSQLCollector) GetPlan(planDigest string) string {
+func (c *TopSQLCollector) GetPlan(planDigest []byte) string {
 	c.Lock()
-	plan := c.planMap[planDigest]
+	plan := c.planMap[string(planDigest)]
 	c.Unlock()
 	return plan
 }
 
 // RegisterSQL uses for testing.
-func (c *TopSQLCollector) RegisterSQL(sqlDigest, normalizedSQL string) {
+func (c *TopSQLCollector) RegisterSQL(sqlDigest []byte, normalizedSQL string) {
+	digestStr := string(hack.String(sqlDigest))
 	c.Lock()
-	_, ok := c.sqlMap[sqlDigest]
+	_, ok := c.sqlMap[digestStr]
 	if !ok {
-		c.sqlMap[sqlDigest] = normalizedSQL
+		c.sqlMap[digestStr] = normalizedSQL
 	}
 	c.Unlock()
 
 }
 
 // RegisterPlan uses for testing.
-func (c *TopSQLCollector) RegisterPlan(planDigest string, normalizedPlan string) {
+func (c *TopSQLCollector) RegisterPlan(planDigest []byte, normalizedPlan string) {
+	digestStr := string(hack.String(planDigest))
 	c.Lock()
-	_, ok := c.planMap[planDigest]
+	_, ok := c.planMap[digestStr]
 	if !ok {
-		c.planMap[planDigest] = normalizedPlan
+		c.planMap[digestStr] = normalizedPlan
 	}
 	c.Unlock()
 }
@@ -159,11 +163,11 @@ func (c *TopSQLCollector) WaitCollectCnt(count int64) {
 }
 
 func (c *TopSQLCollector) hash(stat tracecpu.SQLCPUResult) string {
-	return stat.SQLDigest + stat.PlanDigest
+	return string(stat.SQLDigest) + string(stat.PlanDigest)
 }
 
 // GenSQLDigest uses for testing.
-func GenSQLDigest(sql string) string {
+func GenSQLDigest(sql string) *parser.Digest {
 	_, digest := parser.NormalizeDigest(sql)
-	return digest.String()
+	return digest
 }

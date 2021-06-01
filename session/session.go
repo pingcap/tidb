@@ -1389,7 +1389,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		normalized, digest := parser.NormalizeDigest(sql)
 		if digest != nil {
 			// Fixme: reset/clean the label when sql execute finish.
-			topsql.AttachSQLInfo(ctx, normalized, digest.String(), "", "")
+			topsql.AttachSQLInfo(ctx, normalized, digest.Bytes(), "", nil)
 		}
 	}
 	return stmts[0], nil
@@ -1504,7 +1504,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
 	if variable.TopSQLEnabled() {
-		topsql.AttachSQLInfo(ctx, normalizedSQL, digest.String(), "", "")
+		topsql.AttachSQLInfo(ctx, normalizedSQL, digest.Bytes(), "", nil)
 	}
 
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
@@ -1883,7 +1883,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
 	}
 	if variable.TopSQLEnabled() && preparedStmt.SQLDigest != nil {
-		topsql.AttachSQLInfo(ctx, preparedStmt.NormalizedSQL, preparedStmt.SQLDigest.String(), "", "")
+		topsql.AttachSQLInfo(ctx, preparedStmt.NormalizedSQL, preparedStmt.SQLDigest.Bytes(), "", nil)
 	}
 	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
 	ok, err = s.IsCachedExecOk(ctx, preparedStmt)

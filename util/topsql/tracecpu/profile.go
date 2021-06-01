@@ -29,6 +29,7 @@ import (
 	"github.com/google/pprof/profile"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -51,8 +52,8 @@ type Collector interface {
 
 // SQLCPUResult contains the SQL meta and cpu time.
 type SQLCPUResult struct {
-	SQLDigest  string
-	PlanDigest string
+	SQLDigest  []byte
+	PlanDigest []byte
 	CPUTimeMs  uint32
 }
 
@@ -203,8 +204,8 @@ func (sp *sqlCPUProfiler) createSQLStats(sqlMap map[string]*sqlStats) []SQLCPURe
 		stmt.tune()
 		for planDigest, val := range stmt.plans {
 			stats = append(stats, SQLCPUResult{
-				SQLDigest:  sqlDigest,
-				PlanDigest: planDigest,
+				SQLDigest:  []byte(sqlDigest),
+				PlanDigest: []byte(planDigest),
 				CPUTimeMs:  uint32(time.Duration(val).Milliseconds()),
 			})
 		}
@@ -293,11 +294,12 @@ func StopCPUProfile() error {
 }
 
 // CtxWithDigest wrap the ctx with sql digest, if plan digest is not null, wrap with plan digest too.
-func CtxWithDigest(ctx context.Context, sqlDigest, planDigest string) context.Context {
+func CtxWithDigest(ctx context.Context, sqlDigest, planDigest []byte) context.Context {
 	if len(planDigest) == 0 {
-		return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest))
+		return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, string(hack.String(sqlDigest))))
 	}
-	return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest, labelPlanDigest, planDigest))
+	return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, string(hack.String(sqlDigest)),
+		labelPlanDigest, string(hack.String(planDigest))))
 }
 
 func (sp *sqlCPUProfiler) startExportCPUProfile(w io.Writer) error {

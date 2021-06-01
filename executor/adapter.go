@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -296,7 +297,7 @@ func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) {
 	normalizedSQL, sqlDigest := a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
 	normalizedPlan, planDigest := getPlanDigest(a.Ctx, a.Plan)
 	if len(normalizedPlan) > 0 {
-		topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest.String(), normalizedPlan, planDigest)
+		topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest.Bytes(), normalizedPlan, planDigest.Bytes())
 	}
 }
 
@@ -981,7 +982,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		DiskMax:           diskMax,
 		Succ:              succ,
 		Plan:              getPlanTree(a.Ctx, a.Plan),
-		PlanDigest:        planDigest,
+		PlanDigest:        planDigest.String(),
 		Prepared:          a.isPreparedStmt,
 		HasMoreResults:    hasMoreResults,
 		PlanFromCache:     sessVars.FoundInPlanCache,
@@ -1055,15 +1056,15 @@ func getPlanTree(sctx sessionctx.Context, p plannercore.Plan) string {
 }
 
 // getPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
-func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (string, string) {
+func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (string, *parser.Digest) {
 	sc := sctx.GetSessionVars().StmtCtx
 	normalized, planDigest := sc.GetPlanDigest()
 	if len(normalized) > 0 && planDigest != nil {
-		return normalized, planDigest.String()
+		return normalized, planDigest
 	}
 	normalized, planDigest = plannercore.NormalizePlan(p)
 	sc.SetPlanDigest(normalized, planDigest)
-	return normalized, planDigest.String()
+	return normalized, planDigest
 }
 
 // getEncodedPlan gets the encoded plan, and generates the hint string if indicated.
@@ -1138,10 +1139,11 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if a.Plan.TP() == plancodec.TypePointGet {
 		planDigestGen = func() string {
 			_, planDigest := getPlanDigest(a.Ctx, a.Plan)
-			return planDigest
+			return planDigest.String()
 		}
 	} else {
-		_, planDigest = getPlanDigest(a.Ctx, a.Plan)
+		_, tmp := getPlanDigest(a.Ctx, a.Plan)
+		planDigest = tmp.String()
 	}
 
 	execDetail := stmtCtx.GetExecDetails()

@@ -19,6 +19,6 @@ import "github.com/pingcap/tidb/util/topsql/tracecpu"
 // TODO: add a collector to collect and store the SQL stats.
 type TopSQLCollector interface {
 	tracecpu.Collector
-	RegisterSQL(sqlDigest, normalizedSQL string)
-	RegisterPlan(planDigest string, normalizedPlan string)
+	RegisterSQL(sqlDigest []byte, normalizedSQL string)
+	RegisterPlan(planDigest []byte, normalizedPlan string)
 }

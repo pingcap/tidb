@@ -27,14 +27,14 @@ func SetupTopSQL() {
 }
 
 // AttachSQLInfo attach the sql information info top sql.
-func AttachSQLInfo(ctx context.Context, normalizedSQL, sqlDigest, normalizedPlan, planDigest string) {
+func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest []byte, normalizedPlan string, planDigest []byte) {
 	if len(normalizedSQL) == 0 || len(sqlDigest) == 0 {
 		return
 	}
 	ctx = tracecpu.CtxWithDigest(ctx, sqlDigest, planDigest)
 	pprof.SetGoroutineLabels(ctx)
 
-	if len(planDigest) == 0 {
+	if len(normalizedSQL) == 0 || len(planDigest) == 0 {
 		// If plan digest is '', indicate it is the first time to attach the SQL info, since it only know the sql digest.
 		linkSQLTextWithDigest(sqlDigest, normalizedSQL)
 	} else {
@@ -42,7 +42,7 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL, sqlDigest, normalizedPlan
 	}
 }
 
-func linkSQLTextWithDigest(sqlDigest, normalizedSQL string) {
+func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string) {
 	c := tracecpu.GlobalSQLCPUProfiler.GetCollector()
 	if c == nil {
 		return
@@ -53,7 +53,7 @@ func linkSQLTextWithDigest(sqlDigest, normalizedSQL string) {
 	}
 }
 
-func linkPlanTextWithDigest(planDigest string, normalizedPlan string) {
+func linkPlanTextWithDigest(planDigest []byte, normalizedPlan string) {
 	c := tracecpu.GlobalSQLCPUProfiler.GetCollector()
 	if c == nil {
 		return
