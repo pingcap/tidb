@@ -202,9 +202,12 @@ type replica struct {
 }
 
 type replicaSelector struct {
-	regionCache    *RegionCache
-	region         *Region
-	replicas       []*replica
+	regionCache *RegionCache
+	region      *Region
+	// replicas contains all TiKV replicas for now and the leader is at the
+	// head of the slice.
+	replicas []*replica
+	// nextReplicaIdx points to the candidate for the next attempt.
 	nextReplicaIdx int
 }
 
@@ -233,11 +236,10 @@ func newReplicaSelector(regionCache *RegionCache, regionID RegionVerID) (*replic
 	}, nil
 }
 
+// isExhausted returns true if runs out of all replicas.
 func (s *replicaSelector) isExhausted() bool {
 	return s.nextReplicaIdx >= len(s.replicas)
 }
-
-const maxReplicaAttempt = 10
 
 func (s *replicaSelector) nextReplica() *replica {
 	if s.isExhausted() {
@@ -246,8 +248,11 @@ func (s *replicaSelector) nextReplica() *replica {
 	return s.replicas[s.nextReplicaIdx]
 }
 
-func (s *replicaSelector) next(bo *Backoffer) (*RPCContext, error) {
+const maxReplicaAttempt = 10
 
+// next creates the RPCContext of the current candidate replica.
+// It returns a SendError if runs out of all replicas of the cached region is invalidated.
+func (s *replicaSelector) next(bo *Backoffer) (*RPCContext, error) {
 	for {
 		if !s.region.isValid() {
 			return nil, tikverr.NewSendError("invalidated region")
@@ -259,6 +264,7 @@ func (s *replicaSelector) next(bo *Backoffer) (*RPCContext, error) {
 		replica := s.replicas[s.nextReplicaIdx]
 		s.nextReplicaIdx++
 
+		// Limit the max attempts of each replica to prevent endless retry.
 		replica.attempts++
 		if replica.attempts > maxReplicaAttempt {
 			continue
@@ -285,6 +291,7 @@ func (s *replicaSelector) next(bo *Backoffer) (*RPCContext, error) {
 	}
 }
 
+// onSendFailure
 func (s *replicaSelector) onSendFailure(bo *Backoffer, err error) {
 	metrics.RegionCacheCounterWithSendFail.Inc()
 	replica := s.replicas[s.nextReplicaIdx-1]
@@ -307,6 +314,9 @@ func (s *replicaSelector) onSendFailure(bo *Backoffer, err error) {
 	}
 }
 
+// OnSendSuccess updates the leader of the cached region since the replicaSelector
+// is only used for leader request. It's called when the request is sent to the
+// replica successfully.
 func (s *replicaSelector) OnSendSuccess() {
 	// The successful replica is not at the head of replicas which means it's not the
 	// leader in the cached region, so update leader.
@@ -322,6 +332,8 @@ func (s *replicaSelector) rewind() {
 	s.nextReplicaIdx--
 }
 
+// updateLeader updates the leader of the cached region.
+// If the leader peer isn't found in the region, the region will be invalidated.
 func (s *replicaSelector) updateLeader(leader *metapb.Peer) {
 	if leader == nil {
 		return
