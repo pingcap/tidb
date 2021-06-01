@@ -3952,6 +3952,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		desc:         plan.Desc,
 		lock:         plan.Lock,
 		waitTime:     plan.LockWaitTime,
+		partExpr:     plan.PartitionExpr,
 		partPos:      plan.PartitionColPos,
 		singlePart:   plan.SinglePart,
 		partTblID:    plan.PartTblID,
