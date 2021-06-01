@@ -214,7 +214,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	a.setPlanLabelForTopSQL(ctx)
+	ctx = a.setPlanLabelForTopSQL(ctx)
 	startTs := uint64(math.MaxUint64)
 	err := a.Ctx.InitTxnWithStartTS(startTs)
 	if err != nil {
@@ -290,15 +290,16 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	return a.InfoSchema.SchemaMetaVersion(), nil
 }
 
-func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) {
+func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) context.Context {
 	if a.Plan == nil || !variable.TopSQLEnabled() {
-		return
+		return ctx
 	}
 	normalizedSQL, sqlDigest := a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
 	normalizedPlan, planDigest := getPlanDigest(a.Ctx, a.Plan)
 	if len(normalizedPlan) > 0 {
-		topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest)
+		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest)
 	}
+	return ctx
 }
 
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
@@ -371,7 +372,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		return nil, err
 	}
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
-	a.setPlanLabelForTopSQL(ctx)
+	ctx = a.setPlanLabelForTopSQL(ctx)
 
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
