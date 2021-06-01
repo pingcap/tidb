@@ -27,19 +27,29 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-var _ = check.Suite(&CTETestSuite{})
+var _ = check.Suite(&CTETestSuite{&baseCTETestSuite{}})
+var _ = check.SerialSuites(&CTESerialTestSuite{&baseCTETestSuite{}})
 
-type CTETestSuite struct {
+type baseCTETestSuite struct {
 	store      kv.Storage
 	dom        *domain.Domain
 	sessionCtx sessionctx.Context
 	session    session.Session
 	ctx        context.Context
+}
+
+type CTETestSuite struct {
+	*baseCTETestSuite
+}
+
+type CTESerialTestSuite struct {
+	*baseCTETestSuite
 }
 
 func (test *CTETestSuite) SetUpSuite(c *check.C) {
@@ -107,7 +117,12 @@ func (test *CTETestSuite) TestBasicCTE(c *check.C) {
 	rows.Check(testkit.Rows("1", "2"))
 }
 
-func (test *CTETestSuite) TestSpillToDisk(c *check.C) {
+func (test *CTESerialTestSuite) TestSpillToDisk(c *check.C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMUseTmpStorage = true
+	})
+
 	tk := testkit.NewTestKit(c, test.store)
 	tk.MustExec("use test;")
 
