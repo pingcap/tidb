@@ -67,6 +67,17 @@
     ]
   },
   {
+    "name": "TestTopNOutOfHist",
+    "cases": [
+      "show stats_topn",
+      "show stats_buckets",
+      "explain select * from topn_before_hist where a = 1",
+      "explain select * from topn_after_hist where a = 6",
+      "explain select * from topn_after_hist_no_index where a = 6",
+      "explain select * from topn_before_hist_no_index where a = 1"
+    ]
+  },
+  {
     "name": "TestColumnIndexNullEstimation",
     "cases": [
       "explain select b from t where b is null",

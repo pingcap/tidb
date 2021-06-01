@@ -265,7 +265,9 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		preparedObj.Executor = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
-		err := Preprocess(sctx, prepared.Stmt, is, InPrepare)
+		// FIXME: compatible with prepare https://github.com/pingcap/tidb/issues/24932
+		ret := &PreprocessorReturn{InfoSchema: is}
+		err := Preprocess(sctx, prepared.Stmt, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
 			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
@@ -448,18 +450,6 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 		if err != nil {
 			return err
 		}
-	case *Update:
-		// Temporarily turn off the cache for UPDATE to solve #21884.
-
-		//ok, err = IsPointUpdateByAutoCommit(sctx, p)
-		//if err != nil {
-		//	return err
-		//}
-		//if ok {
-		//	// make constant expression store paramMarker
-		//	sctx.GetSessionVars().StmtCtx.PointExec = true
-		//	p, names, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
-		//}
 	}
 	if ok {
 		// just cache point plan now
@@ -724,8 +714,8 @@ type Simple struct {
 	//   Used for `global kill`. See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
 	IsFromRemote bool
 
-	// StalenessTxnOption is the transaction option that will be built when planner builder calls buildSimple.
-	StalenessTxnOption *sessionctx.StalenessTxnOption
+	// StaleTxnStartTS is the StartTS that is used to build a staleness transaction by 'START TRANSACTION READ ONLY' statement.
+	StaleTxnStartTS uint64
 }
 
 // PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.
@@ -965,6 +955,8 @@ type Explain struct {
 	Rows           [][]string
 	ExplainRows    [][]string
 	explainedPlans map[int]bool
+
+	ctes []*PhysicalCTE
 }
 
 // GetExplainRowsForPlan get explain rows for plan.
@@ -1026,6 +1018,10 @@ func (e *Explain) RenderResult() error {
 			if err != nil {
 				return err
 			}
+			err = e.explainPlanInRowFormatCTE()
+			if err != nil {
+				return err
+			}
 		}
 	case ast.ExplainFormatDOT:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
@@ -1039,6 +1035,26 @@ func (e *Explain) RenderResult() error {
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
 	return nil
+}
+
+func (e *Explain) explainPlanInRowFormatCTE() (err error) {
+	explainedCTEPlan := make(map[int]struct{})
+	for i := 0; i < len(e.ctes); i++ {
+		x := (*CTEDefinition)(e.ctes[i])
+		// skip if the CTE has been explained, the same CTE has same IDForStorage
+		if _, ok := explainedCTEPlan[x.CTE.IDForStorage]; ok {
+			continue
+		}
+		e.prepareOperatorInfo(x, "root", "", "", true)
+		childIndent := texttree.Indent4Child("", true)
+		err = e.explainPlanInRowFormat(x.SeedPlan, "root", "(Seed Part)", childIndent, x.RecurPlan == nil)
+		if x.RecurPlan != nil {
+			err = e.explainPlanInRowFormat(x.RecurPlan, "root", "(Recursive Part)", childIndent, true)
+		}
+		explainedCTEPlan[x.CTE.IDForStorage] = struct{}{}
+	}
+
+	return
 }
 
 // explainPlanInRowFormat generates explain information for root-tasks.
@@ -1144,6 +1160,8 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 		if x.Plan != nil {
 			err = e.explainPlanInRowFormat(x.Plan, "root", "", indent, true)
 		}
+	case *PhysicalCTE:
+		e.ctes = append(e.ctes, x)
 	}
 	return
 }
@@ -1357,22 +1375,4 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 // used for fast plan like point get
 func IsAutoCommitTxn(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().IsAutocommit() && !ctx.GetSessionVars().InTxn()
-}
-
-// IsPointUpdateByAutoCommit checks if plan p is point update and is in autocommit context
-func IsPointUpdateByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
-	if !IsAutoCommitTxn(ctx) {
-		return false, nil
-	}
-
-	// check plan
-	updPlan, ok := p.(*Update)
-	if !ok {
-		return false, nil
-	}
-	if _, isFastSel := updPlan.SelectPlan.(*PointGetPlan); isFastSel {
-		return true, nil
-	}
-
-	return false, nil
 }

@@ -1219,7 +1219,7 @@ func (s *testIntegrationSuite) TestPartitionPruningForEQ(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a datetime, b int) partition by range(weekday(a)) (partition p0 values less than(10), partition p1 values less than (100))")
 
-	is := tk.Se.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	is := tk.Se.GetInfoSchema().(infoschema.InfoSchema)
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	pt := tbl.(table.PartitionedTable)
@@ -3845,30 +3845,4 @@ func (s *testIntegrationSerialSuite) TestEnforceMPP(c *C) {
 		"    └─HashAgg_9 1.00 285050.00 batchCop[tiflash]  funcs:count(1)->Column#5",
 		"      └─Selection_20 10.00 285020.00 batchCop[tiflash]  eq(test.t.a, 1)",
 		"        └─TableFullScan_19 10000.00 255020.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
-}
-
-func (s *testIntegrationSuite) TestEliminateLockForTemporaryTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	tk.MustExec("use test;")
-	tk.MustExec("create global temporary table t1 (a int primary key, b int, c int, index i_b(b))  on commit delete rows;")
-	defer func() {
-		tk.MustExec("drop global temporary table if exists t1;")
-	}()
-	tk.MustExec("begin;")
-	tk.MustExec("insert t1 values (8,8,9);")
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
-		})
-		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
-	}
 }
