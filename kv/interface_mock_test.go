@@ -104,10 +104,6 @@ func (t *mockTxn) GetSnapshot() Snapshot {
 	return nil
 }
 
-func (t *mockTxn) GetUnionStore() UnionStore {
-	return nil
-}
-
 func (t *mockTxn) NewStagingBuffer() MemBuffer {
 	return nil
 }
