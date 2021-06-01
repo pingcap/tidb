@@ -892,14 +892,13 @@ func (e *RuntimeStatsWithCommit) String() string {
 	return buf.String()
 }
 
-func (e *RuntimeStatsWithCommit) formatBackoff(backoffTypes []fmt.Stringer) string {
+func (e *RuntimeStatsWithCommit) formatBackoff(backoffTypes []string) string {
 	if len(backoffTypes) == 0 {
 		return ""
 	}
 	tpMap := make(map[string]struct{})
 	tpArray := []string{}
-	for _, tp := range backoffTypes {
-		tpStr := tp.String()
+	for _, tpStr := range backoffTypes {
 		_, ok := tpMap[tpStr]
 		if ok {
 			continue
