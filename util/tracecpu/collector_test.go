@@ -69,7 +69,7 @@ func populateCache(ts *TopSQLCollector, begin, end int, timestamp uint64) {
 			CPUTimeMs:  uint32(i + 1),
 		})
 	}
-	ts.Collect1(timestamp, records)
+	ts.Collect(timestamp, records)
 }
 
 func initializeCache(maxSQLNum int, addr string) *TopSQLCollector {
@@ -111,10 +111,12 @@ func startTestServer(c *C) (*grpc.Server, *testAgentServer, int) {
 	server := grpc.NewServer()
 	agentServer := &testAgentServer{}
 	tipb.RegisterTopSQLAgentServer(server, agentServer)
+
 	go func() {
 		err := server.Serve(lis)
 		c.Assert(err, IsNil, Commentf("failed to start server"))
 	}()
+
 	return server, agentServer, lis.Addr().(*net.TCPAddr).Port
 }
 
@@ -208,8 +210,9 @@ func (s *testTopSQLCollector) TestCollectAndSendBatch(c *C) {
 	ts := initializeCache(maxSQLNum, fmt.Sprintf(":%d", port))
 	batch := ts.snapshot()
 
-	conn, stream, err := newAgentClient(ts.agentGRPCAddress, 30*time.Second)
+	conn, stream, cancel, err := newAgentClient(ts.agentGRPCAddress, 30*time.Second)
 	c.Assert(err, IsNil, Commentf("failed to create agent client"))
+	defer cancel()
 	err = ts.sendBatch(stream, batch)
 	c.Assert(err, IsNil, Commentf("failed to send batch to server"))
 	err = conn.Close()

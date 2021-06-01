@@ -21,8 +21,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/wangjohn/quickselect"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
@@ -46,21 +48,21 @@ type TopSQLDataPoints struct {
 	CPUTimeMsTotal uint64
 }
 
-type DigestAndCPUTime struct {
+type digestAndCPUTime struct {
 	Key            string
 	CPUTimeMsTotal uint64
 }
-type DigestAndCPUTimeSlice []DigestAndCPUTime
+type digestAndCPUTimeSlice []digestAndCPUTime
 
-func (t DigestAndCPUTimeSlice) Len() int {
+func (t digestAndCPUTimeSlice) Len() int {
 	return len(t)
 }
 
 // We need find the kth largest value, so here should use >
-func (t DigestAndCPUTimeSlice) Less(i, j int) bool {
+func (t digestAndCPUTimeSlice) Less(i, j int) bool {
 	return t[i].CPUTimeMsTotal > t[j].CPUTimeMsTotal
 }
-func (t DigestAndCPUTimeSlice) Swap(i, j int) {
+func (t digestAndCPUTimeSlice) Swap(i, j int) {
 	t[i], t[j] = t[j], t[i]
 }
 
@@ -69,6 +71,7 @@ type planRegisterJob struct {
 	normalizedPlan string
 }
 
+// TopSQLCollector is called periodically to collect TopSQL resource usage metrics
 type TopSQLCollector struct {
 	// // calling this can take a while, so should not block critical paths
 	// planBinaryDecoder planBinaryDecodeFunc
@@ -95,6 +98,7 @@ type TopSQLCollector struct {
 	quit chan struct{}
 }
 
+// TopSQLCollectorConfig is the config for TopSQLCollector
 type TopSQLCollectorConfig struct {
 	PlanBinaryDecoder   planBinaryDecodeFunc
 	MaxSQLNum           int
@@ -114,19 +118,21 @@ func decodeCacheKey(key string) (string, string) {
 	return sqlDigest, PlanDigest
 }
 
-func newAgentClient(addr string, sendingTimeout time.Duration) (*grpc.ClientConn, tipb.TopSQLAgent_CollectCPUTimeClient, error) {
-	dialCtx, _ := context.WithTimeout(context.TODO(), time.Second)
+func newAgentClient(addr string, sendingTimeout time.Duration) (*grpc.ClientConn, tipb.TopSQLAgent_CollectCPUTimeClient, context.CancelFunc, error) {
+	dialCtx, cancel := context.WithTimeout(context.TODO(), time.Second)
+	defer cancel()
 	conn, err := grpc.DialContext(dialCtx, addr, grpc.WithInsecure())
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	client := tipb.NewTopSQLAgentClient(conn)
-	ctx, _ := context.WithTimeout(dialCtx, sendingTimeout)
+	ctx, cancel := context.WithTimeout(context.TODO(), sendingTimeout)
 	stream, err := client.CollectCPUTime(ctx)
 	if err != nil {
-		return nil, nil, err
+		cancel()
+		return nil, nil, nil, err
 	}
-	return conn, stream, nil
+	return conn, stream, cancel, nil
 }
 
 // NewTopSQLCollector creates a new TopSQL struct
@@ -157,9 +163,9 @@ func NewTopSQLCollector(config *TopSQLCollectorConfig) *TopSQLCollector {
 	return ts
 }
 
-// Collect1 uses a hashmap to store records in every minute, and evict every minute.
+// Collect uses a hashmap to store records in every minute, and evict every minute.
 // This function can be run in parallel with snapshot, so we should protect the map operations with a mutex.
-func (ts *TopSQLCollector) Collect1(timestamp uint64, records []TopSQLRecord) {
+func (ts *TopSQLCollector) Collect(timestamp uint64, records []TopSQLRecord) {
 	for _, record := range records {
 		encodedKey := encodeCacheKey(record.SQLDigest, record.PlanDigest)
 		entry, exist := ts.topSQLMap[encodedKey]
@@ -181,11 +187,11 @@ func (ts *TopSQLCollector) Collect1(timestamp uint64, records []TopSQLRecord) {
 	}
 
 	// find the max CPUTimeMsTotal that should be evicted
-	digestCPUTimeList := make([]DigestAndCPUTime, len(ts.topSQLMap))
+	digestCPUTimeList := make([]digestAndCPUTime, len(ts.topSQLMap))
 	{
 		i := 0
 		for key, value := range ts.topSQLMap {
-			data := DigestAndCPUTime{
+			data := digestAndCPUTime{
 				Key:            key,
 				CPUTimeMsTotal: value.CPUTimeMsTotal,
 			}
@@ -193,7 +199,11 @@ func (ts *TopSQLCollector) Collect1(timestamp uint64, records []TopSQLRecord) {
 			i++
 		}
 	}
-	quickselect.QuickSelect(DigestAndCPUTimeSlice(digestCPUTimeList), ts.maxSQLNum)
+	// QuickSelect will only return error when the second parameter is out of range
+	if err := quickselect.QuickSelect(digestAndCPUTimeSlice(digestCPUTimeList), ts.maxSQLNum); err != nil {
+		//	skip eviction
+		return
+	}
 	shouldEvictList := digestCPUTimeList[ts.maxSQLNum:]
 	for _, evict := range shouldEvictList {
 		delete(ts.topSQLMap, evict.Key)
@@ -279,14 +289,14 @@ func (ts *TopSQLCollector) snapshot() []*tipb.CPUTimeRequestTiDB {
 func (ts *TopSQLCollector) sendBatch(stream tipb.TopSQLAgent_CollectCPUTimeClient, batch []*tipb.CPUTimeRequestTiDB) error {
 	for _, req := range batch {
 		if err := stream.Send(req); err != nil {
-			log.Printf("ERROR: send stream request failed, %v", err)
+			logutil.BgLogger().Error("TopSQL: send stream request failed, %v", zap.Error(err))
 			return err
 		}
 	}
 	// response is Empty, drop it for now
 	_, err := stream.CloseAndRecv()
 	if err != nil {
-		log.Printf("ERROR: receive stream response failed, %v", err)
+		logutil.BgLogger().Error("TopSQL: receive stream response failed, %v", zap.Error(err))
 		return err
 	}
 	return nil
@@ -303,7 +313,7 @@ func (ts *TopSQLCollector) sendToAgentWorker(interval time.Duration) {
 			if sendingTimeout < 0 {
 				sendingTimeout = interval / 2
 			}
-			conn, stream, err := newAgentClient(ts.agentGRPCAddress, sendingTimeout)
+			conn, stream, _, err := newAgentClient(ts.agentGRPCAddress, sendingTimeout)
 			if err != nil {
 				log.Printf("ERROR: failed to create agent client, %v\n", err)
 				continue
