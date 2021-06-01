@@ -180,21 +180,41 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			c.setUndeterminedErr(errors.Trace(sender.rpcError))
 		}
 
-		if err != nil && !tikverr.IsSendError(err) {
-			return errors.Trace(err)
-		}
-		regionErr, e := resp.GetRegionError()
-		if e != nil {
-			return errors.Trace(e)
-		}
-		// Retry recursively immediately if the region range is changed.
-		if regionErr != nil && regionErr.GetEpochNotMatch() != nil {
+		// Retry in the same loop when receives a SendError.
+		if tikverr.IsSendError(err) {
+			err = bo.Backoff(retry.BoRegionMiss, err)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			same, err := batch.relocate(bo, c.store.regionCache)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if same {
+				continue
+			}
 			err = c.doActionOnMutations(bo, actionPrewrite{true}, batch.mutations)
 			return errors.Trace(err)
 		}
-		// Retry in the same loop if fails to send request and the region range isn't changed.
-		if regionErr != nil || tikverr.IsSendError(err) {
-			err = bo.Backoff(retry.BoRegionMiss, err)
+
+		// Unexpected error occurs, return it.
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if regionErr != nil {
+			// Retry recursively immediately if the region range is changed.
+			if regionErr.GetEpochNotMatch() != nil {
+				err = c.doActionOnMutations(bo, actionPrewrite{true}, batch.mutations)
+				return errors.Trace(err)
+			}
+			// For other region error, we can't know whether the region range is changed,
+			// retry in the same loop.
+			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}

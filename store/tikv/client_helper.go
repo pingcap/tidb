@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/errorpb"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
 )
@@ -88,5 +90,10 @@ func (ch *ClientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID
 		}
 	})
 	resp, ctx, err := sender.SendReqCtx(bo, req, regionID, timeout, et, opts...)
+	// Convert the SendError to the fake region error so that we don't need to change all callers.
+	// TODO(youjiali1995): remove the fake region error.
+	if tikverr.IsSendError(err) {
+		resp, err = tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}})
+	}
 	return resp, ctx, sender.GetStoreAddr(), err
 }
