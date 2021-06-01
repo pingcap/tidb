@@ -471,18 +471,6 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenVarcharAndNonVarc
 	tk.MustExec("admin check table t;")
 
 	tk.Se.GetSessionVars().EnableChangeColumnType = true
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a char(10), b varchar(10));")
-	tk.MustExec("insert into t values ('aaa    ', 'bbb   ');")
-	tk.MustExec("alter table t change column a a varchar(10);")
-	tk.MustExec("alter table t change column b b char(10);")
-
-	tk.MustExec("alter table t add index idx_a(a);")
-	tk.MustExec("alter table t add index idx_b(b);")
-	tk.MustExec("alter table t change column a a char(10);")
-	tk.MustExec("alter table t change column b b varchar(10);")
-	tk.MustExec("admin check table t;")
-
 	// https://github.com/pingcap/tidb/issues/23624
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(b varchar(10));")

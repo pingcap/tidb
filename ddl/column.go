@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -712,8 +713,7 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		return needTruncationOrToggleSign()
 	}
 
-	if (types.IsTypeVarchar(oldCol.Tp) && newCol.Tp == mysql.TypeString) ||
-		(oldCol.Tp == mysql.TypeString && types.IsTypeVarchar(newCol.Tp)) {
+	if convertBetweenCharAndVarchar(oldCol.Tp, newCol.Tp) {
 		return true
 	}
 
@@ -737,6 +737,15 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	}
 
 	return true
+}
+
+// Column type conversion between varchar to char need reorganization because
+// 1. varchar -> char: char type is stored with the padding removed. All the indexes need to be rewritten.
+// 2. char -> varchar: the index value encoding of secondary index on clustered primary key tables is different.
+// These secondary indexes need to be rewritten.
+func convertBetweenCharAndVarchar(oldCol, newCol byte) bool {
+	return (types.IsTypeVarchar(oldCol) && newCol == mysql.TypeString) ||
+		(oldCol == mysql.TypeString && types.IsTypeVarchar(newCol) && collate.NewCollationEnabled())
 }
 
 func isElemsChangedToModifyColumn(oldElems, newElems []string) bool {
