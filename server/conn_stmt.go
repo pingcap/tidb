@@ -130,6 +130,13 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	stmtID := binary.LittleEndian.Uint32(data[0:4])
 	pos += 4
 
+	if variable.TopSQLEnabled() {
+		preparedStmt, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
+		if preparedStmt != nil && preparedStmt.SQLDigest != nil {
+			ctx = topsql.AttachSQLInfo(ctx, preparedStmt.NormalizedSQL, preparedStmt.SQLDigest, "", nil)
+		}
+	}
+
 	stmt := cc.ctx.GetStatement(int(stmtID))
 	if stmt == nil {
 		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
