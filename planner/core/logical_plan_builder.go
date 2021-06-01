@@ -6009,7 +6009,7 @@ func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) error {
 		nameMap[cte.Name.L] = struct{}{}
 	}
 	for _, cte := range w.CTEs {
-		b.outerCTEs = append(b.outerCTEs, &cteInfo{cte, !w.IsRecursive, false, true, false, nil, nil, b.allocIDForCTEStorage, 0, false, false, nil})
+		b.outerCTEs = append(b.outerCTEs, &cteInfo{def: cte, nonRecursive: !w.IsRecursive, isBuilding: true, storageID: b.allocIDForCTEStorage})
 		b.allocIDForCTEStorage++
 		saveFlag := b.optFlag
 		// Init the flag to flagPrunColumns, otherwise it's missing.
