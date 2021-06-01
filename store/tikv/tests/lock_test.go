@@ -19,13 +19,17 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
@@ -493,7 +497,7 @@ func (s *testLockSuite) TestBatchResolveLocks(c *C) {
 	c.Assert(msBeforeLockExpired, Greater, int64(0))
 
 	lr := s.store.NewLockResolver()
-	bo := tikv.NewBackofferWithVars(context.Background(), tikv.GcResolveLockMaxBackoff, nil)
+	bo := tikv.NewGcResolveLockMaxBackoffer(context.Background())
 	loc, err := s.store.GetRegionCache().LocateKey(bo, locks[0].Primary)
 	c.Assert(err, IsNil)
 	// Check BatchResolveLocks resolve the lock even the ttl is not expired.
@@ -639,4 +643,132 @@ func (s *testLockSuite) TestBatchResolveTxnFallenBackFromAsyncCommit(c *C) {
 	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 	_, err = t3.Get(context.Background(), []byte("fb2"))
 	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
+}
+
+func (s *testLockSuite) TestDeadlockReportWaitChain(c *C) {
+	// Utilities to make the test logic clear and simple.
+	type txnWrapper struct {
+		tikv.TxnProbe
+		wg sync.WaitGroup
+	}
+
+	makeLockCtx := func(txn *txnWrapper, resourceGroupTag string) *kv.LockCtx {
+		return &kv.LockCtx{
+			ForUpdateTS:      txn.StartTS(),
+			WaitStartTime:    time.Now(),
+			LockWaitTime:     1000,
+			ResourceGroupTag: []byte(resourceGroupTag),
+		}
+	}
+
+	// Prepares several transactions and each locks a key.
+	prepareTxns := func(num int) []*txnWrapper {
+		res := make([]*txnWrapper, 0, num)
+		for i := 0; i < num; i++ {
+			txnProbe, err := s.store.Begin()
+			c.Assert(err, IsNil)
+			txn := &txnWrapper{TxnProbe: txnProbe}
+			txn.SetPessimistic(true)
+			tag := fmt.Sprintf("tag-init%v", i)
+			key := []byte{'k', byte(i)}
+			err = txn.LockKeys(context.Background(), makeLockCtx(txn, tag), key)
+			c.Assert(err, IsNil)
+
+			res = append(res, txn)
+		}
+		return res
+	}
+
+	// Let the i-th trnasaction lock the key that has been locked by j-th transaction
+	tryLock := func(txns []*txnWrapper, i int, j int) error {
+		c.Logf("txn %v try locking %v", i, j)
+		txn := txns[i]
+		tag := fmt.Sprintf("tag-%v-%v", i, j)
+		key := []byte{'k', byte(j)}
+		return txn.LockKeys(context.Background(), makeLockCtx(txn, tag), key)
+	}
+
+	// Asserts the i-th transaction waits for the j-th transaction.
+	makeWaitFor := func(txns []*txnWrapper, i int, j int) {
+		txns[i].wg.Add(1)
+		go func() {
+			defer txns[i].wg.Done()
+			err := tryLock(txns, i, j)
+			// After the lock being waited for is released, the transaction returns a WriteConflict error
+			// unconditionally, which is by design.
+			c.Assert(err, NotNil)
+			c.Logf("txn %v wait for %v finished, err: %s", i, j, err.Error())
+			_, ok := errors.Cause(err).(*tikverr.ErrWriteConflict)
+			c.Assert(ok, IsTrue)
+		}()
+	}
+
+	waitAndRollback := func(txns []*txnWrapper, i int) {
+		// It's expected that each transaction should be rolled back after its blocker, so that `Rollback` will not
+		// run when there's concurrent `LockKeys` running.
+		// If it's blocked on the `Wait` forever, it means the transaction's blocker is not rolled back.
+		c.Logf("rollback txn %v", i)
+		txns[i].wg.Wait()
+		err := txns[i].Rollback()
+		c.Assert(err, IsNil)
+	}
+
+	// Check the given WaitForEntry is caused by txn[i] waiting for txn[j].
+	checkWaitChainEntry := func(txns []*txnWrapper, entry *deadlockpb.WaitForEntry, i, j int) {
+		c.Assert(entry.Txn, Equals, txns[i].StartTS())
+		c.Assert(entry.WaitForTxn, Equals, txns[j].StartTS())
+		c.Assert(entry.Key, BytesEquals, []byte{'k', byte(j)})
+		c.Assert(string(entry.ResourceGroupTag), Equals, fmt.Sprintf("tag-%v-%v", i, j))
+	}
+
+	c.Log("test case 1: 1->0->1")
+
+	txns := prepareTxns(2)
+
+	makeWaitFor(txns, 0, 1)
+	// Sleep for a while to make sure it has been blocked.
+	time.Sleep(time.Millisecond * 100)
+
+	// txn2 tries locking k1 and encounters deadlock error.
+	err := tryLock(txns, 1, 0)
+	c.Assert(err, NotNil)
+	dl, ok := errors.Cause(err).(*tikverr.ErrDeadlock)
+	c.Assert(ok, IsTrue)
+
+	waitChain := dl.GetWaitChain()
+	c.Assert(len(waitChain), Equals, 2)
+	checkWaitChainEntry(txns, waitChain[0], 0, 1)
+	checkWaitChainEntry(txns, waitChain[1], 1, 0)
+
+	// Each transaction should be rolled back after its blocker being rolled back
+	waitAndRollback(txns, 1)
+	waitAndRollback(txns, 0)
+
+	c.Log("test case 2: 3->2->0->1->3")
+	txns = prepareTxns(4)
+
+	makeWaitFor(txns, 0, 1)
+	makeWaitFor(txns, 2, 0)
+	makeWaitFor(txns, 1, 3)
+	// Sleep for a while to make sure it has been blocked.
+	time.Sleep(time.Millisecond * 100)
+
+	err = tryLock(txns, 3, 2)
+	c.Assert(err, NotNil)
+	dl, ok = errors.Cause(err).(*tikverr.ErrDeadlock)
+	c.Assert(ok, IsTrue)
+
+	waitChain = dl.GetWaitChain()
+	c.Assert(len(waitChain), Equals, 4)
+	c.Logf("wait chain: \n** %v\n**%v\n**%v\n**%v\n", waitChain[0], waitChain[1], waitChain[2], waitChain[3])
+	checkWaitChainEntry(txns, waitChain[0], 2, 0)
+	checkWaitChainEntry(txns, waitChain[1], 0, 1)
+	checkWaitChainEntry(txns, waitChain[2], 1, 3)
+	checkWaitChainEntry(txns, waitChain[3], 3, 2)
+
+	// Each transaction should be rolled back after its blocker being rolled back
+	waitAndRollback(txns, 3)
+	waitAndRollback(txns, 1)
+	waitAndRollback(txns, 0)
+	waitAndRollback(txns, 2)
 }

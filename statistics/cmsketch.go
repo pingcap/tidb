@@ -386,8 +386,12 @@ func CMSketchToProto(c *CMSketch, topn *TopN) *tipb.CMSketch {
 
 // CMSketchAndTopNFromProto converts CMSketch and TopN from its protobuf representation.
 func CMSketchAndTopNFromProto(protoSketch *tipb.CMSketch) (*CMSketch, *TopN) {
-	if protoSketch == nil || len(protoSketch.Rows) == 0 {
+	if protoSketch == nil {
 		return nil, nil
+	}
+	retTopN := TopNFromProto(protoSketch.TopN)
+	if len(protoSketch.Rows) == 0 {
+		return nil, retTopN
 	}
 	c := NewCMSketch(int32(len(protoSketch.Rows)), int32(len(protoSketch.Rows[0].Counters)))
 	for i, row := range protoSketch.Rows {
@@ -398,14 +402,14 @@ func CMSketchAndTopNFromProto(protoSketch *tipb.CMSketch) (*CMSketch, *TopN) {
 		}
 	}
 	c.defaultValue = protoSketch.DefaultValue
-	if len(protoSketch.TopN) == 0 {
-		return c, nil
-	}
-	return c, TopNFromProto(protoSketch.TopN)
+	return c, retTopN
 }
 
 // TopNFromProto converts TopN from its protobuf representation.
 func TopNFromProto(protoTopN []*tipb.CMSketchTopN) *TopN {
+	if len(protoTopN) == 0 {
+		return nil
+	}
 	topN := NewTopN(32)
 	for _, e := range protoTopN {
 		d := make([]byte, len(e.Data))
@@ -515,6 +519,15 @@ func (c *TopN) String() string {
 	fmt.Fprint(builder, "]")
 	fmt.Fprint(builder, "}")
 	return builder.String()
+}
+
+// Num returns the ndv of the TopN.
+//   TopN is declared directly in Histogram. So the Len is occupied by the Histogram. We use Num instead.
+func (c *TopN) Num() int {
+	if c == nil {
+		return 0
+	}
+	return len(c.TopN)
 }
 
 // DecodedString returns the value with decoded result.
@@ -818,14 +831,11 @@ func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
 }
 
 func checkEmptyTopNs(topNs []*TopN) bool {
-	totCnt := uint64(0)
+	count := uint64(0)
 	for _, topN := range topNs {
-		totCnt += topN.TotalCount()
+		count += topN.TotalCount()
 	}
-	if totCnt == 0 {
-		return true
-	}
-	return false
+	return count == 0
 }
 
 func getMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {

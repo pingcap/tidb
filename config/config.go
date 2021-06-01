@@ -60,9 +60,9 @@ const (
 	DefHost = "0.0.0.0"
 	// DefStatusHost is the default status host of TiDB
 	DefStatusHost = "0.0.0.0"
-	// Def TableColumnCountLimit is limit of the number of columns in a table
+	// DefTableColumnCountLimit is limit of the number of columns in a table
 	DefTableColumnCountLimit = 1017
-	// Def TableColumnCountLimit is maximum limitation of the number of columns in a table
+	// DefMaxOfTableColumnCountLimit is maximum limitation of the number of columns in a table
 	DefMaxOfTableColumnCountLimit = 4096
 )
 
@@ -73,7 +73,7 @@ var (
 		"tikv":     true,
 		"unistore": true,
 	}
-	// checkTableBeforeDrop enable to execute `admin check table` before `drop table`.
+	// CheckTableBeforeDrop enable to execute `admin check table` before `drop table`.
 	CheckTableBeforeDrop = false
 	// checkBeforeDropLDFlag is a go build flag.
 	checkBeforeDropLDFlag = "None"
@@ -198,7 +198,6 @@ func (c *Config) getTiKVConfig() *tikvcfg.Config {
 	return &tikvcfg.Config{
 		CommitterConcurrency:  c.Performance.CommitterConcurrency,
 		MaxTxnTTL:             c.Performance.MaxTxnTTL,
-		ServerMemoryQuota:     defTiKVCfg.ServerMemoryQuota,
 		TiKVClient:            c.TiKVClient,
 		Security:              c.Security.ClusterSecurity(),
 		PDClient:              c.PDClient,
@@ -298,7 +297,7 @@ func (b *nullableBool) UnmarshalJSON(data []byte) error {
 type Log struct {
 	// Log level.
 	Level string `toml:"level" json:"level"`
-	// Log format. one of json, text, or console.
+	// Log format, one of json or text.
 	Format string `toml:"format" json:"format"`
 	// Disable automatic timestamps in output. Deprecated: use EnableTimestamp instead.
 	DisableTimestamp nullableBool `toml:"disable-timestamp" json:"disable-timestamp"`

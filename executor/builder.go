@@ -49,6 +49,8 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cteutil"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
@@ -80,6 +82,14 @@ type executorBuilder struct {
 	snapshotTSCached bool
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
+}
+
+// CTEStorages stores resTbl and iterInTbl for CTEExec.
+// There will be a map[CTEStorageID]*CTEStorages in StmtCtx,
+// which will store all CTEStorages to make all shared CTEs use same the CTEStorages.
+type CTEStorages struct {
+	ResTbl    cteutil.Storage
+	IterInTbl cteutil.Storage
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *executorBuilder {
@@ -234,6 +244,10 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildAdminShowTelemetry(v)
 	case *plannercore.AdminResetTelemetryID:
 		return b.buildAdminResetTelemetryID(v)
+	case *plannercore.PhysicalCTE:
+		return b.buildCTE(v)
+	case *plannercore.PhysicalCTETable:
+		return b.buildCTETableReader(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -639,7 +653,6 @@ func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
 	base.initCap = chunk.ZeroCapacity
 	return &PrepareExec{
 		baseExecutor: base,
-		is:           b.is,
 		name:         v.Name,
 		sqlText:      v.SQLText,
 	}
@@ -705,10 +718,11 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.initCap = chunk.ZeroCapacity
 	e := &SimpleExec{
-		baseExecutor: base,
-		Statement:    v.Statement,
-		IsFromRemote: v.IsFromRemote,
-		is:           b.is,
+		baseExecutor:    base,
+		Statement:       v.Statement,
+		IsFromRemote:    v.IsFromRemote,
+		is:              b.is,
+		staleTxnStartTS: v.StaleTxnStartTS,
 	}
 	return e
 }
@@ -1526,12 +1540,18 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableTiKVStoreStatus),
 			strings.ToLower(infoschema.TableStatementsSummary),
 			strings.ToLower(infoschema.TableStatementsSummaryHistory),
+			strings.ToLower(infoschema.TableStatementsSummaryEvicted),
 			strings.ToLower(infoschema.ClusterTableStatementsSummary),
 			strings.ToLower(infoschema.ClusterTableStatementsSummaryHistory),
 			strings.ToLower(infoschema.TablePlacementPolicy),
 			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
-			strings.ToLower(infoschema.TableClientErrorsSummaryByHost):
+			strings.ToLower(infoschema.TableClientErrorsSummaryByHost),
+			strings.ToLower(infoschema.TableTiDBTrx),
+			strings.ToLower(infoschema.ClusterTableTiDBTrx),
+			strings.ToLower(infoschema.TableDeadlocks),
+			strings.ToLower(infoschema.ClusterTableDeadlocks),
+			strings.ToLower(infoschema.TableDataLockWaits):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -2016,7 +2036,7 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 		oldHist = idx.TruncateHistogram(bktID)
 	}
 	var oldTopN *statistics.TopN
-	if analyzeTask.idxExec.analyzePB.IdxReq.GetVersion() == statistics.Version2 {
+	if analyzeTask.idxExec.analyzePB.IdxReq.GetVersion() >= statistics.Version2 {
 		oldTopN = idx.TopN.Copy()
 		oldTopN.RemoveVal(oldHist.Bounds.GetRow(len(oldHist.Buckets)*2 - 1).GetBytes(0))
 	}
@@ -2474,11 +2494,14 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		outerKeyCols[i] = v.OuterJoinKeys[i].Index
 	}
 	innerKeyCols := make([]int, len(v.InnerJoinKeys))
+	innerKeyColIDs := make([]int64, len(v.InnerJoinKeys))
 	for i := 0; i < len(v.InnerJoinKeys); i++ {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
+		innerKeyColIDs[i] = v.InnerJoinKeys[i].ID
 	}
 	e.outerCtx.keyCols = outerKeyCols
 	e.innerCtx.keyCols = innerKeyCols
+	e.innerCtx.keyColIDs = innerKeyColIDs
 
 	outerHashCols, innerHashCols := make([]int, len(v.OuterHashKeys)), make([]int, len(v.InnerHashKeys))
 	for i := 0; i < len(v.OuterHashKeys); i++ {
@@ -2783,7 +2806,6 @@ func keyColumnsIncludeAllPartitionColumns(keyColumns []int, pe *tables.Partition
 func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, schema *expression.Schema, partitionInfo *plannercore.PartitionInfo,
 	lookUpContent []*indexJoinLookUpContent) (usedPartition []table.PhysicalTable, canPrune bool, contentPos []int64, err error) {
 	partitionTbl := tbl.(table.PartitionedTable)
-	locateKey := make([]types.Datum, schema.Len())
 	// TODO: condition based pruning can be do in advance.
 	condPruneResult, err := partitionPruning(ctx, partitionTbl, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
 	if err != nil {
@@ -2798,22 +2820,44 @@ func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, sch
 	if err != nil {
 		return nil, false, nil, err
 	}
+
+	// recalculate key column offsets
+	if lookUpContent[0].keyColIDs == nil {
+		return nil, false, nil,
+			dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("cannot get column IDs when dynamic pruning")
+	}
+	keyColOffsets := make([]int, len(lookUpContent[0].keyColIDs))
+	for i, colID := range lookUpContent[0].keyColIDs {
+		offset := -1
+		for j, col := range partitionTbl.Cols() {
+			if colID == col.ID {
+				offset = j
+				break
+			}
+		}
+		if offset == -1 {
+			return nil, false, nil,
+				dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("invalid column offset when dynamic pruning")
+		}
+		keyColOffsets[i] = offset
+	}
+
 	offsetMap := make(map[int]bool)
-	for _, offset := range lookUpContent[0].keyCols {
+	for _, offset := range keyColOffsets {
 		offsetMap[offset] = true
 	}
 	for _, offset := range pe.ColumnOffset {
 		if _, ok := offsetMap[offset]; !ok {
-			logutil.BgLogger().Warn("can not runtime prune in index join")
 			return condPruneResult, false, nil, nil
 		}
 	}
 
+	locateKey := make([]types.Datum, len(partitionTbl.Cols()))
 	partitions := make(map[int64]table.PhysicalTable)
 	contentPos = make([]int64, len(lookUpContent))
 	for idx, content := range lookUpContent {
 		for i, date := range content.keys {
-			locateKey[content.keyCols[i]] = date
+			locateKey[keyColOffsets[i]] = date
 		}
 		p, err := partitionTbl.GetPartitionByRow(ctx, locateKey)
 		if err != nil {
@@ -3432,7 +3476,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
+		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		Build()
 	if err != nil {
 		return nil, err
@@ -3908,6 +3952,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		desc:         plan.Desc,
 		lock:         plan.Lock,
 		waitTime:     plan.LockWaitTime,
+		partExpr:     plan.PartitionExpr,
 		partPos:      plan.PartitionColPos,
 		singlePart:   plan.SinglePart,
 		partTblID:    plan.PartTblID,
@@ -4039,4 +4084,91 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 			v.TableSampleInfo.FullSchema, e.retFieldTypes, v.Desc)
 	}
 	return e
+}
+
+func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
+	// 1. Build seedPlan.
+	seedExec := b.build(v.SeedPlan)
+	if b.err != nil {
+		return nil
+	}
+
+	// 2. Build iterInTbl.
+	chkSize := b.ctx.GetSessionVars().MaxChunkSize
+	tps := seedExec.base().retFieldTypes
+	iterOutTbl := cteutil.NewStorageRowContainer(tps, chkSize)
+	if err := iterOutTbl.OpenAndRef(); err != nil {
+		b.err = err
+		return nil
+	}
+
+	var resTbl cteutil.Storage
+	var iterInTbl cteutil.Storage
+	storageMap, ok := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
+	if !ok {
+		b.err = errors.New("type assertion for CTEStorageMap failed")
+		return nil
+	}
+	storages, ok := storageMap[v.CTE.IDForStorage]
+	if ok {
+		// Storage already setup.
+		resTbl = storages.ResTbl
+		iterInTbl = storages.IterInTbl
+	} else {
+		resTbl = cteutil.NewStorageRowContainer(tps, chkSize)
+		if err := resTbl.OpenAndRef(); err != nil {
+			b.err = err
+			return nil
+		}
+		iterInTbl = cteutil.NewStorageRowContainer(tps, chkSize)
+		if err := iterInTbl.OpenAndRef(); err != nil {
+			b.err = err
+			return nil
+		}
+		storageMap[v.CTE.IDForStorage] = &CTEStorages{ResTbl: resTbl, IterInTbl: iterInTbl}
+	}
+
+	// 3. Build recursive part.
+	recursiveExec := b.build(v.RecurPlan)
+	if b.err != nil {
+		return nil
+	}
+
+	var sel []int
+	if v.CTE.IsDistinct {
+		sel = make([]int, chkSize)
+		for i := 0; i < chkSize; i++ {
+			sel[i] = i
+		}
+	}
+
+	return &CTEExec{
+		baseExecutor:  newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		seedExec:      seedExec,
+		recursiveExec: recursiveExec,
+		resTbl:        resTbl,
+		iterInTbl:     iterInTbl,
+		iterOutTbl:    iterOutTbl,
+		chkIdx:        0,
+		isDistinct:    v.CTE.IsDistinct,
+		sel:           sel,
+	}
+}
+
+func (b *executorBuilder) buildCTETableReader(v *plannercore.PhysicalCTETable) Executor {
+	storageMap, ok := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
+	if !ok {
+		b.err = errors.New("type assertion for CTEStorageMap failed")
+		return nil
+	}
+	storages, ok := storageMap[v.IDForStorage]
+	if !ok {
+		b.err = errors.Errorf("iterInTbl should already be set up by CTEExec(id: %d)", v.IDForStorage)
+		return nil
+	}
+	return &CTETableReaderExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		iterInTbl:    storages.IterInTbl,
+		chkIdx:       0,
+	}
 }

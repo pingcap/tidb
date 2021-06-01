@@ -131,7 +131,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 			var topnCount int64
 			// If this is stats of the Version2, we need to consider the topn's count as well.
 			// See the comments of Version2 for more details.
-			if statsVer == statistics.Version2 {
+			if statsVer >= statistics.Version2 {
 				var err error
 				topnCount, err = h.initTopNCountSum(tblID, id)
 				if err != nil {
@@ -185,7 +185,7 @@ func (h *Handle) initStatsTopN4Chunk(cache *statsCache, iter *chunk.Iterator4Chu
 			continue
 		}
 		idx, ok := table.Indices[row.GetInt64(1)]
-		if !ok || idx.CMSketch == nil {
+		if !ok || (idx.CMSketch == nil && idx.StatsVer <= statistics.Version1) {
 			continue
 		}
 		if idx.TopN == nil {

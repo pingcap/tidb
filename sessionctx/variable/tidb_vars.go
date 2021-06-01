@@ -15,7 +15,6 @@ package variable
 
 import (
 	"math"
-	"os"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
@@ -107,15 +106,15 @@ const (
 
 	// The following session variables controls the memory quota during query execution.
 	// "tidb_mem_quota_query":				control the memory quota of a query.
-	TIDBMemQuotaQuery      = "tidb_mem_quota_query" // Bytes.
+	TiDBMemQuotaQuery      = "tidb_mem_quota_query" // Bytes.
 	TiDBMemQuotaApplyCache = "tidb_mem_quota_apply_cache"
-	// TODO: remove them below sometime, it should have only one Quota(TIDBMemQuotaQuery).
-	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
-	TIDBMemQuotaMergeJoin         = "tidb_mem_quota_mergejoin"         // Bytes.
-	TIDBMemQuotaSort              = "tidb_mem_quota_sort"              // Bytes.
-	TIDBMemQuotaTopn              = "tidb_mem_quota_topn"              // Bytes.
-	TIDBMemQuotaIndexLookupReader = "tidb_mem_quota_indexlookupreader" // Bytes.
-	TIDBMemQuotaIndexLookupJoin   = "tidb_mem_quota_indexlookupjoin"   // Bytes.
+	// TODO: remove them below sometime, it should have only one Quota(TiDBMemQuotaQuery).
+	TiDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
+	TiDBMemQuotaMergeJoin         = "tidb_mem_quota_mergejoin"         // Bytes.
+	TiDBMemQuotaSort              = "tidb_mem_quota_sort"              // Bytes.
+	TiDBMemQuotaTopn              = "tidb_mem_quota_topn"              // Bytes.
+	TiDBMemQuotaIndexLookupReader = "tidb_mem_quota_indexlookupreader" // Bytes.
+	TiDBMemQuotaIndexLookupJoin   = "tidb_mem_quota_indexlookupjoin"   // Bytes.
 
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
@@ -204,6 +203,9 @@ const (
 
 	// TiDBTxnScope indicates whether using global transactions or local transactions.
 	TiDBTxnScope = "txn_scope"
+
+	// TiDBTxnReadTS indicates the next transaction should be staleness transaction and provide the startTS
+	TiDBTxnReadTS = "tx_read_ts"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -216,7 +218,6 @@ const (
 	// A distsql scan task can be a table scan or a index scan, which may be distributed to many TiKV nodes.
 	// Higher concurrency may reduce latency, but with the cost of higher memory usage and system performance impact.
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
-	// tidb_distsql_scan_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
 
 	// tidb_opt_insubquery_to_join_and_agg is used to enable/disable the optimizer rule of rewriting IN subquery.
@@ -291,6 +292,8 @@ const (
 	// The default value is 0
 	TiDBAllowBatchCop = "tidb_allow_batch_cop"
 
+	// TiDBAllowMPPExecution means if we should use mpp way to execute query. Default value is 1 (or 'ON'), means to be determined by the optimizer.
+	// Value set to 2 (or 'ENFORCE') which means to use mpp whenever possible. Value set to 2 (or 'OFF') means never use mpp.
 	TiDBAllowMPPExecution = "tidb_allow_mpp"
 
 	// TiDBInitChunkSize is used to control the init chunk size during query execution.
@@ -393,10 +396,6 @@ const (
 	// It can be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY", "DELAYED"
 	TiDBForcePriority = "tidb_force_priority"
 
-	// tidb_enable_radix_join indicates to use radix hash join algorithm to execute
-	// HashJoin.
-	TiDBEnableRadixJoin = "tidb_enable_radix_join"
-
 	// tidb_constraint_check_in_place indicates to check the constraint when the SQL executing.
 	// It could hurt the performance of bulking insert when it is ON.
 	TiDBConstraintCheckInPlace = "tidb_constraint_check_in_place"
@@ -410,7 +409,7 @@ const (
 	// tidb_enable_vectorized_expression is used to control whether to enable the vectorized expression evaluation.
 	TiDBEnableVectorizedExpression = "tidb_enable_vectorized_expression"
 
-	// TIDBOptJoinReorderThreshold defines the threshold less than which
+	// TiDBOptJoinReorderThreshold defines the threshold less than which
 	// we'll choose a rather time consuming algorithm to calculate the join order.
 	TiDBOptJoinReorderThreshold = "tidb_opt_join_reorder_threshold"
 
@@ -532,6 +531,18 @@ const (
 
 	// TiDBEnableDynamicPrivileges enables MySQL 8.0 compatible dynamic privileges (experimental).
 	TiDBEnableDynamicPrivileges = "tidb_enable_dynamic_privileges"
+
+	// TiDBEnableTopSQL indicates whether the top SQL is enabled.
+	TiDBEnableTopSQL = "tidb_enable_top_sql"
+
+	// TiDBTopSQLAgentAddress indicates the top SQL agent address.
+	TiDBTopSQLAgentAddress = "tidb_top_sql_agent_address"
+
+	// TiDBTopSQLPrecisionSeconds indicates the top SQL precision seconds.
+	TiDBTopSQLPrecisionSeconds = "tidb_top_sql_precision_seconds"
+
+	// TiDBTopSQLMaxStatementCount indicates the max number of statements been collected.
+	TiDBTopSQLMaxStatementCount = "tidb_top_sql_max_statement_count"
 )
 
 // TiDB vars that have only global scope
@@ -614,7 +625,7 @@ const (
 	DefBroadcastJoinThresholdCount     = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 1
-	DefTiDBAllowMPPExecution           = true
+	DefTiDBAllowMPPExecution           = "ON"
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
@@ -632,7 +643,6 @@ const (
 	DefTiDBMergeJoinConcurrency        = 1 // disable optimization by default
 	DefTiDBStreamAggConcurrency        = 1
 	DefTiDBForcePriority               = mysql.NoPriority
-	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true
 	DefEnableStrictDoubleTypeCheck     = true
 	DefEnableVectorizedExpression      = true
@@ -675,6 +685,10 @@ const (
 	DefTiDBTrackAggregateMemoryUsage   = true
 	DefTiDBEnableExchangePartition     = false
 	DefCTEMaxRecursionDepth            = 1000
+	DefTiDBTopSQLEnable                = false
+	DefTiDBTopSQLAgentAddress          = ""
+	DefTiDBTopSQLPrecisionSeconds      = 1
+	DefTiDBTopSQLMaxStatementCount     = 200
 )
 
 // Process global variables.
@@ -693,11 +707,33 @@ var (
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
 	DDLSlowOprThreshold            uint32 = DefTiDBDDLSlowOprThreshold
 	ForcePriority                         = int32(DefTiDBForcePriority)
-	ServerHostname, _                     = os.Hostname()
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
 	CapturePlanBaseline                   = serverGlobalVariable{globalVal: Off}
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
+	TopSQLVariable                        = TopSQL{
+		Enable:            atomic.NewBool(DefTiDBTopSQLEnable),
+		AgentAddress:      atomic.NewString(DefTiDBTopSQLAgentAddress),
+		PrecisionSeconds:  atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
+		MaxStatementCount: atomic.NewInt64(DefTiDBTopSQLMaxStatementCount),
+	}
 )
+
+// TopSQL is the variable for control top sql feature.
+type TopSQL struct {
+	// Enable statement summary or not.
+	Enable *atomic.Bool
+	// AgentAddress indicate the collect agent address.
+	AgentAddress *atomic.String
+	// The refresh interval of statement summary.
+	PrecisionSeconds *atomic.Int64
+	// The maximum number of statements kept in memory.
+	MaxStatementCount *atomic.Int64
+}
+
+// TopSQLEnabled uses to check whether enabled the top SQL feature.
+func TopSQLEnabled() bool {
+	return TopSQLVariable.Enable.Load() && TopSQLVariable.AgentAddress.Load() != ""
+}

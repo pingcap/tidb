@@ -17,7 +17,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"runtime"
 	"strconv"
@@ -69,7 +68,6 @@ import (
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
-	"google.golang.org/grpc/grpclog"
 )
 
 // Flag Names
@@ -528,7 +526,7 @@ func setGlobalVars() {
 
 	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
 	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
-	variable.SetSysVar(variable.TIDBMemQuotaQuery, strconv.FormatInt(cfg.MemQuotaQuery, 10))
+	variable.SetSysVar(variable.TiDBMemQuotaQuery, strconv.FormatInt(cfg.MemQuotaQuery, 10))
 	variable.SetSysVar(variable.LowerCaseTableNames, strconv.Itoa(cfg.LowerCaseTableNames))
 	variable.SetSysVar(variable.LogBin, variable.BoolToOnOff(cfg.Binlog.Enable))
 	variable.SetSysVar(variable.Port, fmt.Sprintf("%d", cfg.Port))
@@ -537,6 +535,9 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
 	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ", "))
 	variable.MemoryUsageAlarmRatio.Store(cfg.Performance.MemoryUsageAlarmRatio)
+	if hostname, err := os.Hostname(); err != nil {
+		variable.SetSysVar(variable.Hostname, hostname)
+	}
 
 	if cfg.Security.EnableSEM {
 		sem.Enable()
@@ -572,7 +573,7 @@ func setGlobalVars() {
 	kvcache.GlobalLRUMemUsageTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
 
 	t, err := time.ParseDuration(cfg.TiKVClient.StoreLivenessTimeout)
-	if err != nil {
+	if err != nil || t < 0 {
 		logutil.BgLogger().Fatal("invalid duration value for store-liveness-timeout",
 			zap.String("currentValue", cfg.TiKVClient.StoreLivenessTimeout))
 	}
@@ -585,14 +586,6 @@ func setupLog() {
 	err := logutil.InitZapLogger(cfg.Log.ToLogConfig())
 	terror.MustNil(err)
 
-	err = logutil.InitLogger(cfg.Log.ToLogConfig())
-	terror.MustNil(err)
-
-	if len(os.Getenv("GRPC_DEBUG")) > 0 {
-		grpclog.SetLoggerV2(grpclog.NewLoggerV2WithVerbosity(os.Stderr, os.Stderr, os.Stderr, 999))
-	} else {
-		grpclog.SetLoggerV2(grpclog.NewLoggerV2(ioutil.Discard, ioutil.Discard, os.Stderr))
-	}
 	// trigger internal http(s) client init.
 	util.InternalHTTPClient()
 }
@@ -629,7 +622,7 @@ func setupMetrics() {
 		metrics.TimeJumpBackCounter.Inc()
 	}
 	callBackCount := 0
-	sucessCallBack := func() {
+	successCallBack := func() {
 		callBackCount++
 		// It is callback by monitor per second, we increase metrics.KeepAliveCounter per 5s.
 		if callBackCount >= 5 {
@@ -637,7 +630,7 @@ func setupMetrics() {
 			metrics.KeepAliveCounter.Inc()
 		}
 	}
-	go systimemon.StartMonitor(time.Now, systimeErrHandler, sucessCallBack)
+	go systimemon.StartMonitor(time.Now, systimeErrHandler, successCallBack)
 
 	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
 }

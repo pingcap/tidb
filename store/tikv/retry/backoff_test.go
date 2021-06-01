@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,19 +11,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package error
+package retry
 
-// MySQL error code.
-// This value is numeric. It is not portable to other database systems.
-const (
-	CodeUnknown                     = 1105
-	CodeLockWaitTimeout             = 1205
-	CodeTruncatedWrongValue         = 1292
-	CodeQueryInterrupted            = 1317
-	CodeDivisionByZero              = 1365
-	CodeDataOutOfRange              = 1690
-	CodeLockAcquireFailAndNoWaitSet = 3572
+import (
+	"context"
+	"errors"
 
-	// TiKV/PD/TiFlash errors.
-	CodeTiKVStoreLimit = 9008
+	. "github.com/pingcap/check"
 )
+
+type testBackoffSuite struct {
+}
+
+var _ = Suite(&testBackoffSuite{})
+
+func (s *testBackoffSuite) TestBackoffWithMax(c *C) {
+	b := NewBackofferWithVars(context.TODO(), 2000, nil)
+	err := b.BackoffWithMaxSleepTxnLockFast(30, errors.New("test"))
+	c.Assert(err, IsNil)
+	c.Assert(b.totalSleep, Equals, 30)
+}

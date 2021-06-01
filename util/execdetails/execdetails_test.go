@@ -14,7 +14,6 @@
 package execdetails
 
 import (
-	"fmt"
 	"strconv"
 	"sync"
 	"testing"
@@ -22,7 +21,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/tikv/util"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -43,14 +41,10 @@ func TestString(t *testing.T) {
 			CommitBackoffTime: int64(time.Second),
 			Mu: struct {
 				sync.Mutex
-				BackoffTypes []fmt.Stringer
-			}{BackoffTypes: []fmt.Stringer{
-				stringutil.MemoizeStr(func() string {
-					return "backoff1"
-				}),
-				stringutil.MemoizeStr(func() string {
-					return "backoff2"
-				}),
+				BackoffTypes []string
+			}{BackoffTypes: []string{
+				"backoff1",
+				"backoff2",
 			}},
 			ResolveLockTime:   1000000000, // 10^9 ns = 1s
 			WriteKeys:         1,
@@ -212,18 +206,8 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		CommitBackoffTime: int64(time.Second),
 		Mu: struct {
 			sync.Mutex
-			BackoffTypes []fmt.Stringer
-		}{BackoffTypes: []fmt.Stringer{
-			stringutil.MemoizeStr(func() string {
-				return "backoff1"
-			}),
-			stringutil.MemoizeStr(func() string {
-				return "backoff2"
-			}),
-			stringutil.MemoizeStr(func() string {
-				return "backoff1"
-			}),
-		}},
+			BackoffTypes []string
+		}{BackoffTypes: []string{"backoff1", "backoff2", "backoff1"}},
 		ResolveLockTime:   int64(time.Second),
 		WriteKeys:         3,
 		WriteSize:         66,
@@ -245,17 +229,11 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		BackoffTime:     int64(time.Second * 3),
 		Mu: struct {
 			sync.Mutex
-			BackoffTypes []fmt.Stringer
-		}{BackoffTypes: []fmt.Stringer{
-			stringutil.MemoizeStr(func() string {
-				return "backoff4"
-			}),
-			stringutil.MemoizeStr(func() string {
-				return "backoff5"
-			}),
-			stringutil.MemoizeStr(func() string {
-				return "backoff5"
-			}),
+			BackoffTypes []string
+		}{BackoffTypes: []string{
+			"backoff4",
+			"backoff5",
+			"backoff5",
 		}},
 		LockRPCTime:  int64(time.Second * 5),
 		LockRPCCount: 50,

@@ -13,8 +13,8 @@
       {
         "SQL": "explain format = 'brief' select * from t where cast(t.a as float) + 3 = 5.1",
         "Plan": [
-          "Selection 10000.00 root  eq(plus(cast(test.t.a, float BINARY), 3), 5.1)",
-          "└─TableReader 10000.00 root  data:TableFullScan",
+          "TableReader 8000.00 root  data:Selection",
+          "└─Selection 8000.00 cop[tiflash]  eq(plus(cast(test.t.a, float BINARY), 3), 5.1)",
           "  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
@@ -2605,6 +2605,34 @@
         "Res": [
           "1",
           "1"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestMergeContinuousSelections",
+    "Cases": [
+      {
+        "SQL": "desc format = 'brief' SELECT table2 . `col_char_64` AS field1 FROM `ts` AS table2 INNER JOIN (SELECT DISTINCT SUBQUERY3_t1 . * FROM `ts` AS SUBQUERY3_t1 LEFT OUTER JOIN `ts` AS SUBQUERY3_t2 ON SUBQUERY3_t2 . `col_varchar_64_not_null` = SUBQUERY3_t1 . `col_varchar_key`) AS table3 ON (table3 . `col_varchar_key` = table2 . `col_varchar_64`) WHERE table3 . `col_char_64_not_null` >= SOME (SELECT SUBQUERY4_t1 . `col_varchar_64` AS SUBQUERY4_field1 FROM `ts` AS SUBQUERY4_t1) GROUP BY field1 ;",
+        "Plan": [
+          "HashAgg 7992.00 root  group by:test.ts.col_char_64, funcs:firstrow(test.ts.col_char_64)->test.ts.col_char_64",
+          "└─HashJoin 9990.00 root  CARTESIAN inner join, other cond:or(ge(test.ts.col_char_64_not_null, Column#25), if(ne(Column#26, 0), NULL, 0))",
+          "  ├─Selection(Build) 0.80 root  ne(Column#27, 0)",
+          "  │ └─HashAgg 1.00 root  funcs:min(Column#33)->Column#25, funcs:sum(Column#34)->Column#26, funcs:count(Column#35)->Column#27",
+          "  │   └─TableReader 1.00 root  data:ExchangeSender",
+          "  │     └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  │       └─HashAgg 1.00 batchCop[tiflash]  funcs:min(Column#39)->Column#33, funcs:sum(Column#40)->Column#34, funcs:count(1)->Column#35",
+          "  │         └─Projection 10000.00 batchCop[tiflash]  test.ts.col_varchar_64, cast(isnull(test.ts.col_varchar_64), decimal(22,0) BINARY)->Column#40",
+          "  │           └─TableFullScan 10000.00 batchCop[tiflash] table:SUBQUERY4_t1 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 12487.50 root  data:ExchangeSender",
+          "    └─ExchangeSender 12487.50 cop[tiflash]  ExchangeType: PassThrough",
+          "      └─HashJoin 12487.50 cop[tiflash]  inner join, equal:[eq(test.ts.col_varchar_64, test.ts.col_varchar_key)]",
+          "        ├─ExchangeReceiver(Build) 9990.00 cop[tiflash]  ",
+          "        │ └─ExchangeSender 9990.00 cop[tiflash]  ExchangeType: Broadcast",
+          "        │   └─Selection 9990.00 cop[tiflash]  not(isnull(test.ts.col_varchar_64))",
+          "        │     └─TableFullScan 10000.00 cop[tiflash] table:table2 keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 9990.00 cop[tiflash]  not(isnull(test.ts.col_varchar_key))",
+          "          └─TableFullScan 10000.00 cop[tiflash] table:SUBQUERY3_t1 keep order:false, stats:pseudo"
         ]
       }
     ]
