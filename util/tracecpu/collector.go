@@ -177,7 +177,7 @@ func NewTopSQLCollector(config *TopSQLCollectorConfig) *TopSQLCollector {
 		collectTimeout = config.CollectInterval / 2
 	}
 
-	ts := &TopSQLCollector{
+	tsc := &TopSQLCollector{
 		topSQLMap:         topSQLMap,
 		MaxStatementsNum:  config.MaxStatementsNum,
 		collectInterval:   config.CollectInterval,
@@ -190,19 +190,19 @@ func NewTopSQLCollector(config *TopSQLCollectorConfig) *TopSQLCollector {
 		quit:              make(chan struct{}),
 	}
 
-	go ts.registerNormalizedPlanWorker(config.PlanBinaryDecoder)
+	go tsc.registerNormalizedPlanWorker(config.PlanBinaryDecoder)
 
-	go ts.sendToAgentWorker(config.CollectInterval)
+	go tsc.sendToAgentWorker(config.CollectInterval)
 
-	return ts
+	return tsc
 }
 
 // Collect uses a hashmap to store records in every minute, and evict every minute.
 // This function can be run in parallel with snapshot, so we should protect the map operations with a mutex.
-func (ts *TopSQLCollector) Collect(timestamp uint64, records []TopSQLRecord) {
+func (tsc *TopSQLCollector) Collect(timestamp uint64, records []TopSQLRecord) {
 	for _, record := range records {
 		encodedKey := encodeCacheKey(record.SQLDigest, record.PlanDigest)
-		entry, exist := ts.topSQLMap[string(encodedKey)]
+		entry, exist := tsc.topSQLMap[string(encodedKey)]
 		if !exist {
 			entry = &topSQLDataPoints{
 				SQLDigest:     record.SQLDigest,
@@ -210,7 +210,7 @@ func (ts *TopSQLCollector) Collect(timestamp uint64, records []TopSQLRecord) {
 				CPUTimeMsList: []uint32{record.CPUTimeMs},
 				TimestampList: []uint64{timestamp},
 			}
-			ts.topSQLMap[string(encodedKey)] = entry
+			tsc.topSQLMap[string(encodedKey)] = entry
 		} else {
 			entry.CPUTimeMsList = append(entry.CPUTimeMsList, record.CPUTimeMs)
 			entry.TimestampList = append(entry.TimestampList, timestamp)
@@ -218,15 +218,15 @@ func (ts *TopSQLCollector) Collect(timestamp uint64, records []TopSQLRecord) {
 		entry.CPUTimeMsTotal += uint64(record.CPUTimeMs)
 	}
 
-	if len(ts.topSQLMap) <= ts.MaxStatementsNum {
+	if len(tsc.topSQLMap) <= tsc.MaxStatementsNum {
 		return
 	}
 
 	// find the max CPUTimeMsTotal that should be evicted
-	digestCPUTimeList := make([]cpuTimeSort, len(ts.topSQLMap))
+	digestCPUTimeList := make([]cpuTimeSort, len(tsc.topSQLMap))
 	{
 		i := 0
-		for key, value := range ts.topSQLMap {
+		for key, value := range tsc.topSQLMap {
 			data := cpuTimeSort{
 				Key:            key,
 				SQLDigest:      value.SQLDigest,
@@ -239,20 +239,20 @@ func (ts *TopSQLCollector) Collect(timestamp uint64, records []TopSQLRecord) {
 	}
 
 	// QuickSelect will only return error when the second parameter is out of range
-	if err := quickselect.QuickSelect(cpuTimeSortSlice(digestCPUTimeList), ts.MaxStatementsNum); err != nil {
+	if err := quickselect.QuickSelect(cpuTimeSortSlice(digestCPUTimeList), tsc.MaxStatementsNum); err != nil {
 		//	skip eviction
 		return
 
 	}
 
 	// TODO: we can change to periodical eviction (every minute) to relax the CPU pressure
-	shouldEvictList := digestCPUTimeList[ts.MaxStatementsNum:]
+	shouldEvictList := digestCPUTimeList[tsc.MaxStatementsNum:]
 	for _, evict := range shouldEvictList {
-		delete(ts.topSQLMap, evict.Key)
-		ts.mu.Lock()
-		delete(ts.normalizedSQLMap, string(evict.SQLDigest))
-		delete(ts.normalizedPlanMap, string(evict.PlanDigest))
-		ts.mu.Unlock()
+		delete(tsc.topSQLMap, evict.Key)
+		tsc.mu.Lock()
+		delete(tsc.normalizedSQLMap, string(evict.SQLDigest))
+		delete(tsc.normalizedPlanMap, string(evict.PlanDigest))
+		tsc.mu.Unlock()
 	}
 }
 
@@ -262,34 +262,34 @@ func (ts *TopSQLCollector) Collect(timestamp uint64, records []TopSQLRecord) {
 // This function should be thread-safe, which means parallelly calling it in several goroutines should be fine.
 // It should also return immediately, and do any CPU-intensive job asynchronously.
 // TODO: benchmark test concurrent performance
-func (ts *TopSQLCollector) RegisterNormalizedSQL(sqlDigest string, normalizedSQL string) {
-	ts.mu.RLock()
-	_, exist := ts.normalizedSQLMap[sqlDigest]
-	ts.mu.RUnlock()
+func (tsc *TopSQLCollector) RegisterNormalizedSQL(sqlDigest string, normalizedSQL string) {
+	tsc.mu.RLock()
+	_, exist := tsc.normalizedSQLMap[sqlDigest]
+	tsc.mu.RUnlock()
 	if !exist {
-		ts.mu.Lock()
-		ts.normalizedSQLMap[sqlDigest] = normalizedSQL
-		ts.mu.Unlock()
+		tsc.mu.Lock()
+		tsc.normalizedSQLMap[sqlDigest] = normalizedSQL
+		tsc.mu.Unlock()
 	}
 }
 
 // RegisterNormalizedPlan is like RegisterNormalizedSQL, but for normalized plan strings.
 // TODO: benchmark test concurrent performance
-func (ts *TopSQLCollector) RegisterNormalizedPlan(planDigest string, normalizedPlan string) {
-	ts.planRegisterChan <- &planRegisterJob{
+func (tsc *TopSQLCollector) RegisterNormalizedPlan(planDigest string, normalizedPlan string) {
+	tsc.planRegisterChan <- &planRegisterJob{
 		planDigest:     planDigest,
 		normalizedPlan: normalizedPlan,
 	}
 }
 
 // this should be the only place where the normalizedPlanMap is set
-func (ts *TopSQLCollector) registerNormalizedPlanWorker(planDecoder planBinaryDecodeFunc) {
+func (tsc *TopSQLCollector) registerNormalizedPlanWorker(planDecoder planBinaryDecodeFunc) {
 	// NOTE: if use multiple worker goroutine, we should make sure that access to the digest map is thread-safe
 	for {
-		job := <-ts.planRegisterChan
-		ts.mu.RLock()
-		_, exist := ts.normalizedPlanMap[job.planDigest]
-		ts.mu.RUnlock()
+		job := <-tsc.planRegisterChan
+		tsc.mu.RLock()
+		_, exist := tsc.normalizedPlanMap[job.planDigest]
+		tsc.mu.RUnlock()
 		if exist {
 			continue
 		}
@@ -298,7 +298,7 @@ func (ts *TopSQLCollector) registerNormalizedPlanWorker(planDecoder planBinaryDe
 			fmt.Printf("decode plan failed: %v\n", err)
 			continue
 		}
-		ts.normalizedPlanMap[job.planDigest] = planDecoded
+		tsc.normalizedPlanMap[job.planDigest] = planDecoded
 	}
 }
 
@@ -309,15 +309,15 @@ func (ts *TopSQLCollector) registerNormalizedPlanWorker(planDecoder planBinaryDe
 // which means we maintain 2 *struct which contains the maps, and snapshot() atomically
 // swaps the pointer. After this, the writing is shifted to the new struct, and
 // we can do the snapshot in the background.
-func (ts *TopSQLCollector) snapshot() []*tipb.CollectCPUTimeRequest {
-	ts.mu.RLock()
-	defer ts.mu.RUnlock()
-	total := len(ts.topSQLMap)
+func (tsc *TopSQLCollector) snapshot() []*tipb.CollectCPUTimeRequest {
+	tsc.mu.RLock()
+	defer tsc.mu.RUnlock()
+	total := len(tsc.topSQLMap)
 	batch := make([]*tipb.CollectCPUTimeRequest, total)
 	i := 0
-	for _, value := range ts.topSQLMap {
-		normalizedSQL := ts.normalizedSQLMap[string(value.SQLDigest)]
-		normalizedPlan := ts.normalizedPlanMap[string(value.PlanDigest)]
+	for _, value := range tsc.topSQLMap {
+		normalizedSQL := tsc.normalizedSQLMap[string(value.SQLDigest)]
+		normalizedPlan := tsc.normalizedPlanMap[string(value.PlanDigest)]
 		batch[i] = &tipb.CollectCPUTimeRequest{
 			TimestampList:  value.TimestampList,
 			CpuTimeMsList:  value.CPUTimeMsList,
@@ -331,7 +331,7 @@ func (ts *TopSQLCollector) snapshot() []*tipb.CollectCPUTimeRequest {
 	return batch
 }
 
-func (ts *TopSQLCollector) sendBatch(stream tipb.TopSQLAgent_CollectCPUTimeClient, batch []*tipb.CollectCPUTimeRequest) error {
+func (tsc *TopSQLCollector) sendBatch(stream tipb.TopSQLAgent_CollectCPUTimeClient, batch []*tipb.CollectCPUTimeRequest) error {
 	for _, req := range batch {
 		// TODO: look into the gRPC configuration for batching request, for potential better performance
 		if err := stream.Send(req); err != nil {
@@ -349,28 +349,28 @@ func (ts *TopSQLCollector) sendBatch(stream tipb.TopSQLAgent_CollectCPUTimeClien
 }
 
 // sendToAgentWorker will send a snapshot to the gRPC endpoint every collect interval
-func (ts *TopSQLCollector) sendToAgentWorker(collectInterval time.Duration) {
+func (tsc *TopSQLCollector) sendToAgentWorker(collectInterval time.Duration) {
 	ticker := time.NewTicker(collectInterval)
 	for {
 		var ctx context.Context
 		var cancel context.CancelFunc
 		select {
 		case <-ticker.C:
-			batch := ts.snapshot()
+			batch := tsc.snapshot()
 			// NOTE: Currently we are creating/destroying a TCP connection to the agent every time.
 			// It's fine if we do this every minute, but need optimization if we need to do it more frequently, like every second.
-			conn, client, err := newAgentClient(ts.agentGRPCAddress)
+			conn, client, err := newAgentClient(tsc.agentGRPCAddress)
 			if err != nil {
 				log.Error("TopSQL: failed to create agent client, %v", zap.Error(err))
 				continue
 			}
-			ctx, cancel = context.WithTimeout(context.TODO(), ts.collectTimeout)
+			ctx, cancel = context.WithTimeout(context.TODO(), tsc.collectTimeout)
 			stream, err := client.CollectCPUTime(ctx)
 			if err != nil {
 				log.Error("TopSQL: failed to initialize gRPC call CollectCPUTime, %v", zap.Error(err))
 				continue
 			}
-			if err := ts.sendBatch(stream, batch); err != nil {
+			if err := tsc.sendBatch(stream, batch); err != nil {
 				continue
 			}
 			cancel()
@@ -378,9 +378,14 @@ func (ts *TopSQLCollector) sendToAgentWorker(collectInterval time.Duration) {
 				log.Error("TopSQL: failed to close connection, %v", zap.Error(err))
 				continue
 			}
-		case <-ts.quit:
+		case <-tsc.quit:
 			ticker.Stop()
 			break
 		}
 	}
+}
+
+// SetAgentGRPCAddress sets the agentGRPCAddress field
+func (tsc *TopSQLCollector) SetAgentGRPCAddress(address string) {
+	tsc.agentGRPCAddress = address
 }

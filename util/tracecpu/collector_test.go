@@ -47,18 +47,18 @@ func testPlanBinaryDecoderFunc(plan string) (string, error) {
 	return plan, nil
 }
 
-func populateCache(ts *TopSQLCollector, begin, end int, timestamp uint64) {
+func populateCache(tsc *TopSQLCollector, begin, end int, timestamp uint64) {
 	// register normalized sql
 	for i := begin; i < end; i++ {
 		key := "sqlDigest" + strconv.Itoa(i+1)
 		value := "sqlNormalized" + strconv.Itoa(i+1)
-		ts.RegisterNormalizedSQL(key, value)
+		tsc.RegisterNormalizedSQL(key, value)
 	}
 	// register normalized plan
 	for i := begin; i < end; i++ {
 		key := "planDigest" + strconv.Itoa(i+1)
 		value := "planNormalized" + strconv.Itoa(i+1)
-		ts.RegisterNormalizedPlan(key, value)
+		tsc.RegisterNormalizedPlan(key, value)
 	}
 	// collect
 	var records []TopSQLRecord
@@ -69,7 +69,7 @@ func populateCache(ts *TopSQLCollector, begin, end int, timestamp uint64) {
 			CPUTimeMs:  uint32(i + 1),
 		})
 	}
-	ts.Collect(timestamp, records)
+	tsc.Collect(timestamp, records)
 }
 
 func initializeCache(maxStatementsNum int, addr string) *TopSQLCollector {
@@ -122,25 +122,25 @@ func startTestServer(c *C) (*grpc.Server, *testAgentServer, int) {
 }
 
 func (s *testTopSQLCollector) TestCollectAndGet(c *C) {
-	ts := initializeCache(maxSQLNum, ":23333")
+	tsc := initializeCache(maxSQLNum, ":23333")
 	for i := 0; i < maxSQLNum; i++ {
 		sqlDigest := []byte("sqlDigest" + strconv.Itoa(i+1))
 		planDigest := []byte("planDigest" + strconv.Itoa(i+1))
 		encodedKey := encodeCacheKey(sqlDigest, planDigest)
-		entry := ts.topSQLMap[string(encodedKey)]
+		entry := tsc.topSQLMap[string(encodedKey)]
 		c.Assert(entry.CPUTimeMsList[0], Equals, uint32(i+1))
 		c.Assert(entry.TimestampList[0], Equals, uint64(1))
 	}
 }
 
 func (s *testTopSQLCollector) TestCollectAndVerifyFrequency(c *C) {
-	ts := initializeCache(maxSQLNum, ":23333")
+	tsc := initializeCache(maxSQLNum, ":23333")
 	// traverse the map, and check CPU time and content
 	for i := 0; i < maxSQLNum; i++ {
 		sqlDigest := []byte("sqlDigest" + strconv.Itoa(i+1))
 		planDigest := []byte("planDigest" + strconv.Itoa(i+1))
 		encodedKey := encodeCacheKey(sqlDigest, planDigest)
-		value, exist := ts.topSQLMap[string(encodedKey)]
+		value, exist := tsc.topSQLMap[string(encodedKey)]
 		c.Assert(exist, Equals, true)
 		c.Assert(value.CPUTimeMsTotal, Equals, uint64(i+1))
 		c.Assert(len(value.CPUTimeMsList), Equals, 1)
@@ -151,19 +151,19 @@ func (s *testTopSQLCollector) TestCollectAndVerifyFrequency(c *C) {
 }
 
 func (s *testTopSQLCollector) TestCollectAndEvict(c *C) {
-	ts := initializeCache(maxSQLNum, ":23333")
+	tsc := initializeCache(maxSQLNum, ":23333")
 	// Collect maxSQLNum records with timestamp 2 and sql plan digest from maxSQLNum/2 to maxSQLNum/2*3.
-	populateCache(ts, maxSQLNum/2, maxSQLNum/2*3, 2)
+	populateCache(tsc, maxSQLNum/2, maxSQLNum/2*3, 2)
 	// The first maxSQLNum/2 sql plan digest should have been evicted
 	for i := 0; i < maxSQLNum/2; i++ {
 		sqlDigest := []byte("sqlDigest" + strconv.Itoa(i+1))
 		planDigest := []byte("planDigest" + strconv.Itoa(i+1))
 		encodedKey := encodeCacheKey(sqlDigest, planDigest)
-		_, exist := ts.topSQLMap[string(encodedKey)]
+		_, exist := tsc.topSQLMap[string(encodedKey)]
 		c.Assert(exist, Equals, false, Commentf("cache key '%' should be evicted", encodedKey))
-		_, exist = ts.normalizedSQLMap[string(sqlDigest)]
+		_, exist = tsc.normalizedSQLMap[string(sqlDigest)]
 		c.Assert(exist, Equals, false, Commentf("normalized SQL with digest '%s' should be evicted", sqlDigest))
-		_, exist = ts.normalizedPlanMap[string(planDigest)]
+		_, exist = tsc.normalizedPlanMap[string(planDigest)]
 		c.Assert(exist, Equals, false, Commentf("normalized plan with digest '%s' should be evicted", planDigest))
 	}
 	// Because CPU time is populated as i+1,
@@ -173,7 +173,7 @@ func (s *testTopSQLCollector) TestCollectAndEvict(c *C) {
 		sqlDigest := []byte("sqlDigest" + strconv.Itoa(i+1))
 		planDigest := []byte("planDigest" + strconv.Itoa(i+1))
 		encodedKey := encodeCacheKey(sqlDigest, planDigest)
-		value, exist := ts.topSQLMap[string(encodedKey)]
+		value, exist := tsc.topSQLMap[string(encodedKey)]
 		c.Assert(exist, Equals, true, Commentf("cache key '%s' should exist", encodedKey))
 		if i < maxSQLNum {
 			c.Assert(value.CPUTimeMsTotal, Equals, uint64((i+1)*2))
@@ -184,13 +184,13 @@ func (s *testTopSQLCollector) TestCollectAndEvict(c *C) {
 }
 
 func (s *testTopSQLCollector) TestCollectAndSnapshot(c *C) {
-	ts := initializeCache(maxSQLNum, ":23333")
-	batch := ts.snapshot()
+	tsc := initializeCache(maxSQLNum, ":23333")
+	batch := tsc.snapshot()
 	for _, req := range batch {
 		sqlDigest := req.SqlDigest
 		planDigest := req.PlanDigest
 		encodedKey := encodeCacheKey(sqlDigest, planDigest)
-		value, exist := ts.topSQLMap[string(encodedKey)]
+		value, exist := tsc.topSQLMap[string(encodedKey)]
 		c.Assert(exist, Equals, true, Commentf("key '%s' should exist", string(encodedKey)))
 		c.Assert(len(req.CpuTimeMsList), Equals, len(value.CPUTimeMsList))
 		for i, ct := range value.CPUTimeMsList {
@@ -208,16 +208,16 @@ func (s *testTopSQLCollector) TestCollectAndSendBatch(c *C) {
 	c.Logf("server is listening on :%d", port)
 	defer server.Stop()
 
-	ts := initializeCache(maxSQLNum, fmt.Sprintf(":%d", port))
-	batch := ts.snapshot()
+	tsc := initializeCache(maxSQLNum, fmt.Sprintf(":%d", port))
+	batch := tsc.snapshot()
 
-	conn, client, err := newAgentClient(ts.agentGRPCAddress)
+	conn, client, err := newAgentClient(tsc.agentGRPCAddress)
 	c.Assert(err, IsNil, Commentf("failed to create agent client"))
-	ctx, cancel := context.WithTimeout(context.TODO(), ts.collectTimeout)
+	ctx, cancel := context.WithTimeout(context.TODO(), tsc.collectTimeout)
 	defer cancel()
 	stream, err := client.CollectCPUTime(ctx)
 	c.Assert(err, IsNil, Commentf("failed to initialize gRPC call CollectCPUTime"))
-	err = ts.sendBatch(stream, batch)
+	err = tsc.sendBatch(stream, batch)
 	c.Assert(err, IsNil, Commentf("failed to send batch to server"))
 	err = conn.Close()
 	c.Assert(err, IsNil, Commentf("failed to close connection"))
@@ -225,7 +225,7 @@ func (s *testTopSQLCollector) TestCollectAndSendBatch(c *C) {
 	// check for equality of server received batch and the original data
 	for _, req := range agentServer.batch {
 		encodedKey := encodeCacheKey(req.SqlDigest, req.PlanDigest)
-		value, exist := ts.topSQLMap[string(encodedKey)]
+		value, exist := tsc.topSQLMap[string(encodedKey)]
 		c.Assert(exist, Equals, true, Commentf("key '%s' should exist in topSQLMap", string(encodedKey)))
 		for i, ct := range value.CPUTimeMsList {
 			c.Assert(req.CpuTimeMsList[i], Equals, ct)
@@ -233,29 +233,29 @@ func (s *testTopSQLCollector) TestCollectAndSendBatch(c *C) {
 		for i, ts := range value.TimestampList {
 			c.Assert(req.TimestampList[i], Equals, ts)
 		}
-		normalizedSQL, exist := ts.normalizedSQLMap[string(req.SqlDigest)]
+		normalizedSQL, exist := tsc.normalizedSQLMap[string(req.SqlDigest)]
 		c.Assert(exist, Equals, true, Commentf("key '%s' should exist in normalizedSQLMap", req.SqlDigest))
 		c.Assert(req.NormalizedSql, Equals, normalizedSQL)
-		normalizedPlan, exist := ts.normalizedPlanMap[string(req.PlanDigest)]
+		normalizedPlan, exist := tsc.normalizedPlanMap[string(req.PlanDigest)]
 		c.Assert(exist, Equals, true, Commentf("key '%s' should exist in normalizedPlanMap", req.PlanDigest))
 		c.Assert(req.NormalizedPlan, Equals, normalizedPlan)
 	}
 }
 
 func BenchmarkTopSQL_CollectAndIncrementFrequency(b *testing.B) {
-	ts := initializeCache(maxSQLNum, ":23333")
+	tsc := initializeCache(maxSQLNum, ":23333")
 	for i := 0; i < b.N; i++ {
-		populateCache(ts, 0, maxSQLNum, uint64(i))
+		populateCache(tsc, 0, maxSQLNum, uint64(i))
 	}
 }
 
 func BenchmarkTopSQL_CollectAndEvict(b *testing.B) {
-	ts := initializeCache(maxSQLNum, ":23333")
+	tsc := initializeCache(maxSQLNum, ":23333")
 	begin := 0
 	end := maxSQLNum
 	for i := 0; i < b.N; i++ {
 		begin += maxSQLNum
 		end += maxSQLNum
-		populateCache(ts, begin, end, uint64(i))
+		populateCache(tsc, begin, end, uint64(i))
 	}
 }
