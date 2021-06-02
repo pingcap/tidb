@@ -134,7 +134,22 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		if err != nil {
 			return err
 		}
-		oldSnapshotTS := sessionVars.SnapshotTS
+		getSnapshotTSByName := func() uint64 {
+			if name == variable.TiDBSnapshot {
+				return sessionVars.SnapshotTS
+			} else if name == variable.TiDBTxnReadTS {
+				return sessionVars.TxnReadTS.PeakTxnReadTS()
+			}
+			return 0
+		}
+		oldSnapshotTS := getSnapshotTSByName()
+		fallbackOldSnapshotTS := func() {
+			if name == variable.TiDBSnapshot {
+				sessionVars.SnapshotTS = oldSnapshotTS
+			} else if name == variable.TiDBTxnReadTS {
+				sessionVars.TxnReadTS.SetTxnReadTS(oldSnapshotTS)
+			}
+		}
 		if name == variable.TxnIsolationOneShot && sessionVars.InTxn() {
 			return errors.Trace(ErrCantChangeTxCharacteristics)
 		}
@@ -142,17 +157,18 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		if err != nil {
 			return err
 		}
-		newSnapshotIsSet := sessionVars.SnapshotTS > 0 && sessionVars.SnapshotTS != oldSnapshotTS
+		newSnapshotTS := getSnapshotTSByName()
+		newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
 		if newSnapshotIsSet {
-			err = gcutil.ValidateSnapshot(e.ctx, sessionVars.SnapshotTS)
+			err = gcutil.ValidateSnapshot(e.ctx, newSnapshotTS)
 			if err != nil {
-				sessionVars.SnapshotTS = oldSnapshotTS
+				fallbackOldSnapshotTS()
 				return err
 			}
 		}
-		err = e.loadSnapshotInfoSchemaIfNeeded(name)
+		err = e.loadSnapshotInfoSchemaIfNeeded(newSnapshotTS)
 		if err != nil {
-			sessionVars.SnapshotTS = oldSnapshotTS
+			fallbackOldSnapshotTS()
 			return err
 		}
 		// Clients are often noisy in setting session variables such as
@@ -248,18 +264,17 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 	return nativeVal.ToString()
 }
 
-func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string) error {
-	if name != variable.TiDBSnapshot {
-		return nil
-	}
+func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(snapshotTS uint64) error {
 	vars := e.ctx.GetSessionVars()
-	if vars.SnapshotTS == 0 {
+	if snapshotTS == 0 {
 		vars.SnapshotInfoschema = nil
 		return nil
 	}
-	logutil.BgLogger().Info("load snapshot info schema", zap.Uint64("conn", vars.ConnectionID), zap.Uint64("SnapshotTS", vars.SnapshotTS))
+	logutil.BgLogger().Info("load snapshot info schema",
+		zap.Uint64("conn", vars.ConnectionID),
+		zap.Uint64("SnapshotTS", snapshotTS))
 	dom := domain.GetDomain(e.ctx)
-	snapInfo, err := dom.GetSnapshotInfoSchema(vars.SnapshotTS)
+	snapInfo, err := dom.GetSnapshotInfoSchema(snapshotTS)
 	if err != nil {
 		return err
 	}

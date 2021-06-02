@@ -101,6 +101,10 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 		v.PreprocessorReturn = &PreprocessorReturn{}
 	}
 	node.Accept(&v)
+	readTS := ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
+	if readTS > 0 {
+		v.PreprocessorReturn.SnapshotTS = readTS
+	}
 	// InfoSchema must be non-nil after preprocessing
 	if v.InfoSchema == nil {
 		v.ensureInfoSchema()
@@ -608,8 +612,12 @@ func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 			return
 		}
 		tempTableType := tableInfo.Meta().TempTableType
-		if stmt.Tp == ast.AdminCheckTable && tempTableType != model.TempTableNone {
-			p.err = infoschema.ErrAdminCheckTable
+		if (stmt.Tp == ast.AdminCheckTable || stmt.Tp == ast.AdminChecksumTable) && tempTableType != model.TempTableNone {
+			if stmt.Tp == ast.AdminChecksumTable {
+				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table")
+			} else {
+				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("admin check table")
+			}
 			return
 		}
 	}
@@ -1373,9 +1381,18 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 // handleAsOf tries to validate the timestamp.
 // If it is not nil, timestamp is used to get the history infoschema from the infocache.
 func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
+	readTS := p.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS()
+	if readTS > 0 && node != nil {
+		p.err = ErrAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
+		return
+	}
 	dom := domain.GetDomain(p.ctx)
 	ts := uint64(0)
 	if node != nil {
+		if p.ctx.GetSessionVars().InTxn() {
+			p.err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
+			return
+		}
 		ts, p.err = calculateTsExpr(p.ctx, node)
 		if p.err != nil {
 			return
