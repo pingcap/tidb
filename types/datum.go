@@ -958,8 +958,21 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 		s = d.GetMysqlEnum().String()
 	case KindMysqlSet:
 		s = d.GetMysqlSet().String()
-	case KindBinaryLiteral, KindMysqlBit:
+	case KindBinaryLiteral:
 		s = d.GetBinaryLiteral().ToString()
+	case KindMysqlBit:
+		// issue #25037
+		// bit to binary. should consider transferring to uint first.
+		if target.Tp == mysql.TypeString {
+			val, err := d.GetBinaryLiteral().ToInt(sc)
+			if err != nil {
+				s = d.GetBinaryLiteral().ToString()
+			} else {
+				s = strconv.FormatUint(val, 10)
+			}
+		} else {
+			s = d.GetBinaryLiteral().ToString()
+		}
 	case KindMysqlJSON:
 		s = d.GetMysqlJSON().String()
 	default:
