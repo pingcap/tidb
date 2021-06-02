@@ -186,39 +186,6 @@ func (s *testRegionRequestToThreeStoresSuite) TestStoreTokenLimit(c *C) {
 	kv.StoreLimit.Store(oldStoreLimit)
 }
 
-func (s *testRegionRequestToThreeStoresSuite) TestGetRPCContextWithExcludedStoreIDs(c *C) {
-	// Load the bootstrapped region into the cache.
-	_, err := s.cache.BatchLoadRegionsFromKey(s.bo, []byte{}, 1)
-	c.Assert(err, IsNil)
-
-	var (
-		seed     uint32 = 0
-		regionID        = RegionVerID{s.regionID, 0, 0}
-	)
-	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{}, kv.ReplicaReadMixed, &seed)
-	rpcCtx, err := s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV)
-	c.Assert(err, IsNil)
-	storeID := rpcCtx.Store.storeID
-
-	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV, WithExcludedStoreIDs([]uint64{storeID}))
-	c.Assert(err, IsNil)
-	storeID2 := rpcCtx.Store.storeID
-	c.Assert(storeID, Not(Equals), storeID2)
-
-	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV, WithExcludedStoreIDs([]uint64{storeID, storeID2}))
-	c.Assert(err, IsNil)
-	storeID3 := rpcCtx.Store.storeID
-	c.Assert(storeID, Not(Equals), storeID3)
-	c.Assert(storeID2, Not(Equals), storeID3)
-
-	// All stores are excluded, leader peer will be chosen.
-	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV, WithExcludedStoreIDs([]uint64{storeID, storeID2, storeID3}))
-	c.Assert(err, IsNil)
-	storeID4 := rpcCtx.Store.storeID
-	c.Assert(storeID, Equals, storeID4)
-	c.Assert(rpcCtx.Peer.GetId(), Equals, s.leaderPeer)
-}
-
 // Test whether the Stale Read request will retry the leader or next peer on error.
 func (s *testRegionRequestToThreeStoresSuite) TestStaleReadRetry(c *C) {
 	region, err := s.cache.LocateRegionByID(s.bo, s.regionID)

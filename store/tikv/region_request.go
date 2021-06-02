@@ -278,16 +278,9 @@ func (s *RegionRequestSender) SendReqCtx(
 			logutil.Logger(bo.GetCtx()).Warn("retry get ", zap.Uint64("region = ", regionID.GetID()), zap.Int("times = ", tryTimes))
 		}
 
-		var lastStoreID uint64
-		if rpcCtx != nil && rpcCtx.Store != nil {
-			lastStoreID = rpcCtx.Store.storeID
-		}
 		rpcCtx, err = s.getRPCContext(bo, req, regionID, et, opts...)
 		if err != nil {
 			return nil, nil, err
-		}
-		if rpcCtx != nil {
-			rpcCtx.lastStoreID = lastStoreID
 		}
 
 		failpoint.Inject("invalidCacheAndRetry", func() {
@@ -344,7 +337,7 @@ func (s *RegionRequestSender) SendReqCtx(
 			}
 		})
 		if regionErr != nil {
-			retry, opts, err = s.onRegionError(bo, rpcCtx, req.ReplicaReadSeed, regionErr)
+			retry, err = s.onRegionError(bo, rpcCtx, req.ReplicaReadSeed, regionErr)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -653,21 +646,13 @@ func regionErrorToLabel(e *errorpb.Error) string {
 	return "unknown"
 }
 
-func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed *uint32, regionErr *errorpb.Error) (shouldRetry bool, opts []StoreSelectorOption, err error) {
+func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed *uint32, regionErr *errorpb.Error) (shouldRetry bool, err error) {
 	if span := opentracing.SpanFromContext(bo.GetCtx()); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tikv.onRegionError", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		// TODO(MyonKeminta): Make sure trace works without cloning the backoffer.
 		// bo = bo.Clone()
 		bo.SetCtx(opentracing.ContextWithSpan(bo.GetCtx(), span1))
-	}
-	opts = ctx.storeSelectorOptions
-	// Stale Read request will retry the leader or next peer on error,
-	// so we will exclude the StoreID of the requested peer every time.
-	// If the new StoreID keeps being the same with the last one, we
-	// should not continue excluding it to make the opts become bigger.
-	if ctx.Store != nil && ctx.isStaleRead && ctx.lastStoreID != ctx.Store.storeID {
-		opts = append(opts, WithExcludedStoreIDs([]uint64{ctx.Store.storeID}))
 	}
 
 	metrics.TiKVRegionErrorCounter.WithLabelValues(regionErrorToLabel(regionErr)).Inc()
@@ -684,14 +669,14 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 			// the region from PD.
 			s.regionCache.InvalidateCachedRegionWithReason(ctx.Region, NoLeader)
 			if err = bo.Backoff(retry.BoRegionMiss, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
-				return false, opts, errors.Trace(err)
+				return false, errors.Trace(err)
 			}
 		} else {
 			// don't backoff if a new leader is returned.
 			s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId(), ctx.AccessIdx)
 		}
 
-		return true, opts, nil
+		return true, nil
 	}
 
 	if storeNotMatch := regionErr.GetStoreNotMatch(); storeNotMatch != nil {
@@ -701,7 +686,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 			zap.Stringer("ctx", ctx))
 		ctx.Store.markNeedCheck(s.regionCache.notifyCheckCh)
 		s.regionCache.InvalidateCachedRegion(ctx.Region)
-		return true, opts, nil
+		return true, nil
 	}
 
 	if epochNotMatch := regionErr.GetEpochNotMatch(); epochNotMatch != nil {
@@ -712,7 +697,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 			*seed = *seed + 1
 		}
 		err = s.regionCache.OnRegionEpochNotMatch(bo, ctx, epochNotMatch.CurrentRegions)
-		return false, opts, errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	if regionErr.GetServerIsBusy() != nil {
 		logutil.BgLogger().Warn("tikv reports `ServerIsBusy` retry later",
@@ -724,21 +709,21 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 			err = bo.Backoff(retry.BoTiKVServerBusy, errors.Errorf("server is busy, ctx: %v", ctx))
 		}
 		if err != nil {
-			return false, opts, errors.Trace(err)
+			return false, errors.Trace(err)
 		}
-		return true, opts, nil
+		return true, nil
 	}
 	if regionErr.GetStaleCommand() != nil {
 		logutil.BgLogger().Debug("tikv reports `StaleCommand`", zap.Stringer("ctx", ctx))
 		err = bo.Backoff(retry.BoStaleCmd, errors.Errorf("stale command, ctx: %v", ctx))
 		if err != nil {
-			return false, opts, errors.Trace(err)
+			return false, errors.Trace(err)
 		}
-		return true, opts, nil
+		return true, nil
 	}
 	if regionErr.GetRaftEntryTooLarge() != nil {
 		logutil.BgLogger().Warn("tikv reports `RaftEntryTooLarge`", zap.Stringer("ctx", ctx))
-		return false, opts, errors.New(regionErr.String())
+		return false, errors.New(regionErr.String())
 	}
 	if regionErr.GetDataIsNotReady() != nil && ctx.isStaleRead {
 		logutil.BgLogger().Warn("tikv reports `DataIsNotReady` retry later",
@@ -746,14 +731,22 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 			zap.Uint64("region-id", regionErr.GetDataIsNotReady().GetRegionId()),
 			zap.Uint64("safe-ts", regionErr.GetDataIsNotReady().GetSafeTs()),
 			zap.Stringer("ctx", ctx))
-		return true, opts, nil
+		// Stale Read request will retry the leader or next peer on error,
+		// so we will add seed every time.
+		if seed != nil {
+			*seed = *seed + 1
+		}
+		return true, nil
 	}
 	// A stale read request may be sent to a peer which has not been initialized yet, we should retry in this case.
 	if regionErr.GetRegionNotInitialized() != nil && ctx.isStaleRead {
 		logutil.BgLogger().Warn("tikv reports `RegionNotInitialized` retry later",
 			zap.Uint64("region-id", regionErr.GetRegionNotInitialized().GetRegionId()),
 			zap.Stringer("ctx", ctx))
-		return true, opts, nil
+		if seed != nil {
+			*seed = *seed + 1
+		}
+		return true, nil
 	}
 	if regionErr.GetRegionNotFound() != nil && seed != nil {
 		logutil.BgLogger().Debug("tikv reports `RegionNotFound` in follow-reader",
@@ -764,9 +757,9 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 		logutil.BgLogger().Warn("tikv reports `MaxTimestampNotSynced`", zap.Stringer("ctx", ctx))
 		err = bo.Backoff(retry.BoMaxTsNotSynced, errors.Errorf("max timestamp not synced, ctx: %v", ctx))
 		if err != nil {
-			return false, opts, errors.Trace(err)
+			return false, errors.Trace(err)
 		}
-		return true, opts, nil
+		return true, nil
 	}
 	// For other errors, we only drop cache here.
 	// Because caller may need to re-split the request.
@@ -778,5 +771,5 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 	if ctx.Region.id != 0 {
 		s.regionCache.InvalidateCachedRegion(ctx.Region)
 	}
-	return false, opts, nil
+	return false, nil
 }

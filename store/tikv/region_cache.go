@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/pkg/slice"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
@@ -186,13 +185,7 @@ func (r *RegionStore) kvPeer(seed uint32, op *storeSelectorOp) AccessIndex {
 
 func (r *RegionStore) filterStoreCandidate(aidx AccessIndex, op *storeSelectorOp) bool {
 	_, s := r.accessStore(TiKVOnly, aidx)
-	// Filter by the excludedStoreIDs first.
-	if slice.AnyOf(op.excludedStoreIDs, func(i int) bool {
-		return op.excludedStoreIDs[i] == s.storeID
-	}) {
-		return false
-	}
-	// Filter label unmatched store.
+	// filter label unmatched store
 	return s.IsLabelsMatch(op.labels)
 }
 
@@ -427,9 +420,7 @@ type RPCContext struct {
 	ProxyAddr      string      // valid when ProxyStore is not nil
 	TiKVNum        int         // Number of TiKV nodes among the region's peers. Assuming non-TiKV peers are all TiFlash peers.
 
-	isStaleRead          bool
-	storeSelectorOptions []StoreSelectorOption
-	lastStoreID          uint64
+	isStaleRead bool
 }
 
 func (c *RPCContext) String() string {
@@ -446,8 +437,7 @@ func (c *RPCContext) String() string {
 }
 
 type storeSelectorOp struct {
-	labels           []*metapb.StoreLabel
-	excludedStoreIDs []uint64
+	labels []*metapb.StoreLabel
 }
 
 // StoreSelectorOption configures storeSelectorOp.
@@ -457,13 +447,6 @@ type StoreSelectorOption func(*storeSelectorOp)
 func WithMatchLabels(labels []*metapb.StoreLabel) StoreSelectorOption {
 	return func(op *storeSelectorOp) {
 		op.labels = append(op.labels, labels...)
-	}
-}
-
-// WithExcludedStoreIDs indicates selecting stores without these excluded StoreIDs.
-func WithExcludedStoreIDs(storeIDs []uint64) StoreSelectorOption {
-	return func(op *storeSelectorOp) {
-		op.excludedStoreIDs = append(op.excludedStoreIDs, storeIDs...)
 	}
 }
 
@@ -564,18 +547,17 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	}
 
 	return &RPCContext{
-		Region:               id,
-		Meta:                 cachedRegion.meta,
-		Peer:                 peer,
-		AccessIdx:            accessIdx,
-		Store:                store,
-		Addr:                 addr,
-		AccessMode:           TiKVOnly,
-		ProxyStore:           proxyStore,
-		ProxyAccessIdx:       proxyAccessIdx,
-		ProxyAddr:            proxyAddr,
-		TiKVNum:              regionStore.accessStoreNum(TiKVOnly),
-		storeSelectorOptions: opts,
+		Region:         id,
+		Meta:           cachedRegion.meta,
+		Peer:           peer,
+		AccessIdx:      accessIdx,
+		Store:          store,
+		Addr:           addr,
+		AccessMode:     TiKVOnly,
+		ProxyStore:     proxyStore,
+		ProxyAccessIdx: proxyAccessIdx,
+		ProxyAddr:      proxyAddr,
+		TiKVNum:        regionStore.accessStoreNum(TiKVOnly),
 	}, nil
 }
 
