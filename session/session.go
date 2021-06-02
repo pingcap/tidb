@@ -1391,7 +1391,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		normalized, digest := parser.NormalizeDigest(sql)
 		if digest != nil {
 			// Fixme: reset/clean the label when internal sql execute finish.
-			ctx = topsql.AttachSQLInfo(ctx, normalized, digest, "", nil)
+			topsql.AttachSQLInfo(ctx, normalized, digest, "", nil)
 		}
 	}
 	return stmts[0], nil
