@@ -146,6 +146,7 @@ var _ = SerialSuites(&tiflashTestSuite{})
 var _ = SerialSuites(&globalIndexSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testStaleTxnSerialSuite{&baseTestSuite{}})
+var _ = Suite(&testStaleTxnSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testCoprCache{})
 var _ = SerialSuites(&testPrepareSuite{})
 var _ = SerialSuites(&testResourceTagSuite{&baseTestSuite{}})
@@ -163,6 +164,7 @@ type partitionTableSuite struct{ *baseTestSuite }
 type globalIndexSuite struct{ *baseTestSuite }
 type testSerialSuite struct{ *baseTestSuite }
 type testStaleTxnSerialSuite struct{ *baseTestSuite }
+type testStaleTxnSuite struct{ *baseTestSuite }
 type testCoprCache struct {
 	store kv.Storage
 	dom   *domain.Domain
@@ -8178,7 +8180,7 @@ func (s *testSerialSuite) TestIssue24210(c *C) {
 func (s *testSerialSuite) TestDeadlockTable(c *C) {
 	deadlockhistory.GlobalDeadlockHistory.Clear()
 
-	occurTime := time.Date(2021, 5, 10, 1, 2, 3, 456789000, time.UTC)
+	occurTime := time.Date(2021, 5, 10, 1, 2, 3, 456789000, time.Local)
 	rec := &deadlockhistory.DeadlockRecord{
 		OccurTime:   occurTime,
 		IsRetryable: false,
@@ -8201,7 +8203,7 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 	}
 	deadlockhistory.GlobalDeadlockHistory.Push(rec)
 
-	occurTime2 := time.Date(2022, 6, 11, 2, 3, 4, 987654000, time.UTC)
+	occurTime2 := time.Date(2022, 6, 11, 2, 3, 4, 987654000, time.Local)
 	rec2 := &deadlockhistory.DeadlockRecord{
 		OccurTime:   occurTime2,
 		IsRetryable: true,
@@ -8354,6 +8356,57 @@ func (s testSerialSuite) TestExprBlackListForEnum(c *C) {
 	c.Assert(checkFuncPushDown(rows, "index:idx(b, a)"), IsTrue)
 }
 
+func (s testSerialSuite) TestTemporaryTableNoNetwork(c *C) {
+	// Test that table reader/index reader/index lookup on the temporary table do not need to visit TiKV.
+	tk := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk1.MustExec("use test")
+	tk.MustExec("create table normal (id int, a int, index(a))")
+	tk.MustExec("create global temporary table tmp_t (id int, a int, index(a)) on commit delete rows")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into tmp_t values (1, 1)")
+	tk.MustExec("insert into tmp_t values (2, 2)")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy", "return(true)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy"), IsNil)
+	}()
+
+	// Make sure the fail point works.
+	// With that failpoint, all requests to the TiKV is discard.
+	rs, err := tk1.Exec("select * from normal")
+	c.Assert(err, IsNil)
+	blocked := make(chan struct{})
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	go func() {
+		_, err := session.ResultSetToStringSlice(ctx, tk1.Se, rs)
+		blocked <- struct{}{}
+		c.Assert(err, NotNil)
+	}()
+	select {
+	case <-blocked:
+		c.Error("The query should block when the failpoint is enabled")
+	case <-time.After(200 * time.Millisecond):
+	}
+	cancelFunc()
+
+	// Check the temporary table do not send request to TiKV.
+	// Table reader
+	tk.HasPlan("select * from tmp_t", "TableReader")
+	tk.MustQuery("select * from tmp_t").Check(testkit.Rows("1 1", "2 2"))
+	// Index reader
+	tk.HasPlan("select /*+ USE_INDEX(tmp_t, a) */ a from tmp_t", "IndexReader")
+	tk.MustQuery("select /*+ USE_INDEX(tmp_t, a) */ a from tmp_t").Check(testkit.Rows("1", "2"))
+	// Index lookup
+	tk.HasPlan("select id from tmp_t where a = 1", "IndexLookUp")
+	tk.MustQuery("select id from tmp_t where a = 1").Check(testkit.Rows("1"))
+
+	tk.MustExec("rollback")
+}
+
 func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -8362,10 +8415,8 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 	tbInfo := testGetTableByName(c, tk.Se, "test", "t")
 
 	// Enable Top SQL
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	newCfg.TopSQL.Enable = true
-	config.StoreGlobalConfig(&newCfg)
+	variable.TopSQLVariable.Enable.Store(true)
+	variable.TopSQLVariable.AgentAddress.Store("mock-agent")
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook", `return(true)`), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")

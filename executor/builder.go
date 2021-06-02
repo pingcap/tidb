@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cteutil"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
@@ -81,6 +82,14 @@ type executorBuilder struct {
 	snapshotTSCached bool
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
+}
+
+// CTEStorages stores resTbl and iterInTbl for CTEExec.
+// There will be a map[CTEStorageID]*CTEStorages in StmtCtx,
+// which will store all CTEStorages to make all shared CTEs use same the CTEStorages.
+type CTEStorages struct {
+	ResTbl    cteutil.Storage
+	IterInTbl cteutil.Storage
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *executorBuilder {
@@ -235,6 +244,10 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildAdminShowTelemetry(v)
 	case *plannercore.AdminResetTelemetryID:
 		return b.buildAdminResetTelemetryID(v)
+	case *plannercore.PhysicalCTE:
+		return b.buildCTE(v)
+	case *plannercore.PhysicalCTETable:
+		return b.buildCTETableReader(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -2749,7 +2762,6 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	ret.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
 		sctx:       b.ctx,
 		partitions: partitions,
-		ranges:     ts.Ranges,
 	}
 
 	return ret
@@ -3434,15 +3446,14 @@ func dedupHandles(lookUpContents []*indexJoinLookUpContent) ([]kv.Handle, []*ind
 type kvRangeBuilderFromRangeAndPartition struct {
 	sctx       sessionctx.Context
 	partitions []table.PhysicalTable
-	ranges     []*ranger.Range
 }
 
-func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(int64) ([]kv.KeyRange, error) {
+func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(_ int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {
 	var ret []kv.KeyRange
 	for _, p := range h.partitions {
 		pid := p.GetPhysicalID()
 		meta := p.Meta()
-		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, h.ranges, nil)
+		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, ranges, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -3939,6 +3950,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		desc:         plan.Desc,
 		lock:         plan.Lock,
 		waitTime:     plan.LockWaitTime,
+		partExpr:     plan.PartitionExpr,
 		partPos:      plan.PartitionColPos,
 		singlePart:   plan.SinglePart,
 		partTblID:    plan.PartTblID,
@@ -4070,4 +4082,91 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 			v.TableSampleInfo.FullSchema, e.retFieldTypes, v.Desc)
 	}
 	return e
+}
+
+func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
+	// 1. Build seedPlan.
+	seedExec := b.build(v.SeedPlan)
+	if b.err != nil {
+		return nil
+	}
+
+	// 2. Build iterInTbl.
+	chkSize := b.ctx.GetSessionVars().MaxChunkSize
+	tps := seedExec.base().retFieldTypes
+	iterOutTbl := cteutil.NewStorageRowContainer(tps, chkSize)
+	if err := iterOutTbl.OpenAndRef(); err != nil {
+		b.err = err
+		return nil
+	}
+
+	var resTbl cteutil.Storage
+	var iterInTbl cteutil.Storage
+	storageMap, ok := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
+	if !ok {
+		b.err = errors.New("type assertion for CTEStorageMap failed")
+		return nil
+	}
+	storages, ok := storageMap[v.CTE.IDForStorage]
+	if ok {
+		// Storage already setup.
+		resTbl = storages.ResTbl
+		iterInTbl = storages.IterInTbl
+	} else {
+		resTbl = cteutil.NewStorageRowContainer(tps, chkSize)
+		if err := resTbl.OpenAndRef(); err != nil {
+			b.err = err
+			return nil
+		}
+		iterInTbl = cteutil.NewStorageRowContainer(tps, chkSize)
+		if err := iterInTbl.OpenAndRef(); err != nil {
+			b.err = err
+			return nil
+		}
+		storageMap[v.CTE.IDForStorage] = &CTEStorages{ResTbl: resTbl, IterInTbl: iterInTbl}
+	}
+
+	// 3. Build recursive part.
+	recursiveExec := b.build(v.RecurPlan)
+	if b.err != nil {
+		return nil
+	}
+
+	var sel []int
+	if v.CTE.IsDistinct {
+		sel = make([]int, chkSize)
+		for i := 0; i < chkSize; i++ {
+			sel[i] = i
+		}
+	}
+
+	return &CTEExec{
+		baseExecutor:  newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		seedExec:      seedExec,
+		recursiveExec: recursiveExec,
+		resTbl:        resTbl,
+		iterInTbl:     iterInTbl,
+		iterOutTbl:    iterOutTbl,
+		chkIdx:        0,
+		isDistinct:    v.CTE.IsDistinct,
+		sel:           sel,
+	}
+}
+
+func (b *executorBuilder) buildCTETableReader(v *plannercore.PhysicalCTETable) Executor {
+	storageMap, ok := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
+	if !ok {
+		b.err = errors.New("type assertion for CTEStorageMap failed")
+		return nil
+	}
+	storages, ok := storageMap[v.IDForStorage]
+	if !ok {
+		b.err = errors.Errorf("iterInTbl should already be set up by CTEExec(id: %d)", v.IDForStorage)
+		return nil
+	}
+	return &CTETableReaderExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		iterInTbl:    storages.IterInTbl,
+		chkIdx:       0,
+	}
 }

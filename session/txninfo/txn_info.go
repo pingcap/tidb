@@ -97,8 +97,7 @@ func (info *TxnInfo) ShallowClone() *TxnInfo {
 
 // ToDatum Converts the `TxnInfo` to `Datum` to show in the `TIDB_TRX` table.
 func (info *TxnInfo) ToDatum() []types.Datum {
-	// TODO: The timezone represented to the user is not correct and it will be always UTC time.
-	humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6).UTC()
+	humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
 
 	var currentDigest interface{}
 	if len(info.CurrentSQLDigest) != 0 {
