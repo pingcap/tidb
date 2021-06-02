@@ -260,6 +260,9 @@ func (test *CTETestSuite) TestCTEWithLimit(c *check.C) {
 	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select c1 + 1 from cte1 limit 5 offset 995) select * from cte1")
 	rows.Check(testkit.Rows("996", "997", "998", "999", "1000"))
 
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select c1 + 1 from cte1 limit 5 offset 6) select * from cte1;")
+	rows.Check(testkit.Rows("7", "8", "9", "10", "11"))
+
 	// Test with cte_max_recursion_depth
 	tk.MustExec("set cte_max_recursion_depth=2;")
 	rows = tk.MustQuery("with recursive cte1(c1) as (select 0 union select c1 + 1 from cte1 limit 1 offset 2) select * from cte1;")
