@@ -111,7 +111,10 @@ func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
 		} else if chCnt == 1 {
 			curPlan = curPlan.Children()[0]
 		} else {
-			join := curPlan.(*PhysicalHashJoin)
+			join, ok := curPlan.(*PhysicalHashJoin)
+			if !ok {
+				return nil
+			}
 			curPlan = join.children[1-join.globalChildIndex]
 		}
 	}
@@ -886,6 +889,18 @@ type PhysicalExchangeReceiver struct {
 	basePhysicalPlan
 
 	Tasks []*kv.MPPTask
+	frags []*Fragment
+}
+
+// Clone implment PhysicalPlan interface.
+func (p *PhysicalExchangeReceiver) Clone() (PhysicalPlan, error) {
+	np := new(PhysicalExchangeReceiver)
+	base, err := p.basePhysicalPlan.cloneWithSelf(np)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	np.basePhysicalPlan = *base
+	return np, nil
 }
 
 // GetExchangeSender return the connected sender of this receiver. We assume that its child must be a receiver.
@@ -900,10 +915,21 @@ type PhysicalExchangeSender struct {
 	TargetTasks  []*kv.MPPTask
 	ExchangeType tipb.ExchangeType
 	HashCols     []*expression.Column
-	// Tasks is the mpp task for current PhysicalExchangeSender
+	// Tasks is the mpp task for current PhysicalExchangeSender.
 	Tasks []*kv.MPPTask
+}
 
-	Fragment *Fragment
+// Clone implment PhysicalPlan interface.
+func (p *PhysicalExchangeSender) Clone() (PhysicalPlan, error) {
+	np := new(PhysicalExchangeSender)
+	base, err := p.basePhysicalPlan.cloneWithSelf(np)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	np.basePhysicalPlan = *base
+	np.ExchangeType = p.ExchangeType
+	np.HashCols = p.HashCols
+	return np, nil
 }
 
 // Clone implements PhysicalPlan interface.
@@ -952,6 +978,19 @@ func (p *PhysicalLimit) Clone() (PhysicalPlan, error) {
 // PhysicalUnionAll is the physical operator of UnionAll.
 type PhysicalUnionAll struct {
 	physicalSchemaProducer
+
+	mpp bool
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalUnionAll) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalUnionAll)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	return cloned, nil
 }
 
 // AggMppRunMode defines the running mode of aggregation in MPP
