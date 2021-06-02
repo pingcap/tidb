@@ -534,13 +534,6 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 	_, err = tk.Exec("create table temporary_table_t1 like temporary_table")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
 	tk.MustExec("drop table if exists temporary_table;")
-
-	tk.MustExec("drop table if exists temporary_table_like;")
-	tk.MustExec("create table temporary_table (a int, b int,index(a))")
-	tk.MustExec("drop table if exists temporary_table_like_t1;")
-	_, err = tk.Exec("create global temporary table temporary_table_like_t1 like temporary_table on commit delete rows;")
-	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
-	tk.MustExec("drop table if exists temporary_table_like;")
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
