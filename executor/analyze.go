@@ -853,12 +853,22 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- &samplingMergeResult{err: errAnalyzeWorkerPanic}
 		}
+		// Consume the remaining things.
+		for {
+			_, ok := <-taskCh
+			if !ok {
+				break
+			}
+		}
 		e.samplingMergeWg.Done()
 		if isClosedChanThread {
 			e.samplingMergeWg.Wait()
 			close(resultCh)
 		}
 	}()
+	failpoint.Inject("mockAnalyzeSamplingMergeWorkerPanic", func() {
+		panic("failpoint triggered")
+	})
 	retCollector := &statistics.RowSampleCollector{
 		NullCount:     make([]int64, l),
 		FMSketches:    make([]*statistics.FMSketch, 0, l),
@@ -878,7 +888,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 		err := colResp.Unmarshal(data)
 		if err != nil {
 			resultCh <- &samplingMergeResult{err: err}
-			continue
+			return
 		}
 		subCollector := &statistics.RowSampleCollector{
 			MaxSampleSize: int(e.analyzePB.ColReq.SampleSize),
@@ -914,7 +924,11 @@ func (e *AnalyzeColumnsExec) subBuildWorker(resultCh chan error, taskCh chan *sa
 			close(resultCh)
 		}
 	}()
+	failpoint.Inject("mockAnalyzeSamplingBuildWorkerPanic", func() {
+		panic("failpoint triggered")
+	})
 	colLen := len(e.colsInfo)
+workLoop:
 	for {
 		task, ok := <-taskCh
 		if !ok {
@@ -952,7 +966,7 @@ func (e *AnalyzeColumnsExec) subBuildWorker(resultCh chan error, taskCh chan *sa
 					b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, row.Columns[col.Offset])
 					if err != nil {
 						resultCh <- err
-						break
+						continue workLoop
 					}
 				}
 				sampleItems = append(sampleItems, &statistics.SampleItem{
@@ -973,7 +987,7 @@ func (e *AnalyzeColumnsExec) subBuildWorker(resultCh chan error, taskCh chan *sa
 		hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn)
 		if err != nil {
 			resultCh <- err
-			break
+			continue
 		}
 		hists[task.slicePos] = hist
 		topns[task.slicePos] = topn
