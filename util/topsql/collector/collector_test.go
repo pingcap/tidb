@@ -70,6 +70,8 @@ func populateCache(tsc *TopSQLCollectorImpl, begin, end int, timestamp uint64) {
 		})
 	}
 	tsc.Collect(timestamp, records)
+	// sleep a while for the asynchronouse collect
+	time.Sleep(10 * time.Millisecond)
 }
 
 func initializeCache(maxStatementsNum int, addr string) *TopSQLCollectorImpl {
