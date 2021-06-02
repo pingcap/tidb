@@ -1663,7 +1663,7 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) (*mo
 	tblInfo.AutoIncID = 0
 	tblInfo.ForeignKeys = nil
 	// Ignore TiFlash replicas for temporary tables.
-	if tblInfo.TiFlashReplica != nil && tblInfo.TempTableType != model.TempTableNone {
+	if tblInfo.TiFlashReplica != nil && tblInfo.TempTableType == model.TempTableNone {
 		replica := *tblInfo.TiFlashReplica
 		// Keep the tiflash replica setting, remove the replica available status.
 		replica.AvailablePartitionIDs = nil
