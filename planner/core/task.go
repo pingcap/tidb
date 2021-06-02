@@ -151,9 +151,10 @@ func (t *copTask) finishIndexPlan() {
 	t.indexPlanFinished = true
 	sessVars := t.indexPlan.SCtx().GetSessionVars()
 	// Network cost of transferring rows of index scan to TiDB.
-	t.cst += cnt * sessVars.GetNetworkFactor(nil) * t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true, false)
+	cst := t.cst + cnt*sessVars.GetNetworkFactor(nil)*t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true, false)
 
 	if t.tablePlan == nil {
+		t.cst = cst
 		return
 	}
 	ts := t.tablePlan.(*PhysicalTableScan)
