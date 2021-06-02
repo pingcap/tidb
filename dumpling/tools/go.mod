@@ -1,6 +1,6 @@
 module github.com/pingcap/dumpling/_tools
 
-go 1.13
+go 1.16
 
 require (
 	github.com/dnephin/govet v0.0.0-20171012192244-4a96d43e39d3
