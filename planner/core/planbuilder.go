@@ -3480,9 +3480,6 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 					return nil, infoschema.ErrCannotAddForeign
 				}
 			}
-			if v.ReferTable != nil {
-				return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("create table like")
-			}
 		}
 		if b.ctx.GetSessionVars().User != nil {
 			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
