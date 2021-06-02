@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -49,6 +50,13 @@ func InPrepare(p *preprocessor) {
 // InTxnRetry is a PreprocessOpt that indicates preprocess is executing under transaction retry.
 func InTxnRetry(p *preprocessor) {
 	p.flag |= inTxnRetry
+}
+
+// WithPreprocessorReturn returns a PreprocessOpt to initialize the PreprocesorReturn.
+func WithPreprocessorReturn(ret *PreprocessorReturn) PreprocessOpt {
+	return func(p *preprocessor) {
+		p.PreprocessorReturn = ret
+	}
 }
 
 // TryAddExtraLimit trys to add an extra limit for SELECT or UNION statement when sql_select_limit is set.
@@ -82,12 +90,25 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 }
 
 // Preprocess resolves table names of the node, and checks some statements validation.
-func Preprocess(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema, preprocessOpt ...PreprocessOpt) error {
-	v := preprocessor{is: is, ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0)}
+// prepreocssReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
+func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
+	v := preprocessor{ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0), withName: make(map[string]interface{})}
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
 	}
+	// PreprocessorReturn must be non-nil before preprocessing
+	if v.PreprocessorReturn == nil {
+		v.PreprocessorReturn = &PreprocessorReturn{}
+	}
 	node.Accept(&v)
+	readTS := ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
+	if readTS > 0 {
+		v.PreprocessorReturn.SnapshotTS = readTS
+	}
+	// InfoSchema must be non-nil after preprocessing
+	if v.InfoSchema == nil {
+		v.ensureInfoSchema()
+	}
 	return errors.Trace(v.err)
 }
 
@@ -109,18 +130,27 @@ const (
 	inSequenceFunction
 )
 
+// PreprocessorReturn is used to retain information obtained in the preprocessor.
+type PreprocessorReturn struct {
+	SnapshotTS uint64
+	InfoSchema infoschema.InfoSchema
+}
+
 // preprocessor is an ast.Visitor that preprocess
 // ast Nodes parsed from parser.
 type preprocessor struct {
-	is     infoschema.InfoSchema
 	ctx    sessionctx.Context
-	err    error
 	flag   preprocessorFlag
 	stmtTp byte
 
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
 	tableAliasInJoin []map[string]interface{}
+	withName         map[string]interface{}
+
+	// values that may be returned
+	*PreprocessorReturn
+	err error
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -217,6 +247,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.FnName.L == ast.NextVal || node.FnName.L == ast.LastVal || node.FnName.L == ast.SetVal {
 			p.flag |= inSequenceFunction
 		}
+
 	case *ast.BRIEStmt:
 		if node.Kind == ast.BRIEKindRestore {
 			p.flag |= inCreateOrDropTable
@@ -235,6 +266,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.GroupByClause:
 		p.checkGroupBy(node)
+	case *ast.WithClause:
+		for _, cte := range node.CTEs {
+			p.withName[cte.Name.L] = struct{}{}
+		}
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -571,14 +606,18 @@ func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 		}
 		sName := model.NewCIStr(currentDB)
 		tName := table.Name
-		tableInfo, err := p.is.TableByName(sName, tName)
+		tableInfo, err := p.ensureInfoSchema().TableByName(sName, tName)
 		if err != nil {
 			p.err = err
 			return
 		}
 		tempTableType := tableInfo.Meta().TempTableType
-		if stmt.Tp == ast.AdminCheckTable && tempTableType != model.TempTableNone {
-			p.err = infoschema.ErrAdminCheckTable
+		if (stmt.Tp == ast.AdminCheckTable || stmt.Tp == ast.AdminChecksumTable) && tempTableType != model.TempTableNone {
+			if stmt.Tp == ast.AdminChecksumTable {
+				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table")
+			} else {
+				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("admin check table")
+			}
 			return
 		}
 	}
@@ -590,7 +629,8 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		if stmt.ReferTable.Schema.String() != "" {
 			schema = stmt.ReferTable.Schema
 		}
-		tableInfo, err := p.is.TableByName(schema, stmt.ReferTable.Name)
+		// get the infoschema from the context.
+		tableInfo, err := p.ensureInfoSchema().TableByName(schema, stmt.ReferTable.Name)
 		if err != nil {
 			p.err = err
 			return
@@ -1154,6 +1194,10 @@ func (p *preprocessor) stmtType() string {
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
+		if _, ok := p.withName[tn.Name.L]; ok {
+			return
+		}
+
 		currentDB := p.ctx.GetSessionVars().CurrentDB
 		if currentDB == "" {
 			p.err = errors.Trace(ErrNoDB)
@@ -1161,6 +1205,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		}
 		tn.Schema = model.NewCIStr(currentDB)
 	}
+
 	if p.flag&inCreateOrDropTable > 0 {
 		// The table may not exist in create table or drop table statement.
 		if p.flag&inRepairTable > 0 {
@@ -1180,7 +1225,12 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
-	table, err := p.is.TableByName(tn.Schema, tn.Name)
+	p.handleAsOf(tn.AsOf)
+	if p.err != nil {
+		return
+	}
+
+	table, err := p.ensureInfoSchema().TableByName(tn.Schema, tn.Name)
 	if err != nil {
 		// We should never leak that the table doesn't exist (i.e. attach ErrTableNotExists)
 		// unless we know that the user has permissions to it, should it exist.
@@ -1202,7 +1252,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 	tableInfo := table.Meta()
-	dbInfo, _ := p.is.SchemaByName(tn.Schema)
+	dbInfo, _ := p.ensureInfoSchema().SchemaByName(tn.Schema)
 	// tableName should be checked as sequence object.
 	if p.flag&inSequenceFunction > 0 {
 		if !tableInfo.IsSequence() {
@@ -1326,4 +1376,46 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 			return
 		}
 	}
+}
+
+// handleAsOf tries to validate the timestamp.
+// If it is not nil, timestamp is used to get the history infoschema from the infocache.
+func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
+	readTS := p.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS()
+	if readTS > 0 && node != nil {
+		p.err = ErrAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
+		return
+	}
+	dom := domain.GetDomain(p.ctx)
+	ts := uint64(0)
+	if node != nil {
+		ts, p.err = calculateTsExpr(p.ctx, node)
+		if p.err != nil {
+			return
+		}
+	}
+	if ts != 0 && p.InfoSchema == nil {
+		is, err := dom.GetSnapshotInfoSchema(ts)
+		if err != nil {
+			p.err = err
+			return
+		}
+		p.SnapshotTS = ts
+		p.InfoSchema = is
+	}
+	if p.SnapshotTS != ts {
+		p.err = ErrDifferentAsOf.GenWithStack("can not set different time in the as of")
+	}
+}
+
+// ensureInfoSchema get the infoschema from the preprecessor.
+// there some situations:
+//    - the stmt specifies the schema version.
+//    - session variable
+//    - transcation context
+func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
+	if p.InfoSchema == nil {
+		p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	}
+	return p.InfoSchema
 }

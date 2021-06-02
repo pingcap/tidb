@@ -237,7 +237,6 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	statsTbl := s.prepareSelectivity(testKit, c)
-	is := s.do.InfoSchema()
 
 	longExpr := "0 < a and a = 1 "
 	for i := 1; i < 64; i++ {
@@ -294,9 +293,10 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprs))
 		c.Assert(stmts, HasLen, 1)
 
-		err = plannercore.Preprocess(sctx, stmts[0], is)
+		ret := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil, comment)
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, tt.exprs))
 
 		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
@@ -542,7 +542,6 @@ func BenchmarkSelectivity(b *testing.B) {
 
 	testKit := testkit.NewTestKit(c, s.store)
 	statsTbl := s.prepareSelectivity(testKit, c)
-	is := s.do.InfoSchema()
 	exprs := "a > 1 and b < 2 and c > 3 and d < 4 and e > 5"
 	sql := "select * from t where " + exprs
 	comment := Commentf("for %s", exprs)
@@ -550,9 +549,10 @@ func BenchmarkSelectivity(b *testing.B) {
 	stmts, err := session.Parse(sctx, sql)
 	c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, exprs))
 	c.Assert(stmts, HasLen, 1)
-	err = plannercore.Preprocess(sctx, stmts[0], is)
+	ret := &plannercore.PreprocessorReturn{}
+	err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 	c.Assert(err, IsNil, comment)
-	p, _, err := plannercore.BuildLogicalPlan(context.Background(), sctx, stmts[0], is)
+	p, _, err := plannercore.BuildLogicalPlan(context.Background(), sctx, stmts[0], ret.InfoSchema)
 	c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, exprs))
 
 	file, err := os.Create("cpu.profile")
@@ -627,6 +627,42 @@ func (s *testStatsSuite) TestStatsVer2(c *C) {
 		// ensure statsVer = 2
 		c.Assert(fmt.Sprintf("%v", r[0]), Equals, "2")
 	}
+
+	var (
+		input  []string
+		output [][]string
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	for i := range input {
+		s.testData.OnRecord(func() {
+			output[i] = s.testData.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
+	}
+}
+
+func (s *testStatsSuite) TestTopNOutOfHist(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set tidb_analyze_version=3")
+
+	testKit.MustExec("drop table if exists topn_before_hist")
+	testKit.MustExec("create table topn_before_hist(a int, index idx(a))")
+	testKit.MustExec("insert into topn_before_hist values(1), (1), (1), (1), (2), (2), (3), (4), (5)")
+	testKit.MustExec("analyze table topn_before_hist with 2 topn, 3 buckets")
+
+	testKit.MustExec("create table topn_after_hist(a int, index idx(a))")
+	testKit.MustExec("insert into topn_after_hist values(2), (2), (3), (4), (5), (6), (6), (6), (6)")
+	testKit.MustExec("analyze table topn_after_hist with 2 topn, 3 buckets")
+
+	testKit.MustExec("create table topn_before_hist_no_index(a int)")
+	testKit.MustExec("insert into topn_before_hist_no_index values(1), (1), (1), (1), (2), (2), (3), (4), (5)")
+	testKit.MustExec("analyze table topn_before_hist_no_index with 2 topn, 3 buckets")
+
+	testKit.MustExec("create table topn_after_hist_no_index(a int)")
+	testKit.MustExec("insert into topn_after_hist_no_index values(2), (2), (3), (4), (5), (6), (6), (6), (6)")
+	testKit.MustExec("analyze table topn_after_hist_no_index with 2 topn, 3 buckets")
 
 	var (
 		input  []string
@@ -756,9 +792,8 @@ func (s *testStatsSuite) TestDNFCondSelectivity(c *C) {
 	testKit.MustExec(`analyze table t`)
 
 	ctx := context.Background()
-	is := s.do.InfoSchema()
 	h := s.do.StatsHandle()
-	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tblInfo := tb.Meta()
 	statsTbl := h.GetTableStats(tblInfo)
@@ -777,9 +812,10 @@ func (s *testStatsSuite) TestDNFCondSelectivity(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for sql %s", err, tt))
 		c.Assert(stmts, HasLen, 1)
 
-		err = plannercore.Preprocess(sctx, stmts[0], is)
+		ret := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil, Commentf("error %v, for sql %s", err, tt))
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, sql %s", err, tt))
 
 		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)

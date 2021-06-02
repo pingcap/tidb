@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"time"
 
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
@@ -159,8 +160,6 @@ type Transaction interface {
 	SetOption(opt int, val interface{})
 	// GetOption returns the option
 	GetOption(opt int) interface{}
-	// DelOption deletes an option.
-	DelOption(opt int)
 	// IsReadOnly checks if the transaction has only performed read operations.
 	IsReadOnly() bool
 	// StartTS returns the transaction start timestamp.
@@ -322,8 +321,6 @@ type Snapshot interface {
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option. Only ReplicaRead is supported for snapshot
 	SetOption(opt int, val interface{})
-	// DelOption deletes an option.
-	DelOption(opt int)
 }
 
 // BatchGetter is the interface for BatchGet.
@@ -344,7 +341,7 @@ type Driver interface {
 type Storage interface {
 	// Begin a global transaction
 	Begin() (Transaction, error)
-	// Begin a transaction with given option
+	// BeginWithOption begins a transaction with given option
 	BeginWithOption(option tikv.StartTSOption) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
@@ -373,6 +370,8 @@ type Storage interface {
 	GetMemCache() MemManager
 	// GetMinSafeTS return the minimal SafeTS of the storage with given txnScope.
 	GetMinSafeTS(txnScope string) uint64
+	// GetLockWaits return all lock wait information
+	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.
