@@ -907,31 +907,7 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 		return
 	}
 	specs := stmt.Specs
-	currentDB := p.ctx.GetSessionVars().CurrentDB
-	if stmt.Table.Schema.String() != "" {
-		currentDB = stmt.Table.Schema.L
-	}
-	if currentDB == "" {
-		p.err = errors.Trace(ErrNoDB)
-		return
-	}
-	sName := model.NewCIStr(currentDB)
-	tableInfo, err := p.ensureInfoSchema().TableByName(sName, stmt.Table.Name)
-	if err != nil {
-		p.err = err
-		return
-	}
-	tempTableType := tableInfo.Meta().TempTableType
 	for _, spec := range specs {
-		if tempTableType != model.TempTableNone {
-			for _, option := range spec.Options {
-				if option.Tp == ast.TableOptionShardRowID {
-					p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
-					return
-				}
-			}
-		}
-
 		if spec.NewTable != nil {
 			ntName := spec.NewTable.Name.String()
 			if isIncorrectName(ntName) {
