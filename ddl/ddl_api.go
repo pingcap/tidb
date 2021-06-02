@@ -5299,9 +5299,6 @@ func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
-	if t.Meta().TempTableType != model.TempTableNone {
-		return infoschema.ErrCannotAddForeign
-	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,

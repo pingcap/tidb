@@ -3471,6 +3471,13 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.IndexPriv, v.Table.Schema.L,
 			v.Table.Name.L, "", authErr)
 	case *ast.CreateTableStmt:
+		if v.TemporaryKeyword != ast.TemporaryNone {
+			for _, cons := range v.Constraints {
+				if cons.Tp == ast.ConstraintForeignKey {
+					return nil, infoschema.ErrCannotAddForeign
+				}
+			}
+		}
 		if b.ctx.GetSessionVars().User != nil {
 			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
 				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
