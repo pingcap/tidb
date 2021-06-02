@@ -996,6 +996,13 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	switch function.FuncName.L {
+	case ast.Floor, ast.Ceil, ast.Ceiling:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_FloorIntToDec, tipb.ScalarFuncSig_CeilIntToDec:
+			return false
+		default:
+			return true
+		}
 	case
 		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or,
 		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like,
@@ -1003,7 +1010,6 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.If, ast.Ifnull, ast.Case,
 		ast.Month,
 		ast.Sqrt,
-		ast.Floor, ast.Ceil, ast.Ceiling,
 		ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
 		ast.JSONLength:
 		return true
