@@ -1683,6 +1683,9 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		}
 		idxInfos = append(idxInfos, idx)
 	}
+	if as.Incremental {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 3 stats would ignore the INCREMENTAL keyword and do full sampling"))
+	}
 	for i, id := range physicalIDs {
 		if id == tbl.TableInfo.ID {
 			id = -1
@@ -1692,7 +1695,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			TableName:     tbl.Name.O,
 			PartitionName: names[i],
 			TableID:       AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
-			Incremental:   as.Incremental,
+			Incremental:   false,
 			StatsVersion:  version,
 		}
 		newTask := AnalyzeColumnsTask{
