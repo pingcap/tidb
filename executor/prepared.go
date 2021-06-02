@@ -29,12 +29,14 @@ import (
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/topsql"
 	"go.uber.org/zap"
 )
 
@@ -178,6 +180,10 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		Params:        sorter.markers,
 		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
 	}
+	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
+	if variable.TopSQLEnabled() {
+		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil)
+	}
 
 	if !plannercore.PreparedPlanCacheEnabled() {
 		prepared.UseCache = false
@@ -213,11 +219,10 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		vars.PreparedStmtNameToID[e.name] = e.ID
 	}
 
-	normalized, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 	preparedObj := &plannercore.CachedPrepareStmt{
 		PreparedAst:   prepared,
 		VisitInfos:    destBuilder.GetVisitInfo(),
-		NormalizedSQL: normalized,
+		NormalizedSQL: normalizedSQL,
 		SQLDigest:     digest,
 		ForUpdateRead: destBuilder.GetIsForUpdateRead(),
 	}
