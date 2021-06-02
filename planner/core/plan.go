@@ -282,7 +282,7 @@ type LogicalPlan interface {
 	// It will return:
 	// 1. All possible plans that can match the required property.
 	// 2. Whether the SQL hint can work. Return true if there is no hint.
-	exhaustPhysicalPlans(*property.PhysicalProperty) (physicalPlans []PhysicalPlan, hintCanWork bool)
+	exhaustPhysicalPlans(*property.PhysicalProperty) (physicalPlans []PhysicalPlan, hintCanWork bool, err error)
 
 	// ExtractCorrelatedCols extracts correlated columns inside the LogicalPlan.
 	ExtractCorrelatedCols() []*expression.CorrelatedColumn
@@ -408,6 +408,9 @@ func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPla
 		base.children = append(base.children, cloned)
 	}
 	for _, prop := range p.childrenReqProps {
+		if prop == nil {
+			continue
+		}
 		base.childrenReqProps = append(base.childrenReqProps, prop.CloneEssentialFields())
 	}
 	return base, nil

@@ -14,6 +14,7 @@
 package core
 
 import (
+	"context"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -311,7 +312,10 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 	var hintWorksWithProp bool
 	// Maybe the plan can satisfy the required property,
 	// so we try to get the task without the enforced sort first.
-	plansFitsProp, hintWorksWithProp = p.self.exhaustPhysicalPlans(newProp)
+	plansFitsProp, hintWorksWithProp, err = p.self.exhaustPhysicalPlans(newProp)
+	if err != nil {
+		return nil, 0, err
+	}
 	if !hintWorksWithProp && !newProp.IsEmpty() {
 		// If there is a hint in the plan and the hint cannot satisfy the property,
 		// we enforce this property and try to generate the PhysicalPlan again to
@@ -327,7 +331,10 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		newProp.PartitionCols = nil
 		newProp.PartitionTp = property.AnyType
 		var hintCanWork bool
-		plansNeedEnforce, hintCanWork = p.self.exhaustPhysicalPlans(newProp)
+		plansNeedEnforce, hintCanWork, err = p.self.exhaustPhysicalPlans(newProp)
+		if err != nil {
+			return nil, 0, err
+		}
 		if hintCanWork && !hintWorksWithProp {
 			// If the hint can work with the empty property, but cannot work with
 			// the required property, we give up `plansFitProp` to make sure the hint
@@ -1716,6 +1723,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		Columns:          ds.Columns,
 		SinglePart:       ds.isPartition,
 		PartTblID:        ds.physicalTableID,
+		PartitionExpr:    getPartitionExpr(ds.ctx, ds.TableInfo()),
 	}.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.SortItems[0].Desc
@@ -1741,7 +1749,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		batchPointGetPlan.IndexInfo = candidate.path.Index
 		batchPointGetPlan.IdxCols = candidate.path.IdxCols
 		batchPointGetPlan.IdxColLens = candidate.path.IdxColLens
-		batchPointGetPlan.PartitionColPos = getPartitionColumnPos(candidate.path.Index, hashPartColName)
+		batchPointGetPlan.PartitionColPos = getHashPartitionColumnPos(candidate.path.Index, hashPartColName)
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.IndexValues = append(batchPointGetPlan.IndexValues, ran.LowVal)
 		}
@@ -1931,4 +1939,43 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	cost += float64(len(is.Ranges)) * sessVars.SeekFactor
 	is.cost = cost
 	return is, cost, rowCount
+}
+
+func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (t task, cntPlan int64, err error) {
+	if !prop.IsEmpty() {
+		return invalidTask, 1, nil
+	}
+	if p.cte.cteTask != nil {
+		// Already built it.
+		return p.cte.cteTask, 1, nil
+	}
+	sp, _, err := DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
+	if err != nil {
+		return nil, 1, err
+	}
+
+	var rp PhysicalPlan
+	if p.cte.recursivePartLogicalPlan != nil {
+		rp, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.recursivePartLogicalPlan)
+		if err != nil {
+			return nil, 1, err
+		}
+	}
+
+	pcte := PhysicalCTE{SeedPlan: sp, RecurPlan: rp, CTE: p.cte, cteAsName: p.cteAsName}.Init(p.ctx, p.stats)
+	pcte.SetSchema(p.schema)
+	t = &rootTask{pcte, sp.statsInfo().RowCount}
+	p.cte.cteTask = t
+	return t, 1, nil
+}
+
+func (p *LogicalCTETable) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (t task, cntPlan int64, err error) {
+	if !prop.IsEmpty() {
+		return nil, 1, nil
+	}
+
+	pcteTable := PhysicalCTETable{IDForStorage: p.idForStorage}.Init(p.ctx, p.stats)
+	pcteTable.SetSchema(p.schema)
+	t = &rootTask{p: pcteTable}
+	return t, 1, nil
 }

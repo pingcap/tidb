@@ -814,7 +814,7 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 		rAvg *= 2
 	}
 	for i := 0; i < rh.Len(); i++ {
-		if statsVer == Version2 {
+		if statsVer >= Version2 {
 			lh.AppendBucketWithNDV(rh.GetLower(i), rh.GetUpper(i), rh.Buckets[i].Count+lCount-offset, rh.Buckets[i].Repeat, rh.Buckets[i].NDV)
 			continue
 		}
@@ -925,14 +925,14 @@ func (c *Column) String() string {
 
 // TotalRowCount returns the total count of this column.
 func (c *Column) TotalRowCount() float64 {
-	if c.StatsVer == Version2 {
+	if c.StatsVer >= Version2 {
 		return c.Histogram.TotalRowCount() + float64(c.TopN.TotalCount())
 	}
 	return c.Histogram.TotalRowCount()
 }
 
 func (c *Column) notNullCount() float64 {
-	if c.StatsVer == Version2 {
+	if c.StatsVer >= Version2 {
 		return c.Histogram.notNullCount() + float64(c.TopN.TotalCount())
 	}
 	return c.Histogram.notNullCount()
@@ -1140,7 +1140,7 @@ func (idx *Index) String() string {
 
 // TotalRowCount returns the total count of this index.
 func (idx *Index) TotalRowCount() float64 {
-	if idx.StatsVer == Version2 {
+	if idx.StatsVer >= Version2 {
 		return idx.Histogram.TotalRowCount() + float64(idx.TopN.TotalCount())
 	}
 	return idx.Histogram.TotalRowCount()
@@ -1177,7 +1177,7 @@ func (idx *Index) equalRowCount(b []byte, modifyCount int64) float64 {
 		return float64(idx.QueryBytes(b))
 	}
 	// If it's version2, query the top-n first.
-	if idx.StatsVer == Version2 {
+	if idx.StatsVer >= Version2 {
 		count, found := idx.TopN.QueryTopN(b)
 		if found {
 			return float64(count)
@@ -1245,7 +1245,7 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, coll *HistColl, inde
 		expBackoffSuccess := false
 		// Due to the limitation of calcFraction and convertDatumToScalar, the histogram actually won't estimate anything.
 		// If the first column's range is point.
-		if rangePosition := GetOrdinalOfRangeCond(sc, indexRange); rangePosition > 0 && idx.StatsVer == Version2 && coll != nil {
+		if rangePosition := GetOrdinalOfRangeCond(sc, indexRange); rangePosition > 0 && idx.StatsVer >= Version2 && coll != nil {
 			var expBackoffSel float64
 			expBackoffSel, expBackoffSuccess, err = idx.expBackoffEstimation(sc, coll, indexRange)
 			if err != nil {
@@ -1504,13 +1504,26 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 }
 
 func (idx *Index) outOfRange(val types.Datum) bool {
-	if idx.Histogram.Len() == 0 {
+	histEmpty, topNEmpty := idx.Histogram.Len() == 0, idx.TopN.Num() == 0
+	// All empty.
+	if histEmpty && topNEmpty {
 		return true
 	}
-	withInLowBoundOrPrefixMatch := chunk.Compare(idx.Bounds.GetRow(0), 0, &val) <= 0 ||
-		matchPrefix(idx.Bounds.GetRow(0), 0, &val)
-	withInHighBound := chunk.Compare(idx.Bounds.GetRow(idx.Bounds.NumRows()-1), 0, &val) >= 0
-	return !withInLowBoundOrPrefixMatch || !withInHighBound
+	// TopN is not empty. Record found.
+	if !topNEmpty && idx.TopN.findTopN(val.GetBytes()) >= 0 {
+		return false
+	}
+	if !histEmpty {
+		withInLowBoundOrPrefixMatch := chunk.Compare(idx.Bounds.GetRow(0), 0, &val) <= 0 ||
+			matchPrefix(idx.Bounds.GetRow(0), 0, &val)
+		withInHighBound := chunk.Compare(idx.Bounds.GetRow(idx.Bounds.NumRows()-1), 0, &val) >= 0
+		// Hist is not empty. Record found.
+		if withInLowBoundOrPrefixMatch && withInHighBound {
+			return false
+		}
+	}
+	// No record found. Is out of range.
+	return true
 }
 
 // matchPrefix checks whether ad is the prefix of value

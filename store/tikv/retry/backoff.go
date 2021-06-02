@@ -41,7 +41,7 @@ type Backoffer struct {
 	maxSleep   int
 	totalSleep int
 	errors     []error
-	configs    []fmt.Stringer
+	configs    []*Config
 	vars       *kv.Variables
 	noop       bool
 
@@ -144,7 +144,7 @@ func (b *Backoffer) BackoffWithMaxSleep(typ int, maxSleepMs int, err error) erro
 	case boMaxTsNotSynced:
 		return b.BackoffWithCfgAndMaxSleep(BoMaxTsNotSynced, maxSleepMs, err)
 	}
-	cfg := NewConfig("", metrics.BackoffHistogramEmpty, nil, tikverr.ErrUnknown)
+	cfg := NewConfig("", &metrics.BackoffHistogramEmpty, nil, tikverr.ErrUnknown)
 	return b.BackoffWithCfgAndMaxSleep(cfg, maxSleepMs, err)
 }
 
@@ -172,7 +172,7 @@ func (b *Backoffer) BackoffWithCfgAndMaxSleep(cfg *Config, maxSleepMs int, err e
 		}
 		logutil.BgLogger().Warn(errMsg)
 		// Use the first backoff type to generate a MySQL error.
-		return b.configs[0].(*Config).err
+		return b.configs[0].err
 	}
 
 	// Lazy initialize.
@@ -185,7 +185,9 @@ func (b *Backoffer) BackoffWithCfgAndMaxSleep(cfg *Config, maxSleepMs int, err e
 		b.fn[cfg.name] = f
 	}
 	realSleep := f(b.ctx, maxSleepMs)
-	cfg.metric.Observe(float64(realSleep) / 1000)
+	if cfg.metric != nil {
+		(*cfg.metric).Observe(float64(realSleep) / 1000)
+	}
 	b.totalSleep += realSleep
 	if b.backoffSleepMS == nil {
 		b.backoffSleepMS = make(map[string]int)
@@ -265,8 +267,12 @@ func (b *Backoffer) GetTotalSleep() int {
 }
 
 // GetTypes returns type list.
-func (b *Backoffer) GetTypes() []fmt.Stringer {
-	return b.configs
+func (b *Backoffer) GetTypes() []string {
+	typs := make([]string, 0, len(b.configs))
+	for _, cfg := range b.configs {
+		typs = append(typs, cfg.String())
+	}
+	return typs
 }
 
 // GetCtx returns the binded context.
