@@ -310,13 +310,6 @@ func (test *CTETestSuite) TestCTEWithLimit(c *check.C) {
 	tk.MustExec("create table t1(c1 int);")
 	tk.MustExec("insert into t1 values(1), (2), (3);")
 
-	// Basic non-recursive tests.
-	rows = tk.MustQuery("with cte1 as (select c1 from t1 limit 2 offset 1) select * from cte1")
-	rows.Check(testkit.Rows("2", "3"))
-
-	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select 2 limit 0 offset 1) select * from cte1")
-	rows.Check(testkit.Rows())
-
 	// Error: ERROR 1221 (HY000): Incorrect usage of UNION and LIMIT.
 	// Limit can only be at the end of SQL stmt.
 	err = tk.ExecToErr("with recursive cte1(c1) as (select c1 from t1 limit 1 offset 1 union select c1 + 1 from cte1 limit 0 offset 1) select * from cte1")
@@ -351,6 +344,28 @@ func (test *CTETestSuite) TestCTEWithLimit(c *check.C) {
 
 	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 5 offset 100) select * from cte1")
 	rows.Check(testkit.Rows("100", "101", "102", "103", "104"))
+
+	// Basic non-recursive tests.
+	rows = tk.MustQuery("with cte1 as (select c1 from t1 limit 2 offset 1) select * from cte1")
+	rows.Check(testkit.Rows("1", "2"))
+
+	rows = tk.MustQuery("with cte1 as (select c1 from t1 limit 2 offset 1) select * from cte1 dt1 join cte1 dt2 on dt1.c1 = dt2.c1")
+	rows.Check(testkit.Rows("1 1", "2 2"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select 2 limit 0 offset 1) select * from cte1")
+	rows.Check(testkit.Rows())
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select 2 limit 0 offset 1) select * from cte1 dt1 join cte1 dt2 on dt1.c1 = dt2.c1")
+	rows.Check(testkit.Rows())
+
+	// rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select 2 limit 5 offset 100) select * from cte1")
+	// rows.Check(testkit.Rows("100", "101", "102", "103", "104"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 limit 3 offset 100) select * from cte1")
+	rows.Check(testkit.Rows("100", "101", "102"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 limit 3 offset 100) select * from cte1 dt1 join cte1 dt2 on dt1.c1 = dt2.c1")
+	rows.Check(testkit.Rows("100 100", "101 101", "102 102"))
 
 	// Test limit 0.
 	tk.MustExec("set cte_max_recursion_depth = 0;")

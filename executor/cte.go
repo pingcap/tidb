@@ -215,7 +215,7 @@ func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 	defer close(e.iterInTbl.GetBegCh())
 	chks := make([]*chunk.Chunk, 0, 10)
 	for {
-		if e.hasLimit && uint64(e.iterInTbl.NumRows()) >= e.limitEnd {
+		if e.limitDone(e.iterInTbl) {
 			break
 		}
 		chk := newFirstChunk(e.seedExec)
@@ -252,7 +252,7 @@ func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
 		return ErrCTEMaxRecursionDepth.GenWithStackByArgs(e.curIter)
 	}
 
-	if e.hasLimit && uint64(e.resTbl.NumRows()) >= e.limitEnd {
+	if e.limitDone(e.resTbl) {
 		return nil
 	}
 
@@ -265,7 +265,7 @@ func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
 			if err = e.setupTblsForNewIteration(); err != nil {
 				return err
 			}
-			if e.hasLimit && uint64(e.resTbl.NumRows()) >= e.limitEnd {
+			if e.limitDone(e.resTbl) {
 				break
 			}
 			if e.iterInTbl.NumChunks() == 0 {
@@ -397,6 +397,11 @@ func (e *CTEExec) reopenTbls() (err error) {
 		return err
 	}
 	return e.iterInTbl.Reopen()
+}
+
+// Check if tbl meets the requirement of limit.
+func (e *CTEExec) limitDone(tbl cteutil.Storage) bool {
+	return e.hasLimit && uint64(tbl.NumRows()) >= e.limitEnd
 }
 
 func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context, parentMemTracker *memory.Tracker,
