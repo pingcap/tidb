@@ -306,8 +306,6 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 
 	pending := batch.keys
 	for {
-		isStaleness := false
-		var matchStoreLabels []*metapb.StoreLabel
 		s.mu.RLock()
 		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdBatchGet, &pb.BatchGetRequest{
 			Keys:    pending,
@@ -318,8 +316,8 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 			TaskId:           s.mu.taskID,
 			ResourceGroupTag: s.resourceGroupTag,
 		})
-		isStaleness = s.mu.isStaleness
-		matchStoreLabels = s.mu.matchStoreLabels
+		isStaleness := s.mu.isStaleness
+		matchStoreLabels := s.mu.matchStoreLabels
 		s.mu.RUnlock()
 		var ops []StoreSelectorOption
 		if isStaleness {
@@ -452,7 +450,6 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 
 	cli := NewClientHelper(s.store, s.resolvedLocks)
 
-	var matchStoreLabels []*metapb.StoreLabel
 	s.mu.RLock()
 	if s.mu.stats != nil {
 		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
@@ -471,7 +468,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 			ResourceGroupTag: s.resourceGroupTag,
 		})
 	isStaleness := s.mu.isStaleness
-	matchStoreLabels = s.mu.matchStoreLabels
+	matchStoreLabels := s.mu.matchStoreLabels
 	s.mu.RUnlock()
 	var ops []StoreSelectorOption
 	if isStaleness {

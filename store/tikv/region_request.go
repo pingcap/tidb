@@ -279,7 +279,7 @@ func (s *RegionRequestSender) SendReqCtx(
 		}
 
 		var lastStoreID uint64
-		if rpcCtx != nil {
+		if rpcCtx != nil && rpcCtx.Store != nil {
 			lastStoreID = rpcCtx.Store.storeID
 		}
 		rpcCtx, err = s.getRPCContext(bo, req, regionID, et, opts...)
@@ -666,7 +666,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 	// so we will exclude the StoreID of the requested peer every time.
 	// If the new StoreID keeps being the same with the last one, we
 	// should not continue excluding it to make the opts become bigger.
-	if ctx.isStaleRead && ctx.lastStoreID != ctx.Store.storeID {
+	if ctx.Store != nil && ctx.isStaleRead && ctx.lastStoreID != ctx.Store.storeID {
 		opts = append(opts, WithExcludedStoreIDs([]uint64{ctx.Store.storeID}))
 	}
 
