@@ -962,8 +962,8 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 		s = d.GetBinaryLiteral().ToString()
 	case KindMysqlBit:
 		// issue #25037
-		// bit to binary. should consider transferring to uint first.
-		if target.Tp == mysql.TypeString {
+		// bit to binary/varbinary. should consider transferring to uint first.
+		if target.Tp == mysql.TypeString || (target.Tp == mysql.TypeVarchar && target.Collate == charset.CollationBin) {
 			val, err := d.GetBinaryLiteral().ToInt(sc)
 			if err != nil {
 				s = d.GetBinaryLiteral().ToString()
