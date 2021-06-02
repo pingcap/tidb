@@ -47,23 +47,23 @@ func testPlanBinaryDecoderFunc(plan string) (string, error) {
 	return plan, nil
 }
 
-func populateCache(tsc *TopSQLCollector, begin, end int, timestamp uint64) {
+func populateCache(tsc *TopSQLCollectorImpl, begin, end int, timestamp uint64) {
 	// register normalized sql
 	for i := begin; i < end; i++ {
 		key := "sqlDigest" + strconv.Itoa(i+1)
 		value := "sqlNormalized" + strconv.Itoa(i+1)
-		tsc.RegisterNormalizedSQL(key, value)
+		tsc.RegisterSQL(key, value)
 	}
 	// register normalized plan
 	for i := begin; i < end; i++ {
 		key := "planDigest" + strconv.Itoa(i+1)
 		value := "planNormalized" + strconv.Itoa(i+1)
-		tsc.RegisterNormalizedPlan(key, value)
+		tsc.RegisterPlan(key, value)
 	}
 	// collect
-	var records []TopSQLRecord
+	var records []TopSQLCPUTimeRecord
 	for i := begin; i < end; i++ {
-		records = append(records, TopSQLRecord{
+		records = append(records, TopSQLCPUTimeRecord{
 			SQLDigest:  []byte("sqlDigest" + strconv.Itoa(i+1)),
 			PlanDigest: []byte("planDigest" + strconv.Itoa(i+1)),
 			CPUTimeMs:  uint32(i + 1),
@@ -72,7 +72,7 @@ func populateCache(tsc *TopSQLCollector, begin, end int, timestamp uint64) {
 	tsc.Collect(timestamp, records)
 }
 
-func initializeCache(maxStatementsNum int, addr string) *TopSQLCollector {
+func initializeCache(maxStatementsNum int, addr string) *TopSQLCollectorImpl {
 	config := &TopSQLCollectorConfig{
 		PlanBinaryDecoder: testPlanBinaryDecoderFunc,
 		MaxStatementsNum:  maxStatementsNum,

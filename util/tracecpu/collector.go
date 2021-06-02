@@ -29,20 +29,20 @@ import (
 	"google.golang.org/grpc/backoff"
 )
 
-// TopSQLRecord represents a single record of how much cpu time a sql plan consumes in one second.
+// TopSQLCPUTimeRecord represents a single record of how much cpu time a sql plan consumes in one second.
 //
 // PlanDigest can be empty, because:
 // 1. some sql statements has no plan, like `COMMIT`
 // 2. when a sql statement is being compiled, there's no plan yet
-type TopSQLRecord struct {
+type TopSQLCPUTimeRecord struct {
 	SQLDigest  []byte
 	PlanDigest []byte
 	CPUTimeMs  uint32
 }
 
-type topSQLCollectInput struct {
+type topSQLCPUTimeInput struct {
 	timestamp uint64
-	records   []TopSQLRecord
+	records   []TopSQLCPUTimeRecord
 }
 
 type planBinaryDecodeFunc func(string) (string, error)
@@ -82,8 +82,8 @@ type planRegisterJob struct {
 	normalizedPlan string
 }
 
-// TopSQLCollector is called periodically to collect TopSQL resource usage metrics
-type TopSQLCollector struct {
+// TopSQLCollectorImpl is called periodically to collect TopSQL resource usage metrics
+type TopSQLCollectorImpl struct {
 	mu sync.RWMutex
 	// calling this can take a while, so should not block critical paths
 	planBinaryDecoder planBinaryDecodeFunc
@@ -99,8 +99,8 @@ type TopSQLCollector struct {
 	// this should only be set from the dedicated worker
 	normalizedPlanMap map[string]string
 
-	collectChan      chan *topSQLCollectInput
-	planRegisterChan chan *planRegisterJob
+	collectCPUTimeChan chan *topSQLCPUTimeInput
+	planRegisterChan   chan *planRegisterJob
 
 	collectInterval  time.Duration
 	collectTimeout   time.Duration
@@ -172,29 +172,29 @@ func newAgentClient(addr string) (*grpc.ClientConn, tipb.TopSQLAgentClient, erro
 //
 // planBinaryDecoder is a decoding function which will be called asynchronously to decode the plan binary to string
 // MaxStatementsNum is the maximum SQL and plan number, which will restrict the memory usage of the internal LFU cache
-func NewTopSQLCollector(config *TopSQLCollectorConfig) *TopSQLCollector {
+func NewTopSQLCollector(config *TopSQLCollectorConfig) *TopSQLCollectorImpl {
 	collectTimeout := config.CollectTimeout
 	if collectTimeout > config.CollectInterval || collectTimeout <= 0 {
 		collectTimeout = config.CollectInterval / 2
 	}
-	tsc := &TopSQLCollector{
-		planBinaryDecoder: config.PlanBinaryDecoder,
-		MaxStatementsNum:  config.MaxStatementsNum,
-		collectInterval:   config.CollectInterval,
-		collectTimeout:    collectTimeout,
-		topSQLMap:         make(map[string]*topSQLDataPoints),
-		normalizedSQLMap:  make(map[string]string),
-		normalizedPlanMap: make(map[string]string),
-		collectChan:       make(chan *topSQLCollectInput, 1),
-		planRegisterChan:  make(chan *planRegisterJob, 10),
-		agentGRPCAddress:  config.AgentGRPCAddress,
-		instanceID:        config.InstanceID,
-		quit:              make(chan struct{}),
+	tsc := &TopSQLCollectorImpl{
+		planBinaryDecoder:  config.PlanBinaryDecoder,
+		MaxStatementsNum:   config.MaxStatementsNum,
+		collectInterval:    config.CollectInterval,
+		collectTimeout:     collectTimeout,
+		topSQLMap:          make(map[string]*topSQLDataPoints),
+		normalizedSQLMap:   make(map[string]string),
+		normalizedPlanMap:  make(map[string]string),
+		collectCPUTimeChan: make(chan *topSQLCPUTimeInput, 1),
+		planRegisterChan:   make(chan *planRegisterJob, 10),
+		agentGRPCAddress:   config.AgentGRPCAddress,
+		instanceID:         config.InstanceID,
+		quit:               make(chan struct{}),
 	}
 
 	go tsc.collectWorker()
 
-	go tsc.registerNormalizedPlanWorker()
+	go tsc.registerPlanWorker()
 
 	go tsc.sendToAgentWorker()
 
@@ -202,9 +202,9 @@ func NewTopSQLCollector(config *TopSQLCollectorConfig) *TopSQLCollector {
 }
 
 // Collect will drop the records when the collect channel is full
-func (tsc *TopSQLCollector) Collect(timestamp uint64, records []TopSQLRecord) {
+func (tsc *TopSQLCollectorImpl) Collect(timestamp uint64, records []TopSQLCPUTimeRecord) {
 	select {
-	case tsc.collectChan <- &topSQLCollectInput{
+	case tsc.collectCPUTimeChan <- &topSQLCPUTimeInput{
 		timestamp: timestamp,
 		records:   records,
 	}:
@@ -212,16 +212,16 @@ func (tsc *TopSQLCollector) Collect(timestamp uint64, records []TopSQLRecord) {
 	}
 }
 
-func (tsc *TopSQLCollector) collectWorker() {
+func (tsc *TopSQLCollectorImpl) collectWorker() {
 	for {
-		input := <-tsc.collectChan
+		input := <-tsc.collectCPUTimeChan
 		tsc.collect(input.timestamp, input.records)
 	}
 }
 
 // collect uses a hashmap to store records in every second, and evict when necessary.
 // This function can be run in parallel with snapshot, so we should protect the map operations with a mutex.
-func (tsc *TopSQLCollector) collect(timestamp uint64, records []TopSQLRecord) {
+func (tsc *TopSQLCollectorImpl) collect(timestamp uint64, records []TopSQLCPUTimeRecord) {
 	for _, record := range records {
 		encodedKey := encodeCacheKey(record.SQLDigest, record.PlanDigest)
 		entry, exist := tsc.topSQLMap[string(encodedKey)]
@@ -278,13 +278,13 @@ func (tsc *TopSQLCollector) collect(timestamp uint64, records []TopSQLRecord) {
 	}
 }
 
-// RegisterNormalizedSQL registers a normalized sql string to a sql digest, while the former can be of >1M long.
-// The in-memory space for registered normalized sql are limited by TopSQL.normalizedSQLCapacity.
+// RegisterSQL registers a normalized SQL string to a SQL digest.
 //
+// Note that the normalized SQL string can be of >1M long.
 // This function should be thread-safe, which means parallelly calling it in several goroutines should be fine.
 // It should also return immediately, and do any CPU-intensive job asynchronously.
 // TODO: benchmark test concurrent performance
-func (tsc *TopSQLCollector) RegisterNormalizedSQL(sqlDigest string, normalizedSQL string) {
+func (tsc *TopSQLCollectorImpl) RegisterSQL(sqlDigest string, normalizedSQL string) {
 	tsc.mu.RLock()
 	_, exist := tsc.normalizedSQLMap[sqlDigest]
 	tsc.mu.RUnlock()
@@ -295,9 +295,9 @@ func (tsc *TopSQLCollector) RegisterNormalizedSQL(sqlDigest string, normalizedSQ
 	}
 }
 
-// RegisterNormalizedPlan is like RegisterNormalizedSQL, but for normalized plan strings.
+// RegisterPlan is like RegisterSQL, but for normalized plan strings.
 // TODO: benchmark test concurrent performance
-func (tsc *TopSQLCollector) RegisterNormalizedPlan(planDigest string, normalizedPlan string) {
+func (tsc *TopSQLCollectorImpl) RegisterPlan(planDigest string, normalizedPlan string) {
 	tsc.planRegisterChan <- &planRegisterJob{
 		planDigest:     planDigest,
 		normalizedPlan: normalizedPlan,
@@ -305,7 +305,7 @@ func (tsc *TopSQLCollector) RegisterNormalizedPlan(planDigest string, normalized
 }
 
 // this should be the only place where the normalizedPlanMap is set
-func (tsc *TopSQLCollector) registerNormalizedPlanWorker() {
+func (tsc *TopSQLCollectorImpl) registerPlanWorker() {
 	// NOTE: if use multiple worker goroutine, we should make sure that access to the digest map is thread-safe
 	for {
 		job := <-tsc.planRegisterChan
@@ -331,7 +331,7 @@ func (tsc *TopSQLCollector) registerNormalizedPlanWorker() {
 // which means we maintain 2 *struct which contains the maps, and snapshot() atomically
 // swaps the pointer. After this, the writing is shifted to the new struct, and
 // we can do the snapshot in the background.
-func (tsc *TopSQLCollector) snapshot() []*tipb.CollectCPUTimeRequest {
+func (tsc *TopSQLCollectorImpl) snapshot() []*tipb.CollectCPUTimeRequest {
 	tsc.mu.RLock()
 	defer tsc.mu.RUnlock()
 	total := len(tsc.topSQLMap)
@@ -355,7 +355,7 @@ func (tsc *TopSQLCollector) snapshot() []*tipb.CollectCPUTimeRequest {
 
 // sendBatch sends a batch of TopSQL records streamingly.
 // TODO: benchmark test with large amount of data (e.g. 5000), tune with grpc.WithWriteBufferSize()
-func (tsc *TopSQLCollector) sendBatch(stream tipb.TopSQLAgent_CollectCPUTimeClient, batch []*tipb.CollectCPUTimeRequest) error {
+func (tsc *TopSQLCollectorImpl) sendBatch(stream tipb.TopSQLAgent_CollectCPUTimeClient, batch []*tipb.CollectCPUTimeRequest) error {
 	for _, req := range batch {
 		if err := stream.Send(req); err != nil {
 			log.Error("TopSQL: send stream request failed, %v", zap.Error(err))
@@ -372,7 +372,7 @@ func (tsc *TopSQLCollector) sendBatch(stream tipb.TopSQLAgent_CollectCPUTimeClie
 }
 
 // sendToAgentWorker will send a snapshot to the gRPC endpoint every collect interval
-func (tsc *TopSQLCollector) sendToAgentWorker() {
+func (tsc *TopSQLCollectorImpl) sendToAgentWorker() {
 	ticker := time.NewTicker(tsc.collectInterval)
 	for {
 		var ctx context.Context
@@ -409,6 +409,6 @@ func (tsc *TopSQLCollector) sendToAgentWorker() {
 }
 
 // SetAgentGRPCAddress sets the agentGRPCAddress field
-func (tsc *TopSQLCollector) SetAgentGRPCAddress(address string) {
+func (tsc *TopSQLCollectorImpl) SetAgentGRPCAddress(address string) {
 	tsc.agentGRPCAddress = address
 }
