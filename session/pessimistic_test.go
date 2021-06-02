@@ -72,7 +72,7 @@ func (s *testPessimisticSuite) SetUpSuite(c *C) {
 func (s *testPessimisticSuite) TearDownSuite(c *C) {
 	s.testSessionSuiteBase.TearDownSuite(c)
 	tikv.PrewriteMaxBackoff = 20000
-	tikv.VeryLongMaxBackoff = 60000 * 60
+	tikv.VeryLongMaxBackoff = 600000
 }
 
 func (s *testPessimisticSuite) TestPessimisticTxn(c *C) {

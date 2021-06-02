@@ -901,7 +901,7 @@ const (
 )
 
 // VeryLongMaxBackoff is the max sleep time of transaction commit.
-var VeryLongMaxBackoff = uint64(60000 * 60) // 1 hour
+var VeryLongMaxBackoff = uint64(600000) // 10mins
 
 func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
 	c.cleanWg.Add(1)

@@ -291,7 +291,6 @@ func (s *replicaSelector) next(bo *Backoffer) (*RPCContext, error) {
 	}
 }
 
-// onSendFailure
 func (s *replicaSelector) onSendFailure(bo *Backoffer, err error) {
 	metrics.RegionCacheCounterWithSendFail.Inc()
 	replica := s.replicas[s.nextReplicaIdx-1]

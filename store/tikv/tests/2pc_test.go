@@ -92,7 +92,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 
 func (s *testCommitterSuite) TearDownSuite(c *C) {
 	atomic.StoreUint64(&tikv.CommitMaxBackoff, 20000)
-	atomic.StoreUint64(&tikv.VeryLongMaxBackoff, 60000*60)
+	atomic.StoreUint64(&tikv.VeryLongMaxBackoff, 600000)
 	s.store.Close()
 	s.OneByOneSuite.TearDownSuite(c)
 }
