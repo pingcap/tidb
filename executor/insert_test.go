@@ -1383,7 +1383,6 @@ func (s *testSuite10) TestClusterPrimaryTableInsertDuplicate(c *C) {
 	tk.MustExec(`drop table if exists dt1pi`)
 	tk.MustExec(`create table dt1pi(id varchar(200) primary key, v int)`)
 	tk.MustExec(`insert into dt1pi(id, v) values('abb', 1),('acc', 2)`)
-	tk.MustQuery(`select * from dt1pi`).Check(testkit.Rows("abb 1", "acc 2"))
 	tk.MustExec(`insert into dt1pi(id, v) values('abb', 2) on duplicate key update v = v + 1`)
 	tk.MustQuery(`select * from dt1pi`).Check(testkit.Rows("abb 2", "acc 2"))
 	tk.MustExec(`insert into dt1pi(id, v) values('abb', 2) on duplicate key update v = v + 1, id = 'xxx'`)

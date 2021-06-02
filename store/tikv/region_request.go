@@ -900,6 +900,9 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 			*seed = *seed + 1
 		}
 		retry, err := s.regionCache.OnRegionEpochNotMatch(bo, ctx, epochNotMatch.CurrentRegions)
+		if !retry && s.leaderReplicaSelector != nil {
+			s.leaderReplicaSelector.invalidateRegion()
+		}
 		return retry, errors.Trace(err)
 	}
 	if regionErr.GetServerIsBusy() != nil {

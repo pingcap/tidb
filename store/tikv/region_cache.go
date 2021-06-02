@@ -1547,6 +1547,7 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 		}
 	}
 
+	needInvalidateOld := true
 	newRegions := make([]*Region, 0, len(currentRegions))
 	// If the region epoch is not ahead of TiKV's, replace region meta in region cache.
 	for _, meta := range currentRegions {
@@ -1569,10 +1570,19 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 		}
 		c.switchWorkLeaderToPeer(region, region.getPeerOnStore(initLeaderStoreID))
 		newRegions = append(newRegions, region)
+		if ctx.Region == region.VerID() {
+			needInvalidateOld = false
+		}
 	}
 	c.mu.Lock()
 	for _, region := range newRegions {
 		c.insertRegionToCache(region)
+	}
+	if needInvalidateOld {
+		cachedRegion, ok := c.mu.regions[ctx.Region]
+		if ok {
+			cachedRegion.invalidate(EpochNotMatch)
+		}
 	}
 	c.mu.Unlock()
 	return false, nil

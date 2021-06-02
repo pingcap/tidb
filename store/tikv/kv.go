@@ -288,7 +288,7 @@ func (s *KVStore) SupportDeleteRange() (supported bool) {
 	return !s.mock
 }
 
-// SendReq sends a request to TiKV.
+// SendReq sends a request to region.
 func (s *KVStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
 	sender := NewRegionRequestSender(s.regionCache, s.GetTiKVClient())
 	return sender.SendReq(bo, req, regionID, timeout)
