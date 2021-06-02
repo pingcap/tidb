@@ -331,9 +331,10 @@ func (tsc *TopSQLCollector) snapshot() []*tipb.CollectCPUTimeRequest {
 	return batch
 }
 
+// sendBatch sends a batch of TopSQL records streamingly.
+// TODO: benchmark test with large amount of data (e.g. 5000), tune with grpc.WithWriteBufferSize()
 func (tsc *TopSQLCollector) sendBatch(stream tipb.TopSQLAgent_CollectCPUTimeClient, batch []*tipb.CollectCPUTimeRequest) error {
 	for _, req := range batch {
-		// TODO: look into the gRPC configuration for batching request, for potential better performance
 		if err := stream.Send(req); err != nil {
 			log.Error("TopSQL: send stream request failed, %v", zap.Error(err))
 			return err
