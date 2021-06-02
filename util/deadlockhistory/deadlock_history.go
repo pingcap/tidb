@@ -90,7 +90,8 @@ func (d *DeadlockHistory) Resize(newCapacity uint) {
 			copy(d.deadlocks, current)
 		} else {
 			// shrink deadlocks, keep the last len(current)-newCapacity items
-			d.deadlocks = current[uint(len(current))-newCapacity:]
+			// use append here to force golang to realloc the underlying array to save memory
+			d.deadlocks = append([]*DeadlockRecord{}, current[uint(len(current))-newCapacity:]...)
 			d.size = int(newCapacity)
 		}
 	}

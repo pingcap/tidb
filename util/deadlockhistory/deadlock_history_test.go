@@ -287,17 +287,39 @@ func (s *testDeadlockHistorySuite) TestResize(c *C) {
 	h.Push(dummyRecord()) // id=1 inserted
 	h.Push(dummyRecord()) // id=2 inserted,
 	h.Push(dummyRecord()) // id=3 inserted, id=1 is removed
+	c.Assert(h.head, Equals, 1)
+	c.Assert(h.size, Equals, 2)
 	c.Assert(len(h.GetAll()), Equals, 2)
 	c.Assert(h.GetAll()[0].ID, Equals, uint64(2))
 	c.Assert(h.GetAll()[1].ID, Equals, uint64(3))
+
 	h.Resize(3)
+	c.Assert(h.head, Equals, 0)
+	c.Assert(h.size, Equals, 2)
 	h.Push(dummyRecord()) // id=4 inserted
+	c.Assert(h.head, Equals, 0)
+	c.Assert(h.size, Equals, 3)
 	c.Assert(len(h.GetAll()), Equals, 3)
 	c.Assert(h.GetAll()[0].ID, Equals, uint64(2))
 	c.Assert(h.GetAll()[1].ID, Equals, uint64(3))
 	c.Assert(h.GetAll()[2].ID, Equals, uint64(4))
+
 	h.Resize(2) // id=2 removed
+	c.Assert(h.head, Equals, 0)
+	c.Assert(h.size, Equals, 2)
 	c.Assert(len(h.GetAll()), Equals, 2)
 	c.Assert(h.GetAll()[0].ID, Equals, uint64(3))
 	c.Assert(h.GetAll()[1].ID, Equals, uint64(4))
+
+	h.Resize(0) // all removed
+	c.Assert(h.head, Equals, 0)
+	c.Assert(h.size, Equals, 0)
+	c.Assert(len(h.GetAll()), Equals, 0)
+
+	h.Resize(2)
+	c.Assert(h.head, Equals, 0)
+	c.Assert(h.size, Equals, 0)
+	h.Push(dummyRecord()) // id=5 inserted
+	c.Assert(h.head, Equals, 0)
+	c.Assert(h.size, Equals, 1)
 }
