@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/util/sys/linux"
 	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
+	"github.com/pingcap/tidb/util/topsql"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	pd "github.com/tikv/pd/client"
@@ -176,6 +177,7 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
+	topsql.SetupTopSQL()
 
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
