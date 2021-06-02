@@ -112,7 +112,6 @@ lint: tools
 tidy:
 	@echo "go mod tidy"
 	GO111MODULE=on go mod tidy
-	cd tools && GO111MODULE=on go mod tidy
 	git diff --exit-code go.mod go.sum tools/go.mod tools/go.sum
 
 bins:

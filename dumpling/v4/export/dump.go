@@ -963,11 +963,7 @@ func initLogger(d *Dumper) error {
 // createExternalStore is an initialization step of Dumper.
 func createExternalStore(d *Dumper) error {
 	tctx, conf := d.tctx, d.conf
-	b, err := storage.ParseBackend(conf.OutputDirPath, &conf.BackendOptions)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	extStore, err := storage.Create(tctx, b, false)
+	extStore, err := conf.createExternalStorage(tctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
