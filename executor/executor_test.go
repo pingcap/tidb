@@ -8359,8 +8359,10 @@ func (s testSerialSuite) TestExprBlackListForEnum(c *C) {
 func (s testSerialSuite) TestTemporaryTableNoNetwork(c *C) {
 	// Test that table reader/index reader/index lookup on the temporary table do not need to visit TiKV.
 	tk := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
+	tk1.MustExec("use test")
 	tk.MustExec("create table normal (id int, a int, index(a))")
 	tk.MustExec("create global temporary table tmp_t (id int, a int, index(a)) on commit delete rows")
 
@@ -8375,12 +8377,12 @@ func (s testSerialSuite) TestTemporaryTableNoNetwork(c *C) {
 
 	// Make sure the fail point works.
 	// With that failpoint, all requests to the TiKV is discard.
-	rs, err := tk.Exec("select * from normal")
+	rs, err := tk1.Exec("select * from normal")
 	c.Assert(err, IsNil)
 	blocked := make(chan struct{})
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	go func() {
-		_, err := session.ResultSetToStringSlice(ctx, tk.Se, rs)
+		_, err := session.ResultSetToStringSlice(ctx, tk1.Se, rs)
 		blocked <- struct{}{}
 		c.Assert(err, NotNil)
 	}()
