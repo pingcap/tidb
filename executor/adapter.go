@@ -26,7 +26,9 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -43,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -54,7 +57,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
-
+	"github.com/pingcap/tidb/util/topsql"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -177,6 +180,9 @@ func (a *recordSet) OnFetchReturned() {
 type ExecStmt struct {
 	// GoCtx stores parent go context.Context for a stmt.
 	GoCtx context.Context
+	// SnapshotTS stores the timestamp for stale read.
+	// It is not equivalent to session variables's snapshot ts, it only use to build the executor.
+	SnapshotTS uint64
 	// InfoSchema stores a reference to the schema information.
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
@@ -208,6 +214,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	ctx = a.setPlanLabelForTopSQL(ctx)
 	startTs := uint64(math.MaxUint64)
 	err := a.Ctx.InitTxnWithStartTS(startTs)
 	if err != nil {
@@ -268,18 +275,28 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 // RebuildPlan rebuilds current execute statement plan.
 // It returns the current information schema version that 'a' is using.
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
-	is := a.Ctx.GetInfoSchema().(infoschema.InfoSchema)
-	a.InfoSchema = is
-	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
+	ret := &plannercore.PreprocessorReturn{}
+	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, plannercore.InTxnRetry, plannercore.WithPreprocessorReturn(ret)); err != nil {
 		return 0, err
 	}
-	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, is)
+	a.InfoSchema = ret.InfoSchema
+	a.SnapshotTS = ret.SnapshotTS
+	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, a.InfoSchema)
 	if err != nil {
 		return 0, err
 	}
 	a.OutputNames = names
 	a.Plan = p
-	return is.SchemaMetaVersion(), nil
+	return a.InfoSchema.SchemaMetaVersion(), nil
+}
+
+func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) context.Context {
+	if a.Plan == nil || !variable.TopSQLEnabled() {
+		return ctx
+	}
+	normalizedSQL, sqlDigest := a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
+	normalizedPlan, planDigest := getPlanDigest(a.Ctx, a.Plan)
+	return topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest)
 }
 
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
@@ -305,6 +322,25 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.GetTextToLog()), zap.Stack("stack"))
 	}()
 
+	failpoint.Inject("assertStaleTSO", func(val failpoint.Value) {
+		if n, ok := val.(int); ok {
+			startTS := oracle.ExtractPhysical(a.SnapshotTS) / 1000
+			if n != int(startTS) {
+				panic("different tso")
+			}
+			failpoint.Return()
+		}
+	})
+	failpoint.Inject("assertStaleTSOWithTolerance", func(val failpoint.Value) {
+		if n, ok := val.(int); ok {
+			// Convert to seconds
+			startTS := oracle.ExtractPhysical(a.SnapshotTS) / 1000
+			if int(startTS) <= n-1 || n+1 <= int(startTS) {
+				panic("tso violate tolerance")
+			}
+			failpoint.Return()
+		}
+	})
 	sctx := a.Ctx
 	ctx = util.SetSessionID(ctx, sctx.GetSessionVars().ConnectionID)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
@@ -332,8 +368,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	if err != nil {
 		return nil, err
 	}
-
-	getPlanDigest(a.Ctx, a.Plan)
+	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
+	ctx = a.setPlanLabelForTopSQL(ctx)
 
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
@@ -579,6 +615,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		if len(keys) == 0 {
 			return nil
 		}
+		keys = filterTemporaryTableKeys(sctx.GetSessionVars(), keys)
 		seVars := sctx.GetSessionVars()
 		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout)
 		var lockKeyStats *util.LockKeysDetails
@@ -746,6 +783,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	}
 
 	b := newExecutorBuilder(ctx, a.InfoSchema)
+	b.snapshotTS = a.SnapshotTS
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
@@ -924,7 +962,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	diskMax := sessVars.StmtCtx.DiskTracker.MaxConsumed()
-	planDigest := getPlanDigest(a.Ctx, a.Plan)
+	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		SQL:               sql.String(),
@@ -942,7 +980,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		DiskMax:           diskMax,
 		Succ:              succ,
 		Plan:              getPlanTree(a.Ctx, a.Plan),
-		PlanDigest:        planDigest,
+		PlanDigest:        planDigest.String(),
 		Prepared:          a.isPreparedStmt,
 		HasMoreResults:    hasMoreResults,
 		PlanFromCache:     sessVars.FoundInPlanCache,
@@ -1016,15 +1054,15 @@ func getPlanTree(sctx sessionctx.Context, p plannercore.Plan) string {
 }
 
 // getPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
-func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) string {
+func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (string, *parser.Digest) {
 	sc := sctx.GetSessionVars().StmtCtx
-	_, planDigest := sc.GetPlanDigest()
-	if planDigest != nil {
-		return planDigest.String()
+	normalized, planDigest := sc.GetPlanDigest()
+	if len(normalized) > 0 && planDigest != nil {
+		return normalized, planDigest
 	}
-	normalized, planDigest := plannercore.NormalizePlan(p)
+	normalized, planDigest = plannercore.NormalizePlan(p)
 	sc.SetPlanDigest(normalized, planDigest)
-	return planDigest.String()
+	return normalized, planDigest
 }
 
 // getEncodedPlan gets the encoded plan, and generates the hint string if indicated.
@@ -1098,11 +1136,12 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	var planDigestGen func() string
 	if a.Plan.TP() == plancodec.TypePointGet {
 		planDigestGen = func() string {
-			planDigest := getPlanDigest(a.Ctx, a.Plan)
-			return planDigest
+			_, planDigest := getPlanDigest(a.Ctx, a.Plan)
+			return planDigest.String()
 		}
 	} else {
-		planDigest = getPlanDigest(a.Ctx, a.Plan)
+		_, tmp := getPlanDigest(a.Ctx, a.Plan)
+		planDigest = tmp.String()
 	}
 
 	execDetail := stmtCtx.GetExecDetails()
