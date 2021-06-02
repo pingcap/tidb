@@ -7,7 +7,7 @@ import (
 	_ "github.com/golangci/golangci-lint/pkg/commands"
 
 	// revive is a file-based linter
-	_ "github.com/mgechev/revive/lint"
+	_ "github.com/mgechev/revive"
 
 	// govet checks for code correctness
 	_ "github.com/dnephin/govet"

@@ -12,7 +12,6 @@ import (
 	tcontext "github.com/pingcap/dumpling/v4/context"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/pingcap/br/pkg/storage"
 	. "github.com/pingcap/check"
 )
 
@@ -27,9 +26,7 @@ func defaultConfigForTest(c *C) *Config {
 }
 
 func (s *testWriterSuite) newWriter(conf *Config, c *C) *Writer {
-	b, err := storage.ParseBackend(conf.OutputDirPath, &conf.BackendOptions)
-	c.Assert(err, IsNil)
-	extStore, err := storage.Create(context.Background(), b, false)
+	extStore, err := conf.createExternalStorage(context.Background())
 	c.Assert(err, IsNil)
 	db, _, err := sqlmock.New()
 	c.Assert(err, IsNil)

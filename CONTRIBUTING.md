@@ -14,7 +14,7 @@ your contribution accepted.
 
 Developing Dumpling requires:
 
-* [Go 1.13.5+](http://golang.org/doc/code.html)
+* [Go 1.16+](http://golang.org/doc/code.html)
 * An internet connection to download the dependencies
 
 Simply run `make` to build the program.
@@ -28,7 +28,7 @@ See [README.md](README.md#building) for how to execute tests.
 
 ### Updating dependencies
 
-Dumpling manages dependencies using [Go 1.13 module](https://github.com/golang/go/wiki/Modules).
+Dumpling manages dependencies using [Go 1.16 module](https://github.com/golang/go/wiki/Modules).
 To add or update a dependency, either
 
 * Use the `go mod edit` command to change the dependency, or

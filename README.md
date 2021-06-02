@@ -29,7 +29,7 @@ Any questions? Let's discuss in [#sig-migrate in Slack](https://slack.tidb.io/in
 Building
 --------
 
-1. Install Go 1.13 or above
+1. Install Go 1.16 or above
 2. Run `make build` to compile. The output is in `bin/dumpling`.
 3. Run `make test` to run the unit tests.
 4. Run `make integration_test` to run integration tests. For integration test:
