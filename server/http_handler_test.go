@@ -1231,6 +1231,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	dbt.mustExec("insert t2 values (unhex('f09f8c80'));")
 
 	// test tidb_deadlock_history_capacity
+	deadlockhistory.GlobalDeadlockHistory.Resize(10)
 	for i := 0; i < 10; i++ {
 		deadlockhistory.GlobalDeadlockHistory.Push(dummyRecord())
 	}

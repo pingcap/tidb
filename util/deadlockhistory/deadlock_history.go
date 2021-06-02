@@ -73,8 +73,11 @@ func NewDeadlockHistory(capacity uint) *DeadlockHistory {
 
 // GlobalDeadlockHistory is the global instance of DeadlockHistory, which is used to maintain recent several recent
 // deadlock events globally.
-var GlobalDeadlockHistory = NewDeadlockHistory(10)
+// The real size of the deadlock history table should be initialized with `Resize`
+// in `setGlobalVars` in tidb-server/main.go
+var GlobalDeadlockHistory = NewDeadlockHistory(0)
 
+// Resize update the DeadlockHistory's table max capacity to newCapacity
 func (d *DeadlockHistory) Resize(newCapacity uint) {
 	d.Lock()
 	defer d.Unlock()
