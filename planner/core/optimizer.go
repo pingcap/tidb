@@ -15,7 +15,9 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -132,12 +134,38 @@ func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visit
 	return nil
 }
 
+func DEBUGLOGCIAL(sctx sessionctx.Context, prefix string, p LogicalPlan) {
+	if !sctx.GetSessionVars().DEBUG {
+		return
+	}
+	fmt.Println(prefix, p.ExplainID().String(), len(p.Schema().Columns), p.Schema())
+	for _, child := range p.Children() {
+		DEBUGLOGCIAL(sctx, prefix+"  ", child)
+	}
+}
+
+func DEBUGPHYSICAL(sctx sessionctx.Context, prefix string, p PhysicalPlan) {
+	if !sctx.GetSessionVars().DEBUG {
+		return
+	}
+	fmt.Println(prefix, p.ExplainID().String(), len(p.Schema().Columns), p.Schema())
+	for _, child := range p.Children() {
+		DEBUGPHYSICAL(sctx, prefix+"  ", child)
+	}
+}
+
 // DoOptimize optimizes a logical plan to a physical plan.
 func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
 	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
 	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
 		flag |= flagPrunColumnsAgain
 	}
+
+	if strings.Contains(ToString(logic), "test_partition") {
+		sctx.GetSessionVars().DEBUG = true
+	}
+
+	DEBUGLOGCIAL(sctx, ">> begin: ", logic)
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, 0, err
@@ -149,7 +177,9 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if planCounter == 0 {
 		planCounter = -1
 	}
+	DEBUGLOGCIAL(sctx, ">> after logical: ", logic)
 	physical, cost, err := physicalOptimize(logic, &planCounter)
+	DEBUGPHYSICAL(sctx, ">> afer phy: ", physical)
 	if err != nil {
 		return nil, 0, err
 	}

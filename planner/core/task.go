@@ -1121,6 +1121,11 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 			return false
 		}
 	}
+	// If this happens, some Projection Operator must be inlined into this Limit.
+	// For safety, do not sink Limit into this LookUp in this case.
+	if p.Schema().Len() != reader.Schema().Len() {
+		return false
+	}
 	// We can sink Limit into IndexLookUpReader only if tablePlan contains no Selection.
 	ts, isTableScan := reader.tablePlan.(*PhysicalTableScan)
 	if !isTableScan {
