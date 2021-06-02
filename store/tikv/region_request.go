@@ -60,8 +60,8 @@ var ShuttingDown uint32
 // send back a RegionError.
 // RegionRequestSender takes care of errors that does not relevant to region
 // range, such as 'I/O timeout', 'NotLeader', and 'ServerIsBusy'. If fails to
-// send the request to all replicas, a SendError may be returned. Caller which
-// receives the error should retry the request.
+// send the request to all replicas, a fake rregion error may be returned.
+// Caller which receives the error should retry the request.
 //
 // For other region errors, since region range have changed, the request may need to
 // split, so we simply return the error to caller.
@@ -188,7 +188,7 @@ func (s *RegionRequestSender) SetRPCError(err error) {
 }
 
 // SendReq sends a request to tikv server. If fails to send the request to all replicas,
-// a SendError may be returned. Caller which receives the error should retry the request.
+// a fake region error may be returned. Caller which receives the error should retry the request.
 func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
 	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout, tikvrpc.TiKV)
 	return resp, err
@@ -214,7 +214,7 @@ type replicaSelector struct {
 func newReplicaSelector(regionCache *RegionCache, regionID RegionVerID) (*replicaSelector, error) {
 	cachedRegion := regionCache.GetCachedRegionWithRLock(regionID)
 	if cachedRegion == nil || !cachedRegion.isValid() {
-		return nil, tikverr.NewSendError("invalidated region")
+		return nil, nil
 	}
 	regionStore := cachedRegion.getStore()
 	replicas := make([]*replica, 0, regionStore.accessStoreNum(TiKVOnly))
@@ -255,11 +255,11 @@ const maxReplicaAttempt = 10
 func (s *replicaSelector) next(bo *Backoffer) (*RPCContext, error) {
 	for {
 		if !s.region.isValid() {
-			return nil, tikverr.NewSendError("invalidated region")
+			return nil, nil
 		}
 		if s.isExhausted() {
 			s.invalidateRegion()
-			return nil, tikverr.NewSendError("runs out of replicas")
+			return nil, nil
 		}
 		replica := s.replicas[s.nextReplicaIdx]
 		s.nextReplicaIdx++
@@ -274,7 +274,7 @@ func (s *replicaSelector) next(bo *Backoffer) (*RPCContext, error) {
 		if storeFailEpoch != replica.epoch {
 			// TODO(youjiali1995): Is it necessary to invalidate the region?
 			s.invalidateRegion()
-			return nil, tikverr.NewSendError(fmt.Sprintf("others failed on store %d", replica.store.storeID))
+			return nil, nil
 		}
 		addr, err := s.regionCache.getStoreAddr(bo, s.region, replica.store)
 		if err == nil && len(addr) != 0 {
@@ -406,6 +406,10 @@ func (s *RegionRequestSender) reset() {
 	s.leaderReplicaSelector = nil
 	s.failStoreIDs = nil
 	s.failProxyStoreIDs = nil
+}
+
+func isFakeRegionError(err *errorpb.Error) bool {
+	return err != nil && err.GetEpochNotMatch() != nil && len(err.GetEpochNotMatch().CurrentRegions) == 0
 }
 
 // SendReqCtx sends a request to tikv server and return response and RPCCtx of this RPC.

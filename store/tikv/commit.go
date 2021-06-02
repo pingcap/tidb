@@ -72,23 +72,6 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 			c.setUndeterminedErr(errors.Trace(sender.rpcError))
 		}
 
-		// Retry in the same loop when receives a SendError.
-		if tikverr.IsSendError(err) {
-			err = bo.Backoff(retry.BoRegionMiss, err)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			same, err := batch.relocate(bo, c.store.regionCache)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if same {
-				continue
-			}
-			err = c.doActionOnMutations(bo, actionPrewrite{true}, batch.mutations)
-			return errors.Trace(err)
-		}
-
 		// Unexpected error occurs, return it.
 		if err != nil {
 			return errors.Trace(err)
@@ -99,16 +82,14 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			// Retry recursively immediately if the region range is changed.
-			if regionErr.GetEpochNotMatch() != nil {
-				err = c.doActionOnMutations(bo, actionPrewrite{true}, batch.mutations)
-				return errors.Trace(err)
-			}
-			// For other region error, we can't know whether the region range is changed,
-			// retry in the same loop.
-			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return errors.Trace(err)
+			// For other region error and the fake region error, backoff because
+			// there's something wrong.
+			// For the real EpochNotMatch error, don't backoff.
+			if regionErr.GetEpochNotMatch() == nil || isFakeRegionError(regionErr) {
+				err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			same, err := batch.relocate(bo, c.store.regionCache)
 			if err != nil {

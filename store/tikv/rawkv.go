@@ -368,13 +368,6 @@ func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, reverse bool) (*
 			return nil, nil, errors.Trace(err)
 		}
 		resp, err := sender.SendReq(bo, req, loc.Region, client.ReadTimeoutShort)
-		if tikverr.IsSendError(err) {
-			err = bo.Backoff(retry.BoRegionMiss, err)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-			continue
-		}
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -455,20 +448,8 @@ func (c *RawKVClient) doBatchReq(bo *Backoffer, batch batch, cmdType tikvrpc.Cmd
 
 	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
 	resp, err := sender.SendReq(bo, req, batch.regionID, client.ReadTimeoutShort)
+
 	batchResp := singleBatchResp{}
-
-	if tikverr.IsSendError(err) {
-		err := bo.Backoff(retry.BoRegionMiss, err)
-		if err != nil {
-			batchResp.err = errors.Trace(err)
-			return batchResp
-		}
-		resp, err = c.sendBatchReq(bo, batch.keys, cmdType)
-		batchResp.resp = resp
-		batchResp.err = err
-		return batchResp
-	}
-
 	if err != nil {
 		batchResp.err = errors.Trace(err)
 		return batchResp
@@ -532,13 +513,6 @@ func (c *RawKVClient) sendDeleteRangeReq(startKey []byte, endKey []byte) (*tikvr
 		})
 
 		resp, err := sender.SendReq(bo, req, loc.Region, client.ReadTimeoutShort)
-		if tikverr.IsSendError(err) {
-			err := bo.Backoff(retry.BoRegionMiss, err)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-			continue
-		}
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -644,15 +618,6 @@ func (c *RawKVClient) doBatchPut(bo *Backoffer, batch batch) error {
 
 	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
 	resp, err := sender.SendReq(bo, req, batch.regionID, client.ReadTimeoutShort)
-	if tikverr.IsSendError(err) {
-		err := bo.Backoff(retry.BoRegionMiss, err)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// recursive call
-		return c.sendBatchPut(bo, batch.keys, batch.values)
-	}
-
 	if err != nil {
 		return errors.Trace(err)
 	}

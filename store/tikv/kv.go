@@ -26,7 +26,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/tikv/client"
@@ -289,16 +288,10 @@ func (s *KVStore) SupportDeleteRange() (supported bool) {
 	return !s.mock
 }
 
-// SendReq sends a request to tikv server.
+// SendReq sends a request to TiKV.
 func (s *KVStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
 	sender := NewRegionRequestSender(s.regionCache, s.GetTiKVClient())
-	resp, err := sender.SendReq(bo, req, regionID, timeout)
-	// Convert the SendError to the fake region error so that we don't need to change all callers.
-	// TODO(youjiali1995): remove the fake region error.
-	if tikverr.IsSendError(err) {
-		resp, err = tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}})
-	}
-	return resp, err
+	return sender.SendReq(bo, req, regionID, timeout)
 }
 
 // GetRegionCache returns the region cache instance.

@@ -162,8 +162,10 @@ func (s *testRegionRequestToSingleStoreSuite) TestOnRegionError(c *C) {
 		}}
 		bo := NewBackofferWithVars(context.Background(), 5, nil)
 		resp, err := s.regionRequestSender.SendReq(bo, req, region.Region, time.Second)
-		c.Assert(err, NotNil)
-		c.Assert(resp, IsNil)
+		c.Assert(err, IsNil)
+		c.Assert(resp, NotNil)
+		regionErr, _ := resp.GetRegionError()
+		c.Assert(regionErr, NotNil)
 	}()
 }
 
@@ -850,7 +852,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestReplicaSelector(c *C) {
 	c.Assert(replicaSelector.isExhausted(), IsTrue)
 	rpcCtx, err := replicaSelector.next(s.bo)
 	c.Assert(rpcCtx, IsNil)
-	c.Assert(tikverr.IsSendError(err), IsTrue)
+	c.Assert(err, IsNil)
 	// The region should be invalidated if runs out of all replicas.
 	c.Assert(replicaSelector.region.isValid(), IsFalse)
 
@@ -924,8 +926,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestReplicaSelector(c *C) {
 	// Don't try next replica if the region is invalidated.
 	rpcCtx, err = replicaSelector.next(s.bo)
 	c.Assert(rpcCtx, IsNil)
-	c.Assert(tikverr.IsSendError(err), IsTrue)
-	c.Assert(tikverr.IsSendError(nil), IsFalse)
+	c.Assert(err, IsNil)
 
 	// Verify on send success.
 	region.lastAccess = time.Now().Unix()
@@ -953,6 +954,17 @@ func (s *testRegionRequestToThreeStoresSuite) TestSendReqWithReplicaSelector(c *
 	reloadRegion := func() {
 		s.regionRequestSender.leaderReplicaSelector.region.invalidate(Other)
 		region, _ = s.cache.LocateRegionByID(s.bo, s.regionID)
+	}
+
+	hasFakeRegionError := func(resp *tikvrpc.Response) bool {
+		if resp == nil {
+			return false
+		}
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return false
+		}
+		return isFakeRegionError(regionErr)
 	}
 
 	// Normal
@@ -988,8 +1000,8 @@ func (s *testRegionRequestToThreeStoresSuite) TestSendReqWithReplicaSelector(c *
 	s.cluster.StopStore(s.storeIDs[1])
 	bo = retry.NewBackoffer(context.Background(), -1)
 	resp, err = sender.SendReq(bo, req, region.Region, time.Second)
-	c.Assert(tikverr.IsSendError(err), IsTrue)
-	c.Assert(resp, IsNil)
+	c.Assert(err, IsNil)
+	c.Assert(hasFakeRegionError(resp), IsTrue)
 	c.Assert(sender.leaderReplicaSelector.isExhausted(), IsFalse)
 	c.Assert(bo.GetTotalBackoffTimes(), Equals, 1)
 	s.cluster.StartStore(s.storeIDs[1])
@@ -1007,8 +1019,8 @@ func (s *testRegionRequestToThreeStoresSuite) TestSendReqWithReplicaSelector(c *
 	s.cluster.GiveUpLeader(s.regionID)
 	bo = retry.NewBackoffer(context.Background(), -1)
 	resp, err = sender.SendReq(bo, req, region.Region, time.Second)
-	c.Assert(tikverr.IsSendError(err), IsTrue)
-	c.Assert(resp, IsNil)
+	c.Assert(err, IsNil)
+	c.Assert(hasFakeRegionError(resp), IsTrue)
 	c.Assert(bo.GetTotalBackoffTimes(), Equals, 3)
 	c.Assert(sender.leaderReplicaSelector.isExhausted(), IsTrue)
 	c.Assert(sender.leaderReplicaSelector.region.isValid(), IsFalse)
@@ -1023,8 +1035,8 @@ func (s *testRegionRequestToThreeStoresSuite) TestSendReqWithReplicaSelector(c *
 	s.cluster.StopStore(s.storeIDs[0])
 	bo = retry.NewBackoffer(context.Background(), -1)
 	resp, err = sender.SendReq(bo, req, region.Region, time.Second)
-	c.Assert(tikverr.IsSendError(err), IsTrue)
-	c.Assert(resp, IsNil)
+	c.Assert(err, IsNil)
+	c.Assert(hasFakeRegionError(resp), IsTrue)
 	c.Assert(sender.leaderReplicaSelector.isExhausted(), IsTrue)
 	c.Assert(sender.leaderReplicaSelector.region.isValid(), IsFalse)
 	c.Assert(bo.GetTotalBackoffTimes(), Equals, 10)
@@ -1058,8 +1070,8 @@ func (s *testRegionRequestToThreeStoresSuite) TestSendReqWithReplicaSelector(c *
 			reloadRegion()
 			bo = retry.NewBackoffer(context.Background(), -1)
 			resp, err := sender.SendReq(bo, req, region.Region, time.Second)
-			c.Assert(tikverr.IsSendError(err), IsTrue)
-			c.Assert(resp, IsNil)
+			c.Assert(err, IsNil)
+			c.Assert(hasFakeRegionError(resp), IsTrue)
 			c.Assert(sender.leaderReplicaSelector.isExhausted(), IsTrue)
 			c.Assert(sender.leaderReplicaSelector.region.isValid(), IsFalse)
 			c.Assert(bo.GetTotalBackoffTimes(), Equals, 10)
@@ -1079,8 +1091,8 @@ func (s *testRegionRequestToThreeStoresSuite) TestSendReqWithReplicaSelector(c *
 		reloadRegion()
 		bo = retry.NewBackoffer(context.Background(), -1)
 		resp, err := sender.SendReq(bo, req, region.Region, time.Second)
-		c.Assert(tikverr.IsSendError(err), IsTrue)
-		c.Assert(resp, IsNil)
+		c.Assert(err, IsNil)
+		c.Assert(hasFakeRegionError(resp), IsTrue)
 		c.Assert(sender.leaderReplicaSelector.isExhausted(), IsTrue)
 		c.Assert(sender.leaderReplicaSelector.region.isValid(), IsFalse)
 		c.Assert(bo.GetTotalBackoffTimes(), Equals, 0)
@@ -1099,8 +1111,8 @@ func (s *testRegionRequestToThreeStoresSuite) TestSendReqWithReplicaSelector(c *
 		reloadRegion()
 		bo = retry.NewBackoffer(context.Background(), -1)
 		resp, err := sender.SendReq(bo, req, region.Region, time.Second)
-		c.Assert(tikverr.IsSendError(err), IsTrue)
-		c.Assert(resp, IsNil)
+		c.Assert(err, IsNil)
+		c.Assert(hasFakeRegionError(resp), IsTrue)
 		c.Assert(sender.leaderReplicaSelector.isExhausted(), IsTrue)
 		c.Assert(sender.leaderReplicaSelector.region.isValid(), IsFalse)
 		c.Assert(bo.GetTotalBackoffTimes(), Equals, 0)
@@ -1127,8 +1139,8 @@ func (s *testRegionRequestToThreeStoresSuite) TestSendReqWithReplicaSelector(c *
 
 			// Return a sendError when meets NotLeader and can't find the leader in the region.
 			if i == 3 {
-				c.Assert(tikverr.IsSendError(err), IsTrue)
-				c.Assert(resp, IsNil)
+				c.Assert(err, IsNil)
+				c.Assert(hasFakeRegionError(resp), IsTrue)
 			} else {
 				c.Assert(err, IsNil)
 				c.Assert(resp, NotNil)
@@ -1151,8 +1163,8 @@ func (s *testRegionRequestToThreeStoresSuite) TestSendReqWithReplicaSelector(c *
 	}
 	bo = retry.NewBackoffer(context.Background(), -1)
 	resp, err = sender.SendReq(bo, req, region.Region, time.Second)
-	c.Assert(tikverr.IsSendError(err), IsTrue)
-	c.Assert(resp, IsNil)
+	c.Assert(err, IsNil)
+	c.Assert(hasFakeRegionError(resp), IsTrue)
 	c.Assert(bo.GetTotalBackoffTimes() == 3, IsTrue)
 	c.Assert(sender.leaderReplicaSelector.region.isValid(), IsFalse)
 	for _, store := range s.storeIDs {

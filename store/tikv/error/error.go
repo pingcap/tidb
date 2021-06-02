@@ -197,29 +197,3 @@ type ErrTokenLimit struct {
 func (e *ErrTokenLimit) Error() string {
 	return fmt.Sprintf("Store token is up to the limit, store id = %d.", e.StoreID)
 }
-
-// A SendError indicates that the request is failed to evaluated on all replicas
-// or the cached region is invalidated. Caller which receives the error should
-// retry the request.
-type SendError struct {
-	message string
-}
-
-func (s SendError) Error() string {
-	return "failed to send RPC: " + s.message
-}
-
-// NewSendError creates a SendError.
-func NewSendError(message string) error {
-	return &SendError{message}
-}
-
-// IsSendError returns true if the error is a send error.
-// Caller which receives the error should retry the request.
-func IsSendError(err error) bool {
-	if _, ok := errors.Cause(err).(*SendError); ok {
-		return true
-	}
-	_, ok := errors.Cause(err).(SendError)
-	return ok
-}
