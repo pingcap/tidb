@@ -1467,7 +1467,7 @@ func (p *CTEDefinition) ExplainInfo() string {
 	if p.RecurPlan != nil {
 		res = "Recursive CTE"
 	} else {
-		res = "None Recursive CTE"
+		res = "Non Recursive CTE"
 	}
 	if p.CTE.HasLimit {
 		res += fmt.Sprintf(", limit(offset:%v, count:%v)", p.CTE.LimitBeg, p.CTE.LimitEnd-p.CTE.LimitBeg)
