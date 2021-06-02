@@ -86,7 +86,6 @@ type TopSQLCollector struct {
 	// topSQLMap maps `sqlDigest-planDigest` to TopSQLDataPoints
 	topSQLMap        map[string]*topSQLDataPoints
 	MaxStatementsNum int
-	collectTimeout   time.Duration
 
 	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are normalized SQL strings
 	normalizedSQLMap map[string]string
@@ -97,10 +96,12 @@ type TopSQLCollector struct {
 
 	planRegisterChan chan *planRegisterJob
 
+	collectInterval  time.Duration
+	collectTimeout   time.Duration
+	agentGRPCAddress string
+
 	// current tidb-server instance ID
 	instanceID string
-
-	agentGRPCAddress string
 
 	quit chan struct{}
 }
@@ -133,7 +134,7 @@ const (
 	GrpcInitialConnWindowSize = 1 << 30
 )
 
-func newAgentClient(addr string, sendingTimeout time.Duration) (*grpc.ClientConn, tipb.TopSQLAgent_CollectCPUTimeClient, context.CancelFunc, error) {
+func newAgentClient(addr string) (*grpc.ClientConn, tipb.TopSQLAgentClient, error) {
 	dialCtx, cancel := context.WithTimeout(context.TODO(), time.Second)
 	defer cancel()
 	conn, err := grpc.DialContext(
@@ -155,16 +156,10 @@ func newAgentClient(addr string, sendingTimeout time.Duration) (*grpc.ClientConn
 		}),
 	)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	client := tipb.NewTopSQLAgentClient(conn)
-	ctx, cancel := context.WithTimeout(context.TODO(), sendingTimeout)
-	stream, err := client.CollectCPUTime(ctx)
-	if err != nil {
-		cancel()
-		return nil, nil, nil, err
-	}
-	return conn, stream, cancel, nil
+	return conn, client, nil
 }
 
 // NewTopSQLCollector creates a new TopSQL struct
@@ -185,6 +180,7 @@ func NewTopSQLCollector(config *TopSQLCollectorConfig) *TopSQLCollector {
 	ts := &TopSQLCollector{
 		topSQLMap:         topSQLMap,
 		MaxStatementsNum:  config.MaxStatementsNum,
+		collectInterval:   config.CollectInterval,
 		collectTimeout:    collectTimeout,
 		normalizedSQLMap:  normalizedSQLMap,
 		normalizedPlanMap: normalizedPlanMap,
@@ -356,26 +352,35 @@ func (ts *TopSQLCollector) sendBatch(stream tipb.TopSQLAgent_CollectCPUTimeClien
 func (ts *TopSQLCollector) sendToAgentWorker(collectInterval time.Duration) {
 	ticker := time.NewTicker(collectInterval)
 	for {
+		var ctx context.Context
+		var cancel context.CancelFunc
 		select {
 		case <-ticker.C:
 			batch := ts.snapshot()
 			// NOTE: Currently we are creating/destroying a TCP connection to the agent every time.
 			// It's fine if we do this every minute, but need optimization if we need to do it more frequently, like every second.
-			conn, stream, _, err := newAgentClient(ts.agentGRPCAddress, ts.collectTimeout)
+			conn, client, err := newAgentClient(ts.agentGRPCAddress)
 			if err != nil {
-				log.Error("ERROR: failed to create agent client, %v\n", zap.Error(err))
+				log.Error("TopSQL: failed to create agent client, %v", zap.Error(err))
+				continue
+			}
+			ctx, cancel = context.WithTimeout(context.TODO(), ts.collectTimeout)
+			stream, err := client.CollectCPUTime(ctx)
+			if err != nil {
+				log.Error("TopSQL: failed to initialize gRPC call CollectCPUTime, %v", zap.Error(err))
 				continue
 			}
 			if err := ts.sendBatch(stream, batch); err != nil {
 				continue
 			}
+			cancel()
 			if err := conn.Close(); err != nil {
-				log.Error("ERROR: failed to close connection, %v\n", zap.Error(err))
+				log.Error("TopSQL: failed to close connection, %v", zap.Error(err))
 				continue
 			}
 		case <-ts.quit:
 			ticker.Stop()
-			return
+			break
 		}
 	}
 }

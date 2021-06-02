@@ -14,6 +14,7 @@
 package tracecpu
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -210,9 +211,12 @@ func (s *testTopSQLCollector) TestCollectAndSendBatch(c *C) {
 	ts := initializeCache(maxSQLNum, fmt.Sprintf(":%d", port))
 	batch := ts.snapshot()
 
-	conn, stream, cancel, err := newAgentClient(ts.agentGRPCAddress, 30*time.Second)
+	conn, client, err := newAgentClient(ts.agentGRPCAddress)
 	c.Assert(err, IsNil, Commentf("failed to create agent client"))
+	ctx, cancel := context.WithTimeout(context.TODO(), ts.collectTimeout)
 	defer cancel()
+	stream, err := client.CollectCPUTime(ctx)
+	c.Assert(err, IsNil, Commentf("failed to initialize gRPC call CollectCPUTime"))
 	err = ts.sendBatch(stream, batch)
 	c.Assert(err, IsNil, Commentf("failed to send batch to server"))
 	err = conn.Close()
