@@ -280,7 +280,7 @@ func (s *RegionRequestSender) SendReqCtx(
 
 		var lastPeerID uint64
 		if rpcCtx != nil {
-			lastPeerID = rpcCtx.lastPeerID
+			lastPeerID = rpcCtx.Peer.GetId()
 		}
 		rpcCtx, err = s.getRPCContext(bo, req, regionID, et, opts...)
 		if err != nil {
@@ -337,6 +337,12 @@ func (s *RegionRequestSender) SendReqCtx(
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		failpoint.Inject("mockDataIsNotReadyError", func(val failpoint.Value) {
+			regionErr = &errorpb.Error{}
+			if tryTimesLimit, ok := val.(int); ok && tryTimes <= tryTimesLimit {
+				regionErr.DataIsNotReady = &errorpb.DataIsNotReady{}
+			}
+		})
 		if regionErr != nil {
 			retry, opts, err = s.onRegionError(bo, rpcCtx, req.ReplicaReadSeed, regionErr)
 			if err != nil {
