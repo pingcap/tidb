@@ -487,8 +487,10 @@ type SessionVars struct {
 	// AllowBCJ means allow broadcast join.
 	AllowBCJ bool
 
-	// AllowCARTESIANBCJ means allow broadcast join for CARTESIAN join
-	AllowCARTESIANBCJ int
+	// AllowCartesianBCJ means allow broadcast CARTESIAN join, 0 means not allow, 1 means allow broadcast CARTESIAN join
+	// but the table size should under the broadcast threshold, 2 means allow broadcast CARTESIAN join even if the table
+	// size exceeds the broadcast threshold
+	AllowCartesianBCJ int
 
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
@@ -969,7 +971,7 @@ func NewSessionVars() *SessionVars {
 		StmtCtx:                     new(stmtctx.StatementContext),
 		AllowAggPushDown:            false,
 		AllowBCJ:                    false,
-		AllowCARTESIANBCJ:           DefOptCARTESIANBCJ,
+		AllowCartesianBCJ:           DefOptCartesianBCJ,
 		BroadcastJoinThresholdSize:  DefBroadcastJoinThresholdSize,
 		BroadcastJoinThresholdCount: DefBroadcastJoinThresholdSize,
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
