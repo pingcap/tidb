@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -4102,9 +4103,11 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	tk.MustGetErrMsg("alter table tt change a a varchar(4);", "[types:1406]Data Too Long, field len 4, data len 5")
 	tk.MustExec("alter table tt change a a varchar(100);")
 
-	tk.MustExec("drop table if exists tt;")
-	tk.MustExec("create table tt (a char(10));")
-	tk.MustExec("insert into tt values ('111'),('10000');")
+	// varchar to char
+	tk.MustExec("alter table tt change a a char(10);")
+	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeString)
+	c.Assert(c2.FieldType.Flen, Equals, 10)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 	tk.MustGetErrMsg("alter table tt change a a char(4);", "[types:1406]Data Too Long, field len 4, data len 5")
 
@@ -5356,6 +5359,18 @@ func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
 	_, err = tk.Exec("insert into t1 set a=1;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[autoid:1467]Failed to read auto-increment value from storage engine")
+}
+
+func (s *testSerialDBSuite) TestShardRowIDBitsOnTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists shard_row_id_temporary")
+	_, err := tk.Exec("create global temporary table shard_row_id_temporary (a int) shard_row_id_bits = 5 on commit delete rows;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
+	tk.MustExec("create global temporary table shard_row_id_temporary (a int) on commit delete rows;")
+	defer tk.MustExec("drop table if exists shard_row_id_temporary")
+	_, err = tk.Exec("alter table shard_row_id_temporary shard_row_id_bits = 4;")
+	c.Assert(err.Error(), Equals, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
 }
 
 // port from mysql
