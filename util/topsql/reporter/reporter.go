@@ -133,8 +133,8 @@ func encodeCacheKey(sqlDigest, planDigest []byte) []byte {
 }
 
 const (
-	GrpcInitialWindowSize     = 1 << 30
-	GrpcInitialConnWindowSize = 1 << 30
+	grpcInitialWindowSize     = 1 << 30
+	grpcInitialConnWindowSize = 1 << 30
 )
 
 func newAgentClient(addr string) (*grpc.ClientConn, tipb.TopSQLAgentClient, error) {
@@ -144,8 +144,8 @@ func newAgentClient(addr string) (*grpc.ClientConn, tipb.TopSQLAgentClient, erro
 		dialCtx,
 		addr,
 		grpc.WithInsecure(),
-		grpc.WithInitialWindowSize(GrpcInitialWindowSize),
-		grpc.WithInitialConnWindowSize(GrpcInitialConnWindowSize),
+		grpc.WithInitialWindowSize(grpcInitialWindowSize),
+		grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
 		grpc.WithDefaultCallOptions(
 			grpc.MaxCallRecvMsgSize(math.MaxInt64),
 		),
