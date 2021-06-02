@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -72,18 +71,11 @@ func NewDeadlockHistory(capacity uint) *DeadlockHistory {
 	}
 }
 
-// globalDeadlockHistory is the global instance of DeadlockHistory, which is used to maintain recent several recent
+// GlobalDeadlockHistory is the global instance of DeadlockHistory, which is used to maintain recent several recent
 // deadlock events globally.
-var globalDeadlockHistory = NewDeadlockHistory(10)
+var GlobalDeadlockHistory = NewDeadlockHistory(10)
 
-// GetGlobalDeadlockHistory return the global deadlock history table
-func GetGlobalDeadlockHistory() *DeadlockHistory {
-	capacity := config.GetGlobalConfig().PessimisticTxn.DeadlockHistoryCapacity
-	globalDeadlockHistory.resize(capacity)
-	return globalDeadlockHistory
-}
-
-func (d *DeadlockHistory) resize(newCapacity uint) {
+func (d *DeadlockHistory) Resize(newCapacity uint) {
 	d.Lock()
 	defer d.Unlock()
 	if newCapacity != uint(len(d.deadlocks)) {

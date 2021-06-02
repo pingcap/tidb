@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
@@ -715,6 +716,7 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			cfg := config.GetGlobalConfig()
 			cfg.PessimisticTxn.DeadlockHistoryCapacity = uint(capacity)
 			config.StoreGlobalConfig(cfg)
+			deadlockhistory.GlobalDeadlockHistory.Resize(uint(capacity))
 		}
 	} else {
 		writeData(w, config.GetGlobalConfig())

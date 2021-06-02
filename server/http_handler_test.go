@@ -1232,24 +1232,24 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 
 	// test tidb_deadlock_history_capacity
 	for i := 0; i < 10; i++ {
-		deadlockhistory.GetGlobalDeadlockHistory().Push(dummyRecord())
+		deadlockhistory.GlobalDeadlockHistory.Push(dummyRecord())
 	}
 	form = make(url.Values)
 	form.Set("tidb_deadlock_history_capacity", "5")
 	resp, err = ts.formStatus("/settings", form)
-	c.Assert(len(deadlockhistory.GetGlobalDeadlockHistory().GetAll()), Equals, 5)
-	c.Assert(deadlockhistory.GetGlobalDeadlockHistory().GetAll()[0].ID, Equals, uint64(6))
-	c.Assert(deadlockhistory.GetGlobalDeadlockHistory().GetAll()[4].ID, Equals, uint64(10))
-	deadlockhistory.GetGlobalDeadlockHistory().Push(dummyRecord())
-	c.Assert(len(deadlockhistory.GetGlobalDeadlockHistory().GetAll()), Equals, 5)
-	c.Assert(deadlockhistory.GetGlobalDeadlockHistory().GetAll()[0].ID, Equals, uint64(7))
-	c.Assert(deadlockhistory.GetGlobalDeadlockHistory().GetAll()[4].ID, Equals, uint64(11))
+	c.Assert(len(deadlockhistory.GlobalDeadlockHistory.GetAll()), Equals, 5)
+	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[0].ID, Equals, uint64(6))
+	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[4].ID, Equals, uint64(10))
+	deadlockhistory.GlobalDeadlockHistory.Push(dummyRecord())
+	c.Assert(len(deadlockhistory.GlobalDeadlockHistory.GetAll()), Equals, 5)
+	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[0].ID, Equals, uint64(7))
+	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[4].ID, Equals, uint64(11))
 	form = make(url.Values)
 	form.Set("tidb_deadlock_history_capacity", "6")
-	deadlockhistory.GetGlobalDeadlockHistory().Push(dummyRecord())
-	c.Assert(len(deadlockhistory.GetGlobalDeadlockHistory().GetAll()), Equals, 6)
-	c.Assert(deadlockhistory.GetGlobalDeadlockHistory().GetAll()[0].ID, Equals, uint64(7))
-	c.Assert(deadlockhistory.GetGlobalDeadlockHistory().GetAll()[5].ID, Equals, uint64(12))
+	deadlockhistory.GlobalDeadlockHistory.Push(dummyRecord())
+	c.Assert(len(deadlockhistory.GlobalDeadlockHistory.GetAll()), Equals, 6)
+	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[0].ID, Equals, uint64(7))
+	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[5].ID, Equals, uint64(12))
 }
 
 func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {

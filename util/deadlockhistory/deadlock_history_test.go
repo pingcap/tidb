@@ -14,7 +14,6 @@
 package deadlockhistory
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -288,18 +287,16 @@ func (s *testDeadlockHistorySuite) TestResize(c *C) {
 	h.Push(dummyRecord()) // id=1 inserted
 	h.Push(dummyRecord()) // id=2 inserted,
 	h.Push(dummyRecord()) // id=3 inserted, id=1 is removed
-	fmt.Println(h.GetAll()[0].ID)
-	fmt.Println(h.GetAll()[1].ID)
 	c.Assert(len(h.GetAll()), Equals, 2)
 	c.Assert(h.GetAll()[0].ID, Equals, uint64(2))
 	c.Assert(h.GetAll()[1].ID, Equals, uint64(3))
-	h.resize(3)
+	h.Resize(3)
 	h.Push(dummyRecord()) // id=4 inserted
 	c.Assert(len(h.GetAll()), Equals, 3)
 	c.Assert(h.GetAll()[0].ID, Equals, uint64(2))
 	c.Assert(h.GetAll()[1].ID, Equals, uint64(3))
 	c.Assert(h.GetAll()[2].ID, Equals, uint64(4))
-	h.resize(2) // id=2 removed
+	h.Resize(2) // id=2 removed
 	c.Assert(len(h.GetAll()), Equals, 2)
 	c.Assert(h.GetAll()[0].ID, Equals, uint64(3))
 	c.Assert(h.GetAll()[1].ID, Equals, uint64(4))
