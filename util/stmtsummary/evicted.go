@@ -58,6 +58,10 @@ func newStmtSummaryByDigestEvictedElement(beginTime int64, endTime int64) *stmtS
 		detail: &stmtSummaryByDigestElement{
 			beginTime: beginTime,
 			endTime:   endTime,
+			// basic
+			sampleSQL:  "other",
+			prevSQL:    "other",
+			indexNames: []string{"other"},
 			// user
 			authUsers: make(map[string]struct{}),
 			// latency
@@ -225,7 +229,14 @@ func (ssbde *stmtSummaryByDigestEvicted) toCurrentDatum() []types.Datum {
 	if seElement == nil {
 		return nil
 	}
-	induceSsbd := new(stmtSummaryByDigest)
+	induceSsbd := &stmtSummaryByDigest{
+		schemaName:    "other",
+		digest:        "other",
+		planDigest:    "other",
+		stmtType:      "other",
+		normalizedSQL: "other",
+		tableNames:    "other",
+	}
 	return seElement.toDatum(induceSsbd)
 }
 
@@ -276,6 +287,10 @@ func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElem
 	}
 	if addTo.minLatency > addWith.minLatency {
 		addTo.minLatency = addWith.minLatency
+	}
+	addTo.sumParseLatency += addWith.sumParseLatency
+	if addTo.maxParseLatency < addWith.maxParseLatency {
+		addTo.maxParseLatency = addWith.maxParseLatency
 	}
 	addTo.sumCompileLatency += addWith.sumCompileLatency
 	if addTo.maxParseLatency < addWith.maxParseLatency {
@@ -368,6 +383,10 @@ func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElem
 	addTo.sumWriteKeys += addWith.sumWriteKeys
 	if addTo.maxWriteKeys < addWith.maxWriteKeys {
 		addTo.maxWriteKeys = addWith.maxWriteKeys
+	}
+	addTo.sumWriteSize += addWith.sumWriteSize
+	if addTo.maxWriteSize < addWith.maxWriteSize {
+		addTo.maxWriteSize = addWith.maxWriteSize
 	}
 	addTo.sumPrewriteRegionNum += addWith.sumPrewriteRegionNum
 	if addTo.maxPrewriteRegionNum < addWith.maxPrewriteRegionNum {

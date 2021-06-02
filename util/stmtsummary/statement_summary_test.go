@@ -660,6 +660,46 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 	datums = s.ssMap.ToHistoryDatum(nil, true)
 	c.Assert(len(datums), Equals, 1)
 	match(c, datums[0], expectedDatum...)
+
+	// test evict
+	err := s.ssMap.SetMaxStmtCount("1", false)
+	c.Assert(err, IsNil)
+	stmtExecInfo2 := stmtExecInfo1
+	stmtExecInfo2.Digest = "bandit sei"
+	s.ssMap.AddStatement(stmtExecInfo2)
+	c.Assert(s.ssMap.summaryMap.Size(), Equals, 1)
+	datums = s.ssMap.ToCurrentDatum(nil, true)
+	expectedEvictedDatum := []interface{}{n, e, "other", "other", "other", "other",
+		"other", "other", stmtExecInfo1.User, 1, 0, 0, int64(stmtExecInfo1.TotalLatency),
+		int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency),
+		int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.CompileLatency),
+		int64(stmtExecInfo1.CompileLatency), stmtExecInfo1.CopTasks.NumCopTasks, int64(stmtExecInfo1.CopTasks.MaxProcessTime),
+		stmtExecInfo1.CopTasks.MaxProcessAddress, int64(stmtExecInfo1.CopTasks.MaxWaitTime),
+		stmtExecInfo1.CopTasks.MaxWaitAddress, int64(stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime), int64(stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime),
+		int64(stmtExecInfo1.ExecDetail.TimeDetail.WaitTime), int64(stmtExecInfo1.ExecDetail.TimeDetail.WaitTime), int64(stmtExecInfo1.ExecDetail.BackoffTime),
+		int64(stmtExecInfo1.ExecDetail.BackoffTime), stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys, stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys,
+		stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys, stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys,
+		int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount), int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount),
+		int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbKeySkippedCount), int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbKeySkippedCount),
+		int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbBlockCacheHitCount), int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbBlockCacheHitCount),
+		int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbBlockReadCount), int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbBlockReadCount),
+		int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbBlockReadByte), int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbBlockReadByte),
+		int64(stmtExecInfo1.ExecDetail.CommitDetail.PrewriteTime), int64(stmtExecInfo1.ExecDetail.CommitDetail.PrewriteTime),
+		int64(stmtExecInfo1.ExecDetail.CommitDetail.CommitTime), int64(stmtExecInfo1.ExecDetail.CommitDetail.CommitTime),
+		int64(stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime), int64(stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime),
+		stmtExecInfo1.ExecDetail.CommitDetail.CommitBackoffTime, stmtExecInfo1.ExecDetail.CommitDetail.CommitBackoffTime,
+		stmtExecInfo1.ExecDetail.CommitDetail.ResolveLockTime, stmtExecInfo1.ExecDetail.CommitDetail.ResolveLockTime,
+		int64(stmtExecInfo1.ExecDetail.CommitDetail.LocalLatchTime), int64(stmtExecInfo1.ExecDetail.CommitDetail.LocalLatchTime),
+		stmtExecInfo1.ExecDetail.CommitDetail.WriteKeys, stmtExecInfo1.ExecDetail.CommitDetail.WriteKeys,
+		stmtExecInfo1.ExecDetail.CommitDetail.WriteSize, stmtExecInfo1.ExecDetail.CommitDetail.WriteSize,
+		stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum, stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
+		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 0, 0, 1,
+		fmt.Sprintf("%s:1", boTxnLockName), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax,
+		0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
+		t, t, 0, 0, 0, "other", "other", "other", ""}
+	expectedDatum[4] = stmtExecInfo2.Digest
+	match(c, datums[0], expectedDatum...)
+	match(c, datums[1], expectedEvictedDatum...)
 }
 
 // Test AddStatement and ToDatum parallel.
@@ -1064,13 +1104,29 @@ func (s *testStmtSummarySuite) TestSummaryHistory(c *C) {
 
 	// test eviction
 	s.ssMap.Clear()
-	err = s.ssMap.SetMaxStmtCount("3", true)
+	err = s.ssMap.SetMaxStmtCount("1", false)
 	c.Assert(err, IsNil)
 	defer func() {
-		err := s.ssMap.SetMaxStmtCount("", true)
+		err := s.ssMap.SetMaxStmtCount("", false)
 		c.Assert(err, IsNil)
 	}()
-
+	// insert first digest
+	for i := 0; i < 6; i++ {
+		s.ssMap.beginTimeForCurInterval = now + int64(i)*10
+		s.ssMap.AddStatement(stmtExecInfo1)
+		c.Assert(s.ssMap.summaryMap.Size(), Equals, 1)
+		c.Assert(s.ssMap.other.history.Len(), Equals, 0)
+	}
+	// insert another digest to evict it
+	stmtExecInfo2 := stmtExecInfo1
+	stmtExecInfo2.Digest = "bandit digest"
+	s.ssMap.AddStatement(stmtExecInfo2)
+	c.Assert(s.ssMap.summaryMap.Size(), Equals, 1)
+	// length of `other` should not longer than historySize.
+	c.Assert(s.ssMap.other.history.Len(), Equals, 5)
+	datum = s.ssMap.ToHistoryDatum(nil, true)
+	// length of STATEMENT_SUMMARY_HISTORY == (history in cache) + (history evicted)
+	c.Assert(len(datum), Equals, 6)
 }
 
 // Test summary when PrevSQL is not empty.
