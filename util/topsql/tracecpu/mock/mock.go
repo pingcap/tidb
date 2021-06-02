@@ -32,7 +32,7 @@ type TopSQLReporter struct {
 	// plan_digest -> normalized plan
 	planMap map[string]string
 	// (sql + plan_digest) -> sql stats
-	sqlStatsMap map[string]*tracecpu.SQLCPUResult
+	sqlStatsMap map[string]*tracecpu.TopSQLCPUTimeRecord
 	collectCnt  atomic.Int64
 }
 
@@ -41,12 +41,12 @@ func NewTopSQLReporter() *TopSQLReporter {
 	return &TopSQLReporter{
 		sqlMap:      make(map[string]string),
 		planMap:     make(map[string]string),
-		sqlStatsMap: make(map[string]*tracecpu.SQLCPUResult),
+		sqlStatsMap: make(map[string]*tracecpu.TopSQLCPUTimeRecord),
 	}
 }
 
 // Collect uses for testing.
-func (c *TopSQLReporter) Collect(ts int64, stats []tracecpu.SQLCPUResult) {
+func (c *TopSQLReporter) Collect(ts int64, stats []tracecpu.TopSQLCPUTimeRecord) {
 	defer c.collectCnt.Inc()
 	if len(stats) == 0 {
 		return
@@ -57,7 +57,7 @@ func (c *TopSQLReporter) Collect(ts int64, stats []tracecpu.SQLCPUResult) {
 		hash := c.hash(stmt)
 		stats, ok := c.sqlStatsMap[hash]
 		if !ok {
-			stats = &tracecpu.SQLCPUResult{
+			stats = &tracecpu.TopSQLCPUTimeRecord{
 				SQLDigest:  stmt.SQLDigest,
 				PlanDigest: stmt.PlanDigest,
 			}
@@ -68,7 +68,7 @@ func (c *TopSQLReporter) Collect(ts int64, stats []tracecpu.SQLCPUResult) {
 }
 
 // GetSQLStatsBySQLWithRetry uses for testing.
-func (c *TopSQLReporter) GetSQLStatsBySQLWithRetry(sql string, planIsNotNull bool) []*tracecpu.SQLCPUResult {
+func (c *TopSQLReporter) GetSQLStatsBySQLWithRetry(sql string, planIsNotNull bool) []*tracecpu.TopSQLCPUTimeRecord {
 	after := time.After(time.Second * 10)
 	for {
 		select {
@@ -85,8 +85,8 @@ func (c *TopSQLReporter) GetSQLStatsBySQLWithRetry(sql string, planIsNotNull boo
 }
 
 // GetSQLStatsBySQL uses for testing.
-func (c *TopSQLReporter) GetSQLStatsBySQL(sql string, planIsNotNull bool) []*tracecpu.SQLCPUResult {
-	stats := make([]*tracecpu.SQLCPUResult, 0, 2)
+func (c *TopSQLReporter) GetSQLStatsBySQL(sql string, planIsNotNull bool) []*tracecpu.TopSQLCPUTimeRecord {
+	stats := make([]*tracecpu.TopSQLCPUTimeRecord, 0, 2)
 	sqlDigest := GenSQLDigest(sql)
 	c.Lock()
 	for _, stmt := range c.sqlStatsMap {
@@ -162,7 +162,7 @@ func (c *TopSQLReporter) WaitCollectCnt(count int64) {
 	}
 }
 
-func (c *TopSQLReporter) hash(stat tracecpu.SQLCPUResult) string {
+func (c *TopSQLReporter) hash(stat tracecpu.TopSQLCPUTimeRecord) string {
 	return string(stat.SQLDigest) + string(stat.PlanDigest)
 }
 

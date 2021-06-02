@@ -23,6 +23,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tipb/go-tipb"
 	"google.golang.org/grpc"
 )
@@ -61,9 +62,9 @@ func populateCache(tsc *TopSQLReporterImpl, begin, end int, timestamp uint64) {
 		tsc.RegisterPlan(key, value)
 	}
 	// collect
-	var records []TopSQLCPUTimeRecord
+	var records []tracecpu.TopSQLCPUTimeRecord
 	for i := begin; i < end; i++ {
-		records = append(records, TopSQLCPUTimeRecord{
+		records = append(records, tracecpu.TopSQLCPUTimeRecord{
 			SQLDigest:  []byte("sqlDigest" + strconv.Itoa(i+1)),
 			PlanDigest: []byte("planDigest" + strconv.Itoa(i+1)),
 			CPUTimeMs:  uint32(i + 1),

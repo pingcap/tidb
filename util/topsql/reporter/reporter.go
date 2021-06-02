@@ -37,20 +37,9 @@ type TopSQLReporter interface {
 	RegisterPlan(planDigest []byte, normalizedPlan string)
 }
 
-// TopSQLCPUTimeRecord represents a single record of how much cpu time a sql plan consumes in one second.
-//
-// PlanDigest can be empty, because:
-// 1. some sql statements has no plan, like `COMMIT`
-// 2. when a sql statement is being compiled, there's no plan yet
-type TopSQLCPUTimeRecord struct {
-	SQLDigest  []byte
-	PlanDigest []byte
-	CPUTimeMs  uint32
-}
-
 type topSQLCPUTimeInput struct {
 	timestamp uint64
-	records   []TopSQLCPUTimeRecord
+	records   []tracecpu.TopSQLCPUTimeRecord
 }
 
 type planBinaryDecodeFunc func(string) (string, error)
@@ -210,7 +199,7 @@ func NewTopSQLReporter(config *TopSQLReporterConfig) *TopSQLReporterImpl {
 }
 
 // Collect will drop the records when the collect channel is full
-func (tsc *TopSQLReporterImpl) Collect(timestamp uint64, records []TopSQLCPUTimeRecord) {
+func (tsc *TopSQLReporterImpl) Collect(timestamp uint64, records []tracecpu.TopSQLCPUTimeRecord) {
 	select {
 	case tsc.collectCPUTimeChan <- &topSQLCPUTimeInput{
 		timestamp: timestamp,
@@ -229,7 +218,7 @@ func (tsc *TopSQLReporterImpl) collectWorker() {
 
 // collect uses a hashmap to store records in every second, and evict when necessary.
 // This function can be run in parallel with snapshot, so we should protect the map operations with a mutex.
-func (tsc *TopSQLReporterImpl) collect(timestamp uint64, records []TopSQLCPUTimeRecord) {
+func (tsc *TopSQLReporterImpl) collect(timestamp uint64, records []tracecpu.TopSQLCPUTimeRecord) {
 	for _, record := range records {
 		encodedKey := encodeCacheKey(record.SQLDigest, record.PlanDigest)
 		entry, exist := tsc.topSQLMap[string(encodedKey)]
