@@ -422,6 +422,48 @@ func (s *tiflashTestSuite) TestMppGoroutinesExitFromErrors(c *C) {
 	c.Assert(failpoint.Disable(hang), IsNil)
 }
 
+func (s *tiflashTestSuite) TestMppUnionAll(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists x1")
+	tk.MustExec("create table x1(a int , b int);")
+	tk.MustExec("alter table x1 set tiflash replica 1")
+	tk.MustExec("drop table if exists x2")
+	tk.MustExec("create table x2(a int , b int);")
+	tk.MustExec("alter table x2 set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "x1")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tb = testGetTableByName(c, tk.Se, "test", "x2")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("insert into x1 values (1, 1), (2, 2), (3, 3), (4, 4)")
+	tk.MustExec("insert into x2 values (5, 1), (2, 2), (3, 3), (4, 4)")
+
+	// test join + union (join + select)
+	tk.MustQuery("select x1.a, x.a from x1 left join (select x2.b a, x1.b from x1 join x2 on x1.a = x2.b union all select * from x1 ) x on x1.a = x.a order by x1.a").Check(testkit.Rows("1 1", "1 1", "2 2", "2 2", "3 3", "3 3", "4 4", "4 4"))
+	tk.MustQuery("select x1.a, x.a from x1 left join (select count(*) a, sum(b) b from x1 group by a union all select * from x2 ) x on x1.a = x.a order by x1.a").Check(testkit.Rows("1 1", "1 1", "1 1", "1 1", "2 2", "3 3", "4 4"))
+
+	tk.MustExec("drop table if exists x3")
+	tk.MustExec("create table x3(a int , b int);")
+	tk.MustExec("alter table x3 set tiflash replica 1")
+	tb = testGetTableByName(c, tk.Se, "test", "x3")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("insert into x3 values (2, 2), (2, 3), (2, 4)")
+	// test nested union all
+	tk.MustQuery("select count(*) from (select a, b from x1 union all select a, b from x3 union all (select x1.a, x3.b from (select * from x3 union all select * from x2) x3 left join x1 on x3.a = x1.b))").Check(testkit.Rows("14"))
+	// test union all join union all
+	tk.MustQuery("select count(*) from (select * from x1 union all select * from x2 union all select * from x3) x join (select * from x1 union all select * from x2 union all select * from x3) y on x.a = y.b").Check(testkit.Rows("29"))
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count=100000")
+	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(6)`)
+	tk.MustQuery("select count(*) from (select * from x1 union all select * from x2 union all select * from x3) x join (select * from x1 union all select * from x2 union all select * from x3) y on x.a = y.b").Check(testkit.Rows("29"))
+	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
+
+}
+
 func (s *tiflashTestSuite) TestMppApply(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
