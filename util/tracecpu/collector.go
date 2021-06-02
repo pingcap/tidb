@@ -81,8 +81,8 @@ type TopSQLCollector struct {
 	mu sync.RWMutex
 
 	// topSQLMap maps `sqlDigest-planDigest` to TopSQLDataPoints
-	topSQLMap map[string]*topSQLDataPoints
-	maxSQLNum int
+	topSQLMap        map[string]*topSQLDataPoints
+	MaxStatementsNum int
 
 	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are normalized SQL strings
 	normalizedSQLMap map[string]string
@@ -103,11 +103,11 @@ type TopSQLCollector struct {
 
 // TopSQLCollectorConfig is the config for TopSQLCollector
 type TopSQLCollectorConfig struct {
-	PlanBinaryDecoder   planBinaryDecodeFunc
-	MaxStatementsNum           int
-	CollectInterval time.Duration
-	AgentGRPCAddress    string
-	InstanceID          string
+	PlanBinaryDecoder planBinaryDecodeFunc
+	MaxStatementsNum  int
+	CollectInterval   time.Duration
+	AgentGRPCAddress  string
+	InstanceID        string
 }
 
 func encodeCacheKey(sqlDigest, planDigest []byte) []byte {
@@ -137,7 +137,7 @@ func newAgentClient(addr string, sendingTimeout time.Duration) (*grpc.ClientConn
 // NewTopSQLCollector creates a new TopSQL struct
 //
 // planBinaryDecoder is a decoding function which will be called asynchronously to decode the plan binary to string
-// maxSQLNum is the maximum SQL and plan number, which will restrict the memory usage of the internal LFU cache
+// MaxStatementsNum is the maximum SQL and plan number, which will restrict the memory usage of the internal LFU cache
 func NewTopSQLCollector(config *TopSQLCollectorConfig) *TopSQLCollector {
 	normalizedSQLMap := make(map[string]string)
 	normalizedPlanMap := make(map[string]string)
@@ -146,7 +146,7 @@ func NewTopSQLCollector(config *TopSQLCollectorConfig) *TopSQLCollector {
 
 	ts := &TopSQLCollector{
 		topSQLMap:         topSQLMap,
-		maxSQLNum:         config.MaxSQLNum,
+		MaxStatementsNum:  config.MaxStatementsNum,
 		normalizedSQLMap:  normalizedSQLMap,
 		normalizedPlanMap: normalizedPlanMap,
 		planRegisterChan:  planRegisterChan,
@@ -157,7 +157,7 @@ func NewTopSQLCollector(config *TopSQLCollectorConfig) *TopSQLCollector {
 
 	go ts.registerNormalizedPlanWorker(config.PlanBinaryDecoder)
 
-	go ts.sendToAgentWorker(config.SendToAgentInterval)
+	go ts.sendToAgentWorker(config.CollectInterval)
 
 	return ts
 }
@@ -183,7 +183,7 @@ func (ts *TopSQLCollector) Collect(timestamp uint64, records []TopSQLRecord) {
 		entry.CPUTimeMsTotal += uint64(record.CPUTimeMs)
 	}
 
-	if len(ts.topSQLMap) <= ts.maxSQLNum {
+	if len(ts.topSQLMap) <= ts.MaxStatementsNum {
 		return
 	}
 
@@ -203,11 +203,11 @@ func (ts *TopSQLCollector) Collect(timestamp uint64, records []TopSQLRecord) {
 		}
 	}
 	// QuickSelect will only return error when the second parameter is out of range
-	if err := quickselect.QuickSelect(cpuTimeSortSlice(digestCPUTimeList), ts.maxSQLNum); err != nil {
+	if err := quickselect.QuickSelect(cpuTimeSortSlice(digestCPUTimeList), ts.MaxStatementsNum); err != nil {
 		//	skip eviction
 		return
 	}
-	shouldEvictList := digestCPUTimeList[ts.maxSQLNum:]
+	shouldEvictList := digestCPUTimeList[ts.MaxStatementsNum:]
 	for _, evict := range shouldEvictList {
 		delete(ts.topSQLMap, evict.Key)
 		ts.mu.Lock()
@@ -309,16 +309,16 @@ func (ts *TopSQLCollector) sendBatch(stream tipb.TopSQLAgent_CollectCPUTimeClien
 	return nil
 }
 
-// sendToAgentWorker will send a snapshot to the gRPC endpoint every interval
-func (ts *TopSQLCollector) sendToAgentWorker(interval time.Duration) {
-	ticker := time.NewTicker(interval)
+// sendToAgentWorker will send a snapshot to the gRPC endpoint every collect interval
+func (ts *TopSQLCollector) sendToAgentWorker(collectInterval time.Duration) {
+	ticker := time.NewTicker(collectInterval)
 	for {
 		select {
 		case <-ticker.C:
 			batch := ts.snapshot()
-			sendingTimeout := interval - 10*time.Second
+			sendingTimeout := collectInterval - 10*time.Second
 			if sendingTimeout < 0 {
-				sendingTimeout = interval / 2
+				sendingTimeout = collectInterval / 2
 			}
 			// NOTE: Currently we are creating/destroying a TCP connection to the agent every time.
 			// It's fine if we do this every minute, but need optimization if we need to do it more frequently, like every second.

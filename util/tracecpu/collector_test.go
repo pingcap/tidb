@@ -71,16 +71,16 @@ func populateCache(ts *TopSQLCollector, begin, end int, timestamp uint64) {
 	ts.Collect(timestamp, records)
 }
 
-func initializeCache(maxSQLNum int, addr string) *TopSQLCollector {
+func initializeCache(maxStatementsNum int, addr string) *TopSQLCollector {
 	config := &TopSQLCollectorConfig{
-		PlanBinaryDecoder:   testPlanBinaryDecoderFunc,
-		MaxSQLNum:           maxSQLNum,
-		SendToAgentInterval: time.Minute,
-		AgentGRPCAddress:    addr,
-		InstanceID:          "tidb-server",
+		PlanBinaryDecoder: testPlanBinaryDecoderFunc,
+		MaxStatementsNum:  maxStatementsNum,
+		CollectInterval:   time.Minute,
+		AgentGRPCAddress:  addr,
+		InstanceID:        "tidb-server",
 	}
 	ts := NewTopSQLCollector(config)
-	populateCache(ts, 0, maxSQLNum, 1)
+	populateCache(ts, 0, maxStatementsNum, 1)
 	return ts
 }
 
