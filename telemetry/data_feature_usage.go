@@ -25,8 +25,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/prometheus/client_golang/prometheus"
-	dto "github.com/prometheus/client_model/go"
 )
 
 type featureUsage struct {
@@ -36,7 +34,7 @@ type featureUsage struct {
 	// key is the first 6 characters of sha2(TABLE_NAME, 256)
 	ClusterIndex   *ClusterIndexUsage `json:"clusterIndex"`
 	TemporaryTable bool               `json:"temporaryTable"`
-	CTE            *CTEUsage          `json:"cte"`
+	CTE            *m.CTEUsageCounter `json:"cte"`
 }
 
 func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
@@ -53,10 +51,7 @@ func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
 	// Avoid the circle dependency.
 	temporaryTable := ctx.(TemporaryTableFeatureChecker).TemporaryTableExists()
 
-	cteUsage, err := GetCTEUsageInfo(ctx)
-	if err != nil {
-		return nil, err
-	}
+	cteUsage := GetCTEUsageInfo(ctx)
 
 	return &featureUsage{txnUsage, clusterIdxUsage, temporaryTable, cteUsage}, nil
 }
@@ -157,6 +152,7 @@ type TxnUsage struct {
 }
 
 var initialTxnCommitCounter metrics.TxnCommitCounter
+var initialCTECounter m.CTEUsageCounter
 
 // GetTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func GetTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
@@ -177,69 +173,14 @@ func postReportTxnUsage() {
 	initialTxnCommitCounter = metrics.GetTxnCommitCounter()
 }
 
-// CTEUsage records the usages of CTE.
-type CTEUsage struct {
-	NonRecursiveCTEUsed uint64 `json:"nonRecursiveCTEUsed"`
-	RecursiveUsed       uint64 `json:"recursiveUsed"`
-	NonCTEUsed          uint64 `json:"nonCTEUsed"`
-}
-
 // ResetCTEUsage resets CTE usages.
-func ResetCTEUsage() error {
-	me, err := m.TelemetrySQLCTECnt.GetMetricWith(prometheus.Labels{m.LblCTEType: "nonRecurCTE"})
-	if err != nil {
-		return err
-	}
-	me.Set(0)
-	me, err = m.TelemetrySQLCTECnt.GetMetricWith(prometheus.Labels{m.LblCTEType: "recurCTE"})
-	if err != nil {
-		return err
-	}
-	me.Set(0)
-	me, err = m.TelemetrySQLCTECnt.GetMetricWith(prometheus.Labels{m.LblCTEType: "notCTE"})
-	if err != nil {
-		return err
-	}
-	me.Set(0)
-	return nil
+func postReportCTEUsage() {
+	initialCTECounter = m.GetCTECounter()
 }
 
 // GetCTEUsageInfo gets the CTE usages.
-func GetCTEUsageInfo(ctx sessionctx.Context) (*CTEUsage, error) {
-	usage := &CTEUsage{}
-	me, err := m.TelemetrySQLCTECnt.GetMetricWith(prometheus.Labels{m.LblCTEType: "nonRecurCTE"})
-	if err != nil {
-		return nil, err
-	}
-	metric := &dto.Metric{}
-	err = me.Write(metric)
-	if err != nil {
-		return nil, err
-	}
-	usage.NonRecursiveCTEUsed = uint64(metric.GetGauge().GetValue())
-	metric.Reset()
-	me.Set(0)
-	me, err = m.TelemetrySQLCTECnt.GetMetricWith(prometheus.Labels{m.LblCTEType: "recurCTE"})
-	if err != nil {
-		return nil, err
-	}
-	err = me.Write(metric)
-	if err != nil {
-		return nil, err
-	}
-	usage.RecursiveUsed = uint64(metric.GetGauge().GetValue())
-	metric.Reset()
-	me.Set(0)
-	me, err = m.TelemetrySQLCTECnt.GetMetricWith(prometheus.Labels{m.LblCTEType: "notCTE"})
-	if err != nil {
-		return nil, err
-	}
-	err = me.Write(metric)
-	if err != nil {
-		return nil, err
-	}
-	usage.NonCTEUsed = uint64(metric.GetGauge().GetValue())
-	me.Set(0)
-
-	return usage, nil
+func GetCTEUsageInfo(ctx sessionctx.Context) *m.CTEUsageCounter {
+	curr := m.GetCTECounter()
+	diff := curr.Sub(initialCTECounter)
+	return &diff
 }
