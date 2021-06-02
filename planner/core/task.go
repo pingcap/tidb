@@ -156,8 +156,9 @@ func (t *copTask) finishIndexPlan() {
 	if t.tablePlan == nil {
 		return
 	}
-	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
 	ts := t.tablePlan.(*PhysicalTableScan)
+	t.cst += cnt * sessVars.GetNetworkFactor(ts.Table) * t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true, false)
+	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
 	ts.stats = t.indexPlan.statsInfo()
 	var p PhysicalPlan
 	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
