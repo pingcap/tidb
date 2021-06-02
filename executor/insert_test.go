@@ -1716,6 +1716,8 @@ func (s *testSuite10) TestStringtoDecimal(c *C) {
 	tk.MustGetErrCode("insert into t values('1sdf')", errno.ErrTruncatedWrongValueForField)
 	tk.MustGetErrCode("insert into t values('1edf')", errno.ErrTruncatedWrongValueForField)
 	tk.MustGetErrCode("insert into t values('12Ea')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('1E')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('1e')", errno.ErrTruncatedWrongValueForField)
 	tk.MustGetErrCode("insert into t values('1.2A')", errno.ErrTruncatedWrongValueForField)
 	tk.MustGetErrCode("insert into t values('1.2.3.4.5')", errno.ErrTruncatedWrongValueForField)
 	tk.MustGetErrCode("insert into t values('1.2.')", errno.ErrTruncatedWrongValueForField)
