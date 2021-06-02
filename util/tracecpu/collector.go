@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/wangjohn/quickselect"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 )
 
 // TopSQLRecord represents a single record of how much cpu time a sql plan consumes in one second.
@@ -49,6 +51,7 @@ type topSQLDataPoints struct {
 	CPUTimeMsTotal uint64
 }
 
+// cpuTimeSort is used to sort TopSQL records by tocal CPU time
 type cpuTimeSort struct {
 	Key            string
 	SQLDigest      []byte
@@ -83,6 +86,7 @@ type TopSQLCollector struct {
 	// topSQLMap maps `sqlDigest-planDigest` to TopSQLDataPoints
 	topSQLMap        map[string]*topSQLDataPoints
 	MaxStatementsNum int
+	collectTimeout   time.Duration
 
 	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are normalized SQL strings
 	normalizedSQLMap map[string]string
@@ -103,11 +107,18 @@ type TopSQLCollector struct {
 
 // TopSQLCollectorConfig is the config for TopSQLCollector
 type TopSQLCollectorConfig struct {
+	// PlanBinaryDecoder is used to decode the plan binary before sending to agent
 	PlanBinaryDecoder planBinaryDecodeFunc
-	MaxStatementsNum  int
-	CollectInterval   time.Duration
-	AgentGRPCAddress  string
-	InstanceID        string
+	// MaxStatementsNum is the capacity of the TopSQL map, above which evition should happen
+	MaxStatementsNum int
+	// CollectInterval is the interval of sending TopSQL records to the agent
+	CollectInterval time.Duration
+	// CollectTimeout is the timeout of a single agent gRPC call
+	CollectTimeout time.Duration
+	// AgentGRPCAddress is the gRPC address of the agent server
+	AgentGRPCAddress string
+	// InstanceID is the ID of this tidb server
+	InstanceID string
 }
 
 func encodeCacheKey(sqlDigest, planDigest []byte) []byte {
@@ -117,10 +128,32 @@ func encodeCacheKey(sqlDigest, planDigest []byte) []byte {
 	return buffer.Bytes()
 }
 
+const (
+	GrpcInitialWindowSize     = 1 << 30
+	GrpcInitialConnWindowSize = 1 << 30
+)
+
 func newAgentClient(addr string, sendingTimeout time.Duration) (*grpc.ClientConn, tipb.TopSQLAgent_CollectCPUTimeClient, context.CancelFunc, error) {
 	dialCtx, cancel := context.WithTimeout(context.TODO(), time.Second)
 	defer cancel()
-	conn, err := grpc.DialContext(dialCtx, addr, grpc.WithInsecure())
+	conn, err := grpc.DialContext(
+		dialCtx,
+		addr,
+		grpc.WithInsecure(),
+		grpc.WithInitialWindowSize(GrpcInitialWindowSize),
+		grpc.WithInitialConnWindowSize(GrpcInitialConnWindowSize),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(math.MaxInt64),
+		),
+		grpc.WithConnectParams(grpc.ConnectParams{
+			Backoff: backoff.Config{
+				BaseDelay:  100 * time.Millisecond, // Default was 1s.
+				Multiplier: 1.6,                    // Default
+				Jitter:     0.2,                    // Default
+				MaxDelay:   3 * time.Second,        // Default was 120s.
+			},
+		}),
+	)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -144,9 +177,15 @@ func NewTopSQLCollector(config *TopSQLCollectorConfig) *TopSQLCollector {
 	planRegisterChan := make(chan *planRegisterJob, 10)
 	topSQLMap := make(map[string]*topSQLDataPoints)
 
+	collectTimeout := config.CollectTimeout
+	if collectTimeout > config.CollectInterval || collectTimeout <= 0 {
+		collectTimeout = config.CollectInterval / 2
+	}
+
 	ts := &TopSQLCollector{
 		topSQLMap:         topSQLMap,
 		MaxStatementsNum:  config.MaxStatementsNum,
+		collectTimeout:    collectTimeout,
 		normalizedSQLMap:  normalizedSQLMap,
 		normalizedPlanMap: normalizedPlanMap,
 		planRegisterChan:  planRegisterChan,
@@ -202,11 +241,15 @@ func (ts *TopSQLCollector) Collect(timestamp uint64, records []TopSQLRecord) {
 			i++
 		}
 	}
+
 	// QuickSelect will only return error when the second parameter is out of range
 	if err := quickselect.QuickSelect(cpuTimeSortSlice(digestCPUTimeList), ts.MaxStatementsNum); err != nil {
 		//	skip eviction
 		return
+
 	}
+
+	// TODO: we can change to periodical eviction (every minute) to relax the CPU pressure
 	shouldEvictList := digestCPUTimeList[ts.MaxStatementsNum:]
 	for _, evict := range shouldEvictList {
 		delete(ts.topSQLMap, evict.Key)
@@ -316,13 +359,9 @@ func (ts *TopSQLCollector) sendToAgentWorker(collectInterval time.Duration) {
 		select {
 		case <-ticker.C:
 			batch := ts.snapshot()
-			sendingTimeout := collectInterval - 10*time.Second
-			if sendingTimeout < 0 {
-				sendingTimeout = collectInterval / 2
-			}
 			// NOTE: Currently we are creating/destroying a TCP connection to the agent every time.
 			// It's fine if we do this every minute, but need optimization if we need to do it more frequently, like every second.
-			conn, stream, _, err := newAgentClient(ts.agentGRPCAddress, sendingTimeout)
+			conn, stream, _, err := newAgentClient(ts.agentGRPCAddress, ts.collectTimeout)
 			if err != nil {
 				log.Error("ERROR: failed to create agent client, %v\n", zap.Error(err))
 				continue

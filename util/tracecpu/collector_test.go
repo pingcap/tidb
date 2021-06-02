@@ -76,6 +76,7 @@ func initializeCache(maxStatementsNum int, addr string) *TopSQLCollector {
 		PlanBinaryDecoder: testPlanBinaryDecoderFunc,
 		MaxStatementsNum:  maxStatementsNum,
 		CollectInterval:   time.Minute,
+		CollectTimeout:    30 * time.Second,
 		AgentGRPCAddress:  addr,
 		InstanceID:        "tidb-server",
 	}
