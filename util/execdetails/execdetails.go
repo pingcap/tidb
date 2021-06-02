@@ -734,12 +734,8 @@ func (e *RuntimeStatsWithConcurrencyInfo) String() string {
 }
 
 // Merge implements the RuntimeStats interface.
-func (e *RuntimeStatsWithConcurrencyInfo) Merge(rs RuntimeStats) {
-	tmp, ok := rs.(*RuntimeStatsWithConcurrencyInfo)
-	if !ok {
-		return
-	}
-	e.concurrency = append(e.concurrency, tmp.concurrency...)
+func (e *RuntimeStatsWithConcurrencyInfo) Merge(_ RuntimeStats) {
+	return
 }
 
 // RuntimeStatsWithCommit is the RuntimeStats with commit detail.

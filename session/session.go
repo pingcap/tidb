@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 
@@ -1386,6 +1387,13 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	for _, warn := range warns {
 		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
+	if variable.TopSQLEnabled() {
+		normalized, digest := parser.NormalizeDigest(sql)
+		if digest != nil {
+			// Fixme: reset/clean the label when internal sql execute finish.
+			ctx = topsql.AttachSQLInfo(ctx, normalized, digest, "", nil)
+		}
+	}
 	return stmts[0], nil
 }
 
@@ -1496,6 +1504,11 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
+	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
+	if variable.TopSQLEnabled() {
+		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil)
+	}
+
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
 		return nil, err
 	}
@@ -1503,7 +1516,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Uncorrelated subqueries will execute once when building plan, so we reset process info before building plan.
 	cmd32 := atomic.LoadUint32(&s.GetSessionVars().CommandValue)
 	s.SetProcessInfo(stmtNode.Text(), time.Now(), byte(cmd32), 0)
-	_, digest := s.sessionVars.StmtCtx.SQLDigest()
 	s.txn.onStmtStart(digest.String())
 	defer s.txn.onStmtEnd()
 
