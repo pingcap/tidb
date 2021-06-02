@@ -15,7 +15,6 @@ package telemetry
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strconv"
 	"time"
@@ -38,6 +37,18 @@ type slowQueryStats struct {
 // Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days  // defined in metrics/server.go
 type SlowQueryBucket map[string]int
 
+func (bucketMap SlowQueryBucket) String() string {
+	if bucketMap == nil {
+		return "nil"
+	}
+	var retStr string = "{"
+	for k, v := range bucketMap {
+		retStr += k + ":" + strconv.Itoa(v) + ","
+	}
+	retStr = retStr[:len(retStr)-1]
+	return retStr
+}
+
 const slowQueryBucketNum = 29 //prometheus.ExponentialBuckets(0.001, 2, 28), and 1 more +Inf
 
 var (
@@ -48,7 +59,7 @@ var (
 )
 
 func getSlowQueryStats(ctx sessionctx.Context) (*slowQueryStats, error) {
-	slowQueryBucket, err := GetSlowQueryBucket(ctx)
+	slowQueryBucket, err := getSlowQueryBucket(ctx)
 	if err != nil {
 		logutil.BgLogger().Info(err.Error())
 		return nil, err
@@ -57,18 +68,18 @@ func getSlowQueryStats(ctx sessionctx.Context) (*slowQueryStats, error) {
 	return &slowQueryStats{slowQueryBucket}, nil
 }
 
-// GetSlowQueryBucket genenrates the delta SlowQueryBucket to report
-func GetSlowQueryBucket(ctx sessionctx.Context) (*SlowQueryBucket, error) {
+// getSlowQueryBucket genenrates the delta SlowQueryBucket to report
+func getSlowQueryBucket(ctx sessionctx.Context) (*SlowQueryBucket, error) {
 	// update CurrentSQBInfo first, then gen delta
-	if err := UpdateCurrentSQB(ctx); err != nil {
+	if err := updateCurrentSQB(ctx); err != nil {
 		return nil, err
 	}
-	delta := CalculateDeltaSQB()
+	delta := calculateDeltaSQB()
 	return delta, nil
 }
 
-// UpdateCurrentSQB records current slow query buckets
-func UpdateCurrentSQB(ctx sessionctx.Context) (err error) {
+// updateCurrentSQB records current slow query buckets
+func updateCurrentSQB(ctx sessionctx.Context) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			switch x := r.(type) {
@@ -83,7 +94,7 @@ func UpdateCurrentSQB(ctx sessionctx.Context) (err error) {
 	}()
 
 	value, err := querySlowQueryMetric(ctx) //TODO: judge error here
-	if err != nil {
+	if err != nil && err != infosync.ErrPrometheusAddrIsNotSet {
 		logutil.BgLogger().Info("querySlowQueryMetric got error")
 		return err
 	}
@@ -125,7 +136,8 @@ func querySlowQueryMetric(sctx sessionctx.Context) (result pmodel.Value, err err
 
 	ts := time.Now()
 	// Add retry to avoid network error.
-	ctx := context.TODO() // just use default context
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 	for i := 0; i < 5; i++ {
 		result, _, err = promQLAPI.Query(ctx, promQL, ts)
 		if err == nil {
@@ -136,8 +148,8 @@ func querySlowQueryMetric(sctx sessionctx.Context) (result pmodel.Value, err err
 	return result, err
 }
 
-// CalculateDeltaSQB calculate the delta between current slow query bucket and last slow query bucket
-func CalculateDeltaSQB() *SlowQueryBucket {
+// calculateDeltaSQB calculate the delta between current slow query bucket and last slow query bucket
+func calculateDeltaSQB() *SlowQueryBucket {
 	deltaMap := make(SlowQueryBucket)
 	for key, value := range CurrentSQBInfo {
 		deltaMap[key] = value - (LastSQBInfo)[key]
@@ -145,9 +157,9 @@ func CalculateDeltaSQB() *SlowQueryBucket {
 	return &deltaMap
 }
 
-// InitSlowQueryStats Init LastSQBInfo, follow the definition of metrics/server.go
+// initSlowQueryStats Init LastSQBInfo, follow the definition of metrics/server.go
 // Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
-func InitSlowQueryStats() {
+func initSlowQueryStats() {
 	LastSQBInfo := make(SlowQueryBucket)
 	CurrentSQBInfo := make(SlowQueryBucket)
 
@@ -160,22 +172,16 @@ func InitSlowQueryStats() {
 	LastSQBInfo["+Inf"] = 0
 	CurrentSQBInfo["+Inf"] = 0
 
-	logutil.BgLogger().Info("Telemetry slow query stats initialized", zap.String("CurrentSQBInfo", bucketMap2Json(CurrentSQBInfo)))
-	logutil.BgLogger().Info("Telemetry slow query stats initialized", zap.String("LastSQBInfo", bucketMap2Json(LastSQBInfo)))
+	logutil.BgLogger().Info("Telemetry slow query stats initialized", zap.String("CurrentSQBInfo", CurrentSQBInfo.String()))
+	logutil.BgLogger().Info("Telemetry slow query stats initialized", zap.String("LastSQBInfo", LastSQBInfo.String()))
 }
 
 // postReportSlowQueryStats copy CurrentSQBInfo to LastSQBInfo to be ready for next report
 // this function is designed for being compatible with preview telemetry
 func postReportSlowQueryStats() {
-	LastSQBInfo = CurrentSQBInfo
-	CurrentSQBInfo = make(SlowQueryBucket)
-	logutil.BgLogger().Info("Telemetry slow query stats, postReportSlowQueryStats finished")
-}
-
-func bucketMap2Json(paramMap SlowQueryBucket) string {
-	dataType, err := json.Marshal(paramMap)
-	if err != nil {
-		return ""
+	for k := range LastSQBInfo {
+		delete(LastSQBInfo, k)
 	}
-	return string(dataType)
+	LastSQBInfo, CurrentSQBInfo = CurrentSQBInfo, LastSQBInfo
+	logutil.BgLogger().Info("Telemetry slow query stats, postReportSlowQueryStats finished")
 }
