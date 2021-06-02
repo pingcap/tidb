@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
@@ -335,6 +337,37 @@ func bindableStmtType(node ast.StmtNode) byte {
 	return TypeInvalid
 }
 
+func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
+	currentDB := p.ctx.GetSessionVars().CurrentDB
+	if tn.Schema.String() != "" {
+		currentDB = tn.Schema.L
+	}
+	if currentDB == "" {
+		return nil, errors.Trace(ErrNoDB)
+	}
+	sName := model.NewCIStr(currentDB)
+	tbl, err := p.ensureInfoSchema().TableByName(sName, tn.Name)
+	if err != nil {
+		// We should never leak that the table doesn't exist (i.e. attach ErrTableNotExists)
+		// unless we know that the user has permissions to it, should it exist.
+		// By checking here, this makes all SELECT/SHOW/INSERT/UPDATE/DELETE statements safe.
+		currentUser, activeRoles := p.ctx.GetSessionVars().User, p.ctx.GetSessionVars().ActiveRoles
+		if pm := privilege.GetPrivilegeManager(p.ctx); pm != nil {
+			if !pm.RequestVerification(activeRoles, sName.L, tn.Name.O, "", mysql.AllPrivMask) {
+				u := currentUser.Username
+				h := currentUser.Hostname
+				if currentUser.AuthHostname != "" {
+					u = currentUser.AuthUsername
+					h = currentUser.AuthHostname
+				}
+				return nil, ErrTableaccessDenied.GenWithStackByArgs(p.stmtType(), u, h, tn.Name.O)
+			}
+		}
+		return nil, err
+	}
+	return tbl, err
+}
+
 func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, defaultDB string) {
 	origTp := bindableStmtType(originNode)
 	hintedTp := bindableStmtType(hintedNode)
@@ -353,6 +386,39 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 			return
 		}
 	}
+
+	// Check the bind operation is not on any temporary table.
+	var resNode ast.ResultSetNode
+	switch n := originNode.(type) {
+	case *ast.SelectStmt:
+		resNode = n.From.TableRefs
+	case *ast.DeleteStmt:
+		resNode = n.TableRefs.TableRefs
+	case *ast.UpdateStmt:
+		resNode = n.TableRefs.TableRefs
+	case *ast.InsertStmt:
+		resNode = n.Table.TableRefs
+	}
+	if resNode != nil {
+		tblNames := extractTableList(resNode, nil, false)
+		for _, tn := range tblNames {
+			tbl, err := p.tableByName(tn)
+			if err != nil {
+				// If the operation is order is: drop table -> drop binding
+				// The table doesn't  exist, it is not an error.
+				if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+					continue
+				}
+				p.err = err
+				return
+			}
+			if tbl.Meta().TempTableType != model.TempTableNone {
+				p.err = ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("create binding")
+				return
+			}
+		}
+	}
+
 	originSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(originNode, defaultDB, originNode.Text()))
 	hintedSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(hintedNode, defaultDB, hintedNode.Text()))
 	if originSQL != hintedSQL {
@@ -596,17 +662,7 @@ func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
 
 func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 	for _, table := range stmt.Tables {
-		currentDB := p.ctx.GetSessionVars().CurrentDB
-		if table.Schema.String() != "" {
-			currentDB = table.Schema.L
-		}
-		if currentDB == "" {
-			p.err = errors.Trace(ErrNoDB)
-			return
-		}
-		sName := model.NewCIStr(currentDB)
-		tName := table.Name
-		tableInfo, err := p.ensureInfoSchema().TableByName(sName, tName)
+		tableInfo, err := p.tableByName(table)
 		if err != nil {
 			p.err = err
 			return
