@@ -4132,6 +4132,9 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 	}
 
 	// 3. Build recursive part.
+	if v.RecurPlan != nil {
+		b.Ti.UseRecursive = true
+	}
 	recursiveExec := b.build(v.RecurPlan)
 	if b.err != nil {
 		return nil
@@ -4160,7 +4163,6 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 
 func (b *executorBuilder) buildCTETableReader(v *plannercore.PhysicalCTETable) Executor {
 	storageMap, ok := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
-	b.Ti.UseRecursive = true
 	if !ok {
 		b.err = errors.New("type assertion for CTEStorageMap failed")
 		return nil
