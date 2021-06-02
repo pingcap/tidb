@@ -215,6 +215,9 @@ func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 	defer close(e.iterInTbl.GetBegCh())
 	chks := make([]*chunk.Chunk, 0, 10)
 	for {
+		if e.hasLimit && uint64(e.iterInTbl.NumRows()) >= e.limitEnd {
+			break
+		}
 		chk := newFirstChunk(e.seedExec)
 		if err = Next(ctx, e.seedExec, chk); err != nil {
 			return err
@@ -241,15 +244,16 @@ func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 }
 
 func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
-	if e.hasLimit && uint64(e.resTbl.NumRows()) >= e.limitEnd {
-		return nil
-	}
 	if e.recursiveExec == nil || e.iterInTbl.NumChunks() == 0 {
 		return nil
 	}
 
 	if e.curIter > e.ctx.GetSessionVars().CTEMaxRecursionDepth {
 		return ErrCTEMaxRecursionDepth.GenWithStackByArgs(e.curIter)
+	}
+
+	if e.hasLimit && uint64(e.resTbl.NumRows()) >= e.limitEnd {
+		return nil
 	}
 
 	for {
@@ -314,6 +318,7 @@ func (e *CTEExec) nextChunkLimit(req *chunk.Chunk) error {
 				req.Append(tmpChk, int(begInChk), int(endInChk))
 				return nil
 			}
+			e.cursor += numRows
 		}
 	}
 	if e.chkIdx < e.resTbl.NumChunks() && e.cursor < e.limitEnd {
@@ -382,6 +387,8 @@ func (e *CTEExec) reset() {
 	e.curIter = 0
 	e.chkIdx = 0
 	e.hashTbl = nil
+	e.cursor = 0
+	e.meetFirstBatch = false
 }
 
 func (e *CTEExec) reopenTbls() (err error) {

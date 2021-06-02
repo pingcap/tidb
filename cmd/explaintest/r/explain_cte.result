@@ -127,3 +127,78 @@ CTE_0	1.00	root		Recursive CTE
 └─Projection_27(Recursive Part)	0.80	root		plus(Column#5, 1)->Column#7
   └─Selection_28	0.80	root		eq(Column#5, 0)
     └─CTETable_29	1.00	root		Scan on CTE_0
+explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 1) select * from cte1;
+id	estRows	task	access object	operator info
+CTEFullScan_19	1.00	root	CTE:cte1	data:CTE_0
+CTE_0	1.00	root		Recursive CTE, limit(offset:0, count:1)
+├─TableReader_14(Seed Part)	10000.00	root		data:TableFullScan_13
+│ └─TableFullScan_13	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Projection_17(Recursive Part)	1.00	root		cast(plus(test.t1.c1, 1), int(11))->test.t1.c1
+  └─CTETable_18	1.00	root		Scan on CTE_0
+explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 100 offset 100) select * from cte1;
+id	estRows	task	access object	operator info
+CTEFullScan_19	1.00	root	CTE:cte1	data:CTE_0
+CTE_0	1.00	root		Recursive CTE, limit(offset:100, count:100)
+├─TableReader_14(Seed Part)	10000.00	root		data:TableFullScan_13
+│ └─TableFullScan_13	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Projection_17(Recursive Part)	1.00	root		cast(plus(test.t1.c1, 1), int(11))->test.t1.c1
+  └─CTETable_18	1.00	root		Scan on CTE_0
+explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 0 offset 0) select * from cte1;
+id	estRows	task	access object	operator info
+CTEFullScan_19	1.00	root	CTE:cte1	data:CTE_0
+CTE_0	1.00	root		Recursive CTE, limit(offset:0, count:0)
+├─TableReader_14(Seed Part)	10000.00	root		data:TableFullScan_13
+│ └─TableFullScan_13	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Projection_17(Recursive Part)	1.00	root		cast(plus(test.t1.c1, 1), int(11))->test.t1.c1
+  └─CTETable_18	1.00	root		Scan on CTE_0
+explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 1) select * from cte1 dt1 join cte1 dt2 on dt1.c1 = dt2.c1;
+id	estRows	task	access object	operator info
+HashJoin_18	0.64	root		inner join, equal:[eq(test.t1.c1, test.t1.c1)]
+├─Selection_29(Build)	0.80	root		not(isnull(test.t1.c1))
+│ └─CTEFullScan_30	1.00	root	CTE:dt2	data:CTE_0
+└─Selection_20(Probe)	0.80	root		not(isnull(test.t1.c1))
+  └─CTEFullScan_28	1.00	root	CTE:dt1	data:CTE_0
+CTE_0	1.00	root		Recursive CTE, limit(offset:0, count:1)
+├─TableReader_23(Seed Part)	10000.00	root		data:TableFullScan_22
+│ └─TableFullScan_22	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Projection_26(Recursive Part)	1.00	root		cast(plus(test.t1.c1, 1), int(11))->test.t1.c1
+  └─CTETable_27	1.00	root		Scan on CTE_0
+explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 0 offset 0) select * from cte1 dt1 join cte1 dt2 on dt1.c1 = dt2.c1;
+id	estRows	task	access object	operator info
+HashJoin_18	0.64	root		inner join, equal:[eq(test.t1.c1, test.t1.c1)]
+├─Selection_29(Build)	0.80	root		not(isnull(test.t1.c1))
+│ └─CTEFullScan_30	1.00	root	CTE:dt2	data:CTE_0
+└─Selection_20(Probe)	0.80	root		not(isnull(test.t1.c1))
+  └─CTEFullScan_28	1.00	root	CTE:dt1	data:CTE_0
+CTE_0	1.00	root		Recursive CTE, limit(offset:0, count:0)
+├─TableReader_23(Seed Part)	10000.00	root		data:TableFullScan_22
+│ └─TableFullScan_22	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Projection_26(Recursive Part)	1.00	root		cast(plus(test.t1.c1, 1), int(11))->test.t1.c1
+  └─CTETable_27	1.00	root		Scan on CTE_0
+explain with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 1) select * from cte1;
+id	estRows	task	access object	operator info
+CTEFullScan_34	1.00	root	CTE:cte1	data:CTE_0
+CTE_0	1.00	root		None Recursive CTE
+└─Limit_21(Seed Part)	1.00	root		offset:0, count:1
+  └─HashAgg_22	1.00	root		group by:Column#11, funcs:firstrow(Column#11)->Column#11
+    └─Union_23	20000.00	root		
+      ├─TableReader_26	10000.00	root		data:TableFullScan_25
+      │ └─TableFullScan_25	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+      └─IndexReader_33	10000.00	root		index:IndexFullScan_32
+        └─IndexFullScan_32	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
+explain with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 100 offset 100) select * from cte1;
+id	estRows	task	access object	operator info
+CTEFullScan_34	1.00	root	CTE:cte1	data:CTE_0
+CTE_0	1.00	root		None Recursive CTE
+└─Limit_21(Seed Part)	100.00	root		offset:100, count:100
+  └─HashAgg_22	200.00	root		group by:Column#11, funcs:firstrow(Column#11)->Column#11
+    └─Union_23	20000.00	root		
+      ├─TableReader_26	10000.00	root		data:TableFullScan_25
+      │ └─TableFullScan_25	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+      └─IndexReader_33	10000.00	root		index:IndexFullScan_32
+        └─IndexFullScan_32	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
+explain with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 0 offset 0) select * from cte1;
+id	estRows	task	access object	operator info
+CTEFullScan_18	1.00	root	CTE:cte1	data:CTE_0
+CTE_0	1.00	root		None Recursive CTE
+└─TableDual_17(Seed Part)	0.00	root		rows:0

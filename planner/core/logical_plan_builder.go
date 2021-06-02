@@ -3682,7 +3682,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 					limitBeg = x.Offset
 					limitEnd = x.Offset + x.Count
 				case *LogicalTableDual:
-					return x, nil
+					// Beg and End will both be 0.
 				default:
 					return nil, errors.Errorf("invalid type for limit plan: %v", cte.limitLP)
 				}
@@ -5927,7 +5927,7 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 			if err != nil {
 				return err
 			}
-			limit.SetChildren(nil)
+			limit.SetChildren(limit.Children()[:0]...)
 			cInfo.limitLP = limit
 		}
 		return nil
