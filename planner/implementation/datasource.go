@@ -74,6 +74,8 @@ func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 	reader := impl.plan.(*plannercore.PhysicalTableReader)
 	width := impl.tblColHists.GetAvgRowSize(impl.plan.SCtx(), reader.Schema().Columns, false, false)
 	sessVars := reader.SCtx().GetSessionVars()
+	// TableReaderImpl dont have tableInfo property, so using nil to replace it.
+	// Todo add the tableInfo property for the TableReaderImpl.
 	networkCost := outCount * sessVars.GetNetworkFactor(nil) * width
 	// copTasks are run in parallel, to make the estimated cost closer to execution time, we amortize
 	// the cost to cop iterator workers. According to `CopClient::Send`, the concurrency
