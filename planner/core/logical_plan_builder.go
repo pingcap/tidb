@@ -1378,6 +1378,10 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 		b.optFlag |= flagEliminateProjection
 		proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(b.ctx, b.getSelectOffset())
 		proj.SetSchema(u.schema.Clone())
+		// reset the schema type to make the "not null" flag right.
+		for i, expr := range exprs {
+			proj.schema.Columns[i].RetType = expr.GetType()
+		}
 		proj.SetChildren(child)
 		u.children[childID] = proj
 	}
