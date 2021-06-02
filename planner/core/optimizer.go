@@ -15,6 +15,8 @@ package core
 
 import (
 	"context"
+	"math"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -32,7 +34,6 @@ import (
 	utilhint "github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/atomic"
-	"math"
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.
