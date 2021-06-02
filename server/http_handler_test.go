@@ -1140,6 +1140,10 @@ func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
 	c.Assert(jobs, DeepEquals, data)
 }
 
+func dummyRecord() *deadlockhistory.DeadlockRecord {
+	return &deadlockhistory.DeadlockRecord{}
+}
+
 func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
@@ -1227,9 +1231,8 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	dbt.mustExec("insert t2 values (unhex('f09f8c80'));")
 
 	// test tidb_deadlock_history_capacity
-	dummyRecord := &deadlockhistory.DeadlockRecord{}
 	for i := 0; i < 10; i++ {
-		deadlockhistory.GetGlobalDeadlockHistory().Push(dummyRecord)
+		deadlockhistory.GetGlobalDeadlockHistory().Push(dummyRecord())
 	}
 	form = make(url.Values)
 	form.Set("tidb_deadlock_history_capacity", "5")
@@ -1237,13 +1240,13 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(len(deadlockhistory.GetGlobalDeadlockHistory().GetAll()), Equals, 5)
 	c.Assert(deadlockhistory.GetGlobalDeadlockHistory().GetAll()[0].ID, Equals, uint64(6))
 	c.Assert(deadlockhistory.GetGlobalDeadlockHistory().GetAll()[4].ID, Equals, uint64(10))
-	deadlockhistory.GetGlobalDeadlockHistory().Push(dummyRecord)
+	deadlockhistory.GetGlobalDeadlockHistory().Push(dummyRecord())
 	c.Assert(len(deadlockhistory.GetGlobalDeadlockHistory().GetAll()), Equals, 5)
 	c.Assert(deadlockhistory.GetGlobalDeadlockHistory().GetAll()[0].ID, Equals, uint64(7))
 	c.Assert(deadlockhistory.GetGlobalDeadlockHistory().GetAll()[4].ID, Equals, uint64(11))
 	form = make(url.Values)
 	form.Set("tidb_deadlock_history_capacity", "6")
-	deadlockhistory.GetGlobalDeadlockHistory().Push(dummyRecord)
+	deadlockhistory.GetGlobalDeadlockHistory().Push(dummyRecord())
 	c.Assert(len(deadlockhistory.GetGlobalDeadlockHistory().GetAll()), Equals, 6)
 	c.Assert(deadlockhistory.GetGlobalDeadlockHistory().GetAll()[0].ID, Equals, uint64(7))
 	c.Assert(deadlockhistory.GetGlobalDeadlockHistory().GetAll()[5].ID, Equals, uint64(12))

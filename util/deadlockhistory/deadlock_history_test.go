@@ -14,6 +14,7 @@
 package deadlockhistory
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -278,17 +279,28 @@ func (s *testDeadlockHistorySuite) TestErrDeadlockToDeadlockRecord(c *C) {
 	c.Assert(record, DeepEquals, expectedRecord)
 }
 
+func dummyRecord() *DeadlockRecord {
+	return &DeadlockRecord{}
+}
+
 func (s *testDeadlockHistorySuite) TestResize(c *C) {
-	dummyRecord := &DeadlockRecord{}
-	h := NewDeadlockHistory(1)
-	h.Push(dummyRecord) // id=1
-	h.Push(dummyRecord) // id=2
-	c.Assert(len(h.GetAll()), Equals, 1)
-	c.Assert(h.GetAll()[0].ID, Equals, uint64(2))
-	h.resize(2)
-	h.Push(dummyRecord) // id=3
+	h := NewDeadlockHistory(2)
+	h.Push(dummyRecord()) // id=1 inserted
+	h.Push(dummyRecord()) // id=2 inserted,
+	h.Push(dummyRecord()) // id=3 inserted, id=1 is removed
+	fmt.Println(h.GetAll()[0].ID)
+	fmt.Println(h.GetAll()[1].ID)
 	c.Assert(len(h.GetAll()), Equals, 2)
-	h.resize(1)
-	c.Assert(len(h.GetAll()), Equals, 1)
+	c.Assert(h.GetAll()[0].ID, Equals, uint64(2))
+	c.Assert(h.GetAll()[1].ID, Equals, uint64(3))
+	h.resize(3)
+	h.Push(dummyRecord()) // id=4 inserted
+	c.Assert(len(h.GetAll()), Equals, 3)
+	c.Assert(h.GetAll()[0].ID, Equals, uint64(2))
+	c.Assert(h.GetAll()[1].ID, Equals, uint64(3))
+	c.Assert(h.GetAll()[2].ID, Equals, uint64(4))
+	h.resize(2) // id=2 removed
+	c.Assert(len(h.GetAll()), Equals, 2)
 	c.Assert(h.GetAll()[0].ID, Equals, uint64(3))
+	c.Assert(h.GetAll()[1].ID, Equals, uint64(4))
 }

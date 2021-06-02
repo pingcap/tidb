@@ -90,10 +90,12 @@ func (d *DeadlockHistory) resize(newCapacity uint) {
 		current := d.getAll()
 		d.head = 0
 		if uint(len(current)) < newCapacity {
+			// extend deadlocks
 			d.deadlocks = make([]*DeadlockRecord, newCapacity)
 			copy(d.deadlocks, current)
 		} else {
-			d.deadlocks = current[:newCapacity]
+			// shrink deadlocks, keep the last len(current)-newCapacity items
+			d.deadlocks = current[uint(len(current))-newCapacity:]
 			d.size = int(newCapacity)
 		}
 	}
