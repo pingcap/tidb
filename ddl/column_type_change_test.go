@@ -1884,7 +1884,7 @@ func (s *testColumnTypeChangeSuite) TestChangeIntToBitWillPanicInBackfillIndexes
 	tk.MustQuery("select * from t").Check(testkit.Rows("\x13 1 1.00", "\x11 2 2.00"))
 }
 
-// Close issue #24971, #24973, #24971
+// Close issue #24971, #24973, #24974
 func (s *testColumnTypeChangeSuite) TestCTCShouldCastTheDefaultValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
