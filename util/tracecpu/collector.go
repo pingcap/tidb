@@ -40,6 +40,11 @@ type TopSQLRecord struct {
 	CPUTimeMs  uint32
 }
 
+type topSQLCollectInput struct {
+	timestamp uint64
+	records   []TopSQLRecord
+}
+
 type planBinaryDecodeFunc func(string) (string, error)
 
 // topSQLDataPoints represents the cumulative SQL plan CPU time in current minute window
@@ -79,9 +84,9 @@ type planRegisterJob struct {
 
 // TopSQLCollector is called periodically to collect TopSQL resource usage metrics
 type TopSQLCollector struct {
-	// // calling this can take a while, so should not block critical paths
-	// planBinaryDecoder planBinaryDecodeFunc
 	mu sync.RWMutex
+	// calling this can take a while, so should not block critical paths
+	planBinaryDecoder planBinaryDecodeFunc
 
 	// topSQLMap maps `sqlDigest-planDigest` to TopSQLDataPoints
 	topSQLMap        map[string]*topSQLDataPoints
@@ -94,6 +99,7 @@ type TopSQLCollector struct {
 	// this should only be set from the dedicated worker
 	normalizedPlanMap map[string]string
 
+	collectChan      chan *topSQLCollectInput
 	planRegisterChan chan *planRegisterJob
 
 	collectInterval  time.Duration
@@ -167,39 +173,55 @@ func newAgentClient(addr string) (*grpc.ClientConn, tipb.TopSQLAgentClient, erro
 // planBinaryDecoder is a decoding function which will be called asynchronously to decode the plan binary to string
 // MaxStatementsNum is the maximum SQL and plan number, which will restrict the memory usage of the internal LFU cache
 func NewTopSQLCollector(config *TopSQLCollectorConfig) *TopSQLCollector {
-	normalizedSQLMap := make(map[string]string)
-	normalizedPlanMap := make(map[string]string)
-	planRegisterChan := make(chan *planRegisterJob, 10)
-	topSQLMap := make(map[string]*topSQLDataPoints)
-
 	collectTimeout := config.CollectTimeout
 	if collectTimeout > config.CollectInterval || collectTimeout <= 0 {
 		collectTimeout = config.CollectInterval / 2
 	}
-
 	tsc := &TopSQLCollector{
-		topSQLMap:         topSQLMap,
+		planBinaryDecoder: config.PlanBinaryDecoder,
 		MaxStatementsNum:  config.MaxStatementsNum,
 		collectInterval:   config.CollectInterval,
 		collectTimeout:    collectTimeout,
-		normalizedSQLMap:  normalizedSQLMap,
-		normalizedPlanMap: normalizedPlanMap,
-		planRegisterChan:  planRegisterChan,
+		topSQLMap:         make(map[string]*topSQLDataPoints),
+		normalizedSQLMap:  make(map[string]string),
+		normalizedPlanMap: make(map[string]string),
+		collectChan:       make(chan *topSQLCollectInput, 1),
+		planRegisterChan:  make(chan *planRegisterJob, 10),
 		agentGRPCAddress:  config.AgentGRPCAddress,
 		instanceID:        config.InstanceID,
 		quit:              make(chan struct{}),
 	}
 
-	go tsc.registerNormalizedPlanWorker(config.PlanBinaryDecoder)
+	go tsc.collectWorker()
 
-	go tsc.sendToAgentWorker(config.CollectInterval)
+	go tsc.registerNormalizedPlanWorker()
+
+	go tsc.sendToAgentWorker()
 
 	return tsc
 }
 
-// Collect uses a hashmap to store records in every minute, and evict every minute.
-// This function can be run in parallel with snapshot, so we should protect the map operations with a mutex.
+// Collect will drop the records when the collect channel is full
 func (tsc *TopSQLCollector) Collect(timestamp uint64, records []TopSQLRecord) {
+	select {
+	case tsc.collectChan <- &topSQLCollectInput{
+		timestamp: timestamp,
+		records:   records,
+	}:
+	default:
+	}
+}
+
+func (tsc *TopSQLCollector) collectWorker() {
+	for {
+		input := <-tsc.collectChan
+		tsc.collect(input.timestamp, input.records)
+	}
+}
+
+// collect uses a hashmap to store records in every second, and evict when necessary.
+// This function can be run in parallel with snapshot, so we should protect the map operations with a mutex.
+func (tsc *TopSQLCollector) collect(timestamp uint64, records []TopSQLRecord) {
 	for _, record := range records {
 		encodedKey := encodeCacheKey(record.SQLDigest, record.PlanDigest)
 		entry, exist := tsc.topSQLMap[string(encodedKey)]
@@ -283,7 +305,7 @@ func (tsc *TopSQLCollector) RegisterNormalizedPlan(planDigest string, normalized
 }
 
 // this should be the only place where the normalizedPlanMap is set
-func (tsc *TopSQLCollector) registerNormalizedPlanWorker(planDecoder planBinaryDecodeFunc) {
+func (tsc *TopSQLCollector) registerNormalizedPlanWorker() {
 	// NOTE: if use multiple worker goroutine, we should make sure that access to the digest map is thread-safe
 	for {
 		job := <-tsc.planRegisterChan
@@ -293,7 +315,7 @@ func (tsc *TopSQLCollector) registerNormalizedPlanWorker(planDecoder planBinaryD
 		if exist {
 			continue
 		}
-		planDecoded, err := planDecoder(job.normalizedPlan)
+		planDecoded, err := tsc.planBinaryDecoder(job.normalizedPlan)
 		if err != nil {
 			fmt.Printf("decode plan failed: %v\n", err)
 			continue
@@ -350,8 +372,8 @@ func (tsc *TopSQLCollector) sendBatch(stream tipb.TopSQLAgent_CollectCPUTimeClie
 }
 
 // sendToAgentWorker will send a snapshot to the gRPC endpoint every collect interval
-func (tsc *TopSQLCollector) sendToAgentWorker(collectInterval time.Duration) {
-	ticker := time.NewTicker(collectInterval)
+func (tsc *TopSQLCollector) sendToAgentWorker() {
+	ticker := time.NewTicker(tsc.collectInterval)
 	for {
 		var ctx context.Context
 		var cancel context.CancelFunc
