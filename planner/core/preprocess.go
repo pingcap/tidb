@@ -1389,6 +1389,10 @@ func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
 	dom := domain.GetDomain(p.ctx)
 	ts := uint64(0)
 	if node != nil {
+		if p.ctx.GetSessionVars().InTxn() {
+			p.err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
+			return
+		}
 		ts, p.err = calculateTsExpr(p.ctx, node)
 		if p.err != nil {
 			return
