@@ -18,7 +18,7 @@ import (
 	"runtime/pprof"
 
 	"github.com/pingcap/parser"
-	"github.com/pingcap/tidb/util/topsql/collector"
+	"github.com/pingcap/tidb/util/topsql/reporter"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 )
 
@@ -50,22 +50,22 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 }
 
 func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string) {
-	c := tracecpu.GlobalSQLCPUProfiler.GetCollector()
+	c := tracecpu.GlobalSQLCPUProfiler.GetReporter()
 	if c == nil {
 		return
 	}
-	topc, ok := c.(collector.TopSQLCollector)
+	topc, ok := c.(reporter.TopSQLReporter)
 	if ok {
 		topc.RegisterSQL(sqlDigest, normalizedSQL)
 	}
 }
 
 func linkPlanTextWithDigest(planDigest []byte, normalizedPlan string) {
-	c := tracecpu.GlobalSQLCPUProfiler.GetCollector()
+	c := tracecpu.GlobalSQLCPUProfiler.GetReporter()
 	if c == nil {
 		return
 	}
-	topc, ok := c.(collector.TopSQLCollector)
+	topc, ok := c.(reporter.TopSQLReporter)
 	if ok {
 		topc.RegisterPlan(planDigest, normalizedPlan)
 	}

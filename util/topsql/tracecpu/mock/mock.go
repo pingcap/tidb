@@ -24,8 +24,8 @@ import (
 	"github.com/uber-go/atomic"
 )
 
-// TopSQLCollector uses for testing.
-type TopSQLCollector struct {
+// TopSQLReporter uses for testing.
+type TopSQLReporter struct {
 	sync.Mutex
 	// sql_digest -> normalized SQL
 	sqlMap map[string]string
@@ -36,9 +36,9 @@ type TopSQLCollector struct {
 	collectCnt  atomic.Int64
 }
 
-// NewTopSQLCollector uses for testing.
-func NewTopSQLCollector() *TopSQLCollector {
-	return &TopSQLCollector{
+// NewTopSQLReporter uses for testing.
+func NewTopSQLReporter() *TopSQLReporter {
+	return &TopSQLReporter{
 		sqlMap:      make(map[string]string),
 		planMap:     make(map[string]string),
 		sqlStatsMap: make(map[string]*tracecpu.SQLCPUResult),
@@ -46,7 +46,7 @@ func NewTopSQLCollector() *TopSQLCollector {
 }
 
 // Collect uses for testing.
-func (c *TopSQLCollector) Collect(ts int64, stats []tracecpu.SQLCPUResult) {
+func (c *TopSQLReporter) Collect(ts int64, stats []tracecpu.SQLCPUResult) {
 	defer c.collectCnt.Inc()
 	if len(stats) == 0 {
 		return
@@ -68,7 +68,7 @@ func (c *TopSQLCollector) Collect(ts int64, stats []tracecpu.SQLCPUResult) {
 }
 
 // GetSQLStatsBySQLWithRetry uses for testing.
-func (c *TopSQLCollector) GetSQLStatsBySQLWithRetry(sql string, planIsNotNull bool) []*tracecpu.SQLCPUResult {
+func (c *TopSQLReporter) GetSQLStatsBySQLWithRetry(sql string, planIsNotNull bool) []*tracecpu.SQLCPUResult {
 	after := time.After(time.Second * 10)
 	for {
 		select {
@@ -85,7 +85,7 @@ func (c *TopSQLCollector) GetSQLStatsBySQLWithRetry(sql string, planIsNotNull bo
 }
 
 // GetSQLStatsBySQL uses for testing.
-func (c *TopSQLCollector) GetSQLStatsBySQL(sql string, planIsNotNull bool) []*tracecpu.SQLCPUResult {
+func (c *TopSQLReporter) GetSQLStatsBySQL(sql string, planIsNotNull bool) []*tracecpu.SQLCPUResult {
 	stats := make([]*tracecpu.SQLCPUResult, 0, 2)
 	sqlDigest := GenSQLDigest(sql)
 	c.Lock()
@@ -106,7 +106,7 @@ func (c *TopSQLCollector) GetSQLStatsBySQL(sql string, planIsNotNull bool) []*tr
 }
 
 // GetSQL uses for testing.
-func (c *TopSQLCollector) GetSQL(sqlDigest []byte) string {
+func (c *TopSQLReporter) GetSQL(sqlDigest []byte) string {
 	c.Lock()
 	sql := c.sqlMap[string(sqlDigest)]
 	c.Unlock()
@@ -114,7 +114,7 @@ func (c *TopSQLCollector) GetSQL(sqlDigest []byte) string {
 }
 
 // GetPlan uses for testing.
-func (c *TopSQLCollector) GetPlan(planDigest []byte) string {
+func (c *TopSQLReporter) GetPlan(planDigest []byte) string {
 	c.Lock()
 	plan := c.planMap[string(planDigest)]
 	c.Unlock()
@@ -122,7 +122,7 @@ func (c *TopSQLCollector) GetPlan(planDigest []byte) string {
 }
 
 // RegisterSQL uses for testing.
-func (c *TopSQLCollector) RegisterSQL(sqlDigest []byte, normalizedSQL string) {
+func (c *TopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL string) {
 	digestStr := string(hack.String(sqlDigest))
 	c.Lock()
 	_, ok := c.sqlMap[digestStr]
@@ -134,7 +134,7 @@ func (c *TopSQLCollector) RegisterSQL(sqlDigest []byte, normalizedSQL string) {
 }
 
 // RegisterPlan uses for testing.
-func (c *TopSQLCollector) RegisterPlan(planDigest []byte, normalizedPlan string) {
+func (c *TopSQLReporter) RegisterPlan(planDigest []byte, normalizedPlan string) {
 	digestStr := string(hack.String(planDigest))
 	c.Lock()
 	_, ok := c.planMap[digestStr]
@@ -145,11 +145,11 @@ func (c *TopSQLCollector) RegisterPlan(planDigest []byte, normalizedPlan string)
 }
 
 // WaitCollectCnt uses for testing.
-func (c *TopSQLCollector) WaitCollectCnt(count int64) {
+func (c *TopSQLReporter) WaitCollectCnt(count int64) {
 	timeout := time.After(time.Second * 10)
 	end := c.collectCnt.Load() + count
 	for {
-		// Wait for collector collect sql stats count >= expected count
+		// Wait for reporter to collect sql stats count >= expected count
 		if c.collectCnt.Load() >= end {
 			break
 		}
@@ -162,7 +162,7 @@ func (c *TopSQLCollector) WaitCollectCnt(count int64) {
 	}
 }
 
-func (c *TopSQLCollector) hash(stat tracecpu.SQLCPUResult) string {
+func (c *TopSQLReporter) hash(stat tracecpu.SQLCPUResult) string {
 	return string(stat.SQLDigest) + string(stat.PlanDigest)
 }
 

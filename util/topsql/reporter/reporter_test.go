@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package collector
+package reporter
 
 import (
 	"context"
@@ -35,19 +35,19 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&testTopSQLCollector{})
+var _ = Suite(&testTopSQLReporter{})
 
-type testTopSQLCollector struct{}
+type testTopSQLReporter struct{}
 
-func (s *testTopSQLCollector) SetUpSuite(c *C) {}
+func (s *testTopSQLReporter) SetUpSuite(c *C) {}
 
-func (s *testTopSQLCollector) SetUpTest(c *C) {}
+func (s *testTopSQLReporter) SetUpTest(c *C) {}
 
 func testPlanBinaryDecoderFunc(plan string) (string, error) {
 	return plan, nil
 }
 
-func populateCache(tsc *TopSQLCollectorImpl, begin, end int, timestamp uint64) {
+func populateCache(tsc *TopSQLReporterImpl, begin, end int, timestamp uint64) {
 	// register normalized sql
 	for i := begin; i < end; i++ {
 		key := "sqlDigest" + strconv.Itoa(i+1)
@@ -74,8 +74,8 @@ func populateCache(tsc *TopSQLCollectorImpl, begin, end int, timestamp uint64) {
 	time.Sleep(10 * time.Millisecond)
 }
 
-func initializeCache(maxStatementsNum int, addr string) *TopSQLCollectorImpl {
-	config := &TopSQLCollectorConfig{
+func initializeCache(maxStatementsNum int, addr string) *TopSQLReporterImpl {
+	config := &TopSQLReporterConfig{
 		PlanBinaryDecoder: testPlanBinaryDecoderFunc,
 		MaxStatementsNum:  maxStatementsNum,
 		CollectInterval:   time.Minute,
@@ -83,7 +83,7 @@ func initializeCache(maxStatementsNum int, addr string) *TopSQLCollectorImpl {
 		AgentGRPCAddress:  addr,
 		InstanceID:        "tidb-server",
 	}
-	ts := NewTopSQLCollector(config)
+	ts := NewTopSQLReporter(config)
 	populateCache(ts, 0, maxStatementsNum, 1)
 	return ts
 }
@@ -123,7 +123,7 @@ func startTestServer(c *C) (*grpc.Server, *testAgentServer, int) {
 	return server, agentServer, lis.Addr().(*net.TCPAddr).Port
 }
 
-func (s *testTopSQLCollector) TestCollectAndGet(c *C) {
+func (s *testTopSQLReporter) TestCollectAndGet(c *C) {
 	tsc := initializeCache(maxSQLNum, ":23333")
 	for i := 0; i < maxSQLNum; i++ {
 		sqlDigest := []byte("sqlDigest" + strconv.Itoa(i+1))
@@ -135,7 +135,7 @@ func (s *testTopSQLCollector) TestCollectAndGet(c *C) {
 	}
 }
 
-func (s *testTopSQLCollector) TestCollectAndVerifyFrequency(c *C) {
+func (s *testTopSQLReporter) TestCollectAndVerifyFrequency(c *C) {
 	tsc := initializeCache(maxSQLNum, ":23333")
 	// traverse the map, and check CPU time and content
 	for i := 0; i < maxSQLNum; i++ {
@@ -152,7 +152,7 @@ func (s *testTopSQLCollector) TestCollectAndVerifyFrequency(c *C) {
 	}
 }
 
-func (s *testTopSQLCollector) TestCollectAndEvict(c *C) {
+func (s *testTopSQLReporter) TestCollectAndEvict(c *C) {
 	tsc := initializeCache(maxSQLNum, ":23333")
 	// Collect maxSQLNum records with timestamp 2 and sql plan digest from maxSQLNum/2 to maxSQLNum/2*3.
 	populateCache(tsc, maxSQLNum/2, maxSQLNum/2*3, 2)
@@ -185,7 +185,7 @@ func (s *testTopSQLCollector) TestCollectAndEvict(c *C) {
 	}
 }
 
-func (s *testTopSQLCollector) TestCollectAndSnapshot(c *C) {
+func (s *testTopSQLReporter) TestCollectAndSnapshot(c *C) {
 	tsc := initializeCache(maxSQLNum, ":23333")
 	batch := tsc.snapshot()
 	for _, req := range batch {
@@ -205,7 +205,7 @@ func (s *testTopSQLCollector) TestCollectAndSnapshot(c *C) {
 	}
 }
 
-func (s *testTopSQLCollector) TestCollectAndSendBatch(c *C) {
+func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
 	server, agentServer, port := startTestServer(c)
 	c.Logf("server is listening on :%d", port)
 	defer server.Stop()

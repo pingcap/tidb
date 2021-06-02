@@ -1180,8 +1180,8 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
-	collector := mock.NewTopSQLCollector()
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(collector)
+	collector := mock.NewTopSQLReporter()
+	tracecpu.GlobalSQLCPUProfiler.SetReporter(collector)
 
 	dbt := &DBTest{c, db}
 	dbt.mustExec("drop database if exists topsql")
