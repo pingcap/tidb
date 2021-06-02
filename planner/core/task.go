@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
@@ -150,22 +151,27 @@ func (t *copTask) finishIndexPlan() {
 	cnt := t.count()
 	t.indexPlanFinished = true
 	sessVars := t.indexPlan.SCtx().GetSessionVars()
+	var (
+		tableInfo *model.TableInfo
+		ts        *PhysicalTableScan
+	)
+	if t.tablePlan != nil {
+		ts = t.tablePlan.(*PhysicalTableScan)
+		ts.stats = t.indexPlan.statsInfo()
+		tableInfo = ts.Table
+	}
 	// Network cost of transferring rows of index scan to TiDB.
-	cst := t.cst + cnt*sessVars.GetNetworkFactor(nil)*t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true, false)
-
+	t.cst += cnt * sessVars.GetNetworkFactor(tableInfo) * t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true, false)
 	if t.tablePlan == nil {
-		t.cst = cst
 		return
 	}
-	ts := t.tablePlan.(*PhysicalTableScan)
-	t.cst += cnt * sessVars.GetNetworkFactor(ts.Table) * t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true, false)
+
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
-	ts.stats = t.indexPlan.statsInfo()
 	var p PhysicalPlan
 	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
 	}
 	rowSize := t.tblColHists.GetIndexAvgRowSize(t.indexPlan.SCtx(), t.tblCols, p.(*PhysicalIndexScan).Index.Unique)
-	t.cst += cnt * rowSize * sessVars.GetScanFactor(ts.Table)
+	t.cst += cnt * rowSize * sessVars.GetScanFactor(tableInfo)
 }
 
 func (t *copTask) getStoreType() kv.StoreType {
