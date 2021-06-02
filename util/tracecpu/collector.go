@@ -14,14 +14,13 @@
 package tracecpu
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"log"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/wangjohn/quickselect"
 	"go.uber.org/zap"
@@ -34,35 +33,39 @@ import (
 // 1. some sql statements has no plan, like `COMMIT`
 // 2. when a sql statement is being compiled, there's no plan yet
 type TopSQLRecord struct {
-	SQLDigest  string
-	PlanDigest string
+	SQLDigest  []byte
+	PlanDigest []byte
 	CPUTimeMs  uint32
 }
 
 type planBinaryDecodeFunc func(string) (string, error)
 
-// TopSQLDataPoints represents the cumulative SQL plan CPU time in current minute window
-type TopSQLDataPoints struct {
+// topSQLDataPoints represents the cumulative SQL plan CPU time in current minute window
+type topSQLDataPoints struct {
+	SQLDigest      []byte
+	PlanDigest     []byte
 	CPUTimeMsList  []uint32
 	TimestampList  []uint64
 	CPUTimeMsTotal uint64
 }
 
-type digestAndCPUTime struct {
+type cpuTimeSort struct {
 	Key            string
+	SQLDigest      []byte
+	PlanDigest     []byte
 	CPUTimeMsTotal uint64
 }
-type digestAndCPUTimeSlice []digestAndCPUTime
+type cpuTimeSortSlice []cpuTimeSort
 
-func (t digestAndCPUTimeSlice) Len() int {
+func (t cpuTimeSortSlice) Len() int {
 	return len(t)
 }
 
 // We need find the kth largest value, so here should use >
-func (t digestAndCPUTimeSlice) Less(i, j int) bool {
+func (t cpuTimeSortSlice) Less(i, j int) bool {
 	return t[i].CPUTimeMsTotal > t[j].CPUTimeMsTotal
 }
-func (t digestAndCPUTimeSlice) Swap(i, j int) {
+func (t cpuTimeSortSlice) Swap(i, j int) {
 	t[i], t[j] = t[j], t[i]
 }
 
@@ -78,7 +81,7 @@ type TopSQLCollector struct {
 	mu sync.RWMutex
 
 	// topSQLMap maps `sqlDigest-planDigest` to TopSQLDataPoints
-	topSQLMap map[string]*TopSQLDataPoints
+	topSQLMap map[string]*topSQLDataPoints
 	maxSQLNum int
 
 	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are normalized SQL strings
@@ -107,15 +110,11 @@ type TopSQLCollectorConfig struct {
 	InstanceID          string
 }
 
-func encodeCacheKey(sqlDigest, planDigest string) string {
-	return sqlDigest + "-" + planDigest
-}
-
-func decodeCacheKey(key string) (string, string) {
-	split := strings.Split(key, "-")
-	sqlDigest := split[0]
-	PlanDigest := split[1]
-	return sqlDigest, PlanDigest
+func encodeCacheKey(sqlDigest, planDigest []byte) []byte {
+	var buffer bytes.Buffer
+	buffer.Write(sqlDigest)
+	buffer.Write(planDigest)
+	return buffer.Bytes()
 }
 
 func newAgentClient(addr string, sendingTimeout time.Duration) (*grpc.ClientConn, tipb.TopSQLAgent_CollectCPUTimeClient, context.CancelFunc, error) {
@@ -143,7 +142,7 @@ func NewTopSQLCollector(config *TopSQLCollectorConfig) *TopSQLCollector {
 	normalizedSQLMap := make(map[string]string)
 	normalizedPlanMap := make(map[string]string)
 	planRegisterChan := make(chan *planRegisterJob, 10)
-	topSQLMap := make(map[string]*TopSQLDataPoints)
+	topSQLMap := make(map[string]*topSQLDataPoints)
 
 	ts := &TopSQLCollector{
 		topSQLMap:         topSQLMap,
@@ -168,13 +167,15 @@ func NewTopSQLCollector(config *TopSQLCollectorConfig) *TopSQLCollector {
 func (ts *TopSQLCollector) Collect(timestamp uint64, records []TopSQLRecord) {
 	for _, record := range records {
 		encodedKey := encodeCacheKey(record.SQLDigest, record.PlanDigest)
-		entry, exist := ts.topSQLMap[encodedKey]
+		entry, exist := ts.topSQLMap[string(encodedKey)]
 		if !exist {
-			entry = &TopSQLDataPoints{
+			entry = &topSQLDataPoints{
+				SQLDigest:     record.SQLDigest,
+				PlanDigest:    record.PlanDigest,
 				CPUTimeMsList: []uint32{record.CPUTimeMs},
 				TimestampList: []uint64{timestamp},
 			}
-			ts.topSQLMap[encodedKey] = entry
+			ts.topSQLMap[string(encodedKey)] = entry
 		} else {
 			entry.CPUTimeMsList = append(entry.CPUTimeMsList, record.CPUTimeMs)
 			entry.TimestampList = append(entry.TimestampList, timestamp)
@@ -187,12 +188,14 @@ func (ts *TopSQLCollector) Collect(timestamp uint64, records []TopSQLRecord) {
 	}
 
 	// find the max CPUTimeMsTotal that should be evicted
-	digestCPUTimeList := make([]digestAndCPUTime, len(ts.topSQLMap))
+	digestCPUTimeList := make([]cpuTimeSort, len(ts.topSQLMap))
 	{
 		i := 0
 		for key, value := range ts.topSQLMap {
-			data := digestAndCPUTime{
+			data := cpuTimeSort{
 				Key:            key,
+				SQLDigest:      value.SQLDigest,
+				PlanDigest:     value.PlanDigest,
 				CPUTimeMsTotal: value.CPUTimeMsTotal,
 			}
 			digestCPUTimeList[i] = data
@@ -200,17 +203,16 @@ func (ts *TopSQLCollector) Collect(timestamp uint64, records []TopSQLRecord) {
 		}
 	}
 	// QuickSelect will only return error when the second parameter is out of range
-	if err := quickselect.QuickSelect(digestAndCPUTimeSlice(digestCPUTimeList), ts.maxSQLNum); err != nil {
+	if err := quickselect.QuickSelect(cpuTimeSortSlice(digestCPUTimeList), ts.maxSQLNum); err != nil {
 		//	skip eviction
 		return
 	}
 	shouldEvictList := digestCPUTimeList[ts.maxSQLNum:]
 	for _, evict := range shouldEvictList {
 		delete(ts.topSQLMap, evict.Key)
-		sqlDigest, planDigest := decodeCacheKey(evict.Key)
 		ts.mu.Lock()
-		delete(ts.normalizedSQLMap, sqlDigest)
-		delete(ts.normalizedPlanMap, planDigest)
+		delete(ts.normalizedSQLMap, string(evict.SQLDigest))
+		delete(ts.normalizedPlanMap, string(evict.PlanDigest))
 		ts.mu.Unlock()
 	}
 }
@@ -263,22 +265,26 @@ func (ts *TopSQLCollector) registerNormalizedPlanWorker(planDecoder planBinaryDe
 
 // snapshot will collect the current snapshot of data for transmission
 // This could run in parallel with `Collect()`, so we should guard it by a mutex.
-func (ts *TopSQLCollector) snapshot() []*tipb.CPUTimeRequestTiDB {
+//
+// NOTE: we could optimize this using a mutex protected pointer-swapping operation,
+// which means we maintain 2 *struct which contains the maps, and snapshot() atomically
+// swaps the pointer. After this, the writing is shifted to the new struct, and
+// we can do the snapshot in the background.
+func (ts *TopSQLCollector) snapshot() []*tipb.CollectCPUTimeRequest {
 	ts.mu.RLock()
 	defer ts.mu.RUnlock()
 	total := len(ts.topSQLMap)
-	batch := make([]*tipb.CPUTimeRequestTiDB, total)
+	batch := make([]*tipb.CollectCPUTimeRequest, total)
 	i := 0
-	for key, value := range ts.topSQLMap {
-		sqlDigest, planDigest := decodeCacheKey(key)
-		normalizedSQL := ts.normalizedSQLMap[sqlDigest]
-		normalizedPlan := ts.normalizedPlanMap[planDigest]
-		batch[i] = &tipb.CPUTimeRequestTiDB{
+	for _, value := range ts.topSQLMap {
+		normalizedSQL := ts.normalizedSQLMap[string(value.SQLDigest)]
+		normalizedPlan := ts.normalizedPlanMap[string(value.PlanDigest)]
+		batch[i] = &tipb.CollectCPUTimeRequest{
 			TimestampList:  value.TimestampList,
 			CpuTimeMsList:  value.CPUTimeMsList,
-			SqlDigest:      sqlDigest,
+			SqlDigest:      value.SQLDigest,
 			NormalizedSql:  normalizedSQL,
-			PlanDigest:     planDigest,
+			PlanDigest:     value.PlanDigest,
 			NormalizedPlan: normalizedPlan,
 		}
 		i++
@@ -286,17 +292,18 @@ func (ts *TopSQLCollector) snapshot() []*tipb.CPUTimeRequestTiDB {
 	return batch
 }
 
-func (ts *TopSQLCollector) sendBatch(stream tipb.TopSQLAgent_CollectCPUTimeClient, batch []*tipb.CPUTimeRequestTiDB) error {
+func (ts *TopSQLCollector) sendBatch(stream tipb.TopSQLAgent_CollectCPUTimeClient, batch []*tipb.CollectCPUTimeRequest) error {
 	for _, req := range batch {
+		// TODO: look into the gRPC configuration for batching request, for potential better performance
 		if err := stream.Send(req); err != nil {
-			logutil.BgLogger().Error("TopSQL: send stream request failed, %v", zap.Error(err))
+			log.Error("TopSQL: send stream request failed, %v", zap.Error(err))
 			return err
 		}
 	}
 	// response is Empty, drop it for now
 	_, err := stream.CloseAndRecv()
 	if err != nil {
-		logutil.BgLogger().Error("TopSQL: receive stream response failed, %v", zap.Error(err))
+		log.Error("TopSQL: receive stream response failed, %v", zap.Error(err))
 		return err
 	}
 	return nil
@@ -313,16 +320,18 @@ func (ts *TopSQLCollector) sendToAgentWorker(interval time.Duration) {
 			if sendingTimeout < 0 {
 				sendingTimeout = interval / 2
 			}
+			// NOTE: Currently we are creating/destroying a TCP connection to the agent every time.
+			// It's fine if we do this every minute, but need optimization if we need to do it more frequently, like every second.
 			conn, stream, _, err := newAgentClient(ts.agentGRPCAddress, sendingTimeout)
 			if err != nil {
-				log.Printf("ERROR: failed to create agent client, %v\n", err)
+				log.Error("ERROR: failed to create agent client, %v\n", zap.Error(err))
 				continue
 			}
 			if err := ts.sendBatch(stream, batch); err != nil {
 				continue
 			}
 			if err := conn.Close(); err != nil {
-				log.Printf("ERROR: failed to close connection, %v\n", err)
+				log.Error("ERROR: failed to close connection, %v\n", zap.Error(err))
 				continue
 			}
 		case <-ts.quit:

@@ -137,8 +137,8 @@ github.com/docker/go-units v0.4.0 h1:3uh0PgVws3nIA0Q+MwDC8yjEPf9zjRfZZWXZYDct3Tw
 github.com/docker/go-units v0.4.0/go.mod h1:fgPhTUdO+D/Jk86RDLlptpiXQzgHJF7gydDDbaIK4Dk=
 github.com/dragonly/kvproto v0.0.0-20210601051714-f9f95d35f2fd h1:T0bkcK0K2L2MG/6svwLd5DTY+iJ7sD4xeHSJ6dn/uIE=
 github.com/dragonly/kvproto v0.0.0-20210601051714-f9f95d35f2fd/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
-github.com/dragonly/tipb v0.0.0-20210601032623-3f8776b05d8b h1:w1lnjv/rkn13Ee55j01C14w5HphGHPD3Zt8MPEVtB2g=
-github.com/dragonly/tipb v0.0.0-20210601032623-3f8776b05d8b/go.mod h1:nsEhnMokcn7MRqd2J60yxpn/ac3ZH8A6GOJ9NslabUo=
+github.com/dragonly/tipb v0.0.0-20210602021946-35c3a0892f56 h1:lcw13wuA3OGbuOM7ClFB7zTAPVfAnMJ+t6nrFqQTsRg=
+github.com/dragonly/tipb v0.0.0-20210602021946-35c3a0892f56/go.mod h1:A7mrd7WHBl1o63LE2bIBGEJMTNWXqhgmYiOvMLxozfs=
 github.com/dustin/go-humanize v0.0.0-20171111073723-bb3d318650d4/go.mod h1:HtrtbFcZ19U5GC7JDqmcUSB87Iq5E25KnS6fMYU6eOk=
 github.com/dustin/go-humanize v1.0.0 h1:VSnTsYCnlFHaM2/igO1h6X3HA71jcobQuxemgkq4zYo=
 github.com/dustin/go-humanize v1.0.0/go.mod h1:HtrtbFcZ19U5GC7JDqmcUSB87Iq5E25KnS6fMYU6eOk=
