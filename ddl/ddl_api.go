@@ -1814,6 +1814,13 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if tbInfo.TempTableType != model.TempTableNone {
+		for _, column := range tbInfo.Columns {
+			if column.IsGenerated() && !column.GeneratedStored {
+				return ErrOptOnTemporaryTable.GenWithStackByArgs("virtual columns")
+			}
+		}
+	}
 
 	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		return err
