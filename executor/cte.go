@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/cteutil"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -77,6 +78,9 @@ type CTEExec struct {
 	curIter    int
 	hCtx       *hashContext
 	sel        []int
+
+	memTracker  *memory.Tracker
+	diskTracker *disk.Tracker
 }
 
 // Open implements the Executor interface.
@@ -93,6 +97,11 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 		return err
 	}
 
+	e.memTracker = memory.NewTracker(e.id, -1)
+	e.diskTracker = disk.NewTracker(e.id, -1)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
+
 	if e.recursiveExec != nil {
 		if err = e.recursiveExec.Open(ctx); err != nil {
 			return err
@@ -103,7 +112,7 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 			return err
 		}
 
-		setupCTEStorageTracker(e.iterOutTbl, e.ctx)
+		setupCTEStorageTracker(e.iterOutTbl, e.ctx, e.memTracker, e.diskTracker)
 	}
 
 	if e.isDistinct {
@@ -126,8 +135,8 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	e.resTbl.Lock()
 	if !e.resTbl.Done() {
 		defer e.resTbl.Unlock()
-		resAction := setupCTEStorageTracker(e.resTbl, e.ctx)
-		iterInAction := setupCTEStorageTracker(e.iterInTbl, e.ctx)
+		resAction := setupCTEStorageTracker(e.resTbl, e.ctx, e.memTracker, e.diskTracker)
+		iterInAction := setupCTEStorageTracker(e.iterInTbl, e.ctx, e.memTracker, e.diskTracker)
 
 		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
 			if val.(bool) && config.GetGlobalConfig().OOMUseTmpStorage {
@@ -323,14 +332,15 @@ func (e *CTEExec) reopenTbls() (err error) {
 	return e.iterInTbl.Reopen()
 }
 
-func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context) (actionSpill *chunk.SpillDiskAction) {
+func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context, parentMemTracker *memory.Tracker,
+	parentDiskTracker *disk.Tracker) (actionSpill *chunk.SpillDiskAction) {
 	memTracker := tbl.GetMemTracker()
 	memTracker.SetLabel(memory.LabelForCTEStorage)
-	memTracker.AttachTo(ctx.GetSessionVars().StmtCtx.MemTracker)
+	memTracker.AttachTo(parentMemTracker)
 
 	diskTracker := tbl.GetDiskTracker()
 	diskTracker.SetLabel(memory.LabelForCTEStorage)
-	diskTracker.AttachTo(ctx.GetSessionVars().StmtCtx.DiskTracker)
+	diskTracker.AttachTo(parentDiskTracker)
 
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		actionSpill = tbl.ActionSpill()
