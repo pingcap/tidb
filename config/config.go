@@ -297,7 +297,7 @@ func (b *nullableBool) UnmarshalJSON(data []byte) error {
 type Log struct {
 	// Log level.
 	Level string `toml:"level" json:"level"`
-	// Log format. one of json, text, or console.
+	// Log format, one of json or text.
 	Format string `toml:"format" json:"format"`
 	// Disable automatic timestamps in output. Deprecated: use EnableTimestamp instead.
 	DisableTimestamp nullableBool `toml:"disable-timestamp" json:"disable-timestamp"`
