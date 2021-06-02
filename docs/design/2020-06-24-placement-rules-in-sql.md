@@ -14,7 +14,7 @@ The scenarios of defining placement rules in SQL include:
 
 - Place data across regions to improve access locality
 - Add a TiFlash replica for a table
-- Limit data within its national border to gaurantee data sovereignty
+- Limit data within its national border to guarantee data sovereignty
 - Place latest data to SSD and history data to HDD
 - Place the leader of hot data to a high-performance TiKV instance
 - Increase the replica count of more important data
@@ -233,7 +233,7 @@ For example, `CONSTRAINTS="{+zone=sh:1,-zone=bj:2}"` indicates to place 1 replic
 
 In the list format, `count` is not specified. The number of replicas for each constraint is not limited, but the total number of replicas should still conform to the `REPLICAS` option.
 
-For example, `CONSTRAINTS="[+zone=sh,+zone=bj]" REPLICAS=3` indicates to place 3 repicas on either `sh` or `bj`. There may be 2 replicas on `sh` and 1 in `bj`, or 2 in `bj` and 1 in `sh`. It's up to PD.
+For example, `CONSTRAINTS="[+zone=sh,+zone=bj]" REPLICAS=3` indicates to place 3 replicas on either `sh` or `bj`. There may be 2 replicas on `sh` and 1 in `bj`, or 2 in `bj` and 1 in `sh`. It's up to PD.
 
 Label constraints can be implemented by defining `label_constraints` field in PD placement rule configuration. `+` and `-` correspond to property `op`. Specifically, `+` is equivalent to `in` and `-` is equivalent to `notIn`.
 
@@ -553,7 +553,7 @@ However, TiDB also uses placement rules in some cases, as discussed in section "
 
 Before choosing the solution, transactional requirements need to be noticed:
 
-- Defining placement rules may fail, and users will probably retry it. As retrying `ADD PLACEMENT POLICY` will add more replicas than expected, the atomacity of the opertion needs to be gauranteed.
+- Defining placement rules may fail, and users will probably retry it. As retrying `ADD PLACEMENT POLICY` will add more replicas than expected, the atomicity of the opertion needs to be guaranteed.
 - `ADD PLACEMENT POLICY` needs to read the original placement rules, combine the 2 rules and then store them to PD, so linearizability should be gauranteed.
 
 If the placement rules are stored on both TiKV and PD, the approaches to keep atomicity are as follows:
@@ -583,7 +583,7 @@ The comparison shows that both solutions are possible, but storing placement rul
 The scenarios where TiDB queries placement rules are as follows:
 
 1. The optimizer uses placement rules to decide to route cop request to TiKV or TiFlash. It's already implemented and the TiFlash information is written into table information, which is stored on TiKV.
-2. It will be probably used in locality-aware features in the furture, such as follower-read. Follower-read is always used when TiDB wants to read the nearest replica to reduce multi-region latency. In some distributed databases, it’s implemented by labelling data nodes and selecting the nearest replica according to the labels.
+2. It will be probably used in locality-aware features in the future, such as follower-read. Follower-read is always used when TiDB wants to read the nearest replica to reduce multi-region latency. In some distributed databases, it’s implemented by labelling data nodes and selecting the nearest replica according to the labels.
 3. Local transactions need to know the binding relationship between Raft leader and region, which is also defined by placement rules.
 4. Once a rule is defined on a table, all the subsequent partitions added to the table should also inherit the rule. So the `ADD PARTITION` operation should query the rules on the table. The same is true for creating tables and indices.
 5. `SHOW PLACEMENT POLICY` statement should output the placement rules correctly.
@@ -615,7 +615,7 @@ The fact that the DDL procedure in TiDB is mature helps to achieve some features
 - Placement rules are defined in serial as there's only one DDL owner at the same time
 - DDL is capable of disaster recovery as the middle states are persistent in TiKV
 - DDL is rollbackable as the middle states can transform from one to another
-- Updating schema version guarantees all active transactions are based on the same version of placement ruels
+- Updating schema version guarantees all active transactions are based on the same version of placement rules
 
 ### Rule priorities
 
@@ -712,7 +712,7 @@ ALTER TABLE t
 	ALTER PLACEMENT POLICY CONSTRAINTS="{+zone=bj:2,+zone=sh:1}" ROLE=voter;
 ```
 
-It needs 2 placement rules for `voter` in the PD placment rule configuration, because each rule can only specify one `count`. To make `id` unique, a unique identifier must be appended to `id`. DDL job ID plus an index in the job is a good choice.
+It needs 2 placement rules for `voter` in the PD placement rule configuration, because each rule can only specify one `count`. To make `id` unique, a unique identifier must be appended to `id`. DDL job ID plus an index in the job is a good choice.
 
 Take the case above for example, assuming the table ID of `t` is 100, the ID of the DDL job executing this statement is 200, then `id` of the placement rules are `100-200-1` and `100-200-2`.
 
