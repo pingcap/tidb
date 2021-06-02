@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
 	"strings"
@@ -66,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/pingcap/tidb/util/topsql"
 	"go.uber.org/zap"
 )
 
@@ -977,7 +979,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.LockCtx {
 	var planDigest *parser.Digest
 	_, sqlDigest := seVars.StmtCtx.SQLDigest()
-	if config.TopSQLEnabled() {
+	if variable.TopSQLEnabled() {
 		_, planDigest = seVars.StmtCtx.GetPlanDigest()
 	}
 	return &tikvstore.LockCtx{
@@ -1629,10 +1631,11 @@ func (e *UnionExec) Close() error {
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
 	sc := &stmtctx.StatementContext{
-		TimeZone:    vars.Location(),
-		MemTracker:  memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery),
-		DiskTracker: disk.NewTracker(memory.LabelForSQLText, -1),
-		TaskID:      stmtctx.AllocateTaskID(),
+		TimeZone:      vars.Location(),
+		MemTracker:    memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery),
+		DiskTracker:   disk.NewTracker(memory.LabelForSQLText, -1),
+		TaskID:        stmtctx.AllocateTaskID(),
+		CTEStorageMap: map[int]*CTEStorages{},
 	}
 	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 	globalConfig := config.GetGlobalConfig()
@@ -1652,9 +1655,20 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.MemTracker.SetActionOnExceed(action)
 	}
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
-		s, err = planner.GetPreparedStmt(execStmt, vars)
+		prepareStmt, err := planner.GetPreparedStmt(execStmt, vars)
 		if err != nil {
-			return
+			return err
+		}
+		s = prepareStmt.PreparedAst.Stmt
+		sc.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
+		// For `execute stmt` SQL, should reset the SQL digest with the prepare SQL digest.
+		goCtx := context.Background()
+		if variable.EnablePProfSQLCPU.Load() && len(prepareStmt.NormalizedSQL) > 0 {
+			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", util.QueryStrForLog(prepareStmt.NormalizedSQL)))
+			pprof.SetGoroutineLabels(goCtx)
+		}
+		if variable.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
+			goCtx = topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, "", nil)
 		}
 	}
 	// execute missed stmtID uses empty sql
@@ -1822,7 +1836,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 }
 
 func setResourceGroupTagForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
-	if snapshot != nil && config.TopSQLEnabled() {
+	if snapshot != nil && variable.TopSQLEnabled() {
 		snapshot.SetOption(kv.ResourceGroupTag, sc.GetResourceGroupTag())
 	}
 }

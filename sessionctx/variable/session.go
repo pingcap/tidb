@@ -463,7 +463,7 @@ type SessionVars struct {
 	SnapshotTS uint64
 
 	// TxnReadTS is used for staleness transaction, it provides next staleness transaction startTS.
-	TxnReadTS uint64
+	TxnReadTS *TxnReadTS
 
 	// SnapshotInfoschema is used with SnapshotTS, when the schema version at snapshotTS less than current schema
 	// version, we load an old version schema for query.
@@ -822,9 +822,6 @@ type SessionVars struct {
 	// AllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
 	// Now we only support TiFlash.
 	AllowFallbackToTiKV map[kv.StoreType]struct{}
-
-	// EnableDynamicPrivileges indicates whether to permit experimental support for MySQL 8.0 compatible dynamic privileges.
-	EnableDynamicPrivileges bool
 
 	// CTEMaxRecursionDepth indicates The common table expression (CTE) maximum recursion depth.
 	// see https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_cte_max_recursion_depth
@@ -2057,4 +2054,55 @@ type QueryInfo struct {
 	StartTS     uint64 `json:"start_ts"`
 	ForUpdateTS uint64 `json:"for_update_ts"`
 	ErrMsg      string `json:"error,omitempty"`
+}
+
+// TxnReadTS indicates the value and used situation for tx_read_ts
+type TxnReadTS struct {
+	readTS uint64
+	used   bool
+}
+
+// NewTxnReadTS creates TxnReadTS
+func NewTxnReadTS(ts uint64) *TxnReadTS {
+	return &TxnReadTS{
+		readTS: ts,
+		used:   false,
+	}
+}
+
+// UseTxnReadTS returns readTS, and mark used as true
+func (t *TxnReadTS) UseTxnReadTS() uint64 {
+	if t == nil {
+		return 0
+	}
+	t.used = true
+	return t.readTS
+}
+
+// SetTxnReadTS update readTS, and refresh used
+func (t *TxnReadTS) SetTxnReadTS(ts uint64) {
+	if t == nil {
+		return
+	}
+	t.used = false
+	t.readTS = ts
+}
+
+// PeakTxnReadTS returns readTS
+func (t *TxnReadTS) PeakTxnReadTS() uint64 {
+	if t == nil {
+		return 0
+	}
+	return t.readTS
+}
+
+// CleanupTxnReadTSIfUsed cleans txnReadTS if used
+func (s *SessionVars) CleanupTxnReadTSIfUsed() {
+	if s.TxnReadTS == nil {
+		return
+	}
+	if s.TxnReadTS.used && s.TxnReadTS.readTS > 0 {
+		s.TxnReadTS = NewTxnReadTS(0)
+		s.SnapshotInfoschema = nil
+	}
 }

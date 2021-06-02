@@ -2370,12 +2370,15 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 	case *ast.ShutdownStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShutdownPriv, "", "", "", nil)
 	case *ast.BeginStmt:
+		readTS := b.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
 		if raw.AsOf != nil {
 			startTS, err := calculateTsExpr(b.ctx, raw.AsOf)
 			if err != nil {
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS
+		} else if readTS > 0 {
+			p.StaleTxnStartTS = readTS
 		}
 	}
 	return p, nil
@@ -3476,6 +3479,9 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				if cons.Tp == ast.ConstraintForeignKey {
 					return nil, infoschema.ErrCannotAddForeign
 				}
+			}
+			if v.ReferTable != nil {
+				return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("create table like")
 			}
 		}
 		if b.ctx.GetSessionVars().User != nil {
