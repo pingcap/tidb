@@ -862,7 +862,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 
 	// handling virtual columns
 	var hasVirtualCol bool
-	var chk *chunk.Chunk
 	fieldTps := make([]*types.FieldType, 0, len(schema.Columns))
 	virtualColIdx := make([]int, 0)
 	for i, col := range schema.Columns {
@@ -1047,12 +1046,15 @@ func (e *AnalyzeColumnsExec) handleNDVForIndexWithVirtualCol(indexInfos []*model
 			break
 		}
 		if result.Err != nil {
+			result.job.Finish(true)
 			err = result.Err
 			if err == errAnalyzeWorkerPanic {
 				panicCnt++
 			}
 			continue
 		}
+		result.job.Finish(false)
+		statistics.MoveToHistory(result.job)
 		totalResult.results[result.Hist[0].ID] = result
 	}
 	if err != nil {
