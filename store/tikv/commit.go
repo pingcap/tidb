@@ -98,7 +98,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 			if same {
 				continue
 			}
-			err = c.doActionOnMutations(bo, actionPrewrite{true}, batch.mutations)
+			err = c.doActionOnMutations(bo, actionCommit{true}, batch.mutations)
 			return errors.Trace(err)
 		}
 

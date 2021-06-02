@@ -523,7 +523,6 @@ func (c *twoPhaseCommitter) groupMutations(bo *Backoffer, mutations CommitterMut
 			logutil.BgLogger().Info("2PC detect large amount of mutations on a single region",
 				zap.Uint64("region", group.region.GetID()),
 				zap.Int("mutations count", group.mutations.Len()))
-			// Use context.Background, this time should not add up to Backoffer.
 			if c.store.preSplitRegion(bo.GetCtx(), group) {
 				didPreSplit = true
 			}
