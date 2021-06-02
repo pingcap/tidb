@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -939,52 +940,52 @@ func getSchemaTablesStorageInfo(h *schemaStorageHandler, schema *model.CIStr, ta
 	if s, err = session.CreateSession(h.Store); err != nil {
 		return
 	}
-	if s != nil {
-		defer s.Close()
-		condition := make([]string, 0)
-		params := make([]interface{}, 0)
+	defer s.Close()
 
-		if schema != nil {
-			condition = append(condition, `TABLE_SCHEMA = %?`)
-			params = append(params, schema.O)
-		}
-		if table != nil {
-			condition = append(condition, `TABLE_NAME = %?`)
-			params = append(params, table.O)
-		}
+	ctx := s.(sessionctx.Context)
+	condition := make([]string, 0)
+	params := make([]interface{}, 0)
 
-		sql := `select TABLE_SCHEMA,TABLE_NAME,TABLE_ROWS,AVG_ROW_LENGTH,DATA_LENGTH,MAX_DATA_LENGTH,INDEX_LENGTH,DATA_FREE from INFORMATION_SCHEMA.TABLES`
-		if len(condition) > 0 {
-			sql += ` WHERE ` + strings.Join(condition, ` AND `)
-		}
-		var results sqlexec.RecordSet
-		if results, err = s.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, params...); err != nil {
-			logutil.BgLogger().Error(`ExecuteInternal`, zap.Error(err))
-		} else if results != nil {
-			messages = make([]*schemaTableStorage, 0)
-			defer terror.Call(results.Close)
-			for {
-				req := results.NewChunk()
-				if err = results.Next(context.TODO(), req); err != nil {
-					break
-				}
+	if schema != nil {
+		condition = append(condition, `TABLE_SCHEMA = %?`)
+		params = append(params, schema.O)
+	}
+	if table != nil {
+		condition = append(condition, `TABLE_NAME = %?`)
+		params = append(params, table.O)
+	}
 
-				if req.NumRows() == 0 {
-					break
-				}
+	sql := `select TABLE_SCHEMA,TABLE_NAME,TABLE_ROWS,AVG_ROW_LENGTH,DATA_LENGTH,MAX_DATA_LENGTH,INDEX_LENGTH,DATA_FREE from INFORMATION_SCHEMA.TABLES`
+	if len(condition) > 0 {
+		sql += ` WHERE ` + strings.Join(condition, ` AND `)
+	}
+	var results sqlexec.RecordSet
+	if results, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, params...); err != nil {
+		logutil.BgLogger().Error(`ExecuteInternal`, zap.Error(err))
+	} else if results != nil {
+		messages = make([]*schemaTableStorage, 0)
+		defer terror.Call(results.Close)
+		for {
+			req := results.NewChunk()
+			if err = results.Next(context.TODO(), req); err != nil {
+				break
+			}
 
-				for i := 0; i < req.NumRows(); i++ {
-					messages = append(messages, &schemaTableStorage{
-						TableSchema:   req.GetRow(i).GetString(0),
-						TableName:     req.GetRow(i).GetString(1),
-						TableRows:     req.GetRow(i).GetInt64(2),
-						AvgRowLength:  req.GetRow(i).GetInt64(3),
-						DataLength:    req.GetRow(i).GetInt64(4),
-						MaxDataLength: req.GetRow(i).GetInt64(5),
-						IndexLength:   req.GetRow(i).GetInt64(6),
-						DataFree:      req.GetRow(i).GetInt64(7),
-					})
-				}
+			if req.NumRows() == 0 {
+				break
+			}
+
+			for i := 0; i < req.NumRows(); i++ {
+				messages = append(messages, &schemaTableStorage{
+					TableSchema:   req.GetRow(i).GetString(0),
+					TableName:     req.GetRow(i).GetString(1),
+					TableRows:     req.GetRow(i).GetInt64(2),
+					AvgRowLength:  req.GetRow(i).GetInt64(3),
+					DataLength:    req.GetRow(i).GetInt64(4),
+					MaxDataLength: req.GetRow(i).GetInt64(5),
+					IndexLength:   req.GetRow(i).GetInt64(6),
+					DataFree:      req.GetRow(i).GetInt64(7),
+				})
 			}
 		}
 	}
