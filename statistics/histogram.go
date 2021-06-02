@@ -1088,7 +1088,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		}
 		// The interval case.
 		cnt := c.BetweenRowCount(sc, lowVal, highVal, lowEncoded, highEncoded)
-		if (c.outOfRange(lowVal, nil) && !lowVal.IsNull()) || c.outOfRange(highVal, nil) {
+		if (c.outOfRange(lowVal, lowEncoded) && !lowVal.IsNull()) || c.outOfRange(highVal, highEncoded) {
 			cnt += outOfRangeEQSelectivity(outOfRangeBetweenRate, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount()
 		}
 		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boudaries here.
