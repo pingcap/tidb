@@ -167,21 +167,12 @@ func (r *RegionStore) follower(seed uint32, op *storeSelectorOp) AccessIndex {
 }
 
 // return next leader or follower store's index
-func (r *RegionStore) kvPeer(region *Region, seed uint32, op *storeSelectorOp) AccessIndex {
+func (r *RegionStore) kvPeer(seed uint32, op *storeSelectorOp) AccessIndex {
 	candidates := make([]AccessIndex, 0, r.accessStoreNum(TiKVOnly))
 	for i := 0; i < r.accessStoreNum(TiKVOnly); i++ {
 		accessIdx := AccessIndex(i)
 		storeIdx, s := r.accessStore(TiKVOnly, accessIdx)
-		if r.storeEpochs[storeIdx] != atomic.LoadUint32(&s.epoch) || !r.filterStoreCandidate(AccessIndex(i), op) {
-			continue
-		}
-		// Exclude by the excludedPeerIDs.
-		if peer := region.meta.Peers[storeIdx]; slice.AnyOf(op.excludedPeerIDs, func(i int) bool {
-			return op.excludedPeerIDs[i] == peer.GetId()
-		}) ||
-			// Learner peer is only an intermediate state, so we should not send any request to it.
-			// TODO: better to retry by TiKV response's error message in (*RegionRequestSender).onRegionError.
-			peer.GetRole() == metapb.PeerRole_Learner {
+		if r.storeEpochs[storeIdx] != atomic.LoadUint32(&s.epoch) || !r.filterStoreCandidate(accessIdx, op) {
 			continue
 		}
 		candidates = append(candidates, accessIdx)
@@ -195,7 +186,13 @@ func (r *RegionStore) kvPeer(region *Region, seed uint32, op *storeSelectorOp) A
 
 func (r *RegionStore) filterStoreCandidate(aidx AccessIndex, op *storeSelectorOp) bool {
 	_, s := r.accessStore(TiKVOnly, aidx)
-	// filter label unmatched store
+	// Filter by the excludedStoreIDs first.
+	if slice.AnyOf(op.excludedStoreIDs, func(i int) bool {
+		return op.excludedStoreIDs[i] == s.storeID
+	}) {
+		return false
+	}
+	// Filter label unmatched store.
 	return s.IsLabelsMatch(op.labels)
 }
 
@@ -432,7 +429,7 @@ type RPCContext struct {
 
 	isStaleRead          bool
 	storeSelectorOptions []StoreSelectorOption
-	lastPeerID           uint64
+	lastStoreID          uint64
 }
 
 func (c *RPCContext) String() string {
@@ -449,8 +446,8 @@ func (c *RPCContext) String() string {
 }
 
 type storeSelectorOp struct {
-	labels          []*metapb.StoreLabel
-	excludedPeerIDs []uint64
+	labels           []*metapb.StoreLabel
+	excludedStoreIDs []uint64
 }
 
 // StoreSelectorOption configures storeSelectorOp.
@@ -459,22 +456,14 @@ type StoreSelectorOption func(*storeSelectorOp)
 // WithMatchLabels indicates selecting stores with matched labels.
 func WithMatchLabels(labels []*metapb.StoreLabel) StoreSelectorOption {
 	return func(op *storeSelectorOp) {
-		if op.labels != nil {
-			op.labels = append(op.labels, labels...)
-		} else {
-			op.labels = labels
-		}
+		op.labels = append(op.labels, labels...)
 	}
 }
 
-// WithExcludedPeerIDs indicates selecting stores without any matched peerID on it.
-func WithExcludedPeerIDs(storeIDs []uint64) StoreSelectorOption {
+// WithExcludedStoreIDs indicates selecting stores without these excluded StoreIDs.
+func WithExcludedStoreIDs(storeIDs []uint64) StoreSelectorOption {
 	return func(op *storeSelectorOp) {
-		if op.excludedPeerIDs != nil {
-			op.excludedPeerIDs = append(op.excludedPeerIDs, storeIDs...)
-		} else {
-			op.excludedPeerIDs = storeIDs
-		}
+		op.excludedStoreIDs = append(op.excludedStoreIDs, storeIDs...)
 	}
 }
 
@@ -1698,7 +1687,7 @@ func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32, op
 
 // AnyStorePeer returns a leader or follower store with the associated peer.
 func (r *Region) AnyStorePeer(rs *RegionStore, followerStoreSeed uint32, op *storeSelectorOp) (store *Store, peer *metapb.Peer, accessIdx AccessIndex, storeIdx int) {
-	return r.getKvStorePeer(rs, rs.kvPeer(r, followerStoreSeed, op))
+	return r.getKvStorePeer(rs, rs.kvPeer(followerStoreSeed, op))
 }
 
 // RegionVerID is a unique ID that can identify a Region at a specific version.

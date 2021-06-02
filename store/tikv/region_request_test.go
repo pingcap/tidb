@@ -186,7 +186,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestStoreTokenLimit(c *C) {
 	kv.StoreLimit.Store(oldStoreLimit)
 }
 
-func (s *testRegionRequestToThreeStoresSuite) TestGetRPCContextWithExcludedPeerIDs(c *C) {
+func (s *testRegionRequestToThreeStoresSuite) TestGetRPCContextWithExcludedStoreIDs(c *C) {
 	// Load the bootstrapped region into the cache.
 	_, err := s.cache.BatchLoadRegionsFromKey(s.bo, []byte{}, 1)
 	c.Assert(err, IsNil)
@@ -198,24 +198,24 @@ func (s *testRegionRequestToThreeStoresSuite) TestGetRPCContextWithExcludedPeerI
 	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{}, kv.ReplicaReadMixed, &seed)
 	rpcCtx, err := s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV)
 	c.Assert(err, IsNil)
-	peedID1 := rpcCtx.Peer.GetId()
+	storeID := rpcCtx.Store.storeID
 
-	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV, WithExcludedPeerIDs([]uint64{peedID1}))
+	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV, WithExcludedStoreIDs([]uint64{storeID}))
 	c.Assert(err, IsNil)
-	peedID2 := rpcCtx.Peer.GetId()
-	c.Assert(peedID1, Not(Equals), peedID2)
+	storeID2 := rpcCtx.Store.storeID
+	c.Assert(storeID, Not(Equals), storeID2)
 
-	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV, WithExcludedPeerIDs([]uint64{peedID1, peedID2}))
+	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV, WithExcludedStoreIDs([]uint64{storeID, storeID2}))
 	c.Assert(err, IsNil)
-	peedID3 := rpcCtx.Peer.GetId()
-	c.Assert(peedID1, Not(Equals), peedID3)
-	c.Assert(peedID2, Not(Equals), peedID3)
+	storeID3 := rpcCtx.Store.storeID
+	c.Assert(storeID, Not(Equals), storeID3)
+	c.Assert(storeID2, Not(Equals), storeID3)
 
 	// All stores are excluded, leader peer will be chosen.
-	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV, WithExcludedPeerIDs([]uint64{peedID1, peedID2, peedID3}))
+	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV, WithExcludedStoreIDs([]uint64{storeID, storeID2, storeID3}))
 	c.Assert(err, IsNil)
-	peedID4 := rpcCtx.Peer.GetId()
-	c.Assert(peedID1, Equals, peedID4)
+	storeID4 := rpcCtx.Store.storeID
+	c.Assert(storeID, Equals, storeID4)
 	c.Assert(rpcCtx.Peer.GetId(), Equals, s.leaderPeer)
 }
 

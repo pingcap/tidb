@@ -278,16 +278,16 @@ func (s *RegionRequestSender) SendReqCtx(
 			logutil.Logger(bo.GetCtx()).Warn("retry get ", zap.Uint64("region = ", regionID.GetID()), zap.Int("times = ", tryTimes))
 		}
 
-		var lastPeerID uint64
+		var lastStoreID uint64
 		if rpcCtx != nil {
-			lastPeerID = rpcCtx.Peer.GetId()
+			lastStoreID = rpcCtx.Store.storeID
 		}
 		rpcCtx, err = s.getRPCContext(bo, req, regionID, et, opts...)
 		if err != nil {
 			return nil, nil, err
 		}
 		if rpcCtx != nil {
-			rpcCtx.lastPeerID = lastPeerID
+			rpcCtx.lastStoreID = lastStoreID
 		}
 
 		failpoint.Inject("invalidCacheAndRetry", func() {
@@ -663,11 +663,11 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 	}
 	opts = ctx.storeSelectorOptions
 	// Stale Read request will retry the leader or next peer on error,
-	// so we will exclude the PeerID of the requested peer every time.
-	// If the new PeerID keeps being the same with the last one, we
+	// so we will exclude the StoreID of the requested peer every time.
+	// If the new StoreID keeps being the same with the last one, we
 	// should not continue excluding it to make the opts become bigger.
-	if ctx.isStaleRead && ctx.lastPeerID != ctx.Peer.GetId() {
-		opts = append(opts, WithExcludedPeerIDs([]uint64{ctx.Peer.GetId()}))
+	if ctx.isStaleRead && ctx.lastStoreID != ctx.Store.storeID {
+		opts = append(opts, WithExcludedStoreIDs([]uint64{ctx.Store.storeID}))
 	}
 
 	metrics.TiKVRegionErrorCounter.WithLabelValues(regionErrorToLabel(regionErr)).Inc()
