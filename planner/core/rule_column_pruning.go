@@ -88,7 +88,11 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 	child := la.children[0]
 	used := expression.GetUsedList(parentUsedCols, la.Schema())
 
+	allFirstRow := true
 	for i := len(used) - 1; i >= 0; i-- {
+		if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
+			allFirstRow = false
+		}
 		if !used[i] {
 			la.schema.Columns = append(la.schema.Columns[:i], la.schema.Columns[i+1:]...)
 			la.AggFuncs = append(la.AggFuncs[:i], la.AggFuncs[i+1:]...)
@@ -103,15 +107,24 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 		selfUsedCols = append(selfUsedCols, cols...)
 	}
 	if len(la.AggFuncs) == 0 {
-		// If all the aggregate functions are pruned, we should add an aggregate function to keep the correctness.
-		one, err := aggregation.NewAggFuncDesc(la.ctx, ast.AggFuncFirstRow, []expression.Expression{expression.NewOne()}, false)
+		// If all the aggregate functions are pruned, we should add an aggregate function to maintain the info of row numbers.
+		// For all the aggregate functions except `first_row`, if we have an empty table defined as t(a,b),
+		// `select agg(a) from t` would always return one row, while `select agg(a) from t group by b` would return empty.
+		// For `first_row` which is only used internally by tidb, `first_row(a)` would always return empty for empty input now.
+		var err error
+		var newAgg *aggregation.AggFuncDesc
+		if allFirstRow {
+			newAgg, err = aggregation.NewAggFuncDesc(la.ctx, ast.AggFuncFirstRow, []expression.Expression{expression.NewOne()}, false)
+		} else {
+			newAgg, err = aggregation.NewAggFuncDesc(la.ctx, ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
+		}
 		if err != nil {
 			return err
 		}
-		la.AggFuncs = []*aggregation.AggFuncDesc{one}
+		la.AggFuncs = []*aggregation.AggFuncDesc{newAgg}
 		col := &expression.Column{
 			UniqueID: la.ctx.GetSessionVars().AllocPlanColumnID(),
-			RetType:  one.RetTp,
+			RetType:  newAgg.RetTp,
 		}
 		la.schema.Columns = []*expression.Column{col}
 	}
