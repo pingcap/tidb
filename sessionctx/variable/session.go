@@ -555,8 +555,6 @@ type SessionVars struct {
 
 	SQLMode mysql.SQLMode
 
-	DEBUG bool
-
 	// AutoIncrementIncrement and AutoIncrementOffset indicates the autoID's start value and increment.
 	AutoIncrementIncrement int
 
