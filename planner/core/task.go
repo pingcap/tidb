@@ -151,12 +151,9 @@ func (t *copTask) finishIndexPlan() {
 	cnt := t.count()
 	t.indexPlanFinished = true
 	sessVars := t.indexPlan.SCtx().GetSessionVars()
-	var (
-		tableInfo *model.TableInfo
-		ts        *PhysicalTableScan
-	)
+	var tableInfo *model.TableInfo
 	if t.tablePlan != nil {
-		ts = t.tablePlan.(*PhysicalTableScan)
+		ts := t.tablePlan.(*PhysicalTableScan)
 		ts.stats = t.indexPlan.statsInfo()
 		tableInfo = ts.Table
 	}
