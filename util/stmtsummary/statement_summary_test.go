@@ -663,6 +663,12 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 
 	// test evict
 	err := s.ssMap.SetMaxStmtCount("1", false)
+	defer func() {
+		// clean up
+		err = s.ssMap.SetMaxStmtCount("", false)
+		c.Assert(err, IsNil)
+	}()
+
 	c.Assert(err, IsNil)
 	stmtExecInfo2 := stmtExecInfo1
 	stmtExecInfo2.Digest = "bandit sei"
