@@ -4531,3 +4531,32 @@ func (s *testSessionSuite) TestInTxnPSProtoPointGet(c *C) {
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("commit")
 }
+
+func (s *testSessionSuite) TestTiDBEnableGlobalTemporaryTable(c *C) {
+	// Test the @@tidb_enable_global_temporary_table system variable.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// variable 'tidb_enable_global_temporary_table' should not be seen when show variables
+	tk.MustQuery("show variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows())
+	tk.MustQuery("show global variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows())
+
+	// variable 'tidb_enable_global_temporary_table' is turned off by default
+	tk.MustQuery("select @@global.tidb_enable_global_temporary_table").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@tidb_enable_global_temporary_table").Check(testkit.Rows("0"))
+	c.Assert(tk.Se.GetSessionVars().EnableGlobalTemporaryTable, IsFalse)
+
+	// cannot create global temporary table when 'tidb_enable_global_temporary_table' is off
+	tk.MustGetErrMsg(
+		"create global temporary table temp_test(id int primary key auto_increment) on commit delete rows",
+		"global temporary table is experimental and it is switched off by tidb_enable_global_temporary_table",
+	)
+	tk.MustQuery("show tables like 'temp_test'").Check(testkit.Rows())
+
+	// you can create global temporary table when 'tidb_enable_global_temporary_table' is on
+	tk.MustExec("set tidb_enable_global_temporary_table=on")
+	tk.MustQuery("select @@tidb_enable_global_temporary_table").Check(testkit.Rows("1"))
+	c.Assert(tk.Se.GetSessionVars().EnableGlobalTemporaryTable, IsTrue)
+	tk.MustExec("create global temporary table temp_test(id int primary key auto_increment) on commit delete rows")
+	tk.MustQuery("show tables like 'temp_test'").Check(testkit.Rows("temp_test"))
+}
