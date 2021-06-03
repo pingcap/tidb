@@ -19,17 +19,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/store/tikv/logutil"
-
-	// "github.com/pingcap/tidb/types"
-	"github.com/pingcap/errors"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	pmodel "github.com/prometheus/common/model"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	// "go.uber.org/zap"
 )
 
 var (
@@ -128,24 +125,22 @@ func getSQLSum(sqlTypeDeta *sqlType) int64 {
 	return result
 }
 
-func readSQLMetric(timepoint time.Time, SQLresult sqlUsageData) (sqlUsageData, error) {
+func readSQLMetric(timepoint time.Time, SQLresult *sqlUsageData) error {
 	ctx := context.TODO()
-	quantile := 0.99
-
-	result, err := querySQLMetric(ctx, timepoint, quantile)
+	result, err := querySQLMetric(ctx, timepoint)
 	if err != nil {
 		if err1, ok := err.(*promv1.Error); ok {
-			return SQLresult, errors.Errorf("query metric error, msg: %v, detail: %v", err1.Msg, err1.Detail)
+			return errors.Errorf("query metric error, msg: %v, detail: %v", err1.Msg, err1.Detail)
 		}
-		return SQLresult, errors.Errorf("query metric error: %v", err.Error())
+		return errors.Errorf("query metric error: %v", err.Error())
 	}
 
-	dataAnylis(result, &SQLresult)
-	return SQLresult, nil
+	dataAnylis(result, SQLresult)
+	return nil
 
 }
 
-func querySQLMetric(ctx context.Context, queryTime time.Time, quantile float64) (result pmodel.Value, err error) {
+func querySQLMetric(ctx context.Context, queryTime time.Time) (result pmodel.Value, err error) {
 	// Add retry to avoid network error.
 	var prometheusAddr string
 	for i := 0; i < 5; i++ {
@@ -186,12 +181,12 @@ func dataAnylis(promResult pmodel.Value, SQLresult *sqlUsageData) {
 		matrix := promResult.(pmodel.Vector)
 		for _, m := range matrix {
 			v := m.Value
-			genRecord(m.Metric, v, SQLresult)
+			fillSQLResult(m.Metric, v, SQLresult)
 		}
 	}
 }
 
-func genRecord(metric pmodel.Metric, pair pmodel.SampleValue, SQLresult *sqlUsageData) {
+func fillSQLResult(metric pmodel.Metric, pair pmodel.SampleValue, SQLresult *sqlUsageData) {
 	v := ""
 	if metric != nil {
 		v = string(metric[pmodel.LabelName("type")])
@@ -234,7 +229,6 @@ func genRecord(metric pmodel.Metric, pair pmodel.SampleValue, SQLresult *sqlUsag
 }
 
 // RotateSubWindow rotates the telemetry sub window.
-// ctx sessionctx.Context
 func RotateSubWindow() {
 	thisSubWindow := windowData{
 		BeginAt:      time.Now(),
@@ -256,8 +250,8 @@ func RotateSubWindow() {
 			SQLTotal: 0,
 		},
 	}
-	var err error
-	thisSubWindow.SQLUsage, err = readSQLMetric(time.Now(), thisSubWindow.SQLUsage)
+
+	err := readSQLMetric(time.Now(), &thisSubWindow.SQLUsage)
 	if err != nil {
 		logutil.BgLogger().Error("Error exists when calling prometheus", zap.Error(err))
 	}
