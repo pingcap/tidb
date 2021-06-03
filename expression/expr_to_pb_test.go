@@ -729,6 +729,11 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+        // Replace
+	function, err = NewFunction(mock.NewContext(), ast.Replace, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn, stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
 	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeDouble), realColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
