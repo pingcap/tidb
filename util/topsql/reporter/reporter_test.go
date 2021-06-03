@@ -187,12 +187,17 @@ func (s *testTopSQLReporter) TestCollectAndEvict(c *C) {
 
 func (s *testTopSQLReporter) TestCollectAndSnapshot(c *C) {
 	tsr := initializeCache(maxSQLNum, ":23333")
+	// because snapshot() will clear the TopSQL map, we should keep a copy here for comparison later
+	copy := make(map[string]*topSQLDataPoints)
+	for k, v := range tsr.topSQLMap {
+		copy[k] = v
+	}
 	batch := tsr.snapshot()
 	for _, req := range batch {
 		sqlDigest := req.SqlDigest
 		planDigest := req.PlanDigest
 		encodedKey := encodeKey(sqlDigest, planDigest)
-		value, exist := tsr.topSQLMap[string(encodedKey)]
+		value, exist := copy[string(encodedKey)]
 		c.Assert(exist, Equals, true, Commentf("key '%s' should exist", string(encodedKey)))
 		c.Assert(len(req.CpuTimeMsList), Equals, len(value.CPUTimeMsList))
 		for i, ct := range value.CPUTimeMsList {
@@ -211,6 +216,11 @@ func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
 	defer server.Stop()
 
 	tsr := initializeCache(maxSQLNum, fmt.Sprintf(":%d", port))
+	// because snapshot() will clear the TopSQL map, we should keep a copy here for comparison later
+	copy := make(map[string]*topSQLDataPoints)
+	for k, v := range tsr.topSQLMap {
+		copy[k] = v
+	}
 	batch := tsr.snapshot()
 
 	conn, client, err := newAgentClient(tsr.agentGRPCAddress.Load().(string))
@@ -227,7 +237,7 @@ func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
 	// check for equality of server received batch and the original data
 	for _, req := range agentServer.batch {
 		encodedKey := encodeKey(req.SqlDigest, req.PlanDigest)
-		value, exist := tsr.topSQLMap[string(encodedKey)]
+		value, exist := copy[string(encodedKey)]
 		c.Assert(exist, Equals, true, Commentf("key '%s' should exist in topSQLMap", string(encodedKey)))
 		for i, ct := range value.CPUTimeMsList {
 			c.Assert(req.CpuTimeMsList[i], Equals, ct)

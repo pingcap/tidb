@@ -41,7 +41,7 @@ var _ TopSQLReporter = &RemoteTopSQLReporter{}
 
 // TopSQLReporter collects Top SQL metrics.
 type TopSQLReporter interface {
-	tracecpu.Reporter
+	tracecpu.Collector
 	RegisterSQL(sqlDigest []byte, normalizedSQL string)
 	RegisterPlan(planDigest []byte, normalizedPlan string)
 }
@@ -323,7 +323,7 @@ func (tsr *RemoteTopSQLReporter) registerPlanWorker() {
 	}
 }
 
-// snapshot will collect the current snapshot of data for transmission
+// snapshot will collect the current snapshot of data for transmission, and clear the records map.
 // This could run in parallel with `Collect()`, so we should guard it by a mutex.
 //
 // NOTE: we could optimize this using a mutex protected pointer-swapping operation,
@@ -336,7 +336,7 @@ func (tsr *RemoteTopSQLReporter) snapshot() []*tipb.CollectCPUTimeRequest {
 	total := len(tsr.topSQLMap)
 	batch := make([]*tipb.CollectCPUTimeRequest, total)
 	i := 0
-	for _, value := range tsr.topSQLMap {
+	for key, value := range tsr.topSQLMap {
 		normalizedSQL := tsr.normalizedSQLMap[string(value.SQLDigest)]
 		normalizedPlan := tsr.normalizedPlanMap[string(value.PlanDigest)]
 		batch[i] = &tipb.CollectCPUTimeRequest{
@@ -347,6 +347,7 @@ func (tsr *RemoteTopSQLReporter) snapshot() []*tipb.CollectCPUTimeRequest {
 			PlanDigest:     value.PlanDigest,
 			NormalizedPlan: normalizedPlan,
 		}
+		delete(tsr.topSQLMap, key)
 		i++
 	}
 	return batch
