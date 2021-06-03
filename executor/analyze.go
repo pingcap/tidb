@@ -764,6 +764,8 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	return result, nil
 }
 
+// decodeSampleDataWithVirtualColumn constructs the virtual column by evaluating from the deocded normal columns.
+// If it failed, it would return false to trigger normal decoding way without the virtual column.
 func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 	collector *statistics.RowSampleCollector,
 	fieldTps []*types.FieldType,
@@ -780,6 +782,7 @@ func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 				logutil.BgLogger().Warn("Build stats on virtual column failed when analyzing. Stats on virtual column will be incomplete",
 					zap.Int64("table id", e.AnalyzeInfo.TableID.TableID),
 					zap.Int64("partition id", e.AnalyzeInfo.TableID.PartitionID),
+					zap.String("table name", fmt.Sprintf("%v.%v", e.AnalyzeInfo.DBName, e.AnalyzeInfo.TableName)),
 					zap.Error(err))
 				return false
 			}
