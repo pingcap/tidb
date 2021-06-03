@@ -525,15 +525,49 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 
 	tk.MustExec("drop database ctwl_db")
 	tk.MustExec("drop database ctwl_db1")
+}
+
+func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 
 	// Test create table like at temporary mode.
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists temporary_table;")
 	tk.MustExec("create global temporary table temporary_table (a int, b int,index(a)) on commit delete rows")
 	tk.MustExec("drop table if exists temporary_table_t1;")
-	_, err = tk.Exec("create table temporary_table_t1 like temporary_table")
+	_, err := tk.Exec("create table temporary_table_t1 like temporary_table")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
 	tk.MustExec("drop table if exists temporary_table;")
+
+	// Test create temporary table like.
+	// Test auto_random.
+	tk.MustExec("drop table if exists auto_random_table")
+	_, err = tk.Exec("create table auto_random_table (a bigint primary key auto_random(3), b varchar(255));")
+	defer tk.MustExec("drop table if exists auto_random_table")
+	tk.MustExec("drop table if exists auto_random_temporary_global")
+	_, err = tk.Exec("create global temporary table auto_random_temporary_global like auto_random_table on commit delete rows;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random").Error())
+
+	// Test pre split regions.
+	tk.MustExec("drop table if exists table_pre_split")
+	_, err = tk.Exec("create table table_pre_split(id int) shard_row_id_bits = 2 pre_split_regions=2;")
+	defer tk.MustExec("drop table if exists table_pre_split")
+	tk.MustExec("drop table if exists temporary_table_pre_split")
+	_, err = tk.Exec("create global temporary table temporary_table_pre_split like table_pre_split ON COMMIT DELETE ROWS;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error())
+
+	// Test partition.
+	tk.MustExec("drop table if exists global_partition_table;")
+	tk.MustExec("create table global_partition_table (a int, b int) partition by hash(a) partitions 3;")
+	defer tk.MustExec("drop table if exists global_partition_table;")
+	tk.MustGetErrCode("create global temporary table global_partition_temp_table like global_partition_table ON COMMIT DELETE ROWS;",
+		errno.ErrPartitionNoTemporary)
+	// Test virtual columns.
+	tk.MustExec("drop table if exists test_gv_ddl")
+	tk.MustExec(`create table test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored);`)
+	defer tk.MustExec("drop table if exists test_gv_ddl;")
+	_, err = tk.Exec(`create global temporary table test_gv_ddl_temp like test_gv_ddl on commit delete rows;`)
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("virtual column").Error())
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.

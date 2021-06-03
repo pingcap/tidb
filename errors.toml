@@ -971,6 +971,11 @@ error = '''
 `%-.192s`.`%-.192s` contains view recursion
 '''
 
+["ddl:1562"]
+error = '''
+Cannot create temporary table with partitions
+'''
+
 ["planner:1706"]
 error = '''
 Primary key/partition key update is not allowed since the table is updated both as '%-.192s' and '%-.192s'.
