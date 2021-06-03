@@ -47,15 +47,15 @@ var GlobalSQLCPUProfiler = newSQLCPUProfiler()
 type Reporter interface {
 	// Collect uses to collect the SQL execution cpu time.
 	// ts is a Unix time, unit is second.
-	Collect(ts uint64, stats []TopSQLCPUTimeRecord)
+	Collect(ts uint64, stats []SQLCPUTimeRecord)
 }
 
-// TopSQLCPUTimeRecord represents a single record of how much cpu time a sql plan consumes in one second.
+// SQLCPUTimeRecord represents a single record of how much cpu time a sql plan consumes in one second.
 //
 // PlanDigest can be empty, because:
 // 1. some sql statements has no plan, like `COMMIT`
 // 2. when a sql statement is being compiled, there's no plan yet
-type TopSQLCPUTimeRecord struct {
+type SQLCPUTimeRecord struct {
 	SQLDigest  []byte
 	PlanDigest []byte
 	CPUTimeMs  uint32
@@ -178,7 +178,7 @@ func (sp *sqlCPUProfiler) putTaskToBuffer(task *profileData) {
 // The plan_digest label is been set by `SetSQLAndPlanLabels` function after build the SQL plan.
 // Since `sqlCPUProfiler` only care about the cpu time that consume by (sql_digest,plan_digest), the other sample data
 // without those label will be ignore.
-func (sp *sqlCPUProfiler) parseCPUProfileBySQLLabels(p *profile.Profile) []TopSQLCPUTimeRecord {
+func (sp *sqlCPUProfiler) parseCPUProfileBySQLLabels(p *profile.Profile) []SQLCPUTimeRecord {
 	sqlMap := make(map[string]*sqlStats)
 	idx := len(p.SampleType) - 1
 	for _, s := range p.Sample {
@@ -206,12 +206,12 @@ func (sp *sqlCPUProfiler) parseCPUProfileBySQLLabels(p *profile.Profile) []TopSQ
 	return sp.createSQLStats(sqlMap)
 }
 
-func (sp *sqlCPUProfiler) createSQLStats(sqlMap map[string]*sqlStats) []TopSQLCPUTimeRecord {
-	stats := make([]TopSQLCPUTimeRecord, 0, len(sqlMap))
+func (sp *sqlCPUProfiler) createSQLStats(sqlMap map[string]*sqlStats) []SQLCPUTimeRecord {
+	stats := make([]SQLCPUTimeRecord, 0, len(sqlMap))
 	for sqlDigest, stmt := range sqlMap {
 		stmt.tune()
 		for planDigest, val := range stmt.plans {
-			stats = append(stats, TopSQLCPUTimeRecord{
+			stats = append(stats, SQLCPUTimeRecord{
 				SQLDigest:  []byte(sqlDigest),
 				PlanDigest: []byte(planDigest),
 				CPUTimeMs:  uint32(time.Duration(val).Milliseconds()),

@@ -48,7 +48,7 @@ type TopSQLReporter interface {
 
 type topSQLCPUTimeInput struct {
 	timestamp uint64
-	records   []tracecpu.TopSQLCPUTimeRecord
+	records   []tracecpu.SQLCPUTimeRecord
 }
 
 type planBinaryDecodeFunc func(string) (string, error)
@@ -199,7 +199,7 @@ func NewRemoteTopSQLReporter(config *RemoteTopSQLReporterConfig) *RemoteTopSQLRe
 
 // Collect will drop the records when the collect channel is full
 // TODO: test the dropping behavior
-func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.TopSQLCPUTimeRecord) {
+func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
 	select {
 	case tsr.collectCPUTimeChan <- &topSQLCPUTimeInput{
 		timestamp: timestamp,
@@ -218,7 +218,7 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 
 // collect uses a hashmap to store records in every second, and evict when necessary.
 // This function can be run in parallel with snapshot, so we should protect the map operations with a mutex.
-func (tsr *RemoteTopSQLReporter) collect(timestamp uint64, records []tracecpu.TopSQLCPUTimeRecord) {
+func (tsr *RemoteTopSQLReporter) collect(timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
 	for _, record := range records {
 		encodedKey := encodeKey(record.SQLDigest, record.PlanDigest)
 		entry, exist := tsr.topSQLMap[string(encodedKey)]
@@ -357,14 +357,14 @@ func (tsr *RemoteTopSQLReporter) snapshot() []*tipb.CollectCPUTimeRequest {
 func (tsr *RemoteTopSQLReporter) sendBatch(stream tipb.TopSQLAgent_CollectCPUTimeClient, batch []*tipb.CollectCPUTimeRequest) error {
 	for _, req := range batch {
 		if err := stream.Send(req); err != nil {
-			logutil.BgLogger().Warn("TopSQL: send stream request failed", zap.Error(err))
+			logutil.BgLogger().Warn("[TopSQL] send stream request failed", zap.Error(err))
 			return err
 		}
 	}
 	// response is Empty, drop it for now
 	_, err := stream.CloseAndRecv()
 	if err != nil {
-		logutil.BgLogger().Warn("TopSQL: receive stream response failed", zap.Error(err))
+		logutil.BgLogger().Warn("[TopSQL] receive stream response failed", zap.Error(err))
 		return err
 	}
 	return nil
@@ -383,14 +383,14 @@ func (tsr *RemoteTopSQLReporter) sendToAgentWorker() {
 			// It's fine if we do this every minute, but need optimization if we need to do it more frequently, like every second.
 			conn, client, err := newAgentClient(tsr.agentGRPCAddress.Load().(string))
 			if err != nil {
-				logutil.BgLogger().Warn("TopSQL: failed to create agent client", zap.Error(err))
+				logutil.BgLogger().Warn("[TopSQL] failed to create agent client", zap.Error(err))
 				continue
 			}
 			// TODO: test timeout behavior
 			ctx, cancel = context.WithTimeout(context.TODO(), tsr.reportTimeout)
 			stream, err := client.CollectCPUTime(ctx)
 			if err != nil {
-				logutil.BgLogger().Warn("TopSQL: failed to initialize gRPC call CollectCPUTime", zap.Error(err))
+				logutil.BgLogger().Warn("[TopSQL] failed to initialize gRPC call CollectCPUTime", zap.Error(err))
 				continue
 			}
 			if err := tsr.sendBatch(stream, batch); err != nil {
@@ -398,7 +398,7 @@ func (tsr *RemoteTopSQLReporter) sendToAgentWorker() {
 			}
 			cancel()
 			if err := conn.Close(); err != nil {
-				logutil.BgLogger().Warn("TopSQL: failed to close connection", zap.Error(err))
+				logutil.BgLogger().Warn("[TopSQL] failed to close connection", zap.Error(err))
 				continue
 			}
 		case <-tsr.quit:

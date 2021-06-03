@@ -62,9 +62,9 @@ func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) 
 		tsr.RegisterPlan(key, value)
 	}
 	// collect
-	var records []tracecpu.TopSQLCPUTimeRecord
+	var records []tracecpu.SQLCPUTimeRecord
 	for i := begin; i < end; i++ {
-		records = append(records, tracecpu.TopSQLCPUTimeRecord{
+		records = append(records, tracecpu.SQLCPUTimeRecord{
 			SQLDigest:  []byte("sqlDigest" + strconv.Itoa(i+1)),
 			PlanDigest: []byte("planDigest" + strconv.Itoa(i+1)),
 			CPUTimeMs:  uint32(i + 1),
