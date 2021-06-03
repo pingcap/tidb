@@ -33,11 +33,11 @@ type testClientFailSuite struct {
 
 func (s *testClientFailSuite) SetUpSuite(_ *C) {
 	// This lock make testClientFailSuite runs exclusively.
-	withTiKVGlobalLock.Lock()
+	s.LockGlobalTiKV()
 }
 
 func (s testClientFailSuite) TearDownSuite(_ *C) {
-	withTiKVGlobalLock.Unlock()
+	s.UnLockGlobalTiKV()
 }
 
 func (s *testClientFailSuite) TestPanicInRecvLoop(c *C) {

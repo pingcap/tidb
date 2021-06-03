@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	"github.com/pingcap/tidb/store/tikv/util"
 )
 
 type testSnapshotFailSuite struct {
@@ -62,7 +63,7 @@ func (s *testSnapshotFailSuite) cleanup(c *C) {
 
 func (s *testSnapshotFailSuite) TestBatchGetResponseKeyError(c *C) {
 	// Meaningless to test with tikv because it has a mock key error
-	if *WithTiKV {
+	if *util.WithTiKV {
 		return
 	}
 	defer s.cleanup(c)
@@ -91,7 +92,7 @@ func (s *testSnapshotFailSuite) TestBatchGetResponseKeyError(c *C) {
 
 func (s *testSnapshotFailSuite) TestScanResponseKeyError(c *C) {
 	// Meaningless to test with tikv because it has a mock key error
-	if *WithTiKV {
+	if *util.WithTiKV {
 		return
 	}
 	defer s.cleanup(c)

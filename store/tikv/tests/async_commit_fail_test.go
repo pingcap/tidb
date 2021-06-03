@@ -43,7 +43,7 @@ func (s *testAsyncCommitFailSuite) SetUpTest(c *C) {
 // committing primary region task.
 func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
 	// This test doesn't support tikv mode because it needs setting failpoint in unistore.
-	if *WithTiKV {
+	if *util.WithTiKV {
 		return
 	}
 
@@ -75,7 +75,7 @@ func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
 
 func (s *testAsyncCommitFailSuite) TestAsyncCommitPrewriteCancelled(c *C) {
 	// This test doesn't support tikv mode because it needs setting failpoint in unistore.
-	if *WithTiKV {
+	if *util.WithTiKV {
 		return
 	}
 
@@ -135,7 +135,7 @@ func (s *testAsyncCommitFailSuite) TestPointGetWithAsyncCommit(c *C) {
 
 func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 	// This test doesn't support tikv mode.
-	if *WithTiKV {
+	if *util.WithTiKV {
 		return
 	}
 

@@ -15,7 +15,6 @@ package client
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -30,32 +29,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"google.golang.org/grpc/metadata"
 )
 
-var (
-	withTiKVGlobalLock sync.RWMutex
-	WithTiKV           = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
-)
-
 // OneByOneSuite is a suite, When with-tikv flag is true, there is only one storage, so the test suite have to run one by one.
-type OneByOneSuite struct{}
-
-func (s *OneByOneSuite) SetUpSuite(c *C) {
-	if *WithTiKV {
-		withTiKVGlobalLock.Lock()
-	} else {
-		withTiKVGlobalLock.RLock()
-	}
-}
-
-func (s *OneByOneSuite) TearDownSuite(c *C) {
-	if *WithTiKV {
-		withTiKVGlobalLock.Unlock()
-	} else {
-		withTiKVGlobalLock.RUnlock()
-	}
-}
+type OneByOneSuite = util.OneByOneSuite
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
