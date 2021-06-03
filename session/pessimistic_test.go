@@ -2510,12 +2510,10 @@ func (s *testPessimisticSuite) TestPlanCacheSchemaChange(c *C) {
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk3 := testkit.NewTestKitWithInit(c, s.store)
 	ctx := context.Background()
 
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
-	tk3.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key, v int, unique index iv (v), vv int)")
@@ -2537,9 +2535,9 @@ func (s *testPessimisticSuite) TestPlanCacheSchemaChange(c *C) {
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("begin pessimistic")
 
-	tk3.MustExec("alter table t drop index iv")
-	tk3.MustExec("update t set v = 3 where v = 2")
-	tk3.MustExec("update t set v = 5 where v = 4")
+	tk.MustExec("alter table t drop index iv")
+	tk.MustExec("update t set v = 3 where v = 2")
+	tk.MustExec("update t set v = 5 where v = 4")
 
 	tk.MustExec("set @v = 2")
 	tk.MustExec("execute update_stmt using @v")
