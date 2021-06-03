@@ -1183,14 +1183,18 @@ type CTEClass struct {
 	// storageID for this CTE.
 	IDForStorage int
 	// optFlag is the optFlag for the whole CTE.
-	optFlag uint64
+	optFlag  uint64
+	HasLimit bool
+	LimitBeg uint64
+	LimitEnd uint64
 }
 
 // LogicalCTE is for CTE.
 type LogicalCTE struct {
 	logicalSchemaProducer
 
-	cte *CTEClass
+	cte       *CTEClass
+	cteAsName model.CIStr
 }
 
 // LogicalCTETable is for CTE table

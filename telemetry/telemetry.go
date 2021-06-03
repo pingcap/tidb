@@ -172,7 +172,7 @@ func InitialRun(ctx sessionctx.Context, etcdClient *clientv3.Client) error {
 		return err
 	}
 
+	initSlowQueryStats()
 	logutil.BgLogger().Info("Telemetry configuration", zap.String("endpoint", apiEndpoint), zap.Duration("report_interval", ReportInterval), zap.Bool("enabled", enabled))
-
 	return ReportUsageData(ctx, etcdClient)
 }

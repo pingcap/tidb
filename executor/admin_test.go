@@ -24,6 +24,7 @@ import (
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -80,9 +81,11 @@ func (s *testSuite5) TestAdminCheckIndexInTemporaryMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists temporary_admin_test;")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table temporary_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2)) ON COMMIT DELETE ROWS;")
 	tk.MustExec("insert temporary_admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);")
-	tk.MustGetErrCode("admin check table temporary_admin_test;", mysql.ErrAdminCheckTable)
+	_, err := tk.Exec("admin check table temporary_admin_test;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin check table").Error())
 	tk.MustExec("drop table if exists temporary_admin_test;")
 
 	tk.MustExec("drop table if exists non_temporary_admin_test;")
@@ -90,6 +93,16 @@ func (s *testSuite5) TestAdminCheckIndexInTemporaryMode(c *C) {
 	tk.MustExec("insert non_temporary_admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);")
 	tk.MustExec("admin check table non_temporary_admin_test;")
 	tk.MustExec("drop table if exists non_temporary_admin_test;")
+
+	tk.MustExec("drop table if exists temporary_admin_checksum_table_with_index_test;")
+	tk.MustExec("drop table if exists temporary_admin_checksum_table_without_index_test;")
+	tk.MustExec("create global temporary table temporary_admin_checksum_table_with_index_test (id int, count int, PRIMARY KEY(id), KEY(count)) ON COMMIT DELETE ROWS;")
+	tk.MustExec("create global temporary table temporary_admin_checksum_table_without_index_test (id int, count int, PRIMARY KEY(id)) ON COMMIT DELETE ROWS;")
+	_, err = tk.Exec("admin checksum table temporary_admin_checksum_table_with_index_test;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
+	_, err = tk.Exec("admin checksum table temporary_admin_checksum_table_without_index_test;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
+	tk.MustExec("drop table if exists temporary_admin_checksum_table_with_index_test,temporary_admin_checksum_table_without_index_test;")
 }
 
 func (s *testSuite5) TestAdminRecoverIndex(c *C) {
