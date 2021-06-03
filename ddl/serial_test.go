@@ -534,13 +534,6 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 	_, err = tk.Exec("create table temporary_table_t1 like temporary_table")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
 	tk.MustExec("drop table if exists temporary_table;")
-
-	tk.MustExec("drop table if exists temporary_table_like;")
-	tk.MustExec("create table temporary_table (a int, b int,index(a))")
-	tk.MustExec("drop table if exists temporary_table_like_t1;")
-	_, err = tk.Exec("create global temporary table temporary_table_like_t1 like temporary_table on commit delete rows;")
-	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
-	tk.MustExec("drop table if exists temporary_table_like;")
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
@@ -940,6 +933,17 @@ func (s *testSerialSuite) TestTableLocksEnable(c *C) {
 
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
+}
+
+func (s *testSerialDBSuite) TestAutoRandomOnTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists auto_random_temporary")
+	_, err := tk.Exec("create global temporary table auto_random_temporary (a bigint primary key auto_random(3), b varchar(255)) on commit delete rows;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random").Error())
+	tk.MustExec("set @@tidb_enable_noop_functions = 1")
+	_, err = tk.Exec("create temporary table t(a bigint key auto_random);")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random").Error())
 }
 
 func (s *testSerialDBSuite) TestAutoRandom(c *C) {
