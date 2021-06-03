@@ -9579,13 +9579,13 @@ func (s *testIntegrationSuite) TestEnumIndex(c *C) {
 	tk.MustQuery("select * from t where e = '';").Check(
 		testkit.Rows(""))
 	tk.MustQuery("select * from t where e != 'a';").Check(
-		testkit.Rows("","b","c"))
+		testkit.Rows("b", "c", ""))
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(e enum(\"\"), index idx(e));")
 	tk.MustExec("insert ignore into t values(0),(1);")
 	tk.MustQuery("select * from t where e = '';").Check(
-		testkit.Rows("",""))
+		testkit.Rows("", ""))
 }
 
 // Previously global values were cached. This is incorrect.
