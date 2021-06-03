@@ -729,12 +729,45 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+	// ScalarFuncSig_RoundReal
 	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeDouble), realColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+	// ScalarFuncSig_RoundInt
 	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeLonglong), intColumn)
 	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// concat
+	function, err = NewFunction(mock.NewContext(), ast.Concat, types.NewFieldType(mysql.TypeString), stringColumn, intColumn, realColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// UnixTimestampCurrent
+	function, err = NewFunction(mock.NewContext(), ast.UnixTimestamp, types.NewFieldType(mysql.TypeLonglong))
+	c.Assert(err, IsNil)
+	_, ok := function.(*Constant)
+	c.Assert(ok, IsTrue)
+
+	// UnixTimestampInt
+	datetimeColumn.RetType.Decimal = 0
+	function, err = NewFunction(mock.NewContext(), ast.UnixTimestamp, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
+	c.Assert(err, IsNil)
+	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_UnixTimestampInt)
+	exprs = append(exprs, function)
+
+	// UnixTimestampDecimal
+	datetimeColumn.RetType.Decimal = types.UnspecifiedLength
+	function, err = NewFunction(mock.NewContext(), ast.UnixTimestamp, types.NewFieldType(mysql.TypeNewDecimal), datetimeColumn)
+	c.Assert(err, IsNil)
+	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_UnixTimestampDec)
+	exprs = append(exprs, function)
+
+	// StrToDateDateTime
+	function, err = NewFunction(mock.NewContext(), ast.StrToDate, types.NewFieldType(mysql.TypeDatetime), stringColumn, stringColumn)
+	c.Assert(err, IsNil)
+	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_StrToDateDatetime)
 	exprs = append(exprs, function)
 
 	canPush := CanExprsPushDown(sc, exprs, client, kv.TiFlash)

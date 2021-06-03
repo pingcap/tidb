@@ -15,9 +15,12 @@ package tikv
 
 import (
 	"flag"
+	"os"
 	"sync"
+	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 var (
@@ -46,6 +49,13 @@ func (s *OneByOneSuite) TearDownSuite(c *C) {
 
 type testTiKVSuite struct {
 	OneByOneSuite
+}
+
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	logLevel := os.Getenv("log_level")
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	TestingT(t)
 }
 
 var _ = Suite(&testTiKVSuite{})
