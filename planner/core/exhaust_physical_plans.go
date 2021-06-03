@@ -147,6 +147,19 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 	joins := make([]PhysicalPlan, 0, len(p.leftProperties)+1)
 	// The leftProperties caches all the possible properties that are provided by its children.
 	leftJoinKeys, rightJoinKeys, isNullEQ, hasNullEQ := p.GetJoinKeys()
+
+	// EnumType Unsupported: merge join conflicts with index order. ref: https://github.com/pingcap/tidb/issues/24473
+	for _, leftKey := range leftJoinKeys {
+		if leftKey.RetType.Tp == mysql.TypeEnum {
+			return nil
+		}
+	}
+	for _, rightKey := range rightJoinKeys {
+		if rightKey.RetType.Tp == mysql.TypeEnum {
+			return nil
+		}
+	}
+
 	// TODO: support null equal join keys for merge join
 	if hasNullEQ {
 		return nil
@@ -513,6 +526,19 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		if len(join.InnerHashKeys) > len(join.InnerJoinKeys) {
 			return nil
 		}
+
+		// EnumType Unsupported: merge join conflicts with index order. ref: https://github.com/pingcap/tidb/issues/24473
+		for _, innerKey := range join.InnerJoinKeys {
+			if innerKey.RetType.Tp == mysql.TypeEnum {
+				return nil
+			}
+		}
+		for _, outerKey := range join.OuterJoinKeys {
+			if outerKey.RetType.Tp == mysql.TypeEnum {
+				return nil
+			}
+		}
+
 		hasPrefixCol := false
 		for _, l := range join.IdxColLens {
 			if l != types.UnspecifiedLength {
@@ -1635,6 +1661,9 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 	if p.ctx.GetSessionVars().BroadcastJoinThresholdSize == 0 || p.ctx.GetSessionVars().BroadcastJoinThresholdCount == 0 {
 		return p.ctx.GetSessionVars().AllowBCJ
 	}
+	if len(p.EqualConditions) == 0 && p.ctx.GetSessionVars().AllowCartesianBCJ == 2 {
+		return true
+	}
 	if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		return checkChildFitBC(p.children[1])
 	} else if p.JoinType == RightOuterJoin {
@@ -1743,9 +1772,19 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		return nil
 	}
 
-	if (p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != SemiJoin && p.JoinType != AntiSemiJoin) || len(p.EqualConditions) == 0 {
+	if p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != SemiJoin && p.JoinType != AntiSemiJoin {
 		return nil
 	}
+
+	if len(p.EqualConditions) == 0 {
+		if p.ctx.GetSessionVars().AllowCartesianBCJ == 0 || !useBCJ {
+			return nil
+		}
+	}
+	if (len(p.LeftConditions) != 0 && p.JoinType != LeftOuterJoin) || (len(p.RightConditions) != 0 && p.JoinType != RightOuterJoin) {
+		return nil
+	}
+
 	if prop.PartitionTp == property.BroadcastType {
 		return nil
 	}

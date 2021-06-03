@@ -172,14 +172,19 @@ func (r *RegionStore) follower(seed uint32, op *storeSelectorOp) AccessIndex {
 
 // return next leader or follower store's index
 func (r *RegionStore) kvPeer(seed uint32, op *storeSelectorOp) AccessIndex {
+	if op.leaderOnly {
+		return r.workTiKVIdx
+	}
 	candidates := make([]AccessIndex, 0, r.accessStoreNum(TiKVOnly))
 	for i := 0; i < r.accessStoreNum(TiKVOnly); i++ {
-		storeIdx, s := r.accessStore(TiKVOnly, AccessIndex(i))
-		if r.storeEpochs[storeIdx] != atomic.LoadUint32(&s.epoch) || !r.filterStoreCandidate(AccessIndex(i), op) {
+		accessIdx := AccessIndex(i)
+		storeIdx, s := r.accessStore(TiKVOnly, accessIdx)
+		if r.storeEpochs[storeIdx] != atomic.LoadUint32(&s.epoch) || !r.filterStoreCandidate(accessIdx, op) {
 			continue
 		}
-		candidates = append(candidates, AccessIndex(i))
+		candidates = append(candidates, accessIdx)
 	}
+	// If there is no candidates, send to current workTiKVIdx which generally is the leader.
 	if len(candidates) == 0 {
 		return r.workTiKVIdx
 	}
@@ -422,6 +427,8 @@ type RPCContext struct {
 	ProxyAccessIdx AccessIndex // valid when ProxyStore is not nil
 	ProxyAddr      string      // valid when ProxyStore is not nil
 	TiKVNum        int         // Number of TiKV nodes among the region's peers. Assuming non-TiKV peers are all TiFlash peers.
+
+	tryTimes int
 }
 
 func (c *RPCContext) String() string {
@@ -438,16 +445,24 @@ func (c *RPCContext) String() string {
 }
 
 type storeSelectorOp struct {
-	labels []*metapb.StoreLabel
+	leaderOnly bool
+	labels     []*metapb.StoreLabel
 }
 
 // StoreSelectorOption configures storeSelectorOp.
 type StoreSelectorOption func(*storeSelectorOp)
 
-// WithMatchLabels indicates selecting stores with matched labels
+// WithMatchLabels indicates selecting stores with matched labels.
 func WithMatchLabels(labels []*metapb.StoreLabel) StoreSelectorOption {
 	return func(op *storeSelectorOp) {
-		op.labels = labels
+		op.labels = append(op.labels, labels...)
+	}
+}
+
+// WithLeaderOnly indicates selecting stores with leader only.
+func WithLeaderOnly() StoreSelectorOption {
+	return func(op *storeSelectorOp) {
+		op.leaderOnly = true
 	}
 }
 
