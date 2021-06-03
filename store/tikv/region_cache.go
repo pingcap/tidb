@@ -167,7 +167,6 @@ func (r *RegionStore) follower(seed uint32, op *storeSelectorOp) AccessIndex {
 
 // return next leader or follower store's index
 func (r *RegionStore) kvPeer(seed uint32, op *storeSelectorOp) AccessIndex {
-	fmt.Println(op, seed)
 	if op.leaderOnly {
 		return r.workTiKVIdx
 	}
@@ -423,6 +422,8 @@ type RPCContext struct {
 	ProxyAccessIdx AccessIndex // valid when ProxyStore is not nil
 	ProxyAddr      string      // valid when ProxyStore is not nil
 	TiKVNum        int         // Number of TiKV nodes among the region's peers. Assuming non-TiKV peers are all TiFlash peers.
+
+	tryTimes int
 }
 
 func (c *RPCContext) String() string {

@@ -276,6 +276,9 @@ func (s *RegionRequestSender) SendReqCtx(
 		if err != nil {
 			return nil, nil, err
 		}
+		if rpcCtx != nil {
+			rpcCtx.tryTimes = tryTimes
+		}
 
 		failpoint.Inject("invalidCacheAndRetry", func() {
 			// cooperate with github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff
@@ -651,7 +654,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 	// Stale Read request will retry the leader or next peer on error,
 	// if txnScope is global, we will only retry the leader by using the WithLeaderOnly option,
 	// if txnScope is local, we will retry both other peers and the leader by the incresing seed.
-	if req != nil && req.GetStaleRead() && req.TxnScope == oracle.GlobalTxnScope {
+	if ctx.tryTimes < 1 && req != nil && req.TxnScope == oracle.GlobalTxnScope && req.GetStaleRead() {
 		*opts = append(*opts, WithLeaderOnly())
 	}
 
