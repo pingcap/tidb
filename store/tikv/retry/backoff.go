@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"math/rand"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -30,205 +29,24 @@ import (
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/util"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
-
-const (
-	// NoJitter makes the backoff sequence strict exponential.
-	NoJitter = 1 + iota
-	// FullJitter applies random factors to strict exponential.
-	FullJitter
-	// EqualJitter is also randomized, but prevents very short sleeps.
-	EqualJitter
-	// DecorrJitter increases the maximum jitter based on the last random value.
-	DecorrJitter
-)
-
-func (t BackoffType) metric() prometheus.Observer {
-	switch t {
-	// TODO: distinguish tikv and tiflash in metrics
-	case boTiKVRPC, BoTiFlashRPC:
-		return metrics.BackoffHistogramRPC
-	case BoTxnLock:
-		return metrics.BackoffHistogramLock
-	case BoTxnLockFast:
-		return metrics.BackoffHistogramLockFast
-	case BoPDRPC:
-		return metrics.BackoffHistogramPD
-	case BoRegionMiss:
-		return metrics.BackoffHistogramRegionMiss
-	case BoTiKVServerBusy, BoTiFlashServerBusy:
-		return metrics.BackoffHistogramServerBusy
-	case BoStaleCmd:
-		return metrics.BackoffHistogramStaleCmd
-	}
-	return metrics.BackoffHistogramEmpty
-}
-
-// NewBackoffFn creates a backoff func which implements exponential backoff with
-// optional jitters.
-// See http://www.awsarchitectureblog.com/2015/03/backoff.html
-func NewBackoffFn(base, cap, jitter int) func(ctx context.Context, maxSleepMs int) int {
-	if base < 2 {
-		// Top prevent panic in 'rand.Intn'.
-		base = 2
-	}
-	attempts := 0
-	lastSleep := base
-	return func(ctx context.Context, maxSleepMs int) int {
-		var sleep int
-		switch jitter {
-		case NoJitter:
-			sleep = expo(base, cap, attempts)
-		case FullJitter:
-			v := expo(base, cap, attempts)
-			sleep = rand.Intn(v)
-		case EqualJitter:
-			v := expo(base, cap, attempts)
-			sleep = v/2 + rand.Intn(v/2)
-		case DecorrJitter:
-			sleep = int(math.Min(float64(cap), float64(base+rand.Intn(lastSleep*3-base))))
-		}
-		logutil.BgLogger().Debug("backoff",
-			zap.Int("base", base),
-			zap.Int("sleep", sleep),
-			zap.Int("attempts", attempts))
-
-		realSleep := sleep
-		// when set maxSleepMs >= 0 in `tikv.BackoffWithMaxSleep` will force sleep maxSleepMs milliseconds.
-		if maxSleepMs >= 0 && realSleep > maxSleepMs {
-			realSleep = maxSleepMs
-		}
-		select {
-		case <-time.After(time.Duration(realSleep) * time.Millisecond):
-			attempts++
-			lastSleep = sleep
-			return realSleep
-		case <-ctx.Done():
-			return 0
-		}
-	}
-}
-
-func expo(base, cap, n int) int {
-	return int(math.Min(float64(cap), float64(base)*math.Pow(2.0, float64(n))))
-}
-
-// BackoffType defines the backoff type.
-type BackoffType int
-
-// Back off types.
-const (
-	boTiKVRPC BackoffType = iota
-	BoTiFlashRPC
-	BoTxnLock
-	BoTxnLockFast
-	BoPDRPC
-	BoRegionMiss
-	BoTiKVServerBusy
-	BoTiFlashServerBusy
-	BoTxnNotFound
-	BoStaleCmd
-	BoMaxTsNotSynced
-)
-
-func (t BackoffType) createFn(vars *kv.Variables) func(context.Context, int) int {
-	if vars.Hook != nil {
-		vars.Hook(t.String(), vars)
-	}
-	switch t {
-	case boTiKVRPC, BoTiFlashRPC:
-		return NewBackoffFn(100, 2000, EqualJitter)
-	case BoTxnLock:
-		return NewBackoffFn(200, 3000, EqualJitter)
-	case BoTxnLockFast:
-		return NewBackoffFn(vars.BackoffLockFast, 3000, EqualJitter)
-	case BoPDRPC:
-		return NewBackoffFn(500, 3000, EqualJitter)
-	case BoRegionMiss:
-		// change base time to 2ms, because it may recover soon.
-		return NewBackoffFn(2, 500, NoJitter)
-	case BoTxnNotFound:
-		return NewBackoffFn(2, 500, NoJitter)
-	case BoTiKVServerBusy, BoTiFlashServerBusy:
-		return NewBackoffFn(2000, 10000, EqualJitter)
-	case BoStaleCmd:
-		return NewBackoffFn(2, 1000, NoJitter)
-	case BoMaxTsNotSynced:
-		return NewBackoffFn(2, 500, NoJitter)
-	}
-	return nil
-}
-
-func (t BackoffType) String() string {
-	switch t {
-	case boTiKVRPC:
-		return "tikvRPC"
-	case BoTiFlashRPC:
-		return "tiflashRPC"
-	case BoTxnLock:
-		return "txnLock"
-	case BoTxnLockFast:
-		return "txnLockFast"
-	case BoPDRPC:
-		return "pdRPC"
-	case BoRegionMiss:
-		return "regionMiss"
-	case BoTiKVServerBusy:
-		return "tikvServerBusy"
-	case BoTiFlashServerBusy:
-		return "tiflashServerBusy"
-	case BoStaleCmd:
-		return "staleCommand"
-	case BoTxnNotFound:
-		return "txnNotFound"
-	case BoMaxTsNotSynced:
-		return "maxTsNotSynced"
-	}
-	return ""
-}
-
-// TError returns pingcap/error of the backoff type.
-func (t BackoffType) TError() error {
-	switch t {
-	case boTiKVRPC:
-		return tikverr.ErrTiKVServerTimeout
-	case BoTiFlashRPC:
-		return tikverr.ErrTiFlashServerTimeout
-	case BoTxnLock, BoTxnLockFast, BoTxnNotFound:
-		return tikverr.ErrResolveLockTimeout
-	case BoPDRPC:
-		return tikverr.NewErrPDServerTimeout("")
-	case BoRegionMiss:
-		return tikverr.ErrRegionUnavailable
-	case BoTiKVServerBusy:
-		return tikverr.ErrTiKVServerBusy
-	case BoTiFlashServerBusy:
-		return tikverr.ErrTiFlashServerBusy
-	case BoStaleCmd:
-		return tikverr.ErrTiKVStaleCommand
-	case BoMaxTsNotSynced:
-		return tikverr.ErrTiKVMaxTimestampNotSynced
-	}
-	return tikverr.ErrUnknown
-}
 
 // Backoffer is a utility for retrying queries.
 type Backoffer struct {
 	ctx context.Context
 
-	fn         map[BackoffType]func(context.Context, int) int
+	fn         map[string]backoffFn
 	maxSleep   int
 	totalSleep int
 	errors     []error
-	types      []fmt.Stringer
+	configs    []*Config
 	vars       *kv.Variables
 	noop       bool
 
-	backoffSleepMS map[BackoffType]int
-	backoffTimes   map[BackoffType]int
+	backoffSleepMS map[string]int
+	backoffTimes   map[string]int
 }
 
 type txnStartCtxKeyType struct{}
@@ -268,26 +86,71 @@ func (b *Backoffer) withVars(vars *kv.Variables) *Backoffer {
 	return b
 }
 
-// Backoff sleeps a while base on the backoffType and records the error message.
+// Backoff sleeps a while base on the Config and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
-func (b *Backoffer) Backoff(typ BackoffType, err error) error {
+func (b *Backoffer) Backoff(cfg *Config, err error) error {
 	if span := opentracing.SpanFromContext(b.ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan(fmt.Sprintf("tikv.backoff.%s", typ), opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan(fmt.Sprintf("tikv.backoff.%s", cfg), opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		opentracing.ContextWithSpan(b.ctx, span1)
 	}
-	return b.BackoffWithMaxSleep(typ, -1, err)
+	return b.BackoffWithCfgAndMaxSleep(cfg, -1, err)
 }
 
-// BackoffTiKVRPC sleeps a while base on the TiKVRPC and records the error message.
-// It returns a retryable error if total sleep time exceeds maxSleep.
-func (b *Backoffer) BackoffTiKVRPC(err error) error {
-	return b.Backoff(boTiKVRPC, err)
-}
-
-// BackoffWithMaxSleep sleeps a while base on the backoffType and records the error message
+// BackoffWithMaxSleepTxnLockFast sleeps a while base on the MaxSleepTxnLock and records the error message
 // and never sleep more than maxSleepMs for each sleep.
-func (b *Backoffer) BackoffWithMaxSleep(typ BackoffType, maxSleepMs int, err error) error {
+func (b *Backoffer) BackoffWithMaxSleepTxnLockFast(maxSleepMs int, err error) error {
+	cfg := BoTxnLockFast
+	return b.BackoffWithCfgAndMaxSleep(cfg, maxSleepMs, err)
+}
+
+// BackoffWithMaxSleep is deprecated, please use BackoffWithCfgAndMaxSleep instead. TODO: remove it when br is ready.
+func (b *Backoffer) BackoffWithMaxSleep(typ int, maxSleepMs int, err error) error {
+	// Back off types.
+	const (
+		boTiKVRPC int = iota
+		boTiFlashRPC
+		boTxnLock
+		boTxnLockFast
+		boPDRPC
+		boRegionMiss
+		boTiKVServerBusy
+		boTiFlashServerBusy
+		boTxnNotFound
+		boStaleCmd
+		boMaxTsNotSynced
+	)
+	switch typ {
+	case boTiKVRPC:
+		return b.BackoffWithCfgAndMaxSleep(BoTiKVRPC, maxSleepMs, err)
+	case boTiFlashRPC:
+		return b.BackoffWithCfgAndMaxSleep(BoTiFlashRPC, maxSleepMs, err)
+	case boTxnLock:
+		return b.BackoffWithCfgAndMaxSleep(BoTxnLock, maxSleepMs, err)
+	case boTxnLockFast:
+		return b.BackoffWithCfgAndMaxSleep(BoTxnLockFast, maxSleepMs, err)
+	case boPDRPC:
+		return b.BackoffWithCfgAndMaxSleep(BoPDRPC, maxSleepMs, err)
+	case boRegionMiss:
+		return b.BackoffWithCfgAndMaxSleep(BoRegionMiss, maxSleepMs, err)
+	case boTiKVServerBusy:
+		return b.BackoffWithCfgAndMaxSleep(BoTiKVServerBusy, maxSleepMs, err)
+	case boTiFlashServerBusy:
+		return b.BackoffWithCfgAndMaxSleep(BoTiFlashServerBusy, maxSleepMs, err)
+	case boTxnNotFound:
+		return b.BackoffWithCfgAndMaxSleep(BoTxnNotFound, maxSleepMs, err)
+	case boStaleCmd:
+		return b.BackoffWithCfgAndMaxSleep(BoStaleCmd, maxSleepMs, err)
+	case boMaxTsNotSynced:
+		return b.BackoffWithCfgAndMaxSleep(BoMaxTsNotSynced, maxSleepMs, err)
+	}
+	cfg := NewConfig("", &metrics.BackoffHistogramEmpty, nil, tikverr.ErrUnknown)
+	return b.BackoffWithCfgAndMaxSleep(cfg, maxSleepMs, err)
+}
+
+// BackoffWithCfgAndMaxSleep sleeps a while base on the Config and records the error message
+// and never sleep more than maxSleepMs for each sleep.
+func (b *Backoffer) BackoffWithCfgAndMaxSleep(cfg *Config, maxSleepMs int, err error) error {
 	if strings.Contains(err.Error(), tikverr.MismatchClusterID) {
 		logutil.BgLogger().Fatal("critical error", zap.Error(err))
 	}
@@ -298,9 +161,9 @@ func (b *Backoffer) BackoffWithMaxSleep(typ BackoffType, maxSleepMs int, err err
 	}
 
 	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
-	b.types = append(b.types, typ)
+	b.configs = append(b.configs, cfg)
 	if b.noop || (b.maxSleep > 0 && b.totalSleep >= b.maxSleep) {
-		errMsg := fmt.Sprintf("%s backoffer.maxSleep %dms is exceeded, errors:", typ.String(), b.maxSleep)
+		errMsg := fmt.Sprintf("%s backoffer.maxSleep %dms is exceeded, errors:", cfg.String(), b.maxSleep)
 		for i, err := range b.errors {
 			// Print only last 3 errors for non-DEBUG log levels.
 			if log.GetLevel() == zapcore.DebugLevel || i >= len(b.errors)-3 {
@@ -309,30 +172,31 @@ func (b *Backoffer) BackoffWithMaxSleep(typ BackoffType, maxSleepMs int, err err
 		}
 		logutil.BgLogger().Warn(errMsg)
 		// Use the first backoff type to generate a MySQL error.
-		return b.types[0].(BackoffType).TError()
+		return b.configs[0].err
 	}
 
 	// Lazy initialize.
 	if b.fn == nil {
-		b.fn = make(map[BackoffType]func(context.Context, int) int)
+		b.fn = make(map[string]backoffFn)
 	}
-	f, ok := b.fn[typ]
+	f, ok := b.fn[cfg.name]
 	if !ok {
-		f = typ.createFn(b.vars)
-		b.fn[typ] = f
+		f = cfg.createBackoffFn(b.vars)
+		b.fn[cfg.name] = f
 	}
-
 	realSleep := f(b.ctx, maxSleepMs)
-	typ.metric().Observe(float64(realSleep) / 1000)
+	if cfg.metric != nil {
+		(*cfg.metric).Observe(float64(realSleep) / 1000)
+	}
 	b.totalSleep += realSleep
 	if b.backoffSleepMS == nil {
-		b.backoffSleepMS = make(map[BackoffType]int)
+		b.backoffSleepMS = make(map[string]int)
 	}
-	b.backoffSleepMS[typ] += realSleep
+	b.backoffSleepMS[cfg.name] += realSleep
 	if b.backoffTimes == nil {
-		b.backoffTimes = make(map[BackoffType]int)
+		b.backoffTimes = make(map[string]int)
 	}
-	b.backoffTimes[typ]++
+	b.backoffTimes[cfg.name]++
 
 	stmtExec := b.ctx.Value(util.ExecDetailsKey)
 	if stmtExec != nil {
@@ -355,7 +219,7 @@ func (b *Backoffer) BackoffWithMaxSleep(typ BackoffType, maxSleepMs int, err err
 		zap.Error(err),
 		zap.Int("totalSleep", b.totalSleep),
 		zap.Int("maxSleep", b.maxSleep),
-		zap.Stringer("type", typ),
+		zap.Stringer("type", cfg),
 		zap.Reflect("txnStartTS", startTs))
 	return nil
 }
@@ -364,7 +228,7 @@ func (b *Backoffer) String() string {
 	if b.totalSleep == 0 {
 		return ""
 	}
-	return fmt.Sprintf(" backoff(%dms %v)", b.totalSleep, b.types)
+	return fmt.Sprintf(" backoff(%dms %v)", b.totalSleep, b.configs)
 }
 
 // Clone creates a new Backoffer which keeps current Backoffer's sleep time and errors, and shares
@@ -403,8 +267,12 @@ func (b *Backoffer) GetTotalSleep() int {
 }
 
 // GetTypes returns type list.
-func (b *Backoffer) GetTypes() []fmt.Stringer {
-	return b.types
+func (b *Backoffer) GetTypes() []string {
+	typs := make([]string, 0, len(b.configs))
+	for _, cfg := range b.configs {
+		typs = append(typs, cfg.String())
+	}
+	return typs
 }
 
 // GetCtx returns the binded context.
@@ -418,23 +286,16 @@ func (b *Backoffer) SetCtx(ctx context.Context) {
 }
 
 // GetBackoffTimes returns a map contains backoff time count by type.
-func (b *Backoffer) GetBackoffTimes() map[BackoffType]int {
+func (b *Backoffer) GetBackoffTimes() map[string]int {
 	return b.backoffTimes
 }
 
 // GetBackoffSleepMS returns a map contains backoff sleep time by type.
-func (b *Backoffer) GetBackoffSleepMS() map[BackoffType]int {
+func (b *Backoffer) GetBackoffSleepMS() map[string]int {
 	return b.backoffSleepMS
 }
 
 // ErrorsNum returns the number of errors.
 func (b *Backoffer) ErrorsNum() int {
 	return len(b.errors)
-}
-
-// SetVarsHook sets the vars.Hook is used for test to verify the variable take effect.
-func (b *Backoffer) SetVarsHook(name string, vars *kv.Variables) {
-	if b.vars != nil && b.vars.Hook != nil {
-		b.vars.Hook(name, vars)
-	}
 }

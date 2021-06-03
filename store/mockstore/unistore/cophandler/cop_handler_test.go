@@ -16,7 +16,6 @@ package cophandler
 import (
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"os"
 	"path/filepath"
@@ -443,11 +442,11 @@ func (ts *testStore) commit(keys [][]byte, startTS, commitTS uint64) error {
 }
 
 func newTestStore(dbPrefix string, logPrefix string) (*testStore, error) {
-	dbPath, err := ioutil.TempDir("", dbPrefix)
+	dbPath, err := os.MkdirTemp("", dbPrefix)
 	if err != nil {
 		return nil, err
 	}
-	LogPath, err := ioutil.TempDir("", logPrefix)
+	LogPath, err := os.MkdirTemp("", logPrefix)
 	if err != nil {
 		return nil, err
 	}

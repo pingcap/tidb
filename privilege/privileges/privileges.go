@@ -171,11 +171,16 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 		return ""
 	}
 	pwd := record.AuthenticationString
-	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
-		logutil.BgLogger().Error("user password from system DB not like sha1sum", zap.String("user", user))
-		return ""
+	switch len(pwd) {
+	case 0:
+		return pwd
+	case mysql.PWDHashLen + 1: // mysql_native_password
+		return pwd
+	case 70: // caching_sha2_password
+		return pwd
 	}
-	return pwd
+	logutil.BgLogger().Error("user password from system DB not like a known hash format", zap.String("user", user), zap.Int("hash_length", len(pwd)))
+	return ""
 }
 
 // GetAuthWithoutVerification implements the Manager interface.
@@ -531,7 +536,8 @@ func (p *UserPrivileges) GetAllRoles(user, host string) []*auth.RoleIdentity {
 }
 
 // IsDynamicPrivilege returns true if the DYNAMIC privilege is built-in or has been registered by a plugin
-func (p *UserPrivileges) IsDynamicPrivilege(privNameInUpper string) bool {
+func (p *UserPrivileges) IsDynamicPrivilege(privName string) bool {
+	privNameInUpper := strings.ToUpper(privName)
 	for _, priv := range dynamicPrivs {
 		if privNameInUpper == priv {
 			return true
@@ -541,7 +547,11 @@ func (p *UserPrivileges) IsDynamicPrivilege(privNameInUpper string) bool {
 }
 
 // RegisterDynamicPrivilege is used by plugins to add new privileges to TiDB
-func RegisterDynamicPrivilege(privNameInUpper string) error {
+func RegisterDynamicPrivilege(privName string) error {
+	privNameInUpper := strings.ToUpper(privName)
+	if len(privNameInUpper) > 32 {
+		return errors.New("privilege name is longer than 32 characters")
+	}
 	dynamicPrivLock.Lock()
 	defer dynamicPrivLock.Unlock()
 	for _, priv := range dynamicPrivs {

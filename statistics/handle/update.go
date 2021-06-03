@@ -480,7 +480,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	affectedRows := h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
 
 	// if it's a partitioned table and its global-stats exists, update its count and modify_count as well.
-	is := h.mu.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	is := h.mu.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	if is == nil {
 		return false, errors.New("cannot get the information schema")
 	}
@@ -1067,6 +1067,7 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 	statistics.Version0: sqlexec.ExecOptionAnalyzeVer1,
 	statistics.Version1: sqlexec.ExecOptionAnalyzeVer1,
 	statistics.Version2: sqlexec.ExecOptionAnalyzeVer2,
+	statistics.Version3: sqlexec.ExecOptionAnalyzeVer3,
 }
 
 func (h *Handle) execAutoAnalyze(statsVer int, sql string, params ...interface{}) {

@@ -506,20 +506,12 @@ func (hg *Histogram) BetweenRowCount(a, b types.Datum) float64 {
 }
 
 // BetweenRowCount estimates the row count for interval [l, r).
-func (c *Column) BetweenRowCount(sc *stmtctx.StatementContext, l, r types.Datum) (float64, error) {
+func (c *Column) BetweenRowCount(sc *stmtctx.StatementContext, l, r types.Datum, lowEncoded, highEncoded []byte) float64 {
 	histBetweenCnt := c.Histogram.BetweenRowCount(l, r)
 	if c.StatsVer <= Version1 {
-		return histBetweenCnt, nil
+		return histBetweenCnt
 	}
-	lBytes, err := codec.EncodeKey(sc, nil, l)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	rBytes, err := codec.EncodeKey(sc, nil, r)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return float64(c.TopN.BetweenCount(lBytes, rBytes)) + histBetweenCnt, nil
+	return float64(c.TopN.BetweenCount(lowEncoded, highEncoded)) + histBetweenCnt
 }
 
 // TotalRowCount returns the total count of this histogram.
@@ -814,7 +806,7 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 		rAvg *= 2
 	}
 	for i := 0; i < rh.Len(); i++ {
-		if statsVer == Version2 {
+		if statsVer >= Version2 {
 			lh.AppendBucketWithNDV(rh.GetLower(i), rh.GetUpper(i), rh.Buckets[i].Count+lCount-offset, rh.Buckets[i].Repeat, rh.Buckets[i].NDV)
 			continue
 		}
@@ -925,14 +917,14 @@ func (c *Column) String() string {
 
 // TotalRowCount returns the total count of this column.
 func (c *Column) TotalRowCount() float64 {
-	if c.StatsVer == Version2 {
+	if c.StatsVer >= Version2 {
 		return c.Histogram.TotalRowCount() + float64(c.TopN.TotalCount())
 	}
 	return c.Histogram.TotalRowCount()
 }
 
 func (c *Column) notNullCount() float64 {
-	if c.StatsVer == Version2 {
+	if c.StatsVer >= Version2 {
 		return c.Histogram.notNullCount() + float64(c.TopN.TotalCount())
 	}
 	return c.Histogram.notNullCount()
@@ -978,7 +970,7 @@ func (c *Column) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
 	return c.TotalRowCount() == 0 || (c.Histogram.NDV > 0 && c.notNullCount() == 0)
 }
 
-func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, modifyCount int64) (float64, error) {
+func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, encodedVal []byte, modifyCount int64) (float64, error) {
 	if val.IsNull() {
 		return float64(c.NullCount), nil
 	}
@@ -987,7 +979,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 		if c.Histogram.Bounds.NumRows() == 0 {
 			return 0.0, nil
 		}
-		if c.Histogram.NDV > 0 && c.outOfRange(val) {
+		if c.Histogram.NDV > 0 && c.outOfRange(val, encodedVal) {
 			return outOfRangeEQSelectivity(c.Histogram.NDV, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 		}
 		if c.CMSketch != nil {
@@ -996,14 +988,17 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 		}
 		return c.Histogram.equalRowCount(val, false), nil
 	}
+	// All the values are null.
+	if c.Histogram.Bounds.NumRows() == 0 && c.TopN.Num() == 0 {
+		return 0, nil
+	}
+	if c.Histogram.NDV+int64(c.TopN.Num()) > 0 && c.outOfRange(val, encodedVal) {
+		return outOfRangeEQSelectivity(c.Histogram.NDV, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
+	}
 	// Stats version == 2
 	// 1. try to find this value in TopN
 	if c.TopN != nil {
-		valBytes, err := codec.EncodeKey(sc, nil, val)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		rowcount, ok := c.QueryTopN(valBytes)
+		rowcount, ok := c.QueryTopN(encodedVal)
 		if ok {
 			return float64(rowcount), nil
 		}
@@ -1054,6 +1049,14 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
+		lowEncoded, err := codec.EncodeKey(sc, nil, lowVal)
+		if err != nil {
+			return 0, err
+		}
+		highEncoded, err := codec.EncodeKey(sc, nil, highVal)
+		if err != nil {
+			return 0, err
+		}
 		if cmp == 0 {
 			// the point case.
 			if !rg.LowExclude && !rg.HighExclude {
@@ -1063,7 +1066,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 					continue
 				}
 				var cnt float64
-				cnt, err = c.equalRowCount(sc, lowVal, modifyCount)
+				cnt, err = c.equalRowCount(sc, lowVal, lowEncoded, modifyCount)
 				if err != nil {
 					return 0, errors.Trace(err)
 				}
@@ -1075,7 +1078,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		// The small range case.
 		if rangeVals != nil {
 			for _, val := range rangeVals {
-				cnt, err := c.equalRowCount(sc, val, modifyCount)
+				cnt, err := c.equalRowCount(sc, val, lowEncoded, modifyCount)
 				if err != nil {
 					return 0, err
 				}
@@ -1084,18 +1087,15 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			continue
 		}
 		// The interval case.
-		cnt, err := c.BetweenRowCount(sc, lowVal, highVal)
-		if err != nil {
-			return 0, err
-		}
-		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
+		cnt := c.BetweenRowCount(sc, lowVal, highVal, lowEncoded, highEncoded)
+		if (c.outOfRange(lowVal, lowEncoded) && !lowVal.IsNull()) || c.outOfRange(highVal, highEncoded) {
 			cnt += outOfRangeEQSelectivity(outOfRangeBetweenRate, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount()
 		}
 		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boudaries here.
 		// Note that, `cnt` does not include null values, we need specially handle cases
 		// where null is the lower bound.
 		if rg.LowExclude && !lowVal.IsNull() {
-			lowCnt, err := c.equalRowCount(sc, lowVal, modifyCount)
+			lowCnt, err := c.equalRowCount(sc, lowVal, lowEncoded, modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -1105,7 +1105,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			cnt += float64(c.NullCount)
 		}
 		if !rg.HighExclude {
-			highCnt, err := c.equalRowCount(sc, highVal, modifyCount)
+			highCnt, err := c.equalRowCount(sc, highVal, highEncoded, modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -1119,6 +1119,15 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		rowCount = 0
 	}
 	return rowCount, nil
+}
+
+func (c *Column) outOfRange(val types.Datum, encodedVal []byte) bool {
+	outOfHist := c.Histogram.outOfRange(val)
+	if !outOfHist {
+		return false
+	}
+	// Already out of hist.
+	return c.TopN.outOfRange(encodedVal)
 }
 
 // Index represents an index histogram.
@@ -1140,7 +1149,7 @@ func (idx *Index) String() string {
 
 // TotalRowCount returns the total count of this index.
 func (idx *Index) TotalRowCount() float64 {
-	if idx.StatsVer == Version2 {
+	if idx.StatsVer >= Version2 {
 		return idx.Histogram.TotalRowCount() + float64(idx.TopN.TotalCount())
 	}
 	return idx.Histogram.TotalRowCount()
@@ -1177,7 +1186,7 @@ func (idx *Index) equalRowCount(b []byte, modifyCount int64) float64 {
 		return float64(idx.QueryBytes(b))
 	}
 	// If it's version2, query the top-n first.
-	if idx.StatsVer == Version2 {
+	if idx.StatsVer >= Version2 {
 		count, found := idx.TopN.QueryTopN(b)
 		if found {
 			return float64(count)
@@ -1245,7 +1254,7 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, coll *HistColl, inde
 		expBackoffSuccess := false
 		// Due to the limitation of calcFraction and convertDatumToScalar, the histogram actually won't estimate anything.
 		// If the first column's range is point.
-		if rangePosition := GetOrdinalOfRangeCond(sc, indexRange); rangePosition > 0 && idx.StatsVer == Version2 && coll != nil {
+		if rangePosition := GetOrdinalOfRangeCond(sc, indexRange); rangePosition > 0 && idx.StatsVer >= Version2 && coll != nil {
 			var expBackoffSel float64
 			expBackoffSel, expBackoffSuccess, err = idx.expBackoffEstimation(sc, coll, indexRange)
 			if err != nil {
@@ -1504,7 +1513,15 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 }
 
 func (idx *Index) outOfRange(val types.Datum) bool {
-	if idx.Histogram.Len() == 0 {
+	outOfTopN := idx.TopN.outOfRange(val.GetBytes())
+	// The val is in TopN, return false.
+	if !outOfTopN {
+		return false
+	}
+
+	histEmpty := idx.Histogram.Len() == 0
+	// HistEmpty->Hist out of range.
+	if histEmpty {
 		return true
 	}
 	withInLowBoundOrPrefixMatch := chunk.Compare(idx.Bounds.GetRow(0), 0, &val) <= 0 ||

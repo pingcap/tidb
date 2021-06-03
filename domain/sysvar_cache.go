@@ -123,7 +123,9 @@ func (svc *SysVarCache) RebuildSysVarCache(ctx sessionctx.Context) error {
 		if _, ok := tableContents[sv.Name]; ok {
 			sVal = tableContents[sv.Name]
 		}
-		if sv.HasSessionScope() {
+		// session cache stores non-skippable variables, which essentially means session scope.
+		// for historical purposes there are some globals, but these should eventually be removed.
+		if !sv.SkipInit() {
 			newSessionCache[sv.Name] = sVal
 		}
 		if sv.HasGlobalScope() {
@@ -143,6 +145,10 @@ func (svc *SysVarCache) RebuildSysVarCache(ctx sessionctx.Context) error {
 }
 
 // checkEnableServerGlobalVar processes variables that acts in server and global level.
+// This is required because the SetGlobal function on the sysvar struct only executes on
+// the initiating tidb-server. There is no current method to say "run this function on all
+// tidb servers when the value of this variable changes". If you do not require changes to
+// be applied on all servers, use a getter/setter instead! You don't need to add to this list.
 func checkEnableServerGlobalVar(name, sVal string) {
 	var err error
 	switch name {
