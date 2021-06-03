@@ -567,7 +567,7 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	tk.MustExec(`create table test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored);`)
 	defer tk.MustExec("drop table if exists test_gv_ddl;")
 	_, err = tk.Exec(`create global temporary table test_gv_ddl_temp like test_gv_ddl on commit delete rows;`)
-	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("virtual column").Error())
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("virtual columns").Error())
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.

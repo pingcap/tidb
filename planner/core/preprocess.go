@@ -1040,7 +1040,7 @@ func checkReferInfo(tableMetaInfo *model.TableInfo) error {
 	}
 	for _, column := range tableMetaInfo.Columns {
 		if column.IsGenerated() && !column.GeneratedStored {
-			return ErrOptOnTemporaryTable.GenWithStackByArgs("virtual column")
+			return ErrOptOnTemporaryTable.GenWithStackByArgs("virtual columns")
 		}
 	}
 
