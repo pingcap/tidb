@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -237,7 +238,9 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 }
 
 func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
-	c.Skip("unstable")
+	if israce.RaceEnabled {
+		c.Skip("unstable, skip race test")
+	}
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer func() {
@@ -252,7 +255,8 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 	defer dom.Close()
 	tk := testkit.NewTestKit(c, store)
 
-	tk.MustExec("use test")
+	tk.MustExec("create database test_index_extract_topn")
+	tk.MustExec("use test_index_extract_topn")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a, b))")
 	tk.MustExec("insert into t values(1, 1), (1, 1), (1, 2), (1, 2)")
@@ -260,7 +264,7 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 	tk.MustExec("analyze table t with 10 cmsketch width")
 
 	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test_index_extract_topn"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
@@ -511,18 +515,21 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 }
 
 func (s *testSerialSuite2) TestFastAnalyze4GlobalStats(c *C) {
-	c.Skip("unstable")
+	if israce.RaceEnabled {
+		c.Skip("unstable, skip race test")
+	}
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
+	tk.MustExec(`create database if not exists test_fast_gstats`)
+	tk.MustExec("use test_fast_gstats")
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
 	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
 	// test fast analyze in dynamic mode
 	tk.MustExec("set @@session.tidb_analyze_version = 2;")
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic';")
-	tk.MustExec("drop table if exists t4;")
-	tk.MustExec("create table t4(a int, b int) PARTITION BY HASH(a) PARTITIONS 2;")
-	tk.MustExec("insert into t4 values(1,1),(3,3),(4,4),(2,2),(5,5);")
-	err := tk.ExecToErr("analyze table t4;")
+	tk.MustExec("drop table if exists test_fast_gstats;")
+	tk.MustExec("create table test_fast_gstats(a int, b int) PARTITION BY HASH(a) PARTITIONS 2;")
+	tk.MustExec("insert into test_fast_gstats values(1,1),(3,3),(4,4),(2,2),(5,5);")
+	err := tk.ExecToErr("analyze table test_fast_gstats;")
 	c.Assert(err.Error(), Equals, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently.")
 }
 
@@ -747,21 +754,24 @@ func (s *testSuite10) TestFailedAnalyzeRequest(c *C) {
 }
 
 func (s *testSuite1) TestExtractTopN(c *C) {
-	c.Skip("unstable")
+	if israce.RaceEnabled {
+		c.Skip("unstable, skip race test")
+	}
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
+	tk.MustExec("create database if not exists test_extract_topn")
+	tk.MustExec("use test_extract_topn")
+	tk.MustExec("drop table if exists test_extract_topn")
+	tk.MustExec("create table test_extract_topn(a int primary key, b int, index index_b(b))")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	for i := 0; i < 10; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+		tk.MustExec(fmt.Sprintf("insert into test_extract_topn values (%d, %d)", i, i))
 	}
 	for i := 0; i < 10; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, 0)", i+10))
+		tk.MustExec(fmt.Sprintf("insert into test_extract_topn values (%d, 0)", i+10))
 	}
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table test_extract_topn")
 	is := s.dom.InfoSchema()
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test_extract_topn"), model.NewCIStr("test_extract_topn"))
 	c.Assert(err, IsNil)
 	tblInfo := table.Meta()
 	tblStats := s.dom.StatsHandle().GetTableStats(tblInfo)
@@ -774,26 +784,26 @@ func (s *testSuite1) TestExtractTopN(c *C) {
 	idxItem := idxStats.TopN.TopN[0]
 	c.Assert(idxItem.Count, Equals, uint64(11))
 	// The columns are: DBName, table name, column name, is index, value, count.
-	tk.MustQuery("show stats_topn").Sort().Check(testkit.Rows("test t  b 0 0 11",
-		"test t  b 0 1 1",
-		"test t  b 0 2 1",
-		"test t  b 0 3 1",
-		"test t  b 0 4 1",
-		"test t  b 0 5 1",
-		"test t  b 0 6 1",
-		"test t  b 0 7 1",
-		"test t  b 0 8 1",
-		"test t  b 0 9 1",
-		"test t  index_b 1 0 11",
-		"test t  index_b 1 1 1",
-		"test t  index_b 1 2 1",
-		"test t  index_b 1 3 1",
-		"test t  index_b 1 4 1",
-		"test t  index_b 1 5 1",
-		"test t  index_b 1 6 1",
-		"test t  index_b 1 7 1",
-		"test t  index_b 1 8 1",
-		"test t  index_b 1 9 1",
+	tk.MustQuery("show stats_topn").Sort().Check(testkit.Rows("test_extract_topn test_extract_topn  b 0 0 11",
+		"test_extract_topn test_extract_topn  b 0 1 1",
+		"test_extract_topn test_extract_topn  b 0 2 1",
+		"test_extract_topn test_extract_topn  b 0 3 1",
+		"test_extract_topn test_extract_topn  b 0 4 1",
+		"test_extract_topn test_extract_topn  b 0 5 1",
+		"test_extract_topn test_extract_topn  b 0 6 1",
+		"test_extract_topn test_extract_topn  b 0 7 1",
+		"test_extract_topn test_extract_topn  b 0 8 1",
+		"test_extract_topn test_extract_topn  b 0 9 1",
+		"test_extract_topn test_extract_topn  index_b 1 0 11",
+		"test_extract_topn test_extract_topn  index_b 1 1 1",
+		"test_extract_topn test_extract_topn  index_b 1 2 1",
+		"test_extract_topn test_extract_topn  index_b 1 3 1",
+		"test_extract_topn test_extract_topn  index_b 1 4 1",
+		"test_extract_topn test_extract_topn  index_b 1 5 1",
+		"test_extract_topn test_extract_topn  index_b 1 6 1",
+		"test_extract_topn test_extract_topn  index_b 1 7 1",
+		"test_extract_topn test_extract_topn  index_b 1 8 1",
+		"test_extract_topn test_extract_topn  index_b 1 9 1",
 	))
 }
 
@@ -981,4 +991,23 @@ func (s *testSuite1) TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColu
 		"test sampling_index_prefix_col  idx 1 0 1 1 b b 0",
 	))
 	tk.MustQuery("show stats_topn where table_name = 'sampling_index_prefix_col' and column_name = 'idx'").Check(testkit.Rows("test sampling_index_prefix_col  idx 1 a 3"))
+}
+
+func (s *testSuite2) TestAnalyzeSamplingWorkPanic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 3")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12)")
+	tk.MustExec("split table t between (-9223372036854775808) and (9223372036854775807) regions 12")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockAnalyzeSamplingBuildWorkerPanic", "return(1)"), IsNil)
+	err := tk.ExecToErr("analyze table t")
+	c.Assert(err, NotNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeSamplingBuildWorkerPanic"), IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockAnalyzeSamplingMergeWorkerPanic", "return(1)"), IsNil)
+	err = tk.ExecToErr("analyze table t")
+	c.Assert(err, NotNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeSamplingMergeWorkerPanic"), IsNil)
 }

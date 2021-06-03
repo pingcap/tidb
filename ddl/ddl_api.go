@@ -1643,7 +1643,7 @@ func checkTableInfoValid(tblInfo *model.TableInfo) error {
 	return checkInvisibleIndexOnPK(tblInfo)
 }
 
-func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) (*model.TableInfo, error) {
+func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *ast.CreateTableStmt) (*model.TableInfo, error) {
 	// Check the referred table is a real table object.
 	if referTblInfo.IsSequence() || referTblInfo.IsView() {
 		return nil, ErrWrongObject.GenWithStackByArgs(ident.Schema, referTblInfo.Name, "BASE TABLE")
@@ -1662,7 +1662,10 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) (*mo
 	tblInfo.Name = ident.Name
 	tblInfo.AutoIncID = 0
 	tblInfo.ForeignKeys = nil
-	if tblInfo.TiFlashReplica != nil {
+	// Ignore TiFlash replicas for temporary tables.
+	if s.TemporaryKeyword != ast.TemporaryNone {
+		tblInfo.TiFlashReplica = nil
+	} else if tblInfo.TiFlashReplica != nil {
 		replica := *tblInfo.TiFlashReplica
 		// Keep the tiflash replica setting, remove the replica available status.
 		replica.AvailablePartitionIDs = nil
@@ -1736,6 +1739,9 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	switch s.TemporaryKeyword {
 	case ast.TemporaryGlobal:
 		tbInfo.TempTableType = model.TempTableGlobal
+		if !ctx.GetSessionVars().EnableGlobalTemporaryTable {
+			return nil, errors.New("global temporary table is experimental and it is switched off by tidb_enable_global_temporary_table")
+		}
 		// "create global temporary table ... on commit preserve rows"
 		if !s.OnCommitDelete {
 			return nil, errors.Trace(errUnsupportedOnCommitPreserve)
@@ -1807,7 +1813,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	// build tableInfo
 	var tbInfo *model.TableInfo
 	if s.ReferTable != nil {
-		tbInfo, err = buildTableInfoWithLike(ident, referTbl.Meta())
+		tbInfo, err = buildTableInfoWithLike(ident, referTbl.Meta(), s)
 	} else {
 		tbInfo, err = buildTableInfoWithStmt(ctx, s, schema.Charset, schema.Collate)
 	}
@@ -2646,6 +2652,9 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, tableIdent)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if t.Meta().TempTableType != model.TempTableNone {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
 	}
 	if uVal == t.Meta().ShardRowIDBits {
 		// Nothing need to do.
@@ -3537,7 +3546,7 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (ca
 	return true, notCompatibleMsg, errUnsupportedModifyColumn.GenWithStackByArgs(notCompatibleMsg)
 }
 
-func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needOreg bool, reasonMsg string) {
+func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needReorg bool, reasonMsg string) {
 	toFlen := to.Flen
 	originFlen := origin.Flen
 	if mysql.IsIntegerType(to.Tp) && mysql.IsIntegerType(origin.Tp) {
@@ -3545,6 +3554,10 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needOreg b
 		// the default flen of the type.
 		originFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(origin.Tp)
 		toFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(to.Tp)
+	}
+
+	if convertBetweenCharAndVarchar(origin.Tp, to.Tp) {
+		return true, "conversion between char and varchar string needs reorganization"
 	}
 
 	if toFlen > 0 && toFlen < originFlen {
@@ -3620,10 +3633,6 @@ func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types
 			msg := "tidb_enable_change_column_type is true and this column has primary key flag"
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
-	}
-	if types.IsTypeVarchar(origin.Tp) != types.IsTypeVarchar(to.Tp) {
-		unsupportedMsg := "column type conversion between 'varchar' and 'non-varchar' is currently unsupported yet"
-		return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 	}
 
 	err = checkModifyCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate, needRewriteCollationData)
@@ -4381,14 +4390,16 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	// Ban setting replica count for tables in system database.
 	if util.IsMemOrSysDB(schema.Name.L) {
 		return errors.Trace(errUnsupportedAlterReplicaForSysTable)
+	} else if tb.Meta().TempTableType != model.TempTableNone {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("set tiflash replica")
 	}
 
 	tbReplicaInfo := tb.Meta().TiFlashReplica
 	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
 		len(tbReplicaInfo.LocationLabels) == len(replicaInfo.Labels) {
 		changed := false
-		for i, lable := range tbReplicaInfo.LocationLabels {
-			if replicaInfo.Labels[i] != lable {
+		for i, label := range tbReplicaInfo.LocationLabels {
+			if replicaInfo.Labels[i] != label {
 				changed = true
 				break
 			}
@@ -5263,6 +5274,9 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
+	}
+	if t.Meta().TempTableType != model.TempTableNone {
+		return infoschema.ErrCannotAddForeign
 	}
 
 	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols(), t.Meta())

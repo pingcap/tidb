@@ -717,7 +717,9 @@ type AnalyzeColumnsExec struct {
 	indexes       []*model.IndexInfo
 	core.AnalyzeInfo
 
-	subIndexWorkerWg *sync.WaitGroup
+	subIndexWorkerWg  *sync.WaitGroup
+	samplingBuilderWg *sync.WaitGroup
+	samplingMergeWg   *sync.WaitGroup
 }
 
 func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
@@ -834,6 +836,17 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		rootRowCollector.FMSketches = append(rootRowCollector.FMSketches, statistics.NewFMSketch(maxSketchSize))
 	}
 	sc := e.ctx.GetSessionVars().StmtCtx
+	statsConcurrency, err := getBuildStatsConcurrency(e.ctx)
+	if err != nil {
+		return 0, nil, nil, nil, nil, err
+	}
+	mergeResultCh := make(chan *samplingMergeResult, statsConcurrency)
+	mergeTaskCh := make(chan []byte, statsConcurrency)
+	e.samplingMergeWg = &sync.WaitGroup{}
+	e.samplingMergeWg.Add(statsConcurrency)
+	for i := 0; i < statsConcurrency; i++ {
+		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i == 0)
+	}
 	for {
 		data, err1 := e.resultHandler.nextRaw(context.TODO())
 		if err1 != nil {
@@ -842,17 +855,26 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		if data == nil {
 			break
 		}
-		colResp := &tipb.AnalyzeColumnsResp{}
-		err = colResp.Unmarshal(data)
-		if err != nil {
-			return 0, nil, nil, nil, nil, err
+		mergeTaskCh <- data
+	}
+	close(mergeTaskCh)
+	mergeWorkerPanicCnt := 0
+	for mergeWorkerPanicCnt < statsConcurrency {
+		mergeResult, ok := <-mergeResultCh
+		if !ok {
+			break
 		}
-		subCollector := &statistics.RowSampleCollector{
-			MaxSampleSize: int(e.analyzePB.ColReq.SampleSize),
+		if mergeResult.err != nil {
+			err = mergeResult.err
+			if mergeResult.err == errAnalyzeWorkerPanic {
+				mergeWorkerPanicCnt++
+			}
+			continue
 		}
-		subCollector.FromProto(colResp.RowCollector)
-		e.job.Update(subCollector.Count)
-		rootRowCollector.MergeCollector(subCollector)
+		rootRowCollector.MergeCollector(mergeResult.collector)
+	}
+	if err != nil {
+		return 0, nil, nil, nil, nil, err
 	}
 
 	// handling virtual columns
@@ -904,46 +926,26 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		return rootRowCollector.Samples[i].Handle.Compare(rootRowCollector.Samples[j].Handle) < 0
 	})
 
-	hists = make([]*statistics.Histogram, 0, len(e.colsInfo))
-	topns = make([]*statistics.TopN, 0, len(e.colsInfo))
-	fmSketches = make([]*statistics.FMSketch, 0, len(e.colsInfo))
-	sampleCollectors := make([]*statistics.SampleCollector, 0, len(e.colsInfo))
-
+	totalLen := len(e.colsInfo) + len(e.indexes)
+	hists = make([]*statistics.Histogram, totalLen)
+	topns = make([]*statistics.TopN, totalLen)
+	fmSketches = make([]*statistics.FMSketch, 0, totalLen)
+	buildResultChan := make(chan error, totalLen)
+	buildTaskChan := make(chan *samplingBuildTask, totalLen)
+	e.samplingBuilderWg = &sync.WaitGroup{}
+	e.samplingBuilderWg.Add(statsConcurrency)
+	sampleCollectors := make([]*statistics.SampleCollector, len(e.colsInfo))
+	for i := 0; i < statsConcurrency; i++ {
+		go e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, i == 0)
+	}
 	for i, col := range e.colsInfo {
-		// If the column contains virtual column. We don't store the stats for it currently Since we cannot maintain the FM-Sketch for it.
-		// Same with original stats of Version1.
-		if col.IsGenerated() && !col.GeneratedStored {
-			hists = append(hists, nil)
-			topns = append(topns, nil)
-			fmSketches = append(fmSketches, nil)
-			continue
+		buildTaskChan <- &samplingBuildTask{
+			id:               col.ID,
+			rootRowCollector: rootRowCollector,
+			tp:               &col.FieldType,
+			isColumn:         true,
+			slicePos:         i,
 		}
-
-		sampleItems := make([]*statistics.SampleItem, 0, rootRowCollector.MaxSampleSize)
-		for j, row := range rootRowCollector.Samples {
-			if row.Columns[i].IsNull() {
-				continue
-			}
-			sampleItems = append(sampleItems, &statistics.SampleItem{
-				Value:   row.Columns[i],
-				Ordinal: j,
-			})
-		}
-		collector := &statistics.SampleCollector{
-			Samples:   sampleItems,
-			NullCount: rootRowCollector.NullCount[i],
-			Count:     rootRowCollector.Count - rootRowCollector.NullCount[i],
-			FMSketch:  rootRowCollector.FMSketches[i],
-			TotalSize: rootRowCollector.TotalSizes[i],
-		}
-		sampleCollectors = append(sampleCollectors, collector)
-
-		hg, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collector, &col.FieldType, true)
-		if err != nil {
-			return 0, nil, nil, nil, nil, err
-		}
-		hists = append(hists, hg)
-		topns = append(topns, topn)
 		fmSketches = append(fmSketches, rootRowCollector.FMSketches[i])
 	}
 
@@ -958,48 +960,33 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}
 
 	// build index stats
-	var tmpDatum types.Datum
 	for i, idx := range e.indexes {
-		sampleItems := make([]*statistics.SampleItem, 0, rootRowCollector.MaxSampleSize)
-		for _, row := range rootRowCollector.Samples {
-			if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
-				continue
-			}
-
-			b := make([]byte, 0, 8)
-			for _, col := range idx.Columns {
-				if col.Length != types.UnspecifiedLength {
-					row.Columns[col.Offset].Copy(&tmpDatum)
-					ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldType)
-					b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, tmpDatum)
-					if err != nil {
-						return 0, nil, nil, nil, nil, err
-					}
-					continue
-				}
-				b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, row.Columns[col.Offset])
-				if err != nil {
-					return 0, nil, nil, nil, nil, err
-				}
-			}
-			sampleItems = append(sampleItems, &statistics.SampleItem{
-				Value: types.NewBytesDatum(b),
-			})
+		buildTaskChan <- &samplingBuildTask{
+			id:               idx.ID,
+			rootRowCollector: rootRowCollector,
+			tp:               types.NewFieldType(mysql.TypeBlob),
+			isColumn:         false,
+			slicePos:         colLen + i,
 		}
-		collector := &statistics.SampleCollector{
-			Samples:   sampleItems,
-			NullCount: rootRowCollector.NullCount[colLen+i],
-			Count:     rootRowCollector.Count - rootRowCollector.NullCount[colLen+i],
-			FMSketch:  rootRowCollector.FMSketches[colLen+i],
-			TotalSize: rootRowCollector.TotalSizes[colLen+i],
-		}
-		hg, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), idx.ID, collector, types.NewFieldType(mysql.TypeBlob), false)
-		if err != nil {
-			return 0, nil, nil, nil, nil, err
-		}
-		hists = append(hists, hg)
-		topns = append(topns, topn)
 		fmSketches = append(fmSketches, rootRowCollector.FMSketches[colLen+i])
+	}
+	close(buildTaskChan)
+	panicCnt := 0
+	for panicCnt < statsConcurrency {
+		err1, ok := <-buildResultChan
+		if !ok {
+			break
+		}
+		if err1 != nil {
+			err = err1
+			if err1 == errAnalyzeWorkerPanic {
+				panicCnt++
+			}
+			continue
+		}
+	}
+	if err != nil {
+		return 0, nil, nil, nil, nil, err
 	}
 	count = rootRowCollector.Count
 	if needExtStats {
@@ -1171,6 +1158,180 @@ func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(indexInfos []*model
 		})
 	}
 	return tasks
+}
+
+type samplingMergeResult struct {
+	collector *statistics.RowSampleCollector
+	err       error
+}
+
+func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult, taskCh <-chan []byte, l int, isClosedChanThread bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			logutil.BgLogger().Error("analyze worker panicked", zap.String("stack", string(buf)))
+			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
+			resultCh <- &samplingMergeResult{err: errAnalyzeWorkerPanic}
+		}
+		// Consume the remaining things.
+		for {
+			_, ok := <-taskCh
+			if !ok {
+				break
+			}
+		}
+		e.samplingMergeWg.Done()
+		if isClosedChanThread {
+			e.samplingMergeWg.Wait()
+			close(resultCh)
+		}
+	}()
+	failpoint.Inject("mockAnalyzeSamplingMergeWorkerPanic", func() {
+		panic("failpoint triggered")
+	})
+	retCollector := &statistics.RowSampleCollector{
+		NullCount:     make([]int64, l),
+		FMSketches:    make([]*statistics.FMSketch, 0, l),
+		TotalSizes:    make([]int64, l),
+		Samples:       make(statistics.WeightedRowSampleHeap, 0, e.analyzePB.ColReq.SampleSize),
+		MaxSampleSize: int(e.analyzePB.ColReq.SampleSize),
+	}
+	for i := 0; i < l; i++ {
+		retCollector.FMSketches = append(retCollector.FMSketches, statistics.NewFMSketch(maxSketchSize))
+	}
+	for {
+		data, ok := <-taskCh
+		if !ok {
+			break
+		}
+		colResp := &tipb.AnalyzeColumnsResp{}
+		err := colResp.Unmarshal(data)
+		if err != nil {
+			resultCh <- &samplingMergeResult{err: err}
+			return
+		}
+		subCollector := &statistics.RowSampleCollector{
+			MaxSampleSize: int(e.analyzePB.ColReq.SampleSize),
+		}
+		subCollector.FromProto(colResp.RowCollector)
+		e.job.Update(subCollector.Count)
+		retCollector.MergeCollector(subCollector)
+	}
+	resultCh <- &samplingMergeResult{collector: retCollector}
+}
+
+type samplingBuildTask struct {
+	id               int64
+	rootRowCollector *statistics.RowSampleCollector
+	tp               *types.FieldType
+	isColumn         bool
+	slicePos         int
+}
+
+func (e *AnalyzeColumnsExec) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, isClosedChanThread bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			logutil.BgLogger().Error("analyze worker panicked", zap.String("stack", string(buf)))
+			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
+			resultCh <- errAnalyzeWorkerPanic
+		}
+		e.samplingBuilderWg.Done()
+		if isClosedChanThread {
+			e.samplingBuilderWg.Wait()
+			close(resultCh)
+		}
+	}()
+	failpoint.Inject("mockAnalyzeSamplingBuildWorkerPanic", func() {
+		panic("failpoint triggered")
+	})
+	colLen := len(e.colsInfo)
+workLoop:
+	for {
+		task, ok := <-taskCh
+		if !ok {
+			break
+		}
+		var collector *statistics.SampleCollector
+		if task.isColumn {
+			if e.colsInfo[task.slicePos].IsGenerated() && !e.colsInfo[task.slicePos].GeneratedStored {
+				hists[task.slicePos] = nil
+				topns[task.slicePos] = nil
+				continue
+			}
+			sampleItems := make([]*statistics.SampleItem, 0, task.rootRowCollector.MaxSampleSize)
+			for j, row := range task.rootRowCollector.Samples {
+				if row.Columns[task.slicePos].IsNull() {
+					continue
+				}
+				sampleItems = append(sampleItems, &statistics.SampleItem{
+					Value:   row.Columns[task.slicePos],
+					Ordinal: j,
+				})
+			}
+			collector = &statistics.SampleCollector{
+				Samples:   sampleItems,
+				NullCount: task.rootRowCollector.NullCount[task.slicePos],
+				Count:     task.rootRowCollector.Count - task.rootRowCollector.NullCount[task.slicePos],
+				FMSketch:  task.rootRowCollector.FMSketches[task.slicePos],
+				TotalSize: task.rootRowCollector.TotalSizes[task.slicePos],
+			}
+		} else {
+			var tmpDatum types.Datum
+			var err error
+			idx := e.indexes[task.slicePos-colLen]
+			sampleItems := make([]*statistics.SampleItem, 0, task.rootRowCollector.MaxSampleSize)
+			for _, row := range task.rootRowCollector.Samples {
+				if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
+					continue
+				}
+
+				b := make([]byte, 0, 8)
+				for _, col := range idx.Columns {
+					if col.Length != types.UnspecifiedLength {
+						row.Columns[col.Offset].Copy(&tmpDatum)
+						ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldType)
+						b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, tmpDatum)
+						if err != nil {
+							resultCh <- err
+							continue workLoop
+						}
+						continue
+					}
+					b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, row.Columns[col.Offset])
+					if err != nil {
+						resultCh <- err
+						continue workLoop
+					}
+				}
+				sampleItems = append(sampleItems, &statistics.SampleItem{
+					Value: types.NewBytesDatum(b),
+				})
+			}
+			collector = &statistics.SampleCollector{
+				Samples:   sampleItems,
+				NullCount: task.rootRowCollector.NullCount[task.slicePos],
+				Count:     task.rootRowCollector.Count - task.rootRowCollector.NullCount[task.slicePos],
+				FMSketch:  task.rootRowCollector.FMSketches[task.slicePos],
+				TotalSize: task.rootRowCollector.TotalSizes[task.slicePos],
+			}
+		}
+		if task.isColumn {
+			collectors[task.slicePos] = collector
+		}
+		hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn)
+		if err != nil {
+			resultCh <- err
+			continue
+		}
+		hists[task.slicePos] = hist
+		topns[task.slicePos] = topn
+		resultCh <- nil
+	}
 }
 
 func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats bool) (hists []*statistics.Histogram, cms []*statistics.CMSketch, topNs []*statistics.TopN, fms []*statistics.FMSketch, extStats *statistics.ExtendedStatsColl, err error) {
