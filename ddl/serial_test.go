@@ -568,6 +568,17 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	defer tk.MustExec("drop table if exists test_gv_ddl;")
 	_, err = tk.Exec(`create global temporary table test_gv_ddl_temp like test_gv_ddl on commit delete rows;`)
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("virtual columns").Error())
+	// Test foreign key.
+	tk.MustExec("drop table if exists test_foreign_key")
+	tk.MustExec("create table t1 (a int, b int);")
+	tk.MustExec("create table test_foreign_key (c int,d int,foreign key (d) references t1 (b));")
+	defer tk.MustExec("drop table if exists test_foreign_key;")
+	tk.MustExec("create global temporary table test_foreign_key_temp like test_foreign_key on commit delete rows;")
+	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_foreign_key_temp"))
+	c.Assert(err, IsNil)
+	tableInfo := table.Meta()
+	c.Assert(len(tableInfo.ForeignKeys), Equals, 0)
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
