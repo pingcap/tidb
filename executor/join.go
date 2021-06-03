@@ -755,33 +755,30 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 		})
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
-	hCtx1 := &hashContext{
-		allTypes:  e.buildTypes,
-		keyColIdx: buildKeyColIdx,
-	}
-	return e.runBuildWorker(buildSideResultCh, hCtx1)
+
+	return e.runBuildWorker(buildSideResultCh, *hCtx)
 }
 
-func (e *HashJoinExec) runBuildWorker(buildSideResultCh <-chan *chunk.Chunk, hCtx *hashContext) error {
+func (e *HashJoinExec) runBuildWorker(buildSideResultCh <-chan *chunk.Chunk, hCtx hashContext) error {
 	var err error
 	for chk := range buildSideResultCh {
 		if e.finished.Load().(bool) {
 			return nil
 		}
 		if !e.useOuterToBuild {
-			err = e.rowContainer.PutChunk(chk, e.isNullEQ, hCtx)
+			err = e.rowContainer.PutChunk(chk, e.isNullEQ, &hCtx)
 		} else {
 			var bitMap = bitmap.NewConcurrentBitmap(chk.NumRows())
 			e.outerMatchedStatus = append(e.outerMatchedStatus, bitMap)
 			e.memTracker.Consume(bitMap.BytesConsumed())
 			if len(e.outerFilter) == 0 {
-				err = e.rowContainer.PutChunk(chk, e.isNullEQ, hCtx)
+				err = e.rowContainer.PutChunk(chk, e.isNullEQ, &hCtx)
 			} else {
 				e.buildSelected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(chk), e.buildSelected)
 				if err != nil {
 					return err
 				}
-				err = e.rowContainer.PutChunkSelected(chk, e.buildSelected, e.isNullEQ, hCtx)
+				err = e.rowContainer.PutChunkSelected(chk, e.buildSelected, e.isNullEQ, &hCtx)
 			}
 		}
 		if err != nil {
