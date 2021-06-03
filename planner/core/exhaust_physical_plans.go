@@ -147,7 +147,20 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 	joins := make([]PhysicalPlan, 0, len(p.leftProperties)+1)
 	// The leftProperties caches all the possible properties that are provided by its children.
 	leftJoinKeys, rightJoinKeys, isNullEQ, hasNullEQ := p.GetJoinKeys()
-	// TODO: support null equal join keys for merge join
+
+	// EnumType Unsupported: merge join conflicts with index order. ref: https://github.com/pingcap/tidb/issues/24473
+	for _, leftKey := range leftJoinKeys {
+		if leftKey.RetType.Tp == mysql.TypeEnum {
+			return nil
+		}
+	}
+	for _, rightKey := range rightJoinKeys {
+		if rightKey.RetType.Tp == mysql.TypeEnum {
+			return nil
+		}
+	}
+
+		// TODO: support null equal join keys for merge join
 	if hasNullEQ {
 		return nil
 	}
