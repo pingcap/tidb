@@ -137,6 +137,8 @@ func (s *testSuite5) TestShowErrors(c *C) {
 	testSQL = `create table show_errors (a int)`
 	// FIXME: 'test.show_errors' already exists
 	_, _ = tk.Exec(testSQL)
+
+	tk.MustQuery("show errors").Check(testutil.RowsWithSep("|", "Error|1050|Table 'test.show_errors' already exists"))
 }
 
 func (s *testSuite5) TestShowWarningsForExprPushdown(c *C) {
