@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"runtime/pprof"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/topsql/tracecpu"
 )
 
 type sqlInfoFetcher struct {
@@ -275,13 +275,13 @@ func (sh *sqlInfoFetcher) getExplainAnalyze(ctx context.Context, sql string, res
 }
 
 func (sh *sqlInfoFetcher) catchCPUProfile(ctx context.Context, sec int, buf *bytes.Buffer, errChan chan<- error) {
-	if err := pprof.StartCPUProfile(buf); err != nil {
+	if err := tracecpu.StartCPUProfile(buf); err != nil {
 		errChan <- err
 		return
 	}
 	sleepWithCtx(ctx, time.Duration(sec)*time.Second)
-	pprof.StopCPUProfile()
-	errChan <- nil
+	err := tracecpu.StopCPUProfile()
+	errChan <- err
 }
 
 func (sh *sqlInfoFetcher) getStatsForTable(pair tableNamePair) (*handle.JSONTable, error) {

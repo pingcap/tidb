@@ -76,7 +76,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "log_backward_compatible_user_definitions", Value: ""},
 	{Scope: ScopeNone, Name: "lc_messages_dir", Value: "/usr/local/mysql-5.6.25-osx10.8-x86_64/share/"},
 	{Scope: ScopeGlobal, Name: "ft_boolean_syntax", Value: "+ -><()~*:\"\"&|"},
-	{Scope: ScopeGlobal, Name: TableDefinitionCache, Value: "-1", Type: TypeUnsigned, MinValue: 400, MaxValue: 524288, AutoConvertOutOfRange: true},
+	{Scope: ScopeGlobal, Name: TableDefinitionCache, Value: "2000", Type: TypeUnsigned, MinValue: 400, MaxValue: 524288, AutoConvertOutOfRange: true},
 	{Scope: ScopeNone, Name: SkipNameResolve, Value: Off, Type: TypeBool},
 	{Scope: ScopeNone, Name: "performance_schema_max_file_handles", Value: "32768"},
 	{Scope: ScopeSession, Name: "transaction_allow_batching", Value: ""},
@@ -140,7 +140,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_file_format_max", Value: "Antelope"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "debug", Value: ""},
 	{Scope: ScopeGlobal, Name: "log_warnings", Value: "1"},
-	{Scope: ScopeGlobal | ScopeSession, Name: InnodbStrictMode, Value: "1", Type: TypeBool, AutoConvertNegativeBool: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: InnodbStrictMode, Value: On, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: "innodb_rollback_segments", Value: "128"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "join_buffer_size", Value: "262144", IsHintUpdatable: true},
 	{Scope: ScopeNone, Name: "innodb_mirrored_log_groups", Value: "1"},
@@ -472,7 +472,7 @@ var noopSysVars = []*SysVar{
 	// for compatibility purpose, we should leave them alone.
 	// TODO: Follow the Terminology Updates of MySQL after their changes arrived.
 	// https://mysqlhighavailability.com/mysql-terminology-updates/
-	{Scope: ScopeSession, Name: PseudoSlaveMode, Value: "", Type: TypeInt},
+	{Scope: ScopeSession, Name: PseudoSlaveMode, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "slave_pending_jobs_size_max", Value: "16777216"},
 	{Scope: ScopeGlobal, Name: "slave_transaction_retries", Value: "10"},
 	{Scope: ScopeGlobal, Name: "slave_checkpoint_period", Value: "300"},
@@ -490,7 +490,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "slave_load_tmpdir", Value: "/var/tmp/"},
 	{Scope: ScopeGlobal, Name: "slave_parallel_type", Value: ""},
 	{Scope: ScopeGlobal, Name: "slave_parallel_workers", Value: "0"},
-	{Scope: ScopeGlobal, Name: "rpl_semi_sync_master_timeout", Value: "10000", Type: TypeInt},
+	{Scope: ScopeGlobal, Name: "rpl_semi_sync_master_timeout", Value: "10000", Type: TypeInt, MaxValue: math.MaxInt64},
 	{Scope: ScopeNone, Name: "slave_skip_errors", Value: Off},
 	{Scope: ScopeGlobal, Name: "sql_slave_skip_counter", Value: "0"},
 	{Scope: ScopeGlobal, Name: "rpl_semi_sync_slave_enabled", Value: Off, Type: TypeBool},

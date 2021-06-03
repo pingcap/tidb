@@ -790,6 +790,7 @@ func (s *testSessionSuite) TestRetryUnion(c *C) {
 
 func (s *testSessionSuite) TestRetryGlobalTempTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("drop table if exists normal_table")
 	tk.MustExec("create table normal_table(a int primary key, b int)")
 	defer tk.MustExec("drop table if exists normal_table")
@@ -2140,6 +2141,7 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerTempTable(c *C) {
 	tk.MustExec(`drop table if exists normal_table`)
 	tk.MustExec(`create table normal_table (id int, c int);`)
 	defer tk.MustExec(`drop table if exists normal_table`)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec(`drop table if exists temp_table`)
 	tk.MustExec(`create global temporary table temp_table (id int, c int) on commit delete rows;`)
 	defer tk.MustExec(`drop table if exists temp_table`)
@@ -4159,6 +4161,7 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 
 func (s *testSessionSuite3) TestGlobalTemporaryTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table g_tmp (a int primary key, b int, c int, index i_b(b)) on commit delete rows")
 	tk.MustExec("begin")
 	tk.MustExec("insert into g_tmp values (3, 3, 3)")
@@ -4534,6 +4537,7 @@ func (s *testSessionSuite) TestTMPTableSize(c *C) {
 	// Test the @@tmp_table_size system variable.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_temporary_table=on")
 	tk.MustExec("create global temporary table t (c1 int, c2 varchar(512)) on commit delete rows")
 
 	tk.MustQuery("select @@global.tmp_table_size").Check(testkit.Rows(strconv.Itoa(variable.DefTMPTableSize)))
@@ -4557,4 +4561,33 @@ func (s *testSessionSuite) TestTMPTableSize(c *C) {
 	tk.MustExec("insert into t values (1, repeat('x', 512))")
 	tk.MustExec("insert into t values (1, repeat('x', 512))")
 	tk.MustGetErrCode("insert into t values (1, repeat('x', 512))", errno.ErrRecordFileFull)
+}
+
+func (s *testSessionSuite) TestTiDBEnableGlobalTemporaryTable(c *C) {
+	// Test the @@tidb_enable_global_temporary_table system variable.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// variable 'tidb_enable_global_temporary_table' should not be seen when show variables
+	tk.MustQuery("show variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows())
+	tk.MustQuery("show global variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows())
+
+	// variable 'tidb_enable_global_temporary_table' is turned off by default
+	tk.MustQuery("select @@global.tidb_enable_global_temporary_table").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@tidb_enable_global_temporary_table").Check(testkit.Rows("0"))
+	c.Assert(tk.Se.GetSessionVars().EnableGlobalTemporaryTable, IsFalse)
+
+	// cannot create global temporary table when 'tidb_enable_global_temporary_table' is off
+	tk.MustGetErrMsg(
+		"create global temporary table temp_test(id int primary key auto_increment) on commit delete rows",
+		"global temporary table is experimental and it is switched off by tidb_enable_global_temporary_table",
+	)
+	tk.MustQuery("show tables like 'temp_test'").Check(testkit.Rows())
+
+	// you can create global temporary table when 'tidb_enable_global_temporary_table' is on
+	tk.MustExec("set tidb_enable_global_temporary_table=on")
+	tk.MustQuery("select @@tidb_enable_global_temporary_table").Check(testkit.Rows("1"))
+	c.Assert(tk.Se.GetSessionVars().EnableGlobalTemporaryTable, IsTrue)
+	tk.MustExec("create global temporary table temp_test(id int primary key auto_increment) on commit delete rows")
+	tk.MustQuery("show tables like 'temp_test'").Check(testkit.Rows("temp_test"))
 }
