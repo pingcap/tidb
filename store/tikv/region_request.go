@@ -538,6 +538,8 @@ func (s *RegionRequestSender) SendReqCtx(
 				continue
 			}
 		} else {
+			// Clear the RPC Error since the request is evaluated successfully on a store.
+			s.rpcError = nil
 			if s.leaderReplicaSelector != nil {
 				s.leaderReplicaSelector.OnSendSuccess()
 			}

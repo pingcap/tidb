@@ -120,7 +120,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog, ResourceGroupTag: c.resourceGroupTag})
 }
 
-func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
+func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) (err error) {
 	// WARNING: This function only tries to send a single request to a single region, so it don't
 	// need to unset the `useOnePC` flag when it fails. A special case is that when TiKV returns
 	// regionErr, it's uncertain if the request will be splitted into multiple and sent to multiple
@@ -161,6 +161,17 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 
 	req := c.buildPrewriteRequest(batch, txnSize)
 	sender := NewRegionRequestSender(c.store.regionCache, c.store.GetTiKVClient())
+	defer func() {
+		if err != nil {
+			// If we fail to receive response for async commit prewrite, it will be undetermined whether this
+			// transaction has been successfully committed.
+			// If prewrite has been cancelled, all ongoing prewrite RPCs will become errors, we needn't set undetermined
+			// errors.
+			if (c.isAsyncCommit() || c.isOnePC()) && sender.rpcError != nil && atomic.LoadUint32(&c.prewriteCancelled) == 0 {
+				c.setUndeterminedErr(errors.Trace(sender.rpcError))
+			}
+		}
+	}()
 	for {
 		attempts++
 		if time.Since(tBegin) > slowRequestThreshold {
@@ -169,16 +180,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 		}
 
 		resp, err := sender.SendReq(bo, req, batch.region, client.ReadTimeoutShort)
-
-		// If we fail to receive response for async commit prewrite, it will be undetermined whether this
-		// transaction has been successfully committed.
-		// If prewrite has been cancelled, all ongoing prewrite RPCs will become errors, we needn't set undetermined
-		// errors.
-		if (c.isAsyncCommit() || c.isOnePC()) && sender.rpcError != nil && atomic.LoadUint32(&c.prewriteCancelled) == 0 {
-			c.setUndeterminedErr(errors.Trace(sender.rpcError))
-		}
-
-		// Unexpected error occurs, return it.
+		// Unexpected error occurs, return it
 		if err != nil {
 			return errors.Trace(err)
 		}

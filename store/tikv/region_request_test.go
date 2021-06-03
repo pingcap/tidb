@@ -198,11 +198,14 @@ func (s *testRegionRequestToSingleStoreSuite) TestOnSendFailedWithStoreRestart(c
 	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
+	c.Assert(s.regionRequestSender.rpcError, IsNil)
 
 	// stop store.
 	s.cluster.StopStore(s.store)
 	_, err = s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, NotNil)
+	// The RPC error shouldn't be nil since it failed to sent the request.
+	c.Assert(s.regionRequestSender.rpcError, NotNil)
 
 	// start store.
 	s.cluster.StartStore(s.store)
@@ -212,9 +215,12 @@ func (s *testRegionRequestToSingleStoreSuite) TestOnSendFailedWithStoreRestart(c
 	region, err = s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
+	c.Assert(s.regionRequestSender.rpcError, NotNil)
 	resp, err = s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
+	// The RPC error should be nil since it's evaluated successfully.
+	c.Assert(s.regionRequestSender.rpcError, IsNil)
 }
 
 func (s *testRegionRequestToSingleStoreSuite) TestOnSendFailedWithCloseKnownStoreThenUseNewOne(c *C) {
