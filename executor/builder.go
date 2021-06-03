@@ -4090,7 +4090,9 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 
 func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 	// 1. Build seedPlan.
-	b.Ti.UseNonRecursive = true
+	if b.Ti != nil {
+		b.Ti.UseNonRecursive = true
+	}
 	seedExec := b.build(v.SeedPlan)
 	if b.err != nil {
 		return nil
@@ -4132,7 +4134,7 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 	}
 
 	// 3. Build recursive part.
-	if v.RecurPlan != nil {
+	if v.RecurPlan != nil && b.Ti != nil {
 		b.Ti.UseRecursive = true
 	}
 	recursiveExec := b.build(v.RecurPlan)
