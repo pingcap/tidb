@@ -21,7 +21,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
@@ -184,7 +185,7 @@ func (s *Server) startHTTPServer() {
 
 	serverMux.HandleFunc("/debug/pprof/", pprof.Index)
 	serverMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	serverMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	serverMux.HandleFunc("/debug/pprof/profile", tracecpu.ProfileHTTPHandler)
 	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	serverMux.HandleFunc("/debug/gogc", func(w http.ResponseWriter, r *http.Request) {
@@ -193,7 +194,7 @@ func (s *Server) startHTTPServer() {
 			_, err := w.Write([]byte(strconv.Itoa(util.GetGOGC())))
 			terror.Log(err)
 		case http.MethodPost:
-			body, err := ioutil.ReadAll(r.Body)
+			body, err := io.ReadAll(r.Body)
 			if err != nil {
 				terror.Log(err)
 				return
@@ -251,7 +252,7 @@ func (s *Server) startHTTPServer() {
 			serveError(w, http.StatusInternalServerError, fmt.Sprintf("Create zipped %s fail: %v", "profile", err))
 			return
 		}
-		if err := rpprof.StartCPUProfile(fw); err != nil {
+		if err := tracecpu.StartCPUProfile(fw); err != nil {
 			serveError(w, http.StatusInternalServerError,
 				fmt.Sprintf("Could not enable CPU profiling: %s", err))
 			return
@@ -261,7 +262,11 @@ func (s *Server) startHTTPServer() {
 			sec = 10
 		}
 		sleepWithCtx(r.Context(), time.Duration(sec)*time.Second)
-		rpprof.StopCPUProfile()
+		err = tracecpu.StopCPUProfile()
+		if err != nil {
+			serveError(w, http.StatusInternalServerError, fmt.Sprintf("Create zipped %s fail: %v", "config", err))
+			return
+		}
 
 		// dump config
 		fw, err = zw.Create("config")

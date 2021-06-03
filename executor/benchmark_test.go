@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"sort"
@@ -291,7 +290,7 @@ func buildHashAggExecutor(ctx sessionctx.Context, src Executor, schema *expressi
 	plan.SetSchema(schema)
 	plan.Init(ctx, nil, 0)
 	plan.SetChildren(nil)
-	b := newExecutorBuilder(ctx, nil)
+	b := newExecutorBuilder(ctx, nil, nil)
 	exec := b.build(plan)
 	hashAgg := exec.(*HashAggExec)
 	hashAgg.children[0] = src
@@ -343,7 +342,7 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec Executor, schema *ex
 		plan = sg
 	}
 
-	b := newExecutorBuilder(ctx, nil)
+	b := newExecutorBuilder(ctx, nil, nil)
 	return b.build(plan)
 }
 
@@ -576,7 +575,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		plan = win
 	}
 
-	b := newExecutorBuilder(ctx, nil)
+	b := newExecutorBuilder(ctx, nil, nil)
 	exec := b.build(plan)
 	return exec
 }
@@ -1291,7 +1290,7 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 			hashCols: tc.outerHashKeyIdx,
 		},
 		innerCtx: innerCtx{
-			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil)},
+			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil, nil)},
 			rowTypes:      rightTypes,
 			colLens:       colLens,
 			keyCols:       tc.innerJoinKeyIdx,
@@ -1357,7 +1356,7 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 			compareFuncs:  outerCompareFuncs,
 		},
 		innerMergeCtx: innerMergeCtx{
-			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil)},
+			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil, nil)},
 			rowTypes:      rightTypes,
 			joinKeys:      innerJoinKeys,
 			colLens:       colLens,
@@ -1991,7 +1990,7 @@ func BenchmarkReadLastLinesOfHugeLine(b *testing.B) {
 		hugeLine[i] = 'a' + byte(i%26)
 	}
 	fileName := "tidb.log"
-	err := ioutil.WriteFile(fileName, hugeLine, 0644)
+	err := os.WriteFile(fileName, hugeLine, 0644)
 	if err != nil {
 		b.Fatal(err)
 	}

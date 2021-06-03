@@ -1799,7 +1799,7 @@ func splitDuration(t gotime.Duration) (int, int, int, int, int) {
 
 var maxDaysInMonth = []int{31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
 
-func getTime(sc *stmtctx.StatementContext, num int64, tp byte) (Time, error) {
+func getTime(sc *stmtctx.StatementContext, num, originNum int64, tp byte) (Time, error) {
 	s1 := num / 1000000
 	s2 := num - s1*1000000
 
@@ -1815,7 +1815,8 @@ func getTime(sc *stmtctx.StatementContext, num int64, tp byte) (Time, error) {
 
 	ct, ok := FromDateChecked(year, month, day, hour, minute, second, 0)
 	if !ok {
-		return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, ""))
+		numStr := strconv.FormatInt(originNum, 10)
+		return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, numStr))
 	}
 	t := NewTime(ct, tp, DefaultFsp)
 	err := t.check(sc)
@@ -1831,11 +1832,12 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 	if num == 0 {
 		return t, nil
 	}
+	originNum := num
 
 	// Check datetime type.
 	if num >= 10000101000000 {
 		t.SetType(mysql.TypeDatetime)
-		return getTime(sc, num, t.Type())
+		return getTime(sc, num, originNum, t.Type())
 	}
 
 	// Check MMDD.
@@ -1847,7 +1849,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 	// YYMMDD, year: 2000-2069
 	if num <= (70-1)*10000+1231 {
 		num = (num + 20000000) * 1000000
-		return getTime(sc, num, t.Type())
+		return getTime(sc, num, originNum, t.Type())
 	}
 
 	// Check YYMMDD.
@@ -1859,13 +1861,13 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 	// YYMMDD, year: 1970-1999
 	if num <= 991231 {
 		num = (num + 19000000) * 1000000
-		return getTime(sc, num, t.Type())
+		return getTime(sc, num, originNum, t.Type())
 	}
 
 	// Adjust hour/min/second.
 	if num <= 99991231 {
 		num = num * 1000000
-		return getTime(sc, num, t.Type())
+		return getTime(sc, num, originNum, t.Type())
 	}
 
 	// Check MMDDHHMMSS.
@@ -1880,7 +1882,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 	// YYMMDDHHMMSS, 2000-2069
 	if num <= 69*10000000000+1231235959 {
 		num = num + 20000000000000
-		return getTime(sc, num, t.Type())
+		return getTime(sc, num, originNum, t.Type())
 	}
 
 	// Check YYYYMMDDHHMMSS.
@@ -1892,10 +1894,10 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 	// YYMMDDHHMMSS, 1970-1999
 	if num <= 991231235959 {
 		num = num + 19000000000000
-		return getTime(sc, num, t.Type())
+		return getTime(sc, num, originNum, t.Type())
 	}
 
-	return getTime(sc, num, t.Type())
+	return getTime(sc, num, originNum, t.Type())
 }
 
 // ParseTime parses a formatted string with type tp and specific fsp.

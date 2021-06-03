@@ -64,6 +64,71 @@
     ]
   },
   {
+    "Name": "TestAggColumnPrune",
+    "Cases": [
+      {
+        "SQL": "select count(1) from t join (select count(1) from t where false) as tmp",
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select max(a) from t where false) as tmp",
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select min(a) from t where false) as tmp",
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select sum(a) from t where false) as tmp",
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select avg(a) from t where false) as tmp",
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select count(1) from t where false group by a) as tmp",
+        "Res": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select max(a) from t where false group by a) as tmp",
+        "Res": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select min(a) from t where false group by a) as tmp",
+        "Res": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select sum(a) from t where false group by a) as tmp",
+        "Res": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select avg(a) from t where false group by a) as tmp",
+        "Res": [
+          "0"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestIndexJoinInnerIndexNDV",
     "Cases": [
       {
@@ -1561,39 +1626,6 @@
           "  │ └─TableDual 1.00 root  rows:1",
           "  └─StreamAgg 1.00 root  funcs:count(1)->Column#2",
           "    └─TableDual 1.00 root  rows:1"
-        ]
-      }
-    ]
-  },
-  {
-    "Name": "TestEliminateLockForTemporaryTable",
-    "Cases": [
-      {
-        "SQL": "select * from t1 where a = 2 for update",
-        "Plan": [
-          "Point_Get 1.00 root table:t1 handle:2"
-        ]
-      },
-      {
-        "SQL": "select * from t1 where a in (1,2) for update",
-        "Plan": [
-          "Batch_Point_Get 2.00 root table:t1 handle:[1 2], keep order:false, desc:false"
-        ]
-      },
-      {
-        "SQL": "select c + 1 from t1 where a = 2 and c = 2 for update",
-        "Plan": [
-          "Projection 0.00 root  plus(test.t1.c, 1)->Column#4",
-          "└─Selection 0.00 root  eq(test.t1.c, 2)",
-          "  └─Point_Get 1.00 root table:t1 handle:2"
-        ]
-      },
-      {
-        "SQL": "select c + 1 from t1 where a in (1,2) and c = 2 for update",
-        "Plan": [
-          "Projection 0.00 root  plus(test.t1.c, 1)->Column#4",
-          "└─Selection 0.00 root  eq(test.t1.c, 2)",
-          "  └─Batch_Point_Get 2.00 root table:t1 handle:[1 2], keep order:false, desc:false"
         ]
       }
     ]
