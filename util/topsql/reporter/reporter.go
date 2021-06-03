@@ -21,7 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/wangjohn/quickselect"
@@ -314,7 +314,7 @@ func (tsr *RemoteTopSQLReporter) registerPlanWorker() {
 		}
 		planDecoded, err := tsr.planBinaryDecoder(job.normalizedPlan)
 		if err != nil {
-			log.Warn("decode plan failed: %v\n", zap.Error(err))
+			logutil.BgLogger().Warn("decode plan failed", zap.Error(err))
 			continue
 		}
 		tsr.mu.Lock()
@@ -357,14 +357,14 @@ func (tsr *RemoteTopSQLReporter) snapshot() []*tipb.CollectCPUTimeRequest {
 func (tsr *RemoteTopSQLReporter) sendBatch(stream tipb.TopSQLAgent_CollectCPUTimeClient, batch []*tipb.CollectCPUTimeRequest) error {
 	for _, req := range batch {
 		if err := stream.Send(req); err != nil {
-			log.Warn("TopSQL: send stream request failed", zap.Error(err))
+			logutil.BgLogger().Warn("TopSQL: send stream request failed", zap.Error(err))
 			return err
 		}
 	}
 	// response is Empty, drop it for now
 	_, err := stream.CloseAndRecv()
 	if err != nil {
-		log.Warn("TopSQL: receive stream response failed", zap.Error(err))
+		logutil.BgLogger().Warn("TopSQL: receive stream response failed", zap.Error(err))
 		return err
 	}
 	return nil
@@ -383,14 +383,14 @@ func (tsr *RemoteTopSQLReporter) sendToAgentWorker() {
 			// It's fine if we do this every minute, but need optimization if we need to do it more frequently, like every second.
 			conn, client, err := newAgentClient(tsr.agentGRPCAddress.Load().(string))
 			if err != nil {
-				log.Warn("TopSQL: failed to create agent client", zap.Error(err))
+				logutil.BgLogger().Warn("TopSQL: failed to create agent client", zap.Error(err))
 				continue
 			}
 			// TODO: test timeout behavior
 			ctx, cancel = context.WithTimeout(context.TODO(), tsr.reportTimeout)
 			stream, err := client.CollectCPUTime(ctx)
 			if err != nil {
-				log.Warn("TopSQL: failed to initialize gRPC call CollectCPUTime", zap.Error(err))
+				logutil.BgLogger().Warn("TopSQL: failed to initialize gRPC call CollectCPUTime", zap.Error(err))
 				continue
 			}
 			if err := tsr.sendBatch(stream, batch); err != nil {
@@ -398,7 +398,7 @@ func (tsr *RemoteTopSQLReporter) sendToAgentWorker() {
 			}
 			cancel()
 			if err := conn.Close(); err != nil {
-				log.Warn("TopSQL: failed to close connection", zap.Error(err))
+				logutil.BgLogger().Warn("TopSQL: failed to close connection", zap.Error(err))
 				continue
 			}
 		case <-tsr.quit:
