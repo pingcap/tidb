@@ -213,7 +213,7 @@ func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
 	tsr := initializeCache(maxSQLNum, fmt.Sprintf(":%d", port))
 	batch := tsr.snapshot()
 
-	conn, client, err := newAgentClient(tsr.agentGRPCAddress.address)
+	conn, client, err := newAgentClient(tsr.agentGRPCAddress.Load().(string))
 	c.Assert(err, IsNil, Commentf("failed to create agent client"))
 	ctx, cancel := context.WithTimeout(context.TODO(), tsr.reportTimeout)
 	defer cancel()

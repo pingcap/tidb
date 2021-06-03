@@ -18,6 +18,7 @@ import (
 	"context"
 	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/log"
@@ -35,6 +36,8 @@ const (
 	collectCPUTimeChanLen     = 1
 	planRegisterChanLen       = 1024
 )
+
+var _ TopSQLReporter = &RemoteTopSQLReporter{}
 
 // TopSQLReporter collects Top SQL metrics.
 type TopSQLReporter interface {
@@ -108,10 +111,7 @@ type RemoteTopSQLReporter struct {
 
 	reportInterval   time.Duration
 	reportTimeout    time.Duration
-	agentGRPCAddress struct {
-		mu      sync.Mutex
-		address string
-	}
+	agentGRPCAddress atomic.Value // string
 
 	quit chan struct{}
 }
@@ -184,14 +184,9 @@ func NewRemoteTopSQLReporter(config *RemoteTopSQLReporterConfig) *RemoteTopSQLRe
 		normalizedPlanMap:  make(map[string]string),
 		collectCPUTimeChan: make(chan *topSQLCPUTimeInput, collectCPUTimeChanLen),
 		planRegisterChan:   make(chan *planRegisterJob, planRegisterChanLen),
-		agentGRPCAddress: struct {
-			mu      sync.Mutex
-			address string
-		}{
-			address: config.AgentGRPCAddress,
-		},
-		quit: make(chan struct{}),
+		quit:               make(chan struct{}),
 	}
+	tsr.agentGRPCAddress.Store(config.AgentGRPCAddress)
 
 	go tsr.collectWorker()
 
@@ -272,8 +267,8 @@ func (tsr *RemoteTopSQLReporter) collect(timestamp uint64, records []tracecpu.To
 	// TODO: we can change to periodical eviction (every minute) to relax the CPU pressure
 	shouldEvictList := digestCPUTimeList[tsr.MaxStatementsNum:]
 	for _, evict := range shouldEvictList {
-		delete(tsr.topSQLMap, evict.Key)
 		tsr.mu.Lock()
+		delete(tsr.topSQLMap, evict.Key)
 		delete(tsr.normalizedSQLMap, string(evict.SQLDigest))
 		delete(tsr.normalizedPlanMap, string(evict.PlanDigest))
 		tsr.mu.Unlock()
@@ -386,11 +381,12 @@ func (tsr *RemoteTopSQLReporter) sendToAgentWorker() {
 			batch := tsr.snapshot()
 			// NOTE: Currently we are creating/destroying a TCP connection to the agent every time.
 			// It's fine if we do this every minute, but need optimization if we need to do it more frequently, like every second.
-			conn, client, err := newAgentClient(tsr.agentGRPCAddress.address)
+			conn, client, err := newAgentClient(tsr.agentGRPCAddress.Load().(string))
 			if err != nil {
 				log.Warn("TopSQL: failed to create agent client", zap.Error(err))
 				continue
 			}
+			// TODO: test timeout behavior
 			ctx, cancel = context.WithTimeout(context.TODO(), tsr.reportTimeout)
 			stream, err := client.CollectCPUTime(ctx)
 			if err != nil {
@@ -414,7 +410,5 @@ func (tsr *RemoteTopSQLReporter) sendToAgentWorker() {
 
 // SetAgentGRPCAddress sets the agentGRPCAddress field
 func (tsr *RemoteTopSQLReporter) SetAgentGRPCAddress(address string) {
-	tsr.agentGRPCAddress.mu.Lock()
-	defer tsr.agentGRPCAddress.mu.Unlock()
-	tsr.agentGRPCAddress.address = address
+	tsr.agentGRPCAddress.Store(address)
 }
