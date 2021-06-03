@@ -288,13 +288,6 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	if r.rootPlanID <= 0 || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
 		return
 	}
-	//if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
-	//	logutil.Logger(ctx).Error("invalid cop task execution summaries length",
-	//		zap.Int("expected", len(r.copPlanIDs)),
-	//		zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
-	//
-	//	return
-	//}
 	if r.stats == nil {
 		id := r.rootPlanID
 		r.stats = &selectResultRuntimeStats{
@@ -309,6 +302,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), copStats.ScanDetail)
 	}
 
+	// If hasExecutor is true, it means the summary is returned from TiFlash.
 	hasExecutor := false
 	for _, detail := range r.selectResp.GetExecutionSummaries() {
 		if detail != nil && detail.TimeProcessedNs != nil &&
@@ -319,7 +313,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			break
 		}
 	}
-	if hasExecutor == true {
+	if hasExecutor {
 		var recorededPlanIDs = make(map[int]int)
 		for i, detail := range r.selectResp.GetExecutionSummaries() {
 			if detail != nil && detail.TimeProcessedNs != nil &&
