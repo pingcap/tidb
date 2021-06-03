@@ -2066,7 +2066,7 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	}.Init(ctx, t.p.SelectBlockOffset())
 	p.stats = t.p.statsInfo()
 
-	cst := t.cst + t.count()*ctx.GetSessionVars().NetworkFactor
+	cst := t.cst + t.count()*ctx.GetSessionVars().GetNetworkFactor(nil)
 	p.cost = cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
 	if p.ctx.GetSessionVars().IsMPPEnforced() {
 		p.cost = 0
