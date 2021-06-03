@@ -3260,6 +3260,9 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 }
 
 func (b *PlanBuilder) popVisitInfo() {
+	if len(b.visitInfo) == 0 {
+		return
+	}
 	b.visitInfo = b.visitInfo[:len(b.visitInfo)-1]
 }
 
@@ -4382,6 +4385,17 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	b.inUpdateStmt = true
 	b.isForUpdateRead = true
 
+	if update.With != nil {
+		l := len(b.outerCTEs)
+		defer func() {
+			b.outerCTEs = b.outerCTEs[:l]
+		}()
+		err := b.buildWith(ctx, update.With)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	p, err := b.buildResultSetNode(ctx, update.TableRefs.TableRefs)
 	if err != nil {
 		return nil, err
@@ -4520,6 +4534,12 @@ func CheckUpdateList(assignFlags []int, updt *Update) error {
 	return nil
 }
 
+// If tl is CTE, its TableInfo will be nil.
+// Only used in build plan from AST after preprocess.
+func isCTE(tl *ast.TableName) bool {
+	return tl.TableInfo == nil
+}
+
 func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan,
 	notUpdatableTbl []string) (newList []*expression.Assignment, po LogicalPlan, allAssignmentsAreConstant bool, e error) {
 	b.curClause = fieldList
@@ -4546,7 +4566,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		name := p.OutputNames()[idx]
 		for _, tl := range tableList {
 			if (tl.Schema.L == "" || tl.Schema.L == name.DBName.L) && (tl.Name.L == name.TblName.L) {
-				if tl.TableInfo.IsView() || tl.TableInfo.IsSequence() {
+				if isCTE(tl) || tl.TableInfo.IsView() || tl.TableInfo.IsSequence() {
 					return nil, nil, false, ErrNonUpdatableTable.GenWithStackByArgs(name.TblName.O, "UPDATE")
 				}
 				// may be a subquery
@@ -4581,7 +4601,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 				break
 			}
 		}
-		if !updatable || tn.TableInfo.IsView() || tn.TableInfo.IsSequence() {
+		if !updatable || isCTE(tn) || tn.TableInfo.IsView() || tn.TableInfo.IsSequence() {
 			continue
 		}
 
@@ -4615,6 +4635,9 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 	newList = make([]*expression.Assignment, 0, p.Schema().Len())
 	tblDbMap := make(map[string]string, len(tableList))
 	for _, tbl := range tableList {
+		if isCTE(tbl) {
+			continue
+		}
 		tblDbMap[tbl.Name.L] = tbl.DBInfo.Name.L
 	}
 
@@ -4720,6 +4743,17 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 
 	b.inDeleteStmt = true
 	b.isForUpdateRead = true
+
+	if delete.With != nil {
+		l := len(b.outerCTEs)
+		defer func() {
+			b.outerCTEs = b.outerCTEs[:l]
+		}()
+		err := b.buildWith(ctx, delete.With)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	p, err := b.buildResultSetNode(ctx, delete.TableRefs.TableRefs)
 	if err != nil {
@@ -4847,6 +4881,9 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		var tableList []*ast.TableName
 		tableList = extractTableList(delete.TableRefs.TableRefs, tableList, false)
 		for _, v := range tableList {
+			if isCTE(v) {
+				return nil, ErrNonUpdatableTable.GenWithStackByArgs(v.Name.O, "DELETE")
+			}
 			if v.TableInfo.IsView() {
 				return nil, errors.Errorf("delete view %s is not supported now.", v.Name.O)
 			}
@@ -5469,13 +5506,27 @@ func (b *PlanBuilder) handleDefaultFrame(spec *ast.WindowSpec, windowFuncName st
 		newSpec.Frame = nil
 		return &newSpec, true
 	}
-	// For functions that operate on the entire partition, the frame clause will be ignored.
-	if !needFrame && spec.Frame != nil {
-		specName := spec.Name.O
-		b.ctx.GetSessionVars().StmtCtx.AppendNote(ErrWindowFunctionIgnoresFrame.GenWithStackByArgs(windowFuncName, getWindowName(specName)))
+	if !needFrame {
+		var updated bool
 		newSpec := *spec
-		newSpec.Frame = nil
-		return &newSpec, true
+
+		// For functions that operate on the entire partition, the frame clause will be ignored.
+		if spec.Frame != nil {
+			specName := spec.Name.O
+			b.ctx.GetSessionVars().StmtCtx.AppendNote(ErrWindowFunctionIgnoresFrame.GenWithStackByArgs(windowFuncName, getWindowName(specName)))
+			newSpec.Frame = nil
+			updated = true
+		}
+		if b.ctx.GetSessionVars().EnablePipelinedWindowExec {
+			useDefaultFrame, defaultFrame := aggregation.UseDefaultFrame(windowFuncName)
+			if useDefaultFrame {
+				newSpec.Frame = &defaultFrame
+				updated = true
+			}
+		}
+		if updated {
+			return &newSpec, true
+		}
 	}
 	return spec, false
 }
@@ -5490,11 +5541,27 @@ func appendIfAbsentWindowSpec(specs []*ast.WindowSpec, ns *ast.WindowSpec) []*as
 	return append(specs, ns)
 }
 
+func specEqual(s1, s2 *ast.WindowSpec) (equal bool, err error) {
+	if (s1 == nil && s2 != nil) || (s1 != nil && s2 == nil) {
+		return false, nil
+	}
+	var sb1, sb2 strings.Builder
+	ctx1 := format.NewRestoreCtx(0, &sb1)
+	ctx2 := format.NewRestoreCtx(0, &sb2)
+	if err = s1.Restore(ctx1); err != nil {
+		return
+	}
+	if err = s2.Restore(ctx2); err != nil {
+		return
+	}
+	return sb1.String() == sb2.String(), nil
+}
+
 // groupWindowFuncs groups the window functions according to the window specification name.
 // TODO: We can group the window function by the definition of window specification.
 func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*ast.WindowSpec][]*ast.WindowFuncExpr, []*ast.WindowSpec, error) {
 	// updatedSpecMap is used to handle the specifications that have frame clause changed.
-	updatedSpecMap := make(map[string]*ast.WindowSpec)
+	updatedSpecMap := make(map[string][]*ast.WindowSpec)
 	groupedWindow := make(map[*ast.WindowSpec][]*ast.WindowFuncExpr)
 	orderedSpec := make([]*ast.WindowSpec, 0, len(windowFuncs))
 	for _, windowFunc := range windowFuncs {
@@ -5526,10 +5593,26 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)
 			orderedSpec = appendIfAbsentWindowSpec(orderedSpec, spec)
 		} else {
+			var updatedSpec *ast.WindowSpec
 			if _, ok := updatedSpecMap[name]; !ok {
-				updatedSpecMap[name] = newSpec
+				updatedSpecMap[name] = []*ast.WindowSpec{newSpec}
+				updatedSpec = newSpec
+			} else {
+				for _, spec := range updatedSpecMap[name] {
+					eq, err := specEqual(spec, newSpec)
+					if err != nil {
+						return nil, nil, err
+					}
+					if eq {
+						updatedSpec = spec
+						break
+					}
+				}
+				if updatedSpec == nil {
+					updatedSpec = newSpec
+					updatedSpecMap[name] = append(updatedSpecMap[name], newSpec)
+				}
 			}
-			updatedSpec := updatedSpecMap[name]
 			groupedWindow[updatedSpec] = append(groupedWindow[updatedSpec], windowFunc)
 			orderedSpec = appendIfAbsentWindowSpec(orderedSpec, updatedSpec)
 		}
@@ -5656,10 +5739,14 @@ func collectTableName(node ast.ResultSetNode, updatableName *map[string]bool, in
 		if s, canUpdate = x.Source.(*ast.TableName); canUpdate {
 			if name == "" {
 				name = s.Schema.L + "." + s.Name.L
+				// it may be a CTE
+				if s.Schema.L == "" {
+					name = s.Name.L
+				}
 			}
 			(*info)[name] = s
 		}
-		(*updatableName)[name] = canUpdate
+		(*updatableName)[name] = canUpdate && s.Schema.L != ""
 	}
 }
 
