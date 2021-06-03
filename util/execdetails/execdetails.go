@@ -735,7 +735,6 @@ func (e *RuntimeStatsWithConcurrencyInfo) String() string {
 
 // Merge implements the RuntimeStats interface.
 func (e *RuntimeStatsWithConcurrencyInfo) Merge(_ RuntimeStats) {
-	return
 }
 
 // RuntimeStatsWithCommit is the RuntimeStats with commit detail.
