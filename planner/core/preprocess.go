@@ -640,6 +640,14 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			return
 		}
 	}
+	if stmt.TemporaryKeyword != ast.TemporaryNone {
+		for _, opt := range stmt.Options {
+			if opt.Tp == ast.TableOptionShardRowID {
+				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
+				return
+			}
+		}
+	}
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
@@ -656,7 +664,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			p.err = err
 			return
 		}
-		isPrimary, err := checkColumnOptions(colDef.Options)
+		isPrimary, err := checkColumnOptions(stmt.TemporaryKeyword != ast.TemporaryNone, colDef.Options)
 		if err != nil {
 			p.err = err
 			return
@@ -813,7 +821,7 @@ func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]inter
 	return nil
 }
 
-func checkColumnOptions(ops []*ast.ColumnOption) (int, error) {
+func checkColumnOptions(isTempTable bool, ops []*ast.ColumnOption) (int, error) {
 	isPrimary, isGenerated, isStored := 0, 0, false
 
 	for _, op := range ops {
@@ -823,6 +831,10 @@ func checkColumnOptions(ops []*ast.ColumnOption) (int, error) {
 		case ast.ColumnOptionGenerated:
 			isGenerated = 1
 			isStored = op.Stored
+		case ast.ColumnOptionAutoRandom:
+			if isTempTable {
+				return isPrimary, ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random")
+			}
 		}
 	}
 
@@ -1389,6 +1401,10 @@ func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
 	dom := domain.GetDomain(p.ctx)
 	ts := uint64(0)
 	if node != nil {
+		if p.ctx.GetSessionVars().InTxn() {
+			p.err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
+			return
+		}
 		ts, p.err = calculateTsExpr(p.ctx, node)
 		if p.err != nil {
 			return

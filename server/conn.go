@@ -78,6 +78,7 @@ import (
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/tablecodec"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -906,14 +907,6 @@ func (cc *clientConn) ShutdownOrNotify() bool {
 	return false
 }
 
-func queryStrForLog(query string) string {
-	const size = 4096
-	if len(query) > size {
-		return query[:size] + fmt.Sprintf("(len: %d)", len(query))
-	}
-	return query
-}
-
 func errStrForLog(err error, enableRedactLog bool) string {
 	if enableRedactLog {
 		// currently, only ErrParse is considered when enableRedactLog because it may contain sensitive information like
@@ -1025,6 +1018,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
+	if variable.TopSQLEnabled() {
+		defer pprof.SetGoroutineLabels(ctx)
+	}
 	if variable.EnablePProfSQLCPU.Load() {
 		label := getLastStmtInConn{cc}.PProfLabel()
 		if len(label) > 0 {
@@ -2125,10 +2121,10 @@ func (cc getLastStmtInConn) String() string {
 		if cc.ctx.GetSessionVars().EnableRedactLog {
 			sql = parser.Normalize(sql)
 		}
-		return queryStrForLog(sql)
+		return tidbutil.QueryStrForLog(sql)
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
-		return queryStrForLog(cc.preparedStmt2String(stmtID))
+		return tidbutil.QueryStrForLog(cc.preparedStmt2String(stmtID))
 	case mysql.ComStmtClose, mysql.ComStmtReset:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
 		return mysql.Command2Str[cmd] + " " + strconv.Itoa(int(stmtID))
@@ -2156,10 +2152,10 @@ func (cc getLastStmtInConn) PProfLabel() string {
 	case mysql.ComStmtReset:
 		return "ResetStmt"
 	case mysql.ComQuery, mysql.ComStmtPrepare:
-		return parser.Normalize(queryStrForLog(string(hack.String(data))))
+		return parser.Normalize(tidbutil.QueryStrForLog(string(hack.String(data))))
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
-		return queryStrForLog(cc.preparedStmt2StringNoArgs(stmtID))
+		return tidbutil.QueryStrForLog(cc.preparedStmt2StringNoArgs(stmtID))
 	default:
 		return ""
 	}
