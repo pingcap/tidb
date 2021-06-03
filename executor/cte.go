@@ -118,8 +118,6 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 		if err = e.iterOutTbl.OpenAndRef(); err != nil {
 			return err
 		}
-
-		setupCTEStorageTracker(e.iterOutTbl, e.ctx, e.memTracker, e.diskTracker)
 	}
 
 	if e.isDistinct {
@@ -144,11 +142,13 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		defer e.resTbl.Unlock()
 		resAction := setupCTEStorageTracker(e.resTbl, e.ctx, e.memTracker, e.diskTracker)
 		iterInAction := setupCTEStorageTracker(e.iterInTbl, e.ctx, e.memTracker, e.diskTracker)
+		iterOutAction := setupCTEStorageTracker(e.iterOutTbl, e.ctx, e.memTracker, e.diskTracker)
 
 		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
 			if val.(bool) && config.GetGlobalConfig().OOMUseTmpStorage {
 				defer resAction.WaitForTest()
 				defer iterInAction.WaitForTest()
+				defer iterOutAction.WaitForTest()
 			}
 		})
 

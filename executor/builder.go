@@ -82,6 +82,7 @@ type executorBuilder struct {
 	snapshotTSCached bool
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
+	Ti               *TelemetryInfo
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -92,10 +93,11 @@ type CTEStorages struct {
 	IterInTbl cteutil.Storage
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *executorBuilder {
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *executorBuilder {
 	return &executorBuilder{
 		ctx: ctx,
 		is:  is,
+		Ti:  ti,
 	}
 }
 
@@ -2762,7 +2764,6 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	ret.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
 		sctx:       b.ctx,
 		partitions: partitions,
-		ranges:     ts.Ranges,
 	}
 
 	return ret
@@ -3447,15 +3448,14 @@ func dedupHandles(lookUpContents []*indexJoinLookUpContent) ([]kv.Handle, []*ind
 type kvRangeBuilderFromRangeAndPartition struct {
 	sctx       sessionctx.Context
 	partitions []table.PhysicalTable
-	ranges     []*ranger.Range
 }
 
-func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(int64) ([]kv.KeyRange, error) {
+func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(_ int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {
 	var ret []kv.KeyRange
 	for _, p := range h.partitions {
 		pid := p.GetPhysicalID()
 		meta := p.Meta()
-		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, h.ranges, nil)
+		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, ranges, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -4088,6 +4088,9 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 
 func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 	// 1. Build seedPlan.
+	if b.Ti != nil {
+		b.Ti.UseNonRecursive = true
+	}
 	seedExec := b.build(v.SeedPlan)
 	if b.err != nil {
 		return nil
@@ -4129,6 +4132,9 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 	}
 
 	// 3. Build recursive part.
+	if v.RecurPlan != nil && b.Ti != nil {
+		b.Ti.UseRecursive = true
+	}
 	recursiveExec := b.build(v.RecurPlan)
 	if b.err != nil {
 		return nil
