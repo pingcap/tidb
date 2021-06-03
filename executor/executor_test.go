@@ -8179,6 +8179,7 @@ func (s *testSerialSuite) TestIssue24210(c *C) {
 
 func (s *testSerialSuite) TestDeadlockTable(c *C) {
 	deadlockhistory.GlobalDeadlockHistory.Clear()
+	deadlockhistory.GlobalDeadlockHistory.Resize(10)
 
 	occurTime := time.Date(2021, 5, 10, 1, 2, 3, 456789000, time.Local)
 	rec := &deadlockhistory.DeadlockRecord{
@@ -8354,6 +8355,57 @@ func (s testSerialSuite) TestExprBlackListForEnum(c *C) {
 	c.Assert(checkFuncPushDown(rows, "index:idx(b, a)"), IsTrue)
 	rows = tk.MustQuery("desc format='brief' select * from t where b = 1 and a > 'a'").Rows()
 	c.Assert(checkFuncPushDown(rows, "index:idx(b, a)"), IsTrue)
+}
+
+func (s testSerialSuite) TestTemporaryTableNoNetwork(c *C) {
+	// Test that table reader/index reader/index lookup on the temporary table do not need to visit TiKV.
+	tk := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk1.MustExec("use test")
+	tk.MustExec("create table normal (id int, a int, index(a))")
+	tk.MustExec("create global temporary table tmp_t (id int, a int, index(a)) on commit delete rows")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into tmp_t values (1, 1)")
+	tk.MustExec("insert into tmp_t values (2, 2)")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy", "return(true)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy"), IsNil)
+	}()
+
+	// Make sure the fail point works.
+	// With that failpoint, all requests to the TiKV is discard.
+	rs, err := tk1.Exec("select * from normal")
+	c.Assert(err, IsNil)
+	blocked := make(chan struct{})
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	go func() {
+		_, err := session.ResultSetToStringSlice(ctx, tk1.Se, rs)
+		blocked <- struct{}{}
+		c.Assert(err, NotNil)
+	}()
+	select {
+	case <-blocked:
+		c.Error("The query should block when the failpoint is enabled")
+	case <-time.After(200 * time.Millisecond):
+	}
+	cancelFunc()
+
+	// Check the temporary table do not send request to TiKV.
+	// Table reader
+	tk.HasPlan("select * from tmp_t", "TableReader")
+	tk.MustQuery("select * from tmp_t").Check(testkit.Rows("1 1", "2 2"))
+	// Index reader
+	tk.HasPlan("select /*+ USE_INDEX(tmp_t, a) */ a from tmp_t", "IndexReader")
+	tk.MustQuery("select /*+ USE_INDEX(tmp_t, a) */ a from tmp_t").Check(testkit.Rows("1", "2"))
+	// Index lookup
+	tk.HasPlan("select id from tmp_t where a = 1", "IndexLookUp")
+	tk.MustQuery("select id from tmp_t where a = 1").Check(testkit.Rows("1"))
+
+	tk.MustExec("rollback")
 }
 
 func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
