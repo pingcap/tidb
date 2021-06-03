@@ -543,6 +543,9 @@ const (
 
 	// TiDBTopSQLMaxStatementCount indicates the max number of statements been collected.
 	TiDBTopSQLMaxStatementCount = "tidb_top_sql_max_statement_count"
+
+	// TiDBEnableGlobalTemporaryTable indicates whether to enable global temporary table
+	TiDBEnableGlobalTemporaryTable = "tidb_enable_global_temporary_table"
 )
 
 // TiDB vars that have only global scope
@@ -689,6 +692,7 @@ const (
 	DefTiDBTopSQLAgentAddress          = ""
 	DefTiDBTopSQLPrecisionSeconds      = 1
 	DefTiDBTopSQLMaxStatementCount     = 200
+	DefTiDBEnableGlobalTemporaryTable  = false
 )
 
 // Process global variables.

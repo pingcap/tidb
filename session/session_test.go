@@ -789,6 +789,7 @@ func (s *testSessionSuite) TestRetryUnion(c *C) {
 
 func (s *testSessionSuite) TestRetryGlobalTempTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("drop table if exists normal_table")
 	tk.MustExec("create table normal_table(a int primary key, b int)")
 	defer tk.MustExec("drop table if exists normal_table")
@@ -2139,6 +2140,7 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerTempTable(c *C) {
 	tk.MustExec(`drop table if exists normal_table`)
 	tk.MustExec(`create table normal_table (id int, c int);`)
 	defer tk.MustExec(`drop table if exists normal_table`)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec(`drop table if exists temp_table`)
 	tk.MustExec(`create global temporary table temp_table (id int, c int) on commit delete rows;`)
 	defer tk.MustExec(`drop table if exists temp_table`)
@@ -4158,6 +4160,7 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 
 func (s *testSessionSuite3) TestGlobalTemporaryTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table g_tmp (a int primary key, b int, c int, index i_b(b)) on commit delete rows")
 	tk.MustExec("begin")
 	tk.MustExec("insert into g_tmp values (3, 3, 3)")
