@@ -265,10 +265,10 @@ func (s *replicaSelector) next(bo *Backoffer) (*RPCContext, error) {
 		s.nextReplicaIdx++
 
 		// Limit the max attempts of each replica to prevent endless retry.
-		replica.attempts++
-		if replica.attempts > maxReplicaAttempt {
+		if replica.attempts >= maxReplicaAttempt {
 			continue
 		}
+		replica.attempts++
 
 		storeFailEpoch := atomic.LoadUint32(&replica.store.epoch)
 		if storeFailEpoch != replica.epoch {
@@ -342,13 +342,18 @@ func (s *replicaSelector) updateLeader(leader *metapb.Peer) {
 			if i < s.nextReplicaIdx {
 				s.nextReplicaIdx--
 			}
-			// Move the leader replica to the front of candidates and skip the current replica.
+			// Move the leader replica to the front of candidates.
 			s.replicas[i], s.replicas[s.nextReplicaIdx] = s.replicas[s.nextReplicaIdx], s.replicas[i]
+			if s.replicas[s.nextReplicaIdx].attempts == maxReplicaAttempt {
+				// Give the replica one more chance and because the current replica is skipped, it
+				// won't result in infinite retry.
+				s.replicas[s.nextReplicaIdx].attempts = maxReplicaAttempt - 1
+			}
 			// Update the workTiKVIdx so that following requests can be sent to the leader immediately.
 			if !s.regionCache.switchWorkLeaderToPeer(s.region, leader) {
 				panic("the store must exist")
 			}
-			logutil.BgLogger().Info("switch region leader to specific leader due to kv return NotLeader",
+			logutil.BgLogger().Debug("switch region leader to specific leader due to kv return NotLeader",
 				zap.Uint64("regionID", s.region.GetID()),
 				zap.Uint64("leaderStoreID", leader.GetStoreId()))
 			return

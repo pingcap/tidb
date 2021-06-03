@@ -897,14 +897,17 @@ func (s *testRegionRequestToThreeStoresSuite) TestReplicaSelector(c *C) {
 	replicaSelector, _ = newReplicaSelector(cache, regionLoc.Region)
 	replicaSelector.next(s.bo)
 	replicaSelector.next(s.bo)
+	replicaSelector.next(s.bo)
+	c.Assert(replicaSelector.isExhausted(), IsTrue)
 	// The leader is the 1st replica. After updating leader, it should be the next and
 	// the currnet replica is skipped.
 	leader = replicaSelector.replicas[0]
 	replicaSelector.updateLeader(leader.peer)
 	// The leader should be the next replica.
 	c.Assert(replicaSelector.nextReplica(), Equals, leader)
-	c.Assert(replicaSelector.nextReplicaIdx, Equals, 1)
+	c.Assert(replicaSelector.nextReplicaIdx, Equals, 2)
 	rpcCtx, _ = replicaSelector.next(s.bo)
+	c.Assert(replicaSelector.isExhausted(), IsTrue)
 	assertRPCCtxEqual(rpcCtx, leader)
 	// Verify the regionStore is updated and the workTiKVIdx points to the leader.
 	regionStore = region.getStore()
@@ -912,12 +915,15 @@ func (s *testRegionRequestToThreeStoresSuite) TestReplicaSelector(c *C) {
 	c.Assert(leaderStore, Equals, leader.store)
 	c.Assert(leaderPeer, Equals, leader.peer)
 
-	// Shouldn't retry the leader if it exceeds the maxReplicaAttempt.
+	// Give the leader one more chance even if it exceeds the maxReplicaAttempt.
+	replicaSelector, _ = newReplicaSelector(cache, regionLoc.Region)
+	leader = replicaSelector.replicas[0]
 	leader.attempts = maxReplicaAttempt
 	replicaSelector.updateLeader(leader.peer)
+	c.Assert(leader.attempts, Equals, maxReplicaAttempt-1)
 	rpcCtx, _ = replicaSelector.next(s.bo)
-	assertRPCCtxEqual(rpcCtx, replicaSelector.replicas[2])
-	c.Assert(replicaSelector.isExhausted(), IsTrue)
+	assertRPCCtxEqual(rpcCtx, leader)
+	c.Assert(leader.attempts, Equals, maxReplicaAttempt)
 
 	// Invalidate the region if the leader is not in the region.
 	region.lastAccess = time.Now().Unix()
@@ -1039,7 +1045,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestSendReqWithReplicaSelector(c *
 	c.Assert(hasFakeRegionError(resp), IsTrue)
 	c.Assert(sender.leaderReplicaSelector.isExhausted(), IsTrue)
 	c.Assert(sender.leaderReplicaSelector.region.isValid(), IsFalse)
-	c.Assert(bo.GetTotalBackoffTimes(), Equals, 10)
+	c.Assert(bo.GetTotalBackoffTimes(), Equals, maxReplicaAttempt+2)
 	s.cluster.StartStore(s.storeIDs[0])
 
 	// Verify that retry the same replica when meets ServerIsBusy/MaxTimestampNotSynced/ReadIndexNotReady/ProposalInMergingMode/DataIsNotReady.
@@ -1074,7 +1080,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestSendReqWithReplicaSelector(c *
 			c.Assert(hasFakeRegionError(resp), IsTrue)
 			c.Assert(sender.leaderReplicaSelector.isExhausted(), IsTrue)
 			c.Assert(sender.leaderReplicaSelector.region.isValid(), IsFalse)
-			c.Assert(bo.GetTotalBackoffTimes(), Equals, 10)
+			c.Assert(bo.GetTotalBackoffTimes(), Equals, maxReplicaAttempt+2)
 		}()
 	}
 
