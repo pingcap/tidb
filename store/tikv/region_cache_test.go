@@ -359,7 +359,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader(c *C) {
 	loc, err := s.cache.LocateKey(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
 	// tikv-server reports `NotLeader`
-	s.cache.UpdateLeader(loc.Region, s.store2, 0)
+	s.cache.UpdateLeader(loc.Region, &metapb.Peer{Id: s.peer2, StoreId: s.store2}, 0)
 
 	r := s.getRegion(c, []byte("a"))
 	c.Assert(r, NotNil)
@@ -384,7 +384,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader2(c *C) {
 	s.cluster.AddStore(store3, s.storeAddr(store3))
 	s.cluster.AddPeer(s.region1, store3, peer3)
 	// tikv-server reports `NotLeader`
-	s.cache.UpdateLeader(loc.Region, store3, 0)
+	s.cache.UpdateLeader(loc.Region, &metapb.Peer{Id: peer3, StoreId: store3}, 0)
 
 	// Store3 does not exist in cache, causes a reload from PD.
 	r := s.getRegion(c, []byte("a"))
@@ -408,7 +408,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader2(c *C) {
 	// tikv-server notifies new leader to pd-server.
 	s.cluster.ChangeLeader(s.region1, peer3)
 	// tikv-server reports `NotLeader` again.
-	s.cache.UpdateLeader(r.VerID(), store3, 0)
+	s.cache.UpdateLeader(r.VerID(), &metapb.Peer{Id: peer3, StoreId: store3}, 0)
 	r = s.getRegion(c, []byte("a"))
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
@@ -443,7 +443,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
 	// tikv-server notifies new leader to pd-server.
 	s.cluster.ChangeLeader(s.region1, peer3)
 	// tikv-server reports `NotLeader`(store2 is the leader)
-	s.cache.UpdateLeader(loc.Region, s.store2, 0)
+	s.cache.UpdateLeader(loc.Region, &metapb.Peer{Id: s.peer2, StoreId: s.store2}, 0)
 
 	// Store2 does not exist any more, causes a reload from PD.
 	r := s.getRegion(c, []byte("a"))
@@ -458,7 +458,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
 	c.Assert(ctx.Addr, Equals, "store2")
 	s.cache.OnSendFail(retry.NewNoopBackoff(context.Background()), ctx, false, errors.New("send fail"))
 	s.cache.checkAndResolve(nil, func(*Store) bool { return true })
-	s.cache.UpdateLeader(loc.Region, s.store2, 0)
+	s.cache.UpdateLeader(loc.Region, &metapb.Peer{Id: s.peer2, StoreId: s.store2}, 0)
 	addr := s.getAddr(c, []byte("a"), kv.ReplicaReadLeader, 0)
 	c.Assert(addr, Equals, "")
 	addr = s.getAddr(c, []byte("a"), kv.ReplicaReadLeader, 0)
@@ -527,7 +527,7 @@ func (s *testRegionCacheSuite) TestSendFailedButLeaderNotChange(c *C) {
 	c.Assert(ctxFollower1.Peer.Id, Not(Equals), ctxFollower2.Peer.Id)
 
 	// access 1 it will return NotLeader, leader back to 2 again
-	s.cache.UpdateLeader(loc.Region, s.store2, ctx.AccessIdx)
+	s.cache.UpdateLeader(loc.Region, &metapb.Peer{Id: s.peer2, StoreId: s.store2}, ctx.AccessIdx)
 	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer2)
@@ -608,7 +608,7 @@ func (s *testRegionCacheSuite) TestSendFailedInHibernateRegion(c *C) {
 	c.Assert(ctxFollower1.Peer.Id, Not(Equals), ctxFollower2.Peer.Id)
 
 	// access 2, it's in hibernate and return 0 leader, so switch to 3
-	s.cache.UpdateLeader(loc.Region, 0, ctx.AccessIdx)
+	s.cache.UpdateLeader(loc.Region, nil, ctx.AccessIdx)
 	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, peer3)
@@ -633,7 +633,7 @@ func (s *testRegionCacheSuite) TestSendFailedInHibernateRegion(c *C) {
 	// again peer back to 1
 	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
 	c.Assert(err, IsNil)
-	s.cache.UpdateLeader(loc.Region, 0, ctx.AccessIdx)
+	s.cache.UpdateLeader(loc.Region, nil, ctx.AccessIdx)
 	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer1)
@@ -817,7 +817,7 @@ func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
 	c.Assert(ctxFollower1.Peer.Id, Equals, ctxFollower2.Peer.Id)
 
 	// 3 can be access, so switch to 1
-	s.cache.UpdateLeader(loc.Region, s.store1, ctx.AccessIdx)
+	s.cache.UpdateLeader(loc.Region, &metapb.Peer{Id: s.peer1, StoreId: s.store1}, ctx.AccessIdx)
 	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer1)
@@ -1012,9 +1012,9 @@ func (s *testRegionCacheSuite) TestRegionEpochAheadOfTiKV(c *C) {
 
 	bo := NewBackofferWithVars(context.Background(), 2000000, nil)
 
-	err := cache.OnRegionEpochNotMatch(bo, &RPCContext{Region: region.VerID()}, []*metapb.Region{&r1})
+	_, err := cache.OnRegionEpochNotMatch(bo, &RPCContext{Region: region.VerID()}, []*metapb.Region{&r1})
 	c.Assert(err, IsNil)
-	err = cache.OnRegionEpochNotMatch(bo, &RPCContext{Region: region.VerID()}, []*metapb.Region{&r2})
+	_, err = cache.OnRegionEpochNotMatch(bo, &RPCContext{Region: region.VerID()}, []*metapb.Region{&r2})
 	c.Assert(err, IsNil)
 	c.Assert(bo.ErrorsNum(), Equals, 2)
 }
@@ -1446,7 +1446,7 @@ func (s *testRegionCacheSuite) TestPeersLenChange(c *C) {
 	// 2 peers [peer1, peer2] and let peer2 become leader
 	loc, err := s.cache.LocateKey(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
-	s.cache.UpdateLeader(loc.Region, s.store2, 0)
+	s.cache.UpdateLeader(loc.Region, &metapb.Peer{Id: s.peer2, StoreId: s.store2}, 0)
 
 	// current leader is peer2 in [peer1, peer2]
 	loc, err = s.cache.LocateKey(s.bo, []byte("a"))
