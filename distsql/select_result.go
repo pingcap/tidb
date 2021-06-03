@@ -298,7 +298,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 
 		return
 	}
-	if len(r.selectResp.GetExecutionSummaries()) > 0 {
+	if copStats.ScanDetail != nil {
 		readKeys := copStats.ScanDetail.ProcessedKeys
 		readTime := copStats.TimeDetail.KvReadWallTimeMs.Seconds()
 		sli.ObserveReadSLI(uint64(readKeys), readTime)
