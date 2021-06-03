@@ -120,7 +120,8 @@ var (
 	subWindowsLock    = sync.RWMutex{}
 )
 
-type SQLBucket map[string]int64 // SQL duration bucket
+// SQL duration bucket
+type SQLBucket map[string]int64
 
 // const SQLBucketNum = 29 //prometheus.ExponentialBuckets(0.001, 2, 28), and 1 more +Inf
 
