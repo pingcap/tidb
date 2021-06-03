@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/retry"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -1048,7 +1049,7 @@ func (s *testRegionCacheSuite) TestRegionEpochOnTiFlash(c *C) {
 	r := ctxTiFlash.Meta
 	reqSend := NewRegionRequestSender(s.cache, nil)
 	regionErr := &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{CurrentRegions: []*metapb.Region{r}}}
-	reqSend.onRegionError(s.bo, ctxTiFlash, nil, regionErr)
+	reqSend.onRegionError(s.bo, ctxTiFlash, nil, regionErr, nil)
 
 	// check leader read should not go to tiflash
 	lctx, err = s.cache.GetTiKVRPCContext(s.bo, loc1.Region, kv.ReplicaReadLeader, 0)
@@ -1411,11 +1412,11 @@ func (s *testRegionCacheSuite) TestFollowerMeetEpochNotMatch(c *C) {
 	c.Assert(ctxFollower1.Store.storeID, Equals, s.store2)
 
 	regionErr := &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}
-	reqSend.onRegionError(s.bo, ctxFollower1, &followReqSeed, regionErr)
+	reqSend.onRegionError(s.bo, ctxFollower1, &tikvrpc.Request{ReplicaReadSeed: &followReqSeed}, regionErr, nil)
 	c.Assert(followReqSeed, Equals, uint32(1))
 
 	regionErr = &errorpb.Error{RegionNotFound: &errorpb.RegionNotFound{}}
-	reqSend.onRegionError(s.bo, ctxFollower1, &followReqSeed, regionErr)
+	reqSend.onRegionError(s.bo, ctxFollower1, &tikvrpc.Request{ReplicaReadSeed: &followReqSeed}, regionErr, nil)
 	c.Assert(followReqSeed, Equals, uint32(2))
 }
 
@@ -1442,7 +1443,7 @@ func (s *testRegionCacheSuite) TestMixedMeetEpochNotMatch(c *C) {
 	c.Assert(ctxFollower1.Store.storeID, Equals, s.store1)
 
 	regionErr := &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}
-	reqSend.onRegionError(s.bo, ctxFollower1, &followReqSeed, regionErr)
+	reqSend.onRegionError(s.bo, ctxFollower1, &tikvrpc.Request{ReplicaReadSeed: &followReqSeed}, regionErr, nil)
 	c.Assert(followReqSeed, Equals, uint32(1))
 }
 

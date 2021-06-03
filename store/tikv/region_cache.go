@@ -55,8 +55,13 @@ const (
 	defaultRegionsPerBatch    = 128
 )
 
-// RegionCacheTTLSec is the max idle time for regions in the region cache.
-var RegionCacheTTLSec int64 = 600
+// regionCacheTTLSec is the max idle time for regions in the region cache.
+var regionCacheTTLSec int64 = 600
+
+// SetRegionCacheTTLSec sets regionCacheTTLSec to t.
+func SetRegionCacheTTLSec(t int64) {
+	regionCacheTTLSec = t
+}
 
 const (
 	updated  int32 = iota // region is updated and no need to reload.
@@ -167,14 +172,19 @@ func (r *RegionStore) follower(seed uint32, op *storeSelectorOp) AccessIndex {
 
 // return next leader or follower store's index
 func (r *RegionStore) kvPeer(seed uint32, op *storeSelectorOp) AccessIndex {
+	if op.leaderOnly {
+		return r.workTiKVIdx
+	}
 	candidates := make([]AccessIndex, 0, r.accessStoreNum(TiKVOnly))
 	for i := 0; i < r.accessStoreNum(TiKVOnly); i++ {
-		storeIdx, s := r.accessStore(TiKVOnly, AccessIndex(i))
-		if r.storeEpochs[storeIdx] != atomic.LoadUint32(&s.epoch) || !r.filterStoreCandidate(AccessIndex(i), op) {
+		accessIdx := AccessIndex(i)
+		storeIdx, s := r.accessStore(TiKVOnly, accessIdx)
+		if r.storeEpochs[storeIdx] != atomic.LoadUint32(&s.epoch) || !r.filterStoreCandidate(accessIdx, op) {
 			continue
 		}
-		candidates = append(candidates, AccessIndex(i))
+		candidates = append(candidates, accessIdx)
 	}
+	// If there is no candidates, send to current workTiKVIdx which generally is the leader.
 	if len(candidates) == 0 {
 		return r.workTiKVIdx
 	}
@@ -254,7 +264,7 @@ func (r *Region) checkRegionCacheTTL(ts int64) bool {
 	})
 	for {
 		lastAccess := atomic.LoadInt64(&r.lastAccess)
-		if ts-lastAccess > RegionCacheTTLSec {
+		if ts-lastAccess > regionCacheTTLSec {
 			return false
 		}
 		if atomic.CompareAndSwapInt64(&r.lastAccess, lastAccess, ts) {
@@ -421,6 +431,8 @@ type RPCContext struct {
 	ProxyAccessIdx AccessIndex // valid when ProxyStore is not nil
 	ProxyAddr      string      // valid when ProxyStore is not nil
 	TiKVNum        int         // Number of TiKV nodes among the region's peers. Assuming non-TiKV peers are all TiFlash peers.
+
+	tryTimes int
 }
 
 func (c *RPCContext) String() string {
@@ -437,16 +449,24 @@ func (c *RPCContext) String() string {
 }
 
 type storeSelectorOp struct {
-	labels []*metapb.StoreLabel
+	leaderOnly bool
+	labels     []*metapb.StoreLabel
 }
 
 // StoreSelectorOption configures storeSelectorOp.
 type StoreSelectorOption func(*storeSelectorOp)
 
-// WithMatchLabels indicates selecting stores with matched labels
+// WithMatchLabels indicates selecting stores with matched labels.
 func WithMatchLabels(labels []*metapb.StoreLabel) StoreSelectorOption {
 	return func(op *storeSelectorOp) {
-		op.labels = labels
+		op.labels = append(op.labels, labels...)
+	}
+}
+
+// WithLeaderOnly indicates selecting stores with leader only.
+func WithLeaderOnly() StoreSelectorOption {
+	return func(op *storeSelectorOp) {
+		op.leaderOnly = true
 	}
 }
 
@@ -1184,7 +1204,7 @@ func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
 		return nil
 	}
 	lastAccess := atomic.LoadInt64(&latestRegion.lastAccess)
-	if ts-lastAccess > RegionCacheTTLSec {
+	if ts-lastAccess > regionCacheTTLSec {
 		return nil
 	}
 	if latestRegion != nil {
@@ -2095,9 +2115,19 @@ type livenessState uint32
 
 var (
 	livenessSf singleflight.Group
-	// StoreLivenessTimeout is the max duration of resolving liveness of a TiKV instance.
-	StoreLivenessTimeout time.Duration
+	// storeLivenessTimeout is the max duration of resolving liveness of a TiKV instance.
+	storeLivenessTimeout time.Duration
 )
+
+// SetStoreLivenessTimeout sets storeLivenessTimeout to t.
+func SetStoreLivenessTimeout(t time.Duration) {
+	storeLivenessTimeout = t
+}
+
+// GetStoreLivenessTimeout returns storeLivenessTimeout.
+func GetStoreLivenessTimeout() time.Duration {
+	return storeLivenessTimeout
+}
 
 const (
 	unknown livenessState = iota
@@ -2161,7 +2191,7 @@ func (s *Store) requestLiveness(bo *Backoffer, c *RegionCache) (l livenessState)
 		return c.testingKnobs.mockRequestLiveness(s, bo)
 	}
 
-	if StoreLivenessTimeout == 0 {
+	if storeLivenessTimeout == 0 {
 		return unreachable
 	}
 
@@ -2171,7 +2201,7 @@ func (s *Store) requestLiveness(bo *Backoffer, c *RegionCache) (l livenessState)
 	}
 	addr := s.addr
 	rsCh := livenessSf.DoChan(addr, func() (interface{}, error) {
-		return invokeKVStatusAPI(addr, StoreLivenessTimeout), nil
+		return invokeKVStatusAPI(addr, storeLivenessTimeout), nil
 	})
 	var ctx context.Context
 	if bo != nil {
