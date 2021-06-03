@@ -100,6 +100,7 @@ func GetClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, er
 			}
 		}
 	}()
+
 	err = ctx.RefreshTxnCtx(context.TODO())
 	if err != nil {
 		return nil, err

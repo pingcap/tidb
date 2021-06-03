@@ -2647,6 +2647,9 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if t.Meta().TempTableType != model.TempTableNone {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
+	}
 	if uVal == t.Meta().ShardRowIDBits {
 		// Nothing need to do.
 		return nil
@@ -3537,7 +3540,7 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (ca
 	return true, notCompatibleMsg, errUnsupportedModifyColumn.GenWithStackByArgs(notCompatibleMsg)
 }
 
-func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needOreg bool, reasonMsg string) {
+func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needReorg bool, reasonMsg string) {
 	toFlen := to.Flen
 	originFlen := origin.Flen
 	if mysql.IsIntegerType(to.Tp) && mysql.IsIntegerType(origin.Tp) {
@@ -3545,6 +3548,10 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needOreg b
 		// the default flen of the type.
 		originFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(origin.Tp)
 		toFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(to.Tp)
+	}
+
+	if convertBetweenCharAndVarchar(origin.Tp, to.Tp) {
+		return true, "conversion between char and varchar string needs reorganization"
 	}
 
 	if toFlen > 0 && toFlen < originFlen {
@@ -3620,10 +3627,6 @@ func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types
 			msg := "tidb_enable_change_column_type is true and this column has primary key flag"
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
-	}
-	if types.IsTypeVarchar(origin.Tp) != types.IsTypeVarchar(to.Tp) {
-		unsupportedMsg := "column type conversion between 'varchar' and 'non-varchar' is currently unsupported yet"
-		return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 	}
 
 	err = checkModifyCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate, needRewriteCollationData)
@@ -5263,6 +5266,9 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
+	}
+	if t.Meta().TempTableType != model.TempTableNone {
+		return infoschema.ErrCannotAddForeign
 	}
 
 	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols(), t.Meta())
