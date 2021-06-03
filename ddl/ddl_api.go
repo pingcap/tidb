@@ -1736,6 +1736,9 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	switch s.TemporaryKeyword {
 	case ast.TemporaryGlobal:
 		tbInfo.TempTableType = model.TempTableGlobal
+		if !ctx.GetSessionVars().EnableGlobalTemporaryTable {
+			return nil, errors.New("global temporary table is experimental and it is switched off by tidb_enable_global_temporary_table")
+		}
 		// "create global temporary table ... on commit preserve rows"
 		if !s.OnCommitDelete {
 			return nil, errors.Trace(errUnsupportedOnCommitPreserve)
