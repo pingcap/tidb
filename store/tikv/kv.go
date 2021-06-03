@@ -253,11 +253,11 @@ func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64,
 		// Then mockGetTSErrorInRetry will return retryable error when first retry.
 		// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout
 		// This may cause duplicate data to be written.
-		if val, _err_ := failpoint.Eval(_curpkg_("mockGetTSErrorInRetry")); _err_ == nil {
+		failpoint.Inject("mockGetTSErrorInRetry", func(val failpoint.Value) {
 			if val.(bool) && !IsMockCommitErrorEnable() {
 				err = tikverr.NewErrPDServerTimeout("mock PD timeout")
 			}
-		}
+		})
 
 		if err == nil {
 			return startTS, nil
@@ -368,10 +368,10 @@ func (s *KVStore) setSafeTS(storeID, safeTS uint64) {
 }
 
 func (s *KVStore) getMinSafeTSByStores(stores []*Store) uint64 {
-	if val, _err_ := failpoint.Eval(_curpkg_("injectSafeTS")); _err_ == nil {
+	failpoint.Inject("injectSafeTS", func(val failpoint.Value) {
 		injectTS := val.(int)
-		return uint64(injectTS)
-	}
+		failpoint.Return(uint64(injectTS))
+	})
 	minSafeTS := uint64(math.MaxUint64)
 	// when there is no store, return 0 in order to let minStartTS become startTS directly
 	if len(stores) < 1 {

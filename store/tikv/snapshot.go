@@ -445,11 +445,11 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 		defer span1.Finish()
 		opentracing.ContextWithSpan(ctx, span1)
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("snapshot-get-cache-fail")); _err_ == nil {
+	failpoint.Inject("snapshot-get-cache-fail", func(_ failpoint.Value) {
 		if bo.GetCtx().Value("TestSnapshotCache") != nil {
 			panic("cache miss")
 		}
-	}
+	})
 
 	cli := NewClientHelper(s.store, s.resolvedLocks)
 
@@ -483,7 +483,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 
 	var firstLock *Lock
 	for {
-		failpoint.Eval(_curpkg_("beforeSendPointGet"))
+		failpoint.Inject("beforeSendPointGet", nil)
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
 			return nil, errors.Trace(err)

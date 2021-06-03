@@ -7184,10 +7184,10 @@ func getMinSafeTime(sessionCtx sessionctx.Context, timeZone *time.Location) time
 		minSafeTS = store.GetMinSafeTS(sessionCtx.GetSessionVars().CheckAndGetTxnScope())
 	}
 	// Inject mocked SafeTS for test.
-	if val, _err_ := failpoint.Eval(_curpkg_("injectSafeTS")); _err_ == nil {
+	failpoint.Inject("injectSafeTS", func(val failpoint.Value) {
 		injectTS := val.(int)
 		minSafeTS = uint64(injectTS)
-	}
+	})
 	// Try to get from the stmt cache to make sure this function is deterministic.
 	stmtCtx := sessionCtx.GetSessionVars().StmtCtx
 	minSafeTS = stmtCtx.GetOrStoreStmtCache(stmtctx.StmtSafeTSCacheKey, minSafeTS).(uint64)

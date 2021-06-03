@@ -224,11 +224,11 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 }
 
 func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.PartitionDefinition, d *ddlCtx) (needWait bool, err error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("mockWaitTiFlashReplica")); _err_ == nil {
+	failpoint.Inject("mockWaitTiFlashReplica", func(val failpoint.Value) {
 		if val.(bool) {
-			return true, nil
+			failpoint.Return(true, nil)
 		}
-	}
+	})
 
 	ctx := context.Background()
 	pdCli := d.store.(tikv.Storage).GetRegionCache().PDClient()
@@ -1241,12 +1241,12 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("exchangePartitionErr")); _err_ == nil {
+	failpoint.Inject("exchangePartitionErr", func(val failpoint.Value) {
 		if val.(bool) {
 			job.State = model.JobStateCancelled
-			return ver, errors.New("occur an error after updating partition id")
+			failpoint.Return(ver, errors.New("occur an error after updating partition id"))
 		}
-	}
+	})
 
 	// recreate non-partition table meta info
 	err = t.DropTableOrView(job.SchemaID, partDef.ID, true)

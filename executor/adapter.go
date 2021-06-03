@@ -329,25 +329,25 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.GetTextToLog()), zap.Stack("stack"))
 	}()
 
-	if val, _err_ := failpoint.Eval(_curpkg_("assertStaleTSO")); _err_ == nil {
+	failpoint.Inject("assertStaleTSO", func(val failpoint.Value) {
 		if n, ok := val.(int); ok {
 			startTS := oracle.ExtractPhysical(a.SnapshotTS) / 1000
 			if n != int(startTS) {
 				panic("different tso")
 			}
-			return
+			failpoint.Return()
 		}
-	}
-	if val, _err_ := failpoint.Eval(_curpkg_("assertStaleTSOWithTolerance")); _err_ == nil {
+	})
+	failpoint.Inject("assertStaleTSOWithTolerance", func(val failpoint.Value) {
 		if n, ok := val.(int); ok {
 			// Convert to seconds
 			startTS := oracle.ExtractPhysical(a.SnapshotTS) / 1000
 			if int(startTS) <= n-1 || n+1 <= int(startTS) {
 				panic("tso violate tolerance")
 			}
-			return
+			failpoint.Return()
 		}
-	}
+	})
 	sctx := a.Ctx
 	ctx = util.SetSessionID(ctx, sctx.GetSessionVars().ConnectionID)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
