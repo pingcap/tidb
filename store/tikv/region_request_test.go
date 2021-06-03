@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/retry"
 
 	"github.com/pingcap/tidb/store/tikv/config"
@@ -186,32 +187,65 @@ func (s *testRegionRequestToThreeStoresSuite) TestStoreTokenLimit(c *C) {
 	kv.StoreLimit.Store(oldStoreLimit)
 }
 
-// Test whether the Stale Read request will retry the leader or next peer on error.
-func (s *testRegionRequestToThreeStoresSuite) TestStaleReadRetry(c *C) {
+// Test whether the global Stale Read request will only retry the leader on error.
+func (s *testRegionRequestToThreeStoresSuite) TestGlobalStaleReadRetry(c *C) {
 	region, err := s.cache.LocateRegionByID(s.bo, s.regionID)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
 	var seed uint32 = 0
 	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{}, kv.ReplicaReadMixed, &seed)
 	req.EnableStaleRead()
-	// Retry 3 times.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockDataIsNotReadyError", `return(3)`), IsNil)
+	req.TxnScope = oracle.GlobalTxnScope
+	// Retry 1 times.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockDataIsNotReadyError", `return(1)`), IsNil)
 	resp, ctx, err := s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, tikvrpc.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
 	c.Assert(ctx, NotNil)
 	peerID := ctx.Peer.GetId()
+	c.Assert(peerID, Equals, s.leaderPeer)
 
 	region, err = s.cache.LocateRegionByID(s.bo, s.regionID)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
-	// Retry 1 time.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockDataIsNotReadyError", `return(1)`), IsNil)
+	// Retry 3 time.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockDataIsNotReadyError", `return(2)`), IsNil)
 	resp, ctx, err = s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, tikvrpc.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
 	c.Assert(ctx, NotNil)
-	c.Assert(peerID, Not(Equals), ctx.Peer.GetId())
+	c.Assert(peerID, Equals, s.leaderPeer)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockDataIsNotReadyError"), IsNil)
+}
+
+// Test whether the local Stale Read request will retry both the leader and next peer on error.
+func (s *testRegionRequestToThreeStoresSuite) TestLocalStaleReadRetry(c *C) {
+	region, err := s.cache.LocateRegionByID(s.bo, s.regionID)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+	var seed uint32 = 0
+	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{}, kv.ReplicaReadMixed, &seed)
+	req.EnableStaleRead()
+	req.TxnScope = "local"
+	// Retry 1 times.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockDataIsNotReadyError", `return(1)`), IsNil)
+	resp, ctx, err := s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, tikvrpc.TiKV)
+	c.Assert(err, IsNil)
+	c.Assert(resp.Resp, NotNil)
+	c.Assert(ctx, NotNil)
+	peerID1 := ctx.Peer.GetId()
+
+	region, err = s.cache.LocateRegionByID(s.bo, s.regionID)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+	// Retry 3 time.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockDataIsNotReadyError", `return(3)`), IsNil)
+	resp, ctx, err = s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, tikvrpc.TiKV)
+	c.Assert(err, IsNil)
+	c.Assert(resp.Resp, NotNil)
+	c.Assert(ctx, NotNil)
+	peerID2 := ctx.Peer.GetId()
+	c.Assert(peerID2, Not(Equals), peerID1)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockDataIsNotReadyError"), IsNil)
 }
 

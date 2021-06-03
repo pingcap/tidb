@@ -105,6 +105,7 @@ type KVSnapshot struct {
 		replicaRead kv.ReplicaReadType
 		taskID      uint64
 		isStaleness bool
+		txnScope    string
 		// MatchStoreLabels indicates the labels the store should be matched
 		matchStoreLabels []*metapb.StoreLabel
 	}
@@ -316,13 +317,15 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 			TaskId:           s.mu.taskID,
 			ResourceGroupTag: s.resourceGroupTag,
 		})
+		txnScope := s.mu.txnScope
 		isStaleness := s.mu.isStaleness
 		matchStoreLabels := s.mu.matchStoreLabels
 		s.mu.RUnlock()
-		var ops []StoreSelectorOption
+		req.TxnScope = txnScope
 		if isStaleness {
 			req.EnableStaleRead()
 		}
+		ops := make([]StoreSelectorOption, 0, 2)
 		if len(matchStoreLabels) > 0 {
 			ops = append(ops, WithMatchLabels(matchStoreLabels))
 		}
@@ -614,6 +617,13 @@ func (s *KVSnapshot) SetRuntimeStats(stats *SnapshotRuntimeStats) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mu.stats = stats
+}
+
+// SetTxnScope sets up the txn scope.
+func (s *KVSnapshot) SetTxnScope(txnScope string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.txnScope = txnScope
 }
 
 // SetIsStatenessReadOnly indicates whether the transaction is staleness read only transaction
