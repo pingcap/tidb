@@ -463,7 +463,7 @@ type SessionVars struct {
 	SnapshotTS uint64
 
 	// TxnReadTS is used for staleness transaction, it provides next staleness transaction startTS.
-	TxnReadTS uint64
+	TxnReadTS *TxnReadTS
 
 	// SnapshotInfoschema is used with SnapshotTS, when the schema version at snapshotTS less than current schema
 	// version, we load an old version schema for query.
@@ -486,6 +486,12 @@ type SessionVars struct {
 
 	// AllowBCJ means allow broadcast join.
 	AllowBCJ bool
+
+	// AllowCartesianBCJ means allow broadcast CARTESIAN join, 0 means not allow, 1 means allow broadcast CARTESIAN join
+	// but the table size should under the broadcast threshold, 2 means allow broadcast CARTESIAN join even if the table
+	// size exceeds the broadcast threshold
+	AllowCartesianBCJ int
+
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
@@ -526,14 +532,14 @@ type SessionVars struct {
 	CopCPUFactor float64
 	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
 	CopTiFlashConcurrencyFactor float64
-	// NetworkFactor is the network cost of transferring 1 byte data.
-	NetworkFactor float64
+	// networkFactor is the network cost of transferring 1 byte data.
+	networkFactor float64
 	// ScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
-	ScanFactor float64
-	// DescScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash in desc order.
-	DescScanFactor float64
-	// SeekFactor is the IO cost of seeking the start value of a range in TiKV or TiFlash.
-	SeekFactor float64
+	scanFactor float64
+	// descScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash in desc order.
+	descScanFactor float64
+	// seekFactor is the IO cost of seeking the start value of a range in TiKV or TiFlash.
+	seekFactor float64
 	// MemoryFactor is the memory cost of storing one tuple.
 	MemoryFactor float64
 	// DiskFactor is the IO cost of reading/writing one byte to temporary disk.
@@ -595,6 +601,9 @@ type SessionVars struct {
 
 	// EnableWindowFunction enables the window function.
 	EnableWindowFunction bool
+
+	// EnablePipelinedWindowExec enables executing window functions in a pipelined manner.
+	EnablePipelinedWindowExec bool
 
 	// EnableStrictDoubleTypeCheck enables table field double type check.
 	EnableStrictDoubleTypeCheck bool
@@ -826,6 +835,9 @@ type SessionVars struct {
 	// CTEMaxRecursionDepth indicates The common table expression (CTE) maximum recursion depth.
 	// see https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_cte_max_recursion_depth
 	CTEMaxRecursionDepth int
+
+	// EnableGlobalTemporaryTable indicates whether to enable global temporary table
+	EnableGlobalTemporaryTable bool
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
@@ -965,6 +977,7 @@ func NewSessionVars() *SessionVars {
 		StmtCtx:                     new(stmtctx.StatementContext),
 		AllowAggPushDown:            false,
 		AllowBCJ:                    false,
+		AllowCartesianBCJ:           DefOptCartesianBCJ,
 		BroadcastJoinThresholdSize:  DefBroadcastJoinThresholdSize,
 		BroadcastJoinThresholdCount: DefBroadcastJoinThresholdSize,
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
@@ -978,10 +991,10 @@ func NewSessionVars() *SessionVars {
 		CPUFactor:                   DefOptCPUFactor,
 		CopCPUFactor:                DefOptCopCPUFactor,
 		CopTiFlashConcurrencyFactor: DefOptTiFlashConcurrencyFactor,
-		NetworkFactor:               DefOptNetworkFactor,
-		ScanFactor:                  DefOptScanFactor,
-		DescScanFactor:              DefOptDescScanFactor,
-		SeekFactor:                  DefOptSeekFactor,
+		networkFactor:               DefOptNetworkFactor,
+		scanFactor:                  DefOptScanFactor,
+		descScanFactor:              DefOptDescScanFactor,
+		seekFactor:                  DefOptSeekFactor,
 		MemoryFactor:                DefOptMemoryFactor,
 		DiskFactor:                  DefOptDiskFactor,
 		ConcurrencyFactor:           DefOptConcurrencyFactor,
@@ -1028,6 +1041,7 @@ func NewSessionVars() *SessionVars {
 		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
+		EnableGlobalTemporaryTable:  DefTiDBEnableGlobalTemporaryTable,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -2041,4 +2055,99 @@ type QueryInfo struct {
 	StartTS     uint64 `json:"start_ts"`
 	ForUpdateTS uint64 `json:"for_update_ts"`
 	ErrMsg      string `json:"error,omitempty"`
+}
+
+// TxnReadTS indicates the value and used situation for tx_read_ts
+type TxnReadTS struct {
+	readTS uint64
+	used   bool
+}
+
+// NewTxnReadTS creates TxnReadTS
+func NewTxnReadTS(ts uint64) *TxnReadTS {
+	return &TxnReadTS{
+		readTS: ts,
+		used:   false,
+	}
+}
+
+// UseTxnReadTS returns readTS, and mark used as true
+func (t *TxnReadTS) UseTxnReadTS() uint64 {
+	if t == nil {
+		return 0
+	}
+	t.used = true
+	return t.readTS
+}
+
+// SetTxnReadTS update readTS, and refresh used
+func (t *TxnReadTS) SetTxnReadTS(ts uint64) {
+	if t == nil {
+		return
+	}
+	t.used = false
+	t.readTS = ts
+}
+
+// PeakTxnReadTS returns readTS
+func (t *TxnReadTS) PeakTxnReadTS() uint64 {
+	if t == nil {
+		return 0
+	}
+	return t.readTS
+}
+
+// CleanupTxnReadTSIfUsed cleans txnReadTS if used
+func (s *SessionVars) CleanupTxnReadTSIfUsed() {
+	if s.TxnReadTS == nil {
+		return
+	}
+	if s.TxnReadTS.used && s.TxnReadTS.readTS > 0 {
+		s.TxnReadTS = NewTxnReadTS(0)
+		s.SnapshotInfoschema = nil
+	}
+}
+
+// GetNetworkFactor returns the session variable networkFactor
+// returns 0 when tbl is a temporary table.
+func (s *SessionVars) GetNetworkFactor(tbl *model.TableInfo) float64 {
+	if tbl != nil {
+		if tbl.TempTableType != model.TempTableNone {
+			return 0
+		}
+	}
+	return s.networkFactor
+}
+
+// GetScanFactor returns the session variable scanFactor
+// returns 0 when tbl is a temporary table.
+func (s *SessionVars) GetScanFactor(tbl *model.TableInfo) float64 {
+	if tbl != nil {
+		if tbl.TempTableType != model.TempTableNone {
+			return 0
+		}
+	}
+	return s.scanFactor
+}
+
+// GetDescScanFactor returns the session variable descScanFactor
+// returns 0 when tbl is a temporary table.
+func (s *SessionVars) GetDescScanFactor(tbl *model.TableInfo) float64 {
+	if tbl != nil {
+		if tbl.TempTableType != model.TempTableNone {
+			return 0
+		}
+	}
+	return s.descScanFactor
+}
+
+// GetSeekFactor returns the session variable seekFactor
+// returns 0 when tbl is a temporary table.
+func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
+	if tbl != nil {
+		if tbl.TempTableType != model.TempTableNone {
+			return 0
+		}
+	}
+	return s.seekFactor
 }
