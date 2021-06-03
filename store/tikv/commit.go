@@ -19,11 +19,9 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/store/tikv/client"
-	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
-	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -47,10 +45,10 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 		StartVersion:  c.startTS,
 		Keys:          keys,
 		CommitVersion: c.commitTS,
-	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog, ResourceGroupTag: c.resourceGroupTag})
+	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 
-	sender := NewRegionRequestSender(c.store.regionCache, c.store.GetTiKVClient())
-	resp, err := sender.SendReq(bo, req, batch.region, client.ReadTimeoutShort)
+	sender := NewRegionRequestSender(c.store.regionCache, c.store.client)
+	resp, err := sender.SendReq(bo, req, batch.region, ReadTimeoutShort)
 
 	// If we fail to receive response for the request that commits primary key, it will be undetermined whether this
 	// transaction has been successfully committed.
@@ -69,7 +67,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 		return errors.Trace(err)
 	}
 	if regionErr != nil {
-		err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -78,7 +76,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 		return errors.Trace(err)
 	}
 	if resp.Resp == nil {
-		return errors.Trace(tikverr.ErrBodyMissing)
+		return errors.Trace(kv.ErrBodyMissing)
 	}
 	commitResp := resp.Resp.(*pb.CommitResponse)
 	// Here we can make sure tikv has processed the commit primary key request. So
@@ -88,7 +86,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 	}
 	if keyErr := commitResp.GetError(); keyErr != nil {
 		if rejected := keyErr.GetCommitTsExpired(); rejected != nil {
-			logutil.Logger(bo.GetCtx()).Info("2PC commitTS rejected by TiKV, retry with a newer commitTS",
+			logutil.Logger(bo.ctx).Info("2PC commitTS rejected by TiKV, retry with a newer commitTS",
 				zap.Uint64("txnStartTS", c.startTS),
 				zap.Stringer("info", logutil.Hex(rejected)))
 
@@ -101,9 +99,9 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 			}
 
 			// Update commit ts and retry.
-			commitTS, err := c.store.getTimestampWithRetry(bo, c.txn.GetScope())
+			commitTS, err := c.store.getTimestampWithRetry(bo, c.txn.GetUnionStore().GetOption(kv.TxnScope).(string))
 			if err != nil {
-				logutil.Logger(bo.GetCtx()).Warn("2PC get commitTS failed",
+				logutil.Logger(bo.ctx).Warn("2PC get commitTS failed",
 					zap.Error(err),
 					zap.Uint64("txnStartTS", c.startTS))
 				return errors.Trace(err)
@@ -128,20 +126,33 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 				}
 				return res
 			}
-			logutil.Logger(bo.GetCtx()).Error("2PC failed commit key after primary key committed",
-				zap.Error(err),
-				zap.Uint64("txnStartTS", c.startTS),
-				zap.Uint64("commitTS", c.commitTS),
-				zap.Strings("keys", hexBatchKeys(keys)))
+			if c.isAsyncCommit() {
+				logutil.Logger(bo.ctx).Error("2PC failed commit secondary key",
+					zap.Error(err),
+					zap.Uint64("txnStartTS", c.startTS),
+					zap.Uint64("commitTS", c.commitTS),
+					zap.Strings("keys", hexBatchKeys(keys)))
+			} else {
+				logutil.Logger(bo.ctx).Error("2PC failed commit key after primary key committed",
+					zap.Error(err),
+					zap.Uint64("txnStartTS", c.startTS),
+					zap.Uint64("commitTS", c.commitTS),
+					zap.Strings("keys", hexBatchKeys(keys)))
+			}
 			return errors.Trace(err)
 		}
-		// The transaction maybe rolled back by concurrent transactions.
-		logutil.Logger(bo.GetCtx()).Debug("2PC failed commit primary key",
-			zap.Error(err),
-			zap.Uint64("txnStartTS", c.startTS))
+		if batch.isPrimary {
+			// The transaction maybe rolled back by concurrent transactions.
+			logutil.Logger(bo.ctx).Debug("2PC failed commit primary key",
+				zap.Error(err),
+				zap.Uint64("txnStartTS", c.startTS))
+		} else {
+			logutil.Logger(bo.ctx).Debug("2PC failed commit secondary key",
+				zap.Error(err),
+				zap.Uint64("txnStartTS", c.startTS))
+		}
 		return err
 	}
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	// Group that contains primary key is always the first.
@@ -151,10 +162,10 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 }
 
 func (c *twoPhaseCommitter) commitMutations(bo *Backoffer, mutations CommitterMutations) error {
-	if span := opentracing.SpanFromContext(bo.GetCtx()); span != nil && span.Tracer() != nil {
+	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("twoPhaseCommitter.commitMutations", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
-		bo.SetCtx(opentracing.ContextWithSpan(bo.GetCtx(), span1))
+		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}
 
 	return c.doActionOnMutations(bo, actionCommit{}, mutations)
