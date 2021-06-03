@@ -63,9 +63,7 @@ var (
 )
 
 func getSlowQueryStats(ctx sessionctx.Context) (*slowQueryStats, error) {
-	slowQueryLock.Lock()
 	slowQueryBucket, err := getSlowQueryBucket(ctx)
-	slowQueryLock.Unlock()
 	if err != nil {
 		logutil.BgLogger().Info(err.Error())
 		return nil, err
@@ -102,11 +100,13 @@ func updateCurrentSQB(ctx sessionctx.Context) (err error) {
 		return errors.New("Prom vector expected, got " + value.Type().String())
 	}
 	promVec := value.(pmodel.Vector)
+	slowQueryLock.Lock()
 	for _, sample := range promVec {
 		metric := sample.Metric
 		bucketName := metric["le"] //hardcode bucket upper bound
 		CurrentSQBInfo[string(bucketName)] = int(sample.Value)
 	}
+	slowQueryLock.Unlock()
 	return nil
 }
 
@@ -114,7 +114,7 @@ func querySlowQueryMetric(sctx sessionctx.Context) (result pmodel.Value, err err
 	// Add retry to avoid network error.
 	var prometheusAddr string
 	for i := 0; i < 5; i++ {
-		//TODO: the prometheus will be Integrated into the PD, then we need to query the prometheus in PD directly, which need change the quire API
+		//TODO: the prometheus will be Integrated into the PD, then we need to query the prometheus in PD directly, which need change the query API
 		prometheusAddr, err = infosync.GetPrometheusAddr()
 		if err == nil || err == infosync.ErrPrometheusAddrIsNotSet {
 			break
@@ -133,8 +133,7 @@ func querySlowQueryMetric(sctx sessionctx.Context) (result pmodel.Value, err err
 	promQLAPI := promv1.NewAPI(promClient)
 	promQL := "tidb_server_slow_query_process_duration_seconds_bucket{sql_type=\"general\"}"
 
-	context.Background().Deadline()
-	ts := time.Now()
+	ts := time.Now().Add(-time.Minute)
 	// Add retry to avoid network error.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
 	defer cancel()
@@ -151,9 +150,11 @@ func querySlowQueryMetric(sctx sessionctx.Context) (result pmodel.Value, err err
 // calculateDeltaSQB calculate the delta between current slow query bucket and last slow query bucket
 func calculateDeltaSQB() *SlowQueryBucket {
 	deltaMap := make(SlowQueryBucket)
+	slowQueryLock.Lock()
 	for key, value := range CurrentSQBInfo {
 		deltaMap[key] = value - (LastSQBInfo)[key]
 	}
+	slowQueryLock.Unlock()
 	return &deltaMap
 }
 
