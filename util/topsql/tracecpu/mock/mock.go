@@ -46,7 +46,7 @@ func NewTopSQLReporter() *TopSQLReporter {
 }
 
 // Collect uses for testing.
-func (c *TopSQLReporter) Collect(ts int64, stats []tracecpu.TopSQLCPUTimeRecord) {
+func (c *TopSQLReporter) Collect(ts uint64, stats []tracecpu.TopSQLCPUTimeRecord) {
 	defer c.collectCnt.Inc()
 	if len(stats) == 0 {
 		return

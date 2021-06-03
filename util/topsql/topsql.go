@@ -15,15 +15,36 @@ package topsql
 
 import (
 	"context"
+	"fmt"
 	"runtime/pprof"
+	"time"
 
 	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 )
 
+const (
+	// TODO: turn reportInterval and reportTimeout into sysvar
+	reportInterval = 60 * time.Second
+	reportTimeout  = 45 * time.Second
+)
+
 // SetupTopSQL sets up the top-sql worker.
 func SetupTopSQL() {
+	cfg := config.GetGlobalConfig()
+	reporter := reporter.NewRemoteTopSQLReporter(&reporter.RemoteTopSQLReporterConfig{
+		PlanBinaryDecoder: plancodec.DecodeNormalizedPlan,
+		MaxStatementsNum:  int(variable.TopSQLVariable.MaxStatementCount.Load()),
+		ReportInterval:    reportInterval,
+		ReportTimeout:     reportTimeout,
+		AgentGRPCAddress:  variable.TopSQLVariable.AgentAddress.Load(),
+		InstanceID:        fmt.Sprintf("%s:%d", cfg.AdvertiseAddress, cfg.Port),
+	})
+	tracecpu.GlobalSQLCPUProfiler.SetReporter(reporter)
 	tracecpu.GlobalSQLCPUProfiler.Run()
 }
 

@@ -79,8 +79,8 @@ func initializeCache(maxStatementsNum int, addr string) *RemoteTopSQLReporter {
 	config := &RemoteTopSQLReporterConfig{
 		PlanBinaryDecoder: testPlanBinaryDecoderFunc,
 		MaxStatementsNum:  maxStatementsNum,
-		CollectInterval:   time.Minute,
-		CollectTimeout:    30 * time.Second,
+		ReportInterval:    time.Minute,
+		ReportTimeout:     30 * time.Second,
 		AgentGRPCAddress:  addr,
 		InstanceID:        "tidb-server",
 	}
@@ -214,9 +214,9 @@ func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
 	tsr := initializeCache(maxSQLNum, fmt.Sprintf(":%d", port))
 	batch := tsr.snapshot()
 
-	conn, client, err := newAgentClient(tsr.agentGRPCAddress)
+	conn, client, err := newAgentClient(tsr.agentGRPCAddress.address)
 	c.Assert(err, IsNil, Commentf("failed to create agent client"))
-	ctx, cancel := context.WithTimeout(context.TODO(), tsr.collectTimeout)
+	ctx, cancel := context.WithTimeout(context.TODO(), tsr.reportTimeout)
 	defer cancel()
 	stream, err := client.CollectCPUTime(ctx)
 	c.Assert(err, IsNil, Commentf("failed to initialize gRPC call CollectCPUTime"))

@@ -47,7 +47,7 @@ var GlobalSQLCPUProfiler = newSQLCPUProfiler()
 type Reporter interface {
 	// Collect uses to collect the SQL execution cpu time.
 	// ts is a Unix time, unit is second.
-	Collect(ts int64, stats []TopSQLCPUTimeRecord)
+	Collect(ts uint64, stats []TopSQLCPUTimeRecord)
 }
 
 // TopSQLCPUTimeRecord represents a single record of how much cpu time a sql plan consumes in one second.
@@ -145,7 +145,11 @@ func (sp *sqlCPUProfiler) startAnalyzeProfileWorker() {
 		stats := sp.parseCPUProfileBySQLLabels(p)
 		sp.handleExportProfileTask(p)
 		if c := sp.GetReporter(); c != nil {
-			c.Collect(task.end, stats)
+			taskEnd := task.end
+			if taskEnd < 0 {
+				taskEnd = 0
+			}
+			c.Collect(uint64(taskEnd), stats)
 		}
 		sp.putTaskToBuffer(task)
 	}

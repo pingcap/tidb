@@ -16,7 +16,6 @@ package reporter
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -100,9 +99,12 @@ type RemoteTopSQLReporter struct {
 	collectCPUTimeChan chan *topSQLCPUTimeInput
 	planRegisterChan   chan *planRegisterJob
 
-	collectInterval  time.Duration
-	collectTimeout   time.Duration
-	agentGRPCAddress string
+	reportInterval   time.Duration
+	reportTimeout    time.Duration
+	agentGRPCAddress struct {
+		mu      sync.Mutex
+		address string
+	}
 
 	// current tidb-server instance ID
 	instanceID string
@@ -116,10 +118,10 @@ type RemoteTopSQLReporterConfig struct {
 	PlanBinaryDecoder planBinaryDecodeFunc
 	// MaxStatementsNum is the capacity of the TopSQL map, above which evition should happen
 	MaxStatementsNum int
-	// CollectInterval is the interval of sending TopSQL records to the agent
-	CollectInterval time.Duration
-	// CollectTimeout is the timeout of a single agent gRPC call
-	CollectTimeout time.Duration
+	// ReportInterval is the interval of sending TopSQL records to the agent
+	ReportInterval time.Duration
+	// ReportTimeout is the timeout of a single agent gRPC call
+	ReportTimeout time.Duration
 	// AgentGRPCAddress is the gRPC address of the agent server
 	AgentGRPCAddress string
 	// InstanceID is the ID of this tidb server
@@ -171,23 +173,28 @@ func newAgentClient(addr string) (*grpc.ClientConn, tipb.TopSQLAgentClient, erro
 // planBinaryDecoder is a decoding function which will be called asynchronously to decode the plan binary to string
 // MaxStatementsNum is the maximum SQL and plan number, which will restrict the memory usage of the internal LFU cache
 func NewRemoteTopSQLReporter(config *RemoteTopSQLReporterConfig) *RemoteTopSQLReporter {
-	collectTimeout := config.CollectTimeout
-	if collectTimeout > config.CollectInterval || collectTimeout <= 0 {
-		collectTimeout = config.CollectInterval / 2
+	reportTimeout := config.ReportTimeout
+	if reportTimeout > config.ReportInterval || reportTimeout <= 0 {
+		reportTimeout = config.ReportInterval / 2
 	}
 	tsr := &RemoteTopSQLReporter{
 		planBinaryDecoder:  config.PlanBinaryDecoder,
 		MaxStatementsNum:   config.MaxStatementsNum,
-		collectInterval:    config.CollectInterval,
-		collectTimeout:     collectTimeout,
+		reportInterval:     config.ReportInterval,
+		reportTimeout:      reportTimeout,
 		topSQLMap:          make(map[string]*topSQLDataPoints),
 		normalizedSQLMap:   make(map[string]string),
 		normalizedPlanMap:  make(map[string]string),
 		collectCPUTimeChan: make(chan *topSQLCPUTimeInput, 1),
 		planRegisterChan:   make(chan *planRegisterJob, 10),
-		agentGRPCAddress:   config.AgentGRPCAddress,
-		instanceID:         config.InstanceID,
-		quit:               make(chan struct{}),
+		agentGRPCAddress: struct {
+			mu      sync.Mutex
+			address string
+		}{
+			address: config.AgentGRPCAddress,
+		},
+		instanceID: config.InstanceID,
+		quit:       make(chan struct{}),
 	}
 
 	go tsr.collectWorker()
@@ -200,6 +207,7 @@ func NewRemoteTopSQLReporter(config *RemoteTopSQLReporterConfig) *RemoteTopSQLRe
 }
 
 // Collect will drop the records when the collect channel is full
+// TODO: test the dropping behavior
 func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.TopSQLCPUTimeRecord) {
 	select {
 	case tsr.collectCPUTimeChan <- &topSQLCPUTimeInput{
@@ -315,7 +323,7 @@ func (tsr *RemoteTopSQLReporter) registerPlanWorker() {
 		}
 		planDecoded, err := tsr.planBinaryDecoder(job.normalizedPlan)
 		if err != nil {
-			fmt.Printf("decode plan failed: %v\n", err)
+			log.Warn("decode plan failed: %v\n", zap.Error(err))
 			continue
 		}
 		tsr.normalizedPlanMap[job.planDigest] = planDecoded
@@ -371,7 +379,7 @@ func (tsr *RemoteTopSQLReporter) sendBatch(stream tipb.TopSQLAgent_CollectCPUTim
 
 // sendToAgentWorker will send a snapshot to the gRPC endpoint every collect interval
 func (tsr *RemoteTopSQLReporter) sendToAgentWorker() {
-	ticker := time.NewTicker(tsr.collectInterval)
+	ticker := time.NewTicker(tsr.reportInterval)
 	for {
 		var ctx context.Context
 		var cancel context.CancelFunc
@@ -380,12 +388,12 @@ func (tsr *RemoteTopSQLReporter) sendToAgentWorker() {
 			batch := tsr.snapshot()
 			// NOTE: Currently we are creating/destroying a TCP connection to the agent every time.
 			// It's fine if we do this every minute, but need optimization if we need to do it more frequently, like every second.
-			conn, client, err := newAgentClient(tsr.agentGRPCAddress)
+			conn, client, err := newAgentClient(tsr.agentGRPCAddress.address)
 			if err != nil {
 				log.Error("TopSQL: failed to create agent client, %v", zap.Error(err))
 				continue
 			}
-			ctx, cancel = context.WithTimeout(context.TODO(), tsr.collectTimeout)
+			ctx, cancel = context.WithTimeout(context.TODO(), tsr.reportTimeout)
 			stream, err := client.CollectCPUTime(ctx)
 			if err != nil {
 				log.Error("TopSQL: failed to initialize gRPC call CollectCPUTime, %v", zap.Error(err))
@@ -408,5 +416,7 @@ func (tsr *RemoteTopSQLReporter) sendToAgentWorker() {
 
 // SetAgentGRPCAddress sets the agentGRPCAddress field
 func (tsr *RemoteTopSQLReporter) SetAgentGRPCAddress(address string) {
-	tsr.agentGRPCAddress = address
+	tsr.agentGRPCAddress.mu.Lock()
+	defer tsr.agentGRPCAddress.mu.Unlock()
+	tsr.agentGRPCAddress.address = address
 }
