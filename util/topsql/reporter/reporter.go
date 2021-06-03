@@ -106,9 +106,6 @@ type RemoteTopSQLReporter struct {
 		address string
 	}
 
-	// current tidb-server instance ID
-	instanceID string
-
 	quit chan struct{}
 }
 
@@ -124,8 +121,6 @@ type RemoteTopSQLReporterConfig struct {
 	ReportTimeout time.Duration
 	// AgentGRPCAddress is the gRPC address of the agent server
 	AgentGRPCAddress string
-	// InstanceID is the ID of this tidb server
-	InstanceID string
 }
 
 func encodeCacheKey(sqlDigest, planDigest []byte) []byte {
@@ -193,8 +188,7 @@ func NewRemoteTopSQLReporter(config *RemoteTopSQLReporterConfig) *RemoteTopSQLRe
 		}{
 			address: config.AgentGRPCAddress,
 		},
-		instanceID: config.InstanceID,
-		quit:       make(chan struct{}),
+		quit: make(chan struct{}),
 	}
 
 	go tsr.collectWorker()

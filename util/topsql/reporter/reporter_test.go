@@ -82,7 +82,6 @@ func initializeCache(maxStatementsNum int, addr string) *RemoteTopSQLReporter {
 		ReportInterval:    time.Minute,
 		ReportTimeout:     30 * time.Second,
 		AgentGRPCAddress:  addr,
-		InstanceID:        "tidb-server",
 	}
 	ts := NewRemoteTopSQLReporter(config)
 	populateCache(ts, 0, maxStatementsNum, 1)
