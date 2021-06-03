@@ -16,10 +16,12 @@ package telemetry
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"sync"
 	"time"
 
+	pingcapErrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
@@ -86,14 +88,7 @@ func getSlowQueryBucket(ctx sessionctx.Context) (*SlowQueryBucket, error) {
 func updateCurrentSQB(ctx sessionctx.Context) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			switch x := r.(type) {
-			case string:
-				err = errors.New(x)
-			case error:
-				err = x
-			default:
-				err = errors.New("unknown failure")
-			}
+			err = pingcapErrors.Errorf(fmt.Sprintln(r))
 		}
 	}()
 
