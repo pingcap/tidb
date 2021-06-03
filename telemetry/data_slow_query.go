@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/domain/infosync"
@@ -56,10 +57,13 @@ var (
 	LastSQBInfo SlowQueryBucket
 	// CurrentSQBInfo records current statitic information of slow query buckets
 	CurrentSQBInfo SlowQueryBucket
+	slowQueryLock  = sync.RWMutex{}
 )
 
 func getSlowQueryStats(ctx sessionctx.Context) (*slowQueryStats, error) {
+	slowQueryLock.Lock()
 	slowQueryBucket, err := getSlowQueryBucket(ctx)
+	slowQueryLock.Unlock()
 	if err != nil {
 		logutil.BgLogger().Info(err.Error())
 		return nil, err
@@ -134,9 +138,10 @@ func querySlowQueryMetric(sctx sessionctx.Context) (result pmodel.Value, err err
 	promQLAPI := promv1.NewAPI(promClient)
 	promQL := "tidb_server_slow_query_process_duration_seconds_bucket{sql_type=\"general\"}"
 
+	context.Background().Deadline()
 	ts := time.Now()
 	// Add retry to avoid network error.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
 	defer cancel()
 	for i := 0; i < 5; i++ {
 		result, _, err = promQLAPI.Query(ctx, promQL, ts)
@@ -172,16 +177,15 @@ func initSlowQueryStats() {
 	LastSQBInfo["+Inf"] = 0
 	CurrentSQBInfo["+Inf"] = 0
 
-	logutil.BgLogger().Info("Telemetry slow query stats initialized", zap.String("CurrentSQBInfo", CurrentSQBInfo.String()))
-	logutil.BgLogger().Info("Telemetry slow query stats initialized", zap.String("LastSQBInfo", LastSQBInfo.String()))
+	logutil.BgLogger().Info("Telemetry slow query stats initialized", zap.String("CurrentSQBInfo", CurrentSQBInfo.String()), zap.String("LastSQBInfo", LastSQBInfo.String()))
 }
 
 // postReportSlowQueryStats copy CurrentSQBInfo to LastSQBInfo to be ready for next report
 // this function is designed for being compatible with preview telemetry
 func postReportSlowQueryStats() {
-	for k := range LastSQBInfo {
-		delete(LastSQBInfo, k)
-	}
-	LastSQBInfo, CurrentSQBInfo = CurrentSQBInfo, LastSQBInfo
+	slowQueryLock.Lock()
+	LastSQBInfo = CurrentSQBInfo
+	CurrentSQBInfo = make(SlowQueryBucket)
+	slowQueryLock.Unlock()
 	logutil.BgLogger().Info("Telemetry slow query stats, postReportSlowQueryStats finished")
 }
