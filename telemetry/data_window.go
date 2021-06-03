@@ -140,25 +140,24 @@ func getSQLSum(sqlTypeDeta *sqlType) int64 {
 	return result
 }
 
-func readSQLMetric(timepoint time.Time, SQLresult sqlUsageData) (sqlUsageData, error) {
+func readSQLMetric(timepoint time.Time, SQLresult *sqlUsageData) error {
 	ctx := context.TODO()
-	quantile := 0.99
 
-	result, err := querySQLMetric(ctx, timepoint, quantile)
+	result, err := querySQLMetric(ctx, timepoint)
 	if err != nil {
 		if err1, ok := err.(*promv1.Error); ok {
-			return SQLresult, errors.Errorf("query metric error, msg: %v, detail: %v", err1.Msg, err1.Detail)
+			return errors.Errorf("query metric error, msg: %v, detail: %v", err1.Msg, err1.Detail)
 		}
-		return SQLresult, errors.Errorf("query metric error: %v", err.Error())
+		return errors.Errorf("query metric error: %v", err.Error())
 	}
 	logutil.BgLogger().Info("perpare to analys")
-	dataAnylis(result, &SQLresult)
-	durResult, err := queryDurMetric(ctx, timepoint, quantile)
+	dataAnylis(result, SQLresult)
+	durResult, err := queryDurMetric(ctx, timepoint)
 	if err != nil {
 		if err1, ok := err.(*promv1.Error); ok {
-			return SQLresult, errors.Errorf("query metric error, msg: %v, detail: %v", err1.Msg, err1.Detail)
+			return errors.Errorf("query metric error, msg: %v, detail: %v", err1.Msg, err1.Detail)
 		}
-		return SQLresult, errors.Errorf("query metric error: %v", err.Error())
+		return errors.Errorf("query metric error: %v", err.Error())
 	}
 	switch durResult.Type() {
 	case pmodel.ValVector:
@@ -166,15 +165,15 @@ func readSQLMetric(timepoint time.Time, SQLresult sqlUsageData) (sqlUsageData, e
 		for _, sample := range promVec {
 			metric := sample.Metric
 			bucketName := metric["le"] //hardcode bucket upper bound
-			SQLresult.SQLDurationTotal[string(bucketName)] = int64(sample.Value)
+			(*SQLresult).SQLDurationTotal[string(bucketName)] = int64(sample.Value)
 		}
 	}
 	logutil.BgLogger().Info(fmt.Sprintf("bucket:%s", bucketMap2Json(SQLresult.SQLDurationTotal)))
-	return SQLresult, nil
+	return nil
 
 }
 
-func querySQLMetric(ctx context.Context, queryTime time.Time, quantile float64) (result pmodel.Value, err error) {
+func querySQLMetric(ctx context.Context, queryTime time.Time) (result pmodel.Value, err error) {
 	// Add retry to avoid network error.
 	var prometheusAddr string
 	for i := 0; i < 5; i++ {
@@ -209,7 +208,7 @@ func querySQLMetric(ctx context.Context, queryTime time.Time, quantile float64) 
 	return result, err
 }
 
-func queryDurMetric(ctx context.Context, queryTime time.Time, quantile float64) (result pmodel.Value, err error) {
+func queryDurMetric(ctx context.Context, queryTime time.Time) (result pmodel.Value, err error) {
 	// Add retry to avoid network error.
 	var prometheusAddr string
 	for i := 0; i < 5; i++ {
@@ -337,8 +336,8 @@ func RotateSubWindow() {
 			SQLDurationTotal: make(SQLBucket),
 		},
 	}
-	var err error
-	thisSubWindow.SQLUsage, err = readSQLMetric(time.Now(), thisSubWindow.SQLUsage)
+
+	err := readSQLMetric(time.Now(), &thisSubWindow.SQLUsage)
 	if err != nil {
 		logutil.BgLogger().Error("Error exists when calling prometheus", zap.Error(err))
 	}
