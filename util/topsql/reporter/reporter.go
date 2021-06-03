@@ -29,6 +29,13 @@ import (
 	"google.golang.org/grpc/backoff"
 )
 
+const (
+	grpcInitialWindowSize     = 1 << 30
+	grpcInitialConnWindowSize = 1 << 30
+	collectCPUTimeChanLen     = 1
+	planRegisterChanLen       = 1024
+)
+
 // TopSQLReporter collects Top SQL metrics.
 type TopSQLReporter interface {
 	tracecpu.Reporter
@@ -130,11 +137,6 @@ func encodeCacheKey(sqlDigest, planDigest []byte) []byte {
 	return buffer.Bytes()
 }
 
-const (
-	grpcInitialWindowSize     = 1 << 30
-	grpcInitialConnWindowSize = 1 << 30
-)
-
 func newAgentClient(addr string) (*grpc.ClientConn, tipb.TopSQLAgentClient, error) {
 	dialCtx, cancel := context.WithTimeout(context.TODO(), time.Second)
 	defer cancel()
@@ -180,8 +182,8 @@ func NewRemoteTopSQLReporter(config *RemoteTopSQLReporterConfig) *RemoteTopSQLRe
 		topSQLMap:          make(map[string]*topSQLDataPoints),
 		normalizedSQLMap:   make(map[string]string),
 		normalizedPlanMap:  make(map[string]string),
-		collectCPUTimeChan: make(chan *topSQLCPUTimeInput, 1),
-		planRegisterChan:   make(chan *planRegisterJob, 10),
+		collectCPUTimeChan: make(chan *topSQLCPUTimeInput, collectCPUTimeChanLen),
+		planRegisterChan:   make(chan *planRegisterJob, planRegisterChanLen),
 		agentGRPCAddress: struct {
 			mu      sync.Mutex
 			address string
