@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -70,16 +71,20 @@ func LoadShuttingDown() uint32 {
 // merge, or region balance, tikv server may not able to process request and
 // send back a RegionError.
 // RegionRequestSender takes care of errors that does not relevant to region
-// range, such as 'I/O timeout', 'NotLeader', and 'ServerIsBusy'. For other
-// errors, since region range have changed, the request may need to split, so we
-// simply return the error to caller.
+// range, such as 'I/O timeout', 'NotLeader', and 'ServerIsBusy'. If fails to
+// send the request to all replicas, a fake rregion error may be returned.
+// Caller which receives the error should retry the request.
+//
+// For other region errors, since region range have changed, the request may need to
+// split, so we simply return the error to caller.
 type RegionRequestSender struct {
-	regionCache       *RegionCache
-	client            Client
-	storeAddr         string
-	rpcError          error
-	failStoreIDs      map[uint64]struct{}
-	failProxyStoreIDs map[uint64]struct{}
+	regionCache           *RegionCache
+	client                Client
+	storeAddr             string
+	rpcError              error
+	leaderReplicaSelector *replicaSelector
+	failStoreIDs          map[uint64]struct{}
+	failProxyStoreIDs     map[uint64]struct{}
 	RegionRequestRuntimeStats
 }
 
@@ -194,10 +199,186 @@ func (s *RegionRequestSender) SetRPCError(err error) {
 	s.rpcError = err
 }
 
-// SendReq sends a request to tikv server.
+// SendReq sends a request to tikv server. If fails to send the request to all replicas,
+// a fake region error may be returned. Caller which receives the error should retry the request.
 func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
 	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout, tikvrpc.TiKV)
 	return resp, err
+}
+
+type replica struct {
+	store    *Store
+	peer     *metapb.Peer
+	epoch    uint32
+	attempts int
+}
+
+type replicaSelector struct {
+	regionCache *RegionCache
+	region      *Region
+	// replicas contains all TiKV replicas for now and the leader is at the
+	// head of the slice.
+	replicas []*replica
+	// nextReplicaIdx points to the candidate for the next attempt.
+	nextReplicaIdx int
+}
+
+func newReplicaSelector(regionCache *RegionCache, regionID RegionVerID) (*replicaSelector, error) {
+	cachedRegion := regionCache.GetCachedRegionWithRLock(regionID)
+	if cachedRegion == nil || !cachedRegion.isValid() {
+		return nil, nil
+	}
+	regionStore := cachedRegion.getStore()
+	replicas := make([]*replica, 0, regionStore.accessStoreNum(TiKVOnly))
+	for _, storeIdx := range regionStore.accessIndex[TiKVOnly] {
+		replicas = append(replicas, &replica{
+			store:    regionStore.stores[storeIdx],
+			peer:     cachedRegion.meta.Peers[storeIdx],
+			epoch:    regionStore.storeEpochs[storeIdx],
+			attempts: 0,
+		})
+	}
+	// Move the leader to the first slot.
+	replicas[regionStore.workTiKVIdx], replicas[0] = replicas[0], replicas[regionStore.workTiKVIdx]
+	return &replicaSelector{
+		regionCache,
+		cachedRegion,
+		replicas,
+		0,
+	}, nil
+}
+
+// isExhausted returns true if runs out of all replicas.
+func (s *replicaSelector) isExhausted() bool {
+	return s.nextReplicaIdx >= len(s.replicas)
+}
+
+func (s *replicaSelector) nextReplica() *replica {
+	if s.isExhausted() {
+		return nil
+	}
+	return s.replicas[s.nextReplicaIdx]
+}
+
+const maxReplicaAttempt = 10
+
+// next creates the RPCContext of the current candidate replica.
+// It returns a SendError if runs out of all replicas of the cached region is invalidated.
+func (s *replicaSelector) next(bo *Backoffer) (*RPCContext, error) {
+	for {
+		if !s.region.isValid() {
+			return nil, nil
+		}
+		if s.isExhausted() {
+			s.invalidateRegion()
+			return nil, nil
+		}
+		replica := s.replicas[s.nextReplicaIdx]
+		s.nextReplicaIdx++
+
+		// Limit the max attempts of each replica to prevent endless retry.
+		if replica.attempts >= maxReplicaAttempt {
+			continue
+		}
+		replica.attempts++
+
+		storeFailEpoch := atomic.LoadUint32(&replica.store.epoch)
+		if storeFailEpoch != replica.epoch {
+			// TODO(youjiali1995): Is it necessary to invalidate the region?
+			s.invalidateRegion()
+			return nil, nil
+		}
+		addr, err := s.regionCache.getStoreAddr(bo, s.region, replica.store)
+		if err == nil && len(addr) != 0 {
+			return &RPCContext{
+				Region:     s.region.VerID(),
+				Meta:       s.region.meta,
+				Peer:       replica.peer,
+				Store:      replica.store,
+				Addr:       addr,
+				AccessMode: TiKVOnly,
+				TiKVNum:    len(s.replicas),
+			}, nil
+		}
+	}
+}
+
+func (s *replicaSelector) onSendFailure(bo *Backoffer, err error) {
+	metrics.RegionCacheCounterWithSendFail.Inc()
+	replica := s.replicas[s.nextReplicaIdx-1]
+	if replica.store.requestLiveness(bo, s.regionCache) == reachable {
+		s.rewind()
+		return
+	}
+
+	store := replica.store
+	// invalidate regions in store.
+	if atomic.CompareAndSwapUint32(&store.epoch, replica.epoch, replica.epoch+1) {
+		logutil.BgLogger().Info("mark store's regions need be refill", zap.Uint64("id", store.storeID), zap.String("addr", store.addr), zap.Error(err))
+		metrics.RegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
+		// schedule a store addr resolve.
+		store.markNeedCheck(s.regionCache.notifyCheckCh)
+	}
+	// TODO(youjiali1995): It's not necessary, but some tests depend on it and it's not easy to fix.
+	if s.isExhausted() {
+		s.region.scheduleReload()
+	}
+}
+
+// OnSendSuccess updates the leader of the cached region since the replicaSelector
+// is only used for leader request. It's called when the request is sent to the
+// replica successfully.
+func (s *replicaSelector) OnSendSuccess() {
+	// The successful replica is not at the head of replicas which means it's not the
+	// leader in the cached region, so update leader.
+	if s.nextReplicaIdx-1 != 0 {
+		leader := s.replicas[s.nextReplicaIdx-1].peer
+		if !s.regionCache.switchWorkLeaderToPeer(s.region, leader) {
+			panic("the store must exist")
+		}
+	}
+}
+
+func (s *replicaSelector) rewind() {
+	s.nextReplicaIdx--
+}
+
+// updateLeader updates the leader of the cached region.
+// If the leader peer isn't found in the region, the region will be invalidated.
+func (s *replicaSelector) updateLeader(leader *metapb.Peer) {
+	if leader == nil {
+		return
+	}
+	for i, replica := range s.replicas {
+		if isSamePeer(replica.peer, leader) {
+			if i < s.nextReplicaIdx {
+				s.nextReplicaIdx--
+			}
+			// Move the leader replica to the front of candidates.
+			s.replicas[i], s.replicas[s.nextReplicaIdx] = s.replicas[s.nextReplicaIdx], s.replicas[i]
+			if s.replicas[s.nextReplicaIdx].attempts == maxReplicaAttempt {
+				// Give the replica one more chance and because the current replica is skipped, it
+				// won't result in infinite retry.
+				s.replicas[s.nextReplicaIdx].attempts = maxReplicaAttempt - 1
+			}
+			// Update the workTiKVIdx so that following requests can be sent to the leader immediately.
+			if !s.regionCache.switchWorkLeaderToPeer(s.region, leader) {
+				panic("the store must exist")
+			}
+			logutil.BgLogger().Debug("switch region leader to specific leader due to kv return NotLeader",
+				zap.Uint64("regionID", s.region.GetID()),
+				zap.Uint64("leaderStoreID", leader.GetStoreId()))
+			return
+		}
+	}
+	// Invalidate the region since the new leader is not in the cached version.
+	s.region.invalidate(StoreNotFound)
+}
+
+func (s *replicaSelector) invalidateRegion() {
+	if s.region != nil {
+		s.region.invalidate(Other)
+	}
 }
 
 func (s *RegionRequestSender) getRPCContext(
@@ -209,6 +390,20 @@ func (s *RegionRequestSender) getRPCContext(
 ) (*RPCContext, error) {
 	switch et {
 	case tikvrpc.TiKV:
+		// Now only requests sent to the replica leader will use the replica selector to get
+		// the RPC context.
+		// TODO(youjiali1995): make all requests use the replica selector.
+		if !s.regionCache.enableForwarding && req.ReplicaReadType == kv.ReplicaReadLeader {
+			if s.leaderReplicaSelector == nil {
+				selector, err := newReplicaSelector(s.regionCache, regionID)
+				if selector == nil || err != nil {
+					return nil, err
+				}
+				s.leaderReplicaSelector = selector
+			}
+			return s.leaderReplicaSelector.next(bo)
+		}
+
 		var seed uint32
 		if req.ReplicaReadSeed != nil {
 			seed = *req.ReplicaReadSeed
@@ -221,6 +416,16 @@ func (s *RegionRequestSender) getRPCContext(
 	default:
 		return nil, errors.Errorf("unsupported storage type: %v", et)
 	}
+}
+
+func (s *RegionRequestSender) reset() {
+	s.leaderReplicaSelector = nil
+	s.failStoreIDs = nil
+	s.failProxyStoreIDs = nil
+}
+
+func isFakeRegionError(err *errorpb.Error) bool {
+	return err != nil && err.GetEpochNotMatch() != nil && len(err.GetEpochNotMatch().CurrentRegions) == 0
 }
 
 // SendReqCtx sends a request to tikv server and return response and RPCCtx of this RPC.
@@ -239,8 +444,6 @@ func (s *RegionRequestSender) SendReqCtx(
 	if span := opentracing.SpanFromContext(bo.GetCtx()); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("regionRequest.SendReqCtx", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
-		// TODO(MyonKeminta): Make sure trace works without cloning the backoffer.
-		// bo = bo.Clone()
 		bo.SetCtx(opentracing.ContextWithSpan(bo.GetCtx(), span1))
 	}
 
@@ -277,10 +480,11 @@ func (s *RegionRequestSender) SendReqCtx(
 		req.Context.MaxExecutionDurationMs = uint64(timeout.Milliseconds())
 	}
 
+	s.reset()
 	tryTimes := 0
 	for {
-		if (tryTimes > 0) && (tryTimes%1000 == 0) {
-			logutil.Logger(bo.GetCtx()).Warn("retry get ", zap.Uint64("region = ", regionID.GetID()), zap.Int("times = ", tryTimes))
+		if (tryTimes > 0) && (tryTimes%100 == 0) {
+			logutil.Logger(bo.GetCtx()).Warn("retry", zap.Uint64("region", regionID.GetID()), zap.Int("times", tryTimes))
 		}
 
 		rpcCtx, err = s.getRPCContext(bo, req, regionID, et, opts...)
@@ -299,6 +503,7 @@ func (s *RegionRequestSender) SendReqCtx(
 			}
 		}
 		if rpcCtx == nil {
+			// TODO(youjiali1995): remove it when using the replica selector for all requests.
 			// If the region is not found in cache, it must be out
 			// of date and already be cleaned up. We can skip the
 			// RPC by returning RegionError directly.
@@ -352,6 +557,12 @@ func (s *RegionRequestSender) SendReqCtx(
 			if retry {
 				tryTimes++
 				continue
+			}
+		} else {
+			// Clear the RPC Error since the request is evaluated successfully on a store.
+			s.rpcError = nil
+			if s.leaderReplicaSelector != nil {
+				s.leaderReplicaSelector.OnSendSuccess()
 			}
 		}
 		return resp, rpcCtx, nil
@@ -569,8 +780,6 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	if span := opentracing.SpanFromContext(bo.GetCtx()); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("regionRequest.onSendFail", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
-		// TODO(MyonKeminta): Make sure trace works without cloning the backoffer.
-		// bo = bo.Clone()
 		bo.SetCtx(opentracing.ContextWithSpan(bo.GetCtx(), span1))
 	}
 	// If it failed because the context is cancelled by ourself, don't retry.
@@ -592,7 +801,11 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	}
 
 	if ctx.Meta != nil {
-		s.regionCache.OnSendFail(bo, ctx, s.NeedReloadRegion(ctx), err)
+		if s.leaderReplicaSelector != nil {
+			s.leaderReplicaSelector.onSendFailure(bo, err)
+		} else {
+			s.regionCache.OnSendFail(bo, ctx, s.NeedReloadRegion(ctx), err)
+		}
 	}
 
 	// Retry on send request failure when it's not canceled.
@@ -658,8 +871,6 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 	if span := opentracing.SpanFromContext(bo.GetCtx()); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tikv.onRegionError", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
-		// TODO(MyonKeminta): Make sure trace works without cloning the backoffer.
-		// bo = bo.Clone()
 		bo.SetCtx(opentracing.ContextWithSpan(bo.GetCtx(), span1))
 	}
 	// Stale Read request will retry the leader or next peer on error,
@@ -676,7 +887,18 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 			zap.String("notLeader", notLeader.String()),
 			zap.String("ctx", ctx.String()))
 
-		if notLeader.GetLeader() == nil {
+		if s.leaderReplicaSelector != nil {
+			leader := notLeader.GetLeader()
+			if leader == nil {
+				// The region may be during transferring leader.
+				if err = bo.Backoff(retry.BoRegionMiss, errors.Errorf("no leader, ctx: %v", ctx)); err != nil {
+					return false, errors.Trace(err)
+				}
+			} else {
+				s.leaderReplicaSelector.updateLeader(notLeader.GetLeader())
+			}
+			return true, nil
+		} else if notLeader.GetLeader() == nil {
 			// The peer doesn't know who is the current leader. Generally it's because
 			// the Raft group is in an election, but it's possible that the peer is
 			// isolated and removed from the Raft group. So it's necessary to reload
@@ -685,12 +907,12 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 			if err = bo.Backoff(retry.BoRegionMiss, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
 				return false, errors.Trace(err)
 			}
+			return false, nil
 		} else {
 			// don't backoff if a new leader is returned.
-			s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId(), ctx.AccessIdx)
+			s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader(), ctx.AccessIdx)
+			return true, nil
 		}
-
-		return true, nil
 	}
 
 	if storeNotMatch := regionErr.GetStoreNotMatch(); storeNotMatch != nil {
@@ -700,7 +922,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 			zap.Stringer("ctx", ctx))
 		ctx.Store.markNeedCheck(s.regionCache.notifyCheckCh)
 		s.regionCache.InvalidateCachedRegion(ctx.Region)
-		return true, nil
+		return false, nil
 	}
 
 	seed := req.GetReplicaReadSeed()
@@ -711,8 +933,11 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 		if seed != nil {
 			*seed = *seed + 1
 		}
-		err = s.regionCache.OnRegionEpochNotMatch(bo, ctx, epochNotMatch.CurrentRegions)
-		return false, errors.Trace(err)
+		retry, err := s.regionCache.OnRegionEpochNotMatch(bo, ctx, epochNotMatch.CurrentRegions)
+		if !retry && s.leaderReplicaSelector != nil {
+			s.leaderReplicaSelector.invalidateRegion()
+		}
+		return retry, errors.Trace(err)
 	}
 	if regionErr.GetServerIsBusy() != nil {
 		logutil.BgLogger().Warn("tikv reports `ServerIsBusy` retry later",
@@ -726,13 +951,21 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 		if err != nil {
 			return false, errors.Trace(err)
 		}
+		if s.leaderReplicaSelector != nil {
+			s.leaderReplicaSelector.rewind()
+		}
 		return true, nil
 	}
 	if regionErr.GetStaleCommand() != nil {
 		logutil.BgLogger().Debug("tikv reports `StaleCommand`", zap.Stringer("ctx", ctx))
-		err = bo.Backoff(retry.BoStaleCmd, errors.Errorf("stale command, ctx: %v", ctx))
-		if err != nil {
-			return false, errors.Trace(err)
+		if s.leaderReplicaSelector != nil {
+			// Needn't backoff because stale command indicates the command is sent to the old leader.
+			// The new leader should be elected soon and the leaderReplicaSelector will try the next peer.
+		} else {
+			err = bo.Backoff(retry.BoStaleCmd, errors.Errorf("stale command, ctx: %v", ctx))
+			if err != nil {
+				return false, errors.Trace(err)
+			}
 		}
 		return true, nil
 	}
@@ -748,8 +981,18 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 			zap.Uint64("region-id", regionErr.GetDataIsNotReady().GetRegionId()),
 			zap.Uint64("safe-ts", regionErr.GetDataIsNotReady().GetSafeTs()),
 			zap.Stringer("ctx", ctx))
+		// Don't backoff if it's a replica-read.
 		if seed != nil {
 			*seed = *seed + 1
+		} else {
+			// The region is merging or splitting.
+			err = bo.Backoff(retry.BoRegionMiss, errors.Errorf("data is not ready, ctx: %v", ctx))
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+			if s.leaderReplicaSelector != nil {
+				s.leaderReplicaSelector.rewind()
+			}
 		}
 		return true, nil
 	}
@@ -764,28 +1007,66 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 		}
 		return true, nil
 	}
-	if regionErr.GetRegionNotFound() != nil && seed != nil {
-		logutil.BgLogger().Debug("tikv reports `RegionNotFound` in follow-reader",
-			zap.Stringer("ctx", ctx), zap.Uint32("seed", *seed))
-		*seed = *seed + 1
-	}
 	if regionErr.GetMaxTimestampNotSynced() != nil {
-		logutil.BgLogger().Warn("tikv reports `MaxTimestampNotSynced`", zap.Stringer("ctx", ctx))
+		logutil.BgLogger().Debug("tikv reports `MaxTimestampNotSynced`", zap.Stringer("ctx", ctx))
 		err = bo.Backoff(retry.BoMaxTsNotSynced, errors.Errorf("max timestamp not synced, ctx: %v", ctx))
 		if err != nil {
 			return false, errors.Trace(err)
 		}
+		if s.leaderReplicaSelector != nil {
+			s.leaderReplicaSelector.rewind()
+		}
 		return true, nil
 	}
-	// For other errors, we only drop cache here.
-	// Because caller may need to re-split the request.
+	if regionErr.GetReadIndexNotReady() != nil {
+		logutil.BgLogger().Debug("tikv reports `ReadIndexNotReady`", zap.Stringer("ctx", ctx))
+		// The region is merging or splitting.
+		err = bo.Backoff(retry.BoRegionMiss, errors.Errorf("read index not ready, ctx: %v", ctx))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if s.leaderReplicaSelector != nil {
+			s.leaderReplicaSelector.rewind()
+		}
+		return true, nil
+	}
+	if regionErr.GetProposalInMergingMode() != nil {
+		logutil.BgLogger().Debug("tikv reports `ProposalInMergingMode`", zap.Stringer("ctx", ctx))
+		// The region is merging.
+		err = bo.Backoff(retry.BoRegionMiss, errors.Errorf("region is merging, ctx: %v", ctx))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if s.leaderReplicaSelector != nil {
+			s.leaderReplicaSelector.rewind()
+		}
+		return true, nil
+	}
+	if regionErr.GetRegionNotFound() != nil {
+		if seed != nil {
+			logutil.BgLogger().Debug("tikv reports `RegionNotFound` in follow-reader",
+				zap.Stringer("ctx", ctx), zap.Uint32("seed", *seed))
+			*seed = *seed + 1
+		}
+		s.regionCache.InvalidateCachedRegion(ctx.Region)
+		return false, nil
+	}
+
 	logutil.BgLogger().Debug("tikv reports region failed",
 		zap.Stringer("regionErr", regionErr),
 		zap.Stringer("ctx", ctx))
+
+	if s.leaderReplicaSelector != nil {
+		// Try the next replica.
+		return true, nil
+	}
+
 	// When the request is sent to TiDB, there is no region in the request, so the region id will be 0.
 	// So when region id is 0, there is no business with region cache.
 	if ctx.Region.id != 0 {
 		s.regionCache.InvalidateCachedRegion(ctx.Region)
 	}
+	// For other errors, we only drop cache here.
+	// Because caller may need to re-split the request.
 	return false, nil
 }

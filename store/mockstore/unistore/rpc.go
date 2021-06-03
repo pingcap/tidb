@@ -125,6 +125,8 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		if val, _err_ := failpoint.Eval(_curpkg_("rpcPrewriteResult")); _err_ == nil {
 			if val != nil {
 				switch val.(string) {
+				case "timeout":
+					failpoint.Return(nil, errors.New("timeout"))
 				case "notLeader":
 					return &tikvrpc.Response{
 						Resp: &kvrpcpb.PrewriteResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},

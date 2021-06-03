@@ -44,6 +44,9 @@ import (
 	zap "go.uber.org/zap"
 )
 
+// If the duration of a single request exceeds the slowRequestThreshold, a warning log will be logged.
+const slowRequestThreshold = time.Minute
+
 type twoPhaseCommitAction interface {
 	handleSingleBatch(*twoPhaseCommitter, *Backoffer, batchMutations) error
 	tiKVTxnRegionsNumHistogram() prometheus.Observer
@@ -520,8 +523,7 @@ func (c *twoPhaseCommitter) groupMutations(bo *Backoffer, mutations CommitterMut
 			logutil.BgLogger().Info("2PC detect large amount of mutations on a single region",
 				zap.Uint64("region", group.region.GetID()),
 				zap.Int("mutations count", group.mutations.Len()))
-			// Use context.Background, this time should not add up to Backoffer.
-			if c.store.preSplitRegion(context.Background(), group) {
+			if c.store.preSplitRegion(bo.GetCtx(), group) {
 				didPreSplit = true
 			}
 		}
@@ -547,7 +549,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 	switch act := action.(type) {
 	case actionPrewrite:
 		// Do not update regionTxnSize on retries. They are not used when building a PrewriteRequest.
-		if bo.ErrorsNum() == 0 {
+		if !act.retry {
 			for _, group := range groups {
 				c.regionTxnSize[group.region.id] = group.mutations.Len()
 			}
@@ -573,7 +575,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 	c.checkOnePCFallBack(action, len(batchBuilder.allBatches()))
 
 	var err error
-	if val, _err_ := failpoint.Eval(_curpkg_("skipKeyReturnOK")); _err_ == nil {
+	failpoint.Inject("skipKeyReturnOK", func(val failpoint.Value) {
 		valStr, ok := val.(string)
 		if ok && c.sessionID > 0 {
 			if firstIsPrimary && actionIsPessimiticLock {
@@ -581,21 +583,21 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 				switch valStr {
 				case "pessimisticLockSkipPrimary":
 					err = c.doActionOnBatches(bo, action, batchBuilder.allBatches())
-					return err
+					failpoint.Return(err)
 				case "pessimisticLockSkipSecondary":
 					err = c.doActionOnBatches(bo, action, batchBuilder.primaryBatch())
-					return err
+					failpoint.Return(err)
 				}
 			}
 		}
-	}
-	if _, _err_ := failpoint.Eval(_curpkg_("pessimisticRollbackDoNth")); _err_ == nil {
+	})
+	failpoint.Inject("pessimisticRollbackDoNth", func() {
 		_, actionIsPessimisticRollback := action.(actionPessimisticRollback)
 		if actionIsPessimisticRollback && c.sessionID > 0 {
 			logutil.Logger(bo.GetCtx()).Warn("pessimisticRollbackDoNth failpoint")
-			return nil
+			failpoint.Return(nil)
 		}
-	}
+	})
 
 	if firstIsPrimary &&
 		((actionIsCommit && !c.isAsyncCommit()) || actionIsCleanup || actionIsPessimiticLock) {
@@ -612,10 +614,10 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 	}
 	// Already spawned a goroutine for async commit transaction.
 	if actionIsCommit && !actionCommit.retry && !c.isAsyncCommit() {
-		secondaryBo := retry.NewBackofferWithVars(context.Background(), int(atomic.LoadUint64(&CommitMaxBackoff)), c.txn.vars)
+		secondaryBo := retry.NewBackofferWithVars(context.Background(), CommitSecondaryMaxBackoff, c.txn.vars)
 		go func() {
 			if c.sessionID > 0 {
-				if v, _err_ := failpoint.Eval(_curpkg_("beforeCommitSecondaries")); _err_ == nil {
+				failpoint.Inject("beforeCommitSecondaries", func(v failpoint.Value) {
 					if s, ok := v.(string); !ok {
 						logutil.Logger(bo.GetCtx()).Info("[failpoint] sleep 2s before commit secondary keys",
 							zap.Uint64("sessionID", c.sessionID), zap.Uint64("txnStartTS", c.startTS), zap.Uint64("txnCommitTS", c.commitTS))
@@ -623,9 +625,9 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 					} else if s == "skip" {
 						logutil.Logger(bo.GetCtx()).Info("[failpoint] injected skip committing secondaries",
 							zap.Uint64("sessionID", c.sessionID), zap.Uint64("txnStartTS", c.startTS), zap.Uint64("txnCommitTS", c.commitTS))
-						return
+						failpoint.Return()
 					}
-				}
+				})
 			}
 
 			e := c.doActionOnBatches(secondaryBo, action, batchBuilder.allBatches())
@@ -711,9 +713,9 @@ func (tm *ttlManager) run(c *twoPhaseCommitter, lockCtx *kv.LockCtx) {
 	}
 	tm.lockCtx = lockCtx
 	noKeepAlive := false
-	if _, _err_ := failpoint.Eval(_curpkg_("doNotKeepAlive")); _err_ == nil {
+	failpoint.Inject("doNotKeepAlive", func() {
 		noKeepAlive = true
-	}
+	})
 
 	if !noKeepAlive {
 		go tm.keepAlive(c)
@@ -897,15 +899,18 @@ const (
 	tsoMaxBackoff     = 15000
 )
 
+// VeryLongMaxBackoff is the max sleep time of transaction commit.
+var VeryLongMaxBackoff = uint64(600000) // 10mins
+
 func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
 	c.cleanWg.Add(1)
 	go func() {
-		if _, _err_ := failpoint.Eval(_curpkg_("commitFailedSkipCleanup")); _err_ == nil {
+		failpoint.Inject("commitFailedSkipCleanup", func() {
 			logutil.Logger(ctx).Info("[failpoint] injected skip cleanup secondaries on failure",
 				zap.Uint64("txnStartTS", c.startTS))
 			c.cleanWg.Done()
-			return
-		}
+			failpoint.Return()
+		})
 
 		cleanupKeysCtx := context.WithValue(context.Background(), retry.TxnStartKey, ctx.Value(retry.TxnStartKey))
 		var err error
@@ -993,13 +998,22 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		c.setOnePC(true)
 		c.hasTriedOnePC = true
 	}
+
+	// TODO(youjiali1995): It's better to use different maxSleep for different operations
+	// and distinguish permanent errors from temporary errors, for example:
+	//   - If all PDs are down, all requests to PD will fail due to network error.
+	//     The maxSleep should't be very long in this case.
+	//   - If the region isn't found in PD, it's possible the reason is write-stall.
+	//     The maxSleep can be long in this case.
+	bo := retry.NewBackofferWithVars(ctx, int(atomic.LoadUint64(&VeryLongMaxBackoff)), c.txn.vars)
+
 	// If we want to use async commit or 1PC and also want linearizability across
 	// all nodes, we have to make sure the commit TS of this transaction is greater
 	// than the snapshot TS of all existent readers. So we get a new timestamp
 	// from PD and plus one as our MinCommitTS.
 	if commitTSMayBeCalculated && c.needLinearizability() {
-		failpoint.Eval(_curpkg_("getMinCommitTSFromTSO"))
-		latestTS, err := c.store.getTimestampWithRetry(retry.NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars), c.txn.GetScope())
+		failpoint.Inject("getMinCommitTSFromTSO", nil)
+		latestTS, err := c.store.getTimestampWithRetry(bo, c.txn.GetScope())
 		// If we fail to get a timestamp from PD, we just propagate the failure
 		// instead of falling back to the normal 2PC because a normal 2PC will
 		// also be likely to fail due to the same timestamp issue.
@@ -1017,7 +1031,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}
 
 	if c.sessionID > 0 {
-		failpoint.Eval(_curpkg_("beforePrewrite"))
+		failpoint.Inject("beforePrewrite", nil)
 	}
 
 	c.prewriteStarted = true
@@ -1025,9 +1039,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	if c.shouldWriteBinlog() {
 		binlogChan = c.binlog.Prewrite(ctx, c.primary())
 	}
-	prewriteBo := retry.NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
+
 	start := time.Now()
-	err = c.prewriteMutations(prewriteBo, c.mutations)
+	err = c.prewriteMutations(bo, c.mutations)
 
 	if err != nil {
 		// TODO: Now we return an undetermined error as long as one of the prewrite
@@ -1044,12 +1058,14 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 
 	commitDetail := c.getDetail()
 	commitDetail.PrewriteTime = time.Since(start)
-	if prewriteBo.GetTotalSleep() > 0 {
-		atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(prewriteBo.GetTotalSleep())*int64(time.Millisecond))
+	// TODO(youjiali1995): Record the backoff time of the last finished batch. It doesn't make sense to aggregate all batches'.
+	if bo.GetTotalSleep() > 0 {
+		atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(bo.GetTotalSleep())*int64(time.Millisecond))
 		commitDetail.Mu.Lock()
-		commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, prewriteBo.GetTypes()...)
+		commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, bo.GetTypes()...)
 		commitDetail.Mu.Unlock()
 	}
+
 	if binlogChan != nil {
 		startWaitBinlog := time.Now()
 		binlogWriteResult := <-binlogChan
@@ -1154,7 +1170,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}
 
 	if c.sessionID > 0 {
-		if val, _err_ := failpoint.Eval(_curpkg_("beforeCommit")); _err_ == nil {
+		failpoint.Inject("beforeCommit", func(val failpoint.Value) {
 			// Pass multiple instructions in one string, delimited by commas, to trigger multiple behaviors, like
 			// `return("delay,fail")`. Then they will be executed sequentially at once.
 			if v, ok := val.(string); ok {
@@ -1162,7 +1178,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 					// Async commit transactions cannot return error here, since it's already successful.
 					if action == "fail" && !c.isAsyncCommit() {
 						logutil.Logger(ctx).Info("[failpoint] injected failure before commit", zap.Uint64("txnStartTS", c.startTS))
-						return errors.New("injected failure before commit")
+						failpoint.Return(errors.New("injected failure before commit"))
 					} else if action == "delay" {
 						duration := time.Duration(rand.Int63n(int64(time.Second) * 5))
 						logutil.Logger(ctx).Info("[failpoint] injected delay before commit",
@@ -1171,7 +1187,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 					}
 				}
 			}
-		}
+		})
 	}
 
 	if c.isAsyncCommit() {
@@ -1181,10 +1197,10 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			zap.Uint64("startTS", c.startTS), zap.Uint64("commitTS", c.commitTS),
 			zap.Uint64("sessionID", c.sessionID))
 		go func() {
-			if _, _err_ := failpoint.Eval(_curpkg_("asyncCommitDoNothing")); _err_ == nil {
-				return
-			}
-			commitBo := retry.NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), c.txn.vars)
+			failpoint.Inject("asyncCommitDoNothing", func() {
+				failpoint.Return()
+			})
+			commitBo := retry.NewBackofferWithVars(ctx, CommitSecondaryMaxBackoff, c.txn.vars)
 			err := c.commitMutations(commitBo, c.mutations)
 			if err != nil {
 				logutil.Logger(ctx).Warn("2PC async commit failed", zap.Uint64("sessionID", c.sessionID),
@@ -1200,7 +1216,8 @@ func (c *twoPhaseCommitter) commitTxn(ctx context.Context, commitDetail *util.Co
 	c.txn.GetMemBuffer().DiscardValues()
 	start := time.Now()
 
-	commitBo := retry.NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), c.txn.vars)
+	// Use the VeryLongMaxBackoff to commit the primary key.
+	commitBo := retry.NewBackofferWithVars(ctx, int(atomic.LoadUint64(&VeryLongMaxBackoff)), c.txn.vars)
 	err := c.commitMutations(commitBo, c.mutations)
 	commitDetail.CommitTime = time.Since(start)
 	if commitBo.GetTotalSleep() > 0 {
@@ -1395,12 +1412,12 @@ func (c *twoPhaseCommitter) getCommitTS(ctx context.Context, commitDetail *util.
 // this transaction using the related schema changes.
 func (c *twoPhaseCommitter) checkSchemaValid(ctx context.Context, checkTS uint64, startInfoSchema SchemaVer,
 	tryAmend bool) (*RelatedSchemaChange, bool, error) {
-	if _, _err_ := failpoint.Eval(_curpkg_("failCheckSchemaValid")); _err_ == nil {
+	failpoint.Inject("failCheckSchemaValid", func() {
 		logutil.Logger(ctx).Info("[failpoint] injected fail schema check",
 			zap.Uint64("txnStartTS", c.startTS))
 		err := errors.Errorf("mock check schema valid failure")
-		return nil, false, err
-	}
+		failpoint.Return(nil, false, err)
+	})
 	if c.txn.schemaLeaseChecker == nil {
 		if c.sessionID > 0 {
 			logutil.Logger(ctx).Warn("schemaLeaseChecker is not set for this transaction",
@@ -1466,6 +1483,20 @@ type batchMutations struct {
 	mutations CommitterMutations
 	isPrimary bool
 }
+
+func (b *batchMutations) relocate(bo *Backoffer, c *RegionCache) (bool, error) {
+	begin, end := b.mutations.GetKey(0), b.mutations.GetKey(b.mutations.Len()-1)
+	loc, err := c.LocateKey(bo, begin)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if !loc.Contains(end) {
+		return false, nil
+	}
+	b.region = loc.Region
+	return true, nil
+}
+
 type batched struct {
 	batches    []batchMutations
 	primaryIdx int
@@ -1482,9 +1513,9 @@ func newBatched(primaryKey []byte) *batched {
 // appendBatchMutationsBySize appends mutations to b. It may split the keys to make
 // sure each batch's size does not exceed the limit.
 func (b *batched) appendBatchMutationsBySize(region RegionVerID, mutations CommitterMutations, sizeFn func(k, v []byte) int, limit int) {
-	if _, _err_ := failpoint.Eval(_curpkg_("twoPCRequestBatchSizeLimit")); _err_ == nil {
+	failpoint.Inject("twoPCRequestBatchSizeLimit", func() {
 		limit = 1
-	}
+	})
 
 	var start, end int
 	for start = 0; start < mutations.Len(); start = end {
@@ -1550,7 +1581,7 @@ type batchExecutor struct {
 func newBatchExecutor(rateLimit int, committer *twoPhaseCommitter,
 	action twoPhaseCommitAction, backoffer *Backoffer) *batchExecutor {
 	return &batchExecutor{rateLimit, nil, committer,
-		action, backoffer, 1 * time.Millisecond}
+		action, backoffer, 0}
 }
 
 // initUtils do initialize batchExecutor related policies like rateLimit util
@@ -1647,7 +1678,9 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 		}
 	}
 	close(exitCh)
-	metrics.TiKVTokenWaitDuration.Observe(float64(batchExe.tokenWaitDuration.Nanoseconds()))
+	if batchExe.tokenWaitDuration > 0 {
+		metrics.TiKVTokenWaitDuration.Observe(float64(batchExe.tokenWaitDuration.Nanoseconds()))
+	}
 	return err
 }
 
