@@ -81,7 +81,7 @@ func (t cpuTimeSortSlice) Swap(i, j int) {
 }
 
 type planRegisterJob struct {
-	planDigest     string
+	planDigest     []byte
 	normalizedPlan string
 }
 
@@ -130,7 +130,7 @@ type RemoteTopSQLReporterConfig struct {
 	AgentGRPCAddress string
 }
 
-func encodeCacheKey(sqlDigest, planDigest []byte) []byte {
+func encodeKey(sqlDigest, planDigest []byte) []byte {
 	var buffer bytes.Buffer
 	buffer.Write(sqlDigest)
 	buffer.Write(planDigest)
@@ -225,7 +225,7 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 // This function can be run in parallel with snapshot, so we should protect the map operations with a mutex.
 func (tsr *RemoteTopSQLReporter) collect(timestamp uint64, records []tracecpu.TopSQLCPUTimeRecord) {
 	for _, record := range records {
-		encodedKey := encodeCacheKey(record.SQLDigest, record.PlanDigest)
+		encodedKey := encodeKey(record.SQLDigest, record.PlanDigest)
 		entry, exist := tsr.topSQLMap[string(encodedKey)]
 		if !exist {
 			entry = &topSQLDataPoints{
@@ -286,20 +286,20 @@ func (tsr *RemoteTopSQLReporter) collect(timestamp uint64, records []tracecpu.To
 // This function should be thread-safe, which means parallelly calling it in several goroutines should be fine.
 // It should also return immediately, and do any CPU-intensive job asynchronously.
 // TODO: benchmark test concurrent performance
-func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest string, normalizedSQL string) {
+func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL string) {
 	tsr.mu.RLock()
-	_, exist := tsr.normalizedSQLMap[sqlDigest]
+	_, exist := tsr.normalizedSQLMap[string(sqlDigest)]
 	tsr.mu.RUnlock()
 	if !exist {
 		tsr.mu.Lock()
-		tsr.normalizedSQLMap[sqlDigest] = normalizedSQL
+		tsr.normalizedSQLMap[string(sqlDigest)] = normalizedSQL
 		tsr.mu.Unlock()
 	}
 }
 
 // RegisterPlan is like RegisterSQL, but for normalized plan strings.
 // TODO: benchmark test concurrent performance
-func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest string, normalizedPlan string) {
+func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedPlan string) {
 	tsr.planRegisterChan <- &planRegisterJob{
 		planDigest:     planDigest,
 		normalizedPlan: normalizedPlan,
@@ -312,7 +312,7 @@ func (tsr *RemoteTopSQLReporter) registerPlanWorker() {
 	for {
 		job := <-tsr.planRegisterChan
 		tsr.mu.RLock()
-		_, exist := tsr.normalizedPlanMap[job.planDigest]
+		_, exist := tsr.normalizedPlanMap[string(job.planDigest)]
 		tsr.mu.RUnlock()
 		if exist {
 			continue
@@ -322,7 +322,7 @@ func (tsr *RemoteTopSQLReporter) registerPlanWorker() {
 			log.Warn("decode plan failed: %v\n", zap.Error(err))
 			continue
 		}
-		tsr.normalizedPlanMap[job.planDigest] = planDecoded
+		tsr.normalizedPlanMap[string(job.planDigest)] = planDecoded
 	}
 }
 
