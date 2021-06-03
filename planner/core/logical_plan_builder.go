@@ -3674,8 +3674,28 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			}
 
 			b.handleHelper.pushMap(nil)
+
+			hasLimit := false
+			limitBeg := uint64(0)
+			limitEnd := uint64(0)
+			if cte.limitLP != nil {
+				hasLimit = true
+				switch x := cte.limitLP.(type) {
+				case *LogicalLimit:
+					limitBeg = x.Offset
+					limitEnd = x.Offset + x.Count
+				case *LogicalTableDual:
+					// Beg and End will both be 0.
+				default:
+					return nil, errors.Errorf("invalid type for limit plan: %v", cte.limitLP)
+				}
+			}
+
 			var p LogicalPlan
-			lp := LogicalCTE{cteAsName: tn.Name, cte: &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP, recursivePartLogicalPlan: cte.recurLP, IDForStorage: cte.storageID, optFlag: cte.optFlag}}.Init(b.ctx, b.getSelectOffset())
+			lp := LogicalCTE{cteAsName: tn.Name, cte: &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP,
+				recursivePartLogicalPlan: cte.recurLP, IDForStorage: cte.storageID,
+				optFlag: cte.optFlag, HasLimit: hasLimit, LimitBeg: limitBeg,
+				LimitEnd: limitEnd}}.Init(b.ctx, b.getSelectOffset())
 			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 			p = lp
 			p.SetOutputNames(cte.seedLP.OutputNames())
@@ -5907,6 +5927,9 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 					if x.OrderBy != nil {
 						return ErrNotSupportedYet.GenWithStackByArgs("ORDER BY over UNION in recursive Common Table Expression")
 					}
+					// Limit clause is for the whole CTE instead of only for the seed part.
+					oriLimit := x.Limit
+					x.Limit = nil
 
 					// Check union type.
 					if afterOpr != nil {
@@ -5936,6 +5959,7 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 					// Rebuild the plan.
 					i--
 					b.buildingRecursivePartForCTE = true
+					x.Limit = oriLimit
 					continue
 				}
 				if err != nil {
@@ -5984,6 +6008,15 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 		}
 		// 4. Finally, we get the seed part plan and recursive part plan.
 		cInfo.recurLP = recurPart
+		// Only need to handle limit if x is SetOprStmt.
+		if x.Limit != nil {
+			limit, err := b.buildLimit(cInfo.seedLP, x.Limit)
+			if err != nil {
+				return err
+			}
+			limit.SetChildren(limit.Children()[:0]...)
+			cInfo.limitLP = limit
+		}
 		return nil
 	default:
 		p, err := b.buildResultSetNode(ctx, x)
