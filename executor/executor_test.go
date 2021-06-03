@@ -3830,7 +3830,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "admin check index t c")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "handle 3, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:30, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:<nil>")
+	c.Assert(err.Error(), Equals, "[executor:8133]handle 3, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:30, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:<nil>")
 
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)

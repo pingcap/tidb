@@ -8,7 +8,7 @@ TiDB admin check table failed.
 
 ["admin:8223"]
 error = '''
-data isn't equal
+index:%#v != record:%#v
 '''
 
 ["admin:8224"]
@@ -601,6 +601,24 @@ error = '''
 Export failed: %s
 '''
 
+<<<<<<< HEAD
+=======
+["executor:8133"]
+error = '''
+handle %#v, index:%#v != record:%#v
+'''
+
+["executor:8134"]
+error = '''
+col %s, handle %#v, index:%#v != record:%#v, compare err:%#v
+'''
+
+["executor:8212"]
+error = '''
+Failed to split region ranges: %s
+'''
+
+>>>>>>> 9f8175743... *: refine some error messages (#24767)
 ["expression:1139"]
 error = '''
 Got error '%-.64s' from regexp

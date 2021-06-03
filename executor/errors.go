@@ -45,8 +45,18 @@ var (
 	ErrDeadlock                    = dbterror.ClassExecutor.NewStd(mysql.ErrLockDeadlock)
 	ErrQueryInterrupted            = dbterror.ClassExecutor.NewStd(mysql.ErrQueryInterrupted)
 
+<<<<<<< HEAD
 	ErrBRIEBackupFailed  = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEBackupFailed)
 	ErrBRIERestoreFailed = dbterror.ClassExecutor.NewStd(mysql.ErrBRIERestoreFailed)
 	ErrBRIEImportFailed  = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEImportFailed)
 	ErrBRIEExportFailed  = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEExportFailed)
+=======
+	ErrBRIEBackupFailed              = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEBackupFailed)
+	ErrBRIERestoreFailed             = dbterror.ClassExecutor.NewStd(mysql.ErrBRIERestoreFailed)
+	ErrBRIEImportFailed              = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEImportFailed)
+	ErrBRIEExportFailed              = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEExportFailed)
+	ErrCTEMaxRecursionDepth          = dbterror.ClassExecutor.NewStd(mysql.ErrCTEMaxRecursionDepth)
+	ErrDataInConsistentExtraIndex    = dbterror.ClassExecutor.NewStd(mysql.ErrDataInConsistentExtraIndex)
+	ErrDataInConsistentMisMatchIndex = dbterror.ClassExecutor.NewStd(mysql.ErrDataInConsistentMisMatchIndex)
+>>>>>>> 9f8175743... *: refine some error messages (#24767)
 )
