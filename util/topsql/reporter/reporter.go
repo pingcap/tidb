@@ -322,7 +322,9 @@ func (tsr *RemoteTopSQLReporter) registerPlanWorker() {
 			log.Warn("decode plan failed: %v\n", zap.Error(err))
 			continue
 		}
+		tsr.mu.Lock()
 		tsr.normalizedPlanMap[string(job.planDigest)] = planDecoded
+		tsr.mu.Unlock()
 	}
 }
 
@@ -360,14 +362,14 @@ func (tsr *RemoteTopSQLReporter) snapshot() []*tipb.CollectCPUTimeRequest {
 func (tsr *RemoteTopSQLReporter) sendBatch(stream tipb.TopSQLAgent_CollectCPUTimeClient, batch []*tipb.CollectCPUTimeRequest) error {
 	for _, req := range batch {
 		if err := stream.Send(req); err != nil {
-			log.Error("TopSQL: send stream request failed, %v", zap.Error(err))
+			log.Warn("TopSQL: send stream request failed", zap.Error(err))
 			return err
 		}
 	}
 	// response is Empty, drop it for now
 	_, err := stream.CloseAndRecv()
 	if err != nil {
-		log.Error("TopSQL: receive stream response failed, %v", zap.Error(err))
+		log.Warn("TopSQL: receive stream response failed", zap.Error(err))
 		return err
 	}
 	return nil
@@ -386,13 +388,13 @@ func (tsr *RemoteTopSQLReporter) sendToAgentWorker() {
 			// It's fine if we do this every minute, but need optimization if we need to do it more frequently, like every second.
 			conn, client, err := newAgentClient(tsr.agentGRPCAddress.address)
 			if err != nil {
-				log.Error("TopSQL: failed to create agent client, %v", zap.Error(err))
+				log.Warn("TopSQL: failed to create agent client", zap.Error(err))
 				continue
 			}
 			ctx, cancel = context.WithTimeout(context.TODO(), tsr.reportTimeout)
 			stream, err := client.CollectCPUTime(ctx)
 			if err != nil {
-				log.Error("TopSQL: failed to initialize gRPC call CollectCPUTime, %v", zap.Error(err))
+				log.Warn("TopSQL: failed to initialize gRPC call CollectCPUTime", zap.Error(err))
 				continue
 			}
 			if err := tsr.sendBatch(stream, batch); err != nil {
@@ -400,7 +402,7 @@ func (tsr *RemoteTopSQLReporter) sendToAgentWorker() {
 			}
 			cancel()
 			if err := conn.Close(); err != nil {
-				log.Error("TopSQL: failed to close connection, %v", zap.Error(err))
+				log.Warn("TopSQL: failed to close connection", zap.Error(err))
 				continue
 			}
 		case <-tsr.quit:
