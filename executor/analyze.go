@@ -346,7 +346,7 @@ func analyzeIndexNDVPushDown(idxExec *AnalyzeIndexExec) analyzeResult {
 	if len(idxExec.idxInfo.Columns) == 1 {
 		ranges = ranger.FullNotNullRange()
 	}
-	fms, nullHist, err := idxExec.buildSimpleStats(ranges, true)
+	fms, nullHist, err := idxExec.buildSimpleStats(ranges, len(idxExec.idxInfo.Columns) == 1)
 	if err != nil {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}
@@ -771,38 +771,27 @@ func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 	fieldTps []*types.FieldType,
 	virtualColIdx []int,
 	schema *expression.Schema,
-) bool {
+) error {
 	chk := chunk.NewChunkWithCapacity(fieldTps, len(collector.Samples))
 	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().TimeZone)
 	for _, sample := range collector.Samples {
 		for i := range sample.Columns {
 			_, err := decoder.DecodeOne(sample.Columns[i].GetBytes(), i, fieldTps[i])
 			if err != nil {
-				// Eval virtual column failed. Give up building virtual column stats.
-				logutil.BgLogger().Warn("Build stats on virtual column failed when analyzing. Stats on virtual column will be incomplete",
-					zap.Int64("table id", e.AnalyzeInfo.TableID.TableID),
-					zap.Int64("partition id", e.AnalyzeInfo.TableID.PartitionID),
-					zap.String("table name", fmt.Sprintf("%v.%v", e.AnalyzeInfo.DBName, e.AnalyzeInfo.TableName)),
-					zap.Error(err))
-				return false
+				return err
 			}
 		}
 	}
 	err := FillVirtualColumnValue(fieldTps, virtualColIdx, schema, e.colsInfo, e.ctx, chk)
 	if err != nil {
-		// Eval virtual column failed. Give up building virtual column stats.
-		logutil.BgLogger().Warn("Build stats on virtual column failed when analyzing. Stats on virtual column will be incomplete",
-			zap.Int64("table id", e.AnalyzeInfo.TableID.TableID),
-			zap.Int64("partition id", e.AnalyzeInfo.TableID.PartitionID),
-			zap.Error(err))
-		return false
+		return err
 	}
 	iter := chunk.NewIterator4Chunk(chk)
 	for row, i := iter.Begin(), 0; row != iter.End(); row, i = iter.Next(), i+1 {
 		datums := row.GetDatumRow(fieldTps)
 		collector.Samples[i].Columns = datums
 	}
-	return true
+	return nil
 }
 
 func (e *AnalyzeColumnsExec) buildSamplingStats(
@@ -877,8 +866,13 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			virtualColIdx = append(virtualColIdx, i)
 		}
 	}
-	// If there's no virtual column or we meet error during eval virtual column, we fallback to normal decode otherwise.
-	if !hasVirtualCol || !e.decodeSampleDataWithVirtualColumn(rootRowCollector, fieldTps, virtualColIdx, schema) {
+	if hasVirtualCol {
+		err = e.decodeSampleDataWithVirtualColumn(rootRowCollector, fieldTps, virtualColIdx, schema)
+		if err != nil {
+			return 0, nil, nil, nil, nil, err
+		}
+	} else {
+		// If there's no virtual column or we meet error during eval virtual column, we fallback to normal decode otherwise.
 		for _, sample := range rootRowCollector.Samples {
 			for i := range sample.Columns {
 				sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone)
@@ -1037,7 +1031,7 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 			}
 		}
 	}()
-	tasks := e.buildSubIndexJobForVirtualCol(indexInfos)
+	tasks := e.buildSubIndexJobForSpecialIndex(indexInfos)
 	statsConcurrncy, err := getBuildStatsConcurrency(e.ctx)
 	taskCh := make(chan *analyzeTask, len(tasks))
 	for _, task := range tasks {
@@ -1120,9 +1114,9 @@ func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(taskCh chan *analyzeTask, resu
 	}
 }
 
-// buildSubIndexJobForVirtualCol builds sub index pushed down task to calculate the NDV information for indexes containing virtual column.
+// buildSubIndexJobForSpecialIndex builds sub index pushed down task to calculate the NDV information for indexes containing virtual column.
 // This is because we cannot push the calculation of the virtual column down to the tikv side.
-func (e *AnalyzeColumnsExec) buildSubIndexJobForVirtualCol(indexInfos []*model.IndexInfo) []*analyzeTask {
+func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(indexInfos []*model.IndexInfo) []*analyzeTask {
 	_, offset := timeutil.Zone(e.ctx.GetSessionVars().Location())
 	tasks := make([]*analyzeTask, 0, len(indexInfos))
 	sc := e.ctx.GetSessionVars().StmtCtx
@@ -1139,13 +1133,19 @@ func (e *AnalyzeColumnsExec) buildSubIndexJobForVirtualCol(indexInfos []*model.I
 				TimeZoneOffset: offset,
 			},
 		}
+		idxExec.opts = make(map[ast.AnalyzeOptionType]uint64, len(ast.AnalyzeOptionString))
+		idxExec.opts[ast.AnalyzeOptNumTopN] = 0
+		idxExec.opts[ast.AnalyzeOptCMSketchDepth] = 0
+		idxExec.opts[ast.AnalyzeOptCMSketchWidth] = 0
+		idxExec.opts[ast.AnalyzeOptNumSamples] = 0
+		idxExec.opts[ast.AnalyzeOptNumBuckets] = 1
 		statsVersion := new(int32)
 		*statsVersion = statistics.Version1
 		// No Top-N
 		topnSize := int32(0)
 		idxExec.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
-			// No histogram.
-			BucketSize: 0,
+			// One bucket to store the null for null histogram.
+			BucketSize: 1,
 			NumColumns: int32(len(indexInfo.Columns)),
 			TopNSize:   &topnSize,
 			Version:    statsVersion,
