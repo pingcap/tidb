@@ -1,10 +1,10 @@
 /bindinfo @rebelice
 /cmd @eurekaka @rebelice
 /config @tiancaiamao @qw4990
-/ddl @lynn @tiancaiamao
+/ddl @zimulala @tiancaiamao
 /distsql @crazycs520 @qw4990
 /docs @zz-jason @bb7133
-/domain @lynn @lysu @xhebox
+/domain @lysu @xhebox
 /errno @morgo @tangenta
 /executor @lysu @XuHuaiyu @wshwsh12
 /expression @XuHuaiyu @wjhuang2016
@@ -13,13 +13,14 @@
 /lock @crazycs520
 /meta @tangenta @AilinKid
 /metrics @jackysp @lzmhhh123
-/owner @lynn @wjhuang2016
+/owner @zimulala @wjhuang2016
 /planner @winoros @rebelice @hanfei1991 
 /plugin @lysu
 /privilege @morgo
 /server @coocood @morgo
 /session @cfzjywxk @tiancaiamao
 /sessionctx @qw4990
+/sessionctx/variable @morgo
 /statistics @winoros @eurekaka
 /store @disksing @AndreMouche @MyonKeminta
 /structure @zimulala
