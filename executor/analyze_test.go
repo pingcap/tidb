@@ -238,7 +238,9 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 }
 
 func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
-	c.Skip("unstable")
+	if israce.RaceEnabled {
+		c.Skip("unstable, skip race test")
+	}
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer func() {
@@ -253,7 +255,8 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 	defer dom.Close()
 	tk := testkit.NewTestKit(c, store)
 
-	tk.MustExec("use test")
+	tk.MustExec("create database test_index_extract_topn")
+	tk.MustExec("use test_index_extract_topn")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a, b))")
 	tk.MustExec("insert into t values(1, 1), (1, 1), (1, 2), (1, 2)")
@@ -261,7 +264,7 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 	tk.MustExec("analyze table t with 10 cmsketch width")
 
 	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test_index_extract_topn"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
