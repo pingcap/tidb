@@ -325,8 +325,8 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 
 	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
 		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
-			if tmpTable.GetSize() > sctx.GetSessionVars().TempTableMaxRAM {
-				return errors.New("temporary table size exceed @@global.temptable_max_ram")
+			if tmpTable.GetSize() > sctx.GetSessionVars().TiDBTempTableMaxRAM {
+				return errors.New("temporary table size exceed @@global.tidb_temptable_max_ram")
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
 		}
@@ -624,9 +624,9 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
 		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
-			if tmpTable.GetSize() > sctx.GetSessionVars().TempTableMaxRAM {
+			if tmpTable.GetSize() > sctx.GetSessionVars().TiDBTempTableMaxRAM {
 				// TODO: what's the standard message?
-				return nil, errors.New("temporary table size exceed @@global.temptable_max_ram")
+				return nil, errors.New("temporary table size exceed @@global.tidb_temptable_max_ram")
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
 		}
@@ -1036,8 +1036,8 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	}
 	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
 		if tmpTable := addTemporaryTable(ctx, m); tmpTable != nil {
-			if tmpTable.GetSize() > ctx.GetSessionVars().TempTableMaxRAM {
-				return errors.New("temporary table size exceed @@global.temptable_max_ram")
+			if tmpTable.GetSize() > ctx.GetSessionVars().TiDBTempTableMaxRAM {
+				return errors.New("temporary table size exceed @@global.tidb_temptable_max_ram")
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
 		}

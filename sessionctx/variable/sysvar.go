@@ -1627,10 +1627,10 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: TiDBGCLifetime, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: math.MaxInt64},
 	{Scope: ScopeGlobal, Name: TiDBGCConcurrency, Value: "-1", Type: TypeInt, MinValue: 1, MaxValue: 128, AllowAutoValue: true},
 	{Scope: ScopeGlobal, Name: TiDBGCScanLockMode, Value: "PHYSICAL", Type: TypeEnum, PossibleValues: []string{"PHYSICAL", "LEGACY"}},
-
-	// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_temptable_max_ram
-	{Scope: ScopeGlobal, Name: TempTableMaxRAM, Value: strconv.Itoa(DefTempTableMaxRAM), Type: TypeInt, MinValue: 2097152, MaxValue: math.MaxInt32, AllowEmpty: true, SetGlobal: func(s *SessionVars, val string) error {
-		s.TempTableMaxRAM = tidbOptPositiveInt32(val, DefTempTableMaxRAM)
+	// The variable temptable_max_ram is deprecated in mysql8, so TiDB use another variable tidb_temptable_max_ram.
+	// See also https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_temptable_max_ram
+	{Scope: ScopeGlobal, Name: TiDBTempTableMaxRAM, Value: strconv.Itoa(DefTiDBTempTableMaxRAM), Type: TypeInt, MinValue: 2097152, MaxValue: math.MaxInt32, AllowEmpty: true, SetGlobal: func(s *SessionVars, val string) error {
+		s.TiDBTempTableMaxRAM = tidbOptPositiveInt32(val, DefTiDBTempTableMaxRAM)
 		return nil
 	}},
 	// variable for top SQL feature.
@@ -1965,8 +1965,6 @@ const (
 	SystemTimeZone = "system_time_zone"
 	// CTEMaxRecursionDepth is the name of 'cte_max_recursion_depth' system variable.
 	CTEMaxRecursionDepth = "cte_max_recursion_depth"
-	// TempTableMaxRAM  defines the maximum amount of RAM that can be occupied by a temporary table.
-	TempTableMaxRAM = "temptable_max_ram"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.

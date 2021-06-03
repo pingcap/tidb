@@ -560,6 +560,8 @@ const (
 	TiDBGCScanLockMode = "tidb_gc_scan_lock_mode"
 	// TiDBEnableEnhancedSecurity restricts SUPER users from certain operations.
 	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
+	// TiDBTempTableMaxRAM  defines the maximum amount of RAM that can be occupied by a temporary table.
+	TiDBTempTableMaxRAM = "tidb_temptable_max_ram"
 )
 
 // Default TiDB system variable values.
@@ -685,11 +687,11 @@ const (
 	DefTiDBTrackAggregateMemoryUsage   = true
 	DefTiDBEnableExchangePartition     = false
 	DefCTEMaxRecursionDepth            = 1000
-	DefTempTableMaxRAM                 = 1 << 30 // 1GB
 	DefTiDBTopSQLEnable                = false
 	DefTiDBTopSQLAgentAddress          = ""
 	DefTiDBTopSQLPrecisionSeconds      = 1
 	DefTiDBTopSQLMaxStatementCount     = 200
+	DefTiDBTempTableMaxRAM             = 1 << 30 // 1GB
 )
 
 // Process global variables.

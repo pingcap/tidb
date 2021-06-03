@@ -828,7 +828,7 @@ type SessionVars struct {
 	CTEMaxRecursionDepth int
 
 	// The temporary table size threshold
-	TempTableMaxRAM int
+	TiDBTempTableMaxRAM int
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
@@ -1031,7 +1031,7 @@ func NewSessionVars() *SessionVars {
 		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
-		TempTableMaxRAM:             DefTempTableMaxRAM,
+		TiDBTempTableMaxRAM:         DefTiDBTempTableMaxRAM,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
