@@ -72,6 +72,11 @@ var ExecOptionAnalyzeVer2 OptionFuncAlias = func(option *ExecOption) {
 	option.AnalyzeVer = 2
 }
 
+// ExecOptionAnalyzeVer3 tells ExecRestrictedStmt to collect statistics with version3.
+var ExecOptionAnalyzeVer3 OptionFuncAlias = func(option *ExecOption) {
+	option.AnalyzeVer = 3
+}
+
 // ExecOptionWithSnapshot tells ExecRestrictedStmt to use a snapshot.
 func ExecOptionWithSnapshot(snapshot uint64) OptionFuncAlias {
 	return func(option *ExecOption) {
@@ -96,7 +101,7 @@ type SQLExecutor interface {
 // But a session already has a parser bind in it, so we define this interface and use session as its implementation,
 // thus avoid allocating new parser. See session.SQLParser for more information.
 type SQLParser interface {
-	ParseSQL(sql, charset, collation string) ([]ast.StmtNode, error)
+	ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error)
 }
 
 // Statement is an interface for SQL execution.

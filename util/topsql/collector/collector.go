@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,10 +11,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv
+package collector
 
-// UnionStore is a store that wraps a snapshot for read and a MemBuffer for buffered write.
-// Also, it provides some transaction related utilities.
-// TODO: Remove after upgrading BR.
-type UnionStore interface {
+import "github.com/pingcap/tidb/util/topsql/tracecpu"
+
+// TopSQLCollector uses to collect SQL stats.
+// TODO: add a collector to collect and store the SQL stats.
+type TopSQLCollector interface {
+	tracecpu.Collector
+	RegisterSQL(sqlDigest []byte, normalizedSQL string)
+	RegisterPlan(planDigest []byte, normalizedPlan string)
 }

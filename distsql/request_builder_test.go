@@ -19,7 +19,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -612,7 +611,6 @@ func (s *testSuite) TestRequestBuilder7(c *C) {
 
 func (s *testSuite) TestRequestBuilder8(c *C) {
 	sv := variable.NewSessionVars()
-	sv.SnapshotInfoschema = infoschema.MockInfoSchemaWithSchemaVer(nil, 10000)
 	actual, err := (&RequestBuilder{}).
 		SetFromSessionVars(sv).
 		Build()
@@ -625,7 +623,7 @@ func (s *testSuite) TestRequestBuilder8(c *C) {
 		IsolationLevel: 0,
 		Priority:       0,
 		MemTracker:     (*memory.Tracker)(nil),
-		SchemaVar:      10000,
+		SchemaVar:      0,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }

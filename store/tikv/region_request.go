@@ -44,7 +44,18 @@ import (
 // ShuttingDown is a flag to indicate tidb-server is exiting (Ctrl+C signal
 // receved for example). If this flag is set, tikv client should not retry on
 // network error because tidb-server expect tikv client to exit as soon as possible.
+// TODO: make it private when br is ready.
 var ShuttingDown uint32
+
+// StoreShuttingDown atomically stores ShuttingDown into v.
+func StoreShuttingDown(v uint32) {
+	atomic.StoreUint32(&ShuttingDown, v)
+}
+
+// LoadShuttingDown atomically loads ShuttingDown.
+func LoadShuttingDown() uint32 {
+	return atomic.LoadUint32(&ShuttingDown)
+}
 
 // RegionRequestSender sends KV/Cop requests to tikv server. It handles network
 // errors and some region errors internally.
@@ -248,8 +259,6 @@ func (s *RegionRequestSender) SendReqCtx(
 					Resp: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
 				}, nil, nil)
 			}
-		case "callBackofferHook":
-			bo.SetVarsHook("callBackofferHook", bo.GetVars())
 		case "requestTiDBStoreError":
 			if et == tikvrpc.TiDB {
 				failpoint.Return(nil, nil, tikverr.ErrTiKVServerTimeout)
@@ -260,6 +269,12 @@ func (s *RegionRequestSender) SendReqCtx(
 			}
 		}
 	})
+
+	// If the MaxExecutionDurationMs is not set yet, we set it to be the RPC timeout duration
+	// so TiKV can give up the requests whose response TiDB cannot receive due to timeout.
+	if req.Context.MaxExecutionDurationMs == 0 {
+		req.Context.MaxExecutionDurationMs = uint64(timeout.Milliseconds())
+	}
 
 	tryTimes := 0
 	for {
@@ -551,7 +566,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	// If it failed because the context is cancelled by ourself, don't retry.
 	if errors.Cause(err) == context.Canceled {
 		return errors.Trace(err)
-	} else if atomic.LoadUint32(&ShuttingDown) > 0 {
+	} else if LoadShuttingDown() > 0 {
 		return tikverr.ErrTiDBShuttingDown
 	}
 	if status.Code(errors.Cause(err)) == codes.Canceled {
@@ -577,7 +592,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	if ctx.Store != nil && ctx.Store.storeType == tikvrpc.TiFlash {
 		err = bo.Backoff(retry.BoTiFlashRPC, errors.Errorf("send tiflash request error: %v, ctx: %v, try next peer later", err, ctx))
 	} else {
-		err = bo.BackoffTiKVRPC(errors.Errorf("send tikv request error: %v, ctx: %v, try next peer later", err, ctx))
+		err = bo.Backoff(retry.BoTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %v, try next peer later", err, ctx))
 	}
 	return errors.Trace(err)
 }
