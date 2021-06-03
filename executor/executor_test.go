@@ -8180,6 +8180,7 @@ func (s *testSerialSuite) TestIssue24210(c *C) {
 
 func (s *testSerialSuite) TestDeadlockTable(c *C) {
 	deadlockhistory.GlobalDeadlockHistory.Clear()
+	deadlockhistory.GlobalDeadlockHistory.Resize(10)
 
 	occurTime := time.Date(2021, 5, 10, 1, 2, 3, 456789000, time.Local)
 	rec := &deadlockhistory.DeadlockRecord{
