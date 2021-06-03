@@ -584,24 +584,27 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 	}
 	collExtStats := colExec.ctx.GetSessionVars().EnableExtendedStats
 	if colExec.StatsVersion == statistics.Version3 {
-		indexesWithVirtualCol := make([]*model.IndexInfo, 0, len(colExec.indexes))
-		indexesWithVirtualColOffsets := make([]int, 0, len(colExec.indexes))
+		specialIndexes := make([]*model.IndexInfo, 0, len(colExec.indexes))
+		specialIndexesOffsets := make([]int, 0, len(colExec.indexes))
 		for i, idx := range colExec.indexes {
-			containVirtual := false
+			isSpecial := false
 			for _, col := range idx.Columns {
-				if colExec.colsInfo[col.Offset].IsGenerated() && !colExec.colsInfo[col.Offset].GeneratedStored {
-					containVirtual = true
+				colInfo := colExec.colsInfo[col.Offset]
+				isVirtualCol := colInfo.IsGenerated() && !colInfo.GeneratedStored
+				isPrefixCol := col.Length != types.UnspecifiedLength
+				if isVirtualCol || isPrefixCol {
+					isSpecial = true
 					break
 				}
 			}
-			if containVirtual {
-				indexesWithVirtualColOffsets = append(indexesWithVirtualColOffsets, i)
-				indexesWithVirtualCol = append(indexesWithVirtualCol, idx)
+			if isSpecial {
+				specialIndexesOffsets = append(specialIndexesOffsets, i)
+				specialIndexes = append(specialIndexes, idx)
 			}
 		}
 		idxNDVPushDownCh := make(chan analyzeIndexNDVTotalResult, 1)
-		go colExec.handleNDVForIndexWithVirtualCol(indexesWithVirtualCol, idxNDVPushDownCh)
-		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStats(ranges, collExtStats, indexesWithVirtualColOffsets, idxNDVPushDownCh)
+		go colExec.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh)
+		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
 		if err != nil {
 			return []analyzeResult{{Err: err, job: colExec.job}}
 		}
@@ -958,14 +961,25 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}
 
 	// build index stats
+	var tmpDatum types.Datum
 	for i, idx := range e.indexes {
 		sampleItems := make([]*statistics.SampleItem, 0, rootRowCollector.MaxSampleSize)
 		for _, row := range rootRowCollector.Samples {
 			if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
 				continue
 			}
+
 			b := make([]byte, 0, 8)
 			for _, col := range idx.Columns {
+				if col.Length != types.UnspecifiedLength {
+					row.Columns[col.Offset].Copy(&tmpDatum)
+					ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldType)
+					b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, tmpDatum)
+					if err != nil {
+						return 0, nil, nil, nil, nil, err
+					}
+					continue
+				}
 				b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, row.Columns[col.Offset])
 				if err != nil {
 					return 0, nil, nil, nil, nil, err
@@ -1006,8 +1020,8 @@ type analyzeIndexNDVTotalResult struct {
 	err     error
 }
 
-// handleNDVForIndexWithVirtualCol deals with the logic to analyze the index containing the virtual column when the mode is full sampling.
-func (e *AnalyzeColumnsExec) handleNDVForIndexWithVirtualCol(indexInfos []*model.IndexInfo, totalResultCh chan analyzeIndexNDVTotalResult) {
+// handleNDVForSpecialIndexes deals with the logic to analyze the index containing the virtual column when the mode is full sampling.
+func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.IndexInfo, totalResultCh chan analyzeIndexNDVTotalResult) {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)

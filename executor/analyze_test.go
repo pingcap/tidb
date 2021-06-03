@@ -954,7 +954,7 @@ func (s *testSuite1) TestAnalyzeClusteredIndexPrimary(c *C) {
 		"test t1  PRIMARY 1 0 1 1 1111 1111 0"))
 }
 
-func (s *testSuite1) TestAnalyzeFullSamplingOnIndexWithVirtualColumn(c *C) {
+func (s *testSuite1) TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists sampling_index_virtual_col")
@@ -973,4 +973,12 @@ func (s *testSuite1) TestAnalyzeFullSamplingOnIndexWithVirtualColumn(c *C) {
 	c.Assert(row[6], Equals, "5")
 	// The NULLs.
 	c.Assert(row[7], Equals, "2")
+	tk.MustExec("drop table if exists sampling_index_prefix_col")
+	tk.MustExec("create table sampling_index_prefix_col(a varchar(3), index idx(a(1)))")
+	tk.MustExec("insert into sampling_index_prefix_col (a) values ('aa'), ('ab'), ('ac'), ('bb')")
+	tk.MustExec("analyze table sampling_index_prefix_col with 1 topn")
+	tk.MustQuery("show stats_buckets where table_name = 'sampling_index_prefix_col' and column_name = 'idx'").Check(testkit.Rows(
+		"test sampling_index_prefix_col  idx 1 0 1 1 b b 0",
+	))
+	tk.MustQuery("show stats_topn where table_name = 'sampling_index_prefix_col' and column_name = 'idx'").Check(testkit.Rows("test sampling_index_prefix_col  idx 1 a 3"))
 }
