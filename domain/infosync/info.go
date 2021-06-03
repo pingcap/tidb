@@ -680,6 +680,7 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 		pdAddrs = is.etcdCli.Endpoints()
 	}
 	if !clientAvailable || len(pdAddrs) == 0 {
+		// panic(len(pdAddrs))
 		return "", errors.Errorf("pd unavailable")
 	}
 

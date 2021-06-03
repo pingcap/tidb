@@ -140,6 +140,7 @@ func reportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (bool,
 	if resp.StatusCode != http.StatusOK {
 		return false, errors.Errorf("Received non-Ok response when reporting usage data, http code: %d", resp.StatusCode)
 	}
+	logutil.BgLogger().Info(fmt.Sprintf("Uploading telemetry data to %s", apiEndpoint))
 
 	return true, nil
 }
