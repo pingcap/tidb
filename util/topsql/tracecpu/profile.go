@@ -43,8 +43,8 @@ const (
 // GlobalSQLCPUProfiler is the global SQL stats profiler.
 var GlobalSQLCPUProfiler = newSQLCPUProfiler()
 
-// Reporter uses to collect SQL execution cpu time.
-type Reporter interface {
+// Collector uses to collect SQL execution cpu time.
+type Collector interface {
 	// Collect uses to collect the SQL execution cpu time.
 	// ts is a Unix time, unit is second.
 	Collect(ts uint64, stats []SQLCPUTimeRecord)
@@ -93,12 +93,12 @@ func (sp *sqlCPUProfiler) Run() {
 	go sp.startAnalyzeProfileWorker()
 }
 
-func (sp *sqlCPUProfiler) SetReporter(c Reporter) {
+func (sp *sqlCPUProfiler) SetReporter(c Collector) {
 	sp.reporter.Store(c)
 }
 
-func (sp *sqlCPUProfiler) GetReporter() Reporter {
-	c, ok := sp.reporter.Load().(Reporter)
+func (sp *sqlCPUProfiler) GetReporter() Collector {
+	c, ok := sp.reporter.Load().(Collector)
 	if !ok || c == nil {
 		return nil
 	}
@@ -144,12 +144,12 @@ func (sp *sqlCPUProfiler) startAnalyzeProfileWorker() {
 		}
 		stats := sp.parseCPUProfileBySQLLabels(p)
 		sp.handleExportProfileTask(p)
-		if c := sp.GetReporter(); c != nil {
+		if r := sp.GetReporter(); r != nil {
 			taskEnd := task.end
 			if taskEnd < 0 {
 				taskEnd = 0
 			}
-			c.Collect(uint64(taskEnd), stats)
+			r.Collect(uint64(taskEnd), stats)
 		}
 		sp.putTaskToBuffer(task)
 	}
