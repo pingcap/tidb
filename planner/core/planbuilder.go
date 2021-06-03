@@ -432,6 +432,7 @@ type cteInfo struct {
 	// enterSubquery and recursiveRef are used to check "recursive table must be referenced only once, and not in any subquery".
 	enterSubquery bool
 	recursiveRef  bool
+	limitLP       LogicalPlan
 }
 
 // PlanBuilder builds Plan from an ast.Node.

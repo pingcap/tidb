@@ -1144,7 +1144,7 @@ func dummyRecord() *deadlockhistory.DeadlockRecord {
 	return &deadlockhistory.DeadlockRecord{}
 }
 
-func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
+func (ts *HTTPHandlerTestSerialSuite) TestPostSettings(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
@@ -1252,6 +1252,8 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(len(deadlockhistory.GlobalDeadlockHistory.GetAll()), Equals, 6)
 	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[0].ID, Equals, uint64(7))
 	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[5].ID, Equals, uint64(12))
+	// restore original value.
+	config.GetGlobalConfig().CheckMb4ValueInUTF8 = true
 }
 
 func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
