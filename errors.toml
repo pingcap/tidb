@@ -971,7 +971,7 @@ error = '''
 `%-.192s`.`%-.192s` contains view recursion
 '''
 
-["ddl:1562"]
+["planner:1562"]
 error = '''
 Cannot create temporary table with partitions
 '''
