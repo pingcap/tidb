@@ -2762,7 +2762,6 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	ret.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
 		sctx:       b.ctx,
 		partitions: partitions,
-		ranges:     ts.Ranges,
 	}
 
 	return ret
@@ -3447,15 +3446,14 @@ func dedupHandles(lookUpContents []*indexJoinLookUpContent) ([]kv.Handle, []*ind
 type kvRangeBuilderFromRangeAndPartition struct {
 	sctx       sessionctx.Context
 	partitions []table.PhysicalTable
-	ranges     []*ranger.Range
 }
 
-func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(int64) ([]kv.KeyRange, error) {
+func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(_ int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {
 	var ret []kv.KeyRange
 	for _, p := range h.partitions {
 		pid := p.GetPhysicalID()
 		meta := p.Meta()
-		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, h.ranges, nil)
+		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, ranges, nil)
 		if err != nil {
 			return nil, err
 		}
