@@ -1310,15 +1310,18 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 	tk.MustExec("set tidb_max_chunk_size=32;")
 	randSeed := time.Now().UnixNano()
 	r := rand.New(rand.NewSource(randSeed))
-	var insertSQL string
+	var insertSQL strings.Builder
 	for i := 0; i < 1000; i++ {
-		if i == 0 {
-			insertSQL += fmt.Sprintf("(%d, %d)", r.Intn(100), r.Intn(100))
-		} else {
-			insertSQL += fmt.Sprintf(",(%d, %d)", r.Intn(100), r.Intn(100))
+		insertSQL.WriteString("(")
+		insertSQL.WriteString(strconv.Itoa(r.Intn(10)))
+		insertSQL.WriteString(",")
+		insertSQL.WriteString(strconv.Itoa(r.Intn(10)))
+		insertSQL.WriteString(")")
+		if i < 1000 - 1 {
+			insertSQL.WriteString(",")
 		}
 	}
-	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSQL))
+	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSQL.String()))
 
 	mustParseAndSort := func(rows [][]interface{}, cmt CommentInterface) []float64 {
 		ret := make([]float64, len(rows))
