@@ -50,11 +50,13 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/topsql"
 )
 
 func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
@@ -127,6 +129,13 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	pos := 0
 	stmtID := binary.LittleEndian.Uint32(data[0:4])
 	pos += 4
+
+	if variable.TopSQLEnabled() {
+		preparedStmt, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
+		if preparedStmt != nil && preparedStmt.SQLDigest != nil {
+			ctx = topsql.AttachSQLInfo(ctx, preparedStmt.NormalizedSQL, preparedStmt.SQLDigest, "", nil)
+		}
+	}
 
 	stmt := cc.ctx.GetStatement(int(stmtID))
 	if stmt == nil {
@@ -264,6 +273,12 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 	if stmt == nil {
 		return errors.Annotate(mysql.NewErr(mysql.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch"), cc.preparedStmt2String(stmtID))
+	}
+	if variable.TopSQLEnabled() {
+		prepareObj, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
+		if prepareObj != nil && prepareObj.SQLDigest != nil {
+			ctx = topsql.AttachSQLInfo(ctx, prepareObj.NormalizedSQL, prepareObj.SQLDigest, "", nil)
+		}
 	}
 	sql := ""
 	if prepared, ok := cc.ctx.GetStatement(int(stmtID)).(*TiDBStatement); ok {
@@ -680,14 +695,30 @@ func (cc *clientConn) preparedStmt2StringNoArgs(stmtID uint32) string {
 	if sv == nil {
 		return ""
 	}
+	preparedObj, invalid := cc.preparedStmtID2CachePreparedStmt(stmtID)
+	if invalid {
+		return "invalidate CachedPrepareStmt type, ID: " + strconv.FormatUint(uint64(stmtID), 10)
+	}
+	if preparedObj == nil {
+		return "prepared statement not found, ID: " + strconv.FormatUint(uint64(stmtID), 10)
+	}
+	return preparedObj.PreparedAst.Stmt.Text()
+}
+
+func (cc *clientConn) preparedStmtID2CachePreparedStmt(stmtID uint32) (_ *plannercore.CachedPrepareStmt, invalid bool) {
+	sv := cc.ctx.GetSessionVars()
+	if sv == nil {
+		return nil, false
+	}
 	preparedPointer, ok := sv.PreparedStmts[stmtID]
 	if !ok {
-		return "prepared statement not found, ID: " + strconv.FormatUint(uint64(stmtID), 10)
+		// not found
+		return nil, false
 	}
 	preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
 	if !ok {
-		return "invalidate CachedPrepareStmt type, ID: " + strconv.FormatUint(uint64(stmtID), 10)
+		// invalid cache. should never happen.
+		return nil, true
 	}
-	preparedAst := preparedObj.PreparedAst
-	return preparedAst.Stmt.Text()
+	return preparedObj, false
 }
