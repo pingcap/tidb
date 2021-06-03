@@ -545,6 +545,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		// The code should never run here as long as we're not using point get for partition table.
 		// And if we change the logic one day, here work as defensive programming to cache the error.
 		if x.PartitionInfo != nil {
+			// TODO: relocate the partition after rebuilding range to make PlanCache support PointGet
 			return errors.New("point get for partition table can not use plan cache")
 		}
 		if x.HandleParam != nil {
