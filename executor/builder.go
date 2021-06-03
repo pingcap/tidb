@@ -3741,7 +3741,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 	return distsql.IndexRangesToKVRanges(ctx.GetSessionVars().StmtCtx, tableID, indexID, tmpDatumRanges, nil)
 }
 
-func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec {
+func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -3769,6 +3769,40 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 		partialResult, _ := agg.AllocPartialResult()
 		partialResults = append(partialResults, partialResult)
 		resultColIdx++
+	}
+
+	if b.ctx.GetSessionVars().EnablePipelinedWindowExec {
+		exec := &PipelinedWindowExec{
+			baseExecutor:   base,
+			groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
+			numWindowFuncs: len(v.WindowFuncDescs),
+		}
+
+		exec.windowFuncs = windowFuncs
+		exec.partialResults = partialResults
+		if v.Frame == nil {
+			exec.start = &plannercore.FrameBound{
+				Type:      ast.Preceding,
+				UnBounded: true,
+			}
+			exec.end = &plannercore.FrameBound{
+				Type:      ast.Following,
+				UnBounded: true,
+			}
+		} else {
+			exec.start = v.Frame.Start
+			exec.end = v.Frame.End
+			if v.Frame.Type == ast.Ranges {
+				cmpResult := int64(-1)
+				if len(v.OrderBy) > 0 && v.OrderBy[0].Desc {
+					cmpResult = 1
+				}
+				exec.orderByCols = orderByCols
+				exec.expectedCmpResult = cmpResult
+				exec.isRangeFrame = true
+			}
+		}
+		return exec
 	}
 	var processor windowProcessor
 	if v.Frame == nil {
