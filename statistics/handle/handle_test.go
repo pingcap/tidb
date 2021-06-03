@@ -919,7 +919,7 @@ func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts2(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.prepareForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2")
 
-	tk.MustExec("analyze table t with 20 topn, 50 buckets, 1000 samples")
+	tk.MustExec("analyze table test_gstats_opt2 with 20 topn, 50 buckets, 1000 samples")
 	s.checkForGlobalStatsWithOpts(c, tk, "global", 2, 50)
 	s.checkForGlobalStatsWithOpts(c, tk, "p0", 1, 50)
 	s.checkForGlobalStatsWithOpts(c, tk, "p1", 1, 50)
@@ -935,7 +935,7 @@ func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts2(c *C) {
 	s.checkForGlobalStatsWithOpts(c, tk, "p0", 10, 20)
 	s.checkForGlobalStatsWithOpts(c, tk, "p1", 100, 200)
 
-	tk.MustExec("analyze table t partition p0 with 20 topn") // change back to 20 topn
+	tk.MustExec("analyze table test_gstats_opt2 partition p0 with 20 topn") // change back to 20 topn
 	s.checkForGlobalStatsWithOpts(c, tk, "global", 20, 256)
 	s.checkForGlobalStatsWithOpts(c, tk, "p0", 20, 256)
 	s.checkForGlobalStatsWithOpts(c, tk, "p1", 100, 200)
