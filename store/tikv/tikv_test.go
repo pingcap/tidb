@@ -14,13 +14,24 @@
 package tikv
 
 import (
+	"os"
+	"testing"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/tikv/util"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 type OneByOneSuite = util.OneByOneSuite
 type testTiKVSuite struct {
 	OneByOneSuite
+}
+
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	logLevel := os.Getenv("log_level")
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	TestingT(t)
 }
 
 var _ = Suite(&testTiKVSuite{})
