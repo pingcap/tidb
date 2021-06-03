@@ -1003,7 +1003,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.If, ast.Ifnull, ast.Case,
 		ast.Concat,
 		ast.Month,
-		ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime, ast.UnixTimestamp,
+		ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
 		ast.JSONLength:
 		return true
 	case ast.Substr, ast.Substring:
@@ -1025,6 +1025,11 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	case ast.DateAdd:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateStringInt:
+			return true
+		}
+	case ast.UnixTimestamp:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_UnixTimestampInt, tipb.ScalarFuncSig_UnixTimestampDec:
 			return true
 		}
 	case ast.Round:
