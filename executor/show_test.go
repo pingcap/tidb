@@ -140,7 +140,7 @@ func (s *testSuite5) TestShowErrors(c *C) {
 
 	tk.MustQuery("show errors").Check(testutil.RowsWithSep("|", "Error|1050|Table 'test.show_errors' already exists"))
 
-	tk.MustExec("drop table idontexist")
+	_, _ = tk.Exec("drop table idontexist")
 	tk.MustQuery("show errors").Check(testutil.RowsWithSep("|", "Error|1051|Unknown table 'test.idontexist'"))
 }
 
