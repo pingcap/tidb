@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/metrics"
-	tikvmetrics "github.com/pingcap/tidb/store/tikv/metrics"
 )
 
 // TxnWriteThroughputSLI uses to report transaction write throughput metrics for SLI.
@@ -119,8 +118,9 @@ func (t *TxnWriteThroughputSLI) String() string {
 		t.invalid, t.affectRow, t.writeSize, t.readKeys, t.writeKeys, t.writeTime.String())
 }
 
+// Observe the read sli metric
 func ObserveReadSLI(readRow uint64, readTime float64) {
 	if readRow <= smallTxnAffectRow {
-		tikvmetrics.TiKVSmallReadDuration.Observe(readTime)
+		metrics.TiKVSmallReadDuration.Observe(readTime)
 	}
 }

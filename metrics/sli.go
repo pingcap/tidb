@@ -37,4 +37,14 @@ var (
 			Help:      "Bucketed histogram of transaction write throughput (bytes/second).",
 			Buckets:   prometheus.ExponentialBuckets(64, 1.3, 40), // 64 bytes/s ~ 2.3MB/s
 		})
+
+	// TiKVSmallReadDuration uses to collect small request read duration.
+	TiKVSmallReadDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "sli",
+			Name:      "tikv_small_read_duration",
+			Help:      "Read time of TiKV small read.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 28), // 0.5ms ~ 74h
+		})
 )

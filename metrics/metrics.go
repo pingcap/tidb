@@ -151,6 +151,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiFlashQueryTotalCounter)
 	prometheus.MustRegister(SmallTxnWriteDuration)
 	prometheus.MustRegister(TxnWriteThroughput)
+	prometheus.MustRegister(TiKVSmallReadDuration)
 	prometheus.MustRegister(LoadSysVarCacheCounter)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)

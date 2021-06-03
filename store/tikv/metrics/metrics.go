@@ -35,7 +35,6 @@ var (
 	TiKVSecondaryLockCleanupFailureCounter *prometheus.CounterVec
 	TiKVRegionCacheCounter                 *prometheus.CounterVec
 	TiKVLocalLatchWaitTimeHistogram        prometheus.Histogram
-	TiKVSmallReadDuration                  prometheus.Histogram
 	TiKVStatusDuration                     *prometheus.HistogramVec
 	TiKVStatusCounter                      *prometheus.CounterVec
 	TiKVBatchWaitDuration                  prometheus.Histogram
@@ -211,15 +210,6 @@ func initMetrics(namespace, subsystem string) {
 			Name:      "local_latch_wait_seconds",
 			Help:      "Wait time of a get local latch.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20), // 0.5ms ~ 262s
-		})
-
-	TiKVSmallReadDuration = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: namespace,
-			Subsystem: subsystem,
-			Name:      "tikv_small_read_duration",
-			Help:      "Read time of TiKV small read.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 28), // 0.5ms ~ 74h
 		})
 
 	TiKVStatusDuration = prometheus.NewHistogramVec(
@@ -471,7 +461,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVLoadSafepointCounter)
 	prometheus.MustRegister(TiKVSecondaryLockCleanupFailureCounter)
 	prometheus.MustRegister(TiKVRegionCacheCounter)
-	prometheus.MustRegister(TiKVSmallReadDuration)
 	prometheus.MustRegister(TiKVLocalLatchWaitTimeHistogram)
 	prometheus.MustRegister(TiKVStatusDuration)
 	prometheus.MustRegister(TiKVStatusCounter)
