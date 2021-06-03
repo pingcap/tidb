@@ -82,6 +82,7 @@ type executorBuilder struct {
 	snapshotTSCached bool
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
+	Ti               *TelemetryInfo
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -92,10 +93,11 @@ type CTEStorages struct {
 	IterInTbl cteutil.Storage
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *executorBuilder {
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *executorBuilder {
 	return &executorBuilder{
 		ctx: ctx,
 		is:  is,
+		Ti:  ti,
 	}
 }
 
@@ -3739,7 +3741,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 	return distsql.IndexRangesToKVRanges(ctx.GetSessionVars().StmtCtx, tableID, indexID, tmpDatumRanges, nil)
 }
 
-func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec {
+func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -3767,6 +3769,40 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 		partialResult, _ := agg.AllocPartialResult()
 		partialResults = append(partialResults, partialResult)
 		resultColIdx++
+	}
+
+	if b.ctx.GetSessionVars().EnablePipelinedWindowExec {
+		exec := &PipelinedWindowExec{
+			baseExecutor:   base,
+			groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
+			numWindowFuncs: len(v.WindowFuncDescs),
+		}
+
+		exec.windowFuncs = windowFuncs
+		exec.partialResults = partialResults
+		if v.Frame == nil {
+			exec.start = &plannercore.FrameBound{
+				Type:      ast.Preceding,
+				UnBounded: true,
+			}
+			exec.end = &plannercore.FrameBound{
+				Type:      ast.Following,
+				UnBounded: true,
+			}
+		} else {
+			exec.start = v.Frame.Start
+			exec.end = v.Frame.End
+			if v.Frame.Type == ast.Ranges {
+				cmpResult := int64(-1)
+				if len(v.OrderBy) > 0 && v.OrderBy[0].Desc {
+					cmpResult = 1
+				}
+				exec.orderByCols = orderByCols
+				exec.expectedCmpResult = cmpResult
+				exec.isRangeFrame = true
+			}
+		}
+		return exec
 	}
 	var processor windowProcessor
 	if v.Frame == nil {
@@ -4086,6 +4122,9 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 
 func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 	// 1. Build seedPlan.
+	if b.Ti != nil {
+		b.Ti.UseNonRecursive = true
+	}
 	seedExec := b.build(v.SeedPlan)
 	if b.err != nil {
 		return nil
@@ -4127,6 +4166,9 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 	}
 
 	// 3. Build recursive part.
+	if v.RecurPlan != nil && b.Ti != nil {
+		b.Ti.UseRecursive = true
+	}
 	recursiveExec := b.build(v.RecurPlan)
 	if b.err != nil {
 		return nil
@@ -4150,6 +4192,9 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		chkIdx:        0,
 		isDistinct:    v.CTE.IsDistinct,
 		sel:           sel,
+		hasLimit:      v.CTE.HasLimit,
+		limitBeg:      v.CTE.LimitBeg,
+		limitEnd:      v.CTE.LimitEnd,
 	}
 }
 
