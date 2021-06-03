@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -511,6 +512,9 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 }
 
 func (s *testSerialSuite2) TestFastAnalyze4GlobalStats(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("unstable, skip race test")
+	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`create database if not exists test_fast_gstats`)
 	tk.MustExec("use test_fast_gstats")
@@ -747,6 +751,9 @@ func (s *testSuite10) TestFailedAnalyzeRequest(c *C) {
 }
 
 func (s *testSuite1) TestExtractTopN(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("unstable, skip race test")
+	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test_extract_topn")
 	tk.MustExec("use test_extract_topn")

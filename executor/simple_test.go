@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -604,6 +605,9 @@ func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
 }
 
 func (s *testSerialSuite) TestDropPartitionStats(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("unstable, skip race test")
+	}
 	// Use the testSerialSuite to fix the unstable test
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`create database if not exists test_drop_gstats`)
