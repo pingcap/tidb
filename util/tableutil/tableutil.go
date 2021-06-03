@@ -34,8 +34,8 @@ type TempTable interface {
 	// Define the return type as interface{} here to avoid cycle imports.
 	GetStats() interface{}
 
-	GetSize() int
-	SetSize(int)
+	GetSize() int64
+	SetSize(int64)
 }
 
 // TempTableFromMeta builds a TempTable from *model.TableInfo.

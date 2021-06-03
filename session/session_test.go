@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -4529,33 +4530,31 @@ func (s *testSessionSuite) TestInTxnPSProtoPointGet(c *C) {
 	tk.MustExec("commit")
 }
 
-func (s *testSessionSuite) TestTiDBTempTableMaxRAM(c *C) {
-	// Test the @@tidb_temptable_max_ram system variable.
+func (s *testSessionSuite) TestTMPTableSize(c *C) {
+	// Test the @@tmp_table_size system variable.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create global temporary table t (c1 int, c2 varchar(512)) on commit delete rows")
 
-	tk.MustQuery("select @@global.tidb_temptable_max_ram").Check(testkit.Rows(strconv.Itoa(variable.DefTiDBTempTableMaxRAM)))
-	c.Assert(tk.Se.GetSessionVars().TiDBTempTableMaxRAM, Equals, variable.DefTiDBTempTableMaxRAM)
+	tk.MustQuery("select @@global.tmp_table_size").Check(testkit.Rows(strconv.Itoa(variable.DefTMPTableSize)))
+	c.Assert(tk.Se.GetSessionVars().TMPTableSize, Equals, int64(variable.DefTMPTableSize))
 
-	// Min value 2097152
-	_, err := tk.Exec("set @@global.tidb_temptable_max_ram = 123")
-	c.Assert(err, NotNil)
-	// Not a session scope system variable.
-	_, err = tk.Exec("set @@session.tidb_temptable_max_ram = 2097152")
-	c.Assert(err, NotNil)
+	// Min value 1024, so the result is change to 1024, with a warning.
+	tk.MustExec("set @@global.tmp_table_size = 123")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tmp_table_size value: '123'"))
 
-	// A positive test case.
-	tk.MustExec("set @@global.tidb_temptable_max_ram = 2097152")
-	tk.MustQuery("select @@global.tidb_temptable_max_ram").Check(testkit.Rows("2097152"))
-	c.Assert(tk.Se.GetSessionVars().TiDBTempTableMaxRAM, Equals, 2097152)
+	// Change the session scope value.
+	tk.MustExec("set @@session.tmp_table_size = 2097152")
+	c.Assert(tk.Se.GetSessionVars().TMPTableSize, Equals, int64(2097152))
 
-	// Manually hack the value for testing.
-	tk.Se.GetSessionVars().TiDBTempTableMaxRAM = 1024
+	// Check in another sessin, change session scope value does not affect the global scope.
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustQuery("select @@global.tmp_table_size").Check(testkit.Rows("1024"))
+
+	// The value is now 1024, check the error when table size exceed it.
+	tk.MustExec("set @@session.tmp_table_size = 1024")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1, repeat('x', 512))")
 	tk.MustExec("insert into t values (1, repeat('x', 512))")
-	_, err = tk.Exec("insert into t values (1, repeat('x', 512))")
-	// Table size exceed
-	c.Assert(err, NotNil)
+	tk.MustGetErrCode("insert into t values (1, repeat('x', 512))", errno.ErrRecordFileFull)
 }

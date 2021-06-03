@@ -325,8 +325,8 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 
 	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
 		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
-			if tmpTable.GetSize() > sctx.GetSessionVars().TiDBTempTableMaxRAM {
-				return errors.New("temporary table size exceed @@global.tidb_temptable_max_ram")
+			if tmpTable.GetSize() > sctx.GetSessionVars().TMPTableSize {
+				return table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
 		}
@@ -606,7 +606,7 @@ func handleTempTableSize(t tableutil.TempTable, txnSizeBefore int, txn kv.Transa
 	delta := txnSizeNow - txnSizeBefore
 
 	oldSize := t.GetSize()
-	newSize := oldSize + delta
+	newSize := oldSize + int64(delta)
 	t.SetSize(newSize)
 }
 
@@ -624,9 +624,8 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
 		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
-			if tmpTable.GetSize() > sctx.GetSessionVars().TiDBTempTableMaxRAM {
-				// TODO: what's the standard message?
-				return nil, errors.New("temporary table size exceed @@global.tidb_temptable_max_ram")
+			if tmpTable.GetSize() > sctx.GetSessionVars().TMPTableSize {
+				return nil, table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
 		}
@@ -1036,8 +1035,8 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	}
 	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
 		if tmpTable := addTemporaryTable(ctx, m); tmpTable != nil {
-			if tmpTable.GetSize() > ctx.GetSessionVars().TiDBTempTableMaxRAM {
-				return errors.New("temporary table size exceed @@global.tidb_temptable_max_ram")
+			if tmpTable.GetSize() > ctx.GetSessionVars().TMPTableSize {
+				return table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
 		}
@@ -1817,7 +1816,7 @@ type TemporaryTable struct {
 	// The autoID allocator of this table.
 	autoIDAllocator autoid.Allocator
 	// Table size.
-	size int
+	size int64
 }
 
 // TempTableFromMeta builds a TempTable from model.TableInfo.
@@ -1850,11 +1849,11 @@ func (t *TemporaryTable) GetStats() interface{} {
 }
 
 // GetSize gets the table size.
-func (t *TemporaryTable) GetSize() int {
+func (t *TemporaryTable) GetSize() int64 {
 	return t.size
 }
 
 // SetSize sets the table size.
-func (t *TemporaryTable) SetSize(v int) {
+func (t *TemporaryTable) SetSize(v int64) {
 	t.size = v
 }
