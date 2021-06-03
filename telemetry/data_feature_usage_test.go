@@ -93,6 +93,7 @@ func (s *testFeatureInfoSuite) TestTxnUsageInfo(c *C) {
 
 func (s *testFeatureInfoSuite) TestTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("use test")
 	usage, err := telemetry.GetFeatureUsage(tk.Se)
 	c.Assert(err, IsNil)
