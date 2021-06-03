@@ -237,3 +237,140 @@ func (test *CTETestSuite) TestCTEMaxRecursionDepth(c *check.C) {
 	rows = tk.MustQuery("with cte1(c1) as (select 1 union select 2) select * from cte1 order by c1;")
 	rows.Check(testkit.Rows("1", "2"))
 }
+
+func (test *CTETestSuite) TestCTEWithLimit(c *check.C) {
+	tk := testkit.NewTestKit(c, test.store)
+	tk.MustExec("use test;")
+
+	// Basic recursive tests.
+	rows := tk.MustQuery("with recursive cte1(c1) as (select 1 union select c1 + 1 from cte1 limit 5 offset 0) select * from cte1")
+	rows.Check(testkit.Rows("1", "2", "3", "4", "5"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select c1 + 1 from cte1 limit 5 offset 1) select * from cte1")
+	rows.Check(testkit.Rows("2", "3", "4", "5", "6"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select c1 + 1 from cte1 limit 5 offset 10) select * from cte1")
+	rows.Check(testkit.Rows("11", "12", "13", "14", "15"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select c1 + 1 from cte1 limit 5 offset 995) select * from cte1")
+	rows.Check(testkit.Rows("996", "997", "998", "999", "1000"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select c1 + 1 from cte1 limit 5 offset 6) select * from cte1;")
+	rows.Check(testkit.Rows("7", "8", "9", "10", "11"))
+
+	// Test with cte_max_recursion_depth
+	tk.MustExec("set cte_max_recursion_depth=2;")
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 0 union select c1 + 1 from cte1 limit 1 offset 2) select * from cte1;")
+	rows.Check(testkit.Rows("2"))
+
+	err := tk.QueryToErr("with recursive cte1(c1) as (select 0 union select c1 + 1 from cte1 limit 1 offset 3) select * from cte1;")
+	c.Assert(err, check.NotNil)
+	c.Assert(err.Error(), check.Equals, "[executor:3636]Recursive query aborted after 3 iterations. Try increasing @@cte_max_recursion_depth to a larger value")
+
+	tk.MustExec("set cte_max_recursion_depth=1000;")
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 0 union select c1 + 1 from cte1 limit 5 offset 996) select * from cte1;")
+	rows.Check(testkit.Rows("996", "997", "998", "999", "1000"))
+
+	err = tk.QueryToErr("with recursive cte1(c1) as (select 0 union select c1 + 1 from cte1 limit 5 offset 997) select * from cte1;")
+	c.Assert(err, check.NotNil)
+	c.Assert(err.Error(), check.Equals, "[executor:3636]Recursive query aborted after 1001 iterations. Try increasing @@cte_max_recursion_depth to a larger value")
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select c1 + 1 from cte1 limit 0 offset 1) select * from cte1")
+	rows.Check(testkit.Rows())
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select c1 + 1 from cte1 limit 0 offset 10) select * from cte1")
+	rows.Check(testkit.Rows())
+
+	// Test join.
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select c1 + 1 from cte1 limit 2 offset 1) select * from cte1 dt1 join cte1 dt2 order by dt1.c1, dt2.c1;")
+	rows.Check(testkit.Rows("2 2", "2 3", "3 2", "3 3"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select c1 + 1 from cte1 limit 2 offset 1) select * from cte1 dt1 join cte1 dt2 on dt1.c1 = dt2.c1 order by dt1.c1, dt1.c1;")
+	rows.Check(testkit.Rows("2 2", "3 3"))
+
+	// Test subquery.
+	// Different with mysql, maybe it's mysql bug?(https://bugs.mysql.com/bug.php?id=103890&thanks=4)
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select c1 + 1 from cte1 limit 2 offset 1) select c1 from cte1 where c1 in (select 2);")
+	rows.Check(testkit.Rows("2"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select c1 + 1 from cte1 limit 2 offset 1) select c1 from cte1 dt where c1 in (select c1 from cte1 where 1 = dt.c1 - 1);")
+	rows.Check(testkit.Rows("2"))
+
+	// Test Apply.
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select c1 + 1 from cte1 limit 2 offset 1) select c1 from cte1 where cte1.c1 = (select dt1.c1 from cte1 dt1 where dt1.c1 = cte1.c1);")
+	rows.Check(testkit.Rows("2", "3"))
+
+	// Recursive tests with table.
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int);")
+	tk.MustExec("insert into t1 values(1), (2), (3);")
+
+	// Error: ERROR 1221 (HY000): Incorrect usage of UNION and LIMIT.
+	// Limit can only be at the end of SQL stmt.
+	err = tk.ExecToErr("with recursive cte1(c1) as (select c1 from t1 limit 1 offset 1 union select c1 + 1 from cte1 limit 0 offset 1) select * from cte1")
+	c.Assert(err.Error(), check.Equals, "[planner:1221]Incorrect usage of UNION and LIMIT")
+
+	// Basic non-recusive tests.
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select 2 order by 1 limit 1 offset 1) select * from cte1")
+	rows.Check(testkit.Rows("2"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select 2 order by 1 limit 0 offset 1) select * from cte1")
+	rows.Check(testkit.Rows())
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select 2 order by 1 limit 2 offset 0) select * from cte1")
+	rows.Check(testkit.Rows("1", "2"))
+
+	// Test with table.
+	tk.MustExec("drop table if exists t1;")
+	insertStr := "insert into t1 values(0)"
+	for i := 1; i < 5000; i++ {
+		insertStr += fmt.Sprintf(", (%d)", i)
+	}
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int);")
+	tk.MustExec(insertStr)
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 1) select * from cte1")
+	rows.Check(testkit.Rows("0"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 1 offset 100) select * from cte1")
+	rows.Check(testkit.Rows("100"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 5 offset 100) select * from cte1")
+	rows.Check(testkit.Rows("100", "101", "102", "103", "104"))
+
+	// Basic non-recursive tests.
+	rows = tk.MustQuery("with cte1 as (select c1 from t1 limit 2 offset 1) select * from cte1")
+	rows.Check(testkit.Rows("1", "2"))
+
+	rows = tk.MustQuery("with cte1 as (select c1 from t1 limit 2 offset 1) select * from cte1 dt1 join cte1 dt2 on dt1.c1 = dt2.c1")
+	rows.Check(testkit.Rows("1 1", "2 2"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select 2 limit 0 offset 1) select * from cte1")
+	rows.Check(testkit.Rows())
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select 2 limit 0 offset 1) select * from cte1 dt1 join cte1 dt2 on dt1.c1 = dt2.c1")
+	rows.Check(testkit.Rows())
+
+	// rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select 2 limit 5 offset 100) select * from cte1")
+	// rows.Check(testkit.Rows("100", "101", "102", "103", "104"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 limit 3 offset 100) select * from cte1")
+	rows.Check(testkit.Rows("100", "101", "102"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 limit 3 offset 100) select * from cte1 dt1 join cte1 dt2 on dt1.c1 = dt2.c1")
+	rows.Check(testkit.Rows("100 100", "101 101", "102 102"))
+
+	// Test limit 0.
+	tk.MustExec("set cte_max_recursion_depth = 0;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int);")
+	tk.MustExec("insert into t1 values(0);")
+	rows = tk.MustQuery("with recursive cte1 as (select 1/c1 c1 from t1 union select c1 + 1 c1 from cte1 where c1 < 2 limit 0) select * from cte1;")
+	rows.Check(testkit.Rows())
+	// MySQL err: ERROR 1365 (22012): Division by 0. Because it gives error when computing 1/c1.
+	err = tk.QueryToErr("with recursive cte1 as (select 1/c1 c1 from t1 union select c1 + 1 c1 from cte1 where c1 < 2 limit 1) select * from cte1;")
+	c.Assert(err, check.NotNil)
+	c.Assert(err.Error(), check.Equals, "[executor:3636]Recursive query aborted after 1 iterations. Try increasing @@cte_max_recursion_depth to a larger value")
+}
