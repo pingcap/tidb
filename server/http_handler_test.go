@@ -36,7 +36,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
@@ -55,9 +55,9 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/versioninfo"
-	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
 
@@ -1140,6 +1140,10 @@ func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
 	c.Assert(jobs, DeepEquals, data)
 }
 
+func dummyRecord() *deadlockhistory.DeadlockRecord {
+	return &deadlockhistory.DeadlockRecord{}
+}
+
 func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
@@ -1155,8 +1159,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	resp, err := ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	c.Assert(log.GetLevel(), Equals, log.ErrorLevel)
-	c.Assert(zaplog.GetLevel(), Equals, zap.ErrorLevel)
+	c.Assert(log.GetLevel(), Equals, zap.ErrorLevel)
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "error")
 	c.Assert(variable.ProcessGeneralLog.Load(), IsTrue)
 	val, err := variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
@@ -1175,8 +1178,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(variable.ProcessGeneralLog.Load(), IsFalse)
-	c.Assert(log.GetLevel(), Equals, log.FatalLevel)
-	c.Assert(zaplog.GetLevel(), Equals, zap.FatalLevel)
+	c.Assert(log.GetLevel(), Equals, zap.FatalLevel)
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "fatal")
 	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
 	c.Assert(err, IsNil)
@@ -1227,6 +1229,29 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, false)
 	dbt.mustExec("insert t2 values (unhex('f09f8c80'));")
+
+	// test tidb_deadlock_history_capacity
+	deadlockhistory.GlobalDeadlockHistory.Resize(10)
+	for i := 0; i < 10; i++ {
+		deadlockhistory.GlobalDeadlockHistory.Push(dummyRecord())
+	}
+	form = make(url.Values)
+	form.Set("tidb_deadlock_history_capacity", "5")
+	resp, err = ts.formStatus("/settings", form)
+	c.Assert(len(deadlockhistory.GlobalDeadlockHistory.GetAll()), Equals, 5)
+	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[0].ID, Equals, uint64(6))
+	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[4].ID, Equals, uint64(10))
+	deadlockhistory.GlobalDeadlockHistory.Push(dummyRecord())
+	c.Assert(len(deadlockhistory.GlobalDeadlockHistory.GetAll()), Equals, 5)
+	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[0].ID, Equals, uint64(7))
+	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[4].ID, Equals, uint64(11))
+	form = make(url.Values)
+	form.Set("tidb_deadlock_history_capacity", "6")
+	resp, err = ts.formStatus("/settings", form)
+	deadlockhistory.GlobalDeadlockHistory.Push(dummyRecord())
+	c.Assert(len(deadlockhistory.GlobalDeadlockHistory.GetAll()), Equals, 6)
+	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[0].ID, Equals, uint64(7))
+	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[5].ID, Equals, uint64(12))
 }
 
 func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
@@ -1244,7 +1269,7 @@ func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
 		}
 		time.Sleep(time.Millisecond * 10)
 	}
-	zaplog.Fatal("failed to get profile for %d retries in every 10 ms", zap.Int("retryTime", retryTime))
+	log.Fatal("failed to get profile for %d retries in every 10 ms", zap.Int("retryTime", retryTime))
 }
 
 func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {

@@ -159,17 +159,11 @@ func (s *testSuite1) TestRevokeDynamicPrivs(c *C) {
 	tk.MustExec("DROP USER if exists dyn")
 	tk.MustExec("create user dyn")
 
-	tk.MustExec("SET tidb_enable_dynamic_privileges=0")
-	_, err := tk.Exec("GRANT BACKUP_ADMIN ON *.* TO dyn")
-	c.Assert(err.Error(), Equals, "dynamic privileges is an experimental feature. Run 'SET tidb_enable_dynamic_privileges=1'")
-
-	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
-
 	tk.MustExec("GRANT BACKUP_Admin ON *.* TO dyn") // grant one priv
 	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(testkit.Rows("dyn % BACKUP_ADMIN N"))
 
 	// try revoking only on test.* - should fail:
-	_, err = tk.Exec("REVOKE BACKUP_Admin,system_variables_admin ON test.* FROM dyn")
+	_, err := tk.Exec("REVOKE BACKUP_Admin,system_variables_admin ON test.* FROM dyn")
 	c.Assert(terror.ErrorEqual(err, executor.ErrIllegalPrivilegeLevel), IsTrue)
 
 	// privs should still be intact:

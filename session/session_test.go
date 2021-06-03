@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,7 +43,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
-	txninfo "github.com/pingcap/tidb/session/txninfo"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -82,7 +83,7 @@ var _ = SerialSuites(&testSessionSerialSuite{})
 var _ = SerialSuites(&testBackupRestoreSuite{})
 var _ = Suite(&testClusteredSuite{})
 var _ = SerialSuites(&testClusteredSerialSuite{})
-var _ = SerialSuites(&testTxnStateSuite{})
+var _ = SerialSuites(&testTxnStateSerialSuite{})
 
 type testSessionSuiteBase struct {
 	cluster cluster.Cluster
@@ -788,6 +789,7 @@ func (s *testSessionSuite) TestRetryUnion(c *C) {
 
 func (s *testSessionSuite) TestRetryGlobalTempTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("drop table if exists normal_table")
 	tk.MustExec("create table normal_table(a int primary key, b int)")
 	defer tk.MustExec("drop table if exists normal_table")
@@ -2138,6 +2140,7 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerTempTable(c *C) {
 	tk.MustExec(`drop table if exists normal_table`)
 	tk.MustExec(`create table normal_table (id int, c int);`)
 	defer tk.MustExec(`drop table if exists normal_table`)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec(`drop table if exists temp_table`)
 	tk.MustExec(`create global temporary table temp_table (id int, c int) on commit delete rows;`)
 	defer tk.MustExec(`drop table if exists temp_table`)
@@ -3978,204 +3981,6 @@ func (s *testSessionSerialSuite) TestIssue21943(c *C) {
 	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'last_plan_from_cache' is a read only variable")
 }
 
-func (s *testSessionSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
-	testcases := []struct {
-		name       string
-		sql        string
-		isValidate bool
-	}{
-		{
-			name:       "select statement",
-			sql:        `select * from t;`,
-			isValidate: true,
-		},
-		{
-			name:       "explain statement",
-			sql:        `explain insert into t (id) values (1);`,
-			isValidate: true,
-		},
-		{
-			name:       "explain analyze insert statement",
-			sql:        `explain analyze insert into t (id) values (1);`,
-			isValidate: false,
-		},
-		{
-			name:       "explain analyze select statement",
-			sql:        `explain analyze select * from t `,
-			isValidate: true,
-		},
-		{
-			name:       "execute insert statement",
-			sql:        `EXECUTE stmt1;`,
-			isValidate: false,
-		},
-		{
-			name:       "execute select statement",
-			sql:        `EXECUTE stmt2;`,
-			isValidate: true,
-		},
-		{
-			name:       "show statement",
-			sql:        `show tables;`,
-			isValidate: true,
-		},
-		{
-			name:       "set union",
-			sql:        `SELECT 1, 2 UNION SELECT 'a', 'b';`,
-			isValidate: true,
-		},
-		{
-			name:       "insert",
-			sql:        `insert into t (id) values (1);`,
-			isValidate: false,
-		},
-		{
-			name:       "delete",
-			sql:        `delete from t where id =1`,
-			isValidate: false,
-		},
-		{
-			name:       "update",
-			sql:        "update t set id =2 where id =1",
-			isValidate: false,
-		},
-		{
-			name:       "point get",
-			sql:        `select * from t where id = 1`,
-			isValidate: true,
-		},
-		{
-			name:       "batch point get",
-			sql:        `select * from t where id in (1,2,3);`,
-			isValidate: true,
-		},
-		{
-			name:       "split table",
-			sql:        `SPLIT TABLE t BETWEEN (0) AND (1000000000) REGIONS 16;`,
-			isValidate: true,
-		},
-		{
-			name:       "do statement",
-			sql:        `DO SLEEP(1);`,
-			isValidate: true,
-		},
-		{
-			name:       "select for update",
-			sql:        "select * from t where id = 1 for update",
-			isValidate: false,
-		},
-		{
-			name:       "select lock in share mode",
-			sql:        "select * from t where id = 1 lock in share mode",
-			isValidate: true,
-		},
-		{
-			name:       "select for update union statement",
-			sql:        "select * from t for update union select * from t;",
-			isValidate: false,
-		},
-		{
-			name:       "replace statement",
-			sql:        "replace into t(id) values (1)",
-			isValidate: false,
-		},
-		{
-			name:       "load data statement",
-			sql:        "LOAD DATA LOCAL INFILE '/mn/asa.csv' INTO TABLE t FIELDS TERMINATED BY x'2c' ENCLOSED BY b'100010' LINES TERMINATED BY '\r\n' IGNORE 1 LINES (id);",
-			isValidate: false,
-		},
-		{
-			name:       "update multi tables",
-			sql:        "update t,t1 set t.id = 1,t1.id = 2 where t.1 = 2 and t1.id = 3;",
-			isValidate: false,
-		},
-		{
-			name:       "delete multi tables",
-			sql:        "delete t from t1 where t.id = t1.id",
-			isValidate: false,
-		},
-		{
-			name:       "insert select",
-			sql:        "insert into t select * from t1;",
-			isValidate: false,
-		},
-	}
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (id int);")
-	tk.MustExec("create table t1 (id int);")
-	tk.MustExec(`PREPARE stmt1 FROM 'insert into t(id) values (5);';`)
-	tk.MustExec(`PREPARE stmt2 FROM 'select * from t';`)
-	tk.MustExec(`set @@tidb_enable_noop_functions=1;`)
-	for _, testcase := range testcases {
-		c.Log(testcase.name)
-		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
-		if testcase.isValidate {
-			_, err := tk.Exec(testcase.sql)
-			c.Assert(err, IsNil)
-			tk.MustExec("commit")
-		} else {
-			err := tk.ExecToErr(testcase.sql)
-			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Matches, `.*only support read-only statement during read-only staleness transactions.*`)
-		}
-	}
-}
-
-func (s *testSessionSerialSuite) TestSpecialSQLInStalenessTxn(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	testcases := []struct {
-		name        string
-		sql         string
-		sameSession bool
-	}{
-		{
-			name:        "ddl",
-			sql:         "create table t (id int, b int,INDEX(b));",
-			sameSession: false,
-		},
-		{
-			name:        "set global session",
-			sql:         `SET GLOBAL sql_mode = 'STRICT_TRANS_TABLES,NO_AUTO_CREATE_USER';`,
-			sameSession: true,
-		},
-		{
-			name:        "analyze table",
-			sql:         "analyze table t",
-			sameSession: true,
-		},
-		{
-			name:        "session binding",
-			sql:         "CREATE SESSION BINDING FOR  SELECT * FROM t WHERE b = 123 USING SELECT * FROM t IGNORE INDEX (b) WHERE b = 123;",
-			sameSession: true,
-		},
-		{
-			name:        "global binding",
-			sql:         "CREATE GLOBAL BINDING FOR  SELECT * FROM t WHERE b = 123 USING SELECT * FROM t IGNORE INDEX (b) WHERE b = 123;",
-			sameSession: true,
-		},
-		{
-			name:        "grant statements",
-			sql:         "GRANT ALL ON test.* TO 'newuser';",
-			sameSession: false,
-		},
-		{
-			name:        "revoke statements",
-			sql:         "REVOKE ALL ON test.* FROM 'newuser';",
-			sameSession: false,
-		},
-	}
-	tk.MustExec("CREATE USER 'newuser' IDENTIFIED BY 'mypassword';")
-	for _, testcase := range testcases {
-		comment := Commentf(testcase.name)
-		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
-		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, true, comment)
-		tk.MustExec(testcase.sql)
-		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, testcase.sameSession, comment)
-	}
-}
-
 func (s *testSessionSerialSuite) TestRemovedSysVars(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
@@ -4355,6 +4160,7 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 
 func (s *testSessionSuite3) TestGlobalTemporaryTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table g_tmp (a int primary key, b int, c int, index i_b(b)) on commit delete rows")
 	tk.MustExec("begin")
 	tk.MustExec("insert into g_tmp values (3, 3, 3)")
@@ -4376,33 +4182,94 @@ func (s *testSessionSuite3) TestGlobalTemporaryTable(c *C) {
 	tk.MustQuery("select * from g_tmp").Check(testkit.Rows())
 }
 
-type testTxnStateSuite struct {
+type testTxnStateSerialSuite struct {
 	testSessionSuiteBase
 }
 
-func (s *testTxnStateSuite) TestBasic(c *C) {
+func (s *testTxnStateSerialSuite) TestBasic(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t(a) values (1);")
 	info := tk.Se.TxnInfo()
 	c.Assert(info, IsNil)
+
 	tk.MustExec("begin pessimistic;")
-	tk.MustExec("select * from t for update;")
+	startTSStr := tk.MustQuery("select @@tidb_current_ts;").Rows()[0][0].(string)
+	startTS, err := strconv.ParseUint(startTSStr, 10, 64)
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock", "pause"), IsNil)
+	ch := make(chan interface{})
+	go func() {
+		tk.MustExec("select * from t for update;")
+		ch <- nil
+	}()
+	time.Sleep(100 * time.Millisecond)
 	info = tk.Se.TxnInfo()
 	_, expectedDigest := parser.NormalizeDigest("select * from t for update;")
 	c.Assert(info.CurrentSQLDigest, Equals, expectedDigest.String())
+	c.Assert(info.State, Equals, txninfo.TxnLockWaiting)
+	c.Assert((*time.Time)(info.BlockStartTime), NotNil)
+	c.Assert(info.StartTS, Equals, startTS)
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock"), IsNil)
+	<-ch
+
+	info = tk.Se.TxnInfo()
+	c.Assert(info.CurrentSQLDigest, Equals, "")
 	c.Assert(info.State, Equals, txninfo.TxnRunningNormal)
-	c.Assert(info.BlockStartTime, IsNil)
+	c.Assert((*time.Time)(info.BlockStartTime), IsNil)
+	c.Assert(info.StartTS, Equals, startTS)
+	_, beginDigest := parser.NormalizeDigest("begin pessimistic;")
+	_, selectTSDigest := parser.NormalizeDigest("select @@tidb_current_ts;")
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest.String(), selectTSDigest.String(), expectedDigest.String()})
+
 	// len and size will be covered in TestLenAndSize
 	c.Assert(info.ConnectionID, Equals, tk.Se.GetSessionVars().ConnectionID)
 	c.Assert(info.Username, Equals, "")
 	c.Assert(info.CurrentDB, Equals, "test")
-	tk.MustExec("commit;")
+	c.Assert(info.StartTS, Equals, startTS)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "pause"), IsNil)
+	go func() {
+		tk.MustExec("commit;")
+		ch <- nil
+	}()
+	time.Sleep(100 * time.Millisecond)
+	_, commitDigest := parser.NormalizeDigest("commit;")
+	info = tk.Se.TxnInfo()
+	c.Assert(info.CurrentSQLDigest, Equals, commitDigest.String())
+	c.Assert(info.State, Equals, txninfo.TxnCommitting)
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest.String(), selectTSDigest.String(), expectedDigest.String(), commitDigest.String()})
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
+	<-ch
+	info = tk.Se.TxnInfo()
+	c.Assert(info, IsNil)
+
+	// Test autocommit transaction
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "pause"), IsNil)
+	go func() {
+		tk.MustExec("insert into t values (2)")
+		ch <- nil
+	}()
+	time.Sleep(100 * time.Millisecond)
+	info = tk.Se.TxnInfo()
+	_, expectedDigest = parser.NormalizeDigest("insert into t values (2)")
+	c.Assert(info.CurrentSQLDigest, Equals, expectedDigest.String())
+	c.Assert(info.State, Equals, txninfo.TxnCommitting)
+	c.Assert((*time.Time)(info.BlockStartTime), IsNil)
+	c.Assert(info.StartTS, Greater, startTS)
+	c.Assert(len(info.AllSQLDigests), Equals, 1)
+	c.Assert(info.AllSQLDigests[0], Equals, expectedDigest.String())
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
+	<-ch
 	info = tk.Se.TxnInfo()
 	c.Assert(info, IsNil)
 }
 
-func (s *testTxnStateSuite) TestEntriesCountAndSize(c *C) {
+func (s *testTxnStateSerialSuite) TestEntriesCountAndSize(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("begin pessimistic;")
@@ -4417,7 +4284,7 @@ func (s *testTxnStateSuite) TestEntriesCountAndSize(c *C) {
 	tk.MustExec("commit;")
 }
 
-func (s *testTxnStateSuite) TestBlocked(c *C) {
+func (s *testTxnStateSerialSuite) TestBlocked(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(a int);")
@@ -4435,7 +4302,7 @@ func (s *testTxnStateSuite) TestBlocked(c *C) {
 	tk.MustExec("commit;")
 }
 
-func (s *testTxnStateSuite) TestCommitting(c *C) {
+func (s *testTxnStateSerialSuite) TestCommitting(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(a int);")
@@ -4447,8 +4314,10 @@ func (s *testTxnStateSuite) TestCommitting(c *C) {
 		tk2.MustExec("begin pessimistic")
 		c.Assert(tk2.Se.TxnInfo(), NotNil)
 		tk2.MustExec("select * from t where a = 2 for update;")
-		failpoint.Enable("github.com/pingcap/tidb/session/mockSlowCommit", "sleep(200)")
-		defer failpoint.Disable("github.com/pingcap/tidb/session/mockSlowCommit")
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockSlowCommit", "sleep(200)"), IsNil)
+		defer func() {
+			c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockSlowCommit"), IsNil)
+		}()
 		tk2.MustExec("commit;")
 		ch <- struct{}{}
 	}()
@@ -4458,7 +4327,7 @@ func (s *testTxnStateSuite) TestCommitting(c *C) {
 	<-ch
 }
 
-func (s *testTxnStateSuite) TestRollbacking(c *C) {
+func (s *testTxnStateSerialSuite) TestRollbacking(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t(a) values (1), (2);")
@@ -4474,6 +4343,125 @@ func (s *testTxnStateSuite) TestRollbacking(c *C) {
 	time.Sleep(100 * time.Millisecond)
 	c.Assert(tk.Se.TxnInfo().State, Equals, txninfo.TxnRollingBack)
 	<-ch
+}
+
+func (s *testTxnStateSerialSuite) TestTxnInfoWithPreparedStmt(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("prepare s1 from 'insert into t values (?)'")
+	tk.MustExec("set @v = 1")
+
+	tk.MustExec("begin pessimistic")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock", "pause"), IsNil)
+	ch := make(chan interface{})
+	go func() {
+		tk.MustExec("execute s1 using @v")
+		ch <- nil
+	}()
+	time.Sleep(100 * time.Millisecond)
+	info := tk.Se.TxnInfo()
+	_, expectDigest := parser.NormalizeDigest("insert into t values (?)")
+	c.Assert(info.CurrentSQLDigest, Equals, expectDigest.String())
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock"), IsNil)
+	<-ch
+	info = tk.Se.TxnInfo()
+	c.Assert(info.CurrentSQLDigest, Equals, "")
+	_, beginDigest := parser.NormalizeDigest("begin pessimistic")
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest.String(), expectDigest.String()})
+
+	tk.MustExec("rollback")
+}
+
+func (s *testTxnStateSerialSuite) TestTxnInfoWithScalarSubquery(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (1, 10), (2, 1)")
+
+	tk.MustExec("begin pessimistic")
+	_, beginDigest := parser.NormalizeDigest("begin pessimistic")
+	tk.MustExec("select * from t where a = (select b from t where a = 2)")
+	_, s1Digest := parser.NormalizeDigest("select * from t where a = (select b from t where a = 2)")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock", "pause"), IsNil)
+	ch := make(chan interface{})
+	go func() {
+		tk.MustExec("update t set b = b + 1 where a = (select b from t where a = 2)")
+		ch <- nil
+	}()
+	_, s2Digest := parser.NormalizeDigest("update t set b = b + 1 where a = (select b from t where a = 1)")
+	time.Sleep(100 * time.Millisecond)
+	info := tk.Se.TxnInfo()
+	c.Assert(info.CurrentSQLDigest, Equals, s2Digest.String())
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest.String(), s1Digest.String(), s2Digest.String()})
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock"), IsNil)
+	<-ch
+	tk.MustExec("rollback")
+}
+
+func (s *testTxnStateSerialSuite) TestTxnInfoWithPSProtocol(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (a int primary key)")
+
+	// Test autocommit transaction
+
+	idInsert, _, _, err := tk.Se.PrepareStmt("insert into t values (?)")
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "pause"), IsNil)
+	ch := make(chan interface{})
+	go func() {
+		_, err := tk.Se.ExecutePreparedStmt(context.Background(), idInsert, types.MakeDatums(1))
+		c.Assert(err, IsNil)
+		ch <- nil
+	}()
+	time.Sleep(100 * time.Millisecond)
+	_, digest := parser.NormalizeDigest("insert into t values (1)")
+	info := tk.Se.TxnInfo()
+	c.Assert(info, NotNil)
+	c.Assert(info.StartTS, Greater, uint64(0))
+	c.Assert(info.State, Equals, txninfo.TxnCommitting)
+	c.Assert(info.CurrentSQLDigest, Equals, digest.String())
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{digest.String()})
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
+	<-ch
+	info = tk.Se.TxnInfo()
+	c.Assert(info, IsNil)
+
+	// Test non-autocommit transaction
+
+	id1, _, _, err := tk.Se.PrepareStmt("select * from t where a = ?")
+	c.Assert(err, IsNil)
+	_, digest1 := parser.NormalizeDigest("select * from t where a = ?")
+	id2, _, _, err := tk.Se.PrepareStmt("update t set a = a + 1 where a = ?")
+	c.Assert(err, IsNil)
+	_, digest2 := parser.NormalizeDigest("update t set a = a + 1 where a = ?")
+
+	tk.MustExec("begin pessimistic")
+
+	_, err = tk.Se.ExecutePreparedStmt(context.Background(), id1, types.MakeDatums(1))
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock", "pause"), IsNil)
+	go func() {
+		_, err := tk.Se.ExecutePreparedStmt(context.Background(), id2, types.MakeDatums(1))
+		c.Assert(err, IsNil)
+		ch <- nil
+	}()
+	time.Sleep(100 * time.Millisecond)
+	info = tk.Se.TxnInfo()
+	c.Assert(info.StartTS, Greater, uint64(0))
+	c.Assert(info.CurrentSQLDigest, Equals, digest2.String())
+	c.Assert(info.State, Equals, txninfo.TxnLockWaiting)
+	c.Assert((*time.Time)(info.BlockStartTime), NotNil)
+	_, beginDigest := parser.NormalizeDigest("begin pessimistic")
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest.String(), digest1.String(), digest2.String()})
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock"), IsNil)
+	<-ch
+	tk.MustExec("rollback")
 }
 
 func (s *testSessionSuite) TestReadDMLBatchSize(c *C) {
@@ -4542,4 +4530,33 @@ func (s *testSessionSuite) TestInTxnPSProtoPointGet(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("commit")
+}
+
+func (s *testSessionSuite) TestTiDBEnableGlobalTemporaryTable(c *C) {
+	// Test the @@tidb_enable_global_temporary_table system variable.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// variable 'tidb_enable_global_temporary_table' should not be seen when show variables
+	tk.MustQuery("show variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows())
+	tk.MustQuery("show global variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows())
+
+	// variable 'tidb_enable_global_temporary_table' is turned off by default
+	tk.MustQuery("select @@global.tidb_enable_global_temporary_table").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@tidb_enable_global_temporary_table").Check(testkit.Rows("0"))
+	c.Assert(tk.Se.GetSessionVars().EnableGlobalTemporaryTable, IsFalse)
+
+	// cannot create global temporary table when 'tidb_enable_global_temporary_table' is off
+	tk.MustGetErrMsg(
+		"create global temporary table temp_test(id int primary key auto_increment) on commit delete rows",
+		"global temporary table is experimental and it is switched off by tidb_enable_global_temporary_table",
+	)
+	tk.MustQuery("show tables like 'temp_test'").Check(testkit.Rows())
+
+	// you can create global temporary table when 'tidb_enable_global_temporary_table' is on
+	tk.MustExec("set tidb_enable_global_temporary_table=on")
+	tk.MustQuery("select @@tidb_enable_global_temporary_table").Check(testkit.Rows("1"))
+	c.Assert(tk.Se.GetSessionVars().EnableGlobalTemporaryTable, IsTrue)
+	tk.MustExec("create global temporary table temp_test(id int primary key auto_increment) on commit delete rows")
+	tk.MustQuery("show tables like 'temp_test'").Check(testkit.Rows("temp_test"))
 }

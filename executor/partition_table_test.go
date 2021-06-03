@@ -683,6 +683,108 @@ func (s *partitionTableSuite) TestDynamicPruningUnderIndexJoin(c *C) {
 		tk.MustQuery(`select /*+ INL_JOIN(touter, tnormal) */ tnormal.* from touter join tnormal use index(idx_b) on touter.b = tnormal.b`).Sort().Rows())
 }
 
+func (s *partitionTableSuite) TestBatchGetforRangeandListPartitionTable(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_pointget")
+	tk.MustExec("use test_pointget")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+
+	// list partition table
+	tk.MustExec(`create table tlist(a int, b int, unique index idx_a(a), index idx_b(b)) partition by list(a)(
+		partition p0 values in (1, 2, 3, 4),
+			partition p1 values in (5, 6, 7, 8),
+			partition p2 values in (9, 10, 11, 12));`)
+
+	// range partition table
+	tk.MustExec(`create table trange(a int, unique key(a)) partition by range(a) (
+		partition p0 values less than (30),
+		partition p1 values less than (60),
+		partition p2 values less than (90),
+		partition p3 values less than (120));`)
+
+	// hash partition table
+	tk.MustExec("create table thash(a int unsigned, unique key(a)) partition by hash(a) partitions 4;")
+
+	// insert data into list partition table
+	tk.MustExec("insert into tlist values(1,1), (2,2), (3, 3), (4, 4), (5,5), (6, 6), (7,7), (8, 8), (9, 9), (10, 10), (11, 11), (12, 12);")
+	// regular partition table
+	tk.MustExec("create table tregular1(a int, unique key(a));")
+	tk.MustExec("create table tregular2(a int, unique key(a));")
+
+	vals := make([]string, 0, 100)
+	// insert data into range partition table and hash partition table
+	for i := 0; i < 100; i++ {
+		vals = append(vals, fmt.Sprintf("(%v)", i+1))
+	}
+	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
+	tk.MustExec("insert into thash values " + strings.Join(vals, ","))
+	tk.MustExec("insert into tregular1 values " + strings.Join(vals, ","))
+	tk.MustExec("insert into tregular2 values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12)")
+
+	// test BatchGet
+	for i := 0; i < 100; i++ {
+		// explain select a from t where a in ({x1}, {x2}, ... {x10}); // BatchGet is used
+		// select a from t where where a in ({x1}, {x2}, ... {x10});
+		points := make([]string, 0, 10)
+		for i := 0; i < 10; i++ {
+			x := rand.Intn(100) + 1
+			points = append(points, fmt.Sprintf("%v", x))
+		}
+		queryRegular1 := fmt.Sprintf("select a from tregular1 where a in (%v)", strings.Join(points, ","))
+
+		queryHash := fmt.Sprintf("select a from thash where a in (%v)", strings.Join(points, ","))
+		c.Assert(tk.HasPlan(queryHash, "Batch_Point_Get"), IsTrue) // check if BatchGet is used
+		tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular1).Sort().Rows())
+
+		queryRange := fmt.Sprintf("select a from trange where a in (%v)", strings.Join(points, ","))
+		c.Assert(tk.HasPlan(queryRange, "Batch_Point_Get"), IsTrue) // check if BatchGet is used
+		tk.MustQuery(queryRange).Sort().Check(tk.MustQuery(queryRegular1).Sort().Rows())
+
+		points = make([]string, 0, 10)
+		for i := 0; i < 10; i++ {
+			x := rand.Intn(12) + 1
+			points = append(points, fmt.Sprintf("%v", x))
+		}
+		queryRegular2 := fmt.Sprintf("select a from tregular2 where a in (%v)", strings.Join(points, ","))
+		queryList := fmt.Sprintf("select a from tlist where a in (%v)", strings.Join(points, ","))
+		c.Assert(tk.HasPlan(queryList, "Batch_Point_Get"), IsTrue) // check if BatchGet is used
+		tk.MustQuery(queryList).Sort().Check(tk.MustQuery(queryRegular2).Sort().Rows())
+	}
+
+	// test different data type
+	// unsigned flag
+	// partition table and reguar table pair
+	tk.MustExec(`create table trange3(a int unsigned, unique key(a)) partition by range(a) (
+		partition p0 values less than (30),
+		partition p1 values less than (60),
+		partition p2 values less than (90),
+		partition p3 values less than (120));`)
+	tk.MustExec("create table tregular3(a int unsigned, unique key(a));")
+	vals = make([]string, 0, 100)
+	// insert data into range partition table and hash partition table
+	for i := 0; i < 100; i++ {
+		vals = append(vals, fmt.Sprintf("(%v)", i+1))
+	}
+	tk.MustExec("insert into trange3 values " + strings.Join(vals, ","))
+	tk.MustExec("insert into tregular3 values " + strings.Join(vals, ","))
+	// test BatchGet
+	// explain select a from t where a in ({x1}, {x2}, ... {x10}); // BatchGet is used
+	// select a from t where where a in ({x1}, {x2}, ... {x10});
+	points := make([]string, 0, 10)
+	for i := 0; i < 10; i++ {
+		x := rand.Intn(100) + 1
+		points = append(points, fmt.Sprintf("%v", x))
+	}
+	queryRegular := fmt.Sprintf("select a from tregular3 where a in (%v)", strings.Join(points, ","))
+	queryRange := fmt.Sprintf("select a from trange3 where a in (%v)", strings.Join(points, ","))
+	c.Assert(tk.HasPlan(queryRange, "Batch_Point_Get"), IsTrue) // check if BatchGet is used
+	tk.MustQuery(queryRange).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+}
+
 func (s *partitionTableSuite) TestGlobalStatsAndSQLBinding(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
@@ -1560,6 +1662,202 @@ func (s *partitionTableSuite) TestAddDropPartitions(c *C) {
 	tk.MustPartition(`select * from t where a < 20`, "p1,p2,p3").Sort().Check(testkit.Rows("12", "15", "7"))
 }
 
+func (s *partitionTableSuite) PartitionPruningInTransaction(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_pruning_transaction")
+	defer tk.MustExec(`drop database test_pruning_transaction`)
+	tk.MustExec("use test_pruning_transaction")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec(`create table t(a int, b int) partition by range(a) (partition p0 values less than(3), partition p1 values less than (5), partition p2 values less than(11))`)
+	tk.MustExec(`begin`)
+	tk.MustPartition(`select * from t`, "all")
+	tk.MustPartition(`select * from t where a > 4`, "p1,p2") // partition pruning can work in transactions
+	tk.MustPartition(`select * from t where a > 7`, "p2")
+	tk.MustExec(`rollback`)
+}
+
+func (s *partitionTableSuite) TestDML(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_DML")
+	defer tk.MustExec(`drop database test_DML`)
+	tk.MustExec("use test_DML")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	tk.MustExec(`create table tinner (a int, b int)`)
+	tk.MustExec(`create table thash (a int, b int) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table trange (a int, b int) partition by range(a) (
+		partition p0 values less than(10000),
+		partition p1 values less than(20000),
+		partition p2 values less than(30000),
+		partition p3 values less than(40000),
+		partition p4 values less than MAXVALUE)`)
+
+	vals := make([]string, 0, 50)
+	for i := 0; i < 50; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(40000), rand.Intn(40000)))
+	}
+	tk.MustExec(`insert into tinner values ` + strings.Join(vals, ", "))
+	tk.MustExec(`insert into thash values ` + strings.Join(vals, ", "))
+	tk.MustExec(`insert into trange values ` + strings.Join(vals, ", "))
+
+	// delete, insert, replace, update
+	for i := 0; i < 200; i++ {
+		var pattern string
+		switch rand.Intn(4) {
+		case 0: // delete
+			col := []string{"a", "b"}[rand.Intn(2)]
+			l := rand.Intn(40000)
+			r := l + rand.Intn(5000)
+			pattern = fmt.Sprintf(`delete from %%v where %v>%v and %v<%v`, col, l, col, r)
+		case 1: // insert
+			a, b := rand.Intn(40000), rand.Intn(40000)
+			pattern = fmt.Sprintf(`insert into %%v values (%v, %v)`, a, b)
+		case 2: // replace
+			a, b := rand.Intn(40000), rand.Intn(40000)
+			pattern = fmt.Sprintf(`replace into %%v(a, b) values (%v, %v)`, a, b)
+		case 3: // update
+			col := []string{"a", "b"}[rand.Intn(2)]
+			l := rand.Intn(40000)
+			r := l + rand.Intn(5000)
+			x := rand.Intn(1000) - 500
+			pattern = fmt.Sprintf(`update %%v set %v=%v+%v where %v>%v and %v<%v`, col, col, x, col, l, col, r)
+		}
+		for _, tbl := range []string{"tinner", "thash", "trange"} {
+			tk.MustExec(fmt.Sprintf(pattern, tbl))
+		}
+
+		// check
+		r := tk.MustQuery(`select * from tinner`).Sort().Rows()
+		tk.MustQuery(`select * from thash`).Sort().Check(r)
+		tk.MustQuery(`select * from trange`).Sort().Check(r)
+	}
+}
+
+func (s *partitionTableSuite) TestUnion(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_union")
+	defer tk.MustExec(`drop database test_union`)
+	tk.MustExec("use test_union")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	tk.MustExec(`create table t(a int, b int, key(a))`)
+	tk.MustExec(`create table thash (a int, b int, key(a)) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table trange (a int, b int, key(a)) partition by range(a) (
+		partition p0 values less than (10000),
+		partition p1 values less than (20000),
+		partition p2 values less than (30000),
+		partition p3 values less than (40000))`)
+
+	vals := make([]string, 0, 1000)
+	for i := 0; i < 1000; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(40000), rand.Intn(40000)))
+	}
+	tk.MustExec(`insert into t values ` + strings.Join(vals, ", "))
+	tk.MustExec(`insert into thash values ` + strings.Join(vals, ", "))
+	tk.MustExec(`insert into trange values ` + strings.Join(vals, ", "))
+
+	randRange := func() (int, int) {
+		l, r := rand.Intn(40000), rand.Intn(40000)
+		if l > r {
+			l, r = r, l
+		}
+		return l, r
+	}
+
+	for i := 0; i < 100; i++ {
+		a1l, a1r := randRange()
+		a2l, a2r := randRange()
+		b1l, b1r := randRange()
+		b2l, b2r := randRange()
+		for _, utype := range []string{"union all", "union distinct"} {
+			pattern := fmt.Sprintf(`select * from %%v where a>=%v and a<=%v and b>=%v and b<=%v
+			%v select * from %%v where a>=%v and a<=%v and b>=%v and b<=%v`, a1l, a1r, b1l, b1r, utype, a2l, a2r, b2l, b2r)
+			r := tk.MustQuery(fmt.Sprintf(pattern, "t", "t")).Sort().Rows()
+			tk.MustQuery(fmt.Sprintf(pattern, "thash", "thash")).Sort().Check(r)   // hash + hash
+			tk.MustQuery(fmt.Sprintf(pattern, "trange", "trange")).Sort().Check(r) // range + range
+			tk.MustQuery(fmt.Sprintf(pattern, "trange", "thash")).Sort().Check(r)  // range + hash
+		}
+	}
+}
+
+func (s *partitionTableSuite) TestSubqueries(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_subquery")
+	defer tk.MustExec(`drop database test_subquery`)
+	tk.MustExec("use test_subquery")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	tk.MustExec(`create table touter (a int, b int, index(a))`)
+	tk.MustExec(`create table tinner (a int, b int, c int, index(a))`)
+	tk.MustExec(`create table thash (a int, b int, c int, index(a)) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table trange (a int, b int, c int, index(a)) partition by range(a) (
+		partition p0 values less than(10000),
+		partition p1 values less than(20000),
+		partition p2 values less than(30000),
+		partition p3 values less than(40000))`)
+
+	outerVals := make([]string, 0, 100)
+	for i := 0; i < 100; i++ {
+		outerVals = append(outerVals, fmt.Sprintf(`(%v, %v)`, rand.Intn(40000), rand.Intn(40000)))
+	}
+	tk.MustExec(`insert into touter values ` + strings.Join(outerVals, ", "))
+	vals := make([]string, 0, 2000)
+	for i := 0; i < 2000; i++ {
+		vals = append(vals, fmt.Sprintf(`(%v, %v, %v)`, rand.Intn(40000), rand.Intn(40000), rand.Intn(40000)))
+	}
+	tk.MustExec(`insert into tinner values ` + strings.Join(vals, ", "))
+	tk.MustExec(`insert into thash values ` + strings.Join(vals, ", "))
+	tk.MustExec(`insert into trange values ` + strings.Join(vals, ", "))
+
+	// in
+	for i := 0; i < 50; i++ {
+		for _, op := range []string{"in", "not in"} {
+			x := rand.Intn(40000)
+			var r [][]interface{}
+			for _, t := range []string{"tinner", "thash", "trange"} {
+				q := fmt.Sprintf(`select * from touter where touter.a %v (select %v.b from %v where %v.a > touter.b and %v.c > %v)`, op, t, t, t, t, x)
+				if r == nil {
+					r = tk.MustQuery(q).Sort().Rows()
+				} else {
+					tk.MustQuery(q).Sort().Check(r)
+				}
+			}
+		}
+	}
+
+	// exist
+	for i := 0; i < 50; i++ {
+		for _, op := range []string{"exists", "not exists"} {
+			x := rand.Intn(40000)
+			var r [][]interface{}
+			for _, t := range []string{"tinner", "thash", "trange"} {
+				q := fmt.Sprintf(`select * from touter where %v (select %v.b from %v where %v.a > touter.b and %v.c > %v)`, op, t, t, t, t, x)
+				if r == nil {
+					r = tk.MustQuery(q).Sort().Rows()
+				} else {
+					tk.MustQuery(q).Sort().Check(r)
+				}
+			}
+		}
+	}
+}
+
 func (s *partitionTableSuite) TestSplitRegion(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
@@ -1810,6 +2108,155 @@ func (s *partitionTableSuite) TestDirectReadingWithUnionScan(c *C) {
 		}
 	}
 	tk.MustExec(`rollback`)
+}
+
+func (s *partitionTableSuite) TestIssue25030(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_issue_25030")
+	tk.MustExec("use test_issue_25030")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	tk.MustExec(`CREATE TABLE tbl_936 (
+	col_5410 smallint NOT NULL,
+	col_5411 double,
+	col_5412 boolean NOT NULL DEFAULT 1,
+	col_5413 set('Alice', 'Bob', 'Charlie', 'David') NOT NULL DEFAULT 'Charlie',
+	col_5414 varbinary(147) COLLATE 'binary' DEFAULT 'bvpKgYWLfyuTiOYSkj',
+	col_5415 timestamp NOT NULL DEFAULT '2021-07-06',
+	col_5416 decimal(6, 6) DEFAULT 0.49,
+	col_5417 text COLLATE utf8_bin,
+	col_5418 float DEFAULT 2048.0762299371554,
+	col_5419 int UNSIGNED NOT NULL DEFAULT 3152326370,
+	PRIMARY KEY (col_5419) )
+	PARTITION BY HASH (col_5419) PARTITIONS 3`)
+	tk.MustQuery(`SELECT last_value(col_5414) OVER w FROM tbl_936
+	WINDOW w AS (ORDER BY col_5410, col_5411, col_5412, col_5413, col_5414, col_5415, col_5416, col_5417, col_5418, col_5419)
+	ORDER BY col_5410, col_5411, col_5412, col_5413, col_5414, col_5415, col_5416, col_5417, col_5418, col_5419, nth_value(col_5412, 5) OVER w`).
+		Check(testkit.Rows()) // can work properly without any error or panic
+}
+
+func (s *partitionTableSuite) TestUnsignedPartitionColumn(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_unsigned_partition")
+	tk.MustExec("use test_unsigned_partition")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	tk.MustExec(`create table thash_pk (a int unsigned, b int, primary key(a)) partition by hash (a) partitions 3`)
+	tk.MustExec(`create table trange_pk (a int unsigned, b int, primary key(a)) partition by range (a) (
+		partition p1 values less than (100000),
+		partition p2 values less than (200000),
+		partition p3 values less than (300000),
+		partition p4 values less than (400000))`)
+	tk.MustExec(`create table tnormal_pk (a int unsigned, b int, primary key(a))`)
+	tk.MustExec(`create table thash_uniq (a int unsigned, b int, unique key(a)) partition by hash (a) partitions 3`)
+	tk.MustExec(`create table trange_uniq (a int unsigned, b int, unique key(a)) partition by range (a) (
+		partition p1 values less than (100000),
+		partition p2 values less than (200000),
+		partition p3 values less than (300000),
+		partition p4 values less than (400000))`)
+	tk.MustExec(`create table tnormal_uniq (a int unsigned, b int, unique key(a))`)
+
+	valColA := make(map[int]struct{}, 1000)
+	vals := make([]string, 0, 1000)
+	for len(vals) < 1000 {
+		a := rand.Intn(400000)
+		if _, ok := valColA[a]; ok {
+			continue
+		}
+		valColA[a] = struct{}{}
+		vals = append(vals, fmt.Sprintf("(%v, %v)", a, rand.Intn(400000)))
+	}
+	valStr := strings.Join(vals, ", ")
+	for _, tbl := range []string{"thash_pk", "trange_pk", "tnormal_pk", "thash_uniq", "trange_uniq", "tnormal_uniq"} {
+		tk.MustExec(fmt.Sprintf("insert into %v values %v", tbl, valStr))
+	}
+
+	for i := 0; i < 100; i++ {
+		scanCond := fmt.Sprintf("a %v %v", []string{">", "<"}[rand.Intn(2)], rand.Intn(400000))
+		pointCond := fmt.Sprintf("a = %v", rand.Intn(400000))
+		batchCond := fmt.Sprintf("a in (%v, %v, %v)", rand.Intn(400000), rand.Intn(400000), rand.Intn(400000))
+
+		var rScan, rPoint, rBatch [][]interface{}
+		for tid, tbl := range []string{"tnormal_pk", "trange_pk", "thash_pk"} {
+			// unsigned + TableReader
+			scanSQL := fmt.Sprintf("select * from %v use index(primary) where %v", tbl, scanCond)
+			c.Assert(tk.HasPlan(scanSQL, "TableReader"), IsTrue)
+			r := tk.MustQuery(scanSQL).Sort()
+			if tid == 0 {
+				rScan = r.Rows()
+			} else {
+				r.Check(rScan)
+			}
+
+			// unsigned + PointGet on PK
+			pointSQL := fmt.Sprintf("select * from %v use index(primary) where %v", tbl, pointCond)
+			tk.MustPointGet(pointSQL)
+			r = tk.MustQuery(pointSQL).Sort()
+			if tid == 0 {
+				rPoint = r.Rows()
+			} else {
+				r.Check(rPoint)
+			}
+
+			// unsigned + BatchGet on PK
+			batchSQL := fmt.Sprintf("select * from %v where %v", tbl, batchCond)
+			c.Assert(tk.HasPlan(batchSQL, "Batch_Point_Get"), IsTrue)
+			r = tk.MustQuery(batchSQL).Sort()
+			if tid == 0 {
+				rBatch = r.Rows()
+			} else {
+				r.Check(rBatch)
+			}
+		}
+
+		lookupCond := fmt.Sprintf("a %v %v", []string{">", "<"}[rand.Intn(2)], rand.Intn(400000))
+		var rLookup [][]interface{}
+		for tid, tbl := range []string{"tnormal_uniq", "trange_uniq", "thash_uniq"} {
+			// unsigned + IndexReader
+			scanSQL := fmt.Sprintf("select a from %v use index(a) where %v", tbl, scanCond)
+			c.Assert(tk.HasPlan(scanSQL, "IndexReader"), IsTrue)
+			r := tk.MustQuery(scanSQL).Sort()
+			if tid == 0 {
+				rScan = r.Rows()
+			} else {
+				r.Check(rScan)
+			}
+
+			// unsigned + IndexLookUp
+			lookupSQL := fmt.Sprintf("select * from %v use index(a) where %v", tbl, lookupCond)
+			tk.MustIndexLookup(lookupSQL)
+			r = tk.MustQuery(lookupSQL).Sort()
+			if tid == 0 {
+				rLookup = r.Rows()
+			} else {
+				r.Check(rLookup)
+			}
+
+			// unsigned + PointGet on UniqueIndex
+			pointSQL := fmt.Sprintf("select * from %v use index(a) where %v", tbl, pointCond)
+			tk.MustPointGet(pointSQL)
+			r = tk.MustQuery(pointSQL).Sort()
+			if tid == 0 {
+				rPoint = r.Rows()
+			} else {
+				r.Check(rPoint)
+			}
+
+			// unsigned + BatchGet on UniqueIndex
+			batchSQL := fmt.Sprintf("select * from %v where %v", tbl, batchCond)
+			c.Assert(tk.HasPlan(batchSQL, "Batch_Point_Get"), IsTrue)
+			r = tk.MustQuery(batchSQL).Sort()
+			if tid == 0 {
+				rBatch = r.Rows()
+			} else {
+				r.Check(rBatch)
+			}
+		}
+	}
 }
 
 func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {

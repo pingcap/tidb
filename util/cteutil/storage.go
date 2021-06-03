@@ -51,6 +51,7 @@ type Storage interface {
 	Reopen() error
 
 	// Add chunk into underlying storage.
+	// Should return directly if chk is empty.
 	Add(chk *chunk.Chunk) error
 
 	// Get Chunk by index.
@@ -61,6 +62,9 @@ type Storage interface {
 
 	// NumChunks return chunk number of the underlying storage.
 	NumChunks() int
+
+	// NumRows return row number of the underlying storage.
+	NumRows() int
 
 	// Storage is not thread-safe.
 	// By using Lock(), users can achieve the purpose of ensuring thread safety.
@@ -84,7 +88,7 @@ type Storage interface {
 
 	GetMemTracker() *memory.Tracker
 	GetDiskTracker() *disk.Tracker
-	ActionSpill() memory.ActionOnExceed
+	ActionSpill() *chunk.SpillDiskAction
 }
 
 // StorageRC implements Storage interface using RowContainer.
@@ -101,8 +105,8 @@ type StorageRC struct {
 	rc *chunk.RowContainer
 }
 
-// NewStorageRC create a new StorageRC.
-func NewStorageRC(tp []*types.FieldType, chkSize int) *StorageRC {
+// NewStorageRowContainer create a new StorageRC.
+func NewStorageRowContainer(tp []*types.FieldType, chkSize int) *StorageRC {
 	return &StorageRC{tp: tp, chkSize: chkSize}
 }
 
@@ -199,6 +203,11 @@ func (s *StorageRC) NumChunks() int {
 	return s.rc.NumChunks()
 }
 
+// NumRows impls Storage NumRows interface.
+func (s *StorageRC) NumRows() int {
+	return s.rc.NumRow()
+}
+
 // Lock impls Storage Lock interface.
 func (s *StorageRC) Lock() {
 	s.mu.Lock()
@@ -245,7 +254,7 @@ func (s *StorageRC) GetDiskTracker() *memory.Tracker {
 }
 
 // ActionSpill impls Storage ActionSpill interface.
-func (s *StorageRC) ActionSpill() memory.ActionOnExceed {
+func (s *StorageRC) ActionSpill() *chunk.SpillDiskAction {
 	return s.rc.ActionSpill()
 }
 
