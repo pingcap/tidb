@@ -53,7 +53,11 @@ require (
 	github.com/pingcap/parser v0.0.0-20210601031019-389d0cf6c5bd
 	github.com/pingcap/sysutil v0.0.0-20210221112134-a07bda3bde99
 	github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible
+<<<<<<< HEAD
 	github.com/pingcap/tipb v0.0.0-20210326161441-1164ca065d1b
+=======
+	github.com/pingcap/tipb v0.0.0-20210601083426-79a378b6d1c4
+>>>>>>> d3de5479a... planner: support push down broadcast cartesian join to TiFlash (#25049)
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
