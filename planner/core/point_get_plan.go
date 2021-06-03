@@ -247,8 +247,8 @@ func (p *PointGetPlan) GetCost(cols []*expression.Column) float64 {
 	} else {
 		rowSize = p.stats.HistColl.GetIndexAvgRowSize(p.ctx, cols, p.IndexInfo.Unique)
 	}
-	cost += rowSize * sessVars.NetworkFactor
-	cost += sessVars.SeekFactor
+	cost += rowSize * sessVars.GetNetworkFactor(p.TblInfo)
+	cost += sessVars.GetSeekFactor(p.TblInfo)
 	cost /= float64(sessVars.DistSQLScanConcurrency())
 	return cost
 }
@@ -428,8 +428,8 @@ func (p *BatchPointGetPlan) GetCost(cols []*expression.Column) float64 {
 		rowCount = float64(len(p.IndexValues))
 		rowSize = p.stats.HistColl.GetIndexAvgRowSize(p.ctx, cols, p.IndexInfo.Unique)
 	}
-	cost += rowCount * rowSize * sessVars.NetworkFactor
-	cost += rowCount * sessVars.SeekFactor
+	cost += rowCount * rowSize * sessVars.GetNetworkFactor(p.TblInfo)
+	cost += rowCount * sessVars.GetSeekFactor(p.TblInfo)
 	cost /= float64(sessVars.DistSQLScanConcurrency())
 	return cost
 }
