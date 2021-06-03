@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-	"github.com/pingcap/kvproto/pkg/coprocessor_v2"
 	deadlockPb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -962,8 +961,8 @@ func (svr *Server) RawCompareAndSwap(context.Context, *kvrpcpb.RawCASRequest) (*
 	panic("implement me")
 }
 
-// CoprocessorV2 implements the tikvpb.TikvServer interface.
-func (svr *Server) CoprocessorV2(context.Context, *coprocessor_v2.RawCoprocessorRequest) (*coprocessor_v2.RawCoprocessorResponse, error) {
+// RawCoprocessor implements the tikvpb.TikvServer interface.
+func (svr *Server) RawCoprocessor(context.Context, *kvrpcpb.RawCoprocessorRequest) (*kvrpcpb.RawCoprocessorResponse, error) {
 	panic("implement me")
 }
 
