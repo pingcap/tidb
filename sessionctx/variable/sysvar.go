@@ -1202,6 +1202,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableWindowFunction = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePipelinedWindowFunction, Value: BoolToOnOff(DefEnablePipelinedWindowFunction), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnablePipelinedWindowExec = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableStrictDoubleTypeCheck, Value: BoolToOnOff(DefEnableStrictDoubleTypeCheck), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableStrictDoubleTypeCheck = TiDBOptOn(val)
 		return nil
@@ -1716,6 +1720,10 @@ var defaultSysVars = []*SysVar{
 			return err
 		}
 		TopSQLVariable.MaxStatementCount.Store(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableGlobalTemporaryTable, Value: BoolToOnOff(DefTiDBEnableGlobalTemporaryTable), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableGlobalTemporaryTable = TiDBOptOn(val)
 		return nil
 	}},
 }

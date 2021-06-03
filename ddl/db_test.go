@@ -3037,6 +3037,7 @@ func (s *testDBSuite2) TestTemporaryTableForeignKey(c *C) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (a int, b int);")
 	tk.MustExec("drop table if exists t1_tmp;")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table t1_tmp (a int, b int) on commit delete rows;")
 	// test add foreign key.
 	tk.MustExec("drop table if exists t2;")
@@ -5383,6 +5384,7 @@ func (s *testSerialDBSuite) TestShardRowIDBitsOnTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists shard_row_id_temporary")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	_, err := tk.Exec("create global temporary table shard_row_id_temporary (a int) shard_row_id_bits = 5 on commit delete rows;")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
 	tk.MustExec("create global temporary table shard_row_id_temporary (a int) on commit delete rows;")

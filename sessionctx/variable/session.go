@@ -596,6 +596,9 @@ type SessionVars struct {
 	// EnableWindowFunction enables the window function.
 	EnableWindowFunction bool
 
+	// EnablePipelinedWindowExec enables executing window functions in a pipelined manner.
+	EnablePipelinedWindowExec bool
+
 	// EnableStrictDoubleTypeCheck enables table field double type check.
 	EnableStrictDoubleTypeCheck bool
 
@@ -826,6 +829,9 @@ type SessionVars struct {
 	// CTEMaxRecursionDepth indicates The common table expression (CTE) maximum recursion depth.
 	// see https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_cte_max_recursion_depth
 	CTEMaxRecursionDepth int
+
+	// EnableGlobalTemporaryTable indicates whether to enable global temporary table
+	EnableGlobalTemporaryTable bool
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
@@ -1028,6 +1034,7 @@ func NewSessionVars() *SessionVars {
 		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
+		EnableGlobalTemporaryTable:  DefTiDBEnableGlobalTemporaryTable,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
