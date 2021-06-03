@@ -1,23 +1,33 @@
-/distsql @pingcap/exec-reviewers
-/executor @pingcap/exec-reviewers
-/expression @pingcap/exec-reviewers
-/types @pingcap/exec-reviewers
-/util/chunk @pingcap/exec-reviewers
-/util/disk @pingcap/exec-reviewers
-/util/execdetails @pingcap/exec-reviewers
-/util/expensivequery @pingcap/exec-reviewers
-/util/filesort @pingcap/exec-reviewers
-/util/memory @pingcap/exec-reviewers
-/util/sqlexec @pingcap/exec-reviewers
-
-/planner @pingcap/planner-reviewers
-/statistics @pingcap/planner-reviewers
-/util/ranger @pingcap/planner-reviewers
-/util/plancodec @pingcap/planner-reviewers
-/bindinfo @pingcap/planner-reviewers
-
-/ddl @pingcap/co-ddl
-/domain @pingcap/co-ddl
-/infoschema @pingcap/co-ddl
-/meta @pingcap/co-ddl
-/owner @pingcap/co-ddl
+/bindinfo @rebelice
+/cmd @eurekaka @rebelice
+/config @tiancaiamao @qw4990
+/ddl @lynn @tiancaiamao
+/distsql @crazycs520 @qw4990
+/docs @zz-jason @bb7133
+/domain @lynn @lysu @xhebox
+/errno @morgo @tangenta
+/executor @lysu @XuHuaiyu @wshwsh12
+/expression @XuHuaiyu @wjhuang2016
+/infoschema @djshow832 @lysu
+/kv @disksing @AndreMouche
+/lock @crazycs520
+/meta @tangenta @AilinKid
+/metrics @jackysp @lzmhhh123
+/owner @lynn @wjhuang2016
+/planner @winoros @rebelice @hanfei1991 
+/plugin @lysu
+/privilege @morgo
+/server @coocood @morgo
+/session @cfzjywxk @tiancaiamao
+/sessionctx @qw4990
+/statistics @winoros @eurekaka
+/store @disksing @AndreMouche @MyonKeminta
+/structure @zimulala
+/table @wjhuang2016
+/tablecodec @tangenta
+/telemetry @breeswish @lzmhhh123
+/tests @ichn-hu
+/tidb-server @coocood @crazycs520
+/tools @zhuo-zhi
+/types @XuHuaiyu @guo-shaoge
+/util @winoros @wshwsh12
