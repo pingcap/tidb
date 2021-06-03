@@ -2526,7 +2526,10 @@ func NewRuleMergeAdjacentWindow() Transformation {
 // Match implements Transformation interface.
 func (r *MergeAdjacentWindow) Match(expr *memo.ExprIter) bool {
 	curWinPlan := expr.GetExpr().ExprNode.(*plannercore.LogicalWindow)
-	nextWinPlan := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalWindow)
+	nextGroupExpr := expr.Children[0].GetExpr()
+	nextWinPlan := nextGroupExpr.ExprNode.(*plannercore.LogicalWindow)
+	nextSchema := nextGroupExpr.Group.Prop.Schema
+	nextGroupChildren := nextGroupExpr.Children
 	ctx := expr.GetExpr().ExprNode.SCtx()
 
 	// Whether Partition parts are the same.
@@ -2577,10 +2580,10 @@ func (r *MergeAdjacentWindow) Match(expr *memo.ExprIter) bool {
 	// The adjacent windows in the above sql statement cannot be merged.
 	// The reason is that the first one uses an unsettled column `bb` from the second one.
 	nextWindowNewCols := make(map[*expression.Column]struct{})
-	for _, nc := range nextWinPlan.Schema().Columns {
+	for _, nc := range nextSchema.Columns {
 		isExisted := false
-		for _, plan := range nextWinPlan.Children() {
-			for _, c := range plan.Schema().Columns {
+		for _, ngc := range nextGroupChildren {
+			for _, c := range ngc.Prop.Schema.Columns {
 				if nc.Equal(ctx, c) {
 					isExisted = true
 					break
