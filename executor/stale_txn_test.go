@@ -772,3 +772,49 @@ func (s *testStaleTxnSuite) TestSetTransactionInfoSchema(c *C) {
 	tk.MustExec("commit")
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer3)
 }
+
+func (s *testStaleTxnSuite) TestStaleSelect(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("insert into t values (1)")
+
+	time.Sleep(10 * time.Millisecond)
+	time1 := time.Now()
+	tk.MustExec("insert into t values (2)")
+	time.Sleep(10 * time.Millisecond)
+	time2 := time.Now()
+	tk.MustExec("insert into t values (3)")
+
+	staleRows := testkit.Rows("1")
+	staleSQL := fmt.Sprintf(`select * from t as of timestamp '%s'`, time1.Format("2006-1-2 15:04:05.000"))
+
+	// test normal stale select
+	tk.MustQuery(staleSQL).Check(staleRows)
+
+	// test stale select in txn
+	tk.MustExec("begin")
+	tk.MustQuery(staleSQL).Check(staleRows)
+	tk.MustExec("commit")
+
+	// test prepared stale select
+	tk.MustExec(fmt.Sprintf(`prepare s from "%s"`, staleSQL))
+	tk.MustQuery("execute s")
+
+	// test prepared stale select in txn
+	tk.MustExec("begin")
+	tk.MustQuery("execute s").Check(staleRows)
+	tk.MustExec("commit")
+
+	// test stale select in stale txn
+	tk.MustExec(fmt.Sprintf(`start transaction read only as of timestamp '%s'`, time2.Format("2006-1-2 15:04:05.000")))
+	tk.MustQuery(staleSQL).Check(staleRows)
+	tk.MustExec("commit")
+
+	// test prepared stale select in stale txn
+	tk.MustExec(fmt.Sprintf(`start transaction read only as of timestamp '%s'`, time2.Format("2006-1-2 15:04:05.000")))
+	tk.MustQuery("execute s").Check(staleRows)
+	tk.MustExec("commit")
+}

@@ -95,12 +95,19 @@ type CTEStorages struct {
 	IterInTbl cteutil.Storage
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *executorBuilder {
-	return &executorBuilder{
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, explicitStaleness bool) *executorBuilder {
+	builder := &executorBuilder{
 		ctx: ctx,
 		is:  is,
 		Ti:  ti,
+		snapshotTS: snapshotTS,
+		explicitStaleness: explicitStaleness,
 	}
+	// if snapshotTS is specified, executor will not try to update it anymore. it only serves for stale reads for now.
+	if builder.snapshotTS != 0 {
+		builder.snapshotTSCached = true
+	}
+	return builder
 }
 
 // MockPhysicalPlan is used to return a specified executor in when build.
@@ -672,6 +679,11 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		stmt:         v.Stmt,
 		plan:         v.Plan,
 		outputNames:  v.OutputNames(),
+	}
+	// if snapshotTS is specified, executor will not try to update it anymore. it only serves for stale reads for now.
+	b.snapshotTS = v.SnapshotTS
+	if b.snapshotTS != 0 {
+		b.snapshotTSCached = true
 	}
 	return e
 }

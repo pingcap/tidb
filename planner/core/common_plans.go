@@ -182,6 +182,7 @@ type Execute struct {
 	UsingVars     []expression.Expression
 	PrepareParams []types.Datum
 	ExecID        uint32
+	SnapshotTS    uint64
 	Stmt          ast.StmtNode
 	StmtType      string
 	Plan          Plan
@@ -256,17 +257,20 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 	}
 
-	if prepared.SchemaVersion != is.SchemaMetaVersion() {
+	// if snapshotTS != 0, it is a stale read SQL:
+	// which means its infoschema is specified by the SQL, not the current/latest infoschema
+	if preparedObj.SnapshotTS == 0 && prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
 		// cached plan once the schema version is changed.
 		// Cached plan in prepared struct does NOT have a "cache key" with
 		// schema version like prepared plan cache key
 		prepared.CachedPlan = nil
+
 		preparedObj.Executor = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
 		// FIXME: compatible with prepare https://github.com/pingcap/tidb/issues/24932
-		ret := &PreprocessorReturn{InfoSchema: is}
+		ret := &PreprocessorReturn{InfoSchema: is, SnapshotTS: 0}
 		err := Preprocess(sctx, prepared.Stmt, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
 			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
@@ -277,6 +281,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	if err != nil {
 		return err
 	}
+	e.SnapshotTS = preparedObj.SnapshotTS
 	e.Stmt = prepared.Stmt
 	return nil
 }

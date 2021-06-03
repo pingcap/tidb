@@ -1771,7 +1771,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 
 func (s *session) preparedStmtExec(ctx context.Context,
 	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
-	st, tiFlashPushDown, tiFlashExchangePushDown, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
+	st, tiFlashPushDown, tiFlashExchangePushDown, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, prepareStmt.SnapshotTS, args)
 	if err != nil {
 		return nil, err
 	}
@@ -1820,6 +1820,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 		OutputNames: execPlan.OutputNames(),
 		PsStmt:      prepareStmt,
 		Ti:          &executor.TelemetryInfo{},
+		SnapshotTS:  prepareStmt.SnapshotTS,
 	}
 	compileDuration := time.Since(s.sessionVars.StartTime)
 	sessionExecuteCompileDurationGeneral.Observe(compileDuration.Seconds())
@@ -1878,11 +1879,16 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 	if !plannercore.IsAutoCommitTxn(s) {
 		return false, nil
 	}
-	// check schema version
-	is := s.GetInfoSchema().(infoschema.InfoSchema)
-	if prepared.SchemaVersion != is.SchemaMetaVersion() {
-		prepared.CachedPlan = nil
-		return false, nil
+	// SnapshotTS != 0, it is stale read
+	// stale read expect a stale infoschema
+	// so skip infoschema check
+	if preparedStmt.SnapshotTS == 0 {
+		// check schema version
+		is := s.GetInfoSchema().(infoschema.InfoSchema)
+		if prepared.SchemaVersion != is.SchemaMetaVersion() {
+			prepared.CachedPlan = nil
+			return false, nil
+		}
 	}
 	// maybe we'd better check cached plan type here, current
 	// only point select/update will be cached, see "getPhysicalPlan" func

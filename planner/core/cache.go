@@ -203,4 +203,5 @@ type CachedPrepareStmt struct {
 	SQLDigest      *parser.Digest
 	PlanDigest     *parser.Digest
 	ForUpdateRead  bool
+	SnapshotTS     uint64
 }
