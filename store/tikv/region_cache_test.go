@@ -33,11 +33,6 @@ import (
 	pd "github.com/tikv/pd/client"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
 type testRegionCacheSuite struct {
 	OneByOneSuite
 	cluster *mocktikv.Cluster
