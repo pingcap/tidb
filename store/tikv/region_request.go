@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
@@ -286,6 +287,9 @@ func (s *RegionRequestSender) SendReqCtx(
 		if err != nil {
 			return nil, nil, err
 		}
+		if rpcCtx != nil {
+			rpcCtx.tryTimes = tryTimes
+		}
 
 		failpoint.Inject("invalidCacheAndRetry", func() {
 			// cooperate with github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff
@@ -334,8 +338,14 @@ func (s *RegionRequestSender) SendReqCtx(
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		failpoint.Inject("mockDataIsNotReadyError", func(val failpoint.Value) {
+			regionErr = &errorpb.Error{}
+			if tryTimesLimit, ok := val.(int); ok && tryTimes <= tryTimesLimit {
+				regionErr.DataIsNotReady = &errorpb.DataIsNotReady{}
+			}
+		})
 		if regionErr != nil {
-			retry, err = s.onRegionError(bo, rpcCtx, req.ReplicaReadSeed, regionErr)
+			retry, err = s.onRegionError(bo, rpcCtx, req, regionErr, &opts)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -644,13 +654,19 @@ func regionErrorToLabel(e *errorpb.Error) string {
 	return "unknown"
 }
 
-func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed *uint32, regionErr *errorpb.Error) (shouldRetry bool, err error) {
+func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req *tikvrpc.Request, regionErr *errorpb.Error, opts *[]StoreSelectorOption) (shouldRetry bool, err error) {
 	if span := opentracing.SpanFromContext(bo.GetCtx()); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tikv.onRegionError", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		// TODO(MyonKeminta): Make sure trace works without cloning the backoffer.
 		// bo = bo.Clone()
 		bo.SetCtx(opentracing.ContextWithSpan(bo.GetCtx(), span1))
+	}
+	// Stale Read request will retry the leader or next peer on error,
+	// if txnScope is global, we will only retry the leader by using the WithLeaderOnly option,
+	// if txnScope is local, we will retry both other peers and the leader by the incresing seed.
+	if ctx.tryTimes < 1 && req != nil && req.TxnScope == oracle.GlobalTxnScope && req.GetStaleRead() {
+		*opts = append(*opts, WithLeaderOnly())
 	}
 
 	metrics.TiKVRegionErrorCounter.WithLabelValues(regionErrorToLabel(regionErr)).Inc()
@@ -687,6 +703,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 		return true, nil
 	}
 
+	seed := req.GetReplicaReadSeed()
 	if epochNotMatch := regionErr.GetEpochNotMatch(); epochNotMatch != nil {
 		logutil.BgLogger().Debug("tikv reports `EpochNotMatch` retry later",
 			zap.Stringer("EpochNotMatch", epochNotMatch),
@@ -722,6 +739,30 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 	if regionErr.GetRaftEntryTooLarge() != nil {
 		logutil.BgLogger().Warn("tikv reports `RaftEntryTooLarge`", zap.Stringer("ctx", ctx))
 		return false, errors.New(regionErr.String())
+	}
+	// A stale read request may be sent to a peer which the data is not ready yet, we should retry in this case.
+	if regionErr.GetDataIsNotReady() != nil {
+		logutil.BgLogger().Warn("tikv reports `DataIsNotReady` retry later",
+			zap.Uint64("store-id", ctx.Store.storeID),
+			zap.Uint64("peer-id", regionErr.GetDataIsNotReady().GetPeerId()),
+			zap.Uint64("region-id", regionErr.GetDataIsNotReady().GetRegionId()),
+			zap.Uint64("safe-ts", regionErr.GetDataIsNotReady().GetSafeTs()),
+			zap.Stringer("ctx", ctx))
+		if seed != nil {
+			*seed = *seed + 1
+		}
+		return true, nil
+	}
+	// A read request may be sent to a peer which has not been initialized yet, we should retry in this case.
+	if regionErr.GetRegionNotInitialized() != nil {
+		logutil.BgLogger().Warn("tikv reports `RegionNotInitialized` retry later",
+			zap.Uint64("store-id", ctx.Store.storeID),
+			zap.Uint64("region-id", regionErr.GetRegionNotInitialized().GetRegionId()),
+			zap.Stringer("ctx", ctx))
+		if seed != nil {
+			*seed = *seed + 1
+		}
+		return true, nil
 	}
 	if regionErr.GetRegionNotFound() != nil && seed != nil {
 		logutil.BgLogger().Debug("tikv reports `RegionNotFound` in follow-reader",

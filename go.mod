@@ -43,7 +43,7 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
-	github.com/pingcap/kvproto v0.0.0-20210507054410-a8152f8a876c
+	github.com/pingcap/kvproto v0.0.0-20210531063847-f42e582bf0bb
 	github.com/pingcap/log v0.0.0-20210317133921-96f4fcab92a4
 	github.com/pingcap/parser v0.0.0-20210525032559-c37778aff307
 	github.com/pingcap/sysutil v0.0.0-20210315073920-cc0985d983a3
