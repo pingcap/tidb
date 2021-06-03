@@ -4192,6 +4192,9 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		chkIdx:        0,
 		isDistinct:    v.CTE.IsDistinct,
 		sel:           sel,
+		hasLimit:      v.CTE.HasLimit,
+		limitBeg:      v.CTE.LimitBeg,
+		limitEnd:      v.CTE.LimitEnd,
 	}
 }
 
