@@ -1115,6 +1115,15 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 			tipb.ScalarFuncSig_RandWithSeedFirstGen:
 			ret = true
 		}
+	case ast.StrToDate:
+		switch function.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_StrToDateDate,
+			tipb.ScalarFuncSig_StrToDateDatetime:
+			return true
+		default:
+			return false
+		}
 	}
 	if ret {
 		switch storeType {
