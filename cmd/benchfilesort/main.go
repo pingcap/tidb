@@ -17,7 +17,6 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -332,7 +331,7 @@ func driveRunCmd() {
 	for i := 0; i < keySize; i++ {
 		byDesc[i] = false
 	}
-	dir, err = ioutil.TempDir(tmpDir, "benchfilesort_test")
+	dir, err = os.MkdirTemp(tmpDir, "benchfilesort_test")
 	terror.MustNil(err)
 	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(nWorkers).SetDesc(byDesc).SetDir(dir).Build()
 	terror.MustNil(err)

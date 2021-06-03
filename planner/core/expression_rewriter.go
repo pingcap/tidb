@@ -65,7 +65,7 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice) (expression.Expression, error) {
 	var is infoschema.InfoSchema
 	// in tests, it may be null
-	if s, ok := sctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema); ok {
+	if s, ok := sctx.GetInfoSchema().(infoschema.InfoSchema); ok {
 		is = s
 	}
 	b, savedBlockNames := NewPlanBuilder(sctx, is, &hint.BlockHintProcessor{})
@@ -170,6 +170,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 	rewriter.ctxStack = rewriter.ctxStack[:0]
 	rewriter.ctxNameStk = rewriter.ctxNameStk[:0]
 	rewriter.ctx = ctx
+	rewriter.err = nil
 	return
 }
 
@@ -497,6 +498,8 @@ func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np LogicalPlan, l, r e
 }
 
 func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.CompareSubqueryExpr) (ast.Node, bool) {
+	ci := er.b.prepareCTECheckForSubQuery()
+	defer resetCTECheckForSubQuery(ci)
 	v.L.Accept(er)
 	if er.err != nil {
 		return v, true
@@ -536,6 +539,15 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 			return v, true
 		}
 	}
+
+	// Lexpr cannot compare with rexpr by different collate
+	opString := new(strings.Builder)
+	v.Op.Format(opString)
+	er.err = expression.CheckIllegalMixCollation(opString.String(), []expression.Expression{lexpr, rexpr}, 0)
+	if er.err != nil {
+		return v, true
+	}
+
 	switch v.Op {
 	// Only EQ, NE and NullEQ can be composed with and.
 	case opcode.EQ, opcode.NE, opcode.NullEQ:
@@ -771,6 +783,8 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 }
 
 func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.ExistsSubqueryExpr) (ast.Node, bool) {
+	ci := er.b.prepareCTECheckForSubQuery()
+	defer resetCTECheckForSubQuery(ci)
 	subq, ok := v.Sel.(*ast.SubqueryExpr)
 	if !ok {
 		er.err = errors.Errorf("Unknown exists type %T.", v.Sel)
@@ -836,6 +850,8 @@ out:
 }
 
 func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.PatternInExpr) (ast.Node, bool) {
+	ci := er.b.prepareCTECheckForSubQuery()
+	defer resetCTECheckForSubQuery(ci)
 	asScalar := er.asScalar
 	er.asScalar = true
 	v.Expr.Accept(er)
@@ -945,6 +961,8 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 }
 
 func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.SubqueryExpr) (ast.Node, bool) {
+	ci := er.b.prepareCTECheckForSubQuery()
+	defer resetCTECheckForSubQuery(ci)
 	np, err := er.buildSubquery(ctx, v)
 	if err != nil {
 		er.err = err
@@ -1239,11 +1257,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	var err error
 	if sysVar.HasNoneScope() {
 		val = sysVar.Value
-	} else if v.IsGlobal || !sysVar.HasSessionScope() {
-		// The condition "|| !sysVar.HasSessionScope()" is a workaround
-		// for issue https://github.com/pingcap/tidb/issues/24368
-		// Where global values are cached incorrectly. When this issue closes,
-		// the if statement here can be simplified.
+	} else if v.IsGlobal {
 		val, err = variable.GetGlobalSystemVar(sessionVars, name)
 	} else {
 		val, err = variable.GetSessionOrGlobalSystemVar(sessionVars, name)
