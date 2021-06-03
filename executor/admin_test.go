@@ -81,6 +81,7 @@ func (s *testSuite5) TestAdminCheckIndexInTemporaryMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists temporary_admin_test;")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table temporary_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2)) ON COMMIT DELETE ROWS;")
 	tk.MustExec("insert temporary_admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);")
 	_, err := tk.Exec("admin check table temporary_admin_test;")
