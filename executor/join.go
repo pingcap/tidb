@@ -64,6 +64,8 @@ type HashJoinExec struct {
 	rowContainer  *hashRowContainer
 	buildFinished chan error
 
+	buildSelected []bool
+
 	// closeCh add a lock for closing executor.
 	closeCh      chan struct{}
 	joinType     plannercore.JoinType
@@ -739,7 +741,6 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 		keyColIdx: buildKeyColIdx,
 	}
 	var err error
-	var selected []bool
 	e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx)
 	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
 	e.rowContainer.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
@@ -755,24 +756,28 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 		})
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
+	hCtx1 := &hashContext{
+		allTypes:  e.buildTypes,
+		keyColIdx: buildKeyColIdx,
+	}
 	for chk := range buildSideResultCh {
 		if e.finished.Load().(bool) {
 			return nil
 		}
 		if !e.useOuterToBuild {
-			err = e.rowContainer.PutChunk(chk, e.isNullEQ)
+			err = e.rowContainer.PutChunk(chk, e.isNullEQ, hCtx1)
 		} else {
 			var bitMap = bitmap.NewConcurrentBitmap(chk.NumRows())
 			e.outerMatchedStatus = append(e.outerMatchedStatus, bitMap)
 			e.memTracker.Consume(bitMap.BytesConsumed())
 			if len(e.outerFilter) == 0 {
-				err = e.rowContainer.PutChunk(chk, e.isNullEQ)
+				err = e.rowContainer.PutChunk(chk, e.isNullEQ, hCtx1)
 			} else {
-				selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(chk), selected)
+				e.buildSelected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(chk), e.buildSelected)
 				if err != nil {
 					return err
 				}
-				err = e.rowContainer.PutChunkSelected(chk, selected, e.isNullEQ)
+				err = e.rowContainer.PutChunkSelected(chk, e.buildSelected, e.isNullEQ, hCtx1)
 			}
 		}
 		if err != nil {

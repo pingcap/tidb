@@ -138,14 +138,14 @@ func (c *hashRowContainer) alreadySpilledSafeForTest() bool {
 // PutChunk puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
-func (c *hashRowContainer) PutChunk(chk *chunk.Chunk, ignoreNulls []bool) error {
-	return c.PutChunkSelected(chk, nil, ignoreNulls)
+func (c *hashRowContainer) PutChunk(chk *chunk.Chunk, ignoreNulls []bool, hCtx *hashContext) error {
+	return c.PutChunkSelected(chk, nil, ignoreNulls, hCtx)
 }
 
 // PutChunkSelected selectively puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
-func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNulls []bool) error {
+func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNulls []bool, hCtx *hashContext) error {
 	start := time.Now()
 	defer func() { c.stat.buildTableElapse += time.Since(start) }()
 
@@ -154,11 +154,14 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 	if err != nil {
 		return err
 	}
-	numRows := chk.NumRows()
-	c.hCtx.initHash(numRows)
 
-	hCtx := c.hCtx
-	for keyIdx, colIdx := range c.hCtx.keyColIdx {
+	if hCtx == nil {
+		hCtx = c.hCtx
+	}
+	numRows := chk.NumRows()
+	hCtx.initHash(numRows)
+
+	for keyIdx, colIdx := range hCtx.keyColIdx {
 		ignoreNull := len(ignoreNulls) > keyIdx && ignoreNulls[keyIdx]
 		err := codec.HashChunkSelected(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
 		if err != nil {
@@ -166,10 +169,10 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 		}
 	}
 	for i := 0; i < numRows; i++ {
-		if (selected != nil && !selected[i]) || c.hCtx.hasNull[i] {
+		if (selected != nil && !selected[i]) || hCtx.hasNull[i] {
 			continue
 		}
-		key := c.hCtx.hashVals[i].Sum64()
+		key := hCtx.hashVals[i].Sum64()
 		rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(i)}
 		c.hashTable.Put(key, rowPtr)
 	}
