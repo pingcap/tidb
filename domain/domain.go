@@ -1067,7 +1067,6 @@ func (do *Domain) TelemetryReportLoop(ctx sessionctx.Context) {
 
 // TelemetryRotateSubWindowLoop create a goroutine that rotates the telemetry window regularly.
 func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
-	telemetry.InitSQLStats()
 	logutil.BgLogger().Info("InitSQLStats already")
 	ctx.GetSessionVars().InRestrictedSQL = true
 	do.wg.Add(1)

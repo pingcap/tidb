@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"strconv"
 	"sync"
 	"time"
 
@@ -121,16 +120,9 @@ var (
 	subWindowsLock    = sync.RWMutex{}
 )
 
-type SQLBucket map[string]int64
+type SQLBucket map[string]int64 // SQL duration bucket
 
-const SQLBucketNum = 29 //prometheus.ExponentialBuckets(0.001, 2, 28), and 1 more +Inf
-
-var (
-	// LastBInfo records last statistic information of slow query buckets
-	LastBInfo SQLBucket
-	// CurrentBInfo records current statitic information of slow query buckets
-	CurrentBInfo SQLBucket
-)
+// const SQLBucketNum = 29 //prometheus.ExponentialBuckets(0.001, 2, 28), and 1 more +Inf
 
 func getSQLSum(sqlTypeDeta *sqlType) int64 {
 	result := sqlTypeDeta.Use
@@ -173,87 +165,13 @@ func readSQLMetric(timepoint time.Time, SQLresult sqlUsageData) (sqlUsageData, e
 		for _, sample := range promVec {
 			metric := sample.Metric
 			bucketName := metric["le"] //hardcode bucket upper bound
-			logutil.BgLogger().Info(fmt.Sprintf("value%d", int64(CurrentBInfo[string(bucketName)])))
 			SQLresult.SQLDurationTotal[string(bucketName)] = int64(sample.Value)
 		}
 	}
+	logutil.BgLogger().Info(fmt.Sprintf("bucket:%s", bucketMap2Json(SQLresult.SQLDurationTotal)))
 	return SQLresult, nil
 
 }
-
-/*
-func querySQLMetric(ctx context.Context, queryTime time.Time, quantile float64) (PromResult promResult, err error) {
-	// Add retry to avoid network error.
-	var prometheusAddr string
-	for i := 0; i < 5; i++ {
-		//TODO: the prometheus will be Integrated into the PD, then we need to query the prometheus in PD directly, which need change the quire API
-		prometheusAddr, err = infosync.GetPrometheusAddr()
-		if err == nil || err == infosync.ErrPrometheusAddrIsNotSet {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	if err != nil {
-		return PromResult, err
-	}
-	promClient, err := api.NewClient(api.Config{
-		Address: prometheusAddr,
-	})
-	if err != nil {
-		return PromResult, err
-	}
-	promQLAPI := promv1.NewAPI(promClient)
-	ctx, cancel := context.WithTimeout(ctx, promReadTimeout)
-	defer cancel()
-	promQL := "sum(tidb_executor_statement_total{}) by (instance,type)"
-	// Add retry to avoid network error.
-	for i := 0; i < 5; i++ {
-		sqlresult, _, err := promQLAPI.Query(ctx, promQL, queryTime)
-		// logutil.BgLogger().Info(fmt.Sprintf("sqlresult", sqlresult))
-		PromResult.sqlResult = sqlresult
-		if err == nil {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	duration_promQL := "tidb_server_handle_query_duration_seconds_bucket{sql_type=\"general\"}"
-	for i := 0; i < 5; i++ {
-		durresult, _, err := promQLAPI.Query(ctx, duration_promQL, queryTime)
-		if err == nil {
-			logutil.BgLogger().Info("get SQL duration from prom successful")
-			PromResult.durResult = durresult
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return PromResult, err
-}
-
-func dataAnylis(PromResult promResult, SQLresult *sqlUsageData) {
-	switch PromResult.sqlResult.Type() {
-	case pmodel.ValVector:
-		promVec := PromResult.sqlResult.(pmodel.Vector)
-		for _, sample := range promVec {
-			v := sample.Value
-			genSqlRecord(sample.Metric, v, SQLresult)
-		}
-	}
-	logutil.BgLogger().Info(fmt.Sprintf("type:%d", PromResult.durResult.Type()))
-
-	switch PromResult.durResult.Type() {
-	case pmodel.ValVector:
-		promVec := PromResult.durResult.(pmodel.Vector)
-		for _, sample := range promVec {
-			metric := sample.Metric
-			bucketName := metric["le"] //hardcode bucket upper bound
-			logutil.BgLogger().Info(fmt.Sprintf("type:%s", bucketName))
-			logutil.BgLogger().Info(fmt.Sprintf("sample", sample))
-			CurrentBInfo[string(bucketName)] = int(sample.Value)
-		}
-	}
-}
-*/
 
 func querySQLMetric(ctx context.Context, queryTime time.Time, quantile float64) (result pmodel.Value, err error) {
 	// Add retry to avoid network error.
@@ -278,7 +196,7 @@ func querySQLMetric(ctx context.Context, queryTime time.Time, quantile float64) 
 	promQLAPI := promv1.NewAPI(promClient)
 	ctx, cancel := context.WithTimeout(ctx, promReadTimeout)
 	defer cancel()
-	promQL := "sum(tidb_executor_statement_total{}) by (instance,type)"
+	promQL := "tidb_executor_statement_total{}"
 	// Add retry to avoid network error.
 	for i := 0; i < 5; i++ {
 		result, _, err = promQLAPI.Query(ctx, promQL, queryTime)
@@ -313,7 +231,7 @@ func queryDurMetric(ctx context.Context, queryTime time.Time, quantile float64) 
 	promQLAPI := promv1.NewAPI(promClient)
 	ctx, cancel := context.WithTimeout(ctx, promReadTimeout)
 	defer cancel()
-	promQL := "tidb_server_handle_query_duration_seconds_bucket{sql_type=\"general\"}"
+	promQL := "sum(tidb_server_handle_query_duration_seconds_bucket{sql_type!=\"internal\"}) by (le)"
 	// Add retry to avoid network error.
 	for i := 0; i < 5; i++ {
 		result, _, err = promQLAPI.Query(ctx, promQL, queryTime)
@@ -344,27 +262,7 @@ func bucketMap2Json(paramMap SQLBucket) string {
 	return string(dataType)
 }
 
-func InitSQLStats() {
-	logutil.BgLogger().Info("statustest1")
-	LastBInfo = make(SQLBucket)
-	CurrentBInfo = make(SQLBucket)
-
-	bucketBase := 0.001 // From 0.001 to 134217.728, total 28 float number; the 29th is +Inf
-	for i := 0; i < SQLBucketNum-1; i++ {
-		LastBInfo[strconv.FormatFloat(bucketBase, 'f', 3, 32)] = 0
-		CurrentBInfo[strconv.FormatFloat(bucketBase, 'f', 3, 32)] = 0
-		bucketBase += bucketBase
-	}
-	LastBInfo["+Inf"] = 0
-	CurrentBInfo["+Inf"] = 0
-
-	// logutil.BgLogger().Info("status test1")
-	logutil.BgLogger().Info("Telemetry SQL query stats initialized", zap.String("CurrentBInfo", bucketMap2Json(CurrentBInfo)))
-	logutil.BgLogger().Info("Telemetry SQL query stats initialized", zap.String("LastBInfo", bucketMap2Json(LastBInfo)))
-	logutil.BgLogger().Info("statustest2")
-}
-
-func CalculateDeltaB(last SQLBucket, cur SQLBucket) SQLBucket {
+func calculateDeltaB(cur SQLBucket, last SQLBucket) SQLBucket {
 	deltaMap := make(SQLBucket)
 	for key, value := range cur {
 		deltaMap[key] = value - (last)[key]
@@ -435,7 +333,7 @@ func RotateSubWindow() {
 		},
 		SQLUsage: sqlUsageData{
 			SQLTotal:         0,
-			SQLDurationTotal: LastBInfo,
+			SQLDurationTotal: make(SQLBucket),
 		},
 	}
 	var err error
@@ -496,11 +394,10 @@ func getWindowData() []*windowData {
 			thisWindow.SQLUsage.SQLType.Update = rotatedSubWindows[i].SQLUsage.SQLType.Update - startWindow.SQLUsage.SQLType.Update
 			thisWindow.SQLUsage.SQLType.Select = rotatedSubWindows[i].SQLUsage.SQLType.Select - startWindow.SQLUsage.SQLType.Select
 			thisWindow.SQLUsage.SQLType.Other = rotatedSubWindows[i].SQLUsage.SQLType.Other - startWindow.SQLUsage.SQLType.Other
-			thisWindow.SQLUsage.SQLDurationTotal = CalculateDeltaB(rotatedSubWindows[i].SQLUsage.SQLDurationTotal, startWindow.SQLUsage.SQLDurationTotal)
+			thisWindow.SQLUsage.SQLDurationTotal = calculateDeltaB(rotatedSubWindows[i].SQLUsage.SQLDurationTotal, startWindow.SQLUsage.SQLDurationTotal)
 			aggregatedSubWindows++
 			if aggregatedSubWindows == maxSubWindowLengthInWindow {
-				logutil.BgLogger().Info("durstring" + bucketMap2Json(CalculateDeltaB(rotatedSubWindows[i].SQLUsage.SQLDurationTotal, startWindow.SQLUsage.SQLDurationTotal)))
-
+				logutil.BgLogger().Info("durstring" + bucketMap2Json(calculateDeltaB(rotatedSubWindows[i].SQLUsage.SQLDurationTotal, startWindow.SQLUsage.SQLDurationTotal)))
 			}
 			i++
 		}
