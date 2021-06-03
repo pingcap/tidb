@@ -139,6 +139,9 @@ func (s *testSuite5) TestShowErrors(c *C) {
 	_, _ = tk.Exec(testSQL)
 
 	tk.MustQuery("show errors").Check(testutil.RowsWithSep("|", "Error|1050|Table 'test.show_errors' already exists"))
+
+	tk.MustExec("drop table idontexist")
+	tk.MustQuery("show errors").Check(testutil.RowsWithSep("|", "Error|1051|Unknown table 'test.idontexist'"))
 }
 
 func (s *testSuite5) TestShowWarningsForExprPushdown(c *C) {
