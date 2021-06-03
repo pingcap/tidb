@@ -160,7 +160,7 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 		}
 	}
 
-		// TODO: support null equal join keys for merge join
+	// TODO: support null equal join keys for merge join
 	if hasNullEQ {
 		return nil
 	}
