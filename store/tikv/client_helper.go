@@ -80,13 +80,13 @@ func (ch *ClientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID
 	}
 	sender.Stats = ch.Stats
 	req.Context.ResolvedLocks = ch.resolvedLocks.GetAll()
-	failpoint.Inject("assertStaleReadFlag", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("assertStaleReadFlag")); _err_ == nil {
 		if val.(bool) {
 			if len(opts) > 0 && !req.StaleRead {
 				panic("req.StaleRead shouldn't be false when opts is not empty")
 			}
 		}
-	})
+	}
 	resp, ctx, err := sender.SendReqCtx(bo, req, regionID, timeout, et, opts...)
 	return resp, ctx, sender.GetStoreAddr(), err
 }

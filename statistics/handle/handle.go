@@ -1181,11 +1181,11 @@ func (sr *statsReader) isHistory() bool {
 }
 
 func (h *Handle) getStatsReader(snapshot uint64) (reader *statsReader, err error) {
-	failpoint.Inject("mockGetStatsReaderFail", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockGetStatsReaderFail")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(nil, errors.New("gofail genStatsReader error"))
+			return nil, errors.New("gofail genStatsReader error")
 		}
-	})
+	}
 	if snapshot > 0 {
 		return &statsReader{ctx: h.mu.ctx.(sqlexec.RestrictedSQLExecutor), snapshot: snapshot}, nil
 	}
@@ -1198,7 +1198,7 @@ func (h *Handle) getStatsReader(snapshot uint64) (reader *statsReader, err error
 			h.mu.Unlock()
 		}
 	}()
-	failpoint.Inject("mockGetStatsReaderPanic", nil)
+	failpoint.Eval(_curpkg_("mockGetStatsReaderPanic"))
 	_, err = h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "begin")
 	if err != nil {
 		return nil, err

@@ -145,13 +145,13 @@ const (
 
 // GetTxnScopeFromConfig extracts @@txn_scope value from config
 func GetTxnScopeFromConfig() (bool, string) {
-	failpoint.Inject("injectTxnScope", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("injectTxnScope")); _err_ == nil {
 		v := val.(string)
 		if len(v) > 0 {
-			failpoint.Return(false, v)
+			return false, v
 		}
-		failpoint.Return(true, globalTxnScope)
-	})
+		return true, globalTxnScope
+	}
 
 	if kvcfg := GetGlobalConfig(); kvcfg != nil && len(kvcfg.TxnScope) > 0 {
 		return false, kvcfg.TxnScope

@@ -2699,16 +2699,16 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) Executor {
-	failpoint.Inject("checkUseMPP", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("checkUseMPP")); _err_ == nil {
 		if val.(bool) != useMPPExecution(b.ctx, v) {
 			if val.(bool) {
 				b.err = errors.New("expect mpp but not used")
 			} else {
 				b.err = errors.New("don't expect mpp but we used it")
 			}
-			failpoint.Return(nil)
+			return nil
 		}
-	})
+	}
 	if useMPPExecution(b.ctx, v) {
 		return b.buildMPPGather(v)
 	}

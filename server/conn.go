@@ -362,11 +362,11 @@ func (cc *clientConn) readPacket() ([]byte, error) {
 }
 
 func (cc *clientConn) writePacket(data []byte) error {
-	failpoint.Inject("FakeClientConn", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("FakeClientConn")); _err_ == nil {
 		if cc.pkt == nil {
-			failpoint.Return(nil)
+			return nil
 		}
-	})
+	}
 	return cc.pkt.writePacket(data)
 }
 
@@ -1183,11 +1183,11 @@ func (cc *clientConn) flush(ctx context.Context) error {
 			}
 		}
 	}()
-	failpoint.Inject("FakeClientConn", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("FakeClientConn")); _err_ == nil {
 		if cc.pkt == nil {
-			failpoint.Return(nil)
+			return nil
 		}
-	})
+	}
 	return cc.pkt.flush()
 }
 
@@ -1866,16 +1866,16 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	}
 
 	for {
-		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
+		if value, _err_ := failpoint.Eval(_curpkg_("fetchNextErr")); _err_ == nil {
 			switch value.(string) {
 			case "firstNext":
-				failpoint.Return(firstNext, storeerr.ErrTiFlashServerTimeout)
+				return firstNext, storeerr.ErrTiFlashServerTimeout
 			case "secondNext":
 				if !firstNext {
-					failpoint.Return(firstNext, storeerr.ErrTiFlashServerTimeout)
+					return firstNext, storeerr.ErrTiFlashServerTimeout
 				}
 			}
-		})
+		}
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, req)
 		if err != nil {

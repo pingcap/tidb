@@ -156,11 +156,11 @@ func (c *RowContainer) NumChunks() int {
 func (c *RowContainer) Add(chk *Chunk) (err error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
-	failpoint.Inject("testRowContainerDeadLock", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("testRowContainerDeadLock")); _err_ == nil {
 		if val.(bool) {
 			time.Sleep(time.Second)
 		}
-	})
+	}
 	if c.alreadySpilled() {
 		if c.m.spillError != nil {
 			return c.m.spillError

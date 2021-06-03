@@ -327,29 +327,29 @@ func (txn *LazyTxn) Commit(ctx context.Context) error {
 
 	atomic.StoreInt32(&txn.getTxnInfo().State, txninfo.TxnCommitting)
 
-	failpoint.Inject("mockSlowCommit", func(_ failpoint.Value) {})
+	failpoint.Eval(_curpkg_("mockSlowCommit"))
 
 	// mockCommitError8942 is used for PR #8942.
-	failpoint.Inject("mockCommitError8942", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockCommitError8942")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(kv.ErrTxnRetryable)
+			return kv.ErrTxnRetryable
 		}
-	})
+	}
 
 	// mockCommitRetryForAutoIncID is used to mock an commit retry for adjustAutoIncrementDatum.
-	failpoint.Inject("mockCommitRetryForAutoIncID", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockCommitRetryForAutoIncID")); _err_ == nil {
 		if val.(bool) && !mockAutoIncIDRetry() {
 			enableMockAutoIncIDRetry()
-			failpoint.Return(kv.ErrTxnRetryable)
+			return kv.ErrTxnRetryable
 		}
-	})
+	}
 
-	failpoint.Inject("mockCommitRetryForAutoRandID", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockCommitRetryForAutoRandID")); _err_ == nil {
 		if val.(bool) && needMockAutoRandIDRetry() {
 			decreaseMockAutoRandIDRetryCount()
-			failpoint.Return(kv.ErrTxnRetryable)
+			return kv.ErrTxnRetryable
 		}
-	})
+	}
 
 	return txn.Transaction.Commit(ctx)
 }
@@ -359,7 +359,7 @@ func (txn *LazyTxn) Rollback() error {
 	defer txn.reset()
 	atomic.StoreInt32(&txn.getTxnInfo().State, txninfo.TxnRollingBack)
 	// mockSlowRollback is used to mock a rollback which takes a long time
-	failpoint.Inject("mockSlowRollback", func(_ failpoint.Value) {})
+	failpoint.Eval(_curpkg_("mockSlowRollback"))
 	return txn.Transaction.Rollback()
 }
 
@@ -512,9 +512,9 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 		tsFuture = oracleStore.GetTimestampAsync(ctx, &oracle.Option{TxnScope: s.sessionVars.CheckAndGetTxnScope()})
 	}
 	ret := &txnFuture{future: tsFuture, store: s.store, txnScope: s.sessionVars.CheckAndGetTxnScope()}
-	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
+	if _, _err_ := failpoint.EvalContext(ctx, _curpkg_("mockGetTSFail")); _err_ == nil {
 		ret.future = txnFailFuture{}
-	})
+	}
 	return ret
 }
 

@@ -1313,10 +1313,10 @@ func (idx *Index) expBackoffEstimation(sc *stmtctx.StatementContext, coll *HistC
 	for i := 0; i < l && i < 4; i++ {
 		singleColumnEstResults[i] = singleColumnEstResults[i] / float64(coll.Count)
 	}
-	failpoint.Inject("cleanEstResults", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("cleanEstResults")); _err_ == nil {
 		singleColumnEstResults = singleColumnEstResults[:0]
 		l = 0
-	})
+	}
 	if l == 1 {
 		return singleColumnEstResults[0], true, nil
 	} else if l == 2 {

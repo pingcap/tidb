@@ -83,7 +83,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 	}
 	elapsed := uint64(time.Since(c.txn.startTime) / time.Millisecond)
 	ttl := elapsed + atomic.LoadUint64(&ManagedLockTTL)
-	failpoint.Inject("shortPessimisticLockTTL", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("shortPessimisticLockTTL")); _err_ == nil {
 		ttl = 1
 		keys := make([]string, 0, len(mutations))
 		for _, m := range mutations {
@@ -91,7 +91,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		}
 		logutil.BgLogger().Info("[failpoint] injected lock ttl = 1 on pessimistic lock",
 			zap.Uint64("txnStartTS", c.startTS), zap.Strings("keys", keys))
-	})
+	}
 	req := tikvrpc.NewRequest(tikvrpc.CmdPessimisticLock, &pb.PessimisticLockRequest{
 		Mutations:    mutations,
 		PrimaryLock:  c.primary(),
@@ -114,10 +114,10 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 				req.PessimisticLock().WaitTimeout = timeLeft
 			}
 		}
-		failpoint.Inject("PessimisticLockErrWriteConflict", func() error {
+		if _, _err_ := failpoint.Eval(_curpkg_("PessimisticLockErrWriteConflict")); _err_ == nil {
 			time.Sleep(300 * time.Millisecond)
 			return &tikverr.ErrWriteConflict{WriteConflict: nil}
-		})
+		}
 		startTime := time.Now()
 		resp, err := c.store.SendReq(bo, req, batch.region, client.ReadTimeoutShort)
 		if action.LockCtx.Stats != nil {
@@ -242,7 +242,7 @@ func (actionPessimisticRollback) handleSingleBatch(c *twoPhaseCommitter, bo *Bac
 
 func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *kv.LockCtx, mutations CommitterMutations) error {
 	if c.sessionID > 0 {
-		failpoint.Inject("beforePessimisticLock", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("beforePessimisticLock")); _err_ == nil {
 			// Pass multiple instructions in one string, delimited by commas, to trigger multiple behaviors, like
 			// `return("delay,fail")`. Then they will be executed sequentially at once.
 			if v, ok := val.(string); ok {
@@ -255,11 +255,11 @@ func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *kv.
 					} else if action == "fail" {
 						logutil.Logger(bo.GetCtx()).Info("[failpoint] injected failure at pessimistic lock",
 							zap.Uint64("txnStartTS", c.startTS))
-						failpoint.Return(errors.New("injected failure at pessimistic lock"))
+						return errors.New("injected failure at pessimistic lock")
 					}
 				}
 			}
-		})
+		}
 	}
 	return c.doActionOnMutations(bo, actionPessimisticLock{lockCtx}, mutations)
 }

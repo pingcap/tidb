@@ -249,13 +249,13 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 			m.store.GetRegionCache().InvalidateCachedRegionWithReason(id, tikv.EpochNotMatch)
 		}
 	}
-	failpoint.Inject("mppNonRootTaskError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mppNonRootTaskError")); _err_ == nil {
 		if val.(bool) && !req.IsRoot {
 			time.Sleep(1 * time.Second)
 			m.sendError(derr.ErrTiFlashServerTimeout)
 			return
 		}
-	})
+	}
 	if !req.IsRoot {
 		return
 	}
