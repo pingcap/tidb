@@ -1317,7 +1317,7 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 		insertSQL.WriteString(",")
 		insertSQL.WriteString(strconv.Itoa(r.Intn(10)))
 		insertSQL.WriteString(")")
-		if i < 1000 - 1 {
+		if i < 1000-1 {
 			insertSQL.WriteString(",")
 		}
 	}
