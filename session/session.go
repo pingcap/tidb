@@ -1649,6 +1649,9 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		return nil, err
 	}
 	rs, err = s.Exec(ctx)
+	if err != nil {
+		se.sessionVars.StmtCtx.AppendError(err)
+	}
 	sessVars.TxnCtx.StatementCount++
 	if rs != nil {
 		return &execStmtResult{

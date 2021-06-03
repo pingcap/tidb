@@ -348,13 +348,6 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 		}
 	}
 	if len(notExistTables) > 0 && !ifExists {
-		for _, table := range notExistTables {
-			if obt == sequenceObject {
-				e.ctx.GetSessionVars().StmtCtx.AppendError(infoschema.ErrSequenceDropExists.GenWithStackByArgs(table))
-			} else {
-				e.ctx.GetSessionVars().StmtCtx.AppendError(infoschema.ErrTableDropExists.GenWithStackByArgs(table))
-			}
-		}
 		if obt == sequenceObject {
 			return infoschema.ErrSequenceDropExists.GenWithStackByArgs(strings.Join(notExistTables, ","))
 		}
