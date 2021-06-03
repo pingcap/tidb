@@ -1022,12 +1022,12 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_CastTimeAsInt, /*tipb.ScalarFuncSig_CastTimeAsReal, */tipb.ScalarFuncSig_CastTimeAsDecimal, tipb.ScalarFuncSig_CastTimeAsTime, tipb.ScalarFuncSig_CastTimeAsString:
 			return true
 		}
-	case ast.DateAdd:
+	case ast.DateAdd, ast.AddDate:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateStringInt:
 			return true
 		}
-	case ast.DateSub:
+	case ast.DateSub, ast.SubDate:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_SubDateDatetimeInt, tipb.ScalarFuncSig_SubDateStringInt:
 			return true
