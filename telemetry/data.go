@@ -55,5 +55,6 @@ func generateTelemetryData(ctx sessionctx.Context, trackingID string) telemetryD
 
 func postReportTelemetryData() {
 	postReportTxnUsage()
+	postReportCTEUsage()
 	postReportSlowQueryStats()
 }
