@@ -5489,13 +5489,27 @@ func (b *PlanBuilder) handleDefaultFrame(spec *ast.WindowSpec, windowFuncName st
 		newSpec.Frame = nil
 		return &newSpec, true
 	}
-	// For functions that operate on the entire partition, the frame clause will be ignored.
-	if !needFrame && spec.Frame != nil {
-		specName := spec.Name.O
-		b.ctx.GetSessionVars().StmtCtx.AppendNote(ErrWindowFunctionIgnoresFrame.GenWithStackByArgs(windowFuncName, getWindowName(specName)))
+	if !needFrame {
+		var updated bool
 		newSpec := *spec
-		newSpec.Frame = nil
-		return &newSpec, true
+
+		// For functions that operate on the entire partition, the frame clause will be ignored.
+		if spec.Frame != nil {
+			specName := spec.Name.O
+			b.ctx.GetSessionVars().StmtCtx.AppendNote(ErrWindowFunctionIgnoresFrame.GenWithStackByArgs(windowFuncName, getWindowName(specName)))
+			newSpec.Frame = nil
+			updated = true
+		}
+		if b.ctx.GetSessionVars().EnablePipelinedWindowExec {
+			useDefaultFrame, defaultFrame := aggregation.UseDefaultFrame(windowFuncName)
+			if useDefaultFrame {
+				newSpec.Frame = &defaultFrame
+				updated = true
+			}
+		}
+		if updated {
+			return &newSpec, true
+		}
 	}
 	return spec, false
 }
@@ -5510,11 +5524,27 @@ func appendIfAbsentWindowSpec(specs []*ast.WindowSpec, ns *ast.WindowSpec) []*as
 	return append(specs, ns)
 }
 
+func specEqual(s1, s2 *ast.WindowSpec) (equal bool, err error) {
+	if (s1 == nil && s2 != nil) || (s1 != nil && s2 == nil) {
+		return false, nil
+	}
+	var sb1, sb2 strings.Builder
+	ctx1 := format.NewRestoreCtx(0, &sb1)
+	ctx2 := format.NewRestoreCtx(0, &sb2)
+	if err = s1.Restore(ctx1); err != nil {
+		return
+	}
+	if err = s2.Restore(ctx2); err != nil {
+		return
+	}
+	return sb1.String() == sb2.String(), nil
+}
+
 // groupWindowFuncs groups the window functions according to the window specification name.
 // TODO: We can group the window function by the definition of window specification.
 func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*ast.WindowSpec][]*ast.WindowFuncExpr, []*ast.WindowSpec, error) {
 	// updatedSpecMap is used to handle the specifications that have frame clause changed.
-	updatedSpecMap := make(map[string]*ast.WindowSpec)
+	updatedSpecMap := make(map[string][]*ast.WindowSpec)
 	groupedWindow := make(map[*ast.WindowSpec][]*ast.WindowFuncExpr)
 	orderedSpec := make([]*ast.WindowSpec, 0, len(windowFuncs))
 	for _, windowFunc := range windowFuncs {
@@ -5546,10 +5576,26 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)
 			orderedSpec = appendIfAbsentWindowSpec(orderedSpec, spec)
 		} else {
+			var updatedSpec *ast.WindowSpec
 			if _, ok := updatedSpecMap[name]; !ok {
-				updatedSpecMap[name] = newSpec
+				updatedSpecMap[name] = []*ast.WindowSpec{newSpec}
+				updatedSpec = newSpec
+			} else {
+				for _, spec := range updatedSpecMap[name] {
+					eq, err := specEqual(spec, newSpec)
+					if err != nil {
+						return nil, nil, err
+					}
+					if eq {
+						updatedSpec = spec
+						break
+					}
+				}
+				if updatedSpec == nil {
+					updatedSpec = newSpec
+					updatedSpecMap[name] = append(updatedSpecMap[name], newSpec)
+				}
 			}
-			updatedSpec := updatedSpecMap[name]
 			groupedWindow[updatedSpec] = append(groupedWindow[updatedSpec], windowFunc)
 			orderedSpec = appendIfAbsentWindowSpec(orderedSpec, updatedSpec)
 		}
