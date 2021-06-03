@@ -1815,7 +1815,8 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		EqualConditions:  p.EqualConditions,
 		storeTp:          kv.TiFlash,
 		mppShuffleJoin:   !useBCJ,
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childrenProps...)
+		// Mpp Join has quite heavy cost. Even limit might not suspend it in time, so we dont scale the count.
+	}.Init(p.ctx, p.stats, p.blockOffset, childrenProps...)
 	return []PhysicalPlan{join}
 }
 
