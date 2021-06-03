@@ -48,18 +48,18 @@ func testPlanBinaryDecoderFunc(plan string) (string, error) {
 	return plan, nil
 }
 
-func populateCache(tsc *TopSQLReporterImpl, begin, end int, timestamp uint64) {
+func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) {
 	// register normalized sql
 	for i := begin; i < end; i++ {
 		key := "sqlDigest" + strconv.Itoa(i+1)
 		value := "sqlNormalized" + strconv.Itoa(i+1)
-		tsc.RegisterSQL(key, value)
+		tsr.RegisterSQL(key, value)
 	}
 	// register normalized plan
 	for i := begin; i < end; i++ {
 		key := "planDigest" + strconv.Itoa(i+1)
 		value := "planNormalized" + strconv.Itoa(i+1)
-		tsc.RegisterPlan(key, value)
+		tsr.RegisterPlan(key, value)
 	}
 	// collect
 	var records []tracecpu.TopSQLCPUTimeRecord
@@ -70,13 +70,13 @@ func populateCache(tsc *TopSQLReporterImpl, begin, end int, timestamp uint64) {
 			CPUTimeMs:  uint32(i + 1),
 		})
 	}
-	tsc.Collect(timestamp, records)
+	tsr.Collect(timestamp, records)
 	// sleep a while for the asynchronouse collect
 	time.Sleep(100 * time.Millisecond)
 }
 
-func initializeCache(maxStatementsNum int, addr string) *TopSQLReporterImpl {
-	config := &TopSQLReporterConfig{
+func initializeCache(maxStatementsNum int, addr string) *RemoteTopSQLReporter {
+	config := &RemoteTopSQLReporterConfig{
 		PlanBinaryDecoder: testPlanBinaryDecoderFunc,
 		MaxStatementsNum:  maxStatementsNum,
 		CollectInterval:   time.Minute,
@@ -84,7 +84,7 @@ func initializeCache(maxStatementsNum int, addr string) *TopSQLReporterImpl {
 		AgentGRPCAddress:  addr,
 		InstanceID:        "tidb-server",
 	}
-	ts := NewTopSQLReporter(config)
+	ts := NewRemoteTopSQLReporter(config)
 	populateCache(ts, 0, maxStatementsNum, 1)
 	return ts
 }
@@ -125,25 +125,25 @@ func startTestServer(c *C) (*grpc.Server, *testAgentServer, int) {
 }
 
 func (s *testTopSQLReporter) TestCollectAndGet(c *C) {
-	tsc := initializeCache(maxSQLNum, ":23333")
+	tsr := initializeCache(maxSQLNum, ":23333")
 	for i := 0; i < maxSQLNum; i++ {
 		sqlDigest := []byte("sqlDigest" + strconv.Itoa(i+1))
 		planDigest := []byte("planDigest" + strconv.Itoa(i+1))
 		encodedKey := encodeCacheKey(sqlDigest, planDigest)
-		entry := tsc.topSQLMap[string(encodedKey)]
+		entry := tsr.topSQLMap[string(encodedKey)]
 		c.Assert(entry.CPUTimeMsList[0], Equals, uint32(i+1))
 		c.Assert(entry.TimestampList[0], Equals, uint64(1))
 	}
 }
 
 func (s *testTopSQLReporter) TestCollectAndVerifyFrequency(c *C) {
-	tsc := initializeCache(maxSQLNum, ":23333")
+	tsr := initializeCache(maxSQLNum, ":23333")
 	// traverse the map, and check CPU time and content
 	for i := 0; i < maxSQLNum; i++ {
 		sqlDigest := []byte("sqlDigest" + strconv.Itoa(i+1))
 		planDigest := []byte("planDigest" + strconv.Itoa(i+1))
 		encodedKey := encodeCacheKey(sqlDigest, planDigest)
-		value, exist := tsc.topSQLMap[string(encodedKey)]
+		value, exist := tsr.topSQLMap[string(encodedKey)]
 		c.Assert(exist, Equals, true)
 		c.Assert(value.CPUTimeMsTotal, Equals, uint64(i+1))
 		c.Assert(len(value.CPUTimeMsList), Equals, 1)
@@ -154,19 +154,19 @@ func (s *testTopSQLReporter) TestCollectAndVerifyFrequency(c *C) {
 }
 
 func (s *testTopSQLReporter) TestCollectAndEvict(c *C) {
-	tsc := initializeCache(maxSQLNum, ":23333")
+	tsr := initializeCache(maxSQLNum, ":23333")
 	// Collect maxSQLNum records with timestamp 2 and sql plan digest from maxSQLNum/2 to maxSQLNum/2*3.
-	populateCache(tsc, maxSQLNum/2, maxSQLNum/2*3, 2)
+	populateCache(tsr, maxSQLNum/2, maxSQLNum/2*3, 2)
 	// The first maxSQLNum/2 sql plan digest should have been evicted
 	for i := 0; i < maxSQLNum/2; i++ {
 		sqlDigest := []byte("sqlDigest" + strconv.Itoa(i+1))
 		planDigest := []byte("planDigest" + strconv.Itoa(i+1))
 		encodedKey := encodeCacheKey(sqlDigest, planDigest)
-		_, exist := tsc.topSQLMap[string(encodedKey)]
+		_, exist := tsr.topSQLMap[string(encodedKey)]
 		c.Assert(exist, Equals, false, Commentf("cache key '%' should be evicted", encodedKey))
-		_, exist = tsc.normalizedSQLMap[string(sqlDigest)]
+		_, exist = tsr.normalizedSQLMap[string(sqlDigest)]
 		c.Assert(exist, Equals, false, Commentf("normalized SQL with digest '%s' should be evicted", sqlDigest))
-		_, exist = tsc.normalizedPlanMap[string(planDigest)]
+		_, exist = tsr.normalizedPlanMap[string(planDigest)]
 		c.Assert(exist, Equals, false, Commentf("normalized plan with digest '%s' should be evicted", planDigest))
 	}
 	// Because CPU time is populated as i+1,
@@ -176,7 +176,7 @@ func (s *testTopSQLReporter) TestCollectAndEvict(c *C) {
 		sqlDigest := []byte("sqlDigest" + strconv.Itoa(i+1))
 		planDigest := []byte("planDigest" + strconv.Itoa(i+1))
 		encodedKey := encodeCacheKey(sqlDigest, planDigest)
-		value, exist := tsc.topSQLMap[string(encodedKey)]
+		value, exist := tsr.topSQLMap[string(encodedKey)]
 		c.Assert(exist, Equals, true, Commentf("cache key '%s' should exist", encodedKey))
 		if i < maxSQLNum {
 			c.Assert(value.CPUTimeMsTotal, Equals, uint64((i+1)*2))
@@ -187,13 +187,13 @@ func (s *testTopSQLReporter) TestCollectAndEvict(c *C) {
 }
 
 func (s *testTopSQLReporter) TestCollectAndSnapshot(c *C) {
-	tsc := initializeCache(maxSQLNum, ":23333")
-	batch := tsc.snapshot()
+	tsr := initializeCache(maxSQLNum, ":23333")
+	batch := tsr.snapshot()
 	for _, req := range batch {
 		sqlDigest := req.SqlDigest
 		planDigest := req.PlanDigest
 		encodedKey := encodeCacheKey(sqlDigest, planDigest)
-		value, exist := tsc.topSQLMap[string(encodedKey)]
+		value, exist := tsr.topSQLMap[string(encodedKey)]
 		c.Assert(exist, Equals, true, Commentf("key '%s' should exist", string(encodedKey)))
 		c.Assert(len(req.CpuTimeMsList), Equals, len(value.CPUTimeMsList))
 		for i, ct := range value.CPUTimeMsList {
@@ -211,16 +211,16 @@ func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
 	c.Logf("server is listening on :%d", port)
 	defer server.Stop()
 
-	tsc := initializeCache(maxSQLNum, fmt.Sprintf(":%d", port))
-	batch := tsc.snapshot()
+	tsr := initializeCache(maxSQLNum, fmt.Sprintf(":%d", port))
+	batch := tsr.snapshot()
 
-	conn, client, err := newAgentClient(tsc.agentGRPCAddress)
+	conn, client, err := newAgentClient(tsr.agentGRPCAddress)
 	c.Assert(err, IsNil, Commentf("failed to create agent client"))
-	ctx, cancel := context.WithTimeout(context.TODO(), tsc.collectTimeout)
+	ctx, cancel := context.WithTimeout(context.TODO(), tsr.collectTimeout)
 	defer cancel()
 	stream, err := client.CollectCPUTime(ctx)
 	c.Assert(err, IsNil, Commentf("failed to initialize gRPC call CollectCPUTime"))
-	err = tsc.sendBatch(stream, batch)
+	err = tsr.sendBatch(stream, batch)
 	c.Assert(err, IsNil, Commentf("failed to send batch to server"))
 	err = conn.Close()
 	c.Assert(err, IsNil, Commentf("failed to close connection"))
@@ -228,7 +228,7 @@ func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
 	// check for equality of server received batch and the original data
 	for _, req := range agentServer.batch {
 		encodedKey := encodeCacheKey(req.SqlDigest, req.PlanDigest)
-		value, exist := tsc.topSQLMap[string(encodedKey)]
+		value, exist := tsr.topSQLMap[string(encodedKey)]
 		c.Assert(exist, Equals, true, Commentf("key '%s' should exist in topSQLMap", string(encodedKey)))
 		for i, ct := range value.CPUTimeMsList {
 			c.Assert(req.CpuTimeMsList[i], Equals, ct)
@@ -236,29 +236,29 @@ func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
 		for i, ts := range value.TimestampList {
 			c.Assert(req.TimestampList[i], Equals, ts)
 		}
-		normalizedSQL, exist := tsc.normalizedSQLMap[string(req.SqlDigest)]
+		normalizedSQL, exist := tsr.normalizedSQLMap[string(req.SqlDigest)]
 		c.Assert(exist, Equals, true, Commentf("key '%s' should exist in normalizedSQLMap", req.SqlDigest))
 		c.Assert(req.NormalizedSql, Equals, normalizedSQL)
-		normalizedPlan, exist := tsc.normalizedPlanMap[string(req.PlanDigest)]
+		normalizedPlan, exist := tsr.normalizedPlanMap[string(req.PlanDigest)]
 		c.Assert(exist, Equals, true, Commentf("key '%s' should exist in normalizedPlanMap", req.PlanDigest))
 		c.Assert(req.NormalizedPlan, Equals, normalizedPlan)
 	}
 }
 
 func BenchmarkTopSQL_CollectAndIncrementFrequency(b *testing.B) {
-	tsc := initializeCache(maxSQLNum, ":23333")
+	tsr := initializeCache(maxSQLNum, ":23333")
 	for i := 0; i < b.N; i++ {
-		populateCache(tsc, 0, maxSQLNum, uint64(i))
+		populateCache(tsr, 0, maxSQLNum, uint64(i))
 	}
 }
 
 func BenchmarkTopSQL_CollectAndEvict(b *testing.B) {
-	tsc := initializeCache(maxSQLNum, ":23333")
+	tsr := initializeCache(maxSQLNum, ":23333")
 	begin := 0
 	end := maxSQLNum
 	for i := 0; i < b.N; i++ {
 		begin += maxSQLNum
 		end += maxSQLNum
-		populateCache(tsc, begin, end, uint64(i))
+		populateCache(tsr, begin, end, uint64(i))
 	}
 }

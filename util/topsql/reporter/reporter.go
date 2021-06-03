@@ -79,8 +79,9 @@ type planRegisterJob struct {
 	normalizedPlan string
 }
 
-// TopSQLReporterImpl is called periodically to collect TopSQL resource usage metrics
-type TopSQLReporterImpl struct {
+// RemoteTopSQLReporter implements a TopSQL reporter that sends data to a remote agent
+// This should be called periodically to collect TopSQL resource usage metrics
+type RemoteTopSQLReporter struct {
 	mu sync.RWMutex
 	// calling this can take a while, so should not block critical paths
 	planBinaryDecoder planBinaryDecodeFunc
@@ -109,8 +110,8 @@ type TopSQLReporterImpl struct {
 	quit chan struct{}
 }
 
-// TopSQLReporterConfig is the config for TopSQLReporterImpl
-type TopSQLReporterConfig struct {
+// RemoteTopSQLReporterConfig is the config for RemoteTopSQLReporter
+type RemoteTopSQLReporterConfig struct {
 	// PlanBinaryDecoder is used to decode the plan binary before sending to agent
 	PlanBinaryDecoder planBinaryDecodeFunc
 	// MaxStatementsNum is the capacity of the TopSQL map, above which evition should happen
@@ -165,16 +166,16 @@ func newAgentClient(addr string) (*grpc.ClientConn, tipb.TopSQLAgentClient, erro
 	return conn, client, nil
 }
 
-// NewTopSQLReporter creates a new TopSQL struct
+// NewRemoteTopSQLReporter creates a new TopSQL struct
 //
 // planBinaryDecoder is a decoding function which will be called asynchronously to decode the plan binary to string
 // MaxStatementsNum is the maximum SQL and plan number, which will restrict the memory usage of the internal LFU cache
-func NewTopSQLReporter(config *TopSQLReporterConfig) *TopSQLReporterImpl {
+func NewRemoteTopSQLReporter(config *RemoteTopSQLReporterConfig) *RemoteTopSQLReporter {
 	collectTimeout := config.CollectTimeout
 	if collectTimeout > config.CollectInterval || collectTimeout <= 0 {
 		collectTimeout = config.CollectInterval / 2
 	}
-	tsc := &TopSQLReporterImpl{
+	tsr := &RemoteTopSQLReporter{
 		planBinaryDecoder:  config.PlanBinaryDecoder,
 		MaxStatementsNum:   config.MaxStatementsNum,
 		collectInterval:    config.CollectInterval,
@@ -189,19 +190,19 @@ func NewTopSQLReporter(config *TopSQLReporterConfig) *TopSQLReporterImpl {
 		quit:               make(chan struct{}),
 	}
 
-	go tsc.collectWorker()
+	go tsr.collectWorker()
 
-	go tsc.registerPlanWorker()
+	go tsr.registerPlanWorker()
 
-	go tsc.sendToAgentWorker()
+	go tsr.sendToAgentWorker()
 
-	return tsc
+	return tsr
 }
 
 // Collect will drop the records when the collect channel is full
-func (tsc *TopSQLReporterImpl) Collect(timestamp uint64, records []tracecpu.TopSQLCPUTimeRecord) {
+func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.TopSQLCPUTimeRecord) {
 	select {
-	case tsc.collectCPUTimeChan <- &topSQLCPUTimeInput{
+	case tsr.collectCPUTimeChan <- &topSQLCPUTimeInput{
 		timestamp: timestamp,
 		records:   records,
 	}:
@@ -209,19 +210,19 @@ func (tsc *TopSQLReporterImpl) Collect(timestamp uint64, records []tracecpu.TopS
 	}
 }
 
-func (tsc *TopSQLReporterImpl) collectWorker() {
+func (tsr *RemoteTopSQLReporter) collectWorker() {
 	for {
-		input := <-tsc.collectCPUTimeChan
-		tsc.collect(input.timestamp, input.records)
+		input := <-tsr.collectCPUTimeChan
+		tsr.collect(input.timestamp, input.records)
 	}
 }
 
 // collect uses a hashmap to store records in every second, and evict when necessary.
 // This function can be run in parallel with snapshot, so we should protect the map operations with a mutex.
-func (tsc *TopSQLReporterImpl) collect(timestamp uint64, records []tracecpu.TopSQLCPUTimeRecord) {
+func (tsr *RemoteTopSQLReporter) collect(timestamp uint64, records []tracecpu.TopSQLCPUTimeRecord) {
 	for _, record := range records {
 		encodedKey := encodeCacheKey(record.SQLDigest, record.PlanDigest)
-		entry, exist := tsc.topSQLMap[string(encodedKey)]
+		entry, exist := tsr.topSQLMap[string(encodedKey)]
 		if !exist {
 			entry = &topSQLDataPoints{
 				SQLDigest:     record.SQLDigest,
@@ -229,7 +230,7 @@ func (tsc *TopSQLReporterImpl) collect(timestamp uint64, records []tracecpu.TopS
 				CPUTimeMsList: []uint32{record.CPUTimeMs},
 				TimestampList: []uint64{timestamp},
 			}
-			tsc.topSQLMap[string(encodedKey)] = entry
+			tsr.topSQLMap[string(encodedKey)] = entry
 		} else {
 			entry.CPUTimeMsList = append(entry.CPUTimeMsList, record.CPUTimeMs)
 			entry.TimestampList = append(entry.TimestampList, timestamp)
@@ -237,15 +238,15 @@ func (tsc *TopSQLReporterImpl) collect(timestamp uint64, records []tracecpu.TopS
 		entry.CPUTimeMsTotal += uint64(record.CPUTimeMs)
 	}
 
-	if len(tsc.topSQLMap) <= tsc.MaxStatementsNum {
+	if len(tsr.topSQLMap) <= tsr.MaxStatementsNum {
 		return
 	}
 
 	// find the max CPUTimeMsTotal that should be evicted
-	digestCPUTimeList := make([]cpuTimeSort, len(tsc.topSQLMap))
+	digestCPUTimeList := make([]cpuTimeSort, len(tsr.topSQLMap))
 	{
 		i := 0
-		for key, value := range tsc.topSQLMap {
+		for key, value := range tsr.topSQLMap {
 			data := cpuTimeSort{
 				Key:            key,
 				SQLDigest:      value.SQLDigest,
@@ -258,20 +259,20 @@ func (tsc *TopSQLReporterImpl) collect(timestamp uint64, records []tracecpu.TopS
 	}
 
 	// QuickSelect will only return error when the second parameter is out of range
-	if err := quickselect.QuickSelect(cpuTimeSortSlice(digestCPUTimeList), tsc.MaxStatementsNum); err != nil {
+	if err := quickselect.QuickSelect(cpuTimeSortSlice(digestCPUTimeList), tsr.MaxStatementsNum); err != nil {
 		//	skip eviction
 		return
 
 	}
 
 	// TODO: we can change to periodical eviction (every minute) to relax the CPU pressure
-	shouldEvictList := digestCPUTimeList[tsc.MaxStatementsNum:]
+	shouldEvictList := digestCPUTimeList[tsr.MaxStatementsNum:]
 	for _, evict := range shouldEvictList {
-		delete(tsc.topSQLMap, evict.Key)
-		tsc.mu.Lock()
-		delete(tsc.normalizedSQLMap, string(evict.SQLDigest))
-		delete(tsc.normalizedPlanMap, string(evict.PlanDigest))
-		tsc.mu.Unlock()
+		delete(tsr.topSQLMap, evict.Key)
+		tsr.mu.Lock()
+		delete(tsr.normalizedSQLMap, string(evict.SQLDigest))
+		delete(tsr.normalizedPlanMap, string(evict.PlanDigest))
+		tsr.mu.Unlock()
 	}
 }
 
@@ -281,43 +282,43 @@ func (tsc *TopSQLReporterImpl) collect(timestamp uint64, records []tracecpu.TopS
 // This function should be thread-safe, which means parallelly calling it in several goroutines should be fine.
 // It should also return immediately, and do any CPU-intensive job asynchronously.
 // TODO: benchmark test concurrent performance
-func (tsc *TopSQLReporterImpl) RegisterSQL(sqlDigest string, normalizedSQL string) {
-	tsc.mu.RLock()
-	_, exist := tsc.normalizedSQLMap[sqlDigest]
-	tsc.mu.RUnlock()
+func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest string, normalizedSQL string) {
+	tsr.mu.RLock()
+	_, exist := tsr.normalizedSQLMap[sqlDigest]
+	tsr.mu.RUnlock()
 	if !exist {
-		tsc.mu.Lock()
-		tsc.normalizedSQLMap[sqlDigest] = normalizedSQL
-		tsc.mu.Unlock()
+		tsr.mu.Lock()
+		tsr.normalizedSQLMap[sqlDigest] = normalizedSQL
+		tsr.mu.Unlock()
 	}
 }
 
 // RegisterPlan is like RegisterSQL, but for normalized plan strings.
 // TODO: benchmark test concurrent performance
-func (tsc *TopSQLReporterImpl) RegisterPlan(planDigest string, normalizedPlan string) {
-	tsc.planRegisterChan <- &planRegisterJob{
+func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest string, normalizedPlan string) {
+	tsr.planRegisterChan <- &planRegisterJob{
 		planDigest:     planDigest,
 		normalizedPlan: normalizedPlan,
 	}
 }
 
 // this should be the only place where the normalizedPlanMap is set
-func (tsc *TopSQLReporterImpl) registerPlanWorker() {
+func (tsr *RemoteTopSQLReporter) registerPlanWorker() {
 	// NOTE: if use multiple worker goroutine, we should make sure that access to the digest map is thread-safe
 	for {
-		job := <-tsc.planRegisterChan
-		tsc.mu.RLock()
-		_, exist := tsc.normalizedPlanMap[job.planDigest]
-		tsc.mu.RUnlock()
+		job := <-tsr.planRegisterChan
+		tsr.mu.RLock()
+		_, exist := tsr.normalizedPlanMap[job.planDigest]
+		tsr.mu.RUnlock()
 		if exist {
 			continue
 		}
-		planDecoded, err := tsc.planBinaryDecoder(job.normalizedPlan)
+		planDecoded, err := tsr.planBinaryDecoder(job.normalizedPlan)
 		if err != nil {
 			fmt.Printf("decode plan failed: %v\n", err)
 			continue
 		}
-		tsc.normalizedPlanMap[job.planDigest] = planDecoded
+		tsr.normalizedPlanMap[job.planDigest] = planDecoded
 	}
 }
 
@@ -328,15 +329,15 @@ func (tsc *TopSQLReporterImpl) registerPlanWorker() {
 // which means we maintain 2 *struct which contains the maps, and snapshot() atomically
 // swaps the pointer. After this, the writing is shifted to the new struct, and
 // we can do the snapshot in the background.
-func (tsc *TopSQLReporterImpl) snapshot() []*tipb.CollectCPUTimeRequest {
-	tsc.mu.RLock()
-	defer tsc.mu.RUnlock()
-	total := len(tsc.topSQLMap)
+func (tsr *RemoteTopSQLReporter) snapshot() []*tipb.CollectCPUTimeRequest {
+	tsr.mu.RLock()
+	defer tsr.mu.RUnlock()
+	total := len(tsr.topSQLMap)
 	batch := make([]*tipb.CollectCPUTimeRequest, total)
 	i := 0
-	for _, value := range tsc.topSQLMap {
-		normalizedSQL := tsc.normalizedSQLMap[string(value.SQLDigest)]
-		normalizedPlan := tsc.normalizedPlanMap[string(value.PlanDigest)]
+	for _, value := range tsr.topSQLMap {
+		normalizedSQL := tsr.normalizedSQLMap[string(value.SQLDigest)]
+		normalizedPlan := tsr.normalizedPlanMap[string(value.PlanDigest)]
 		batch[i] = &tipb.CollectCPUTimeRequest{
 			TimestampList:  value.TimestampList,
 			CpuTimeMsList:  value.CPUTimeMsList,
@@ -352,7 +353,7 @@ func (tsc *TopSQLReporterImpl) snapshot() []*tipb.CollectCPUTimeRequest {
 
 // sendBatch sends a batch of TopSQL records streamingly.
 // TODO: benchmark test with large amount of data (e.g. 5000), tune with grpc.WithWriteBufferSize()
-func (tsc *TopSQLReporterImpl) sendBatch(stream tipb.TopSQLAgent_CollectCPUTimeClient, batch []*tipb.CollectCPUTimeRequest) error {
+func (tsr *RemoteTopSQLReporter) sendBatch(stream tipb.TopSQLAgent_CollectCPUTimeClient, batch []*tipb.CollectCPUTimeRequest) error {
 	for _, req := range batch {
 		if err := stream.Send(req); err != nil {
 			log.Error("TopSQL: send stream request failed, %v", zap.Error(err))
@@ -369,28 +370,28 @@ func (tsc *TopSQLReporterImpl) sendBatch(stream tipb.TopSQLAgent_CollectCPUTimeC
 }
 
 // sendToAgentWorker will send a snapshot to the gRPC endpoint every collect interval
-func (tsc *TopSQLReporterImpl) sendToAgentWorker() {
-	ticker := time.NewTicker(tsc.collectInterval)
+func (tsr *RemoteTopSQLReporter) sendToAgentWorker() {
+	ticker := time.NewTicker(tsr.collectInterval)
 	for {
 		var ctx context.Context
 		var cancel context.CancelFunc
 		select {
 		case <-ticker.C:
-			batch := tsc.snapshot()
+			batch := tsr.snapshot()
 			// NOTE: Currently we are creating/destroying a TCP connection to the agent every time.
 			// It's fine if we do this every minute, but need optimization if we need to do it more frequently, like every second.
-			conn, client, err := newAgentClient(tsc.agentGRPCAddress)
+			conn, client, err := newAgentClient(tsr.agentGRPCAddress)
 			if err != nil {
 				log.Error("TopSQL: failed to create agent client, %v", zap.Error(err))
 				continue
 			}
-			ctx, cancel = context.WithTimeout(context.TODO(), tsc.collectTimeout)
+			ctx, cancel = context.WithTimeout(context.TODO(), tsr.collectTimeout)
 			stream, err := client.CollectCPUTime(ctx)
 			if err != nil {
 				log.Error("TopSQL: failed to initialize gRPC call CollectCPUTime, %v", zap.Error(err))
 				continue
 			}
-			if err := tsc.sendBatch(stream, batch); err != nil {
+			if err := tsr.sendBatch(stream, batch); err != nil {
 				continue
 			}
 			cancel()
@@ -398,7 +399,7 @@ func (tsc *TopSQLReporterImpl) sendToAgentWorker() {
 				log.Error("TopSQL: failed to close connection, %v", zap.Error(err))
 				continue
 			}
-		case <-tsc.quit:
+		case <-tsr.quit:
 			ticker.Stop()
 			break
 		}
@@ -406,6 +407,6 @@ func (tsc *TopSQLReporterImpl) sendToAgentWorker() {
 }
 
 // SetAgentGRPCAddress sets the agentGRPCAddress field
-func (tsc *TopSQLReporterImpl) SetAgentGRPCAddress(address string) {
-	tsc.agentGRPCAddress = address
+func (tsr *RemoteTopSQLReporter) SetAgentGRPCAddress(address string) {
+	tsr.agentGRPCAddress = address
 }
