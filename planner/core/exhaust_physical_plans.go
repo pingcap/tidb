@@ -1751,7 +1751,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	}
 
 	if len(p.EqualConditions) == 0 {
-		if p.ctx.GetSessionVars().AllowCartesianBCJ < 1 || !useBCJ {
+		if p.ctx.GetSessionVars().AllowCartesianBCJ == 0 || !useBCJ {
 			return nil
 		}
 	}
