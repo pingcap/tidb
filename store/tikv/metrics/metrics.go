@@ -36,7 +36,6 @@ var (
 	TiKVRegionCacheCounter                 *prometheus.CounterVec
 	TiKVLocalLatchWaitTimeHistogram        prometheus.Histogram
 	TiKVSmallReadDuration                  prometheus.Histogram
-	TiKVLargeReadThroughput                prometheus.Histogram
 	TiKVStatusDuration                     *prometheus.HistogramVec
 	TiKVStatusCounter                      *prometheus.CounterVec
 	TiKVBatchWaitDuration                  prometheus.Histogram
