@@ -432,6 +432,7 @@ type cteInfo struct {
 	// enterSubquery and recursiveRef are used to check "recursive table must be referenced only once, and not in any subquery".
 	enterSubquery bool
 	recursiveRef  bool
+	limitLP       LogicalPlan
 }
 
 // PlanBuilder builds Plan from an ast.Node.
@@ -1683,6 +1684,9 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		}
 		idxInfos = append(idxInfos, idx)
 	}
+	if as.Incremental {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 3 stats would ignore the INCREMENTAL keyword and do full sampling"))
+	}
 	for i, id := range physicalIDs {
 		if id == tbl.TableInfo.ID {
 			id = -1
@@ -1692,7 +1696,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			TableName:     tbl.Name.O,
 			PartitionName: names[i],
 			TableID:       AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
-			Incremental:   as.Incremental,
+			Incremental:   false,
 			StatsVersion:  version,
 		}
 		newTask := AnalyzeColumnsTask{
@@ -3396,7 +3400,11 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 			authErr = ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.AuthUsername,
 				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, v.Table.Schema.L,
+		dbName := v.Table.Schema.L
+		if dbName == "" {
+			dbName = b.ctx.GetSessionVars().CurrentDB
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, dbName,
 			v.Table.Name.L, "", authErr)
 		for _, spec := range v.Specs {
 			if spec.Tp == ast.AlterTableRenameTable || spec.Tp == ast.AlterTableExchangePartition {
@@ -3404,21 +3412,21 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 					authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
 						b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
 				}
-				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Table.Schema.L,
+				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, dbName,
 					v.Table.Name.L, "", authErr)
 
 				if b.ctx.GetSessionVars().User != nil {
 					authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
 						b.ctx.GetSessionVars().User.AuthHostname, spec.NewTable.Name.L)
 				}
-				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, spec.NewTable.Schema.L,
+				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, dbName,
 					spec.NewTable.Name.L, "", authErr)
 
 				if b.ctx.GetSessionVars().User != nil {
 					authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.AuthUsername,
 						b.ctx.GetSessionVars().User.AuthHostname, spec.NewTable.Name.L)
 				}
-				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, spec.NewTable.Schema.L,
+				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, dbName,
 					spec.NewTable.Name.L, "", authErr)
 			} else if spec.Tp == ast.AlterTableDropPartition {
 				if b.ctx.GetSessionVars().User != nil {
@@ -3474,8 +3482,12 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.IndexPriv, v.Table.Schema.L,
 			v.Table.Name.L, "", authErr)
 	case *ast.CreateTableStmt:
-		if v.TemporaryKeyword != ast.TemporaryNone && v.ReferTable != nil {
-			return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("create table like")
+		if v.TemporaryKeyword != ast.TemporaryNone {
+			for _, cons := range v.Constraints {
+				if cons.Tp == ast.ConstraintForeignKey {
+					return nil, infoschema.ErrCannotAddForeign
+				}
+			}
 		}
 		if b.ctx.GetSessionVars().User != nil {
 			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,

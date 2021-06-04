@@ -180,6 +180,29 @@ func (s *testIntegrationSuite) TestPushLimitDownIndexLookUpReader(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) TestAggColumnPrune(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1),(2)")
+
+	var input []string
+	var output []struct {
+		SQL string
+		Res []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
+	}
+}
+
 func (s *testIntegrationSuite) TestIsFromUnixtimeNullRejective(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -515,6 +538,138 @@ func (s *testIntegrationSerialSuite) TestMPPJoin(c *C) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 1")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestMPPOuterJoinBuildSideForBroadcastJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists a")
+	tk.MustExec("create table a(id int, value int)")
+	tk.MustExec("insert into a values(1,2),(2,3)")
+	tk.MustExec("analyze table a")
+	tk.MustExec("drop table if exists b")
+	tk.MustExec("create table b(id int, value int)")
+	tk.MustExec("insert into b values(1,2),(2,3),(3,4)")
+	tk.MustExec("analyze table b")
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "a" || tblInfo.Name.L == "b" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_opt_mpp_outer_join_fixed_build_side = 0")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 10000")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 10000")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestMPPOuterJoinBuildSideForShuffleJoinWithFixedBuildSide(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists a")
+	tk.MustExec("create table a(id int, value int)")
+	tk.MustExec("insert into a values(1,2),(2,3)")
+	tk.MustExec("analyze table a")
+	tk.MustExec("drop table if exists b")
+	tk.MustExec("create table b(id int, value int)")
+	tk.MustExec("insert into b values(1,2),(2,3),(3,4)")
+	tk.MustExec("analyze table b")
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "a" || tblInfo.Name.L == "b" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_opt_mpp_outer_join_fixed_build_side = 1")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestMPPOuterJoinBuildSideForShuffleJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists a")
+	tk.MustExec("create table a(id int, value int)")
+	tk.MustExec("insert into a values(1,2),(2,3)")
+	tk.MustExec("analyze table a")
+	tk.MustExec("drop table if exists b")
+	tk.MustExec("create table b(id int, value int)")
+	tk.MustExec("insert into b values(1,2),(2,3),(3,4)")
+	tk.MustExec("analyze table b")
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "a" || tblInfo.Name.L == "b" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_opt_mpp_outer_join_fixed_build_side = 0")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
 	var input []string
 	var output []struct {
 		SQL  string
@@ -3635,6 +3790,31 @@ func (s *testIntegrationSuite) TestIssue24281(c *C) {
 		"WHERE 1 = 1 AND v.share_login = 'somevalue' " +
 		"GROUP BY s.member_login " +
 		"UNION select 1 as v1, 2 as v2")
+}
+
+func (s *testIntegrationSuite) TestIncrementalAnalyzeStatsVer3(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, index idx_b(b))")
+	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
+	tk.MustExec("set @@session.tidb_analyze_version = 3")
+	tk.MustExec("analyze table t")
+	is := tk.Se.GetInfoSchema().(infoschema.InfoSchema)
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+	rows := tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d and is_index = 1", tblID)).Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "3")
+	tk.MustExec("insert into t values(4,4),(5,5),(6,6)")
+	tk.MustExec("analyze incremental table t index idx_b")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 2)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "The version 3 would collect all statistics not only the selected indexes")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[1].Err.Error(), Equals, "The version 3 stats would ignore the INCREMENTAL keyword and do full sampling")
+	rows = tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d and is_index = 1", tblID)).Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "6")
 }
 
 func (s *testIntegrationSuite) TestConflictReadFromStorage(c *C) {
