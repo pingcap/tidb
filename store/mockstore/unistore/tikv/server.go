@@ -617,6 +617,11 @@ func (svr *Server) BatchCoprocessor(req *coprocessor.BatchRequest, batchCopServe
 	return nil
 }
 
+// RawCoprocessor implements implements the tikvpb.TikvServer interface.
+func (svr *Server) RawCoprocessor(context.Context, *kvrpcpb.RawCoprocessorRequest) (*kvrpcpb.RawCoprocessorResponse, error) {
+	panic("unimplemented")
+}
+
 func (mrm *MockRegionManager) removeMPPTaskHandler(taskID int64, storeID uint64) error {
 	set := mrm.getMPPTaskSet(storeID)
 	if set == nil {
@@ -958,11 +963,6 @@ func (svr *Server) CheckLeader(context.Context, *kvrpcpb.CheckLeaderRequest) (*k
 
 // RawCompareAndSwap implements the tikvpb.TikvServer interface.
 func (svr *Server) RawCompareAndSwap(context.Context, *kvrpcpb.RawCASRequest) (*kvrpcpb.RawCASResponse, error) {
-	panic("implement me")
-}
-
-// RawCoprocessor implements the tikvpb.TikvServer interface.
-func (svr *Server) RawCoprocessor(context.Context, *kvrpcpb.RawCoprocessorRequest) (*kvrpcpb.RawCoprocessorResponse, error) {
 	panic("implement me")
 }
 

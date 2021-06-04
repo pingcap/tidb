@@ -46,7 +46,14 @@ const (
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
+	// TiDBOptBCJ is used to enable/disable broadcast join in MPP mode
 	TiDBOptBCJ = "tidb_opt_broadcast_join"
+
+	// TiDBOptCartesianBCJ is used to disable/enable broadcast cartesian join in MPP mode
+	TiDBOptCartesianBCJ = "tidb_opt_broadcast_cartesian_join"
+
+	TiDBOptMPPOuterJoinFixedBuildSide = "tidb_opt_mpp_outer_join_fixed_build_side"
+
 	// tidb_opt_distinct_agg_push_down is used to decide whether agg with distinct should be pushed to tikv/tiflash.
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
 
@@ -549,6 +556,8 @@ const (
 
 	// TiDBTopSQLReportIntervalSeconds indicates the top SQL report interval seconds.
 	TiDBTopSQLReportIntervalSeconds = "tidb_top_sql_report_interval_seconds"
+	// TiDBEnableGlobalTemporaryTable indicates whether to enable global temporary table
+	TiDBEnableGlobalTemporaryTable = "tidb_enable_global_temporary_table"
 )
 
 // TiDB vars that have only global scope
@@ -588,6 +597,8 @@ const (
 	DefSkipASCIICheck                  = false
 	DefOptAggPushDown                  = false
 	DefOptBCJ                          = false
+	DefOptCartesianBCJ                 = 1
+	DefOptMPPOuterJoinFixedBuildSide   = true
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
@@ -697,6 +708,7 @@ const (
 	DefTiDBTopSQLPrecisionSeconds      = 1
 	DefTiDBTopSQLMaxStatementCount     = 200
 	DefTiDBTopSQLReportIntervalSeconds = 60
+	DefTiDBEnableGlobalTemporaryTable  = false
 )
 
 // Process global variables.
