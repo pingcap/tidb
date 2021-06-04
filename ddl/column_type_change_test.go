@@ -817,7 +817,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	// MySQL will get "ERROR 1406 (22001): Data truncation: Data too long for column 'f64' at row 1".
 	tk.MustExec("alter table t modify f64 char(20)")
 	tk.MustExec("alter table t modify b char(20)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 21"))
 
 	// varchar
 	reset(tk)
@@ -844,7 +844,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	tk.MustGetErrCode("alter table t modify f32 binary(10)", mysql.ErrDataTooLong)
 	tk.MustGetErrCode("alter table t modify f64 binary(10)", mysql.ErrDataTooLong)
 	tk.MustExec("alter table t modify b binary(10)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33\x00\x00\x00\x00 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15\x00\x00\x00\x00\x00\x00\x00\x00\x00"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33\x00\x00\x00\x00 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 21\x00\x00\x00\x00\x00\x00\x00\x00"))
 
 	// varbinary
 	reset(tk)
@@ -858,7 +858,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	// MySQL will get "ERROR 1406 (22001): Data truncation: Data too long for column 'f64' at row 1".
 	tk.MustExec("alter table t modify f64 varbinary(30)")
 	tk.MustExec("alter table t modify b varbinary(30)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 21"))
 
 	// blob
 	reset(tk)
@@ -1912,4 +1912,35 @@ func (s *testColumnTypeChangeSuite) TestCTCShouldCastTheDefaultValue(c *C) {
 	tk.MustQuery("select col_279 from tbl").Check(testkit.Rows("RAWTdm\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"))
 	tk.MustGetErrCode("alter table tbl change column col_279 col_287 int", mysql.ErrTruncatedWrongValue)
 	tk.MustQuery("select col_279 from tbl").Check(testkit.Rows("RAWTdm\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"))
+}
+
+// Close issue #25037
+// 1: for default value of binary of create-table, it should append the \0 as the suffix to meet flen.
+// 2: when cast the bit to binary, we should consider to convert it to uint then cast uint to string, rather than taking the bit to string directly.
+func (s *testColumnTypeChangeSuite) TestCTCCastBitToBinary(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	// For point 1:
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a binary(10) default 't')")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` binary(10) DEFAULT 't\\0\\0\\0\\0\\0\\0\\0\\0\\0'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// For point 2 with binary:
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bit(13) not null) collate utf8mb4_general_ci")
+	tk.MustExec("insert into t values ( 4047 )")
+	tk.MustExec("alter table t change column a a binary(248) collate binary default 't'")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` binary(248) DEFAULT 't\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("4047\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"))
+
+	// For point 2 with varbinary:
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bit(13) not null) collate utf8mb4_general_ci")
+	tk.MustExec("insert into t values ( 4047 )")
+	tk.MustExec("alter table t change column a a varbinary(248) collate binary default 't'")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` varbinary(248) DEFAULT 't'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("4047"))
 }
