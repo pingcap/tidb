@@ -1109,8 +1109,23 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 			tipb.ScalarFuncSig_Substring3ArgsUTF8:
 			ret = true
 		}
+<<<<<<< HEAD
 	case ast.Rand:
 		switch sf.Function.PbCode() {
+=======
+	case ast.Extract:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_ExtractDatetime:
+			return true
+		}
+	case ast.Replace:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_Replace:
+			return true
+		}
+	case ast.StrToDate:
+		switch function.Function.PbCode() {
+>>>>>>> 9a1e57c02... expression: Support push function replace down to TiFlash (#25084)
 		case
 			tipb.ScalarFuncSig_RandWithSeedFirstGen:
 			ret = true
