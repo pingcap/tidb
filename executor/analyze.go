@@ -720,6 +720,8 @@ type AnalyzeColumnsExec struct {
 	subIndexWorkerWg  *sync.WaitGroup
 	samplingBuilderWg *sync.WaitGroup
 	samplingMergeWg   *sync.WaitGroup
+
+	schemaForVirtualColEval *expression.Schema
 }
 
 func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
@@ -817,12 +819,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			err = err1
 		}
 	}()
-	columns, _, err := expression.ColumnInfos2ColumnsAndNames(e.ctx, model.NewCIStr(e.AnalyzeInfo.DBName), e.tableInfo.Name, e.colsInfo, e.tableInfo)
-	if err != nil {
-		return 0, nil, nil, nil, nil, err
-	}
-
-	schema := expression.NewSchema(columns...)
 
 	l := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
 	rootRowCollector := &statistics.RowSampleCollector{
@@ -879,9 +875,9 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 
 	// handling virtual columns
 	var hasVirtualCol bool
-	fieldTps := make([]*types.FieldType, 0, len(schema.Columns))
+	fieldTps := make([]*types.FieldType, 0, len(e.schemaForVirtualColEval.Columns))
 	virtualColIdx := make([]int, 0)
-	for i, col := range schema.Columns {
+	for i, col := range e.schemaForVirtualColEval.Columns {
 		fieldTps = append(fieldTps, col.RetType)
 		if col.VirtualExpr != nil {
 			hasVirtualCol = true
@@ -889,7 +885,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		}
 	}
 	if hasVirtualCol {
-		err = e.decodeSampleDataWithVirtualColumn(rootRowCollector, fieldTps, virtualColIdx, schema)
+		err = e.decodeSampleDataWithVirtualColumn(rootRowCollector, fieldTps, virtualColIdx, e.schemaForVirtualColEval)
 		if err != nil {
 			return 0, nil, nil, nil, nil, err
 		}
