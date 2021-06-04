@@ -133,7 +133,7 @@ func NewRemoteTopSQLReporter(client ReportClient, planDecoder planBinaryDecodeFu
 
 	go tsr.collectWorker()
 
-	go tsr.sendToAgentWorker()
+	go tsr.reportWorker()
 
 	return tsr
 }
@@ -336,8 +336,8 @@ func (tsr *RemoteTopSQLReporter) prepareReportData(data reportData) []*tipb.Coll
 }
 
 // sendToAgentWorker will send a snapshot to the gRPC endpoint every collect interval
-func (tsr *RemoteTopSQLReporter) sendToAgentWorker() {
-	defer util.Recover("top-sql", "sendToAgentWorker", nil, false)
+func (tsr *RemoteTopSQLReporter) reportWorker() {
+	defer util.Recover("top-sql", "reportWorker", nil, false)
 
 	for {
 		select {
