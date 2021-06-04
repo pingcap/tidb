@@ -237,7 +237,7 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitContextCancelCausingUndetermin
 // TestAsyncCommitRPCErrorThenWriteConflict verifies that the determined failure error overwrites undetermined error.
 func (s *testAsyncCommitFailSuite) TestAsyncCommitRPCErrorThenWriteConflict(c *C) {
 	// This test doesn't support tikv mode because it needs setting failpoint in unistore.
-	if *WithTiKV {
+	if *util.WithTiKV {
 		return
 	}
 
@@ -260,7 +260,7 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitRPCErrorThenWriteConflict(c *C
 // overwrites the undetermined error in the parent.
 func (s *testAsyncCommitFailSuite) TestAsyncCommitRPCErrorThenWriteConflictInChild(c *C) {
 	// This test doesn't support tikv mode because it needs setting failpoint in unistore.
-	if *WithTiKV {
+	if *util.WithTiKV {
 		return
 	}
 
