@@ -110,9 +110,9 @@ var (
 	subWindowsLock    = sync.RWMutex{}
 )
 
-func getSQLSum(sqlTypeDeta *sqlType) int64 {
+func getSQLSum(sqlTypeData *sqlType) int64 {
 	result := int64(0)
-	for _, v := range *sqlTypeDeta {
+	for _, v := range *sqlTypeData {
 		result += v
 	}
 	// result := sqlTypeDeta.Use
@@ -274,7 +274,7 @@ func RotateSubWindow() {
 	subWindowsLock.Unlock()
 }
 
-func subSQLTypeMap(cur sqlType, last sqlType) sqlType {
+func calDeltaSQLTypeMap(cur sqlType, last sqlType) sqlType {
 	deltaMap := make(sqlType)
 	// slowQueryLock.Lock()
 	for key, value := range cur {
@@ -314,7 +314,7 @@ func getWindowData() []*windowData {
 			thisWindow.CoprCacheUsage.GTE80 += rotatedSubWindows[i].CoprCacheUsage.GTE80
 			thisWindow.CoprCacheUsage.GTE100 += rotatedSubWindows[i].CoprCacheUsage.GTE100
 			thisWindow.SQLUsage.SQLTotal = rotatedSubWindows[i].SQLUsage.SQLTotal - startWindow.SQLUsage.SQLTotal
-			thisWindow.SQLUsage.SQLType = subSQLTypeMap(rotatedSubWindows[i].SQLUsage.SQLType, startWindow.SQLUsage.SQLType)
+			thisWindow.SQLUsage.SQLType = calDeltaSQLTypeMap(rotatedSubWindows[i].SQLUsage.SQLType, startWindow.SQLUsage.SQLType)
 			// thisWindow.SQLUsage.SQLType.Use = rotatedSubWindows[i].SQLUsage.SQLType.Use - startWindow.SQLUsage.SQLType.Use
 			// thisWindow.SQLUsage.SQLType.Show = rotatedSubWindows[i].SQLUsage.SQLType.Show - startWindow.SQLUsage.SQLType.Show
 			// thisWindow.SQLUsage.SQLType.Begin = rotatedSubWindows[i].SQLUsage.SQLType.Begin - startWindow.SQLUsage.SQLType.Begin
