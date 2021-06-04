@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"bytes"
+	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
@@ -235,7 +236,7 @@ func BuildHistAndTopN(
 	if ndv > count {
 		ndv = count
 	}
-	if count == 0 || len(collector.Samples) == 0 {
+	if count == 0 || len(collector.Samples) == 0 || ndv == 0 {
 		return NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize), nil, nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
@@ -329,6 +330,8 @@ func BuildHistAndTopN(
 		}
 	}
 
+	topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
+
 	// Step2: exclude topn from samples
 	for i := int64(0); i < int64(len(samples)); i++ {
 		sampleBytes, err := getComparedBytes(samples[i].Value)
@@ -365,4 +368,56 @@ func BuildHistAndTopN(
 	}
 
 	return hg, topn, nil
+}
+
+// pruneTopNItem tries to prune the least common values in the top-n list if it is not significantly more common than the values not in the list.
+//   We assume that the ones not in the top-n list's selectivity is 1/remained_ndv which is the internal implementation of EqualRowCount
+func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64) []TopNMeta {
+	// If the sampleRows holds all rows. We just return the top-n directly.
+	if sampleRows == totalRows || totalRows <= 1 {
+		return topns
+	}
+	// Sum the occurrence except the least common one from the top-n list. To check whether the lest common one is worth
+	// storing later.
+	sumCount := uint64(0)
+	for i := 0; i < len(topns)-1; i++ {
+		sumCount += topns[i].Count
+	}
+	topNNum := len(topns)
+	for topNNum > 0 {
+		// Selectivity for the ones not in the top-n list.
+		// (1 - things in top-n list - null) / remained ndv.
+		selectivity := 1.0 - float64(sumCount)/float64(sampleRows) - float64(nullCount)/float64(totalRows)
+		if selectivity < 0.0 {
+			selectivity = 0
+		}
+		if selectivity > 1 {
+			selectivity = 1
+		}
+		otherNDV := float64(ndv) - float64(topNNum)
+		if otherNDV > 1 {
+			selectivity /= otherNDV
+		}
+		N := float64(totalRows)
+		n := float64(sampleRows)
+		K := N * float64(topns[topNNum-1].Count) / n
+		// Since we are sampling without replacement. The distribution would be a hypergeometric distribution.
+		// Thus the variance is the following formula.
+		variance := n * K * (N - K) * (N - n) / (N * N * (N - 1))
+		stddev := math.Sqrt(variance)
+		// We choose the bound that plus two stddev of the sample frequency， plus an additional 0.5 for the continuity correction.
+		//   Note:
+		//  	The mean + 2 * stddev is known as Wald confidence interval, plus 0.5 would be continuity-corrected Wald interval
+		if float64(topns[topNNum-1].Count) > selectivity*n+2*stddev+0.5 {
+			// If the current one is worth storing, the latter ones too. So we just break here.
+			break
+		}
+		// Current one is not worth storing, remove it and subtract it from sumCount, go to next one.
+		topNNum--
+		if topNNum == 0 {
+			break
+		}
+		sumCount -= topns[topNNum-1].Count
+	}
+	return topns[:topNNum]
 }

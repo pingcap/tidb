@@ -180,6 +180,7 @@ type Request struct {
 	Type CmdType
 	Req  interface{}
 	kvrpcpb.Context
+	TxnScope        string
 	ReplicaReadType kv.ReplicaReadType // different from `kvrpcpb.Context.ReplicaRead`
 	ReplicaReadSeed *uint32            // pointer to follower read seed in snapshot/coprocessor
 	StoreTp         EndpointType
@@ -212,6 +213,14 @@ func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType kv.
 	req.ReplicaReadType = replicaReadType
 	req.ReplicaReadSeed = replicaReadSeed
 	return req
+}
+
+// GetReplicaReadSeed returns ReplicaReadSeed pointer.
+func (req *Request) GetReplicaReadSeed() *uint32 {
+	if req != nil {
+		return req.ReplicaReadSeed
+	}
+	return nil
 }
 
 // EnableStaleRead enables stale read
