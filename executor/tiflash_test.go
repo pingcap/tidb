@@ -570,7 +570,7 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableShuffledHashAggregation(c *C
 		tk.MustExec(fmt.Sprintf("analyze table %v", tbl))
 	}
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
-	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	tk.MustExec("set @@session.tidb_allow_mpp=2")
 
 	lr := func() (int, int) {
 		l, r := rand.Intn(400), rand.Intn(400)
@@ -639,7 +639,7 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableBroadcastJoin(c *C) {
 		tk.MustExec(fmt.Sprintf("analyze table %v", tbl))
 	}
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
-	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	tk.MustExec("set @@session.tidb_allow_mpp=2")
 	tk.MustExec("set @@session.tidb_opt_broadcast_join=ON")
 
 	lr := func() (int, int) {
