@@ -1180,8 +1180,8 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
-	reporter := mock.NewTopSQLReporter()
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(reporter)
+	collector := mock.NewTopSQLReporter()
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(collector)
 
 	dbt := &DBTest{c, db}
 	dbt.mustExec("drop database if exists topsql")
@@ -1316,19 +1316,19 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		})
 	}
 
-	// Wait the top sql reporter to collect profile data.
-	reporter.WaitCollectCnt(1)
+	// Wait the top sql collector to collect profile data.
+	collector.WaitCollectCnt(1)
 
 	checkFn := func(sql, planRegexp string) {
 		commentf := Commentf("sql: %v", sql)
-		stats := reporter.GetSQLStatsBySQLWithRetry(sql, len(planRegexp) > 0)
+		stats := collector.GetSQLStatsBySQLWithRetry(sql, len(planRegexp) > 0)
 		// since 1 sql may has many plan, check `len(stats) > 0` instead of `len(stats) == 1`.
 		c.Assert(len(stats) > 0, IsTrue, commentf)
 
 		match := false
 		for _, s := range stats {
-			sqlStr := reporter.GetSQL(s.SQLDigest)
-			encodedPlan := reporter.GetPlan(s.PlanDigest)
+			sqlStr := collector.GetSQL(s.SQLDigest)
+			encodedPlan := collector.GetPlan(s.PlanDigest)
 			// Normalize the user SQL before check.
 			normalizedSQL := parser.Normalize(sql)
 			c.Assert(sqlStr, Equals, normalizedSQL, commentf)

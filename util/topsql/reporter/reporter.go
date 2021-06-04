@@ -16,7 +16,6 @@ package reporter
 import (
 	"bytes"
 	"context"
-	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,8 +27,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/wangjohn/quickselect"
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/backoff"
 )
 
 const (
@@ -49,11 +46,6 @@ type TopSQLReporter interface {
 	RegisterPlan(planDigest []byte, normalizedPlan string)
 }
 
-// ReportClient send data to the target server.
-type ReportClient interface {
-	Send(ctx context.Context, addr string, sqlMetas []*tipb.SQLMeta, planMetas []*tipb.PlanMeta, records []*tipb.CPUTimeRecord) error
-}
-
 type topSQLCPUTimeInput struct {
 	timestamp uint64
 	records   []tracecpu.SQLCPUTimeRecord
@@ -68,7 +60,7 @@ type topSQLDataPoints struct {
 	CPUTimeMsTotal uint64
 }
 
-// cpuTimeSort is used to sort TopSQL records by tocal CPU time
+// cpuTimeSort is used to sort TopSQL records by total CPU time
 type cpuTimeSort struct {
 	Key            string
 	SQLDigest      []byte
@@ -98,6 +90,7 @@ type RemoteTopSQLReporter struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	client ReportClient
+
 	// topSQLMap maps `sqlDigest-planDigest` to TopSQLDataPoints
 	topSQLMap map[string]*topSQLDataPoints
 
@@ -149,22 +142,14 @@ func NewRemoteTopSQLReporter(client ReportClient, planDecoder planBinaryDecodeFu
 func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL string) {
 	m := tsr.normalizedSQLMap.Load().(*sync.Map)
 	key := string(sqlDigest)
-	_, ok := m.Load(key)
-	if ok {
-		return
-	}
-	m.Store(key, normalizedSQL)
+	m.LoadOrStore(key, normalizedSQL)
 }
 
 // RegisterPlan is like RegisterSQL, but for normalized plan strings.
 func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedPlan string) {
 	m := tsr.normalizedPlanMap.Load().(*sync.Map)
 	key := string(planDigest)
-	_, ok := m.Load(key)
-	if ok {
-		return
-	}
-	m.Store(key, normalizedPlan)
+	m.LoadOrStore(key, normalizedPlan)
 }
 
 // Collect will drop the records when the collect channel is full
@@ -195,33 +180,40 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 				interval = newInterval
 				reportTicker.Reset(time.Second * time.Duration(interval))
 			}
-			tsr.sendToReport()
+			tsr.sendToReportChan()
 		case <-tsr.ctx.Done():
 			return
 		}
 	}
 }
 
-func encodeKey(sqlDigest, planDigest []byte) string {
-	var buffer bytes.Buffer
-	buffer.Write(sqlDigest)
-	buffer.Write(planDigest)
-	return buffer.String()
+func encodeKey(buf *bytes.Buffer, sqlDigest, planDigest []byte) string {
+	buf.Write(sqlDigest)
+	buf.Write(planDigest)
+	return buf.String()
 }
 
 // collect uses a hashmap to store records in every second, and evict when necessary.
-// This function can be run in parallel with snapshot, so we should protect the map operations with a mutex.
 func (tsr *RemoteTopSQLReporter) collect(timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
+	buf := bytes.NewBuffer(make([]byte, 0, 64))
+	// capacity uses to pre-allocate memory
+	capacity := int(variable.TopSQLVariable.ReportIntervalSeconds.Load() / variable.TopSQLVariable.PrecisionSeconds.Load() / 2)
+	if capacity < 1 {
+		capacity = 1
+	}
 	for _, record := range records {
-		key := encodeKey(record.SQLDigest, record.PlanDigest)
+		buf.Reset()
+		key := encodeKey(buf, record.SQLDigest, record.PlanDigest)
 		entry, exist := tsr.topSQLMap[key]
 		if !exist {
 			entry = &topSQLDataPoints{
 				SQLDigest:     record.SQLDigest,
 				PlanDigest:    record.PlanDigest,
-				CPUTimeMsList: []uint32{record.CPUTimeMs},
-				TimestampList: []uint64{timestamp},
+				CPUTimeMsList: make([]uint32, 1, capacity),
+				TimestampList: make([]uint64, 1, capacity),
 			}
+			entry.CPUTimeMsList[0] = record.CPUTimeMs
+			entry.TimestampList[0] = timestamp
 			tsr.topSQLMap[key] = entry
 		} else {
 			entry.CPUTimeMsList = append(entry.CPUTimeMsList, record.CPUTimeMs)
@@ -237,18 +229,15 @@ func (tsr *RemoteTopSQLReporter) collect(timestamp uint64, records []tracecpu.SQ
 
 	// find the max CPUTimeMsTotal that should be evicted
 	digestCPUTimeList := make([]cpuTimeSort, len(tsr.topSQLMap))
-	{
-		i := 0
-		for key, value := range tsr.topSQLMap {
-			data := cpuTimeSort{
-				Key:            key,
-				SQLDigest:      value.SQLDigest,
-				PlanDigest:     value.PlanDigest,
-				CPUTimeMsTotal: value.CPUTimeMsTotal,
-			}
-			digestCPUTimeList[i] = data
-			i++
+	idx := 0
+	for key, value := range tsr.topSQLMap {
+		digestCPUTimeList[idx] = cpuTimeSort{
+			Key:            key,
+			SQLDigest:      value.SQLDigest,
+			PlanDigest:     value.PlanDigest,
+			CPUTimeMsTotal: value.CPUTimeMsTotal,
 		}
+		idx++
 	}
 
 	// QuickSelect will only return error when the second parameter is out of range
@@ -257,7 +246,6 @@ func (tsr *RemoteTopSQLReporter) collect(timestamp uint64, records []tracecpu.SQ
 		return
 	}
 
-	// TODO: we can change to periodical eviction (every minute) to relax the CPU pressure
 	shouldEvictList := digestCPUTimeList[maxStmt:]
 	normalizedSQLMap := tsr.normalizedSQLMap.Load().(*sync.Map)
 	normalizedPlanMap := tsr.normalizedPlanMap.Load().(*sync.Map)
@@ -268,7 +256,7 @@ func (tsr *RemoteTopSQLReporter) collect(timestamp uint64, records []tracecpu.SQ
 	}
 }
 
-func (tsr *RemoteTopSQLReporter) sendToReport() {
+func (tsr *RemoteTopSQLReporter) sendToReportChan() {
 	data := reportData{
 		topSQL:            tsr.topSQLMap,
 		normalizedSQLMap:  tsr.normalizedSQLMap.Load().(*sync.Map),
@@ -347,151 +335,21 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 	for {
 		select {
 		case data := <-tsr.reportDataChan:
-			tsr.Report(data)
+			tsr.report(data)
 		case <-tsr.ctx.Done():
 			return
 		}
 	}
 }
 
-func (tsr *RemoteTopSQLReporter) Report(data reportData) {
+func (tsr *RemoteTopSQLReporter) report(data reportData) {
 	sqlMetas, planMetas, records := tsr.prepareReportData(data)
-	ctx, cancel := context.WithTimeout(tsr.ctx, reportTimeout)
 	addr := variable.TopSQLVariable.AgentAddress.Load()
+
+	ctx, cancel := context.WithTimeout(tsr.ctx, reportTimeout)
 	err := tsr.client.Send(ctx, addr, sqlMetas, planMetas, records)
 	if err != nil {
 		logutil.BgLogger().Warn("[top-sql] client failed to send data", zap.Error(err))
 	}
 	cancel()
-}
-
-// ReportGRPCClient reports data to grpc servers.
-type ReportGRPCClient struct {
-	addr   string
-	conn   *grpc.ClientConn
-	client tipb.TopSQLAgentClient
-}
-
-// NewReportGRPCClient returns a new ReportGRPCClient
-func NewReportGRPCClient() *ReportGRPCClient {
-	return &ReportGRPCClient{}
-}
-
-// Send implements the ReportClient interface.
-func (r *ReportGRPCClient) Send(ctx context.Context, addr string, sqlMetas []*tipb.SQLMeta, planMetas []*tipb.PlanMeta, records []*tipb.CPUTimeRecord) error {
-	if addr == "" {
-		return nil
-	}
-	err := r.initialize(ctx, addr)
-	if err != nil {
-		return err
-	}
-	if err := r.sendBatchSQLMeta(ctx, sqlMetas); err != nil {
-		return r.resetClientWhenSendError(err)
-	}
-	if err := r.sendBatchPlanMeta(ctx, planMetas); err != nil {
-		return r.resetClientWhenSendError(err)
-	}
-	if err := r.sendBatchCPUTimeRecord(ctx, records); err != nil {
-		return r.resetClientWhenSendError(err)
-	}
-	return nil
-}
-
-// sendBatchCPUTimeRecord sends a batch of TopSQL records by stream.
-func (r *ReportGRPCClient) sendBatchCPUTimeRecord(ctx context.Context, records []*tipb.CPUTimeRecord) error {
-	stream, err := r.client.ReportCPUTimeRecords(ctx)
-	if err != nil {
-		return r.resetClientWhenSendError(err)
-	}
-	for _, record := range records {
-		if err := stream.Send(record); err != nil {
-			return err
-		}
-	}
-	// response is Empty, drop it for now
-	_, err = stream.CloseAndRecv()
-	return err
-}
-
-// sendBatchSQLMeta sends a batch of SQL metas by stream.
-func (r *ReportGRPCClient) sendBatchSQLMeta(ctx context.Context, metas []*tipb.SQLMeta) error {
-	stream, err := r.client.ReportSQLMeta(ctx)
-	if err != nil {
-		return r.resetClientWhenSendError(err)
-	}
-	for _, meta := range metas {
-		if err := stream.Send(meta); err != nil {
-			return err
-		}
-	}
-	// response is Empty, drop it for now
-	_, err = stream.CloseAndRecv()
-	return err
-}
-
-// sendBatchSQLMeta sends a batch of SQL metas by stream.
-func (r *ReportGRPCClient) sendBatchPlanMeta(ctx context.Context, metas []*tipb.PlanMeta) error {
-	stream, err := r.client.ReportPlanMeta(ctx)
-	if err != nil {
-		return r.resetClientWhenSendError(err)
-	}
-	for _, meta := range metas {
-		if err := stream.Send(meta); err != nil {
-			return err
-		}
-	}
-	// response is Empty, drop it for now
-	_, err = stream.CloseAndRecv()
-	return err
-}
-
-func (r *ReportGRPCClient) initialize(ctx context.Context, addr string) (err error) {
-	if r.addr == addr {
-		return nil
-	}
-	r.conn, err = r.newAgentConn(ctx, addr)
-	if err != nil {
-		return err
-	}
-	r.addr = addr
-	r.client = tipb.NewTopSQLAgentClient(r.conn)
-	return nil
-}
-
-func (r *ReportGRPCClient) newAgentConn(ctx context.Context, addr string) (*grpc.ClientConn, error) {
-	dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
-	defer cancel()
-	return grpc.DialContext(
-		dialCtx,
-		addr,
-		grpc.WithInsecure(),
-		grpc.WithInitialWindowSize(grpcInitialWindowSize),
-		grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
-		grpc.WithDefaultCallOptions(
-			grpc.MaxCallRecvMsgSize(math.MaxInt64),
-		),
-		grpc.WithConnectParams(grpc.ConnectParams{
-			Backoff: backoff.Config{
-				BaseDelay:  100 * time.Millisecond, // Default was 1s.
-				Multiplier: 1.6,                    // Default
-				Jitter:     0.2,                    // Default
-				MaxDelay:   3 * time.Second,        // Default was 120s.
-			},
-		}),
-	)
-}
-
-func (r *ReportGRPCClient) resetClientWhenSendError(err error) error {
-	if err == nil {
-		return nil
-	}
-	r.addr = ""
-	if r.conn != nil {
-		err1 := r.conn.Close()
-		if err1 != nil {
-			logutil.BgLogger().Warn("[top-sql] close grpc conn failed", zap.Error(err1))
-		}
-	}
-	return err
 }
