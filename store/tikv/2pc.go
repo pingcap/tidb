@@ -1063,8 +1063,8 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		commitDetail.Mu.Lock()
 		if boSleep > commitDetail.Mu.CommitBackoffTime {
 			commitDetail.Mu.CommitBackoffTime = boSleep
+			commitDetail.Mu.BackoffTypes = bo.GetTypes()
 		}
-		commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, bo.GetTypes()...)
 		commitDetail.Mu.Unlock()
 	}
 
@@ -1625,8 +1625,8 @@ func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, 
 					boSleep := int64(singleBatchBackoffer.GetTotalSleep()) * int64(time.Millisecond)
 					if boSleep > commitDetail.Mu.CommitBackoffTime {
 						commitDetail.Mu.CommitBackoffTime = boSleep
+						commitDetail.Mu.BackoffTypes = singleBatchBackoffer.GetTypes()
 					}
-					commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, singleBatchBackoffer.GetTypes()...)
 					commitDetail.Mu.Unlock()
 				}
 				// Backoff time in the 2nd phase of a non-async-commit txn is added
