@@ -67,6 +67,20 @@
     ]
   },
   {
+    "name": "TestMPPOuterJoinBuildSideForShuffleJoinWithFixedBuildSide",
+    "cases": [
+      "explain format = 'brief' select count(*) from a left join b on a.id = b.id",
+      "explain format = 'brief' select count(*) from b right join a on a.id = b.id"
+    ]
+  },
+  {
+    "name": "TestMPPOuterJoinBuildSideForShuffleJoin",
+    "cases": [
+      "explain format = 'brief' select count(*) from a left join b on a.id = b.id",
+      "explain format = 'brief' select count(*) from b right join a on a.id = b.id"
+    ]
+  },
+  {
     "name": "TestMPPShuffledJoin",
     "cases": [
       "explain format = 'brief' select count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
