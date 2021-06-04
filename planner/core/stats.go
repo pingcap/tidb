@@ -202,7 +202,6 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 					Cols: idxCols,
 					NDV:  float64(idx.NDV),
 				}
-				logutil.BgLogger().Warn("get group ndv", zap.Int64s("cols", idxCols), zap.Float64("ndv", ndv.NDV))
 				ndvs = append(ndvs, ndv)
 				break
 			}
