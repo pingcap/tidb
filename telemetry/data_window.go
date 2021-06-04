@@ -70,19 +70,6 @@ type windowData struct {
 	SQLUsage       sqlUsageData       `json:"SQLUsage"`
 }
 
-// type sqlType struct {
-// 	Use      int64 `json:"Use"`
-// 	Show     int64 `json:"Show"`
-// 	Begin    int64 `json:"Begin"`
-// 	Commit   int64 `json:"Commit"`
-// 	Rollback int64 `json:"Rollback"`
-// 	Insert   int64 `json:"Insert"`
-// 	Replace  int64 `json:"Replace"`
-// 	Delete   int64 `json:"Delete"`
-// 	Update   int64 `json:"Update"`
-// 	Select   int64 `json:"Select"`
-// 	Other    int64 `json:"Other"`
-// }
 type sqlType map[string]int64
 
 type sqlUsageData struct {
@@ -115,17 +102,6 @@ func getSQLSum(sqlTypeData *sqlType) int64 {
 	for _, v := range *sqlTypeData {
 		result += v
 	}
-	// result := sqlTypeDeta.Use
-	// result += sqlTypeDeta.Show
-	// result += sqlTypeDeta.Begin
-	// result += sqlTypeDeta.Commit
-	// result += sqlTypeDeta.Rollback
-	// result += sqlTypeDeta.Insert
-	// result += sqlTypeDeta.Replace
-	// result += sqlTypeDeta.Delete
-	// result += sqlTypeDeta.Update
-	// result += sqlTypeDeta.Select
-	// result += sqlTypeDeta.Other
 	return result
 }
 
@@ -186,54 +162,9 @@ func anylisSQLUsage(promResult pmodel.Value, SQLResult *sqlUsageData) {
 			v := m.Value
 			promLable := string(m.Metric[pmodel.LabelName("type")])
 			SQLResult.SQLType[promLable] = int64(float64(v))
-			// fillSQLResult(m.Metric, v, SQLResult)
 		}
 	}
 }
-
-/*
-func fillSQLResult(metric pmodel.Metric, pair pmodel.SampleValue, SQLResult *sqlUsageData) {
-	v := ""
-	if metric != nil {
-		v = string(metric[pmodel.LabelName("type")])
-	}
-	if len(v) == 0 {
-		v = "total"
-	}
-	var record int64
-	if math.IsNaN(float64(pair)) {
-		record = 0
-	} else {
-		record = int64(float64(pair))
-	}
-	switch v {
-	case "total":
-		SQLResult.SQLTotal = record
-	case "Use":
-		SQLResult.SQLType.Use = record
-	case "Show":
-		SQLResult.SQLType.Show = record
-	case "Begin":
-		SQLResult.SQLType.Begin = record
-	case "Commit":
-		SQLResult.SQLType.Commit = record
-	case "Rollback":
-		SQLResult.SQLType.Rollback = record
-	case "Insert":
-		SQLResult.SQLType.Insert = record
-	case "Replace":
-		SQLResult.SQLType.Replace = record
-	case "Delete":
-		SQLResult.SQLType.Delete = record
-	case "Update":
-		SQLResult.SQLType.Update = record
-	case "Select":
-		SQLResult.SQLType.Select = record
-	default:
-		SQLResult.SQLType.Other = record
-	}
-}
-*/
 
 // RotateSubWindow rotates the telemetry sub window.
 func RotateSubWindow() {
