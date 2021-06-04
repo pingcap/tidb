@@ -125,9 +125,10 @@ func getSQLSum(sqlTypeDeta *sqlType) int64 {
 	return result
 }
 
-func readSQLMetric(timepoint time.Time, SQLresult *sqlUsageData) error {
+func readSQLMetric(timepoint time.Time, SQLResult *sqlUsageData) error {
 	ctx := context.TODO()
-	result, err := querySQLMetric(ctx, timepoint)
+	promQL := "sum(tidb_executor_statement_total{}) by (instance,type)"
+	result, err := querySQLMetric(ctx, timepoint, promQL)
 	if err != nil {
 		if err1, ok := err.(*promv1.Error); ok {
 			return errors.Errorf("query metric error, msg: %v, detail: %v", err1.Msg, err1.Detail)
@@ -135,12 +136,12 @@ func readSQLMetric(timepoint time.Time, SQLresult *sqlUsageData) error {
 		return errors.Errorf("query metric error: %v", err.Error())
 	}
 
-	dataAnylis(result, SQLresult)
+	anylisSQLUsage(result, SQLResult)
 	return nil
 
 }
 
-func querySQLMetric(ctx context.Context, queryTime time.Time) (result pmodel.Value, err error) {
+func querySQLMetric(ctx context.Context, queryTime time.Time, promQL string) (result pmodel.Value, err error) {
 	// Add retry to avoid network error.
 	var prometheusAddr string
 	for i := 0; i < 5; i++ {
@@ -163,7 +164,6 @@ func querySQLMetric(ctx context.Context, queryTime time.Time) (result pmodel.Val
 	promQLAPI := promv1.NewAPI(promClient)
 	ctx, cancel := context.WithTimeout(ctx, promReadTimeout)
 	defer cancel()
-	promQL := "sum(tidb_executor_statement_total{}) by (instance,type)"
 	// Add retry to avoid network error.
 	for i := 0; i < 5; i++ {
 		result, _, err = promQLAPI.Query(ctx, promQL, queryTime)
@@ -175,18 +175,18 @@ func querySQLMetric(ctx context.Context, queryTime time.Time) (result pmodel.Val
 	return result, err
 }
 
-func dataAnylis(promResult pmodel.Value, SQLresult *sqlUsageData) {
+func anylisSQLUsage(promResult pmodel.Value, SQLResult *sqlUsageData) {
 	switch promResult.Type() {
 	case pmodel.ValVector:
 		matrix := promResult.(pmodel.Vector)
 		for _, m := range matrix {
 			v := m.Value
-			fillSQLResult(m.Metric, v, SQLresult)
+			fillSQLResult(m.Metric, v, SQLResult)
 		}
 	}
 }
 
-func fillSQLResult(metric pmodel.Metric, pair pmodel.SampleValue, SQLresult *sqlUsageData) {
+func fillSQLResult(metric pmodel.Metric, pair pmodel.SampleValue, SQLResult *sqlUsageData) {
 	v := ""
 	if metric != nil {
 		v = string(metric[pmodel.LabelName("type")])
@@ -202,29 +202,29 @@ func fillSQLResult(metric pmodel.Metric, pair pmodel.SampleValue, SQLresult *sql
 	}
 	switch v {
 	case "total":
-		SQLresult.SQLTotal = record
+		SQLResult.SQLTotal = record
 	case "Use":
-		SQLresult.SQLType.Use = record
+		SQLResult.SQLType.Use = record
 	case "Show":
-		SQLresult.SQLType.Show = record
+		SQLResult.SQLType.Show = record
 	case "Begin":
-		SQLresult.SQLType.Begin = record
+		SQLResult.SQLType.Begin = record
 	case "Commit":
-		SQLresult.SQLType.Commit = record
+		SQLResult.SQLType.Commit = record
 	case "Rollback":
-		SQLresult.SQLType.Rollback = record
+		SQLResult.SQLType.Rollback = record
 	case "Insert":
-		SQLresult.SQLType.Insert = record
+		SQLResult.SQLType.Insert = record
 	case "Replace":
-		SQLresult.SQLType.Replace = record
+		SQLResult.SQLType.Replace = record
 	case "Delete":
-		SQLresult.SQLType.Delete = record
+		SQLResult.SQLType.Delete = record
 	case "Update":
-		SQLresult.SQLType.Update = record
+		SQLResult.SQLType.Update = record
 	case "Select":
-		SQLresult.SQLType.Select = record
+		SQLResult.SQLType.Select = record
 	default:
-		SQLresult.SQLType.Other = record
+		SQLResult.SQLType.Other = record
 	}
 }
 
