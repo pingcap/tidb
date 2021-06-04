@@ -87,3 +87,17 @@ func (*testSysVarSuite) TestError(c *C) {
 		c.Assert(terror.ToSQLError(err).Code != mysql.ErrUnknown, IsTrue)
 	}
 }
+
+func (*testSysVarSuite) TestEnableClusteredIndex(c *C) {
+	s := NewSessionVars()
+	_, err := ValidateSetSystemVar(s, TiDBEnableClusteredIndex, "0", ScopeSession)
+	c.Assert(err, IsNil)
+	_, err = ValidateSetSystemVar(s, TiDBEnableClusteredIndex, "1", ScopeSession)
+	c.Assert(err, IsNil)
+	_, err = ValidateSetSystemVar(s, TiDBEnableClusteredIndex, "2", ScopeSession)
+	c.Assert(err, IsNil)
+	_, err = ValidateSetSystemVar(s, TiDBEnableClusteredIndex, "3", ScopeSession)
+	c.Assert(err, NotNil)
+	_, err = ValidateSetSystemVar(s, TiDBEnableClusteredIndex, "4", ScopeSession)
+	c.Assert(err, NotNil)
+}
