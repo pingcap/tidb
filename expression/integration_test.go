@@ -9570,6 +9570,41 @@ func (s *testIntegrationSuite) TestEnumIndex(c *C) {
 		testkit.Rows("2"))
 	tk.MustQuery("select /*+ use_index(t,idx) */ col3 from t where col2 = 'b' and col1 is not null;").Check(
 		testkit.Rows("2"))
+
+	// issue25099
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(e enum(\"a\",\"b\",\"c\"), index idx(e));")
+	tk.MustExec("insert ignore into t values(0),(1),(2),(3);")
+	tk.MustQuery("select * from t where e = '';").Check(
+		testkit.Rows(""))
+	tk.MustQuery("select * from t where e != 'a';").Sort().Check(
+		testkit.Rows("", "b", "c"))
+	tk.MustExec("alter table t drop index idx;")
+	tk.MustQuery("select * from t where e = '';").Check(
+		testkit.Rows(""))
+	tk.MustQuery("select * from t where e != 'a';").Sort().Check(
+		testkit.Rows("", "b", "c"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(e enum(\"\"), index idx(e));")
+	tk.MustExec("insert ignore into t values(0),(1);")
+	tk.MustQuery("select * from t where e = '';").Check(
+		testkit.Rows("", ""))
+	tk.MustExec("alter table t drop index idx;")
+	tk.MustQuery("select * from t where e = '';").Check(
+		testkit.Rows("", ""))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(e enum(\"a\",\"b\",\"c\"), index idx(e));")
+	tk.MustExec("insert ignore into t values(0);")
+	tk.MustExec("select * from t t1 join t t2 on t1.e=t2.e;")
+	tk.MustQuery("select /*+ inl_join(t1,t2) */ * from t t1 join t t2 on t1.e=t2.e;").Check(
+		testkit.Rows(" "))
+	tk.MustQuery("select /*+ hash_join(t1,t2) */ * from t t1 join t t2 on t1.e=t2.e;").Check(
+		testkit.Rows(" "))
+	tk.MustQuery("select /*+ inl_hash_join(t1,t2) */ * from t t1 join t t2 on t1.e=t2.e;").Check(
+		testkit.Rows(" "))
 }
 
 // Previously global values were cached. This is incorrect.
@@ -9675,13 +9710,13 @@ func (s *testIntegrationSuite) TestComplexShowVariables(c *C) {
 	// and 16 rows in MySQL 8.0 (the aliases for tx_isolation is removed, along with query cache)
 	// In the event that we hide noop sysvars in future, we must keep these variables.
 	tk := testkit.NewTestKit(c, s.store)
-	c.Assert(tk.MustQuery(`SHOW VARIABLES WHERE Variable_name ='language' OR Variable_name = 'net_write_timeout' OR Variable_name = 'interactive_timeout' 
-OR Variable_name = 'wait_timeout' OR Variable_name = 'character_set_client' OR Variable_name = 'character_set_connection' 
-OR Variable_name = 'character_set' OR Variable_name = 'character_set_server' OR Variable_name = 'tx_isolation' 
-OR Variable_name = 'transaction_isolation' OR Variable_name = 'character_set_results' OR Variable_name = 'timezone' 
-OR Variable_name = 'time_zone' OR Variable_name = 'system_time_zone' 
-OR Variable_name = 'lower_case_table_names' OR Variable_name = 'max_allowed_packet' OR Variable_name = 'net_buffer_length' 
-OR Variable_name = 'sql_mode' OR Variable_name = 'query_cache_type'  OR Variable_name = 'query_cache_size' 
+	c.Assert(tk.MustQuery(`SHOW VARIABLES WHERE Variable_name ='language' OR Variable_name = 'net_write_timeout' OR Variable_name = 'interactive_timeout'
+OR Variable_name = 'wait_timeout' OR Variable_name = 'character_set_client' OR Variable_name = 'character_set_connection'
+OR Variable_name = 'character_set' OR Variable_name = 'character_set_server' OR Variable_name = 'tx_isolation'
+OR Variable_name = 'transaction_isolation' OR Variable_name = 'character_set_results' OR Variable_name = 'timezone'
+OR Variable_name = 'time_zone' OR Variable_name = 'system_time_zone'
+OR Variable_name = 'lower_case_table_names' OR Variable_name = 'max_allowed_packet' OR Variable_name = 'net_buffer_length'
+OR Variable_name = 'sql_mode' OR Variable_name = 'query_cache_type'  OR Variable_name = 'query_cache_size'
 OR Variable_name = 'license' OR Variable_name = 'init_connect'`).Rows(), HasLen, 19)
 
 }
