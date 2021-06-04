@@ -1945,29 +1945,59 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
-		err = dom.LoadPrivilegeLoop(se)
+		se4, err := createSession(store)
+		if err != nil {
+			return nil, err
+		}
+		err = dom.LoadPrivilegeLoop(se4)
 		if err != nil {
 			return nil, err
 		}
 	}
 
+<<<<<<< HEAD
+=======
+	//  Rebuild sysvar cache in a loop
+	se5, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	err = dom.LoadSysVarCacheLoop(se5)
+	if err != nil {
+		return nil, err
+	}
+
+>>>>>>> 5ca65a883... *: concurrent session access leads to race (#25173)
 	if len(cfg.Plugin.Load) > 0 {
 		err := plugin.Init(context.Background(), plugin.Config{EtcdClient: dom.GetEtcdClient()})
 		if err != nil {
 			return nil, err
 		}
 	}
+<<<<<<< HEAD
 
 	err = executor.LoadExprPushdownBlacklist(se)
+=======
+	se6, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	err = executor.LoadExprPushdownBlacklist(se6)
+>>>>>>> 5ca65a883... *: concurrent session access leads to race (#25173)
 	if err != nil {
 		return nil, err
 	}
 
+<<<<<<< HEAD
 	err = executor.LoadOptRuleBlacklist(se)
+=======
+	err = executor.LoadOptRuleBlacklist(se6)
+>>>>>>> 5ca65a883... *: concurrent session access leads to race (#25173)
 	if err != nil {
 		return nil, err
 	}
 
+<<<<<<< HEAD
 	dom.TelemetryLoop(se)
 
 	se1, err := createSession(store)
@@ -1975,6 +2005,16 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 	err = dom.UpdateTableStatsLoop(se1)
+=======
+	dom.TelemetryReportLoop(se6)
+	dom.TelemetryRotateSubWindowLoop(se6)
+
+	se7, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	err = dom.UpdateTableStatsLoop(se7)
+>>>>>>> 5ca65a883... *: concurrent session access leads to race (#25173)
 	if err != nil {
 		return nil, err
 	}
