@@ -48,6 +48,7 @@ type Backoffer struct {
 	configs        []*Config
 	backoffSleepMS map[string]int
 	backoffTimes   map[string]int
+	parent         *Backoffer
 }
 
 type txnStartCtxKeyType struct{}
@@ -254,6 +255,7 @@ func (b *Backoffer) Fork() (*Backoffer, context.CancelFunc) {
 		totalSleep: b.totalSleep,
 		errors:     b.errors,
 		vars:       b.vars,
+		parent:     b,
 	}, cancel
 }
 
@@ -267,11 +269,14 @@ func (b *Backoffer) GetTotalSleep() int {
 	return b.totalSleep
 }
 
-// GetTypes returns type list.
+// GetTypes returns type list of this backoff and all its ancestors.
 func (b *Backoffer) GetTypes() []string {
 	typs := make([]string, 0, len(b.configs))
-	for _, cfg := range b.configs {
-		typs = append(typs, cfg.String())
+	for b != nil {
+		for _, cfg := range b.configs {
+			typs = append(typs, cfg.String())
+		}
+		b = b.parent
 	}
 	return typs
 }
