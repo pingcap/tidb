@@ -623,7 +623,8 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 		// Because the process of analyzing will keep the order of results be the same as the colsInfo in the analyze task,
 		// and in `buildAnalyzeFullSamplingTask` we always place the _tidb_rowid at the last of colsInfo, so if there are
 		// stats for _tidb_rowid, it must be at the end of the column stats.
-		if hists[cLen-1].ID == -1 {
+		// Virtual column has no histogram yet. So we check nil here.
+		if hists[cLen-1] != nil && hists[cLen-1].ID == -1 {
 			cLen -= 1
 		}
 		colResult := analyzeResult{
@@ -776,11 +777,18 @@ func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 	virtualColIdx []int,
 	schema *expression.Schema,
 ) error {
-	chk := chunk.NewChunkWithCapacity(fieldTps, len(collector.Samples))
+	totFts := make([]*types.FieldType, 0, e.schemaForVirtualColEval.Len())
+	for _, col := range e.schemaForVirtualColEval.Columns {
+		totFts = append(totFts, col.RetType)
+	}
+	chk := chunk.NewChunkWithCapacity(totFts, len(collector.Samples))
 	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().TimeZone)
 	for _, sample := range collector.Samples {
 		for i := range sample.Columns {
-			_, err := decoder.DecodeOne(sample.Columns[i].GetBytes(), i, fieldTps[i])
+			if schema.Columns[i].VirtualExpr != nil {
+				continue
+			}
+			_, err := decoder.DecodeOne(sample.Columns[i].GetBytes(), i, e.schemaForVirtualColEval.Columns[i].RetType)
 			if err != nil {
 				return err
 			}
@@ -792,7 +800,7 @@ func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 	}
 	iter := chunk.NewIterator4Chunk(chk)
 	for row, i := iter.Begin(), 0; row != iter.End(); row, i = iter.Next(), i+1 {
-		datums := row.GetDatumRow(fieldTps)
+		datums := row.GetDatumRow(totFts)
 		collector.Samples[i].Columns = datums
 	}
 	return nil
@@ -874,17 +882,12 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}
 
 	// handling virtual columns
-	var hasVirtualCol bool
-	fieldTps := make([]*types.FieldType, 0, len(e.schemaForVirtualColEval.Columns))
-	virtualColIdx := make([]int, 0)
-	for i, col := range e.schemaForVirtualColEval.Columns {
-		fieldTps = append(fieldTps, col.RetType)
-		if col.VirtualExpr != nil {
-			hasVirtualCol = true
-			virtualColIdx = append(virtualColIdx, i)
+	virtualColIdx := buildVirtualColumnIndex(e.schemaForVirtualColEval, e.colsInfo)
+	if len(virtualColIdx) > 0 {
+		fieldTps := make([]*types.FieldType, 0, len(virtualColIdx))
+		for _, colOffset := range virtualColIdx {
+			fieldTps = append(fieldTps, e.schemaForVirtualColEval.Columns[colOffset].RetType)
 		}
-	}
-	if hasVirtualCol {
 		err = e.decodeSampleDataWithVirtualColumn(rootRowCollector, fieldTps, virtualColIdx, e.schemaForVirtualColEval)
 		if err != nil {
 			return 0, nil, nil, nil, nil, err
@@ -1293,6 +1296,7 @@ workLoop:
 				if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
 					continue
 				}
+
 				b := make([]byte, 0, 8)
 				for _, col := range idx.Columns {
 					if col.Length != types.UnspecifiedLength {

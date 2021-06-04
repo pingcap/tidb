@@ -4,22 +4,22 @@
     "Cases": [
       {
         "SQL": "select count(1) from t1 group by a, b",
-        "AggInput": "[{[4 5] 4}]",
+        "AggInput": "[{[1 2] 4}]",
         "JoinInput": ""
       },
       {
         "SQL": "select * from t1, t2 where t1.a = t2.a and t1.b = t2.b",
         "AggInput": "",
-        "JoinInput": "[{[8 9] 4}];[{[11 12] 9}]"
+        "JoinInput": "[{[1 2] 4}];[{[4 5] 9}]"
       },
       {
         "SQL": "select count(1) from t1 where a > 0 group by a, b",
-        "AggInput": "[{[14 15] 4}]",
+        "AggInput": "[{[1 2] 4}]",
         "JoinInput": ""
       },
       {
         "SQL": "select count(1) from t1 where b > 0 group by a, b",
-        "AggInput": "[{[18 19] 4}]",
+        "AggInput": "[{[1 2] 4}]",
         "JoinInput": ""
       },
       {
@@ -29,7 +29,7 @@
       },
       {
         "SQL": "select count(c3) from (select a as c1, b as c2, a+1 as c3 from t1) as tmp group by c2, c1",
-        "AggInput": "[{[26 27] 4}]",
+        "AggInput": "[{[1 2] 4}]",
         "JoinInput": ""
       },
       {
@@ -39,7 +39,7 @@
       },
       {
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b > (select t2.b from t2 where t2.a = t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
-        "AggInput": "[{[40 41] 4}]",
+        "AggInput": "[{[1 2] 4}]",
         "JoinInput": ""
       },
       {
@@ -49,12 +49,12 @@
       },
       {
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b in (select t2.b from t2 where t2.a = t1.a limit 3)) as cmp from t1) tmp group by tmp.a, tmp.b",
-        "AggInput": "[{[59 60] 4}]",
+        "AggInput": "[{[1 2] 4}]",
         "JoinInput": ""
       },
       {
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b not in (select t2.b from t2 where t2.a = t1.a limit 3)) as cmp from t1) tmp group by tmp.a, tmp.b",
-        "AggInput": "[{[70 71] 4}]",
+        "AggInput": "[{[1 2] 4}]",
         "JoinInput": ""
       },
       {
@@ -74,8 +74,8 @@
       },
       {
         "SQL": "select count(1) from t1 left join t2 on t1.a = t2.a group by t1.a, t1.b",
-        "AggInput": "[{[102 103] 4}]",
-        "JoinInput": "[{[102 103] 4}];[]"
+        "AggInput": "[{[1 2] 4}]",
+        "JoinInput": "[{[1 2] 4}];[]"
       },
       {
         "SQL": "select count(1) from t1 left join t2 on t1.a = t2.a group by t2.a, t2.b",
@@ -89,18 +89,18 @@
       },
       {
         "SQL": "select count(1) from t1 right join t2 on t1.a = t2.a group by t2.a, t2.b",
-        "AggInput": "[{[126 127] 9}]",
-        "JoinInput": "[];[{[126 127] 9}]"
+        "AggInput": "[{[4 5] 9}]",
+        "JoinInput": "[];[{[4 5] 9}]"
       },
       {
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b in (select t2.b from t2 where t2.a > t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
-        "AggInput": "[{[130 131] 4}]",
-        "JoinInput": "[{[130 131] 4}];[]"
+        "AggInput": "[{[1 2] 4}]",
+        "JoinInput": "[{[1 2] 4}];[]"
       },
       {
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b not in (select t2.b from t2 where t2.a > t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
-        "AggInput": "[{[141 142] 4}]",
-        "JoinInput": "[{[141 142] 4}];[]"
+        "AggInput": "[{[1 2] 4}]",
+        "JoinInput": "[{[1 2] 4}];[]"
       },
       {
         "SQL": "select count(1) from (select t1.a as a, t1.b as b from t1 where t1.b in (select t2.b from t2 where t2.a > t1.a)) tmp group by tmp.a, tmp.b",
@@ -114,8 +114,8 @@
       },
       {
         "SQL": "select * from t1 left join (select t2.a as a, t2.b as b, count(1) as cnt from t2 group by t2.a, t2.b) as tmp on t1.a = tmp.a and t1.b = tmp.b",
-        "AggInput": "[{[169 170] 9}]",
-        "JoinInput": "[{[166 167] 4}];[{[169 170] 9}]"
+        "AggInput": "[{[4 5] 9}]",
+        "JoinInput": "[{[1 2] 4}];[{[4 5] 9}]"
       },
       {
         "SQL": "select count(1) from (select t1.a as a, t1.b as b from t1 limit 3) tmp group by tmp.a, tmp.b",
@@ -124,7 +124,7 @@
       },
       {
         "SQL": "select count(tmp.a_sum) from (select t1.a as a, t1.b as b, sum(a) over() as a_sum from t1) tmp group by tmp.a, tmp.b",
-        "AggInput": "[{[177 178] 4}]",
+        "AggInput": "[{[1 2] 4}]",
         "JoinInput": ""
       }
     ]
