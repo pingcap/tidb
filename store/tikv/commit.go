@@ -42,7 +42,7 @@ func (actionCommit) tiKVTxnRegionsNumHistogram() prometheus.Observer {
 	return metrics.TxnRegionsNumHistogramCommit
 }
 
-func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) (err error) {
+func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
 	keys := batch.mutations.GetKeys()
 	req := tikvrpc.NewRequest(tikvrpc.CmdCommit, &pb.CommitRequest{
 		StartVersion:  c.startTS,
@@ -54,18 +54,6 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 	attempts := 0
 
 	sender := NewRegionRequestSender(c.store.regionCache, c.store.GetTiKVClient())
-	defer func() {
-		if err != nil {
-			// If we fail to receive response for the request that commits primary key, it will be undetermined whether this
-			// transaction has been successfully committed.
-			// Under this circumstance, we can not declare the commit is complete (may lead to data lost), nor can we throw
-			// an error (may lead to the duplicated key error when upper level restarts the transaction). Currently the best
-			// solution is to populate this error and let upper layer drop the connection to the corresponding mysql client.
-			if batch.isPrimary && sender.rpcError != nil && !c.isAsyncCommit() {
-				c.setUndeterminedErr(errors.Trace(sender.rpcError))
-			}
-		}
-	}()
 	for {
 		attempts++
 		if time.Since(tBegin) > slowRequestThreshold {
@@ -74,6 +62,15 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 		}
 
 		resp, err := sender.SendReq(bo, req, batch.region, client.ReadTimeoutShort)
+		// If we fail to receive response for the request that commits primary key, it will be undetermined whether this
+		// transaction has been successfully committed.
+		// Under this circumstance, we can not declare the commit is complete (may lead to data lost), nor can we throw
+		// an error (may lead to the duplicated key error when upper level restarts the transaction). Currently the best
+		// solution is to populate this error and let upper layer drop the connection to the corresponding mysql client.
+		if batch.isPrimary && sender.rpcError != nil && !c.isAsyncCommit() {
+			c.setUndeterminedErr(errors.Trace(sender.rpcError))
+		}
+
 		// Unexpected error occurs, return it.
 		if err != nil {
 			return errors.Trace(err)
@@ -108,6 +105,11 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 			return errors.Trace(tikverr.ErrBodyMissing)
 		}
 		commitResp := resp.Resp.(*pb.CommitResponse)
+		// Here we can make sure tikv has processed the commit primary key request. So
+		// we can clean undetermined error.
+		if batch.isPrimary && !c.isAsyncCommit() {
+			c.setUndeterminedErr(nil)
+		}
 		if keyErr := commitResp.GetError(); keyErr != nil {
 			if rejected := keyErr.GetCommitTsExpired(); rejected != nil {
 				logutil.Logger(bo.GetCtx()).Info("2PC commitTS rejected by TiKV, retry with a newer commitTS",
