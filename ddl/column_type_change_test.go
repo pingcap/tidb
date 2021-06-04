@@ -915,15 +915,15 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	reset(tk)
 	tk.MustExec("insert into t values (200805.11, 307.333, 20200805.11111111, 20200805111307.11111111, 200805111307.11111111, 20200805111307.11111111, b'10101')")
 	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect datetime value: '200805.1100000' for column 'd' at row 1".
-	tk.MustExec("alter table t modify d datetime")
+	tk.MustGetErrCode("alter table t modify d datetime", mysql.ErrUnsupportedDDLOperation)
 	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect datetime value: '307.33' for column 'n' at row 1".
-	tk.MustExec("alter table t modify n datetime")
+	tk.MustGetErrCode("alter table t modify n datetime", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify r datetime", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify db datetime", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify f32 datetime", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify f64 datetime", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify b datetime", mysql.ErrUnsupportedDDLOperation)
-	tk.MustQuery("select * from t").Check(testkit.Rows("2020-08-05 00:00:00 2000-03-07 00:00:00 20200805.11111111 20200805111307.11 200805100000 20200805111307.11 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("200805.1100000 307.33 20200805.11111111 20200805111307.11 200805100000 20200805111307.11 \x15"))
 	// time
 	reset(tk)
 	tk.MustExec("insert into t values (200805.11, 307.333, 20200805.11111111, 20200805111307.11111111, 200805111307.11111111, 20200805111307.11111111, b'10101')")
@@ -939,28 +939,28 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	reset(tk)
 	tk.MustExec("insert into t values (200805.11, 307.333, 20200805.11111111, 20200805111307.11111111, 200805111307.11111111, 20200805111307.11111111, b'10101')")
 	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect date value: '200805.1100000' for column 'd' at row 1".
-	tk.MustExec("alter table t modify d date")
+	tk.MustGetErrCode("alter table t modify d date", mysql.ErrUnsupportedDDLOperation)
 	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect date value: '307.33' for column 'n' at row 1".
-	tk.MustExec("alter table t modify n date")
+	tk.MustGetErrCode("alter table t modify n date", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify r date", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify db date", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify f32 date", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify f64 date", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify b date", mysql.ErrUnsupportedDDLOperation)
-	tk.MustQuery("select * from t").Check(testkit.Rows("2020-08-05 2000-03-07 20200805.11111111 20200805111307.11 200805100000 20200805111307.11 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("200805.1100000 307.33 20200805.11111111 20200805111307.11 200805100000 20200805111307.11 \x15"))
 	// timestamp
 	reset(tk)
 	tk.MustExec("insert into t values (200805.11, 307.333, 20200805.11111111, 20200805111307.11111111, 200805111307.11111111, 20200805111307.11111111, b'10101')")
 	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect datetime value: '200805.1100000' for column 'd' at row 1".
-	tk.MustExec("alter table t modify d timestamp")
+	tk.MustGetErrCode("alter table t modify d timestamp", mysql.ErrUnsupportedDDLOperation)
 	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect datetime value: '307.33' for column 'n' at row 1".
-	tk.MustExec("alter table t modify n timestamp")
+	tk.MustGetErrCode("alter table t modify n timestamp", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify r timestamp", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify db timestamp", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify f32 timestamp", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify f64 timestamp", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify b timestamp", mysql.ErrUnsupportedDDLOperation)
-	tk.MustQuery("select * from t").Check(testkit.Rows("2020-08-05 00:00:00 2000-03-07 00:00:00 20200805.11111111 20200805111307.11 200805100000 20200805111307.11 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("200805.1100000 307.33 20200805.11111111 20200805111307.11 200805100000 20200805111307.11 \x15"))
 	// year
 	reset(tk)
 	tk.MustExec("insert into t values (200805.11, 307.333, 2.55555, 98.1111111, 2154.00001, 20200805111307.11111111, b'10101')")

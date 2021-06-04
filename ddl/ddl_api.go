@@ -3587,6 +3587,11 @@ func checkTypeChangeSupported(origin *types.FieldType, to *types.FieldType) bool
 		return false
 	}
 
+	if origin.Tp == mysql.TypeNewDecimal && types.IsTypeTime(to.Tp) {
+		// TODO: Currently decimal cast to date/datetime/timestamp type are not support yet, should fix here after supported.
+		return false
+	}
+
 	if origin.Tp == mysql.TypeBit &&
 		(types.IsTypeTime(to.Tp) || to.Tp == mysql.TypeDuration || to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet) {
 		// TODO: Currently bit cast to date/datetime/timestamp/time/enum/set are not support yet, should fix here after supported.
