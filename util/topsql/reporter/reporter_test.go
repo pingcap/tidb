@@ -14,9 +14,6 @@
 package reporter
 
 import (
-	"fmt"
-	"io"
-	"net"
 	"strconv"
 	"strings"
 	"testing"
@@ -24,9 +21,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/topsql/reporter/mock"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
-	"github.com/pingcap/tipb/go-tipb"
-	"google.golang.org/grpc"
 )
 
 const (
@@ -76,17 +72,6 @@ func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) 
 	time.Sleep(100 * time.Millisecond)
 }
 
-func initializeCache(maxStatementsNum, interval int, addr string) *RemoteTopSQLReporter {
-	variable.TopSQLVariable.MaxStatementCount.Store(int64(maxStatementsNum))
-	variable.TopSQLVariable.ReportIntervalSeconds.Store(int64(interval))
-	variable.TopSQLVariable.AgentAddress.Store(addr)
-
-	rc := NewGRPCReportClient()
-	ts := NewRemoteTopSQLReporter(rc, testPlanBinaryDecoderFunc)
-	populateCache(ts, 0, maxStatementsNum, 1)
-	return ts
-}
-
 func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) *RemoteTopSQLReporter {
 	variable.TopSQLVariable.MaxStatementCount.Store(int64(maxStatementsNum))
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(int64(interval))
@@ -97,100 +82,30 @@ func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) *Rem
 	return ts
 }
 
-type testAgentServer struct {
-	addr      string
-	sqlMetas  map[string]string
-	planMetas map[string]string
-	records   []*tipb.CPUTimeRecord
-}
-
-func (svr *testAgentServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportCPUTimeRecordsServer) error {
-	for {
-		req, err := stream.Recv()
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			return err
-		}
-		svr.records = append(svr.records, req)
-	}
-	return stream.SendAndClose(&tipb.EmptyResponse{})
-}
-
-func (svr *testAgentServer) ReportSQLMeta(stream tipb.TopSQLAgent_ReportSQLMetaServer) error {
-	for {
-		req, err := stream.Recv()
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			return err
-		}
-		svr.sqlMetas[string(req.SqlDigest)] = req.NormalizedSql
-	}
-	return stream.SendAndClose(&tipb.EmptyResponse{})
-}
-
-func (svr *testAgentServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMetaServer) error {
-	for {
-		req, err := stream.Recv()
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			return err
-		}
-		svr.planMetas[string(req.PlanDigest)] = req.NormalizedPlan
-	}
-	return stream.SendAndClose(&tipb.EmptyResponse{})
-}
-
-func startTestServer(c *C) (*grpc.Server, *testAgentServer) {
-	addr := "127.0.0.1:0"
-	lis, err := net.Listen("tcp", addr)
-	c.Assert(err, IsNil, Commentf("failed to listen to address %s", addr))
-	server := grpc.NewServer()
-	agentServer := &testAgentServer{
-		addr:      fmt.Sprintf("127.0.0.1:%d", lis.Addr().(*net.TCPAddr).Port),
-		sqlMetas:  make(map[string]string, maxSQLNum),
-		planMetas: make(map[string]string, maxSQLNum),
-	}
-	tipb.RegisterTopSQLAgentServer(server, agentServer)
-
-	go func() {
-		err := server.Serve(lis)
-		c.Assert(err, IsNil, Commentf("failed to start server"))
-	}()
-
-	return server, agentServer
-}
-
-func (svr *testAgentServer) waitServerCollect(recordCount int, timeout time.Duration) {
-	start := time.Now()
-	for {
-		if len(svr.records) >= recordCount {
-			return
-		}
-		if time.Since(start) > timeout {
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
+func initializeCache(maxStatementsNum, interval int, addr string) *RemoteTopSQLReporter {
+	ts := setupRemoteTopSQLReporter(maxStatementsNum, interval, addr)
+	populateCache(ts, 0, maxStatementsNum, 1)
+	return ts
 }
 
 func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
-	server, agentServer := startTestServer(c)
-	c.Logf("server is listening on %v", agentServer.addr)
-	defer server.Stop()
+	agentServer, err := mock.StartMockAgentServer()
+	c.Assert(err, IsNil)
+	defer agentServer.Stop()
 
-	tsr := setupRemoteTopSQLReporter(maxSQLNum, 1, agentServer.addr)
+	tsr := setupRemoteTopSQLReporter(maxSQLNum, 1, agentServer.Address())
 	defer tsr.Close()
 	populateCache(tsr, 0, maxSQLNum, 1)
 
-	agentServer.waitServerCollect(maxSQLNum, time.Second*5)
+	agentServer.WaitServerCollect(maxSQLNum, time.Second*5)
 
-	c.Assert(agentServer.records, HasLen, maxSQLNum)
+	c.Assert(agentServer.GetRecords(), HasLen, maxSQLNum)
 
 	// check for equality of server received batch and the original data
-	for _, req := range agentServer.records {
+	records := agentServer.GetRecords()
+	sqlMetas := agentServer.GetSQLMetas()
+	planMetas := agentServer.GetPlanMetas()
+	for _, req := range records {
 		id := 0
 		prefix := "sqlDigest"
 		if strings.HasPrefix(string(req.SqlDigest), prefix) {
@@ -206,30 +121,33 @@ func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
 		for i := range req.TimestampList {
 			c.Assert(req.TimestampList[i], Equals, uint64(1))
 		}
-		normalizedSQL, exist := agentServer.sqlMetas[string(req.SqlDigest)]
+		normalizedSQL, exist := sqlMetas[string(req.SqlDigest)]
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedSQL, Equals, "sqlNormalized"+strconv.Itoa(id))
-		normalizedPlan, exist := agentServer.planMetas[string(req.PlanDigest)]
+		normalizedPlan, exist := planMetas[string(req.PlanDigest)]
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedPlan, Equals, "planNormalized"+strconv.Itoa(id))
 	}
 }
 
 func (s *testTopSQLReporter) TestCollectAndEvicted(c *C) {
-	server, agentServer := startTestServer(c)
-	c.Logf("server is listening on %v", agentServer.addr)
-	defer server.Stop()
+	agentServer, err := mock.StartMockAgentServer()
+	c.Assert(err, IsNil)
+	defer agentServer.Stop()
 
-	tsr := setupRemoteTopSQLReporter(maxSQLNum, 1, agentServer.addr)
+	tsr := setupRemoteTopSQLReporter(maxSQLNum, 1, agentServer.Address())
 	defer tsr.Close()
 	populateCache(tsr, 0, maxSQLNum*2, 2)
 
-	agentServer.waitServerCollect(maxSQLNum, time.Second*10)
+	agentServer.WaitServerCollect(maxSQLNum, time.Second*10)
 
-	c.Assert(agentServer.records, HasLen, maxSQLNum)
+	c.Assert(agentServer.GetRecords(), HasLen, maxSQLNum)
 
 	// check for equality of server received batch and the original data
-	for _, req := range agentServer.records {
+	records := agentServer.GetRecords()
+	sqlMetas := agentServer.GetSQLMetas()
+	planMetas := agentServer.GetPlanMetas()
+	for _, req := range records {
 		id := 0
 		prefix := "sqlDigest"
 		if strings.HasPrefix(string(req.SqlDigest), prefix) {
@@ -246,10 +164,10 @@ func (s *testTopSQLReporter) TestCollectAndEvicted(c *C) {
 		for i := range req.TimestampList {
 			c.Assert(req.TimestampList[i], Equals, uint64(2))
 		}
-		normalizedSQL, exist := agentServer.sqlMetas[string(req.SqlDigest)]
+		normalizedSQL, exist := sqlMetas[string(req.SqlDigest)]
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedSQL, Equals, "sqlNormalized"+strconv.Itoa(id))
-		normalizedPlan, exist := agentServer.planMetas[string(req.PlanDigest)]
+		normalizedPlan, exist := planMetas[string(req.PlanDigest)]
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedPlan, Equals, "planNormalized"+strconv.Itoa(id))
 	}

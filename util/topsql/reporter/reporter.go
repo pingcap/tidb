@@ -155,6 +155,9 @@ func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedPlan 
 
 // Collect will drop the records when the collect channel is full
 func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
+	if len(records) == 0 {
+		return
+	}
 	select {
 	case tsr.collectCPUTimeChan <- &topSQLCPUTimeInput{
 		timestamp: timestamp,
@@ -293,44 +296,37 @@ func (tsr *RemoteTopSQLReporter) prepareReportData(data reportData) (sqlMetas []
 	// wait latest register finish, use sleep instead of other method to avoid performance issue in hot code path.
 	time.Sleep(time.Millisecond * 100)
 
-	sqlMetas = make([]*tipb.SQLMeta, len(data.topSQL))
-	idx := 0
+	sqlMetas = make([]*tipb.SQLMeta, 0, len(data.topSQL))
 	data.normalizedSQLMap.Range(func(key, value interface{}) bool {
-		sqlMetas[idx] = &tipb.SQLMeta{
+		sqlMetas = append(sqlMetas, &tipb.SQLMeta{
 			SqlDigest:     []byte(key.(string)),
 			NormalizedSql: value.(string),
-		}
-		idx++
+		})
 		return true
 	})
 
-	planMetas = make([]*tipb.PlanMeta, len(data.topSQL))
-	idx = 0
+	planMetas = make([]*tipb.PlanMeta, 0, len(data.topSQL))
 	data.normalizedPlanMap.Range(func(key, value interface{}) bool {
 		planDecoded, err := tsr.planBinaryDecoder(value.(string))
 		if err != nil {
 			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(err))
 			return true
 		}
-		planMetas[idx] = &tipb.PlanMeta{
+		planMetas = append(planMetas, &tipb.PlanMeta{
 			PlanDigest:     []byte(key.(string)),
 			NormalizedPlan: planDecoded,
-		}
-		idx++
+		})
 		return true
 	})
 
-	idx = 0
-	records = make([]*tipb.CPUTimeRecord, len(data.topSQL))
+	records = make([]*tipb.CPUTimeRecord, 0, len(data.topSQL))
 	for _, value := range data.topSQL {
-		req := &tipb.CPUTimeRecord{
+		records = append(records, &tipb.CPUTimeRecord{
 			TimestampList: value.TimestampList,
 			CpuTimeMsList: value.CPUTimeMsList,
 			SqlDigest:     value.SQLDigest,
 			PlanDigest:    value.PlanDigest,
-		}
-		records[idx] = req
-		idx++
+		})
 	}
 	return sqlMetas, planMetas, records
 }

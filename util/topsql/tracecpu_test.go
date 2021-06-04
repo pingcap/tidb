@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/topsql"
+	"github.com/pingcap/tidb/util/topsql/reporter"
+	mockServer "github.com/pingcap/tidb/util/topsql/reporter/mock"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tidb/util/topsql/tracecpu/mock"
 )
@@ -108,6 +110,81 @@ func (s *testSuite) TestIsEnabled(c *C) {
 	c.Assert(tracecpu.GlobalSQLCPUProfiler.IsEnabled(), IsFalse)
 	s.setTopSQLEnable(true)
 	c.Assert(tracecpu.GlobalSQLCPUProfiler.IsEnabled(), IsTrue)
+}
+
+func (s *testSuite) TestTopSQLReporter(c *C) {
+	server, err := mockServer.StartMockAgentServer()
+	c.Assert(err, IsNil)
+	variable.TopSQLVariable.MaxStatementCount.Store(200)
+	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
+	variable.TopSQLVariable.AgentAddress.Store(server.Address())
+
+	client := reporter.NewGRPCReportClient()
+	report := reporter.NewRemoteTopSQLReporter(client, func(s string) (string, error) {
+		return s, nil
+	})
+	defer report.Close()
+
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(report)
+	reqs := []struct {
+		sql  string
+		plan string
+	}{
+		{"select * from t where a=?", "point-get"},
+		{"select * from t where a>?", "table-scan"},
+		{"insert into t values (?)", ""},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sqlMap := make(map[string]string)
+	sql2plan := make(map[string]string)
+	for _, req := range reqs {
+		sql2plan[req.sql] = req.plan
+		sqlDigest := mock.GenSQLDigest(req.sql)
+		sqlMap[string(sqlDigest.Bytes())] = req.sql
+
+		go func(sql, plan string) {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					s.mockExecuteSQL(sql, plan)
+				}
+			}
+		}(req.sql, req.plan)
+	}
+
+	server.WaitServerCollect(6, time.Second*5)
+
+	records := server.GetRecords()
+	sqlMetas := server.GetSQLMetas()
+	planMetas := server.GetPlanMetas()
+
+	checkSQLPlanMap := map[string]struct{}{}
+	for _, req := range records {
+		c.Assert(len(req.CpuTimeMsList) > 0, IsTrue)
+		c.Assert(req.CpuTimeMsList[0] > 0, IsTrue)
+		c.Assert(req.TimestampList[0] > 0, IsTrue)
+		normalizedSQL, exist := sqlMetas[string(req.SqlDigest)]
+		c.Assert(exist, IsTrue)
+		expectedNormalizedSQL, exist := sqlMap[string(req.SqlDigest)]
+		c.Assert(exist, IsTrue)
+		c.Assert(normalizedSQL, Equals, expectedNormalizedSQL)
+
+		expectedNormalizedPlan := sql2plan[expectedNormalizedSQL]
+		if expectedNormalizedPlan == "" || len(req.PlanDigest) == 0 {
+			c.Assert(len(req.PlanDigest), Equals, 0)
+			continue
+		}
+		normalizedPlan, exist := planMetas[string(req.PlanDigest)]
+		c.Assert(exist, IsTrue)
+		c.Assert(normalizedPlan, Equals, expectedNormalizedPlan)
+		checkSQLPlanMap[expectedNormalizedSQL] = struct{}{}
+	}
+	c.Assert(len(checkSQLPlanMap) == 2, IsTrue)
 }
 
 func (s *testSuite) setTopSQLEnable(enabled bool) {

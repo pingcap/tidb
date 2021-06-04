@@ -93,6 +93,9 @@ func (r *GRPCReportClient) Close() {
 
 // sendBatchCPUTimeRecord sends a batch of TopSQL records by stream.
 func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records []*tipb.CPUTimeRecord) error {
+	if len(records) == 0 {
+		return nil
+	}
 	client := tipb.NewTopSQLAgentClient(r.conn)
 	stream, err := client.ReportCPUTimeRecords(ctx)
 	if err != nil {
@@ -110,6 +113,9 @@ func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records [
 
 // sendBatchSQLMeta sends a batch of SQL metas by stream.
 func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, metas []*tipb.SQLMeta) error {
+	if len(metas) == 0 {
+		return nil
+	}
 	client := tipb.NewTopSQLAgentClient(r.conn)
 	stream, err := client.ReportSQLMeta(ctx)
 	if err != nil {
@@ -126,6 +132,9 @@ func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, metas []*tipb.S
 
 // sendBatchSQLMeta sends a batch of SQL metas by stream.
 func (r *GRPCReportClient) sendBatchPlanMeta(ctx context.Context, metas []*tipb.PlanMeta) error {
+	if len(metas) == 0 {
+		return nil
+	}
 	client := tipb.NewTopSQLAgentClient(r.conn)
 	stream, err := client.ReportPlanMeta(ctx)
 	if err != nil {
