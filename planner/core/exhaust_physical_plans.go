@@ -2492,19 +2492,14 @@ func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 
 func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	// TODO: UnionAll can not pass any order, but we can change it to sort merge to keep order.
-<<<<<<< HEAD
-	if !prop.IsEmpty() || prop.IsFlashProp() {
-		return nil, true
-=======
 	if !prop.IsEmpty() || (prop.IsFlashProp() && prop.TaskTp != property.MppTaskType) {
-		return nil, true, nil
+		return nil, true
 	}
 	// TODO: UnionAll can pass partition info, but for briefness, we prevent it from pushing down.
 	if prop.TaskTp == property.MppTaskType && prop.PartitionTp != property.AnyType {
-		return nil, true, nil
->>>>>>> 52e89cb8b... planner/core: support union all for mpp. (#24287)
+		return nil, true
 	}
-	canUseMpp := p.ctx.GetSessionVars().IsMPPAllowed() && p.canPushToCop(kv.TiFlash)
+	canUseMpp := p.ctx.GetSessionVars().AllowMPPExecution && p.canPushToCop(kv.TiFlash)
 	chReqProps := make([]*property.PhysicalProperty, 0, len(p.children))
 	for range p.children {
 		if canUseMpp && prop.TaskTp == property.MppTaskType {
@@ -2520,9 +2515,6 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 		mpp: canUseMpp && prop.TaskTp == property.MppTaskType,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
 	ua.SetSchema(p.Schema())
-<<<<<<< HEAD
-	return []PhysicalPlan{ua}, true
-=======
 	if canUseMpp && prop.TaskTp == property.RootTaskType {
 		chReqProps = make([]*property.PhysicalProperty, 0, len(p.children))
 		for range p.children {
@@ -2533,10 +2525,9 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 		}
 		mppUA := PhysicalUnionAll{mpp: true}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
 		mppUA.SetSchema(p.Schema())
-		return []PhysicalPlan{ua, mppUA}, true, nil
+		return []PhysicalPlan{ua, mppUA}, true
 	}
-	return []PhysicalPlan{ua}, true, nil
->>>>>>> 52e89cb8b... planner/core: support union all for mpp. (#24287)
+	return []PhysicalPlan{ua}, true
 }
 
 func (p *LogicalPartitionUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
