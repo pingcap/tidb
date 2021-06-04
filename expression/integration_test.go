@@ -9594,6 +9594,17 @@ func (s *testIntegrationSuite) TestEnumIndex(c *C) {
 	tk.MustExec("alter table t drop index idx;")
 	tk.MustQuery("select * from t where e = '';").Check(
 		testkit.Rows("", ""))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(e enum(\"a\",\"b\",\"c\"), index idx(e));")
+	tk.MustExec("insert ignore into t values(0);")
+	tk.MustExec("select * from t t1 join t t2 on t1.e=t2.e;")
+	tk.MustQuery("select /*+ inl_join(t1,t2) */ * from t t1 join t t2 on t1.e=t2.e;").Check(
+		testkit.Rows("", ""))
+	tk.MustQuery("select /*+ hash_join(t1,t2) */ * from t t1 join t t2 on t1.e=t2.e;").Check(
+		testkit.Rows("", ""))
+	tk.MustQuery("select /*+ inl_hash_join(t1,t2) */ * from t t1 join t t2 on t1.e=t2.e;").Check(
+		testkit.Rows("", ""))
 }
 
 // Previously global values were cached. This is incorrect.
