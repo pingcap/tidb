@@ -2552,7 +2552,7 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 		return nil, true, nil
 	}
 	// TODO: UnionAll can pass partition info, but for briefness, we prevent it from pushing down.
-	if prop.TaskTp == property.MppTaskType && prop.PartitionTp != property.AnyType {
+	if prop.TaskTp == property.MppTaskType && prop.MPPPartitionTp != property.AnyType {
 		return nil, true, nil
 	}
 	canUseMpp := p.ctx.GetSessionVars().IsMPPAllowed() && p.canPushToCop(kv.TiFlash)
