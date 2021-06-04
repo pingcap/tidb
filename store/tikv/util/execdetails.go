@@ -46,10 +46,10 @@ type CommitDetails struct {
 	WaitPrewriteBinlogTime time.Duration
 	CommitTime             time.Duration
 	LocalLatchTime         time.Duration
-	CommitBackoffTime      int64
 	Mu                     struct {
 		sync.Mutex
-		BackoffTypes []string
+		CommitBackoffTime int64
+		BackoffTypes      []string
 	}
 	ResolveLockTime   int64
 	WriteKeys         int
@@ -65,12 +65,12 @@ func (cd *CommitDetails) Merge(other *CommitDetails) {
 	cd.WaitPrewriteBinlogTime += other.WaitPrewriteBinlogTime
 	cd.CommitTime += other.CommitTime
 	cd.LocalLatchTime += other.LocalLatchTime
-	cd.CommitBackoffTime += other.CommitBackoffTime
 	cd.ResolveLockTime += other.ResolveLockTime
 	cd.WriteKeys += other.WriteKeys
 	cd.WriteSize += other.WriteSize
 	cd.PrewriteRegionNum += other.PrewriteRegionNum
 	cd.TxnRetry += other.TxnRetry
+	cd.Mu.CommitBackoffTime += other.Mu.CommitBackoffTime
 	cd.Mu.BackoffTypes = append(cd.Mu.BackoffTypes, other.Mu.BackoffTypes...)
 }
 
@@ -82,7 +82,6 @@ func (cd *CommitDetails) Clone() *CommitDetails {
 		WaitPrewriteBinlogTime: cd.WaitPrewriteBinlogTime,
 		CommitTime:             cd.CommitTime,
 		LocalLatchTime:         cd.LocalLatchTime,
-		CommitBackoffTime:      cd.CommitBackoffTime,
 		ResolveLockTime:        cd.ResolveLockTime,
 		WriteKeys:              cd.WriteKeys,
 		WriteSize:              cd.WriteSize,
@@ -90,6 +89,7 @@ func (cd *CommitDetails) Clone() *CommitDetails {
 		TxnRetry:               cd.TxnRetry,
 	}
 	commit.Mu.BackoffTypes = append([]string{}, cd.Mu.BackoffTypes...)
+	commit.Mu.CommitBackoffTime = cd.Mu.CommitBackoffTime
 	return commit
 }
 

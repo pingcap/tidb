@@ -61,6 +61,8 @@ var (
 	TiKVTSFutureWaitDuration               prometheus.Histogram
 	TiKVSafeTSUpdateCounter                *prometheus.CounterVec
 	TiKVSafeTSUpdateStats                  *prometheus.GaugeVec
+	TiKVReplicaSelectorFailureCounter      *prometheus.CounterVec
+	TiKVRequestRetryTimesHistogram         prometheus.Histogram
 )
 
 // Label constants.
@@ -431,6 +433,21 @@ func initMetrics(namespace, subsystem string) {
 			Name:      "safets_update_stats",
 			Help:      "stat of tikv updating safe_ts stats",
 		}, []string{LblStore})
+	TiKVReplicaSelectorFailureCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "replica_selector_failure_counter",
+			Help:      "Counter of the reason why the replica selector cannot yield a potential leader.",
+		}, []string{LblType})
+	TiKVRequestRetryTimesHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "request_retry_times",
+			Help:      "Bucketed histogram of how many times a region request retries.",
+			Buckets:   []float64{1, 2, 3, 4, 8, 16, 32, 64, 128, 256},
+		})
 
 	initShortcuts()
 }
@@ -488,6 +505,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVTSFutureWaitDuration)
 	prometheus.MustRegister(TiKVSafeTSUpdateCounter)
 	prometheus.MustRegister(TiKVSafeTSUpdateStats)
+	prometheus.MustRegister(TiKVReplicaSelectorFailureCounter)
+	prometheus.MustRegister(TiKVRequestRetryTimesHistogram)
 }
 
 // readCounter reads the value of a prometheus.Counter.

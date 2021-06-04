@@ -1058,10 +1058,12 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 
 	commitDetail := c.getDetail()
 	commitDetail.PrewriteTime = time.Since(start)
-	// TODO(youjiali1995): Record the backoff time of the last finished batch. It doesn't make sense to aggregate all batches'.
 	if bo.GetTotalSleep() > 0 {
-		atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(bo.GetTotalSleep())*int64(time.Millisecond))
+		boSleep := int64(bo.GetTotalSleep()) * int64(time.Millisecond)
 		commitDetail.Mu.Lock()
+		if boSleep > commitDetail.Mu.CommitBackoffTime {
+			commitDetail.Mu.CommitBackoffTime = boSleep
+		}
 		commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, bo.GetTypes()...)
 		commitDetail.Mu.Unlock()
 	}
@@ -1221,8 +1223,8 @@ func (c *twoPhaseCommitter) commitTxn(ctx context.Context, commitDetail *util.Co
 	err := c.commitMutations(commitBo, c.mutations)
 	commitDetail.CommitTime = time.Since(start)
 	if commitBo.GetTotalSleep() > 0 {
-		atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(commitBo.GetTotalSleep())*int64(time.Millisecond))
 		commitDetail.Mu.Lock()
+		commitDetail.Mu.CommitBackoffTime += int64(commitBo.GetTotalSleep()) * int64(time.Millisecond)
 		commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, commitBo.GetTypes()...)
 		commitDetail.Mu.Unlock()
 	}
@@ -1615,17 +1617,20 @@ func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, 
 					singleBatchBackoffer, singleBatchCancel = batchExe.backoffer.Fork()
 					defer singleBatchCancel()
 				}
-				beforeSleep := singleBatchBackoffer.GetTotalSleep()
 				ch <- batchExe.action.handleSingleBatch(batchExe.committer, singleBatchBackoffer, batch)
 				commitDetail := batchExe.committer.getDetail()
-				if commitDetail != nil { // lock operations of pessimistic-txn will let commitDetail be nil
-					if delta := singleBatchBackoffer.GetTotalSleep() - beforeSleep; delta > 0 {
-						atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(singleBatchBackoffer.GetTotalSleep()-beforeSleep)*int64(time.Millisecond))
-						commitDetail.Mu.Lock()
-						commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, singleBatchBackoffer.GetTypes()...)
-						commitDetail.Mu.Unlock()
+				// For prewrite, we record the max backoff time
+				if _, ok := batchExe.action.(actionPrewrite); ok {
+					commitDetail.Mu.Lock()
+					boSleep := int64(singleBatchBackoffer.GetTotalSleep()) * int64(time.Millisecond)
+					if boSleep > commitDetail.Mu.CommitBackoffTime {
+						commitDetail.Mu.CommitBackoffTime = boSleep
 					}
+					commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, singleBatchBackoffer.GetTypes()...)
+					commitDetail.Mu.Unlock()
 				}
+				// Backoff time in the 2nd phase of a non-async-commit txn is added
+				// in the commitTxn method, so we don't add it here.
 			}()
 		} else {
 			logutil.Logger(batchExe.backoffer.GetCtx()).Info("break startWorker",
