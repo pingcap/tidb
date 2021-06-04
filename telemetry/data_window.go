@@ -59,7 +59,7 @@ const (
 
 	maxSubWindowLength         = int(ReportInterval / SubWindowSize) // TODO: Ceiling?
 	maxSubWindowLengthInWindow = int(WindowSize / SubWindowSize)     // TODO: Ceiling?
-	promReadTimeout            = time.Second * 10
+	promReadTimeout            = time.Second * 30
 )
 
 type windowData struct {
