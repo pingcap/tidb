@@ -820,7 +820,12 @@ func (s *testStaleTxnSuite) TestStaleSelect(c *C) {
 
 	// test prepared stale select with schema change
 	tk.MustExec("alter table t add column c int")
-	tk.MustExec("insert into t values (4, 4)")
+	tk.MustExec("insert into t values (4, 5)")
 	time.Sleep(10 * time.Millisecond)
 	tk.MustQuery("execute s").Check(staleRows)
+	time3 := time.Now()
+	tk.MustExec("insert into t values (5, 5)")
+
+	// test point get
+	tk.MustQuery(fmt.Sprintf("select * from t as of timestamp '%s' where c=5", time3.Format("2006-1-2 15:04:05.000"))).Check(testkit.Rows("4 5"))
 }
