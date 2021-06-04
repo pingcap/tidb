@@ -346,13 +346,19 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 	}
 
 	defer func() {
+		detail := committer.getDetail()
+		detail.Mu.Lock()
+		metrics.TiKVTxnCommitBackoffSeconds.Observe(float64(detail.Mu.CommitBackoffTime) / float64(time.Second))
+		metrics.TiKVTxnCommitBackoffCount.Observe(float64(len(detail.Mu.BackoffTypes)))
+		detail.Mu.Unlock()
+
 		ctxValue := ctx.Value(util.CommitDetailCtxKey)
 		if ctxValue != nil {
 			commitDetail := ctxValue.(**util.CommitDetails)
 			if *commitDetail != nil {
 				(*commitDetail).TxnRetry++
 			} else {
-				*commitDetail = committer.getDetail()
+				*commitDetail = detail
 			}
 		}
 	}()
