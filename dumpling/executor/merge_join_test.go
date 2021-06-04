@@ -279,6 +279,8 @@ func (s *testSerialSuite1) TestShuffleMergeJoinInDisk(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), Greater, int64(0))
 }
 func (s *testSerialSuite1) TestMergeJoinInDisk(c *C) {
+	c.Skip("unstable, skip it and fix it before 20210618")
+
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
