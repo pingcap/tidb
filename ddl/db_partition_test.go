@@ -3393,6 +3393,7 @@ func (s *testSerialDBSuite1) TestPartitionListWithNewCollation(c *C) {
 
 func (s *testSerialDBSuite1) TestAddTableWithPartition(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists global_partition_table;")
 	tk.MustGetErrCode("create global temporary table global_partition_table (a int, b int) partition by hash(a) partitions 3 ON COMMIT DELETE ROWS;", errno.ErrPartitionNoTemporary)

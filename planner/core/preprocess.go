@@ -165,6 +165,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeUpdate
 	case *ast.InsertStmt:
 		p.stmtTp = TypeInsert
+		// handle the insert table name imminently
+		// insert into t with t ..., the insert can not see t here. We should hand it before the CTE statement
+		p.handleTableName(node.Table.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName))
 	case *ast.CreateTableStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
@@ -640,6 +643,14 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			return
 		}
 	}
+	if stmt.TemporaryKeyword != ast.TemporaryNone {
+		for _, opt := range stmt.Options {
+			if opt.Tp == ast.TableOptionShardRowID {
+				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
+				return
+			}
+		}
+	}
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
@@ -656,7 +667,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			p.err = err
 			return
 		}
-		isPrimary, err := checkColumnOptions(colDef.Options)
+		isPrimary, err := checkColumnOptions(stmt.TemporaryKeyword != ast.TemporaryNone, colDef.Options)
 		if err != nil {
 			p.err = err
 			return
@@ -813,7 +824,7 @@ func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]inter
 	return nil
 }
 
-func checkColumnOptions(ops []*ast.ColumnOption) (int, error) {
+func checkColumnOptions(isTempTable bool, ops []*ast.ColumnOption) (int, error) {
 	isPrimary, isGenerated, isStored := 0, 0, false
 
 	for _, op := range ops {
@@ -823,6 +834,10 @@ func checkColumnOptions(ops []*ast.ColumnOption) (int, error) {
 		case ast.ColumnOptionGenerated:
 			isGenerated = 1
 			isStored = op.Stored
+		case ast.ColumnOptionAutoRandom:
+			if isTempTable {
+				return isPrimary, ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random")
+			}
 		}
 	}
 
