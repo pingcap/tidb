@@ -177,7 +177,7 @@ func (rc *reorgCtx) clean() {
 // The background reorg is continuously running except for several factors, for instances, ddl owner change,
 // logic error (kv duplicate when insert index / cast error when alter column), ctx done, and cancel signal.
 //
-// When `admin cancel ddl jobs xxx` takes effects, we will give the this kind of reorg ddl one more round.
+// When `admin cancel ddl jobs xxx` takes effect, we will give this kind of reorg ddl one more round.
 // because we should pull the result from doneCh out, otherwise, the reorg worker will hang on `f()` logic,
 // which is a kind of goroutine leak.
 //

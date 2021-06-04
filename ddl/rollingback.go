@@ -111,7 +111,7 @@ func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredE
 // normal-type has only two states:    None -> Public
 // reorg-type has five states:         None -> Delete-only -> Write-only -> Write-org -> Public
 func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	// If the value of SnapshotVer isn't zero, it means the reorg workers has been started.
+	// If the value of SnapshotVer isn't zero, it means the reorg workers have been started.
 	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 		// column type change workers are started. we have to ask them to exit.
 		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
@@ -146,7 +146,7 @@ func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job)
 		job.State = model.JobStateCancelled
 		return ver, errCancelledDDLJob
 	}
-	// The job has been in it's middle state (but reorg worker hasn't start) and we rolling it back here.
+	// The job has been in its middle state (but the reorg worker hasn't started) and we roll it back here.
 	job.State = model.JobStateRollingback
 	return ver, errCancelledDDLJob
 }
