@@ -1016,17 +1016,10 @@
       {
         "SQL": "select /*+ use_index_merge(t1 primary, c) */ * from t1 where t1.a = 1 and t1.b = '111' or t1.c = 3.3",
         "Plan": [
-<<<<<<< HEAD
-          "IndexMerge_8 2.11 root  ",
-          "├─TableRangeScan_5(Build) 1.00 cop[tikv] table:t1 range:[1 \"111\",1 \"111\"], keep order:false",
-          "├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t1, index:c(c) range:[3.3000000000,3.3000000000], keep order:false",
-          "└─TableRowIDScan_7(Probe) 2.11 cop[tikv] table:t1 keep order:false"
-=======
-          "IndexMerge 1.67 root  ",
+          "IndexMerge 2.11 root  ",
           "├─TableRangeScan(Build) 1.00 cop[tikv] table:t1 range:[1 \"111\",1 \"111\"], keep order:false",
           "├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, index:c(c) range:[3.3000000000,3.3000000000], keep order:false",
-          "└─TableRowIDScan(Probe) 1.67 cop[tikv] table:t1 keep order:false"
->>>>>>> 05bb31b81... planner/core: push down topn to mpp (#24081)
+          "└─TableRowIDScan(Probe) 2.11 cop[tikv] table:t1 keep order:false"
         ],
         "Res": [
           "1 111 1.1000000000 11",
