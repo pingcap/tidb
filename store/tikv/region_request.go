@@ -879,8 +879,11 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 	if ctx.tryTimes < 1 && req != nil && req.TxnScope == oracle.GlobalTxnScope && req.GetStaleRead() {
 		*opts = append(*opts, WithLeaderOnly())
 	}
+	seed := req.GetReplicaReadSeed()
 
+	// NOTE: Please add the region error handler in the same order of errorpb.Error.
 	metrics.TiKVRegionErrorCounter.WithLabelValues(regionErrorToLabel(regionErr)).Inc()
+
 	if notLeader := regionErr.GetNotLeader(); notLeader != nil {
 		// Retry if error is `NotLeader`.
 		logutil.BgLogger().Debug("tikv reports `NotLeader` retry later",
@@ -891,7 +894,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 			leader := notLeader.GetLeader()
 			if leader == nil {
 				// The region may be during transferring leader.
-				if err = bo.Backoff(retry.BoRegionMiss, errors.Errorf("no leader, ctx: %v", ctx)); err != nil {
+				if err = bo.Backoff(retry.BoRegionScheduling, errors.Errorf("no leader, ctx: %v", ctx)); err != nil {
 					return false, errors.Trace(err)
 				}
 			} else {
@@ -904,7 +907,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 			// isolated and removed from the Raft group. So it's necessary to reload
 			// the region from PD.
 			s.regionCache.InvalidateCachedRegionWithReason(ctx.Region, NoLeader)
-			if err = bo.Backoff(retry.BoRegionMiss, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
+			if err = bo.Backoff(retry.BoRegionScheduling, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
 				return false, errors.Trace(err)
 			}
 			return false, nil
@@ -915,17 +918,22 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 		}
 	}
 
-	if storeNotMatch := regionErr.GetStoreNotMatch(); storeNotMatch != nil {
-		// store not match
-		logutil.BgLogger().Debug("tikv reports `StoreNotMatch` retry later",
-			zap.Stringer("storeNotMatch", storeNotMatch),
-			zap.Stringer("ctx", ctx))
-		ctx.Store.markNeedCheck(s.regionCache.notifyCheckCh)
+	// This peer is removed from the region. Invalidate the region since it's too stale.
+	if regionErr.GetRegionNotFound() != nil {
+		if seed != nil {
+			logutil.BgLogger().Debug("tikv reports `RegionNotFound` in follow-reader",
+				zap.Stringer("ctx", ctx), zap.Uint32("seed", *seed))
+			*seed = *seed + 1
+		}
 		s.regionCache.InvalidateCachedRegion(ctx.Region)
 		return false, nil
 	}
 
-	seed := req.GetReplicaReadSeed()
+	if regionErr.GetKeyNotInRegion() != nil {
+		s.regionCache.InvalidateCachedRegion(ctx.Region)
+		return false, nil
+	}
+
 	if epochNotMatch := regionErr.GetEpochNotMatch(); epochNotMatch != nil {
 		logutil.BgLogger().Debug("tikv reports `EpochNotMatch` retry later",
 			zap.Stringer("EpochNotMatch", epochNotMatch),
@@ -939,6 +947,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 		}
 		return retry, errors.Trace(err)
 	}
+
 	if regionErr.GetServerIsBusy() != nil {
 		logutil.BgLogger().Warn("tikv reports `ServerIsBusy` retry later",
 			zap.String("reason", regionErr.GetServerIsBusy().GetReason()),
@@ -956,11 +965,15 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 		}
 		return true, nil
 	}
+
+	// StaleCommand error indicates the request is sent to the old leader and its term is changed.
+	// We can't know whether the request is committed or not, so it's an undetermined error too,
+	// but we don't handle it now.
 	if regionErr.GetStaleCommand() != nil {
 		logutil.BgLogger().Debug("tikv reports `StaleCommand`", zap.Stringer("ctx", ctx))
 		if s.leaderReplicaSelector != nil {
-			// Needn't backoff because stale command indicates the command is sent to the old leader.
-			// The new leader should be elected soon and the leaderReplicaSelector will try the next peer.
+			// Needn't backoff because the new leader should be elected soon
+			// and the leaderReplicaSelector will try the next peer.
 		} else {
 			err = bo.Backoff(retry.BoStaleCmd, errors.Errorf("stale command, ctx: %v", ctx))
 			if err != nil {
@@ -969,44 +982,22 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 		}
 		return true, nil
 	}
+
+	if storeNotMatch := regionErr.GetStoreNotMatch(); storeNotMatch != nil {
+		// store not match
+		logutil.BgLogger().Debug("tikv reports `StoreNotMatch` retry later",
+			zap.Stringer("storeNotMatch", storeNotMatch),
+			zap.Stringer("ctx", ctx))
+		ctx.Store.markNeedCheck(s.regionCache.notifyCheckCh)
+		s.regionCache.InvalidateCachedRegion(ctx.Region)
+		return false, nil
+	}
+
 	if regionErr.GetRaftEntryTooLarge() != nil {
 		logutil.BgLogger().Warn("tikv reports `RaftEntryTooLarge`", zap.Stringer("ctx", ctx))
 		return false, errors.New(regionErr.String())
 	}
-	// A stale read request may be sent to a peer which the data is not ready yet, we should retry in this case.
-	if regionErr.GetDataIsNotReady() != nil {
-		logutil.BgLogger().Warn("tikv reports `DataIsNotReady` retry later",
-			zap.Uint64("store-id", ctx.Store.storeID),
-			zap.Uint64("peer-id", regionErr.GetDataIsNotReady().GetPeerId()),
-			zap.Uint64("region-id", regionErr.GetDataIsNotReady().GetRegionId()),
-			zap.Uint64("safe-ts", regionErr.GetDataIsNotReady().GetSafeTs()),
-			zap.Stringer("ctx", ctx))
-		// Don't backoff if it's a replica-read.
-		if seed != nil {
-			*seed = *seed + 1
-		} else {
-			// The region is merging or splitting.
-			err = bo.Backoff(retry.BoRegionMiss, errors.Errorf("data is not ready, ctx: %v", ctx))
-			if err != nil {
-				return false, errors.Trace(err)
-			}
-			if s.leaderReplicaSelector != nil {
-				s.leaderReplicaSelector.rewind()
-			}
-		}
-		return true, nil
-	}
-	// A read request may be sent to a peer which has not been initialized yet, we should retry in this case.
-	if regionErr.GetRegionNotInitialized() != nil {
-		logutil.BgLogger().Warn("tikv reports `RegionNotInitialized` retry later",
-			zap.Uint64("store-id", ctx.Store.storeID),
-			zap.Uint64("region-id", regionErr.GetRegionNotInitialized().GetRegionId()),
-			zap.Stringer("ctx", ctx))
-		if seed != nil {
-			*seed = *seed + 1
-		}
-		return true, nil
-	}
+
 	if regionErr.GetMaxTimestampNotSynced() != nil {
 		logutil.BgLogger().Debug("tikv reports `MaxTimestampNotSynced`", zap.Stringer("ctx", ctx))
 		err = bo.Backoff(retry.BoMaxTsNotSynced, errors.Errorf("max timestamp not synced, ctx: %v", ctx))
@@ -1018,38 +1009,66 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 		}
 		return true, nil
 	}
-	if regionErr.GetReadIndexNotReady() != nil {
-		logutil.BgLogger().Debug("tikv reports `ReadIndexNotReady`", zap.Stringer("ctx", ctx))
-		// The region is merging or splitting.
-		err = bo.Backoff(retry.BoRegionMiss, errors.Errorf("read index not ready, ctx: %v", ctx))
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if s.leaderReplicaSelector != nil {
-			s.leaderReplicaSelector.rewind()
-		}
-		return true, nil
-	}
-	if regionErr.GetProposalInMergingMode() != nil {
-		logutil.BgLogger().Debug("tikv reports `ProposalInMergingMode`", zap.Stringer("ctx", ctx))
-		// The region is merging.
-		err = bo.Backoff(retry.BoRegionMiss, errors.Errorf("region is merging, ctx: %v", ctx))
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if s.leaderReplicaSelector != nil {
-			s.leaderReplicaSelector.rewind()
-		}
-		return true, nil
-	}
-	if regionErr.GetRegionNotFound() != nil {
+
+	// A read request may be sent to a peer which has not been initialized yet, we should retry in this case.
+	if regionErr.GetRegionNotInitialized() != nil {
+		logutil.BgLogger().Debug("tikv reports `RegionNotInitialized` retry later",
+			zap.Uint64("store-id", ctx.Store.storeID),
+			zap.Uint64("region-id", regionErr.GetRegionNotInitialized().GetRegionId()),
+			zap.Stringer("ctx", ctx))
 		if seed != nil {
-			logutil.BgLogger().Debug("tikv reports `RegionNotFound` in follow-reader",
-				zap.Stringer("ctx", ctx), zap.Uint32("seed", *seed))
 			*seed = *seed + 1
 		}
-		s.regionCache.InvalidateCachedRegion(ctx.Region)
-		return false, nil
+		return true, nil
+	}
+
+	// The read-index can't be handled timely because the region is splitting or merging.
+	if regionErr.GetReadIndexNotReady() != nil {
+		logutil.BgLogger().Debug("tikv reports `ReadIndexNotReady` retry later",
+			zap.Uint64("store-id", ctx.Store.storeID),
+			zap.Uint64("region-id", regionErr.GetRegionNotInitialized().GetRegionId()),
+			zap.Stringer("ctx", ctx))
+		if seed != nil {
+			*seed = *seed + 1
+		}
+		// The region can't provide service until split or merge finished, so backoff.
+		err = bo.Backoff(retry.BoRegionScheduling, errors.Errorf("read index not ready, ctx: %v", ctx))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if s.leaderReplicaSelector != nil {
+			s.leaderReplicaSelector.rewind()
+		}
+		return true, nil
+	}
+
+	if regionErr.GetProposalInMergingMode() != nil {
+		logutil.BgLogger().Debug("tikv reports `ProposalInMergingMode`", zap.Stringer("ctx", ctx))
+		// The region is merging and it can't provide service until merge finished, so backoff.
+		err = bo.Backoff(retry.BoRegionScheduling, errors.Errorf("region is merging, ctx: %v", ctx))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if s.leaderReplicaSelector != nil {
+			s.leaderReplicaSelector.rewind()
+		}
+		return true, nil
+	}
+
+	// A stale read request may be sent to a peer which the data is not ready yet, we should retry in this case.
+	// This error is specific to stale read and the target replica is randomly selected. If the request is sent
+	// to the leader, the data must be ready, so we don't backoff here.
+	if regionErr.GetDataIsNotReady() != nil {
+		logutil.BgLogger().Warn("tikv reports `DataIsNotReady` retry later",
+			zap.Uint64("store-id", ctx.Store.storeID),
+			zap.Uint64("peer-id", regionErr.GetDataIsNotReady().GetPeerId()),
+			zap.Uint64("region-id", regionErr.GetDataIsNotReady().GetRegionId()),
+			zap.Uint64("safe-ts", regionErr.GetDataIsNotReady().GetSafeTs()),
+			zap.Stringer("ctx", ctx))
+		if seed != nil {
+			*seed = *seed + 1
+		}
+		return true, nil
 	}
 
 	logutil.BgLogger().Debug("tikv reports region failed",

@@ -191,7 +191,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestStoreTokenLimit(c *C) {
 
 // Test whether the Stale Read request will retry the leader or other peers on error.
 func (s *testRegionRequestToThreeStoresSuite) TestStaleReadRetry(c *C) {
-	var seed uint32 = 0
+	var seed uint32
 	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{}, kv.ReplicaReadMixed, &seed)
 	req.EnableStaleRead()
 
@@ -1145,14 +1145,14 @@ func (s *testRegionRequestToThreeStoresSuite) TestSendReqWithReplicaSelector(c *
 	c.Assert(bo.GetTotalBackoffTimes(), Equals, maxReplicaAttempt+2)
 	s.cluster.StartStore(s.storeIDs[0])
 
-	// Verify that retry the same replica when meets ServerIsBusy/MaxTimestampNotSynced/ReadIndexNotReady/ProposalInMergingMode/DataIsNotReady.
+	// Verify that retry the same replica when meets ServerIsBusy/MaxTimestampNotSynced/ReadIndexNotReady/ProposalInMergingMode.
 	for _, regionErr := range []*errorpb.Error{
 		// ServerIsBusy takes too much time to test.
 		// {ServerIsBusy: &errorpb.ServerIsBusy{}},
 		{MaxTimestampNotSynced: &errorpb.MaxTimestampNotSynced{}},
 		{ReadIndexNotReady: &errorpb.ReadIndexNotReady{}},
 		{ProposalInMergingMode: &errorpb.ProposalInMergingMode{}},
-		{DataIsNotReady: &errorpb.DataIsNotReady{}}} {
+	} {
 		func() {
 			oc := sender.client
 			defer func() {
