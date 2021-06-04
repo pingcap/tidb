@@ -7878,6 +7878,15 @@ func (s *testIntegrationSerialSuite) TestIssue19804(c *C) {
 	tk.MustGetErrMsg(`alter table t change a a set('a', 'b', 'c', 'e', 'f');`, "[ddl:8200]Unsupported modify column: cannot modify set column value d to e, and tidb_enable_change_column_type is false")
 }
 
+func (s *testIntegrationSuite) TestIssue24429(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("set @@sql_mode = ANSI_QUOTES;")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int);")
+	tk.MustQuery(`select t."a"=10 from t;`).Check(testkit.Rows())
+}
+
 func (s *testIntegrationSerialSuite) TestIssue20209(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
