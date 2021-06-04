@@ -226,6 +226,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		SQLDigest:     digest,
 		ForUpdateRead: destBuilder.GetIsForUpdateRead(),
 		SnapshotTS:    ret.SnapshotTS,
+		InfoSchema:    ret.InfoSchema,
 	}
 	return vars.AddPreparedStmt(e.ID, preparedObj)
 }
@@ -315,7 +316,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
-	ID uint32, snapshotTS uint64, args []types.Datum) (sqlexec.Statement, bool, bool, error) {
+	ID uint32, is infoschema.InfoSchema, snapshotTS uint64, args []types.Datum) (sqlexec.Statement, bool, bool, error) {
 	startTime := time.Now()
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
@@ -325,7 +326,6 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		return nil, false, false, err
 	}
 	execStmt.BinaryArgs = args
-	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
 		return nil, false, false, err

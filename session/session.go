@@ -1770,8 +1770,8 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 }
 
 func (s *session) preparedStmtExec(ctx context.Context,
-	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
-	st, tiFlashPushDown, tiFlashExchangePushDown, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, prepareStmt.SnapshotTS, args)
+	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, is infoschema.InfoSchema, args []types.Datum) (sqlexec.RecordSet, error) {
+	st, tiFlashPushDown, tiFlashExchangePushDown, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, is, prepareStmt.SnapshotTS, args)
 	if err != nil {
 		return nil, err
 	}
@@ -1791,15 +1791,9 @@ func (s *session) preparedStmtExec(ctx context.Context,
 
 // cachedPlanExec short path currently ONLY for cached "point select plan" execution
 func (s *session) cachedPlanExec(ctx context.Context,
-	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
+	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, is infoschema.InfoSchema, args []types.Datum) (sqlexec.RecordSet, error) {
 	prepared := prepareStmt.PreparedAst
 	// compile ExecStmt
-	var is infoschema.InfoSchema
-	if prepareStmt.ForUpdateRead {
-		is = domain.GetDomain(s).InfoSchema()
-	} else {
-		is = s.GetInfoSchema().(infoschema.InfoSchema)
-	}
 	execAst := &ast.ExecuteStmt{ExecID: stmtID}
 	if err := executor.ResetContextOfStmt(s, execAst); err != nil {
 		return nil, err
@@ -1932,11 +1926,19 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, err
 	}
 	s.txn.onStmtStart(preparedStmt.SQLDigest.String())
+	var is infoschema.InfoSchema
+	if preparedStmt.ForUpdateRead {
+		is = domain.GetDomain(s).InfoSchema()
+	} else if preparedStmt.InfoSchema != nil {
+		is = preparedStmt.InfoSchema.(infoschema.InfoSchema)
+	} else {
+		is = s.GetInfoSchema().(infoschema.InfoSchema)
+	}
 	var rs sqlexec.RecordSet
 	if ok {
-		rs, err = s.cachedPlanExec(ctx, stmtID, preparedStmt, args)
+		rs, err = s.cachedPlanExec(ctx, stmtID, preparedStmt, is, args)
 	} else {
-		rs, err = s.preparedStmtExec(ctx, stmtID, preparedStmt, args)
+		rs, err = s.preparedStmtExec(ctx, stmtID, preparedStmt, is, args)
 	}
 	s.txn.onStmtEnd()
 	return rs, err

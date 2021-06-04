@@ -665,6 +665,10 @@ func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
 }
 
 func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
+	b.snapshotTS = v.SnapshotTS
+	if b.snapshotTS != 0 {
+		b.is, b.err = domain.GetDomain(b.ctx).GetSnapshotInfoSchema(b.snapshotTS)
+	}
 	e := &ExecuteExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		is:           b.is,
@@ -675,7 +679,6 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		plan:         v.Plan,
 		outputNames:  v.OutputNames(),
 	}
-	b.snapshotTS = v.SnapshotTS
 	return e
 }
 

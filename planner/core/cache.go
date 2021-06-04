@@ -204,4 +204,5 @@ type CachedPrepareStmt struct {
 	PlanDigest     *parser.Digest
 	ForUpdateRead  bool
 	SnapshotTS     uint64
+	InfoSchema     interface{}
 }
