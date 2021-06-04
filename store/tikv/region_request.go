@@ -930,6 +930,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 	}
 
 	if regionErr.GetKeyNotInRegion() != nil {
+		logutil.BgLogger().Debug("tikv reports `KeyNotInRegion`", zap.Stringer("ctx", ctx))
 		s.regionCache.InvalidateCachedRegion(ctx.Region)
 		return false, nil
 	}
