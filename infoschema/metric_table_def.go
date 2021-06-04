@@ -16,6 +16,16 @@ package infoschema
 // MetricTableMap records the metric table definition, export for test.
 // TODO: read from system table.
 var MetricTableMap = map[string]MetricTableDef{
+	"tidb_ops_total": {
+		PromQL:  `sum(tidb_executor_statement_total{$LABEL_CONDITIONS}) by (instance)`,
+		Labels:  []string{"instance"},
+		Comment: "TiDB SQL total by type",
+	},
+	"tidb_ops_type": {
+		PromQL:  `sum(tidb_executor_statement_total{$LABEL_CONDITIONS}) by (instance,type)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "TiDB SQL total by type and instance",
+	},
 	"tidb_query_duration": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tidb_server_handle_query_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,sql_type,instance))`,
 		Labels:   []string{"instance", "sql_type"},
