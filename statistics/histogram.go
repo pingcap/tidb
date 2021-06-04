@@ -298,10 +298,6 @@ const (
 	// Index stats: CM SKetch is not used. TopN and Histograms are built in TiKV using full data. NDV is also collected for each bucket in histogram.
 	//    Then values covered by TopN is removed from Histogram. TopN + Histogram represent all data.
 	Version2 = 2
-	// Version3 is used for testing now. Once it finished, we will fallback the Version3 to Version2.
-	// The difference between Version2 and Version3 is that we construct the index's statistics based on sampling also.
-	// The data structure between them are then same.
-	Version3 = 3
 )
 
 // AnalyzeFlag is set when the statistics comes from analyze and has not been modified by feedback.
@@ -1289,6 +1285,7 @@ func (idx *Index) expBackoffEstimation(sc *stmtctx.StatementContext, coll *HistC
 	//   2. Sort them and choose the first 4 most selective filter and the corresponding selectivity is sel_1, sel_2, sel_3, sel_4 where i < j => sel_i < sel_j.
 	//   3. The final selectivity would be sel_1 * sel_2^{1/2} * sel_3^{1/4} * sel_4^{1/8}.
 	// This calculation reduced the independence assumption and can work well better than it.
+	logutil.BgLogger().Warn("exp backoff", zap.String("range", fmt.Sprintf("%v", indexRange)), zap.String("col ids", fmt.Sprintf("%v", colsIDs)))
 	for i := 0; i < len(indexRange.LowVal); i++ {
 		tmpRan[0].LowVal[0] = indexRange.LowVal[i]
 		tmpRan[0].HighVal[0] = indexRange.HighVal[i]

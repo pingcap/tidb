@@ -2073,7 +2073,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	sc := b.ctx.GetSessionVars().StmtCtx
 	e := &AnalyzeColumnsExec{
 		ctx:         b.ctx,
-		tableID:     task.TableID,
+		tableInfo:   task.TblInfo,
 		colsInfo:    task.ColsInfo,
 		handleCols:  task.HandleCols,
 		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency(),
@@ -2082,9 +2082,9 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
-		opts:       opts,
-		analyzeVer: task.StatsVersion,
-		indexes:    availableIdx,
+		opts:        opts,
+		indexes:     availableIdx,
+		AnalyzeInfo: task.AnalyzeInfo,
 	}
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
 		BucketSize:   int64(opts[ast.AnalyzeOptNumBuckets]),
@@ -2105,7 +2105,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 }
 
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
-	if task.StatsVersion == statistics.Version3 {
+	if task.StatsVersion == statistics.Version2 {
 		return b.buildAnalyzeSamplingPushdown(task, opts, autoAnalyze)
 	}
 	cols := task.ColsInfo
@@ -2125,7 +2125,6 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 	sc := b.ctx.GetSessionVars().StmtCtx
 	e := &AnalyzeColumnsExec{
 		ctx:         b.ctx,
-		tableID:     task.TableID,
 		colsInfo:    task.ColsInfo,
 		handleCols:  task.HandleCols,
 		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency(),
@@ -2134,8 +2133,8 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
-		opts:       opts,
-		analyzeVer: task.StatsVersion,
+		opts:        opts,
+		AnalyzeInfo: task.AnalyzeInfo,
 	}
 	depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
 	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
