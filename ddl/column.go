@@ -1036,7 +1036,6 @@ func (w *worker) doModifyColumnTypeWithData(
 				// If timeout, we should return, check for the owner and re-wait job done.
 				return ver, nil
 			}
-<<<<<<< HEAD
 			if kv.IsTxnRetryableError(err) {
 				// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
 				w.reorgCtx.cleanNotifyReorgCancel()
@@ -1046,17 +1045,6 @@ func (w *worker) doModifyColumnTypeWithData(
 				logutil.BgLogger().Warn("[ddl] run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
 					zap.String("job", job.String()), zap.Error(err1))
 				return ver, errors.Trace(err)
-=======
-			if needRollbackData(err) {
-				if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
-					logutil.BgLogger().Warn("[ddl] run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
-						zap.String("job", job.String()), zap.Error(err1))
-					return ver, errors.Trace(err)
-				}
-				logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
-				// When encounter these error above, we change the job to rolling back job directly.
-				job.State = model.JobStateRollingback
->>>>>>> c77a92e6c (fix reorg goroutine leak after ctc is cancelled)
 			}
 			logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 			job.State = model.JobStateRollingback
