@@ -3925,8 +3925,8 @@ func (s *testIntegrationSerialSuite) TestEnforceMPP(c *C) {
 
 	// read from tiflash, mpp with large cost
 	tk.MustQuery("explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1").Check(testkit.Rows(
-		"HashAgg_21 1.00 11910.68 root  funcs:count(Column#5)->Column#3",
-		"└─TableReader_23 1.00 11877.08 root  data:ExchangeSender_22",
+		"HashAgg_21 1.00 11910.73 root  funcs:count(Column#5)->Column#3",
+		"└─TableReader_23 1.00 11877.13 root  data:ExchangeSender_22",
 		"  └─ExchangeSender_22 1.00 285050.00 batchCop[tiflash]  ExchangeType: PassThrough",
 		"    └─HashAgg_9 1.00 285050.00 batchCop[tiflash]  funcs:count(1)->Column#5",
 		"      └─Selection_20 10.00 285020.00 batchCop[tiflash]  eq(test.t.a, 1)",
