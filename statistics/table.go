@@ -14,7 +14,6 @@
 package statistics
 
 import (
-	"encoding/binary"
 	"fmt"
 	"math"
 	"sort"
@@ -23,7 +22,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -58,39 +56,18 @@ const (
 	PseudoRowCount = 10000
 )
 
-// CMSketchSizeLimit indicates the max size(width * depth) of a CMSketch.
-var CMSketchSizeLimit = kv.TxnEntrySizeLimit / binary.MaxVarintLen32
-
-// AnalyzeOptionLimit indicates the upper bound of some attribute.
-var AnalyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets:    1024,
-	ast.AnalyzeOptNumTopN:       1024,
-	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
-	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
-	ast.AnalyzeOptNumSamples:    100000,
-}
-
-// AnalyzeOptionDefault indicates the default values of some attributes.
-var AnalyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets:    256,
-	ast.AnalyzeOptNumTopN:       20,
-	ast.AnalyzeOptCMSketchWidth: 2048,
-	ast.AnalyzeOptCMSketchDepth: 5,
-	ast.AnalyzeOptNumSamples:    10000,
-}
-
 // Table represents statistics for a table.
 type Table struct {
 	HistColl
 	Version       uint64
 	Name          string
 	ExtendedStats *ExtendedStatsColl
-}
-
-// ExtendedStatsKey is the key for cached item of a mysql.stats_extended record.
-type ExtendedStatsKey struct {
-	StatsName string
-	DB        string
+	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
+	// It is the schema version of the corresponding table. It is used to skip redundant
+	// loading of stats, i.e, if the cached stats is already update-to-date with mysql.stats_xxx tables,
+	// and the schema of the table does not change, we don't need to load the stats for this
+	// table again.
+	TblInfoUpdateTS uint64
 }
 
 // ExtendedStatsItem is the cached item of a mysql.stats_extended record.
@@ -103,13 +80,13 @@ type ExtendedStatsItem struct {
 
 // ExtendedStatsColl is a collection of cached items for mysql.stats_extended records.
 type ExtendedStatsColl struct {
-	Stats             map[ExtendedStatsKey]*ExtendedStatsItem
+	Stats             map[string]*ExtendedStatsItem
 	LastUpdateVersion uint64
 }
 
 // NewExtendedStatsColl allocate an ExtendedStatsColl struct.
 func NewExtendedStatsColl() *ExtendedStatsColl {
-	return &ExtendedStatsColl{Stats: make(map[ExtendedStatsKey]*ExtendedStatsItem)}
+	return &ExtendedStatsColl{Stats: make(map[string]*ExtendedStatsItem)}
 }
 
 // HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
@@ -165,61 +142,20 @@ func (t *Table) Copy() *Table {
 		newHistColl.Indices[id] = idx
 	}
 	nt := &Table{
-		HistColl: newHistColl,
-		Version:  t.Version,
-		Name:     t.Name,
+		HistColl:        newHistColl,
+		Version:         t.Version,
+		Name:            t.Name,
+		TblInfoUpdateTS: t.TblInfoUpdateTS,
 	}
 	if t.ExtendedStats != nil {
 		newExtStatsColl := &ExtendedStatsColl{
-			Stats:             make(map[ExtendedStatsKey]*ExtendedStatsItem),
+			Stats:             make(map[string]*ExtendedStatsItem),
 			LastUpdateVersion: t.ExtendedStats.LastUpdateVersion,
 		}
-		for key, item := range t.ExtendedStats.Stats {
-			newExtStatsColl.Stats[key] = item
+		for name, item := range t.ExtendedStats.Stats {
+			newExtStatsColl.Stats[name] = item
 		}
 		nt.ExtendedStats = newExtStatsColl
-	}
-	return nt
-}
-
-// CopyWithoutBucketsAndCMS copies the current table only with metadata.
-func (t *Table) CopyWithoutBucketsAndCMS() *Table {
-	newHistColl := HistColl{
-		PhysicalID:     t.PhysicalID,
-		HavePhysicalID: t.HavePhysicalID,
-		Count:          t.Count,
-		Columns:        make(map[int64]*Column, len(t.Columns)),
-		Indices:        make(map[int64]*Index, len(t.Indices)),
-		Pseudo:         t.Pseudo,
-		ModifyCount:    t.ModifyCount,
-	}
-	for id, col := range t.Columns {
-		oldHg := &col.Histogram
-		newHg := NewHistogram(oldHg.ID, oldHg.NDV, oldHg.NullCount, oldHg.LastUpdateVersion, oldHg.Tp, 0, oldHg.TotColSize)
-		newHistColl.Columns[id] = &Column{
-			Histogram:  *newHg,
-			PhysicalID: col.PhysicalID,
-			Info:       col.Info,
-			Count:      col.Count,
-			IsHandle:   col.IsHandle,
-			Flag:       col.Flag,
-		}
-	}
-	for id, idx := range t.Indices {
-		oldHg := &idx.Histogram
-		newHg := NewHistogram(oldHg.ID, oldHg.NDV, oldHg.NullCount, oldHg.LastUpdateVersion, oldHg.Tp, 0, oldHg.TotColSize)
-		newHistColl.Indices[id] = &Index{
-			Histogram:  *newHg,
-			PhysicalID: idx.PhysicalID,
-			Info:       idx.Info,
-			StatsVer:   idx.StatsVer,
-			Flag:       idx.Flag,
-		}
-	}
-	nt := &Table{
-		HistColl: newHistColl,
-		Version:  t.Version,
-		Name:     t.Name,
 	}
 	return nt
 }
@@ -268,6 +204,16 @@ func (t *Table) ColumnByName(colName string) *Column {
 	return nil
 }
 
+// GetStatsInfo returns their statistics according to the ID of the column or index, including histogram, CMSketch, TopN and FMSketch.
+func (t *Table) GetStatsInfo(ID int64, isIndex bool) (int64, *Histogram, *CMSketch, *TopN, *FMSketch) {
+	if isIndex {
+		idxStatsInfo := t.Indices[ID]
+		return int64(idxStatsInfo.TotalRowCount()), idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), idxStatsInfo.FMSketch.Copy()
+	}
+	colStatsInfo := t.Columns[ID]
+	return int64(colStatsInfo.TotalRowCount()), colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy()
+}
+
 type tableColumnID struct {
 	TableID  int64
 	ColumnID int64
@@ -297,40 +243,6 @@ func (n *neededColumnMap) insert(col tableColumnID) {
 func (n *neededColumnMap) Delete(col tableColumnID) {
 	n.m.Lock()
 	delete(n.cols, col)
-	n.m.Unlock()
-}
-
-type tableIndexID struct {
-	TableID int64
-	IndexID int64
-}
-
-type neededIndexMap struct {
-	m    sync.Mutex
-	idxs map[tableIndexID]struct{}
-}
-
-// AllIdxs returns all the idx with an array
-func (n *neededIndexMap) AllIdxs() []tableIndexID {
-	n.m.Lock()
-	keys := make([]tableIndexID, 0, len(n.idxs))
-	for key := range n.idxs {
-		keys = append(keys, key)
-	}
-	n.m.Unlock()
-	return keys
-}
-
-func (n *neededIndexMap) insert(idx tableIndexID) {
-	n.m.Lock()
-	n.idxs[idx] = struct{}{}
-	n.m.Unlock()
-}
-
-// Delete delete a idx from idxs
-func (n *neededIndexMap) Delete(idx tableIndexID) {
-	n.m.Lock()
-	delete(n.idxs, idx)
 	n.m.Unlock()
 }
 
@@ -365,16 +277,24 @@ func (t *Table) ColumnLessRowCount(sc *stmtctx.StatementContext, value types.Dat
 }
 
 // ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
-func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.Datum, colID int64) float64 {
+func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.Datum, colID int64) (float64, error) {
 	c, ok := t.Columns[colID]
 	if !ok || c.IsInvalid(sc, t.Pseudo) {
-		return float64(t.Count) / pseudoBetweenRate
+		return float64(t.Count) / pseudoBetweenRate, nil
 	}
-	count := c.BetweenRowCount(a, b)
+	aEncoded, err := codec.EncodeKey(sc, nil, a)
+	if err != nil {
+		return 0, err
+	}
+	bEncoded, err := codec.EncodeKey(sc, nil, b)
+	if err != nil {
+		return 0, err
+	}
+	count := c.BetweenRowCount(sc, a, b, aEncoded, bEncoded)
 	if a.IsNull() {
 		count += float64(c.NullCount)
 	}
-	return count * c.GetIncreaseFactor(t.Count)
+	return count * c.GetIncreaseFactor(t.Count), nil
 }
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
@@ -383,7 +303,11 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 	if !ok || c.IsInvalid(sc, t.Pseudo) {
 		return float64(t.Count) / pseudoEqualRate, nil
 	}
-	result, err := c.equalRowCount(sc, value, t.ModifyCount)
+	encodedVal, err := codec.EncodeKey(sc, nil, value)
+	if err != nil {
+		return 0, err
+	}
+	result, err := c.equalRowCount(sc, value, encodedVal, t.ModifyCount)
 	result *= c.GetIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
@@ -419,7 +343,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
 func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	idx := coll.Indices[idxID]
-	if idx == nil || idx.IsInvalid(sc, coll.Pseudo) {
+	if idx == nil || idx.IsInvalid(coll.Pseudo) {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
@@ -431,7 +355,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 	if idx.CMSketch != nil && idx.StatsVer == Version1 {
 		result, err = coll.getIndexRowCount(sc, idxID, indexRanges)
 	} else {
-		result, err = idx.GetRowCount(sc, indexRanges, coll.ModifyCount)
+		result, err = idx.GetRowCount(sc, coll, indexRanges, coll.ModifyCount)
 	}
 	result *= idx.GetIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
@@ -574,6 +498,9 @@ func (coll *HistColl) crossValidationSelectivity(sc *stmtctx.StatementContext, i
 			break
 		}
 		if col, ok := coll.Columns[colID]; ok {
+			if col.IsInvalid(sc, coll.Pseudo) {
+				continue
+			}
 			lowExclude := idxPointRange.LowExclude
 			highExclude := idxPointRange.HighExclude
 			// Consider this case:
@@ -628,7 +555,9 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 			if i >= usedColsLen {
 				break
 			}
-			ndv = mathutil.MaxInt64(ndv, coll.Columns[colID].NDV)
+			if col, ok := coll.Columns[colID]; ok {
+				ndv = mathutil.MaxInt64(ndv, col.Histogram.NDV)
+			}
 		}
 		return outOfRangeEQSelectivity(ndv, coll.ModifyCount, int64(idx.TotalRowCount())), nil
 	}
@@ -662,7 +591,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 		// on single-column index, use previous way as well, because CMSketch does not contain null
 		// values in this case.
 		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
-			count, err := idx.GetRowCount(sc, []*ranger.Range{ran}, coll.ModifyCount)
+			count, err := idx.GetRowCount(sc, nil, []*ranger.Range{ran}, coll.ModifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -997,4 +926,36 @@ func (coll *HistColl) GetIndexAvgRowSize(ctx sessionctx.Context, cols []*express
 		size++
 	}
 	return
+}
+
+// CheckAnalyzeVerOnTable checks whether the given version is the one from the tbl.
+// If not, it will return false and set the version to the tbl's.
+// We use this check to make sure all the statistics of the table are in the same version.
+func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
+	for _, col := range tbl.Columns {
+		// Version0 means no statistics is collected currently.
+		if col.StatsVer == Version0 {
+			continue
+		}
+		if col.StatsVer != int64(*version) {
+			*version = int(col.StatsVer)
+			return false
+		}
+		// If we found one column and the version is the same, we can directly return since all the versions from this table is the same.
+		return true
+	}
+	for _, idx := range tbl.Indices {
+		// Version0 means no statistics is collected currently.
+		if idx.StatsVer == Version0 {
+			continue
+		}
+		if idx.StatsVer != int64(*version) {
+			*version = int(idx.StatsVer)
+			return false
+		}
+		// If we found one column and the version is the same, we can directly return since all the versions from this table is the same.
+		return true
+	}
+	// This table has no statistics yet. We can directly return true.
+	return true
 }

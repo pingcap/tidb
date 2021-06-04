@@ -16,7 +16,6 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -56,7 +55,6 @@ func (s *testConfigSuite) TestMergeConfigItems(c *C) {
 	newConf.Performance.PseudoEstimateRatio = 123
 	newConf.OOMAction = "panic"
 	newConf.MemQuotaQuery = 123
-	newConf.MemQuotaStatistics = 123
 	newConf.TiKVClient.StoreLimit = 123
 
 	// rejected
@@ -67,7 +65,7 @@ func (s *testConfigSuite) TestMergeConfigItems(c *C) {
 
 	as, rs := MergeConfigItems(oldConf, newConf)
 	c.Assert(len(as), Equals, 10)
-	c.Assert(len(rs), Equals, 4)
+	c.Assert(len(rs), Equals, 3)
 	for _, a := range as {
 		_, ok := dynamicConfigItems[a]
 		c.Assert(ok, IsTrue)
@@ -101,7 +99,7 @@ func (s *testConfigSuite) TestAtomicWriteConfig(c *C) {
 	conf.Performance.PseudoEstimateRatio = 3.45
 	c.Assert(atomicWriteConfig(conf, confPath), IsNil)
 
-	content, err := ioutil.ReadFile(confPath)
+	content, err := os.ReadFile(confPath)
 	c.Assert(err, IsNil)
 	dconf, err := decodeConfig(string(content))
 	c.Assert(err, IsNil)
@@ -114,7 +112,7 @@ func (s *testConfigSuite) TestAtomicWriteConfig(c *C) {
 	conf.Performance.PseudoEstimateRatio = 54.3
 	c.Assert(atomicWriteConfig(conf, confPath), IsNil)
 
-	content, err = ioutil.ReadFile(confPath)
+	content, err = os.ReadFile(confPath)
 	c.Assert(err, IsNil)
 	dconf, err = decodeConfig(string(content))
 	c.Assert(err, IsNil)

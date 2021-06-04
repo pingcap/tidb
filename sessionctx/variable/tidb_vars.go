@@ -15,7 +15,6 @@ package variable
 
 import (
 	"math"
-	"os"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
@@ -47,9 +46,24 @@ const (
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
+	// TiDBOptBCJ is used to enable/disable broadcast join in MPP mode
 	TiDBOptBCJ = "tidb_opt_broadcast_join"
+
+	// TiDBOptCartesianBCJ is used to disable/enable broadcast cartesian join in MPP mode
+	TiDBOptCartesianBCJ = "tidb_opt_broadcast_cartesian_join"
+
+	TiDBOptMPPOuterJoinFixedBuildSide = "tidb_opt_mpp_outer_join_fixed_build_side"
+
 	// tidb_opt_distinct_agg_push_down is used to decide whether agg with distinct should be pushed to tikv/tiflash.
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
+
+	// tidb_broadcast_join_threshold_size is used to limit the size of small table for mpp broadcast join.
+	// It's unit is bytes, if the size of small table is larger than it, we will not use bcj.
+	TiDBBCJThresholdSize = "tidb_broadcast_join_threshold_size"
+
+	// tidb_broadcast_join_threshold_count is used to limit the count of small table for mpp broadcast join.
+	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
+	TiDBBCJThresholdCount = "tidb_broadcast_join_threshold_count"
 
 	// tidb_opt_write_row_id is used to enable/disable the operations of insert、replace and update to _tidb_rowid.
 	TiDBOptWriteRowID = "tidb_opt_write_row_id"
@@ -72,6 +86,9 @@ const (
 
 	// TiDBLastTxnInfo is used to get the last transaction info within the current session.
 	TiDBLastTxnInfo = "tidb_last_txn_info"
+
+	// TiDBLastTxnInfo is used to get the last query info within the current session.
+	TiDBLastQueryInfo = "tidb_last_query_info"
 
 	// tidb_config is a read-only variable that shows the config of the current server.
 	TiDBConfig = "tidb_config"
@@ -96,17 +113,15 @@ const (
 
 	// The following session variables controls the memory quota during query execution.
 	// "tidb_mem_quota_query":				control the memory quota of a query.
-	TIDBMemQuotaQuery               = "tidb_mem_quota_query" // Bytes.
-	TIDBMemQuotaStatistics          = "tidb_mem_quota_statistics"
-	TIDBNestedLoopJoinCacheCapacity = "tidb_nested_loop_join_cache_capacity"
-	// TODO: remove them below sometime, it should have only one Quota(TIDBMemQuotaQuery).
-	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
-	TIDBMemQuotaMergeJoin         = "tidb_mem_quota_mergejoin"         // Bytes.
-	TIDBMemQuotaSort              = "tidb_mem_quota_sort"              // Bytes.
-	TIDBMemQuotaTopn              = "tidb_mem_quota_topn"              // Bytes.
-	TIDBMemQuotaIndexLookupReader = "tidb_mem_quota_indexlookupreader" // Bytes.
-	TIDBMemQuotaIndexLookupJoin   = "tidb_mem_quota_indexlookupjoin"   // Bytes.
-	TIDBMemQuotaNestedLoopApply   = "tidb_mem_quota_nestedloopapply"   // Bytes.
+	TiDBMemQuotaQuery      = "tidb_mem_quota_query" // Bytes.
+	TiDBMemQuotaApplyCache = "tidb_mem_quota_apply_cache"
+	// TODO: remove them below sometime, it should have only one Quota(TiDBMemQuotaQuery).
+	TiDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
+	TiDBMemQuotaMergeJoin         = "tidb_mem_quota_mergejoin"         // Bytes.
+	TiDBMemQuotaSort              = "tidb_mem_quota_sort"              // Bytes.
+	TiDBMemQuotaTopn              = "tidb_mem_quota_topn"              // Bytes.
+	TiDBMemQuotaIndexLookupReader = "tidb_mem_quota_indexlookupreader" // Bytes.
+	TiDBMemQuotaIndexLookupJoin   = "tidb_mem_quota_indexlookupjoin"   // Bytes.
 
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
@@ -141,6 +156,9 @@ const (
 	// off: always disable table partition.
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
 
+	// tidb_enable_list_partition is used to control list table partition feature.
+	TiDBEnableListTablePartition = "tidb_enable_list_partition"
+
 	// tidb_skip_isolation_level_check is used to control whether to return error when set unsupported transaction
 	// isolation level.
 	TiDBSkipIsolationLevelCheck = "tidb_skip_isolation_level_check"
@@ -153,6 +171,10 @@ const (
 
 	// TiDBAllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	TiDBAllowRemoveAutoInc = "tidb_allow_remove_auto_inc"
+
+	// TiDBMultiStatementMode enables multi statement at the risk of SQL injection
+	// provides backwards compatibility
+	TiDBMultiStatementMode = "tidb_multi_statement_mode"
 
 	// TiDBEvolvePlanTaskMaxTime controls the max time of a single evolution task.
 	TiDBEvolvePlanTaskMaxTime = "tidb_evolve_plan_task_max_time"
@@ -188,6 +210,9 @@ const (
 
 	// TiDBTxnScope indicates whether using global transactions or local transactions.
 	TiDBTxnScope = "txn_scope"
+
+	// TiDBTxnReadTS indicates the next transaction should be staleness transaction and provide the startTS
+	TiDBTxnReadTS = "tx_read_ts"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -200,7 +225,6 @@ const (
 	// A distsql scan task can be a table scan or a index scan, which may be distributed to many TiKV nodes.
 	// Higher concurrency may reduce latency, but with the cost of higher memory usage and system performance impact.
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
-	// tidb_distsql_scan_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
 
 	// tidb_opt_insubquery_to_join_and_agg is used to enable/disable the optimizer rule of rewriting IN subquery.
@@ -275,6 +299,8 @@ const (
 	// The default value is 0
 	TiDBAllowBatchCop = "tidb_allow_batch_cop"
 
+	// TiDBAllowMPPExecution means if we should use mpp way to execute query. Default value is 1 (or 'ON'), means to be determined by the optimizer.
+	// Value set to 2 (or 'ENFORCE') which means to use mpp whenever possible. Value set to 2 (or 'OFF') means never use mpp.
 	TiDBAllowMPPExecution = "tidb_allow_mpp"
 
 	// TiDBInitChunkSize is used to control the init chunk size during query execution.
@@ -316,6 +342,9 @@ const (
 	// tidb_window_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBWindowConcurrency = "tidb_window_concurrency"
 
+	// tidb_merge_join_concurrency is used for merge join parallel executor
+	TiDBMergeJoinConcurrency = "tidb_merge_join_concurrency"
+
 	// tidb_stream_agg_concurrency is used for stream aggregation parallel executor.
 	// tidb_stream_agg_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBStreamAggConcurrency = "tidb_streamagg_concurrency"
@@ -348,6 +377,15 @@ const (
 	// TiDBEnableChangeColumnType is used to control whether to enable the change column type.
 	TiDBEnableChangeColumnType = "tidb_enable_change_column_type"
 
+	// TiDBEnableChangeMultiSchema is used to control whether to enable the change multi schema.
+	TiDBEnableChangeMultiSchema = "tidb_enable_change_multi_schema"
+
+	// TiDBEnablePointGetCache is used to control whether to enable the point get cache for special scenario.
+	TiDBEnablePointGetCache = "tidb_enable_point_get_cache"
+
+	// TiDBEnableAlterPlacement is used to control whether to enable alter table partition.
+	TiDBEnableAlterPlacement = "tidb_enable_alter_placement"
+
 	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
 	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
@@ -365,10 +403,6 @@ const (
 	// It can be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY", "DELAYED"
 	TiDBForcePriority = "tidb_force_priority"
 
-	// tidb_enable_radix_join indicates to use radix hash join algorithm to execute
-	// HashJoin.
-	TiDBEnableRadixJoin = "tidb_enable_radix_join"
-
 	// tidb_constraint_check_in_place indicates to check the constraint when the SQL executing.
 	// It could hurt the performance of bulking insert when it is ON.
 	TiDBConstraintCheckInPlace = "tidb_constraint_check_in_place"
@@ -376,13 +410,16 @@ const (
 	// tidb_enable_window_function is used to control whether to enable the window function.
 	TiDBEnableWindowFunction = "tidb_enable_window_function"
 
+	// tidb_enable_pipelined_window_function is used to control whether to use pipelined window function, it only works when tidb_enable_window_function = true.
+	TiDBEnablePipelinedWindowFunction = "tidb_enable_pipelined_window_function"
+
 	// tidb_enable_strict_double_type_check is used to control table field double type syntax check.
 	TiDBEnableStrictDoubleTypeCheck = "tidb_enable_strict_double_type_check"
 
 	// tidb_enable_vectorized_expression is used to control whether to enable the vectorized expression evaluation.
 	TiDBEnableVectorizedExpression = "tidb_enable_vectorized_expression"
 
-	// TIDBOptJoinReorderThreshold defines the threshold less than which
+	// TiDBOptJoinReorderThreshold defines the threshold less than which
 	// we'll choose a rather time consuming algorithm to calculate the join order.
 	TiDBOptJoinReorderThreshold = "tidb_opt_join_reorder_threshold"
 
@@ -428,6 +465,9 @@ const (
 	// TiDBEvolvePlanBaselines indicates whether the evolution of plan baselines is enabled.
 	TiDBEvolvePlanBaselines = "tidb_evolve_plan_baselines"
 
+	// TiDBEnableExtendedStats indicates whether the extended statistics feature is enabled.
+	TiDBEnableExtendedStats = "tidb_enable_extended_stats"
+
 	// TiDBIsolationReadEngines indicates the tidb only read from the stores whose engine type is involved in IsolationReadEngines.
 	// Now, only support TiKV and TiFlash.
 	TiDBIsolationReadEngines = "tidb_isolation_read_engines"
@@ -470,6 +510,69 @@ const (
 
 	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
 	TiDBMemoryUsageAlarmRatio = "tidb_memory_usage_alarm_ratio"
+
+	// TiDBEnableRateLimitAction indicates whether enabled ratelimit action
+	TiDBEnableRateLimitAction = "tidb_enable_rate_limit_action"
+
+	// TiDBEnableAsyncCommit indicates whether to enable the async commit feature.
+	TiDBEnableAsyncCommit = "tidb_enable_async_commit"
+
+	// TiDBEnable1PC indicates whether to enable the one-phase commit feature.
+	TiDBEnable1PC = "tidb_enable_1pc"
+
+	// TiDBGuaranteeLinearizability indicates whether to guarantee linearizability.
+	TiDBGuaranteeLinearizability = "tidb_guarantee_linearizability"
+
+	// TiDBAnalyzeVersion indicates the how tidb collects the analyzed statistics and how use to it.
+	TiDBAnalyzeVersion = "tidb_analyze_version"
+
+	// TiDBEnableIndexMergeJoin indicates whether to enable index merge join.
+	TiDBEnableIndexMergeJoin = "tidb_enable_index_merge_join"
+
+	// TiDBTrackAggregateMemoryUsage indicates whether track the memory usage of aggregate function.
+	TiDBTrackAggregateMemoryUsage = "tidb_track_aggregate_memory_usage"
+
+	// TiDBEnableExchangePartition indicates whether to enable exchange partition.
+	TiDBEnableExchangePartition = "tidb_enable_exchange_partition"
+
+	// TiDBAllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
+	// Now we only support TiFlash.
+	TiDBAllowFallbackToTiKV = "tidb_allow_fallback_to_tikv"
+
+	// TiDBEnableDynamicPrivileges enables MySQL 8.0 compatible dynamic privileges (experimental).
+	TiDBEnableDynamicPrivileges = "tidb_enable_dynamic_privileges"
+
+	// TiDBEnableTopSQL indicates whether the top SQL is enabled.
+	TiDBEnableTopSQL = "tidb_enable_top_sql"
+
+	// TiDBTopSQLAgentAddress indicates the top SQL agent address.
+	TiDBTopSQLAgentAddress = "tidb_top_sql_agent_address"
+
+	// TiDBTopSQLPrecisionSeconds indicates the top SQL precision seconds.
+	TiDBTopSQLPrecisionSeconds = "tidb_top_sql_precision_seconds"
+
+	// TiDBTopSQLMaxStatementCount indicates the max number of statements been collected.
+	TiDBTopSQLMaxStatementCount = "tidb_top_sql_max_statement_count"
+
+	// TiDBEnableGlobalTemporaryTable indicates whether to enable global temporary table
+	TiDBEnableGlobalTemporaryTable = "tidb_enable_global_temporary_table"
+)
+
+// TiDB vars that have only global scope
+
+const (
+	// TiDBGCEnable turns garbage collection on or OFF
+	TiDBGCEnable = "tidb_gc_enable"
+	// TiDBGCRunInterval sets the interval that GC runs
+	TiDBGCRunInterval = "tidb_gc_run_interval"
+	// TiDBGCLifetime sets the retention window of older versions
+	TiDBGCLifetime = "tidb_gc_life_time"
+	// TiDBGCConcurrency sets the concurrency of garbage collection. -1 = AUTO value
+	TiDBGCConcurrency = "tidb_gc_concurrency"
+	// TiDBGCScanLockMode enables the green GC feature (default)
+	TiDBGCScanLockMode = "tidb_gc_scan_lock_mode"
+	// TiDBEnableEnhancedSecurity restricts SUPER users from certain operations.
+	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
 )
 
 // Default TiDB system variable values.
@@ -492,6 +595,8 @@ const (
 	DefSkipASCIICheck                  = false
 	DefOptAggPushDown                  = false
 	DefOptBCJ                          = false
+	DefOptCartesianBCJ                 = 1
+	DefOptMPPOuterJoinFixedBuildSide   = true
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
@@ -516,13 +621,13 @@ const (
 	DefDMLBatchSize                    = 0
 	DefMaxPreparedStmtCount            = -1
 	DefWaitTimeout                     = 0
+	DefTiDBMemQuotaApplyCache          = 32 << 20 // 32MB.
 	DefTiDBMemQuotaHashJoin            = 32 << 30 // 32GB.
 	DefTiDBMemQuotaMergeJoin           = 32 << 30 // 32GB.
 	DefTiDBMemQuotaSort                = 32 << 30 // 32GB.
 	DefTiDBMemQuotaTopn                = 32 << 30 // 32GB.
 	DefTiDBMemQuotaIndexLookupReader   = 32 << 30 // 32GB.
 	DefTiDBMemQuotaIndexLookupJoin     = 32 << 30 // 32GB.
-	DefTiDBMemQuotaNestedLoopApply     = 32 << 30 // 32GB.
 	DefTiDBMemQuotaDistSQL             = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                  = false
 	DefTiDBPProfSQLCPU                 = 0
@@ -531,9 +636,11 @@ const (
 	DefTiDBConstraintCheckInPlace      = false
 	DefTiDBHashJoinConcurrency         = ConcurrencyUnset
 	DefTiDBProjectionConcurrency       = ConcurrencyUnset
+	DefBroadcastJoinThresholdSize      = 100 * 1024 * 1024
+	DefBroadcastJoinThresholdCount     = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 1
-	DefTiDBAllowMPPExecution           = false
+	DefTiDBAllowMPPExecution           = "ON"
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
@@ -542,13 +649,17 @@ const (
 	DefTiDBDDLErrorCountLimit          = 512
 	DefTiDBMaxDeltaSchemaCount         = 1024
 	DefTiDBChangeColumnType            = false
+	DefTiDBChangeMultiSchema           = false
+	DefTiDBPointGetCache               = false
+	DefTiDBEnableAlterPlacement        = false
 	DefTiDBHashAggPartialConcurrency   = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency     = ConcurrencyUnset
 	DefTiDBWindowConcurrency           = ConcurrencyUnset
+	DefTiDBMergeJoinConcurrency        = 1 // disable optimization by default
 	DefTiDBStreamAggConcurrency        = 1
 	DefTiDBForcePriority               = mysql.NoPriority
-	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true
+	DefEnablePipelinedWindowFunction   = true
 	DefEnableStrictDoubleTypeCheck     = true
 	DefEnableVectorizedExpression      = true
 	DefTiDBOptJoinReorderThreshold     = 0
@@ -574,13 +685,27 @@ const (
 	DefTiDBFoundInBinding              = false
 	DefTiDBEnableCollectExecutionInfo  = true
 	DefTiDBAllowAutoRandExplicitInsert = false
-	DefTiDBEnableClusteredIndex        = false
+	DefTiDBEnableClusteredIndex        = ClusteredIndexDefModeIntOnly
 	DefTiDBRedactLog                   = false
 	DefTiDBShardAllocateStep           = math.MaxInt64
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableParallelApply         = false
-	DefTiDBEnableAmendPessimisticTxn   = true
-	DefTiDBPartitionPruneMode          = "static-only"
+	DefTiDBEnableAmendPessimisticTxn   = false
+	DefTiDBPartitionPruneMode          = "static"
+	DefTiDBEnableRateLimitAction       = true
+	DefTiDBEnableAsyncCommit           = false
+	DefTiDBEnable1PC                   = false
+	DefTiDBGuaranteeLinearizability    = true
+	DefTiDBAnalyzeVersion              = 1
+	DefTiDBEnableIndexMergeJoin        = false
+	DefTiDBTrackAggregateMemoryUsage   = true
+	DefTiDBEnableExchangePartition     = false
+	DefCTEMaxRecursionDepth            = 1000
+	DefTiDBTopSQLEnable                = false
+	DefTiDBTopSQLAgentAddress          = ""
+	DefTiDBTopSQLPrecisionSeconds      = 1
+	DefTiDBTopSQLMaxStatementCount     = 200
+	DefTiDBEnableGlobalTemporaryTable  = false
 )
 
 // Process global variables.
@@ -591,6 +716,7 @@ var (
 	maxDDLReorgWorkerCount int32 = 128
 	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize
 	ddlErrorCountlimit     int64 = DefTiDBDDLErrorCountLimit
+	ddlReorgRowFormat      int64 = DefTiDBRowFormatV2
 	maxDeltaSchemaCount    int64 = DefTiDBMaxDeltaSchemaCount
 	// Export for testing.
 	MaxDDLReorgBatchSize int32 = 10240
@@ -598,11 +724,33 @@ var (
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
 	DDLSlowOprThreshold            uint32 = DefTiDBDDLSlowOprThreshold
 	ForcePriority                         = int32(DefTiDBForcePriority)
-	ServerHostname, _                     = os.Hostname()
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
-	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
-	CapturePlanBaseline                   = serverGlobalVariable{globalVal: BoolOff}
+	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
+	CapturePlanBaseline                   = serverGlobalVariable{globalVal: Off}
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
+	TopSQLVariable                        = TopSQL{
+		Enable:            atomic.NewBool(DefTiDBTopSQLEnable),
+		AgentAddress:      atomic.NewString(DefTiDBTopSQLAgentAddress),
+		PrecisionSeconds:  atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
+		MaxStatementCount: atomic.NewInt64(DefTiDBTopSQLMaxStatementCount),
+	}
 )
+
+// TopSQL is the variable for control top sql feature.
+type TopSQL struct {
+	// Enable statement summary or not.
+	Enable *atomic.Bool
+	// AgentAddress indicate the collect agent address.
+	AgentAddress *atomic.String
+	// The refresh interval of statement summary.
+	PrecisionSeconds *atomic.Int64
+	// The maximum number of statements kept in memory.
+	MaxStatementCount *atomic.Int64
+}
+
+// TopSQLEnabled uses to check whether enabled the top SQL feature.
+func TopSQLEnabled() bool {
+	return TopSQLVariable.Enable.Load() && TopSQLVariable.AgentAddress.Load() != ""
+}

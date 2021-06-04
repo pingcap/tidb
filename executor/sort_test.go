@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -63,11 +65,17 @@ func (s *testSerialSuite1) testSortInDisk(c *C, removeDir bool) {
 	tk.MustExec("set @@tidb_max_chunk_size=32;")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c1 int, c2 int, c3 int)")
+	var buf bytes.Buffer
+	buf.WriteString("insert into t values ")
 	for i := 0; i < 5; i++ {
 		for j := i; j < 1024; j += 5 {
-			tk.MustExec(fmt.Sprintf("insert into t values(%v, %v, %v)", j, j, j))
+			if j > 0 {
+				buf.WriteString(", ")
+			}
+			buf.WriteString(fmt.Sprintf("(%v, %v, %v)", j, j, j))
 		}
 	}
+	tk.MustExec(buf.String())
 	result := tk.MustQuery("select * from t order by c1")
 	for i := 0; i < 1024; i++ {
 		c.Assert(result.Rows()[i][0].(string), Equals, fmt.Sprint(i))
@@ -85,6 +93,10 @@ func (s *testSerialSuite1) TestIssue16696(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
 	})
+	alarmRatio := variable.MemoryUsageAlarmRatio.Load()
+	variable.MemoryUsageAlarmRatio.Store(0.0)
+	defer variable.MemoryUsageAlarmRatio.Store(alarmRatio)
+
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"), IsNil)

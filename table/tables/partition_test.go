@@ -111,7 +111,8 @@ PARTITION BY RANGE ( id ) (
 	// Value must locates in one partition.
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(22))
 	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
-	ts.se.Execute(context.Background(), "rollback")
+	_, err = ts.se.Execute(context.Background(), "rollback")
+	c.Assert(err, IsNil)
 
 	createTable2 := `CREATE TABLE test.t2 (id int(11))
 PARTITION BY RANGE ( id ) (
@@ -517,4 +518,31 @@ func (ts *testSuite) TestHashPartitionInsertValue(c *C) {
 	tk.MustExec("INSERT INTO t4 VALUES(1, 1)")
 	result := tk.MustQuery("SELECT * FROM t4 WHERE a = 1")
 	result.Check(testkit.Rows("\x01 1"))
+}
+
+func (ts *testSuite) TestIssue21574(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop tables if exists t_21574")
+	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by range columns (`key`) (partition p0 values less than (10));")
+	tk.MustExec("drop table t_21574")
+	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by list columns (`key`) (partition p0 values in (10));")
+	tk.MustExec("drop table t_21574")
+	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by list columns (`key`,`table`) (partition p0 values in ((1,1)));")
+}
+
+func (ts *testSuite) TestIssue24746(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop tables if exists t_24746")
+	tk.MustExec("create table t_24746 (a int, b varchar(60), c int, primary key(a)) partition by range(a) (partition p0 values less than (5),partition p1 values less than (10), partition p2 values less than maxvalue)")
+	defer tk.MustExec("drop table t_24746")
+	err := tk.ExecToErr("insert into t_24746 partition (p1) values(4,'ERROR, not matching partition p1',4)")
+	c.Assert(table.ErrRowDoesNotMatchGivenPartitionSet.Equal(err), IsTrue)
+	tk.MustExec("insert into t_24746 partition (p0) values(4,'OK, first row in correct partition',4)")
+	err = tk.ExecToErr("insert into t_24746 partition (p0) values(4,'DUPLICATE, in p0',4) on duplicate key update a = a + 1, b = 'ERROR, not allowed to write to p1'")
+	c.Assert(table.ErrRowDoesNotMatchGivenPartitionSet.Equal(err), IsTrue)
+	// Actual bug, before the fix this was updating the row in p0 (deleting it in p0 and inserting in p1):
+	err = tk.ExecToErr("insert into t_24746 partition (p1) values(4,'ERROR, not allowed to read from partition p0',4) on duplicate key update a = a + 1, b = 'ERROR, not allowed to read from p0!'")
+	c.Assert(table.ErrRowDoesNotMatchGivenPartitionSet.Equal(err), IsTrue)
 }

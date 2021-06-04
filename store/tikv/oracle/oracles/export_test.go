@@ -33,14 +33,6 @@ func SetOracleHookCurrentTime(oc oracle.Oracle, t time.Time) {
 	}
 }
 
-// ClearOracleHook exports localOracle's clear hook method
-func ClearOracleHook(oc oracle.Oracle) {
-	switch o := oc.(type) {
-	case *localOracle:
-		o.hook = nil
-	}
-}
-
 // NewEmptyPDOracle exports pdOracle struct to test
 func NewEmptyPDOracle() oracle.Oracle {
 	return &pdOracle{}
@@ -53,5 +45,17 @@ func SetEmptyPDOracleLastTs(oc oracle.Oracle, ts uint64) {
 		lastTSInterface, _ := o.lastTSMap.LoadOrStore(oracle.GlobalTxnScope, new(uint64))
 		lastTSPointer := lastTSInterface.(*uint64)
 		atomic.StoreUint64(lastTSPointer, ts)
+		lasTSArrivalInterface, _ := o.lastArrivalTSMap.LoadOrStore(oracle.GlobalTxnScope, new(uint64))
+		lasTSArrivalPointer := lasTSArrivalInterface.(*uint64)
+		atomic.StoreUint64(lasTSArrivalPointer, uint64(time.Now().Unix()*1000))
+	}
+	setEmptyPDOracleLastArrivalTs(oc, ts)
+}
+
+// setEmptyPDOracleLastArrivalTs exports PD oracle's global last ts to test.
+func setEmptyPDOracleLastArrivalTs(oc oracle.Oracle, ts uint64) {
+	switch o := oc.(type) {
+	case *pdOracle:
+		o.setLastArrivalTS(ts, oracle.GlobalTxnScope)
 	}
 }

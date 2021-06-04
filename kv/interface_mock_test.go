@@ -16,12 +16,15 @@ package kv
 import (
 	"context"
 
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 // mockTxn is a txn that returns a retryAble error when called Commit.
 type mockTxn struct {
-	opts  map[Option]interface{}
+	opts  map[int]interface{}
 	valid bool
 }
 
@@ -43,15 +46,11 @@ func (t *mockTxn) LockKeys(_ context.Context, _ *LockCtx, _ ...Key) error {
 	return nil
 }
 
-func (t *mockTxn) SetOption(opt Option, val interface{}) {
+func (t *mockTxn) SetOption(opt int, val interface{}) {
 	t.opts[opt] = val
 }
 
-func (t *mockTxn) DelOption(opt Option) {
-	delete(t.opts, opt)
-}
-
-func (t *mockTxn) GetOption(opt Option) interface{} {
+func (t *mockTxn) GetOption(opt int) interface{} {
 	return t.opts[opt]
 }
 
@@ -105,10 +104,6 @@ func (t *mockTxn) GetSnapshot() Snapshot {
 	return nil
 }
 
-func (t *mockTxn) GetUnionStore() UnionStore {
-	return nil
-}
-
 func (t *mockTxn) NewStagingBuffer() MemBuffer {
 	return nil
 }
@@ -125,18 +120,26 @@ func (t *mockTxn) Reset() {
 	t.valid = false
 }
 
-func (t *mockTxn) SetVars(vars *Variables) {
+func (t *mockTxn) SetVars(vars interface{}) {
 
 }
 
-func (t *mockTxn) GetVars() *Variables {
+func (t *mockTxn) GetVars() interface{} {
+	return nil
+}
+
+func (t *mockTxn) CacheTableInfo(id int64, info *model.TableInfo) {
+
+}
+
+func (t *mockTxn) GetTableInfo(id int64) *model.TableInfo {
 	return nil
 }
 
 // newMockTxn new a mockTxn.
 func newMockTxn() Transaction {
 	return &mockTxn{
-		opts:  make(map[Option]interface{}),
+		opts:  make(map[int]interface{}),
 		valid: true,
 	}
 }
@@ -149,18 +152,17 @@ func (s *mockStorage) Begin() (Transaction, error) {
 	return newMockTxn(), nil
 }
 
+func (s *mockStorage) BeginWithOption(option tikv.StartTSOption) (Transaction, error) {
+	return newMockTxn(), nil
+}
+
 func (*mockTxn) IsPessimistic() bool {
 	return false
 }
 
-// BeginWithStartTS begins a transaction with startTS.
-func (s *mockStorage) BeginWithStartTS(startTS uint64) (Transaction, error) {
-	return s.Begin()
-}
-
 func (s *mockStorage) GetSnapshot(ver Version) Snapshot {
 	return &mockSnapshot{
-		store: newMemDB(),
+		store: newMockMap(),
 	}
 }
 
@@ -173,7 +175,7 @@ func (s *mockStorage) UUID() string {
 }
 
 // CurrentVersion returns current max committed version.
-func (s *mockStorage) CurrentVersion() (Version, error) {
+func (s *mockStorage) CurrentVersion(txnScope string) (Version, error) {
 	return NewVersion(1), nil
 }
 
@@ -209,13 +211,21 @@ func (s *mockStorage) GetMemCache() MemManager {
 	return nil
 }
 
+func (s *mockStorage) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
+	return nil, nil
+}
+
+func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
+	return 0
+}
+
 // newMockStorage creates a new mockStorage.
 func newMockStorage() Storage {
 	return &mockStorage{}
 }
 
 type mockSnapshot struct {
-	store MemBuffer
+	store Retriever
 }
 
 func (s *mockSnapshot) Get(ctx context.Context, k Key) ([]byte, error) {
@@ -249,5 +259,8 @@ func (s *mockSnapshot) IterReverse(k Key) (Iterator, error) {
 	return s.store.IterReverse(k)
 }
 
-func (s *mockSnapshot) SetOption(opt Option, val interface{}) {}
-func (s *mockSnapshot) DelOption(opt Option)                  {}
+func (s *mockSnapshot) SetOption(opt int, val interface{}) {}
+
+func (s *mockSnapshot) GetLockWaits() []deadlockpb.WaitForEntry {
+	return nil
+}

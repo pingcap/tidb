@@ -487,7 +487,7 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 
 	iter := chunk.NewIterator4Slice(buildSideRows)
 	var outerMatchStatus []outerRowStatusFlag
-	rowIdx := 0
+	rowIdx, ok := 0, false
 	for iter.Begin(); iter.Current() != iter.End(); {
 		outerMatchStatus, err = e.joiners[workerID].tryToMatchOuters(iter, probeSideRow, joinResult.chk, outerMatchStatus)
 		if err != nil {
@@ -502,7 +502,7 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 		rowIdx += len(outerMatchStatus)
 		if joinResult.chk.IsFull() {
 			e.joinResultCh <- joinResult
-			ok, joinResult := e.getNewJoinResult(workerID)
+			ok, joinResult = e.getNewJoinResult(workerID)
 			if !ok {
 				return false, joinResult
 			}
@@ -522,7 +522,7 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uin
 		return true, joinResult
 	}
 	iter := chunk.NewIterator4Slice(buildSideRows)
-	hasMatch, hasNull := false, false
+	hasMatch, hasNull, ok := false, false, false
 	for iter.Begin(); iter.Current() != iter.End(); {
 		matched, isNull, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter, joinResult.chk)
 		if err != nil {
@@ -534,7 +534,7 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uin
 
 		if joinResult.chk.IsFull() {
 			e.joinResultCh <- joinResult
-			ok, joinResult := e.getNewJoinResult(workerID)
+			ok, joinResult = e.getNewJoinResult(workerID)
 			if !ok {
 				return false, joinResult
 			}
@@ -1071,13 +1071,6 @@ func (e *joinRuntimeStats) setCacheInfo(useCache bool, hitRatio float64) {
 	e.Unlock()
 }
 
-func (e *joinRuntimeStats) setHashStat(hashStat hashStatistic) {
-	e.Lock()
-	e.hasHashStat = true
-	e.hashStat = hashStat
-	e.Unlock()
-}
-
 func (e *joinRuntimeStats) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	buf.WriteString(e.RuntimeStatsWithConcurrencyInfo.String())
@@ -1085,7 +1078,7 @@ func (e *joinRuntimeStats) String() string {
 		if e.cache.useCache {
 			buf.WriteString(fmt.Sprintf(", cache:ON, cacheHitRatio:%.3f%%", e.cache.hitRatio*100))
 		} else {
-			buf.WriteString(fmt.Sprintf(", cache:OFF"))
+			buf.WriteString(", cache:OFF")
 		}
 	}
 	if e.hasHashStat {
@@ -1129,24 +1122,24 @@ func (e *hashJoinRuntimeStats) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 128))
 	if e.fetchAndBuildHashTable > 0 {
 		buf.WriteString("build_hash_table:{total:")
-		buf.WriteString(e.fetchAndBuildHashTable.String())
+		buf.WriteString(execdetails.FormatDuration(e.fetchAndBuildHashTable))
 		buf.WriteString(", fetch:")
-		buf.WriteString((e.fetchAndBuildHashTable - e.hashStat.buildTableElapse).String())
+		buf.WriteString(execdetails.FormatDuration((e.fetchAndBuildHashTable - e.hashStat.buildTableElapse)))
 		buf.WriteString(", build:")
-		buf.WriteString(e.hashStat.buildTableElapse.String())
+		buf.WriteString(execdetails.FormatDuration(e.hashStat.buildTableElapse))
 		buf.WriteString("}")
 	}
 	if e.probe > 0 {
 		buf.WriteString(", probe:{concurrency:")
 		buf.WriteString(strconv.Itoa(e.concurrent))
 		buf.WriteString(", total:")
-		buf.WriteString(time.Duration(e.fetchAndProbe).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe)))
 		buf.WriteString(", max:")
-		buf.WriteString(time.Duration(atomic.LoadInt64(&e.maxFetchAndProbe)).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(atomic.LoadInt64(&e.maxFetchAndProbe))))
 		buf.WriteString(", probe:")
-		buf.WriteString(time.Duration(e.probe).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.probe)))
 		buf.WriteString(", fetch:")
-		buf.WriteString(time.Duration(e.fetchAndProbe - e.probe).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe - e.probe)))
 		if e.hashStat.probeCollision > 0 {
 			buf.WriteString(", probe_collision:")
 			buf.WriteString(strconv.Itoa(e.hashStat.probeCollision))

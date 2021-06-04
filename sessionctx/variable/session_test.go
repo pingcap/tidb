@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -39,25 +39,25 @@ func (*testSessionSuite) TestSetSystemVariable(c *C) {
 	v.TimeZone = time.UTC
 	tests := []struct {
 		key   string
-		value interface{}
+		value string
 		err   bool
 	}{
 		{variable.TxnIsolation, "SERIALIZABLE", true},
 		{variable.TimeZone, "xyz", true},
 		{variable.TiDBOptAggPushDown, "1", false},
 		{variable.TiDBOptDistinctAggPushDown, "1", false},
-		{variable.TIDBMemQuotaQuery, "1024", false},
-		{variable.TIDBMemQuotaHashJoin, "1024", false},
-		{variable.TIDBMemQuotaMergeJoin, "1024", false},
-		{variable.TIDBMemQuotaSort, "1024", false},
-		{variable.TIDBMemQuotaTopn, "1024", false},
-		{variable.TIDBMemQuotaIndexLookupReader, "1024", false},
-		{variable.TIDBMemQuotaIndexLookupJoin, "1024", false},
-		{variable.TIDBMemQuotaNestedLoopApply, "1024", false},
+		{variable.TiDBMemQuotaQuery, "1024", false},
+		{variable.TiDBMemQuotaHashJoin, "1024", false},
+		{variable.TiDBMemQuotaMergeJoin, "1024", false},
+		{variable.TiDBMemQuotaSort, "1024", false},
+		{variable.TiDBMemQuotaTopn, "1024", false},
+		{variable.TiDBMemQuotaIndexLookupReader, "1024", false},
+		{variable.TiDBMemQuotaIndexLookupJoin, "1024", false},
+		{variable.TiDBMemQuotaApplyCache, "1024", false},
 		{variable.TiDBEnableStmtSummary, "1", false},
 	}
 	for _, t := range tests {
-		err := variable.SetSessionSystemVar(v, t.key, types.NewDatum(t.value))
+		err := variable.SetSessionSystemVar(v, t.key, t.value)
 		if t.err {
 			c.Assert(err, NotNil)
 		} else {
@@ -122,6 +122,20 @@ func (*testSessionSuite) TestSession(c *C) {
 	c.Assert(ss.WarningCount(), Equals, uint16(0))
 }
 
+func (*testSessionSuite) TestAllocMPPID(c *C) {
+	ctx := mock.NewContext()
+
+	seVar := ctx.GetSessionVars()
+	c.Assert(seVar, NotNil)
+
+	c.Assert(seVar.AllocMPPTaskID(1), Equals, int64(1))
+	c.Assert(seVar.AllocMPPTaskID(1), Equals, int64(2))
+	c.Assert(seVar.AllocMPPTaskID(1), Equals, int64(3))
+	c.Assert(seVar.AllocMPPTaskID(2), Equals, int64(1))
+	c.Assert(seVar.AllocMPPTaskID(2), Equals, int64(2))
+	c.Assert(seVar.AllocMPPTaskID(2), Equals, int64(3))
+}
+
 func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	ctx := mock.NewContext()
 
@@ -136,13 +150,15 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
 	execDetail := execdetails.ExecDetails{
-		ProcessTime:  time.Second * time.Duration(2),
-		WaitTime:     time.Minute,
 		BackoffTime:  time.Millisecond,
 		RequestCount: 2,
-		CopDetail: &execdetails.CopDetails{
+		ScanDetail: &util.ScanDetail{
 			ProcessedKeys: 20001,
 			TotalKeys:     10000,
+		},
+		TimeDetail: util.TimeDetail{
+			ProcessTime: time.Second * time.Duration(2),
+			WaitTime:    time.Minute,
 		},
 	}
 	statsInfos := make(map[string]uint64)
@@ -191,7 +207,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # DB: test
 # Index_names: [t1:a,t2:b]
 # Is_internal: true
-# Digest: f94c76d7fa8f60e438118752bfbfb71fe9e1934888ac415ddd8625b121af124c
+# Digest: 01d00e6e93b28184beae487ac05841145d2a2f6a7b16de32a763bed27967e83d
 # Stats: t1:pseudo
 # Num_cop_tasks: 10
 # Cop_proc_avg: 1 Cop_proc_p90: 2 Cop_proc_max: 3 Cop_proc_addr: 10.6.131.78
@@ -215,7 +231,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	logItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		SQL:               sql,
-		Digest:            digest,
+		Digest:            digest.String(),
 		TimeTotal:         costTime,
 		TimeParse:         time.Duration(10),
 		TimeCompile:       time.Duration(10),

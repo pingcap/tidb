@@ -35,8 +35,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mock"
@@ -89,7 +91,7 @@ func unixSocketAvailable() bool {
 }
 
 func TestInfo(t *testing.T) {
-	err := failpoint.Enable("github.com/pingcap/tidb/domain/FailPlacement", `return(true)`)
+	err := failpoint.Enable("github.com/pingcap/tidb/domain/infosync/FailPlacement", `return(true)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +128,7 @@ func TestInfo(t *testing.T) {
 		goCtx,
 		ddl.WithEtcdClient(dom.GetEtcdClient()),
 		ddl.WithStore(s),
-		ddl.WithInfoHandle(dom.infoHandle),
+		ddl.WithInfoCache(dom.infoCache),
 		ddl.WithLease(ddlLease),
 	)
 	err = dom.ddl.Start(nil)
@@ -230,7 +232,7 @@ func TestInfo(t *testing.T) {
 		t.Fatalf("dom.refreshServerIDTTL err %v", err)
 	}
 
-	err = failpoint.Disable("github.com/pingcap/tidb/domain/FailPlacement")
+	err = failpoint.Disable("github.com/pingcap/tidb/domain/infosync/FailPlacement")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,6 +240,10 @@ func TestInfo(t *testing.T) {
 
 type mockSessionManager struct {
 	PS []*util.ProcessInfo
+}
+
+func (msm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
+	panic("unimplemented!")
 }
 
 func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
@@ -281,7 +287,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(dd, NotNil)
 	c.Assert(dd.GetLease(), Equals, 80*time.Millisecond)
 
-	snapTS := oracle.EncodeTSO(oracle.GetPhysical(time.Now()))
+	snapTS := oracle.GoTimeToTS(time.Now())
 	cs := &ast.CharsetOpt{
 		Chs: "utf8",
 		Col: "utf8_bin",
@@ -311,7 +317,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 
 	// for GetSnapshotInfoSchema
-	currSnapTS := oracle.EncodeTSO(oracle.GetPhysical(time.Now()))
+	currSnapTS := oracle.GoTimeToTS(time.Now())
 	currSnapIs, err := dom.GetSnapshotInfoSchema(currSnapTS)
 	c.Assert(err, IsNil)
 	c.Assert(currSnapIs, NotNil)
@@ -341,7 +347,7 @@ func (*testSuite) TestT(c *C) {
 
 	// for schemaValidator
 	schemaVer := dom.SchemaValidator.(*schemaValidator).LatestSchemaVersion()
-	ver, err := store.CurrentVersion()
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	ts := ver.Ver
 
@@ -354,7 +360,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(succ, Equals, ResultSucc)
 	time.Sleep(ddlLease)
 
-	ver, err = store.CurrentVersion()
+	ver, err = store.CurrentVersion(kv.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	ts = ver.Ver
 	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
@@ -409,7 +415,8 @@ func (*testSuite) TestT(c *C) {
 	dom.autoAnalyzeWorker(nil)
 	counter := metrics.PanicCounter.WithLabelValues(metrics.LabelDomain)
 	pb := &dto.Metric{}
-	counter.Write(pb)
+	err = counter.Write(pb)
+	c.Assert(err, IsNil)
 	c.Assert(pb.GetCounter().GetValue(), Equals, float64(2))
 
 	scope := dom.GetScope("status")
@@ -437,16 +444,17 @@ func (*testSuite) TestT(c *C) {
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	infoSyncer.SetSessionManager(sm)
-	beforeTS := variable.GoTimeToTS(time.Now())
+	beforeTS := oracle.GoTimeToTS(time.Now())
 	infoSyncer.ReportMinStartTS(dom.Store())
-	afterTS := variable.GoTimeToTS(time.Now())
+	afterTS := oracle.GoTimeToTS(time.Now())
 	c.Assert(infoSyncer.GetMinStartTS() > beforeTS && infoSyncer.GetMinStartTS() < afterTS, IsFalse)
-	lowerLimit := time.Now().Add(-time.Duration(kv.MaxTxnTimeUse) * time.Millisecond)
-	validTS := variable.GoTimeToTS(lowerLimit.Add(time.Minute))
+	now := time.Now()
+	validTS := oracle.GoTimeToLowerLimitStartTS(now.Add(time.Minute), tikv.MaxTxnTimeUse)
+	lowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
 	sm.PS = []*util.ProcessInfo{
 		{CurTxnStartTS: 0},
 		{CurTxnStartTS: math.MaxUint64},
-		{CurTxnStartTS: variable.GoTimeToTS(lowerLimit)},
+		{CurTxnStartTS: lowerLimit},
 		{CurTxnStartTS: validTS},
 	}
 	infoSyncer.SetSessionManager(sm)

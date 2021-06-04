@@ -18,18 +18,19 @@ import (
 	"strings"
 
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -65,7 +66,6 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	// onUpdateSpecified is for "UPDATE SET ts_field = old_value", the
 	// timestamp field is explicitly set, but not changed in fact.
 	onUpdateSpecified := make(map[int]bool)
-	var newHandle kv.Handle
 
 	// We can iterate on public columns not writable columns,
 	// because all of them are sorted by their `Offset`, which
@@ -116,28 +116,13 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 			}
 			if col.IsPKHandleColumn(t.Meta()) {
 				handleChanged = true
-				newHandle = kv.IntHandle(newData[i].GetInt64())
 				// Rebase auto random id if the field is changed.
 				if err := rebaseAutoRandomValue(sctx, t, &newData[i], col); err != nil {
 					return false, err
 				}
 			}
 			if col.IsCommonHandleColumn(t.Meta()) {
-				pkIdx := tables.FindPrimaryIndex(t.Meta())
 				handleChanged = true
-				pkDts := make([]types.Datum, 0, len(pkIdx.Columns))
-				for _, idxCol := range pkIdx.Columns {
-					pkDts = append(pkDts, newData[idxCol.Offset])
-				}
-				tablecodec.TruncateIndexValues(t.Meta(), pkIdx, pkDts)
-				handleBytes, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, pkDts...)
-				if err != nil {
-					return false, err
-				}
-				newHandle, err = kv.NewCommonHandle(handleBytes)
-				if err != nil {
-					return false, err
-				}
 			}
 		} else {
 			if mysql.HasOnUpdateNowFlag(col.Flag) && modified[i] {
@@ -187,40 +172,48 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 
 	// 5. If handle changed, remove the old then add the new record, otherwise update the record.
 	if handleChanged {
-		if sc.DupKeyAsWarning {
-			// For `UPDATE IGNORE`/`INSERT IGNORE ON DUPLICATE KEY UPDATE`
-			// If the new handle exists, this will avoid to remove the record.
-			err = tables.CheckHandleExists(ctx, sctx, t, newHandle, newData)
+		// For `UPDATE IGNORE`/`INSERT IGNORE ON DUPLICATE KEY UPDATE`
+		// we use the staging buffer so that we don't need to precheck the existence of handle or unique keys by sending
+		// extra kv requests, and the remove action will not take effect if there are conflicts.
+		if updated, err := func() (bool, error) {
+			txn, err := sctx.Txn(true)
 			if err != nil {
 				return false, err
 			}
-		}
-		if err = t.RemoveRecord(sctx, h, oldData); err != nil {
-			return false, err
-		}
-		// the `affectedRows` is increased when adding new record.
-		if sc.DupKeyAsWarning {
-			_, err = t.AddRecord(sctx, newData, table.IsUpdate, table.SkipHandleCheck, table.WithCtx(ctx))
-		} else {
-			_, err = t.AddRecord(sctx, newData, table.IsUpdate, table.WithCtx(ctx))
-		}
+			memBuffer := txn.GetMemBuffer()
+			sh := memBuffer.Staging()
+			defer memBuffer.Cleanup(sh)
 
-		if err != nil {
-			return false, err
-		}
-		if onDup {
-			sc.AddAffectedRows(1)
+			if err = t.RemoveRecord(sctx, h, oldData); err != nil {
+				return false, err
+			}
+
+			_, err = t.AddRecord(sctx, newData, table.IsUpdate, table.WithCtx(ctx))
+			if err != nil {
+				return false, err
+			}
+			memBuffer.Release(sh)
+			return true, nil
+		}(); err != nil {
+			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+				return false, nil
+			}
+			return updated, err
 		}
 	} else {
 		// Update record to new value and update index.
 		if err = t.UpdateRecord(ctx, sctx, h, oldData, newData, modified); err != nil {
+			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+				return false, nil
+			}
 			return false, err
 		}
-		if onDup {
-			sc.AddAffectedRows(2)
-		} else {
-			sc.AddAffectedRows(1)
-		}
+
+	}
+	if onDup {
+		sc.AddAffectedRows(2)
+	} else {
+		sc.AddAffectedRows(1)
 	}
 	sc.AddUpdatedRows(1)
 	sc.AddCopiedRows(1)
@@ -240,7 +233,7 @@ func rebaseAutoRandomValue(sctx sessionctx.Context, t table.Table, newData *type
 	if recordID < 0 {
 		return nil
 	}
-	layout := autoid.NewAutoRandomIDLayout(&col.FieldType, tableInfo.AutoRandomBits)
+	layout := autoid.NewShardIDLayout(&col.FieldType, tableInfo.AutoRandomBits)
 	// Set bits except incremental_bits to zero.
 	recordID = recordID & (1<<layout.IncrementalBits - 1)
 	return t.Allocators(sctx).Get(autoid.AutoRandomType).Rebase(tableInfo.ID, recordID, true)

@@ -17,7 +17,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	_ "net/http/pprof"
 	"sync"
@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/driver"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
@@ -69,7 +69,7 @@ var (
 
 // Init initializes information.
 func Init() {
-	driver := tikv.Driver{}
+	driver := driver.TiKVDriver{}
 	var err error
 	store, err = driver.Open(fmt.Sprintf("tikv://%s?cluster=1", *pdAddr))
 	terror.MustNil(err)
@@ -129,7 +129,7 @@ func main() {
 	terror.MustNil(err)
 
 	defer terror.Call(resp.Body.Close)
-	text, err1 := ioutil.ReadAll(resp.Body)
+	text, err1 := io.ReadAll(resp.Body)
 	terror.Log(errors.Trace(err1))
 
 	fmt.Println(string(text))

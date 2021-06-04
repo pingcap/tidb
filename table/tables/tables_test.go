@@ -15,13 +15,16 @@ package tables_test
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -74,6 +77,36 @@ func (ts *testSuite) TearDownSuite(c *C) {
 	testleak.AfterTest(c)()
 }
 
+func firstKey(t table.Table) kv.Key {
+	return tablecodec.EncodeRecordKey(t.RecordPrefix(), kv.IntHandle(math.MinInt64))
+}
+
+func indexPrefix(t table.PhysicalTable) kv.Key {
+	return tablecodec.GenTableIndexPrefix(t.GetPhysicalID())
+}
+
+func seek(t table.PhysicalTable, ctx sessionctx.Context, h kv.Handle) (kv.Handle, bool, error) {
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return nil, false, err
+	}
+	recordPrefix := t.RecordPrefix()
+	seekKey := tablecodec.EncodeRowKeyWithHandle(t.GetPhysicalID(), h)
+	iter, err := txn.Iter(seekKey, recordPrefix.PrefixNext())
+	if err != nil {
+		return nil, false, err
+	}
+	if !iter.Valid() || !iter.Key().HasPrefix(recordPrefix) {
+		// No more records in the table, skip to the end.
+		return nil, false, nil
+	}
+	handle, err := tablecodec.DecodeRowKey(iter.Key())
+	if err != nil {
+		return nil, false, err
+	}
+	return handle, true, nil
+}
+
 type mockPumpClient struct{}
 
 func (m mockPumpClient) WriteBinlog(ctx context.Context, in *binlog.WriteBinlogReq, opts ...grpc.CallOption) (*binlog.WriteBinlogResp, error) {
@@ -94,8 +127,8 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(tb.Meta().Name.L, Equals, "t")
 	c.Assert(tb.Meta(), NotNil)
 	c.Assert(tb.Indices(), NotNil)
-	c.Assert(string(tb.FirstKey()), Not(Equals), "")
-	c.Assert(string(tb.IndexPrefix()), Not(Equals), "")
+	c.Assert(string(firstKey(tb)), Not(Equals), "")
+	c.Assert(string(indexPrefix(tb.(table.PhysicalTable))), Not(Equals), "")
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
@@ -103,7 +136,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(autoID, Greater, int64(0))
 
-	handle, err := tables.AllocHandle(nil, tb)
+	handle, err := tables.AllocHandle(context.Background(), nil, tb)
 	c.Assert(err, IsNil)
 	c.Assert(handle.IntValue(), Greater, int64(0))
 
@@ -111,7 +144,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
 	c.Assert(rid.IntValue(), Greater, int64(0))
-	row, err := tb.Row(ctx, rid)
+	row, err := tables.RowWithCols(tb, ctx, rid, tb.Cols())
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].GetInt64(), Equals, int64(1))
@@ -123,23 +156,24 @@ func (ts *testSuite) TestBasic(c *C) {
 
 	c.Assert(tb.UpdateRecord(context.Background(), ctx, rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), []bool{false, true}), IsNil)
 
-	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tb, ctx, tb.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		return true, nil
 	})
+	c.Assert(err, IsNil)
 
 	indexCnt := func() int {
-		cnt, err1 := countEntriesWithPrefix(ctx, tb.IndexPrefix())
+		cnt, err1 := countEntriesWithPrefix(ctx, indexPrefix(tb.(table.PhysicalTable)))
 		c.Assert(err1, IsNil)
 		return cnt
 	}
 
 	// RowWithCols test
-	vals, err := tb.RowWithCols(ctx, kv.IntHandle(1), tb.Cols())
+	vals, err := tables.RowWithCols(tb, ctx, kv.IntHandle(1), tb.Cols())
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 2)
 	c.Assert(vals[0].GetInt64(), Equals, int64(1))
 	cols := []*table.Column{tb.Cols()[1]}
-	vals, err = tb.RowWithCols(ctx, kv.IntHandle(1), cols)
+	vals, err = tables.RowWithCols(tb, ctx, kv.IntHandle(1), cols)
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 1)
 	c.Assert(vals[0].GetBytes(), DeepEquals, []byte("cba"))
@@ -152,7 +186,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
 	c.Assert(indexCnt(), Greater, 0)
-	handle, found, err := tb.Seek(ctx, kv.IntHandle(0))
+	handle, found, err := seek(tb.(table.PhysicalTable), ctx, kv.IntHandle(0))
 	c.Assert(handle.IntValue(), Equals, int64(1))
 	c.Assert(found, Equals, true)
 	c.Assert(err, IsNil)
@@ -242,12 +276,12 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(tb.Meta().Name.L, Equals, "t")
 	c.Assert(tb.Meta(), NotNil)
 	c.Assert(tb.Indices(), NotNil)
-	c.Assert(string(tb.FirstKey()), Not(Equals), "")
-	c.Assert(string(tb.IndexPrefix()), Not(Equals), "")
+	c.Assert(string(firstKey(tb)), Not(Equals), "")
+	c.Assert(string(indexPrefix(tb.(table.PhysicalTable))), Not(Equals), "")
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
-	handle, err := tables.AllocHandle(nil, tb)
+	handle, err := tables.AllocHandle(context.Background(), nil, tb)
 	c.Assert(err, IsNil)
 	c.Assert(handle.IntValue(), Greater, int64(0))
 
@@ -310,15 +344,17 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 }
 
 func (ts *testSuite) TestUnsignedPK(c *C) {
-	ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tPK")
-	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.tPK (a bigint unsigned primary key, b varchar(255))")
+	_, err := ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tPK")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), "CREATE TABLE test.tPK (a bigint unsigned primary key, b varchar(255))")
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tPK"))
 	c.Assert(err, IsNil)
 	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
 	rid, err := tb.AddRecord(ts.se, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
-	row, err := tb.Row(ts.se, rid)
+	pt := tb.(table.PhysicalTable)
+	row, err := tables.RowWithCols(pt, ts.se, rid, tb.Cols())
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].Kind(), Equals, types.KindUint64)
@@ -329,8 +365,9 @@ func (ts *testSuite) TestUnsignedPK(c *C) {
 }
 
 func (ts *testSuite) TestIterRecords(c *C) {
-	ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tIter")
-	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.tIter (a int primary key, b int)")
+	_, err := ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tIter")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), "CREATE TABLE test.tIter (a int primary key, b int)")
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), "INSERT test.tIter VALUES (-1, 2), (2, NULL)")
 	c.Assert(err, IsNil)
@@ -338,7 +375,7 @@ func (ts *testSuite) TestIterRecords(c *C) {
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tIter"))
 	c.Assert(err, IsNil)
 	totalCount := 0
-	err = tb.IterRecords(ts.se, tb.FirstKey(), tb.Cols(), func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tb, ts.se, tb.Cols(), func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
 		totalCount++
 		c.Assert(rec[0].IsNull(), IsFalse)
 		return true, nil
@@ -363,10 +400,12 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 
 	// For test coverage
 	tbInfo.Columns[0].GeneratedExprString = "a"
-	tables.TableFromMeta(nil, tbInfo)
+	_, err = tables.TableFromMeta(nil, tbInfo)
+	c.Assert(err, IsNil)
 
 	tbInfo.Columns[0].GeneratedExprString = "test"
-	tables.TableFromMeta(nil, tbInfo)
+	_, err = tables.TableFromMeta(nil, tbInfo)
+	c.Assert(err, NotNil)
 	tbInfo.Columns[0].State = model.StateNone
 	tb, err = tables.TableFromMeta(nil, tbInfo)
 	c.Assert(tb, IsNil)
@@ -388,14 +427,14 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	tk.MustExec("create table t_meta (a int) shard_row_id_bits = 15")
 	tb, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t_meta"))
 	c.Assert(err, IsNil)
-	_, err = tables.AllocHandle(tk.Se, tb)
+	_, err = tables.AllocHandle(context.Background(), tk.Se, tb)
 	c.Assert(err, IsNil)
 
 	maxID := 1<<(64-15-1) - 1
 	err = tb.RebaseAutoID(tk.Se, int64(maxID), false, autoid.RowIDAllocType)
 	c.Assert(err, IsNil)
 
-	_, err = tables.AllocHandle(tk.Se, tb)
+	_, err = tables.AllocHandle(context.Background(), tk.Se, tb)
 	c.Assert(err, NotNil)
 }
 
@@ -468,7 +507,7 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 			"  `a` int(11) NOT NULL,\n" +
 			"  `c` int(11) DEFAULT NULL,\n" +
 			"  `e` int(11) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`)\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Test show (extended) columns
@@ -570,7 +609,7 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 			"  `a` int(11) NOT NULL,\n" +
 			"  `c` int(11) DEFAULT NULL,\n" +
 			"  `e` int(11) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`)\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show extended columns from t").Check(testutil.RowsWithSep("|",
 		"a|int(11)|NO|PRI|<nil>|",
@@ -582,12 +621,16 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 }
 
 func (ts *testSuite) TestAddRecordWithCtx(c *C) {
-	ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tRecord")
-	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.tRecord (a bigint unsigned primary key, b varchar(255))")
+	_, err := ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tRecord")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), "CREATE TABLE test.tRecord (a bigint unsigned primary key, b varchar(255))")
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tRecord"))
 	c.Assert(err, IsNil)
-	defer ts.se.Execute(context.Background(), "DROP TABLE test.tRecord")
+	defer func() {
+		_, err := ts.se.Execute(context.Background(), "DROP TABLE test.tRecord")
+		c.Assert(err, IsNil)
+	}()
 
 	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
 	_, err = ts.se.Txn(true)
@@ -600,14 +643,14 @@ func (ts *testSuite) TestAddRecordWithCtx(c *C) {
 	for _, r := range records {
 		rid, err := tb.AddRecord(ts.se, r)
 		c.Assert(err, IsNil)
-		row, err := tb.Row(ts.se, rid)
+		row, err := tables.RowWithCols(tb.(table.PhysicalTable), ts.se, rid, tb.Cols())
 		c.Assert(err, IsNil)
 		c.Assert(len(row), Equals, len(r))
 		c.Assert(row[0].Kind(), Equals, types.KindUint64)
 	}
 
 	i := 0
-	err = tb.IterRecords(ts.se, tb.FirstKey(), tb.Cols(), func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tb, ts.se, tb.Cols(), func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
 		i++
 		return true, nil
 	})
@@ -660,17 +703,46 @@ func (ts *testSuite) TestConstraintCheckForUniqueIndex(c *C) {
 	ch := make(chan int, 2)
 	go func() {
 		tk2.MustExec("use test")
-		tk2.Exec("insert into ttt(k,c) values(3, 'tidb')")
+		_, err = tk2.Exec("insert into ttt(k,c) values(3, 'tidb')")
+		c.Assert(err, IsNil)
 		ch <- 2
 	}()
+	// Sleep 100ms for tk2 to execute, if it's not blocked, 2 should have been sent to the channel.
 	time.Sleep(100 * time.Millisecond)
 	ch <- 1
-	tk1.Exec("commit")
-	var isSession1 string
-	if 1 == <-ch {
-		isSession1 = "true"
+	_, err = tk1.Exec("commit")
+	c.Assert(err, IsNil)
+	// The data in channel is 1 means tk2 is blocked, that's the expected behavior.
+	c.Assert(<-ch, Equals, 1)
+}
+
+func (ts *testSuite) TestViewColumns(c *C) {
+	se, err := session.CreateSession4Test(ts.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk := testkit.NewTestKitWithSession(c, ts.store, se)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b varchar(20))")
+	tk.MustExec("drop view if exists v")
+	tk.MustExec("create view v as select * from t")
+	tk.MustExec("drop view if exists va")
+	tk.MustExec("create view va as select count(a) from t")
+	testCases := []struct {
+		query    string
+		expected []string
+	}{
+		{"select data_type from INFORMATION_SCHEMA.columns where table_name = 'v'", []string{types.TypeToStr(mysql.TypeLong, ""), types.TypeToStr(mysql.TypeVarchar, "")}},
+		{"select data_type from INFORMATION_SCHEMA.columns where table_name = 'va'", []string{types.TypeToStr(mysql.TypeLonglong, "")}},
 	}
-	c.Assert(isSession1, Equals, "true")
-	tk1.MustExec("rollback")
-	tk2.MustExec("rollback")
+	for _, testCase := range testCases {
+		tk.MustQuery(testCase.query).Check(testutil.RowsWithSep("|", testCase.expected...))
+	}
+	tk.MustExec("drop table if exists t")
+	for _, testCase := range testCases {
+		c.Assert(tk.MustQuery(testCase.query).Rows(), HasLen, 0)
+		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+			"Warning|1356|View 'test.v' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them",
+			"Warning|1356|View 'test.va' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"))
+	}
 }

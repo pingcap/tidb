@@ -19,6 +19,7 @@ package ddl
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"sync"
 	"time"
@@ -41,9 +42,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	goutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
 
@@ -52,7 +55,9 @@ const (
 	currentVersion = 1
 	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
 	DDLOwnerKey = "/tidb/ddl/fg/owner"
-	ddlPrompt   = "ddl"
+	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
+	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
+	ddlPrompt          = "ddl"
 
 	shardRowIDBitsMax = 15
 
@@ -78,11 +83,6 @@ const (
 )
 
 var (
-	// TableColumnCountLimit is limit of the number of columns in a table.
-	// It's exported for testing.
-	TableColumnCountLimit = uint32(512)
-	// TableIndexCountLimit is limit of the number of indexes in a table.
-	TableIndexCountLimit = uint32(64)
 	// EnableSplitTableRegion is a flag to decide whether to split a new region for
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
@@ -155,20 +155,22 @@ type DDL interface {
 	GetScope(status string) variable.ScopeFlag
 	// Stop stops DDL worker.
 	Stop() error
-	// RegisterEventCh registers event channel for ddl.
-	RegisterEventCh(chan<- *util.Event)
+	// RegisterStatsHandle registers statistics handle and its corresponding event channel for ddl.
+	RegisterStatsHandle(*handle.Handle)
 	// SchemaSyncer gets the schema syncer.
 	SchemaSyncer() util.SchemaSyncer
 	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
 	// GetID gets the ddl ID.
 	GetID() string
-	// GetTableMaxRowID gets the max row ID of a normal table or a partition.
+	// GetTableMaxHandle gets the max row ID of a normal table or a partition.
 	GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(*pumpcli.PumpsClient)
 	// GetHook gets the hook. It's exported for testing.
 	GetHook() Callback
+	// SetHook sets the hook.
+	SetHook(h Callback)
 }
 
 type limitJobTask struct {
@@ -200,8 +202,10 @@ type ddlCtx struct {
 	ddlEventCh   chan<- *util.Event
 	lease        time.Duration        // lease is schema lease.
 	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
-	infoHandle   *infoschema.Handle
+	infoCache    *infoschema.InfoCache
+	statsHandle  *handle.Handle
 	tableLockCkr util.DeadTableLockChecker
+	etcdCli      *clientv3.Client
 
 	// hook may be modified.
 	mu struct {
@@ -220,9 +224,10 @@ func (dc *ddlCtx) isOwner() bool {
 	return isOwner
 }
 
-// RegisterEventCh registers passed channel for ddl Event.
-func (d *ddl) RegisterEventCh(ch chan<- *util.Event) {
-	d.ddlEventCh = ch
+// RegisterStatsHandle registers statistics handle and its corresponding even channel for ddl.
+func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
+	d.ddlCtx.statsHandle = h
+	d.ddlEventCh = h.DDLEventCh()
 }
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
@@ -277,6 +282,15 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
 	}
 
+	// TODO: make store and infoCache explicit arguments
+	// these two should be ensured to exist
+	if opt.Store == nil {
+		panic("store should not be nil")
+	}
+	if opt.InfoCache == nil {
+		panic("infoCache should not be nil")
+	}
+
 	ddlCtx := &ddlCtx{
 		uuid:         id,
 		store:        opt.Store,
@@ -285,8 +299,9 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ownerManager: manager,
 		schemaSyncer: syncer,
 		binlogCli:    binloginfo.GetPumpsClient(),
-		infoHandle:   opt.InfoHandle,
+		infoCache:    opt.InfoCache,
 		tableLockCkr: deadLockCkr,
+		etcdCli:      opt.EtcdCli,
 	}
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
@@ -397,9 +412,7 @@ func (d *ddl) close() {
 
 // GetLease implements DDL.GetLease interface.
 func (d *ddl) GetLease() time.Duration {
-	d.m.RLock()
 	lease := d.lease
-	d.m.RUnlock()
 	return lease
 }
 
@@ -407,7 +420,7 @@ func (d *ddl) GetLease() time.Duration {
 // Please don't use this function, it is used by TestParallelDDLBeforeRunDDLJob to intercept the calling of d.infoHandle.Get(), use d.infoHandle.Get() instead.
 // Otherwise, the TestParallelDDLBeforeRunDDLJob will hang up forever.
 func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema {
-	is := d.infoHandle.Get()
+	is := d.infoCache.GetLatest()
 
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -416,7 +429,7 @@ func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.In
 
 func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 	var ret []int64
-	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
 			if val.(bool) {
 				failpoint.Return(errors.New("gofail genGlobalIDs error"))
@@ -447,29 +460,71 @@ func (d *ddl) GetID() string {
 	return d.uuid
 }
 
-func checkJobMaxInterval(job *model.Job) time.Duration {
-	// The job of adding index takes more time to process.
-	// So it uses the longer time.
-	if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
-		return 3 * time.Second
+var (
+	fastDDLIntervalPolicy = []time.Duration{
+		500 * time.Millisecond,
 	}
-	if job.Type == model.ActionCreateTable || job.Type == model.ActionCreateSchema {
-		return 500 * time.Millisecond
+	normalDDLIntervalPolicy = []time.Duration{
+		500 * time.Millisecond,
+		500 * time.Millisecond,
+		1 * time.Second,
 	}
-	return 1 * time.Second
+	slowDDLIntervalPolicy = []time.Duration{
+		500 * time.Millisecond,
+		500 * time.Millisecond,
+		1 * time.Second,
+		1 * time.Second,
+		3 * time.Second,
+	}
+)
+
+func getIntervalFromPolicy(policy []time.Duration, i int) (time.Duration, bool) {
+	plen := len(policy)
+	if i < plen {
+		return policy[i], true
+	}
+	return policy[plen-1], false
 }
 
-func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
+func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
+	switch job.Type {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
+	case model.ActionCreateTable, model.ActionCreateSchema:
+		return getIntervalFromPolicy(fastDDLIntervalPolicy, i)
+	default:
+		return getIntervalFromPolicy(normalDDLIntervalPolicy, i)
+	}
+}
+
+func (d *ddl) asyncNotifyWorker(job *model.Job) {
 	// If the workers don't run, we needn't to notify workers.
 	if !RunWorker {
 		return
 	}
 
+	var worker *worker
+	jobTp := job.Type
 	if jobTp == model.ActionAddIndex || jobTp == model.ActionAddPrimaryKey {
-		asyncNotify(d.workers[addIdxWorker].ddlJobCh)
+		worker = d.workers[addIdxWorker]
 	} else {
-		asyncNotify(d.workers[generalWorker].ddlJobCh)
+		worker = d.workers[generalWorker]
 	}
+	if d.ownerManager.IsOwner() {
+		asyncNotify(worker.ddlJobCh)
+	} else {
+		d.asyncNotifyByEtcd(worker.addingDDLJobKey, job)
+	}
+}
+
+func updateTickerInterval(ticker *time.Ticker, lease time.Duration, job *model.Job, i int) *time.Ticker {
+	interval, changed := getJobCheckInterval(job, i)
+	if !changed {
+		return ticker
+	}
+	// For now we should stop old ticker and create a new ticker
+	ticker.Stop()
+	return time.NewTicker(chooseLeaseTime(lease, interval))
 }
 
 // doDDLJob will return
@@ -487,7 +542,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 
 	// Notice worker that we push a new job and wait the job done.
-	d.asyncNotifyWorker(job.Type)
+	d.asyncNotifyWorker(job)
 	logutil.BgLogger().Info("[ddl] start DDL job", zap.String("job", job.String()), zap.String("query", job.Query))
 
 	var historyJob *model.Job
@@ -495,7 +550,8 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// For a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
 	// For every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
 	// But we use etcd to speed up, normally it takes less than 0.5s now, so we use 0.5s or 1s or 3s as the max value.
-	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, checkJobMaxInterval(job)))
+	initInterval, _ := getJobCheckInterval(job, 0)
+	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, initInterval))
 	startTime := time.Now()
 	metrics.JobsGauge.WithLabelValues(job.Type.String()).Inc()
 	defer func() {
@@ -503,6 +559,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		metrics.JobsGauge.WithLabelValues(job.Type.String()).Dec()
 		metrics.HandleJobHistogram.WithLabelValues(job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
+	i := 0
 	for {
 		failpoint.Inject("storeCloseInLoop", func(_ failpoint.Value) {
 			d.cancel()
@@ -511,10 +568,11 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		select {
 		case <-d.ddlJobDoneCh:
 		case <-ticker.C:
+			i++
+			ticker = updateTickerInterval(ticker, 10*d.lease, job, i)
 		case <-d.ctx.Done():
-			logutil.BgLogger().Error("[ddl] doDDLJob will quit because context done", zap.Error(d.ctx.Err()))
-			err = d.ctx.Err()
-			return err
+			logutil.BgLogger().Info("[ddl] doDDLJob will quit because context done")
+			return context.Canceled
 		}
 
 		historyJob, err = d.getHistoryDDLJob(jobID)
@@ -545,6 +603,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		}
 
 		if historyJob.Error != nil {
+			logutil.BgLogger().Info("[ddl] DDL job is failed", zap.Int64("jobID", jobID))
 			return errors.Trace(historyJob.Error)
 		}
 		// Only for JobStateCancelled job which is adding columns or drop columns.
@@ -577,6 +636,14 @@ func (d *ddl) GetHook() Callback {
 	return d.mu.hook
 }
 
+// SetHook set the customized hook.
+func (d *ddl) SetHook(h Callback) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.mu.hook = h
+}
+
 func (d *ddl) startCleanDeadTableLock() {
 	defer func() {
 		goutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
@@ -591,10 +658,7 @@ func (d *ddl) startCleanDeadTableLock() {
 			if !d.ownerManager.IsOwner() {
 				continue
 			}
-			if d.infoHandle == nil || !d.infoHandle.IsValid() {
-				continue
-			}
-			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.ctx, d.infoHandle.Get().AllSchemas())
+			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.ctx, d.infoCache.GetLatest().AllSchemas())
 			if err != nil {
 				logutil.BgLogger().Info("[ddl] get dead table lock failed.", zap.Error(err))
 				continue
@@ -619,4 +683,26 @@ type RecoverInfo struct {
 	SnapshotTS    uint64
 	CurAutoIncID  int64
 	CurAutoRandID int64
+}
+
+// delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.
+// It should be called before any DDL that could break data consistency.
+// This provides a safe window for async commit and 1PC to commit with an old schema.
+func delayForAsyncCommit() {
+	cfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
+	duration := cfg.SafeWindow + cfg.AllowedClockDrift
+	logutil.BgLogger().Info("sleep before DDL finishes to make async commit and 1PC safe",
+		zap.Duration("duration", duration))
+	time.Sleep(duration)
+}
+
+var (
+	// RunInGoTest is used to identify whether ddl in running in the test.
+	RunInGoTest bool
+)
+
+func init() {
+	if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+		RunInGoTest = true
+	}
 }

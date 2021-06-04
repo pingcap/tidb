@@ -54,7 +54,7 @@ func (sr selectResultHook) SelectResult(ctx context.Context, sctx sessionctx.Con
 }
 
 type kvRangeBuilder interface {
-	buildKeyRange(pid int64) ([]kv.KeyRange, error)
+	buildKeyRange(pid int64, ranges []*ranger.Range) ([]kv.KeyRange, error)
 }
 
 // TableReaderExecutor sends DAG request and reads table data from kv layer.
@@ -64,7 +64,7 @@ type TableReaderExecutor struct {
 	table table.Table
 
 	// The source of key ranges varies from case to case.
-	// It may be calculated from PyhsicalPlan by executorBuilder, or calculated from argument by dataBuilder;
+	// It may be calculated from PhysicalPlan by executorBuilder, or calculated from argument by dataBuilder;
 	// It may be calculated from ranger.Ranger, or calculated from handles.
 	// The table ID may also change because of the partition table, and causes the key range to change.
 	// So instead of keeping a `range` struct field, it's better to define a interface.
@@ -124,7 +124,7 @@ func (i offsetOptional) value() int {
 	return int(i - 1)
 }
 
-// Open initialzes necessary variables for using this executor.
+// Open initializes necessary variables for using this executor.
 func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("TableReaderExecutor.Open", opentracing.ChildOf(span.Context()))
@@ -156,9 +156,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	}
 	if e.corColInAccess {
 		ts := e.plans[0].(*plannercore.PhysicalTableScan)
-		access := ts.AccessCondition
-		pkTP := ts.Table.GetPkColInfo().FieldType
-		e.ranges, err = ranger.BuildTableRange(access, e.ctx.GetSessionVars().StmtCtx, &pkTP)
+		e.ranges, err = ts.ResolveCorrelatedColumns()
 		if err != nil {
 			return err
 		}
@@ -173,7 +171,26 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			e.feedback.Invalidate()
 		}
 	}
-	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder, e.desc)
+	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
+
+	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
+	// Calculate the kv ranges here, UnionScan rely on this kv ranges.
+	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
+		kvReq, err := e.buildKVReq(ctx, firstPartRanges)
+		if err != nil {
+			return err
+		}
+		e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
+		if len(secondPartRanges) != 0 {
+			kvReq, err = e.buildKVReq(ctx, secondPartRanges)
+			if err != nil {
+				return err
+			}
+			e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
+		}
+		return nil
+	}
+
 	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -196,6 +213,12 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
+	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
+		// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
+		req.Reset()
+		return nil
+	}
+
 	logutil.Eventf(ctx, "table scan table: %s, range: %v", stringutil.MemoizeStr(func() string {
 		var tableName string
 		if meta := e.table.Meta(); meta != nil {
@@ -235,6 +258,10 @@ func fillExtraPIDColumn(req *chunk.Chunk, extraPIDColumnIndex int, physicalID in
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
+	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
+		return nil
+	}
+
 	var err error
 	if e.resultHandler != nil {
 		err = e.resultHandler.Close()
@@ -244,33 +271,10 @@ func (e *TableReaderExecutor) Close() error {
 	return err
 }
 
-// buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResut returned by the callee
+// buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResult returned by the callee
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
-	var builder distsql.RequestBuilder
-	var reqBuilder *distsql.RequestBuilder
-	if e.kvRangeBuilder != nil {
-		kvRange, err := e.kvRangeBuilder.buildKeyRange(getPhysicalTableID(e.table))
-		if err != nil {
-			return nil, err
-		}
-		reqBuilder = builder.SetKeyRanges(kvRange)
-	} else if e.table.Meta() != nil && e.table.Meta().IsCommonHandle {
-		reqBuilder = builder.SetCommonHandleRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), ranges)
-	} else {
-		reqBuilder = builder.SetTableRanges(getPhysicalTableID(e.table), ranges, e.feedback)
-	}
-	kvReq, err := reqBuilder.
-		SetDAGRequest(e.dagPB).
-		SetStartTS(e.startTS).
-		SetDesc(e.desc).
-		SetKeepOrder(e.keepOrder).
-		SetStreaming(e.streaming).
-		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetMemTracker(e.memTracker).
-		SetStoreType(e.storeType).
-		SetAllowBatchCop(e.batchCop).
-		Build()
+	kvReq, err := e.buildKVReq(ctx, ranges)
 	if err != nil {
 		return nil, err
 	}
@@ -280,8 +284,33 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	if err != nil {
 		return nil, err
 	}
-	result.Fetch(ctx)
 	return result, nil
+}
+
+func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.Range) (*kv.Request, error) {
+	var builder distsql.RequestBuilder
+	var reqBuilder *distsql.RequestBuilder
+	if e.kvRangeBuilder != nil {
+		kvRange, err := e.kvRangeBuilder.buildKeyRange(getPhysicalTableID(e.table), ranges)
+		if err != nil {
+			return nil, err
+		}
+		reqBuilder = builder.SetKeyRanges(kvRange)
+	} else {
+		reqBuilder = builder.SetHandleRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges, e.feedback)
+	}
+	reqBuilder.
+		SetDAGRequest(e.dagPB).
+		SetStartTS(e.startTS).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetStreaming(e.streaming).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromInfoSchema(e.ctx.GetInfoSchema()).
+		SetMemTracker(e.memTracker).
+		SetStoreType(e.storeType).
+		SetAllowBatchCop(e.batchCop)
+	return reqBuilder.Build()
 }
 
 func buildVirtualColumnIndex(schema *expression.Schema, columns []*model.ColumnInfo) []int {

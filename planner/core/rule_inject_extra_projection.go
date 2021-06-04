@@ -14,8 +14,10 @@
 package core
 
 import (
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 )
@@ -45,6 +47,11 @@ func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 		plan.Children()[i] = pe.inject(child)
 	}
 
+	if tr, ok := plan.(*PhysicalTableReader); ok && tr.StoreType == kv.TiFlash {
+		tr.tablePlan = pe.inject(tr.tablePlan)
+		tr.TablePlans = flattenPushDownPlan(tr.tablePlan)
+	}
+
 	switch p := plan.(type) {
 	case *PhysicalHashAgg:
 		plan = InjectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
@@ -56,8 +63,40 @@ func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 		plan = InjectProjBelowSort(p, p.ByItems)
 	case *NominalSort:
 		plan = TurnNominalSortIntoProj(p, p.OnlyColumn, p.ByItems)
+	case *PhysicalUnionAll:
+		plan = injectProjBelowUnion(p)
 	}
 	return plan
+}
+
+func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
+	if !un.mpp {
+		return un
+	}
+	for i, ch := range un.children {
+		exprs := make([]expression.Expression, len(ch.Schema().Columns))
+		needChange := false
+		for i, dstCol := range un.schema.Columns {
+			dstType := dstCol.RetType
+			srcCol := ch.Schema().Columns[i]
+			srcType := srcCol.RetType
+			if !srcType.Equal(dstType) || !(mysql.HasNotNullFlag(dstType.Flag) == mysql.HasNotNullFlag(srcType.Flag)) {
+				exprs[i] = expression.BuildCastFunction4Union(un.ctx, srcCol, dstType)
+				needChange = true
+			} else {
+				exprs[i] = srcCol
+			}
+		}
+		if needChange {
+			proj := PhysicalProjection{
+				Exprs: exprs,
+			}.Init(un.ctx, ch.statsInfo(), 0)
+			proj.SetSchema(un.schema.Clone())
+			proj.SetChildren(ch)
+			un.children[i] = proj
+		}
+	}
+	return un
 }
 
 // wrapCastForAggFunc wraps the args of an aggregate function with a cast function.
@@ -149,7 +188,7 @@ func InjectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 	}
 
 	child := aggPlan.Children()[0]
-	prop := aggPlan.GetChildReqProps(0).Clone()
+	prop := aggPlan.GetChildReqProps(0).CloneEssentialFields()
 	proj := PhysicalProjection{
 		Exprs:                projExprs,
 		AvoidColumnEvaluator: false,
@@ -216,7 +255,7 @@ func InjectProjBelowSort(p PhysicalPlan, orderByItems []*util.ByItems) PhysicalP
 		item.Expr = newArg
 	}
 
-	childProp := p.GetChildReqProps(0).Clone()
+	childProp := p.GetChildReqProps(0).CloneEssentialFields()
 	bottomProj := PhysicalProjection{
 		Exprs:                bottomProjExprs,
 		AvoidColumnEvaluator: false,
@@ -265,7 +304,7 @@ func TurnNominalSortIntoProj(p PhysicalPlan, onlyColumn bool, orderByItems []*ut
 		bottomProjSchemaCols = append(bottomProjSchemaCols, newArg)
 	}
 
-	childProp := p.GetChildReqProps(0).Clone()
+	childProp := p.GetChildReqProps(0).CloneEssentialFields()
 	bottomProj := PhysicalProjection{
 		Exprs:                bottomProjExprs,
 		AvoidColumnEvaluator: false,

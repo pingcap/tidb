@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/vitess"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -51,6 +52,7 @@ var (
 	_ functionClass = &releaseAllLocksFunctionClass{}
 	_ functionClass = &uuidFunctionClass{}
 	_ functionClass = &uuidShortFunctionClass{}
+	_ functionClass = &vitessHashFunctionClass{}
 )
 
 var (
@@ -73,6 +75,7 @@ var (
 	_ builtinFunc = &builtinIsIPv4MappedSig{}
 	_ builtinFunc = &builtinIsIPv6Sig{}
 	_ builtinFunc = &builtinUUIDSig{}
+	_ builtinFunc = &builtinVitessHashSig{}
 
 	_ builtinFunc = &builtinNameConstIntSig{}
 	_ builtinFunc = &builtinNameConstRealSig{}
@@ -491,14 +494,14 @@ func (b *builtinInetNtoaSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 
 	if val < 0 || uint64(val) > math.MaxUint32 {
-		//not an IPv4 address.
+		// not an IPv4 address.
 		return "", true, nil
 	}
 	ip := make(net.IP, net.IPv4len)
 	binary.BigEndian.PutUint32(ip, uint32(val))
 	ipv4 := ip.To4()
 	if ipv4 == nil {
-		//Not a vaild ipv4 address.
+		// Not a vaild ipv4 address.
 		return "", true, nil
 	}
 
@@ -553,7 +556,7 @@ func (b *builtinInet6AtonSig) evalString(row chunk.Row) (string, bool, error) {
 
 	var isMappedIpv6 bool
 	if ip.To4() != nil && strings.Contains(val, ":") {
-		//mapped ipv6 address.
+		// mapped ipv6 address.
 		isMappedIpv6 = true
 	}
 
@@ -574,7 +577,7 @@ func (b *builtinInet6AtonSig) evalString(row chunk.Row) (string, bool, error) {
 		copy(result, ip.To4())
 	}
 
-	return string(result[:]), false, nil
+	return string(result), false, nil
 }
 
 type inet6NtoaFunctionClass struct {
@@ -737,7 +740,7 @@ func (b *builtinIsIPv4CompatSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	ipAddress := []byte(val)
 	if len(ipAddress) != net.IPv6len {
-		//Not an IPv6 address, return false
+		// Not an IPv6 address, return false
 		return 0, false, nil
 	}
 
@@ -785,7 +788,7 @@ func (b *builtinIsIPv4MappedSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	ipAddress := []byte(val)
 	if len(ipAddress) != net.IPv6len {
-		//Not an IPv6 address, return false
+		// Not an IPv6 address, return false
 		return 0, false, nil
 	}
 
@@ -1013,6 +1016,7 @@ func (c *uuidFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 36
 	sig := &builtinUUIDSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_UUID)
 	return sig, nil
 }
 
@@ -1044,4 +1048,49 @@ type uuidShortFunctionClass struct {
 
 func (c *uuidShortFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "UUID_SHORT")
+}
+
+type vitessHashFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *vitessHashFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+
+	bf.tp.Flen = 20 //64 bit unsigned
+	bf.tp.Flag |= mysql.UnsignedFlag
+	types.SetBinChsClnFlag(bf.tp)
+
+	sig := &builtinVitessHashSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_VitessHash)
+	return sig, nil
+}
+
+type builtinVitessHashSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinVitessHashSig) Clone() builtinFunc {
+	newSig := &builtinVitessHashSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals VITESS_HASH(int64).
+func (b *builtinVitessHashSig) evalInt(row chunk.Row) (int64, bool, error) {
+	shardKeyInt, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return 0, true, err
+	}
+	var hashed uint64
+	if hashed, err = vitess.HashUint64(uint64(shardKeyInt)); err != nil {
+		return 0, true, err
+	}
+	return int64(hashed), false, nil
 }

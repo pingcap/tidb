@@ -431,6 +431,8 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 		{[]interface{}{1.298, 1}, 1.3},
 		{[]interface{}{1.298}, 1},
 		{[]interface{}{1.298, 0}, 1},
+		{[]interface{}{-1.5, 0}, -2},
+		{[]interface{}{1.5, 0}, 2},
 		{[]interface{}{23.298, -1}, 20},
 		{[]interface{}{newDec("-1.23")}, newDec("-1")},
 		{[]interface{}{newDec("-1.23"), 1}, newDec("-1.2")},
@@ -949,7 +951,7 @@ func (s *testEvaluatorSuite) TestTan(c *C) {
 		{int64(0), float64(0), false, false},
 		{math.Pi / 4, float64(1), false, false},
 		{-math.Pi / 4, float64(-1), false, false},
-		{math.Pi * 3 / 4, math.Tan(math.Pi * 3 / 4), false, false}, //in mysql and golang, it equals -1.0000000000000002, not -1
+		{math.Pi * 3 / 4, math.Tan(math.Pi * 3 / 4), false, false}, // in mysql and golang, it equals -1.0000000000000002, not -1
 		{"0.000", float64(0), false, false},
 		{"sdfgsdfg", 0, false, true},
 	}

@@ -14,10 +14,13 @@
 package memory
 
 import (
-	"io/ioutil"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/pingcap/parser/terror"
 	"github.com/shirou/gopsutil/mem"
 )
 
@@ -29,14 +32,30 @@ var MemUsed func() (uint64, error)
 
 // MemTotalNormal returns the total amount of RAM on this system in non-container environment.
 func MemTotalNormal() (uint64, error) {
+	total, t := memLimit.get()
+	if time.Since(t) < 60*time.Second {
+		return total, nil
+	}
 	v, err := mem.VirtualMemory()
-	return v.Total, err
+	if err != nil {
+		return v.Total, err
+	}
+	memLimit.set(v.Total, time.Now())
+	return v.Total, nil
 }
 
 // MemUsedNormal returns the total used amount of RAM on this system in non-container environment.
 func MemUsedNormal() (uint64, error) {
+	used, t := memUsage.get()
+	if time.Since(t) < 500*time.Millisecond {
+		return used, nil
+	}
 	v, err := mem.VirtualMemory()
-	return v.Used, err
+	if err != nil {
+		return v.Used, err
+	}
+	memUsage.set(v.Used, time.Now())
+	return v.Used, nil
 }
 
 const (
@@ -45,14 +64,57 @@ const (
 	selfCGroupPath     = "/proc/self/cgroup"
 )
 
+type memInfoCache struct {
+	*sync.RWMutex
+	mem        uint64
+	updateTime time.Time
+}
+
+func (c *memInfoCache) get() (mem uint64, t time.Time) {
+	c.RLock()
+	defer c.RUnlock()
+	mem, t = c.mem, c.updateTime
+	return
+}
+
+func (c *memInfoCache) set(mem uint64, t time.Time) {
+	c.Lock()
+	defer c.Unlock()
+	c.mem, c.updateTime = mem, t
+}
+
+// expiration time is 60s
+var memLimit *memInfoCache
+
+// expiration time is 500ms
+var memUsage *memInfoCache
+
 // MemTotalCGroup returns the total amount of RAM on this system in container environment.
 func MemTotalCGroup() (uint64, error) {
-	return readUint(cGroupMemLimitPath)
+	mem, t := memLimit.get()
+	if time.Since(t) < 60*time.Second {
+		return mem, nil
+	}
+	mem, err := readUint(cGroupMemLimitPath)
+	if err != nil {
+		return mem, err
+	}
+	memLimit.set(mem, time.Now())
+	return mem, nil
 }
 
 // MemUsedCGroup returns the total used amount of RAM on this system in container environment.
 func MemUsedCGroup() (uint64, error) {
-	return readUint(cGroupMemUsagePath)
+	mem, t := memUsage.get()
+	if time.Since(t) < 500*time.Millisecond {
+		return mem, nil
+	}
+	mem, err := readUint(cGroupMemUsagePath)
+	if err != nil {
+		return mem, err
+	}
+	memUsage.set(mem, time.Now())
+	return mem, nil
 }
 
 func init() {
@@ -63,10 +125,20 @@ func init() {
 		MemTotal = MemTotalNormal
 		MemUsed = MemUsedNormal
 	}
+	memLimit = &memInfoCache{
+		RWMutex: &sync.RWMutex{},
+	}
+	memUsage = &memInfoCache{
+		RWMutex: &sync.RWMutex{},
+	}
+	_, err := MemTotal()
+	terror.MustNil(err)
+	_, err = MemUsed()
+	terror.MustNil(err)
 }
 
 func inContainer() bool {
-	v, err := ioutil.ReadFile(selfCGroupPath)
+	v, err := os.ReadFile(selfCGroupPath)
 	if err != nil {
 		return false
 	}
@@ -99,7 +171,7 @@ func parseUint(s string, base, bitSize int) (uint64, error) {
 
 // refer to https://github.com/containerd/cgroups/blob/318312a373405e5e91134d8063d04d59768a1bff/utils.go#L243
 func readUint(path string) (uint64, error) {
-	v, err := ioutil.ReadFile(path)
+	v, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err
 	}

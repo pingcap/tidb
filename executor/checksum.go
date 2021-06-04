@@ -132,7 +132,6 @@ func (e *ChecksumTableExec) handleChecksumRequest(req *kv.Request) (resp *tipb.C
 	if err != nil {
 		return nil, err
 	}
-	res.Fetch(ctx)
 	defer func() {
 		if err1 := res.Close(); err1 != nil {
 			err = err1
@@ -233,10 +232,16 @@ func (c *checksumContext) buildTableRequest(ctx sessionctx.Context, tableID int6
 		Algorithm: tipb.ChecksumAlgorithm_Crc64_Xor,
 	}
 
-	ranges := ranger.FullIntRange(false)
+	var ranges []*ranger.Range
+	if c.TableInfo.IsCommonHandle {
+		ranges = ranger.FullNotNullRange()
+	} else {
+		ranges = ranger.FullIntRange(false)
+	}
 
 	var builder distsql.RequestBuilder
-	return builder.SetTableRanges(tableID, ranges, nil).
+	builder.SetResourceGroupTag(ctx.GetSessionVars().StmtCtx)
+	return builder.SetHandleRanges(ctx.GetSessionVars().StmtCtx, tableID, c.TableInfo.IsCommonHandle, ranges, nil).
 		SetChecksumRequest(checksum).
 		SetStartTS(c.StartTs).
 		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency()).
@@ -252,6 +257,7 @@ func (c *checksumContext) buildIndexRequest(ctx sessionctx.Context, tableID int6
 	ranges := ranger.FullRange()
 
 	var builder distsql.RequestBuilder
+	builder.SetResourceGroupTag(ctx.GetSessionVars().StmtCtx)
 	return builder.SetIndexRanges(ctx.GetSessionVars().StmtCtx, tableID, indexInfo.ID, ranges).
 		SetChecksumRequest(checksum).
 		SetStartTS(c.StartTs).
@@ -265,7 +271,7 @@ func (c *checksumContext) HandleResponse(update *tipb.ChecksumResponse) {
 
 func getChecksumTableConcurrency(ctx sessionctx.Context) (int, error) {
 	sessionVars := ctx.GetSessionVars()
-	concurrency, err := variable.GetSessionSystemVar(sessionVars, variable.TiDBChecksumTableConcurrency)
+	concurrency, err := variable.GetSessionOrGlobalSystemVar(sessionVars, variable.TiDBChecksumTableConcurrency)
 	if err != nil {
 		return 0, err
 	}

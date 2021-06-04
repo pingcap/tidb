@@ -90,7 +90,7 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	if ctx == nil {
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
-	if err := checkIllegalMixCollation(funcName, args, retType); err != nil {
+	if err := CheckIllegalMixCollation(funcName, args, retType); err != nil {
 		return baseBuiltinFunc{}, err
 	}
 	derivedCharset, derivedCollate := DeriveCollationFromExprs(ctx, args...)
@@ -112,7 +112,8 @@ var (
 	coerString = []string{"EXPLICIT", "NONE", "IMPLICIT", "SYSCONST", "COERCIBLE", "NUMERIC", "IGNORABLE"}
 )
 
-func checkIllegalMixCollation(funcName string, args []Expression, evalType types.EvalType) error {
+// CheckIllegalMixCollation checks illegal mix collation with expressions
+func CheckIllegalMixCollation(funcName string, args []Expression, evalType types.EvalType) error {
 	if len(args) < 2 {
 		return nil
 	}
@@ -169,7 +170,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		}
 	}
 
-	if err = checkIllegalMixCollation(funcName, args, retType); err != nil {
+	if err = CheckIllegalMixCollation(funcName, args, retType); err != nil {
 		return
 	}
 
@@ -240,6 +241,9 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	}
 	if mysql.HasBinaryFlag(fieldType.Flag) && fieldType.Tp != mysql.TypeJSON {
 		fieldType.Charset, fieldType.Collate = charset.CharsetBin, charset.CollationBin
+	}
+	if _, ok := booleanFunctions[funcName]; ok {
+		fieldType.Flag |= mysql.IsBooleanFlag
 	}
 	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalSliceBuffer(len(args)),
@@ -550,17 +554,32 @@ type baseFunctionClass struct {
 }
 
 func (b *baseFunctionClass) verifyArgs(args []Expression) error {
-	l := len(args)
+	return b.verifyArgsByCount(len(args))
+}
+
+func (b *baseFunctionClass) verifyArgsByCount(l int) error {
 	if l < b.minArgs || (b.maxArgs != -1 && l > b.maxArgs) {
 		return ErrIncorrectParameterCount.GenWithStackByArgs(b.funcName)
 	}
 	return nil
 }
 
+// VerifyArgsWrapper verifies a function by its name and the count of the arguments.
+// Note that this function assumes that the function is supported.
+func VerifyArgsWrapper(name string, l int) error {
+	f, ok := funcs[name]
+	if !ok {
+		return nil
+	}
+	return f.verifyArgsByCount(l)
+}
+
 // functionClass is the interface for a function which may contains multiple functions.
 type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
 	getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error)
+	// verifyArgsByCount verifies the count of parameters.
+	verifyArgsByCount(l int) error
 }
 
 // funcs holds all registered builtin functions. When new function is added,
@@ -669,6 +688,9 @@ var funcs = map[string]functionClass{
 	ast.Year:             &yearFunctionClass{baseFunctionClass{ast.Year, 1, 1}},
 	ast.YearWeek:         &yearWeekFunctionClass{baseFunctionClass{ast.YearWeek, 1, 2}},
 	ast.LastDay:          &lastDayFunctionClass{baseFunctionClass{ast.LastDay, 1, 1}},
+	// TSO functions
+	ast.TiDBBoundedStaleness: &tidbBoundedStalenessFunctionClass{baseFunctionClass{ast.TiDBBoundedStaleness, 2, 2}},
+	ast.TiDBParseTso:         &tidbParseTsoFunctionClass{baseFunctionClass{ast.TiDBParseTso, 1, 1}},
 
 	// string functions
 	ast.ASCII:           &asciiFunctionClass{baseFunctionClass{ast.ASCII, 1, 1}},
@@ -769,6 +791,7 @@ var funcs = map[string]functionClass{
 	ast.ReleaseAllLocks: &releaseAllLocksFunctionClass{baseFunctionClass{ast.ReleaseAllLocks, 0, 0}},
 	ast.UUID:            &uuidFunctionClass{baseFunctionClass{ast.UUID, 0, 0}},
 	ast.UUIDShort:       &uuidShortFunctionClass{baseFunctionClass{ast.UUIDShort, 0, 0}},
+	ast.VitessHash:      &vitessHashFunctionClass{baseFunctionClass{ast.VitessHash, 1, 1}},
 
 	// get_lock() and release_lock() are parsed but do nothing.
 	// It is used for preventing error in Ruby's activerecord migrations.
@@ -862,7 +885,6 @@ var funcs = map[string]functionClass{
 	// This function is used to show tidb-server version info.
 	ast.TiDBVersion:    &tidbVersionFunctionClass{baseFunctionClass{ast.TiDBVersion, 0, 0}},
 	ast.TiDBIsDDLOwner: &tidbIsDDLOwnerFunctionClass{baseFunctionClass{ast.TiDBIsDDLOwner, 0, 0}},
-	ast.TiDBParseTso:   &tidbParseTsoFunctionClass{baseFunctionClass{ast.TiDBParseTso, 1, 1}},
 	ast.TiDBDecodePlan: &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodePlan, 1, 1}},
 
 	// TiDB Sequence function.

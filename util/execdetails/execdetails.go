@@ -16,6 +16,7 @@ package execdetails
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,35 +24,24 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-)
-
-type commitDetailCtxKeyType struct{}
-type lockKeysDetailCtxKeyType struct{}
-
-var (
-	// CommitDetailCtxKey presents CommitDetail info key in context.
-	CommitDetailCtxKey = commitDetailCtxKeyType{}
-
-	// LockKeysDetailCtxKey presents LockKeysDetail info key in context.
-	LockKeysDetailCtxKey = lockKeysDetailCtxKeyType{}
 )
 
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
 	CalleeAddress    string
 	CopTime          time.Duration
-	ProcessTime      time.Duration
-	WaitTime         time.Duration
 	BackoffTime      time.Duration
 	LockKeysDuration time.Duration
 	BackoffSleep     map[string]time.Duration
 	BackoffTimes     map[string]int
 	RequestCount     int
-	CommitDetail     *CommitDetails
-	LockKeysDetail   *LockKeysDetails
-	CopDetail        *CopDetails
+	CommitDetail     *util.CommitDetails
+	LockKeysDetail   *util.LockKeysDetails
+	ScanDetail       *util.ScanDetail
+	TimeDetail       util.TimeDetail
 }
 
 type stmtExecDetailKeyType struct{}
@@ -61,132 +51,7 @@ var StmtExecDetailKey = stmtExecDetailKeyType{}
 
 // StmtExecDetails contains stmt level execution detail info.
 type StmtExecDetails struct {
-	BackoffCount         int64
-	BackoffDuration      int64
-	WaitKVRespDuration   int64
-	WaitPDRespDuration   int64
 	WriteSQLRespDuration time.Duration
-}
-
-// CommitDetails contains commit detail information.
-type CommitDetails struct {
-	GetCommitTsTime        time.Duration
-	PrewriteTime           time.Duration
-	WaitPrewriteBinlogTime time.Duration
-	CommitTime             time.Duration
-	LocalLatchTime         time.Duration
-	CommitBackoffTime      int64
-	Mu                     struct {
-		sync.Mutex
-		BackoffTypes []fmt.Stringer
-	}
-	ResolveLockTime   int64
-	WriteKeys         int
-	WriteSize         int
-	PrewriteRegionNum int32
-	TxnRetry          int
-}
-
-// Merge merges commit details into itself.
-func (cd *CommitDetails) Merge(other *CommitDetails) {
-	cd.GetCommitTsTime += other.GetCommitTsTime
-	cd.PrewriteTime += other.PrewriteTime
-	cd.WaitPrewriteBinlogTime += other.WaitPrewriteBinlogTime
-	cd.CommitTime += other.CommitTime
-	cd.LocalLatchTime += other.LocalLatchTime
-	cd.CommitBackoffTime += other.CommitBackoffTime
-	cd.ResolveLockTime += other.ResolveLockTime
-	cd.WriteKeys += other.WriteKeys
-	cd.WriteSize += other.WriteSize
-	cd.PrewriteRegionNum += other.PrewriteRegionNum
-	cd.TxnRetry += other.TxnRetry
-	cd.Mu.BackoffTypes = append(cd.Mu.BackoffTypes, other.Mu.BackoffTypes...)
-}
-
-// Clone returns a deep copy of itself.
-func (cd *CommitDetails) Clone() *CommitDetails {
-	commit := &CommitDetails{
-		GetCommitTsTime:        cd.GetCommitTsTime,
-		PrewriteTime:           cd.PrewriteTime,
-		WaitPrewriteBinlogTime: cd.WaitPrewriteBinlogTime,
-		CommitTime:             cd.CommitTime,
-		LocalLatchTime:         cd.LocalLatchTime,
-		CommitBackoffTime:      cd.CommitBackoffTime,
-		ResolveLockTime:        cd.ResolveLockTime,
-		WriteKeys:              cd.WriteKeys,
-		WriteSize:              cd.WriteSize,
-		PrewriteRegionNum:      cd.PrewriteRegionNum,
-		TxnRetry:               cd.TxnRetry,
-	}
-	commit.Mu.BackoffTypes = append([]fmt.Stringer{}, cd.Mu.BackoffTypes...)
-	return commit
-}
-
-// LockKeysDetails contains pessimistic lock keys detail information.
-type LockKeysDetails struct {
-	TotalTime       time.Duration
-	RegionNum       int32
-	LockKeys        int32
-	ResolveLockTime int64
-	BackoffTime     int64
-	Mu              struct {
-		sync.Mutex
-		BackoffTypes []fmt.Stringer
-	}
-	LockRPCTime  int64
-	LockRPCCount int64
-	RetryCount   int
-}
-
-// Merge merges lock keys execution details into self.
-func (ld *LockKeysDetails) Merge(lockKey *LockKeysDetails) {
-	ld.TotalTime += lockKey.TotalTime
-	ld.RegionNum += lockKey.RegionNum
-	ld.LockKeys += lockKey.LockKeys
-	ld.ResolveLockTime += lockKey.ResolveLockTime
-	ld.BackoffTime += lockKey.BackoffTime
-	ld.LockRPCTime += lockKey.LockRPCTime
-	ld.LockRPCCount += ld.LockRPCCount
-	ld.Mu.BackoffTypes = append(ld.Mu.BackoffTypes, lockKey.Mu.BackoffTypes...)
-	ld.RetryCount++
-}
-
-// Clone returns a deep copy of itself.
-func (ld *LockKeysDetails) Clone() *LockKeysDetails {
-	lock := &LockKeysDetails{
-		TotalTime:       ld.TotalTime,
-		RegionNum:       ld.RegionNum,
-		LockKeys:        ld.LockKeys,
-		ResolveLockTime: ld.ResolveLockTime,
-		BackoffTime:     ld.BackoffTime,
-		LockRPCTime:     ld.LockRPCTime,
-		LockRPCCount:    ld.LockRPCCount,
-		RetryCount:      ld.RetryCount,
-	}
-	lock.Mu.BackoffTypes = append([]fmt.Stringer{}, ld.Mu.BackoffTypes...)
-	return lock
-}
-
-// CopDetails contains coprocessor detail information.
-type CopDetails struct {
-	TotalKeys                 int64
-	ProcessedKeys             int64
-	RocksdbDeleteSkippedCount uint64
-	RocksdbKeySkippedCount    uint64
-	RocksdbBlockCacheHitCount uint64
-	RocksdbBlockReadCount     uint64
-	RocksdbBlockReadByte      uint64
-}
-
-// Merge merges lock keys execution details into self.
-func (cd *CopDetails) Merge(copDetails *CopDetails) {
-	cd.TotalKeys += copDetails.TotalKeys
-	cd.ProcessedKeys += copDetails.ProcessedKeys
-	cd.RocksdbDeleteSkippedCount += copDetails.RocksdbDeleteSkippedCount
-	cd.RocksdbKeySkippedCount += copDetails.RocksdbKeySkippedCount
-	cd.RocksdbBlockCacheHitCount += copDetails.RocksdbBlockCacheHitCount
-	cd.RocksdbBlockReadCount += copDetails.RocksdbBlockReadCount
-	cd.RocksdbBlockReadByte += copDetails.RocksdbBlockReadByte
 }
 
 const (
@@ -248,11 +113,11 @@ func (d ExecDetails) String() string {
 	if d.CopTime > 0 {
 		parts = append(parts, CopTimeStr+": "+strconv.FormatFloat(d.CopTime.Seconds(), 'f', -1, 64))
 	}
-	if d.ProcessTime > 0 {
-		parts = append(parts, ProcessTimeStr+": "+strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64))
+	if d.TimeDetail.ProcessTime > 0 {
+		parts = append(parts, ProcessTimeStr+": "+strconv.FormatFloat(d.TimeDetail.ProcessTime.Seconds(), 'f', -1, 64))
 	}
-	if d.WaitTime > 0 {
-		parts = append(parts, WaitTimeStr+": "+strconv.FormatFloat(d.WaitTime.Seconds(), 'f', -1, 64))
+	if d.TimeDetail.WaitTime > 0 {
+		parts = append(parts, WaitTimeStr+": "+strconv.FormatFloat(d.TimeDetail.WaitTime.Seconds(), 'f', -1, 64))
 	}
 	if d.BackoffTime > 0 {
 		parts = append(parts, BackoffTimeStr+": "+strconv.FormatFloat(d.BackoffTime.Seconds(), 'f', -1, 64))
@@ -307,28 +172,28 @@ func (d ExecDetails) String() string {
 			parts = append(parts, TxnRetryStr+": "+strconv.FormatInt(int64(commitDetails.TxnRetry), 10))
 		}
 	}
-	copDetails := d.CopDetail
-	if copDetails != nil {
-		if copDetails.ProcessedKeys > 0 {
-			parts = append(parts, ProcessKeysStr+": "+strconv.FormatInt(copDetails.ProcessedKeys, 10))
+	scanDetail := d.ScanDetail
+	if scanDetail != nil {
+		if scanDetail.ProcessedKeys > 0 {
+			parts = append(parts, ProcessKeysStr+": "+strconv.FormatInt(scanDetail.ProcessedKeys, 10))
 		}
-		if copDetails.TotalKeys > 0 {
-			parts = append(parts, TotalKeysStr+": "+strconv.FormatInt(copDetails.TotalKeys, 10))
+		if scanDetail.TotalKeys > 0 {
+			parts = append(parts, TotalKeysStr+": "+strconv.FormatInt(scanDetail.TotalKeys, 10))
 		}
-		if copDetails.RocksdbDeleteSkippedCount > 0 {
-			parts = append(parts, RocksdbDeleteSkippedCountStr+": "+strconv.FormatUint(copDetails.RocksdbDeleteSkippedCount, 10))
+		if scanDetail.RocksdbDeleteSkippedCount > 0 {
+			parts = append(parts, RocksdbDeleteSkippedCountStr+": "+strconv.FormatUint(scanDetail.RocksdbDeleteSkippedCount, 10))
 		}
-		if copDetails.RocksdbKeySkippedCount > 0 {
-			parts = append(parts, RocksdbKeySkippedCountStr+": "+strconv.FormatUint(copDetails.RocksdbKeySkippedCount, 10))
+		if scanDetail.RocksdbKeySkippedCount > 0 {
+			parts = append(parts, RocksdbKeySkippedCountStr+": "+strconv.FormatUint(scanDetail.RocksdbKeySkippedCount, 10))
 		}
-		if copDetails.RocksdbBlockCacheHitCount > 0 {
-			parts = append(parts, RocksdbBlockCacheHitCountStr+": "+strconv.FormatUint(copDetails.RocksdbBlockCacheHitCount, 10))
+		if scanDetail.RocksdbBlockCacheHitCount > 0 {
+			parts = append(parts, RocksdbBlockCacheHitCountStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockCacheHitCount, 10))
 		}
-		if copDetails.RocksdbBlockReadCount > 0 {
-			parts = append(parts, RocksdbBlockReadCountStr+": "+strconv.FormatUint(copDetails.RocksdbBlockReadCount, 10))
+		if scanDetail.RocksdbBlockReadCount > 0 {
+			parts = append(parts, RocksdbBlockReadCountStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockReadCount, 10))
 		}
-		if copDetails.RocksdbBlockReadByte > 0 {
-			parts = append(parts, RocksdbBlockReadByteStr+": "+strconv.FormatUint(copDetails.RocksdbBlockReadByte, 10))
+		if scanDetail.RocksdbBlockReadByte > 0 {
+			parts = append(parts, RocksdbBlockReadByteStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockReadByte, 10))
 		}
 	}
 	return strings.Join(parts, " ")
@@ -340,11 +205,11 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	if d.CopTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(CopTimeStr), strconv.FormatFloat(d.CopTime.Seconds(), 'f', -1, 64)+"s"))
 	}
-	if d.ProcessTime > 0 {
-		fields = append(fields, zap.String(strings.ToLower(ProcessTimeStr), strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
+	if d.TimeDetail.ProcessTime > 0 {
+		fields = append(fields, zap.String(strings.ToLower(ProcessTimeStr), strconv.FormatFloat(d.TimeDetail.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
 	}
-	if d.WaitTime > 0 {
-		fields = append(fields, zap.String(strings.ToLower(WaitTimeStr), strconv.FormatFloat(d.WaitTime.Seconds(), 'f', -1, 64)+"s"))
+	if d.TimeDetail.WaitTime > 0 {
+		fields = append(fields, zap.String(strings.ToLower(WaitTimeStr), strconv.FormatFloat(d.TimeDetail.WaitTime.Seconds(), 'f', -1, 64)+"s"))
 	}
 	if d.BackoffTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(BackoffTimeStr), strconv.FormatFloat(d.BackoffTime.Seconds(), 'f', -1, 64)+"s"))
@@ -352,11 +217,11 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	if d.RequestCount > 0 {
 		fields = append(fields, zap.String(strings.ToLower(RequestCountStr), strconv.FormatInt(int64(d.RequestCount), 10)))
 	}
-	if d.CopDetail != nil && d.CopDetail.TotalKeys > 0 {
-		fields = append(fields, zap.String(strings.ToLower(TotalKeysStr), strconv.FormatInt(d.CopDetail.TotalKeys, 10)))
+	if d.ScanDetail != nil && d.ScanDetail.TotalKeys > 0 {
+		fields = append(fields, zap.String(strings.ToLower(TotalKeysStr), strconv.FormatInt(d.ScanDetail.TotalKeys, 10)))
 	}
-	if d.CopDetail != nil && d.CopDetail.ProcessedKeys > 0 {
-		fields = append(fields, zap.String(strings.ToLower(ProcessKeysStr), strconv.FormatInt(d.CopDetail.ProcessedKeys, 10)))
+	if d.ScanDetail != nil && d.ScanDetail.ProcessedKeys > 0 {
+		fields = append(fields, zap.String(strings.ToLower(ProcessKeysStr), strconv.FormatInt(d.ScanDetail.ProcessedKeys, 10)))
 	}
 	commitDetails := d.CommitDetail
 	if commitDetails != nil {
@@ -402,6 +267,46 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	return fields
 }
 
+type basicCopRuntimeStats struct {
+	BasicRuntimeStats
+	threads   int32
+	storeType string
+}
+
+// String implements the RuntimeStats interface.
+func (e *basicCopRuntimeStats) String() string {
+	if e.storeType == "tiflash" {
+		return fmt.Sprintf("time:%v, loops:%d, threads:%d", FormatDuration(time.Duration(e.consume)), e.loop, e.threads)
+	}
+	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume)), e.loop)
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *basicCopRuntimeStats) Clone() RuntimeStats {
+	return &basicCopRuntimeStats{
+		BasicRuntimeStats: BasicRuntimeStats{loop: e.loop, consume: e.consume, rows: e.rows},
+		threads:           e.threads,
+		storeType:         e.storeType,
+	}
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
+	tmp, ok := rs.(*basicCopRuntimeStats)
+	if !ok {
+		return
+	}
+	e.loop += tmp.loop
+	e.consume += tmp.consume
+	e.rows += tmp.rows
+	e.threads += tmp.threads
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *basicCopRuntimeStats) Tp() int {
+	return TpBasicCopRunTimeStats
+}
+
 // CopRuntimeStats collects cop tasks' execution info.
 type CopRuntimeStats struct {
 	sync.Mutex
@@ -411,8 +316,10 @@ type CopRuntimeStats struct {
 	// have many region leaders, several coprocessor tasks can be sent to the
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
-	stats      map[string][]*BasicRuntimeStats
-	copDetails *CopDetails
+	stats      map[string][]*basicCopRuntimeStats
+	scanDetail *util.ScanDetail
+	// do not use kv.StoreType because it will meet cycle import error
+	storeType string
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
@@ -420,9 +327,11 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 	crs.Lock()
 	defer crs.Unlock()
 	crs.stats[address] = append(crs.stats[address],
-		&BasicRuntimeStats{loop: int32(*summary.NumIterations),
+		&basicCopRuntimeStats{BasicRuntimeStats: BasicRuntimeStats{loop: int32(*summary.NumIterations),
 			consume: int64(*summary.TimeProcessedNs),
-			rows:    int64(*summary.NumProducedRows)})
+			rows:    int64(*summary.NumProducedRows)},
+			threads:   int32(summary.GetConcurrency()),
+			storeType: crs.storeType})
 }
 
 // GetActRows return total rows of CopRuntimeStats.
@@ -442,32 +351,46 @@ func (crs *CopRuntimeStats) String() string {
 
 	var totalTasks int64
 	var totalIters int32
+	var totalThreads int32
 	procTimes := make([]time.Duration, 0, 32)
 	for _, instanceStats := range crs.stats {
 		for _, stat := range instanceStats {
 			procTimes = append(procTimes, time.Duration(stat.consume)*time.Nanosecond)
 			totalIters += stat.loop
+			totalThreads += stat.threads
 			totalTasks++
 		}
 	}
+	isTiFlashCop := crs.storeType == "tiflash"
 
-	var result string
+	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if totalTasks == 1 {
-		result += fmt.Sprintf("tikv_task:{time:%v, loops:%d}", procTimes[0], totalIters)
+		buf.WriteString(fmt.Sprintf("%v_task:{time:%v, loops:%d", crs.storeType, FormatDuration(procTimes[0]), totalIters))
+		if isTiFlashCop {
+			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
+		} else {
+			buf.WriteString("}")
+		}
 	} else {
 		n := len(procTimes)
 		sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
-		result += fmt.Sprintf("tikv_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v}",
-			procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks)
+		buf.WriteString(fmt.Sprintf("%v_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v",
+			crs.storeType, FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]),
+			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalIters, totalTasks))
+		if isTiFlashCop {
+			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
+		} else {
+			buf.WriteString("}")
+		}
 	}
-	if crs.copDetails != nil {
-		result += fmt.Sprintf(", total_keys:%v, processed_keys:%v, rocksdb:{delete_skipped_count:%v, "+
-			"key_skipped_count:%v, block_cache_hit_count:%v, block_read_count:%v, block_read_byte:%v}",
-			crs.copDetails.TotalKeys, crs.copDetails.ProcessedKeys,
-			crs.copDetails.RocksdbDeleteSkippedCount, crs.copDetails.RocksdbKeySkippedCount, crs.copDetails.RocksdbBlockCacheHitCount,
-			crs.copDetails.RocksdbBlockReadCount, crs.copDetails.RocksdbBlockReadByte)
+	if !isTiFlashCop && crs.scanDetail != nil {
+		detail := crs.scanDetail.String()
+		if detail != "" {
+			buf.WriteString(", ")
+			buf.WriteString(detail)
+		}
 	}
-	return result
+	return buf.String()
 }
 
 const (
@@ -495,8 +418,12 @@ const (
 	TpIndexLookUpRunTimeStats
 	// TpSlowQueryRuntimeStat is the tp for TpSlowQueryRuntimeStat
 	TpSlowQueryRuntimeStat
+	// TpHashAggRuntimeStat is the tp for HashAggRuntimeStat
+	TpHashAggRuntimeStat
 	// TpIndexMergeRunTimeStats is the tp for TpIndexMergeRunTimeStats
 	TpIndexMergeRunTimeStats
+	// TpBasicCopRunTimeStats is the tp for TpBasicCopRunTimeStats
+	TpBasicCopRunTimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.
@@ -612,7 +539,7 @@ func (e *BasicRuntimeStats) SetRowNum(rowNum int64) {
 
 // String implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) String() string {
-	return fmt.Sprintf("time:%v, loops:%d", time.Duration(e.consume), e.loop)
+	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume)), e.loop)
 }
 
 // GetTime get the int64 total time
@@ -681,7 +608,22 @@ func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 	defer e.mu.Unlock()
 	copStats, ok := e.copStats[planID]
 	if !ok {
-		copStats = &CopRuntimeStats{stats: make(map[string][]*BasicRuntimeStats)}
+		return nil
+	}
+	return copStats
+}
+
+// GetOrCreateCopStats gets the CopRuntimeStats specified by planID, if not exists a new one will be created.
+func (e *RuntimeStatsColl) GetOrCreateCopStats(planID int, storeType string) *CopRuntimeStats {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	copStats, ok := e.copStats[planID]
+	if !ok {
+		copStats = &CopRuntimeStats{
+			stats:      make(map[string][]*basicCopRuntimeStats),
+			scanDetail: &util.ScanDetail{},
+			storeType:  storeType,
+		}
 		e.copStats[planID] = copStats
 	}
 	return copStats
@@ -698,23 +640,21 @@ func getPlanIDFromExecutionSummary(summary *tipb.ExecutorExecutionSummary) (int,
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
-func (e *RuntimeStatsColl) RecordOneCopTask(planID int, address string, summary *tipb.ExecutorExecutionSummary) {
+func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType string, address string, summary *tipb.ExecutorExecutionSummary) int {
 	// for TiFlash cop response, ExecutorExecutionSummary contains executor id, so if there is a valid executor id in
 	// summary, use it overwrite the planID
 	if id, valid := getPlanIDFromExecutionSummary(summary); valid {
 		planID = id
 	}
-	copStats := e.GetCopStats(planID)
+	copStats := e.GetOrCreateCopStats(planID, storeType)
 	copStats.RecordOneCopTask(address, summary)
+	return planID
 }
 
-// RecordCopDetail records a specific cop tasks's cop detail.
-func (e *RuntimeStatsColl) RecordCopDetail(planID int, detail *CopDetails) {
-	copStats := e.GetCopStats(planID)
-	if copStats.copDetails == nil {
-		copStats.copDetails = &CopDetails{}
-	}
-	copStats.copDetails.Merge(detail)
+// RecordScanDetail records a specific cop tasks's cop detail.
+func (e *RuntimeStatsColl) RecordScanDetail(planID int, storeType string, detail *util.ScanDetail) {
+	copStats := e.GetOrCreateCopStats(planID, storeType)
+	copStats.scanDetail.Merge(detail)
 }
 
 // ExistsRootStats checks if the planID exists in the rootStats collection.
@@ -764,9 +704,7 @@ func (e *RuntimeStatsWithConcurrencyInfo) SetConcurrencyInfo(infos ...*Concurren
 	e.Lock()
 	defer e.Unlock()
 	e.concurrency = e.concurrency[:0]
-	for _, info := range infos {
-		e.concurrency = append(e.concurrency, info)
-	}
+	e.concurrency = append(e.concurrency, infos...)
 }
 
 // Clone implements the RuntimeStats interface.
@@ -797,18 +735,13 @@ func (e *RuntimeStatsWithConcurrencyInfo) String() string {
 }
 
 // Merge implements the RuntimeStats interface.
-func (e *RuntimeStatsWithConcurrencyInfo) Merge(rs RuntimeStats) {
-	tmp, ok := rs.(*RuntimeStatsWithConcurrencyInfo)
-	if !ok {
-		return
-	}
-	e.concurrency = append(e.concurrency, tmp.concurrency...)
+func (e *RuntimeStatsWithConcurrencyInfo) Merge(_ RuntimeStats) {
 }
 
 // RuntimeStatsWithCommit is the RuntimeStats with commit detail.
 type RuntimeStatsWithCommit struct {
-	Commit   *CommitDetails
-	LockKeys *LockKeysDetails
+	Commit   *util.CommitDetails
+	LockKeys *util.LockKeysDetails
 }
 
 // Tp implements the RuntimeStats interface.
@@ -824,14 +757,14 @@ func (e *RuntimeStatsWithCommit) Merge(rs RuntimeStats) {
 	}
 	if tmp.Commit != nil {
 		if e.Commit == nil {
-			e.Commit = &CommitDetails{}
+			e.Commit = &util.CommitDetails{}
 		}
 		e.Commit.Merge(tmp.Commit)
 	}
 
 	if tmp.LockKeys != nil {
 		if e.LockKeys == nil {
-			e.LockKeys = &LockKeysDetails{}
+			e.LockKeys = &util.LockKeysDetails{}
 		}
 		e.LockKeys.Merge(tmp.LockKeys)
 	}
@@ -856,24 +789,24 @@ func (e *RuntimeStatsWithCommit) String() string {
 		buf.WriteString("commit_txn: {")
 		if e.Commit.PrewriteTime > 0 {
 			buf.WriteString("prewrite:")
-			buf.WriteString(e.Commit.PrewriteTime.String())
+			buf.WriteString(FormatDuration(e.Commit.PrewriteTime))
 		}
 		if e.Commit.WaitPrewriteBinlogTime > 0 {
 			buf.WriteString(", wait_prewrite_binlog:")
-			buf.WriteString(e.Commit.WaitPrewriteBinlogTime.String())
+			buf.WriteString(FormatDuration(e.Commit.WaitPrewriteBinlogTime))
 		}
 		if e.Commit.GetCommitTsTime > 0 {
 			buf.WriteString(", get_commit_ts:")
-			buf.WriteString(e.Commit.GetCommitTsTime.String())
+			buf.WriteString(FormatDuration(e.Commit.GetCommitTsTime))
 		}
 		if e.Commit.CommitTime > 0 {
 			buf.WriteString(", commit:")
-			buf.WriteString(e.Commit.CommitTime.String())
+			buf.WriteString(FormatDuration(e.Commit.CommitTime))
 		}
 		commitBackoffTime := atomic.LoadInt64(&e.Commit.CommitBackoffTime)
 		if commitBackoffTime > 0 {
 			buf.WriteString(", backoff: {time: ")
-			buf.WriteString(time.Duration(commitBackoffTime).String())
+			buf.WriteString(FormatDuration(time.Duration(commitBackoffTime)))
 			e.Commit.Mu.Lock()
 			if len(e.Commit.Mu.BackoffTypes) > 0 {
 				buf.WriteString(", type: ")
@@ -884,7 +817,7 @@ func (e *RuntimeStatsWithCommit) String() string {
 		}
 		if e.Commit.ResolveLockTime > 0 {
 			buf.WriteString(", resolve_lock: ")
-			buf.WriteString(time.Duration(e.Commit.ResolveLockTime).String())
+			buf.WriteString(FormatDuration(time.Duration(e.Commit.ResolveLockTime)))
 		}
 
 		prewriteRegionNum := atomic.LoadInt32(&e.Commit.PrewriteRegionNum)
@@ -913,7 +846,7 @@ func (e *RuntimeStatsWithCommit) String() string {
 		buf.WriteString("lock_keys: {")
 		if e.LockKeys.TotalTime > 0 {
 			buf.WriteString("time:")
-			buf.WriteString(e.LockKeys.TotalTime.String())
+			buf.WriteString(FormatDuration(e.LockKeys.TotalTime))
 		}
 		if e.LockKeys.RegionNum > 0 {
 			buf.WriteString(", region:")
@@ -925,11 +858,11 @@ func (e *RuntimeStatsWithCommit) String() string {
 		}
 		if e.LockKeys.ResolveLockTime > 0 {
 			buf.WriteString(", resolve_lock:")
-			buf.WriteString(time.Duration(e.LockKeys.ResolveLockTime).String())
+			buf.WriteString(FormatDuration(time.Duration(e.LockKeys.ResolveLockTime)))
 		}
 		if e.LockKeys.BackoffTime > 0 {
 			buf.WriteString(", backoff: {time: ")
-			buf.WriteString(time.Duration(e.LockKeys.BackoffTime).String())
+			buf.WriteString(FormatDuration(time.Duration(e.LockKeys.BackoffTime)))
 			e.LockKeys.Mu.Lock()
 			if len(e.LockKeys.Mu.BackoffTypes) > 0 {
 				buf.WriteString(", type: ")
@@ -955,14 +888,13 @@ func (e *RuntimeStatsWithCommit) String() string {
 	return buf.String()
 }
 
-func (e *RuntimeStatsWithCommit) formatBackoff(backoffTypes []fmt.Stringer) string {
+func (e *RuntimeStatsWithCommit) formatBackoff(backoffTypes []string) string {
 	if len(backoffTypes) == 0 {
 		return ""
 	}
 	tpMap := make(map[string]struct{})
 	tpArray := []string{}
-	for _, tp := range backoffTypes {
-		tpStr := tp.String()
+	for _, tpStr := range backoffTypes {
 		_, ok := tpMap[tpStr]
 		if ok {
 			continue
@@ -972,4 +904,42 @@ func (e *RuntimeStatsWithCommit) formatBackoff(backoffTypes []fmt.Stringer) stri
 	}
 	sort.Strings(tpArray)
 	return fmt.Sprintf("%v", tpArray)
+}
+
+// FormatDuration uses to format duration, this function will prune precision before format duration.
+// Pruning precision is for human readability. The prune rule is:
+// 1. if the duration was less than 1us, return the original string.
+// 2. readable value >=10, keep 1 decimal, otherwise, keep 2 decimal. such as:
+//    9.412345ms  -> 9.41ms
+//    10.412345ms -> 10.4ms
+//    5.999s      -> 6s
+//    100.45µs    -> 100.5µs
+func FormatDuration(d time.Duration) string {
+	if d <= time.Microsecond {
+		return d.String()
+	}
+	unit := getUnit(d)
+	if unit == time.Nanosecond {
+		return d.String()
+	}
+	integer := (d / unit) * unit
+	decimal := float64(d%unit) / float64(unit)
+	if d < 10*unit {
+		decimal = math.Round(decimal*100) / 100
+	} else {
+		decimal = math.Round(decimal*10) / 10
+	}
+	d = integer + time.Duration(decimal*float64(unit))
+	return d.String()
+}
+
+func getUnit(d time.Duration) time.Duration {
+	if d >= time.Second {
+		return time.Second
+	} else if d >= time.Millisecond {
+		return time.Millisecond
+	} else if d >= time.Microsecond {
+		return time.Microsecond
+	}
+	return time.Nanosecond
 }

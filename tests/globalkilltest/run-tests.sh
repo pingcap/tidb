@@ -30,17 +30,17 @@ function help_message()
     -s <tidb-server-path>: Use tidb-server in <tidb-server-path> for testing.
                            Defaults to "bin/globalkilltest_tidb-server".
 
+    -p <pd-server-path>: Use pd-server in <pd-server-path> for testing.
+                         Defaults to "bin/pd-server".
+
+    -k <tikv-server-path>: Use tikv-server in <tikv-server-path> for testing.
+                           Defaults to "bin/tikv-server".
+
     --tidb_start_port <port>: First TiDB server listening port. port ~ port+2 will be used.
                               Defaults to "5000".
 
     --tidb_status_port <port>: First TiDB server status listening port. port ~ port+2 will be used.
                                Defaults to "8000".
-
-    --pd <pd-client-path>: PD client path, ip:port list seperated by comma.
-                           Defaults to "127.0.0.1:2379".
-
-    --pd_proxy_port <port>: PD proxy port. PD proxy is used to simulate lost connection between TiDB and PD.
-                            Defaults to "3379".
 
     --conn_lost <timeout in seconds>: Lost connection to PD timeout,
                                       should be the same as TiDB ldflag <ldflagLostConnectionToPDTimeout>.
@@ -53,6 +53,15 @@ function help_message()
                                           See tidb/Makefile for detail.
                                           Defaults to "1".
 '
+}
+
+function clean_cluster()
+{
+    set +e
+    pkill -9 -f tidb-server
+    pkill -9 -f tikv-server
+    pkill -9 -f pd-server
+    set -e
 }
 
 function go_tests()
@@ -69,5 +78,10 @@ while getopts "h" opt; do
     esac
 done
 
+clean_cluster
+
 go_tests
+
+clean_cluster
+
 echo "globalkilltest end"

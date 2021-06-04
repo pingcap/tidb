@@ -30,6 +30,18 @@ type SortItem struct {
 	Desc bool
 }
 
+// PartitionType is the way to partition during mpp data exchanging.
+type PartitionType int
+
+const (
+	// AnyType will not require any special partition types.
+	AnyType PartitionType = iota
+	// BroadcastType requires current task to broadcast its data.
+	BroadcastType
+	// HashType requires current task to shuffle its data according to some columns.
+	HashType
+)
+
 // PhysicalProperty stands for the required physical property by parents.
 // It contains the orders and the task types.
 type PhysicalProperty struct {
@@ -54,17 +66,23 @@ type PhysicalProperty struct {
 	// calculated when function "HashCode()" being called.
 	hashcode []byte
 
-	// whether need to enforce property.
-	Enforced bool
+	// indicates that whether we are allowed to add an enforcer.
+	CanAddEnforcer bool
+
+	// If the partition type is hash, the data should be reshuffled by partition cols.
+	PartitionCols []*expression.Column
+
+	// which types the exchange sender belongs to, only take effects when it's a mpp task.
+	PartitionTp PartitionType
 }
 
 // NewPhysicalProperty builds property from columns.
 func NewPhysicalProperty(taskTp TaskType, cols []*expression.Column, desc bool, expectCnt float64, enforced bool) *PhysicalProperty {
 	return &PhysicalProperty{
-		SortItems:   SortItemsFromCols(cols, desc),
-		TaskTp:      taskTp,
-		ExpectedCnt: expectCnt,
-		Enforced:    enforced,
+		SortItems:      SortItemsFromCols(cols, desc),
+		TaskTp:         taskTp,
+		ExpectedCnt:    expectCnt,
+		CanAddEnforcer: enforced,
 	}
 }
 
@@ -75,6 +93,28 @@ func SortItemsFromCols(cols []*expression.Column, desc bool) []SortItem {
 		items = append(items, SortItem{Col: col, Desc: desc})
 	}
 	return items
+}
+
+// IsSubsetOf check if the keys can match the needs of partition.
+func (p *PhysicalProperty) IsSubsetOf(keys []*expression.Column) []int {
+	if len(p.PartitionCols) > len(keys) {
+		return nil
+	}
+	matches := make([]int, 0, len(keys))
+	for _, partCol := range p.PartitionCols {
+		found := false
+		for i, key := range keys {
+			if partCol.Equal(nil, key) {
+				found = true
+				matches = append(matches, i)
+				break
+			}
+		}
+		if !found {
+			return nil
+		}
+	}
+	return matches
 }
 
 // AllColsFromSchema checks whether all the columns needed by this physical
@@ -90,7 +130,7 @@ func (p *PhysicalProperty) AllColsFromSchema(schema *expression.Schema) bool {
 
 // IsFlashProp return true if this physical property is only allowed to generate flash related task
 func (p *PhysicalProperty) IsFlashProp() bool {
-	return p.TaskTp == CopTiFlashLocalReadTaskType || p.TaskTp == CopTiFlashGlobalReadTaskType
+	return p.TaskTp == CopTiFlashLocalReadTaskType || p.TaskTp == CopTiFlashGlobalReadTaskType || p.TaskTp == MppTaskType
 }
 
 // GetAllPossibleChildTaskTypes enumrates the possible types of tasks for children.
@@ -127,7 +167,7 @@ func (p *PhysicalProperty) HashCode() []byte {
 	}
 	hashcodeSize := 8 + 8 + 8 + (16+8)*len(p.SortItems) + 8
 	p.hashcode = make([]byte, 0, hashcodeSize)
-	if p.Enforced {
+	if p.CanAddEnforcer {
 		p.hashcode = codec.EncodeInt(p.hashcode, 1)
 	} else {
 		p.hashcode = codec.EncodeInt(p.hashcode, 0)
@@ -142,6 +182,12 @@ func (p *PhysicalProperty) HashCode() []byte {
 			p.hashcode = codec.EncodeInt(p.hashcode, 0)
 		}
 	}
+	if p.TaskTp == MppTaskType {
+		p.hashcode = codec.EncodeInt(p.hashcode, int64(p.PartitionTp))
+		for _, col := range p.PartitionCols {
+			p.hashcode = append(p.hashcode, col.HashCode(nil)...)
+		}
+	}
 	return p.hashcode
 }
 
@@ -150,15 +196,15 @@ func (p *PhysicalProperty) String() string {
 	return fmt.Sprintf("Prop{cols: %v, TaskTp: %s, expectedCount: %v}", p.SortItems, p.TaskTp, p.ExpectedCnt)
 }
 
-// Clone returns a copy of PhysicalProperty. Currently, this function is only used to build new
-// required property for children plan in `exhaustPhysicalPlans`, so we don't copy `Enforced` field
-// because if `Enforced` is true, the `SortItems` must be empty now, this makes `Enforced` meaningless
-// for children nodes.
-func (p *PhysicalProperty) Clone() *PhysicalProperty {
+// CloneEssentialFields returns a copy of PhysicalProperty. We only copy the essential fields that really indicate the
+// property, specifically, `CanAddEnforcer` should not be included.
+func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 	prop := &PhysicalProperty{
-		SortItems:   p.SortItems,
-		TaskTp:      p.TaskTp,
-		ExpectedCnt: p.ExpectedCnt,
+		SortItems:     p.SortItems,
+		TaskTp:        p.TaskTp,
+		ExpectedCnt:   p.ExpectedCnt,
+		PartitionTp:   p.PartitionTp,
+		PartitionCols: p.PartitionCols,
 	}
 	return prop
 }

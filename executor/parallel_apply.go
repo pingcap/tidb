@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/chunk"
@@ -45,12 +46,10 @@ type ParallelNestedLoopApplyExec struct {
 	baseExecutor
 
 	// outer-side fields
-	cursor        int
-	outerExec     Executor
-	outerFilter   expression.CNFExprs
-	outerList     *chunk.List
-	outerRowMutex sync.Mutex
-	outer         bool
+	outerExec   Executor
+	outerFilter expression.CNFExprs
+	outerList   *chunk.List
+	outer       bool
 
 	// inner-side fields
 	// use slices since the inner side is paralleled
@@ -69,6 +68,7 @@ type ParallelNestedLoopApplyExec struct {
 	// fields about concurrency control
 	concurrency int
 	started     uint32
+	drained     uint32 // drained == true indicates there is no more data
 	freeChkCh   chan *chunk.Chunk
 	resultChkCh chan result
 	outerRowCh  chan outerRow
@@ -131,6 +131,11 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 
 // Next implements the Executor interface.
 func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
+	if atomic.LoadUint32(&e.drained) == 1 {
+		req.Reset()
+		return nil
+	}
+
 	if atomic.CompareAndSwapUint32(&e.started, 0, 1) {
 		e.workerWg.Add(1)
 		go e.outerWorker(ctx)
@@ -148,6 +153,7 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 	}
 	if result.chk == nil { // no more data
 		req.Reset()
+		atomic.StoreUint32(&e.drained, 1)
 		return nil
 	}
 	req.SwapColumns(result.chk)
@@ -158,12 +164,14 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 // Close implements the Executor interface.
 func (e *ParallelNestedLoopApplyExec) Close() error {
 	e.memTracker = nil
-	err := e.outerExec.Close()
 	if atomic.LoadUint32(&e.started) == 1 {
 		close(e.exit)
 		e.notifyWg.Wait()
 		e.started = 0
 	}
+	// Wait all workers to finish before Close() is called.
+	// Otherwise we may got data race.
+	err := e.outerExec.Close()
 
 	if e.runtimeStats != nil {
 		runtimeStats := newJoinRuntimeStats()
@@ -196,6 +204,7 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 	var selected []bool
 	var err error
 	for {
+		failpoint.Inject("parallelApplyOuterWorkerPanic", nil)
 		chk := newFirstChunk(e.outerExec)
 		if err := Next(ctx, e.outerExec, chk); err != nil {
 			e.putResult(nil, err)
@@ -233,6 +242,7 @@ func (e *ParallelNestedLoopApplyExec) innerWorker(ctx context.Context, id int) {
 		case <-e.exit:
 			return
 		}
+		failpoint.Inject("parallelApplyInnerWorkerPanic", nil)
 		err := e.fillInnerChunk(ctx, id, chk)
 		if err == nil && chk.NumRows() == 0 { // no more data, this goroutine can exit
 			return
@@ -276,6 +286,7 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	}
 	if e.useCache { // look up the cache
 		atomic.AddInt64(&e.cacheAccessCounter, 1)
+		failpoint.Inject("parallelApplyGetCachePanic", nil)
 		value, err := e.cache.Get(key)
 		if err != nil {
 			return err
@@ -322,6 +333,7 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	}
 
 	if e.useCache { // update the cache
+		failpoint.Inject("parallelApplySetCachePanic", nil)
 		if _, err := e.cache.Set(key, e.innerList[id]); err != nil {
 			return err
 		}

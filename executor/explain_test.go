@@ -49,15 +49,15 @@ func (s *testSuite1) TestExplainPrivileges(c *C) {
 
 	tk1.MustExec("use explaindatabase")
 	tk1.MustQuery("select * from v")
-	err = tk1.ExecToErr("explain select * from v")
+	err = tk1.ExecToErr("explain format = 'brief' select * from v")
 	c.Assert(err.Error(), Equals, plannercore.ErrViewNoExplain.Error())
 
 	tk.MustExec(`grant show view on explaindatabase.v to 'explain'@'%'`)
-	tk1.MustQuery("explain select * from v")
+	tk1.MustQuery("explain format = 'brief' select * from v")
 
 	tk.MustExec(`revoke select on explaindatabase.v from 'explain'@'%'`)
 
-	err = tk1.ExecToErr("explain select * from v")
+	err = tk1.ExecToErr("explain format = 'brief' select * from v")
 	c.Assert(err.Error(), Equals, plannercore.ErrTableaccessDenied.GenWithStackByArgs("SELECT", "explain", "%", "v").Error())
 }
 
@@ -70,10 +70,10 @@ func (s *testSuite1) TestExplainCartesianJoin(c *C) {
 		sql             string
 		isCartesianJoin bool
 	}{
-		{"explain select * from t t1, t t2", true},
-		{"explain select * from t t1 where exists (select 1 from t t2 where t2.v > t1.v)", true},
-		{"explain select * from t t1 where exists (select 1 from t t2 where t2.v in (t1.v+1, t1.v+2))", true},
-		{"explain select * from t t1, t t2 where t1.v = t2.v", false},
+		{"explain format = 'brief' select * from t t1, t t2", true},
+		{"explain format = 'brief' select * from t t1 where exists (select 1 from t t2 where t2.v > t1.v)", true},
+		{"explain format = 'brief' select * from t t1 where exists (select 1 from t t2 where t2.v in (t1.v+1, t1.v+2))", true},
+		{"explain format = 'brief' select * from t t1, t t2 where t1.v = t2.v", false},
 	}
 	for _, ca := range cases {
 		rows := tk.MustQuery(ca.sql).Rows()
@@ -97,7 +97,7 @@ func (s *testSuite1) TestExplainWrite(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
 	tk.MustQuery("explain analyze update t set a=2 where a=1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
-	tk.MustQuery("explain insert into t select 1")
+	tk.MustQuery("explain format = 'brief' insert into t select 1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
 	tk.MustQuery("explain analyze insert into t select 1")
 	tk.MustQuery("explain analyze replace into t values (3)")
@@ -207,6 +207,7 @@ func (s *testSuite2) TestExplainAnalyzeExecutionInfo(c *C) {
 	s.checkExecutionInfo(c, tk, "explain analyze select * from t")
 	s.checkExecutionInfo(c, tk, "explain analyze select k from t use index(k)")
 	s.checkExecutionInfo(c, tk, "explain analyze select * from t use index(k)")
+	s.checkExecutionInfo(c, tk, "explain analyze with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000) select * from cte;")
 
 	tk.MustExec("CREATE TABLE IF NOT EXISTS nation  ( N_NATIONKEY  BIGINT NOT NULL,N_NAME       CHAR(25) NOT NULL,N_REGIONKEY  BIGINT NOT NULL,N_COMMENT    VARCHAR(152),PRIMARY KEY (N_NATIONKEY));")
 	tk.MustExec("CREATE TABLE IF NOT EXISTS part  ( P_PARTKEY     BIGINT NOT NULL,P_NAME        VARCHAR(55) NOT NULL,P_MFGR        CHAR(25) NOT NULL,P_BRAND       CHAR(10) NOT NULL,P_TYPE        VARCHAR(25) NOT NULL,P_SIZE        BIGINT NOT NULL,P_CONTAINER   CHAR(10) NOT NULL,P_RETAILPRICE DECIMAL(15,2) NOT NULL,P_COMMENT     VARCHAR(23) NOT NULL,PRIMARY KEY (P_PARTKEY));")
@@ -320,9 +321,33 @@ func (s *testSuite1) TestCheckActRowsWithUnistore(c *C) {
 			sql:      "select count(*) from t_unistore_act_rows group by b",
 			expected: []string{"2", "2", "2", "4"},
 		},
+		{
+			sql:      "with cte(a) as (select a from t_unistore_act_rows) select (select 1 from cte limit 1) from cte;",
+			expected: []string{"4", "4", "4", "4", "4"},
+		},
 	}
 
 	for _, test := range tests {
 		checkActRows(c, tk, test.sql, test.expected)
 	}
+}
+
+func (s *testSuite2) TestExplainAnalyzeCTEMemoryAndDiskInfo(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000) select * from cte;")
+
+	rows := tk.MustQuery("explain analyze with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000)" +
+		" select * from cte, t;").Rows()
+
+	c.Assert(rows[4][7].(string), Not(Equals), "N/A")
+	c.Assert(rows[4][8].(string), Equals, "0 Bytes")
+
+	tk.MustExec("set @@tidb_mem_quota_query=10240;")
+	rows = tk.MustQuery("explain analyze with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000)" +
+		" select * from cte, t;").Rows()
+
+	c.Assert(rows[4][7].(string), Not(Equals), "N/A")
+	c.Assert(rows[4][8].(string), Not(Equals), "N/A")
 }

@@ -14,7 +14,18 @@
 package tikv
 
 import (
+	"flag"
+	"os"
+	"sync"
+	"testing"
+
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/logutil"
+)
+
+var (
+	withTiKVGlobalLock sync.RWMutex
+	WithTiKV           = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
 )
 
 // OneByOneSuite is a suite, When with-tikv flag is true, there is only one storage, so the test suite have to run one by one.
@@ -40,4 +51,24 @@ type testTiKVSuite struct {
 	OneByOneSuite
 }
 
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	logLevel := os.Getenv("log_level")
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	TestingT(t)
+}
+
 var _ = Suite(&testTiKVSuite{})
+
+func (s *testTiKVSuite) TestBasicFunc(c *C) {
+	if IsMockCommitErrorEnable() {
+		defer MockCommitErrorEnable()
+	} else {
+		defer MockCommitErrorDisable()
+	}
+
+	MockCommitErrorEnable()
+	c.Assert(IsMockCommitErrorEnable(), IsTrue)
+	MockCommitErrorDisable()
+	c.Assert(IsMockCommitErrorEnable(), IsFalse)
+}

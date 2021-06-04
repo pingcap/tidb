@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -47,7 +48,7 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []int
 		Build()
 	c.Assert(err, IsNil)
 
-	/// 4 int64 types.
+	// 4 int64 types.
 	colTypes := []*types.FieldType{
 		{
 			Tp:      mysql.TypeLonglong,
@@ -87,7 +88,6 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []int
 
 func (s *testSuite) TestSelectNormal(c *C) {
 	response, colTypes := s.createSelectNormal(1, 2, c, nil)
-	response.Fetch(context.TODO())
 
 	// Test Next.
 	chk := chunk.New(colTypes, 32, 32)
@@ -108,7 +108,6 @@ func (s *testSuite) TestSelectNormal(c *C) {
 
 func (s *testSuite) TestSelectMemTracker(c *C) {
 	response, colTypes := s.createSelectNormal(2, 6, c, nil)
-	response.Fetch(context.TODO())
 
 	// Test Next.
 	chk := chunk.New(colTypes, 3, 3)
@@ -123,7 +122,6 @@ func (s *testSuite) TestSelectMemTracker(c *C) {
 func (s *testSuite) TestSelectNormalChunkSize(c *C) {
 	s.sctx.GetSessionVars().EnableChunkRPC = false
 	response, colTypes := s.createSelectNormal(100, 1000000, c, nil)
-	response.Fetch(context.TODO())
 	s.testChunkSize(response, colTypes, c)
 	c.Assert(response.Close(), IsNil)
 	c.Assert(response.memTracker.BytesConsumed(), Equals, int64(0))
@@ -140,8 +138,6 @@ func (s *testSuite) TestSelectWithRuntimeStats(c *C) {
 			c.Fatal("invalid copPlanIDs")
 		}
 	}
-
-	response.Fetch(context.TODO())
 
 	// Test Next.
 	chk := chunk.New(colTypes, 32, 32)
@@ -191,6 +187,17 @@ func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
 	c.Assert(stats.String(), Equals, expect)
 	// Test for idempotence.
 	c.Assert(stats.String(), Equals, expect)
+
+	s1 = &selectResultRuntimeStats{
+		copRespTime:      []time.Duration{time.Second},
+		procKeys:         []int64{100},
+		backoffSleep:     map[string]time.Duration{"RegionMiss": time.Millisecond},
+		totalProcessTime: time.Second,
+		totalWaitTime:    time.Second,
+		rpcStat:          tikv.NewRegionRequestRuntimeStats(),
+	}
+	expect = "cop_task: {num: 1, max: 1s, proc_keys: 100, tot_proc: 1s, tot_wait: 1s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 1ms}"
+	c.Assert(s1.String(), Equals, expect)
 }
 
 func (s *testSuite) createSelectStreaming(batch, totalRows int, c *C) (*streamResult, []*types.FieldType) {
@@ -203,7 +210,7 @@ func (s *testSuite) createSelectStreaming(batch, totalRows int, c *C) (*streamRe
 		Build()
 	c.Assert(err, IsNil)
 
-	/// 4 int64 types.
+	// 4 int64 types.
 	colTypes := []*types.FieldType{
 		{
 			Tp:      mysql.TypeLonglong,
@@ -236,7 +243,6 @@ func (s *testSuite) createSelectStreaming(batch, totalRows int, c *C) (*streamRe
 
 func (s *testSuite) TestSelectStreaming(c *C) {
 	response, colTypes := s.createSelectStreaming(1, 2, c)
-	response.Fetch(context.TODO())
 
 	// Test Next.
 	chk := chunk.New(colTypes, 32, 32)
@@ -256,7 +262,6 @@ func (s *testSuite) TestSelectStreaming(c *C) {
 
 func (s *testSuite) TestSelectStreamingWithNextRaw(c *C) {
 	response, _ := s.createSelectStreaming(1, 2, c)
-	response.Fetch(context.TODO())
 	data, err := response.NextRaw(context.TODO())
 	c.Assert(err, IsNil)
 	c.Assert(len(data), Equals, 16)
@@ -264,7 +269,6 @@ func (s *testSuite) TestSelectStreamingWithNextRaw(c *C) {
 
 func (s *testSuite) TestSelectStreamingChunkSize(c *C) {
 	response, colTypes := s.createSelectStreaming(100, 1000000, c)
-	response.Fetch(context.TODO())
 	s.testChunkSize(response, colTypes, c)
 	c.Assert(response.Close(), IsNil)
 }
@@ -324,15 +328,13 @@ func (s *testSuite) TestAnalyze(c *C) {
 		Build()
 	c.Assert(err, IsNil)
 
-	response, err := Analyze(context.TODO(), s.sctx.GetClient(), request, kv.DefaultVars, true, s.sctx.GetSessionVars().StmtCtx.MemTracker)
+	response, err := Analyze(context.TODO(), s.sctx.GetClient(), request, tikvstore.DefaultVars, true, s.sctx.GetSessionVars().StmtCtx.MemTracker)
 	c.Assert(err, IsNil)
 
 	result, ok := response.(*selectResult)
 	c.Assert(ok, IsTrue)
 	c.Assert(result.label, Equals, "analyze")
 	c.Assert(result.sqlType, Equals, "internal")
-
-	response.Fetch(context.TODO())
 
 	bytes, err := response.NextRaw(context.TODO())
 	c.Assert(err, IsNil)
@@ -349,15 +351,13 @@ func (s *testSuite) TestChecksum(c *C) {
 		Build()
 	c.Assert(err, IsNil)
 
-	response, err := Checksum(context.TODO(), s.sctx.GetClient(), request, kv.DefaultVars)
+	response, err := Checksum(context.TODO(), s.sctx.GetClient(), request, tikvstore.DefaultVars)
 	c.Assert(err, IsNil)
 
 	result, ok := response.(*selectResult)
 	c.Assert(ok, IsTrue)
 	c.Assert(result.label, Equals, "checksum")
 	c.Assert(result.sqlType, Equals, "general")
-
-	response.Fetch(context.TODO())
 
 	bytes, err := response.NextRaw(context.TODO())
 	c.Assert(err, IsNil)
@@ -473,7 +473,7 @@ func createSelectNormal(batch, totalRows int, ctx sessionctx.Context) (*selectRe
 		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 
-	/// 4 int64 types.
+	// 4 int64 types.
 	colTypes := []*types.FieldType{
 		{
 			Tp:      mysql.TypeLonglong,
@@ -508,7 +508,6 @@ func BenchmarkSelectResponseChunk_BigResponse(b *testing.B) {
 		s.sctx.GetSessionVars().InitChunkSize = 32
 		s.sctx.GetSessionVars().MaxChunkSize = 1024
 		selectResult, colTypes := createSelectNormal(4000, 20000, s.sctx)
-		selectResult.Fetch(context.TODO())
 		chk := chunk.NewChunkWithCapacity(colTypes, 1024)
 		b.StartTimer()
 		for {
@@ -533,7 +532,6 @@ func BenchmarkSelectResponseChunk_SmallResponse(b *testing.B) {
 		s.sctx.GetSessionVars().InitChunkSize = 32
 		s.sctx.GetSessionVars().MaxChunkSize = 1024
 		selectResult, colTypes := createSelectNormal(32, 3200, s.sctx)
-		selectResult.Fetch(context.TODO())
 		chk := chunk.NewChunkWithCapacity(colTypes, 1024)
 		b.StartTimer()
 		for {

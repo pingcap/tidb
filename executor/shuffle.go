@@ -72,7 +72,7 @@ import (
 //          +---------->  |    fetch data from DataSource   |
 //                        +---------------------------------+
 //
-////////////////////////////////////////////////////////////////////////////////////////
+//
 type ShuffleExec struct {
 	baseExecutor
 	concurrency int
@@ -137,6 +137,7 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 
 // Close implements the Executor Close interface.
 func (e *ShuffleExec) Close() error {
+	var firstErr error
 	if !e.prepared {
 		for _, w := range e.workers {
 			for _, r := range w.receivers {
@@ -153,6 +154,10 @@ func (e *ShuffleExec) Close() error {
 			for range r.inputCh {
 			}
 		}
+		// close child executor of each worker
+		if err := w.childExec.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 	for range e.outputCh { // workers exit before `e.outputCh` is closed.
 	}
@@ -165,19 +170,16 @@ func (e *ShuffleExec) Close() error {
 	}
 
 	// close dataSources
-	errArr := make([]error, len(e.dataSources))
-	for i, dataSource := range e.dataSources {
-		errArr[i] = dataSource.Close()
-	}
-	// close baseExecutor
-	baseCloseErr := e.baseExecutor.Close()
-	// check close error
-	for _, err := range errArr {
-		if err != nil {
-			return errors.Trace(err)
+	for _, dataSource := range e.dataSources {
+		if err := dataSource.Close(); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
-	return errors.Trace(baseCloseErr)
+	// close baseExecutor
+	if err := e.baseExecutor.Close(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	return errors.Trace(firstErr)
 }
 
 func (e *ShuffleExec) prepare4ParallelExec(ctx context.Context) {
@@ -388,6 +390,7 @@ func (e *shuffleWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 }
 
 var _ partitionSplitter = &partitionHashSplitter{}
+var _ partitionSplitter = &partitionRangeSplitter{}
 
 type partitionSplitter interface {
 	split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error)
@@ -410,5 +413,49 @@ func (s *partitionHashSplitter) split(ctx sessionctx.Context, input *chunk.Chunk
 	for i := 0; i < numRows; i++ {
 		workerIndices = append(workerIndices, int(murmur3.Sum32(s.hashKeys[i]))%s.numWorkers)
 	}
+	return workerIndices, nil
+}
+
+func buildPartitionHashSplitter(concurrency int, byItems []expression.Expression) *partitionHashSplitter {
+	return &partitionHashSplitter{
+		byItems:    byItems,
+		numWorkers: concurrency,
+	}
+}
+
+type partitionRangeSplitter struct {
+	byItems      []expression.Expression
+	numWorkers   int
+	groupChecker *vecGroupChecker
+	idx          int
+}
+
+func buildPartitionRangeSplitter(ctx sessionctx.Context, concurrency int, byItems []expression.Expression) *partitionRangeSplitter {
+	return &partitionRangeSplitter{
+		byItems:      byItems,
+		numWorkers:   concurrency,
+		groupChecker: newVecGroupChecker(ctx, byItems),
+		idx:          0,
+	}
+}
+
+// This method is supposed to be used for shuffle with sorted `dataSource`
+// the caller of this method should guarantee that `input` is grouped,
+// which means that rows with the same byItems should be continuous, the order does not matter.
+func (s *partitionRangeSplitter) split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
+	_, err := s.groupChecker.splitIntoGroups(input)
+	if err != nil {
+		return workerIndices, err
+	}
+
+	workerIndices = workerIndices[:0]
+	for !s.groupChecker.isExhausted() {
+		begin, end := s.groupChecker.getNextGroup()
+		for i := begin; i < end; i++ {
+			workerIndices = append(workerIndices, s.idx)
+		}
+		s.idx = (s.idx + 1) % s.numWorkers
+	}
+
 	return workerIndices, nil
 }

@@ -95,10 +95,7 @@ type ImplTableDual struct {
 
 // Match implements ImplementationRule Match interface.
 func (r *ImplTableDual) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	if !prop.IsEmpty() {
-		return false
-	}
-	return true
+	return prop.IsEmpty()
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
@@ -116,10 +113,7 @@ type ImplMemTableScan struct {
 
 // Match implements ImplementationRule Match interface.
 func (r *ImplMemTableScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	if !prop.IsEmpty() {
-		return false
-	}
-	return true
+	return prop.IsEmpty()
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
@@ -272,7 +266,7 @@ func (r *ImplSelection) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 	logicalSel := expr.ExprNode.(*plannercore.LogicalSelection)
 	physicalSel := plannercore.PhysicalSelection{
 		Conditions: logicalSel.Conditions,
-	}.Init(logicalSel.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicalSel.SelectBlockOffset(), reqProp.Clone())
+	}.Init(logicalSel.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicalSel.SelectBlockOffset(), reqProp.CloneEssentialFields())
 	switch expr.Group.EngineType {
 	case memo.EngineTiDB:
 		return []memo.Implementation{impl.NewTiDBSelectionImpl(physicalSel)}, nil

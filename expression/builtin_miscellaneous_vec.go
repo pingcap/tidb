@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/vitess"
 )
 
 func (b *builtinInetNtoaSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
@@ -52,7 +53,7 @@ func (b *builtinInetNtoaSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 		binary.BigEndian.PutUint32(ip, uint32(val))
 		ipv4 := ip.To4()
 		if ipv4 == nil {
-			//Not a vaild ipv4 address.
+			// Not a vaild ipv4 address.
 			result.AppendNull()
 			continue
 		}
@@ -256,7 +257,7 @@ func (b *builtinIsIPv4CompatSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 			// See example https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-compat
 			ipAddress := buf.GetBytes(i)
 			if len(ipAddress) != net.IPv6len || !bytes.HasPrefix(ipAddress, prefixCompat) {
-				//Not an IPv6 address, return false
+				// Not an IPv6 address, return false
 				i64s[i] = 0
 			} else {
 				i64s[i] = 1
@@ -381,7 +382,7 @@ func (b *builtinIsIPv4MappedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 			// See example https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-mapped
 			ipAddress := buf.GetBytes(i)
 			if len(ipAddress) != net.IPv6len || !bytes.HasPrefix(ipAddress, prefixMapped) {
-				//Not an IPv6 address, return false
+				// Not an IPv6 address, return false
 				i64s[i] = 0
 			} else {
 				i64s[i] = 1
@@ -448,7 +449,7 @@ func (b *builtinInet6AtonSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		var isMappedIpv6 bool
 		ipTo4 := ip.To4()
 		if ipTo4 != nil && strings.Contains(val, ":") {
-			//mapped ipv6 address.
+			// mapped ipv6 address.
 			isMappedIpv6 = true
 		}
 
@@ -517,7 +518,7 @@ func (b *builtinInetAtonSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 			result.SetNull(i, true)
 			continue
 		}
-		//reset
+		// reset
 		byteResult = 0
 		res = 0
 		dotCount = 0
@@ -615,5 +616,40 @@ func (b *builtinReleaseLockSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	for i := range i64s {
 		i64s[i] = 1
 	}
+	return nil
+}
+
+func (b *builtinVitessHashSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinVitessHashSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	column, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(column)
+
+	if err := b.args[0].VecEvalInt(b.ctx, input, column); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	r64s := result.Uint64s()
+	result.MergeNulls(column)
+
+	for i := 0; i < n; i++ {
+		if column.IsNull(i) {
+			continue
+		}
+		var uintKey = column.GetUint64(i)
+		var hash uint64
+		if hash, err = vitess.HashUint64(uintKey); err != nil {
+			return err
+		}
+		r64s[i] = hash
+	}
+
 	return nil
 }

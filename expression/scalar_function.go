@@ -153,10 +153,10 @@ func typeInferForNull(args []Expression) {
 	// Infer the actual field type of the NULL constant.
 	var retFieldTp *types.FieldType
 	var hasNullArg bool
-	for _, arg := range args {
-		isNullArg := isNull(arg)
+	for i := len(args) - 1; i >= 0; i-- {
+		isNullArg := isNull(args[i])
 		if !isNullArg && retFieldTp == nil {
-			retFieldTp = arg.GetType()
+			retFieldTp = args[i].GetType()
 		}
 		hasNullArg = hasNullArg || isNullArg
 		// Break if there are both NULL and non-NULL expression
@@ -170,6 +170,7 @@ func typeInferForNull(args []Expression) {
 	for _, arg := range args {
 		if isNull(arg) {
 			*arg.GetType() = *retFieldTp
+			arg.GetType().Flag &= ^mysql.NotNullFlag // Remove NotNullFlag of NullConst
 		}
 	}
 }
@@ -203,7 +204,13 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
-	typeInferForNull(funcArgs)
+	switch funcName {
+	case ast.If, ast.Ifnull, ast.Nullif:
+		// Do nothing. Because it will call InferType4ControlFuncs.
+	default:
+		typeInferForNull(funcArgs)
+	}
+
 	f, err := fc.getFunction(ctx, funcArgs)
 	if err != nil {
 		return nil, err
@@ -352,7 +359,13 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 	case types.ETJson:
 		res, isNull, err = sf.EvalJSON(sf.GetCtx(), row)
 	case types.ETString:
-		res, isNull, err = sf.EvalString(sf.GetCtx(), row)
+		var str string
+		str, isNull, err = sf.EvalString(sf.GetCtx(), row)
+		if !isNull && err == nil && tp.Tp == mysql.TypeEnum {
+			res, err = types.ParseEnumName(tp.Elems, str, tp.Collate)
+		} else {
+			res = str
+		}
 	}
 
 	if isNull || err != nil {
@@ -422,29 +435,6 @@ func (sf *ScalarFunction) ResolveIndices(schema *Schema) (Expression, error) {
 }
 
 func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
-	if sf.FuncName.L == ast.In {
-		args := []Expression{}
-		switch inFunc := sf.Function.(type) {
-		case *builtinInIntSig:
-			args = inFunc.nonConstArgs
-		case *builtinInStringSig:
-			args = inFunc.nonConstArgs
-		case *builtinInTimeSig:
-			args = inFunc.nonConstArgs
-		case *builtinInDurationSig:
-			args = inFunc.nonConstArgs
-		case *builtinInRealSig:
-			args = inFunc.nonConstArgs
-		case *builtinInDecimalSig:
-			args = inFunc.nonConstArgs
-		}
-		for _, arg := range args {
-			err := arg.resolveIndices(schema)
-			if err != nil {
-				return err
-			}
-		}
-	}
 	for _, arg := range sf.GetArgs() {
 		err := arg.resolveIndices(schema)
 		if err != nil {

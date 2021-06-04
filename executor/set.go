@@ -15,30 +15,21 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/stmtsummary"
 	"go.uber.org/zap"
-)
-
-const (
-	scopeGlobal  = "global"
-	scopeSession = "session"
 )
 
 // SetExecutor executes set statement.
@@ -102,26 +93,11 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			continue
 		}
 
-		syns := e.getSynonyms(name)
-		// Set system variable
-		for _, n := range syns {
-			err := e.setSysVariable(n, v)
-			if err != nil {
-				return err
-			}
+		if err := e.setSysVariable(name, v); err != nil {
+			return err
 		}
 	}
 	return nil
-}
-
-func (e *SetExecutor) getSynonyms(varName string) []string {
-	synonyms, ok := variable.SynonymsSysVariables[varName]
-	if ok {
-		return synonyms
-	}
-
-	synonyms = []string{varName}
-	return synonyms
 }
 
 func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) error {
@@ -130,25 +106,8 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	if sysVar == nil {
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	if sysVar.Scope == variable.ScopeNone {
-		return errors.Errorf("Variable '%s' is a read only variable", name)
-	}
-	var valStr string
-	var scopeStr string
 	if v.IsGlobal {
-		scopeStr = scopeGlobal
-		// Set global scope system variable.
-		if sysVar.Scope&variable.ScopeGlobal == 0 {
-			return errors.Errorf("Variable '%s' is a SESSION variable and can't be used with SET GLOBAL", name)
-		}
-		value, err := e.getVarValue(v, sysVar)
-		if err != nil {
-			return err
-		}
-		if value.IsNull() {
-			value.SetString("", mysql.DefaultCollationName)
-		}
-		valStr, err = value.ToString()
+		valStr, err := e.getVarValue(v, sysVar)
 		if err != nil {
 			return err
 		}
@@ -163,89 +122,61 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			}
 			return nil
 		})
-		if err != nil {
-			return err
+		logutil.BgLogger().Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+		return err
+	}
+	// Set session variable
+	valStr, err := e.getVarValue(v, nil)
+	if err != nil {
+		return err
+	}
+	getSnapshotTSByName := func() uint64 {
+		if name == variable.TiDBSnapshot {
+			return sessionVars.SnapshotTS
+		} else if name == variable.TiDBTxnReadTS {
+			return sessionVars.TxnReadTS.PeakTxnReadTS()
 		}
-	} else {
-		scopeStr = scopeSession
-		// Set session scope system variable.
-		if sysVar.Scope&variable.ScopeSession == 0 {
-			return errors.Errorf("Variable '%s' is a GLOBAL variable and should be set with SET GLOBAL", name)
-		}
-		value, err := e.getVarValue(v, nil)
-		if err != nil {
-			return err
-		}
-		oldSnapshotTS := sessionVars.SnapshotTS
-		if name == variable.TxnIsolationOneShot && sessionVars.InTxn() {
-			return errors.Trace(ErrCantChangeTxCharacteristics)
-		}
-		if name == variable.TiDBFoundInPlanCache {
-			sessionVars.StmtCtx.AppendWarning(fmt.Errorf("Set operation for '%s' will not take effect", variable.TiDBFoundInPlanCache))
-			return nil
-		}
-		if name == variable.TiDBFoundInBinding {
-			sessionVars.StmtCtx.AppendWarning(fmt.Errorf("Set operation for '%s' will not take effect", variable.TiDBFoundInBinding))
-			return nil
-		}
-		err = variable.SetSessionSystemVar(sessionVars, name, value)
-		if err != nil {
-			return err
-		}
-		newSnapshotIsSet := sessionVars.SnapshotTS > 0 && sessionVars.SnapshotTS != oldSnapshotTS
-		if newSnapshotIsSet {
-			err = gcutil.ValidateSnapshot(e.ctx, sessionVars.SnapshotTS)
-			if err != nil {
-				sessionVars.SnapshotTS = oldSnapshotTS
-				return err
-			}
-		}
-		err = e.loadSnapshotInfoSchemaIfNeeded(name)
-		if err != nil {
+		return 0
+	}
+	oldSnapshotTS := getSnapshotTSByName()
+	fallbackOldSnapshotTS := func() {
+		if name == variable.TiDBSnapshot {
 			sessionVars.SnapshotTS = oldSnapshotTS
+		} else if name == variable.TiDBTxnReadTS {
+			sessionVars.TxnReadTS.SetTxnReadTS(oldSnapshotTS)
+		}
+	}
+	if name == variable.TxnIsolationOneShot && sessionVars.InTxn() {
+		return errors.Trace(ErrCantChangeTxCharacteristics)
+	}
+	err = variable.SetSessionSystemVar(sessionVars, name, valStr)
+	if err != nil {
+		return err
+	}
+	newSnapshotTS := getSnapshotTSByName()
+	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
+	if newSnapshotIsSet {
+		err = gcutil.ValidateSnapshot(e.ctx, newSnapshotTS)
+		if err != nil {
+			fallbackOldSnapshotTS()
 			return err
 		}
-		if value.IsNull() {
-			valStr = "NULL"
-		} else {
-			var err error
-			valStr, err = value.ToString()
-			terror.Log(err)
-		}
 	}
-	if scopeStr == scopeGlobal {
-		logutil.BgLogger().Info(fmt.Sprintf("set %s var", scopeStr), zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
-	} else {
-		// Clients are often noisy in setting session variables such as
-		// autocommit, timezone, query cache
-		logutil.BgLogger().Debug(fmt.Sprintf("set %s var", scopeStr), zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+	err = e.loadSnapshotInfoSchemaIfNeeded(newSnapshotTS)
+	if err != nil {
+		fallbackOldSnapshotTS()
+		return err
 	}
-
-	valStrToBoolStr := variable.BoolToOnOff(variable.TiDBOptOn(valStr))
-
-	switch name {
-	case variable.TiDBEnableStmtSummary:
-		return stmtsummary.StmtSummaryByDigestMap.SetEnabled(valStr, !v.IsGlobal)
-	case variable.TiDBStmtSummaryInternalQuery:
-		return stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(valStr, !v.IsGlobal)
-	case variable.TiDBStmtSummaryRefreshInterval:
-		return stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(valStr, !v.IsGlobal)
-	case variable.TiDBStmtSummaryHistorySize:
-		return stmtsummary.StmtSummaryByDigestMap.SetHistorySize(valStr, !v.IsGlobal)
-	case variable.TiDBStmtSummaryMaxStmtCount:
-		return stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(valStr, !v.IsGlobal)
-	case variable.TiDBStmtSummaryMaxSQLLength:
-		return stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(valStr, !v.IsGlobal)
-	case variable.TiDBCapturePlanBaseline:
-		variable.CapturePlanBaseline.Set(valStrToBoolStr, !v.IsGlobal)
-	}
-
+	// Clients are often noisy in setting session variables such as
+	// autocommit, timezone, query cache
+	logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	return nil
 }
 
 func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 	var err error
-	if len(co) == 0 {
+	sessionVars := e.ctx.GetSessionVars()
+	if co == "" {
 		if co, err = charset.GetDefaultCollation(cs); err != nil {
 			return err
 		}
@@ -258,18 +189,17 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 			return charset.ErrCollationCharsetMismatch.GenWithStackByArgs(coll.Name, cs)
 		}
 	}
-	sessionVars := e.ctx.GetSessionVars()
 	if isSetName {
 		for _, v := range variable.SetNamesVariables {
-			if err = sessionVars.SetSystemVar(v, cs); err != nil {
+			if err = variable.SetSessionSystemVar(sessionVars, v, cs); err != nil {
 				return errors.Trace(err)
 			}
 		}
-		return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, co))
+		return errors.Trace(variable.SetSessionSystemVar(sessionVars, variable.CollationConnection, co))
 	}
 	// Set charset statement, see also https://dev.mysql.com/doc/refman/8.0/en/set-character-set.html.
 	for _, v := range variable.SetCharsetVariables {
-		if err = sessionVars.SetSystemVar(v, cs); err != nil {
+		if err = variable.SetSessionSystemVar(sessionVars, v, cs); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -281,45 +211,41 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 	if err != nil {
 		return err
 	}
-	err = sessionVars.SetSystemVar(variable.CharacterSetConnection, csDb)
+	err = variable.SetSessionSystemVar(sessionVars, variable.CharacterSetConnection, csDb)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, coDb))
+	return errors.Trace(variable.SetSessionSystemVar(sessionVars, variable.CollationConnection, coDb))
 }
 
-func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.SysVar) (value types.Datum, err error) {
+func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.SysVar) (value string, err error) {
 	if v.IsDefault {
 		// To set a SESSION variable to the GLOBAL value or a GLOBAL value
 		// to the compiled-in MySQL default value, use the DEFAULT keyword.
 		// See http://dev.mysql.com/doc/refman/5.7/en/set-statement.html
 		if sysVar != nil {
-			value = types.NewStringDatum(sysVar.Value)
-		} else {
-			s, err1 := variable.GetGlobalSystemVar(e.ctx.GetSessionVars(), v.Name)
-			if err1 != nil {
-				return value, err1
-			}
-			value = types.NewStringDatum(s)
+			return sysVar.Value, nil
 		}
-		return
+		return variable.GetGlobalSystemVar(e.ctx.GetSessionVars(), v.Name)
 	}
-	value, err = v.Expr.Eval(chunk.Row{})
-	return value, err
+	nativeVal, err := v.Expr.Eval(chunk.Row{})
+	if err != nil || nativeVal.IsNull() {
+		return "", err
+	}
+	return nativeVal.ToString()
 }
 
-func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string) error {
-	if name != variable.TiDBSnapshot {
-		return nil
-	}
+func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(snapshotTS uint64) error {
 	vars := e.ctx.GetSessionVars()
-	if vars.SnapshotTS == 0 {
+	if snapshotTS == 0 {
 		vars.SnapshotInfoschema = nil
 		return nil
 	}
-	logutil.BgLogger().Info("load snapshot info schema", zap.Uint64("conn", vars.ConnectionID), zap.Uint64("SnapshotTS", vars.SnapshotTS))
+	logutil.BgLogger().Info("load snapshot info schema",
+		zap.Uint64("conn", vars.ConnectionID),
+		zap.Uint64("SnapshotTS", snapshotTS))
 	dom := domain.GetDomain(e.ctx)
-	snapInfo, err := dom.GetSnapshotInfoSchema(vars.SnapshotTS)
+	snapInfo, err := dom.GetSnapshotInfoSchema(snapshotTS)
 	if err != nil {
 		return err
 	}

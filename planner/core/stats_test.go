@@ -69,14 +69,15 @@ func (s *testStatsSuite) TestGroupNDVs(c *C) {
 		AggInput  string
 		JoinInput string
 	}
-	is := dom.InfoSchema()
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
 		comment := Commentf("case:%v sql: %s", i, tt)
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
-		core.Preprocess(tk.Se, stmt, is)
-		builder := core.NewPlanBuilder(tk.Se, is, &hint.BlockHintProcessor{})
+		ret := &core.PreprocessorReturn{}
+		err = core.Preprocess(tk.Se, stmt, core.WithPreprocessorReturn(ret))
+		c.Assert(err, IsNil)
+		builder, _ := core.NewPlanBuilder(tk.Se, ret.InfoSchema, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil, comment)
 		p, err = core.LogicalOptimize(ctx, builder.GetOptFlag(), p.(core.LogicalPlan))
@@ -163,9 +164,9 @@ func (s *testStatsSuite) TestCardinalityGroupCols(c *C) {
 	for i, tt := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
 		})
 		// The test point is the row count estimation for aggregations and joins.
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }

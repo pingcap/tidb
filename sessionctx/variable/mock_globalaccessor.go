@@ -36,7 +36,7 @@ func (m *MockGlobalAccessor) SetGlobalSysVar(name string, value string) error {
 	panic("not supported")
 }
 
-// GetAllSysVars implements GlobalVarAccessor.GetAllSysVars interface.
-func (m *MockGlobalAccessor) GetAllSysVars() (map[string]string, error) {
+// SetGlobalSysVarOnly implements GlobalVarAccessor.SetGlobalSysVarOnly interface.
+func (m *MockGlobalAccessor) SetGlobalSysVarOnly(name string, value string) error {
 	panic("not supported")
 }

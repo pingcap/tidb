@@ -90,7 +90,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 
 	values := types.MakeDatums(1, 2)
 	mockCtx := mock.NewContext()
-	_, err = index.Create(mockCtx, txn.GetUnionStore(), values, kv.IntHandle(1))
+	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(1), nil)
 	c.Assert(err, IsNil)
 
 	it, err := index.SeekFirst(txn)
@@ -104,15 +104,15 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(h.IntValue(), Equals, int64(1))
 	it.Close()
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	exist, _, err := index.Exist(sc, txn.GetUnionStore(), values, kv.IntHandle(100))
+	exist, _, err := index.Exist(sc, txn, values, kv.IntHandle(100))
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsFalse)
 
-	exist, _, err = index.Exist(sc, txn.GetUnionStore(), values, kv.IntHandle(1))
+	exist, _, err = index.Exist(sc, txn, values, kv.IntHandle(1))
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsTrue)
 
-	err = index.Delete(sc, txn.GetUnionStore(), values, kv.IntHandle(1))
+	err = index.Delete(sc, txn, values, kv.IntHandle(1))
 	c.Assert(err, IsNil)
 
 	it, err = index.SeekFirst(txn)
@@ -122,7 +122,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue, Commentf("err %v", err))
 	it.Close()
 
-	_, err = index.Create(mockCtx, txn.GetUnionStore(), values, kv.IntHandle(0))
+	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(0), nil)
 	c.Assert(err, IsNil)
 
 	_, err = index.SeekFirst(txn)
@@ -132,7 +132,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(hit, IsFalse)
 
-	err = index.Drop(txn.GetUnionStore())
+	err = index.Drop(txn)
 	c.Assert(err, IsNil)
 
 	it, hit, err = index.Seek(sc, txn, values)
@@ -177,10 +177,10 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 
-	_, err = index.Create(mockCtx, txn.GetUnionStore(), values, kv.IntHandle(1))
+	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(1), nil)
 	c.Assert(err, IsNil)
 
-	_, err = index.Create(mockCtx, txn.GetUnionStore(), values, kv.IntHandle(2))
+	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(2), nil)
 	c.Assert(err, NotNil)
 
 	it, err = index.SeekFirst(txn)
@@ -194,12 +194,12 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(h.IntValue(), Equals, int64(1))
 	it.Close()
 
-	exist, h, err = index.Exist(sc, txn.GetUnionStore(), values, kv.IntHandle(1))
+	exist, h, err = index.Exist(sc, txn, values, kv.IntHandle(1))
 	c.Assert(err, IsNil)
 	c.Assert(h.IntValue(), Equals, int64(1))
 	c.Assert(exist, IsTrue)
 
-	exist, h, err = index.Exist(sc, txn.GetUnionStore(), values, kv.IntHandle(2))
+	exist, h, err = index.Exist(sc, txn, values, kv.IntHandle(2))
 	c.Assert(err, NotNil)
 	c.Assert(h.IntValue(), Equals, int64(1))
 	c.Assert(exist, IsTrue)
@@ -215,7 +215,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 
 	// Test the function of Next when the value of unique key is nil.
 	values2 := types.MakeDatums(nil, nil)
-	_, err = index.Create(mockCtx, txn.GetUnionStore(), values2, kv.IntHandle(2))
+	_, err = index.Create(mockCtx, txn, values2, kv.IntHandle(2), nil)
 	c.Assert(err, IsNil)
 	it, err = index.SeekFirst(txn)
 	c.Assert(err, IsNil)
@@ -257,7 +257,7 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 
 	mockCtx := mock.NewContext()
 	values := types.MakeDatums("abc", "def")
-	_, err = index.Create(mockCtx, txn.GetUnionStore(), values, kv.IntHandle(1))
+	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(1), nil)
 	c.Assert(err, IsNil)
 
 	index2 := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
@@ -298,12 +298,12 @@ func (s *testIndexSuite) TestSingleColumnCommonHandle(c *C) {
 	for _, idx := range []table.Index{idxUnique, idxNonUnique} {
 		key, _, err := idx.GenIndexKey(sc, idxColVals, commonHandle, nil)
 		c.Assert(err, IsNil)
-		_, err = idx.Create(mockCtx, txn.GetUnionStore(), idxColVals, commonHandle)
+		_, err = idx.Create(mockCtx, txn, idxColVals, commonHandle, nil)
 		c.Assert(err, IsNil)
 		val, err := txn.Get(context.Background(), key)
 		c.Assert(err, IsNil)
 		colVals, err := tablecodec.DecodeIndexKV(key, val, 1, tablecodec.HandleDefault,
-			createRowcodecColInfo(tblInfo, idx.Meta()))
+			tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo))
 		c.Assert(err, IsNil)
 		c.Assert(colVals, HasLen, 2)
 		_, d, err := codec.DecodeOne(colVals[0])
@@ -320,7 +320,7 @@ func (s *testIndexSuite) TestSingleColumnCommonHandle(c *C) {
 		unTouchedVal := append([]byte{1}, val[1:]...)
 		unTouchedVal = append(unTouchedVal, kv.UnCommitIndexKVFlag)
 		_, err = tablecodec.DecodeIndexKV(key, unTouchedVal, 1, tablecodec.HandleDefault,
-			createRowcodecColInfo(tblInfo, idx.Meta()))
+			tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo))
 		c.Assert(err, IsNil)
 	}
 }
@@ -338,6 +338,16 @@ func (s *testIndexSuite) TestMultiColumnCommonHandle(c *C) {
 			idxNonUnique = idx
 		}
 	}
+	var a, b *model.ColumnInfo
+	for _, col := range tblInfo.Columns {
+		if col.Name.String() == "a" {
+			a = col
+		} else if col.Name.String() == "b" {
+			b = col
+		}
+	}
+	c.Assert(a, NotNil)
+	c.Assert(b, NotNil)
 
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
@@ -354,12 +364,22 @@ func (s *testIndexSuite) TestMultiColumnCommonHandle(c *C) {
 	for _, idx := range []table.Index{idxUnique, idxNonUnique} {
 		key, _, err := idx.GenIndexKey(sc, idxColVals, commonHandle, nil)
 		c.Assert(err, IsNil)
-		_, err = idx.Create(mockCtx, txn.GetUnionStore(), idxColVals, commonHandle)
+		_, err = idx.Create(mockCtx, txn, idxColVals, commonHandle, nil)
 		c.Assert(err, IsNil)
 		val, err := txn.Get(context.Background(), key)
 		c.Assert(err, IsNil)
-		colVals, err := tablecodec.DecodeIndexKV(key, val, 1, tablecodec.HandleDefault,
-			createRowcodecColInfo(tblInfo, idx.Meta()))
+		colInfo := tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo)
+		colInfo = append(colInfo, rowcodec.ColInfo{
+			ID:         a.ID,
+			IsPKHandle: false,
+			Ft:         rowcodec.FieldTypeFromModelColumn(a),
+		})
+		colInfo = append(colInfo, rowcodec.ColInfo{
+			ID:         b.ID,
+			IsPKHandle: false,
+			Ft:         rowcodec.FieldTypeFromModelColumn(b),
+		})
+		colVals, err := tablecodec.DecodeIndexKV(key, val, 1, tablecodec.HandleDefault, colInfo)
 		c.Assert(err, IsNil)
 		c.Assert(colVals, HasLen, 3)
 		_, d, err := codec.DecodeOne(colVals[0])
@@ -384,17 +404,4 @@ func buildTableInfo(c *C, sql string) *model.TableInfo {
 	tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
 	c.Assert(err, IsNil)
 	return tblInfo
-}
-
-func createRowcodecColInfo(table *model.TableInfo, index *model.IndexInfo) []rowcodec.ColInfo {
-	colInfos := make([]rowcodec.ColInfo, 0, len(index.Columns))
-	for _, idxCol := range index.Columns {
-		col := table.Columns[idxCol.Offset]
-		colInfos = append(colInfos, rowcodec.ColInfo{
-			ID:         col.ID,
-			IsPKHandle: table.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
-			Ft:         rowcodec.FieldTypeFromModelColumn(col),
-		})
-	}
-	return colInfos
 }

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -39,10 +40,13 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"go.uber.org/zap"
 )
 
 // InsertValues is the data to insert.
+// nolint:structcheck
 type InsertValues struct {
 	baseExecutor
 
@@ -80,7 +84,15 @@ type InsertValues struct {
 	lazyFillAutoID bool
 	memTracker     *memory.Tracker
 
+	rowLen int
+
 	stats *InsertRuntimeStat
+
+	// LoadData use two goroutines. One for generate batch data,
+	// The other one for commit task, which will invalid txn.
+	// We use mutex to protect routine from using invalid txn.
+	isLoadData bool
+	txnInUse   sync.Mutex
 }
 
 type defaultVal struct {
@@ -151,7 +163,6 @@ func (e *InsertValues) initInsertColumns() error {
 				return errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
 			}
 			e.hasExtraHandle = true
-			break
 		}
 	}
 
@@ -295,7 +306,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	} else if types.ErrTruncatedWrongVal.Equal(err) && (colTp == mysql.TypeDuration || colTp == mysql.TypeDatetime || colTp == mysql.TypeDate || colTp == mysql.TypeTimestamp) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
-			// do nothing
+			logutil.BgLogger().Debug("time truncated error", zap.Error(err1))
 		}
 		err = dbterror.ClassTable.NewStdErr(
 			errno.ErrTruncatedWrongValue,
@@ -304,7 +315,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	} else if types.ErrTruncatedWrongVal.Equal(err) || types.ErrWrongValue.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
-			// do nothing
+			logutil.BgLogger().Debug("truncated/wrong value error", zap.Error(err1))
 		}
 		err = table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
 	}
@@ -419,14 +430,15 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	rows := make([][]types.Datum, 0, chk.Capacity())
 
 	sessVars := e.ctx.GetSessionVars()
-	if !sessVars.StrictSQLMode {
-		// If StrictSQLMode is disabled and it is a insert-select statement, it also handle BadNullAsWarning.
-		sessVars.StmtCtx.BadNullAsWarning = true
-	}
 	batchSize := sessVars.DMLBatchSize
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML && batchSize > 0
 	memUsageOfRows := int64(0)
+	memUsageOfExtraCols := int64(0)
 	memTracker := e.memTracker
+	extraColsInSel := make([][]types.Datum, 0, chk.Capacity())
+	// In order to ensure the correctness of the `transaction write throughput` SLI statistics,
+	// just ignore the transaction which contain `insert|replace into ... select ... from ...` statement.
+	e.ctx.GetTxnWriteThroughputSLI().SetInvalid()
 	for {
 		err := Next(ctx, selectExec, chk)
 		if err != nil {
@@ -444,15 +456,20 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 			if err != nil {
 				return err
 			}
+			extraColsInSel = append(extraColsInSel, innerRow[e.rowLen:])
 			rows = append(rows, row)
 			if batchInsert && e.rowCount%uint64(batchSize) == 0 {
 				memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
-				memTracker.Consume(memUsageOfRows)
+				memUsageOfExtraCols = types.EstimatedMemUsage(extraColsInSel[0], len(extraColsInSel))
+				memTracker.Consume(memUsageOfRows + memUsageOfExtraCols)
+				e.ctx.GetSessionVars().CurrInsertBatchExtraCols = extraColsInSel
 				if err = base.exec(ctx, rows); err != nil {
 					return err
 				}
 				rows = rows[:0]
+				extraColsInSel = extraColsInSel[:0]
 				memTracker.Consume(-memUsageOfRows)
+				memTracker.Consume(-memUsageOfExtraCols)
 				memUsageOfRows = 0
 				if err = e.doBatchInsert(ctx); err != nil {
 					return err
@@ -462,14 +479,18 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 
 		if len(rows) != 0 {
 			memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
-			memTracker.Consume(memUsageOfRows)
+			memUsageOfExtraCols = types.EstimatedMemUsage(extraColsInSel[0], len(extraColsInSel))
+			memTracker.Consume(memUsageOfRows + memUsageOfExtraCols)
+			e.ctx.GetSessionVars().CurrInsertBatchExtraCols = extraColsInSel
 		}
 		err = base.exec(ctx, rows)
 		if err != nil {
 			return err
 		}
 		rows = rows[:0]
+		extraColsInSel = extraColsInSel[:0]
 		memTracker.Consume(-memUsageOfRows)
+		memTracker.Consume(-memUsageOfExtraCols)
 		memTracker.Consume(-chkMemUsage)
 	}
 	return nil
@@ -495,9 +516,9 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.Datum, error) {
 	row := make([]types.Datum, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
-	for i, v := range vals {
-		casted, err := table.CastValue(e.ctx, v, e.insertColumns[i].ToInfo(), false, false)
-		if e.handleErr(nil, &v, 0, err) != nil {
+	for i := 0; i < e.rowLen; i++ {
+		casted, err := table.CastValue(e.ctx, vals[i], e.insertColumns[i].ToInfo(), false, false)
+		if e.handleErr(nil, &vals[i], 0, err) != nil {
 			return nil, err
 		}
 
@@ -558,6 +579,13 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 		}
 		return d, nil
 	}
+	if column.ID == model.ExtraHandleID && hasValue {
+		d, err := e.adjustImplicitRowID(ctx, datum, hasValue, column)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		return d, nil
+	}
 	if !hasValue {
 		d, err := e.getColDefaultValue(idx, column)
 		if e.handleErr(column, &datum, 0, err) != nil {
@@ -576,7 +604,14 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 // https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
 func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue []bool) ([]types.Datum, error) {
 	gCols := make([]*table.Column, 0)
-	for i, c := range e.Table.Cols() {
+	tCols := e.Table.Cols()
+	if e.hasExtraHandle {
+		col := &table.Column{}
+		col.ColumnInfo = model.NewExtraHandleColInfo()
+		col.ColumnInfo.Offset = len(tCols)
+		tCols = append(tCols, col)
+	}
+	for i, c := range tCols {
 		var err error
 		// Evaluate the generated columns later after real columns set
 		if c.IsGenerated() {
@@ -596,7 +631,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
 		val, err := e.GenExprs[i].Eval(chunk.MutRowFromDatums(row).ToRow())
-		if e.handleErr(gCol, &val, 0, err) != nil {
+		if e.ctx.GetSessionVars().StmtCtx.HandleTruncate(err) != nil {
 			return nil, err
 		}
 		row[colIdx], err = table.CastValue(e.ctx, val, gCol.ToInfo(), false, false)
@@ -855,11 +890,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	// Change NULL to auto id.
 	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
 	if d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
-		_, err := e.ctx.Txn(true)
-		if err != nil {
-			return types.Datum{}, errors.Trace(err)
-		}
-		recordID, err = e.allocAutoRandomID(&c.FieldType)
+		recordID, err = e.allocAutoRandomID(ctx, &c.FieldType)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -879,18 +910,26 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 }
 
 // allocAutoRandomID allocates a random id for primary key column. It assumes tableInfo.AutoRandomBits > 0.
-func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, error) {
+func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.FieldType) (int64, error) {
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 	increment := e.ctx.GetSessionVars().AutoIncrementIncrement
 	offset := e.ctx.GetSessionVars().AutoIncrementOffset
-	_, autoRandomID, err := alloc.Alloc(tableInfo.ID, 1, int64(increment), int64(offset))
+	_, autoRandomID, err := alloc.Alloc(ctx, tableInfo.ID, 1, int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
 	}
-	layout := autoid.NewAutoRandomIDLayout(fieldType, tableInfo.AutoRandomBits)
+	layout := autoid.NewShardIDLayout(fieldType, tableInfo.AutoRandomBits)
 	if tables.OverflowShardBits(autoRandomID, tableInfo.AutoRandomBits, layout.TypeBitsLength, layout.HasSignBit) {
 		return 0, autoid.ErrAutoRandReadFailed
+	}
+	if e.isLoadData {
+		e.txnInUse.Lock()
+		defer e.txnInUse.Unlock()
+	}
+	_, err = e.ctx.Txn(true)
+	if err != nil {
+		return 0, err
 	}
 	shard := e.ctx.GetSessionVars().TxnCtx.GetShard(tableInfo.AutoRandomBits, layout.TypeBitsLength, layout.HasSignBit, 1)
 	autoRandomID |= shard
@@ -904,10 +943,64 @@ func (e *InsertValues) rebaseAutoRandomID(recordID int64, fieldType *types.Field
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 
-	layout := autoid.NewAutoRandomIDLayout(fieldType, tableInfo.AutoRandomBits)
+	layout := autoid.NewShardIDLayout(fieldType, tableInfo.AutoRandomBits)
 	autoRandomID := layout.IncrementalMask() & recordID
 
 	return alloc.Rebase(tableInfo.ID, autoRandomID, true)
+}
+
+func (e *InsertValues) adjustImplicitRowID(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
+	var err error
+	var recordID int64
+	if !hasValue {
+		d.SetNull()
+	}
+	if !d.IsNull() {
+		recordID = d.GetInt64()
+	}
+	// Use the value if it's not null and not 0.
+	if recordID != 0 {
+		if !e.ctx.GetSessionVars().AllowWriteRowID {
+			return types.Datum{}, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+		}
+		err = e.rebaseImplicitRowID(recordID)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		d.SetInt64(recordID)
+		return d, nil
+	}
+	// Change NULL to auto id.
+	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
+	if d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
+		_, err := e.ctx.Txn(true)
+		if err != nil {
+			return types.Datum{}, errors.Trace(err)
+		}
+		intHandle, err := tables.AllocHandle(ctx, e.ctx, e.Table)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		recordID = intHandle.IntValue()
+	}
+	err = setDatumAutoIDAndCast(e.ctx, &d, recordID, c)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	return d, nil
+}
+
+func (e *InsertValues) rebaseImplicitRowID(recordID int64) error {
+	if recordID < 0 {
+		return nil
+	}
+	alloc := e.Table.Allocators(e.ctx).Get(autoid.RowIDAllocType)
+	tableInfo := e.Table.Meta()
+
+	layout := autoid.NewShardIDLayout(types.NewFieldType(mysql.TypeLonglong), tableInfo.ShardRowIDBits)
+	newTiDBRowIDBase := layout.IncrementalMask() & recordID
+
+	return alloc.Rebase(tableInfo.ID, newTiDBRowIDBase, true)
 }
 
 func (e *InsertValues) handleWarning(err error) {
@@ -956,7 +1049,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	if e.collectRuntimeStatsEnabled() {
 		if snapshot := txn.GetSnapshot(); snapshot != nil {
 			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
-			defer snapshot.DelOption(kv.CollectRuntimeStats)
+			defer snapshot.SetOption(kv.CollectRuntimeStats, nil)
 		}
 	}
 	prefetchStart := time.Now()
@@ -970,6 +1063,9 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 
 	// append warnings and get no duplicated error rows
 	for i, r := range toBeCheckedRows {
+		if r.ignored {
+			continue
+		}
 		skip := false
 		if r.handleKey != nil {
 			_, err := txn.Get(ctx, r.handleKey.newKey)
@@ -1029,6 +1125,7 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 	if err != nil {
 		return err
 	}
+	vars.StmtCtx.AddAffectedRows(1)
 	if e.lastInsertID != 0 {
 		vars.SetLastInsertID(e.lastInsertID)
 	}
@@ -1047,14 +1144,17 @@ func (e *InsertRuntimeStat) String() string {
 	if e.CheckInsertTime == 0 {
 		// For replace statement.
 		if e.Prefetch > 0 && e.SnapshotRuntimeStats != nil {
-			return fmt.Sprintf("prefetch: %v, rpc:{%v}", e.Prefetch, e.SnapshotRuntimeStats.String())
+			return fmt.Sprintf("prefetch: %v, rpc:{%v}", execdetails.FormatDuration(e.Prefetch), e.SnapshotRuntimeStats.String())
 		}
 		return ""
 	}
 	buf := bytes.NewBuffer(make([]byte, 0, 32))
-	buf.WriteString(fmt.Sprintf("prepare:%v, ", time.Duration(e.BasicRuntimeStats.GetTime())-e.CheckInsertTime))
+	buf.WriteString(fmt.Sprintf("prepare:%v, ", execdetails.FormatDuration(time.Duration(e.BasicRuntimeStats.GetTime())-e.CheckInsertTime)))
 	if e.Prefetch > 0 {
-		buf.WriteString(fmt.Sprintf("check_insert:{total_time:%v, mem_insert_time:%v, prefetch:%v", e.CheckInsertTime, e.CheckInsertTime-e.Prefetch, e.Prefetch))
+		buf.WriteString(fmt.Sprintf("check_insert: {total_time: %v, mem_insert_time: %v, prefetch: %v",
+			execdetails.FormatDuration(e.CheckInsertTime),
+			execdetails.FormatDuration(e.CheckInsertTime-e.Prefetch),
+			execdetails.FormatDuration(e.Prefetch)))
 		if e.SnapshotRuntimeStats != nil {
 			if rpc := e.SnapshotRuntimeStats.String(); len(rpc) > 0 {
 				buf.WriteString(fmt.Sprintf(", rpc:{%s}", rpc))
@@ -1062,7 +1162,7 @@ func (e *InsertRuntimeStat) String() string {
 		}
 		buf.WriteString("}")
 	} else {
-		buf.WriteString(fmt.Sprintf("insert:%v", e.CheckInsertTime))
+		buf.WriteString(fmt.Sprintf("insert:%v", execdetails.FormatDuration(e.CheckInsertTime)))
 	}
 	return buf.String()
 }
@@ -1075,7 +1175,7 @@ func (e *InsertRuntimeStat) Clone() execdetails.RuntimeStats {
 	}
 	if e.SnapshotRuntimeStats != nil {
 		snapshotStats := e.SnapshotRuntimeStats.Clone()
-		newRs.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+		newRs.SnapshotRuntimeStats = snapshotStats
 	}
 	if e.BasicRuntimeStats != nil {
 		basicStats := e.BasicRuntimeStats.Clone()
@@ -1093,7 +1193,7 @@ func (e *InsertRuntimeStat) Merge(other execdetails.RuntimeStats) {
 	if tmp.SnapshotRuntimeStats != nil {
 		if e.SnapshotRuntimeStats == nil {
 			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
-			e.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+			e.SnapshotRuntimeStats = snapshotStats
 		} else {
 			e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
 		}

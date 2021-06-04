@@ -23,6 +23,12 @@ import (
 )
 
 func TestT(t *testing.T) {
+	path, _ := os.MkdirTemp("", "tmp-storage-disk-pkg")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = path
+	})
+	_ = os.RemoveAll(path) // clean the uncleared temp file during the last run.
+	_ = os.MkdirAll(path, 0755)
 	check.TestingT(t)
 }
 

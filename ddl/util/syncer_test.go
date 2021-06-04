@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	. "github.com/pingcap/tidb/ddl"
 	. "github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/store/mockstore"
 	"go.etcd.io/etcd/clientv3"
@@ -58,23 +59,36 @@ func TestSyncerSimple(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
 
 	clus := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer clus.Terminate(t)
 	cli := clus.RandClient()
 	ctx := goctx.Background()
+	ic := infoschema.NewCache(2)
+	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0))
 	d := NewDDL(
 		ctx,
 		WithEtcdClient(cli),
 		WithStore(store),
 		WithLease(testLease),
+		WithInfoCache(ic),
 	)
 	err = d.Start(nil)
 	if err != nil {
 		t.Fatalf("DDL start failed %v", err)
 	}
-	defer d.Stop()
+	defer func() {
+		err := d.Stop()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
 
 	// for init function
 	if err = d.SchemaSyncer().Init(ctx); err != nil {
@@ -100,17 +114,25 @@ func TestSyncerSimple(t *testing.T) {
 		t.Fatalf("client get global version result not match, err %v", err)
 	}
 
+	ic2 := infoschema.NewCache(2)
+	ic2.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0))
 	d1 := NewDDL(
 		ctx,
 		WithEtcdClient(cli),
 		WithStore(store),
 		WithLease(testLease),
+		WithInfoCache(ic2),
 	)
 	err = d1.Start(nil)
 	if err != nil {
 		t.Fatalf("DDL start failed %v", err)
 	}
-	defer d1.Stop()
+	defer func() {
+		err := d.Stop()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
 	if err = d1.SchemaSyncer().Init(ctx); err != nil {
 		t.Fatalf("schema version syncer init failed %v", err)
 	}

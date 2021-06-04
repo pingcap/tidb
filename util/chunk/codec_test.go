@@ -15,7 +15,6 @@ package chunk
 
 import (
 	"fmt"
-	"runtime"
 	"testing"
 
 	"github.com/pingcap/check"
@@ -29,10 +28,6 @@ var _ = check.Suite(&testCodecSuite{})
 type testCodecSuite struct{}
 
 func (s *testCodecSuite) TestCodec(c *check.C) {
-	if runtime.Version() >= "go1.14" {
-		// TODO: fix https://github.com/pingcap/tidb/issues/15154
-		c.Skip("cannot pass checkptr, TODO to fix https://github.com/pingcap/tidb/issues/15154")
-	}
 	numCols := 6
 	numRows := 10
 
@@ -105,14 +100,13 @@ func BenchmarkEncodeChunk(b *testing.B) {
 	numCols := 4
 	numRows := 1024
 
-	chk := &Chunk{columns: make([]*Column, numCols)}
+	colTypes := make([]*types.FieldType, numCols)
 	for i := 0; i < numCols; i++ {
-		chk.columns[i] = &Column{
-			length:     numRows,
-			nullBitmap: make([]byte, numRows/8+1),
-			data:       make([]byte, numRows*8),
+		colTypes[i] = &types.FieldType{
+			Tp: mysql.TypeLonglong,
 		}
 	}
+	chk := NewChunkWithCapacity(colTypes, numRows)
 
 	codec := &Codec{}
 
@@ -127,17 +121,12 @@ func BenchmarkDecode(b *testing.B) {
 	numRows := 1024
 
 	colTypes := make([]*types.FieldType, numCols)
-	chk := &Chunk{columns: make([]*Column, numCols)}
 	for i := 0; i < numCols; i++ {
-		chk.columns[i] = &Column{
-			length:     numRows,
-			nullBitmap: make([]byte, numRows/8+1),
-			data:       make([]byte, numRows*8),
-		}
 		colTypes[i] = &types.FieldType{
 			Tp: mysql.TypeLonglong,
 		}
 	}
+	chk := NewChunkWithCapacity(colTypes, numRows)
 	codec := &Codec{colTypes}
 	buffer := codec.Encode(chk)
 

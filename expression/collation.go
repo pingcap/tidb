@@ -16,6 +16,7 @@ package expression
 import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -90,7 +91,7 @@ const (
 	CoercibilityExplicit Coercibility = 0
 	// CoercibilityNone is derived from the concatenation of two strings with different collations.
 	CoercibilityNone Coercibility = 1
-	// CoercibilityImplicit is derived from a column or a stored routine parameter or local variable.
+	// CoercibilityImplicit is derived from a column or a stored routine parameter or local variable or cast() function.
 	CoercibilityImplicit Coercibility = 2
 	// CoercibilitySysconst is derived from a “system constant” (the string returned by functions such as USER() or VERSION()).
 	CoercibilitySysconst Coercibility = 3
@@ -177,6 +178,10 @@ func deriveCoercibilityForConstant(c *Constant) Coercibility {
 }
 
 func deriveCoercibilityForColumn(c *Column) Coercibility {
+	// For specified type null, it should return CoercibilityIgnorable, which means it got the lowest priority in DeriveCollationFromExprs.
+	if c.RetType.Tp == mysql.TypeNull {
+		return CoercibilityIgnorable
+	}
 	if c.RetType.EvalType() != types.ETString {
 		return CoercibilityNumeric
 	}

@@ -66,7 +66,7 @@ func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType, is
 			if i == 0 {
 				memDeltas[i] = int64(len(curVal.Name))
 				preEnumVal = curVal
-			} else if isMax && curVal.Value > preEnumVal.Value || !isMax && curVal.Value < preEnumVal.Value {
+			} else if isMax && curVal.Name > preEnumVal.Name || !isMax && curVal.Name < preEnumVal.Name {
 				memDeltas[i] = int64(len(curVal.Name)) - int64(len(preEnumVal.Name))
 				preEnumVal = curVal
 			}
@@ -75,7 +75,7 @@ func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType, is
 			if i == 0 {
 				memDeltas[i] = int64(len(curVal.Name))
 				preSetVal = curVal
-			} else if isMax && curVal.Value > preSetVal.Value || !isMax && curVal.Value < preSetVal.Value {
+			} else if isMax && curVal.Name > preSetVal.Name || !isMax && curVal.Name < preSetVal.Name {
 				memDeltas[i] = int64(len(curVal.Name)) - int64(len(preSetVal.Name))
 				preSetVal = curVal
 			}
@@ -93,14 +93,13 @@ func minUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memD
 }
 
 func (s *testSuite) TestMergePartialResult4MaxMin(c *C) {
-	elems := []string{"a", "b", "c", "d", "e"}
+	elems := []string{"e", "d", "c", "b", "a"}
 	enumA, _ := types.ParseEnum(elems, "a", mysql.DefaultCollationName)
 	enumC, _ := types.ParseEnum(elems, "c", mysql.DefaultCollationName)
 	enumE, _ := types.ParseEnum(elems, "e", mysql.DefaultCollationName)
 
-	setA, _ := types.ParseSet(elems, "a", mysql.DefaultCollationName)    // setA.Value == 1
-	setAB, _ := types.ParseSet(elems, "a,b", mysql.DefaultCollationName) // setAB.Value == 3
-	setAC, _ := types.ParseSet(elems, "a,c", mysql.DefaultCollationName) // setAC.Value == 5
+	setC, _ := types.ParseSet(elems, "c", mysql.DefaultCollationName)    // setC.Value == 4
+	setED, _ := types.ParseSet(elems, "e,d", mysql.DefaultCollationName) // setED.Value == 3
 
 	unsignedType := types.NewFieldType(mysql.TypeLonglong)
 	unsignedType.Flag |= mysql.UnsignedFlag
@@ -114,8 +113,8 @@ func (s *testSuite) TestMergePartialResult4MaxMin(c *C) {
 		buildAggTester(ast.AggFuncMax, mysql.TypeDate, 5, types.TimeFromDays(369), types.TimeFromDays(369), types.TimeFromDays(369)),
 		buildAggTester(ast.AggFuncMax, mysql.TypeDuration, 5, types.Duration{Duration: time.Duration(4)}, types.Duration{Duration: time.Duration(4)}, types.Duration{Duration: time.Duration(4)}),
 		buildAggTester(ast.AggFuncMax, mysql.TypeJSON, 5, json.CreateBinary(int64(4)), json.CreateBinary(int64(4)), json.CreateBinary(int64(4))),
-		buildAggTester(ast.AggFuncMax, mysql.TypeEnum, 5, enumE, enumE, enumE),
-		buildAggTester(ast.AggFuncMax, mysql.TypeSet, 5, setAC, setAC, setAC),
+		buildAggTester(ast.AggFuncMax, mysql.TypeEnum, 5, enumE, enumC, enumE),
+		buildAggTester(ast.AggFuncMax, mysql.TypeSet, 5, setED, setED, setED),
 
 		buildAggTester(ast.AggFuncMin, mysql.TypeLonglong, 5, 0, 2, 0),
 		buildAggTesterWithFieldType(ast.AggFuncMin, unsignedType, 5, 0, 2, 0),
@@ -126,8 +125,8 @@ func (s *testSuite) TestMergePartialResult4MaxMin(c *C) {
 		buildAggTester(ast.AggFuncMin, mysql.TypeDate, 5, types.TimeFromDays(365), types.TimeFromDays(367), types.TimeFromDays(365)),
 		buildAggTester(ast.AggFuncMin, mysql.TypeDuration, 5, types.Duration{Duration: time.Duration(0)}, types.Duration{Duration: time.Duration(2)}, types.Duration{Duration: time.Duration(0)}),
 		buildAggTester(ast.AggFuncMin, mysql.TypeJSON, 5, json.CreateBinary(int64(0)), json.CreateBinary(int64(2)), json.CreateBinary(int64(0))),
-		buildAggTester(ast.AggFuncMin, mysql.TypeEnum, 5, enumA, enumC, enumA),
-		buildAggTester(ast.AggFuncMin, mysql.TypeSet, 5, setA, setAB, setA),
+		buildAggTester(ast.AggFuncMin, mysql.TypeEnum, 5, enumA, enumA, enumA),
+		buildAggTester(ast.AggFuncMin, mysql.TypeSet, 5, setC, setC, setC),
 	}
 	for _, test := range tests {
 		s.testMergePartialResult(c, test)
@@ -176,7 +175,7 @@ func (s *testSuite) TestMemMaxMin(c *C) {
 		buildAggMemTester(ast.AggFuncMax, mysql.TypeDouble, 5,
 			aggfuncs.DefPartialResult4MaxMinFloat64Size, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncMax, mysql.TypeDate, 5,
-			aggfuncs.DefPartialResult4TimeSize, defaultUpdateMemDeltaGens, false),
+			aggfuncs.DefPartialResult4MaxMinTimeSize, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncMax, mysql.TypeDuration, 5,
 			aggfuncs.DefPartialResult4MaxMinDurationSize, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncMax, mysql.TypeString, 99,
@@ -199,7 +198,7 @@ func (s *testSuite) TestMemMaxMin(c *C) {
 		buildAggMemTester(ast.AggFuncMin, mysql.TypeDouble, 5,
 			aggfuncs.DefPartialResult4MaxMinFloat64Size, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncMin, mysql.TypeDate, 5,
-			aggfuncs.DefPartialResult4TimeSize, defaultUpdateMemDeltaGens, false),
+			aggfuncs.DefPartialResult4MaxMinTimeSize, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncMin, mysql.TypeDuration, 5,
 			aggfuncs.DefPartialResult4MaxMinDurationSize, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncMin, mysql.TypeString, 99,
@@ -312,5 +311,50 @@ func (s *testSuite) TestMaxSlidingWindow(c *C) {
 				testMaxSlidingWindow(tk, tc)
 			}
 		}
+	}
+}
+
+func (s *testSuite) TestDequeReset(c *C) {
+	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
+		return types.CompareInt64(i.(int64), j.(int64))
+	})
+	deque.PushBack(0, 12)
+	deque.Reset()
+	c.Assert(len(deque.Items), Equals, 0)
+	c.Assert(deque.IsMax, Equals, true)
+}
+
+func (s *testSuite) TestDequePushPop(c *C) {
+	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
+		return types.CompareInt64(i.(int64), j.(int64))
+	})
+	times := 15
+	// pushes element from back of deque
+	for i := 0; i < times; i++ {
+		if i != 0 {
+			front, isEnd := deque.Front()
+			c.Assert(isEnd, Equals, false)
+			c.Assert(front.Item, Equals, 0)
+			c.Assert(front.Idx, Equals, uint64(0))
+		}
+		deque.PushBack(uint64(i), i)
+		back, isEnd := deque.Back()
+		c.Assert(isEnd, Equals, false)
+		c.Assert(back.Item, Equals, i)
+		c.Assert(back.Idx, Equals, uint64(i))
+	}
+
+	// pops element from back of deque
+	for i := 0; i < times; i++ {
+		pair, isEnd := deque.Back()
+		c.Assert(isEnd, Equals, false)
+		c.Assert(pair.Item, Equals, times-i-1)
+		c.Assert(pair.Idx, Equals, uint64(times-i-1))
+		front, isEnd := deque.Front()
+		c.Assert(isEnd, Equals, false)
+		c.Assert(front.Item, Equals, 0)
+		c.Assert(front.Idx, Equals, uint64(0))
+		err := deque.PopBack()
+		c.Assert(err, IsNil)
 	}
 }

@@ -16,7 +16,9 @@ package handle_test
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +28,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -36,19 +39,44 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	dto "github.com/prometheus/client_model/go"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
 var _ = Suite(&testStatsSuite{})
+var _ = SerialSuites(&testSerialStatsSuite{})
 
-type testStatsSuite struct {
+type testSerialStatsSuite struct {
+	store kv.Storage
+	do    *domain.Domain
+}
+
+func (s *testSerialStatsSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	// Add the hook here to avoid data race.
+	var err error
+	s.store, s.do, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSerialStatsSuite) TearDownSuite(c *C) {
+	s.do.Close()
+	s.store.Close()
+	testleak.AfterTest(c)()
+}
+
+type testSuiteBase struct {
 	store kv.Storage
 	do    *domain.Domain
 	hook  *logHook
 }
 
-func (s *testStatsSuite) SetUpSuite(c *C) {
+type testStatsSuite struct {
+	testSuiteBase
+}
+
+func (s *testSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	// Add the hook here to avoid data race.
 	s.registerHook()
@@ -57,13 +85,13 @@ func (s *testStatsSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testStatsSuite) TearDownSuite(c *C) {
+func (s *testSuiteBase) TearDownSuite(c *C) {
 	s.do.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
 }
 
-func (s *testStatsSuite) registerHook() {
+func (s *testSuiteBase) registerHook() {
 	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
 	s.hook = &logHook{r.Core, ""}
@@ -93,8 +121,10 @@ func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
 	tableInfo1 := tbl1.Meta()
 	h := s.do.StatsHandle()
 
-	h.HandleDDLEvent(<-h.DDLEventCh())
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
@@ -174,14 +204,16 @@ func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
 	for i := 0; i < rowCount1; i++ {
 		testKit.MustExec("insert into t1 values (1,2)")
 	}
-	h.DumpStatsDeltaToKV(handle.DumpDelta)
+	err = h.DumpStatsDeltaToKV(handle.DumpDelta)
+	c.Assert(err, IsNil)
 	c.Assert(h.Update(is), IsNil)
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
 
 	// not dumped
 	testKit.MustExec("insert into t1 values (1,2)")
-	h.DumpStatsDeltaToKV(handle.DumpDelta)
+	err = h.DumpStatsDeltaToKV(handle.DumpDelta)
+	c.Assert(err, IsNil)
 	c.Assert(h.Update(is), IsNil)
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
@@ -206,7 +238,8 @@ func (s *testStatsSuite) TestRollback(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	h := s.do.StatsHandle()
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 
@@ -240,7 +273,8 @@ func (s *testStatsSuite) TestMultiSession(c *C) {
 	tableInfo1 := tbl1.Meta()
 	h := s.do.StatsHandle()
 
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
@@ -284,7 +318,8 @@ func (s *testStatsSuite) TestTxnWithFailure(c *C) {
 	tableInfo1 := tbl1.Meta()
 	h := s.do.StatsHandle()
 
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 
 	rowCount1 := 10
 	testKit.MustExec("begin")
@@ -323,8 +358,9 @@ func (s *testStatsSuite) TestUpdatePartition(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustQuery("select @@tidb_partition_prune_mode").Check(testkit.Rows(string(s.do.StatsHandle().CurrentPruneMode())))
 	testKit.MustExec("use test")
-	testkit.WithPruneMode(testKit, variable.StaticOnly, func() {
-		s.do.StatsHandle().RefreshVars()
+	testkit.WithPruneMode(testKit, variable.Static, func() {
+		err := s.do.StatsHandle().RefreshVars()
+		c.Assert(err, IsNil)
 		testKit.MustExec("drop table if exists t")
 		createTable := `CREATE TABLE t (a int, b char(5)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11))`
 		testKit.MustExec(createTable)
@@ -375,7 +411,7 @@ func (s *testStatsSuite) TestUpdatePartition(c *C) {
 func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
-	testkit.WithPruneMode(testKit, variable.StaticOnly, func() {
+	testkit.WithPruneMode(testKit, variable.Static, func() {
 		testKit.MustExec("use test")
 		testKit.MustExec("create table t (a varchar(20))")
 
@@ -393,7 +429,8 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 		tableInfo := tbl.Meta()
 		h := do.StatsHandle()
 
-		h.HandleDDLEvent(<-h.DDLEventCh())
+		err = h.HandleDDLEvent(<-h.DDLEventCh())
+		c.Assert(err, IsNil)
 		c.Assert(h.Update(is), IsNil)
 		stats := h.GetTableStats(tableInfo)
 		c.Assert(stats.Count, Equals, int64(0))
@@ -474,7 +511,7 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 func (s *testStatsSuite) TestAutoUpdatePartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
-	testkit.WithPruneMode(testKit, variable.StaticOnly, func() {
+	testkit.WithPruneMode(testKit, variable.Static, func() {
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
 		testKit.MustExec("create table t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))")
@@ -510,6 +547,115 @@ func (s *testStatsSuite) TestAutoUpdatePartition(c *C) {
 	})
 }
 
+func (s *testSerialStatsSuite) TestAutoAnalyzeOnEmptyTable(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+
+	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
+	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
+	}()
+
+	t := time.Now().Add(-1 * time.Minute)
+	h, m := t.Hour(), t.Minute()
+	start, end := fmt.Sprintf("%02d:%02d +0000", h, m), fmt.Sprintf("%02d:%02d +0000", h, m)
+	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", start))
+	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", end))
+	s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema())
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, index idx(a))")
+	// to pass the stats.Pseudo check in autoAnalyzeTable
+	tk.MustExec("analyze table t")
+	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
+	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(handle.AutoAnalyzeMinCnt)))
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(s.do.StatsHandle().Update(s.do.InfoSchema()), IsNil)
+
+	// test if it will be limited by the time range
+	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsFalse)
+
+	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
+	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
+	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
+}
+
+func (s *testSerialStatsSuite) TestAutoAnalyzeOnChangeAnalyzeVer(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, index idx(a))")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("set @@global.tidb_analyze_version = 1")
+	do := s.do
+	handle.AutoAnalyzeMinCnt = 0
+	defer func() {
+		handle.AutoAnalyzeMinCnt = 1000
+	}()
+	h := do.StatsHandle()
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	is := do.InfoSchema()
+	err = h.UpdateSessionVar()
+	c.Assert(err, IsNil)
+	c.Assert(h.Update(is), IsNil)
+	// Auto analyze when global ver is 1.
+	h.HandleAutoAnalyze(is)
+	c.Assert(h.Update(is), IsNil)
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	statsTbl1 := h.GetTableStats(tbl.Meta())
+	// Check that all the version of t's stats are 1.
+	for _, col := range statsTbl1.Columns {
+		c.Assert(col.StatsVer, Equals, int64(1))
+	}
+	for _, idx := range statsTbl1.Indices {
+		c.Assert(idx.StatsVer, Equals, int64(1))
+	}
+	tk.MustExec("set @@global.tidb_analyze_version = 2")
+	err = h.UpdateSessionVar()
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t values(1), (2), (3), (4)")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	// Auto analyze t whose version is 1 after setting global ver to 2.
+	h.HandleAutoAnalyze(is)
+	c.Assert(h.Update(is), IsNil)
+	statsTbl1 = h.GetTableStats(tbl.Meta())
+	c.Assert(statsTbl1.Count, Equals, int64(5))
+	// All of its statistics should still be version 1.
+	for _, col := range statsTbl1.Columns {
+		c.Assert(col.StatsVer, Equals, int64(1))
+	}
+	for _, idx := range statsTbl1.Indices {
+		c.Assert(idx.StatsVer, Equals, int64(1))
+	}
+	// Add a new table after the analyze version set to 2.
+	tk.MustExec("create table tt(a int, index idx(a))")
+	tk.MustExec("insert into tt values(1), (2), (3), (4), (5)")
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	is = do.InfoSchema()
+	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tt"))
+	c.Assert(err, IsNil)
+	c.Assert(h.Update(is), IsNil)
+	h.HandleAutoAnalyze(is)
+	c.Assert(h.Update(is), IsNil)
+	statsTbl2 := h.GetTableStats(tbl2.Meta())
+	// Since it's a newly created table. Auto analyze should analyze it's statistics to version2.
+	for _, idx := range statsTbl2.Indices {
+		c.Assert(idx.StatsVer, Equals, int64(2))
+	}
+	for _, col := range statsTbl2.Columns {
+		c.Assert(col.StatsVer, Equals, int64(2))
+	}
+	tk.MustExec("set @@global.tidb_analyze_version = 1")
+}
+
 func (s *testStatsSuite) TestTableAnalyzed(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -532,7 +678,7 @@ func (s *testStatsSuite) TestTableAnalyzed(c *C) {
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(handle.TableAnalyzed(statsTbl), IsTrue)
 
-	h.Clear4Test()
+	h.Clear()
 	oriLease := h.Lease()
 	// set it to non-zero so we will use load by need strategy
 	h.SetLease(1)
@@ -550,11 +696,11 @@ func (s *testStatsSuite) TestUpdateErrorRate(c *C) {
 	is := s.do.InfoSchema()
 	h.SetLease(0)
 	c.Assert(h.Update(is), IsNil)
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
 	}()
@@ -565,7 +711,8 @@ func (s *testStatsSuite) TestUpdateErrorRate(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 
 	testKit.MustExec("insert into t values (1, 3)")
 
@@ -625,11 +772,11 @@ func (s *testStatsSuite) TestUpdatePartitionErrorRate(c *C) {
 	is := s.do.InfoSchema()
 	h.SetLease(0)
 	c.Assert(h.Update(is), IsNil)
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
 	}()
@@ -639,9 +786,10 @@ func (s *testStatsSuite) TestUpdatePartitionErrorRate(c *C) {
 
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	testKit.MustExec("create table t (a bigint(64), primary key(a)) partition by range (a) (partition p0 values less than (30))")
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 
 	testKit.MustExec("insert into t values (1)")
 
@@ -674,8 +822,8 @@ func (s *testStatsSuite) TestUpdatePartitionErrorRate(c *C) {
 	c.Assert(h.Update(is), IsNil)
 	tbl = h.GetPartitionStats(tblInfo, pid)
 
-	// The error rate of this column is not larger than MaxErrorRate now.
-	c.Assert(tbl.Columns[aID].NotAccurate(), IsFalse)
+	// Feedback will not take effect under partition table.
+	c.Assert(tbl.Columns[aID].NotAccurate(), IsTrue)
 }
 
 func appendBucket(h *statistics.Histogram, l, r int64) {
@@ -743,16 +891,16 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t with 0 topn")
 	testKit.MustExec("insert into t values (3,4)")
 
 	h := s.do.StatsHandle()
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriNumber := statistics.MaxNumberOfRanges
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		statistics.MaxNumberOfRanges = oriNumber
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
@@ -769,25 +917,25 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 			// test primary key feedback
 			sql: "select * from t where t.a <= 5 order by a desc",
 			hist: "column:1 ndv:4 totColSize:0\n" +
-				"num: 1 lower_bound: -9223372036854775808 upper_bound: 2 repeats: 0\n" +
-				"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0\n" +
-				"num: 1 lower_bound: 4 upper_bound: 4 repeats: 1",
+				"num: 1 lower_bound: -9223372036854775808 upper_bound: 2 repeats: 0 ndv: 0\n" +
+				"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0 ndv: 0\n" +
+				"num: 1 lower_bound: 4 upper_bound: 4 repeats: 1 ndv: 0",
 			idxCols: 0,
 		},
 		{
 			// test index feedback by double read
 			sql: "select * from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:2\n" +
-				"num: 3 lower_bound: -inf upper_bound: 5 repeats: 0\n" +
-				"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1",
+				"num: 3 lower_bound: -inf upper_bound: 5 repeats: 0 ndv: 0\n" +
+				"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0",
 			idxCols: 1,
 		},
 		{
 			// test index feedback by single read
 			sql: "select b from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:2\n" +
-				"num: 3 lower_bound: -inf upper_bound: 5 repeats: 0\n" +
-				"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1",
+				"num: 3 lower_bound: -inf upper_bound: 5 repeats: 0 ndv: 0\n" +
+				"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0",
 			idxCols: 1,
 		},
 	}
@@ -859,7 +1007,7 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	testKit.MustExec(`create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))
 			    partition by range (a) (
 			    partition p0 values less than (3),
@@ -867,11 +1015,11 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 	testKit.MustExec("insert into t values (1,2),(2,2),(3,4),(4,1),(5,6)")
 	testKit.MustExec("analyze table t")
 
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
 	}()
@@ -880,6 +1028,7 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 	handle.MinLogErrorRate = 0
 
 	h := s.do.StatsHandle()
+	// Feedback will not take effect under partition table.
 	tests := []struct {
 		sql     string
 		hist    string
@@ -888,23 +1037,23 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 		{
 			// test primary key feedback
 			sql: "select * from t where t.a <= 5",
-			hist: "column:1 ndv:2 totColSize:0\n" +
-				"num: 1 lower_bound: -9223372036854775808 upper_bound: 2 repeats: 0\n" +
-				"num: 1 lower_bound: 2 upper_bound: 5 repeats: 0",
+			hist: "column:1 ndv:2 totColSize:2\n" +
+				"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0\n" +
+				"num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0",
 			idxCols: 0,
 		},
 		{
 			// test index feedback by double read
 			sql: "select * from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:1\n" +
-				"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0",
+				"num: 2 lower_bound: 2 upper_bound: 2 repeats: 2 ndv: 0",
 			idxCols: 1,
 		},
 		{
 			// test index feedback by single read
 			sql: "select b from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:1\n" +
-				"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0",
+				"num: 2 lower_bound: 2 upper_bound: 2 repeats: 2 ndv: 0",
 			idxCols: 1,
 		},
 	}
@@ -969,7 +1118,8 @@ func (s *testStatsSuite) TestOutOfOrderUpdate(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 
 	// Simulate the case that another tidb has inserted some value, but delta info has not been dumped to kv yet.
 	testKit.MustExec("insert into t values (2,2),(4,5)")
@@ -991,18 +1141,18 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t with 0 topn")
 	testKit.MustExec("insert into t values (3,5)")
 	h := s.do.StatsHandle()
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
 	oriNumber := statistics.MaxNumberOfRanges
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
 		statistics.MaxNumberOfRanges = oriNumber
@@ -1026,9 +1176,9 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	tbl := h.GetTableStats(tblInfo)
 
 	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
-		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1\n"+
-		"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0\n"+
-		"num: 1 lower_bound: 4 upper_bound: 9223372036854775807 repeats: 0")
+		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0\n"+
+		"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0 ndv: 0\n"+
+		"num: 1 lower_bound: 4 upper_bound: 9223372036854775807 repeats: 0 ndv: 0")
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	low, err := codec.EncodeKey(sc, nil, types.NewIntDatum(5))
 	c.Assert(err, IsNil)
@@ -1036,8 +1186,8 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(low), Equals, uint64(2))
 
 	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, "index:1 ndv:2\n"+
-		"num: 2 lower_bound: -inf upper_bound: 5 repeats: 0\n"+
-		"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1")
+		"num: 2 lower_bound: -inf upper_bound: 5 repeats: 0 ndv: 0\n"+
+		"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0")
 
 	// Test that it won't cause panic after update.
 	testKit.MustQuery("select * from t use index(idx) where b > 0")
@@ -1051,17 +1201,17 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a)) partition by range (a) (partition p0 values less than (6))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
 	testKit.MustExec("analyze table t")
 	testKit.MustExec("insert into t values (3,5)")
 	h := s.do.StatsHandle()
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
 	}()
@@ -1081,10 +1231,112 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	pid := tblInfo.Partition.Definitions[0].ID
 	tbl := h.GetPartitionStats(tblInfo, pid)
 
+	// Feedback will not take effect under partition table.
 	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
-		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1\n"+
-		"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0\n"+
-		"num: 1 lower_bound: 4 upper_bound: 9223372036854775807 repeats: 0")
+		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0\n"+
+		"num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0\n"+
+		"num: 1 lower_bound: 4 upper_bound: 4 repeats: 1 ndv: 0")
+}
+
+func (s *testStatsSuite) TestFeedbackWithStatsVer2(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set global tidb_analyze_version = 1")
+	testKit.MustExec("set @@tidb_analyze_version = 1")
+
+	oriProbability := statistics.FeedbackProbability.Load()
+	oriNumber := statistics.MaxNumberOfRanges
+	oriMinLogCount := handle.MinLogScanCount
+	oriErrorRate := handle.MinLogErrorRate
+	defer func() {
+		statistics.FeedbackProbability.Store(oriProbability)
+		statistics.MaxNumberOfRanges = oriNumber
+		handle.MinLogScanCount = oriMinLogCount
+		handle.MinLogErrorRate = oriErrorRate
+	}()
+	// Case 1: You can't set tidb_analyze_version to 2 if feedback is enabled.
+	statistics.FeedbackProbability.Store(1)
+	testKit.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("1"))
+	testKit.MustExec("set @@tidb_analyze_version = 2")
+	testKit.MustQuery("show warnings").Check(testkit.Rows(`Error 1105 variable tidb_analyze_version not updated because analyze version 2 is incompatible with query feedback. Please consider setting feedback-probability to 0.0 in config file to disable query feedback`))
+	testKit.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("1"))
+
+	// Case 2: Feedback wouldn't be applied on version 2 statistics.
+	statistics.FeedbackProbability.Store(0)
+	testKit.MustExec("set @@tidb_analyze_version = 2")
+	testKit.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("2"))
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), index idx(b))")
+	for i := 0; i < 200; i++ {
+		testKit.MustExec("insert into t values (1,2),(2,2),(4,5),(2,3),(3,4)")
+	}
+	testKit.MustExec("analyze table t with 0 topn")
+	h := s.do.StatsHandle()
+	is := s.do.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+	testKit.MustExec("analyze table t")
+	err = h.Update(s.do.InfoSchema())
+	c.Assert(err, IsNil)
+	statsTblBefore := h.GetTableStats(tblInfo)
+	statistics.FeedbackProbability.Store(1)
+	// make the statistics inaccurate.
+	for i := 0; i < 200; i++ {
+		testKit.MustExec("insert into t values (3,4), (3,4), (3,4), (3,4), (3,4)")
+	}
+	// trigger feedback
+	testKit.MustExec("select * from t where t.a <= 5 order by a desc")
+	testKit.MustExec("select b from t use index(idx) where t.b <= 5")
+
+	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
+	err = h.DumpStatsFeedbackToKV()
+	c.Assert(err, IsNil)
+	err = h.HandleUpdateStats(s.do.InfoSchema())
+	c.Assert(err, IsNil)
+	statsTblAfter := h.GetTableStats(tblInfo)
+	// assert that statistics not changed
+	assertTableEqual(c, statsTblBefore, statsTblAfter)
+
+	// Case 3: Feedback is still effective on version 1 statistics.
+	testKit.MustExec("set tidb_analyze_version = 1")
+	testKit.MustExec("create table t1 (a bigint(64), b bigint(64), index idx(b))")
+	for i := 0; i < 200; i++ {
+		testKit.MustExec("insert into t1 values (1,2),(2,2),(4,5),(2,3),(3,4)")
+	}
+	testKit.MustExec("analyze table t1 with 0 topn")
+	// make the statistics inaccurate.
+	for i := 0; i < 200; i++ {
+		testKit.MustExec("insert into t1 values (3,4), (3,4), (3,4), (3,4), (3,4)")
+	}
+	is = s.do.InfoSchema()
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	tblInfo = table.Meta()
+	statsTblBefore = h.GetTableStats(tblInfo)
+	// trigger feedback
+	testKit.MustExec("select b from t1 use index(idx) where t1.b <= 5")
+
+	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
+	err = h.DumpStatsFeedbackToKV()
+	c.Assert(err, IsNil)
+	err = h.HandleUpdateStats(s.do.InfoSchema())
+	c.Assert(err, IsNil)
+	statsTblAfter = h.GetTableStats(tblInfo)
+	// assert that statistics changed(feedback worked)
+	c.Assert(statistics.HistogramEqual(&statsTblBefore.Indices[1].Histogram, &statsTblAfter.Indices[1].Histogram, false), IsFalse)
+
+	// Case 4: When existing version 1 stats + tidb_analyze_version=2 + feedback enabled, explicitly running `analyze table` still results in version 1 stats.
+	statistics.FeedbackProbability.Store(0)
+	testKit.MustExec("set tidb_analyze_version = 2")
+	statistics.FeedbackProbability.Store(1)
+	testKit.MustExec("analyze table t1 with 0 topn")
+	testKit.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 Use analyze version 1 on table `t1` because this table already has version 1 statistics and query feedback is also enabled." +
+			" If you want to switch to version 2 statistics, please first disable query feedback by setting feedback-probability to 0.0 in the config file."))
+	testKit.MustQuery(fmt.Sprintf("select stats_ver from mysql.stats_histograms where table_id = %d", tblInfo.ID)).Check(testkit.Rows("1", "1", "1"))
+
+	testKit.MustExec("set global tidb_analyze_version = 1")
 }
 
 type logHook struct {
@@ -1127,13 +1379,13 @@ func (h *logHook) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.Chec
 func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriMinLogCount := handle.MinLogScanCount
 	oriMinError := handle.MinLogErrorRate
 	oriLevel := log.GetLevel()
 	oriLease := s.do.StatsHandle().Lease()
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriMinError
 		s.do.StatsHandle().SetLease(oriLease)
@@ -1157,17 +1409,17 @@ func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 	}{
 		{
 			sql: "select * from t where t.a <= 15",
-			result: "[stats-feedback] test.t, column=a, rangeStr=range: [-inf,8), actual: 8, expected: 8, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1, num: 8 lower_bound: 8 upper_bound: 15 repeats: 1}" +
-				"[stats-feedback] test.t, column=a, rangeStr=range: [8,15), actual: 8, expected: 7, buckets: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1}",
+			result: "[stats-feedback] test.t, column=a, rangeStr=range: [-inf,8), actual: 8, expected: 8, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1 ndv: 0, num: 8 lower_bound: 8 upper_bound: 15 repeats: 1 ndv: 0}" +
+				"[stats-feedback] test.t, column=a, rangeStr=range: [8,15), actual: 8, expected: 7, buckets: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1 ndv: 0}",
 		},
 		{
 			sql: "select * from t use index(idx) where t.b <= 15",
-			result: "[stats-feedback] test.t, index=idx, rangeStr=range: [-inf,8), actual: 8, expected: 8, histogram: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1, num: 8 lower_bound: 8 upper_bound: 15 repeats: 1}" +
-				"[stats-feedback] test.t, index=idx, rangeStr=range: [8,16), actual: 8, expected: 8, histogram: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1, num: 4 lower_bound: 16 upper_bound: 19 repeats: 1}",
+			result: "[stats-feedback] test.t, index=idx, rangeStr=range: [-inf,8), actual: 8, expected: 8, histogram: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1 ndv: 0, num: 8 lower_bound: 8 upper_bound: 15 repeats: 1 ndv: 0}" +
+				"[stats-feedback] test.t, index=idx, rangeStr=range: [8,16), actual: 8, expected: 8, histogram: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1 ndv: 0, num: 4 lower_bound: 16 upper_bound: 19 repeats: 1 ndv: 0}",
 		},
 		{
 			sql:    "select b from t use index(idx_ba) where b = 1 and a <= 5",
-			result: "[stats-feedback] test.t, index=idx_ba, actual=1, equality=1, expected equality=1, range=range: [-inf,6], actual: -1, expected: 6, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1}",
+			result: "[stats-feedback] test.t, index=idx_ba, actual=1, equality=1, expected equality=1, range=range: [-inf,6], actual: -1, expected: 6, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1 ndv: 0}",
 		},
 		{
 			sql:    "select b from t use index(idx_bc) where b = 1 and c <= 5",
@@ -1201,7 +1453,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 	}{
 		// table was never analyzed and has reach the limit
 		{
-			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
+			tbl:    &statistics.Table{Version: oracle.GoTimeToTS(time.Now())},
 			limit:  0,
 			ratio:  0,
 			start:  "00:00 +0800",
@@ -1212,7 +1464,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 		},
 		// table was never analyzed but has not reach the limit
 		{
-			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
+			tbl:    &statistics.Table{Version: oracle.GoTimeToTS(time.Now())},
 			limit:  time.Hour,
 			ratio:  0,
 			start:  "00:00 +0800",
@@ -1306,9 +1558,9 @@ func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 	}()
 	statistics.FeedbackProbability.Store(1)
 
@@ -1320,7 +1572,8 @@ func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 		testKit.MustExec(fmt.Sprintf(`insert into t values (1, %d, %d, %d, %d, %d, %d, "%s")`, i, i, i, i, i, i, fmt.Sprintf("1000-01-%02d", i+1)))
 	}
 	h := s.do.StatsHandle()
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t with 3 buckets")
 	for i := 0; i < 20; i++ {
@@ -1440,11 +1693,11 @@ func (s *testStatsSuite) TestIndexQueryFeedback4TopN(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
 	}()
@@ -1458,7 +1711,8 @@ func (s *testStatsSuite) TestIndexQueryFeedback4TopN(c *C) {
 		testKit.MustExec(`insert into t values (1)`)
 	}
 	h := s.do.StatsHandle()
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("set @@tidb_enable_fast_analyze = 1")
 	testKit.MustExec("analyze table t with 3 buckets")
@@ -1487,11 +1741,11 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
 	}()
@@ -1504,7 +1758,7 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i/5, i))
 	}
-	testKit.MustExec("analyze table t with 3 buckets")
+	testKit.MustExec("analyze table t with 3 buckets, 0 topn")
 	testKit.MustExec("delete from t where a = 1")
 	testKit.MustExec("delete from t where b > 10")
 	is := s.do.InfoSchema()
@@ -1523,9 +1777,9 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 			// The real count of `a = 1` is 0.
 			sql: "select * from t where a = 1 and b < 21",
 			hist: "column:2 ndv:20 totColSize:20\n" +
-				"num: 5 lower_bound: -9223372036854775808 upper_bound: 7 repeats: 0\n" +
-				"num: 4 lower_bound: 7 upper_bound: 14 repeats: 0\n" +
-				"num: 4 lower_bound: 14 upper_bound: 21 repeats: 0",
+				"num: 5 lower_bound: -9223372036854775808 upper_bound: 7 repeats: 0 ndv: 0\n" +
+				"num: 4 lower_bound: 7 upper_bound: 14 repeats: 0 ndv: 0\n" +
+				"num: 4 lower_bound: 14 upper_bound: 21 repeats: 0 ndv: 0",
 			rangeID: tblInfo.Columns[1].ID,
 			idxID:   tblInfo.Indices[0].ID,
 			eqCount: 3,
@@ -1534,9 +1788,9 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 			// The real count of `b > 10` is 0.
 			sql: "select * from t where a = 2 and b > 10",
 			hist: "column:2 ndv:20 totColSize:20\n" +
-				"num: 5 lower_bound: -9223372036854775808 upper_bound: 7 repeats: 0\n" +
-				"num: 4 lower_bound: 7 upper_bound: 14 repeats: 0\n" +
-				"num: 5 lower_bound: 14 upper_bound: 9223372036854775807 repeats: 0",
+				"num: 5 lower_bound: -9223372036854775808 upper_bound: 7 repeats: 0 ndv: 0\n" +
+				"num: 4 lower_bound: 7 upper_bound: 14 repeats: 0 ndv: 0\n" +
+				"num: 5 lower_bound: 14 upper_bound: 9223372036854775807 repeats: 0 ndv: 0",
 			rangeID: tblInfo.Columns[1].ID,
 			idxID:   tblInfo.Indices[0].ID,
 			eqCount: 3,
@@ -1560,12 +1814,12 @@ func (s *testStatsSuite) TestFeedbackRanges(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	h := s.do.StatsHandle()
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriNumber := statistics.MaxNumberOfRanges
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		statistics.MaxNumberOfRanges = oriNumber
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
@@ -1579,7 +1833,8 @@ func (s *testStatsSuite) TestFeedbackRanges(c *C) {
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
 	}
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t with 3 buckets")
 	for i := 30; i < 40; i++ {
@@ -1594,25 +1849,25 @@ func (s *testStatsSuite) TestFeedbackRanges(c *C) {
 		{
 			sql: "select * from t where a <= 50 or (a > 130 and a < 140)",
 			hist: "column:1 ndv:30 totColSize:0\n" +
-				"num: 8 lower_bound: -128 upper_bound: 8 repeats: 0\n" +
-				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0\n" +
-				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0",
+				"num: 8 lower_bound: -128 upper_bound: 8 repeats: 0 ndv: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0 ndv: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0 ndv: 0",
 			colID: 1,
 		},
 		{
 			sql: "select * from t where a >= 10",
 			hist: "column:1 ndv:30 totColSize:0\n" +
-				"num: 8 lower_bound: -128 upper_bound: 8 repeats: 0\n" +
-				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0\n" +
-				"num: 14 lower_bound: 16 upper_bound: 127 repeats: 0",
+				"num: 8 lower_bound: -128 upper_bound: 8 repeats: 0 ndv: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0 ndv: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 127 repeats: 0 ndv: 0",
 			colID: 1,
 		},
 		{
 			sql: "select * from t use index(idx) where a = 1 and (b <= 50 or (b > 130 and b < 140))",
 			hist: "column:2 ndv:20 totColSize:30\n" +
-				"num: 8 lower_bound: -128 upper_bound: 7 repeats: 0\n" +
-				"num: 8 lower_bound: 7 upper_bound: 14 repeats: 0\n" +
-				"num: 7 lower_bound: 14 upper_bound: 51 repeats: 0",
+				"num: 8 lower_bound: -128 upper_bound: 7 repeats: 0 ndv: 0\n" +
+				"num: 8 lower_bound: 7 upper_bound: 14 repeats: 0 ndv: 0\n" +
+				"num: 7 lower_bound: 14 upper_bound: 51 repeats: 0 ndv: 0",
 			colID: 2,
 		},
 	}
@@ -1636,12 +1891,12 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	h := s.do.StatsHandle()
 
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
 	oriNumber := statistics.MaxNumberOfRanges
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
 		statistics.MaxNumberOfRanges = oriNumber
@@ -1657,8 +1912,10 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 		testKit.MustExec(fmt.Sprintf("insert into t1 values (%d)", i))
 	}
-	h.HandleDDLEvent(<-h.DDLEventCh())
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t, t1 with 3 buckets")
 	for i := 30; i < 40; i++ {
@@ -1674,33 +1931,33 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 		{
 			sql: "select * from t where a <= 50",
 			hist: "column:1 ndv:30 totColSize:10\n" +
-				"num: 8 lower_bound: 0 upper_bound: 8 repeats: 0\n" +
-				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0\n" +
-				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0",
+				"num: 8 lower_bound: 0 upper_bound: 8 repeats: 0 ndv: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0 ndv: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0 ndv: 0",
 			tblName: "t",
 		},
 		{
 			sql: "select count(*) from t",
 			hist: "column:1 ndv:30 totColSize:10\n" +
-				"num: 8 lower_bound: 0 upper_bound: 8 repeats: 0\n" +
-				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0\n" +
-				"num: 14 lower_bound: 16 upper_bound: 255 repeats: 0",
+				"num: 8 lower_bound: 0 upper_bound: 8 repeats: 0 ndv: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0 ndv: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 255 repeats: 0 ndv: 0",
 			tblName: "t",
 		},
 		{
 			sql: "select * from t1 where a <= 50",
 			hist: "column:1 ndv:30 totColSize:10\n" +
-				"num: 8 lower_bound: 0 upper_bound: 8 repeats: 0\n" +
-				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0\n" +
-				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0",
+				"num: 8 lower_bound: 0 upper_bound: 8 repeats: 0 ndv: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0 ndv: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0 ndv: 0",
 			tblName: "t1",
 		},
 		{
 			sql: "select count(*) from t1",
 			hist: "column:1 ndv:30 totColSize:10\n" +
-				"num: 8 lower_bound: 0 upper_bound: 8 repeats: 0\n" +
-				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0\n" +
-				"num: 14 lower_bound: 16 upper_bound: 18446744073709551615 repeats: 0",
+				"num: 8 lower_bound: 0 upper_bound: 8 repeats: 0 ndv: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0 ndv: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 18446744073709551615 repeats: 0 ndv: 0",
 			tblName: "t1",
 		},
 	}
@@ -1733,7 +1990,7 @@ func (s *testStatsSuite) TestLoadHistCorrelation(c *C) {
 	testKit.MustExec("insert into t values(1),(2),(3),(4),(5)")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t")
-	h.Clear4Test()
+	h.Clear()
 	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
 	result := testKit.MustQuery("show stats_histograms where Table_name = 't'")
 	c.Assert(len(result.Rows()), Equals, 0)
@@ -1748,9 +2005,9 @@ func (s *testStatsSuite) TestDeleteUpdateFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 	}()
 	statistics.FeedbackProbability.Store(1)
 
@@ -1783,4 +2040,220 @@ func (s *testStatsSuite) BenchmarkHandleAutoAnalyze(c *C) {
 	for i := 0; i < c.N; i++ {
 		h.HandleAutoAnalyze(is)
 	}
+}
+
+// subtraction parses the number for counter and returns new - old.
+// string for counter will be `label:<name:"type" value:"ok" > counter:<value:0 > `
+func subtraction(newMetric *dto.Metric, oldMetric *dto.Metric) int {
+	newStr := newMetric.String()
+	oldStr := oldMetric.String()
+	newIdx := strings.LastIndex(newStr, ":")
+	newNum, _ := strconv.Atoi(newStr[newIdx+1 : len(newStr)-3])
+	oldIdx := strings.LastIndex(oldStr, ":")
+	oldNum, _ := strconv.Atoi(oldStr[oldIdx+1 : len(oldStr)-3])
+	return newNum - oldNum
+}
+
+func (s *testStatsSuite) TestDisableFeedback(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	oriProbability := statistics.FeedbackProbability.Load()
+	defer func() {
+		statistics.FeedbackProbability.Store(oriProbability)
+	}()
+	statistics.FeedbackProbability.Store(0.0)
+	oldNum := &dto.Metric{}
+	err := metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(oldNum)
+	c.Assert(err, IsNil)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a int, b int, index idx_a(a))")
+	testKit.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (5, 5)")
+	testKit.MustExec("analyze table t with 0 topn")
+	for i := 0; i < 20; i++ {
+		testKit.MustQuery("select /*+ use_index(t, idx_a) */ * from t where a < 4")
+	}
+
+	newNum := &dto.Metric{}
+	err = metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(newNum)
+	c.Assert(err, IsNil)
+	c.Assert(subtraction(newNum, oldNum), Equals, 0)
+}
+
+func (s *testStatsSuite) TestFeedbackCounter(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	oriProbability := statistics.FeedbackProbability.Load()
+	defer func() {
+		statistics.FeedbackProbability.Store(oriProbability)
+	}()
+	statistics.FeedbackProbability.Store(1)
+	oldNum := &dto.Metric{}
+	err := metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(oldNum)
+	c.Assert(err, IsNil)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a int, b int, index idx_a(a))")
+	testKit.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (5, 5)")
+	testKit.MustExec("analyze table t with 0 topn")
+	for i := 0; i < 20; i++ {
+		testKit.MustQuery("select /*+ use_index(t, idx_a) */ * from t where a < 4")
+	}
+
+	newNum := &dto.Metric{}
+	err = metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(newNum)
+	c.Assert(err, IsNil)
+	c.Assert(subtraction(newNum, oldNum), Equals, 20)
+}
+
+func (s *testSerialStatsSuite) TestMergeTopN(c *C) {
+	// Move this test to here to avoid race test.
+	tests := []struct {
+		topnNum    int
+		n          int
+		maxTopNVal int
+		maxTopNCnt int
+	}{
+		{
+			topnNum:    10,
+			n:          5,
+			maxTopNVal: 50,
+			maxTopNCnt: 100,
+		},
+		{
+			topnNum:    1,
+			n:          5,
+			maxTopNVal: 50,
+			maxTopNCnt: 100,
+		},
+		{
+			topnNum:    5,
+			n:          5,
+			maxTopNVal: 5,
+			maxTopNCnt: 100,
+		},
+		{
+			topnNum:    5,
+			n:          5,
+			maxTopNVal: 10,
+			maxTopNCnt: 100,
+		},
+	}
+	for _, t := range tests {
+		topnNum, n := t.topnNum, t.n
+		maxTopNVal, maxTopNCnt := t.maxTopNVal, t.maxTopNCnt
+
+		// the number of maxTopNVal should be bigger than n.
+		ok := maxTopNVal >= n
+		c.Assert(ok, Equals, true)
+
+		topNs := make([]*statistics.TopN, 0, topnNum)
+		res := make(map[int]uint64)
+		rand.Seed(time.Now().Unix())
+		for i := 0; i < topnNum; i++ {
+			topN := statistics.NewTopN(n)
+			occur := make(map[int]bool)
+			for j := 0; j < n; j++ {
+				// The range of numbers in the topn structure is in [0, maxTopNVal)
+				// But there cannot be repeated occurrences of value in a topN structure.
+				randNum := rand.Intn(maxTopNVal)
+				for occur[randNum] {
+					randNum = rand.Intn(maxTopNVal)
+				}
+				occur[randNum] = true
+				tString := []byte(fmt.Sprintf("%d", randNum))
+				// The range of the number of occurrences in the topn structure is in [0, maxTopNCnt)
+				randCnt := uint64(rand.Intn(maxTopNCnt))
+				res[randNum] += randCnt
+				topNMeta := statistics.TopNMeta{Encoded: tString, Count: randCnt}
+				topN.TopN = append(topN.TopN, topNMeta)
+			}
+			topNs = append(topNs, topN)
+		}
+		topN, remainTopN := statistics.MergeTopN(topNs, uint32(n))
+		cnt := len(topN.TopN)
+		var minTopNCnt uint64
+		for _, topNMeta := range topN.TopN {
+			val, err := strconv.Atoi(string(topNMeta.Encoded))
+			c.Assert(err, IsNil)
+			c.Assert(topNMeta.Count, Equals, res[val])
+			minTopNCnt = topNMeta.Count
+		}
+		if remainTopN != nil {
+			cnt += len(remainTopN)
+			for _, remainTopNMeta := range remainTopN {
+				val, err := strconv.Atoi(string(remainTopNMeta.Encoded))
+				c.Assert(err, IsNil)
+				c.Assert(remainTopNMeta.Count, Equals, res[val])
+				// The count of value in remainTopN may equal to the min count of value in TopN.
+				ok = minTopNCnt >= remainTopNMeta.Count
+				c.Assert(ok, Equals, true)
+			}
+		}
+		c.Assert(cnt, Equals, len(res))
+	}
+}
+
+func (s *testSerialStatsSuite) TestAutoUpdatePartitionInDynamicOnlyMode(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testkit.WithPruneMode(testKit, variable.DynamicOnly, func() {
+		testKit.MustExec("use test")
+		testKit.MustExec("set @@tidb_analyze_version = 2;")
+		testKit.MustExec("drop table if exists t")
+		testKit.MustExec(`create table t (a int, b varchar(10), index idx_ab(a, b))
+					partition by range (a) (
+					partition p0 values less than (10),
+					partition p1 values less than (20),
+					partition p2 values less than (30))`)
+
+		do := s.do
+		is := do.InfoSchema()
+		h := do.StatsHandle()
+		c.Assert(h.RefreshVars(), IsNil)
+		c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
+
+		testKit.MustExec("insert into t values (1, 'a'), (2, 'b'), (11, 'c'), (12, 'd'), (21, 'e'), (22, 'f')")
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		testKit.MustExec("set @@tidb_analyze_version = 2")
+		testKit.MustExec("analyze table t")
+
+		handle.AutoAnalyzeMinCnt = 0
+		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.1")
+		defer func() {
+			handle.AutoAnalyzeMinCnt = 1000
+			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
+		}()
+
+		c.Assert(h.Update(is), IsNil)
+		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		tableInfo := tbl.Meta()
+		pi := tableInfo.GetPartitionInfo()
+		globalStats := h.GetTableStats(tableInfo)
+		partitionStats := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+		c.Assert(globalStats.Count, Equals, int64(6))
+		c.Assert(globalStats.ModifyCount, Equals, int64(0))
+		c.Assert(partitionStats.Count, Equals, int64(2))
+		c.Assert(partitionStats.ModifyCount, Equals, int64(0))
+
+		testKit.MustExec("insert into t values (3, 'g')")
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		globalStats = h.GetTableStats(tableInfo)
+		partitionStats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+		c.Assert(globalStats.Count, Equals, int64(7))
+		c.Assert(globalStats.ModifyCount, Equals, int64(1))
+		c.Assert(partitionStats.Count, Equals, int64(3))
+		c.Assert(partitionStats.ModifyCount, Equals, int64(1))
+
+		h.HandleAutoAnalyze(is)
+		c.Assert(h.Update(is), IsNil)
+		globalStats = h.GetTableStats(tableInfo)
+		partitionStats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+		c.Assert(globalStats.Count, Equals, int64(7))
+		c.Assert(globalStats.ModifyCount, Equals, int64(0))
+		c.Assert(partitionStats.Count, Equals, int64(3))
+		c.Assert(partitionStats.ModifyCount, Equals, int64(0))
+	})
 }

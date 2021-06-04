@@ -1,0 +1,44 @@
+use test;
+drop table if exists t1, t2;
+create table t1 (c1 int primary key, c2 int, index c2 (c2));
+create table t2 (c1 int unique, c2 int);
+insert into t1 values(1, 0), (2, 1);
+insert into t2 values(1, 0), (2, 1);
+
+# simple cte
+explain with cte(a) as (select 1) select * from cte;
+explain with cte(a) as (select c1 from t1) select * from cte;
+explain with cte(a,b,c,d) as (select * from t1, t2) select * from cte;
+
+# recursive cte
+explain with recursive cte(a) as (select 1 union select a+1 from cte where a < 10) select * from cte;
+explain with recursive cte(a) as (select c2 from t1 union select a+1 from cte where a < 10) select * from cte;
+
+# nested cte
+explain with cte(a) as (with recursive cte1(a) as (select 1 union select a + 1 from cte1 where a < 10) select * from cte1) select * from cte;
+
+# cte with join
+explain with recursive cte(a) as (select 1 union select a+1 from cte where a < 10) select * from cte t1, cte t2;
+explain with cte(a) as (with recursive cte1(a) as (select 1 union select a + 1 from cte1 where a < 10) select * from cte1) select * from cte t1, cte t2;
+
+# multiple cte
+explain with recursive cte1(a) as (select 1 union select a+1 from cte1 where a < 10), cte2(a) as (select c2 from t1 union select a+1 from cte2 where a < 10) select * from cte1, cte2;
+
+# other
+explain with q(a,b) as (select * from t1) select /*+ merge(q) no_merge(q1) */ * from q, q q1 where q.a=1 and q1.a=2;
+# explain with cte(a,b) as (select * from t1) select (select 1 from cte limit 1) from cte;
+explain with recursive cte(a,b) as (select 1, concat('a', 1) union select a+1, concat(b, 1) from cte where a < 5) select * from cte;
+explain select * from t1 dt where exists(with recursive qn as (select c1*0+1 as b union all select b+1 from qn where b=0) select * from qn where b=1);
+
+# recursive limit
+explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 1) select * from cte1;
+explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 100 offset 100) select * from cte1;
+explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 0 offset 0) select * from cte1;
+
+explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 1) select * from cte1 dt1 join cte1 dt2 on dt1.c1 = dt2.c1;
+explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 0 offset 0) select * from cte1 dt1 join cte1 dt2 on dt1.c1 = dt2.c1;
+
+# non-recursive limit
+explain with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 1) select * from cte1;
+explain with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 100 offset 100) select * from cte1;
+explain with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 0 offset 0) select * from cte1;

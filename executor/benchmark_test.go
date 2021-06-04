@@ -18,7 +18,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"math/rand"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -27,6 +29,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/core"
@@ -168,7 +171,9 @@ func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
 	switch typ.Tp {
 	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
-	case mysql.TypeDouble, mysql.TypeFloat:
+	case mysql.TypeFloat:
+		return rand.Float32()
+	case mysql.TypeDouble:
 		return rand.Float64()
 	case mysql.TypeNewDecimal:
 		var d types.MyDecimal
@@ -222,7 +227,9 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 			switch retTypes[colIdx].Tp {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				m.genData[idx].AppendInt64(colIdx, colData[colIdx][i].(int64))
-			case mysql.TypeDouble, mysql.TypeFloat:
+			case mysql.TypeFloat:
+				m.genData[idx].AppendFloat32(colIdx, colData[colIdx][i].(float32))
+			case mysql.TypeDouble:
 				m.genData[idx].AppendFloat64(colIdx, colData[colIdx][i].(float64))
 			case mysql.TypeNewDecimal:
 				m.genData[idx].AppendMyDecimal(colIdx, colData[colIdx][i].(*types.MyDecimal))
@@ -283,7 +290,7 @@ func buildHashAggExecutor(ctx sessionctx.Context, src Executor, schema *expressi
 	plan.SetSchema(schema)
 	plan.Init(ctx, nil, 0)
 	plan.SetChildren(nil)
-	b := newExecutorBuilder(ctx, nil)
+	b := newExecutorBuilder(ctx, nil, nil)
 	exec := b.build(plan)
 	hashAgg := exec.(*HashAggExec)
 	hashAgg.children[0] = src
@@ -301,6 +308,7 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec Executor, schema *ex
 	sg.Init(ctx, nil, 0)
 
 	var tail core.PhysicalPlan = sg
+	// if data source is not sorted, we have to attach sort, to make the input of stream-agg sorted
 	if !dataSourceSorted {
 		byItems := make([]*util.ByItems, 0, len(sg.GroupByItems))
 		for _, col := range sg.GroupByItems {
@@ -314,13 +322,19 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec Executor, schema *ex
 		sg.SetChildren(src)
 	}
 
-	var plan core.PhysicalPlan
+	var (
+		plan     core.PhysicalPlan
+		splitter core.PartitionSplitterType = core.PartitionHashSplitterType
+	)
 	if concurrency > 1 {
+		if dataSourceSorted {
+			splitter = core.PartitionRangeSplitterType
+		}
 		plan = core.PhysicalShuffle{
 			Concurrency:  concurrency,
 			Tails:        []core.PhysicalPlan{tail},
 			DataSources:  []core.PhysicalPlan{src},
-			SplitterType: core.PartitionHashSplitterType,
+			SplitterType: splitter,
 			ByItemArrays: [][]expression.Expression{sg.GroupByItems},
 		}.Init(ctx, nil, 0)
 		plan.SetChildren(sg)
@@ -328,7 +342,7 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec Executor, schema *ex
 		plan = sg
 	}
 
-	b := newExecutorBuilder(ctx, nil)
+	b := newExecutorBuilder(ctx, nil, nil)
 	return b.build(plan)
 }
 
@@ -412,7 +426,7 @@ func benchmarkAggExecWithCase(b *testing.B, casTest *aggTestCase) {
 
 func BenchmarkShuffleStreamAggRows(b *testing.B) {
 	b.ReportAllocs()
-	sortTypes := []bool{true}
+	sortTypes := []bool{false, true}
 	rows := []int{10000, 100000, 1000000, 10000000}
 	concurrencies := []int{1, 2, 4, 8}
 	for _, row := range rows {
@@ -561,7 +575,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		plan = win
 	}
 
-	b := newExecutorBuilder(ctx, nil)
+	b := newExecutorBuilder(ctx, nil, nil)
 	exec := b.build(plan)
 	return exec
 }
@@ -574,6 +588,7 @@ type windowTestCase struct {
 	ndv              int // the number of distinct group-by keys
 	rows             int
 	concurrency      int
+	pipelined        int
 	dataSourceSorted bool
 	ctx              sessionctx.Context
 	rawDataSmall     string
@@ -581,15 +596,15 @@ type windowTestCase struct {
 }
 
 func (a windowTestCase) String() string {
-	return fmt.Sprintf("(func:%v, aggColType:%s, numFunc:%v, ndv:%v, rows:%v, sorted:%v, concurrency:%v)",
-		a.windowFunc, a.columns[0].RetType, a.numFunc, a.ndv, a.rows, a.dataSourceSorted, a.concurrency)
+	return fmt.Sprintf("(func:%v, aggColType:%s, numFunc:%v, ndv:%v, rows:%v, sorted:%v, concurrency:%v, pipelined:%v)",
+		a.windowFunc, a.columns[0].RetType, a.numFunc, a.ndv, a.rows, a.dataSourceSorted, a.concurrency, a.pipelined)
 }
 
 func defaultWindowTestCase() *windowTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	return &windowTestCase{ast.WindowFuncRowNumber, 1, nil, 1000, 10000000, 1, true, ctx, strings.Repeat("x", 16),
+	return &windowTestCase{ast.WindowFuncRowNumber, 1, nil, 1000, 10000000, 1, 0, true, ctx, strings.Repeat("x", 16),
 		[]*expression.Column{
 			{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
 			{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
@@ -601,6 +616,9 @@ func defaultWindowTestCase() *windowTestCase {
 func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 	ctx := casTest.ctx
 	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBWindowConcurrency, fmt.Sprintf("%v", casTest.concurrency)); err != nil {
+		b.Fatal(err)
+	}
+	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBEnablePipelinedWindowFunction, fmt.Sprintf("%v", casTest.pipelined)); err != nil {
 		b.Fatal(err)
 	}
 
@@ -643,10 +661,10 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 	}
 }
 
-func BenchmarkWindowRows(b *testing.B) {
+func baseBenchmarkWindowRows(b *testing.B, pipelined int) {
 	b.ReportAllocs()
 	rows := []int{1000, 100000}
-	ndvs := []int{10, 1000}
+	ndvs := []int{1, 10, 1000}
 	concs := []int{1, 2, 4}
 	for _, row := range rows {
 		for _, ndv := range ndvs {
@@ -657,6 +675,7 @@ func BenchmarkWindowRows(b *testing.B) {
 				cas.concurrency = con
 				cas.dataSourceSorted = false
 				cas.windowFunc = ast.WindowFuncRowNumber // cheapest
+				cas.pipelined = pipelined
 				b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 					benchmarkWindowExecWithCase(b, cas)
 				})
@@ -665,20 +684,25 @@ func BenchmarkWindowRows(b *testing.B) {
 	}
 }
 
-func BenchmarkWindowFunctions(b *testing.B) {
+func BenchmarkWindowRows(b *testing.B) {
+	baseBenchmarkWindowRows(b, 0)
+	baseBenchmarkWindowRows(b, 1)
+}
+
+func baseBenchmarkWindowFunctions(b *testing.B, pipelined int) {
 	b.ReportAllocs()
 	windowFuncs := []string{
-		ast.WindowFuncRowNumber,
-		ast.WindowFuncRank,
-		ast.WindowFuncDenseRank,
-		ast.WindowFuncCumeDist,
-		ast.WindowFuncPercentRank,
-		ast.WindowFuncNtile,
-		ast.WindowFuncLead,
+		// ast.WindowFuncRowNumber,
+		// ast.WindowFuncRank,
+		// ast.WindowFuncDenseRank,
+		// ast.WindowFuncCumeDist,
+		// ast.WindowFuncPercentRank,
+		// ast.WindowFuncNtile,
+		// ast.WindowFuncLead,
 		ast.WindowFuncLag,
-		ast.WindowFuncFirstValue,
-		ast.WindowFuncLastValue,
-		ast.WindowFuncNthValue,
+		// ast.WindowFuncFirstValue,
+		// ast.WindowFuncLastValue,
+		// ast.WindowFuncNthValue,
 	}
 	concs := []int{1, 4}
 	for _, windowFunc := range windowFuncs {
@@ -689,6 +713,7 @@ func BenchmarkWindowFunctions(b *testing.B) {
 			cas.concurrency = con
 			cas.dataSourceSorted = false
 			cas.windowFunc = windowFunc
+			cas.pipelined = pipelined
 			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 				benchmarkWindowExecWithCase(b, cas)
 			})
@@ -696,7 +721,12 @@ func BenchmarkWindowFunctions(b *testing.B) {
 	}
 }
 
-func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
+func BenchmarkWindowFunctions(b *testing.B) {
+	baseBenchmarkWindowFunctions(b, 0)
+	baseBenchmarkWindowFunctions(b, 1)
+}
+
+func baseBenchmarkWindowFunctionsWithFrame(b *testing.B, pipelined int) {
 	b.ReportAllocs()
 	windowFuncs := []string{
 		ast.WindowFuncRowNumber,
@@ -722,6 +752,7 @@ func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
 					if i < len(frames) {
 						cas.frame = frames[i]
 					}
+					cas.pipelined = pipelined
 					b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 						benchmarkWindowExecWithCase(b, cas)
 					})
@@ -729,9 +760,15 @@ func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
 			}
 		}
 	}
+
 }
 
-func BenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b *testing.B) {
+func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
+	baseBenchmarkWindowFunctionsWithFrame(b, 0)
+	baseBenchmarkWindowFunctionsWithFrame(b, 1)
+}
+
+func baseBenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b *testing.B, pipelined int) {
 	b.ReportAllocs()
 	windowFunc := ast.AggFuncMax
 	frame := &core.WindowFrame{Type: ast.Rows, Start: &core.FrameBound{UnBounded: true}, End: &core.FrameBound{UnBounded: true}}
@@ -743,12 +780,18 @@ func BenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b *testing.B) {
 	cas.windowFunc = windowFunc
 	cas.numFunc = 1
 	cas.frame = frame
+	cas.pipelined = pipelined
 	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 		benchmarkWindowExecWithCase(b, cas)
 	})
 }
 
-func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.FrameType) {
+func BenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b *testing.B) {
+	baseBenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b, 0)
+	baseBenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b, 1)
+}
+
+func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.FrameType, pipelined int) {
 	b.ReportAllocs()
 	windowFuncs := []struct {
 		aggFunc     string
@@ -780,6 +823,7 @@ func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.F
 		cas.windowFunc = windowFunc.aggFunc
 		cas.frame = frame
 		cas.columns[0].RetType.Tp = windowFunc.aggColTypes
+		cas.pipelined = pipelined
 		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 			benchmarkWindowExecWithCase(b, cas)
 		})
@@ -787,8 +831,10 @@ func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.F
 }
 
 func BenchmarkWindowFunctionsWithSlidingWindow(b *testing.B) {
-	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Rows)
-	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Ranges)
+	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Rows, 0)
+	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Ranges, 0)
+	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Rows, 1)
+	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Ranges, 1)
 }
 
 type hashJoinTestCase struct {
@@ -1276,7 +1322,7 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 			hashCols: tc.outerHashKeyIdx,
 		},
 		innerCtx: innerCtx{
-			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil)},
+			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil, nil)},
 			rowTypes:      rightTypes,
 			colLens:       colLens,
 			keyCols:       tc.innerJoinKeyIdx,
@@ -1342,7 +1388,7 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 			compareFuncs:  outerCompareFuncs,
 		},
 		innerMergeCtx: innerMergeCtx{
-			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil)},
+			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil, nil)},
 			rowTypes:      rightTypes,
 			joinKeys:      innerJoinKeys,
 			colLens:       colLens,
@@ -1452,7 +1498,43 @@ type mergeJoinTestCase struct {
 	childrenUsedSchema [][]bool
 }
 
-func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSource) *MergeJoinExec {
+func prepareMergeJoinExec(tc *mergeJoinTestCase, joinSchema *expression.Schema, leftExec, rightExec Executor, defaultValues []types.Datum,
+	compareFuncs []expression.CompareFunc, innerJoinKeys []*expression.Column, outerJoinKeys []*expression.Column) *MergeJoinExec {
+	// only benchmark inner join
+	mergeJoinExec := &MergeJoinExec{
+		stmtCtx:      tc.ctx.GetSessionVars().StmtCtx,
+		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 3, leftExec, rightExec),
+		compareFuncs: compareFuncs,
+		isOuterJoin:  false,
+	}
+
+	mergeJoinExec.joiner = newJoiner(
+		tc.ctx,
+		0,
+		false,
+		defaultValues,
+		nil,
+		retTypes(leftExec),
+		retTypes(rightExec),
+		tc.childrenUsedSchema,
+	)
+
+	mergeJoinExec.innerTable = &mergeJoinTable{
+		isInner:    true,
+		childIndex: 1,
+		joinKeys:   innerJoinKeys,
+	}
+
+	mergeJoinExec.outerTable = &mergeJoinTable{
+		childIndex: 0,
+		filters:    nil,
+		joinKeys:   outerJoinKeys,
+	}
+
+	return mergeJoinExec
+}
+
+func prepare4MergeJoin(tc *mergeJoinTestCase, innerDS, outerDS *mockDataSource, sorted bool, concurrency int) Executor {
 	outerCols, innerCols := tc.columns(), tc.columns()
 
 	joinSchema := expression.NewSchema()
@@ -1481,50 +1563,91 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSourc
 		innerJoinKeys = append(innerJoinKeys, innerCols[keyIdx])
 	}
 	compareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
-	outerCompareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
 	for i := range outerJoinKeys {
 		compareFuncs = append(compareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], innerJoinKeys[i]))
-		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], outerJoinKeys[i]))
 	}
 
 	defaultValues := make([]types.Datum, len(innerCols))
 
-	// only benchmark inner join
-	e := &MergeJoinExec{
-		stmtCtx:      tc.ctx.GetSessionVars().StmtCtx,
-		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 3, leftExec, rightExec),
-		compareFuncs: compareFuncs,
-		isOuterJoin:  false,
+	var leftExec, rightExec Executor
+	if sorted {
+		leftSortExec := &SortExec{
+			baseExecutor: newBaseExecutor(tc.ctx, innerDS.schema, 3, innerDS),
+			ByItems:      make([]*util.ByItems, 0, len(tc.innerJoinKeyIdx)),
+			schema:       innerDS.schema,
+		}
+		for _, key := range innerJoinKeys {
+			leftSortExec.ByItems = append(leftSortExec.ByItems, &util.ByItems{Expr: key})
+		}
+		leftExec = leftSortExec
+
+		rightSortExec := &SortExec{
+			baseExecutor: newBaseExecutor(tc.ctx, outerDS.schema, 4, outerDS),
+			ByItems:      make([]*util.ByItems, 0, len(tc.outerJoinKeyIdx)),
+			schema:       outerDS.schema,
+		}
+		for _, key := range outerJoinKeys {
+			rightSortExec.ByItems = append(rightSortExec.ByItems, &util.ByItems{Expr: key})
+		}
+		rightExec = rightSortExec
+	} else {
+		leftExec = innerDS
+		rightExec = outerDS
 	}
 
-	e.joiner = newJoiner(
-		tc.ctx,
-		0,
-		false,
-		defaultValues,
-		nil,
-		retTypes(leftExec),
-		retTypes(rightExec),
-		tc.childrenUsedSchema,
-	)
+	var e Executor
+	if concurrency == 1 {
+		e = prepareMergeJoinExec(tc, joinSchema, leftExec, rightExec, defaultValues, compareFuncs, innerJoinKeys, outerJoinKeys)
+	} else {
+		// build dataSources
+		dataSources := []Executor{leftExec, rightExec}
+		// build splitters
+		innerByItems := make([]expression.Expression, 0, len(innerJoinKeys))
+		for _, innerJoinKey := range innerJoinKeys {
+			innerByItems = append(innerByItems, innerJoinKey)
+		}
+		outerByItems := make([]expression.Expression, 0, len(outerJoinKeys))
+		for _, outerJoinKey := range outerJoinKeys {
+			outerByItems = append(outerByItems, outerJoinKey)
+		}
+		splitters := []partitionSplitter{
+			&partitionHashSplitter{
+				byItems:    innerByItems,
+				numWorkers: concurrency,
+			},
+			&partitionHashSplitter{
+				byItems:    outerByItems,
+				numWorkers: concurrency,
+			},
+		}
+		// build ShuffleMergeJoinExec
+		shuffle := &ShuffleExec{
+			baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 4),
+			concurrency:  concurrency,
+			dataSources:  dataSources,
+			splitters:    splitters,
+		}
 
-	e.innerTable = &mergeJoinTable{
-		isInner:    true,
-		childIndex: 1,
-		joinKeys:   innerJoinKeys,
-	}
+		// build workers, only benchmark inner join
+		shuffle.workers = make([]*shuffleWorker, shuffle.concurrency)
+		for i := range shuffle.workers {
+			leftReceiver := shuffleReceiver{
+				baseExecutor: newBaseExecutor(tc.ctx, leftExec.Schema(), 0),
+			}
+			rightReceiver := shuffleReceiver{
+				baseExecutor: newBaseExecutor(tc.ctx, rightExec.Schema(), 0),
+			}
+			w := &shuffleWorker{
+				receivers: []*shuffleReceiver{&leftReceiver, &rightReceiver},
+			}
+			w.childExec = prepareMergeJoinExec(tc, joinSchema, &leftReceiver, &rightReceiver, defaultValues, compareFuncs, innerJoinKeys, outerJoinKeys)
 
-	e.outerTable = &mergeJoinTable{
-		childIndex: 0,
-		filters:    nil,
-		joinKeys:   outerJoinKeys,
+			shuffle.workers[i] = w
+		}
+		e = shuffle
 	}
 
 	return e
-}
-
-func defaultMergeJoinTestCase() *mergeJoinTestCase {
-	return &mergeJoinTestCase{*defaultIndexJoinTestCase(), nil}
 }
 
 func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc *mergeJoinTestCase, innerDS, outerDS *mockDataSource) {
@@ -1605,7 +1728,7 @@ func benchmarkMergeJoinExecWithCase(b *testing.B, tc *mergeJoinTestCase, innerDS
 		var exec Executor
 		switch joinType {
 		case innerMergeJoin:
-			exec = prepare4MergeJoin(tc, innerDS, outerDS)
+			exec = prepare4MergeJoin(tc, innerDS, outerDS, true, 2)
 		}
 
 		tmpCtx := context.Background()
@@ -1890,4 +2013,88 @@ func BenchmarkLimitExec(b *testing.B) {
 			benchmarkLimitExec(b, cas)
 		})
 	}
+}
+
+func BenchmarkReadLastLinesOfHugeLine(b *testing.B) {
+	// step 1. initial a huge line log file
+	hugeLine := make([]byte, 1024*1024*10)
+	for i := range hugeLine {
+		hugeLine[i] = 'a' + byte(i%26)
+	}
+	fileName := "tidb.log"
+	err := os.WriteFile(fileName, hugeLine, 0644)
+	if err != nil {
+		b.Fatal(err)
+	}
+	file, err := os.OpenFile(fileName, os.O_RDONLY, os.ModePerm)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		file.Close()
+		os.Remove(fileName)
+	}()
+	stat, _ := file.Stat()
+	filesize := stat.Size()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, n, err := readLastLines(context.Background(), file, filesize)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if n != len(hugeLine) {
+			b.Fatalf("len %v, expected: %v", n, len(hugeLine))
+		}
+	}
+}
+
+func BenchmarkAggPartialResultMapperMemoryUsage(b *testing.B) {
+	b.ReportAllocs()
+	type testCase struct {
+		rowNum int
+	}
+	cases := []testCase{
+		{
+			rowNum: 0,
+		},
+		{
+			rowNum: 100,
+		},
+		{
+			rowNum: 10000,
+		},
+		{
+			rowNum: 1000000,
+		},
+		{
+			rowNum: 851968, // 6.5 * (1 << 17)
+		},
+		{
+			rowNum: 851969, // 6.5 * (1 << 17) + 1
+		},
+		{
+			rowNum: 425984, // 6.5 * (1 << 16)
+		},
+		{
+			rowNum: 425985, // 6.5 * (1 << 16) + 1
+		},
+	}
+
+	for _, c := range cases {
+		b.Run(fmt.Sprintf("MapRows %v", c.rowNum), func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				aggMap := make(aggPartialResultMapper)
+				tempSlice := make([]aggfuncs.PartialResult, 10)
+				for num := 0; num < c.rowNum; num++ {
+					aggMap[strconv.Itoa(num)] = tempSlice
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkPipelinedRowNumberWindowFunctionExecution(b *testing.B) {
+	b.ReportAllocs()
+
 }

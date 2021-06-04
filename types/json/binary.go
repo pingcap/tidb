@@ -145,7 +145,7 @@ func (bj BinaryJSON) marshalTo(buf []byte) ([]byte, error) {
 	return buf, nil
 }
 
-//IsZero return a boolean indicate whether BinaryJSON is Zero
+// IsZero return a boolean indicate whether BinaryJSON is Zero
 func (bj BinaryJSON) IsZero() bool {
 	isZero := false
 	switch bj.TypeCode {
@@ -402,7 +402,7 @@ func ParseBinaryFromString(s string) (bj BinaryJSON, err error) {
 		err = ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")
 		return
 	}
-	if err = bj.UnmarshalJSON(data); err != nil {
+	if err = bj.UnmarshalJSON(data); err != nil && !ErrJSONObjectKeyTooLong.Equal(err) {
 		err = ErrInvalidJSONText.GenWithStackByArgs(err)
 	}
 	return
@@ -426,6 +426,36 @@ func (bj *BinaryJSON) UnmarshalJSON(data []byte) error {
 	bj.TypeCode = typeCode
 	bj.Value = buf
 	return nil
+}
+
+// HashValue converts certain JSON values for aggregate comparisons.
+// For example int64(3) == float64(3.0)
+func (bj BinaryJSON) HashValue(buf []byte) []byte {
+	switch bj.TypeCode {
+	case TypeCodeInt64:
+		// Convert to a FLOAT if no precision is lost.
+		// In the future, it will be better to convert to a DECIMAL value instead
+		// See: https://github.com/pingcap/tidb/issues/9988
+		if bj.GetInt64() == int64(float64(bj.GetInt64())) {
+			buf = appendBinaryFloat64(buf, float64(bj.GetInt64()))
+		} else {
+			buf = append(buf, bj.Value...)
+		}
+	case TypeCodeArray:
+		elemCount := int(endian.Uint32(bj.Value))
+		for i := 0; i < elemCount; i++ {
+			buf = bj.arrayGetElem(i).HashValue(buf)
+		}
+	case TypeCodeObject:
+		elemCount := int(endian.Uint32(bj.Value))
+		for i := 0; i < elemCount; i++ {
+			buf = append(buf, bj.objectGetKey(i)...)
+			buf = bj.objectGetVal(i).HashValue(buf)
+		}
+	default:
+		buf = append(buf, bj.Value...)
+	}
+	return buf
 }
 
 // CreateBinary creates a BinaryJSON from interface.
@@ -510,29 +540,29 @@ func appendUint32(buf []byte, v uint32) []byte {
 }
 
 func appendBinaryNumber(buf []byte, x json.Number) (TypeCode, []byte, error) {
-	var typeCode TypeCode
+	// The type interpretation process is as follows:
+	// - Attempt float64 if it contains Ee.
+	// - Next attempt int64
+	// - Then uint64 (valid in MySQL JSON, not in JSON decode library)
+	// - Then float64
+	// - Return an error
 	if strings.ContainsAny(string(x), "Ee.") {
-		typeCode = TypeCodeFloat64
 		f64, err := x.Float64()
 		if err != nil {
-			return typeCode, nil, errors.Trace(err)
+			return TypeCodeFloat64, nil, errors.Trace(err)
 		}
-		buf = appendBinaryFloat64(buf, f64)
-	} else {
-		typeCode = TypeCodeInt64
-		i64, err := x.Int64()
-		if err != nil {
-			typeCode = TypeCodeFloat64
-			f64, err := x.Float64()
-			if err != nil {
-				return typeCode, nil, errors.Trace(err)
-			}
-			buf = appendBinaryFloat64(buf, f64)
-		} else {
-			buf = appendBinaryUint64(buf, uint64(i64))
-		}
+		return TypeCodeFloat64, appendBinaryFloat64(buf, f64), nil
+	} else if val, err := x.Int64(); err == nil {
+		return TypeCodeInt64, appendBinaryUint64(buf, uint64(val)), nil
+	} else if val, err := strconv.ParseUint(string(x), 10, 64); err == nil {
+		return TypeCodeUint64, appendBinaryUint64(buf, val), nil
 	}
-	return typeCode, buf, nil
+	val, err := x.Float64()
+	if err == nil {
+		return TypeCodeFloat64, appendBinaryFloat64(buf, val), nil
+	}
+	var typeCode TypeCode
+	return typeCode, nil, errors.Trace(err)
 }
 
 func appendBinaryString(buf []byte, v string) []byte {
@@ -623,6 +653,9 @@ func appendBinaryObject(buf []byte, x map[string]interface{}) ([]byte, error) {
 		keyEntryOff := keyEntryBegin + i*keyEntrySize
 		keyOff := len(buf) - docOff
 		keyLen := uint32(len(field.key))
+		if keyLen > math.MaxUint16 {
+			return nil, ErrJSONObjectKeyTooLong
+		}
 		endian.PutUint32(buf[keyEntryOff:], uint32(keyOff))
 		endian.PutUint16(buf[keyEntryOff+keyLenOff:], uint16(keyLen))
 		buf = append(buf, field.key...)

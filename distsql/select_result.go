@@ -24,13 +24,16 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -58,8 +61,6 @@ var (
 
 // SelectResult is an iterator of coprocessor partial results.
 type SelectResult interface {
-	// Fetch fetches partial results from client.
-	Fetch(context.Context)
 	// NextRaw gets the next raw result.
 	NextRaw(context.Context) ([]byte, error)
 	// Next reads the data into chunk.
@@ -91,6 +92,8 @@ type selectResult struct {
 	copPlanIDs []int
 	rootPlanID int
 
+	storeType kv.StoreType
+
 	fetchDuration    time.Duration
 	durationReported bool
 	memTracker       *memory.Tracker
@@ -98,10 +101,38 @@ type selectResult struct {
 	stats *selectResultRuntimeStats
 }
 
-func (r *selectResult) Fetch(ctx context.Context) {
-}
-
 func (r *selectResult) fetchResp(ctx context.Context) error {
+	defer func() {
+		if r.stats != nil {
+			coprCacheHistogramHit.Observe(float64(r.stats.CoprCacheHitNum))
+			coprCacheHistogramMiss.Observe(float64(len(r.stats.copRespTime) - int(r.stats.CoprCacheHitNum)))
+			// Ignore internal sql.
+			if !r.ctx.GetSessionVars().InRestrictedSQL && len(r.stats.copRespTime) > 0 {
+				ratio := float64(r.stats.CoprCacheHitNum) / float64(len(r.stats.copRespTime))
+				if ratio >= 1 {
+					telemetry.CurrentCoprCacheHitRatioGTE100Count.Inc()
+				}
+				if ratio >= 0.8 {
+					telemetry.CurrentCoprCacheHitRatioGTE80Count.Inc()
+				}
+				if ratio >= 0.4 {
+					telemetry.CurrentCoprCacheHitRatioGTE40Count.Inc()
+				}
+				if ratio >= 0.2 {
+					telemetry.CurrentCoprCacheHitRatioGTE20Count.Inc()
+				}
+				if ratio >= 0.1 {
+					telemetry.CurrentCoprCacheHitRatioGTE10Count.Inc()
+				}
+				if ratio >= 0.01 {
+					telemetry.CurrentCoprCacheHitRatioGTE1Count.Inc()
+				}
+				if ratio >= 0 {
+					telemetry.CurrentCoprCacheHitRatioGTE0Count.Inc()
+				}
+			}
+		}
+	}()
 	for {
 		r.respChkIdx = 0
 		startTime := time.Now()
@@ -146,9 +177,8 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			sc.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 		}
 		if r.feedback != nil {
-			r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
+			r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts, r.selectResp.Ndvs)
 		}
-
 		r.partialCount++
 
 		hasStats, ok := resultSubset.(CopRuntimeStats)
@@ -163,10 +193,6 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		if len(r.selectResp.Chunks) != 0 {
 			break
 		}
-	}
-	if r.stats != nil {
-		coprCacheHistogramHit.Observe(float64(r.stats.CoprCacheHitNum))
-		coprCacheHistogramMiss.Observe(float64(len(r.stats.copRespTime) - int(r.stats.CoprCacheHitNum)))
 	}
 	return nil
 }
@@ -259,16 +285,9 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 	return nil
 }
 
-func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *tikv.CopRuntimeStats, respTime time.Duration) {
+func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration) {
 	callee := copStats.CalleeAddress
 	if r.rootPlanID <= 0 || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
-		return
-	}
-	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
-		logutil.Logger(ctx).Error("invalid cop task execution summaries length",
-			zap.Int("expected", len(r.copPlanIDs)),
-			zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
-
 		return
 	}
 	if r.stats == nil {
@@ -281,16 +300,53 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *tikv
 	}
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
 
-	if copStats.CopDetail != nil && len(r.copPlanIDs) > 0 {
-		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordCopDetail(r.copPlanIDs[len(r.copPlanIDs)-1], copStats.CopDetail)
+	if copStats.ScanDetail != nil && len(r.copPlanIDs) > 0 {
+		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), copStats.ScanDetail)
 	}
 
-	for i, detail := range r.selectResp.GetExecutionSummaries() {
+	// If hasExecutor is true, it means the summary is returned from TiFlash.
+	hasExecutor := false
+	for _, detail := range r.selectResp.GetExecutionSummaries() {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
-			planID := r.copPlanIDs[i]
-			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-				RecordOneCopTask(planID, callee, detail)
+			if detail.ExecutorId != nil {
+				hasExecutor = true
+			}
+			break
+		}
+	}
+	if hasExecutor {
+		var recorededPlanIDs = make(map[int]int)
+		for i, detail := range r.selectResp.GetExecutionSummaries() {
+			if detail != nil && detail.TimeProcessedNs != nil &&
+				detail.NumProducedRows != nil && detail.NumIterations != nil {
+				planID := r.copPlanIDs[i]
+				recorededPlanIDs[r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
+					RecordOneCopTask(planID, r.storeType.Name(), callee, detail)] = 0
+			}
+		}
+		num := uint64(0)
+		dummySummary := &tipb.ExecutorExecutionSummary{TimeProcessedNs: &num, NumProducedRows: &num, NumIterations: &num, ExecutorId: nil}
+		for _, planID := range r.copPlanIDs {
+			if _, ok := recorededPlanIDs[planID]; !ok {
+				r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordOneCopTask(planID, r.storeType.Name(), callee, dummySummary)
+			}
+		}
+	} else {
+		// For cop task cases, we still need this protection.
+		if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
+			logutil.Logger(ctx).Error("invalid cop task execution summaries length",
+				zap.Int("expected", len(r.copPlanIDs)),
+				zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
+			return
+		}
+		for i, detail := range r.selectResp.GetExecutionSummaries() {
+			if detail != nil && detail.TimeProcessedNs != nil &&
+				detail.NumProducedRows != nil && detail.NumIterations != nil {
+				planID := r.copPlanIDs[i]
+				r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
+					RecordOneCopTask(planID, r.storeType.Name(), callee, detail)
+			}
 		}
 	}
 }
@@ -332,7 +388,7 @@ func (r *selectResult) Close() error {
 // CopRuntimeStats is a interface uses to check whether the result has cop runtime stats.
 type CopRuntimeStats interface {
 	// GetCopRuntimeStats gets the cop runtime stats information.
-	GetCopRuntimeStats() *tikv.CopRuntimeStats
+	GetCopRuntimeStats() *copr.CopRuntimeStats
 }
 
 type selectResultRuntimeStats struct {
@@ -345,10 +401,10 @@ type selectResultRuntimeStats struct {
 	CoprCacheHitNum  int64
 }
 
-func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntimeStats, respTime time.Duration) {
+func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntimeStats, respTime time.Duration) {
 	s.copRespTime = append(s.copRespTime, respTime)
-	if copStats.CopDetail != nil {
-		s.procKeys = append(s.procKeys, copStats.CopDetail.ProcessedKeys)
+	if copStats.ScanDetail != nil {
+		s.procKeys = append(s.procKeys, copStats.ScanDetail.ProcessedKeys)
 	} else {
 		s.procKeys = append(s.procKeys, 0)
 	}
@@ -356,8 +412,8 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntim
 	for k, v := range copStats.BackoffSleep {
 		s.backoffSleep[k] += v
 	}
-	s.totalProcessTime += copStats.ProcessTime
-	s.totalWaitTime += copStats.WaitTime
+	s.totalProcessTime += copStats.TimeDetail.ProcessTime
+	s.totalWaitTime += copStats.TimeDetail.WaitTime
 	s.rpcStat.Merge(copStats.RegionRequestRuntimeStats)
 	if copStats.CoprCacheHit {
 		s.CoprCacheHitNum++
@@ -407,7 +463,7 @@ func (s *selectResultRuntimeStats) String() string {
 	if len(s.copRespTime) > 0 {
 		size := len(s.copRespTime)
 		if size == 1 {
-			buf.WriteString(fmt.Sprintf("cop_task: {num: 1, max:%v, proc_keys: %v", s.copRespTime[0], s.procKeys[0]))
+			buf.WriteString(fmt.Sprintf("cop_task: {num: 1, max: %v, proc_keys: %v", execdetails.FormatDuration(s.copRespTime[0]), s.procKeys[0]))
 		} else {
 			sort.Slice(s.copRespTime, func(i, j int) bool {
 				return s.copRespTime[i] < s.copRespTime[j]
@@ -425,20 +481,22 @@ func (s *selectResultRuntimeStats) String() string {
 			})
 			keyMax := s.procKeys[size-1]
 			keyP95 := s.procKeys[size*19/20]
-			buf.WriteString(fmt.Sprintf("cop_task: {num: %v, max: %v, min: %v, avg: %v, p95: %v", size, vMax, vMin, vAvg, vP95))
+			buf.WriteString(fmt.Sprintf("cop_task: {num: %v, max: %v, min: %v, avg: %v, p95: %v", size,
+				execdetails.FormatDuration(vMax), execdetails.FormatDuration(vMin),
+				execdetails.FormatDuration(vAvg), execdetails.FormatDuration(vP95)))
 			if keyMax > 0 {
 				buf.WriteString(", max_proc_keys: ")
 				buf.WriteString(strconv.FormatInt(keyMax, 10))
 				buf.WriteString(", p95_proc_keys: ")
 				buf.WriteString(strconv.FormatInt(keyP95, 10))
 			}
-			if s.totalProcessTime > 0 {
-				buf.WriteString(", tot_proc: ")
-				buf.WriteString(s.totalProcessTime.String())
-				if s.totalWaitTime > 0 {
-					buf.WriteString(", tot_wait: ")
-					buf.WriteString(s.totalWaitTime.String())
-				}
+		}
+		if s.totalProcessTime > 0 {
+			buf.WriteString(", tot_proc: ")
+			buf.WriteString(execdetails.FormatDuration(s.totalProcessTime))
+			if s.totalWaitTime > 0 {
+				buf.WriteString(", tot_wait: ")
+				buf.WriteString(execdetails.FormatDuration(s.totalWaitTime))
 			}
 		}
 		copRPC := rpcStat.Stats[tikvrpc.CmdCop]
@@ -448,10 +506,14 @@ func (s *selectResultRuntimeStats) String() string {
 			buf.WriteString(", rpc_num: ")
 			buf.WriteString(strconv.FormatInt(copRPC.Count, 10))
 			buf.WriteString(", rpc_time: ")
-			buf.WriteString(time.Duration(copRPC.Consume).String())
+			buf.WriteString(execdetails.FormatDuration(time.Duration(copRPC.Consume)))
 		}
-		buf.WriteString(fmt.Sprintf(", copr_cache_hit_ratio: %v",
-			strconv.FormatFloat(float64(s.CoprCacheHitNum)/float64(len(s.copRespTime)), 'f', 2, 64)))
+		if config.GetGlobalConfig().TiKVClient.CoprCache.CapacityMB > 0 {
+			buf.WriteString(fmt.Sprintf(", copr_cache_hit_ratio: %v",
+				strconv.FormatFloat(float64(s.CoprCacheHitNum)/float64(len(s.copRespTime)), 'f', 2, 64)))
+		} else {
+			buf.WriteString(", copr_cache: disabled")
+		}
 		buf.WriteString("}")
 	}
 
@@ -469,7 +531,7 @@ func (s *selectResultRuntimeStats) String() string {
 				buf.WriteString(", ")
 			}
 			idx++
-			buf.WriteString(fmt.Sprintf("%s: %s", k, d.String()))
+			buf.WriteString(fmt.Sprintf("%s: %s", k, execdetails.FormatDuration(d)))
 		}
 		buf.WriteString("}")
 	}

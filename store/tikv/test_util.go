@@ -14,20 +14,20 @@
 package tikv
 
 import (
+	"sync/atomic"
+
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
-	"github.com/tikv/pd/client"
+	pd "github.com/tikv/pd/client"
 )
 
 // NewTestTiKVStore creates a test store with Option
-func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Client) Client, pdClientHijack func(pd.Client) pd.Client, txnLocalLatches uint) (kv.Storage, error) {
+func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Client) Client, pdClientHijack func(pd.Client) pd.Client, txnLocalLatches uint) (*KVStore, error) {
 	if clientHijack != nil {
 		client = clientHijack(client)
 	}
 
-	pdCli := pd.Client(&codecPDClient{pdClient})
+	pdCli := pd.Client(&CodecPDClient{pdClient})
 	if pdClientHijack != nil {
 		pdCli = pdClientHijack(pdCli)
 	}
@@ -35,7 +35,7 @@ func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Clien
 	// Make sure the uuid is unique.
 	uid := uuid.New().String()
 	spkv := NewMockSafePointKV()
-	tikvStore, err := newTikvStore(uid, pdCli, spkv, client, false, &config.GetGlobalConfig().TiKVClient.CoprCache)
+	tikvStore, err := NewKVStore(uid, pdCli, spkv, client)
 
 	if txnLocalLatches > 0 {
 		tikvStore.EnableTxnLocalLatches(txnLocalLatches)
@@ -43,4 +43,22 @@ func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Clien
 
 	tikvStore.mock = true
 	return tikvStore, errors.Trace(err)
+}
+
+// mockCommitErrorEnable uses to enable `mockCommitError` and only mock error once.
+var mockCommitErrorEnable = int64(0)
+
+// MockCommitErrorEnable exports for gofail testing.
+func MockCommitErrorEnable() {
+	atomic.StoreInt64(&mockCommitErrorEnable, 1)
+}
+
+// MockCommitErrorDisable exports for gofail testing.
+func MockCommitErrorDisable() {
+	atomic.StoreInt64(&mockCommitErrorEnable, 0)
+}
+
+// IsMockCommitErrorEnable exports for gofail testing.
+func IsMockCommitErrorEnable() bool {
+	return atomic.LoadInt64(&mockCommitErrorEnable) == 1
 }

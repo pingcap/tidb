@@ -17,7 +17,6 @@ import (
 	"context"
 	"math"
 	"math/rand"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/parser/terror"
@@ -26,7 +25,7 @@ import (
 )
 
 // RunInNewTxn will run the f in a new transaction environment.
-func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) error {
+func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx context.Context, txn Transaction) error) error {
 	var (
 		err           error
 		originalTxnTS uint64
@@ -44,7 +43,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 			originalTxnTS = txn.StartTS()
 		}
 
-		err = f(txn)
+		err = f(ctx, txn)
 		if err != nil {
 			err1 := txn.Rollback()
 			terror.Log(err1)
@@ -58,7 +57,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 			return err
 		}
 
-		err = txn.Commit(context.Background())
+		err = txn.Commit(ctx)
 		if err == nil {
 			break
 		}
@@ -92,29 +91,4 @@ func BackOff(attempts uint) int {
 	sleep := time.Duration(rand.Intn(upper)) * time.Millisecond
 	time.Sleep(sleep)
 	return int(sleep)
-}
-
-// mockCommitErrorEnable uses to enable `mockCommitError` and only mock error once.
-var mockCommitErrorEnable = int64(0)
-
-// MockCommitErrorEnable exports for gofail testing.
-func MockCommitErrorEnable() {
-	atomic.StoreInt64(&mockCommitErrorEnable, 1)
-}
-
-// MockCommitErrorDisable exports for gofail testing.
-func MockCommitErrorDisable() {
-	atomic.StoreInt64(&mockCommitErrorEnable, 0)
-}
-
-// IsMockCommitErrorEnable exports for gofail testing.
-func IsMockCommitErrorEnable() bool {
-	return atomic.LoadInt64(&mockCommitErrorEnable) == 1
-}
-
-// TxnInfo is used to keep track the info of a committed transaction (mainly for diagnosis and testing)
-type TxnInfo struct {
-	StartTS  uint64 `json:"start_ts"`
-	CommitTS uint64 `json:"commit_ts"`
-	ErrMsg   string `json:"error,omitempty"`
 }

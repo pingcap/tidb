@@ -46,6 +46,9 @@ func BenchmarkEncodeRowKeyWithPrefixNex(b *testing.B) {
 func BenchmarkDecodeRowKey(b *testing.B) {
 	rowKey := EncodeRowKeyWithHandle(100, kv.IntHandle(100))
 	for i := 0; i < b.N; i++ {
-		DecodeRowKey(rowKey)
+		_, err := DecodeRowKey(rowKey)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }

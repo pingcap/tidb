@@ -14,9 +14,14 @@
 package distsql
 
 import (
+	"fmt"
 	"math"
+	"sort"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -34,11 +39,18 @@ import (
 // It is called before we issue a kv request by "Select".
 type RequestBuilder struct {
 	kv.Request
-	err error
+	// txnScope indicates the value of txn_scope
+	txnScope string
+	is       infoschema.InfoSchema
+	err      error
 }
 
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
+	err := builder.verifyTxnScope()
+	if err != nil {
+		builder.err = err
+	}
 	return &builder.Request, builder.err
 }
 
@@ -48,17 +60,10 @@ func (builder *RequestBuilder) SetMemTracker(tracker *memory.Tracker) *RequestBu
 	return builder
 }
 
-// SetTableRangesForTables sets "KeyRanges" for "kv.Request" by converting multiples "tableRanges"
-// to "KeyRanges" firstly.
-func (builder *RequestBuilder) SetTableRangesForTables(tids []int64, tableRanges []*ranger.Range, fb *statistics.QueryFeedback) *RequestBuilder {
-	if builder.err == nil {
-		builder.Request.KeyRanges = TablesRangesToKVRanges(tids, tableRanges, fb)
-	}
-	return builder
-}
-
 // SetTableRanges sets "KeyRanges" for "kv.Request" by converting "tableRanges"
 // to "KeyRanges" firstly.
+// Note this function should be deleted or at least not exported, but currently
+// br refers it, so have to keep it.
 func (builder *RequestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.Range, fb *statistics.QueryFeedback) *RequestBuilder {
 	if builder.err == nil {
 		builder.Request.KeyRanges = TableRangesToKVRanges(tid, tableRanges, fb)
@@ -84,20 +89,17 @@ func (builder *RequestBuilder) SetIndexRangesForTables(sc *stmtctx.StatementCont
 	return builder
 }
 
-// SetCommonHandleRanges sets "KeyRanges" for "kv.Request" by converting common handle range
+// SetHandleRanges sets "KeyRanges" for "kv.Request" by converting table handle range
 // "ranges" to "KeyRanges" firstly.
-func (builder *RequestBuilder) SetCommonHandleRanges(sc *stmtctx.StatementContext, tid int64, ranges []*ranger.Range) *RequestBuilder {
-	if builder.err == nil {
-		builder.Request.KeyRanges, builder.err = CommonHandleRangesToKVRanges(sc, []int64{tid}, ranges)
-	}
-	return builder
+func (builder *RequestBuilder) SetHandleRanges(sc *stmtctx.StatementContext, tid int64, isCommonHandle bool, ranges []*ranger.Range, fb *statistics.QueryFeedback) *RequestBuilder {
+	return builder.SetHandleRangesForTables(sc, []int64{tid}, isCommonHandle, ranges, fb)
 }
 
-// SetCommonHandleRangesForTables sets "KeyRanges" for "kv.Request" by converting common handle range
+// SetHandleRangesForTables sets "KeyRanges" for "kv.Request" by converting table handle range
 // "ranges" to "KeyRanges" firstly for multiple tables.
-func (builder *RequestBuilder) SetCommonHandleRangesForTables(sc *stmtctx.StatementContext, tid []int64, ranges []*ranger.Range) *RequestBuilder {
+func (builder *RequestBuilder) SetHandleRangesForTables(sc *stmtctx.StatementContext, tid []int64, isCommonHandle bool, ranges []*ranger.Range, fb *statistics.QueryFeedback) *RequestBuilder {
 	if builder.err == nil {
-		builder.Request.KeyRanges, builder.err = CommonHandleRangesToKVRanges(sc, tid, ranges)
+		builder.Request.KeyRanges, builder.err = TableHandleRangesToKVRanges(sc, tid, isCommonHandle, ranges, fb)
 	}
 	return builder
 }
@@ -227,11 +229,17 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.TaskID = sv.StmtCtx.TaskID
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.GetReplicaRead()
-	if sv.SnapshotInfoschema != nil {
-		builder.Request.SchemaVar = infoschema.GetInfoSchemaBySessionVars(sv).SchemaMetaVersion()
-	} else {
-		builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
+	builder.txnScope = sv.TxnCtx.TxnScope
+	builder.IsStaleness = sv.TxnCtx.IsStaleness
+	if builder.IsStaleness && builder.txnScope != kv.GlobalTxnScope {
+		builder.MatchStoreLabels = []*metapb.StoreLabel{
+			{
+				Key:   placement.DCLabelKey,
+				Value: builder.txnScope,
+			},
+		}
 	}
+	builder.SetResourceGroupTag(sv.StmtCtx)
 	return builder
 }
 
@@ -255,13 +263,84 @@ func (builder *RequestBuilder) SetTiDBServerID(serverID uint64) *RequestBuilder 
 	return builder
 }
 
-// TableRangesToKVRanges converts table ranges to "KeyRange".
-func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
-	return TablesRangesToKVRanges([]int64{tid}, ranges, fb)
+// SetFromInfoSchema sets the following fields from infoSchema:
+// "bundles"
+func (builder *RequestBuilder) SetFromInfoSchema(pis interface{}) *RequestBuilder {
+	is, ok := pis.(infoschema.InfoSchema)
+	if !ok {
+		return builder
+	}
+	builder.is = is
+	builder.Request.SchemaVar = is.SchemaMetaVersion()
+	return builder
 }
 
-// TablesRangesToKVRanges converts table ranges to "KeyRange".
-func TablesRangesToKVRanges(tids []int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
+// SetResourceGroupTag sets the request resource group tag.
+func (builder *RequestBuilder) SetResourceGroupTag(sc *stmtctx.StatementContext) *RequestBuilder {
+	if variable.TopSQLEnabled() {
+		builder.Request.ResourceGroupTag = sc.GetResourceGroupTag()
+	}
+	return builder
+}
+
+func (builder *RequestBuilder) verifyTxnScope() error {
+	if builder.txnScope == "" {
+		builder.txnScope = kv.GlobalTxnScope
+	}
+	if builder.txnScope == kv.GlobalTxnScope || builder.is == nil {
+		return nil
+	}
+	visitPhysicalTableID := make(map[int64]struct{})
+	for _, keyRange := range builder.Request.KeyRanges {
+		tableID := tablecodec.DecodeTableID(keyRange.StartKey)
+		if tableID > 0 {
+			visitPhysicalTableID[tableID] = struct{}{}
+		} else {
+			return errors.New("requestBuilder can't decode tableID from keyRange")
+		}
+	}
+
+	for phyTableID := range visitPhysicalTableID {
+		valid := VerifyTxnScope(builder.txnScope, phyTableID, builder.is)
+		if !valid {
+			var tblName string
+			var partName string
+			tblInfo, _, partInfo := builder.is.FindTableByPartitionID(phyTableID)
+			if tblInfo != nil && partInfo != nil {
+				tblName = tblInfo.Meta().Name.String()
+				partName = partInfo.Name.String()
+			} else {
+				tblInfo, _ = builder.is.TableByID(phyTableID)
+				tblName = tblInfo.Meta().Name.String()
+			}
+			err := fmt.Errorf("table %v can not be read by %v txn_scope", tblName, builder.txnScope)
+			if len(partName) > 0 {
+				err = fmt.Errorf("table %v's partition %v can not be read by %v txn_scope",
+					tblName, partName, builder.txnScope)
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+// TableHandleRangesToKVRanges convert table handle ranges to "KeyRanges" for multiple tables.
+func TableHandleRangesToKVRanges(sc *stmtctx.StatementContext, tid []int64, isCommonHandle bool, ranges []*ranger.Range, fb *statistics.QueryFeedback) ([]kv.KeyRange, error) {
+	if !isCommonHandle {
+		return tablesRangesToKVRanges(tid, ranges, fb), nil
+	}
+	return CommonHandleRangesToKVRanges(sc, tid, ranges)
+}
+
+// TableRangesToKVRanges converts table ranges to "KeyRange".
+// Note this function should not be exported, but currently
+// br refers to it, so have to keep it.
+func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
+	return tablesRangesToKVRanges([]int64{tid}, ranges, fb)
+}
+
+// tablesRangesToKVRanges converts table ranges to "KeyRange".
+func tablesRangesToKVRanges(tids []int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
 	if fb == nil || fb.Hist == nil {
 		return tableRangesToKVRangesWithoutSplit(tids, ranges)
 	}
@@ -316,6 +395,69 @@ func encodeHandleKey(ran *ranger.Range) ([]byte, []byte) {
 		high = kv.Key(high).PrefixNext()
 	}
 	return low, high
+}
+
+// SplitRangesAcrossInt64Boundary split the ranges into two groups:
+// 1. signedRanges is less or equal than MaxInt64
+// 2. unsignedRanges is greater than MaxInt64
+//
+// We do this because every key of tikv is encoded as an int64. As a result, MaxUInt64 is small than zero when
+// interpreted as an int64 variable.
+//
+// This function does the following:
+// 1. split ranges into two groups as described above.
+// 2. if there's a range that straddles the int64 boundary, split it into two ranges, which results in one smaller and
+//    one greater than MaxInt64.
+//
+// if `KeepOrder` is false, we merge the two groups of ranges into one group, to save an rpc call later
+// if `desc` is false, return signed ranges first, vice versa.
+func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc bool, isCommonHandle bool) ([]*ranger.Range, []*ranger.Range) {
+	if isCommonHandle || len(ranges) == 0 || ranges[0].LowVal[0].Kind() == types.KindInt64 {
+		return ranges, nil
+	}
+	idx := sort.Search(len(ranges), func(i int) bool { return ranges[i].HighVal[0].GetUint64() > math.MaxInt64 })
+	if idx == len(ranges) {
+		return ranges, nil
+	}
+	if ranges[idx].LowVal[0].GetUint64() > math.MaxInt64 {
+		signedRanges := ranges[0:idx]
+		unsignedRanges := ranges[idx:]
+		if !keepOrder {
+			return append(unsignedRanges, signedRanges...), nil
+		}
+		if desc {
+			return unsignedRanges, signedRanges
+		}
+		return signedRanges, unsignedRanges
+	}
+	// need to split the range that straddles the int64 boundary
+	signedRanges := make([]*ranger.Range, 0, idx+1)
+	unsignedRanges := make([]*ranger.Range, 0, len(ranges)-idx)
+	signedRanges = append(signedRanges, ranges[0:idx]...)
+	if !(ranges[idx].LowVal[0].GetUint64() == math.MaxInt64 && ranges[idx].LowExclude) {
+		signedRanges = append(signedRanges, &ranger.Range{
+			LowVal:     ranges[idx].LowVal,
+			LowExclude: ranges[idx].LowExclude,
+			HighVal:    []types.Datum{types.NewUintDatum(math.MaxInt64)},
+		})
+	}
+	if !(ranges[idx].HighVal[0].GetUint64() == math.MaxInt64+1 && ranges[idx].HighExclude) {
+		unsignedRanges = append(unsignedRanges, &ranger.Range{
+			LowVal:      []types.Datum{types.NewUintDatum(math.MaxInt64 + 1)},
+			HighVal:     ranges[idx].HighVal,
+			HighExclude: ranges[idx].HighExclude,
+		})
+	}
+	if idx < len(ranges) {
+		unsignedRanges = append(unsignedRanges, ranges[idx+1:]...)
+	}
+	if !keepOrder {
+		return append(unsignedRanges, signedRanges...), nil
+	}
+	if desc {
+		return unsignedRanges, signedRanges
+	}
+	return signedRanges, unsignedRanges
 }
 
 // TableHandlesToKVRanges converts sorted handle to kv ranges.
@@ -460,6 +602,25 @@ func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tids []int64, ra
 		}
 	}
 	return krs, nil
+}
+
+// VerifyTxnScope verify whether the txnScope and visited physical table break the leader rule's dcLocation.
+func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.InfoSchema) bool {
+	if txnScope == "" || txnScope == kv.GlobalTxnScope {
+		return true
+	}
+	bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
+	if !ok {
+		return true
+	}
+	leaderDC, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
+	if !ok {
+		return true
+	}
+	if leaderDC != txnScope {
+		return false
+	}
+	return true
 }
 
 func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {

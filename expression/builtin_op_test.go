@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testutil"
@@ -539,6 +540,26 @@ func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
 			args:    []interface{}{nil},
 			isTrue:  0,
 			isFalse: 0,
+		},
+		{
+			args:    []interface{}{types.NewDuration(0, 0, 0, 1000, 3)},
+			isTrue:  1,
+			isFalse: 0,
+		},
+		{
+			args:    []interface{}{types.NewDuration(0, 0, 0, 0, 3)},
+			isTrue:  0,
+			isFalse: 1,
+		},
+		{
+			args:    []interface{}{types.NewTime(types.FromDate(0, 0, 0, 0, 0, 0, 1000), mysql.TypeDatetime, 3)},
+			isTrue:  1,
+			isFalse: 0,
+		},
+		{
+			args:    []interface{}{types.NewTime(types.CoreTime(0), mysql.TypeTimestamp, 3)},
+			isTrue:  0,
+			isFalse: 1,
 		},
 	}
 

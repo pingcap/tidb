@@ -23,12 +23,14 @@ import (
 )
 
 var vecBuiltinMathCases = map[string][]vecExprBenchCase{
+	/* TODO: Because of https://github.com/pingcap/tidb/issues/5817, we don't enable it now.
 	ast.Conv: {
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETInt},
 		},
 	},
+	*/
 	ast.Sign: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
 	},
@@ -99,15 +101,15 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}, geners: nil},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24}}, geners: nil},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}, geners: nil},
-		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETInt}, geners: nil},
-		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}}, geners: nil},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, geners: nil},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}}, geners: nil},
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeNewDecimal, Flen: 32, Decimal: 2}}, geners: nil},
 	},
 	ast.Ceil: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}, geners: nil},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24}}, geners: nil},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}, geners: nil},
-		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETInt}, geners: nil},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, geners: nil},
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeNewDecimal, Flen: 32, Decimal: 2}}, geners: nil},
 	},
 	ast.PI: {

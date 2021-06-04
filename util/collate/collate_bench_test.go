@@ -27,8 +27,7 @@ func compare(b *testing.B, collator Collator, length int) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if collator.Compare(s1, s2) != 0 {
-		}
+		collator.Compare(s1, s2)
 	}
 }
 

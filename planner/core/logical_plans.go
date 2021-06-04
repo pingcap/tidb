@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
@@ -266,10 +267,6 @@ type LogicalProjection struct {
 
 	Exprs []expression.Expression
 
-	// calculateGenCols indicates the projection is for calculating generated columns.
-	// In *UPDATE*, we should know this to tell different projections.
-	calculateGenCols bool
-
 	// CalculateNoDelay indicates this Projection is the root Plan and should be
 	// calculated without delay and will not return any result to client.
 	// Currently it is "true" only when the current sql query is a "DO" statement.
@@ -313,6 +310,10 @@ type LogicalAggregation struct {
 
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.
+
+	// noCopPushDown indicates if planner must not push this agg down to coprocessor.
+	// It is true when the agg is in the outer child tree of apply.
+	noCopPushDown bool
 }
 
 // HasDistinct shows whether LogicalAggregation has functions with distinct.
@@ -500,7 +501,7 @@ type DataSource struct {
 
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
-	//handleCol *expression.Column
+	// handleCol *expression.Column
 	handleCols HandleCols
 	// TblCols contains the original columns of table before being pruned, and it
 	// is used for estimating table scan cost.
@@ -515,6 +516,12 @@ type DataSource struct {
 	preferStoreType int
 	// preferPartitions store the map, the key represents store type, the value represents the partition name list.
 	preferPartitions map[int][]model.CIStr
+	SampleInfo       *TableSampleInfo
+	is               infoschema.InfoSchema
+	// isForUpdateRead should be true in either of the following situations
+	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
+	// 2. isolation level is RC
+	isForUpdateRead bool
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1169,4 +1176,48 @@ type LogicalShowDDLJobs struct {
 	logicalSchemaProducer
 
 	JobNumber int64
+}
+
+// CTEClass holds the information and plan for a CTE. Most of the fields in this struct are the same as cteInfo.
+// But the cteInfo is used when building the plan, and CTEClass is used also for building the executor.
+type CTEClass struct {
+	// The union between seed part and recursive part is DISTINCT or DISTINCT ALL.
+	IsDistinct bool
+	// seedPartLogicalPlan and recursivePartLogicalPlan are the logical plans for the seed part and recursive part of this CTE.
+	seedPartLogicalPlan      LogicalPlan
+	recursivePartLogicalPlan LogicalPlan
+	// cteTask is the physical plan for this CTE, is a wrapper of the PhysicalCTE.
+	cteTask task
+	// storageID for this CTE.
+	IDForStorage int
+	// optFlag is the optFlag for the whole CTE.
+	optFlag  uint64
+	HasLimit bool
+	LimitBeg uint64
+	LimitEnd uint64
+}
+
+// LogicalCTE is for CTE.
+type LogicalCTE struct {
+	logicalSchemaProducer
+
+	cte       *CTEClass
+	cteAsName model.CIStr
+}
+
+// LogicalCTETable is for CTE table
+type LogicalCTETable struct {
+	logicalSchemaProducer
+
+	name         string
+	idForStorage int
+}
+
+// ExtractCorrelatedCols implements LogicalPlan interface.
+func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := ExtractCorrelatedCols4LogicalPlan(p.cte.seedPartLogicalPlan)
+	if p.cte.recursivePartLogicalPlan != nil {
+		corCols = append(corCols, ExtractCorrelatedCols4LogicalPlan(p.cte.recursivePartLogicalPlan)...)
+	}
+	return corCols
 }

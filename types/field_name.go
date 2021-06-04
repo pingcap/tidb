@@ -16,6 +16,7 @@ package types
 import (
 	"strings"
 
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 )
 
@@ -28,6 +29,11 @@ type FieldName struct {
 	ColName     model.CIStr
 
 	Hidden bool
+
+	// NotExplicitUsable is used for mark whether a column can be explicit used in SQL.
+	// update stmt can write `writeable` column implicitly but cannot use non-public columns explicit.
+	// e.g. update t set a = 10 where b = 10; which `b` is in `writeOnly` state
+	NotExplicitUsable bool
 }
 
 const emptyName = "EMPTY_NAME"
@@ -60,3 +66,15 @@ func (s NameSlice) Shallow() NameSlice {
 
 // EmptyName is to occupy the position in the name slice. If it's set, that column's name is hidden.
 var EmptyName = &FieldName{Hidden: true}
+
+// FindAstColName checks whether the given ast.ColumnName is appeared in this slice.
+func (s NameSlice) FindAstColName(name *ast.ColumnName) bool {
+	for _, fieldName := range s {
+		if (name.Schema.L == "" || name.Schema.L == fieldName.DBName.L) &&
+			(name.Table.L == "" || name.Table.L == fieldName.TblName.L) &&
+			name.Name.L == fieldName.ColName.L {
+			return true
+		}
+	}
+	return false
+}

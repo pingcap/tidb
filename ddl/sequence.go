@@ -83,13 +83,13 @@ func createSequenceWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInf
 	return t.CreateSequenceAndSetSeqValue(schemaID, tbInfo, sequenceBase)
 }
 
-func handleSequenceOptions(SeqOptions []*ast.SequenceOption, sequenceInfo *model.SequenceInfo) {
+func handleSequenceOptions(seqOptions []*ast.SequenceOption, sequenceInfo *model.SequenceInfo) {
 	var (
 		minSetFlag   bool
 		maxSetFlag   bool
 		startSetFlag bool
 	)
-	for _, op := range SeqOptions {
+	for _, op := range seqOptions {
 		switch op.Tp {
 		case ast.SequenceOptionIncrementBy:
 			sequenceInfo.Increment = op.IntValue

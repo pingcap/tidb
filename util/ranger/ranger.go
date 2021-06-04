@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
-func validInterval(sc *stmtctx.StatementContext, low, high point) (bool, error) {
+func validInterval(sc *stmtctx.StatementContext, low, high *point) (bool, error) {
 	l, err := codec.EncodeKey(sc, nil, low.value)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -52,7 +52,7 @@ func validInterval(sc *stmtctx.StatementContext, low, high point) (bool, error) 
 
 // points2Ranges build index ranges from range points.
 // Only one column is built there. If there're multiple columns, use appendPoints2Ranges.
-func points2Ranges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.FieldType) ([]*Range, error) {
+func points2Ranges(sc *stmtctx.StatementContext, rangePoints []*point, tp *types.FieldType) ([]*Range, error) {
 	ranges := make([]*Range, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint, err := convertPoint(sc, rangePoints[i], tp)
@@ -86,15 +86,32 @@ func points2Ranges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.
 	return ranges, nil
 }
 
-func convertPoint(sc *stmtctx.StatementContext, point point, tp *types.FieldType) (point, error) {
+func convertPoint(sc *stmtctx.StatementContext, point *point, tp *types.FieldType) (*point, error) {
 	switch point.value.Kind() {
 	case types.KindMaxValue, types.KindMinNotNull:
 		return point, nil
 	}
 	casted, err := point.value.ConvertTo(sc, tp)
 	if err != nil {
-		// see issue #20101: overflow when converting integer to year
-		if tp.Tp != mysql.TypeYear || !terror.ErrorEqual(err, types.ErrInvalidYear) {
+		if tp.Tp == mysql.TypeYear && terror.ErrorEqual(err, types.ErrInvalidYear) {
+			// see issue #20101: overflow when converting integer to year
+		} else if tp.Tp == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
+			// see issue #19067: we should ignore the types.ErrDataTooLong when we convert value to TypeBit value
+		} else if tp.Tp == mysql.TypeNewDecimal && terror.ErrorEqual(err, types.ErrOverflow) {
+			// Ignore the types.ErrOverflow when we convert TypeNewDecimal values.
+			// A trimmed valid boundary point value would be returned then. Accordingly, the `excl` of the point
+			// would be adjusted. Impossible ranges would be skipped by the `validInterval` call later.
+		} else if tp.Tp == mysql.TypeEnum && terror.ErrorEqual(err, types.ErrTruncated) {
+			// Ignore the types.ErrorTruncated when we convert TypeEnum values.
+			// We should cover Enum upper overflow, and convert to the biggest value.
+			if point.value.GetInt64() > 0 {
+				upperEnum, err := types.ParseEnumValue(tp.Elems, uint64(len(tp.Elems)))
+				if err != nil {
+					return nil, err
+				}
+				casted.SetMysqlEnum(upperEnum, tp.Collate)
+			}
+		} else {
 			return point, errors.Trace(err)
 		}
 	}
@@ -102,43 +119,43 @@ func convertPoint(sc *stmtctx.StatementContext, point point, tp *types.FieldType
 	if err != nil {
 		return point, errors.Trace(err)
 	}
-	point.value = casted
+	npoint := point.Clone(casted)
 	if valCmpCasted == 0 {
-		return point, nil
+		return npoint, nil
 	}
-	if point.start {
-		if point.excl {
+	if npoint.start {
+		if npoint.excl {
 			if valCmpCasted < 0 {
 				// e.g. "a > 1.9" convert to "a >= 2".
-				point.excl = false
+				npoint.excl = false
 			}
 		} else {
 			if valCmpCasted > 0 {
 				// e.g. "a >= 1.1 convert to "a > 1"
-				point.excl = true
+				npoint.excl = true
 			}
 		}
 	} else {
-		if point.excl {
+		if npoint.excl {
 			if valCmpCasted > 0 {
 				// e.g. "a < 1.1" convert to "a <= 1"
-				point.excl = false
+				npoint.excl = false
 			}
 		} else {
 			if valCmpCasted < 0 {
 				// e.g. "a <= 1.9" convert to "a < 2"
-				point.excl = true
+				npoint.excl = true
 			}
 		}
 	}
-	return point, nil
+	return npoint, nil
 }
 
 // appendPoints2Ranges appends additional column ranges for multi-column index.
 // The additional column ranges can only be appended to point ranges.
 // for example we have an index (a, b), if the condition is (a > 1 and b = 2)
 // then we can not build a conjunctive ranges for this index.
-func appendPoints2Ranges(sc *stmtctx.StatementContext, origin []*Range, rangePoints []point,
+func appendPoints2Ranges(sc *stmtctx.StatementContext, origin []*Range, rangePoints []*point,
 	ft *types.FieldType) ([]*Range, error) {
 	var newIndexRanges []*Range
 	for i := 0; i < len(origin); i++ {
@@ -156,7 +173,7 @@ func appendPoints2Ranges(sc *stmtctx.StatementContext, origin []*Range, rangePoi
 	return newIndexRanges, nil
 }
 
-func appendPoints2IndexRange(sc *stmtctx.StatementContext, origin *Range, rangePoints []point,
+func appendPoints2IndexRange(sc *stmtctx.StatementContext, origin *Range, rangePoints []*point,
 	ft *types.FieldType) ([]*Range, error) {
 	newRanges := make([]*Range, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
@@ -218,7 +235,7 @@ func appendRanges2PointRanges(pointRanges []*Range, ranges []*Range) []*Range {
 
 // points2TableRanges build ranges for table scan from range points.
 // It will remove the nil and convert MinNotNull and MaxValue to MinInt64 or MinUint64 and MaxInt64 or MaxUint64.
-func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.FieldType) ([]*Range, error) {
+func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []*point, tp *types.FieldType) ([]*Range, error) {
 	ranges := make([]*Range, 0, len(rangePoints)/2)
 	var minValueDatum, maxValueDatum types.Datum
 	// Currently, table's kv range cannot accept encoded value of MaxValueDatum. we need to convert it.
@@ -270,7 +287,7 @@ func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *t
 // buildColumnRange builds range from CNF conditions.
 func buildColumnRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType, tableRange bool, colLen int) (ranges []*Range, err error) {
 	rb := builder{sc: sc}
-	rangePoints := fullRange
+	rangePoints := getFullRange()
 	for _, cond := range accessConditions {
 		rangePoints = rb.intersection(rangePoints, rb.build(cond))
 		if rb.err != nil {
@@ -288,7 +305,10 @@ func buildColumnRange(accessConditions []expression.Expression, sc *stmtctx.Stat
 	}
 	if colLen != types.UnspecifiedLength {
 		for _, ran := range ranges {
-			if CutDatumByPrefixLen(&ran.LowVal[0], colLen, tp) {
+			// If the length of the last column of LowVal is equal to the prefix length, LowExclude should be set false.
+			// For example, `col_varchar > 'xx'` should be converted to range [xx, +inf) when the prefix index length of
+			// `col_varchar` is 2. Otherwise we would miss values like 'xxx' if we execute (xx, +inf) index range scan.
+			if CutDatumByPrefixLen(&ran.LowVal[0], colLen, tp) || ReachPrefixLen(&ran.LowVal[0], colLen, tp) {
 				ran.LowExclude = false
 			}
 			if CutDatumByPrefixLen(&ran.HighVal[0], colLen, tp) {
@@ -343,7 +363,7 @@ func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
 			return nil, errors.Trace(err)
 		}
 	}
-	rangePoints := fullRange
+	rangePoints := getFullRange()
 	// Build rangePoints for non-equal access conditions.
 	for i := eqAndInCount; i < len(accessCondition); i++ {
 		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i]))
@@ -454,21 +474,24 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 	for _, ran := range ranges {
 		lowTail := len(ran.LowVal) - 1
 		for i := 0; i < lowTail; i++ {
-			CutDatumByPrefixLen(&ran.LowVal[i], lengths[i], tp[i])
+			hasCut = CutDatumByPrefixLen(&ran.LowVal[i], lengths[i], tp[i]) || hasCut
 		}
 		lowCut := CutDatumByPrefixLen(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail])
-		if lowCut {
+		// If the length of the last column of LowVal is equal to the prefix length, LowExclude should be set false.
+		// For example, `col_varchar > 'xx'` should be converted to range [xx, +inf) when the prefix index length of
+		// `col_varchar` is 2. Otherwise we would miss values like 'xxx' if we execute (xx, +inf) index range scan.
+		if lowCut || ReachPrefixLen(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail]) {
 			ran.LowExclude = false
 		}
 		highTail := len(ran.HighVal) - 1
 		for i := 0; i < highTail; i++ {
-			CutDatumByPrefixLen(&ran.HighVal[i], lengths[i], tp[i])
+			hasCut = CutDatumByPrefixLen(&ran.HighVal[i], lengths[i], tp[i]) || hasCut
 		}
 		highCut := CutDatumByPrefixLen(&ran.HighVal[highTail], lengths[highTail], tp[highTail])
 		if highCut {
 			ran.HighExclude = false
 		}
-		hasCut = lowCut || highCut
+		hasCut = hasCut || lowCut || highCut
 	}
 	return hasCut
 }
@@ -500,6 +523,20 @@ func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 	return false
 }
 
+// ReachPrefixLen checks whether the length of v is equal to the prefix length.
+func ReachPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
+	if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
+		colCharset := tp.Charset
+		colValue := v.GetBytes()
+		isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
+		if isUTF8Charset {
+			return length != types.UnspecifiedLength && utf8.RuneCount(colValue) == length
+		}
+		return length != types.UnspecifiedLength && len(colValue) == length
+	}
+	return false
+}
+
 // We cannot use the FieldType of column directly. e.g. the column a is int32 and we have a > 1111111111111111111.
 // Obviously the constant is bigger than MaxInt32, so we will get overflow error if we use the FieldType of column a.
 func newFieldType(tp *types.FieldType) *types.FieldType {
@@ -522,25 +559,15 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 }
 
 // points2EqOrInCond constructs a 'EQUAL' or 'IN' scalar function based on the
-// 'points'. The target column is extracted from the 'expr'.
+// 'points'. `col` is the target column to construct the Equal or In condition.
 // NOTE:
-// 1. 'expr' must be either 'EQUAL' or 'IN' function.
-// 2. 'points' should not be empty.
-func points2EqOrInCond(ctx sessionctx.Context, points []point, expr expression.Expression) expression.Expression {
+// 1. 'points' should not be empty.
+func points2EqOrInCond(ctx sessionctx.Context, points []*point, col *expression.Column) expression.Expression {
 	// len(points) cannot be 0 here, since we impose early termination in ExtractEqAndInCondition
-	sf, _ := expr.(*expression.ScalarFunction)
 	// Constant and Column args should have same RetType, simply get from first arg
-	retType := sf.GetArgs()[0].GetType()
+	retType := col.GetType()
 	args := make([]expression.Expression, 0, len(points)/2)
-	if sf.FuncName.L == ast.EQ {
-		if c, ok := sf.GetArgs()[0].(*expression.Column); ok {
-			args = append(args, c)
-		} else if c, ok := sf.GetArgs()[1].(*expression.Column); ok {
-			args = append(args, c)
-		}
-	} else {
-		args = append(args, sf.GetArgs()[0])
-	}
+	args = append(args, col)
 	for i := 0; i < len(points); i = i + 2 {
 		value := &expression.Constant{
 			Value:   points[i].value,
@@ -552,7 +579,7 @@ func points2EqOrInCond(ctx sessionctx.Context, points []point, expr expression.E
 	if len(args) > 2 {
 		funcName = ast.In
 	}
-	return expression.NewFunctionInternal(ctx, funcName, sf.GetType(), args...)
+	return expression.NewFunctionInternal(ctx, funcName, col.GetType(), args...)
 }
 
 // DetachCondAndBuildRangeForPartition will detach the index filters from table filters.

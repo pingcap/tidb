@@ -15,24 +15,29 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"database/sql"
 	"encoding/pem"
-	"io/ioutil"
+	"fmt"
 	"math/big"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -42,8 +47,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"github.com/pingcap/tidb/util/topsql/tracecpu/mock"
 )
 
 type tidbTestSuite struct {
@@ -51,6 +60,10 @@ type tidbTestSuite struct {
 }
 
 type tidbTestSerialSuite struct {
+	*tidbTestSuiteBase
+}
+
+type tidbTestTopSQLSuite struct {
 	*tidbTestSuiteBase
 }
 
@@ -70,10 +83,16 @@ func newTiDBTestSuiteBase() *tidbTestSuiteBase {
 
 var _ = Suite(&tidbTestSuite{newTiDBTestSuiteBase()})
 var _ = SerialSuites(&tidbTestSerialSuite{newTiDBTestSuiteBase()})
+var _ = SerialSuites(&tidbTestTopSQLSuite{newTiDBTestSuiteBase()})
 
 func (ts *tidbTestSuite) SetUpSuite(c *C) {
 	metrics.RegisterMetrics()
 	ts.tidbTestSuiteBase.SetUpSuite(c)
+}
+
+func (ts *tidbTestTopSQLSuite) SetUpSuite(c *C) {
+	ts.tidbTestSuiteBase.SetUpSuite(c)
+	tracecpu.GlobalSQLCPUProfiler.Run()
 }
 
 func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
@@ -97,7 +116,10 @@ func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
 	ts.port = getPortFromTCPAddr(server.listener.Addr())
 	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ts.server = server
-	go ts.server.Run()
+	go func() {
+		err := ts.server.Run()
+		c.Assert(err, IsNil)
+	}()
 	ts.waitUntilServerOnline()
 }
 
@@ -139,12 +161,40 @@ func (ts *tidbTestSuite) TestPreparedTimestamp(c *C) {
 	ts.runTestPreparedTimestamp(c)
 }
 
+func (ts *tidbTestSerialSuite) TestConfigDefaultValue(c *C) {
+	ts.runTestsOnNewDB(c, nil, "config", func(dbt *DBTest) {
+		rows := dbt.mustQuery("select @@tidb_slow_log_threshold;")
+		ts.checkRows(c, rows, "300")
+	})
+}
+
 // this test will change `kv.TxnTotalSizeLimit` which may affect other test suites,
 // so we must make it running in serial.
 func (ts *tidbTestSerialSuite) TestLoadData(c *C) {
 	ts.runTestLoadData(c, ts.server)
 	ts.runTestLoadDataWithSelectIntoOutfile(c, ts.server)
 	ts.runTestLoadDataForSlowLog(c, ts.server)
+}
+
+func (ts *tidbTestSerialSuite) TestLoadDataListPartition(c *C) {
+	ts.runTestLoadDataForListPartition(c)
+	ts.runTestLoadDataForListPartition2(c)
+	ts.runTestLoadDataForListColumnPartition(c)
+	ts.runTestLoadDataForListColumnPartition2(c)
+}
+
+// Fix issue#22540. Change tidb_dml_batch_size,
+// then check if load data into table with auto random column works properly.
+func (ts *tidbTestSerialSuite) TestLoadDataAutoRandom(c *C) {
+	ts.runTestLoadDataAutoRandom(c)
+}
+
+func (ts *tidbTestSerialSuite) TestLoadDataAutoRandomWithSpecialTerm(c *C) {
+	ts.runTestLoadDataAutoRandomWithSpecialTerm(c)
+}
+
+func (ts *tidbTestSerialSuite) TestExplainFor(c *C) {
+	ts.runTestExplainForConn(c)
 }
 
 func (ts *tidbTestSerialSuite) TestStmtCount(c *C) {
@@ -171,6 +221,7 @@ func (ts *tidbTestSuite) TestIssues(c *C) {
 	c.Parallel()
 	ts.runTestIssue3662(c)
 	ts.runTestIssue3680(c)
+	ts.runTestIssue22646(c)
 }
 
 func (ts *tidbTestSuite) TestDBNameEscape(c *C) {
@@ -232,8 +283,12 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	time.Sleep(time.Millisecond * 100)
+	c.Assert(server.isUnixSocket(), IsFalse) // If listening on tcp-only, return FALSE
 
 	// https connection should work.
 	ts.runTestStatusAPI(c)
@@ -281,7 +336,10 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	time.Sleep(time.Millisecond * 100)
 
 	hc := newTLSHttpClient(c, caPath,
@@ -302,7 +360,7 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 func newTLSHttpClient(c *C, caFile, certFile, keyFile string) *http.Client {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	c.Assert(err, IsNil)
-	caCert, err := ioutil.ReadFile(caFile)
+	caCert, err := os.ReadFile(caFile)
 	c.Assert(err, IsNil)
 	caCertPool := x509.NewCertPool()
 	caCertPool.AppendCertsFromPEM(caCert)
@@ -332,8 +390,12 @@ func (ts *tidbTestSuite) TestSocketForwarding(c *C) {
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	time.Sleep(time.Millisecond * 100)
+	c.Assert(server.isUnixSocket(), IsFalse) // If listening on both, return FALSE
 	defer server.Close()
 
 	cli.runTestRegression(c, func(config *mysql.Config) {
@@ -355,11 +417,15 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	time.Sleep(time.Millisecond * 100)
+	c.Assert(server.isUnixSocket(), IsTrue) // If listening on socket-only, return TRUE
 	defer server.Close()
 
-	//a fake server client, config is override, just used to run tests
+	// a fake server client, config is override, just used to run tests
 	cli := newTestServerClient()
 	cli.runTestRegression(c, func(config *mysql.Config) {
 		config.User = "root"
@@ -423,15 +489,27 @@ func generateCert(sn int, commonName string, parentCert *x509.Certificate, paren
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
-	certOut.Close()
+	err = pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	err = certOut.Close()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 
 	keyOut, err := os.OpenFile(outKeyFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
-	keyOut.Close()
+	err = pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	err = keyOut.Close()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 
 	return cert, privateKey, nil
 }
@@ -440,7 +518,7 @@ func generateCert(sn int, commonName string, parentCert *x509.Certificate, paren
 // See https://godoc.org/github.com/go-sql-driver/mysql#RegisterTLSConfig for details.
 func registerTLSConfig(configName string, caCertPath string, clientCertPath string, clientKeyPath string, serverName string, verifyServer bool) error {
 	rootCertPool := x509.NewCertPool()
-	data, err := ioutil.ReadFile(caCertPath)
+	data, err := os.ReadFile(caCertPath)
 	if err != nil {
 		return err
 	}
@@ -459,8 +537,7 @@ func registerTLSConfig(configName string, caCertPath string, clientCertPath stri
 		ServerName:         serverName,
 		InsecureSkipVerify: !verifyServer,
 	}
-	mysql.RegisterTLSConfig(configName, tlsConfig)
-	return nil
+	return mysql.RegisterTLSConfig(configName, tlsConfig)
 }
 
 func (ts *tidbTestSuite) TestSystemTimeZone(c *C) {
@@ -488,12 +565,18 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	c.Assert(err, IsNil)
 
 	defer func() {
-		os.Remove("/tmp/ca-key.pem")
-		os.Remove("/tmp/ca-cert.pem")
-		os.Remove("/tmp/server-key.pem")
-		os.Remove("/tmp/server-cert.pem")
-		os.Remove("/tmp/client-key.pem")
-		os.Remove("/tmp/client-cert.pem")
+		err := os.Remove("/tmp/ca-key.pem")
+		c.Assert(err, IsNil)
+		err = os.Remove("/tmp/ca-cert.pem")
+		c.Assert(err, IsNil)
+		err = os.Remove("/tmp/server-key.pem")
+		c.Assert(err, IsNil)
+		err = os.Remove("/tmp/server-cert.pem")
+		c.Assert(err, IsNil)
+		err = os.Remove("/tmp/client-key.pem")
+		c.Assert(err, IsNil)
+		err = os.Remove("/tmp/client-cert.pem")
+		c.Assert(err, IsNil)
 	}()
 
 	// Start the server without TLS.
@@ -507,7 +590,10 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	time.Sleep(time.Millisecond * 100)
 	err = cli.runTestTLSConnection(c, connOverrider) // We should get ErrNoTLS.
 	c.Assert(err, NotNil)
@@ -529,7 +615,10 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	server, err = NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	time.Sleep(time.Millisecond * 100)
 	err = cli.runTestTLSConnection(c, connOverrider) // We should establish connection successfully.
 	c.Assert(err, IsNil)
@@ -556,7 +645,10 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	server, err = NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	time.Sleep(time.Millisecond * 100)
 	// The client does not provide a certificate, the connection should succeed.
 	err = cli.runTestTLSConnection(c, nil)
@@ -615,7 +707,10 @@ func (ts *tidbTestSerialSuite) TestReloadTLS(c *C) {
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	time.Sleep(time.Millisecond * 100)
 	// The client provides a valid certificate.
 	connOverrider := func(config *mysql.Config) {
@@ -634,8 +729,10 @@ func (ts *tidbTestSerialSuite) TestReloadTLS(c *C) {
 		c.NotAfter = time.Now().Add(1 * time.Hour).UTC()
 	})
 	c.Assert(err, IsNil)
-	os.Rename("/tmp/server-key-reload2.pem", "/tmp/server-key-reload.pem")
-	os.Rename("/tmp/server-cert-reload2.pem", "/tmp/server-cert-reload.pem")
+	err = os.Rename("/tmp/server-key-reload2.pem", "/tmp/server-key-reload.pem")
+	c.Assert(err, IsNil)
+	err = os.Rename("/tmp/server-cert-reload2.pem", "/tmp/server-cert-reload.pem")
+	c.Assert(err, IsNil)
 	connOverrider = func(config *mysql.Config) {
 		config.TLSConfig = "skip-verify"
 	}
@@ -659,8 +756,10 @@ func (ts *tidbTestSerialSuite) TestReloadTLS(c *C) {
 		c.NotAfter = c.NotBefore.Add(1 * time.Hour).UTC()
 	})
 	c.Assert(err, IsNil)
-	os.Rename("/tmp/server-key-reload3.pem", "/tmp/server-key-reload.pem")
-	os.Rename("/tmp/server-cert-reload3.pem", "/tmp/server-cert-reload.pem")
+	err = os.Rename("/tmp/server-key-reload3.pem", "/tmp/server-key-reload.pem")
+	c.Assert(err, IsNil)
+	err = os.Rename("/tmp/server-cert-reload3.pem", "/tmp/server-cert-reload.pem")
+	c.Assert(err, IsNil)
 	connOverrider = func(config *mysql.Config) {
 		config.TLSConfig = "skip-verify"
 	}
@@ -719,7 +818,10 @@ func (ts *tidbTestSerialSuite) TestErrorNoRollback(c *C) {
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	time.Sleep(time.Millisecond * 100)
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "client-cert-rollback-test"
@@ -919,6 +1021,14 @@ func (ts *tidbTestSuite) TestFieldList(c *C) {
 	c.Assert(cols[0].Name, Equals, columnAsName)
 }
 
+func (ts *tidbTestSuite) TestClientErrors(c *C) {
+	ts.runTestInfoschemaClientErrors(c)
+}
+
+func (ts *tidbTestSuite) TestInitConnect(c *C) {
+	ts.runTestInitConnect(c)
+}
+
 func (ts *tidbTestSuite) TestSumAvg(c *C) {
 	c.Parallel()
 	ts.runTestSumAvg(c)
@@ -935,6 +1045,26 @@ func (ts *tidbTestSuite) TestNullFlag(c *C) {
 	cols := rs.Columns()
 	c.Assert(len(cols), Equals, 1)
 	expectFlag := uint16(tmysql.NotNullFlag | tmysql.BinaryFlag)
+	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+}
+
+func (ts *tidbTestSuite) TestNO_DEFAULT_VALUEFlag(c *C) {
+	// issue #21465
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	_, err = Execute(ctx, qctx, "use test")
+	c.Assert(err, IsNil)
+	_, err = Execute(ctx, qctx, "drop table if exists t")
+	c.Assert(err, IsNil)
+	_, err = Execute(ctx, qctx, "create table t(c1 int key, c2 int);")
+	c.Assert(err, IsNil)
+	rs, err := Execute(ctx, qctx, "select c1 from t;")
+	c.Assert(err, IsNil)
+	cols := rs.Columns()
+	c.Assert(len(cols), Equals, 1)
+	expectFlag := uint16(tmysql.NotNullFlag | tmysql.PriKeyFlag | tmysql.NoDefaultValueFlag)
 	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
 }
 
@@ -958,7 +1088,10 @@ func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 	c.Assert(server, NotNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	time.Sleep(time.Millisecond * 100)
 
 	_, err = cli.fetchStatus("/status") // server is up
@@ -974,6 +1107,29 @@ func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 
 	_, err = cli.fetchStatus("/status") // status is gone
 	c.Assert(err, ErrorMatches, ".*connect: connection refused")
+}
+
+func (ts *tidbTestSerialSuite) TestDefaultCharacterAndCollation(c *C) {
+	// issue #21194
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	// 255 is the collation id of mysql client 8 default collation_connection
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(255), "test", nil)
+	c.Assert(err, IsNil)
+	testCase := []struct {
+		variable string
+		except   string
+	}{
+		{"collation_connection", "utf8mb4_bin"},
+		{"character_set_connection", "utf8mb4"},
+		{"character_set_client", "utf8mb4"},
+	}
+
+	for _, t := range testCase {
+		sVars, b := qctx.GetSessionVars().GetSystemVar(t.variable)
+		c.Assert(b, IsTrue)
+		c.Assert(sVars, Equals, t.except)
+	}
 }
 
 func (ts *tidbTestSuite) TestPessimisticInsertSelectForUpdate(c *C) {
@@ -1015,4 +1171,217 @@ func (ts *tidbTestSerialSuite) TestPrepareCount(c *C) {
 	err = qctx.GetStatement(stmt.ID()).Close()
 	c.Assert(err, IsNil)
 	c.Assert(atomic.LoadInt64(&variable.PreparedStmtCount), Equals, prepareCnt)
+}
+
+func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
+	db, err := sql.Open("mysql", ts.getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer func() {
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
+	collector := mock.NewTopSQLCollector()
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(collector)
+
+	dbt := &DBTest{c, db}
+	dbt.mustExec("drop database if exists topsql")
+	dbt.mustExec("create database topsql")
+	dbt.mustExec("use topsql;")
+	dbt.mustExec("create table t (a int auto_increment, b int, unique index idx(a));")
+	dbt.mustExec("create table t1 (a int auto_increment, b int, unique index idx(a));")
+	dbt.mustExec("create table t2 (a int auto_increment, b int, unique index idx(a));")
+	dbt.mustExec("set @@global.tidb_enable_top_sql='On';")
+	dbt.mustExec("set @@global.tidb_top_sql_agent_address='127.0.0.1:4001';")
+	dbt.mustExec("set @@global.tidb_top_sql_precision_seconds=1;")
+
+	// Test case 1: DML query: insert/update/replace/delete/select
+	cases1 := []struct {
+		sql        string
+		planRegexp string
+		cancel     func()
+	}{
+		{sql: "insert into t () values (),(),(),(),(),(),();", planRegexp: ""},
+		{sql: "insert into t (b) values (1),(1),(1),(1),(1),(1),(1),(1);", planRegexp: ""},
+		{sql: "replace into t (b) values (1),(1),(1),(1),(1),(1),(1),(1);", planRegexp: ""},
+		{sql: "update t set b=a where b is null limit 1;", planRegexp: ".*Limit.*TableReader.*"},
+		{sql: "delete from t where b is null limit 2;", planRegexp: ".*Limit.*TableReader.*"},
+		{sql: "select * from t use index(idx) where a>0;", planRegexp: ".*IndexLookUp.*"},
+		{sql: "select * from t ignore index(idx) where a>0;", planRegexp: ".*TableReader.*"},
+		{sql: "select /*+ HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a=t2.a where t1.b is not null;", planRegexp: ".*HashJoin.*"},
+		{sql: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a=t2.a where t1.b is not null;", planRegexp: ".*IndexHashJoin.*"},
+		{sql: "select * from t where a=1;", planRegexp: ".*Point_Get.*"},
+		{sql: "select * from t where a in (1,2,3,4)", planRegexp: ".*Batch_Point_Get.*"},
+	}
+	for i, ca := range cases1 {
+		ctx, cancel := context.WithCancel(context.Background())
+		cases1[i].cancel = cancel
+		sqlStr := ca.sql
+		go ts.loopExec(ctx, c, func(db *sql.DB) {
+			dbt := &DBTest{c, db}
+			if strings.HasPrefix(sqlStr, "select") {
+				rows := dbt.mustQuery(sqlStr)
+				for rows.Next() {
+				}
+			} else {
+				// Ignore error here since the error may be write conflict.
+				db.Exec(sqlStr)
+			}
+		})
+	}
+
+	// Test case 2: prepare/execute sql
+	cases2 := []struct {
+		prepare    string
+		args       []interface{}
+		planRegexp string
+		cancel     func()
+	}{
+		{prepare: "insert into t1 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
+		{prepare: "replace into t1 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
+		{prepare: "update t1 set b=a where b is null limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
+		{prepare: "delete from t1 where b is null limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
+		{prepare: "select * from t1 use index(idx) where a>?;", args: []interface{}{1}, planRegexp: ".*IndexLookUp.*"},
+		{prepare: "select * from t1 ignore index(idx) where a>?;", args: []interface{}{1}, planRegexp: ".*TableReader.*"},
+		{prepare: "select /*+ HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t1.a=t2.a where t1.b is not null;", args: nil, planRegexp: ".*HashJoin.*"},
+		{prepare: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t1.a=t2.a where t1.b is not null;", args: nil, planRegexp: ".*IndexHashJoin.*"},
+		{prepare: "select * from t1 where a=?;", args: []interface{}{1}, planRegexp: ".*Point_Get.*"},
+		{prepare: "select * from t1 where a in (?,?,?,?)", args: []interface{}{1, 2, 3, 4}, planRegexp: ".*Batch_Point_Get.*"},
+	}
+	for i, ca := range cases2 {
+		ctx, cancel := context.WithCancel(context.Background())
+		cases2[i].cancel = cancel
+		prepare, args := ca.prepare, ca.args
+		go ts.loopExec(ctx, c, func(db *sql.DB) {
+			stmt, err := db.Prepare(prepare)
+			c.Assert(err, IsNil)
+			if strings.HasPrefix(prepare, "select") {
+				rows, err := stmt.Query(args...)
+				c.Assert(err, IsNil)
+				for rows.Next() {
+				}
+			} else {
+				// Ignore error here since the error may be write conflict.
+				stmt.Exec(args...)
+			}
+		})
+	}
+
+	// Test case 3: prepare, execute stmt using @val...
+	cases3 := []struct {
+		prepare    string
+		args       []interface{}
+		planRegexp string
+		cancel     func()
+	}{
+		{prepare: "insert into t2 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
+		{prepare: "replace into t2 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
+		{prepare: "update t2 set b=a where b is null limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
+		{prepare: "delete from t2 where b is null limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
+		{prepare: "select * from t2 use index(idx) where a>?;", args: []interface{}{1}, planRegexp: ".*IndexLookUp.*"},
+		{prepare: "select * from t2 ignore index(idx) where a>?;", args: []interface{}{1}, planRegexp: ".*TableReader.*"},
+		{prepare: "select /*+ HASH_JOIN(t1, t2) */ * from t2 t1 join t2 t2 on t1.a=t2.a where t1.b is not null;", args: nil, planRegexp: ".*HashJoin.*"},
+		{prepare: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t2 t1 join t2 t2 on t1.a=t2.a where t1.b is not null;", args: nil, planRegexp: ".*IndexHashJoin.*"},
+		{prepare: "select * from t2 where a=?;", args: []interface{}{1}, planRegexp: ".*Point_Get.*"},
+		{prepare: "select * from t2 where a in (?,?,?,?)", args: []interface{}{1, 2, 3, 4}, planRegexp: ".*Batch_Point_Get.*"},
+	}
+	for i, ca := range cases3 {
+		ctx, cancel := context.WithCancel(context.Background())
+		cases3[i].cancel = cancel
+		prepare, args := ca.prepare, ca.args
+		go ts.loopExec(ctx, c, func(db *sql.DB) {
+			_, err := db.Exec(fmt.Sprintf("prepare stmt from '%v'", prepare))
+			c.Assert(err, IsNil)
+			sqlBuf := bytes.NewBuffer(nil)
+			sqlBuf.WriteString("execute stmt ")
+			for i := range args {
+				_, err = db.Exec(fmt.Sprintf("set @%c=%v", 'a'+i, args[i]))
+				c.Assert(err, IsNil)
+				if i == 0 {
+					sqlBuf.WriteString("using ")
+				} else {
+					sqlBuf.WriteByte(',')
+				}
+				sqlBuf.WriteByte('@')
+				sqlBuf.WriteByte('a' + byte(i))
+			}
+			if strings.HasPrefix(prepare, "select") {
+				rows, err := db.Query(sqlBuf.String())
+				c.Assert(err, IsNil, Commentf("%v", sqlBuf.String()))
+				for rows.Next() {
+				}
+			} else {
+				// Ignore error here since the error may be write conflict.
+				db.Exec(sqlBuf.String())
+			}
+		})
+	}
+
+	// Wait the top sql collector to collect profile data.
+	collector.WaitCollectCnt(1)
+
+	checkFn := func(sql, planRegexp string) {
+		commentf := Commentf("sql: %v", sql)
+		stats := collector.GetSQLStatsBySQLWithRetry(sql, len(planRegexp) > 0)
+		// since 1 sql may has many plan, check `len(stats) > 0` instead of `len(stats) == 1`.
+		c.Assert(len(stats) > 0, IsTrue, commentf)
+
+		match := false
+		for _, s := range stats {
+			sqlStr := collector.GetSQL(s.SQLDigest)
+			encodedPlan := collector.GetPlan(s.PlanDigest)
+			// Normalize the user SQL before check.
+			normalizedSQL := parser.Normalize(sql)
+			c.Assert(sqlStr, Equals, normalizedSQL, commentf)
+			// decode plan before check.
+			normalizedPlan, err := plancodec.DecodeNormalizedPlan(encodedPlan)
+			c.Assert(err, IsNil)
+			// remove '\n' '\t' before do regexp match.
+			normalizedPlan = strings.Replace(normalizedPlan, "\n", " ", -1)
+			normalizedPlan = strings.Replace(normalizedPlan, "\t", " ", -1)
+			ok, err := regexp.MatchString(planRegexp, normalizedPlan)
+			c.Assert(err, IsNil, commentf)
+			if ok {
+				match = true
+				break
+			}
+		}
+		c.Assert(match, IsTrue, commentf)
+	}
+
+	// Check result of test case 1.
+	for _, ca := range cases1 {
+		checkFn(ca.sql, ca.planRegexp)
+		ca.cancel()
+	}
+
+	// Check result of test case 2.
+	for _, ca := range cases2 {
+		checkFn(ca.prepare, ca.planRegexp)
+		ca.cancel()
+	}
+
+	// Check result of test case 3.
+	for _, ca := range cases3 {
+		checkFn(ca.prepare, ca.planRegexp)
+		ca.cancel()
+	}
+}
+
+func (ts *tidbTestTopSQLSuite) loopExec(ctx context.Context, c *C, fn func(db *sql.DB)) {
+	db, err := sql.Open("mysql", ts.getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer func() {
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
+	dbt := &DBTest{c, db}
+	dbt.mustExec("use topsql;")
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		fn(db)
+	}
 }

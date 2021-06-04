@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"sync"
 
@@ -53,7 +54,7 @@ func (s *testColumnSuite) SetUpSuite(c *C) {
 
 	s.dbInfo = testSchemaInfo(c, d, "test_column")
 	testCreateSchema(c, testNewContext(d), d, s.dbInfo)
-	d.Stop()
+	c.Assert(d.Stop(), IsNil)
 }
 
 func (s *testColumnSuite) TearDownSuite(c *C) {
@@ -188,7 +189,10 @@ func (s *testColumnSuite) TestColumn(c *C) {
 		WithStore(s.store),
 		WithLease(testLease),
 	)
-	defer d.Stop()
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
 
 	tblInfo := testTableInfo(c, d, "t1", 3)
 	ctx := testNewContext(d)
@@ -206,7 +210,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	i := int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		c.Assert(data, HasLen, 3)
 		c.Assert(data[0].GetInt64(), Equals, i)
 		c.Assert(data[1].GetInt64(), Equals, 10*i)
@@ -226,7 +230,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(table.FindCol(t.Cols(), "c4"), NotNil)
 
 	i = int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(),
+	err = tables.IterRecords(t, ctx, t.Cols(),
 		func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			c.Assert(data, HasLen, 4)
 			c.Assert(data[0].GetInt64(), Equals, i)
@@ -243,7 +247,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(err, IsNil)
 	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
-	values, err := t.RowWithCols(ctx, h, t.Cols())
+	values, err := tables.RowWithCols(t, ctx, h, t.Cols())
 	c.Assert(err, IsNil)
 
 	c.Assert(values, HasLen, 4)
@@ -253,7 +257,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	testCheckJobDone(c, d, job, false)
 
 	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	values, err = t.RowWithCols(ctx, h, t.Cols())
+	values, err = tables.RowWithCols(t, ctx, h, t.Cols())
 	c.Assert(err, IsNil)
 
 	c.Assert(values, HasLen, 3)
@@ -263,7 +267,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	testCheckJobDone(c, d, job, true)
 
 	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	values, err = t.RowWithCols(ctx, h, t.Cols())
+	values, err = tables.RowWithCols(t, ctx, h, t.Cols())
 	c.Assert(err, IsNil)
 
 	c.Assert(values, HasLen, 4)
@@ -273,7 +277,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	testCheckJobDone(c, d, job, true)
 
 	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	values, err = t.RowWithCols(ctx, h, t.Cols())
+	values, err = tables.RowWithCols(t, ctx, h, t.Cols())
 	c.Assert(err, IsNil)
 
 	c.Assert(values, HasLen, 5)
@@ -298,7 +302,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(cols[5].Offset, Equals, 5)
 	c.Assert(cols[5].Name.L, Equals, "c5")
 
-	values, err = t.RowWithCols(ctx, h, cols)
+	values, err = tables.RowWithCols(t, ctx, h, cols)
 	c.Assert(err, IsNil)
 
 	c.Assert(values, HasLen, 6)
@@ -310,7 +314,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 
 	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
-	values, err = t.RowWithCols(ctx, h, t.Cols())
+	values, err = tables.RowWithCols(t, ctx, h, t.Cols())
 	c.Assert(err, IsNil)
 	c.Assert(values, HasLen, 5)
 	c.Assert(values[0].GetInt64(), Equals, int64(202))
@@ -343,10 +347,13 @@ func (s *testColumnSuite) checkColumnKVExist(ctx sessionctx.Context, t table.Tab
 	}
 	defer func() {
 		if txn, err1 := ctx.Txn(true); err1 == nil {
-			txn.Commit(context.Background())
+			err = txn.Commit(context.Background())
+			if err != nil {
+				panic(err)
+			}
 		}
 	}()
-	key := t.RecordKey(handle)
+	key := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
@@ -405,7 +412,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, 
 		return errors.Trace(err)
 	}
 	i := int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if !reflect.DeepEqual(data, row) {
 			return false, errors.Errorf("%v not equal to %v", data, row)
 		}
@@ -441,7 +448,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, 
 	rows := [][]types.Datum{row, newRow}
 
 	i = int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if !reflect.DeepEqual(data, rows[i]) {
 			return false, errors.Errorf("%v not equal to %v", data, rows[i])
 		}
@@ -474,7 +481,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, 
 		return errors.Trace(err)
 	}
 	i = int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		i++
 		return true, nil
 	})
@@ -507,7 +514,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, t
 	}
 
 	i := int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if !reflect.DeepEqual(data, row) {
 			return false, errors.Errorf("%v not equal to %v", data, row)
 		}
@@ -545,7 +552,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, t
 	rows := [][]types.Datum{row, newRow}
 
 	i = int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if !reflect.DeepEqual(data, rows[i]) {
 			return false, errors.Errorf("%v not equal to %v", data, rows[i])
 		}
@@ -579,7 +586,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, t
 	}
 
 	i = int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		i++
 		return true, nil
 	})
@@ -612,7 +619,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *d
 	}
 
 	i := int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if !reflect.DeepEqual(data, row) {
 			return false, errors.Errorf("%v not equal to %v", data, row)
 		}
@@ -645,7 +652,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *d
 	rows := [][]types.Datum{row, newRow}
 
 	i = int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if !reflect.DeepEqual(data, rows[i]) {
 			return false, errors.Errorf("%v not equal to %v", data, rows[i])
 		}
@@ -680,7 +687,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *d
 	}
 
 	i = int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		i++
 		return true, nil
 	})
@@ -709,7 +716,7 @@ func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblI
 
 	i := int64(0)
 	updatedRow := append(oldRow, types.NewDatum(columnValue))
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if !reflect.DeepEqual(data, updatedRow) {
 			return false, errors.Errorf("%v not equal to %v", data, updatedRow)
 		}
@@ -742,13 +749,16 @@ func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblI
 	rows := [][]types.Datum{updatedRow, newRow}
 
 	i = int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if !reflect.DeepEqual(data, rows[i]) {
 			return false, errors.Errorf("%v not equal to %v", data, rows[i])
 		}
 		i++
 		return true, nil
 	})
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if i != 2 {
 		return errors.Errorf("expect 2, got %v", i)
 	}
@@ -770,7 +780,7 @@ func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblI
 	}
 
 	i = int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if !reflect.DeepEqual(data, updatedRow) {
 			return false, errors.Errorf("%v not equal to %v", data, updatedRow)
 		}
@@ -907,7 +917,8 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	d.Stop()
+	err = d.Stop()
+	c.Assert(err, IsNil)
 }
 
 func (s *testColumnSuite) TestAddColumns(c *C) {
@@ -991,7 +1002,8 @@ func (s *testColumnSuite) TestAddColumns(c *C) {
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
-	d.Stop()
+	err = d.Stop()
+	c.Assert(err, IsNil)
 }
 
 func (s *testColumnSuite) TestDropColumn(c *C) {
@@ -1066,7 +1078,8 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	d.Stop()
+	err = d.Stop()
+	c.Assert(err, IsNil)
 }
 
 func (s *testColumnSuite) TestDropColumns(c *C) {
@@ -1134,7 +1147,8 @@ func (s *testColumnSuite) TestDropColumns(c *C) {
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
-	d.Stop()
+	err = d.Stop()
+	c.Assert(err, IsNil)
 }
 
 func (s *testColumnSuite) TestModifyColumn(c *C) {
@@ -1145,7 +1159,10 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		WithLease(testLease),
 	)
 	ctx := testNewContext(d)
-	defer d.Stop()
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
 	tests := []struct {
 		origin string
 		to     string
@@ -1199,4 +1216,53 @@ func (s *testColumnSuite) TestFieldCase(c *C) {
 	}
 	err := checkDuplicateColumn(colObjects)
 	c.Assert(err.Error(), Equals, infoschema.ErrColumnExists.GenWithStackByArgs("Field").Error())
+}
+
+func (s *testColumnSuite) TestAutoConvertBlobTypeByLength(c *C) {
+	d := testNewDDLAndStart(
+		context.Background(),
+		c,
+		WithStore(s.store),
+		WithLease(testLease),
+	)
+	// Close the customized ddl(worker goroutine included) after the test is finished, otherwise, it will
+	// cause go routine in TiDB leak test.
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
+
+	sql := fmt.Sprintf("create table t0(c0 Blob(%d), c1 Blob(%d), c2 Blob(%d), c3 Blob(%d))",
+		tinyBlobMaxLength-1, blobMaxLength-1, mediumBlobMaxLength-1, longBlobMaxLength-1)
+	stmt, err := parser.New().ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil)
+	tblInfo, err := BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+	c.Assert(err, IsNil)
+	genIDs, err := d.genGlobalIDs(1)
+	c.Assert(err, IsNil)
+	tblInfo.ID = genIDs[0]
+
+	ctx := testNewContext(d)
+	err = ctx.NewTxn(context.Background())
+	c.Assert(err, IsNil)
+	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+
+	c.Assert(t.Cols()[0].Tp, Equals, mysql.TypeTinyBlob)
+	c.Assert(t.Cols()[0].Flen, Equals, tinyBlobMaxLength)
+	c.Assert(t.Cols()[1].Tp, Equals, mysql.TypeBlob)
+	c.Assert(t.Cols()[1].Flen, Equals, blobMaxLength)
+	c.Assert(t.Cols()[2].Tp, Equals, mysql.TypeMediumBlob)
+	c.Assert(t.Cols()[2].Flen, Equals, mediumBlobMaxLength)
+	c.Assert(t.Cols()[3].Tp, Equals, mysql.TypeLongBlob)
+	c.Assert(t.Cols()[3].Flen, Equals, longBlobMaxLength)
+
+	oldRow := types.MakeDatums([]byte("a"), []byte("a"), []byte("a"), []byte("a"))
+	_, err = t.AddRecord(ctx, oldRow)
+	c.Assert(err, IsNil)
+
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 }

@@ -1,0 +1,51 @@
+[
+  {
+    "Name": "TestExpBackoffEstimation",
+    "Cases": [
+      [
+        "IndexReader_6 5.00 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 5.00 cop[tikv] table:exp_backoff, index:idx(a, b, c, d) range:[1,1], keep order:false"
+      ],
+      [
+        "TableReader_7 3.00 root  data:Selection_6",
+        "└─Selection_6 3.00 cop[tikv]  eq(test.exp_backoff.b, 1)",
+        "  └─TableFullScan_5 5.00 cop[tikv] table:exp_backoff keep order:false"
+      ],
+      [
+        "TableReader_7 2.00 root  data:Selection_6",
+        "└─Selection_6 2.00 cop[tikv]  eq(test.exp_backoff.c, 1)",
+        "  └─TableFullScan_5 5.00 cop[tikv] table:exp_backoff keep order:false"
+      ],
+      [
+        "TableReader_7 3.00 root  data:Selection_6",
+        "└─Selection_6 3.00 cop[tikv]  ge(test.exp_backoff.d, 3), le(test.exp_backoff.d, 5)",
+        "  └─TableFullScan_5 5.00 cop[tikv] table:exp_backoff keep order:false"
+      ],
+      [
+        "IndexReader_6 1.36 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 1.36 cop[tikv] table:exp_backoff, index:idx(a, b, c, d) range:[1 1 1 3,1 1 1 5], keep order:false"
+      ],
+      [
+        "IndexReader_6 0.00 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 0.00 cop[tikv] table:exp_backoff, index:idx(a, b, c, d) range:[1 1 1 3,1 1 1 5], keep order:false"
+      ]
+    ]
+  },
+  {
+    "Name": "TestNULLOnFullSampling",
+    "Cases": [
+      [
+        "test t  a 0 1 3",
+        "test t  a 0 2 2",
+        "test t  idx 1 1 3",
+        "test t  idx 1 2 2"
+      ],
+      [
+        "test t  a 0 0 1 1 3 3 0",
+        "test t  a 0 1 2 1 4 4 0",
+        "test t  idx 1 0 1 1 3 3 0",
+        "test t  idx 1 1 2 1 4 4 0"
+      ]
+    ]
+  }
+]

@@ -16,19 +16,14 @@ package infoschema
 import (
 	"fmt"
 	"sort"
-	"sync/atomic"
+	"sync"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/placement"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -56,10 +51,10 @@ type InfoSchema interface {
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
 	// BundleByName is used to get a rule bundle.
 	BundleByName(name string) (*placement.Bundle, bool)
-	// RuleBundles returns all placement rule bundles.
-	RuleBundles() map[string]*placement.Bundle
-	// MockBundles is only used for TEST.
-	MockBundles(map[string]*placement.Bundle)
+	// SetBundle is used internally to update rule bundles or mock tests.
+	SetBundle(*placement.Bundle)
+	// RuleBundles will return a copy of all rule bundles.
+	RuleBundles() []*placement.Bundle
 }
 
 type sortedTables []table.Table
@@ -95,7 +90,8 @@ const bucketCount = 512
 
 type infoSchema struct {
 	// ruleBundleMap stores all placement rules
-	ruleBundleMap map[string]*placement.Bundle
+	ruleBundleMutex sync.RWMutex
+	ruleBundleMap   map[string]*placement.Bundle
 
 	schemaMap map[string]*schemaTables
 
@@ -110,6 +106,7 @@ type infoSchema struct {
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result := &infoSchema{}
 	result.schemaMap = make(map[string]*schemaTables)
+	result.ruleBundleMap = make(map[string]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
@@ -133,6 +130,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
 	result := &infoSchema{}
 	result.schemaMap = make(map[string]*schemaTables)
+	result.ruleBundleMap = make(map[string]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
@@ -312,40 +310,6 @@ func (is *infoSchema) SequenceByName(schema, sequence model.CIStr) (util.Sequenc
 	return tbl.(util.SequenceTable), nil
 }
 
-// Handle handles information schema, including getting and setting.
-type Handle struct {
-	value atomic.Value
-	store kv.Storage
-}
-
-// NewHandle creates a new Handle.
-func NewHandle(store kv.Storage) *Handle {
-	h := &Handle{
-		store: store,
-	}
-	return h
-}
-
-// Get gets information schema from Handle.
-func (h *Handle) Get() InfoSchema {
-	v := h.value.Load()
-	schema, _ := v.(InfoSchema)
-	return schema
-}
-
-// IsValid uses to check whether handle value is valid.
-func (h *Handle) IsValid() bool {
-	return h.value.Load() != nil
-}
-
-// EmptyClone creates a new Handle with the same store and memSchema, but the value is not set.
-func (h *Handle) EmptyClone() *Handle {
-	newHandle := &Handle{
-		store: h.store,
-	}
-	return newHandle
-}
-
 func init() {
 	// Initialize the information shema database and register the driver to `drivers`
 	dbID := autoid.InformationSchemaDBID
@@ -382,34 +346,60 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 	return false, ""
 }
 
-// GetInfoSchema gets TxnCtx InfoSchema if snapshot schema is not set,
-// Otherwise, snapshot schema is returned.
-func GetInfoSchema(ctx sessionctx.Context) InfoSchema {
-	return GetInfoSchemaBySessionVars(ctx.GetSessionVars())
-}
-
-// GetInfoSchemaBySessionVars gets TxnCtx InfoSchema if snapshot schema is not set,
-// Otherwise, snapshot schema is returned.
-func GetInfoSchemaBySessionVars(sessVar *variable.SessionVars) InfoSchema {
-	var is InfoSchema
-	if snap := sessVar.SnapshotInfoschema; snap != nil {
-		is = snap.(InfoSchema)
-		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", sessVar.ConnectionID), zap.Int64("schemaVersion", is.SchemaMetaVersion()))
-	} else {
-		is = sessVar.TxnCtx.InfoSchema.(InfoSchema)
-	}
-	return is
-}
-
 func (is *infoSchema) BundleByName(name string) (*placement.Bundle, bool) {
+	is.ruleBundleMutex.RLock()
+	defer is.ruleBundleMutex.RUnlock()
 	t, r := is.ruleBundleMap[name]
 	return t, r
 }
 
-func (is *infoSchema) RuleBundles() map[string]*placement.Bundle {
-	return is.ruleBundleMap
+func (is *infoSchema) RuleBundles() []*placement.Bundle {
+	is.ruleBundleMutex.RLock()
+	defer is.ruleBundleMutex.RUnlock()
+	bundles := make([]*placement.Bundle, 0, len(is.ruleBundleMap))
+	for _, bundle := range is.ruleBundleMap {
+		bundles = append(bundles, bundle)
+	}
+	return bundles
 }
 
-func (is *infoSchema) MockBundles(ruleBundleMap map[string]*placement.Bundle) {
-	is.ruleBundleMap = ruleBundleMap
+func (is *infoSchema) SetBundle(bundle *placement.Bundle) {
+	is.ruleBundleMutex.Lock()
+	defer is.ruleBundleMutex.Unlock()
+	is.ruleBundleMap[bundle.ID] = bundle
+}
+
+func (is *infoSchema) deleteBundle(id string) {
+	is.ruleBundleMutex.Lock()
+	defer is.ruleBundleMutex.Unlock()
+	delete(is.ruleBundleMap, id)
+}
+
+// GetBundle get the first available bundle by array of IDs, possibbly fallback to the default.
+// If fallback to the default, only rules applied to all regions(empty keyrange) will be returned.
+// If the default bundle is unavailable, an empty bundle with an GroupID(ids[0]) is returned.
+func GetBundle(h InfoSchema, ids []int64) *placement.Bundle {
+	for _, id := range ids {
+		b, ok := h.BundleByName(placement.GroupID(id))
+		if ok {
+			return b.Clone()
+		}
+	}
+
+	newRules := []*placement.Rule{}
+
+	b, ok := h.BundleByName(placement.PDBundleID)
+	if ok {
+		for _, rule := range b.Rules {
+			if rule.StartKeyHex == "" && rule.EndKeyHex == "" {
+				newRules = append(newRules, rule.Clone())
+			}
+		}
+	}
+
+	id := int64(-1)
+	if len(ids) > 0 {
+		id = ids[0]
+	}
+	return &placement.Bundle{ID: placement.GroupID(id), Rules: newRules}
 }
