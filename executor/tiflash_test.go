@@ -15,11 +15,11 @@ package executor_test
 
 import (
 	"fmt"
+	"math/rand"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-	"math/rand"
-	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
