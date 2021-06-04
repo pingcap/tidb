@@ -730,7 +730,8 @@ func (tm *ttlManager) close() {
 	close(tm.ch)
 }
 
-const pessimisticLockMaxBackoff = 20000
+const keepAliveMaxBackoff = 20000        // 20 seconds
+const pessimisticLockMaxBackoff = 600000 // 10 minutes
 
 func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 	// Ticker is set to 1/2 of the ManagedLockTTL.
@@ -745,7 +746,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			if tm.lockCtx != nil && tm.lockCtx.Killed != nil && atomic.LoadUint32(tm.lockCtx.Killed) != 0 {
 				return
 			}
-			bo := retry.NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, c.txn.vars)
+			bo := retry.NewBackofferWithVars(context.Background(), keepAliveMaxBackoff, c.txn.vars)
 			now, err := c.store.getTimestampWithRetry(bo, c.txn.GetScope())
 			if err != nil {
 				logutil.Logger(bo.GetCtx()).Warn("keepAlive get tso fail",
