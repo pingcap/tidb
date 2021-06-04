@@ -531,6 +531,7 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	// Test create table like at temporary mode.
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists temporary_table;")
 	tk.MustExec("create global temporary table temporary_table (a int, b int,index(a)) on commit delete rows")
@@ -984,6 +985,7 @@ func (s *testSerialDBSuite) TestAutoRandomOnTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists auto_random_temporary")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	_, err := tk.Exec("create global temporary table auto_random_temporary (a bigint primary key auto_random(3), b varchar(255)) on commit delete rows;")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random").Error())
 	tk.MustExec("set @@tidb_enable_noop_functions = 1")

@@ -52,7 +52,32 @@
       "explain format = 'brief' select count(*) from fact_t where exists (select 1 from d1_t where d1_k = fact_t.d1_k)",
       "explain format = 'brief' select count(*) from fact_t where exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)",
       "explain format = 'brief' select count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k)",
-      "explain format = 'brief' select count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)"
+      "explain format = 'brief' select count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)",
+      "explain format = 'brief' select count(*) from fact_t join d1_t on fact_t.d1_k > d1_t.d1_k",
+      "explain format = 'brief' select count(*) from fact_t left join d1_t on fact_t.d1_k > d1_t.d1_k",
+      "explain format = 'brief' select count(*) from fact_t right join d1_t on fact_t.d1_k > d1_t.d1_k",
+      "explain format = 'brief' select count(*) from fact_t where d1_k not in (select d1_k from d1_t)"
+    ]
+  },
+  {
+    "name": "TestMPPOuterJoinBuildSideForBroadcastJoin",
+    "cases": [
+      "explain format = 'brief' select count(*) from a left join b on a.id = b.id",
+      "explain format = 'brief' select count(*) from b right join a on a.id = b.id"
+    ]
+  },
+  {
+    "name": "TestMPPOuterJoinBuildSideForShuffleJoinWithFixedBuildSide",
+    "cases": [
+      "explain format = 'brief' select count(*) from a left join b on a.id = b.id",
+      "explain format = 'brief' select count(*) from b right join a on a.id = b.id"
+    ]
+  },
+  {
+    "name": "TestMPPOuterJoinBuildSideForShuffleJoin",
+    "cases": [
+      "explain format = 'brief' select count(*) from a left join b on a.id = b.id",
+      "explain format = 'brief' select count(*) from b right join a on a.id = b.id"
     ]
   },
   {
