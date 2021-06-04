@@ -1180,7 +1180,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
-	collector := mock.NewTopSQLReporter()
+	collector := mock.NewTopSQLCollector()
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(collector)
 
 	dbt := &DBTest{c, db}

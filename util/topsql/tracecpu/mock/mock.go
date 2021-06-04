@@ -36,8 +36,8 @@ type TopSQLCollector struct {
 	collectCnt  atomic.Int64
 }
 
-// NewTopSQLReporter uses for testing.
-func NewTopSQLReporter() *TopSQLCollector {
+// NewTopSQLCollector uses for testing.
+func NewTopSQLCollector() *TopSQLCollector {
 	return &TopSQLCollector{
 		sqlMap:      make(map[string]string),
 		planMap:     make(map[string]string),

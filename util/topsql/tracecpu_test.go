@@ -45,7 +45,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 }
 
 func (s *testSuite) TestTopSQLCPUProfile(c *C) {
-	reporter := mock.NewTopSQLReporter()
+	reporter := mock.NewTopSQLCollector()
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(reporter)
 	reqs := []struct {
 		sql  string
