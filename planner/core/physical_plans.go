@@ -14,6 +14,8 @@
 package core
 
 import (
+	"fmt"
+	"strconv"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -31,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -108,7 +111,10 @@ func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
 		} else if chCnt == 1 {
 			curPlan = curPlan.Children()[0]
 		} else {
-			join := curPlan.(*PhysicalHashJoin)
+			join, ok := curPlan.(*PhysicalHashJoin)
+			if !ok {
+				return nil
+			}
 			curPlan = join.children[1-join.globalChildIndex]
 		}
 	}
@@ -883,6 +889,18 @@ type PhysicalExchangeReceiver struct {
 	basePhysicalPlan
 
 	Tasks []*kv.MPPTask
+	frags []*Fragment
+}
+
+// Clone implment PhysicalPlan interface.
+func (p *PhysicalExchangeReceiver) Clone() (PhysicalPlan, error) {
+	np := new(PhysicalExchangeReceiver)
+	base, err := p.basePhysicalPlan.cloneWithSelf(np)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	np.basePhysicalPlan = *base
+	return np, nil
 }
 
 // GetExchangeSender return the connected sender of this receiver. We assume that its child must be a receiver.
@@ -897,10 +915,21 @@ type PhysicalExchangeSender struct {
 	TargetTasks  []*kv.MPPTask
 	ExchangeType tipb.ExchangeType
 	HashCols     []*expression.Column
-	// Tasks is the mpp task for current PhysicalExchangeSender
+	// Tasks is the mpp task for current PhysicalExchangeSender.
 	Tasks []*kv.MPPTask
+}
 
-	Fragment *Fragment
+// Clone implment PhysicalPlan interface.
+func (p *PhysicalExchangeSender) Clone() (PhysicalPlan, error) {
+	np := new(PhysicalExchangeSender)
+	base, err := p.basePhysicalPlan.cloneWithSelf(np)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	np.basePhysicalPlan = *base
+	np.ExchangeType = p.ExchangeType
+	np.HashCols = p.HashCols
+	return np, nil
 }
 
 // Clone implements PhysicalPlan interface.
@@ -949,6 +978,19 @@ func (p *PhysicalLimit) Clone() (PhysicalPlan, error) {
 // PhysicalUnionAll is the physical operator of UnionAll.
 type PhysicalUnionAll struct {
 	physicalSchemaProducer
+
+	mpp bool
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalUnionAll) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalUnionAll)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	return cloned, nil
 }
 
 // AggMppRunMode defines the running mode of aggregation in MPP
@@ -1367,6 +1409,7 @@ type PhysicalCTE struct {
 	SeedPlan  PhysicalPlan
 	RecurPlan PhysicalPlan
 	CTE       *CTEClass
+	cteAsName model.CIStr
 }
 
 // PhysicalCTETable is for CTE table.
@@ -1383,4 +1426,58 @@ func (p *PhysicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(p.RecurPlan)...)
 	}
 	return corCols
+}
+
+// AccessObject implements physicalScan interface.
+func (p *PhysicalCTE) AccessObject(normalized bool) string {
+	return fmt.Sprintf("CTE:%s", p.cteAsName.L)
+}
+
+// OperatorInfo implements dataAccesser interface.
+func (p *PhysicalCTE) OperatorInfo(normalized bool) string {
+	return fmt.Sprintf("data:%s", (*CTEDefinition)(p).ExplainID())
+}
+
+// ExplainInfo implements Plan interface.
+func (p *PhysicalCTE) ExplainInfo() string {
+	return p.AccessObject(false) + ", " + p.OperatorInfo(false)
+}
+
+// ExplainID overrides the ExplainID.
+func (p *PhysicalCTE) ExplainID() fmt.Stringer {
+	return stringutil.MemoizeStr(func() string {
+		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
+			return p.TP()
+		}
+		return p.TP() + "_" + strconv.Itoa(p.id)
+	})
+}
+
+// ExplainInfo overrides the ExplainInfo
+func (p *PhysicalCTETable) ExplainInfo() string {
+	return "Scan on CTE_" + strconv.Itoa(p.IDForStorage)
+}
+
+// CTEDefinition is CTE definition for explain.
+type CTEDefinition PhysicalCTE
+
+// ExplainInfo overrides the ExplainInfo
+func (p *CTEDefinition) ExplainInfo() string {
+	var res string
+	if p.RecurPlan != nil {
+		res = "Recursive CTE"
+	} else {
+		res = "Non-Recursive CTE"
+	}
+	if p.CTE.HasLimit {
+		res += fmt.Sprintf(", limit(offset:%v, count:%v)", p.CTE.LimitBeg, p.CTE.LimitEnd-p.CTE.LimitBeg)
+	}
+	return res
+}
+
+// ExplainID overrides the ExplainID.
+func (p *CTEDefinition) ExplainID() fmt.Stringer {
+	return stringutil.MemoizeStr(func() string {
+		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
+	})
 }

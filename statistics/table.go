@@ -277,19 +277,24 @@ func (t *Table) ColumnLessRowCount(sc *stmtctx.StatementContext, value types.Dat
 }
 
 // ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
-func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.Datum, colID int64) float64 {
+func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.Datum, colID int64) (float64, error) {
 	c, ok := t.Columns[colID]
 	if !ok || c.IsInvalid(sc, t.Pseudo) {
-		return float64(t.Count) / pseudoBetweenRate
+		return float64(t.Count) / pseudoBetweenRate, nil
 	}
-	count, err := c.BetweenRowCount(sc, a, b)
+	aEncoded, err := codec.EncodeKey(sc, nil, a)
 	if err != nil {
-		return 0
+		return 0, err
 	}
+	bEncoded, err := codec.EncodeKey(sc, nil, b)
+	if err != nil {
+		return 0, err
+	}
+	count := c.BetweenRowCount(sc, a, b, aEncoded, bEncoded)
 	if a.IsNull() {
 		count += float64(c.NullCount)
 	}
-	return count * c.GetIncreaseFactor(t.Count)
+	return count * c.GetIncreaseFactor(t.Count), nil
 }
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
@@ -298,7 +303,11 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 	if !ok || c.IsInvalid(sc, t.Pseudo) {
 		return float64(t.Count) / pseudoEqualRate, nil
 	}
-	result, err := c.equalRowCount(sc, value, t.ModifyCount)
+	encodedVal, err := codec.EncodeKey(sc, nil, value)
+	if err != nil {
+		return 0, err
+	}
+	result, err := c.equalRowCount(sc, value, encodedVal, t.ModifyCount)
 	result *= c.GetIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }

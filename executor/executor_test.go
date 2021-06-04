@@ -3847,7 +3847,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "admin check index t c")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "handle 3, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:30, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:<nil>")
+	c.Assert(err.Error(), Equals, "[executor:8133]handle 3, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:30, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:<nil>")
 
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
@@ -5203,6 +5203,7 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 
 	// Test show table regions and split table on temporary table.
 	tk.MustExec("drop table if exists t_regions_temporary_table")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table t_regions_temporary_table (a int key, b int, c int, index idx(b), index idx2(c)) ON COMMIT DELETE ROWS;")
 	// Test show table regions.
 	_, err = tk.Exec("show table t_regions_temporary_table regions")
@@ -5969,6 +5970,7 @@ func (s *testRecoverTable) TestRecoverTempTable(c *C) {
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
 	tk.MustExec("drop table if exists t_recover")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table t_recover (a int) on commit delete rows;")
 
 	timeBeforeDrop, _, safePointSQL, resetGC := s.mockGC(tk)
@@ -8179,6 +8181,7 @@ func (s *testSerialSuite) TestIssue24210(c *C) {
 
 func (s *testSerialSuite) TestDeadlockTable(c *C) {
 	deadlockhistory.GlobalDeadlockHistory.Clear()
+	deadlockhistory.GlobalDeadlockHistory.Resize(10)
 
 	occurTime := time.Date(2021, 5, 10, 1, 2, 3, 456789000, time.Local)
 	rec := &deadlockhistory.DeadlockRecord{
@@ -8244,6 +8247,7 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 
 func (s *testSuite1) TestTemporaryTableNoPessimisticLock(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create global temporary table t (a int primary key, b int) on commit delete rows")
@@ -8356,6 +8360,58 @@ func (s testSerialSuite) TestExprBlackListForEnum(c *C) {
 	c.Assert(checkFuncPushDown(rows, "index:idx(b, a)"), IsTrue)
 }
 
+func (s testSerialSuite) TestTemporaryTableNoNetwork(c *C) {
+	// Test that table reader/index reader/index lookup on the temporary table do not need to visit TiKV.
+	tk := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk1.MustExec("use test")
+	tk.MustExec("create table normal (id int, a int, index(a))")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	tk.MustExec("create global temporary table tmp_t (id int, a int, index(a)) on commit delete rows")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into tmp_t values (1, 1)")
+	tk.MustExec("insert into tmp_t values (2, 2)")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy", "return(true)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy"), IsNil)
+	}()
+
+	// Make sure the fail point works.
+	// With that failpoint, all requests to the TiKV is discard.
+	rs, err := tk1.Exec("select * from normal")
+	c.Assert(err, IsNil)
+	blocked := make(chan struct{})
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	go func() {
+		_, err := session.ResultSetToStringSlice(ctx, tk1.Se, rs)
+		blocked <- struct{}{}
+		c.Assert(err, NotNil)
+	}()
+	select {
+	case <-blocked:
+		c.Error("The query should block when the failpoint is enabled")
+	case <-time.After(200 * time.Millisecond):
+	}
+	cancelFunc()
+
+	// Check the temporary table do not send request to TiKV.
+	// Table reader
+	tk.HasPlan("select * from tmp_t", "TableReader")
+	tk.MustQuery("select * from tmp_t").Check(testkit.Rows("1 1", "2 2"))
+	// Index reader
+	tk.HasPlan("select /*+ USE_INDEX(tmp_t, a) */ a from tmp_t", "IndexReader")
+	tk.MustQuery("select /*+ USE_INDEX(tmp_t, a) */ a from tmp_t").Check(testkit.Rows("1", "2"))
+	// Index lookup
+	tk.HasPlan("select id from tmp_t where a = 1", "IndexLookUp")
+	tk.MustQuery("select id from tmp_t where a = 1").Check(testkit.Rows("1"))
+
+	tk.MustExec("rollback")
+}
+
 func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -8364,10 +8420,8 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 	tbInfo := testGetTableByName(c, tk.Se, "test", "t")
 
 	// Enable Top SQL
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	newCfg.TopSQL.Enable = true
-	config.StoreGlobalConfig(&newCfg)
+	variable.TopSQLVariable.Enable.Store(true)
+	variable.TopSQLVariable.AgentAddress.Store("mock-agent")
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook", `return(true)`), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
