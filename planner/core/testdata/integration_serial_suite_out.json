@@ -289,6 +289,113 @@
     ]
   },
   {
+    "Name": "TestMPPOuterJoinBuildSideForBroadcastJoin",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select count(*) from a left join b on a.id = b.id",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─TableReader 2.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 2.00 cop[tiflash]  left outer join, equal:[eq(test.a.id, test.b.id)]",
+          "      ├─ExchangeReceiver(Build) 3.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender 3.00 cop[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 3.00 cop[tiflash]  not(isnull(test.b.id))",
+          "      │     └─TableFullScan 3.00 cop[tiflash] table:b keep order:false",
+          "      └─TableFullScan(Probe) 2.00 cop[tiflash] table:a keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*) from b right join a on a.id = b.id",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─TableReader 2.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 2.00 cop[tiflash]  right outer join, equal:[eq(test.b.id, test.a.id)]",
+          "      ├─ExchangeReceiver(Build) 3.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender 3.00 cop[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 3.00 cop[tiflash]  not(isnull(test.b.id))",
+          "      │     └─TableFullScan 3.00 cop[tiflash] table:b keep order:false",
+          "      └─TableFullScan(Probe) 2.00 cop[tiflash] table:a keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestMPPOuterJoinBuildSideForShuffleJoinWithFixedBuildSide",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select count(*) from a left join b on a.id = b.id",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─TableReader 2.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 2.00 cop[tiflash]  left outer join, equal:[eq(test.a.id, test.b.id)]",
+          "      ├─ExchangeReceiver(Build) 3.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender 3.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.b.id",
+          "      │   └─Selection 3.00 cop[tiflash]  not(isnull(test.b.id))",
+          "      │     └─TableFullScan 3.00 cop[tiflash] table:b keep order:false",
+          "      └─ExchangeReceiver(Probe) 2.00 cop[tiflash]  ",
+          "        └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.a.id",
+          "          └─TableFullScan 2.00 cop[tiflash] table:a keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*) from b right join a on a.id = b.id",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─TableReader 2.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 2.00 cop[tiflash]  right outer join, equal:[eq(test.b.id, test.a.id)]",
+          "      ├─ExchangeReceiver(Build) 3.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender 3.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.b.id",
+          "      │   └─Selection 3.00 cop[tiflash]  not(isnull(test.b.id))",
+          "      │     └─TableFullScan 3.00 cop[tiflash] table:b keep order:false",
+          "      └─ExchangeReceiver(Probe) 2.00 cop[tiflash]  ",
+          "        └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.a.id",
+          "          └─TableFullScan 2.00 cop[tiflash] table:a keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestMPPOuterJoinBuildSideForShuffleJoin",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select count(*) from a left join b on a.id = b.id",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─TableReader 2.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 2.00 cop[tiflash]  left outer join, equal:[eq(test.a.id, test.b.id)]",
+          "      ├─ExchangeReceiver(Build) 2.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.a.id",
+          "      │   └─TableFullScan 2.00 cop[tiflash] table:a keep order:false",
+          "      └─ExchangeReceiver(Probe) 3.00 cop[tiflash]  ",
+          "        └─ExchangeSender 3.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.b.id",
+          "          └─Selection 3.00 cop[tiflash]  not(isnull(test.b.id))",
+          "            └─TableFullScan 3.00 cop[tiflash] table:b keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*) from b right join a on a.id = b.id",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─TableReader 2.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 2.00 cop[tiflash]  right outer join, equal:[eq(test.b.id, test.a.id)]",
+          "      ├─ExchangeReceiver(Build) 2.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.a.id",
+          "      │   └─TableFullScan 2.00 cop[tiflash] table:a keep order:false",
+          "      └─ExchangeReceiver(Probe) 3.00 cop[tiflash]  ",
+          "        └─ExchangeSender 3.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.b.id",
+          "          └─Selection 3.00 cop[tiflash]  not(isnull(test.b.id))",
+          "            └─TableFullScan 3.00 cop[tiflash] table:b keep order:false"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestMPPShuffledJoin",
     "Cases": [
       {

@@ -48,6 +48,15 @@ const (
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
 	TiDBOptBCJ = "tidb_opt_broadcast_join"
+<<<<<<< HEAD
+=======
+
+	// TiDBOptCartesianBCJ is used to disable/enable broadcast cartesian join in MPP mode
+	TiDBOptCartesianBCJ = "tidb_opt_broadcast_cartesian_join"
+
+	TiDBOptMPPOuterJoinFixedBuildSide = "tidb_opt_mpp_outer_join_fixed_build_side"
+
+>>>>>>> c59b3bcea... planner: Mpp outer join build side (#25130)
 	// tidb_opt_distinct_agg_push_down is used to decide whether agg with distinct should be pushed to tikv/tiflash.
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
 
@@ -566,6 +575,11 @@ const (
 	DefSkipASCIICheck                  = false
 	DefOptAggPushDown                  = false
 	DefOptBCJ                          = false
+<<<<<<< HEAD
+=======
+	DefOptCartesianBCJ                 = 1
+	DefOptMPPOuterJoinFixedBuildSide   = true
+>>>>>>> c59b3bcea... planner: Mpp outer join build side (#25130)
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1

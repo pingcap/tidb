@@ -462,6 +462,138 @@ func (s *testIntegrationSerialSuite) TestMPPJoin(c *C) {
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestMPPOuterJoinBuildSideForBroadcastJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists a")
+	tk.MustExec("create table a(id int, value int)")
+	tk.MustExec("insert into a values(1,2),(2,3)")
+	tk.MustExec("analyze table a")
+	tk.MustExec("drop table if exists b")
+	tk.MustExec("create table b(id int, value int)")
+	tk.MustExec("insert into b values(1,2),(2,3),(3,4)")
+	tk.MustExec("analyze table b")
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "a" || tblInfo.Name.L == "b" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_opt_mpp_outer_join_fixed_build_side = 0")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 10000")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 10000")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestMPPOuterJoinBuildSideForShuffleJoinWithFixedBuildSide(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists a")
+	tk.MustExec("create table a(id int, value int)")
+	tk.MustExec("insert into a values(1,2),(2,3)")
+	tk.MustExec("analyze table a")
+	tk.MustExec("drop table if exists b")
+	tk.MustExec("create table b(id int, value int)")
+	tk.MustExec("insert into b values(1,2),(2,3),(3,4)")
+	tk.MustExec("analyze table b")
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "a" || tblInfo.Name.L == "b" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_opt_mpp_outer_join_fixed_build_side = 1")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestMPPOuterJoinBuildSideForShuffleJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists a")
+	tk.MustExec("create table a(id int, value int)")
+	tk.MustExec("insert into a values(1,2),(2,3)")
+	tk.MustExec("analyze table a")
+	tk.MustExec("drop table if exists b")
+	tk.MustExec("create table b(id int, value int)")
+	tk.MustExec("insert into b values(1,2),(2,3),(3,4)")
+	tk.MustExec("analyze table b")
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "a" || tblInfo.Name.L == "b" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_opt_mpp_outer_join_fixed_build_side = 0")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func (s *testIntegrationSerialSuite) TestMPPShuffledJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
