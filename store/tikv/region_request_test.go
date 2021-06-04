@@ -636,6 +636,31 @@ func (s *testRegionRequestToSingleStoreSuite) TestNoReloadRegionForGrpcWhenCtxCa
 	wg.Wait()
 }
 
+func (s *testRegionRequestToSingleStoreSuite) TestOnDataIsNotReadyErrorBackoff(c *C) {
+	var seed uint32 = 0
+	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{}, kv.ReplicaReadMixed, &seed)
+	region, err := s.cache.LocateRegionByID(s.bo, s.region)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+
+	// Test retry for DataIsNotReady error to check if the backoff is valid.
+	func() {
+		oc := s.regionRequestSender.client
+		defer func() {
+			s.regionRequestSender.client = oc
+		}()
+		s.regionRequestSender.client = &fnClient{func(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (response *tikvrpc.Response, err error) {
+			return &tikvrpc.Response{Resp: &kvrpcpb.PrewriteResponse{
+				RegionError: &errorpb.Error{DataIsNotReady: &errorpb.DataIsNotReady{}},
+			}}, nil
+		}}
+		bo := NewBackofferWithVars(context.Background(), 500, nil)
+		resp, err := s.regionRequestSender.SendReq(bo, req, region.Region, time.Second)
+		c.Assert(err, NotNil)
+		c.Assert(resp, IsNil)
+	}()
+}
+
 func (s *testRegionRequestToSingleStoreSuite) TestOnMaxTimestampNotSyncedError(c *C) {
 	req := tikvrpc.NewRequest(tikvrpc.CmdPrewrite, &kvrpcpb.PrewriteRequest{})
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
