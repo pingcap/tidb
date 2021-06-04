@@ -39,6 +39,10 @@ var _ = SerialSuites(&testSuite{})
 
 type testSuite struct{}
 
+type collectorWrapper struct {
+	reporter.TopSQLReporter
+}
+
 func (s *testSuite) SetUpSuite(c *C) {
 	variable.TopSQLVariable.Enable.Store(true)
 	variable.TopSQLVariable.AgentAddress.Store("mock")
@@ -48,7 +52,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 
 func (s *testSuite) TestTopSQLCPUProfile(c *C) {
 	collector := mock.NewTopSQLCollector()
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(collector)
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{collector})
 	reqs := []struct {
 		sql  string
 		plan string
@@ -125,7 +129,7 @@ func (s *testSuite) TestTopSQLReporter(c *C) {
 	})
 	defer report.Close()
 
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(report)
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{report})
 	reqs := []struct {
 		sql  string
 		plan string
