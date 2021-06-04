@@ -106,8 +106,6 @@ type RemoteTopSQLReporter struct {
 	// this should only be set from the dedicated worker
 	normalizedPlanMap atomic.Value // sync.Map
 
-	reporterNormalizedSQLMap  map[string]string
-	reporterNormalizedPlanMap map[string]string
 	// calling this can take a while, so should not block critical paths
 	planBinaryDecoder planBinaryDecodeFunc
 
@@ -123,14 +121,12 @@ type RemoteTopSQLReporter struct {
 // MaxStatementsNum is the maximum SQL and plan number, which will restrict the memory usage of the internal LFU cache
 func NewRemoteTopSQLReporter(client ReportClient, planDecoder planBinaryDecodeFunc) *RemoteTopSQLReporter {
 	tsr := &RemoteTopSQLReporter{
-		client:                    client,
-		topSQLMap:                 make(map[string]*topSQLDataPoints),
-		reporterNormalizedSQLMap:  make(map[string]string),
-		reporterNormalizedPlanMap: make(map[string]string),
-		planBinaryDecoder:         planDecoder,
-		collectCPUTimeChan:        make(chan *topSQLCPUTimeInput, collectCPUTimeChanLen),
-		reportDataChan:            make(chan reportData, 1),
-		quit:                      make(chan struct{}),
+		client:             client,
+		topSQLMap:          make(map[string]*topSQLDataPoints),
+		planBinaryDecoder:  planDecoder,
+		collectCPUTimeChan: make(chan *topSQLCPUTimeInput, collectCPUTimeChanLen),
+		reportDataChan:     make(chan reportData, 1),
+		quit:               make(chan struct{}),
 	}
 	tsr.normalizedSQLMap.Store(&sync.Map{})
 	tsr.normalizedPlanMap.Store(&sync.Map{})
@@ -305,45 +301,35 @@ func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedPlan 
 func (tsr *RemoteTopSQLReporter) prepareReportData(data reportData) []*tipb.CollectCPUTimeRequest {
 	// wait latest register finish, use sleep instead of other method to avoid performance issue in hot code path.
 	time.Sleep(time.Millisecond * 100)
-	data.normalizedSQLMap.Range(func(key, value interface{}) bool {
-		keyStr := key.(string)
-		_, ok := tsr.reporterNormalizedSQLMap[keyStr]
-		if !ok {
-			tsr.reporterNormalizedSQLMap[keyStr] = value.(string)
-		}
-		return true
-	})
 	data.normalizedPlanMap.Range(func(key, value interface{}) bool {
-		keyStr := key.(string)
-		_, ok := tsr.reporterNormalizedPlanMap[keyStr]
-		if ok {
-			return true
-		}
 		planDecoded, err := tsr.planBinaryDecoder(value.(string))
 		if err != nil {
 			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(err))
 			return true
 		}
-		tsr.reporterNormalizedPlanMap[keyStr] = planDecoded
+		data.normalizedPlanMap.Store(key, planDecoded)
 		return true
 	})
 
-	// TODO: evict redundant record in reporterNormalizedSQLMap and reporterNormalizedPlanMap.
-
 	i := 0
 	batch := make([]*tipb.CollectCPUTimeRequest, len(data.topSQL))
-	for key, value := range data.topSQL {
-		normalizedSQL := tsr.reporterNormalizedSQLMap[string(value.SQLDigest)]
-		normalizedPlan := tsr.reporterNormalizedSQLMap[string(value.PlanDigest)]
-		batch[i] = &tipb.CollectCPUTimeRequest{
-			TimestampList:  value.TimestampList,
-			CpuTimeMsList:  value.CPUTimeMsList,
-			SqlDigest:      value.SQLDigest,
-			NormalizedSql:  normalizedSQL,
-			PlanDigest:     value.PlanDigest,
-			NormalizedPlan: normalizedPlan,
+	for _, value := range data.topSQL {
+		normalizedSQL, sqlOk := data.normalizedSQLMap.Load(string(value.SQLDigest))
+		normalizedPlan, planOk := data.normalizedPlanMap.Load(string(value.PlanDigest))
+		req := &tipb.CollectCPUTimeRequest{
+			TimestampList: value.TimestampList,
+			CpuTimeMsList: value.CPUTimeMsList,
+			SqlDigest:     value.SQLDigest,
+			PlanDigest:    value.PlanDigest,
 		}
-		delete(tsr.topSQLMap, key)
+		if sqlOk {
+			req.NormalizedSql = normalizedSQL.(string)
+		}
+		if planOk {
+			req.NormalizedPlan = normalizedPlan.(string)
+		}
+
+		batch[i] = req
 		i++
 	}
 	return batch
@@ -356,22 +342,18 @@ func (tsr *RemoteTopSQLReporter) sendToAgentWorker() {
 	for {
 		select {
 		case data := <-tsr.reportDataChan:
-			batch := tsr.prepareReportData(data)
-			tsr.Report(batch)
+			tsr.Report(data)
 		case <-tsr.quit:
 			return
 		}
 	}
 }
 
-func (tsr *RemoteTopSQLReporter) Report(batch []*tipb.CollectCPUTimeRequest) {
-	cli := tsr.client
-	if cli == nil {
-		return
-	}
+func (tsr *RemoteTopSQLReporter) Report(data reportData) {
+	batch := tsr.prepareReportData(data)
 	addr := variable.TopSQLVariable.AgentAddress.Load()
 	ctx, cancel := context.WithTimeout(context.TODO(), reportTimeout)
-	err := cli.Send(ctx, addr, batch)
+	err := tsr.client.Send(ctx, addr, batch)
 	if err != nil {
 		logutil.BgLogger().Warn("[top-sql] client failed to send data", zap.Error(err))
 	}
