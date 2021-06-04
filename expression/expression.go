@@ -1101,10 +1101,27 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 			ret = true
 		}
 	case
+<<<<<<< HEAD
 		ast.Substring,
 		ast.Substr:
 		switch sf.Function.PbCode() {
+=======
+		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or,
+		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like,
+		ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.Abs, /*ast.Mod,*/
+		ast.If, ast.Ifnull, ast.Case,
+		ast.Concat, ast.ConcatWS,
+		ast.Year, ast.Month, ast.Day,
+		ast.DateDiff, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
+		ast.JSONLength:
+		return true
+	case ast.Substr, ast.Substring, ast.Left, ast.Right, ast.CharLength:
+		switch function.Function.PbCode() {
+>>>>>>> 99b1fa56b... expression: push down left/right/abs to tiflash (#25018)
 		case
+			tipb.ScalarFuncSig_LeftUTF8,
+			tipb.ScalarFuncSig_RightUTF8,
+			tipb.ScalarFuncSig_CharLengthUTF8,
 			tipb.ScalarFuncSig_Substring2ArgsUTF8,
 			tipb.ScalarFuncSig_Substring3ArgsUTF8:
 			ret = true
