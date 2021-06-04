@@ -89,6 +89,7 @@ func (r *GRPCReportClient) Close() {
 	if err != nil {
 		logutil.BgLogger().Warn("[top-sql] grpc client close connection failed", zap.Error(err))
 	}
+	r.conn = nil
 }
 
 // sendBatchCPUTimeRecord sends a batch of TopSQL records by stream.
