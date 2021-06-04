@@ -160,9 +160,9 @@ func calculateDeltaSQB() *SlowQueryBucket {
 	return &deltaMap
 }
 
-// initSlowQueryStats Init lastSQBInfo, follow the definition of metrics/server.go
+// init Init lastSQBInfo, follow the definition of metrics/server.go
 // Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
-func initSlowQueryStats() {
+func init() {
 	lastSQBInfo = make(SlowQueryBucket)
 	currentSQBInfo = make(SlowQueryBucket)
 
