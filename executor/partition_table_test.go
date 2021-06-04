@@ -2404,6 +2404,7 @@ func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
 	}
 }
 
+<<<<<<< HEAD
 func (s *partitionTableSuite) TestDynamicModeByDefault(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create database test_dynamic_by_default")
@@ -2424,6 +2425,8 @@ func (s *partitionTableSuite) TestDynamicModeByDefault(c *C) {
 	}
 }
 
+=======
+>>>>>>> b07942836... planner: fix a panic caused by sinking a Limit with inlined Proj into IndexLookUp when accessing a partition table (#25063)
 func (s *partitionTableSuite) TestIssue24636(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create database test_issue_24636")
