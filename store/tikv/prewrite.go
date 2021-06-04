@@ -203,6 +203,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			if err != nil {
 				return errors.Trace(err)
 			}
+			failpoint.Inject("forceRecursion", func() { same = false })
 			if same {
 				continue
 			}
@@ -276,12 +277,17 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
 				e := &tikverr.ErrKeyExist{AlreadyExist: alreadyExist}
-				return c.extractKeyExistsErr(e)
+				err = c.extractKeyExistsErr(e)
+				if err != nil {
+					atomic.StoreUint32(&c.prewriteFailed, 1)
+				}
+				return err
 			}
 
 			// Extract lock from key error
 			lock, err1 := extractLockFromKeyErr(keyErr)
 			if err1 != nil {
+				atomic.StoreUint32(&c.prewriteFailed, 1)
 				return errors.Trace(err1)
 			}
 			logutil.BgLogger().Info("prewrite encounters lock",
