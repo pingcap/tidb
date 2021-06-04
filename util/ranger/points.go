@@ -458,11 +458,11 @@ func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val 
 
 	tmpEnum := types.Enum{}
 	for i := 0; i <= len(ft.Elems); i++ {
-		if i == len(ft.Elems) {
+		if i == 0 {
 			tmpEnum = types.Enum{}
 		} else {
-			tmpEnum.Name = ft.Elems[i]
-			tmpEnum.Value = uint64(i) + 1
+			tmpEnum.Name = ft.Elems[i-1]
+			tmpEnum.Value = uint64(i)
 		}
 
 		d := types.NewCollateMysqlEnumDatum(tmpEnum, ft.Collate)
