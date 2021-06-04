@@ -182,6 +182,7 @@ func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
 	defer server.Stop()
 
 	tsr := setupRemoteTopSQLReporter(maxSQLNum, 1, agentServer.addr)
+	defer tsr.Close()
 	populateCache(tsr, 0, maxSQLNum, 1)
 
 	agentServer.waitServerCollect(maxSQLNum, time.Second*5)
@@ -220,6 +221,7 @@ func (s *testTopSQLReporter) TestCollectAndEvicted(c *C) {
 	defer server.Stop()
 
 	tsr := setupRemoteTopSQLReporter(maxSQLNum, 1, agentServer.addr)
+	defer tsr.Close()
 	populateCache(tsr, 0, maxSQLNum*2, 2)
 
 	agentServer.waitServerCollect(maxSQLNum, time.Second*10)

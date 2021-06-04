@@ -23,12 +23,20 @@ import (
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 )
 
+var globalTopSQLReport reporter.TopSQLReporter
+
 // SetupTopSQL sets up the top-sql worker.
 func SetupTopSQL() {
 	rc := reporter.NewGRPCReportClient()
-	r := reporter.NewRemoteTopSQLReporter(rc, plancodec.DecodeNormalizedPlan)
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(r)
+	globalTopSQLReport = reporter.NewRemoteTopSQLReporter(rc, plancodec.DecodeNormalizedPlan)
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(globalTopSQLReport)
 	tracecpu.GlobalSQLCPUProfiler.Run()
+}
+
+func Close() {
+	if globalTopSQLReport != nil {
+		globalTopSQLReport.Close()
+	}
 }
 
 // AttachSQLInfo attach the sql information info top sql.

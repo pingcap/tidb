@@ -162,6 +162,8 @@ func (c *TopSQLCollector) WaitCollectCnt(count int64) {
 	}
 }
 
+func (c *TopSQLCollector) Close() {}
+
 func (c *TopSQLCollector) hash(stat tracecpu.SQLCPUTimeRecord) string {
 	return string(stat.SQLDigest) + string(stat.PlanDigest)
 }

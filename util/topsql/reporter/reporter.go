@@ -44,6 +44,7 @@ type TopSQLReporter interface {
 	tracecpu.Collector
 	RegisterSQL(sqlDigest []byte, normalizedSQL string)
 	RegisterPlan(planDigest []byte, normalizedPlan string)
+	Close()
 }
 
 type topSQLCPUTimeInput struct {
@@ -153,7 +154,6 @@ func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedPlan 
 }
 
 // Collect will drop the records when the collect channel is full
-// TODO: test the dropping behavior
 func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
 	select {
 	case tsr.collectCPUTimeChan <- &topSQLCPUTimeInput{
@@ -163,6 +163,11 @@ func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQ
 	default:
 		// ignore if chan blocked
 	}
+}
+
+func (tsr *RemoteTopSQLReporter) Close() {
+	tsr.cancel()
+	tsr.client.Close()
 }
 
 func (tsr *RemoteTopSQLReporter) collectWorker() {

@@ -19,16 +19,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
-	"google.golang.org/grpc/connectivity"
 )
 
 // ReportClient send data to the target server.
 type ReportClient interface {
 	Send(ctx context.Context, addr string, sqlMetas []*tipb.SQLMeta, planMetas []*tipb.PlanMeta, records []*tipb.CPUTimeRecord) error
+	Close()
 }
 
 // GRPCReportClient reports data to grpc servers.
@@ -78,6 +79,16 @@ func (r *GRPCReportClient) Send(
 		}
 	}
 	return nil
+}
+
+func (r *GRPCReportClient) Close() {
+	if r.conn == nil {
+		return
+	}
+	err := r.conn.Close()
+	if err != nil {
+		logutil.BgLogger().Warn("[top-sql] grpc client close connection failed", zap.Error(err))
+	}
 }
 
 // sendBatchCPUTimeRecord sends a batch of TopSQL records by stream.
@@ -132,8 +143,8 @@ func (r *GRPCReportClient) sendBatchPlanMeta(ctx context.Context, metas []*tipb.
 // tryEstablishConnection establishes the gRPC connection if connection is not established.
 func (r *GRPCReportClient) tryEstablishConnection(ctx context.Context, targetRPCAddr string) (err error) {
 	if r.curRPCAddr == targetRPCAddr && r.conn != nil {
-		// Address is not changed, check and wait connection status is ready
-		return r.waitConnReady(ctx)
+		// Address is not changed, skip.
+		return nil
 	}
 	r.conn, err = r.dial(ctx, targetRPCAddr)
 	if err != nil {
@@ -149,6 +160,7 @@ func (r *GRPCReportClient) dial(ctx context.Context, targetRPCAddr string) (*grp
 	return grpc.DialContext(
 		dialCtx,
 		targetRPCAddr,
+		grpc.WithBlock(),
 		grpc.WithInsecure(),
 		grpc.WithInitialWindowSize(grpcInitialWindowSize),
 		grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
@@ -164,28 +176,4 @@ func (r *GRPCReportClient) dial(ctx context.Context, targetRPCAddr string) (*grp
 			},
 		}),
 	)
-}
-
-func (r *GRPCReportClient) waitConnReady(ctx context.Context) (err error) {
-	if r.conn.GetState() == connectivity.Ready {
-		return
-	}
-	start := time.Now()
-	defer func() {
-		metrics.TiKVBatchClientWaitEstablish.Observe(time.Since(start).Seconds())
-	}()
-	dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
-	for {
-		s := r.conn.GetState()
-		if s == connectivity.Ready {
-			cancel()
-			break
-		}
-		if !r.conn.WaitForStateChange(dialCtx, s) {
-			cancel()
-			err = dialCtx.Err()
-			return
-		}
-	}
-	return
 }
