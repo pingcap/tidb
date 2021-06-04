@@ -1081,7 +1081,6 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 		pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
 		mpp = attachPlan2Task(pushedDownLimit, mpp).(*mppTask)
 		pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
-		pushedDownLimit.cost = mpp.cost()
 		t = mpp.convertToRootTask(p.ctx)
 	}
 	if sunk {
@@ -1982,20 +1981,14 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		StoreType: kv.TiFlash,
 	}.Init(ctx, t.p.SelectBlockOffset())
 	p.stats = t.p.statsInfo()
-<<<<<<< HEAD
-	return &rootTask{
-=======
 
-	cst := t.cst + t.count()*ctx.GetSessionVars().GetNetworkFactor(nil)
-	p.cost = cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
-	if p.ctx.GetSessionVars().IsMPPEnforced() {
-		p.cost = 0
-	}
+	cst := t.cst + t.count()*ctx.GetSessionVars().NetworkFactor
+	cst = cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
 	rt := &rootTask{
->>>>>>> 64b469623... planner/core: support limit push down (#24757)
 		p:   p,
-		cst: t.cst / 20, // TODO: This is tricky because mpp doesn't run in a coprocessor way.
+		cst: cst,
 	}
+    return rt
 }
 
 func (t *mppTask) needEnforce(prop *property.PhysicalProperty) bool {
