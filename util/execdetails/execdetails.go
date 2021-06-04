@@ -142,11 +142,11 @@ func (d ExecDetails) String() string {
 		if commitDetails.GetCommitTsTime > 0 {
 			parts = append(parts, GetCommitTSTimeStr+": "+strconv.FormatFloat(commitDetails.GetCommitTsTime.Seconds(), 'f', -1, 64))
 		}
-		commitBackoffTime := atomic.LoadInt64(&commitDetails.CommitBackoffTime)
+		commitDetails.Mu.Lock()
+		commitBackoffTime := commitDetails.Mu.CommitBackoffTime
 		if commitBackoffTime > 0 {
 			parts = append(parts, CommitBackoffTimeStr+": "+strconv.FormatFloat(time.Duration(commitBackoffTime).Seconds(), 'f', -1, 64))
 		}
-		commitDetails.Mu.Lock()
 		if len(commitDetails.Mu.BackoffTypes) > 0 {
 			parts = append(parts, BackoffTypesStr+": "+fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes))
 		}
@@ -234,11 +234,11 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 		if commitDetails.GetCommitTsTime > 0 {
 			fields = append(fields, zap.String("get_commit_ts_time", fmt.Sprintf("%v", strconv.FormatFloat(commitDetails.GetCommitTsTime.Seconds(), 'f', -1, 64)+"s")))
 		}
-		commitBackoffTime := atomic.LoadInt64(&commitDetails.CommitBackoffTime)
+		commitDetails.Mu.Lock()
+		commitBackoffTime := commitDetails.Mu.CommitBackoffTime
 		if commitBackoffTime > 0 {
 			fields = append(fields, zap.String("commit_backoff_time", fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(commitBackoffTime).Seconds(), 'f', -1, 64)+"s")))
 		}
-		commitDetails.Mu.Lock()
 		if len(commitDetails.Mu.BackoffTypes) > 0 {
 			fields = append(fields, zap.String("backoff_types", fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes)))
 		}
@@ -803,11 +803,11 @@ func (e *RuntimeStatsWithCommit) String() string {
 			buf.WriteString(", commit:")
 			buf.WriteString(FormatDuration(e.Commit.CommitTime))
 		}
-		commitBackoffTime := atomic.LoadInt64(&e.Commit.CommitBackoffTime)
+		e.Commit.Mu.Lock()
+		commitBackoffTime := e.Commit.Mu.CommitBackoffTime
 		if commitBackoffTime > 0 {
 			buf.WriteString(", backoff: {time: ")
 			buf.WriteString(FormatDuration(time.Duration(commitBackoffTime)))
-			e.Commit.Mu.Lock()
 			if len(e.Commit.Mu.BackoffTypes) > 0 {
 				buf.WriteString(", type: ")
 				buf.WriteString(e.formatBackoff(e.Commit.Mu.BackoffTypes))
