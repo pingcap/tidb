@@ -15,6 +15,7 @@ package stmtsummary
 
 import (
 	"container/list"
+	"math"
 	"sync"
 	"time"
 
@@ -38,8 +39,8 @@ type stmtSummaryByDigestEvictedElement struct {
 	endTime int64
 	// digestKeyMap contains *Kinds* of digest being evicted
 	digestKeyMap map[string]struct{}
-	// detail contains detailed information
-	detail *stmtSummaryByDigestElement
+	// otherSummary contains detailed information
+	otherSummary *stmtSummaryByDigestElement
 }
 
 // spawn a new pointer to stmtSummaryByDigestEvicted
@@ -55,20 +56,20 @@ func newStmtSummaryByDigestEvictedElement(beginTime int64, endTime int64) *stmtS
 		beginTime:    beginTime,
 		endTime:      endTime,
 		digestKeyMap: make(map[string]struct{}),
-		detail: &stmtSummaryByDigestElement{
+		otherSummary: &stmtSummaryByDigestElement{
 			beginTime: beginTime,
 			endTime:   endTime,
 			// basic
-			sampleSQL:  "other",
-			prevSQL:    "other",
-			indexNames: []string{"other"},
+			sampleSQL:  "otherSummary",
+			prevSQL:    "otherSummary",
+			indexNames: []string{"otherSummary"},
 			// user
 			authUsers: make(map[string]struct{}),
 			// latency
-			minLatency: 24 * time.Hour, // No SQL's latency could be longer than a day I hope...
+			minLatency: time.Duration(math.MaxInt64),
 			// txn
 			backoffTypes: make(map[string]int),
-			// other
+			// otherSummary
 			firstSeen: time.Now(),
 		},
 	}
@@ -162,7 +163,7 @@ func (ssbde *stmtSummaryByDigestEvicted) Clear() {
 func (seElement *stmtSummaryByDigestEvictedElement) addEvicted(digestKey *stmtSummaryByDigestKey, digestValue *stmtSummaryByDigestElement) {
 	if digestKey != nil {
 		seElement.digestKeyMap[string(digestKey.Hash())] = struct{}{}
-		addInfo(seElement.detail, digestValue)
+		addInfo(seElement.otherSummary, digestValue)
 	}
 }
 
@@ -230,12 +231,12 @@ func (ssbde *stmtSummaryByDigestEvicted) toCurrentDatum() []types.Datum {
 		return nil
 	}
 	induceSsbd := &stmtSummaryByDigest{
-		schemaName:    "other",
-		digest:        "other",
-		planDigest:    "other",
-		stmtType:      "other",
-		normalizedSQL: "other",
-		tableNames:    "other",
+		schemaName:    "otherSummary",
+		digest:        "otherSummary",
+		planDigest:    "otherSummary",
+		stmtType:      "otherSummary",
+		normalizedSQL: "otherSummary",
+		tableNames:    "otherSummary",
 	}
 	return seElement.toDatum(induceSsbd)
 }
@@ -263,7 +264,7 @@ func (ssbde *stmtSummaryByDigestEvicted) collectHistorySummaries(historySize int
 }
 
 func (seElement *stmtSummaryByDigestEvictedElement) toDatum(ssbd *stmtSummaryByDigest) []types.Datum {
-	return seElement.detail.toDatum(ssbd)
+	return seElement.otherSummary.toDatum(ssbd)
 }
 
 // addInfo adds information in addWith into addTo.
@@ -409,7 +410,7 @@ func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElem
 	// plan cache
 	addTo.planCacheHits += addWith.planCacheHits
 
-	// other
+	// otherSummary
 	addTo.sumAffectedRows += addWith.sumAffectedRows
 	addTo.sumMem += addWith.sumMem
 	if addTo.maxMem < addWith.maxMem {

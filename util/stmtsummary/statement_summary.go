@@ -177,7 +177,7 @@ type stmtSummaryByDigestElement struct {
 	sumBackoffTimes      int64
 	backoffTypes         map[string]int
 	authUsers            map[string]struct{}
-	// other
+	// otherSummary
 	sumMem               int64
 	maxMem               int64
 	sumDisk              int64
@@ -841,7 +841,7 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		ssElement.planInBinding = false
 	}
 
-	// other
+	// otherSummary
 	ssElement.sumAffectedRows += sei.StmtCtx.AffectedRows()
 	ssElement.sumMem += sei.MemMax
 	if sei.MemMax > ssElement.maxMem {

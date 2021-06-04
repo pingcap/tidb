@@ -94,7 +94,7 @@ func (s *testStmtSummarySuite) TestMapToEvictedCountDatum(c *C) {
 	c.Assert(err, IsNil)
 
 	ssMap.beginTimeForCurInterval = now + interval
-	// insert one statement every other interval.
+	// insert one statement every otherSummary interval.
 	for i := 0; i < 50; i++ {
 		ssMap.AddStatement(generateAnyExecInfo())
 		ssMap.beginTimeForCurInterval += interval * 2
@@ -239,7 +239,7 @@ func (s *testStmtSummarySuite) TestStmtSummaryByDigestEvictedElement(c *C) {
 }
 
 // test stmtSummaryByDigestEvicted.addEvicted
-// test evicted count's detail
+// test evicted count's otherSummary
 func (s *testStmtSummarySuite) TestEvictedCountDetailed(c *C) {
 	ssMap := newStmtSummaryByDigestMap()
 	ssMap.Clear()
