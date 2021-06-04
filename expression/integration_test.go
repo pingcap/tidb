@@ -9578,12 +9578,20 @@ func (s *testIntegrationSuite) TestEnumIndex(c *C) {
 	tk.MustExec("insert ignore into t values(0),(1),(2),(3);")
 	tk.MustQuery("select * from t where e = '';").Check(
 		testkit.Rows(""))
-	tk.MustQuery("select * from t where e != 'a';").Check(
-		testkit.Rows("b", "c", ""))
+	tk.MustQuery("select * from t where e != 'a';").Sort().Check(
+		testkit.Rows("", "b", "c"))
+	tk.MustExec("alter table t drop index idx;")
+	tk.MustQuery("select * from t where e = '';").Check(
+		testkit.Rows(""))
+	tk.MustQuery("select * from t where e != 'a';").Sort().Check(
+		testkit.Rows("", "b", "c"))
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(e enum(\"\"), index idx(e));")
 	tk.MustExec("insert ignore into t values(0),(1);")
+	tk.MustQuery("select * from t where e = '';").Check(
+		testkit.Rows("", ""))
+	tk.MustExec("alter table t drop index idx;")
 	tk.MustQuery("select * from t where e = '';").Check(
 		testkit.Rows("", ""))
 }
