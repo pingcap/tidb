@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/util/logutil"
@@ -13,6 +14,7 @@ import (
 )
 
 type mockAgentServer struct {
+	sync.Mutex
 	addr       string
 	grpcServer *grpc.Server
 	sqlMetas   map[string]string
@@ -20,6 +22,7 @@ type mockAgentServer struct {
 	records    []*tipb.CPUTimeRecord
 }
 
+// StartMockAgentServer starts the mock agent server.
 func StartMockAgentServer() (*mockAgentServer, error) {
 	addr := "127.0.0.1:0"
 	lis, err := net.Listen("tcp", addr)
@@ -53,7 +56,9 @@ func (svr *mockAgentServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportC
 		} else if err != nil {
 			return err
 		}
+		svr.Lock()
 		svr.records = append(svr.records, req)
+		svr.Unlock()
 	}
 	return stream.SendAndClose(&tipb.EmptyResponse{})
 }
@@ -66,7 +71,9 @@ func (svr *mockAgentServer) ReportSQLMeta(stream tipb.TopSQLAgent_ReportSQLMetaS
 		} else if err != nil {
 			return err
 		}
+		svr.Lock()
 		svr.sqlMetas[string(req.SqlDigest)] = req.NormalizedSql
+		svr.Unlock()
 	}
 	return stream.SendAndClose(&tipb.EmptyResponse{})
 }
@@ -79,7 +86,9 @@ func (svr *mockAgentServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMet
 		} else if err != nil {
 			return err
 		}
+		svr.Lock()
 		svr.planMetas[string(req.PlanDigest)] = req.NormalizedPlan
+		svr.Unlock()
 	}
 	return stream.SendAndClose(&tipb.EmptyResponse{})
 }
@@ -87,9 +96,12 @@ func (svr *mockAgentServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMet
 func (svr *mockAgentServer) WaitServerCollect(recordCount int, timeout time.Duration) {
 	start := time.Now()
 	for {
+		svr.Lock()
 		if len(svr.records) >= recordCount {
+			svr.Unlock()
 			return
 		}
+		svr.Unlock()
 		if time.Since(start) > timeout {
 			return
 		}
@@ -98,20 +110,26 @@ func (svr *mockAgentServer) WaitServerCollect(recordCount int, timeout time.Dura
 }
 
 func (svr *mockAgentServer) GetSQLMetas() map[string]string {
+	svr.Lock()
 	m := svr.sqlMetas
 	svr.sqlMetas = make(map[string]string)
+	svr.Unlock()
 	return m
 }
 
 func (svr *mockAgentServer) GetPlanMetas() map[string]string {
+	svr.Lock()
 	m := svr.planMetas
 	svr.planMetas = make(map[string]string)
+	svr.Unlock()
 	return m
 }
 
 func (svr *mockAgentServer) GetRecords() []*tipb.CPUTimeRecord {
+	svr.Lock()
 	records := svr.records
 	svr.records = []*tipb.CPUTimeRecord{}
+	svr.Unlock()
 	return records
 }
 

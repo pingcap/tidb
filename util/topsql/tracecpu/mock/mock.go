@@ -162,6 +162,7 @@ func (c *TopSQLCollector) WaitCollectCnt(count int64) {
 	}
 }
 
+// Close implements the interface.
 func (c *TopSQLCollector) Close() {}
 
 func (c *TopSQLCollector) hash(stat tracecpu.SQLCPUTimeRecord) string {

@@ -81,6 +81,7 @@ func (r *GRPCReportClient) Send(
 	return nil
 }
 
+// Close uses to close grpc connection.
 func (r *GRPCReportClient) Close() {
 	if r.conn == nil {
 		return

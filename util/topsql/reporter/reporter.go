@@ -30,7 +30,6 @@ import (
 )
 
 const (
-	collectCPUTimeChanLen     = 64
 	dialTimeout               = 5 * time.Second
 	reportTimeout             = 40 * time.Second
 	grpcInitialWindowSize     = 1 << 30
@@ -166,6 +165,7 @@ func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQ
 	}
 }
 
+// Close uses to close and release the reporter resource.
 func (tsr *RemoteTopSQLReporter) Close() {
 	tsr.cancel()
 	tsr.client.Close()

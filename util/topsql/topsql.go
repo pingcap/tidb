@@ -33,6 +33,7 @@ func SetupTopSQL() {
 	tracecpu.GlobalSQLCPUProfiler.Run()
 }
 
+// Close uses to close and release the top sql resource.
 func Close() {
 	if globalTopSQLReport != nil {
 		globalTopSQLReport.Close()
