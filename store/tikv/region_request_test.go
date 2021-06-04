@@ -636,7 +636,7 @@ func (s *testRegionRequestToSingleStoreSuite) TestNoReloadRegionForGrpcWhenCtxCa
 	wg.Wait()
 }
 
-func (s *testRegionRequestToSingleStoreSuite) TestOnDataIsNotReadyErrorBackoff(c *C) {
+func (s *testRegionRequestToSingleStoreSuite) TestBackoffOnDataIsNotReadyError(c *C) {
 	var seed uint32 = 0
 	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{}, kv.ReplicaReadMixed, &seed)
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
