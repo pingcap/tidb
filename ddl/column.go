@@ -245,6 +245,10 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 			return ver, errors.Trace(err)
 		}
 
+		logutil.BgLogger().Warn("add column ==============================",
+			zap.Reflect("col", col.Name.O),
+			zap.Reflect("val", columnInfo.GetOriginDefaultValue()))
+
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		asyncNotifyEvent(d, &ddlutil.Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfos: []*model.ColumnInfo{columnInfo}})
@@ -861,7 +865,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		// Since column type change is implemented as adding a new column then substituting the old one.
 		// Case exists when update-where statement fetch a NULL for not-null column without any default data,
 		// it will errors.
-		// So we set zero original default value here to prevent this error. besides, in insert & update records,
+		// So we set zero original default value here to prevent this error. Besides, in insert & update records,
 		// we have already implement using the casted value of relative column to insert rather than the origin
 		// default value.
 		originDefVal, err := generateOriginDefaultValue(jobParam.newCol)
@@ -1070,6 +1074,9 @@ func (w *worker) doModifyColumnTypeWithData(
 		changingColumnUniqueName := changingCol.Name
 		changingCol.Name = colName
 		changingCol.ChangeStateInfo = nil
+		if err = changingCol.SetOriginDefaultValue(nil); err != nil {
+			return ver, errors.Trace(err)
+		}
 		tblInfo.Indices = tblInfo.Indices[:len(tblInfo.Indices)-len(changingIdxs)]
 		// Adjust table column offset.
 		if err = adjustColumnInfoInModifyColumn(job, tblInfo, changingCol, oldCol, pos, changingColumnUniqueName.L); err != nil {
