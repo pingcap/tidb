@@ -6840,9 +6840,6 @@ func (s *testDBSuite8) TestIssue24580(c *C) {
 	tk.MustExec("use test")
 	// Enable column change variable.
 	tk.Se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = false
-	}()
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(250) default null);")
