@@ -30,24 +30,26 @@ type ReportClient interface {
 	Send(ctx context.Context, addr string, sqlMetas []*tipb.SQLMeta, planMetas []*tipb.PlanMeta, records []*tipb.CPUTimeRecord) error
 }
 
-// ReportGRPCClient reports data to grpc servers.
-type ReportGRPCClient struct {
-	addr   string
-	conn   *grpc.ClientConn
-	client tipb.TopSQLAgentClient
+// GRPCReportClient reports data to grpc servers.
+type GRPCReportClient struct {
+	curRPCAddr string
+	conn       *grpc.ClientConn
+	client     tipb.TopSQLAgentClient
 }
 
-// NewReportGRPCClient returns a new ReportGRPCClient
-func NewReportGRPCClient() *ReportGRPCClient {
-	return &ReportGRPCClient{}
+// NewGRPCReportClient returns a new GRPCReportClient
+func NewGRPCReportClient() *GRPCReportClient {
+	return &GRPCReportClient{}
 }
 
 // Send implements the ReportClient interface.
-func (r *ReportGRPCClient) Send(ctx context.Context, addr string, sqlMetas []*tipb.SQLMeta, planMetas []*tipb.PlanMeta, records []*tipb.CPUTimeRecord) error {
-	if addr == "" {
+func (r *GRPCReportClient) Send(
+	ctx context.Context, targetRPCAddr string,
+	sqlMetas []*tipb.SQLMeta, planMetas []*tipb.PlanMeta, records []*tipb.CPUTimeRecord) error {
+	if targetRPCAddr == "" {
 		return nil
 	}
-	err := r.initialize(ctx, addr)
+	err := r.tryEstablishConnection(ctx, targetRPCAddr)
 	if err != nil {
 		return err
 	}
@@ -64,72 +66,72 @@ func (r *ReportGRPCClient) Send(ctx context.Context, addr string, sqlMetas []*ti
 }
 
 // sendBatchCPUTimeRecord sends a batch of TopSQL records by stream.
-func (r *ReportGRPCClient) sendBatchCPUTimeRecord(ctx context.Context, records []*tipb.CPUTimeRecord) error {
+func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records []*tipb.CPUTimeRecord) error {
 	stream, err := r.client.ReportCPUTimeRecords(ctx)
 	if err != nil {
 		return r.resetClientWhenSendError(err)
 	}
 	for _, record := range records {
 		if err := stream.Send(record); err != nil {
-			return err
+			break
 		}
 	}
-	// response is Empty, drop it for now
+	// See https://pkg.go.dev/google.golang.org/grpc#ClientConn.NewStream for how to avoid leaking the stream
 	_, err = stream.CloseAndRecv()
 	return err
 }
 
 // sendBatchSQLMeta sends a batch of SQL metas by stream.
-func (r *ReportGRPCClient) sendBatchSQLMeta(ctx context.Context, metas []*tipb.SQLMeta) error {
+func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, metas []*tipb.SQLMeta) error {
 	stream, err := r.client.ReportSQLMeta(ctx)
 	if err != nil {
 		return r.resetClientWhenSendError(err)
 	}
 	for _, meta := range metas {
 		if err := stream.Send(meta); err != nil {
-			return err
+			break
 		}
 	}
-	// response is Empty, drop it for now
 	_, err = stream.CloseAndRecv()
 	return err
 }
 
 // sendBatchSQLMeta sends a batch of SQL metas by stream.
-func (r *ReportGRPCClient) sendBatchPlanMeta(ctx context.Context, metas []*tipb.PlanMeta) error {
+func (r *GRPCReportClient) sendBatchPlanMeta(ctx context.Context, metas []*tipb.PlanMeta) error {
 	stream, err := r.client.ReportPlanMeta(ctx)
 	if err != nil {
 		return r.resetClientWhenSendError(err)
 	}
 	for _, meta := range metas {
 		if err := stream.Send(meta); err != nil {
-			return err
+			break
 		}
 	}
-	// response is Empty, drop it for now
 	_, err = stream.CloseAndRecv()
 	return err
 }
 
-func (r *ReportGRPCClient) initialize(ctx context.Context, addr string) (err error) {
-	if r.addr == addr {
+// tryEstablishConnection establishes the gRPC connection if connection is not established.
+func (r *GRPCReportClient) tryEstablishConnection(ctx context.Context, targetRPCAddr string) (err error) {
+	if r.curRPCAddr == targetRPCAddr {
+		// Address is not changed, skip.
 		return nil
 	}
-	r.conn, err = r.newAgentConn(ctx, addr)
+	r.conn, err = r.dial(ctx, targetRPCAddr)
 	if err != nil {
 		return err
 	}
-	r.addr = addr
+	r.curRPCAddr = targetRPCAddr
 	r.client = tipb.NewTopSQLAgentClient(r.conn)
 	return nil
 }
 
-func (r *ReportGRPCClient) newAgentConn(ctx context.Context, addr string) (*grpc.ClientConn, error) {
+func (r *GRPCReportClient) dial(ctx context.Context, targetRPCAddr string) (*grpc.ClientConn, error) {
 	dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
 	return grpc.DialContext(
 		dialCtx,
-		addr,
+		targetRPCAddr,
 		grpc.WithInsecure(),
 		grpc.WithInitialWindowSize(grpcInitialWindowSize),
 		grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
@@ -147,11 +149,11 @@ func (r *ReportGRPCClient) newAgentConn(ctx context.Context, addr string) (*grpc
 	)
 }
 
-func (r *ReportGRPCClient) resetClientWhenSendError(err error) error {
+func (r *GRPCReportClient) resetClientWhenSendError(err error) error {
 	if err == nil {
 		return nil
 	}
-	r.addr = ""
+	r.curRPCAddr = ""
 	if r.conn != nil {
 		err1 := r.conn.Close()
 		if err1 != nil {

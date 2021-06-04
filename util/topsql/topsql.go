@@ -25,7 +25,7 @@ import (
 
 // SetupTopSQL sets up the top-sql worker.
 func SetupTopSQL() {
-	rc := reporter.NewReportGRPCClient()
+	rc := reporter.NewGRPCReportClient()
 	r := reporter.NewRemoteTopSQLReporter(rc, plancodec.DecodeNormalizedPlan)
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(r)
 	tracecpu.GlobalSQLCPUProfiler.Run()

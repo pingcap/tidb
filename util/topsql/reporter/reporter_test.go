@@ -81,7 +81,7 @@ func initializeCache(maxStatementsNum, interval int, addr string) *RemoteTopSQLR
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(int64(interval))
 	variable.TopSQLVariable.AgentAddress.Store(addr)
 
-	rc := NewReportGRPCClient()
+	rc := NewGRPCReportClient()
 	ts := NewRemoteTopSQLReporter(rc, testPlanBinaryDecoderFunc)
 	populateCache(ts, 0, maxStatementsNum, 1)
 	return ts
@@ -92,7 +92,7 @@ func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) *Rem
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(int64(interval))
 	variable.TopSQLVariable.AgentAddress.Store(addr)
 
-	rc := NewReportGRPCClient()
+	rc := NewGRPCReportClient()
 	ts := NewRemoteTopSQLReporter(rc, testPlanBinaryDecoderFunc)
 	return ts
 }
