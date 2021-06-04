@@ -3515,6 +3515,7 @@ out:
 
 func (s *testDBSuite3) TestVirtualColumnDDL(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test_gv_ddl")
 	tk.MustExec(`create global temporary table test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored) on commit delete rows;`)
