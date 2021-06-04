@@ -1643,7 +1643,7 @@ func checkTableInfoValid(tblInfo *model.TableInfo) error {
 	return checkInvisibleIndexOnPK(tblInfo)
 }
 
-func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) (*model.TableInfo, error) {
+func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *ast.CreateTableStmt) (*model.TableInfo, error) {
 	// Check the referred table is a real table object.
 	if referTblInfo.IsSequence() || referTblInfo.IsView() {
 		return nil, ErrWrongObject.GenWithStackByArgs(ident.Schema, referTblInfo.Name, "BASE TABLE")
@@ -1662,7 +1662,10 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) (*mo
 	tblInfo.Name = ident.Name
 	tblInfo.AutoIncID = 0
 	tblInfo.ForeignKeys = nil
-	if tblInfo.TiFlashReplica != nil {
+	// Ignore TiFlash replicas for temporary tables.
+	if s.TemporaryKeyword != ast.TemporaryNone {
+		tblInfo.TiFlashReplica = nil
+	} else if tblInfo.TiFlashReplica != nil {
 		replica := *tblInfo.TiFlashReplica
 		// Keep the tiflash replica setting, remove the replica available status.
 		replica.AvailablePartitionIDs = nil
@@ -1736,6 +1739,9 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	switch s.TemporaryKeyword {
 	case ast.TemporaryGlobal:
 		tbInfo.TempTableType = model.TempTableGlobal
+		if !ctx.GetSessionVars().EnableGlobalTemporaryTable {
+			return nil, errors.New("global temporary table is experimental and it is switched off by tidb_enable_global_temporary_table")
+		}
 		// "create global temporary table ... on commit preserve rows"
 		if !s.OnCommitDelete {
 			return nil, errors.Trace(errUnsupportedOnCommitPreserve)
@@ -1807,7 +1813,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	// build tableInfo
 	var tbInfo *model.TableInfo
 	if s.ReferTable != nil {
-		tbInfo, err = buildTableInfoWithLike(ident, referTbl.Meta())
+		tbInfo, err = buildTableInfoWithLike(ident, referTbl.Meta(), s)
 	} else {
 		tbInfo, err = buildTableInfoWithStmt(ctx, s, schema.Charset, schema.Collate)
 	}
@@ -4384,14 +4390,16 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	// Ban setting replica count for tables in system database.
 	if util.IsMemOrSysDB(schema.Name.L) {
 		return errors.Trace(errUnsupportedAlterReplicaForSysTable)
+	} else if tb.Meta().TempTableType != model.TempTableNone {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("set tiflash replica")
 	}
 
 	tbReplicaInfo := tb.Meta().TiFlashReplica
 	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
 		len(tbReplicaInfo.LocationLabels) == len(replicaInfo.Labels) {
 		changed := false
-		for i, lable := range tbReplicaInfo.LocationLabels {
-			if replicaInfo.Labels[i] != lable {
+		for i, label := range tbReplicaInfo.LocationLabels {
+			if replicaInfo.Labels[i] != label {
 				changed = true
 				break
 			}

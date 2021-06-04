@@ -46,7 +46,14 @@ const (
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
+	// TiDBOptBCJ is used to enable/disable broadcast join in MPP mode
 	TiDBOptBCJ = "tidb_opt_broadcast_join"
+
+	// TiDBOptCartesianBCJ is used to disable/enable broadcast cartesian join in MPP mode
+	TiDBOptCartesianBCJ = "tidb_opt_broadcast_cartesian_join"
+
+	TiDBOptMPPOuterJoinFixedBuildSide = "tidb_opt_mpp_outer_join_fixed_build_side"
+
 	// tidb_opt_distinct_agg_push_down is used to decide whether agg with distinct should be pushed to tikv/tiflash.
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
 
@@ -403,6 +410,9 @@ const (
 	// tidb_enable_window_function is used to control whether to enable the window function.
 	TiDBEnableWindowFunction = "tidb_enable_window_function"
 
+	// tidb_enable_pipelined_window_function is used to control whether to use pipelined window function, it only works when tidb_enable_window_function = true.
+	TiDBEnablePipelinedWindowFunction = "tidb_enable_pipelined_window_function"
+
 	// tidb_enable_strict_double_type_check is used to control table field double type syntax check.
 	TiDBEnableStrictDoubleTypeCheck = "tidb_enable_strict_double_type_check"
 
@@ -543,6 +553,9 @@ const (
 
 	// TiDBTopSQLMaxStatementCount indicates the max number of statements been collected.
 	TiDBTopSQLMaxStatementCount = "tidb_top_sql_max_statement_count"
+
+	// TiDBEnableGlobalTemporaryTable indicates whether to enable global temporary table
+	TiDBEnableGlobalTemporaryTable = "tidb_enable_global_temporary_table"
 )
 
 // TiDB vars that have only global scope
@@ -582,6 +595,8 @@ const (
 	DefSkipASCIICheck                  = false
 	DefOptAggPushDown                  = false
 	DefOptBCJ                          = false
+	DefOptCartesianBCJ                 = 1
+	DefOptMPPOuterJoinFixedBuildSide   = true
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
@@ -644,6 +659,7 @@ const (
 	DefTiDBStreamAggConcurrency        = 1
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefEnableWindowFunction            = true
+	DefEnablePipelinedWindowFunction   = true
 	DefEnableStrictDoubleTypeCheck     = true
 	DefEnableVectorizedExpression      = true
 	DefTiDBOptJoinReorderThreshold     = 0
@@ -675,7 +691,7 @@ const (
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableParallelApply         = false
 	DefTiDBEnableAmendPessimisticTxn   = false
-	DefTiDBPartitionPruneMode          = "static"
+	DefTiDBPartitionPruneMode          = "dynamic"
 	DefTiDBEnableRateLimitAction       = true
 	DefTiDBEnableAsyncCommit           = false
 	DefTiDBEnable1PC                   = false
@@ -689,6 +705,7 @@ const (
 	DefTiDBTopSQLAgentAddress          = ""
 	DefTiDBTopSQLPrecisionSeconds      = 1
 	DefTiDBTopSQLMaxStatementCount     = 200
+	DefTiDBEnableGlobalTemporaryTable  = false
 )
 
 // Process global variables.
