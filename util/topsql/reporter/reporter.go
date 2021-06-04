@@ -195,6 +195,8 @@ func encodeKey(buf *bytes.Buffer, sqlDigest, planDigest []byte) string {
 
 // collect uses a hashmap to store records in every second, and evict when necessary.
 func (tsr *RemoteTopSQLReporter) collect(timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
+	defer util.Recover("top-sql", "collect", nil, false)
+
 	buf := bytes.NewBuffer(make([]byte, 0, 64))
 	// capacity uses to pre-allocate memory
 	capacity := int(variable.TopSQLVariable.ReportIntervalSeconds.Load() / variable.TopSQLVariable.PrecisionSeconds.Load() / 2)
@@ -251,8 +253,8 @@ func (tsr *RemoteTopSQLReporter) collect(timestamp uint64, records []tracecpu.SQ
 	normalizedPlanMap := tsr.normalizedPlanMap.Load().(*sync.Map)
 	for _, evict := range shouldEvictList {
 		delete(tsr.topSQLMap, evict.Key)
-		normalizedSQLMap.Delete(evict.SQLDigest)
-		normalizedPlanMap.Delete(evict.PlanDigest)
+		normalizedSQLMap.Delete(string(evict.SQLDigest))
+		normalizedPlanMap.Delete(string(evict.PlanDigest))
 	}
 }
 
@@ -343,6 +345,8 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 }
 
 func (tsr *RemoteTopSQLReporter) report(data reportData) {
+	defer util.Recover("top-sql", "report", nil, false)
+
 	sqlMetas, planMetas, records := tsr.prepareReportData(data)
 	addr := variable.TopSQLVariable.AgentAddress.Load()
 
