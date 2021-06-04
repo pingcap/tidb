@@ -1337,4 +1337,12 @@ func (s *testSuite5) TestShowTemporaryTable(c *C) {
 	// Verify that the `show create table` result can be used to build the table.
 	createTable := strings.ReplaceAll(expect, "t3", "t4")
 	tk.MustExec(createTable)
+
+	// Cover auto increment column.
+	tk.MustExec(`CREATE GLOBAL TEMPORARY TABLE t2 (
+	id int(11) NOT NULL AUTO_INCREMENT,
+	b int(11) NOT NULL,
+	pad varbinary(255) DEFAULT NULL,
+	PRIMARY KEY (id),
+	KEY b (b)) ON COMMIT DELETE ROWS`)
 }
