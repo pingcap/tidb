@@ -15,7 +15,6 @@ package telemetry
 
 import (
 	"context"
-	"math"
 	"sync"
 	"time"
 
@@ -71,19 +70,20 @@ type windowData struct {
 	SQLUsage       sqlUsageData       `json:"SQLUsage"`
 }
 
-type sqlType struct {
-	Use      int64 `json:"Use"`
-	Show     int64 `json:"Show"`
-	Begin    int64 `json:"Begin"`
-	Commit   int64 `json:"Commit"`
-	Rollback int64 `json:"Rollback"`
-	Insert   int64 `json:"Insert"`
-	Replace  int64 `json:"Replace"`
-	Delete   int64 `json:"Delete"`
-	Update   int64 `json:"Update"`
-	Select   int64 `json:"Select"`
-	Other    int64 `json:"Other"`
-}
+// type sqlType struct {
+// 	Use      int64 `json:"Use"`
+// 	Show     int64 `json:"Show"`
+// 	Begin    int64 `json:"Begin"`
+// 	Commit   int64 `json:"Commit"`
+// 	Rollback int64 `json:"Rollback"`
+// 	Insert   int64 `json:"Insert"`
+// 	Replace  int64 `json:"Replace"`
+// 	Delete   int64 `json:"Delete"`
+// 	Update   int64 `json:"Update"`
+// 	Select   int64 `json:"Select"`
+// 	Other    int64 `json:"Other"`
+// }
+type sqlType map[string]int64
 
 type sqlUsageData struct {
 	SQLTotal int64   `json:"total"`
@@ -111,17 +111,21 @@ var (
 )
 
 func getSQLSum(sqlTypeDeta *sqlType) int64 {
-	result := sqlTypeDeta.Use
-	result += sqlTypeDeta.Show
-	result += sqlTypeDeta.Begin
-	result += sqlTypeDeta.Commit
-	result += sqlTypeDeta.Rollback
-	result += sqlTypeDeta.Insert
-	result += sqlTypeDeta.Replace
-	result += sqlTypeDeta.Delete
-	result += sqlTypeDeta.Update
-	result += sqlTypeDeta.Select
-	result += sqlTypeDeta.Other
+	result := int64(0)
+	for _, v := range *sqlTypeDeta {
+		result += v
+	}
+	// result := sqlTypeDeta.Use
+	// result += sqlTypeDeta.Show
+	// result += sqlTypeDeta.Begin
+	// result += sqlTypeDeta.Commit
+	// result += sqlTypeDeta.Rollback
+	// result += sqlTypeDeta.Insert
+	// result += sqlTypeDeta.Replace
+	// result += sqlTypeDeta.Delete
+	// result += sqlTypeDeta.Update
+	// result += sqlTypeDeta.Select
+	// result += sqlTypeDeta.Other
 	return result
 }
 
@@ -180,11 +184,14 @@ func anylisSQLUsage(promResult pmodel.Value, SQLResult *sqlUsageData) {
 		matrix := promResult.(pmodel.Vector)
 		for _, m := range matrix {
 			v := m.Value
-			fillSQLResult(m.Metric, v, SQLResult)
+			promLable := string(m.Metric[pmodel.LabelName("type")])
+			SQLResult.SQLType[promLable] = int64(float64(v))
+			// fillSQLResult(m.Metric, v, SQLResult)
 		}
 	}
 }
 
+/*
 func fillSQLResult(metric pmodel.Metric, pair pmodel.SampleValue, SQLResult *sqlUsageData) {
 	v := ""
 	if metric != nil {
@@ -226,6 +233,7 @@ func fillSQLResult(metric pmodel.Metric, pair pmodel.SampleValue, SQLResult *sql
 		SQLResult.SQLType.Other = record
 	}
 }
+*/
 
 // RotateSubWindow rotates the telemetry sub window.
 func RotateSubWindow() {
@@ -265,6 +273,16 @@ func RotateSubWindow() {
 	subWindowsLock.Unlock()
 }
 
+func subSQLTypeMap(cur sqlType, last sqlType) sqlType {
+	deltaMap := make(sqlType)
+	// slowQueryLock.Lock()
+	for key, value := range cur {
+		deltaMap[key] = value - (last)[key]
+	}
+	// slowQueryLock.Unlock()
+	return deltaMap
+}
+
 // getWindowData returns data aggregated by window size.
 func getWindowData() []*windowData {
 	results := make([]*windowData, 0)
@@ -295,17 +313,18 @@ func getWindowData() []*windowData {
 			thisWindow.CoprCacheUsage.GTE80 += rotatedSubWindows[i].CoprCacheUsage.GTE80
 			thisWindow.CoprCacheUsage.GTE100 += rotatedSubWindows[i].CoprCacheUsage.GTE100
 			thisWindow.SQLUsage.SQLTotal = rotatedSubWindows[i].SQLUsage.SQLTotal - startWindow.SQLUsage.SQLTotal
-			thisWindow.SQLUsage.SQLType.Use = rotatedSubWindows[i].SQLUsage.SQLType.Use - startWindow.SQLUsage.SQLType.Use
-			thisWindow.SQLUsage.SQLType.Show = rotatedSubWindows[i].SQLUsage.SQLType.Show - startWindow.SQLUsage.SQLType.Show
-			thisWindow.SQLUsage.SQLType.Begin = rotatedSubWindows[i].SQLUsage.SQLType.Begin - startWindow.SQLUsage.SQLType.Begin
-			thisWindow.SQLUsage.SQLType.Commit = rotatedSubWindows[i].SQLUsage.SQLType.Commit - startWindow.SQLUsage.SQLType.Commit
-			thisWindow.SQLUsage.SQLType.Rollback = rotatedSubWindows[i].SQLUsage.SQLType.Rollback - startWindow.SQLUsage.SQLType.Rollback
-			thisWindow.SQLUsage.SQLType.Insert = rotatedSubWindows[i].SQLUsage.SQLType.Insert - startWindow.SQLUsage.SQLType.Insert
-			thisWindow.SQLUsage.SQLType.Replace = rotatedSubWindows[i].SQLUsage.SQLType.Replace - startWindow.SQLUsage.SQLType.Replace
-			thisWindow.SQLUsage.SQLType.Delete = rotatedSubWindows[i].SQLUsage.SQLType.Delete - startWindow.SQLUsage.SQLType.Delete
-			thisWindow.SQLUsage.SQLType.Update = rotatedSubWindows[i].SQLUsage.SQLType.Update - startWindow.SQLUsage.SQLType.Update
-			thisWindow.SQLUsage.SQLType.Select = rotatedSubWindows[i].SQLUsage.SQLType.Select - startWindow.SQLUsage.SQLType.Select
-			thisWindow.SQLUsage.SQLType.Other = rotatedSubWindows[i].SQLUsage.SQLType.Other - startWindow.SQLUsage.SQLType.Other
+			thisWindow.SQLUsage.SQLType = subSQLTypeMap(rotatedSubWindows[i].SQLUsage.SQLType, startWindow.SQLUsage.SQLType)
+			// thisWindow.SQLUsage.SQLType.Use = rotatedSubWindows[i].SQLUsage.SQLType.Use - startWindow.SQLUsage.SQLType.Use
+			// thisWindow.SQLUsage.SQLType.Show = rotatedSubWindows[i].SQLUsage.SQLType.Show - startWindow.SQLUsage.SQLType.Show
+			// thisWindow.SQLUsage.SQLType.Begin = rotatedSubWindows[i].SQLUsage.SQLType.Begin - startWindow.SQLUsage.SQLType.Begin
+			// thisWindow.SQLUsage.SQLType.Commit = rotatedSubWindows[i].SQLUsage.SQLType.Commit - startWindow.SQLUsage.SQLType.Commit
+			// thisWindow.SQLUsage.SQLType.Rollback = rotatedSubWindows[i].SQLUsage.SQLType.Rollback - startWindow.SQLUsage.SQLType.Rollback
+			// thisWindow.SQLUsage.SQLType.Insert = rotatedSubWindows[i].SQLUsage.SQLType.Insert - startWindow.SQLUsage.SQLType.Insert
+			// thisWindow.SQLUsage.SQLType.Replace = rotatedSubWindows[i].SQLUsage.SQLType.Replace - startWindow.SQLUsage.SQLType.Replace
+			// thisWindow.SQLUsage.SQLType.Delete = rotatedSubWindows[i].SQLUsage.SQLType.Delete - startWindow.SQLUsage.SQLType.Delete
+			// thisWindow.SQLUsage.SQLType.Update = rotatedSubWindows[i].SQLUsage.SQLType.Update - startWindow.SQLUsage.SQLType.Update
+			// thisWindow.SQLUsage.SQLType.Select = rotatedSubWindows[i].SQLUsage.SQLType.Select - startWindow.SQLUsage.SQLType.Select
+			// thisWindow.SQLUsage.SQLType.Other = rotatedSubWindows[i].SQLUsage.SQLType.Other - startWindow.SQLUsage.SQLType.Other
 			aggregatedSubWindows++
 			i++
 		}
