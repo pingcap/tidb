@@ -3534,6 +3534,13 @@ func (s *testDBSuite3) TestVirtualColumnDDL(c *C) {
 		c.Assert(column.GeneratedExprString, Equals, testCases[i].generatedExprString)
 		c.Assert(column.GeneratedStored, Equals, testCases[i].generatedStored)
 	}
+	result := tk.MustQuery(`DESC test_gv_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
+	tk.MustExec("begin;")
+	tk.MustExec("insert into test_gv_ddl values (1, default, default)")
+	tk.MustQuery("select * from test_gv_ddl").Check(testkit.Rows("1 9 11"))
+	_, err = tk.Exec("commit")
+	c.Assert(err, IsNil)
 }
 
 func (s *testDBSuite3) TestGeneratedColumnDDL(c *C) {
