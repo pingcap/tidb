@@ -242,6 +242,7 @@ func (b *Backoffer) Clone() *Backoffer {
 		totalSleep: b.totalSleep,
 		errors:     b.errors,
 		vars:       b.vars,
+		parent:     b.parent,
 	}
 }
 
