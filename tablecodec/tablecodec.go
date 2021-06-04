@@ -1292,6 +1292,7 @@ func TruncateIndexValue(v *types.Datum, idxCol *model.IndexColumn, tblCol *model
 	if notStringType {
 		return
 	}
+	originalKind := v.Kind()
 	isUTF8Charset := tblCol.Charset == charset.CharsetUTF8 || tblCol.Charset == charset.CharsetUTF8MB4
 	if isUTF8Charset && utf8.RuneCount(v.GetBytes()) > idxCol.Length {
 		rs := bytes.Runes(v.GetBytes())
@@ -1303,7 +1304,7 @@ func TruncateIndexValue(v *types.Datum, idxCol *model.IndexColumn, tblCol *model
 		}
 	} else if !isUTF8Charset && len(v.GetBytes()) > idxCol.Length {
 		v.SetBytes(v.GetBytes()[:idxCol.Length])
-		if v.Kind() == types.KindString {
+		if originalKind == types.KindString {
 			v.SetString(v.GetString(), tblCol.Collate)
 		}
 	}
