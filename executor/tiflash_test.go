@@ -291,6 +291,7 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableShuffledHashJoin(c *C) {
 		tk.MustExec(fmt.Sprintf("analyze table %v", tbl))
 	}
 
+	tk.MustExec("SET tidb_allow_mpp=2")
 	tk.MustExec("SET tidb_opt_broadcast_join=0")
 	tk.MustExec("SET tidb_broadcast_join_threshold_count=0")
 	tk.MustExec("SET tidb_broadcast_join_threshold_size=0")
@@ -345,7 +346,7 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableReader(c *C) {
 	tk.MustExec(`create table tlist (a int, b int) partition by list(a) (
 		partition p0 values in (` + listPartitions[0] + `), partition p1 values in (` + listPartitions[1] + `),
 		partition p2 values in (` + listPartitions[2] + `), partition p3 values in (` + listPartitions[3] + `))`)
-	tk.MustExec(`create table tnormal (a int, b int) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table tnormal (a int, b int)`)
 
 	for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
 		tk.MustExec("alter table " + tbl + " set tiflash replica 1")
@@ -362,6 +363,7 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableReader(c *C) {
 		tk.MustExec(fmt.Sprintf("insert into %v values %v", tbl, strings.Join(vals, ", ")))
 	}
 
+	tk.MustExec("SET tidb_allow_mpp=2")
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
 	for i := 0; i < 100; i++ {
 		l, r := rand.Intn(400), rand.Intn(400)
