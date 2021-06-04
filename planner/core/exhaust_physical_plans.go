@@ -1816,7 +1816,8 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		EqualConditions:  p.EqualConditions,
 		storeTp:          kv.TiFlash,
 		mppShuffleJoin:   !useBCJ,
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childrenProps...)
+		// Mpp Join has quite heavy cost. Even limit might not suspend it in time, so we dont scale the count.
+	}.Init(p.ctx, p.stats, p.blockOffset, childrenProps...)
 	return []PhysicalPlan{join}
 }
 
@@ -2463,6 +2464,9 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
 	if !p.limitHints.preferLimitToCop {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
+	}
+	if p.canPushToCop(kv.TiFlash) && p.ctx.GetSessionVars().IsMPPAllowed() {
+		allTaskTypes = append(allTaskTypes, property.MppTaskType)
 	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {

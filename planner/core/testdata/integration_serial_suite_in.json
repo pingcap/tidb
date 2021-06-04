@@ -252,7 +252,33 @@
       "desc format = 'brief' select * from t join ( select /*+ hash_agg()*/  count(*) as a from t) as A on A.a = t.id",
       "desc format = 'brief' select sum(b) from (select t.id, t1.id as b from t join t t1 on t.id=t1.id)A group by id",
       "desc format = 'brief' select * from (select id from t group by id) C join (select sum(value),id from t group by id)B on C.id=B.id",
+<<<<<<< HEAD
       "desc format = 'brief' select * from (select id from t group by id) C join (select sum(b),id from (select t.id, t1.id as b from t join (select id, count(*) as c from t group by id) t1 on t.id=t1.id)A group by id)B on C.id=b.id"
+=======
+      "desc format = 'brief' select * from (select id from t group by id) C join (select sum(b),id from (select t.id, t1.id as b from t join (select id, count(*) as c from t group by id) t1 on t.id=t1.id)A group by id)B on C.id=b.id",
+      "desc format = 'brief' select * from t join t t1 on t.id = t1.id order by t.value limit 1",
+      "desc format = 'brief' select * from t join t t1 on t.id = t1.id order by t.value % 100 limit 1",
+      "desc format = 'brief' select count(*) from (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 20) v group by v.v1",
+      "desc format = 'brief' select * from t join t t1 on t.id = t1.id limit 1",
+      "desc format = 'brief' select * from t join t t1 on t.id = t1.id limit 1",
+      "desc format = 'brief' select count(*) from (select t.id, t.value v1 from t join t t1 on t.id = t1.id limit 20) v group by v.v1"
+    ]
+  },
+  {
+    "name": "TestIndexMerge",
+    "cases": [
+      "desc format='brief' select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and b+2>1)",
+      "desc format='brief' select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and length(b)=1)",
+      "desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(a)=1) or (b=1 and length(b)=1)",
+      "desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(b)=1) or (b=1 and length(a)=1)"
+    ]
+  },
+  {
+    "name": "TestLimitIndexLookUpKeepOrder",
+    "cases": [
+      "desc format = 'brief' select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b,c limit 10",
+      "desc format = 'brief' select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b desc, c desc limit 10"
+>>>>>>> 64b469623... planner/core: support limit push down (#24757)
     ]
   },
   {
