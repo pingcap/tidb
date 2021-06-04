@@ -255,6 +255,7 @@ func RotateSubWindow() {
 		},
 		SQLUsage: sqlUsageData{
 			SQLTotal: 0,
+			SQLType:  make(sqlType),
 		},
 	}
 
