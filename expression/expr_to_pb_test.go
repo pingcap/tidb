@@ -734,7 +734,6 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
-
 	// sqrt
 	function, err = NewFunction(mock.NewContext(), ast.Sqrt, types.NewFieldType(mysql.TypeDouble), realColumn)
 	c.Assert(err, IsNil)
@@ -777,7 +776,7 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 
 	// ScalarFuncSig_FloorDecimalToDecimal
 	function, err = NewFunction(mock.NewContext(), ast.Floor, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn)
-  c.Assert(err, IsNil)
+	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
 	// Replace
