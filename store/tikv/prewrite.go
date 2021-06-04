@@ -281,6 +281,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 				if err != nil {
 					atomic.StoreUint32(&c.prewriteFailed, 1)
 				}
+				return err
 			}
 
 			// Extract lock from key error
