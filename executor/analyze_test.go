@@ -57,7 +57,7 @@ func (s *testSuite1) TestAnalyzePartition(c *C) {
 	testkit.WithPruneMode(tk, variable.Static, func() {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
-		tk.MustExec("set @@tidb_analyze_version=1")
+		tk.MustExec("set @@tidb_analyze_version=2")
 		createTable := `CREATE TABLE t (a int, b int, c varchar(10), primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (6),
