@@ -16,13 +16,14 @@ package reporter
 import (
 	"context"
 	"math"
+	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/connectivity"
 )
 
 // ReportClient send data to the target server.
@@ -34,7 +35,6 @@ type ReportClient interface {
 type GRPCReportClient struct {
 	curRPCAddr string
 	conn       *grpc.ClientConn
-	client     tipb.TopSQLAgentClient
 }
 
 // NewGRPCReportClient returns a new GRPCReportClient
@@ -53,23 +53,39 @@ func (r *GRPCReportClient) Send(
 	if err != nil {
 		return err
 	}
-	if err := r.sendBatchSQLMeta(ctx, sqlMetas); err != nil {
-		return r.resetClientWhenSendError(err)
-	}
-	if err := r.sendBatchPlanMeta(ctx, planMetas); err != nil {
-		return r.resetClientWhenSendError(err)
-	}
-	if err := r.sendBatchCPUTimeRecord(ctx, records); err != nil {
-		return r.resetClientWhenSendError(err)
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 3)
+	wg.Add(3)
+
+	go func() {
+		defer wg.Done()
+		errCh <- r.sendBatchSQLMeta(ctx, sqlMetas)
+	}()
+	go func() {
+		defer wg.Done()
+		errCh <- r.sendBatchPlanMeta(ctx, planMetas)
+	}()
+	go func() {
+		defer wg.Done()
+		errCh <- r.sendBatchCPUTimeRecord(ctx, records)
+	}()
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 // sendBatchCPUTimeRecord sends a batch of TopSQL records by stream.
 func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records []*tipb.CPUTimeRecord) error {
-	stream, err := r.client.ReportCPUTimeRecords(ctx)
+	client := tipb.NewTopSQLAgentClient(r.conn)
+	stream, err := client.ReportCPUTimeRecords(ctx)
 	if err != nil {
-		return r.resetClientWhenSendError(err)
+		return err
 	}
 	for _, record := range records {
 		if err := stream.Send(record); err != nil {
@@ -83,9 +99,10 @@ func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records [
 
 // sendBatchSQLMeta sends a batch of SQL metas by stream.
 func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, metas []*tipb.SQLMeta) error {
-	stream, err := r.client.ReportSQLMeta(ctx)
+	client := tipb.NewTopSQLAgentClient(r.conn)
+	stream, err := client.ReportSQLMeta(ctx)
 	if err != nil {
-		return r.resetClientWhenSendError(err)
+		return err
 	}
 	for _, meta := range metas {
 		if err := stream.Send(meta); err != nil {
@@ -98,9 +115,10 @@ func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, metas []*tipb.S
 
 // sendBatchSQLMeta sends a batch of SQL metas by stream.
 func (r *GRPCReportClient) sendBatchPlanMeta(ctx context.Context, metas []*tipb.PlanMeta) error {
-	stream, err := r.client.ReportPlanMeta(ctx)
+	client := tipb.NewTopSQLAgentClient(r.conn)
+	stream, err := client.ReportPlanMeta(ctx)
 	if err != nil {
-		return r.resetClientWhenSendError(err)
+		return err
 	}
 	for _, meta := range metas {
 		if err := stream.Send(meta); err != nil {
@@ -113,16 +131,15 @@ func (r *GRPCReportClient) sendBatchPlanMeta(ctx context.Context, metas []*tipb.
 
 // tryEstablishConnection establishes the gRPC connection if connection is not established.
 func (r *GRPCReportClient) tryEstablishConnection(ctx context.Context, targetRPCAddr string) (err error) {
-	if r.curRPCAddr == targetRPCAddr {
-		// Address is not changed, skip.
-		return nil
+	if r.curRPCAddr == targetRPCAddr && r.conn != nil {
+		// Address is not changed, check and wait connection status is ready
+		return r.waitConnReady(ctx)
 	}
 	r.conn, err = r.dial(ctx, targetRPCAddr)
 	if err != nil {
 		return err
 	}
 	r.curRPCAddr = targetRPCAddr
-	r.client = tipb.NewTopSQLAgentClient(r.conn)
 	return nil
 }
 
@@ -149,16 +166,26 @@ func (r *GRPCReportClient) dial(ctx context.Context, targetRPCAddr string) (*grp
 	)
 }
 
-func (r *GRPCReportClient) resetClientWhenSendError(err error) error {
-	if err == nil {
-		return nil
+func (r *GRPCReportClient) waitConnReady(ctx context.Context) (err error) {
+	if r.conn.GetState() == connectivity.Ready {
+		return
 	}
-	r.curRPCAddr = ""
-	if r.conn != nil {
-		err1 := r.conn.Close()
-		if err1 != nil {
-			logutil.BgLogger().Warn("[top-sql] close grpc conn failed", zap.Error(err1))
+	start := time.Now()
+	defer func() {
+		metrics.TiKVBatchClientWaitEstablish.Observe(time.Since(start).Seconds())
+	}()
+	dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
+	for {
+		s := r.conn.GetState()
+		if s == connectivity.Ready {
+			cancel()
+			break
+		}
+		if !r.conn.WaitForStateChange(dialCtx, s) {
+			cancel()
+			err = dialCtx.Err()
+			return
 		}
 	}
-	return err
+	return
 }
