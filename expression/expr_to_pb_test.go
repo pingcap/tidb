@@ -805,8 +805,14 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), datetimeColumn)
 	c.Assert(err, IsNil)
 	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_CastTimeAsString)
-  exprs = append(exprs, function)
-  
+	exprs = append(exprs, function)
+
+	// concat_ws
+	function, err = NewFunction(mock.NewContext(), ast.ConcatWS, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn, stringColumn)
+	c.Assert(err, IsNil)
+	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_ConcatWS)
+	exprs = append(exprs, function)
+
 	// StrToDateDateTime
 	function, err = NewFunction(mock.NewContext(), ast.StrToDate, types.NewFieldType(mysql.TypeDatetime), stringColumn, stringColumn)
 	c.Assert(err, IsNil)
