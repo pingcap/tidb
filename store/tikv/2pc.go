@@ -779,6 +779,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			startTime := time.Now()
 			_, err, stopHeartBeat := sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
 			if err != nil {
+				keepFail++
 				metrics.TxnHeartBeatHistogramError.Observe(time.Since(startTime).Seconds())
 				logutil.Logger(bo.GetCtx()).Debug("send TxnHeartBeat failed",
 					zap.Error(err),
@@ -790,7 +791,6 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 						zap.Uint64("txnStartTS", c.startTS))
 					return
 				}
-				keepFail++
 				continue
 			}
 			keepFail = 0
