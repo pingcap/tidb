@@ -1720,8 +1720,8 @@ func (s *testPlanSuite) TestEnumIndex(c *C) {
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(e enum('c','b','a'), index idx(e))")
-	tk.MustExec("insert into t values(1),(2),(3);")
+	tk.MustExec("create table t(e enum('c','b','a',''), index idx(e))")
+	tk.MustExec("insert ignore into t values(0),(1),(2),(3),(4);")
 
 	for i, ts := range input {
 		s.testData.OnRecord(func() {
