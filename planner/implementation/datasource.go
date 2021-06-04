@@ -16,6 +16,7 @@ package implementation
 import (
 	"math"
 
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -74,9 +75,14 @@ func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 	reader := impl.plan.(*plannercore.PhysicalTableReader)
 	width := impl.tblColHists.GetAvgRowSize(impl.plan.SCtx(), reader.Schema().Columns, false, false)
 	sessVars := reader.SCtx().GetSessionVars()
-	// TableReaderImpl don't have tableInfo property, so using nil to replace it.
-	// Todo add the tableInfo property for the TableReaderImpl.
-	networkCost := outCount * sessVars.GetNetworkFactor(nil) * width
+	var (
+		tableInfo *model.TableInfo
+		ts        = reader.GetTableScan()
+	)
+	if ts != nil {
+		tableInfo = ts.Table
+	}
+	networkCost := outCount * sessVars.GetNetworkFactor(tableInfo) * width
 	// copTasks are run in parallel, to make the estimated cost closer to execution time, we amortize
 	// the cost to cop iterator workers. According to `CopClient::Send`, the concurrency
 	// is Min(DistSQLScanConcurrency, numRegionsInvolvedInScan), since we cannot infer
