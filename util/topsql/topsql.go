@@ -27,7 +27,7 @@ import (
 func SetupTopSQL() {
 	rc := reporter.NewReportGRPCClient()
 	r := reporter.NewRemoteTopSQLReporter(rc, plancodec.DecodeNormalizedPlan)
-	tracecpu.GlobalSQLCPUProfiler.SetReporter(r)
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(r)
 	tracecpu.GlobalSQLCPUProfiler.Run()
 }
 
@@ -54,7 +54,7 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 }
 
 func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string) {
-	c := tracecpu.GlobalSQLCPUProfiler.GetReporter()
+	c := tracecpu.GlobalSQLCPUProfiler.GetCollector()
 	if c == nil {
 		return
 	}
@@ -65,7 +65,7 @@ func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string) {
 }
 
 func linkPlanTextWithDigest(planDigest []byte, normalizedPlan string) {
-	c := tracecpu.GlobalSQLCPUProfiler.GetReporter()
+	c := tracecpu.GlobalSQLCPUProfiler.GetCollector()
 	if c == nil {
 		return
 	}

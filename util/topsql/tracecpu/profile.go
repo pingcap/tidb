@@ -68,7 +68,7 @@ type sqlCPUProfiler struct {
 		sync.Mutex
 		ept *exportProfileTask
 	}
-	reporter atomic.Value
+	collector atomic.Value
 }
 
 var (
@@ -93,12 +93,12 @@ func (sp *sqlCPUProfiler) Run() {
 	go sp.startAnalyzeProfileWorker()
 }
 
-func (sp *sqlCPUProfiler) SetReporter(c Collector) {
-	sp.reporter.Store(c)
+func (sp *sqlCPUProfiler) SetCollector(c Collector) {
+	sp.collector.Store(c)
 }
 
-func (sp *sqlCPUProfiler) GetReporter() Collector {
-	c, ok := sp.reporter.Load().(Collector)
+func (sp *sqlCPUProfiler) GetCollector() Collector {
+	c, ok := sp.collector.Load().(Collector)
 	if !ok || c == nil {
 		return nil
 	}
@@ -129,6 +129,9 @@ func (sp *sqlCPUProfiler) doCPUProfile() {
 	time.Sleep(time.Nanosecond * time.Duration(ns))
 	pprof.StopCPUProfile()
 	task.end = time.Now().Unix()
+	if task.end < 0 {
+		task.end = 0
+	}
 	sp.taskCh <- task
 }
 
@@ -144,12 +147,8 @@ func (sp *sqlCPUProfiler) startAnalyzeProfileWorker() {
 		}
 		stats := sp.parseCPUProfileBySQLLabels(p)
 		sp.handleExportProfileTask(p)
-		if r := sp.GetReporter(); r != nil {
-			taskEnd := task.end
-			if taskEnd < 0 {
-				taskEnd = 0
-			}
-			r.Collect(uint64(taskEnd), stats)
+		if r := sp.GetCollector(); r != nil {
+			r.Collect(uint64(task.end), stats)
 		}
 		sp.putTaskToBuffer(task)
 	}
