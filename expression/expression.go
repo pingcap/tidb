@@ -1046,6 +1046,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_Replace:
 			return true
+		}
 	case ast.StrToDate:
 		switch function.Function.PbCode() {
 		case
