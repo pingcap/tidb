@@ -45,8 +45,8 @@ func (s *testSuite) SetUpSuite(c *C) {
 }
 
 func (s *testSuite) TestTopSQLCPUProfile(c *C) {
-	reporter := mock.NewTopSQLCollector()
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(reporter)
+	collector := mock.NewTopSQLCollector()
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(collector)
 	reqs := []struct {
 		sql  string
 		plan string
@@ -75,17 +75,17 @@ func (s *testSuite) TestTopSQLCPUProfile(c *C) {
 	buf := bytes.NewBuffer(nil)
 	err := tracecpu.StartCPUProfile(buf)
 	c.Assert(err, IsNil)
-	reporter.WaitCollectCnt(2)
+	collector.WaitCollectCnt(2)
 	err = tracecpu.StopCPUProfile()
 	c.Assert(err, IsNil)
 	_, err = profile.Parse(buf)
 	c.Assert(err, IsNil)
 
 	for _, req := range reqs {
-		stats := reporter.GetSQLStatsBySQLWithRetry(req.sql, len(req.plan) > 0)
+		stats := collector.GetSQLStatsBySQLWithRetry(req.sql, len(req.plan) > 0)
 		c.Assert(len(stats), Equals, 1)
-		sql := reporter.GetSQL(stats[0].SQLDigest)
-		plan := reporter.GetPlan(stats[0].PlanDigest)
+		sql := collector.GetSQL(stats[0].SQLDigest)
+		plan := collector.GetPlan(stats[0].PlanDigest)
 		c.Assert(sql, Equals, req.sql)
 		c.Assert(plan, Equals, req.plan)
 	}

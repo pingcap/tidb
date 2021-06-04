@@ -147,8 +147,8 @@ func (sp *sqlCPUProfiler) startAnalyzeProfileWorker() {
 		}
 		stats := sp.parseCPUProfileBySQLLabels(p)
 		sp.handleExportProfileTask(p)
-		if r := sp.GetCollector(); r != nil {
-			r.Collect(uint64(task.end), stats)
+		if c := sp.GetCollector(); c != nil {
+			c.Collect(uint64(task.end), stats)
 		}
 		sp.putTaskToBuffer(task)
 	}
