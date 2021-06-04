@@ -1929,7 +1929,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	var is infoschema.InfoSchema
 	if preparedStmt.ForUpdateRead {
 		is = domain.GetDomain(s).InfoSchema()
-	} else if preparedStmt.InfoSchema != nil {
+	} else if preparedStmt.SnapshotTS != 0 {
 		is = preparedStmt.InfoSchema.(infoschema.InfoSchema)
 	} else {
 		is = s.GetInfoSchema().(infoschema.InfoSchema)

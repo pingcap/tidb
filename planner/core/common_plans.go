@@ -257,12 +257,11 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 	}
 
-	// if preparedObj.infoschema != 0, it is a stale read SQL:
-	// which means its infoschema is specified by the SQL, not the current/latest infoschema
-	if preparedObj.InfoSchema != nil {
+	if preparedObj.SnapshotTS != 0 {
+		// if preparedObj.SnapshotTS != 0, it is a stale read SQL:
+		// which means its infoschema is specified by the SQL, not the current/latest infoschema
 		is = preparedObj.InfoSchema.(infoschema.InfoSchema)
-	}
-	if prepared.SchemaVersion != is.SchemaMetaVersion() {
+	} else if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
 		// cached plan once the schema version is changed.
 		// Cached plan in prepared struct does NOT have a "cache key" with
