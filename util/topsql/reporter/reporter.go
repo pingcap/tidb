@@ -47,17 +47,17 @@ type TopSQLReporter interface {
 	Close()
 }
 
-type topSQLCPUTimeInput struct {
+type cpuData struct {
 	timestamp uint64
 	records   []tracecpu.SQLCPUTimeRecord
 }
 
-// topSQLDataPoints represents the cumulative SQL plan CPU time in current minute window
-type topSQLDataPoints struct {
+// dataPoints represents the cumulative SQL plan CPU time in current minute window
+type dataPoints struct {
 	SQLDigest      []byte
 	PlanDigest     []byte
-	CPUTimeMsList  []uint32
 	TimestampList  []uint64
+	CPUTimeMsList  []uint32
 	CPUTimeMsTotal uint64
 }
 
@@ -66,7 +66,7 @@ type cpuTimeSort struct {
 	Key            string
 	SQLDigest      []byte
 	PlanDigest     []byte
-	CPUTimeMsTotal uint64
+	CPUTimeMsTotal uint64 // The sorting field
 }
 
 type cpuTimeSortSlice []cpuTimeSort
@@ -92,54 +92,50 @@ type RemoteTopSQLReporter struct {
 	cancel context.CancelFunc
 	client ReportClient
 
-	// topSQLMap maps `sqlDigest-planDigest` to TopSQLDataPoints
-	topSQLMap map[string]*topSQLDataPoints
-
 	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are normalized SQL strings
 	normalizedSQLMap atomic.Value // sync.Map
 
-	// normalizedPlanMap is a plan version of normalizedSQLMap
-	// this should only be set from the dedicated worker
+	// normalizedPlanMap is an map, whose keys are plan digest strings and values are normalized plans **in binary**.
+	// The normalized plans in binary can be decoded to string using the `planBinaryDecoder`.
 	normalizedPlanMap atomic.Value // sync.Map
 
 	// calling this can take a while, so should not block critical paths
 	planBinaryDecoder planBinaryDecodeFunc
 
-	collectCPUTimeChan chan *topSQLCPUTimeInput
+	collectCPUDataChan chan cpuData
 	reportDataChan     chan reportData
 }
 
-// NewRemoteTopSQLReporter creates a new TopSQL struct
+// NewRemoteTopSQLReporter creates a new TopSQL reporter
 //
 // planBinaryDecoder is a decoding function which will be called asynchronously to decode the plan binary to string
 // MaxStatementsNum is the maximum SQL and plan number, which will restrict the memory usage of the internal LFU cache
-func NewRemoteTopSQLReporter(client ReportClient, planDecoder planBinaryDecodeFunc) *RemoteTopSQLReporter {
+func NewRemoteTopSQLReporter(client ReportClient, planDecodeFn planBinaryDecodeFunc) *RemoteTopSQLReporter {
+
 	ctx, cancel := context.WithCancel(context.Background())
 	tsr := &RemoteTopSQLReporter{
 		ctx:                ctx,
 		cancel:             cancel,
 		client:             client,
-		topSQLMap:          make(map[string]*topSQLDataPoints),
-		planBinaryDecoder:  planDecoder,
-		collectCPUTimeChan: make(chan *topSQLCPUTimeInput, collectCPUTimeChanLen),
+		planBinaryDecoder:  planDecodeFn,
+		collectCPUDataChan: make(chan cpuData, 1),
 		reportDataChan:     make(chan reportData, 1),
 	}
 	tsr.normalizedSQLMap.Store(&sync.Map{})
 	tsr.normalizedPlanMap.Store(&sync.Map{})
 
 	go tsr.collectWorker()
-
 	go tsr.reportWorker()
 
 	return tsr
 }
 
 // RegisterSQL registers a normalized SQL string to a SQL digest.
+// This function is thread-safe and efficient.
 //
 // Note that the normalized SQL string can be of >1M long.
 // This function should be thread-safe, which means parallelly calling it in several goroutines should be fine.
 // It should also return immediately, and do any CPU-intensive job asynchronously.
-// TODO: benchmark test concurrent performance
 func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL string) {
 	m := tsr.normalizedSQLMap.Load().(*sync.Map)
 	key := string(sqlDigest)
@@ -147,19 +143,21 @@ func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL str
 }
 
 // RegisterPlan is like RegisterSQL, but for normalized plan strings.
-func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedPlan string) {
+// This function is thread-safe and efficient.
+func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedBinaryPlan string) {
 	m := tsr.normalizedPlanMap.Load().(*sync.Map)
 	key := string(planDigest)
-	m.LoadOrStore(key, normalizedPlan)
+	m.LoadOrStore(key, normalizedBinaryPlan)
 }
 
-// Collect will drop the records when the collect channel is full
+// Collect receives CPU time records for processing. WARN: It will drop the records if the processing is not in time.
+// This function is thread-safe and efficient.
 func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
 	if len(records) == 0 {
 		return
 	}
 	select {
-	case tsr.collectCPUTimeChan <- &topSQLCPUTimeInput{
+	case tsr.collectCPUDataChan <- cpuData{
 		timestamp: timestamp,
 		records:   records,
 	}:
@@ -176,19 +174,24 @@ func (tsr *RemoteTopSQLReporter) Close() {
 func (tsr *RemoteTopSQLReporter) collectWorker() {
 	defer util.Recover("top-sql", "collectWorker", nil, false)
 
-	interval := variable.TopSQLVariable.ReportIntervalSeconds.Load()
-	reportTicker := time.NewTicker(time.Second * time.Duration(interval))
+	collectedData := make(map[string]*dataPoints)
+
+	currentReportInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load()
+	reportTicker := time.NewTicker(time.Second * time.Duration(currentReportInterval))
+
 	for {
 		select {
-		case input := <-tsr.collectCPUTimeChan:
-			tsr.collect(input.timestamp, input.records)
+		case data := <-tsr.collectCPUDataChan:
+			// On receiving data to collect: Write to local data array, and retain records with most CPU time.
+			tsr.doCollect(collectedData, data.timestamp, data.records)
 		case <-reportTicker.C:
-			// Update report ticker if report interval changed.
-			if newInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load(); newInterval != interval {
-				interval = newInterval
-				reportTicker.Reset(time.Second * time.Duration(interval))
+			tsr.takeDataAndSendToReportChan(&collectedData)
+
+			// Update `reportTicker` if report interval changed.
+			if newInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load(); newInterval != currentReportInterval {
+				currentReportInterval = newInterval
+				reportTicker.Reset(time.Second * time.Duration(currentReportInterval))
 			}
-			tsr.sendToReportChan()
 		case <-tsr.ctx.Done():
 			return
 		}
@@ -196,35 +199,35 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 }
 
 func encodeKey(buf *bytes.Buffer, sqlDigest, planDigest []byte) string {
+	buf.Reset()
 	buf.Write(sqlDigest)
 	buf.Write(planDigest)
 	return buf.String()
 }
 
-// collect uses a hashmap to store records in every second, and evict when necessary.
-func (tsr *RemoteTopSQLReporter) collect(timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
-	defer util.Recover("top-sql", "collect", nil, false)
+// doCollect uses a hashmap to store records in every second, and evict when necessary.
+func (tsr *RemoteTopSQLReporter) doCollect(
+	collectTarget map[string]*dataPoints, timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
+	defer util.Recover("top-sql", "doCollect", nil, false)
 
-	buf := bytes.NewBuffer(make([]byte, 0, 64))
-	// capacity uses to pre-allocate memory
-	capacity := int(variable.TopSQLVariable.ReportIntervalSeconds.Load() / variable.TopSQLVariable.PrecisionSeconds.Load() / 2)
-	if capacity < 1 {
-		capacity = 1
+	keyBuf := bytes.NewBuffer(make([]byte, 0, 64))
+	listCapacity := int(variable.TopSQLVariable.ReportIntervalSeconds.Load()/variable.TopSQLVariable.PrecisionSeconds.Load() + 1)
+	if listCapacity < 1 {
+		listCapacity = 1
 	}
 	for _, record := range records {
-		buf.Reset()
-		key := encodeKey(buf, record.SQLDigest, record.PlanDigest)
-		entry, exist := tsr.topSQLMap[key]
+		key := encodeKey(keyBuf, record.SQLDigest, record.PlanDigest)
+		entry, exist := collectTarget[key]
 		if !exist {
-			entry = &topSQLDataPoints{
+			entry = &dataPoints{
 				SQLDigest:     record.SQLDigest,
 				PlanDigest:    record.PlanDigest,
-				CPUTimeMsList: make([]uint32, 1, capacity),
-				TimestampList: make([]uint64, 1, capacity),
+				CPUTimeMsList: make([]uint32, 1, listCapacity),
+				TimestampList: make([]uint64, 1, listCapacity),
 			}
 			entry.CPUTimeMsList[0] = record.CPUTimeMs
 			entry.TimestampList[0] = timestamp
-			tsr.topSQLMap[key] = entry
+			collectTarget[key] = entry
 		} else {
 			entry.CPUTimeMsList = append(entry.CPUTimeMsList, record.CPUTimeMs)
 			entry.TimestampList = append(entry.TimestampList, timestamp)
@@ -232,15 +235,17 @@ func (tsr *RemoteTopSQLReporter) collect(timestamp uint64, records []tracecpu.SQ
 		entry.CPUTimeMsTotal += uint64(record.CPUTimeMs)
 	}
 
+	// evict records according to `MaxStatementCount` variable.
+	// TODO: Better to pass in the variable in the constructor, instead of referencing directly.
 	maxStmt := int(variable.TopSQLVariable.MaxStatementCount.Load())
-	if len(tsr.topSQLMap) <= maxStmt {
+	if len(collectTarget) <= maxStmt {
 		return
 	}
 
 	// find the max CPUTimeMsTotal that should be evicted
-	digestCPUTimeList := make([]cpuTimeSort, len(tsr.topSQLMap))
+	digestCPUTimeList := make([]cpuTimeSort, len(collectTarget))
 	idx := 0
-	for key, value := range tsr.topSQLMap {
+	for key, value := range collectTarget {
 		digestCPUTimeList[idx] = cpuTimeSort{
 			Key:            key,
 			SQLDigest:      value.SQLDigest,
@@ -256,29 +261,31 @@ func (tsr *RemoteTopSQLReporter) collect(timestamp uint64, records []tracecpu.SQ
 		return
 	}
 
-	shouldEvictList := digestCPUTimeList[maxStmt:]
+	itemsToEvict := digestCPUTimeList[maxStmt:]
 	normalizedSQLMap := tsr.normalizedSQLMap.Load().(*sync.Map)
 	normalizedPlanMap := tsr.normalizedPlanMap.Load().(*sync.Map)
-	for _, evict := range shouldEvictList {
-		delete(tsr.topSQLMap, evict.Key)
+	for _, evict := range itemsToEvict {
+		delete(collectTarget, evict.Key)
 		normalizedSQLMap.Delete(string(evict.SQLDigest))
 		normalizedPlanMap.Delete(string(evict.PlanDigest))
 	}
 }
 
-func (tsr *RemoteTopSQLReporter) sendToReportChan() {
+// takeDataAndSendToReportChan takes out (resets) collected data. These data will be send to a report channel
+// for reporting later.
+func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *map[string]*dataPoints) {
 	data := reportData{
-		topSQL:            tsr.topSQLMap,
+		collectedData:     *collectedDataPtr,
 		normalizedSQLMap:  tsr.normalizedSQLMap.Load().(*sync.Map),
 		normalizedPlanMap: tsr.normalizedPlanMap.Load().(*sync.Map),
 	}
 
 	// Reset data for next report.
-	tsr.topSQLMap = make(map[string]*topSQLDataPoints)
+	*collectedDataPtr = make(map[string]*dataPoints)
 	tsr.normalizedSQLMap.Store(&sync.Map{})
 	tsr.normalizedPlanMap.Store(&sync.Map{})
 
-	// Send to report channel
+	// Send to report channel. When channel is full, data will be dropped.
 	select {
 	case tsr.reportDataChan <- data:
 	default:
@@ -286,17 +293,14 @@ func (tsr *RemoteTopSQLReporter) sendToReportChan() {
 }
 
 type reportData struct {
-	topSQL            map[string]*topSQLDataPoints
+	collectedData     map[string]*dataPoints
 	normalizedSQLMap  *sync.Map
 	normalizedPlanMap *sync.Map
 }
 
-// prepareReportData prepares the data that need to reported.
-func (tsr *RemoteTopSQLReporter) prepareReportData(data reportData) (sqlMetas []*tipb.SQLMeta, planMetas []*tipb.PlanMeta, records []*tipb.CPUTimeRecord) {
-	// wait latest register finish, use sleep instead of other method to avoid performance issue in hot code path.
-	time.Sleep(time.Millisecond * 100)
-
-	sqlMetas = make([]*tipb.SQLMeta, 0, len(data.topSQL))
+// prepareReportDataForSending prepares the data that need to reported.
+func (tsr *RemoteTopSQLReporter) prepareReportDataForSending(data reportData) (sqlMetas []*tipb.SQLMeta, planMetas []*tipb.PlanMeta, records []*tipb.CPUTimeRecord) {
+	sqlMetas = make([]*tipb.SQLMeta, 0, len(data.collectedData))
 	data.normalizedSQLMap.Range(func(key, value interface{}) bool {
 		sqlMetas = append(sqlMetas, &tipb.SQLMeta{
 			SqlDigest:     []byte(key.(string)),
@@ -305,7 +309,7 @@ func (tsr *RemoteTopSQLReporter) prepareReportData(data reportData) (sqlMetas []
 		return true
 	})
 
-	planMetas = make([]*tipb.PlanMeta, 0, len(data.topSQL))
+	planMetas = make([]*tipb.PlanMeta, 0, len(data.collectedData))
 	data.normalizedPlanMap.Range(func(key, value interface{}) bool {
 		planDecoded, err := tsr.planBinaryDecoder(value.(string))
 		if err != nil {
@@ -319,8 +323,8 @@ func (tsr *RemoteTopSQLReporter) prepareReportData(data reportData) (sqlMetas []
 		return true
 	})
 
-	records = make([]*tipb.CPUTimeRecord, 0, len(data.topSQL))
-	for _, value := range data.topSQL {
+	records = make([]*tipb.CPUTimeRecord, 0, len(data.collectedData))
+	for _, value := range data.collectedData {
 		records = append(records, &tipb.CPUTimeRecord{
 			TimestampList: value.TimestampList,
 			CpuTimeMsList: value.CPUTimeMsList,
@@ -331,28 +335,32 @@ func (tsr *RemoteTopSQLReporter) prepareReportData(data reportData) (sqlMetas []
 	return sqlMetas, planMetas, records
 }
 
-// sendToAgentWorker will send a snapshot to the gRPC endpoint every collect interval
+// reportWorker sends data to the gRPC endpoint from the `reportDataChan` one by one.
 func (tsr *RemoteTopSQLReporter) reportWorker() {
 	defer util.Recover("top-sql", "reportWorker", nil, false)
 
 	for {
 		select {
 		case data := <-tsr.reportDataChan:
-			tsr.report(data)
+			// When `reportDataChan` receives something, there could be ongoing `RegisterSQL` and `RegisterPlan` running,
+			// who writes to the data structure that `data` contains. So we wait for a little while to ensure that
+			// these writes are finished.
+			time.Sleep(time.Millisecond * 100)
+			tsr.doReport(data)
 		case <-tsr.ctx.Done():
 			return
 		}
 	}
 }
 
-func (tsr *RemoteTopSQLReporter) report(data reportData) {
-	defer util.Recover("top-sql", "report", nil, false)
+func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
+	defer util.Recover("top-sql", "doReport", nil, false)
 
-	sqlMetas, planMetas, records := tsr.prepareReportData(data)
-	addr := variable.TopSQLVariable.AgentAddress.Load()
+	sqlMetas, planMetas, records := tsr.prepareReportDataForSending(data)
+	agentAddr := variable.TopSQLVariable.AgentAddress.Load()
 
 	ctx, cancel := context.WithTimeout(tsr.ctx, reportTimeout)
-	err := tsr.client.Send(ctx, addr, sqlMetas, planMetas, records)
+	err := tsr.client.Send(ctx, agentAddr, sqlMetas, planMetas, records)
 	if err != nil {
 		logutil.BgLogger().Warn("[top-sql] client failed to send data", zap.Error(err))
 	}
