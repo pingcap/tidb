@@ -939,13 +939,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}
 
 	for i, col := range e.colsInfo {
-		// If the column contains virtual column. We don't store the stats for it currently Since we cannot maintain the FM-Sketch for it.
-		// Same with original stats of Version1.
-		if col.IsGenerated() && !col.GeneratedStored {
-			fmSketches = append(fmSketches, nil)
-			continue
-		}
-
 		buildTaskChan <- &samplingBuildTask{
 			id:               col.ID,
 			rootRowCollector: rootRowCollector,
