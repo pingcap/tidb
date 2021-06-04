@@ -2640,6 +2640,9 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		return nil, err
 	}
 	ts := v.GetTableScan()
+	if ts == nil {
+		return nil, errors.Errorf("unexpected error when exporting the tableScan")
+	}
 	tbl, _ := b.is.TableByID(ts.Table.ID)
 	isPartition, physicalTableID := ts.IsPartition()
 	if isPartition {
@@ -2733,6 +2736,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		return nil
 	}
 
+	// buildNoRangeTableReader will ensure ts is not nil
 	ts := v.GetTableScan()
 	ret.ranges = ts.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx

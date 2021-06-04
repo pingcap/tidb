@@ -103,6 +103,9 @@ func (p *PhysicalTableReader) GetTablePlan() PhysicalPlan {
 
 // GetTableScan exports the tableScan that contained in tablePlan.
 func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
+	if p.tablePlan == nil {
+		return nil
+	}
 	curPlan := p.tablePlan
 	for {
 		chCnt := len(curPlan.Children())
