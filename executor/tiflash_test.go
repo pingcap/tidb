@@ -18,6 +18,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"math/rand"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -525,4 +527,143 @@ func (s *tiflashTestSuite) TestTiFlashVirtualColumn(c *C) {
 	tk.MustQuery("select /*+ hash_agg() */ count(*) from t1 where c > b'01'").Check(testkit.Rows("2"))
 	tk.MustQuery("select /*+ hash_agg() */ count(*) from t2 where c > 1").Check(testkit.Rows("2"))
 	tk.MustQuery("select /*+ hash_agg() */ count(*) from t3 where c > b'01'").Check(testkit.Rows("3"))
+}
+
+func (s *tiflashTestSuite) TestTiFlashPartitionTableShuffledHashAggregation(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database tiflash_partition_AGG")
+	tk.MustExec("use tiflash_partition_AGG")
+	tk.MustExec(`create table thash (a int, b int) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table trange (a int, b int) partition by range(a) (
+		partition p0 values less than (100), partition p1 values less than (200),
+		partition p2 values less than (300), partition p3 values less than (400))`)
+	listPartitions := make([]string, 4)
+	for i := 0; i < 400; i++ {
+		idx := i % 4
+		if listPartitions[idx] != "" {
+			listPartitions[idx] += ", "
+		}
+		listPartitions[idx] = listPartitions[idx] + fmt.Sprintf("%v", i)
+	}
+	tk.MustExec(`create table tlist (a int, b int) partition by list(a) (
+		partition p0 values in (` + listPartitions[0] + `), partition p1 values in (` + listPartitions[1] + `),
+		partition p2 values in (` + listPartitions[2] + `), partition p3 values in (` + listPartitions[3] + `))`)
+	tk.MustExec(`create table tnormal (a int, b int) partition by hash(a) partitions 4`)
+
+	for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
+		tk.MustExec("alter table " + tbl + " set tiflash replica 1")
+		tb := testGetTableByName(c, tk.Se, "tiflash_partition_AGG", tbl)
+		err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+		c.Assert(err, IsNil)
+	}
+
+	vals := make([]string, 0, 100)
+	for i := 0; i < 100; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(400), rand.Intn(400)))
+	}
+	for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
+		tk.MustExec(fmt.Sprintf("insert into %v values %v", tbl, strings.Join(vals, ", ")))
+		tk.MustExec(fmt.Sprintf("analyze table %v", tbl))
+	}
+	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+
+	lr := func() (int, int) {
+		l, r := rand.Intn(400), rand.Intn(400)
+		if l > r {
+			l, r = r, l
+		}
+		return l, r
+	}
+	for i := 0; i < 2; i++ {
+		l1, r1 := lr()
+		cond := fmt.Sprintf("t1.b>=%v and t1.b<=%v", l1, r1)
+		var res [][]interface{}
+		for _, mode := range []string{"static", "dynamic"} {
+			tk.MustExec(fmt.Sprintf("set @@tidb_partition_prune_mode = '%v'", mode))
+			for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
+				q := fmt.Sprintf("select /*+ HASH_AGG() */ count(*) from %v t1 where %v", tbl, cond)
+				c.Assert(tk.HasPlan(q, "HashAgg"), IsTrue)
+				if res == nil {
+					res = tk.MustQuery(q).Sort().Rows()
+				} else {
+					tk.MustQuery(q).Check(res)
+				}
+			}
+		}
+	}
+}
+
+func (s *tiflashTestSuite) TestTiFlashPartitionTableBroadcastJoin(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database tiflash_partition_BCJ")
+	tk.MustExec("use tiflash_partition_BCJ")
+	tk.MustExec(`create table thash (a int, b int) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table trange (a int, b int) partition by range(a) (
+		partition p0 values less than (100), partition p1 values less than (200),
+		partition p2 values less than (300), partition p3 values less than (400))`)
+	listPartitions := make([]string, 4)
+	for i := 0; i < 400; i++ {
+		idx := i % 4
+		if listPartitions[idx] != "" {
+			listPartitions[idx] += ", "
+		}
+		listPartitions[idx] = listPartitions[idx] + fmt.Sprintf("%v", i)
+	}
+	tk.MustExec(`create table tlist (a int, b int) partition by list(a) (
+		partition p0 values in (` + listPartitions[0] + `), partition p1 values in (` + listPartitions[1] + `),
+		partition p2 values in (` + listPartitions[2] + `), partition p3 values in (` + listPartitions[3] + `))`)
+	tk.MustExec(`create table tnormal (a int, b int) partition by hash(a) partitions 4`)
+
+	for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
+		tk.MustExec("alter table " + tbl + " set tiflash replica 1")
+		tb := testGetTableByName(c, tk.Se, "tiflash_partition_BCJ", tbl)
+		err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+		c.Assert(err, IsNil)
+	}
+
+	vals := make([]string, 0, 100)
+	for i := 0; i < 100; i++ {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(400), rand.Intn(400)))
+	}
+	for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
+		tk.MustExec(fmt.Sprintf("insert into %v values %v", tbl, strings.Join(vals, ", ")))
+		tk.MustExec(fmt.Sprintf("analyze table %v", tbl))
+	}
+	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	tk.MustExec("set @@session.tidb_opt_broadcast_join=ON")
+
+	lr := func() (int, int) {
+		l, r := rand.Intn(400), rand.Intn(400)
+		if l > r {
+			l, r = r, l
+		}
+		return l, r
+	}
+	for i := 0; i < 2; i++ {
+		l1, r1 := lr()
+		l2, r2 := lr()
+		cond := fmt.Sprintf("t1.b>=%v and t1.b<=%v and t2.b>=%v and t2.b<=%v", l1, r1, l2, r2)
+		var res [][]interface{}
+		for _, mode := range []string{"static", "dynamic"} {
+			tk.MustExec(fmt.Sprintf("set @@tidb_partition_prune_mode = '%v'", mode))
+			for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
+				q := fmt.Sprintf("select count(*) from %v t1 join %v t2 on t1.a=t2.a where %v", tbl, tbl, cond)
+				if res == nil {
+					res = tk.MustQuery(q).Sort().Rows()
+				} else {
+					tk.MustQuery(q).Check(res)
+				}
+			}
+		}
+	}
 }
