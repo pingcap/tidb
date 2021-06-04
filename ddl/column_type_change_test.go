@@ -44,10 +44,15 @@ import (
 )
 
 var _ = SerialSuites(&testColumnTypeChangeSuite{})
+var _ = SerialSuites(&testCTCSerialSuiteWrapper{&testColumnTypeChangeSuite{}})
 
 type testColumnTypeChangeSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
+}
+
+type testCTCSerialSuiteWrapper struct {
+	*testColumnTypeChangeSuite
 }
 
 func (s *testColumnTypeChangeSuite) SetUpSuite(c *C) {
