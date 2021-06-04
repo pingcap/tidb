@@ -103,10 +103,6 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *Te
 		snapshotTS: snapshotTS,
 		explicitStaleness: explicitStaleness,
 	}
-	// if snapshotTS is specified, executor will not try to update it anymore. it only serves for stale reads for now.
-	if builder.snapshotTS != 0 {
-		builder.snapshotTSCached = true
-	}
 	return builder
 }
 
@@ -680,11 +676,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		plan:         v.Plan,
 		outputNames:  v.OutputNames(),
 	}
-	// if snapshotTS is specified, executor will not try to update it anymore. it only serves for stale reads for now.
 	b.snapshotTS = v.SnapshotTS
-	if b.snapshotTS != 0 {
-		b.snapshotTSCached = true
-	}
 	return e
 }
 
