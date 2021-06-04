@@ -93,6 +93,22 @@ func (s *testCommitterSuite) TestFailCommitPrimaryKeyError(c *C) {
 	c.Assert(terror.ErrorNotEqual(err, terror.ErrResultUndetermined), IsTrue)
 }
 
+// TestFailCommitPrimaryRPCErrorThenKeyError tests KeyError overwrites the undeterminedErr.
+func (s *testCommitterSuite) TestFailCommitPrimaryRPCErrorThenKeyError(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockstore/mocktikv/rpcCommitResult", `1*return("timeout")->return("keyError")`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockstore/mocktikv/rpcCommitResult"), IsNil)
+	}()
+	// Ensure it returns the original error without wrapped to ErrResultUndetermined
+	// if it meets KeyError.
+	t3 := s.begin(c)
+	err := t3.Set([]byte("c"), []byte("c1"))
+	c.Assert(err, IsNil)
+	err = t3.Commit(context.Background())
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsFalse)
+}
+
 func (s *testCommitterSuite) TestFailCommitTimeout(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockstore/mocktikv/rpcCommitTimeout", `return(true)`), IsNil)
 	defer func() {
