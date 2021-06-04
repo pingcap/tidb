@@ -138,7 +138,6 @@ func readSQLMetric(timepoint time.Time, SQLResult *sqlUsageData) error {
 
 	anylisSQLUsage(result, SQLResult)
 	return nil
-
 }
 
 func querySQLMetric(ctx context.Context, queryTime time.Time, promQL string) (result pmodel.Value, err error) {
