@@ -60,9 +60,8 @@ func newStmtSummaryByDigestEvictedElement(beginTime int64, endTime int64) *stmtS
 			beginTime: beginTime,
 			endTime:   endTime,
 			// basic
-			sampleSQL:  "otherSummary",
-			prevSQL:    "otherSummary",
-			indexNames: []string{"otherSummary"},
+			sampleSQL: "other",
+			prevSQL:   "other",
 			// user
 			authUsers: make(map[string]struct{}),
 			// latency
@@ -231,12 +230,12 @@ func (ssbde *stmtSummaryByDigestEvicted) toCurrentDatum() []types.Datum {
 		return nil
 	}
 	induceSsbd := &stmtSummaryByDigest{
-		schemaName:    "otherSummary",
-		digest:        "otherSummary",
-		planDigest:    "otherSummary",
-		stmtType:      "otherSummary",
-		normalizedSQL: "otherSummary",
-		tableNames:    "otherSummary",
+		schemaName:    "other",
+		digest:        "other",
+		planDigest:    "other",
+		stmtType:      "other",
+		normalizedSQL: "other",
+		tableNames:    "other",
 	}
 	return seElement.toDatum(induceSsbd)
 }

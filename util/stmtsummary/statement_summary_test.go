@@ -675,8 +675,8 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 	s.ssMap.AddStatement(stmtExecInfo2)
 	c.Assert(s.ssMap.summaryMap.Size(), Equals, 1)
 	datums = s.ssMap.ToCurrentDatum(nil, true)
-	expectedEvictedDatum := []interface{}{n, e, "otherSummary", "otherSummary", "otherSummary", "otherSummary",
-		"otherSummary", "otherSummary", stmtExecInfo1.User, 1, 0, 0, int64(stmtExecInfo1.TotalLatency),
+	expectedEvictedDatum := []interface{}{n, e, "other", "other", "other", "other",
+		"other", "<nil>", stmtExecInfo1.User, 1, 0, 0, int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.CompileLatency),
 		int64(stmtExecInfo1.CompileLatency), stmtExecInfo1.CopTasks.NumCopTasks, int64(stmtExecInfo1.CopTasks.MaxProcessTime),
@@ -702,7 +702,7 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 0, 0, 1,
 		fmt.Sprintf("%s:1", boTxnLockName), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax,
 		0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
-		t, t, 0, 0, 0, "otherSummary", "otherSummary", "otherSummary", ""}
+		t, t, 0, 0, 0, "other", "other", "other", ""}
 	expectedDatum[4] = stmtExecInfo2.Digest
 	match(c, datums[0], expectedDatum...)
 	match(c, datums[1], expectedEvictedDatum...)
