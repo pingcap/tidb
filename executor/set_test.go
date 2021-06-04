@@ -1444,4 +1444,14 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_top_sql_max_statement_count' can't be set to the value of '5001'")
 	tk.MustQuery("select @@global.tidb_top_sql_precision_seconds;").Check(testkit.Rows("2"))
 	c.Assert(variable.TopSQLVariable.MaxStatementCount.Load(), Equals, int64(2))
+
+	tk.MustExec("set @@global.tidb_top_sql_report_interval_seconds=120;")
+	tk.MustQuery("select @@global.tidb_top_sql_report_interval_seconds;").Check(testkit.Rows("120"))
+	c.Assert(variable.TopSQLVariable.ReportIntervalSeconds.Load(), Equals, int64(120))
+	_, err = tk.Exec("set @@global.tidb_top_sql_report_interval_seconds='abc';")
+	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_top_sql_report_interval_seconds'")
+	_, err = tk.Exec("set @@global.tidb_top_sql_report_interval_seconds='5000';")
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_top_sql_report_interval_seconds' can't be set to the value of '5000'")
+	tk.MustQuery("select @@global.tidb_top_sql_report_interval_seconds;").Check(testkit.Rows("120"))
+	c.Assert(variable.TopSQLVariable.ReportIntervalSeconds.Load(), Equals, int64(120))
 }

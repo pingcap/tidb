@@ -76,7 +76,7 @@ func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) 
 }
 
 func initializeCache(maxStatementsNum int, addr string) *RemoteTopSQLReporter {
-	config := &RemoteTopSQLReporterConfig{
+	config := &TopSQLConfig{
 		PlanBinaryDecoder: testPlanBinaryDecoderFunc,
 		MaxStatementsNum:  maxStatementsNum,
 		ReportInterval:    time.Minute,
