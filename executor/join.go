@@ -787,7 +787,7 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	return err
 }
 
-func (e *HashJoinExec) runBuildWorker(buildSideResultCh <-chan *chunk.Chunk, hCtx hashContext, done chan bool) (err error) {
+func (e *HashJoinExec) runBuildWorker(buildSideResultCh <-chan *chunk.Chunk, hCtx hashContext, done <-chan bool) (err error) {
 	var (
 		chk      *chunk.Chunk
 		pHashCtx = &hCtx
@@ -797,6 +797,8 @@ func (e *HashJoinExec) runBuildWorker(buildSideResultCh <-chan *chunk.Chunk, hCt
 			break
 		}
 		select {
+		case <-done:
+			return
 		case <-e.closeCh:
 			return
 		case chk, ok = <-buildSideResultCh:
