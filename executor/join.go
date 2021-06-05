@@ -731,7 +731,7 @@ func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 }
 
 // buildHashTableForList builds hash table from `list`.
-func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chunk) error {
+func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chunk) (err error) {
 	buildKeyColIdx := make([]int, len(e.buildKeys))
 	for i := range e.buildKeys {
 		buildKeyColIdx[i] = e.buildKeys[i].Index
@@ -756,29 +756,69 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
 
-	return e.runBuildWorker(buildSideResultCh, *hCtx)
+	var (
+		wg       sync.WaitGroup
+		done     chan bool
+		doneOnce sync.Once
+	)
+
+	for i := uint(0); i < e.concurrency; i++ {
+		wg.Add(1)
+		go util.WithRecovery(func() {
+			err := e.runBuildWorker(buildSideResultCh, *hCtx, done)
+			if err != nil {
+				panic(err)
+			}
+		}, func(r interface{}) {
+			doneOnce.Do(func() {
+				switch r := r.(type) {
+				case error:
+					err = r.(error)
+				default:
+					err = fmt.Errorf("%v", r)
+				}
+				close(done)
+			})
+			wg.Done()
+		})
+	}
+	wg.Wait()
+
+	return err
 }
 
-func (e *HashJoinExec) runBuildWorker(buildSideResultCh <-chan *chunk.Chunk, hCtx hashContext) error {
-	var err error
-	for chk := range buildSideResultCh {
+func (e *HashJoinExec) runBuildWorker(buildSideResultCh <-chan *chunk.Chunk, hCtx hashContext, done chan bool) (err error) {
+	var (
+		chk      *chunk.Chunk
+		pHashCtx = &hCtx
+	)
+	for ok := true; ok; {
 		if e.finished.Load().(bool) {
-			return nil
+			break
 		}
+		select {
+		case <-e.closeCh:
+			return
+		case chk, ok = <-buildSideResultCh:
+		}
+		if !ok {
+			break
+		}
+
 		if !e.useOuterToBuild {
-			err = e.rowContainer.PutChunk(chk, e.isNullEQ, &hCtx)
+			err = e.rowContainer.PutChunk(chk, e.isNullEQ, pHashCtx)
 		} else {
 			var bitMap = bitmap.NewConcurrentBitmap(chk.NumRows())
 			e.outerMatchedStatus = append(e.outerMatchedStatus, bitMap)
 			e.memTracker.Consume(bitMap.BytesConsumed())
 			if len(e.outerFilter) == 0 {
-				err = e.rowContainer.PutChunk(chk, e.isNullEQ, &hCtx)
+				err = e.rowContainer.PutChunk(chk, e.isNullEQ, pHashCtx)
 			} else {
 				e.buildSelected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(chk), e.buildSelected)
 				if err != nil {
 					return err
 				}
-				err = e.rowContainer.PutChunkSelected(chk, e.buildSelected, e.isNullEQ, &hCtx)
+				err = e.rowContainer.PutChunkSelected(chk, e.buildSelected, e.isNullEQ, pHashCtx)
 			}
 		}
 		if err != nil {
