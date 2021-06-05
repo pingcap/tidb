@@ -533,7 +533,7 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 						errors.New("error txn not found and lock expired"))
 				})
 			}
-			// For pessimistic lock resolving, if the primary lock dose not exist and rollbackIfNotExist is true,
+			// For pessimistic lock resolving, if the primary lock does not exist and rollbackIfNotExist is true,
 			// The Action_LockNotExistDoNothing will be returned as the status.
 			rollbackIfNotExist = true
 		} else {
