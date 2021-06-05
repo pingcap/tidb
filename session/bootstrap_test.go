@@ -591,18 +591,36 @@ func (s *testBootstrapSuite) TestUpdateDuplicateBindInfo(c *C) {
 	// The latest one.
 	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from test . t', 'select /*+ use_index(t, idx_b)*/ * from test.t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-09 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 
+	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from t where a < ?', 'select * from t use index(idx) where a < 1', 'test', 'deleted', '2021-06-04 17:04:43.333', '2021-06-04 17:04:43.335', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from t where a < ?', 'select * from t ignore index(idx) where a < 1', 'test', 'using', '2021-06-04 17:04:43.335', '2021-06-04 17:04:43.335', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from test . t where a <= ?', 'select * from test.t use index(idx) where a <= 1', '', 'deleted', '2021-06-04 17:04:43.345', '2021-06-04 17:04:45.334', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from test . t where a <= ?', 'select * from test.t ignore index(idx) where a <= 1', '', 'using', '2021-06-04 17:04:45.334', '2021-06-04 17:04:45.334', 'utf8', 'utf8_general_ci', 'manual')`)
+
 	upgradeToVer67(se, version66)
 
-	r := mustExecSQL(c, se, `select original_sql, bind_sql, default_db, status, create_time from mysql.bind_info where source != 'builtin'`)
+	r := mustExecSQL(c, se, `select original_sql, bind_sql, default_db, status, create_time from mysql.bind_info where source != 'builtin' order by create_time`)
 	req := r.NewChunk()
 	c.Assert(r.Next(ctx, req), IsNil)
-	c.Assert(req.NumRows(), Equals, 1)
+	c.Assert(req.NumRows(), Equals, 3)
 	row := req.GetRow(0)
 	c.Assert(row.GetString(0), Equals, "select * from `test` . `t`")
 	c.Assert(row.GetString(1), Equals, "SELECT /*+ use_index(`t` `idx_b`)*/ * FROM `test`.`t`")
 	c.Assert(row.GetString(2), Equals, "")
 	c.Assert(row.GetString(3), Equals, "using")
 	c.Assert(row.GetTime(4).String(), Equals, "2021-01-04 14:50:58.257")
+	row = req.GetRow(1)
+	c.Assert(row.GetString(0), Equals, "select * from `test` . `t` where `a` < ?")
+	c.Assert(row.GetString(1), Equals, "SELECT * FROM `test`.`t` IGNORE INDEX (`idx`) WHERE `a` < 1")
+	c.Assert(row.GetString(2), Equals, "")
+	c.Assert(row.GetString(3), Equals, "using")
+	c.Assert(row.GetTime(4).String(), Equals, "2021-06-04 17:04:43.335")
+	row = req.GetRow(2)
+	c.Assert(row.GetString(0), Equals, "select * from `test` . `t` where `a` <= ?")
+	c.Assert(row.GetString(1), Equals, "SELECT * FROM `test`.`t` IGNORE INDEX (`idx`) WHERE `a` <= 1")
+	c.Assert(row.GetString(2), Equals, "")
+	c.Assert(row.GetString(3), Equals, "using")
+	c.Assert(row.GetTime(4).String(), Equals, "2021-06-04 17:04:45.334")
+
 	c.Assert(r.Close(), IsNil)
 	mustExecSQL(c, se, "delete from mysql.bind_info where original_sql = 'select * from test . t'")
 }
