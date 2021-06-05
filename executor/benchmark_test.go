@@ -1154,7 +1154,7 @@ func benchmarkBuildHashTable(b *testing.B, casTest *hashJoinTestCase, dataSource
 	close(innerResultCh)
 
 	b.StartTimer()
-	if err := exec.buildHashTableForList(innerResultCh); err != nil {
+	if err := exec.buildHashTableForList(context.Background(), innerResultCh); err != nil {
 		b.Fatal(err)
 	}
 

@@ -712,7 +712,7 @@ func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 	)
 
 	// TODO: Parallel build hash table. Currently not support because `unsafeHashTable` is not thread-safe.
-	err := e.buildHashTableForList(buildSideResultCh)
+	err := e.buildHashTableForList(ctx, buildSideResultCh)
 	if err != nil {
 		e.buildFinished <- errors.Trace(err)
 		close(doneCh)
@@ -731,7 +731,7 @@ func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 }
 
 // buildHashTableForList builds hash table from `list`.
-func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chunk) (err error) {
+func (e *HashJoinExec) buildHashTableForList(ctx context.Context, buildSideResultCh <-chan *chunk.Chunk) (err error) {
 	buildKeyColIdx := make([]int, len(e.buildKeys))
 	for i := range e.buildKeys {
 		buildKeyColIdx[i] = e.buildKeys[i].Index
@@ -765,6 +765,7 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	for i := uint(0); i < e.concurrency; i++ {
 		wg.Add(1)
 		go util.WithRecovery(func() {
+			defer trace.StartRegion(ctx, "HashJoinBuildWorker").End()
 			err := e.runBuildWorker(buildSideResultCh, *hCtx, done)
 			if err != nil {
 				panic(err)
