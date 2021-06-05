@@ -85,10 +85,10 @@ PARTITION BY RANGE ( a ) (
 			c.Assert(len(statsTbl.Columns), Equals, 3)
 			c.Assert(len(statsTbl.Indices), Equals, 1)
 			for _, col := range statsTbl.Columns {
-				c.Assert(col.Len(), Greater, 0)
+				c.Assert(col.Len()+col.Num(), Greater, 0)
 			}
 			for _, idx := range statsTbl.Indices {
-				c.Assert(idx.Len(), Greater, 0)
+				c.Assert(idx.Len()+idx.Num(), Greater, 0)
 			}
 		}
 
