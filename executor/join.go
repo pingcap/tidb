@@ -64,7 +64,8 @@ type HashJoinExec struct {
 	rowContainer  *hashRowContainer
 	buildFinished chan error
 
-	buildSelected []bool
+	buildSelected    []bool
+	buildSelectedMux sync.RWMutex
 
 	// closeCh add a lock for closing executor.
 	closeCh      chan struct{}
@@ -818,11 +819,15 @@ func (e *HashJoinExec) runBuildWorker(buildSideResultCh <-chan *chunk.Chunk, hCt
 			if len(e.outerFilter) == 0 {
 				err = e.rowContainer.PutChunk(chk, e.isNullEQ, pHashCtx)
 			} else {
+				e.buildSelectedMux.Lock()
 				e.buildSelected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(chk), e.buildSelected)
+				e.buildSelectedMux.Unlock()
 				if err != nil {
 					return err
 				}
+				e.buildSelectedMux.RLock()
 				err = e.rowContainer.PutChunkSelected(chk, e.buildSelected, e.isNullEQ, pHashCtx)
+				e.buildSelectedMux.RUnlock()
 			}
 		}
 		if err != nil {
