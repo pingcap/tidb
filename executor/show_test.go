@@ -1319,6 +1319,7 @@ func (s *testSuite5) TestShowPerformanceSchema(c *C) {
 func (s *testSuite5) TestShowTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table t1 (id int) on commit delete rows")
 	tk.MustExec("create global temporary table t3 (i int primary key, j int) on commit delete rows")
 	// For issue https://github.com/pingcap/tidb/issues/24752
@@ -1336,4 +1337,20 @@ func (s *testSuite5) TestShowTemporaryTable(c *C) {
 	// Verify that the `show create table` result can be used to build the table.
 	createTable := strings.ReplaceAll(expect, "t3", "t4")
 	tk.MustExec(createTable)
+
+	// Cover auto increment column.
+	tk.MustExec(`CREATE GLOBAL TEMPORARY TABLE t5 (
+	id int(11) NOT NULL AUTO_INCREMENT,
+	b int(11) NOT NULL,
+	pad varbinary(255) DEFAULT NULL,
+	PRIMARY KEY (id),
+	KEY b (b)) ON COMMIT DELETE ROWS`)
+	expect = "CREATE GLOBAL TEMPORARY TABLE `t5` (\n" +
+		"  `id` int(11) NOT NULL AUTO_INCREMENT,\n" +
+		"  `b` int(11) NOT NULL,\n" +
+		"  `pad` varbinary(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
+	tk.MustQuery("show create table t5").Check(testkit.Rows("t5 " + expect))
 }

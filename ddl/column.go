@@ -1049,10 +1049,11 @@ func (w *worker) doModifyColumnTypeWithData(
 			if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 				logutil.BgLogger().Warn("[ddl] run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
 					zap.String("job", job.String()), zap.Error(err1))
-				return ver, errors.Trace(err)
 			}
 			logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 			job.State = model.JobStateRollingback
+			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
+			w.reorgCtx.cleanNotifyReorgCancel()
 			return ver, errors.Trace(err)
 		}
 		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
@@ -1114,8 +1115,24 @@ func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, oldColInfo, colIn
 	return w.writePhysicalTableRecord(t.(table.PhysicalTable), typeUpdateColumnWorker, nil, oldColInfo, colInfo, reorgInfo)
 }
 
+// TestReorgGoroutineRunning is only used in test to indicate the reorg goroutine has been started.
+var TestReorgGoroutineRunning = make(chan interface{})
+
 // updateColumnAndIndexes handles the modify column reorganization state for a table.
 func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.ColumnInfo, idxes []*model.IndexInfo, reorgInfo *reorgInfo) error {
+	failpoint.Inject("mockInfiniteReorgLogic", func(val failpoint.Value) {
+		if val.(bool) {
+			a := new(interface{})
+			TestReorgGoroutineRunning <- a
+			for {
+				time.Sleep(30 * time.Millisecond)
+				if w.reorgCtx.isReorgCanceled() {
+					// Job is cancelled. So it can't be done.
+					failpoint.Return(errCancelledDDLJob)
+				}
+			}
+		}
+	})
 	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		err := w.updatePhysicalTableRow(t.(table.PhysicalTable), oldCol, col, reorgInfo)

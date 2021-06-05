@@ -3012,7 +3012,7 @@ func (s *testDBSuite2) TestTableForeignKey(c *C) {
 	tk.MustExec("create table t3 (a int, b int);")
 	failSQL = "alter table t1 add foreign key (c) REFERENCES t3(a);"
 	tk.MustGetErrCode(failSQL, errno.ErrKeyColumnDoesNotExits)
-	// test oreign key not match error
+	// test origin key not match error
 	failSQL = "alter table t1 add foreign key (a) REFERENCES t3(a, b);"
 	tk.MustGetErrCode(failSQL, errno.ErrWrongFkDef)
 	// Test drop column with foreign key.
@@ -3029,6 +3029,25 @@ func (s *testDBSuite2) TestTableForeignKey(c *C) {
 	tk.MustExec("alter table t4 drop foreign key d")
 	tk.MustExec("alter table t4 modify column d bigint;")
 	tk.MustExec("drop table if exists t1,t2,t3,t4;")
+}
+
+func (s *testDBSuite2) TestTemporaryTableForeignKey(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (a int, b int);")
+	tk.MustExec("drop table if exists t1_tmp;")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	tk.MustExec("create global temporary table t1_tmp (a int, b int) on commit delete rows;")
+	// test add foreign key.
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2 (a int, b int);")
+	failSQL := "alter table t1_tmp add foreign key (c) REFERENCES t2(a);"
+	tk.MustGetErrCode(failSQL, mysql.ErrCannotAddForeign)
+	// Test drop column with foreign key.
+	failSQL = "create global temporary table t3 (c int,d int,foreign key (d) references t1 (b)) on commit delete rows;"
+	tk.MustGetErrCode(failSQL, mysql.ErrCannotAddForeign)
+	tk.MustExec("drop table if exists t1,t2,t3,t1_tmp;")
 }
 
 func (s *testDBSuite8) TestFKOnGeneratedColumns(c *C) {
@@ -3493,6 +3512,37 @@ out:
 	tk.MustQuery("select c2, c3 from tnn where c1 = 99").Check(testkit.Rows(expected))
 
 	tk.MustExec("drop table tnn")
+}
+
+func (s *testDBSuite3) TestVirtualColumnDDL(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_gv_ddl")
+	tk.MustExec(`create global temporary table test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored) on commit delete rows;`)
+	defer tk.MustExec("drop table if exists test_gv_ddl")
+	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_gv_ddl"))
+	c.Assert(err, IsNil)
+	testCases := []struct {
+		generatedExprString string
+		generatedStored     bool
+	}{
+		{"", false},
+		{"`a` + 8", false},
+		{"`b` + 2", true},
+	}
+	for i, column := range table.Meta().Columns {
+		c.Assert(column.GeneratedExprString, Equals, testCases[i].generatedExprString)
+		c.Assert(column.GeneratedStored, Equals, testCases[i].generatedStored)
+	}
+	result := tk.MustQuery(`DESC test_gv_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
+	tk.MustExec("begin;")
+	tk.MustExec("insert into test_gv_ddl values (1, default, default)")
+	tk.MustQuery("select * from test_gv_ddl").Check(testkit.Rows("1 9 11"))
+	_, err = tk.Exec("commit")
+	c.Assert(err, IsNil)
 }
 
 func (s *testDBSuite3) TestGeneratedColumnDDL(c *C) {
@@ -5320,6 +5370,34 @@ func (s *testSerialDBSuite) TestSetTableFlashReplicaForSystemTable(c *C) {
 	}
 }
 
+func (s *testSerialDBSuite) TestSetTiFlashReplicaForTemporaryTable(c *C) {
+	// test for tiflash replica
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+		c.Assert(err, IsNil)
+	}()
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	tk.MustExec("drop table if exists temp")
+	tk.MustExec("create global temporary table temp(id int) on commit delete rows")
+	tk.MustGetErrCode("alter table temp set tiflash replica 1", errno.ErrOptOnTemporaryTable)
+	tk.MustExec("drop table temp")
+
+	tk.MustExec("drop table if exists normal")
+	tk.MustExec("create table normal(id int)")
+	defer tk.MustExec("drop table normal")
+	tk.MustExec("alter table normal set tiflash replica 1")
+	tk.MustQuery("select REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='normal'").Check(testkit.Rows("1"))
+	tk.MustExec("create global temporary table temp like normal on commit delete rows")
+	tk.MustQuery("select REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='temp'").Check(testkit.Rows())
+	tk.MustExec("drop table temp")
+	tk.MustExec("set tidb_enable_noop_functions = 1")
+	tk.MustExec("create temporary table temp like normal")
+	tk.MustQuery("select REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='temp'").Check(testkit.Rows())
+}
+
 func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
@@ -5365,6 +5443,7 @@ func (s *testSerialDBSuite) TestShardRowIDBitsOnTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists shard_row_id_temporary")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	_, err := tk.Exec("create global temporary table shard_row_id_temporary (a int) shard_row_id_bits = 5 on commit delete rows;")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
 	tk.MustExec("create global temporary table shard_row_id_temporary (a int) on commit delete rows;")

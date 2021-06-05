@@ -101,6 +101,8 @@ var (
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
 
+	telemetryCTEUsage = metrics.TelemetrySQLCTECnt
+
 	tiKVGCAutoConcurrency = "tikv_gc_auto_concurrency"
 )
 
@@ -609,7 +611,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		// Finally t1 will have more data than t2, with no errors return to user!
 		if s.isTxnRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 && !isPessimistic {
 			logutil.Logger(ctx).Warn("sql",
-				zap.String("label", s.getSQLLabel()),
+				zap.String("label", s.GetSQLLabel()),
 				zap.Error(err),
 				zap.String("txn", s.txn.GoString()))
 			// Transactions will retry 2 ~ commitRetryLimit times.
@@ -619,7 +621,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			err = s.retry(ctx, uint(maxRetryCount))
 		} else if !errIsNoisy(err) {
 			logutil.Logger(ctx).Warn("can not retry txn",
-				zap.String("label", s.getSQLLabel()),
+				zap.String("label", s.GetSQLLabel()),
 				zap.Error(err),
 				zap.Bool("IsBatchInsert", s.sessionVars.BatchInsert),
 				zap.Bool("IsPessimistic", isPessimistic),
@@ -734,7 +736,7 @@ const sqlLogMaxLen = 1024
 // SchemaChangedWithoutRetry is used for testing.
 var SchemaChangedWithoutRetry uint32
 
-func (s *session) getSQLLabel() string {
+func (s *session) GetSQLLabel() string {
 	if s.sessionVars.InRestrictedSQL {
 		return metrics.LblInternal
 	}
@@ -794,7 +796,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	var schemaVersion int64
 	sessVars := s.GetSessionVars()
 	orgStartTS := sessVars.TxnCtx.StartTS
-	label := s.getSQLLabel()
+	label := s.GetSQLLabel()
 	for {
 		s.PrepareTxnCtx(ctx)
 		s.sessionVars.RetryInfo.ResetOffset()
@@ -1391,7 +1393,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		normalized, digest := parser.NormalizeDigest(sql)
 		if digest != nil {
 			// Fixme: reset/clean the label when internal sql execute finish.
-			ctx = topsql.AttachSQLInfo(ctx, normalized, digest, "", nil)
+			topsql.AttachSQLInfo(ctx, normalized, digest, "", nil)
 		}
 	}
 	return stmts[0], nil
@@ -1649,6 +1651,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		return nil, err
 	}
 	rs, err = s.Exec(ctx)
+	se.updateTelemetryMetric(s.(*executor.ExecStmt))
 	sessVars.TxnCtx.StatementCount++
 	if rs != nil {
 		return &execStmtResult{
@@ -1816,6 +1819,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 		Ctx:         s,
 		OutputNames: execPlan.OutputNames(),
 		PsStmt:      prepareStmt,
+		Ti:          &executor.TelemetryInfo{},
 	}
 	compileDuration := time.Since(s.sessionVars.StartTime)
 	sessionExecuteCompileDurationGeneral.Observe(compileDuration.Seconds())
@@ -2426,14 +2430,22 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
-		err = dom.LoadPrivilegeLoop(se)
+		se4, err := createSession(store)
+		if err != nil {
+			return nil, err
+		}
+		err = dom.LoadPrivilegeLoop(se4)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	//  Rebuild sysvar cache in a loop
-	err = dom.LoadSysVarCacheLoop(se)
+	se5, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	err = dom.LoadSysVarCacheLoop(se5)
 	if err != nil {
 		return nil, err
 	}
@@ -2444,28 +2456,28 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 			return nil, err
 		}
 	}
-	se4, err := createSession(store)
+	se6, err := createSession(store)
 	if err != nil {
 		return nil, err
 	}
-	err = executor.LoadExprPushdownBlacklist(se4)
-	if err != nil {
-		return nil, err
-	}
-
-	err = executor.LoadOptRuleBlacklist(se4)
+	err = executor.LoadExprPushdownBlacklist(se6)
 	if err != nil {
 		return nil, err
 	}
 
-	dom.TelemetryReportLoop(se4)
-	dom.TelemetryRotateSubWindowLoop(se4)
-
-	se5, err := createSession(store)
+	err = executor.LoadOptRuleBlacklist(se6)
 	if err != nil {
 		return nil, err
 	}
-	err = dom.UpdateTableStatsLoop(se5)
+
+	dom.TelemetryReportLoop(se6)
+	dom.TelemetryRotateSubWindowLoop(se6)
+
+	se7, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	err = dom.UpdateTableStatsLoop(se7)
 	if err != nil {
 		return nil, err
 	}
@@ -2925,4 +2937,22 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 		}
 	}
 	return domain.GetDomain(s).InfoSchema()
+}
+
+func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
+	if es.Ti == nil {
+		return
+	}
+	if s.isInternal() {
+		return
+	}
+
+	ti := es.Ti
+	if ti.UseRecursive {
+		telemetryCTEUsage.WithLabelValues("recurCTE").Inc()
+	} else if ti.UseNonRecursive {
+		telemetryCTEUsage.WithLabelValues("nonRecurCTE").Inc()
+	} else {
+		telemetryCTEUsage.WithLabelValues("notCTE").Inc()
+	}
 }
