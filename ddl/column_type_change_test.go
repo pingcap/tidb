@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -2006,4 +2007,42 @@ func (s *testColumnTypeChangeSuite) TestCTCCastBitToBinary(c *C) {
 	tk.MustExec("alter table t change column a a varbinary(248) collate binary default 't'")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` varbinary(248) DEFAULT 't'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("4047"))
+}
+
+func (s *testColumnTypeChangeSuite) TestChangePrefixedIndexColumnToNonPrefixOne(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a text, unique index idx(a(2)));")
+	tk.MustExec("alter table t modify column a int;")
+	showCreateTable := tk.MustQuery("show create table t").Rows()[0][1].(string)
+	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`)"), IsTrue,
+		Commentf("%s", showCreateTable))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a char(255), unique index idx(a(2)));")
+	tk.MustExec("alter table t modify column a float;")
+	showCreateTable = tk.MustQuery("show create table t").Rows()[0][1].(string)
+	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`)"), IsTrue,
+		Commentf("%s", showCreateTable))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a char(255), b text, unique index idx(a(2), b(10)));")
+	tk.MustExec("alter table t modify column b int;")
+	showCreateTable = tk.MustQuery("show create table t").Rows()[0][1].(string)
+	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`(2),`b`)"), IsTrue,
+		Commentf("%s", showCreateTable))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a char(250), unique key idx(a(10)));")
+	tk.MustExec("alter table t modify a char(9);")
+	showCreateTable = tk.MustQuery("show create table t").Rows()[0][1].(string)
+	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`)"), IsTrue,
+		Commentf("%s", showCreateTable))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a varchar(700), key(a(700)));")
+	tk.MustGetErrCode("alter table t change column a a tinytext;", mysql.ErrBlobKeyWithoutLength)
 }
