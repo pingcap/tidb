@@ -761,7 +761,6 @@ func (e *HashJoinExec) buildHashTableForList(ctx context.Context, buildSideResul
 		done     = make(chan bool)
 		doneOnce sync.Once
 	)
-
 	for i := uint(0); i < e.concurrency; i++ {
 		wg.Add(1)
 		go util.WithRecovery(func() {
@@ -771,15 +770,17 @@ func (e *HashJoinExec) buildHashTableForList(ctx context.Context, buildSideResul
 				panic(err)
 			}
 		}, func(r interface{}) {
-			doneOnce.Do(func() {
-				switch r := r.(type) {
-				case error:
-					err = r.(error)
-				default:
-					err = fmt.Errorf("%v", r)
-				}
-				close(done)
-			})
+			if r != nil {
+				doneOnce.Do(func() {
+					switch r := r.(type) {
+					case error:
+						err = r.(error)
+					default:
+						err = fmt.Errorf("%v", r)
+					}
+					close(done)
+				})
+			}
 			wg.Done()
 		})
 	}
