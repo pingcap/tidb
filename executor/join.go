@@ -758,7 +758,7 @@ func (e *HashJoinExec) buildHashTableForList(ctx context.Context, buildSideResul
 
 	var (
 		wg       sync.WaitGroup
-		done     chan bool
+		done     = make(chan bool)
 		doneOnce sync.Once
 	)
 
