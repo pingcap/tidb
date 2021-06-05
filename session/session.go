@@ -1266,9 +1266,6 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...inter
 	}
 
 	rs, err = s.ExecuteStmt(ctx, stmtNode)
-	if err != nil {
-		s.sessionVars.StmtCtx.AppendError(err)
-	}
 	if rs == nil {
 		return nil, err
 	}
@@ -1294,9 +1291,6 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 	}
 
 	rs, err := s.ExecuteStmt(ctx, stmtNodes[0])
-	if err != nil {
-		s.sessionVars.StmtCtx.AppendError(err)
-	}
 	if rs == nil {
 		return nil, err
 	}
@@ -1467,9 +1461,6 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, tikvutil.ExecDetailsKey, &tikvutil.ExecDetails{})
 	rs, err := se.ExecuteStmt(ctx, stmtNode)
-	if err != nil {
-		se.sessionVars.StmtCtx.AppendError(err)
-	}
 	if rs == nil {
 		return nil, nil, err
 	}
@@ -1547,6 +1538,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	logStmt(stmt, s)
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
+		s.sessionVars.StmtCtx.AppendError(err)
 		if !kv.ErrKeyExists.Equal(err) {
 			logutil.Logger(ctx).Warn("run statement failed",
 				zap.Int64("schemaVersion", s.GetInfoSchema().SchemaMetaVersion()),
@@ -1651,9 +1643,6 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		return nil, err
 	}
 	rs, err = s.Exec(ctx)
-	if err != nil {
-		se.sessionVars.StmtCtx.AppendError(err)
-	}
 	se.updateTelemetryMetric(s.(*executor.ExecStmt))
 	sessVars.TxnCtx.StatementCount++
 	if rs != nil {
