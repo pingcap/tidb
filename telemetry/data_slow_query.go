@@ -53,11 +53,11 @@ func (bucketMap SlowQueryBucket) String() string {
 const slowQueryBucketNum = 29 //prometheus.ExponentialBuckets(0.001, 2, 28), and 1 more +Inf
 
 var (
-	// LastSQBInfo records last statistic information of slow query buckets
-	LastSQBInfo SlowQueryBucket
-	// CurrentSQBInfo records current statitic information of slow query buckets
-	CurrentSQBInfo SlowQueryBucket
-	slowQueryLock  = sync.RWMutex{}
+	// lastSQBInfo records last statistic information of slow query buckets
+	lastSQBInfo SlowQueryBucket
+	// currentSQBInfo records current statitic information of slow query buckets
+	currentSQBInfo SlowQueryBucket
+	slowQueryLock  sync.Mutex
 )
 
 func getSlowQueryStats(ctx sessionctx.Context) (*slowQueryStats, error) {
@@ -72,7 +72,7 @@ func getSlowQueryStats(ctx sessionctx.Context) (*slowQueryStats, error) {
 
 // getSlowQueryBucket genenrates the delta SlowQueryBucket to report
 func getSlowQueryBucket(ctx sessionctx.Context) (*SlowQueryBucket, error) {
-	// update CurrentSQBInfo first, then gen delta
+	// update currentSQBInfo first, then gen delta
 	if err := updateCurrentSQB(ctx); err != nil {
 		return nil, err
 	}
@@ -99,7 +99,9 @@ func updateCurrentSQB(ctx sessionctx.Context) (err error) {
 		logutil.BgLogger().Info("querySlowQueryMetric got error")
 		return err
 	}
-
+	if value == nil {
+		return
+	}
 	if value.Type() != pmodel.ValVector {
 		return errors.New("Prom vector expected, got " + value.Type().String())
 	}
@@ -108,7 +110,7 @@ func updateCurrentSQB(ctx sessionctx.Context) (err error) {
 	for _, sample := range promVec {
 		metric := sample.Metric
 		bucketName := metric["le"] //hardcode bucket upper bound
-		CurrentSQBInfo[string(bucketName)] = int(sample.Value)
+		currentSQBInfo[string(bucketName)] = int(sample.Value)
 	}
 	slowQueryLock.Unlock()
 	return nil
@@ -118,37 +120,37 @@ func updateCurrentSQB(ctx sessionctx.Context) (err error) {
 func calculateDeltaSQB() *SlowQueryBucket {
 	deltaMap := make(SlowQueryBucket)
 	slowQueryLock.Lock()
-	for key, value := range CurrentSQBInfo {
-		deltaMap[key] = value - (LastSQBInfo)[key]
+	for key, value := range currentSQBInfo {
+		deltaMap[key] = value - (lastSQBInfo)[key]
 	}
 	slowQueryLock.Unlock()
 	return &deltaMap
 }
 
-// initSlowQueryStats Init LastSQBInfo, follow the definition of metrics/server.go
+// init Init lastSQBInfo, follow the definition of metrics/server.go
 // Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
-func initSlowQueryStats() {
-	LastSQBInfo = make(SlowQueryBucket)
-	CurrentSQBInfo = make(SlowQueryBucket)
+func init() {
+	lastSQBInfo = make(SlowQueryBucket)
+	currentSQBInfo = make(SlowQueryBucket)
 
 	bucketBase := 0.001 // From 0.001 to 134217.728, total 28 float number; the 29th is +Inf
 	for i := 0; i < slowQueryBucketNum-1; i++ {
-		LastSQBInfo[strconv.FormatFloat(bucketBase, 'f', 3, 32)] = 0
-		CurrentSQBInfo[strconv.FormatFloat(bucketBase, 'f', 3, 32)] = 0
+		lastSQBInfo[strconv.FormatFloat(bucketBase, 'f', 3, 32)] = 0
+		currentSQBInfo[strconv.FormatFloat(bucketBase, 'f', 3, 32)] = 0
 		bucketBase += bucketBase
 	}
-	LastSQBInfo["+Inf"] = 0
-	CurrentSQBInfo["+Inf"] = 0
+	lastSQBInfo["+Inf"] = 0
+	currentSQBInfo["+Inf"] = 0
 
-	logutil.BgLogger().Info("Telemetry slow query stats initialized", zap.String("CurrentSQBInfo", CurrentSQBInfo.String()), zap.String("LastSQBInfo", LastSQBInfo.String()))
+	logutil.BgLogger().Info("Telemetry slow query stats initialized", zap.String("currentSQBInfo", currentSQBInfo.String()), zap.String("lastSQBInfo", lastSQBInfo.String()))
 }
 
-// postReportSlowQueryStats copy CurrentSQBInfo to LastSQBInfo to be ready for next report
+// postReportSlowQueryStats copy currentSQBInfo to lastSQBInfo to be ready for next report
 // this function is designed for being compatible with preview telemetry
 func postReportSlowQueryStats() {
 	slowQueryLock.Lock()
-	LastSQBInfo = CurrentSQBInfo
-	CurrentSQBInfo = make(SlowQueryBucket)
+	lastSQBInfo = currentSQBInfo
+	currentSQBInfo = make(SlowQueryBucket)
 	slowQueryLock.Unlock()
 	logutil.BgLogger().Info("Telemetry slow query stats, postReportSlowQueryStats finished")
 }
