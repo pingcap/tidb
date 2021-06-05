@@ -190,9 +190,9 @@ func RotateSubWindow() {
 		},
 	}
 
-	err := readSQLMetric(time.Now(), &thisSubWindow.SQLUsage)
-	if err != nil {
+	if err := readSQLMetric(time.Now(), &thisSubWindow.SQLUsage); err != nil {
 		logutil.BgLogger().Error("Error exists when calling prometheus", zap.Error(err))
+
 	}
 	thisSubWindow.SQLUsage.SQLTotal = getSQLSum(&thisSubWindow.SQLUsage.SQLType)
 
@@ -207,11 +207,9 @@ func RotateSubWindow() {
 
 func calDeltaSQLTypeMap(cur sqlType, last sqlType) sqlType {
 	deltaMap := make(sqlType)
-	// slowQueryLock.Lock()
 	for key, value := range cur {
 		deltaMap[key] = value - (last)[key]
 	}
-	// slowQueryLock.Unlock()
 	return deltaMap
 }
 
@@ -246,17 +244,6 @@ func getWindowData() []*windowData {
 			thisWindow.CoprCacheUsage.GTE100 += rotatedSubWindows[i].CoprCacheUsage.GTE100
 			thisWindow.SQLUsage.SQLTotal = rotatedSubWindows[i].SQLUsage.SQLTotal - startWindow.SQLUsage.SQLTotal
 			thisWindow.SQLUsage.SQLType = calDeltaSQLTypeMap(rotatedSubWindows[i].SQLUsage.SQLType, startWindow.SQLUsage.SQLType)
-			// thisWindow.SQLUsage.SQLType.Use = rotatedSubWindows[i].SQLUsage.SQLType.Use - startWindow.SQLUsage.SQLType.Use
-			// thisWindow.SQLUsage.SQLType.Show = rotatedSubWindows[i].SQLUsage.SQLType.Show - startWindow.SQLUsage.SQLType.Show
-			// thisWindow.SQLUsage.SQLType.Begin = rotatedSubWindows[i].SQLUsage.SQLType.Begin - startWindow.SQLUsage.SQLType.Begin
-			// thisWindow.SQLUsage.SQLType.Commit = rotatedSubWindows[i].SQLUsage.SQLType.Commit - startWindow.SQLUsage.SQLType.Commit
-			// thisWindow.SQLUsage.SQLType.Rollback = rotatedSubWindows[i].SQLUsage.SQLType.Rollback - startWindow.SQLUsage.SQLType.Rollback
-			// thisWindow.SQLUsage.SQLType.Insert = rotatedSubWindows[i].SQLUsage.SQLType.Insert - startWindow.SQLUsage.SQLType.Insert
-			// thisWindow.SQLUsage.SQLType.Replace = rotatedSubWindows[i].SQLUsage.SQLType.Replace - startWindow.SQLUsage.SQLType.Replace
-			// thisWindow.SQLUsage.SQLType.Delete = rotatedSubWindows[i].SQLUsage.SQLType.Delete - startWindow.SQLUsage.SQLType.Delete
-			// thisWindow.SQLUsage.SQLType.Update = rotatedSubWindows[i].SQLUsage.SQLType.Update - startWindow.SQLUsage.SQLType.Update
-			// thisWindow.SQLUsage.SQLType.Select = rotatedSubWindows[i].SQLUsage.SQLType.Select - startWindow.SQLUsage.SQLType.Select
-			// thisWindow.SQLUsage.SQLType.Other = rotatedSubWindows[i].SQLUsage.SQLType.Other - startWindow.SQLUsage.SQLType.Other
 			aggregatedSubWindows++
 			i++
 		}
