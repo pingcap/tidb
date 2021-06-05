@@ -855,14 +855,18 @@ func testFallbackWork(c *C, tk *testkit.TestKit, cc *clientConn, sql string) {
 // For issue https://github.com/pingcap/tidb/issues/25069
 func (ts *ConnTestSuite) TestShowErrors(c *C) {
 	cc := &clientConn{}
+	ctx := context.Background()
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	cc.ctx = &TiDBContext{Session: tk.Se, stmts: make(map[int]*TiDBStatement)}
 
-	err := cc.handleQuery(context.Background(), "create database if not exists test;")
+	err := cc.handleQuery(ctx, "create database if not exists test;")
 	c.Assert(err, IsNil)
-	err = cc.handleQuery(context.Background(), "use test;")
+	err = cc.handleQuery(ctx, "use test;")
 	c.Assert(err, IsNil)
-	err = cc.handleQuery(context.Background(), "drop table idontexist;")
+
+	stmts, err := cc.ctx.Parse(ctx, "drop table idontexist")
+	c.Assert(err, IsNil)
+	_, err = cc.ctx.ExecuteStmt(ctx, stmts[0])
 	c.Assert(err, Equals, infoschema.ErrTableDropExists)
 	tk.MustQuery("show errors").Check(testkit.Rows("Error 1051 Unknown table 'test.idontexist'"))
 }

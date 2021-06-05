@@ -172,6 +172,7 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 				rs0 = rs
 			}
 			if err != nil {
+				tk.Se.GetSessionVars().StmtCtx.AppendError(err)
 				return nil, errors.Trace(err)
 			}
 		}
