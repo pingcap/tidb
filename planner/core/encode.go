@@ -60,6 +60,7 @@ func EncodePlan(p Plan) string {
 func (pn *planEncoder) encodePlanTree(p Plan) string {
 	pn.encodedPlans = make(map[int]bool)
 	pn.buf.Reset()
+	pn.ctes = pn.ctes[:0]
 	pn.encodePlan(p, true, kv.TiKV, 0)
 	pn.encodeCTEPlan()
 	return plancodec.Compress(pn.buf.Bytes())
