@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -849,4 +850,17 @@ func testFallbackWork(c *C, tk *testkit.TestKit, cc *clientConn, sql string) {
 
 	c.Assert(cc.handleQuery(ctx, sql), IsNil)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
+}
+
+// For issue https://github.com/pingcap/tidb/issues/25069
+func (ts *ConnTestSuite) TestShowErrors(c *C) {
+	cc := &clientConn{}
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	cc.ctx = &TiDBContext{Session: tk.Se, stmts: make(map[int]*TiDBStatement)}
+
+	err := cc.handleQuery(context.Background(), "use test;")
+	c.Assert(err, IsNil)
+	err = cc.handleQuery(context.Background(), "drop table idontexist;")
+	c.Assert(err, Equals, infoschema.ErrTableDropExists)
+	tk.MustQuery("show errors").Check(testkit.Rows("Error 1051 Unknown table 'test.idontexist'"))
 }
