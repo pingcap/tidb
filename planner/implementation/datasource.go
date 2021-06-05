@@ -77,10 +77,13 @@ func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 	sessVars := reader.SCtx().GetSessionVars()
 	var (
 		tableInfo *model.TableInfo
-		ts        = reader.GetTableScan()
+		tablePlan = reader.GetTablePlan()
 	)
-	if ts != nil {
-		tableInfo = ts.Table
+	if tablePlan != nil {
+		ts := reader.GetTableScan()
+		if ts != nil {
+			tableInfo = ts.Table
+		}
 	}
 	networkCost := outCount * sessVars.GetNetworkFactor(tableInfo) * width
 	// copTasks are run in parallel, to make the estimated cost closer to execution time, we amortize
