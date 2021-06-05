@@ -57,6 +57,7 @@ func (s *testSuite1) TestAnalyzePartition(c *C) {
 	testkit.WithPruneMode(tk, variable.Static, func() {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
+		tk.MustExec("set @@tidb_analyze_version=2")
 		createTable := `CREATE TABLE t (a int, b int, c varchar(10), primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (6),
@@ -84,10 +85,10 @@ PARTITION BY RANGE ( a ) (
 			c.Assert(len(statsTbl.Columns), Equals, 3)
 			c.Assert(len(statsTbl.Indices), Equals, 1)
 			for _, col := range statsTbl.Columns {
-				c.Assert(col.Len(), Greater, 0)
+				c.Assert(col.Len()+col.Num(), Greater, 0)
 			}
 			for _, idx := range statsTbl.Indices {
-				c.Assert(idx.Len(), Greater, 0)
+				c.Assert(idx.Len()+idx.Num(), Greater, 0)
 			}
 		}
 
@@ -176,6 +177,7 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 	tk.MustExec("insert into t values (19), (19), (19)")
 
 	tk.MustExec("set @@tidb_enable_fast_analyze = 1")
+	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("analyze table t with 30 samples")
 	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -259,7 +261,7 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 	tk.MustExec("create table t(a int, b int, index idx(a, b))")
 	tk.MustExec("insert into t values(1, 1), (1, 1), (1, 2), (1, 2)")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
-	tk.MustExec("analyze table t with 10 cmsketch width")
+	tk.MustExec("analyze table t")
 
 	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 	table, err := is.TableByName(model.NewCIStr("test_index_extract_topn"), model.NewCIStr("t"))
@@ -268,7 +270,6 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
 
 	// Construct TopN, should be (1, 1) -> 2 and (1, 2) -> 2
-	cms := statistics.NewCMSketch(5, 10)
 	topn := statistics.NewTopN(2)
 	{
 		key1, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1), types.NewIntDatum(1))
@@ -277,19 +278,11 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 		key2, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1), types.NewIntDatum(2))
 		c.Assert(err, IsNil)
 		topn.AppendTopN(key2, 2)
-		prefixKey, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
-		c.Assert(err, IsNil)
-		cms.InsertBytes(prefixKey)
-		cms.InsertBytes(prefixKey)
-		cms.InsertBytes(prefixKey)
-		cms.InsertBytes(prefixKey)
-		cms.CalcDefaultValForAnalyze(2)
 	}
 	for _, idx := range tbl.Indices {
 		ok, err := checkHistogram(tk.Se.GetSessionVars().StmtCtx, &idx.Histogram)
 		c.Assert(err, IsNil)
 		c.Assert(ok, IsTrue)
-		c.Assert(idx.CMSketch.Equal(cms), IsTrue)
 		c.Assert(idx.TopN.Equal(topn), IsTrue)
 	}
 }
@@ -422,6 +415,7 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	tk.MustExec("create table t(a int primary key, b int, c char(10), index index_b(b))")
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
 	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
+	tk.MustExec("set @@tidb_analyze_version = 1")
 	// Should not panic.
 	tk.MustExec("analyze table t")
 	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -537,6 +531,7 @@ func (s *testSuite1) TestIssue15993(c *C) {
 	tk.MustExec("drop table if exists t0")
 	tk.MustExec("CREATE TABLE t0(c0 INT PRIMARY KEY);")
 	tk.MustExec("set @@tidb_enable_fast_analyze=1;")
+	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("ANALYZE TABLE t0 INDEX PRIMARY;")
 }
 
@@ -547,6 +542,7 @@ func (s *testSuite1) TestIssue15751(c *C) {
 	tk.MustExec("CREATE TABLE t0(c0 INT, c1 INT, PRIMARY KEY(c0, c1))")
 	tk.MustExec("INSERT INTO t0 VALUES (0, 0)")
 	tk.MustExec("set @@tidb_enable_fast_analyze=1")
+	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("ANALYZE TABLE t0")
 }
 
@@ -558,6 +554,7 @@ func (s *testSuite1) TestIssue15752(c *C) {
 	tk.MustExec("INSERT INTO t0 VALUES (0)")
 	tk.MustExec("CREATE INDEX i0 ON t0(c0)")
 	tk.MustExec("set @@tidb_enable_fast_analyze=1")
+	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("ANALYZE TABLE t0 INDEX i0")
 }
 
@@ -567,13 +564,18 @@ func (s *testSuite1) TestAnalyzeIndex(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (id int, v int, primary key(id), index k(v))")
 	tk.MustExec("insert into t1(id, v) values(1, 2), (2, 2), (3, 2), (4, 2), (5, 1), (6, 3), (7, 4)")
+	tk.MustExec("set @@tidb_analyze_version=1")
 	tk.MustExec("analyze table t1 index k")
 	c.Assert(len(tk.MustQuery("show stats_buckets where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), Greater, 0)
+	tk.MustExec("set @@tidb_analyze_version=default")
+	tk.MustExec("analyze table t1")
+	c.Assert(len(tk.MustQuery("show stats_topn where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), Greater, 0)
 
 	func() {
 		defer tk.MustExec("set @@session.tidb_enable_fast_analyze=0")
 		tk.MustExec("drop stats t1")
 		tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
+		tk.MustExec("set @@tidb_analyze_version=1")
 		tk.MustExec("analyze table t1 index k")
 		c.Assert(len(tk.MustQuery("show stats_buckets where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), Greater, 1)
 	}()
@@ -582,6 +584,7 @@ func (s *testSuite1) TestAnalyzeIndex(c *C) {
 func (s *testSuite1) TestAnalyzeIncremental(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.Se.GetSessionVars().EnableStreaming = false
 	s.testAnalyzeIncremental(tk, c)
 }
@@ -728,6 +731,7 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 	c.Assert(dom.StatsHandle().Update(dom.InfoSchema()), IsNil)
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
 	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
+	tk.MustExec("set @@tidb_analyze_version = 1")
 	for i := 0; i < 30; i++ {
 		tk.MustExec(fmt.Sprintf("insert into retry_row_count values (%d)", i))
 	}
@@ -745,6 +749,7 @@ func (s *testSuite10) TestFailedAnalyzeRequest(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
+	tk.MustExec("set @@tidb_analyze_version = 1")
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/buildStatsFromResult", `return(true)`), IsNil)
 	_, err := tk.Exec("analyze table t")
 	c.Assert(err.Error(), Equals, "mock buildStatsFromResult error")
@@ -782,7 +787,7 @@ func (s *testSuite1) TestExtractTopN(c *C) {
 	idxItem := idxStats.TopN.TopN[0]
 	c.Assert(idxItem.Count, Equals, uint64(11))
 	// The columns are: DBName, table name, column name, is index, value, count.
-	tk.MustQuery("show stats_topn").Sort().Check(testkit.Rows("test_extract_topn test_extract_topn  b 0 0 11",
+	tk.MustQuery("show stats_topn where column_name in ('b', 'index_b')").Sort().Check(testkit.Rows("test_extract_topn test_extract_topn  b 0 0 11",
 		"test_extract_topn test_extract_topn  b 0 1 1",
 		"test_extract_topn test_extract_topn  b 0 2 1",
 		"test_extract_topn test_extract_topn  b 0 3 1",
@@ -818,6 +823,7 @@ func (s *testSuite1) TestHashInTopN(c *C) {
 	for i := 0; i < 3; i++ {
 		tk.MustExec("insert into t select * from t")
 	}
+	tk.MustExec("set @@tidb_analyze_version = 1")
 	// get stats of normal analyze
 	tk.MustExec("analyze table t")
 	is := s.dom.InfoSchema()
@@ -853,6 +859,8 @@ func (s *testSuite1) TestNormalAnalyzeOnCommonHandle(c *C) {
 	tk.MustExec("CREATE TABLE t3 (a int, b int, c int, primary key (a, b), key(c))")
 	tk.MustExec("insert into t3 values(1,1,1), (2,2,2), (3,3,3)")
 
+	// Version2 is tested in TestStatsVer2.
+	tk.MustExec("set@@tidb_analyze_version=1")
 	tk.MustExec("analyze table t1, t2, t3")
 
 	tk.MustQuery(`show stats_buckets where table_name in ("t1", "t2", "t3")`).Sort().Check(testkit.Rows(
@@ -931,6 +939,7 @@ func (s *testSerialSuite2) TestIssue20874(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a char(10) collate utf8mb4_unicode_ci not null, b char(20) collate utf8mb4_general_ci not null, key idxa(a), key idxb(b))")
 	tk.MustExec("insert into t values ('#', 'C'), ('$', 'c'), ('a', 'a')")
+	tk.MustExec("set @@tidb_analyze_version=1")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
 		"test t  a 0 0 1 1 \x02\xd2 \x02\xd2 0",
@@ -955,11 +964,20 @@ func (s *testSuite1) TestAnalyzeClusteredIndexPrimary(c *C) {
 	tk.MustExec("create table t1(a varchar(20), primary key(a))")
 	tk.MustExec("insert into t0 values('1111')")
 	tk.MustExec("insert into t1 values('1111')")
+	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	tk.MustExec("analyze table t0 index primary")
 	tk.MustExec("analyze table t1 index primary")
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows(
 		"test t0  PRIMARY 1 0 1 1 1111 1111 0",
 		"test t1  PRIMARY 1 0 1 1 1111 1111 0"))
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("analyze table t0")
+	tk.MustExec("analyze table t1")
+	tk.MustQuery("show stats_topn").Sort().Check(testkit.Rows(""+
+		"test t0  PRIMARY 1 1111 1",
+		"test t0  a 0 1111 1",
+		"test t1  PRIMARY 1 1111 1",
+		"test t1  a 0 1111 1"))
 }
 
 func (s *testSuite1) TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColumn(c *C) {
@@ -968,7 +986,7 @@ func (s *testSuite1) TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColu
 	tk.MustExec("drop table if exists sampling_index_virtual_col")
 	tk.MustExec("create table sampling_index_virtual_col(a int, b int as (a+1), index idx(b))")
 	tk.MustExec("insert into sampling_index_virtual_col (a) values (1), (2), (null), (3), (4), (null), (5), (5), (5), (5)")
-	tk.MustExec("set @@session.tidb_analyze_version = 3")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("analyze table sampling_index_virtual_col with 1 topn")
 	tk.MustQuery("show stats_buckets where table_name = 'sampling_index_virtual_col' and column_name = 'idx'").Check(testkit.Rows(
 		"test sampling_index_virtual_col  idx 1 0 1 1 2 2 0",
@@ -994,7 +1012,7 @@ func (s *testSuite1) TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColu
 func (s *testSuite2) TestAnalyzeSamplingWorkPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_analyze_version = 3")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12)")
 	tk.MustExec("split table t between (-9223372036854775808) and (9223372036854775807) regions 12")
