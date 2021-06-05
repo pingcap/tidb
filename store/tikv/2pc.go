@@ -831,7 +831,7 @@ func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, tt
 			continue
 		}
 		if resp.Resp == nil {
-			return 0, errors.Trace(err), false
+			return 0, errors.Trace(tikverr.ErrBodyMissing), false
 		}
 		cmdResp := resp.Resp.(*pb.TxnHeartBeatResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
