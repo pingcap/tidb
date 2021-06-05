@@ -858,7 +858,9 @@ func (ts *ConnTestSuite) TestShowErrors(c *C) {
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	cc.ctx = &TiDBContext{Session: tk.Se, stmts: make(map[int]*TiDBStatement)}
 
-	err := cc.handleQuery(context.Background(), "use test;")
+	err := cc.handleQuery(context.Background(), "create database if not exists test;")
+	c.Assert(err, IsNil)
+	err = cc.handleQuery(context.Background(), "use test;")
 	c.Assert(err, IsNil)
 	err = cc.handleQuery(context.Background(), "drop table idontexist;")
 	c.Assert(err, Equals, infoschema.ErrTableDropExists)
