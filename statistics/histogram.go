@@ -295,13 +295,10 @@ const (
 	Version1 = 1
 	// Version2 maintains the statistics in the following way.
 	// Column stats: CM Sketch is not used. TopN and Histogram are built from samples. TopN + Histogram represent all data.
-	// Index stats: CM SKetch is not used. TopN and Histograms are built in TiKV using full data. NDV is also collected for each bucket in histogram.
+	// Index stats: CM SKetch is not used. TopN and Histograms are built from samples.
 	//    Then values covered by TopN is removed from Histogram. TopN + Histogram represent all data.
+	// Both Column and Index's NDVs are collected by full scan.
 	Version2 = 2
-	// Version3 is used for testing now. Once it finished, we will fallback the Version3 to Version2.
-	// The difference between Version2 and Version3 is that we construct the index's statistics based on sampling also.
-	// The data structure between them are then same.
-	Version3 = 3
 )
 
 // AnalyzeFlag is set when the statistics comes from analyze and has not been modified by feedback.
