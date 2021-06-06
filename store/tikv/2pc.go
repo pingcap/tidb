@@ -777,7 +777,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			logutil.Logger(bo.GetCtx()).Info("send TxnHeartBeat",
 				zap.Uint64("startTS", c.startTS), zap.Uint64("newTTL", newTTL))
 			startTime := time.Now()
-			_, err, stopHeartBeat := sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
+			_, stopHeartBeat, err := sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
 			if err != nil {
 				keepFail++
 				metrics.TxnHeartBeatHistogramError.Observe(time.Since(startTime).Seconds())
@@ -799,7 +799,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 	}
 }
 
-func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, ttl uint64) (newTTL uint64, err error, stopHeartBeat bool) {
+func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, ttl uint64) (newTTL uint64, stopHeartBeat bool, err error) {
 	req := tikvrpc.NewRequest(tikvrpc.CmdTxnHeartBeat, &pb.TxnHeartBeatRequest{
 		PrimaryLock:   primary,
 		StartVersion:  startTS,
@@ -808,15 +808,15 @@ func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, tt
 	for {
 		loc, err := store.GetRegionCache().LocateKey(bo, primary)
 		if err != nil {
-			return 0, errors.Trace(err), false
+			return 0, false, errors.Trace(err)
 		}
 		resp, err := store.SendReq(bo, req, loc.Region, client.ReadTimeoutShort)
 		if err != nil {
-			return 0, errors.Trace(err), false
+			return 0, false, errors.Trace(err)
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return 0, errors.Trace(err), false
+			return 0, false, errors.Trace(err)
 		}
 		if regionErr != nil {
 			// For other region error and the fake region error, backoff because
@@ -825,19 +825,19 @@ func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, tt
 			if regionErr.GetEpochNotMatch() == nil || isFakeRegionError(regionErr) {
 				err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 				if err != nil {
-					return 0, errors.Trace(err), false
+					return 0, false, errors.Trace(err)
 				}
 			}
 			continue
 		}
 		if resp.Resp == nil {
-			return 0, errors.Trace(tikverr.ErrBodyMissing), false
+			return 0, false, errors.Trace(tikverr.ErrBodyMissing)
 		}
 		cmdResp := resp.Resp.(*pb.TxnHeartBeatResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
-			return 0, errors.Errorf("txn %d heartbeat fail, primary key = %v, err = %s", startTS, hex.EncodeToString(primary), extractKeyErr(keyErr)), true
+			return 0, true, errors.Errorf("txn %d heartbeat fail, primary key = %v, err = %s", startTS, hex.EncodeToString(primary), extractKeyErr(keyErr))
 		}
-		return cmdResp.GetLockTtl(), nil, false
+		return cmdResp.GetLockTtl(), false, nil
 	}
 }
 
