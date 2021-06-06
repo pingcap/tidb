@@ -1605,9 +1605,6 @@ func (s *testColumnTypeChangeSuite) TestUpdateDataAfterChangeTimestampToDate(c *
 	tk.MustExec("use test")
 	// Enable column change variable.
 	tk.Se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = false
-	}()
 	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t (col timestamp default '1971-06-09' not null, col1 int default 1, unique key(col1));")
 	tk.MustExec("alter table t modify column col date not null;")
@@ -1694,9 +1691,6 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValue(c *C) {
 	tk.MustExec("use test")
 	// Enable column change variable.
 	tk.Se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = false
-	}()
 
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test")
@@ -1774,9 +1768,6 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 	tk.MustExec("use test")
 	// Enable column change variable.
 	tk.Se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = false
-	}()
 
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test")
