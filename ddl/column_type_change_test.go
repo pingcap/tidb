@@ -16,6 +16,9 @@ package ddl_test
 import (
 	"context"
 	"errors"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -42,10 +45,15 @@ import (
 )
 
 var _ = SerialSuites(&testColumnTypeChangeSuite{})
+var _ = SerialSuites(&testCTCSerialSuiteWrapper{&testColumnTypeChangeSuite{}})
 
 type testColumnTypeChangeSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
+}
+
+type testCTCSerialSuiteWrapper struct {
+	*testColumnTypeChangeSuite
 }
 
 func (s *testColumnTypeChangeSuite) SetUpSuite(c *C) {
@@ -817,7 +825,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	// MySQL will get "ERROR 1406 (22001): Data truncation: Data too long for column 'f64' at row 1".
 	tk.MustExec("alter table t modify f64 char(20)")
 	tk.MustExec("alter table t modify b char(20)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 21"))
 
 	// varchar
 	reset(tk)
@@ -844,7 +852,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	tk.MustGetErrCode("alter table t modify f32 binary(10)", mysql.ErrDataTooLong)
 	tk.MustGetErrCode("alter table t modify f64 binary(10)", mysql.ErrDataTooLong)
 	tk.MustExec("alter table t modify b binary(10)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33\x00\x00\x00\x00 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15\x00\x00\x00\x00\x00\x00\x00\x00\x00"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33\x00\x00\x00\x00 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 21\x00\x00\x00\x00\x00\x00\x00\x00"))
 
 	// varbinary
 	reset(tk)
@@ -858,7 +866,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	// MySQL will get "ERROR 1406 (22001): Data truncation: Data too long for column 'f64' at row 1".
 	tk.MustExec("alter table t modify f64 varbinary(30)")
 	tk.MustExec("alter table t modify b varbinary(30)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 21"))
 
 	// blob
 	reset(tk)
@@ -915,15 +923,15 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	reset(tk)
 	tk.MustExec("insert into t values (200805.11, 307.333, 20200805.11111111, 20200805111307.11111111, 200805111307.11111111, 20200805111307.11111111, b'10101')")
 	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect datetime value: '200805.1100000' for column 'd' at row 1".
-	tk.MustExec("alter table t modify d datetime")
+	tk.MustGetErrCode("alter table t modify d datetime", mysql.ErrUnsupportedDDLOperation)
 	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect datetime value: '307.33' for column 'n' at row 1".
-	tk.MustExec("alter table t modify n datetime")
+	tk.MustGetErrCode("alter table t modify n datetime", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify r datetime", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify db datetime", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify f32 datetime", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify f64 datetime", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify b datetime", mysql.ErrUnsupportedDDLOperation)
-	tk.MustQuery("select * from t").Check(testkit.Rows("2020-08-05 00:00:00 2000-03-07 00:00:00 20200805.11111111 20200805111307.11 200805100000 20200805111307.11 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("200805.1100000 307.33 20200805.11111111 20200805111307.11 200805100000 20200805111307.11 \x15"))
 	// time
 	reset(tk)
 	tk.MustExec("insert into t values (200805.11, 307.333, 20200805.11111111, 20200805111307.11111111, 200805111307.11111111, 20200805111307.11111111, b'10101')")
@@ -939,28 +947,28 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	reset(tk)
 	tk.MustExec("insert into t values (200805.11, 307.333, 20200805.11111111, 20200805111307.11111111, 200805111307.11111111, 20200805111307.11111111, b'10101')")
 	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect date value: '200805.1100000' for column 'd' at row 1".
-	tk.MustExec("alter table t modify d date")
+	tk.MustGetErrCode("alter table t modify d date", mysql.ErrUnsupportedDDLOperation)
 	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect date value: '307.33' for column 'n' at row 1".
-	tk.MustExec("alter table t modify n date")
+	tk.MustGetErrCode("alter table t modify n date", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify r date", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify db date", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify f32 date", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify f64 date", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify b date", mysql.ErrUnsupportedDDLOperation)
-	tk.MustQuery("select * from t").Check(testkit.Rows("2020-08-05 2000-03-07 20200805.11111111 20200805111307.11 200805100000 20200805111307.11 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("200805.1100000 307.33 20200805.11111111 20200805111307.11 200805100000 20200805111307.11 \x15"))
 	// timestamp
 	reset(tk)
 	tk.MustExec("insert into t values (200805.11, 307.333, 20200805.11111111, 20200805111307.11111111, 200805111307.11111111, 20200805111307.11111111, b'10101')")
 	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect datetime value: '200805.1100000' for column 'd' at row 1".
-	tk.MustExec("alter table t modify d timestamp")
+	tk.MustGetErrCode("alter table t modify d timestamp", mysql.ErrUnsupportedDDLOperation)
 	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect datetime value: '307.33' for column 'n' at row 1".
-	tk.MustExec("alter table t modify n timestamp")
+	tk.MustGetErrCode("alter table t modify n timestamp", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify r timestamp", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify db timestamp", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify f32 timestamp", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify f64 timestamp", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify b timestamp", mysql.ErrUnsupportedDDLOperation)
-	tk.MustQuery("select * from t").Check(testkit.Rows("2020-08-05 00:00:00 2000-03-07 00:00:00 20200805.11111111 20200805111307.11 200805100000 20200805111307.11 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("200805.1100000 307.33 20200805.11111111 20200805111307.11 200805100000 20200805111307.11 \x15"))
 	// year
 	reset(tk)
 	tk.MustExec("insert into t values (200805.11, 307.333, 2.55555, 98.1111111, 2154.00001, 20200805111307.11111111, b'10101')")
@@ -1884,6 +1892,62 @@ func (s *testColumnTypeChangeSuite) TestChangeIntToBitWillPanicInBackfillIndexes
 	tk.MustQuery("select * from t").Check(testkit.Rows("\x13 1 1.00", "\x11 2 2.00"))
 }
 
+// Close issue #24584
+func (s *testColumnTypeChangeSuite) TestCancelCTCInReorgStateWillCauseGoroutineLeak(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	failpoint.Enable("github.com/pingcap/tidb/ddl/mockInfiniteReorgLogic", `return(true)`)
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/ddl/mockInfiniteReorgLogic")
+	}()
+
+	// set ddl hook
+	originalHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+
+	tk.MustExec("drop table if exists ctc_goroutine_leak")
+	tk.MustExec("create table ctc_goroutine_leak (a int)")
+	tk.MustExec("insert into ctc_goroutine_leak values(1),(2),(3)")
+	tbl := testGetTableByName(c, tk.Se, "test", "ctc_goroutine_leak")
+
+	hook := &ddl.TestDDLCallback{}
+	var jobID int64
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if jobID != 0 {
+			return
+		}
+		if tbl.Meta().ID != job.TableID {
+			return
+		}
+		if job.Query == "alter table ctc_goroutine_leak modify column a tinyint" {
+			jobID = job.ID
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	// Enable column change variable.
+	tk1.Se.GetSessionVars().EnableChangeColumnType = true
+	var (
+		wg       = sync.WaitGroup{}
+		alterErr error
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// This ddl will be hang over in the failpoint loop, waiting for outside cancel.
+		_, alterErr = tk1.Exec("alter table ctc_goroutine_leak modify column a tinyint")
+	}()
+	<-ddl.TestReorgGoroutineRunning
+	tk.MustExec("admin cancel ddl jobs " + strconv.Itoa(int(jobID)))
+	wg.Wait()
+	c.Assert(alterErr.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+}
+
 // Close issue #24971, #24973, #24974
 func (s *testColumnTypeChangeSuite) TestCTCShouldCastTheDefaultValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -1912,4 +1976,73 @@ func (s *testColumnTypeChangeSuite) TestCTCShouldCastTheDefaultValue(c *C) {
 	tk.MustQuery("select col_279 from tbl").Check(testkit.Rows("RAWTdm\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"))
 	tk.MustGetErrCode("alter table tbl change column col_279 col_287 int", mysql.ErrTruncatedWrongValue)
 	tk.MustQuery("select col_279 from tbl").Check(testkit.Rows("RAWTdm\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"))
+}
+
+// Close issue #25037
+// 1: for default value of binary of create-table, it should append the \0 as the suffix to meet flen.
+// 2: when cast the bit to binary, we should consider to convert it to uint then cast uint to string, rather than taking the bit to string directly.
+func (s *testColumnTypeChangeSuite) TestCTCCastBitToBinary(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	// For point 1:
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a binary(10) default 't')")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` binary(10) DEFAULT 't\\0\\0\\0\\0\\0\\0\\0\\0\\0'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// For point 2 with binary:
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bit(13) not null) collate utf8mb4_general_ci")
+	tk.MustExec("insert into t values ( 4047 )")
+	tk.MustExec("alter table t change column a a binary(248) collate binary default 't'")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` binary(248) DEFAULT 't\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("4047\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"))
+
+	// For point 2 with varbinary:
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bit(13) not null) collate utf8mb4_general_ci")
+	tk.MustExec("insert into t values ( 4047 )")
+	tk.MustExec("alter table t change column a a varbinary(248) collate binary default 't'")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` varbinary(248) DEFAULT 't'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("4047"))
+}
+
+func (s *testColumnTypeChangeSuite) TestChangePrefixedIndexColumnToNonPrefixOne(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a text, unique index idx(a(2)));")
+	tk.MustExec("alter table t modify column a int;")
+	showCreateTable := tk.MustQuery("show create table t").Rows()[0][1].(string)
+	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`)"), IsTrue,
+		Commentf("%s", showCreateTable))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a char(255), unique index idx(a(2)));")
+	tk.MustExec("alter table t modify column a float;")
+	showCreateTable = tk.MustQuery("show create table t").Rows()[0][1].(string)
+	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`)"), IsTrue,
+		Commentf("%s", showCreateTable))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a char(255), b text, unique index idx(a(2), b(10)));")
+	tk.MustExec("alter table t modify column b int;")
+	showCreateTable = tk.MustQuery("show create table t").Rows()[0][1].(string)
+	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`(2),`b`)"), IsTrue,
+		Commentf("%s", showCreateTable))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a char(250), unique key idx(a(10)));")
+	tk.MustExec("alter table t modify a char(9);")
+	showCreateTable = tk.MustQuery("show create table t").Rows()[0][1].(string)
+	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`)"), IsTrue,
+		Commentf("%s", showCreateTable))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a varchar(700), key(a(700)));")
+	tk.MustGetErrCode("alter table t change column a a tinytext;", mysql.ErrBlobKeyWithoutLength)
 }

@@ -1550,6 +1550,7 @@ func (c *RegionCache) getStoresByLabels(labels []*metapb.StoreLabel) []*Store {
 }
 
 // OnRegionEpochNotMatch removes the old region and inserts new regions into the cache.
+// It returns whether retries the request because it's possible the region epoch is ahead of TiKV's due to slow appling.
 func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, currentRegions []*metapb.Region) (bool, error) {
 	if len(currentRegions) == 0 {
 		c.InvalidateCachedRegionWithReason(ctx.Region, EpochNotMatch)
