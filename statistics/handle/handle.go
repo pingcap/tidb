@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime/pprof"
 	"sort"
 	"strconv"
 	"sync"
@@ -121,6 +122,10 @@ func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.
 
 func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
+		if variable.TopSQLEnabled() {
+			//  Restore the goroutine label by using the original ctx after execution is finished.
+			defer pprof.SetGoroutineLabels(ctx)
+		}
 		stmt, err := exec.ParseWithParams(ctx, sql, params...)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -956,7 +961,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	defer h.mu.Unlock()
 	ctx := context.TODO()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err = exec.ExecuteInternal(ctx, "begin")
+	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1118,7 +1123,7 @@ func (h *Handle) columnCountFromStorage(reader *statsReader, tableID, colID, sta
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if statsVer == statistics.Version2 {
+	if statsVer >= statistics.Version2 {
 		// Before stats ver 2, histogram represents all data in this column.
 		// In stats ver 2, histogram + TopN represent all data in this column.
 		// So we need to add TopN total count here.

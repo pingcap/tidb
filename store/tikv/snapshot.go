@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/store/tikv/client"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -104,10 +105,13 @@ type KVSnapshot struct {
 		replicaRead kv.ReplicaReadType
 		taskID      uint64
 		isStaleness bool
+		txnScope    string
 		// MatchStoreLabels indicates the labels the store should be matched
 		matchStoreLabels []*metapb.StoreLabel
 	}
 	sampleStep uint32
+	// resourceGroupTag is use to set the kv request resource group tag.
+	resourceGroupTag []byte
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
@@ -303,28 +307,29 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 
 	pending := batch.keys
 	for {
-		isStaleness := false
-		var matchStoreLabels []*metapb.StoreLabel
 		s.mu.RLock()
 		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdBatchGet, &pb.BatchGetRequest{
 			Keys:    pending,
 			Version: s.version,
 		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
-			Priority:     s.priority.ToPB(),
-			NotFillCache: s.notFillCache,
-			TaskId:       s.mu.taskID,
+			Priority:         s.priority.ToPB(),
+			NotFillCache:     s.notFillCache,
+			TaskId:           s.mu.taskID,
+			ResourceGroupTag: s.resourceGroupTag,
 		})
-		isStaleness = s.mu.isStaleness
-		matchStoreLabels = s.mu.matchStoreLabels
+		txnScope := s.mu.txnScope
+		isStaleness := s.mu.isStaleness
+		matchStoreLabels := s.mu.matchStoreLabels
 		s.mu.RUnlock()
-		var ops []StoreSelectorOption
+		req.TxnScope = txnScope
 		if isStaleness {
 			req.EnableStaleRead()
 		}
+		ops := make([]StoreSelectorOption, 0, 2)
 		if len(matchStoreLabels) > 0 {
 			ops = append(ops, WithMatchLabels(matchStoreLabels))
 		}
-		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, ReadTimeoutMedium, tikvrpc.TiKV, "", ops...)
+		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, client.ReadTimeoutMedium, tikvrpc.TiKV, "", ops...)
 
 		if err != nil {
 			return errors.Trace(err)
@@ -448,8 +453,6 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 
 	cli := NewClientHelper(s.store, s.resolvedLocks)
 
-	isStaleness := false
-	var matchStoreLabels []*metapb.StoreLabel
 	s.mu.RLock()
 	if s.mu.stats != nil {
 		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
@@ -462,12 +465,13 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 			Key:     k,
 			Version: s.version,
 		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
-			Priority:     s.priority.ToPB(),
-			NotFillCache: s.notFillCache,
-			TaskId:       s.mu.taskID,
+			Priority:         s.priority.ToPB(),
+			NotFillCache:     s.notFillCache,
+			TaskId:           s.mu.taskID,
+			ResourceGroupTag: s.resourceGroupTag,
 		})
-	isStaleness = s.mu.isStaleness
-	matchStoreLabels = s.mu.matchStoreLabels
+	isStaleness := s.mu.isStaleness
+	matchStoreLabels := s.mu.matchStoreLabels
 	s.mu.RUnlock()
 	var ops []StoreSelectorOption
 	if isStaleness {
@@ -484,7 +488,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, ReadTimeoutShort, tikvrpc.TiKV, "", ops...)
+		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, client.ReadTimeoutShort, tikvrpc.TiKV, "", ops...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -615,6 +619,13 @@ func (s *KVSnapshot) SetRuntimeStats(stats *SnapshotRuntimeStats) {
 	s.mu.stats = stats
 }
 
+// SetTxnScope sets up the txn scope.
+func (s *KVSnapshot) SetTxnScope(txnScope string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.txnScope = txnScope
+}
+
 // SetIsStatenessReadOnly indicates whether the transaction is staleness read only transaction
 func (s *KVSnapshot) SetIsStatenessReadOnly(b bool) {
 	s.mu.Lock()
@@ -627,6 +638,11 @@ func (s *KVSnapshot) SetMatchStoreLabels(labels []*metapb.StoreLabel) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mu.matchStoreLabels = labels
+}
+
+// SetResourceGroupTag sets resource group of the kv request.
+func (s *KVSnapshot) SetResourceGroupTag(tag []byte) {
+	s.resourceGroupTag = tag
 }
 
 // SnapCacheHitCount gets the snapshot cache hit count. Only for test.

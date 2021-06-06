@@ -66,11 +66,13 @@ func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	// Set it to 300ms for testing lock resolve.
 	atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
 	tikv.PrewriteMaxBackoff = 500
+	tikv.VeryLongMaxBackoff = 500
 }
 
 func (s *testPessimisticSuite) TearDownSuite(c *C) {
 	s.testSessionSuiteBase.TearDownSuite(c)
 	tikv.PrewriteMaxBackoff = 20000
+	tikv.VeryLongMaxBackoff = 600000
 }
 
 func (s *testPessimisticSuite) TestPessimisticTxn(c *C) {
@@ -175,6 +177,7 @@ func (s *testPessimisticSuite) TestTxnMode(c *C) {
 
 func (s *testPessimisticSuite) TestDeadlock(c *C) {
 	deadlockhistory.GlobalDeadlockHistory.Clear()
+	deadlockhistory.GlobalDeadlockHistory.Resize(10)
 
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustExec("drop table if exists deadlock")
@@ -2322,7 +2325,7 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 	err = <-errCh
 	c.Assert(err, Equals, nil)
 	tk.MustExec("commit")
-	tk2.MustExec("admin check table t")
+	tk.MustExec("admin check table t")
 	err = <-errCh
 	c.Assert(err, Equals, nil)
 }

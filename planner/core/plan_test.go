@@ -171,12 +171,12 @@ func (s *testPlanNormalize) TestNormalizedPlanForDiffStore(c *C) {
 		normalizedPlanRows := getPlanRows(normalizedPlan)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
-			output[i].Digest = digest
+			output[i].Digest = digest.String()
 			output[i].Plan = normalizedPlanRows
 		})
 		compareStringSlice(c, normalizedPlanRows, output[i].Plan)
-		c.Assert(digest != lastDigest, IsTrue)
-		lastDigest = digest
+		c.Assert(digest.String() != lastDigest, IsTrue)
+		lastDigest = digest.String()
 	}
 }
 
@@ -209,6 +209,20 @@ func (s *testPlanNormalize) TestEncodeDecodePlan(c *C) {
 	tk.MustExec("insert into t1 values (1,1,1);")
 	planTree = getPlanTree()
 	c.Assert(strings.Contains(planTree, "Insert"), IsTrue)
+	c.Assert(strings.Contains(planTree, "time"), IsTrue)
+	c.Assert(strings.Contains(planTree, "loops"), IsTrue)
+
+	tk.MustExec("with cte(a) as (select 1) select * from cte")
+	planTree = getPlanTree()
+	c.Assert(strings.Contains(planTree, "CTE"), IsTrue)
+	c.Assert(strings.Contains(planTree, "1->Column#1"), IsTrue)
+	c.Assert(strings.Contains(planTree, "time"), IsTrue)
+	c.Assert(strings.Contains(planTree, "loops"), IsTrue)
+
+	tk.MustExec("with cte(a) as (select 2) select * from cte")
+	planTree = getPlanTree()
+	c.Assert(strings.Contains(planTree, "CTE"), IsTrue)
+	c.Assert(strings.Contains(planTree, "2->Column#1"), IsTrue)
 	c.Assert(strings.Contains(planTree, "time"), IsTrue)
 	c.Assert(strings.Contains(planTree, "loops"), IsTrue)
 }
@@ -404,10 +418,10 @@ func testNormalizeDigest(tk *testkit.TestKit, c *C, sql1, sql2 string, isSame bo
 	comment := Commentf("sql1: %v, sql2: %v\n%v !=\n%v\n", sql1, sql2, normalized1, normalized2)
 	if isSame {
 		c.Assert(normalized1, Equals, normalized2, comment)
-		c.Assert(digest1, Equals, digest2, comment)
+		c.Assert(digest1.String(), Equals, digest2.String(), comment)
 	} else {
 		c.Assert(normalized1 != normalized2, IsTrue, comment)
-		c.Assert(digest1 != digest2, IsTrue, comment)
+		c.Assert(digest1.String() != digest2.String(), IsTrue, comment)
 	}
 }
 

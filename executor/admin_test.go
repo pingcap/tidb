@@ -24,6 +24,7 @@ import (
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -80,9 +81,11 @@ func (s *testSuite5) TestAdminCheckIndexInTemporaryMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists temporary_admin_test;")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table temporary_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2)) ON COMMIT DELETE ROWS;")
 	tk.MustExec("insert temporary_admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);")
-	tk.MustGetErrCode("admin check table temporary_admin_test;", mysql.ErrAdminCheckTable)
+	_, err := tk.Exec("admin check table temporary_admin_test;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin check table").Error())
 	tk.MustExec("drop table if exists temporary_admin_test;")
 
 	tk.MustExec("drop table if exists non_temporary_admin_test;")
@@ -90,6 +93,16 @@ func (s *testSuite5) TestAdminCheckIndexInTemporaryMode(c *C) {
 	tk.MustExec("insert non_temporary_admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);")
 	tk.MustExec("admin check table non_temporary_admin_test;")
 	tk.MustExec("drop table if exists non_temporary_admin_test;")
+
+	tk.MustExec("drop table if exists temporary_admin_checksum_table_with_index_test;")
+	tk.MustExec("drop table if exists temporary_admin_checksum_table_without_index_test;")
+	tk.MustExec("create global temporary table temporary_admin_checksum_table_with_index_test (id int, count int, PRIMARY KEY(id), KEY(count)) ON COMMIT DELETE ROWS;")
+	tk.MustExec("create global temporary table temporary_admin_checksum_table_without_index_test (id int, count int, PRIMARY KEY(id)) ON COMMIT DELETE ROWS;")
+	_, err = tk.Exec("admin checksum table temporary_admin_checksum_table_with_index_test;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
+	_, err = tk.Exec("admin checksum table temporary_admin_checksum_table_without_index_test;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
+	tk.MustExec("drop table if exists temporary_admin_checksum_table_with_index_test,temporary_admin_checksum_table_without_index_test;")
 }
 
 func (s *testSuite5) TestAdminRecoverIndex(c *C) {
@@ -780,7 +793,7 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 		c.Assert(err, IsNil)
 		err = tk.ExecToErr("admin check table admin_test_p")
 		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Equals, fmt.Sprintf("handle %d, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:%d, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:<nil>", i+8, i+8))
+		c.Assert(err.Error(), Equals, fmt.Sprintf("[executor:8133]handle %d, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:%d, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:<nil>", i+8, i+8))
 		// TODO: fix admin recover for partition table.
 		txn, err = s.store.Begin()
 		c.Assert(err, IsNil)
@@ -803,7 +816,7 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 		c.Assert(err, IsNil)
 		err = tk.ExecToErr("admin check table admin_test_p")
 		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Equals, fmt.Sprintf("col c2, handle %d, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:%d, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:%d, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}", i, i+8, i))
+		c.Assert(err.Error(), Equals, fmt.Sprintf("[executor:8134]col c2, handle %d, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:%d, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:%d, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}, compare err:<nil>", i, i+8, i))
 		// TODO: fix admin recover for partition table.
 		txn, err = s.store.Begin()
 		c.Assert(err, IsNil)
@@ -815,7 +828,7 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 	}
 }
 
-func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
+func (s *testSuiteJoinSerial) TestAdminCheckTableFailed(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -851,6 +864,11 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err.Error(), Equals,
 		"[executor:8003]admin_test err:[admin:8223]index:<nil> != record:&admin.RecordData{Handle:-1, Values:[]types.Datum{types.Datum{k:0x1, decimal:0x0, length:0x0, i:-10, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}}}")
 	c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
+	tk.MustExec("set @@tidb_redact_log=1;")
+	err = tk.ExecToErr("admin check table admin_test")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:8003]admin_test err:[admin:8223]index:\"?\" != record:\"?\"")
+	tk.MustExec("set @@tidb_redact_log=0;")
 	r := tk.MustQuery("admin recover index admin_test c2")
 	r.Check(testkit.Rows("1 7"))
 	tk.MustExec("admin check table admin_test")
@@ -866,7 +884,12 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err, IsNil)
 	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "handle 0, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:0, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:<nil>")
+	c.Assert(err.Error(), Equals, "[executor:8133]handle 0, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:0, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:<nil>")
+	tk.MustExec("set @@tidb_redact_log=1;")
+	err = tk.ExecToErr("admin check table admin_test")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:8133]handle \"?\", index:\"?\" != record:\"?\"")
+	tk.MustExec("set @@tidb_redact_log=0;")
 
 	// Add one row of index.
 	// Table count < index count.
@@ -884,7 +907,12 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err, IsNil)
 	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "col c2, handle 2, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:13, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:12, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}")
+	c.Assert(err.Error(), Equals, "[executor:8134]col c2, handle 2, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:13, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:12, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}, compare err:<nil>")
+	tk.MustExec("set @@tidb_redact_log=1;")
+	err = tk.ExecToErr("admin check table admin_test")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:8134]col c2, handle \"?\", index:\"?\" != record:\"?\", compare err:\"?\"")
+	tk.MustExec("set @@tidb_redact_log=0;")
 
 	// Table count = index count.
 	// Two indices have the same handle.
@@ -898,7 +926,12 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err, IsNil)
 	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "col c2, handle 10, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:19, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:20, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}")
+	c.Assert(err.Error(), Equals, "[executor:8134]col c2, handle 10, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:19, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:20, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}, compare err:<nil>")
+	tk.MustExec("set @@tidb_redact_log=1;")
+	err = tk.ExecToErr("admin check table admin_test")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:8134]col c2, handle \"?\", index:\"?\" != record:\"?\", compare err:\"?\"")
+	tk.MustExec("set @@tidb_redact_log=0;")
 
 	// Table count = index count.
 	// Index c2 has one line of data is 19, the corresponding table data is 20.
@@ -912,7 +945,12 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err, IsNil)
 	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "col c2, handle 10, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:19, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:20, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}")
+	c.Assert(err.Error(), Equals, "[executor:8134]col c2, handle 10, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:19, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:20, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}, compare err:<nil>")
+	tk.MustExec("set @@tidb_redact_log=1;")
+	err = tk.ExecToErr("admin check table admin_test")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:8134]col c2, handle \"?\", index:\"?\" != record:\"?\", compare err:\"?\"")
+	tk.MustExec("set @@tidb_redact_log=0;")
 
 	// Recover records.
 	txn, err = s.store.Begin()

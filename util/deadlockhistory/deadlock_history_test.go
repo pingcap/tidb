@@ -20,9 +20,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/parser"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 type testDeadlockHistorySuite struct{}
@@ -147,7 +148,7 @@ func (s *testDeadlockHistorySuite) TestGetDatum(c *C) {
 				TryLockTxn:     101,
 				SQLDigest:      "sql1",
 				Key:            []byte("k1"),
-				AllSQLs:        []string{"sql1", "sql2"},
+				AllSQLDigests:  []string{"sql1", "sql2"},
 				TxnHoldingLock: 102,
 			},
 			// It should work even some information are missing.
@@ -163,12 +164,12 @@ func (s *testDeadlockHistorySuite) TestGetDatum(c *C) {
 		WaitChain: []WaitChainItem{
 			{
 				TryLockTxn:     201,
-				AllSQLs:        []string{},
+				AllSQLDigests:  []string{},
 				TxnHoldingLock: 202,
 			},
 			{
 				TryLockTxn:     202,
-				AllSQLs:        []string{"sql1"},
+				AllSQLDigests:  []string{"sql1"},
 				TxnHoldingLock: 201,
 			},
 		},
@@ -183,7 +184,7 @@ func (s *testDeadlockHistorySuite) TestGetDatum(c *C) {
 	res := h.GetAllDatum()
 	c.Assert(len(res), Equals, 4)
 	for _, row := range res {
-		c.Assert(len(row), Equals, 8)
+		c.Assert(len(row), Equals, 7)
 	}
 
 	toGoTime := func(d types.Datum) time.Time {
@@ -194,14 +195,13 @@ func (s *testDeadlockHistorySuite) TestGetDatum(c *C) {
 		return t
 	}
 
-	c.Assert(res[0][0].GetValue(), Equals, uint64(1))      // ID
-	c.Assert(toGoTime(res[0][1]), Equals, time1)           // OCCUR_TIME
-	c.Assert(res[0][2].GetValue(), Equals, int64(0))       // RETRYABLE
-	c.Assert(res[0][3].GetValue(), Equals, uint64(101))    // TRY_LOCK_TRX_ID
-	c.Assert(res[0][4].GetValue(), Equals, "sql1")         // SQL_DIGEST
-	c.Assert(res[0][5].GetValue(), Equals, "6B31")         // KEY
-	c.Assert(res[0][6].GetValue(), Equals, "[sql1, sql2]") // ALL_SQLS
-	c.Assert(res[0][7].GetValue(), Equals, uint64(102))    // TRX_HOLDING_LOCK
+	c.Assert(res[0][0].GetValue(), Equals, uint64(1))   // ID
+	c.Assert(toGoTime(res[0][1]), Equals, time1)        // OCCUR_TIME
+	c.Assert(res[0][2].GetValue(), Equals, int64(0))    // RETRYABLE
+	c.Assert(res[0][3].GetValue(), Equals, uint64(101)) // TRY_LOCK_TRX_ID
+	c.Assert(res[0][4].GetValue(), Equals, "sql1")      // SQL_DIGEST
+	c.Assert(res[0][5].GetValue(), Equals, "6B31")      // KEY
+	c.Assert(res[0][6].GetValue(), Equals, uint64(102)) // TRX_HOLDING_LOCK
 
 	c.Assert(res[1][0].GetValue(), Equals, uint64(1))   // ID
 	c.Assert(toGoTime(res[1][1]), Equals, time1)        // OCCUR_TIME
@@ -209,25 +209,27 @@ func (s *testDeadlockHistorySuite) TestGetDatum(c *C) {
 	c.Assert(res[1][3].GetValue(), Equals, uint64(102)) // TRY_LOCK_TRX_ID
 	c.Assert(res[1][4].GetValue(), Equals, nil)         // SQL_DIGEST
 	c.Assert(res[1][5].GetValue(), Equals, nil)         // KEY
-	c.Assert(res[1][6].GetValue(), Equals, nil)         // ALL_SQLS
-	c.Assert(res[1][7].GetValue(), Equals, uint64(101)) // TRX_HOLDING_LOCK
+	c.Assert(res[1][6].GetValue(), Equals, uint64(101)) // TRX_HOLDING_LOCK
 
 	c.Assert(res[2][0].GetValue(), Equals, uint64(2))   // ID
 	c.Assert(toGoTime(res[2][1]), Equals, time2)        // OCCUR_TIME
 	c.Assert(res[2][2].GetValue(), Equals, int64(1))    // RETRYABLE
 	c.Assert(res[2][3].GetValue(), Equals, uint64(201)) // TRY_LOCK_TRX_ID
-	c.Assert(res[2][6].GetValue(), Equals, "[]")        // ALL_SQLS
-	c.Assert(res[2][7].GetValue(), Equals, uint64(202)) // TRX_HOLDING_LOCK
+	c.Assert(res[2][6].GetValue(), Equals, uint64(202)) // TRX_HOLDING_LOCK
 
 	c.Assert(res[3][0].GetValue(), Equals, uint64(2))   // ID
 	c.Assert(toGoTime(res[3][1]), Equals, time2)        // OCCUR_TIME
 	c.Assert(res[3][2].GetValue(), Equals, int64(1))    // RETRYABLE
 	c.Assert(res[3][3].GetValue(), Equals, uint64(202)) // TRY_LOCK_TRX_ID
-	c.Assert(res[3][6].GetValue(), Equals, "[sql1]")    // ALL_SQLS
-	c.Assert(res[3][7].GetValue(), Equals, uint64(201)) // TRX_HOLDING_LOCK
+	c.Assert(res[3][6].GetValue(), Equals, uint64(201)) // TRX_HOLDING_LOCK
 }
 
 func (s *testDeadlockHistorySuite) TestErrDeadlockToDeadlockRecord(c *C) {
+	digest1, digest2 := parser.NewDigest([]byte("aabbccdd")), parser.NewDigest([]byte("ddccbbaa"))
+	tag1 := tipb.ResourceGroupTag{SqlDigest: digest1.Bytes()}
+	tag2 := tipb.ResourceGroupTag{SqlDigest: digest2.Bytes()}
+	tag1Data, _ := tag1.Marshal()
+	tag2Data, _ := tag2.Marshal()
 	err := &tikverr.ErrDeadlock{
 		Deadlock: &kvrpcpb.Deadlock{
 			LockTs:          101,
@@ -238,13 +240,13 @@ func (s *testDeadlockHistorySuite) TestErrDeadlockToDeadlockRecord(c *C) {
 					Txn:              100,
 					WaitForTxn:       101,
 					Key:              []byte("k2"),
-					ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag("aabbccdd"),
+					ResourceGroupTag: tag1Data,
 				},
 				{
 					Txn:              101,
 					WaitForTxn:       100,
 					Key:              []byte("k1"),
-					ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag("ddccbbaa"),
+					ResourceGroupTag: tag2Data,
 				},
 			},
 		},
@@ -256,13 +258,13 @@ func (s *testDeadlockHistorySuite) TestErrDeadlockToDeadlockRecord(c *C) {
 		WaitChain: []WaitChainItem{
 			{
 				TryLockTxn:     100,
-				SQLDigest:      "aabbccdd",
+				SQLDigest:      digest1.String(),
 				Key:            []byte("k2"),
 				TxnHoldingLock: 101,
 			},
 			{
 				TryLockTxn:     101,
-				SQLDigest:      "ddccbbaa",
+				SQLDigest:      digest2.String(),
 				Key:            []byte("k1"),
 				TxnHoldingLock: 100,
 			},
@@ -274,4 +276,50 @@ func (s *testDeadlockHistorySuite) TestErrDeadlockToDeadlockRecord(c *C) {
 	c.Assert(time.Since(record.OccurTime), Less, time.Millisecond*5)
 	expectedRecord.OccurTime = record.OccurTime
 	c.Assert(record, DeepEquals, expectedRecord)
+}
+
+func dummyRecord() *DeadlockRecord {
+	return &DeadlockRecord{}
+}
+
+func (s *testDeadlockHistorySuite) TestResize(c *C) {
+	h := NewDeadlockHistory(2)
+	h.Push(dummyRecord()) // id=1 inserted
+	h.Push(dummyRecord()) // id=2 inserted,
+	h.Push(dummyRecord()) // id=3 inserted, id=1 is removed
+	c.Assert(h.head, Equals, 1)
+	c.Assert(h.size, Equals, 2)
+	c.Assert(len(h.GetAll()), Equals, 2)
+	c.Assert(h.GetAll()[0].ID, Equals, uint64(2))
+	c.Assert(h.GetAll()[1].ID, Equals, uint64(3))
+
+	h.Resize(3)
+	c.Assert(h.head, Equals, 0)
+	c.Assert(h.size, Equals, 2)
+	h.Push(dummyRecord()) // id=4 inserted
+	c.Assert(h.head, Equals, 0)
+	c.Assert(h.size, Equals, 3)
+	c.Assert(len(h.GetAll()), Equals, 3)
+	c.Assert(h.GetAll()[0].ID, Equals, uint64(2))
+	c.Assert(h.GetAll()[1].ID, Equals, uint64(3))
+	c.Assert(h.GetAll()[2].ID, Equals, uint64(4))
+
+	h.Resize(2) // id=2 removed
+	c.Assert(h.head, Equals, 0)
+	c.Assert(h.size, Equals, 2)
+	c.Assert(len(h.GetAll()), Equals, 2)
+	c.Assert(h.GetAll()[0].ID, Equals, uint64(3))
+	c.Assert(h.GetAll()[1].ID, Equals, uint64(4))
+
+	h.Resize(0) // all removed
+	c.Assert(h.head, Equals, 0)
+	c.Assert(h.size, Equals, 0)
+	c.Assert(len(h.GetAll()), Equals, 0)
+
+	h.Resize(2)
+	c.Assert(h.head, Equals, 0)
+	c.Assert(h.size, Equals, 0)
+	h.Push(dummyRecord()) // id=5 inserted
+	c.Assert(h.head, Equals, 0)
+	c.Assert(h.size, Equals, 1)
 }

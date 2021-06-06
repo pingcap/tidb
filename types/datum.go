@@ -958,8 +958,21 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 		s = d.GetMysqlEnum().String()
 	case KindMysqlSet:
 		s = d.GetMysqlSet().String()
-	case KindBinaryLiteral, KindMysqlBit:
+	case KindBinaryLiteral:
 		s = d.GetBinaryLiteral().ToString()
+	case KindMysqlBit:
+		// issue #25037
+		// bit to binary/varbinary. should consider transferring to uint first.
+		if target.Tp == mysql.TypeString || (target.Tp == mysql.TypeVarchar && target.Collate == charset.CollationBin) {
+			val, err := d.GetBinaryLiteral().ToInt(sc)
+			if err != nil {
+				s = d.GetBinaryLiteral().ToString()
+			} else {
+				s = strconv.FormatUint(val, 10)
+			}
+		} else {
+			s = d.GetBinaryLiteral().ToString()
+		}
 	case KindMysqlJSON:
 		s = d.GetMysqlJSON().String()
 	default:
@@ -1182,6 +1195,14 @@ func (d *Datum) convertToMysqlTime(sc *stmtctx.StatementContext, target *FieldTy
 		t, err = ParseTime(sc, d.GetString(), tp, fsp)
 	case KindInt64:
 		t, err = ParseTimeFromNum(sc, d.GetInt64(), tp, fsp)
+	case KindUint64:
+		intOverflow64 := d.GetInt64() < 0
+		if intOverflow64 {
+			uNum := strconv.FormatUint(d.GetUint64(), 10)
+			t, err = ZeroDate, ErrWrongValue.GenWithStackByArgs(TimeStr, uNum)
+		} else {
+			t, err = ParseTimeFromNum(sc, d.GetInt64(), tp, fsp)
+		}
 	case KindMysqlJSON:
 		j := d.GetMysqlJSON()
 		var s string

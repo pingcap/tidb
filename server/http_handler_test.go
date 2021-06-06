@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -37,7 +36,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
@@ -56,9 +55,9 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/versioninfo"
-	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
 
@@ -560,7 +559,7 @@ partition by range (a)
 
 func decodeKeyMvcc(closer io.ReadCloser, c *C, valid bool) {
 	decoder := json.NewDecoder(closer)
-	var data mvccKV
+	var data helper.MvccKV
 	err := decoder.Decode(&data)
 	c.Assert(err, IsNil)
 	if valid {
@@ -581,7 +580,7 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	resp, err := ts.fetchStatus("/mvcc/key/tidb/test/1")
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
-	var data mvccKV
+	var data helper.MvccKV
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
 	c.Assert(data.Value, NotNil)
@@ -602,7 +601,7 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 
 	resp, err = ts.fetchStatus(fmt.Sprintf("/mvcc/txn/%d/tidb/test", startTs))
 	c.Assert(err, IsNil)
-	var p2 mvccKV
+	var p2 helper.MvccKV
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&p2)
 	c.Assert(err, IsNil)
@@ -616,7 +615,7 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	resp, err = ts.fetchStatus("/mvcc/hex/" + hexKey)
 	c.Assert(err, IsNil)
 	decoder = json.NewDecoder(resp.Body)
-	var data2 mvccKV
+	var data2 helper.MvccKV
 	err = decoder.Decode(&data2)
 	c.Assert(err, IsNil)
 	c.Assert(data2, DeepEquals, data)
@@ -670,7 +669,7 @@ func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
 	resp, err := ts.fetchStatus("/mvcc/key/tidb/test/1234")
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
-	var data mvccKV
+	var data helper.MvccKV
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
 	c.Assert(data.Value.Info.Lock, IsNil)
@@ -740,7 +739,7 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(`{"id":84,"region_count":3,"flash_region_count":3}`)))
 	c.Assert(err, IsNil)
 	c.Assert(resp, NotNil)
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
 	c.Assert(string(body), Equals, "[schema:1146]Table which ID = 84 does not exist.")
 
@@ -750,7 +749,7 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
 	c.Assert(err, IsNil)
 	c.Assert(resp, NotNil)
-	body, err = ioutil.ReadAll(resp.Body)
+	body, err = io.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
 	c.Assert(string(body), Equals, "")
 
@@ -975,14 +974,14 @@ func (ts *HTTPHandlerTestSuite) TestGetIndexMVCC(c *C) {
 	resp, err = ts.fetchStatus("/mvcc/index/tidb/test/idx1/1?a=1")
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
-	var data1 mvccKV
+	var data1 helper.MvccKV
 	err = decoder.Decode(&data1)
 	c.Assert(err, NotNil)
 
 	resp, err = ts.fetchStatus("/mvcc/index/tidb/test/idx2/1?a=1")
 	c.Assert(err, IsNil)
 	decoder = json.NewDecoder(resp.Body)
-	var data2 mvccKV
+	var data2 helper.MvccKV
 	err = decoder.Decode(&data2)
 	c.Assert(err, NotNil)
 
@@ -1141,7 +1140,11 @@ func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
 	c.Assert(jobs, DeepEquals, data)
 }
 
-func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
+func dummyRecord() *deadlockhistory.DeadlockRecord {
+	return &deadlockhistory.DeadlockRecord{}
+}
+
+func (ts *HTTPHandlerTestSerialSuite) TestPostSettings(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
@@ -1156,8 +1159,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	resp, err := ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	c.Assert(log.GetLevel(), Equals, log.ErrorLevel)
-	c.Assert(zaplog.GetLevel(), Equals, zap.ErrorLevel)
+	c.Assert(log.GetLevel(), Equals, zap.ErrorLevel)
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "error")
 	c.Assert(variable.ProcessGeneralLog.Load(), IsTrue)
 	val, err := variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
@@ -1176,8 +1178,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(variable.ProcessGeneralLog.Load(), IsFalse)
-	c.Assert(log.GetLevel(), Equals, log.FatalLevel)
-	c.Assert(zaplog.GetLevel(), Equals, zap.FatalLevel)
+	c.Assert(log.GetLevel(), Equals, zap.FatalLevel)
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "fatal")
 	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnableAsyncCommit)
 	c.Assert(err, IsNil)
@@ -1228,6 +1229,31 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, false)
 	dbt.mustExec("insert t2 values (unhex('f09f8c80'));")
+
+	// test tidb_deadlock_history_capacity
+	deadlockhistory.GlobalDeadlockHistory.Resize(10)
+	for i := 0; i < 10; i++ {
+		deadlockhistory.GlobalDeadlockHistory.Push(dummyRecord())
+	}
+	form = make(url.Values)
+	form.Set("tidb_deadlock_history_capacity", "5")
+	resp, err = ts.formStatus("/settings", form)
+	c.Assert(len(deadlockhistory.GlobalDeadlockHistory.GetAll()), Equals, 5)
+	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[0].ID, Equals, uint64(6))
+	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[4].ID, Equals, uint64(10))
+	deadlockhistory.GlobalDeadlockHistory.Push(dummyRecord())
+	c.Assert(len(deadlockhistory.GlobalDeadlockHistory.GetAll()), Equals, 5)
+	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[0].ID, Equals, uint64(7))
+	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[4].ID, Equals, uint64(11))
+	form = make(url.Values)
+	form.Set("tidb_deadlock_history_capacity", "6")
+	resp, err = ts.formStatus("/settings", form)
+	deadlockhistory.GlobalDeadlockHistory.Push(dummyRecord())
+	c.Assert(len(deadlockhistory.GlobalDeadlockHistory.GetAll()), Equals, 6)
+	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[0].ID, Equals, uint64(7))
+	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[5].ID, Equals, uint64(12))
+	// restore original value.
+	config.GetGlobalConfig().CheckMb4ValueInUTF8 = true
 }
 
 func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
@@ -1237,7 +1263,7 @@ func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
 	for retry := 0; retry < retryTime; retry++ {
 		resp, err := ts.fetchStatus("/debug/pprof/heap")
 		if err == nil {
-			_, err = ioutil.ReadAll(resp.Body)
+			_, err = io.ReadAll(resp.Body)
 			c.Assert(err, IsNil)
 			err = resp.Body.Close()
 			c.Assert(err, IsNil)
@@ -1245,7 +1271,7 @@ func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
 		}
 		time.Sleep(time.Millisecond * 10)
 	}
-	zaplog.Fatal("failed to get profile for %d retries in every 10 ms", zap.Int("retryTime", retryTime))
+	log.Fatal("failed to get profile for %d retries in every 10 ms", zap.Int("retryTime", retryTime))
 }
 
 func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
@@ -1398,7 +1424,7 @@ func (ts *HTTPHandlerTestSuite) TestZipInfoForSQL(c *C) {
 	resp, err = ts.formStatus("/debug/sub-optimal-plan", urlValues)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusInternalServerError)
-	b, err = ioutil.ReadAll(resp.Body)
+	b, err = io.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
 	c.Assert(string(b), Equals, "use database non_exists_db failed, err: [schema:1049]Unknown database 'non_exists_db'\n")
 	c.Assert(resp.Body.Close(), IsNil)
@@ -1420,7 +1446,7 @@ func (ts *HTTPHandlerTestSuite) TestFailpointHandler(c *C) {
 	resp, err = ts.fetchStatus("/fail/")
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	b, err := ioutil.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
 	c.Assert(strings.Contains(string(b), "github.com/pingcap/tidb/server/enableTestAPI=return"), IsTrue)
 	c.Assert(resp.Body.Close(), IsNil)
@@ -1488,7 +1514,7 @@ func (ts *HTTPHandlerTestSuite) TestDDLHookHandler(c *C) {
 	resp, err = ts.postStatus("/test/ddl/hook", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`ddl_hook=ctc_hook`)))
 	c.Assert(err, IsNil)
 	c.Assert(resp, NotNil)
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
 	c.Assert(string(body), Equals, "\"success!\"")
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
@@ -1496,7 +1522,7 @@ func (ts *HTTPHandlerTestSuite) TestDDLHookHandler(c *C) {
 	resp, err = ts.postStatus("/test/ddl/hook", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(`ddl_hook=default_hook`)))
 	c.Assert(err, IsNil)
 	c.Assert(resp, NotNil)
-	body, err = ioutil.ReadAll(resp.Body)
+	body, err = io.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
 	c.Assert(string(body), Equals, "\"success!\"")
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)

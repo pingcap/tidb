@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/store/tikv/client"
 	"github.com/pingcap/tidb/store/tikv/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -33,7 +34,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type actionPrewrite struct{}
+type actionPrewrite struct{ retry bool }
 
 var _ twoPhaseCommitAction = actionPrewrite{}
 
@@ -116,10 +117,10 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		req.TryOnePc = true
 	}
 
-	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
+	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog, ResourceGroupTag: c.resourceGroupTag})
 }
 
-func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
+func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) (err error) {
 	// WARNING: This function only tries to send a single request to a single region, so it don't
 	// need to unset the `useOnePC` flag when it fails. A special case is that when TiKV returns
 	// regionErr, it's uncertain if the request will be splitted into multiple and sent to multiple
@@ -151,38 +152,65 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	txnSize := uint64(c.regionTxnSize[batch.region.id])
 	// When we retry because of a region miss, we don't know the transaction size. We set the transaction size here
 	// to MaxUint64 to avoid unexpected "resolve lock lite".
-	if bo.ErrorsNum() > 0 {
+	if action.retry {
 		txnSize = math.MaxUint64
 	}
 
-	req := c.buildPrewriteRequest(batch, txnSize)
-	for {
-		sender := NewRegionRequestSender(c.store.regionCache, c.store.GetTiKVClient())
-		resp, err := sender.SendReq(bo, req, batch.region, ReadTimeoutShort)
+	tBegin := time.Now()
+	attempts := 0
 
-		// If we fail to receive response for async commit prewrite, it will be undetermined whether this
-		// transaction has been successfully committed.
-		// If prewrite has been cancelled, all ongoing prewrite RPCs will become errors, we needn't set undetermined
-		// errors.
-		if (c.isAsyncCommit() || c.isOnePC()) && sender.rpcError != nil && atomic.LoadUint32(&c.prewriteCancelled) == 0 {
-			c.setUndeterminedErr(errors.Trace(sender.rpcError))
+	req := c.buildPrewriteRequest(batch, txnSize)
+	sender := NewRegionRequestSender(c.store.regionCache, c.store.GetTiKVClient())
+	defer func() {
+		if err != nil {
+			// If we fail to receive response for async commit prewrite, it will be undetermined whether this
+			// transaction has been successfully committed.
+			// If prewrite has been cancelled, all ongoing prewrite RPCs will become errors, we needn't set undetermined
+			// errors.
+			if (c.isAsyncCommit() || c.isOnePC()) && sender.rpcError != nil && atomic.LoadUint32(&c.prewriteCancelled) == 0 {
+				c.setUndeterminedErr(errors.Trace(sender.rpcError))
+			}
+		}
+	}()
+	for {
+		attempts++
+		if time.Since(tBegin) > slowRequestThreshold {
+			logutil.BgLogger().Warn("slow prewrite request", zap.Uint64("startTS", c.startTS), zap.Stringer("region", &batch.region), zap.Int("attempts", attempts))
+			tBegin = time.Now()
 		}
 
+		resp, err := sender.SendReq(bo, req, batch.region, client.ReadTimeoutShort)
+		// Unexpected error occurs, return it
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+			// For other region error and the fake region error, backoff because
+			// there's something wrong.
+			// For the real EpochNotMatch error, don't backoff.
+			if regionErr.GetEpochNotMatch() == nil || isFakeRegionError(regionErr) {
+				err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+			same, err := batch.relocate(bo, c.store.regionCache)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = c.prewriteMutations(bo, batch.mutations)
+			failpoint.Inject("forceRecursion", func() { same = false })
+			if same {
+				continue
+			}
+			err = c.doActionOnMutations(bo, actionPrewrite{true}, batch.mutations)
 			return errors.Trace(err)
 		}
+
 		if resp.Resp == nil {
 			return errors.Trace(tikverr.ErrBodyMissing)
 		}
@@ -249,12 +277,17 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
 				e := &tikverr.ErrKeyExist{AlreadyExist: alreadyExist}
-				return c.extractKeyExistsErr(e)
+				err = c.extractKeyExistsErr(e)
+				if err != nil {
+					atomic.StoreUint32(&c.prewriteFailed, 1)
+				}
+				return err
 			}
 
 			// Extract lock from key error
 			lock, err1 := extractLockFromKeyErr(keyErr)
 			if err1 != nil {
+				atomic.StoreUint32(&c.prewriteFailed, 1)
 				return errors.Trace(err1)
 			}
 			logutil.BgLogger().Info("prewrite encounters lock",
