@@ -25,8 +25,6 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/prometheus/client_golang/api"
-	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	pmodel "github.com/prometheus/common/model"
 	"go.uber.org/zap"
 )
@@ -90,7 +88,12 @@ func updateCurrentSQB(ctx sessionctx.Context) (err error) {
 		}
 	}()
 
-	value, err := querySlowQueryMetric(ctx) //TODO: judge error here
+	pQueryCtx, cancel := context.WithTimeout(context.Background(), time.Second*30)
+	defer cancel()
+	pQueryTs := time.Now().Add(-time.Minute)
+	promQL := "tidb_server_slow_query_process_duration_seconds_bucket{sql_type=\"general\"}"
+	value, err := querySQLMetric(pQueryCtx, pQueryTs, promQL)
+
 	if err != nil && err != infosync.ErrPrometheusAddrIsNotSet {
 		logutil.BgLogger().Info("querySlowQueryMetric got error")
 		return err
@@ -110,43 +113,6 @@ func updateCurrentSQB(ctx sessionctx.Context) (err error) {
 	}
 	slowQueryLock.Unlock()
 	return nil
-}
-
-func querySlowQueryMetric(sctx sessionctx.Context) (result pmodel.Value, err error) {
-	// Add retry to avoid network error.
-	var prometheusAddr string
-	for i := 0; i < 5; i++ {
-		//TODO: the prometheus will be Integrated into the PD, then we need to query the prometheus in PD directly, which need change the query API
-		prometheusAddr, err = infosync.GetPrometheusAddr()
-		if err == nil || err == infosync.ErrPrometheusAddrIsNotSet {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	if err != nil {
-		return nil, err
-	}
-	promClient, err := api.NewClient(api.Config{
-		Address: prometheusAddr,
-	})
-	if err != nil {
-		return nil, err
-	}
-	promQLAPI := promv1.NewAPI(promClient)
-	promQL := "tidb_server_slow_query_process_duration_seconds_bucket{sql_type=\"general\"}"
-
-	ts := time.Now().Add(-time.Minute)
-	// Add retry to avoid network error.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
-	defer cancel()
-	for i := 0; i < 5; i++ {
-		result, _, err = promQLAPI.Query(ctx, promQL, ts)
-		if err == nil {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return result, err
 }
 
 // calculateDeltaSQB calculate the delta between current slow query bucket and last slow query bucket
