@@ -864,9 +864,12 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		// So we set zero original default value here to prevent this error. Besides, in insert & update records,
 		// we have already implement using the casted value of relative column to insert rather than the origin
 		// default value.
-		originDefVal, err := generateOriginDefaultValue(jobParam.newCol)
-		if err != nil {
-			return ver, errors.Trace(err)
+		originDefVal := oldCol.GetOriginDefaultValue()
+		if originDefVal == nil {
+			originDefVal, err = generateOriginDefaultValue(jobParam.newCol)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 		}
 		if err = jobParam.changingCol.SetOriginDefaultValue(originDefVal); err != nil {
 			return ver, errors.Trace(err)

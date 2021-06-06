@@ -1772,11 +1772,12 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test")
 
+	tk.MustExec(fmt.Sprintf("set time_zone = 'UTC'"))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int not null, unique key(a))")
 	tk.MustExec("insert into t values(1, 1)")
 	tk.MustExec("insert into t values(2, 2)")
-	tk.MustExec("alter table t add column c int default 123 not null")
+	tk.MustExec("alter table t add column c timestamp default '1971-06-09' not null")
 
 	tbl := testGetTableByName(c, tk.Se, "test", "t")
 	originalHook := s.dom.DDL().GetHook()
@@ -1801,14 +1802,14 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 					checkErr = errors.New("assert the writable column number error")
 					return
 				}
-				if tbl.WritableCols()[3].OriginDefaultValue.(string) != "66" {
+				if tbl.WritableCols()[3].OriginDefaultValue.(string) != "1971-06-09 00:00:00" {
 					checkErr = errors.New("assert the write only column origin default value error")
 					return
 				}
 			}
 			// For writable column:
 			// Insert / Update should set the column with the casted-related column value.
-			sql := fmt.Sprintf("insert into t values(%d, %d, %d)", i+3, i+3, i+3)
+			sql := fmt.Sprintf("insert into t values(%d, %d, '2021-06-06 12:13:14')", i+3, i+3)
 			_, err := tk1.Exec(sql)
 			if err != nil {
 				checkErr = err
@@ -1836,11 +1837,12 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 	}
 
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	tk.MustExec("alter table t modify column c tinyint default 66 NOT NULL")
+	tk.MustExec("alter table t modify column c date NOT NULL")
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	c.Assert(checkErr, IsNil)
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
-	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 -1 123", "2 -2 123", "5 5 5", "6 6 6", "7 7 7"))
+	tk.MustQuery("select * from t order by a").Check(
+		testkit.Rows("1 -1 1971-06-09", "2 -2 1971-06-09", "5 5 2021-06-06", "6 6 2021-06-06", "7 7 2021-06-06"))
 	tk.MustExec("drop table if exists t")
 }
 
