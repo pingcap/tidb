@@ -810,12 +810,12 @@ func (e *HashJoinExec) runBuildWorker(buildSideResultCh <-chan *chunk.Chunk, hCt
 			break
 		}
 
+		e.buildSelectedMux.Lock()
 		if !e.useOuterToBuild {
 			err = e.rowContainer.PutChunk(chk, e.isNullEQ, pHashCtx)
 		} else {
 			var bitMap = bitmap.NewConcurrentBitmap(chk.NumRows())
 			e.memTracker.Consume(bitMap.BytesConsumed())
-			e.buildSelectedMux.Lock()
 			e.outerMatchedStatus = append(e.outerMatchedStatus, bitMap)
 			if len(e.outerFilter) == 0 {
 				err = e.rowContainer.PutChunk(chk, e.isNullEQ, pHashCtx)
@@ -827,8 +827,8 @@ func (e *HashJoinExec) runBuildWorker(buildSideResultCh <-chan *chunk.Chunk, hCt
 				}
 				err = e.rowContainer.PutChunkSelected(chk, e.buildSelected, e.isNullEQ, pHashCtx)
 			}
-			e.buildSelectedMux.Unlock()
 		}
+		e.buildSelectedMux.Unlock()
 		if err != nil {
 			return err
 		}
