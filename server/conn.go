@@ -151,9 +151,10 @@ var (
 
 // newClientConn creates a *clientConn object.
 func newClientConn(s *Server) *clientConn {
+	globalConnID := s.globalConnIDAllocator.NextID()
 	return &clientConn{
 		server:       s,
-		connectionID: s.globalConnID.NextID(),
+		connectionID: globalConnID.ID(),
 		collation:    mysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(32 * 1024),
 		status:       connStatusDispatching,

@@ -113,17 +113,17 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 
 // Server is the MySQL protocol server
 type Server struct {
-	cfg               *config.Config
-	tlsConfig         unsafe.Pointer // *tls.Config
-	driver            IDriver
-	listener          net.Listener
-	socket            net.Listener
-	rwlock            sync.RWMutex
-	concurrentLimiter *TokenLimiter
-	clients           map[uint64]*clientConn
-	capability        uint32
-	dom               *domain.Domain
-	globalConnID      util.GlobalConnID
+	cfg                   *config.Config
+	tlsConfig             unsafe.Pointer // *tls.Config
+	driver                IDriver
+	listener              net.Listener
+	socket                net.Listener
+	rwlock                sync.RWMutex
+	concurrentLimiter     *TokenLimiter
+	clients               map[uint64]*clientConn
+	capability            uint32
+	dom                   *domain.Domain
+	globalConnIDAllocator util.GlobalConnIDAllocator
 
 	statusAddr     string
 	statusListener net.Listener
@@ -138,6 +138,14 @@ func (s *Server) ConnectionCount() int {
 	cnt := len(s.clients)
 	s.rwlock.RUnlock()
 	return cnt
+}
+
+// IsConnectionIDExisted checks a connectionID existed or not.
+func (s *Server) IsConnectionIDExisted(connectionID uint64) bool {
+	s.rwlock.RLock()
+	_, ok := s.clients[connectionID]
+	s.rwlock.RUnlock()
+	return ok
 }
 
 func (s *Server) getToken() *Token {
@@ -157,14 +165,7 @@ func (s *Server) releaseToken(token *Token) {
 // SetDomain use to set the server domain.
 func (s *Server) SetDomain(dom *domain.Domain) {
 	s.dom = dom
-}
-
-// InitGlobalConnID initialize global connection id.
-func (s *Server) InitGlobalConnID(serverIDGetter func() uint64) {
-	s.globalConnID = util.GlobalConnID{
-		ServerIDGetter: serverIDGetter,
-		Is64bits:       true,
-	}
+	s.globalConnIDAllocator.SetServerIDGetter(dom.ServerID)
 }
 
 // newConn creates a new *clientConn from a net.Conn.
@@ -229,8 +230,8 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
-		globalConnID:      util.GlobalConnID{ServerID: 0, Is64bits: true},
 	}
+	s.globalConnIDAllocator.Init(func() uint64 { return 0 }, s.IsConnectionIDExisted)
 	setTxnScope()
 	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 	if err != nil {
