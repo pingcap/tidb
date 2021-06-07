@@ -404,6 +404,15 @@ func (s *testIntegrationSuite) TestConvertToBit(c *C) {
 		"Warning 1690 constant 599999999 overflows tinyint",
 		"Warning 1406 Data Too Long, field len 63"))
 	tk.MustQuery("select * from t;").Check(testkit.Rows("127 \u007f\xff\xff\xff\xff\xff\xff\xff"))
+
+	// For issue 24900
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(b bit(16));")
+	tk.MustExec("insert ignore into t values(0x3635313836),(0x333830);")
+	tk.MustQuery("show warnings;").Check(testkit.Rows(
+		"Warning 1406 Data Too Long, field len 16",
+		"Warning 1406 Data Too Long, field len 16"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("\xff\xff", "\xff\xff"))
 }
 
 func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
