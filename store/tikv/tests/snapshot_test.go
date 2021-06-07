@@ -273,7 +273,7 @@ func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
 	snapshot.MergeRegionRequestStats(reqStats.Stats)
 	snapshot.MergeRegionRequestStats(reqStats.Stats)
 	bo := tikv.NewBackofferWithVars(context.Background(), 2000, nil)
-	err := bo.BackoffWithMaxSleep(tikv.BoTxnLockFast, 30, errors.New("test"))
+	err := bo.BackoffWithMaxSleepTxnLockFast(30, errors.New("test"))
 	c.Assert(err, IsNil)
 	snapshot.RecordBackoffInfo(bo)
 	snapshot.RecordBackoffInfo(bo)

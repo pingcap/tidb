@@ -55,6 +55,7 @@ const (
 		Host					CHAR(64),
 		User					CHAR(32),
 		authentication_string	TEXT,
+		plugin					CHAR(64),
 		Select_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Insert_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Update_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -489,11 +490,13 @@ const (
 	version68 = 68
 	// version69 adds mysql.global_grants for DYNAMIC privileges
 	version69 = 69
+	// version70 adds mysql.user.plugin to allow multiple authentication plugins
+	version70 = 70
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version69
+var currentBootstrapVersion int64 = version70
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -566,6 +569,7 @@ var (
 		upgradeToVer67,
 		upgradeToVer68,
 		upgradeToVer69,
+		upgradeToVer70,
 	}
 )
 
@@ -1403,6 +1407,12 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		bind := row.GetString(0)
 		db := row.GetString(1)
+		status := row.GetString(2)
+
+		if status != "using" && status != "builtin" {
+			continue
+		}
+
 		charset := row.GetString(4)
 		collation := row.GetString(5)
 		stmt, err := p.ParseOneStmt(bind, charset, collation)
@@ -1421,7 +1431,7 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 		}
 		bindMap[originWithDB] = bindInfo{
 			bindSQL:    utilparser.RestoreWithDefaultDB(stmt, db, bind),
-			status:     row.GetString(2),
+			status:     status,
 			createTime: row.GetTime(3),
 			charset:    charset,
 			collation:  collation,
@@ -1487,6 +1497,14 @@ func upgradeToVer69(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateGlobalGrantsTable)
+}
+
+func upgradeToVer70(s Session, ver int64) {
+	if ver >= version70 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN plugin CHAR(64) AFTER authentication_string", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET plugin='mysql_native_password'")
 }
 
 func writeOOMAction(s Session) {
@@ -1577,7 +1595,7 @@ func doDMLWorks(s Session) {
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.GetSysVars()))

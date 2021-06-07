@@ -598,9 +598,7 @@
         "SQL": "select * from t1 where a = 100",
         "Result": null,
         "Plan": [
-          "TableReader 10.00 root partition:dual data:Selection",
-          "└─Selection 10.00 cop[tikv]  eq(test_partition.t1.a, 100)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "TableDual 0.00 root  rows:0"
         ]
       },
       {

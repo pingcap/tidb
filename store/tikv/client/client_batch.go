@@ -11,8 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package tikv provides tcp connection to kvserver.
-package tikv
+// Package client provides tcp connection to kvserver.
+package client
 
 import (
 	"context"
@@ -673,7 +673,7 @@ func (c *batchCommandsClient) recreateStreamingClient(err error, streamClient *b
 			break
 		}
 
-		err2 := b.BackoffTiKVRPC(err1)
+		err2 := b.Backoff(retry.BoTiKVRPC, err1)
 		// As timeout is set to math.MaxUint32, err2 should always be nil.
 		// This line is added to make the 'make errcheck' pass.
 		terror.Log(err2)
@@ -769,6 +769,7 @@ func sendBatchRequest(
 			zap.String("to", addr), zap.String("cause", ctx.Err().Error()))
 		return nil, errors.Trace(ctx.Err())
 	case <-timer.C:
+		atomic.StoreInt32(&entry.canceled, 1)
 		return nil, errors.SuspendStack(errors.Annotate(context.DeadlineExceeded, "wait recvLoop"))
 	}
 }

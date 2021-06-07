@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package client
 
 import (
 	"context"
@@ -41,8 +41,8 @@ func (s testClientFailSuite) TearDownSuite(_ *C) {
 }
 
 func (s *testClientFailSuite) TestPanicInRecvLoop(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/panicInFailPendingRequests", `panic`), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gotErrorInRecvLoop", `return("0")`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/client/panicInFailPendingRequests", `panic`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/client/gotErrorInRecvLoop", `return("0")`), IsNil)
 
 	server, port := startMockTikvService()
 	c.Assert(port > 0, IsTrue)
@@ -61,8 +61,8 @@ func (s *testClientFailSuite) TestPanicInRecvLoop(c *C) {
 	_, err = rpcClient.SendRequest(context.Background(), addr, req, time.Second/2)
 	c.Assert(err, NotNil)
 
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gotErrorInRecvLoop"), IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/panicInFailPendingRequests"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/client/gotErrorInRecvLoop"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/client/panicInFailPendingRequests"), IsNil)
 	time.Sleep(time.Second * 2)
 
 	req = tikvrpc.NewRequest(tikvrpc.CmdEmpty, &tikvpb.BatchCommandsEmptyRequest{})
@@ -115,7 +115,7 @@ func (s *testClientFailSuite) TestRecvErrorInMultipleRecvLoops(c *C) {
 	}
 	epoch := atomic.LoadUint64(&batchClient.epoch)
 
-	fp := "github.com/pingcap/tidb/store/tikv/gotErrorInRecvLoop"
+	fp := "github.com/pingcap/tidb/store/tikv/client/gotErrorInRecvLoop"
 	// Send a request to each stream to trigger reconnection.
 	for _, forwardedHost := range forwardedHosts {
 		c.Assert(failpoint.Enable(fp, `1*return("0")`), IsNil)

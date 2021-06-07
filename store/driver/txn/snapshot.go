@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	derr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/store/driver/options"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 )
 
 type tikvSnapshot struct {
@@ -76,24 +76,24 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 	case kv.SnapshotTS:
 		s.KVSnapshot.SetSnapshotTS(val.(uint64))
 	case kv.ReplicaRead:
-		s.KVSnapshot.SetReplicaRead(val.(tikvstore.ReplicaReadType))
+		t := options.GetTiKVReplicaReadType(val.(kv.ReplicaReadType))
+		s.KVSnapshot.SetReplicaRead(t)
 	case kv.SampleStep:
 		s.KVSnapshot.SetSampleStep(val.(uint32))
 	case kv.TaskID:
 		s.KVSnapshot.SetTaskID(val.(uint64))
 	case kv.CollectRuntimeStats:
-		s.KVSnapshot.SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
+		if val == nil {
+			s.KVSnapshot.SetRuntimeStats(nil)
+		} else {
+			s.KVSnapshot.SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
+		}
 	case kv.IsStalenessReadOnly:
 		s.KVSnapshot.SetIsStatenessReadOnly(val.(bool))
 	case kv.MatchStoreLabels:
 		s.KVSnapshot.SetMatchStoreLabels(val.([]*metapb.StoreLabel))
-	}
-}
-
-func (s *tikvSnapshot) DelOption(opt int) {
-	switch opt {
-	case kv.CollectRuntimeStats:
-		s.KVSnapshot.SetRuntimeStats(nil)
+	case kv.ResourceGroupTag:
+		s.KVSnapshot.SetResourceGroupTag(val.([]byte))
 	}
 }
 

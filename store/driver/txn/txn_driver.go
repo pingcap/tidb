@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	derr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/store/driver/options"
 	"github.com/pingcap/tidb/store/tikv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
@@ -143,13 +144,18 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	case kv.SnapshotTS:
 		txn.KVTxn.GetSnapshot().SetSnapshotTS(val.(uint64))
 	case kv.ReplicaRead:
-		txn.KVTxn.GetSnapshot().SetReplicaRead(val.(tikvstore.ReplicaReadType))
+		t := options.GetTiKVReplicaReadType(val.(kv.ReplicaReadType))
+		txn.KVTxn.GetSnapshot().SetReplicaRead(t)
 	case kv.TaskID:
 		txn.KVTxn.GetSnapshot().SetTaskID(val.(uint64))
 	case kv.InfoSchema:
 		txn.SetSchemaVer(val.(tikv.SchemaVer))
 	case kv.CollectRuntimeStats:
-		txn.KVTxn.GetSnapshot().SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
+		if val == nil {
+			txn.KVTxn.GetSnapshot().SetRuntimeStats(nil)
+		} else {
+			txn.KVTxn.GetSnapshot().SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
+		}
 	case kv.SchemaAmender:
 		txn.SetSchemaAmender(val.(tikv.SchemaAmender))
 	case kv.SampleStep:
@@ -168,8 +174,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.GetSnapshot().SetIsStatenessReadOnly(val.(bool))
 	case kv.MatchStoreLabels:
 		txn.KVTxn.GetSnapshot().SetMatchStoreLabels(val.([]*metapb.StoreLabel))
-	default:
-		txn.KVTxn.SetOption(opt, val)
+	case kv.ResourceGroupTag:
+		txn.KVTxn.SetResourceGroupTag(val.([]byte))
 	}
 }
 
@@ -180,16 +186,7 @@ func (txn *tikvTxn) GetOption(opt int) interface{} {
 	case kv.TxnScope:
 		return txn.KVTxn.GetScope()
 	default:
-		return txn.KVTxn.GetOption(opt)
-	}
-}
-
-func (txn *tikvTxn) DelOption(opt int) {
-	switch opt {
-	case kv.CollectRuntimeStats:
-		txn.KVTxn.GetSnapshot().SetRuntimeStats(nil)
-	default:
-		txn.KVTxn.DelOption(opt)
+		return nil
 	}
 }
 

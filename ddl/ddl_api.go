@@ -1643,7 +1643,7 @@ func checkTableInfoValid(tblInfo *model.TableInfo) error {
 	return checkInvisibleIndexOnPK(tblInfo)
 }
 
-func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) (*model.TableInfo, error) {
+func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *ast.CreateTableStmt) (*model.TableInfo, error) {
 	// Check the referred table is a real table object.
 	if referTblInfo.IsSequence() || referTblInfo.IsView() {
 		return nil, ErrWrongObject.GenWithStackByArgs(ident.Schema, referTblInfo.Name, "BASE TABLE")
@@ -1662,7 +1662,10 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) (*mo
 	tblInfo.Name = ident.Name
 	tblInfo.AutoIncID = 0
 	tblInfo.ForeignKeys = nil
-	if tblInfo.TiFlashReplica != nil {
+	// Ignore TiFlash replicas for temporary tables.
+	if s.TemporaryKeyword != ast.TemporaryNone {
+		tblInfo.TiFlashReplica = nil
+	} else if tblInfo.TiFlashReplica != nil {
 		replica := *tblInfo.TiFlashReplica
 		// Keep the tiflash replica setting, remove the replica available status.
 		replica.AvailablePartitionIDs = nil
@@ -1736,8 +1739,17 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	switch s.TemporaryKeyword {
 	case ast.TemporaryGlobal:
 		tbInfo.TempTableType = model.TempTableGlobal
+		if !ctx.GetSessionVars().EnableGlobalTemporaryTable {
+			return nil, errors.New("global temporary table is experimental and it is switched off by tidb_enable_global_temporary_table")
+		}
+		// "create global temporary table ... on commit preserve rows"
+		if !s.OnCommitDelete {
+			return nil, errors.Trace(errUnsupportedOnCommitPreserve)
+		}
 	case ast.TemporaryLocal:
-		tbInfo.TempTableType = model.TempTableLocal
+		// TODO: set "tbInfo.TempTableType = model.TempTableLocal" after local temporary table is supported.
+		tbInfo.TempTableType = model.TempTableNone
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("local TEMPORARY TABLE is not supported yet, TEMPORARY will be parsed but ignored"))
 	case ast.TemporaryNone:
 		tbInfo.TempTableType = model.TempTableNone
 	}
@@ -1801,7 +1813,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	// build tableInfo
 	var tbInfo *model.TableInfo
 	if s.ReferTable != nil {
-		tbInfo, err = buildTableInfoWithLike(ident, referTbl.Meta())
+		tbInfo, err = buildTableInfoWithLike(ident, referTbl.Meta(), s)
 	} else {
 		tbInfo, err = buildTableInfoWithStmt(ctx, s, schema.Charset, schema.Collate)
 	}
@@ -1925,6 +1937,9 @@ func (d *ddl) CreateTableWithInfo(
 // preSplitAndScatter performs pre-split and scatter of the table's regions.
 // If `pi` is not nil, will only split region for `pi`, this is used when add partition.
 func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo) {
+	if tbInfo.TempTableType != model.TempTableNone {
+		return
+	}
 	sp, ok := d.store.(kv.SplittableStore)
 	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
 		return
@@ -2214,9 +2229,18 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			}
 			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		case ast.TableOptionPreSplitRegion:
+			if tbInfo.TempTableType != model.TempTableNone {
+				return errors.Trace(ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions"))
+			}
 			tbInfo.PreSplitRegions = op.UintValue
 		case ast.TableOptionCharset, ast.TableOptionCollate:
 			// We don't handle charset and collate here since they're handled in `getCharsetAndCollateInTableOption`.
+		case ast.TableOptionEngine:
+			if tbInfo.TempTableType != model.TempTableNone {
+				if op.StrValue != "" && !strings.EqualFold(op.StrValue, "memory") {
+					return errors.Trace(errUnsupportedEngineTemporary)
+				}
+			}
 		}
 	}
 	shardingBits := shardingBits(tbInfo)
@@ -2367,7 +2391,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 		return errors.Trace(err)
 	}
 
-	is := d.infoHandle.Get()
+	is := d.infoCache.GetLatest()
 	if is.TableIsView(ident.Schema, ident.Name) || is.TableIsSequence(ident.Schema, ident.Name) {
 		return ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "BASE TABLE")
 	}
@@ -2628,6 +2652,9 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, tableIdent)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if t.Meta().TempTableType != model.TempTableNone {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
 	}
 	if uVal == t.Meta().ShardRowIDBits {
 		// Nothing need to do.
@@ -2898,7 +2925,7 @@ func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alte
 
 // AddTablePartitions will add a new partition to the table.
 func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	is := d.infoHandle.Get()
+	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
@@ -2959,7 +2986,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 
 // CoalescePartitions coalesce partitions can be used with a table that is partitioned by hash or key to reduce the number of partitions by number.
 func (d *ddl) CoalescePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	is := d.infoHandle.Get()
+	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
@@ -2991,7 +3018,7 @@ func (d *ddl) CoalescePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 }
 
 func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	is := d.infoHandle.Get()
+	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
@@ -3039,7 +3066,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 }
 
 func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	is := d.infoHandle.Get()
+	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
@@ -3500,7 +3527,7 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (ca
 
 	// Deal with the different type.
 	if !checkTypeChangeSupported(origin, to) {
-		unsupportedMsg := fmt.Sprintf("change from original type %v to %v is currently unsupported yet", to.CompactStr(), origin.CompactStr())
+		unsupportedMsg := fmt.Sprintf("change from original type %v to %v is currently unsupported yet", origin.CompactStr(), to.CompactStr())
 		return false, unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 	}
 
@@ -3519,7 +3546,7 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (ca
 	return true, notCompatibleMsg, errUnsupportedModifyColumn.GenWithStackByArgs(notCompatibleMsg)
 }
 
-func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needOreg bool, reasonMsg string) {
+func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needReorg bool, reasonMsg string) {
 	toFlen := to.Flen
 	originFlen := origin.Flen
 	if mysql.IsIntegerType(to.Tp) && mysql.IsIntegerType(origin.Tp) {
@@ -3527,6 +3554,10 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needOreg b
 		// the default flen of the type.
 		originFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(origin.Tp)
 		toFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(to.Tp)
+	}
+
+	if convertBetweenCharAndVarchar(origin.Tp, to.Tp) {
+		return true, "conversion between char and varchar string needs reorganization"
 	}
 
 	if toFlen > 0 && toFlen < originFlen {
@@ -3542,42 +3573,30 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needOreg b
 }
 
 func checkTypeChangeSupported(origin *types.FieldType, to *types.FieldType) bool {
-	if types.IsString(origin.Tp) && to.Tp == mysql.TypeBit {
-		// TODO: Currently string data type cast to bit are not compatible with mysql, should fix here after compatible.
+	if (types.IsTypeTime(origin.Tp) || origin.Tp == mysql.TypeDuration || origin.Tp == mysql.TypeYear ||
+		types.IsString(origin.Tp) || origin.Tp == mysql.TypeJSON) &&
+		to.Tp == mysql.TypeBit {
+		// TODO: Currently date/datetime/timestamp/time/year/string/json data type cast to bit are not compatible with mysql, should fix here after compatible.
 		return false
 	}
 
-	if (origin.Tp == mysql.TypeEnum || origin.Tp == mysql.TypeSet) &&
-		(types.IsTypeTime(to.Tp) || to.Tp == mysql.TypeDuration) {
-		// TODO: Currently enum/set cast to date/datetime/timestamp/time/bit are not support yet, should fix here after supported.
+	if (types.IsTypeTime(origin.Tp) || origin.Tp == mysql.TypeDuration || origin.Tp == mysql.TypeYear ||
+		origin.Tp == mysql.TypeNewDecimal || origin.Tp == mysql.TypeFloat || origin.Tp == mysql.TypeDouble || origin.Tp == mysql.TypeJSON || origin.Tp == mysql.TypeBit) &&
+		(to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet) {
+		// TODO: Currently date/datetime/timestamp/time/year/decimal/float/double/json/bit cast to enum/set are not support yet, should fix here after supported.
 		return false
 	}
 
-	if (types.IsTypeTime(origin.Tp) || origin.Tp == mysql.TypeDuration || origin.Tp == mysql.TypeYear) &&
-		(to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet || to.Tp == mysql.TypeBit) {
-		// TODO: Currently date and time cast to enum/set/bit are not support yet, should fix here after supported.
+	if (origin.Tp == mysql.TypeEnum || origin.Tp == mysql.TypeSet || origin.Tp == mysql.TypeBit ||
+		origin.Tp == mysql.TypeNewDecimal || origin.Tp == mysql.TypeFloat || origin.Tp == mysql.TypeDouble) &&
+		(types.IsTypeTime(to.Tp)) {
+		// TODO: Currently enum/set/bit/decimal/float/double cast to date/datetime/timestamp type are not support yet, should fix here after supported.
 		return false
 	}
 
-	if (origin.Tp == mysql.TypeFloat || origin.Tp == mysql.TypeDouble) &&
-		(types.IsTypeTime(to.Tp) || to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet) {
-		// TODO: Currently float/double cast to date/datetime/timestamp/enum/set type are not support yet, should fix here after supported.
-		return false
-	}
-
-	if origin.Tp == mysql.TypeBit &&
-		(types.IsTypeTime(to.Tp) || to.Tp == mysql.TypeDuration || to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet) {
-		// TODO: Currently bit cast to date/datetime/timestamp/time/enum/set are not support yet, should fix here after supported.
-		return false
-	}
-
-	if origin.Tp == mysql.TypeNewDecimal && (to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet) {
-		// TODO: Currently decimal cast to enum/set are not support yet, should fix here after supported.
-		return false
-	}
-
-	if origin.Tp == mysql.TypeJSON && (to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet || to.Tp == mysql.TypeBit) {
-		// TODO: Currently json cast to enum/set/bit are not support yet, should fix here after supported.
+	if (origin.Tp == mysql.TypeEnum || origin.Tp == mysql.TypeSet || origin.Tp == mysql.TypeBit) &&
+		to.Tp == mysql.TypeDuration {
+		// TODO: Currently enum/set/bit cast to time are not support yet, should fix here after supported.
 		return false
 	}
 
@@ -3602,10 +3621,6 @@ func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types
 			msg := "tidb_enable_change_column_type is true and this column has primary key flag"
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
-	}
-	if types.IsTypeVarchar(origin.Tp) != types.IsTypeVarchar(to.Tp) {
-		unsupportedMsg := "column type conversion between 'varchar' and 'non-varchar' is currently unsupported yet"
-		return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 	}
 
 	err = checkModifyCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate, needRewriteCollationData)
@@ -3636,11 +3651,27 @@ func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	if err != nil {
 		return hasDefaultValue, errors.Trace(err)
 	}
-	err = col.SetDefaultValue(value)
+	err = setDefaultValueWithBinaryPadding(col, value)
 	if err != nil {
 		return hasDefaultValue, errors.Trace(err)
 	}
 	return hasDefaultValue, nil
+}
+
+func setDefaultValueWithBinaryPadding(col *table.Column, value interface{}) error {
+	err := col.SetDefaultValue(value)
+	if err != nil {
+		return err
+	}
+	// https://dev.mysql.com/doc/refman/8.0/en/binary-varbinary.html
+	// Set the default value for binary type should append the paddings.
+	if value != nil {
+		if col.Tp == mysql.TypeString && types.IsBinaryStr(&col.FieldType) && len(value.(string)) < col.Flen {
+			padding := make([]byte, col.Flen-len(value.(string)))
+			col.DefaultValue = string(append([]byte(col.DefaultValue.(string)), padding...))
+		}
+	}
+	return nil
 }
 
 func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) error {
@@ -3752,7 +3783,7 @@ func processAndCheckDefaultValueAndColumn(ctx sessionctx.Context, col *table.Col
 func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, originalColName model.CIStr,
 	spec *ast.AlterTableSpec) (*model.Job, error) {
 	specNewColumn := spec.NewColumns[0]
-	is := d.infoHandle.Get()
+	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return nil, errors.Trace(infoschema.ErrDatabaseNotExists)
@@ -4008,7 +4039,13 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 			return errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ic.Name)
 		}
 
-		if err := checkIndexColumn(col, ic.Length); err != nil {
+		prefixLength := types.UnspecifiedLength
+		if types.IsTypePrefixable(col.FieldType.Tp) && col.FieldType.Flen > ic.Length {
+			// When the index column is changed, prefix length is only valid
+			// if the type is still prefixable and larger than old prefix length.
+			prefixLength = ic.Length
+		}
+		if err := checkIndexColumn(col, prefixLength); err != nil {
 			return err
 		}
 	}
@@ -4203,7 +4240,7 @@ func (d *ddl) ModifyColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 
 func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	specNewColumn := spec.NewColumns[0]
-	is := d.infoHandle.Get()
+	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name)
@@ -4257,7 +4294,7 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 
 // AlterTableComment updates the table comment information.
 func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	is := d.infoHandle.Get()
+	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
@@ -4310,7 +4347,7 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 		return ErrUnknownCharacterSet.GenWithStackByArgs(toCharset)
 	}
 
-	is := d.infoHandle.Get()
+	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
@@ -4360,13 +4397,19 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Ban setting replica count for tables in system database.
+	if util.IsMemOrSysDB(schema.Name.L) {
+		return errors.Trace(errUnsupportedAlterReplicaForSysTable)
+	} else if tb.Meta().TempTableType != model.TempTableNone {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("set tiflash replica")
+	}
 
 	tbReplicaInfo := tb.Meta().TiFlashReplica
 	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
 		len(tbReplicaInfo.LocationLabels) == len(replicaInfo.Labels) {
 		changed := false
-		for i, lable := range tbReplicaInfo.LocationLabels {
-			if replicaInfo.Labels[i] != lable {
+		for i, label := range tbReplicaInfo.LocationLabels {
+			if replicaInfo.Labels[i] != label {
 				changed = true
 				break
 			}
@@ -4471,7 +4514,7 @@ func (d *ddl) AlterTableDropStatistics(ctx sessionctx.Context, ident ast.Ident, 
 
 // UpdateTableReplicaInfo updates the table flash replica infos.
 func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error {
-	is := d.infoHandle.Get()
+	is := d.infoCache.GetLatest()
 	tb, ok := is.TableByID(physicalID)
 	if !ok {
 		tb, _, _ = is.FindTableByPartitionID(physicalID)
@@ -4574,7 +4617,7 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 // In TiDB, indexes are case-insensitive (so index 'a' and 'A" are considered the same index),
 // but index names are case-sensitive (we can rename index 'a' to 'A')
 func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	is := d.infoHandle.Get()
+	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
@@ -5232,7 +5275,7 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *
 }
 
 func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef) error {
-	is := d.infoHandle.Get()
+	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)
@@ -5241,6 +5284,9 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
+	}
+	if t.Meta().TempTableType != model.TempTableNone {
+		return infoschema.ErrCannotAddForeign
 	}
 
 	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols(), t.Meta())
@@ -5264,7 +5310,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 }
 
 func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.CIStr) error {
-	is := d.infoHandle.Get()
+	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)
@@ -5290,7 +5336,7 @@ func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.
 }
 
 func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr, ifExists bool) error {
-	is := d.infoHandle.Get()
+	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
@@ -5895,8 +5941,8 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 		}
 
 		rules = append(rules, &placement.Rule{
-			Count:            int(replicas),
-			LabelConstraints: labelConstraints,
+			Count:       int(replicas),
+			Constraints: labelConstraints,
 		})
 
 		return rules, nil
@@ -5925,8 +5971,8 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 			}
 
 			rules = append(rules, &placement.Rule{
-				Count:            cnt,
-				LabelConstraints: labelConstraints,
+				Count:       cnt,
+				Constraints: labelConstraints,
 			})
 		}
 
@@ -6036,7 +6082,7 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 		return errors.Trace(err)
 	}
 
-	oldBundle := infoschema.GetBundle(d.infoHandle.Get(), []int64{partitionID, meta.ID, schema.ID})
+	oldBundle := infoschema.GetBundle(d.infoCache.GetLatest(), []int64{partitionID, meta.ID, schema.ID})
 
 	oldBundle.ID = placement.GroupID(partitionID)
 
@@ -6051,14 +6097,14 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 	newRules := bundle.Rules[:0]
 	for i, rule := range bundle.Rules {
 		// merge all empty constraints
-		if len(rule.LabelConstraints) == 0 {
+		if len(rule.Constraints) == 0 {
 			extraCnt[rule.Role] += rule.Count
 			continue
 		}
 		// refer to tidb#22065.
 		// add -engine=tiflash to every rule to avoid schedules to tiflash instances.
 		// placement rules in SQL is not compatible with `set tiflash replica` yet
-		if err := rule.LabelConstraints.Add(placement.Constraint{
+		if err := rule.Constraints.Add(placement.Constraint{
 			Op:     placement.NotIn,
 			Key:    placement.EngineLabelKey,
 			Values: []string{placement.EngineLabelTiFlash},
@@ -6083,7 +6129,7 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 			Count:       cnt,
 			StartKeyHex: startKey,
 			EndKeyHex:   endKey,
-			LabelConstraints: []placement.Constraint{{
+			Constraints: []placement.Constraint{{
 				Op:     placement.NotIn,
 				Key:    placement.EngineLabelKey,
 				Values: []string{placement.EngineLabelTiFlash},

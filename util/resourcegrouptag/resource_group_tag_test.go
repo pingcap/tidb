@@ -14,10 +14,14 @@
 package resourcegrouptag
 
 import (
+	"crypto/sha256"
 	"math/rand"
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 type testUtilsSuite struct{}
@@ -29,83 +33,76 @@ func TestT(t *testing.T) {
 }
 
 func (s *testUtilsSuite) TestResourceGroupTagEncoding(c *C) {
-	sqlDigest := ""
-	tag := EncodeResourceGroupTag(sqlDigest)
+	sqlDigest := parser.NewDigest(nil)
+	tag := EncodeResourceGroupTag(sqlDigest, nil)
 	c.Assert(len(tag), Equals, 0)
 	decodedSQLDigest, err := DecodeResourceGroupTag(tag)
 	c.Assert(err, IsNil)
 	c.Assert(len(decodedSQLDigest), Equals, 0)
 
-	sqlDigest = "aa"
-	tag = EncodeResourceGroupTag(sqlDigest)
+	sqlDigest = parser.NewDigest([]byte{'a', 'a'})
+	tag = EncodeResourceGroupTag(sqlDigest, nil)
 	// version(1) + prefix(1) + length(1) + content(2hex -> 1byte)
 	c.Assert(len(tag), Equals, 4)
 	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
 	c.Assert(err, IsNil)
-	c.Assert(decodedSQLDigest, Equals, sqlDigest)
+	c.Assert(decodedSQLDigest, DeepEquals, sqlDigest.Bytes())
 
-	sqlDigest = genRandHex(64)
-	tag = EncodeResourceGroupTag(sqlDigest)
+	sqlDigest = parser.NewDigest(genRandHex(64))
+	tag = EncodeResourceGroupTag(sqlDigest, nil)
 	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
 	c.Assert(err, IsNil)
-	c.Assert(decodedSQLDigest, Equals, sqlDigest)
+	c.Assert(decodedSQLDigest, DeepEquals, sqlDigest.Bytes())
 
-	sqlDigest = genRandHex(510)
-	tag = EncodeResourceGroupTag(sqlDigest)
+	sqlDigest = parser.NewDigest(genRandHex(510))
+	tag = EncodeResourceGroupTag(sqlDigest, nil)
 	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
 	c.Assert(err, IsNil)
-	c.Assert(decodedSQLDigest, Equals, sqlDigest)
-
-	// The max supported length is 255 bytes (510 hex digits).
-	sqlDigest = genRandHex(512)
-	tag = EncodeResourceGroupTag(sqlDigest)
-	c.Assert(len(tag), Equals, 0)
-
-	// A hex string can't have odd length.
-	sqlDigest = genRandHex(15)
-	tag = EncodeResourceGroupTag(sqlDigest)
-	c.Assert(len(tag), Equals, 0)
-
-	// Non-hexadecimal character is invalid
-	sqlDigest = "aabbccddgg"
-	tag = EncodeResourceGroupTag(sqlDigest)
-	c.Assert(len(tag), Equals, 0)
-
-	// A tag should start with a supported version
-	tag = []byte("\x00")
-	_, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, NotNil)
-
-	// The fields should have format like `[prefix, length, content...]`, otherwise decoding it should returns error.
-	tag = []byte("\x01\x01")
-	_, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, NotNil)
-
-	tag = []byte("\x01\x01\x02")
-	_, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, NotNil)
-
-	tag = []byte("\x01\x01\x02AB")
-	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, IsNil)
-	c.Assert(decodedSQLDigest, Equals, "4142")
-
-	tag = []byte("\x01\x01\x00")
-	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, IsNil)
-	c.Assert(len(decodedSQLDigest), Equals, 0)
-
-	// Unsupported field
-	tag = []byte("\x01\x99")
-	_, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, NotNil)
+	c.Assert(decodedSQLDigest, DeepEquals, sqlDigest.Bytes())
 }
 
-func genRandHex(length int) string {
+func genRandHex(length int) []byte {
 	const chars = "0123456789abcdef"
 	res := make([]byte, length)
 	for i := 0; i < length; i++ {
 		res[i] = chars[rand.Intn(len(chars))]
 	}
-	return string(res)
+	return res
+}
+
+func genDigest(str string) []byte {
+	hasher := sha256.New()
+	hasher.Write(hack.Slice(str))
+	return hasher.Sum(nil)
+}
+
+func (s *testUtilsSuite) TestResourceGroupTagEncodingPB(c *C) {
+	digest1 := genDigest("abc")
+	digest2 := genDigest("abcdefg")
+	// Test for protobuf
+	resourceTag := &tipb.ResourceGroupTag{
+		SqlDigest:  digest1,
+		PlanDigest: digest2,
+	}
+	buf, err := resourceTag.Marshal()
+	c.Assert(err, IsNil)
+	c.Assert(len(buf), Equals, 68)
+	tag := &tipb.ResourceGroupTag{}
+	err = tag.Unmarshal(buf)
+	c.Assert(err, IsNil)
+	c.Assert(tag.SqlDigest, DeepEquals, digest1)
+	c.Assert(tag.PlanDigest, DeepEquals, digest2)
+
+	// Test for protobuf sql_digest only
+	resourceTag = &tipb.ResourceGroupTag{
+		SqlDigest: digest1,
+	}
+	buf, err = resourceTag.Marshal()
+	c.Assert(err, IsNil)
+	c.Assert(len(buf), Equals, 34)
+	tag = &tipb.ResourceGroupTag{}
+	err = tag.Unmarshal(buf)
+	c.Assert(err, IsNil)
+	c.Assert(tag.SqlDigest, DeepEquals, digest1)
+	c.Assert(tag.PlanDigest, IsNil)
 }

@@ -59,4 +59,23 @@ const (
 	IsStalenessReadOnly
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels
+	// ResourceGroupTag indicates the resource group of the kv request.
+	ResourceGroupTag
 )
+
+// ReplicaReadType is the type of replica to read data from
+type ReplicaReadType byte
+
+const (
+	// ReplicaReadLeader stands for 'read from leader'.
+	ReplicaReadLeader ReplicaReadType = iota
+	// ReplicaReadFollower stands for 'read from follower'.
+	ReplicaReadFollower
+	// ReplicaReadMixed stands for 'read from leader and follower and learner'.
+	ReplicaReadMixed
+)
+
+// IsFollowerRead checks if follower is going to be used to read data.
+func (r ReplicaReadType) IsFollowerRead() bool {
+	return r != ReplicaReadLeader
+}

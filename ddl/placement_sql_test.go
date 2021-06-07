@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testDBSuite1) TestAlterTableAlterPartition(c *C) {
+func (s *testDBSuite6) TestAlterTableAlterPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -404,7 +404,7 @@ PARTITION BY RANGE (c) (
 						GroupID: groupID,
 						Role:    placement.Leader,
 						Count:   1,
-						LabelConstraints: []placement.Constraint{
+						Constraints: []placement.Constraint{
 							{
 								Key:    placement.DCLabelKey,
 								Op:     placement.In,
@@ -423,7 +423,7 @@ PARTITION BY RANGE (c) (
 						GroupID: groupID,
 						Role:    placement.Follower,
 						Count:   3,
-						LabelConstraints: []placement.Constraint{
+						Constraints: []placement.Constraint{
 							{
 								Key:    placement.DCLabelKey,
 								Op:     placement.In,
@@ -619,7 +619,7 @@ PARTITION BY RANGE (c) (
 				GroupID: groupID,
 				Role:    placement.Leader,
 				Count:   1,
-				LabelConstraints: []placement.Constraint{
+				Constraints: []placement.Constraint{
 					{
 						Key:    placement.DCLabelKey,
 						Op:     placement.In,

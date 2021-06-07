@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -1913,7 +1912,7 @@ func (cli *testServerClient) runTestSumAvg(c *C) {
 func (cli *testServerClient) getMetrics(t *C) []byte {
 	resp, err := cli.fetchStatus("/metrics")
 	t.Assert(err, IsNil)
-	content, err := ioutil.ReadAll(resp.Body)
+	content, err := io.ReadAll(resp.Body)
 	t.Assert(err, IsNil)
 	err = resp.Body.Close()
 	t.Assert(err, IsNil)
@@ -1955,7 +1954,7 @@ func (cli *testServerClient) waitUntilServerOnline() {
 		// fetch http status
 		resp, err := cli.fetchStatus("/status")
 		if err == nil {
-			_, err = ioutil.ReadAll(resp.Body)
+			_, err = io.ReadAll(resp.Body)
 			if err != nil {
 				panic(err)
 			}

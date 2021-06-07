@@ -14,13 +14,11 @@
 package statistics
 
 import (
-	"bytes"
 	"container/heap"
 	"context"
 	"math/rand"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -52,6 +50,7 @@ type RowSampleCollector struct {
 type RowSampleItem struct {
 	Columns []types.Datum
 	Weight  int64
+	Handle  kv.Handle
 }
 
 // WeightedRowSampleHeap implements the Heap interface.
@@ -298,152 +297,4 @@ func RowSamplesToProto(samples WeightedRowSampleHeap) []*tipb.RowSample {
 		rows = append(rows, pbRow)
 	}
 	return rows
-}
-
-// BuildHistAndTopNOnRowSample build a histogram and TopN for a column from samples.
-func BuildHistAndTopNOnRowSample(
-	ctx sessionctx.Context,
-	numBuckets, numTopN int,
-	id int64,
-	collector *SampleCollector,
-	tp *types.FieldType,
-	isColumn bool,
-) (*Histogram, *TopN, error) {
-	var getComparedBytes func(datum types.Datum) ([]byte, error)
-	if isColumn {
-		getComparedBytes = func(datum types.Datum) ([]byte, error) {
-			return codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, datum)
-		}
-	} else {
-		getComparedBytes = func(datum types.Datum) ([]byte, error) {
-			return datum.GetBytes(), nil
-		}
-	}
-	count := collector.Count
-	ndv := collector.FMSketch.NDV()
-	nullCount := collector.NullCount
-	if ndv > count {
-		ndv = count
-	}
-	if count == 0 || len(collector.Samples) == 0 {
-		return NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize), nil, nil
-	}
-	sc := ctx.GetSessionVars().StmtCtx
-	samples := collector.Samples
-	samples, err := SortSampleItems(sc, samples)
-	if err != nil {
-		return nil, nil, err
-	}
-	hg := NewHistogram(id, ndv, nullCount, 0, tp, numBuckets, collector.TotalSize)
-
-	sampleNum := int64(len(samples))
-	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
-	sampleFactor := float64(count) / float64(len(samples))
-
-	// Step1: collect topn from samples
-
-	// the topNList is always sorted by count from more to less
-	topNList := make([]TopNMeta, 0, numTopN)
-	cur, err := getComparedBytes(samples[0].Value)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	curCnt := float64(0)
-
-	// Iterate through the samples
-	for i := int64(0); i < sampleNum; i++ {
-
-		sampleBytes, err := getComparedBytes(samples[i].Value)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		// case 1, this value is equal to the last one: current count++
-		if bytes.Equal(cur, sampleBytes) {
-			curCnt += 1
-			continue
-		}
-		// case 2, meet a different value: counting for the "current" is complete
-		// case 2-1, now topn is empty: append the "current" count directly
-		if len(topNList) == 0 {
-			topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
-			cur, curCnt = sampleBytes, 1
-			continue
-		}
-		// case 2-2, now topn is full, and the "current" count is less than the least count in the topn: no need to insert the "current"
-		if len(topNList) >= numTopN && uint64(curCnt) <= topNList[len(topNList)-1].Count {
-			cur, curCnt = sampleBytes, 1
-			continue
-		}
-		// case 2-3, now topn is not full, or the "current" count is larger than the least count in the topn: need to find a slot to insert the "current"
-		j := len(topNList)
-		for ; j > 0; j-- {
-			if uint64(curCnt) < topNList[j-1].Count {
-				break
-			}
-		}
-		topNList = append(topNList, TopNMeta{})
-		copy(topNList[j+1:], topNList[j:])
-		topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
-		if len(topNList) > numTopN {
-			topNList = topNList[:numTopN]
-		}
-		cur, curCnt = sampleBytes, 1
-	}
-
-	// Handle the counting for the last value. Basically equal to the case 2 above.
-	// now topn is empty: append the "current" count directly
-	if len(topNList) == 0 {
-		topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
-	} else if len(topNList) < numTopN || uint64(curCnt) > topNList[len(topNList)-1].Count {
-		// now topn is not full, or the "current" count is larger than the least count in the topn: need to find a slot to insert the "current"
-		j := len(topNList)
-		for ; j > 0; j-- {
-			if uint64(curCnt) < topNList[j-1].Count {
-				break
-			}
-		}
-		topNList = append(topNList, TopNMeta{})
-		copy(topNList[j+1:], topNList[j:])
-		topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
-		if len(topNList) > numTopN {
-			topNList = topNList[:numTopN]
-		}
-	}
-
-	// Step2: exclude topn from samples
-	for i := int64(0); i < int64(len(samples)); i++ {
-		sampleBytes, err := getComparedBytes(samples[i].Value)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		for j := 0; j < len(topNList); j++ {
-			if bytes.Equal(sampleBytes, topNList[j].Encoded) {
-				// find the same value in topn: need to skip over this value in samples
-				copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
-				samples = samples[:uint64(len(samples))-topNList[j].Count]
-				i--
-				continue
-			}
-		}
-	}
-
-	for i := 0; i < len(topNList); i++ {
-		topNList[i].Count *= uint64(sampleFactor)
-	}
-	topn := &TopN{TopN: topNList}
-
-	if uint64(count) <= topn.TotalCount() || int(hg.NDV) <= len(topn.TopN) {
-		// TopN includes all sample data
-		return hg, topn, nil
-	}
-
-	// Step3: build histogram with the rest samples
-	if len(samples) > 0 {
-		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets))
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-
-	return hg, topn, nil
 }

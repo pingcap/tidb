@@ -128,7 +128,7 @@ func TestInfo(t *testing.T) {
 		goCtx,
 		ddl.WithEtcdClient(dom.GetEtcdClient()),
 		ddl.WithStore(s),
-		ddl.WithInfoHandle(dom.infoHandle),
+		ddl.WithInfoCache(dom.infoCache),
 		ddl.WithLease(ddlLease),
 	)
 	err = dom.ddl.Start(nil)
@@ -287,7 +287,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(dd, NotNil)
 	c.Assert(dd.GetLease(), Equals, 80*time.Millisecond)
 
-	snapTS := oracle.EncodeTSO(oracle.GetPhysical(time.Now()))
+	snapTS := oracle.GoTimeToTS(time.Now())
 	cs := &ast.CharsetOpt{
 		Chs: "utf8",
 		Col: "utf8_bin",
@@ -317,7 +317,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 
 	// for GetSnapshotInfoSchema
-	currSnapTS := oracle.EncodeTSO(oracle.GetPhysical(time.Now()))
+	currSnapTS := oracle.GoTimeToTS(time.Now())
 	currSnapIs, err := dom.GetSnapshotInfoSchema(currSnapTS)
 	c.Assert(err, IsNil)
 	c.Assert(currSnapIs, NotNil)
@@ -347,7 +347,7 @@ func (*testSuite) TestT(c *C) {
 
 	// for schemaValidator
 	schemaVer := dom.SchemaValidator.(*schemaValidator).LatestSchemaVersion()
-	ver, err := store.CurrentVersion(oracle.GlobalTxnScope)
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	ts := ver.Ver
 
@@ -360,7 +360,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(succ, Equals, ResultSucc)
 	time.Sleep(ddlLease)
 
-	ver, err = store.CurrentVersion(oracle.GlobalTxnScope)
+	ver, err = store.CurrentVersion(kv.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	ts = ver.Ver
 	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)

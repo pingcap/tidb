@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/tidb/store/tikv/client"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -123,8 +124,8 @@ func (s *KVStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool
 		Priority: kvrpcpb.CommandPri_Normal,
 	})
 
-	sender := NewRegionRequestSender(s.regionCache, s.client)
-	resp, err := sender.SendReq(bo, req, batch.regionID, ReadTimeoutShort)
+	sender := NewRegionRequestSender(s.regionCache, s.GetTiKVClient())
+	resp, err := sender.SendReq(bo, req, batch.regionID, client.ReadTimeoutShort)
 
 	batchResp := singleBatchResp{resp: resp}
 	if err != nil {

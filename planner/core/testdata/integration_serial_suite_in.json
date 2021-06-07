@@ -52,7 +52,32 @@
       "explain format = 'brief' select count(*) from fact_t where exists (select 1 from d1_t where d1_k = fact_t.d1_k)",
       "explain format = 'brief' select count(*) from fact_t where exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)",
       "explain format = 'brief' select count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k)",
-      "explain format = 'brief' select count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)"
+      "explain format = 'brief' select count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)",
+      "explain format = 'brief' select count(*) from fact_t join d1_t on fact_t.d1_k > d1_t.d1_k",
+      "explain format = 'brief' select count(*) from fact_t left join d1_t on fact_t.d1_k > d1_t.d1_k",
+      "explain format = 'brief' select count(*) from fact_t right join d1_t on fact_t.d1_k > d1_t.d1_k",
+      "explain format = 'brief' select count(*) from fact_t where d1_k not in (select d1_k from d1_t)"
+    ]
+  },
+  {
+    "name": "TestMPPOuterJoinBuildSideForBroadcastJoin",
+    "cases": [
+      "explain format = 'brief' select count(*) from a left join b on a.id = b.id",
+      "explain format = 'brief' select count(*) from b right join a on a.id = b.id"
+    ]
+  },
+  {
+    "name": "TestMPPOuterJoinBuildSideForShuffleJoinWithFixedBuildSide",
+    "cases": [
+      "explain format = 'brief' select count(*) from a left join b on a.id = b.id",
+      "explain format = 'brief' select count(*) from b right join a on a.id = b.id"
+    ]
+  },
+  {
+    "name": "TestMPPOuterJoinBuildSideForShuffleJoin",
+    "cases": [
+      "explain format = 'brief' select count(*) from a left join b on a.id = b.id",
+      "explain format = 'brief' select count(*) from b right join a on a.id = b.id"
     ]
   },
   {
@@ -276,7 +301,10 @@
       "desc format = 'brief' select * from (select id from t group by id) C join (select sum(b),id from (select t.id, t1.id as b from t join (select id, count(*) as c from t group by id) t1 on t.id=t1.id)A group by id)B on C.id=b.id",
       "desc format = 'brief' select * from t join t t1 on t.id = t1.id order by t.value limit 1",
       "desc format = 'brief' select * from t join t t1 on t.id = t1.id order by t.value % 100 limit 1",
-      "desc format = 'brief' select count(*) from (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 20) v group by v.v1"
+      "desc format = 'brief' select count(*) from (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 20) v group by v.v1",
+      "desc format = 'brief' select * from t join t t1 on t.id = t1.id limit 1",
+      "desc format = 'brief' select * from t join t t1 on t.id = t1.id limit 1",
+      "desc format = 'brief' select count(*) from (select t.id, t.value v1 from t join t t1 on t.id = t1.id limit 20) v group by v.v1"
     ]
   },
   {

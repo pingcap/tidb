@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
@@ -150,19 +151,24 @@ func (t *copTask) finishIndexPlan() {
 	cnt := t.count()
 	t.indexPlanFinished = true
 	sessVars := t.indexPlan.SCtx().GetSessionVars()
+	var tableInfo *model.TableInfo
+	if t.tablePlan != nil {
+		ts := t.tablePlan.(*PhysicalTableScan)
+		ts.stats = t.indexPlan.statsInfo()
+		tableInfo = ts.Table
+	}
 	// Network cost of transferring rows of index scan to TiDB.
-	t.cst += cnt * sessVars.NetworkFactor * t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true, false)
-
+	t.cst += cnt * sessVars.GetNetworkFactor(tableInfo) * t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true, false)
 	if t.tablePlan == nil {
 		return
 	}
+
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
-	t.tablePlan.(*PhysicalTableScan).stats = t.indexPlan.statsInfo()
 	var p PhysicalPlan
 	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
 	}
 	rowSize := t.tblColHists.GetIndexAvgRowSize(t.indexPlan.SCtx(), t.tblCols, p.(*PhysicalIndexScan).Index.Unique)
-	t.cst += cnt * rowSize * sessVars.ScanFactor
+	t.cst += cnt * rowSize * sessVars.GetScanFactor(tableInfo)
 }
 
 func (t *copTask) getStoreType() kv.StoreType {
@@ -935,7 +941,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	var prevSchema *expression.Schema
 	// Network cost of transferring rows of table scan to TiDB.
 	if t.tablePlan != nil {
-		t.cst += t.count() * sessVars.NetworkFactor * t.tblColHists.GetAvgRowSize(ctx, t.tablePlan.Schema().Columns, false, false)
+		t.cst += t.count() * sessVars.GetNetworkFactor(nil) * t.tblColHists.GetAvgRowSize(ctx, t.tablePlan.Schema().Columns, false, false)
 
 		tp := t.tablePlan
 		for len(tp.Children()) > 0 {
@@ -1100,6 +1106,15 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 		}
 		t = cop.convertToRootTask(p.ctx)
 		sunk = p.sinkIntoIndexLookUp(t)
+	} else if mpp, ok := t.(*mppTask); ok {
+		newCount := p.Offset + p.Count
+		childProfile := mpp.plan().statsInfo()
+		stats := deriveLimitStats(childProfile, float64(newCount))
+		pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
+		mpp = attachPlan2Task(pushedDownLimit, mpp).(*mppTask)
+		pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
+		pushedDownLimit.cost = mpp.cost()
+		t = mpp.convertToRootTask(p.ctx)
 	}
 	p.cost = t.cost()
 	if sunk {
@@ -1121,6 +1136,16 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 			return false
 		}
 	}
+
+	// If this happens, some Projection Operator must be inlined into this Limit. (issues/14428)
+	// For example, if the original plan is `IndexLookUp(col1, col2) -> Limit(col1, col2) -> Project(col1)`,
+	//  then after inlining the Project, it will be `IndexLookUp(col1, col2) -> Limit(col1)` here.
+	// If the Limit is sunk into the IndexLookUp, the IndexLookUp's schema needs to be updated as well,
+	//  but updating it here is not safe, so do not sink Limit into this IndexLookUp in this case now.
+	if p.Schema().Len() != reader.Schema().Len() {
+		return false
+	}
+
 	// We can sink Limit into IndexLookUpReader only if tablePlan contains no Selection.
 	ts, isTableScan := reader.tablePlan.(*PhysicalTableScan)
 	if !isTableScan {
@@ -1300,7 +1325,31 @@ func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	return t
 }
 
+func (p *PhysicalUnionAll) attach2MppTasks(tasks ...task) task {
+	t := &mppTask{p: p}
+	childPlans := make([]PhysicalPlan, 0, len(tasks))
+	var childMaxCost float64
+	for _, tk := range tasks {
+		if mpp, ok := tk.(*mppTask); ok && !tk.invalid() {
+			childCost := mpp.cost()
+			if childCost > childMaxCost {
+				childMaxCost = childCost
+			}
+			childPlans = append(childPlans, mpp.plan())
+		} else {
+			return invalidTask
+		}
+	}
+	p.SetChildren(childPlans...)
+	t.cst = childMaxCost
+	p.cost = t.cost()
+	return t
+}
+
 func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
+	if _, ok := tasks[0].(*mppTask); ok {
+		return p.attach2MppTasks(tasks...)
+	}
 	t := &rootTask{p: p}
 	childPlans := make([]PhysicalPlan, 0, len(tasks))
 	var childMaxCost float64
@@ -2027,7 +2076,8 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	}.Init(ctx, t.p.SelectBlockOffset())
 	p.stats = t.p.statsInfo()
 
-	p.cost = t.cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
+	cst := t.cst + t.count()*ctx.GetSessionVars().GetNetworkFactor(nil)
+	p.cost = cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
 	if p.ctx.GetSessionVars().IsMPPEnforced() {
 		p.cost = 0
 	}
@@ -2087,7 +2137,7 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 	sender.SetChildren(t.p)
 	receiver := PhysicalExchangeReceiver{}.Init(ctx, t.p.statsInfo())
 	receiver.SetChildren(sender)
-	cst := t.cst + t.count()*ctx.GetSessionVars().NetworkFactor
+	cst := t.cst + t.count()*ctx.GetSessionVars().GetNetworkFactor(nil)
 	sender.cost = cst
 	receiver.cost = cst
 	return &mppTask{

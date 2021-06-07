@@ -1,7 +1,7 @@
 # Proposal:
 
 - Author(s):     [morgo](https://github.com/morgo)
-- Last updated:  April 25, 2021
+- Last updated:  May 04, 2021
 - Discussion at: N/A
 
 ## Table of Contents
@@ -49,7 +49,7 @@ A boolean option called `EnableEnhancedSecurity` (default `FALSE`) will be added
 
 ### System Variables
 
-The following system variables will be hidden unless the user has the `RESTRICTED_SYSTEM_VARIABLES_ADMIN` privilege:
+The following system variables will be hidden unless the user has the `RESTRICTED_VARIABLES_ADMIN` privilege:
 
 * variable.TiDBDDLSlowOprThreshold,
 * variable.TiDBAllowRemoveAutoInc,
