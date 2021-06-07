@@ -43,20 +43,19 @@ import (
 	"github.com/pingcap/tidb/store/tikv/util"
 )
 
-// ShuttingDown is a flag to indicate tidb-server is exiting (Ctrl+C signal
+// shuttingDown is a flag to indicate tidb-server is exiting (Ctrl+C signal
 // receved for example). If this flag is set, tikv client should not retry on
 // network error because tidb-server expect tikv client to exit as soon as possible.
-// TODO: make it private when br is ready.
-var ShuttingDown uint32
+var shuttingDown uint32
 
 // StoreShuttingDown atomically stores ShuttingDown into v.
 func StoreShuttingDown(v uint32) {
-	atomic.StoreUint32(&ShuttingDown, v)
+	atomic.StoreUint32(&shuttingDown, v)
 }
 
 // LoadShuttingDown atomically loads ShuttingDown.
 func LoadShuttingDown() uint32 {
-	return atomic.LoadUint32(&ShuttingDown)
+	return atomic.LoadUint32(&shuttingDown)
 }
 
 // RegionRequestSender sends KV/Cop requests to tikv server. It handles network
