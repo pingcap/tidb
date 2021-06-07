@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
-	"github.com/pingcap/tidb/store/tikv/util"
+	"github.com/pingcap/tidb/store/tikv/mockstore"
 	"github.com/pingcap/tidb/store/tikv/util/codec"
 	pd "github.com/tikv/pd/client"
 )
@@ -42,7 +42,7 @@ func NewTestStore(c *C) *tikv.KVStore {
 		flag.Parse()
 	}
 
-	if *util.WithTiKV {
+	if *mockstore.WithTiKV {
 		addrs := strings.Split(*pdAddrs, ",")
 		pdClient, err := pd.NewClient(addrs, pd.SecurityOption{})
 		c.Assert(err, IsNil)
@@ -84,7 +84,7 @@ func clearStorage(store *tikv.KVStore) error {
 }
 
 // OneByOneSuite is a suite, When with-tikv flag is true, there is only one storage, so the test suite have to run one by one.
-type OneByOneSuite = util.OneByOneSuite
+type OneByOneSuite = mockstore.OneByOneSuite
 
 func encodeKey(prefix, s string) []byte {
 	return codec.EncodeBytes(nil, []byte(fmt.Sprintf("%s_%s", prefix, s)))

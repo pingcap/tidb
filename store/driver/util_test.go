@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/util"
+	"github.com/pingcap/tidb/store/tikv/mockstore"
 )
 
 func TestT(t *testing.T) {
@@ -43,7 +43,7 @@ func NewTestStore(c *C) kv.Storage {
 		flag.Parse()
 	}
 
-	if *util.WithTiKV {
+	if *mockstore.WithTiKV {
 		var d TiKVDriver
 		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
 		c.Assert(err, IsNil)
@@ -80,4 +80,4 @@ func clearStorage(store kv.Storage) error {
 }
 
 // OneByOneSuite is a suite, When with-tikv flag is true, there is only one storage, so the test suite have to run one by one.
-type OneByOneSuite = util.OneByOneSuite
+type OneByOneSuite = mockstore.OneByOneSuite
