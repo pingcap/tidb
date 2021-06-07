@@ -225,6 +225,21 @@ func (s *testTxStructureSuite) TestIgnoreHashMeta(c *C) {
 	l, err := tx.HLen(key)
 	c.Assert(err, IsNil)
 	c.Assert(l, Equals, int64(0))
+
+	key = []byte("k")
+	err = tx.HSet(key, []byte("1"), []byte("2"))
+	c.Assert(err, IsNil)
+
+	value, err = tx.HGet(key, []byte("1"))
+	c.Assert(err, IsNil)
+	c.Assert(value, DeepEquals, []byte("2"))
+
+	err = tx.HDel(key, []byte("1"))
+	c.Assert(err, IsNil)
+
+	value, err = tx.HGet(key, []byte("1"))
+	c.Assert(err, IsNil)
+	c.Assert(value, IsNil)
 }
 
 func (s *testTxStructureSuite) TestHash(c *C) {

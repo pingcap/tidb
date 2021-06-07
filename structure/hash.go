@@ -176,7 +176,7 @@ func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 	}
 	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
-	if err != nil || meta.IsEmpty() {
+	if err != nil {
 		return errors.Trace(err)
 	}
 
@@ -196,6 +196,10 @@ func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 
 			meta.FieldCount--
 		}
+	}
+
+	if t.ignoreHashMeta {
+		return nil
 	}
 
 	if meta.IsEmpty() {
