@@ -27,8 +27,8 @@ var globalTopSQLReport reporter.TopSQLReporter
 
 // SetupTopSQL sets up the top-sql worker.
 func SetupTopSQL() {
-	rc := reporter.NewGRPCReportClient()
-	globalTopSQLReport = reporter.NewRemoteTopSQLReporter(rc, plancodec.DecodeNormalizedPlan)
+	rc := reporter.NewGRPCReportClient(plancodec.DecodeNormalizedPlan)
+	globalTopSQLReport = reporter.NewRemoteTopSQLReporter(rc)
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(globalTopSQLReport)
 	tracecpu.GlobalSQLCPUProfiler.Run()
 }

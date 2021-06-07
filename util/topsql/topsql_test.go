@@ -123,10 +123,8 @@ func (s *testSuite) TestTopSQLReporter(c *C) {
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
 	variable.TopSQLVariable.AgentAddress.Store(server.Address())
 
-	client := reporter.NewGRPCReportClient()
-	report := reporter.NewRemoteTopSQLReporter(client, func(s string) (string, error) {
-		return s, nil
-	})
+	client := reporter.NewGRPCReportClient(reporter.MockPlanBinaryDecoderFunc)
+	report := reporter.NewRemoteTopSQLReporter(client)
 	defer report.Close()
 
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{report})

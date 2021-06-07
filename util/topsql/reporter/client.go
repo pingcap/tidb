@@ -28,7 +28,7 @@ import (
 
 // ReportClient send data to the target server.
 type ReportClient interface {
-	Send(ctx context.Context, addr string, data reportData, decodePlan planBinaryDecodeFunc) error
+	Send(ctx context.Context, addr string, data reportData) error
 	Close()
 }
 
@@ -36,17 +36,22 @@ type ReportClient interface {
 type GRPCReportClient struct {
 	curRPCAddr string
 	conn       *grpc.ClientConn
+	// calling decodePlan this can take a while, so should not block critical paths
+	decodePlan planBinaryDecodeFunc
 }
 
 // NewGRPCReportClient returns a new GRPCReportClient
-func NewGRPCReportClient() *GRPCReportClient {
-	return &GRPCReportClient{}
+func NewGRPCReportClient(decodePlan planBinaryDecodeFunc) *GRPCReportClient {
+	return &GRPCReportClient{
+		decodePlan: decodePlan,
+	}
 }
 
 var _ ReportClient = &GRPCReportClient{}
 
 // Send implements the ReportClient interface.
-func (r *GRPCReportClient) Send(ctx context.Context, targetRPCAddr string, data reportData, decodePlan planBinaryDecodeFunc) error {
+// Currently the implementation will establish a new connection every time, which is suitable for a per-minute sending period
+func (r *GRPCReportClient) Send(ctx context.Context, targetRPCAddr string, data reportData) error {
 	if targetRPCAddr == "" {
 		return nil
 	}
@@ -65,7 +70,7 @@ func (r *GRPCReportClient) Send(ctx context.Context, targetRPCAddr string, data 
 	}()
 	go func() {
 		defer wg.Done()
-		errCh <- r.sendBatchPlanMeta(ctx, data.normalizedPlanMap, decodePlan)
+		errCh <- r.sendBatchPlanMeta(ctx, data.normalizedPlanMap)
 	}()
 	go func() {
 		defer wg.Done()
@@ -145,14 +150,14 @@ func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, sqlMap *sync.Ma
 }
 
 // sendBatchPlanMeta sends a batch of SQL metas by stream.
-func (r *GRPCReportClient) sendBatchPlanMeta(ctx context.Context, planMap *sync.Map, decodePlan planBinaryDecodeFunc) error {
+func (r *GRPCReportClient) sendBatchPlanMeta(ctx context.Context, planMap *sync.Map) error {
 	client := tipb.NewTopSQLAgentClient(r.conn)
 	stream, err := client.ReportPlanMeta(ctx)
 	if err != nil {
 		return err
 	}
 	planMap.Range(func(key, value interface{}) bool {
-		planDecoded, errDecode := decodePlan(value.(string))
+		planDecoded, errDecode := r.decodePlan(value.(string))
 		if errDecode != nil {
 			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(errDecode))
 			return true

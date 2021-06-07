@@ -35,6 +35,10 @@ const (
 	grpcInitialConnWindowSize = 1 << 30
 )
 
+func MockPlanBinaryDecoderFunc(plan string) (string, error) {
+	return plan, nil
+}
+
 var _ TopSQLReporter = &RemoteTopSQLReporter{}
 
 // TopSQLReporter collects Top SQL metrics.
@@ -97,9 +101,6 @@ type RemoteTopSQLReporter struct {
 	// The normalized plans in binary can be decoded to string using the `planBinaryDecoder`.
 	normalizedPlanMap atomic.Value // sync.Map
 
-	// calling this can take a while, so should not block critical paths
-	planBinaryDecoder planBinaryDecodeFunc
-
 	collectCPUDataChan chan cpuData
 	reportDataChan     chan reportData
 }
@@ -108,14 +109,12 @@ type RemoteTopSQLReporter struct {
 //
 // planBinaryDecoder is a decoding function which will be called asynchronously to decode the plan binary to string
 // MaxStatementsNum is the maximum SQL and plan number, which will restrict the memory usage of the internal LFU cache
-func NewRemoteTopSQLReporter(client ReportClient, planDecodeFn planBinaryDecodeFunc) *RemoteTopSQLReporter {
-
+func NewRemoteTopSQLReporter(client ReportClient) *RemoteTopSQLReporter {
 	ctx, cancel := context.WithCancel(context.Background())
 	tsr := &RemoteTopSQLReporter{
 		ctx:                ctx,
 		cancel:             cancel,
 		client:             client,
-		planBinaryDecoder:  planDecodeFn,
 		collectCPUDataChan: make(chan cpuData, 1),
 		reportDataChan:     make(chan reportData, 1),
 	}
@@ -322,7 +321,7 @@ func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 	agentAddr := variable.TopSQLVariable.AgentAddress.Load()
 
 	ctx, cancel := context.WithTimeout(tsr.ctx, reportTimeout)
-	err := tsr.client.Send(ctx, agentAddr, data, tsr.planBinaryDecoder)
+	err := tsr.client.Send(ctx, agentAddr, data)
 	if err != nil {
 		logutil.BgLogger().Warn("[top-sql] client failed to send data", zap.Error(err))
 	}

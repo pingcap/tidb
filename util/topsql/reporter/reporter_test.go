@@ -41,9 +41,7 @@ func (s *testTopSQLReporter) SetUpSuite(c *C) {}
 
 func (s *testTopSQLReporter) SetUpTest(c *C) {}
 
-func testPlanBinaryDecoderFunc(plan string) (string, error) {
-	return plan, nil
-}
+
 
 func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) {
 	// register normalized sql
@@ -77,8 +75,8 @@ func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) *Rem
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(int64(interval))
 	variable.TopSQLVariable.AgentAddress.Store(addr)
 
-	rc := NewGRPCReportClient()
-	ts := NewRemoteTopSQLReporter(rc, testPlanBinaryDecoderFunc)
+	rc := NewGRPCReportClient(MockPlanBinaryDecoderFunc)
+	ts := NewRemoteTopSQLReporter(rc)
 	return ts
 }
 
