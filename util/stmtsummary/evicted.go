@@ -39,8 +39,8 @@ type stmtSummaryByDigestEvictedElement struct {
 	endTime int64
 	// digestKeyMap contains *Kinds* of digest being evicted
 	digestKeyMap map[string]struct{}
-	// otherSummary contains detailed information
-	otherSummary *stmtSummaryByDigestElement
+	// other contains detailed information
+	other *stmtSummaryByDigestElement
 }
 
 // spawn a new pointer to stmtSummaryByDigestEvicted
@@ -56,7 +56,7 @@ func newStmtSummaryByDigestEvictedElement(beginTime int64, endTime int64) *stmtS
 		beginTime:    beginTime,
 		endTime:      endTime,
 		digestKeyMap: make(map[string]struct{}),
-		otherSummary: &stmtSummaryByDigestElement{
+		other: &stmtSummaryByDigestElement{
 			beginTime: beginTime,
 			endTime:   endTime,
 			// basic
@@ -162,7 +162,7 @@ func (ssbde *stmtSummaryByDigestEvicted) Clear() {
 func (seElement *stmtSummaryByDigestEvictedElement) addEvicted(digestKey *stmtSummaryByDigestKey, digestValue *stmtSummaryByDigestElement) {
 	if digestKey != nil {
 		seElement.digestKeyMap[string(digestKey.Hash())] = struct{}{}
-		addInfo(seElement.otherSummary, digestValue)
+		addInfo(seElement.other, digestValue)
 	}
 }
 
@@ -229,14 +229,11 @@ func (ssbde *stmtSummaryByDigestEvicted) toCurrentDatum() []types.Datum {
 	if seElement == nil {
 		return nil
 	}
-	induceSsbd := &stmtSummaryByDigest{
-		schemaName:    "other",
-		digest:        "other",
-		planDigest:    "other",
-		stmtType:      "other",
-		normalizedSQL: "other",
-		tableNames:    "other",
-	}
+
+	// fake a stmtSummaryByDigest to induce datum
+	// beginTime and endTime are useless here so can be safely set to 0.
+	induceSsbd := newInduceSsbd(0, 0)
+
 	return seElement.toDatum(induceSsbd)
 }
 
@@ -246,7 +243,11 @@ func (ssbde *stmtSummaryByDigestEvicted) toHistoryDatum(historySize int) [][]typ
 	defer ssbde.Unlock()
 	seElements := ssbde.collectHistorySummaries(historySize)
 	rows := make([][]types.Datum, 0, len(seElements))
-	induceSsbd := new(stmtSummaryByDigest)
+
+	// fake a stmtSummaryByDigest to induce datum
+	// beginTime and endTime are useless here, can be safely set to 0.
+	induceSsbd := newInduceSsbd(0, 0)
+
 	for _, seElement := range seElements {
 		rows = append(rows, seElement.toDatum(induceSsbd))
 	}
@@ -263,7 +264,7 @@ func (ssbde *stmtSummaryByDigestEvicted) collectHistorySummaries(historySize int
 }
 
 func (seElement *stmtSummaryByDigestEvictedElement) toDatum(ssbd *stmtSummaryByDigest) []types.Datum {
-	return seElement.otherSummary.toDatum(ssbd)
+	return seElement.other.toDatum(ssbd)
 }
 
 // addInfo adds information in addWith into addTo.
@@ -433,4 +434,26 @@ func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElem
 	addTo.sumWriteSQLRespTotal += addWith.sumWriteSQLRespTotal
 
 	addTo.sumErrors += addWith.sumErrors
+}
+
+func newInduceSsbd(beginTime int64, endTime int64) *stmtSummaryByDigest {
+	newSsbd := &stmtSummaryByDigest{
+		schemaName:    "other",
+		digest:        "other",
+		planDigest:    "other",
+		stmtType:      "other",
+		normalizedSQL: "other",
+		tableNames:    "other",
+		history:       list.New(),
+	}
+	newSsbd.history.PushBack(newInduceSsbde(beginTime, endTime))
+	return newSsbd
+}
+func newInduceSsbde(beginTime int64, endTime int64) *stmtSummaryByDigestElement {
+	newSsbde := &stmtSummaryByDigestElement{
+		beginTime:  beginTime,
+		endTime:    endTime,
+		minLatency: time.Duration.Round(1<<63-1, time.Nanosecond),
+	}
+	return newSsbde
 }

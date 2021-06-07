@@ -15,7 +15,6 @@ package stmtsummary
 
 import (
 	"bytes"
-	"container/list"
 	"fmt"
 	"time"
 
@@ -24,22 +23,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
-
-func newInduceSsbd(beginTime int64, endTime int64) *stmtSummaryByDigest {
-	newSsbd := &stmtSummaryByDigest{
-		history: list.New(),
-	}
-	newSsbd.history.PushBack(newInduceSsbde(beginTime, endTime))
-	return newSsbd
-}
-func newInduceSsbde(beginTime int64, endTime int64) *stmtSummaryByDigestElement {
-	newSsbde := &stmtSummaryByDigestElement{
-		beginTime:  beginTime,
-		endTime:    endTime,
-		minLatency: time.Duration.Round(1<<63-1, time.Nanosecond),
-	}
-	return newSsbde
-}
 
 // generate new stmtSummaryByDigestKey and stmtSummaryByDigest
 func (s *testStmtSummarySuite) generateStmtSummaryByDigestKeyValue(schema string, beginTime int64, endTime int64) (*stmtSummaryByDigestKey, *stmtSummaryByDigest) {
