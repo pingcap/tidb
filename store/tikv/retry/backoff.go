@@ -27,7 +27,6 @@ import (
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
-	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -102,50 +101,6 @@ func (b *Backoffer) Backoff(cfg *Config, err error) error {
 // and never sleep more than maxSleepMs for each sleep.
 func (b *Backoffer) BackoffWithMaxSleepTxnLockFast(maxSleepMs int, err error) error {
 	cfg := BoTxnLockFast
-	return b.BackoffWithCfgAndMaxSleep(cfg, maxSleepMs, err)
-}
-
-// BackoffWithMaxSleep is deprecated, please use BackoffWithCfgAndMaxSleep instead. TODO: remove it when br is ready.
-func (b *Backoffer) BackoffWithMaxSleep(typ int, maxSleepMs int, err error) error {
-	// Back off types.
-	const (
-		boTiKVRPC int = iota
-		boTiFlashRPC
-		boTxnLock
-		boTxnLockFast
-		boPDRPC
-		boRegionMiss
-		boTiKVServerBusy
-		boTiFlashServerBusy
-		boTxnNotFound
-		boStaleCmd
-		boMaxTsNotSynced
-	)
-	switch typ {
-	case boTiKVRPC:
-		return b.BackoffWithCfgAndMaxSleep(BoTiKVRPC, maxSleepMs, err)
-	case boTiFlashRPC:
-		return b.BackoffWithCfgAndMaxSleep(BoTiFlashRPC, maxSleepMs, err)
-	case boTxnLock:
-		return b.BackoffWithCfgAndMaxSleep(BoTxnLock, maxSleepMs, err)
-	case boTxnLockFast:
-		return b.BackoffWithCfgAndMaxSleep(BoTxnLockFast, maxSleepMs, err)
-	case boPDRPC:
-		return b.BackoffWithCfgAndMaxSleep(BoPDRPC, maxSleepMs, err)
-	case boRegionMiss:
-		return b.BackoffWithCfgAndMaxSleep(BoRegionMiss, maxSleepMs, err)
-	case boTiKVServerBusy:
-		return b.BackoffWithCfgAndMaxSleep(BoTiKVServerBusy, maxSleepMs, err)
-	case boTiFlashServerBusy:
-		return b.BackoffWithCfgAndMaxSleep(BoTiFlashServerBusy, maxSleepMs, err)
-	case boTxnNotFound:
-		return b.BackoffWithCfgAndMaxSleep(BoTxnNotFound, maxSleepMs, err)
-	case boStaleCmd:
-		return b.BackoffWithCfgAndMaxSleep(BoStaleCmd, maxSleepMs, err)
-	case boMaxTsNotSynced:
-		return b.BackoffWithCfgAndMaxSleep(BoMaxTsNotSynced, maxSleepMs, err)
-	}
-	cfg := NewConfig("", &metrics.BackoffHistogramEmpty, nil, tikverr.ErrUnknown)
 	return b.BackoffWithCfgAndMaxSleep(cfg, maxSleepMs, err)
 }
 
