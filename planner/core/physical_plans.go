@@ -472,6 +472,8 @@ type PhysicalTableScan struct {
 	IsGlobalRead bool
 
 	// The table scan may be a partition, rather than a real table.
+	// TODO: clean up this field. After we support dynamic partitioning, table scan
+	// works on the whole partition table, and `isPartition` is not used.
 	isPartition bool
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool

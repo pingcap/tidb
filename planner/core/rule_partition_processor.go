@@ -14,11 +14,11 @@ package core
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -297,7 +297,7 @@ func (s *partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.
 			})
 			continue
 		}
-		return nil, fmt.Errorf("information of column %v is not found", colExpr.String())
+		return nil, errors.Trace(fmt.Errorf("information of column %v is not found", colExpr.String()))
 	}
 	return names, nil
 }

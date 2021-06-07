@@ -1149,6 +1149,10 @@ func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo)
 		if err != nil {
 			return nil, err
 		}
+		// TODO: Dynamic partition mode does not support adding extra pid column to the data source.
+		// (Because one table reader can read from multiple partitions, which partition a chunk row comes from is unknown)
+		// So we have to use the old "rewrite to union" way here, set `flagPartitionProcessor` flag for that.
+		b.optFlag = b.optFlag | flagPartitionProcessor
 	}
 	return selectLock, nil
 }

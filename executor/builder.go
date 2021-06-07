@@ -2676,7 +2676,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		storeType:      v.StoreType,
 		batchCop:       v.BatchCop,
 	}
-	if isPartition {
+	if tbl.Meta().Partition != nil {
 		e.extraPIDColumnIndex = extraPIDColumnIndex(v.Schema())
 	}
 	e.buildVirtualColumnInfo()
@@ -2761,6 +2761,10 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 
 	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+		return ret
+	}
+	// When isPartition is set, it means the union rewriting is done, so a partition reader is prefered.
+	if ok, _ := ts.IsPartition(); ok {
 		return ret
 	}
 
@@ -2978,6 +2982,10 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ret
 	}
+	// When isPartition is set, it means the union rewriting is done, so a partition reader is prefered.
+	if ok, _ := is.IsPartition(); ok {
+		return ret
+	}
 
 	pi := is.Table.GetPartitionInfo()
 	if pi == nil {
@@ -3139,6 +3147,10 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	}
 
 	if is.Index.Global {
+		return ret
+	}
+	if ok, _ := is.IsPartition(); ok {
+		// Already pruned when translated to logical union.
 		return ret
 	}
 

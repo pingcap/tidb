@@ -16,8 +16,8 @@ package executor_test
 import (
 	"fmt"
 	"math/rand"
-	"time"
 	"strings"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -2595,13 +2595,9 @@ partition by range (id) (
 partition p0 values less than (4),
 partition p1 values less than (7),
 partition p2 values less than (11))`)
-	tk.MustExec("insert into pt values (5, 5, 5)")
-	// TODO: Fix bug when @@tidb_partition_prune_mode is 'dynamic-only', pay special
-	// attention to index join as it supported in that mode.
-	tk.MustExec("set tidb_partition_prune_mode='static-only'")
+
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
-	tk2.MustExec("set tidb_partition_prune_mode='static-only'")
 
 	optimisticTableReader := func() {
 		tk.MustExec("set @@tidb_txn_mode = 'optimistic'")
@@ -2628,7 +2624,7 @@ partition p2 values less than (11))`)
 		tk.MustExec("set @@tidb_txn_mode = 'optimistic'")
 		tk2.MustExec("set @@tidb_txn_mode = 'optimistic'")
 		tk.MustExec("begin")
-		tk.MustQuery("select c, k from pt use index (k) where k = 5 for update").Check(testkit.Rows("6 5"))
+		tk.MustQuery("select c, k from pt use index (k) where k = 5 for update").Check(testkit.Rows("5 5"))
 		tk2.MustExec("update pt set c = c + 1 where k = 5")
 		_, err := tk.Exec("commit")
 		c.Assert(err, NotNil)
@@ -2652,7 +2648,8 @@ partition p2 values less than (11))`)
 		c.Assert(<-ch, Equals, 2)
 
 		tk.MustExec("commit")
-		tk.MustQuery("select c from pt where k = 5").Check(testkit.Rows("8"))
+		<-ch
+		tk.MustQuery("select c from pt where k = 5").Check(testkit.Rows("6"))
 	}
 
 	pessimisticIndexReader := func() {
@@ -2673,14 +2670,15 @@ partition p2 values less than (11))`)
 		c.Assert(<-ch, Equals, 2)
 
 		tk.MustExec("commit")
-		tk.MustQuery("select c from pt where k = 5").Check(testkit.Rows("9"))
+		<-ch
+		tk.MustQuery("select c from pt where k = 5").Check(testkit.Rows("6"))
 	}
 
 	pessimisticIndexLookUp := func() {
 		tk.MustExec("set @@tidb_txn_mode = 'pessimistic'")
 		tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
 		tk.MustExec("begin")
-		tk.MustQuery("select c, k from pt use index (k) where k = 5 for update").Check(testkit.Rows("10 5"))
+		tk.MustQuery("select c, k from pt use index (k) where k = 5 for update").Check(testkit.Rows("5 5"))
 		ch := make(chan int, 2)
 		go func() {
 			tk2.MustExec("update pt set c = c + 1 where k = 5")
@@ -2693,15 +2691,29 @@ partition p2 values less than (11))`)
 		c.Assert(<-ch, Equals, 2)
 
 		tk.MustExec("commit")
-		tk.MustQuery("select c from pt where k = 5").Check(testkit.Rows("10"))
+		<-ch
+		tk.MustQuery("select c from pt where k = 5").Check(testkit.Rows("6"))
 	}
 
-	testCases := []func(){
-		optimisticTableReader, optimisticIndexLookUp, optimisticIndexReader,
-		pessimisticTableReader, pessimisticIndexReader, pessimisticIndexLookUp,
+	partitionModes := []string{
+		"'dynamic-only'",
+		"'static-only'",
 	}
-	for _, c := range testCases {
-		c()
+	testCases := []func(){
+		optimisticTableReader,
+		optimisticIndexLookUp,
+		optimisticIndexReader,
+		pessimisticTableReader,
+		pessimisticIndexReader,
+		pessimisticIndexLookUp,
+	}
+
+	for _, mode := range partitionModes {
+		tk.MustExec("set @@tidb_partition_prune_mode=" + mode)
+		for i, c := range testCases {
+			tk.MustExec("replace into pt values (5, 5, 5)")
+			c()
+		}
 	}
 }
 
