@@ -127,6 +127,7 @@ const (
 
 // PreprocessorReturn is used to retain information obtained in the preprocessor.
 type PreprocessorReturn struct {
+<<<<<<< HEAD
 	initedLastSnapshotTS bool
 	ExplicitStaleness    bool
 	SnapshotTSEvaluator  func(sessionctx.Context) (uint64, error)
@@ -135,6 +136,11 @@ type PreprocessorReturn struct {
 	LastSnapshotTS uint64
 	InfoSchema     infoschema.InfoSchema
 	TxnScope       string
+=======
+	SnapshotTS        uint64
+	ExplicitStaleness bool
+	InfoSchema        infoschema.InfoSchema
+>>>>>>> 811253785... planner, executor: add stale read compatibility for temporary table (#25206)
 }
 
 // preprocessor is an ast.Visitor that preprocess
@@ -1450,6 +1456,15 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 		if p.err != nil {
 			return
 		}
+<<<<<<< HEAD
+=======
+		p.SnapshotTS = ts
+		p.ExplicitStaleness = true
+		p.InfoSchema = is
+	}
+	if p.SnapshotTS != ts {
+		p.err = ErrDifferentAsOf.GenWithStack("can not set different time in the as of")
+>>>>>>> 811253785... planner, executor: add stale read compatibility for temporary table (#25206)
 	}
 	p.initedLastSnapshotTS = true
 }

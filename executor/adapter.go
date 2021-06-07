@@ -191,8 +191,11 @@ type ExecStmt struct {
 	SnapshotTS uint64
 	// ExplicitStaleness means whether the 'SELECT' clause are using 'AS OF TIMESTAMP' to perform stale read explicitly.
 	ExplicitStaleness bool
+<<<<<<< HEAD
 	// TxnScope indicates the scope the store selector scope the request visited
 	TxnScope string
+=======
+>>>>>>> 811253785... planner, executor: add stale read compatibility for temporary table (#25206)
 	// InfoSchema stores a reference to the schema information.
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
@@ -291,9 +294,14 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	a.InfoSchema = ret.InfoSchema
+<<<<<<< HEAD
 	a.SnapshotTS = ret.LastSnapshotTS
 	a.ExplicitStaleness = ret.ExplicitStaleness
 	a.TxnScope = ret.TxnScope
+=======
+	a.SnapshotTS = ret.SnapshotTS
+	a.ExplicitStaleness = ret.ExplicitStaleness
+>>>>>>> 811253785... planner, executor: add stale read compatibility for temporary table (#25206)
 	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, a.InfoSchema)
 	if err != nil {
 		return 0, err
@@ -795,7 +803,13 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
+<<<<<<< HEAD
 	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti, a.SnapshotTS, a.ExplicitStaleness, a.TxnScope)
+=======
+	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti)
+	b.snapshotTS = a.SnapshotTS
+	b.explicitStaleness = a.ExplicitStaleness
+>>>>>>> 811253785... planner, executor: add stale read compatibility for temporary table (#25206)
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
