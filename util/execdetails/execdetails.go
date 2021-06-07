@@ -812,9 +812,9 @@ func (e *RuntimeStatsWithCommit) String() string {
 				buf.WriteString(", type: ")
 				buf.WriteString(e.formatBackoff(e.Commit.Mu.BackoffTypes))
 			}
-			e.Commit.Mu.Unlock()
 			buf.WriteString("}")
 		}
+		e.Commit.Mu.Unlock()
 		if e.Commit.ResolveLockTime > 0 {
 			buf.WriteString(", resolve_lock: ")
 			buf.WriteString(FormatDuration(time.Duration(e.Commit.ResolveLockTime)))
