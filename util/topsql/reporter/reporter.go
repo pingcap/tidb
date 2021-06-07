@@ -319,7 +319,6 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 	defer util.Recover("top-sql", "doReport", nil, false)
 
-	//sqlMetas, planMetas, records := tsr.prepareReportDataForSending(data)
 	agentAddr := variable.TopSQLVariable.AgentAddress.Load()
 
 	ctx, cancel := context.WithTimeout(tsr.ctx, reportTimeout)
