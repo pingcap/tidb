@@ -205,6 +205,9 @@ func CheckShaPassword(pwhash []byte, password string) (bool, error) {
 func NewSha2Password(pwd string) string {
 	salt := make([]byte, SALT_LENGTH)
 	rand.Read(salt)
+	for i := range salt {
+		salt[i] = salt[i] ^ 128
+	}
 
 	return sha256crypt(pwd, salt, 5*ITERATION_MULTIPLIER)
 }
