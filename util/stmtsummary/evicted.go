@@ -230,11 +230,7 @@ func (ssbde *stmtSummaryByDigestEvicted) toCurrentDatum() []types.Datum {
 		return nil
 	}
 
-	// fake a stmtSummaryByDigest
-	// beginTime and endTime are useless here so can be safely set to 0.
-	induceSsbd := newInduceSsbd(0, 0)
-
-	return seElement.toDatum(induceSsbd)
+	return seElement.toDatum()
 }
 
 func (ssbde *stmtSummaryByDigestEvicted) toHistoryDatum(historySize int) [][]types.Datum {
@@ -244,12 +240,8 @@ func (ssbde *stmtSummaryByDigestEvicted) toHistoryDatum(historySize int) [][]typ
 	seElements := ssbde.collectHistorySummaries(historySize)
 	rows := make([][]types.Datum, 0, len(seElements))
 
-	// fake a stmtSummaryByDigest
-	// beginTime and endTime are useless here, can be safely set to 0.
-	induceSsbd := newInduceSsbd(0, 0)
-
 	for _, seElement := range seElements {
-		rows = append(rows, seElement.toDatum(induceSsbd))
+		rows = append(rows, seElement.toDatum())
 	}
 	return rows
 }
@@ -263,8 +255,16 @@ func (ssbde *stmtSummaryByDigestEvicted) collectHistorySummaries(historySize int
 	return lst
 }
 
-func (seElement *stmtSummaryByDigestEvictedElement) toDatum(ssbd *stmtSummaryByDigest) []types.Datum {
-	return seElement.otherSummary.toDatum(ssbd)
+func (seElement *stmtSummaryByDigestEvictedElement) toDatum() []types.Datum {
+	induceSsbd := &stmtSummaryByDigest{
+		schemaName:    "other",
+		digest:        "other",
+		planDigest:    "other",
+		stmtType:      "other",
+		normalizedSQL: "other",
+		tableNames:    "other",
+	}
+	return seElement.otherSummary.toDatum(induceSsbd)
 }
 
 // addInfo adds information in addWith into addTo.
@@ -434,29 +434,4 @@ func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElem
 	addTo.sumWriteSQLRespTotal += addWith.sumWriteSQLRespTotal
 
 	addTo.sumErrors += addWith.sumErrors
-}
-
-// fake a stmtSummaryByDigest
-func newInduceSsbd(beginTime int64, endTime int64) *stmtSummaryByDigest {
-	newSsbd := &stmtSummaryByDigest{
-		schemaName:    "other",
-		digest:        "other",
-		planDigest:    "other",
-		stmtType:      "other",
-		normalizedSQL: "other",
-		tableNames:    "other",
-		history:       list.New(),
-	}
-	newSsbd.history.PushBack(newInduceSsbde(beginTime, endTime))
-	return newSsbd
-}
-
-// fake a stmtSummaryByDigestElement
-func newInduceSsbde(beginTime int64, endTime int64) *stmtSummaryByDigestElement {
-	newSsbde := &stmtSummaryByDigestElement{
-		beginTime:  beginTime,
-		endTime:    endTime,
-		minLatency: time.Duration.Round(1<<63-1, time.Nanosecond),
-	}
-	return newSsbde
 }
