@@ -16,6 +16,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/errors"
 	"math"
 	"sort"
 
@@ -41,6 +42,9 @@ import (
 
 func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	if prop.IsFlashProp() {
+		if vars := p.SCtx().GetSessionVars(); vars.IsMPPEnforced() && vars.StmtCtx.InExplainStmt {
+			vars.StmtCtx.AppendWarning(errors.New("Can't use mpp mode because operator `UnionScan` is not supported now."))
+		}
 		return nil, true, nil
 	}
 	childProp := prop.CloneEssentialFields()
@@ -2096,6 +2100,9 @@ func (la *LogicalApply) GetHashJoin(prop *property.PhysicalProperty) *PhysicalHa
 
 func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	if !prop.AllColsFromSchema(la.children[0].Schema()) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
+		if vars := la.SCtx().GetSessionVars(); vars.IsMPPEnforced() && vars.StmtCtx.InExplainStmt {
+			vars.StmtCtx.AppendWarning(errors.New("Can't use mpp mode because operator `Apply` is not supported now."))
+		}
 		return nil, true, nil
 	}
 	disableAggPushDownToCop(la.children[0])
@@ -2142,6 +2149,9 @@ func disableAggPushDownToCop(p LogicalPlan) {
 }
 
 func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
+	if vars := p.SCtx().GetSessionVars(); vars.IsMPPEnforced() && vars.StmtCtx.InExplainStmt {
+		vars.StmtCtx.AppendWarning(errors.New("Can't use mpp mode because operator `Window` is not supported now."))
+	}
 	if prop.IsFlashProp() {
 		return nil, true, nil
 	}
@@ -2181,13 +2191,16 @@ func (p *baseLogicalPlan) canPushToCop(storeTp kv.StoreType) bool {
 				}
 			}
 			ret = ret && validDs
-		case *LogicalAggregation, *LogicalProjection, *LogicalSelection, *LogicalJoin, *LogicalUnionAll:
+		case *LogicalAggregation, *LogicalProjection, *LogicalSelection, *LogicalJoin, *LogicalUnionAll, *LogicalLimit, *LogicalTopN:
 			if storeTp == kv.TiFlash {
 				ret = ret && c.canPushToCop(storeTp)
 			} else {
 				return false
 			}
 		default:
+			if vars := p.SCtx().GetSessionVars(); vars.IsMPPEnforced() && vars.StmtCtx.InExplainStmt {
+				vars.StmtCtx.AppendWarning(errors.New("Can't use mpp mode because operator `" + c.TP() + "` is not supported now."))
+			}
 			return false
 		}
 	}
@@ -2411,7 +2424,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
 	}
 	canPushDownToTiFlash := la.canPushToCop(kv.TiFlash)
-	canPushDownToMPP := la.ctx.GetSessionVars().IsMPPAllowed() && la.checkCanPushDownToMPP() && canPushDownToTiFlash
+	canPushDownToMPP := canPushDownToTiFlash && la.ctx.GetSessionVars().IsMPPAllowed() && la.checkCanPushDownToMPP()
 	if la.HasDistinct() {
 		// TODO: remove after the cost estimation of distinct pushdown is implemented.
 		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
@@ -2539,6 +2552,9 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 
 func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	if prop.IsFlashProp() {
+		if vars := p.SCtx().GetSessionVars(); vars.IsMPPEnforced() && vars.StmtCtx.InExplainStmt {
+			vars.StmtCtx.AppendWarning(errors.New("Can't use mpp mode because operator `Lock` is not supported now."))
+		}
 		return nil, true, nil
 	}
 	childProp := prop.CloneEssentialFields()
@@ -2632,6 +2648,9 @@ func (ls *LogicalSort) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 
 func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	if !prop.IsEmpty() || prop.IsFlashProp() {
+		if vars := p.SCtx().GetSessionVars(); vars.IsMPPEnforced() && vars.StmtCtx.InExplainStmt {
+			vars.StmtCtx.AppendWarning(errors.New("Can't use mpp mode because operator `MaxOneRow` is not supported now."))
+		}
 		return nil, true, nil
 	}
 	mor := PhysicalMaxOneRow{}.Init(p.ctx, p.stats, p.blockOffset, &property.PhysicalProperty{ExpectedCnt: 2})
