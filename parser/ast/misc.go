@@ -112,16 +112,21 @@ type AuthOption struct {
 	ByAuthString bool
 	AuthString   string
 	HashString   string
-	// TODO: support auth_plugin
+	AuthPlugin   string
 }
 
 // Restore implements Node interface.
 func (n *AuthOption) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("IDENTIFIED BY ")
+	ctx.WriteKeyWord("IDENTIFIED")
+	if n.AuthPlugin != "" {
+		ctx.WriteKeyWord(" WITH ")
+		ctx.WriteString(n.AuthPlugin)
+	}
 	if n.ByAuthString {
+		ctx.WriteKeyWord(" BY ")
 		ctx.WriteString(n.AuthString)
-	} else {
-		ctx.WriteKeyWord("PASSWORD ")
+	} else if n.HashString != "" {
+		ctx.WriteKeyWord(" AS ")
 		ctx.WriteString(n.HashString)
 	}
 	return nil
@@ -1096,11 +1101,25 @@ func (n *UserSpec) EncodedPassword() (string, bool) {
 
 	opt := n.AuthOpt
 	if opt.ByAuthString {
-		return auth.EncodePassword(opt.AuthString), true
+		switch opt.AuthPlugin {
+		case mysql.AuthCachingSha2Password:
+			return auth.NewSha2Password(opt.AuthString), true
+		default:
+			return auth.EncodePassword(opt.AuthString), true
+		}
 	}
 
 	// Not a legal password string.
-	if len(opt.HashString) != 41 || !strings.HasPrefix(opt.HashString, "*") {
+	switch opt.AuthPlugin {
+	case mysql.AuthCachingSha2Password:
+		if len(opt.HashString) != mysql.SHAPWDHashLen {
+			return "", false
+		}
+	case "", mysql.AuthNativePassword:
+		if len(opt.HashString) != (mysql.PWDHashLen+1) || !strings.HasPrefix(opt.HashString, "*") {
+			return "", false
+		}
+	default:
 		return "", false
 	}
 	return opt.HashString, true
