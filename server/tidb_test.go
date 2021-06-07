@@ -29,7 +29,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -1174,7 +1173,6 @@ func (ts *tidbTestSerialSuite) TestPrepareCount(c *C) {
 }
 
 func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
-	c.Skip("unstable")
 	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer func() {
@@ -1206,10 +1204,10 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		{sql: "replace into t (b) values (1),(1),(1),(1),(1),(1),(1),(1);", planRegexp: ""},
 		{sql: "update t set b=a where b is null limit 1;", planRegexp: ".*Limit.*TableReader.*"},
 		{sql: "delete from t where b is null limit 2;", planRegexp: ".*Limit.*TableReader.*"},
-		{sql: "select * from t use index(idx) where a>0;", planRegexp: ".*IndexLookUp.*"},
+		{sql: "select * from t use index(idx) where a<10;", planRegexp: ".*IndexLookUp.*"},
 		{sql: "select * from t ignore index(idx) where a>0;", planRegexp: ".*TableReader.*"},
 		{sql: "select /*+ HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a=t2.a where t1.b is not null;", planRegexp: ".*HashJoin.*"},
-		{sql: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a=t2.a where t1.b is not null;", planRegexp: ".*IndexHashJoin.*"},
+		{sql: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t2.a=t1.a where t1.b is not null;", planRegexp: ".*IndexHashJoin.*"},
 		{sql: "select * from t where a=1;", planRegexp: ".*Point_Get.*"},
 		{sql: "select * from t where a in (1,2,3,4)", planRegexp: ".*Batch_Point_Get.*"},
 	}
@@ -1241,10 +1239,10 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		{prepare: "replace into t1 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
 		{prepare: "update t1 set b=a where b is null limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
 		{prepare: "delete from t1 where b is null limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
-		{prepare: "select * from t1 use index(idx) where a>?;", args: []interface{}{1}, planRegexp: ".*IndexLookUp.*"},
+		{prepare: "select * from t1 use index(idx) where a<?;", args: []interface{}{1}, planRegexp: ".*IndexLookUp.*"},
 		{prepare: "select * from t1 ignore index(idx) where a>?;", args: []interface{}{1}, planRegexp: ".*TableReader.*"},
 		{prepare: "select /*+ HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t1.a=t2.a where t1.b is not null;", args: nil, planRegexp: ".*HashJoin.*"},
-		{prepare: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t1.a=t2.a where t1.b is not null;", args: nil, planRegexp: ".*IndexHashJoin.*"},
+		{prepare: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t2.a=t1.a where t1.b is not null;", args: nil, planRegexp: ".*IndexHashJoin.*"},
 		{prepare: "select * from t1 where a=?;", args: []interface{}{1}, planRegexp: ".*Point_Get.*"},
 		{prepare: "select * from t1 where a in (?,?,?,?)", args: []interface{}{1, 2, 3, 4}, planRegexp: ".*Batch_Point_Get.*"},
 	}
@@ -1278,10 +1276,10 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		{prepare: "replace into t2 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
 		{prepare: "update t2 set b=a where b is null limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
 		{prepare: "delete from t2 where b is null limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
-		{prepare: "select * from t2 use index(idx) where a>?;", args: []interface{}{1}, planRegexp: ".*IndexLookUp.*"},
+		{prepare: "select * from t2 use index(idx) where a<?;", args: []interface{}{1}, planRegexp: ".*IndexLookUp.*"},
 		{prepare: "select * from t2 ignore index(idx) where a>?;", args: []interface{}{1}, planRegexp: ".*TableReader.*"},
 		{prepare: "select /*+ HASH_JOIN(t1, t2) */ * from t2 t1 join t2 t2 on t1.a=t2.a where t1.b is not null;", args: nil, planRegexp: ".*HashJoin.*"},
-		{prepare: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t2 t1 join t2 t2 on t1.a=t2.a where t1.b is not null;", args: nil, planRegexp: ".*IndexHashJoin.*"},
+		{prepare: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t2 t1 join t2 t2 on t2.a=t1.a where t1.b is not null;", args: nil, planRegexp: ".*IndexHashJoin.*"},
 		{prepare: "select * from t2 where a=?;", args: []interface{}{1}, planRegexp: ".*Point_Get.*"},
 		{prepare: "select * from t2 where a in (?,?,?,?)", args: []interface{}{1, 2, 3, 4}, planRegexp: ".*Batch_Point_Get.*"},
 	}
@@ -1326,7 +1324,6 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		// since 1 sql may has many plan, check `len(stats) > 0` instead of `len(stats) == 1`.
 		c.Assert(len(stats) > 0, IsTrue, commentf)
 
-		match := false
 		for _, s := range stats {
 			sqlStr := collector.GetSQL(s.SQLDigest)
 			encodedPlan := collector.GetPlan(s.PlanDigest)
@@ -1339,14 +1336,8 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 			// remove '\n' '\t' before do regexp match.
 			normalizedPlan = strings.Replace(normalizedPlan, "\n", " ", -1)
 			normalizedPlan = strings.Replace(normalizedPlan, "\t", " ", -1)
-			ok, err := regexp.MatchString(planRegexp, normalizedPlan)
-			c.Assert(err, IsNil, commentf)
-			if ok {
-				match = true
-				break
-			}
+			c.Assert(normalizedPlan, Matches, planRegexp, commentf)
 		}
-		c.Assert(match, IsTrue, commentf)
 	}
 
 	// Check result of test case 1.
