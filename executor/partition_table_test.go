@@ -2710,7 +2710,7 @@ partition p2 values less than (11))`)
 
 	for _, mode := range partitionModes {
 		tk.MustExec("set @@tidb_partition_prune_mode=" + mode)
-		for i, c := range testCases {
+		for _, c := range testCases {
 			tk.MustExec("replace into pt values (5, 5, 5)")
 			c()
 		}
