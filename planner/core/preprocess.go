@@ -102,9 +102,6 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 	}
 	node.Accept(&v)
 	// InfoSchema must be non-nil after preprocessing
-	if v.err != nil {
-		return errors.Trace(v.err)
-	}
 	v.ensureInfoSchema()
 	return errors.Trace(v.err)
 }
@@ -129,9 +126,9 @@ const (
 
 // PreprocessorReturn is used to retain information obtained in the preprocessor.
 type PreprocessorReturn struct {
-	initedLastSnapshotTS     bool
-	ExplicitStaleness bool
-	SnapshotTS        func(sessionctx.Context) (uint64, error)
+	initedLastSnapshotTS bool
+	ExplicitStaleness    bool
+	SnapshotTS           func(sessionctx.Context) (uint64, error)
 	// LastSnapshotTS is the last calculated snapshotTS, if any
 	// otherwise it defaults to zero
 	LastSnapshotTS uint64
@@ -609,13 +606,9 @@ func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 			p.err = errors.Trace(ErrNoDB)
 			return
 		}
-		p.ensureInfoSchema()
-		if p.err != nil {
-			return
-		}
 		sName := model.NewCIStr(currentDB)
 		tName := table.Name
-		tableInfo, err := p.InfoSchema.TableByName(sName, tName)
+		tableInfo, err := p.ensureInfoSchema().TableByName(sName, tName)
 		if err != nil {
 			p.err = err
 			return
@@ -638,12 +631,8 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		if stmt.ReferTable.Schema.String() != "" {
 			schema = stmt.ReferTable.Schema
 		}
-		p.ensureInfoSchema()
-		if p.err != nil {
-			return
-		}
 		// get the infoschema from the context.
-		tableInfo, err := p.InfoSchema.TableByName(schema, stmt.ReferTable.Name)
+		tableInfo, err := p.ensureInfoSchema().TableByName(schema, stmt.ReferTable.Name)
 		if err != nil {
 			p.err = err
 			return
@@ -1255,12 +1244,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
-	p.ensureInfoSchema()
-	if p.err != nil {
-		return
-	}
-
-	table, err := p.InfoSchema.TableByName(tn.Schema, tn.Name)
+	table, err := p.ensureInfoSchema().TableByName(tn.Schema, tn.Name)
 	if err != nil {
 		// We should never leak that the table doesn't exist (i.e. attach ErrTableNotExists)
 		// unless we know that the user has permissions to it, should it exist.
@@ -1281,12 +1265,8 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		p.err = err
 		return
 	}
-	p.ensureInfoSchema()
-	if p.err != nil {
-		return
-	}
 	tableInfo := table.Meta()
-	dbInfo, _ := p.InfoSchema.SchemaByName(tn.Schema)
+	dbInfo, _ := p.ensureInfoSchema().SchemaByName(tn.Schema)
 	// tableName should be checked as sequence object.
 	if p.flag&inSequenceFunction > 0 {
 		if !tableInfo.IsSequence() {
@@ -1451,6 +1431,13 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 		p.err = ErrDifferentAsOf.GenWithStack("can not set different time in the as of")
 		return
 	}
+	if p.LastSnapshotTS != 0 {
+		dom := domain.GetDomain(p.ctx)
+		p.InfoSchema, p.err = dom.GetSnapshotInfoSchema(p.LastSnapshotTS)
+		if p.err != nil {
+			return
+		}
+	}
 	p.initedLastSnapshotTS = true
 }
 
@@ -1461,15 +1448,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 //    - transcation context
 func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 	if p.InfoSchema == nil {
-		if p.LastSnapshotTS != 0 {
-			dom := domain.GetDomain(p.ctx)
-			p.InfoSchema, p.err = dom.GetSnapshotInfoSchema(p.LastSnapshotTS)
-			if p.err != nil {
-				return nil
-			}
-		} else {
-			p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
-		}
+		p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	}
 	return p.InfoSchema
 }
