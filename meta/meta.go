@@ -96,6 +96,7 @@ func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
 	txn.SetOption(kv.SyncLog, struct{}{})
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
+	t.IgnoreHashMeta()
 	listKey := DefaultJobListKey
 	if len(jobListKeys) != 0 {
 		listKey = jobListKeys[0]
@@ -109,6 +110,7 @@ func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
 // NewSnapshotMeta creates a Meta with snapshot.
 func NewSnapshotMeta(snapshot kv.Snapshot) *Meta {
 	t := structure.NewStructure(snapshot, nil, mMetaPrefix)
+	t.IgnoreHashMeta()
 	return &Meta{txn: t}
 }
 

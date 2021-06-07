@@ -205,6 +205,28 @@ func (s *testTxStructureSuite) TestList(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testTxStructureSuite) TestIgnoreHashMeta(c *C) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+
+	// Test ignore hash meta.
+	tx := structure.NewStructure(txn, txn, []byte{0x2})
+	tx.IgnoreHashMeta()
+
+	key := []byte("b")
+	n, err := tx.HInc(key, []byte("1"), 1)
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(1))
+
+	value, err := tx.HGet(key, []byte("1"))
+	c.Assert(err, IsNil)
+	c.Assert(value, DeepEquals, []byte("1"))
+
+	l, err := tx.HLen(key)
+	c.Assert(err, IsNil)
+	c.Assert(l, Equals, int64(0))
+}
+
 func (s *testTxStructureSuite) TestHash(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)

@@ -43,6 +43,13 @@ func (meta hashMeta) IsEmpty() bool {
 	return meta.FieldCount <= 0
 }
 
+// IgnoreHashMeta is a switch to ignore the hash meta data.
+// The meta data makes the hash operation non-scalable, because the transaction conflicts on the meta key.
+// If the user do not need the HLen API (like TiDB's use case), it is good choice to ignore the meta data.
+func (t *TxStructure) IgnoreHashMeta() {
+	t.ignoreHashMeta = true
+}
+
 // HSet sets the string value of a hash field.
 func (t *TxStructure) HSet(key []byte, field []byte, value []byte) error {
 	if t.readWriter == nil {
@@ -127,6 +134,10 @@ func (t *TxStructure) updateHash(key []byte, field []byte, fn func(oldValue []by
 		return errors.Trace(err)
 	}
 
+	if t.ignoreHashMeta {
+		return nil
+	}
+
 	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
 	if err != nil {
@@ -145,6 +156,11 @@ func (t *TxStructure) updateHash(key []byte, field []byte, fn func(oldValue []by
 
 // HLen gets the number of fields in a hash.
 func (t *TxStructure) HLen(key []byte) (int64, error) {
+	if t.ignoreHashMeta {
+		// No need to return error, the user set `ignoreHashMeta` option at his own risk!
+		return 0, nil
+	}
+
 	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
 	if err != nil {
