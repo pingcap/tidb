@@ -2049,11 +2049,7 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 	return analyzeTask
 }
 
-func (b *executorBuilder) buildAnalyzeSamplingPushdown(
-	task plannercore.AnalyzeColumnsTask,
-	opts map[ast.AnalyzeOptionType]uint64,
-	autoAnalyze string,
-) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
 	availableIdx := make([]*model.IndexInfo, 0, len(task.Indexes))
 	colGroups := make([]*tipb.AnalyzeColumnGroup, 0, len(task.Indexes))
 	if len(task.Indexes) > 0 {
@@ -2073,7 +2069,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	sc := b.ctx.GetSessionVars().StmtCtx
 	e := &AnalyzeColumnsExec{
 		ctx:         b.ctx,
-		tableID:     task.TableID,
+		tableInfo:   task.TblInfo,
 		colsInfo:    task.ColsInfo,
 		handleCols:  task.HandleCols,
 		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency(),
@@ -2082,9 +2078,10 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
-		opts:       opts,
-		analyzeVer: task.StatsVersion,
-		indexes:    availableIdx,
+		opts:                    opts,
+		indexes:                 availableIdx,
+		AnalyzeInfo:             task.AnalyzeInfo,
+		schemaForVirtualColEval: schemaForVirtualColEval,
 	}
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
 		BucketSize:   int64(opts[ast.AnalyzeOptNumBuckets]),
@@ -2104,9 +2101,9 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
 }
 
-func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
-	if task.StatsVersion == statistics.Version3 {
-		return b.buildAnalyzeSamplingPushdown(task, opts, autoAnalyze)
+func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
+	if task.StatsVersion == statistics.Version2 {
+		return b.buildAnalyzeSamplingPushdown(task, opts, autoAnalyze, schemaForVirtualColEval)
 	}
 	cols := task.ColsInfo
 	if hasPkHist(task.HandleCols) {
@@ -2125,7 +2122,6 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 	sc := b.ctx.GetSessionVars().StmtCtx
 	e := &AnalyzeColumnsExec{
 		ctx:         b.ctx,
-		tableID:     task.TableID,
 		colsInfo:    task.ColsInfo,
 		handleCols:  task.HandleCols,
 		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency(),
@@ -2134,8 +2130,8 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
-		opts:       opts,
-		analyzeVer: task.StatsVersion,
+		opts:        opts,
+		AnalyzeInfo: task.AnalyzeInfo,
 	}
 	depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
 	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
@@ -2181,7 +2177,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64) *analyzeTask {
 	h := domain.GetDomain(b.ctx).StatsHandle()
 	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.TableID.GetStatisticsID())
-	analyzeTask := b.buildAnalyzeColumnsPushdown(task, opts, "")
+	analyzeTask := b.buildAnalyzeColumnsPushdown(task, opts, "", nil)
 	if statsTbl.Pseudo {
 		return analyzeTask
 	}
@@ -2307,7 +2303,13 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 			if enableFastAnalyze {
 				b.buildAnalyzeFastColumn(e, task, v.Opts)
 			} else {
-				e.tasks = append(e.tasks, b.buildAnalyzeColumnsPushdown(task, v.Opts, autoAnalyze))
+				columns, _, err := expression.ColumnInfos2ColumnsAndNames(b.ctx, model.NewCIStr(task.AnalyzeInfo.DBName), task.TblInfo.Name, task.ColsInfo, task.TblInfo)
+				if err != nil {
+					b.err = err
+					return nil
+				}
+				schema := expression.NewSchema(columns...)
+				e.tasks = append(e.tasks, b.buildAnalyzeColumnsPushdown(task, v.Opts, autoAnalyze, schema))
 			}
 		}
 		if b.err != nil {
