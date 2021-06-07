@@ -47,7 +47,7 @@ type testAsyncCommitCommon struct {
 }
 
 func (s *testAsyncCommitCommon) setUpTest(c *C) {
-	if *WithTiKV {
+	if *util.WithTiKV {
 		s.store = NewTestStore(c)
 		return
 	}
@@ -195,7 +195,7 @@ func (s *testAsyncCommitSuite) lockKeysWithAsyncCommit(c *C, keys, values [][]by
 
 func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 	// This test doesn't support tikv mode.
-	if *WithTiKV {
+	if *util.WithTiKV {
 		return
 	}
 
@@ -402,7 +402,7 @@ func (s *testAsyncCommitSuite) TestAsyncCommitLinearizability(c *C) {
 // TestAsyncCommitWithMultiDC tests that async commit can only be enabled in global transactions
 func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
 	// It requires setting placement rules to run with TiKV
-	if *WithTiKV {
+	if *util.WithTiKV {
 		return
 	}
 

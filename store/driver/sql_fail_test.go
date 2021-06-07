@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -54,7 +55,7 @@ func (s *testSQLSuiteBase) SetUpSuite(c *C) {
 	var err error
 	s.store = NewTestStore(c)
 	// actual this is better done in `OneByOneSuite.SetUpSuite`, but this would cause circle dependency
-	if *WithTiKV {
+	if *util.WithTiKV {
 		session.ResetStoreForWithTiKVTest(s.store)
 	}
 

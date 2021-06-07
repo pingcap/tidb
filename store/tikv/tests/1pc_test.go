@@ -179,7 +179,7 @@ func (s *testOnePCSuite) Test1PCIsolation(c *C) {
 
 func (s *testOnePCSuite) Test1PCDisallowMultiRegion(c *C) {
 	// This test doesn't support tikv mode.
-	if *WithTiKV {
+	if *util.WithTiKV {
 		return
 	}
 
@@ -247,7 +247,7 @@ func (s *testOnePCSuite) Test1PCLinearizability(c *C) {
 
 func (s *testOnePCSuite) Test1PCWithMultiDC(c *C) {
 	// It requires setting placement rules to run with TiKV
-	if *WithTiKV {
+	if *util.WithTiKV {
 		return
 	}
 
