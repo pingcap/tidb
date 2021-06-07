@@ -15,7 +15,6 @@ package copr
 
 import (
 	"context"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -80,7 +79,7 @@ func (ss *RegionBatchRequestSender) onSendFailForBatchRegions(bo *Backoffer, ctx
 	// If it failed because the context is cancelled by ourself, don't retry.
 	if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
 		return errors.Trace(err)
-	} else if atomic.LoadUint32(&tikv.ShuttingDown) > 0 {
+	} else if tikv.LoadShuttingDown() > 0 {
 		return tikverr.ErrTiDBShuttingDown
 	}
 

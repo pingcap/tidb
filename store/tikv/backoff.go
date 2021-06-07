@@ -29,6 +29,9 @@ type BackoffConfig = retry.Config
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
 	gcResolveLockMaxBackoff = 100000
+	pdRPCMaxBackoff         = 20000
+	// CommitSecondaryMaxBackoff is max sleep time of the 'commit' command
+	CommitSecondaryMaxBackoff = 41000
 )
 
 var (

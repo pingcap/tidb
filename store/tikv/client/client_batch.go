@@ -769,6 +769,7 @@ func sendBatchRequest(
 			zap.String("to", addr), zap.String("cause", ctx.Err().Error()))
 		return nil, errors.Trace(ctx.Err())
 	case <-timer.C:
+		atomic.StoreInt32(&entry.canceled, 1)
 		return nil, errors.SuspendStack(errors.Annotate(context.DeadlineExceeded, "wait recvLoop"))
 	}
 }

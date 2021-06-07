@@ -176,6 +176,12 @@ func (a *recordSet) OnFetchReturned() {
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil, true)
 }
 
+// TelemetryInfo records some telemetry information during execution.
+type TelemetryInfo struct {
+	UseNonRecursive bool
+	UseRecursive    bool
+}
+
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
 type ExecStmt struct {
 	// GoCtx stores parent go context.Context for a stmt.
@@ -204,6 +210,7 @@ type ExecStmt struct {
 	// OutputNames will be set if using cached plan
 	OutputNames []*types.FieldName
 	PsStmt      *plannercore.CachedPrepareStmt
+	Ti          *TelemetryInfo
 }
 
 // PointGet short path for point exec directly from plan, keep only necessary steps
@@ -236,7 +243,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		}
 	}
 	if a.PsStmt.Executor == nil {
-		b := newExecutorBuilder(a.Ctx, is)
+		b := newExecutorBuilder(a.Ctx, is, a.Ti)
 		newExecutor := b.build(a.Plan)
 		if b.err != nil {
 			return nil, b.err
@@ -782,7 +789,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
-	b := newExecutorBuilder(ctx, a.InfoSchema)
+	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti)
 	b.snapshotTS = a.SnapshotTS
 	e := b.build(a.Plan)
 	if b.err != nil {

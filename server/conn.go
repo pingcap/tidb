@@ -39,6 +39,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
+	goerr "errors"
 	"fmt"
 	"io"
 	"net"
@@ -51,8 +52,6 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
-
-	goerr "errors"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"

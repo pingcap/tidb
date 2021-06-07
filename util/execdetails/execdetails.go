@@ -640,7 +640,7 @@ func getPlanIDFromExecutionSummary(summary *tipb.ExecutorExecutionSummary) (int,
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
-func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType string, address string, summary *tipb.ExecutorExecutionSummary) {
+func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType string, address string, summary *tipb.ExecutorExecutionSummary) int {
 	// for TiFlash cop response, ExecutorExecutionSummary contains executor id, so if there is a valid executor id in
 	// summary, use it overwrite the planID
 	if id, valid := getPlanIDFromExecutionSummary(summary); valid {
@@ -648,6 +648,7 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType string, addres
 	}
 	copStats := e.GetOrCreateCopStats(planID, storeType)
 	copStats.RecordOneCopTask(address, summary)
+	return planID
 }
 
 // RecordScanDetail records a specific cop tasks's cop detail.
@@ -735,7 +736,6 @@ func (e *RuntimeStatsWithConcurrencyInfo) String() string {
 
 // Merge implements the RuntimeStats interface.
 func (e *RuntimeStatsWithConcurrencyInfo) Merge(_ RuntimeStats) {
-	return
 }
 
 // RuntimeStatsWithCommit is the RuntimeStats with commit detail.

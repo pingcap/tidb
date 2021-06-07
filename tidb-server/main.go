@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -535,7 +536,7 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.Socket, cfg.Socket)
 	variable.SetSysVar(variable.DataDir, cfg.Path)
 	variable.SetSysVar(variable.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
-	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ", "))
+	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ","))
 	variable.MemoryUsageAlarmRatio.Store(cfg.Performance.MemoryUsageAlarmRatio)
 	if hostname, err := os.Hostname(); err != nil {
 		variable.SetSysVar(variable.Hostname, hostname)
@@ -562,7 +563,7 @@ func setGlobalVars() {
 	}
 
 	atomic.StoreUint64(&tikv.CommitMaxBackoff, uint64(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds()*1000))
-	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
+	tikv.SetRegionCacheTTLSec(int64(cfg.TiKVClient.RegionCacheTTL))
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
 	executor.GlobalDiskUsageTracker.SetBytesLimit(cfg.TempStorageQuota)
@@ -579,8 +580,9 @@ func setGlobalVars() {
 		logutil.BgLogger().Fatal("invalid duration value for store-liveness-timeout",
 			zap.String("currentValue", cfg.TiKVClient.StoreLivenessTimeout))
 	}
-	tikv.StoreLivenessTimeout = t
+	tikv.SetStoreLivenessTimeout(t)
 	parsertypes.TiDBStrictIntegerDisplayWidth = cfg.DeprecateIntegerDisplayWidth
+	deadlockhistory.GlobalDeadlockHistory.Resize(cfg.PessimisticTxn.DeadlockHistoryCapacity)
 }
 
 func setupLog() {
@@ -649,7 +651,7 @@ func setupTracing() {
 }
 
 func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
-	atomic.StoreUint32(&tikv.ShuttingDown, 1)
+	tikv.StoreShuttingDown(1)
 	dom.Close()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))
@@ -664,6 +666,7 @@ func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, gracefu
 	plugin.Shutdown(context.Background())
 	closeDomainAndStorage(storage, dom)
 	disk.CleanUp()
+	topsql.Close()
 }
 
 func stringToList(repairString string) []string {
