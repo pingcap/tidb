@@ -226,7 +226,6 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		SQLDigest:     digest,
 		ForUpdateRead: destBuilder.GetIsForUpdateRead(),
 		SnapshotTS:    ret.SnapshotTS,
-		InfoSchema:    ret.InfoSchema,
 	}
 	return vars.AddPreparedStmt(e.ID, preparedObj)
 }

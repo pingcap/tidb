@@ -207,6 +207,7 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 	}
 
 	for _, testcase := range testcases {
+		fmt.Println(testcase.name)
 		c.Log(testcase.name)
 		if len(testcase.setTxnSQL) > 0 {
 			tk.MustExec(testcase.setTxnSQL)
@@ -779,15 +780,14 @@ func (s *testStaleTxnSuite) TestStaleSelect(c *C) {
 	tk.MustExec("drop table if exists t")
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
-	tk.MustExec("insert into t values (1)")
 
-	time.Sleep(10 * time.Millisecond)
+	tk.MustExec("insert into t values (1)")
 	time1 := time.Now()
 	tk.MustExec("insert into t values (2)")
-	time.Sleep(10 * time.Millisecond)
 	time2 := time.Now()
 	tk.MustExec("insert into t values (3)")
 
+	time.Sleep(10 * time.Millisecond)
 	staleRows := testkit.Rows("1")
 	staleSQL := fmt.Sprintf(`select * from t as of timestamp '%s'`, time1.Format("2006-1-2 15:04:05.000"))
 
@@ -823,9 +823,24 @@ func (s *testStaleTxnSuite) TestStaleSelect(c *C) {
 	tk.MustExec("insert into t values (4, 5)")
 	time.Sleep(10 * time.Millisecond)
 	tk.MustQuery("execute s").Check(staleRows)
+
+	// test dynamic timestamp stale select
 	time3 := time.Now()
-	tk.MustExec("insert into t values (5, 5)")
+	tk.MustExec("alter table t add column d int")
+	tk.MustExec("insert into t values (4, 4, 4)")
+	time.Sleep(10 * time.Millisecond)
+	time4 := time.Now()
+	staleRows = testkit.Rows("1 <nil>", "2 <nil>", "3 <nil>", "4 5")
+	tk.MustQuery(fmt.Sprintf("select * from t as of timestamp CURRENT_TIMESTAMP(3) - INTERVAL %d MICROSECOND", time4.Sub(time3).Microseconds())).Check(staleRows)
+
+	// test prepared dynamic timestamp stale select
+	time5 := time.Now()
+	tk.MustExec(fmt.Sprintf(`prepare v from "select * from t as of timestamp CURRENT_TIMESTAMP(3) - INTERVAL %d MICROSECOND"`, time5.Sub(time3).Microseconds()))
+	tk.MustQuery("execute v").Check(staleRows)
 
 	// test point get
-	tk.MustQuery(fmt.Sprintf("select * from t as of timestamp '%s' where c=5", time3.Format("2006-1-2 15:04:05.000"))).Check(testkit.Rows("4 5"))
+	time6 := time.Now()
+	tk.MustExec("insert into t values (5, 5, 5)")
+	time.Sleep(10 * time.Millisecond)
+	tk.MustQuery(fmt.Sprintf("select * from t as of timestamp '%s' where c=5", time6.Format("2006-1-2 15:04:05.000"))).Check(testkit.Rows("4 5 <nil>"))
 }

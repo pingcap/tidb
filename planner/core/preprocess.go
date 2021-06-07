@@ -101,14 +101,11 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 		v.PreprocessorReturn = &PreprocessorReturn{}
 	}
 	node.Accept(&v)
-	readTS := ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
-	if readTS > 0 {
-		v.PreprocessorReturn.SnapshotTS = readTS
-	}
 	// InfoSchema must be non-nil after preprocessing
-	if v.InfoSchema == nil {
-		v.ensureInfoSchema()
+	if v.err != nil {
+		return errors.Trace(v.err)
 	}
+	v.ensureInfoSchema()
 	return errors.Trace(v.err)
 }
 
@@ -132,9 +129,13 @@ const (
 
 // PreprocessorReturn is used to retain information obtained in the preprocessor.
 type PreprocessorReturn struct {
-	SnapshotTS        uint64
+	initedLastSnapshotTS     bool
 	ExplicitStaleness bool
-	InfoSchema        infoschema.InfoSchema
+	SnapshotTS        func(sessionctx.Context) (uint64, error)
+	// LastSnapshotTS is the last calculated snapshotTS, if any
+	// otherwise it defaults to zero
+	LastSnapshotTS uint64
+	InfoSchema     infoschema.InfoSchema
 }
 
 // preprocessor is an ast.Visitor that preprocess
@@ -608,9 +609,13 @@ func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 			p.err = errors.Trace(ErrNoDB)
 			return
 		}
+		p.ensureInfoSchema()
+		if p.err != nil {
+			return
+		}
 		sName := model.NewCIStr(currentDB)
 		tName := table.Name
-		tableInfo, err := p.ensureInfoSchema().TableByName(sName, tName)
+		tableInfo, err := p.InfoSchema.TableByName(sName, tName)
 		if err != nil {
 			p.err = err
 			return
@@ -633,8 +638,12 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		if stmt.ReferTable.Schema.String() != "" {
 			schema = stmt.ReferTable.Schema
 		}
+		p.ensureInfoSchema()
+		if p.err != nil {
+			return
+		}
 		// get the infoschema from the context.
-		tableInfo, err := p.ensureInfoSchema().TableByName(schema, stmt.ReferTable.Name)
+		tableInfo, err := p.InfoSchema.TableByName(schema, stmt.ReferTable.Name)
 		if err != nil {
 			p.err = err
 			return
@@ -1241,12 +1250,17 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
-	p.handleAsOf(tn.AsOf)
+	p.handleAsOfAndReadTS(tn.AsOf)
 	if p.err != nil {
 		return
 	}
 
-	table, err := p.ensureInfoSchema().TableByName(tn.Schema, tn.Name)
+	p.ensureInfoSchema()
+	if p.err != nil {
+		return
+	}
+
+	table, err := p.InfoSchema.TableByName(tn.Schema, tn.Name)
 	if err != nil {
 		// We should never leak that the table doesn't exist (i.e. attach ErrTableNotExists)
 		// unless we know that the user has permissions to it, should it exist.
@@ -1267,8 +1281,12 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		p.err = err
 		return
 	}
+	p.ensureInfoSchema()
+	if p.err != nil {
+		return
+	}
 	tableInfo := table.Meta()
-	dbInfo, _ := p.ensureInfoSchema().SchemaByName(tn.Schema)
+	dbInfo, _ := p.InfoSchema.SchemaByName(tn.Schema)
 	// tableName should be checked as sequence object.
 	if p.flag&inSequenceFunction > 0 {
 		if !tableInfo.IsSequence() {
@@ -1394,16 +1412,24 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 	}
 }
 
-// handleAsOf tries to validate the timestamp.
-// If it is not nil, timestamp is used to get the history infoschema from the infocache.
-func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
-	readTS := p.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS()
-	if readTS > 0 && node != nil {
-		p.err = ErrAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
-		return
+// handleAsOfAndReadTS tries to handle as of closure, or possibly read_ts.
+// If read_ts is not nil, it will be consumed.
+// If as of is not nil, timestamp is used to get the history infoschema from the infocache.
+func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
+	ts := p.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
+	if ts > 0 {
+		if node != nil {
+			p.err = ErrAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
+			return
+		}
+		if !p.initedLastSnapshotTS {
+			p.SnapshotTS = func(sessionctx.Context) (uint64, error) {
+				return ts, nil
+			}
+			p.LastSnapshotTS = ts
+			p.ExplicitStaleness = true
+		}
 	}
-	dom := domain.GetDomain(p.ctx)
-	ts := uint64(0)
 	if node != nil {
 		if p.ctx.GetSessionVars().InTxn() {
 			p.err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
@@ -1413,20 +1439,19 @@ func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
 		if p.err != nil {
 			return
 		}
-	}
-	if ts != 0 && p.InfoSchema == nil {
-		is, err := dom.GetSnapshotInfoSchema(ts)
-		if err != nil {
-			p.err = err
-			return
+		if !p.initedLastSnapshotTS {
+			p.SnapshotTS = func(ctx sessionctx.Context) (uint64, error) {
+				return calculateTsExpr(ctx, node)
+			}
+			p.LastSnapshotTS = ts
+			p.ExplicitStaleness = true
 		}
-		p.SnapshotTS = ts
-		p.ExplicitStaleness = true
-		p.InfoSchema = is
 	}
-	if p.SnapshotTS != ts {
+	if p.LastSnapshotTS != ts {
 		p.err = ErrDifferentAsOf.GenWithStack("can not set different time in the as of")
+		return
 	}
+	p.initedLastSnapshotTS = true
 }
 
 // ensureInfoSchema get the infoschema from the preprecessor.
@@ -1436,7 +1461,15 @@ func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
 //    - transcation context
 func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 	if p.InfoSchema == nil {
-		p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
+		if p.LastSnapshotTS != 0 {
+			dom := domain.GetDomain(p.ctx)
+			p.InfoSchema, p.err = dom.GetSnapshotInfoSchema(p.LastSnapshotTS)
+			if p.err != nil {
+				return nil
+			}
+		} else {
+			p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
+		}
 	}
 	return p.InfoSchema
 }

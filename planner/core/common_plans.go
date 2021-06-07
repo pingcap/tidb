@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -257,10 +258,19 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 	}
 
-	if preparedObj.SnapshotTS != 0 {
-		// if preparedObj.SnapshotTS != 0, it is a stale read SQL:
+	var snapshotTS uint64
+	if preparedObj.SnapshotTS != nil {
+		// if preparedObj.SnapshotTS != nil, it is a stale read SQL:
 		// which means its infoschema is specified by the SQL, not the current/latest infoschema
-		is = preparedObj.InfoSchema.(infoschema.InfoSchema)
+		var err error
+		snapshotTS, err = preparedObj.SnapshotTS(sctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	} else if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
 		// cached plan once the schema version is changed.
@@ -270,8 +280,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		preparedObj.Executor = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
-		// FIXME: compatible with prepare https://github.com/pingcap/tidb/issues/24932
-		ret := &PreprocessorReturn{InfoSchema: is, SnapshotTS: 0}
+		ret := &PreprocessorReturn{InfoSchema: is}
 		err := Preprocess(sctx, prepared.Stmt, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
 			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
@@ -282,7 +291,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	if err != nil {
 		return err
 	}
-	e.SnapshotTS = preparedObj.SnapshotTS
+	e.SnapshotTS = snapshotTS
 	e.Stmt = prepared.Stmt
 	return nil
 }

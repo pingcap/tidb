@@ -289,7 +289,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	a.InfoSchema = ret.InfoSchema
-	a.SnapshotTS = ret.SnapshotTS
+	a.SnapshotTS = ret.LastSnapshotTS
 	a.ExplicitStaleness = ret.ExplicitStaleness
 	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, a.InfoSchema)
 	if err != nil {
@@ -336,7 +336,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		if n, ok := val.(int); ok {
 			startTS := oracle.ExtractPhysical(a.SnapshotTS) / 1000
 			if n != int(startTS) {
-				panic("different tso")
+				panic(fmt.Sprintf("different tso %d != %d", n, startTS))
 			}
 			failpoint.Return()
 		}
@@ -346,7 +346,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			// Convert to seconds
 			startTS := oracle.ExtractPhysical(a.SnapshotTS) / 1000
 			if int(startTS) <= n-1 || n+1 <= int(startTS) {
-				panic("tso violate tolerance")
+				panic(fmt.Sprintf("different tso %d != %d", n, startTS))
 			}
 			failpoint.Return()
 		}

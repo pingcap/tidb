@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -203,6 +204,5 @@ type CachedPrepareStmt struct {
 	SQLDigest      *parser.Digest
 	PlanDigest     *parser.Digest
 	ForUpdateRead  bool
-	SnapshotTS     uint64
-	InfoSchema     interface{}
+	SnapshotTS     func(sessionctx.Context) (uint64, error)
 }

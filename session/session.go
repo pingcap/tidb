@@ -1770,8 +1770,9 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 }
 
 func (s *session) preparedStmtExec(ctx context.Context,
-	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, is infoschema.InfoSchema, args []types.Datum) (sqlexec.RecordSet, error) {
-	st, tiFlashPushDown, tiFlashExchangePushDown, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, is, prepareStmt.SnapshotTS, args)
+	is infoschema.InfoSchema, snapshotTS uint64,
+	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
+	st, tiFlashPushDown, tiFlashExchangePushDown, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, is, snapshotTS, args)
 	if err != nil {
 		return nil, err
 	}
@@ -1791,7 +1792,8 @@ func (s *session) preparedStmtExec(ctx context.Context,
 
 // cachedPlanExec short path currently ONLY for cached "point select plan" execution
 func (s *session) cachedPlanExec(ctx context.Context,
-	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, is infoschema.InfoSchema, args []types.Datum) (sqlexec.RecordSet, error) {
+	is infoschema.InfoSchema, snapshotTS uint64,
+	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
 	prepared := prepareStmt.PreparedAst
 	// compile ExecStmt
 	execAst := &ast.ExecuteStmt{ExecID: stmtID}
@@ -1814,7 +1816,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 		OutputNames: execPlan.OutputNames(),
 		PsStmt:      prepareStmt,
 		Ti:          &executor.TelemetryInfo{},
-		SnapshotTS:  prepareStmt.SnapshotTS,
+		SnapshotTS:  snapshotTS,
 	}
 	compileDuration := time.Since(s.sessionVars.StartTime)
 	sessionExecuteCompileDurationGeneral.Observe(compileDuration.Seconds())
@@ -1873,10 +1875,10 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 	if !plannercore.IsAutoCommitTxn(s) {
 		return false, nil
 	}
-	// SnapshotTS != 0, it is stale read
+	// SnapshotTS != nil, it is stale read
 	// stale read expect a stale infoschema
 	// so skip infoschema check
-	if preparedStmt.SnapshotTS == 0 {
+	if preparedStmt.SnapshotTS == nil {
 		// check schema version
 		is := s.GetInfoSchema().(infoschema.InfoSchema)
 		if prepared.SchemaVersion != is.SchemaMetaVersion() {
@@ -1927,18 +1929,26 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	}
 	s.txn.onStmtStart(preparedStmt.SQLDigest.String())
 	var is infoschema.InfoSchema
+	var snapshotTS uint64
 	if preparedStmt.ForUpdateRead {
 		is = domain.GetDomain(s).InfoSchema()
-	} else if preparedStmt.SnapshotTS != 0 {
-		is = preparedStmt.InfoSchema.(infoschema.InfoSchema)
+	} else if preparedStmt.SnapshotTS != nil {
+		snapshotTS, err = preparedStmt.SnapshotTS(s)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		is, err = domain.GetDomain(s).GetSnapshotInfoSchema(snapshotTS)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	} else {
 		is = s.GetInfoSchema().(infoschema.InfoSchema)
 	}
 	var rs sqlexec.RecordSet
 	if ok {
-		rs, err = s.cachedPlanExec(ctx, stmtID, preparedStmt, is, args)
+		rs, err = s.cachedPlanExec(ctx, is, snapshotTS, stmtID, preparedStmt, args)
 	} else {
-		rs, err = s.preparedStmtExec(ctx, stmtID, preparedStmt, is, args)
+		rs, err = s.preparedStmtExec(ctx, is, snapshotTS, stmtID, preparedStmt, args)
 	}
 	s.txn.onStmtEnd()
 	return rs, err
