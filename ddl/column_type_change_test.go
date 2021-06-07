@@ -16,6 +16,10 @@ package ddl_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -42,10 +46,15 @@ import (
 )
 
 var _ = SerialSuites(&testColumnTypeChangeSuite{})
+var _ = SerialSuites(&testCTCSerialSuiteWrapper{&testColumnTypeChangeSuite{}})
 
 type testColumnTypeChangeSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
+}
+
+type testCTCSerialSuiteWrapper struct {
+	*testColumnTypeChangeSuite
 }
 
 func (s *testColumnTypeChangeSuite) SetUpSuite(c *C) {
@@ -1591,6 +1600,28 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] 0 2001 0 2020 1991 2009 2020"))
 }
 
+func (s *testColumnTypeChangeSuite) TestUpdateDataAfterChangeTimestampToDate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t (col timestamp default '1971-06-09' not null, col1 int default 1, unique key(col1));")
+	tk.MustExec("alter table t modify column col date not null;")
+	tk.MustExec("update t set col = '2002-12-31';")
+	// point get
+	tk.MustExec("update t set col = '2002-12-31' where col1 = 1;")
+
+	// Make sure the original default value isn't rewritten.
+	tk.MustExec("create table t1 (col timestamp default '1971-06-09' not null, col1 int default 1, unique key(col1));")
+	tk.MustExec("insert into t1 value('2001-01-01', 1);")
+	tk.MustExec("alter table t1 add column col2 timestamp default '2020-06-02' not null;")
+	tk.MustExec("alter table t1 modify column col2 date not null;")
+	tk.MustExec("update t1 set col = '2002-11-22';")
+	// point get
+	tk.MustExec("update t1 set col = '2002-12-31' where col1 = 1;")
+}
+
 // TestRowFormat is used to close issue #21391, the encoded row in column type change should be aware of the new row format.
 func (s *testColumnTypeChangeSuite) TestRowFormat(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -1660,15 +1691,12 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValue(c *C) {
 	tk.MustExec("use test")
 	// Enable column change variable.
 	tk.Se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = false
-	}()
 
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table t(a int, b int not null, unique key(a))")
 	tk.MustExec("insert into t values(1, 1)")
 	tk.MustExec("insert into t values(2, 2)")
 
@@ -1679,7 +1707,8 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValue(c *C) {
 		once     bool
 		checkErr error
 	)
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	i := 0
+	hook.OnJobUpdatedExported = func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -1701,7 +1730,8 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValue(c *C) {
 			}
 			// For writable column:
 			// Insert/ Update should set the column with the casted-related column value.
-			_, err := tk1.Exec("insert into t values(3, 3)")
+			sql := fmt.Sprintf("insert into t values(%d, %d)", i+3, i+3)
+			_, err := tk1.Exec(sql)
 			if err != nil {
 				checkErr = err
 				return
@@ -1721,13 +1751,98 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValue(c *C) {
 					return
 				}
 			}
+			i++
 		}
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	tk.MustExec("alter table t modify column b tinyint NOT NULL")
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	c.Assert(checkErr, IsNil)
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
-	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 -1", "2 -2", "3 3", "3 3", "3 3"))
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 -1", "2 -2", "3 3", "4 4", "5 5"))
+	tk.MustExec("drop table if exists t")
+}
+
+func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+
+	tk.MustExec(fmt.Sprintf("set time_zone = 'UTC'"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int not null, unique key(a))")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("insert into t values(2, 2)")
+	tk.MustExec("alter table t add column c timestamp default '1971-06-09' not null")
+
+	tbl := testGetTableByName(c, tk.Se, "test", "t")
+	originalHook := s.dom.DDL().GetHook()
+	hook := &ddl.TestDDLCallback{Do: s.dom}
+	var (
+		once     bool
+		checkErr error
+	)
+	i := 0
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		if tbl.Meta().ID != job.TableID {
+			return
+		}
+		if job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
+			if !once {
+				once = true
+				tbl := testGetTableByName(c, tk1.Se, "test", "t")
+				if len(tbl.WritableCols()) != 4 {
+					checkErr = errors.New("assert the writable column number error")
+					return
+				}
+				if tbl.WritableCols()[3].OriginDefaultValue.(string) != "1971-06-09 00:00:00" {
+					checkErr = errors.New("assert the write only column origin default value error")
+					return
+				}
+			}
+			// For writable column:
+			// Insert / Update should set the column with the casted-related column value.
+			sql := fmt.Sprintf("insert into t values(%d, %d, '2021-06-06 12:13:14')", i+3, i+3)
+			_, err := tk1.Exec(sql)
+			if err != nil {
+				checkErr = err
+				return
+			}
+			if job.SchemaState == model.StateWriteOnly {
+				// The casted value will be inserted into changing column too.
+				// for point get
+				_, err := tk1.Exec("update t set b = -1 where a = 1")
+				if err != nil {
+					checkErr = err
+					return
+				}
+			} else {
+				// The casted value will be inserted into changing column too.
+				// for point get
+				_, err := tk1.Exec("update t set b = -2 where a = 2")
+				if err != nil {
+					checkErr = err
+					return
+				}
+			}
+		}
+		i++
+	}
+
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	tk.MustExec("alter table t modify column c date NOT NULL")
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	c.Assert(checkErr, IsNil)
+	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
+	tk.MustQuery("select * from t order by a").Check(
+		testkit.Rows("1 -1 1971-06-09", "2 -2 1971-06-09", "5 5 2021-06-06", "6 6 2021-06-06", "7 7 2021-06-06"))
 	tk.MustExec("drop table if exists t")
 }
 
@@ -1884,6 +1999,62 @@ func (s *testColumnTypeChangeSuite) TestChangeIntToBitWillPanicInBackfillIndexes
 	tk.MustQuery("select * from t").Check(testkit.Rows("\x13 1 1.00", "\x11 2 2.00"))
 }
 
+// Close issue #24584
+func (s *testColumnTypeChangeSuite) TestCancelCTCInReorgStateWillCauseGoroutineLeak(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	failpoint.Enable("github.com/pingcap/tidb/ddl/mockInfiniteReorgLogic", `return(true)`)
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/ddl/mockInfiniteReorgLogic")
+	}()
+
+	// set ddl hook
+	originalHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+
+	tk.MustExec("drop table if exists ctc_goroutine_leak")
+	tk.MustExec("create table ctc_goroutine_leak (a int)")
+	tk.MustExec("insert into ctc_goroutine_leak values(1),(2),(3)")
+	tbl := testGetTableByName(c, tk.Se, "test", "ctc_goroutine_leak")
+
+	hook := &ddl.TestDDLCallback{}
+	var jobID int64
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if jobID != 0 {
+			return
+		}
+		if tbl.Meta().ID != job.TableID {
+			return
+		}
+		if job.Query == "alter table ctc_goroutine_leak modify column a tinyint" {
+			jobID = job.ID
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	// Enable column change variable.
+	tk1.Se.GetSessionVars().EnableChangeColumnType = true
+	var (
+		wg       = sync.WaitGroup{}
+		alterErr error
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// This ddl will be hang over in the failpoint loop, waiting for outside cancel.
+		_, alterErr = tk1.Exec("alter table ctc_goroutine_leak modify column a tinyint")
+	}()
+	<-ddl.TestReorgGoroutineRunning
+	tk.MustExec("admin cancel ddl jobs " + strconv.Itoa(int(jobID)))
+	wg.Wait()
+	c.Assert(alterErr.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+}
+
 // Close issue #24971, #24973, #24974
 func (s *testColumnTypeChangeSuite) TestCTCShouldCastTheDefaultValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -1943,4 +2114,42 @@ func (s *testColumnTypeChangeSuite) TestCTCCastBitToBinary(c *C) {
 	tk.MustExec("alter table t change column a a varbinary(248) collate binary default 't'")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` varbinary(248) DEFAULT 't'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("4047"))
+}
+
+func (s *testColumnTypeChangeSuite) TestChangePrefixedIndexColumnToNonPrefixOne(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a text, unique index idx(a(2)));")
+	tk.MustExec("alter table t modify column a int;")
+	showCreateTable := tk.MustQuery("show create table t").Rows()[0][1].(string)
+	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`)"), IsTrue,
+		Commentf("%s", showCreateTable))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a char(255), unique index idx(a(2)));")
+	tk.MustExec("alter table t modify column a float;")
+	showCreateTable = tk.MustQuery("show create table t").Rows()[0][1].(string)
+	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`)"), IsTrue,
+		Commentf("%s", showCreateTable))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a char(255), b text, unique index idx(a(2), b(10)));")
+	tk.MustExec("alter table t modify column b int;")
+	showCreateTable = tk.MustQuery("show create table t").Rows()[0][1].(string)
+	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`(2),`b`)"), IsTrue,
+		Commentf("%s", showCreateTable))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a char(250), unique key idx(a(10)));")
+	tk.MustExec("alter table t modify a char(9);")
+	showCreateTable = tk.MustQuery("show create table t").Rows()[0][1].(string)
+	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`)"), IsTrue,
+		Commentf("%s", showCreateTable))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a varchar(700), key(a(700)));")
+	tk.MustGetErrCode("alter table t change column a a tinytext;", mysql.ErrBlobKeyWithoutLength)
 }
