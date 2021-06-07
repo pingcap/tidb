@@ -41,7 +41,7 @@ func (s *testStmtSummarySuite) TestMapToEvictedCountDatum(c *C) {
 	interval := ssMap.refreshInterval()
 	ssMap.beginTimeForCurInterval = now + interval
 
-	// set summaryMap capacity to 1.
+	// set summaryMap's capacity to 1.
 	err := ssMap.summaryMap.SetCapacity(1)
 	if err != nil {
 		log.Fatal(err.Error())
@@ -77,7 +77,7 @@ func (s *testStmtSummarySuite) TestMapToEvictedCountDatum(c *C) {
 	c.Assert(err, IsNil)
 
 	ssMap.beginTimeForCurInterval = now + interval
-	// insert one statement every otherSummary interval.
+	// insert one statement per interval.
 	for i := 0; i < 50; i++ {
 		ssMap.AddStatement(generateAnyExecInfo())
 		ssMap.beginTimeForCurInterval += interval * 2
@@ -222,7 +222,7 @@ func (s *testStmtSummarySuite) TestStmtSummaryByDigestEvictedElement(c *C) {
 }
 
 // test stmtSummaryByDigestEvicted.addEvicted
-// test evicted count's otherSummary
+// test stmtSummaryByDigestEvicted.toEvictedCountDatum (single and multiple intervals)
 func (s *testStmtSummarySuite) TestEvictedCountDetailed(c *C) {
 	ssMap := newStmtSummaryByDigestMap()
 	ssMap.Clear()

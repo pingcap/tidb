@@ -39,8 +39,8 @@ type stmtSummaryByDigestEvictedElement struct {
 	endTime int64
 	// digestKeyMap contains *Kinds* of digest being evicted
 	digestKeyMap map[string]struct{}
-	// other contains detailed information
-	other *stmtSummaryByDigestElement
+	// otherSummary contains summed up information of evicted elements
+	otherSummary *stmtSummaryByDigestElement
 }
 
 // spawn a new pointer to stmtSummaryByDigestEvicted
@@ -56,7 +56,7 @@ func newStmtSummaryByDigestEvictedElement(beginTime int64, endTime int64) *stmtS
 		beginTime:    beginTime,
 		endTime:      endTime,
 		digestKeyMap: make(map[string]struct{}),
-		other: &stmtSummaryByDigestElement{
+		otherSummary: &stmtSummaryByDigestElement{
 			beginTime: beginTime,
 			endTime:   endTime,
 			// basic
@@ -68,7 +68,7 @@ func newStmtSummaryByDigestEvictedElement(beginTime int64, endTime int64) *stmtS
 			minLatency: time.Duration(math.MaxInt64),
 			// txn
 			backoffTypes: make(map[string]int),
-			// otherSummary
+			// other
 			firstSeen: time.Now(),
 		},
 	}
@@ -162,7 +162,7 @@ func (ssbde *stmtSummaryByDigestEvicted) Clear() {
 func (seElement *stmtSummaryByDigestEvictedElement) addEvicted(digestKey *stmtSummaryByDigestKey, digestValue *stmtSummaryByDigestElement) {
 	if digestKey != nil {
 		seElement.digestKeyMap[string(digestKey.Hash())] = struct{}{}
-		addInfo(seElement.other, digestValue)
+		addInfo(seElement.otherSummary, digestValue)
 	}
 }
 
@@ -264,7 +264,7 @@ func (ssbde *stmtSummaryByDigestEvicted) collectHistorySummaries(historySize int
 }
 
 func (seElement *stmtSummaryByDigestEvictedElement) toDatum(ssbd *stmtSummaryByDigest) []types.Datum {
-	return seElement.other.toDatum(ssbd)
+	return seElement.otherSummary.toDatum(ssbd)
 }
 
 // addInfo adds information in addWith into addTo.
@@ -410,7 +410,7 @@ func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElem
 	// plan cache
 	addTo.planCacheHits += addWith.planCacheHits
 
-	// otherSummary
+	// other
 	addTo.sumAffectedRows += addWith.sumAffectedRows
 	addTo.sumMem += addWith.sumMem
 	if addTo.maxMem < addWith.maxMem {
@@ -436,6 +436,7 @@ func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElem
 	addTo.sumErrors += addWith.sumErrors
 }
 
+// fake a stmtSummaryByDigest
 func newInduceSsbd(beginTime int64, endTime int64) *stmtSummaryByDigest {
 	newSsbd := &stmtSummaryByDigest{
 		schemaName:    "other",
@@ -449,6 +450,8 @@ func newInduceSsbd(beginTime int64, endTime int64) *stmtSummaryByDigest {
 	newSsbd.history.PushBack(newInduceSsbde(beginTime, endTime))
 	return newSsbd
 }
+
+// fake a stmtSummaryByDigestElement
 func newInduceSsbde(beginTime int64, endTime int64) *stmtSummaryByDigestElement {
 	newSsbde := &stmtSummaryByDigestElement{
 		beginTime:  beginTime,

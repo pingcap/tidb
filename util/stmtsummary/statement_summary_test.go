@@ -1139,7 +1139,7 @@ func (s *testStmtSummarySuite) TestSummaryHistory(c *C) {
 	stmtExecInfo2.Digest = "bandit digest"
 	s.ssMap.AddStatement(stmtExecInfo2)
 	c.Assert(s.ssMap.summaryMap.Size(), Equals, 1)
-	// length of `otherSummary` should not longer than historySize.
+	// length of `other` should not longer than historySize.
 	c.Assert(s.ssMap.other.history.Len(), Equals, 5)
 	datum = s.ssMap.ToHistoryDatum(nil, true)
 	// length of STATEMENT_SUMMARY_HISTORY == (history in cache) + (history evicted)
