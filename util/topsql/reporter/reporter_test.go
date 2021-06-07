@@ -41,8 +41,6 @@ func (s *testTopSQLReporter) SetUpSuite(c *C) {}
 
 func (s *testTopSQLReporter) SetUpTest(c *C) {}
 
-
-
 func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) {
 	// register normalized sql
 	for i := begin; i < end; i++ {

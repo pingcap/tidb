@@ -1684,7 +1684,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	// TODO(crazycs520): Add validation
-	{Scope: ScopeSession, Name: TiDBTopSQLAgentAddress, Value: DefTiDBTopSQLAgentAddress, Type: TypeStr, AllowEmpty: true, GetSession: func(s *SessionVars) (string, error) {
+	{Scope: ScopeSession, Name: TiDBTopSQLAgentAddress, Value: DefTiDBTopSQLAgentAddress, Type: TypeStr, skipInit: true, AllowEmpty: true, GetSession: func(s *SessionVars) (string, error) {
 		return TopSQLVariable.AgentAddress.Load(), nil
 	}, SetSession: func(vars *SessionVars, s string) error {
 		TopSQLVariable.AgentAddress.Store(s)
