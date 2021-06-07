@@ -826,7 +826,7 @@ func (s *testStaleTxnSuite) TestStaleReadTemporaryTable(c *C) {
 		},
 	}
 
-	addStaleReadToSql := func(sql string) string {
+	addStaleReadToSQL := func(sql string) string {
 		idx := strings.Index(sql, " where ")
 		if idx < 0 {
 			return ""
@@ -835,7 +835,7 @@ func (s *testStaleTxnSuite) TestStaleReadTemporaryTable(c *C) {
 	}
 
 	for _, query := range queries {
-		sql := addStaleReadToSql(query.sql)
+		sql := addStaleReadToSQL(query.sql)
 		if sql != "" {
 			tk.MustGetErrMsg(sql, "can not stale read temporary table")
 		}
