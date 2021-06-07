@@ -861,12 +861,15 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		// Since column type change is implemented as adding a new column then substituting the old one.
 		// Case exists when update-where statement fetch a NULL for not-null column without any default data,
 		// it will errors.
-		// So we set zero original default value here to prevent this error. besides, in insert & update records,
+		// So we set zero original default value here to prevent this error. Besides, in insert & update records,
 		// we have already implement using the casted value of relative column to insert rather than the origin
 		// default value.
-		originDefVal, err := generateOriginDefaultValue(jobParam.newCol)
-		if err != nil {
-			return ver, errors.Trace(err)
+		originDefVal := oldCol.GetOriginDefaultValue()
+		if originDefVal == nil {
+			originDefVal, err = generateOriginDefaultValue(jobParam.newCol)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 		}
 		if err = jobParam.changingCol.SetOriginDefaultValue(originDefVal); err != nil {
 			return ver, errors.Trace(err)
@@ -884,8 +887,13 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			newIdxInfo := idxInfo.Clone()
 			newIdxInfo.Name = model.NewCIStr(genChangingIndexUniqueName(tblInfo, idxInfo))
 			newIdxInfo.ID = allocateIndexID(tblInfo)
-			newIdxInfo.Columns[offsets[i]].Name = newColName
-			newIdxInfo.Columns[offsets[i]].Offset = jobParam.changingCol.Offset
+			newIdxChangingCol := newIdxInfo.Columns[offsets[i]]
+			newIdxChangingCol.Name = newColName
+			newIdxChangingCol.Offset = jobParam.changingCol.Offset
+			canPrefix := types.IsTypePrefixable(jobParam.changingCol.Tp)
+			if !canPrefix || (canPrefix && jobParam.changingCol.Flen < newIdxChangingCol.Length) {
+				newIdxChangingCol.Length = types.UnspecifiedLength
+			}
 			jobParam.changingIdxs = append(jobParam.changingIdxs, newIdxInfo)
 		}
 		tblInfo.Indices = append(tblInfo.Indices, jobParam.changingIdxs...)
@@ -1044,10 +1052,11 @@ func (w *worker) doModifyColumnTypeWithData(
 			if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 				logutil.BgLogger().Warn("[ddl] run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
 					zap.String("job", job.String()), zap.Error(err1))
-				return ver, errors.Trace(err)
 			}
 			logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 			job.State = model.JobStateRollingback
+			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
+			w.reorgCtx.cleanNotifyReorgCancel()
 			return ver, errors.Trace(err)
 		}
 		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
@@ -1070,6 +1079,13 @@ func (w *worker) doModifyColumnTypeWithData(
 		changingColumnUniqueName := changingCol.Name
 		changingCol.Name = colName
 		changingCol.ChangeStateInfo = nil
+		// After changing the column, the column's type is change, so it needs to set OriginDefaultValue back
+		// so that there is no error in getting the default value from OriginDefaultValue.
+		// Besides, nil data that was not backfilled in the "add column" is backfilled after the column is changed.
+		// So it can set OriginDefaultValue to nil.
+		if err = changingCol.SetOriginDefaultValue(nil); err != nil {
+			return ver, errors.Trace(err)
+		}
 		tblInfo.Indices = tblInfo.Indices[:len(tblInfo.Indices)-len(changingIdxs)]
 		// Adjust table column offset.
 		if err = adjustColumnInfoInModifyColumn(job, tblInfo, changingCol, oldCol, pos, changingColumnUniqueName.L); err != nil {
@@ -1109,8 +1125,24 @@ func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, oldColInfo, colIn
 	return w.writePhysicalTableRecord(t.(table.PhysicalTable), typeUpdateColumnWorker, nil, oldColInfo, colInfo, reorgInfo)
 }
 
+// TestReorgGoroutineRunning is only used in test to indicate the reorg goroutine has been started.
+var TestReorgGoroutineRunning = make(chan interface{})
+
 // updateColumnAndIndexes handles the modify column reorganization state for a table.
 func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.ColumnInfo, idxes []*model.IndexInfo, reorgInfo *reorgInfo) error {
+	failpoint.Inject("mockInfiniteReorgLogic", func(val failpoint.Value) {
+		if val.(bool) {
+			a := new(interface{})
+			TestReorgGoroutineRunning <- a
+			for {
+				time.Sleep(30 * time.Millisecond)
+				if w.reorgCtx.isReorgCanceled() {
+					// Job is cancelled. So it can't be done.
+					failpoint.Return(errCancelledDDLJob)
+				}
+			}
+		}
+	})
 	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		err := w.updatePhysicalTableRow(t.(table.PhysicalTable), oldCol, col, reorgInfo)

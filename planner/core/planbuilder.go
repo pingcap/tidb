@@ -1718,13 +1718,13 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		idxInfos = append(idxInfos, idx)
 	}
 	if as.Incremental {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 3 stats would ignore the INCREMENTAL keyword and do full sampling"))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 stats would ignore the INCREMENTAL keyword and do full sampling"))
 	}
 	for i, id := range physicalIDs {
 		if id == tbl.TableInfo.ID {
 			id = -1
 		}
-		info := analyzeInfo{
+		info := AnalyzeInfo{
 			DBName:        tbl.Schema.O,
 			TableName:     tbl.Name.O,
 			PartitionName: names[i],
@@ -1735,7 +1735,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		newTask := AnalyzeColumnsTask{
 			HandleCols:  BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo),
 			ColsInfo:    tbl.TableInfo.Columns,
-			analyzeInfo: info,
+			AnalyzeInfo: info,
 			TblInfo:     tbl.TableInfo,
 			Indexes:     idxInfos,
 		}
@@ -1776,7 +1776,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 					"If you want to switch to version 2 statistics, please first disable query feedback by setting feedback-probability to 0.0 in the config file."))
 			}
 		}
-		if version == statistics.Version3 {
+		if version == statistics.Version2 {
 			p.ColTasks = b.buildAnalyzeFullSamplingTask(as, p.ColTasks, physicalIDs, names, tbl, version)
 			continue
 		}
@@ -1791,7 +1791,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				if id == tbl.TableInfo.ID {
 					id = -1
 				}
-				info := analyzeInfo{
+				info := AnalyzeInfo{
 					DBName:        tbl.Schema.O,
 					TableName:     tbl.Name.O,
 					PartitionName: names[i],
@@ -1801,7 +1801,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				}
 				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
 					IndexInfo:   idx,
-					analyzeInfo: info,
+					AnalyzeInfo: info,
 					TblInfo:     tbl.TableInfo,
 				})
 			}
@@ -1812,7 +1812,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				if id == tbl.TableInfo.ID {
 					id = -1
 				}
-				info := analyzeInfo{
+				info := AnalyzeInfo{
 					DBName:        tbl.Schema.O,
 					TableName:     tbl.Name.O,
 					PartitionName: names[i],
@@ -1824,7 +1824,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 					HandleCols:       handleCols,
 					CommonHandleInfo: commonHandleInfo,
 					ColsInfo:         colInfo,
-					analyzeInfo:      info,
+					AnalyzeInfo:      info,
 					TblInfo:          tbl.TableInfo,
 				})
 			}
@@ -1851,8 +1851,8 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		}
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
-	if version == statistics.Version3 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 3 would collect all statistics not only the selected indexes"))
+	if version == statistics.Version2 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 would collect all statistics not only the selected indexes"))
 		return b.buildAnalyzeTable(as, opts, version)
 	}
 	for _, idxName := range as.IndexNames {
@@ -1864,14 +1864,14 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 					if id == tblInfo.ID {
 						id = -1
 					}
-					info := analyzeInfo{
+					info := AnalyzeInfo{
 						DBName:        as.TableNames[0].Schema.O,
 						TableName:     as.TableNames[0].Name.O,
 						PartitionName: names[i], TableID: AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
 						Incremental:  as.Incremental,
 						StatsVersion: version,
 					}
-					p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+					p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, AnalyzeInfo: info, TblInfo: tblInfo})
 				}
 				continue
 			}
@@ -1884,7 +1884,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 			if id == tblInfo.ID {
 				id = -1
 			}
-			info := analyzeInfo{
+			info := AnalyzeInfo{
 				DBName:        as.TableNames[0].Schema.O,
 				TableName:     as.TableNames[0].Name.O,
 				PartitionName: names[i],
@@ -1892,7 +1892,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 				Incremental:   as.Incremental,
 				StatsVersion:  version,
 			}
-			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
+			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, AnalyzeInfo: info, TblInfo: tblInfo})
 		}
 	}
 	return p, nil
@@ -1916,8 +1916,8 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 		}
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
-	if version == statistics.Version3 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 3 would collect all statistics not only the selected indexes"))
+	if version == statistics.Version2 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 would collect all statistics not only the selected indexes"))
 		return b.buildAnalyzeTable(as, opts, version)
 	}
 	for _, idx := range tblInfo.Indices {
@@ -1926,7 +1926,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 				if id == tblInfo.ID {
 					id = -1
 				}
-				info := analyzeInfo{
+				info := AnalyzeInfo{
 					DBName:        as.TableNames[0].Schema.O,
 					TableName:     as.TableNames[0].Name.O,
 					PartitionName: names[i],
@@ -1934,7 +1934,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 					Incremental:   as.Incremental,
 					StatsVersion:  version,
 				}
-				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
+				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, AnalyzeInfo: info, TblInfo: tblInfo})
 			}
 		}
 	}
@@ -1944,7 +1944,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 			if id == tblInfo.ID {
 				id = -1
 			}
-			info := analyzeInfo{
+			info := AnalyzeInfo{
 				DBName:        as.TableNames[0].Schema.O,
 				TableName:     as.TableNames[0].Name.O,
 				PartitionName: names[i],
@@ -1952,7 +1952,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 				Incremental:   as.Incremental,
 				StatsVersion:  version,
 			}
-			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, AnalyzeInfo: info, TblInfo: tblInfo})
 		}
 	}
 	return p, nil
@@ -1977,10 +1977,24 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumSamples:    10000,
 }
 
-func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
+var analyzeOptionDefaultV2 = map[ast.AnalyzeOptionType]uint64{
+	ast.AnalyzeOptNumBuckets:    256,
+	ast.AnalyzeOptNumTopN:       500,
+	ast.AnalyzeOptCMSketchWidth: 2048,
+	ast.AnalyzeOptCMSketchDepth: 5,
+	ast.AnalyzeOptNumSamples:    100000,
+}
+
+func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeOptionType]uint64, error) {
 	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
-	for key, val := range analyzeOptionDefault {
-		optMap[key] = val
+	if statsVer == statistics.Version1 {
+		for key, val := range analyzeOptionDefault {
+			optMap[key] = val
+		}
+	} else {
+		for key, val := range analyzeOptionDefaultV2 {
+			optMap[key] = val
+		}
 	}
 	for _, opt := range opts {
 		if opt.Type == ast.AnalyzeOptNumTopN {
@@ -2019,7 +2033,7 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", insertErr)
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", selectErr)
 	}
-	opts, err := handleAnalyzeOptions(as.AnalyzeOpts)
+	opts, err := handleAnalyzeOptions(as.AnalyzeOpts, statsVersion)
 	if err != nil {
 		return nil, err
 	}

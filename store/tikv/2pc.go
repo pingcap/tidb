@@ -730,12 +730,15 @@ func (tm *ttlManager) close() {
 	close(tm.ch)
 }
 
-const pessimisticLockMaxBackoff = 20000
+const keepAliveMaxBackoff = 20000        // 20 seconds
+const pessimisticLockMaxBackoff = 600000 // 10 minutes
+const maxConsecutiveFailure = 10
 
 func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 	// Ticker is set to 1/2 of the ManagedLockTTL.
 	ticker := time.NewTicker(time.Duration(atomic.LoadUint64(&ManagedLockTTL)) * time.Millisecond / 2)
 	defer ticker.Stop()
+	keepFail := 0
 	for {
 		select {
 		case <-tm.ch:
@@ -745,7 +748,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			if tm.lockCtx != nil && tm.lockCtx.Killed != nil && atomic.LoadUint32(tm.lockCtx.Killed) != 0 {
 				return
 			}
-			bo := retry.NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, c.txn.vars)
+			bo := retry.NewBackofferWithVars(context.Background(), keepAliveMaxBackoff, c.txn.vars)
 			now, err := c.store.getTimestampWithRetry(bo, c.txn.GetScope())
 			if err != nil {
 				logutil.Logger(bo.GetCtx()).Warn("keepAlive get tso fail",
@@ -774,20 +777,29 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			logutil.Logger(bo.GetCtx()).Info("send TxnHeartBeat",
 				zap.Uint64("startTS", c.startTS), zap.Uint64("newTTL", newTTL))
 			startTime := time.Now()
-			_, err = sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
+			_, stopHeartBeat, err := sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
 			if err != nil {
+				keepFail++
 				metrics.TxnHeartBeatHistogramError.Observe(time.Since(startTime).Seconds())
-				logutil.Logger(bo.GetCtx()).Warn("send TxnHeartBeat failed",
+				logutil.Logger(bo.GetCtx()).Debug("send TxnHeartBeat failed",
 					zap.Error(err),
 					zap.Uint64("txnStartTS", c.startTS))
-				return
+				if stopHeartBeat || keepFail > maxConsecutiveFailure {
+					logutil.Logger(bo.GetCtx()).Warn("stop TxnHeartBeat",
+						zap.Error(err),
+						zap.Int("consecutiveFailure", keepFail),
+						zap.Uint64("txnStartTS", c.startTS))
+					return
+				}
+				continue
 			}
+			keepFail = 0
 			metrics.TxnHeartBeatHistogramOK.Observe(time.Since(startTime).Seconds())
 		}
 	}
 }
 
-func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, ttl uint64) (uint64, error) {
+func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, ttl uint64) (newTTL uint64, stopHeartBeat bool, err error) {
 	req := tikvrpc.NewRequest(tikvrpc.CmdTxnHeartBeat, &pb.TxnHeartBeatRequest{
 		PrimaryLock:   primary,
 		StartVersion:  startTS,
@@ -796,31 +808,36 @@ func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, tt
 	for {
 		loc, err := store.GetRegionCache().LocateKey(bo, primary)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, false, errors.Trace(err)
 		}
 		resp, err := store.SendReq(bo, req, loc.Region, client.ReadTimeoutShort)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, false, errors.Trace(err)
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, false, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return 0, errors.Trace(err)
+			// For other region error and the fake region error, backoff because
+			// there's something wrong.
+			// For the real EpochNotMatch error, don't backoff.
+			if regionErr.GetEpochNotMatch() == nil || isFakeRegionError(regionErr) {
+				err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return 0, false, errors.Trace(err)
+				}
 			}
 			continue
 		}
 		if resp.Resp == nil {
-			return 0, errors.Trace(tikverr.ErrBodyMissing)
+			return 0, false, errors.Trace(tikverr.ErrBodyMissing)
 		}
 		cmdResp := resp.Resp.(*pb.TxnHeartBeatResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
-			return 0, errors.Errorf("txn %d heartbeat fail, primary key = %v, err = %s", startTS, hex.EncodeToString(primary), extractKeyErr(keyErr))
+			return 0, true, errors.Errorf("txn %d heartbeat fail, primary key = %v, err = %s", startTS, hex.EncodeToString(primary), extractKeyErr(keyErr))
 		}
-		return cmdResp.GetLockTtl(), nil
+		return cmdResp.GetLockTtl(), false, nil
 	}
 }
 
@@ -1062,11 +1079,13 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 
 	commitDetail := c.getDetail()
 	commitDetail.PrewriteTime = time.Since(start)
-	// TODO(youjiali1995): Record the backoff time of the last finished batch. It doesn't make sense to aggregate all batches'.
 	if bo.GetTotalSleep() > 0 {
-		atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(bo.GetTotalSleep())*int64(time.Millisecond))
+		boSleep := int64(bo.GetTotalSleep()) * int64(time.Millisecond)
 		commitDetail.Mu.Lock()
-		commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, bo.GetTypes()...)
+		if boSleep > commitDetail.Mu.CommitBackoffTime {
+			commitDetail.Mu.CommitBackoffTime = boSleep
+			commitDetail.Mu.BackoffTypes = bo.GetTypes()
+		}
 		commitDetail.Mu.Unlock()
 	}
 
@@ -1225,8 +1244,8 @@ func (c *twoPhaseCommitter) commitTxn(ctx context.Context, commitDetail *util.Co
 	err := c.commitMutations(commitBo, c.mutations)
 	commitDetail.CommitTime = time.Since(start)
 	if commitBo.GetTotalSleep() > 0 {
-		atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(commitBo.GetTotalSleep())*int64(time.Millisecond))
 		commitDetail.Mu.Lock()
+		commitDetail.Mu.CommitBackoffTime += int64(commitBo.GetTotalSleep()) * int64(time.Millisecond)
 		commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, commitBo.GetTypes()...)
 		commitDetail.Mu.Unlock()
 	}
@@ -1619,17 +1638,20 @@ func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, 
 					singleBatchBackoffer, singleBatchCancel = batchExe.backoffer.Fork()
 					defer singleBatchCancel()
 				}
-				beforeSleep := singleBatchBackoffer.GetTotalSleep()
 				ch <- batchExe.action.handleSingleBatch(batchExe.committer, singleBatchBackoffer, batch)
 				commitDetail := batchExe.committer.getDetail()
-				if commitDetail != nil { // lock operations of pessimistic-txn will let commitDetail be nil
-					if delta := singleBatchBackoffer.GetTotalSleep() - beforeSleep; delta > 0 {
-						atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(singleBatchBackoffer.GetTotalSleep()-beforeSleep)*int64(time.Millisecond))
-						commitDetail.Mu.Lock()
-						commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, singleBatchBackoffer.GetTypes()...)
-						commitDetail.Mu.Unlock()
+				// For prewrite, we record the max backoff time
+				if _, ok := batchExe.action.(actionPrewrite); ok {
+					commitDetail.Mu.Lock()
+					boSleep := int64(singleBatchBackoffer.GetTotalSleep()) * int64(time.Millisecond)
+					if boSleep > commitDetail.Mu.CommitBackoffTime {
+						commitDetail.Mu.CommitBackoffTime = boSleep
+						commitDetail.Mu.BackoffTypes = singleBatchBackoffer.GetTypes()
 					}
+					commitDetail.Mu.Unlock()
 				}
+				// Backoff time in the 2nd phase of a non-async-commit txn is added
+				// in the commitTxn method, so we don't add it here.
 			}()
 		} else {
 			logutil.Logger(batchExe.backoffer.GetCtx()).Info("break startWorker",
