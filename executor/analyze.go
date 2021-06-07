@@ -164,7 +164,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 			}
 			var err1 error
-			if result.StatsVer == statistics.Version3 {
+			if result.StatsVer == statistics.Version2 {
 				err1 = statsHandle.SaveStatsToStorage(statisticsID, result.Count, result.IsIndex, hg, nil, result.TopNs[i], result.Fms[i], result.StatsVer, 1, result.TableID.IsPartitionTable() && needGlobalStats)
 			} else {
 				err1 = statsHandle.SaveStatsToStorage(statisticsID, result.Count, result.IsIndex, hg, result.Cms[i], result.TopNs[i], result.Fms[i], result.StatsVer, 1, result.TableID.IsPartitionTable() && needGlobalStats)
@@ -583,7 +583,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 		ranges = ranger.FullIntRange(false)
 	}
 	collExtStats := colExec.ctx.GetSessionVars().EnableExtendedStats
-	if colExec.StatsVersion == statistics.Version3 {
+	if colExec.StatsVersion == statistics.Version2 {
 		specialIndexes := make([]*model.IndexInfo, 0, len(colExec.indexes))
 		specialIndexesOffsets := make([]int, 0, len(colExec.indexes))
 		for i, idx := range colExec.indexes {
@@ -937,6 +937,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	for i := 0; i < statsConcurrency; i++ {
 		go e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, i == 0)
 	}
+
 	for i, col := range e.colsInfo {
 		buildTaskChan <- &samplingBuildTask{
 			id:               col.ID,
