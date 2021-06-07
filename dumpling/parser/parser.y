@@ -1332,6 +1332,7 @@ import (
 	VariableName                    "A simple Identifier like xx or the xx.xx form"
 	ConfigItemName                  "A config item like aa or aa.bb or aa.bb-cc.dd"
 	AuthString                      "Password string value"
+	AuthPlugin                      "Authentication plugin name"
 	CharsetName                     "Character set name"
 	CollationName                   "Collation name"
 	ColumnFormat                    "Column format"
@@ -11995,32 +11996,44 @@ AuthOption:
 			ByAuthString: true,
 		}
 	}
-|	"IDENTIFIED" "WITH" StringName
-	{
-		$$ = nil
-	}
-|	"IDENTIFIED" "WITH" StringName "BY" AuthString
+|	"IDENTIFIED" "WITH" AuthPlugin
 	{
 		$$ = &ast.AuthOption{
+			AuthPlugin: $3,
+		}
+	}
+|	"IDENTIFIED" "WITH" AuthPlugin "BY" AuthString
+	{
+		$$ = &ast.AuthOption{
+			AuthPlugin:   $3,
 			AuthString:   $5,
 			ByAuthString: true,
 		}
 	}
-|	"IDENTIFIED" "WITH" StringName "AS" HashString
+|	"IDENTIFIED" "WITH" AuthPlugin "AS" HashString
 	{
 		$$ = &ast.AuthOption{
+			AuthPlugin: $3,
 			HashString: $5,
 		}
 	}
 |	"IDENTIFIED" "BY" "PASSWORD" HashString
 	{
 		$$ = &ast.AuthOption{
+			AuthPlugin: mysql.AuthNativePassword,
 			HashString: $4,
 		}
 	}
 
+AuthPlugin:
+	StringName
+
 HashString:
 	stringLit
+|	hexLit
+	{
+		$$ = $1.(ast.BinaryLiteral).ToString()
+	}
 
 RoleSpec:
 	Rolename
