@@ -93,7 +93,7 @@ func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
 	defer tsr.Close()
 	populateCache(tsr, 0, maxSQLNum, 1)
 
-	agentServer.WaitServerCollect(maxSQLNum, time.Second*5)
+	agentServer.WaitCollectCnt(1, time.Second*5)
 
 	c.Assert(agentServer.GetRecords(), HasLen, maxSQLNum)
 
@@ -135,7 +135,7 @@ func (s *testTopSQLReporter) TestCollectAndEvicted(c *C) {
 	defer tsr.Close()
 	populateCache(tsr, 0, maxSQLNum*2, 2)
 
-	agentServer.WaitServerCollect(maxSQLNum, time.Second*10)
+	agentServer.WaitCollectCnt(1, time.Second*10)
 
 	c.Assert(agentServer.GetRecords(), HasLen, maxSQLNum)
 

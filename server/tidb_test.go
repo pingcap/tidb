@@ -50,6 +50,8 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/topsql/reporter"
+	mock2 "github.com/pingcap/tidb/util/topsql/reporter/mock"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tidb/util/topsql/tracecpu/mock"
 )
@@ -1172,6 +1174,10 @@ func (ts *tidbTestSerialSuite) TestPrepareCount(c *C) {
 	c.Assert(atomic.LoadInt64(&variable.PreparedStmtCount), Equals, prepareCnt)
 }
 
+type collectorWrapper struct {
+	reporter.TopSQLReporter
+}
+
 func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
@@ -1180,7 +1186,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	collector := mock.NewTopSQLCollector()
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(collector)
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{collector})
 
 	dbt := &DBTest{c, db}
 	dbt.mustExec("drop database if exists topsql")
@@ -1360,6 +1366,95 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		checkFn(ca.prepare, ca.planRegexp)
 		ca.cancel()
 	}
+}
+
+func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
+	db, err := sql.Open("mysql", ts.getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer func() {
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
+	agentServer, err := mock2.StartMockAgentServer()
+	c.Assert(err, IsNil)
+	defer func() {
+		agentServer.Stop()
+	}()
+
+	size := 10
+	dbt := &DBTest{c, db}
+	dbt.mustExec("drop database if exists topsql")
+	dbt.mustExec("create database topsql")
+	dbt.mustExec("use topsql;")
+	for i := 0; i < size; i++ {
+		dbt.mustExec(fmt.Sprintf("create table t%v (a int auto_increment, b int, unique index idx(a));", i))
+		for j := 0; j < 100; j++ {
+			dbt.mustExec(fmt.Sprintf("insert into t%v (b) values (%v);", i, j))
+		}
+	}
+	dbt.mustExec("set @@global.tidb_enable_top_sql='On';")
+	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
+	dbt.mustExec("set @@global.tidb_top_sql_precision_seconds=1;")
+	dbt.mustExec("set @@global.tidb_top_sql_report_interval_seconds=2;")
+	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
+
+	r := reporter.NewRemoteTopSQLReporter(reporter.NewGRPCReportClient(plancodec.DecodeNormalizedPlan))
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{r})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	for i := 0; i < size; i++ {
+		query := fmt.Sprintf("select /*+ HASH_JOIN(ta, tb) */ * from t%[1]v ta join t%[1]v tb on ta.a=tb.a where ta.b is not null;", i)
+		go ts.loopExec(ctx, c, func(db *sql.DB) {
+			dbt := &DBTest{c, db}
+			rows := dbt.mustQuery(query)
+			for rows.Next() {
+			}
+		})
+	}
+
+	checkFn := func(n int) {
+		records := agentServer.GetRecords()
+		sqlMetas := agentServer.GetSQLMetas()
+		planMetas := agentServer.GetPlanMetas()
+		c.Assert(len(records), Equals, n)
+		for _, r := range records {
+			sql := sqlMetas[string(r.SqlDigest)]
+			if len(r.PlanDigest) == 0 {
+				continue
+			}
+			plan := planMetas[string(r.PlanDigest)]
+			plan = strings.Replace(plan, "\n", " ", -1)
+			plan = strings.Replace(plan, "\t", " ", -1)
+			c.Assert(sql, Matches, "select.*from.*join.*")
+			c.Assert(plan, Matches, ".*Join.*Select.*")
+		}
+	}
+
+	// Test with null agent address, the agent server can't receive any record.
+	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
+	agentServer.WaitCollectCnt(1, time.Second*4)
+	checkFn(0)
+
+	// Test after set agent address and the evict take effect.
+	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
+	agentServer.WaitCollectCnt(1, time.Second*4)
+	checkFn(5)
+
+	// Test enlarge the max statement count
+	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=8;")
+	agentServer.WaitCollectCnt(1, time.Second*4)
+	checkFn(8)
+
+	// Test with wrong agent address, the agent server can't receive any record.
+	dbt.mustExec("set @@tidb_top_sql_agent_address='127.0.0.1:65530';")
+	agentServer.WaitCollectCnt(1, time.Second*4)
+	checkFn(0)
+
+	// Test after set agent address and the evict take effect.
+	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
+	agentServer.WaitCollectCnt(1, time.Second*4)
+	checkFn(8)
 }
 
 func (ts *tidbTestTopSQLSuite) loopExec(ctx context.Context, c *C, fn func(db *sql.DB)) {

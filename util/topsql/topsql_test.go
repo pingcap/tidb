@@ -159,7 +159,7 @@ func (s *testSuite) TestTopSQLReporter(c *C) {
 		}(req.sql, req.plan)
 	}
 
-	server.WaitServerCollect(6, time.Second*5)
+	server.WaitCollectCnt(1, time.Second*5)
 
 	records := server.GetRecords()
 	sqlMetas := server.GetSQLMetas()

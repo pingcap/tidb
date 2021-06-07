@@ -19,7 +19,7 @@ type mockAgentServer struct {
 	grpcServer *grpc.Server
 	sqlMetas   map[string]string
 	planMetas  map[string]string
-	records    []*tipb.CPUTimeRecord
+	records    [][]*tipb.CPUTimeRecord
 }
 
 // StartMockAgentServer starts the mock agent server.
@@ -49,6 +49,7 @@ func StartMockAgentServer() (*mockAgentServer, error) {
 }
 
 func (svr *mockAgentServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportCPUTimeRecordsServer) error {
+	records := make([]*tipb.CPUTimeRecord, 0, 10)
 	for {
 		req, err := stream.Recv()
 		if err == io.EOF {
@@ -56,10 +57,11 @@ func (svr *mockAgentServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportC
 		} else if err != nil {
 			return err
 		}
-		svr.Lock()
-		svr.records = append(svr.records, req)
-		svr.Unlock()
+		records = append(records, req)
 	}
+	svr.Lock()
+	svr.records = append(svr.records, records)
+	svr.Unlock()
 	return stream.SendAndClose(&tipb.EmptyResponse{})
 }
 
@@ -93,11 +95,14 @@ func (svr *mockAgentServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMet
 	return stream.SendAndClose(&tipb.EmptyResponse{})
 }
 
-func (svr *mockAgentServer) WaitServerCollect(recordCount int, timeout time.Duration) {
+func (svr *mockAgentServer) WaitCollectCnt(cnt int, timeout time.Duration) {
 	start := time.Now()
+	svr.Lock()
+	old := len(svr.records)
+	svr.Unlock()
 	for {
 		svr.Lock()
-		if len(svr.records) >= recordCount {
+		if len(svr.records)-old >= cnt {
 			svr.Unlock()
 			return
 		}
@@ -110,17 +115,21 @@ func (svr *mockAgentServer) WaitServerCollect(recordCount int, timeout time.Dura
 }
 
 func (svr *mockAgentServer) GetSQLMetas() map[string]string {
+	m := make(map[string]string, 10)
 	svr.Lock()
-	m := svr.sqlMetas
-	svr.sqlMetas = make(map[string]string)
+	for k, v := range svr.sqlMetas {
+		m[k] = v
+	}
 	svr.Unlock()
 	return m
 }
 
 func (svr *mockAgentServer) GetPlanMetas() map[string]string {
+	m := make(map[string]string, 10)
 	svr.Lock()
-	m := svr.planMetas
-	svr.planMetas = make(map[string]string)
+	for k, v := range svr.planMetas {
+		m[k] = v
+	}
 	svr.Unlock()
 	return m
 }
@@ -128,9 +137,13 @@ func (svr *mockAgentServer) GetPlanMetas() map[string]string {
 func (svr *mockAgentServer) GetRecords() []*tipb.CPUTimeRecord {
 	svr.Lock()
 	records := svr.records
-	svr.records = []*tipb.CPUTimeRecord{}
+	svr.records = [][]*tipb.CPUTimeRecord{}
 	svr.Unlock()
-	return records
+	result := make([]*tipb.CPUTimeRecord, 0, len(records)*10)
+	for _, r := range records {
+		result = append(result, r...)
+	}
+	return result
 }
 
 func (svr *mockAgentServer) Address() string {
