@@ -1450,6 +1450,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 		if p.err != nil {
 			return
 		}
+		p.ExplicitStaleness = true
 	}
 	p.initedLastSnapshotTS = true
 }
