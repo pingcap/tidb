@@ -1048,7 +1048,7 @@ func (p *basePhysicalAgg) numDistinctFunc() (num int) {
 	return
 }
 
-func (p *basePhysicalAgg) getAggFuncCostFactor() (factor float64) {
+func (p *basePhysicalAgg) getAggFuncCostFactor(isMPP bool) (factor float64) {
 	factor = 0.0
 	for _, agg := range p.AggFuncs {
 		if fac, ok := aggFuncFactor[agg.Name]; ok {
@@ -1058,7 +1058,11 @@ func (p *basePhysicalAgg) getAggFuncCostFactor() (factor float64) {
 		}
 	}
 	if factor == 0 {
-		factor = aggFuncFactor[ast.AggFuncFirstRow]
+		if isMPP {
+			factor = aggFuncFactor[ast.AggFuncFirstRow]
+		} else {
+			factor = 1.0
+		}
 	}
 	return
 }
