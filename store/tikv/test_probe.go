@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/store/tikv/region"
 	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
@@ -58,7 +59,7 @@ func (s StoreProbe) GetSnapshot(ts uint64) SnapshotProbe {
 
 // SetRegionCachePDClient replaces pd client inside region cache.
 func (s StoreProbe) SetRegionCachePDClient(client pd.Client) {
-	s.regionCache.pdClient = client
+	s.regionCache.SetPDClient(client)
 }
 
 // ClearTxnLatches clears store's txn latch scheduler.
@@ -85,14 +86,7 @@ func (s StoreProbe) SaveSafePoint(v uint64) error {
 
 // SetRegionCacheStore is used to set a store in region cache, for testing only
 func (s StoreProbe) SetRegionCacheStore(id uint64, storeType tikvrpc.EndpointType, state uint64, labels []*metapb.StoreLabel) {
-	s.regionCache.storeMu.Lock()
-	defer s.regionCache.storeMu.Unlock()
-	s.regionCache.storeMu.stores[id] = &Store{
-		storeID:   id,
-		storeType: storeType,
-		state:     state,
-		labels:    labels,
-	}
+	s.regionCache.SetRegionCacheStore(id, storeType, state, labels)
 }
 
 // SetSafeTS is used to set safeTS for the store with `storeID`
@@ -147,7 +141,7 @@ func (txn TxnProbe) CollectLockedKeys() [][]byte {
 }
 
 // BatchGetSingleRegion gets a batch of keys from a region.
-func (txn TxnProbe) BatchGetSingleRegion(bo *Backoffer, region RegionVerID, keys [][]byte, collect func([]byte, []byte)) error {
+func (txn TxnProbe) BatchGetSingleRegion(bo *Backoffer, region region.VerID, keys [][]byte, collect func([]byte, []byte)) error {
 	snapshot := txn.GetSnapshot()
 	return snapshot.batchGetSingleRegion(bo, batchKeys{region: region, keys: keys}, collect)
 }
@@ -324,7 +318,7 @@ func (c CommitterProbe) IsOnePC() bool {
 func (c CommitterProbe) BuildPrewriteRequest(regionID, regionConf, regionVersion uint64, mutations CommitterMutations, txnSize uint64) *tikvrpc.Request {
 	var batch batchMutations
 	batch.mutations = mutations
-	batch.region = RegionVerID{regionID, regionConf, regionVersion}
+	batch.region = region.NewRegionVerID(regionID, regionConf, regionVersion)
 	for _, key := range mutations.GetKeys() {
 		if bytes.Equal(key, c.primary()) {
 			batch.isPrimary = true
@@ -396,7 +390,7 @@ type SnapshotProbe struct {
 }
 
 // MergeRegionRequestStats merges RPC runtime stats into snapshot's stats.
-func (s SnapshotProbe) MergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats) {
+func (s SnapshotProbe) MergeRegionRequestStats(stats map[tikvrpc.CmdType]*region.RPCRuntimeStats) {
 	s.mergeRegionRequestStats(stats)
 }
 
@@ -455,13 +449,13 @@ func (l LockResolverProbe) ResolveLockAsync(bo *Backoffer, lock *Lock, status Tx
 // ResolveLock resolves single lock.
 func (l LockResolverProbe) ResolveLock(ctx context.Context, lock *Lock) error {
 	bo := retry.NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, nil)
-	return l.resolveLock(bo, lock, TxnStatus{}, false, make(map[RegionVerID]struct{}))
+	return l.resolveLock(bo, lock, TxnStatus{}, false, make(map[region.VerID]struct{}))
 }
 
 // ResolvePessimisticLock resolves single pessimistic lock.
 func (l LockResolverProbe) ResolvePessimisticLock(ctx context.Context, lock *Lock) error {
 	bo := retry.NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, nil)
-	return l.resolvePessimisticLock(bo, lock, make(map[RegionVerID]struct{}))
+	return l.resolvePessimisticLock(bo, lock, make(map[region.VerID]struct{}))
 }
 
 // GetTxnStatus sends the CheckTxnStatus request to the TiKV server.
@@ -573,12 +567,12 @@ type RawKVClientProbe struct {
 }
 
 // GetRegionCache returns the internal region cache container.
-func (c RawKVClientProbe) GetRegionCache() *RegionCache {
+func (c RawKVClientProbe) GetRegionCache() *region.Cache {
 	return c.regionCache
 }
 
 // SetRegionCache resets the internal region cache container.
-func (c RawKVClientProbe) SetRegionCache(regionCache *RegionCache) {
+func (c RawKVClientProbe) SetRegionCache(regionCache *region.Cache) {
 	c.regionCache = regionCache
 }
 

@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package region
 
 import (
 	"context"
@@ -31,6 +31,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/tidb/store/tikv/client"
+	tikvclient "github.com/pingcap/tidb/store/tikv/client"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -47,9 +49,9 @@ type testRegionRequestToSingleStoreSuite struct {
 	store               uint64
 	peer                uint64
 	region              uint64
-	cache               *RegionCache
-	bo                  *Backoffer
-	regionRequestSender *RegionRequestSender
+	cache               *Cache
+	bo                  *retry.Backoffer
+	regionRequestSender *RequestSender
 	mvccStore           mocktikv.MVCCStore
 }
 
@@ -60,9 +62,9 @@ type testRegionRequestToThreeStoresSuite struct {
 	peerIDs             []uint64
 	regionID            uint64
 	leaderPeer          uint64
-	cache               *RegionCache
-	bo                  *Backoffer
-	regionRequestSender *RegionRequestSender
+	cache               *Cache
+	bo                  *retry.Backoffer
+	regionRequestSender *RequestSender
 	mvccStore           mocktikv.MVCCStore
 }
 
@@ -117,7 +119,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestGetRPCContext(c *C) {
 	c.Assert(err, IsNil)
 
 	var seed uint32
-	var regionID = RegionVerID{s.regionID, 0, 0}
+	var regionID = VerID{s.regionID, 0, 0}
 
 	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{}, kv.ReplicaReadLeader, &seed)
 	rpcCtx, err := s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV)
@@ -161,7 +163,7 @@ func (s *testRegionRequestToSingleStoreSuite) TestOnRegionError(c *C) {
 			}}
 			return staleResp, nil
 		}}
-		bo := NewBackofferWithVars(context.Background(), 5, nil)
+		bo := retry.NewBackofferWithVars(context.Background(), 5, nil)
 		resp, err := s.regionRequestSender.SendReq(bo, req, region.Region, time.Second)
 		c.Assert(err, IsNil)
 		c.Assert(resp, NotNil)
@@ -335,7 +337,7 @@ func (s *testRegionRequestToSingleStoreSuite) TestOnSendFailedWithCloseKnownStor
 	s.cluster.ChangeLeader(s.region, s.peer)
 
 	// send to store2 fail and send to new leader store1.
-	bo2 := NewBackofferWithVars(context.Background(), 100, nil)
+	bo2 := retry.NewBackofferWithVars(context.Background(), 100, nil)
 	resp, err = s.regionRequestSender.SendReq(bo2, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
 	regionErr, err := resp.GetRegionError()
@@ -414,7 +416,7 @@ func (s *testRegionRequestToSingleStoreSuite) TestNoReloadRegionWhenCtxCanceled(
 
 // cancelContextClient wraps rpcClient and always cancels context before sending requests.
 type cancelContextClient struct {
-	Client
+	client.Client
 	redirectAddr string
 }
 
@@ -603,7 +605,7 @@ func (s *testRegionRequestToSingleStoreSuite) TestNoReloadRegionForGrpcWhenCtxCa
 		wg.Done()
 	}()
 
-	client := NewRPCClient(config.Security{})
+	client := tikvclient.NewRPCClient(config.Security{})
 	sender := NewRegionRequestSender(s.cache, client)
 	req := tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
 		Key:   []byte("key"),
@@ -620,7 +622,7 @@ func (s *testRegionRequestToSingleStoreSuite) TestNoReloadRegionForGrpcWhenCtxCa
 
 	// Just for covering error code = codes.Canceled.
 	client1 := &cancelContextClient{
-		Client:       NewRPCClient(config.Security{}),
+		Client:       tikvclient.NewRPCClient(config.Security{}),
 		redirectAddr: addr,
 	}
 	sender = NewRegionRequestSender(s.cache, client1)
@@ -656,7 +658,7 @@ func (s *testRegionRequestToSingleStoreSuite) TestOnMaxTimestampNotSyncedError(c
 			}
 			return resp, nil
 		}}
-		bo := NewBackofferWithVars(context.Background(), 5, nil)
+		bo := retry.NewBackofferWithVars(context.Background(), 5, nil)
 		resp, err := s.regionRequestSender.SendReq(bo, req, region.Region, time.Second)
 		c.Assert(err, IsNil)
 		c.Assert(resp, NotNil)
@@ -683,7 +685,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestSwitchPeerWhenNoLeader(c *C) {
 		Value: []byte("value"),
 	})
 
-	bo := NewBackofferWithVars(context.Background(), 5, nil)
+	bo := retry.NewBackofferWithVars(context.Background(), 5, nil)
 	loc, err := s.cache.LocateKey(s.bo, []byte("key"))
 	c.Assert(err, IsNil)
 	resp, err := s.regionRequestSender.SendReq(bo, req, loc.Region, time.Second)
@@ -707,7 +709,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 	// First get the leader's addr from region cache
 	leaderStore, leaderAddr := s.loadAndGetLeaderStore(c)
 
-	bo := NewBackoffer(context.Background(), 10000)
+	bo := retry.NewBackoffer(context.Background(), 10000)
 
 	// Simulate that the leader is network-partitioned but can be accessed by forwarding via a follower
 	innerClient := s.regionRequestSender.client
@@ -722,7 +724,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 		return innerClient.SendRequest(ctx, addr, req, timeout)
 	}}
 	var storeState uint32 = uint32(unreachable)
-	s.regionRequestSender.regionCache.testingKnobs.mockRequestLiveness = func(s *Store, bo *Backoffer) livenessState {
+	s.regionRequestSender.regionCache.testingKnobs.mockRequestLiveness = func(s *Store, bo *retry.Backoffer) livenessState {
 		return livenessState(atomic.LoadUint32(&storeState))
 	}
 
@@ -873,12 +875,12 @@ func (s *testRegionRequestToThreeStoresSuite) TestReplicaSelector(c *C) {
 	// Create a fake region and change its leader to the last peer.
 	regionStore = regionStore.clone()
 	regionStore.workTiKVIdx = AccessIndex(len(regionStore.stores) - 1)
-	sidx, _ := regionStore.accessStore(TiKVOnly, regionStore.workTiKVIdx)
+	sidx, _ := regionStore.accessStore(tiKVOnly, regionStore.workTiKVIdx)
 	regionStore.stores[sidx].epoch++
 	regionStore.storeEpochs[sidx]++
 	// Add a TiFlash peer to the region.
 	peer := &metapb.Peer{Id: s.cluster.AllocID(), StoreId: s.cluster.AllocID()}
-	regionStore.accessIndex[TiFlashOnly] = append(regionStore.accessIndex[TiFlashOnly], len(regionStore.stores))
+	regionStore.accessIndex[tiFlashOnly] = append(regionStore.accessIndex[tiFlashOnly], len(regionStore.stores))
 	regionStore.stores = append(regionStore.stores, &Store{storeID: peer.StoreId, storeType: tikvrpc.TiFlash})
 	regionStore.storeEpochs = append(regionStore.storeEpochs, 0)
 
@@ -899,7 +901,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestReplicaSelector(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(replicaSelector.region, Equals, region)
 	// Should only contains TiKV stores.
-	c.Assert(len(replicaSelector.replicas), Equals, regionStore.accessStoreNum(TiKVOnly))
+	c.Assert(len(replicaSelector.replicas), Equals, regionStore.accessStoreNum(tiKVOnly))
 	c.Assert(len(replicaSelector.replicas), Equals, len(regionStore.stores)-1)
 	c.Assert(replicaSelector.nextReplicaIdx == 0, IsTrue)
 	c.Assert(replicaSelector.isExhausted(), IsFalse)
@@ -926,7 +928,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestReplicaSelector(c *C) {
 		c.Assert(rpcCtx.Store, Equals, replicaSelector.replicas[replicaSelector.nextReplicaIdx-1].store)
 		c.Assert(rpcCtx.Peer, Equals, replicaSelector.replicas[replicaSelector.nextReplicaIdx-1].peer)
 		c.Assert(rpcCtx.Addr, Equals, replicaSelector.replicas[replicaSelector.nextReplicaIdx-1].store.addr)
-		c.Assert(rpcCtx.AccessMode, Equals, TiKVOnly)
+		c.Assert(rpcCtx.AccessMode, Equals, tiKVOnly)
 	}
 
 	// Verify the correctness of next()
@@ -951,7 +953,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestReplicaSelector(c *C) {
 	region.lastAccess = time.Now().Unix()
 	replicaSelector, err = newReplicaSelector(cache, regionLoc.Region)
 	c.Assert(replicaSelector, NotNil)
-	cache.testingKnobs.mockRequestLiveness = func(s *Store, bo *Backoffer) livenessState {
+	cache.testingKnobs.mockRequestLiveness = func(s *Store, bo *retry.Backoffer) livenessState {
 		return reachable
 	}
 	for i := 0; i < maxReplicaAttempt; i++ {
@@ -1062,7 +1064,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestSendReqWithReplicaSelector(c *
 		if err != nil {
 			return false
 		}
-		return isFakeRegionError(regionErr)
+		return IsFakeRegionError(regionErr)
 	}
 
 	// Normal
@@ -1126,7 +1128,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestSendReqWithReplicaSelector(c *
 
 	// The leader store is alive but can't provide service.
 	// Region will be invalidated due to running out of all replicas.
-	s.regionRequestSender.regionCache.testingKnobs.mockRequestLiveness = func(s *Store, bo *Backoffer) livenessState {
+	s.regionRequestSender.regionCache.testingKnobs.mockRequestLiveness = func(s *Store, bo *retry.Backoffer) livenessState {
 		return reachable
 	}
 	reloadRegion()
@@ -1252,7 +1254,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestSendReqWithReplicaSelector(c *
 	}
 
 	// Runs out of all replicas and then returns a send error.
-	s.regionRequestSender.regionCache.testingKnobs.mockRequestLiveness = func(s *Store, bo *Backoffer) livenessState {
+	s.regionRequestSender.regionCache.testingKnobs.mockRequestLiveness = func(s *Store, bo *retry.Backoffer) livenessState {
 		return unreachable
 	}
 	reloadRegion()
