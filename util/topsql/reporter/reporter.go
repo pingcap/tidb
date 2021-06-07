@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/wangjohn/quickselect"
 	"go.uber.org/zap"
 )
@@ -296,43 +295,6 @@ type reportData struct {
 	collectedData     map[string]*dataPoints
 	normalizedSQLMap  *sync.Map
 	normalizedPlanMap *sync.Map
-}
-
-// prepareReportDataForSending prepares the data that need to reported.
-func (tsr *RemoteTopSQLReporter) prepareReportDataForSending(data reportData) (sqlMetas []*tipb.SQLMeta, planMetas []*tipb.PlanMeta, records []*tipb.CPUTimeRecord) {
-	sqlMetas = make([]*tipb.SQLMeta, 0, len(data.collectedData))
-	data.normalizedSQLMap.Range(func(key, value interface{}) bool {
-		sqlMetas = append(sqlMetas, &tipb.SQLMeta{
-			SqlDigest:     []byte(key.(string)),
-			NormalizedSql: value.(string),
-		})
-		return true
-	})
-
-	planMetas = make([]*tipb.PlanMeta, 0, len(data.collectedData))
-	data.normalizedPlanMap.Range(func(key, value interface{}) bool {
-		planDecoded, err := tsr.planBinaryDecoder(value.(string))
-		if err != nil {
-			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(err))
-			return true
-		}
-		planMetas = append(planMetas, &tipb.PlanMeta{
-			PlanDigest:     []byte(key.(string)),
-			NormalizedPlan: planDecoded,
-		})
-		return true
-	})
-
-	records = make([]*tipb.CPUTimeRecord, 0, len(data.collectedData))
-	for _, value := range data.collectedData {
-		records = append(records, &tipb.CPUTimeRecord{
-			TimestampList: value.TimestampList,
-			CpuTimeMsList: value.CPUTimeMsList,
-			SqlDigest:     value.SQLDigest,
-			PlanDigest:    value.PlanDigest,
-		})
-	}
-	return sqlMetas, planMetas, records
 }
 
 // reportWorker sends data to the gRPC endpoint from the `reportDataChan` one by one.
