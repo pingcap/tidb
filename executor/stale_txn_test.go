@@ -782,12 +782,16 @@ func (s *testStaleTxnSuite) TestStaleSelect(c *C) {
 	tk.MustExec("create table t (id int)")
 
 	tk.MustExec("insert into t values (1)")
-	time1 := time.Now()
-	tk.MustExec("insert into t values (2)")
-	time2 := time.Now()
-	tk.MustExec("insert into t values (3)")
-
 	time.Sleep(10 * time.Millisecond)
+	time1 := time.Now()
+
+	tk.MustExec("insert into t values (2)")
+	time.Sleep(10 * time.Millisecond)
+	time2 := time.Now()
+
+	tk.MustExec("insert into t values (3)")
+	time.Sleep(10 * time.Millisecond)
+
 	staleRows := testkit.Rows("1")
 	staleSQL := fmt.Sprintf(`select * from t as of timestamp '%s'`, time1.Format("2006-1-2 15:04:05.000"))
 
