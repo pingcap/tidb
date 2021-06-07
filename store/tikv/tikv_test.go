@@ -18,11 +18,11 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/tikv/util"
+	"github.com/pingcap/tidb/store/tikv/mockstore"
 	"github.com/pingcap/tidb/util/logutil"
 )
 
-type OneByOneSuite = util.OneByOneSuite
+type OneByOneSuite = mockstore.OneByOneSuite
 type testTiKVSuite struct {
 	OneByOneSuite
 }

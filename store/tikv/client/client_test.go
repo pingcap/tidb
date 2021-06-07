@@ -28,13 +28,13 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/mockstore"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/store/tikv/util"
 	"google.golang.org/grpc/metadata"
 )
 
 // OneByOneSuite is a suite, When with-tikv flag is true, there is only one storage, so the test suite have to run one by one.
-type OneByOneSuite = util.OneByOneSuite
+type OneByOneSuite = mockstore.OneByOneSuite
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true

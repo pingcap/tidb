@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/mockstore"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/util"
 )
@@ -179,7 +180,7 @@ func (s *testOnePCSuite) Test1PCIsolation(c *C) {
 
 func (s *testOnePCSuite) Test1PCDisallowMultiRegion(c *C) {
 	// This test doesn't support tikv mode.
-	if *util.WithTiKV {
+	if *mockstore.WithTiKV {
 		return
 	}
 
@@ -247,7 +248,7 @@ func (s *testOnePCSuite) Test1PCLinearizability(c *C) {
 
 func (s *testOnePCSuite) Test1PCWithMultiDC(c *C) {
 	// It requires setting placement rules to run with TiKV
-	if *util.WithTiKV {
+	if *mockstore.WithTiKV {
 		return
 	}
 
