@@ -28,7 +28,7 @@ import (
 
 // ReportClient send data to the target server.
 type ReportClient interface {
-	Send(ctx context.Context, addr string, sqlMetas []*tipb.SQLMeta, planMetas []*tipb.PlanMeta, records []*tipb.CPUTimeRecord) error
+	Send(ctx context.Context, addr string, data reportData, decodePlan planBinaryDecodeFunc) error
 	Close()
 }
 
@@ -43,10 +43,10 @@ func NewGRPCReportClient() *GRPCReportClient {
 	return &GRPCReportClient{}
 }
 
+var _ ReportClient = &GRPCReportClient{}
+
 // Send implements the ReportClient interface.
-func (r *GRPCReportClient) Send(
-	ctx context.Context, targetRPCAddr string,
-	sqlMetas []*tipb.SQLMeta, planMetas []*tipb.PlanMeta, records []*tipb.CPUTimeRecord) error {
+func (r *GRPCReportClient) Send(ctx context.Context, targetRPCAddr string, data reportData, decodePlan planBinaryDecodeFunc) error {
 	if targetRPCAddr == "" {
 		return nil
 	}
@@ -61,15 +61,15 @@ func (r *GRPCReportClient) Send(
 
 	go func() {
 		defer wg.Done()
-		errCh <- r.sendBatchSQLMeta(ctx, sqlMetas)
+		errCh <- r.sendBatchSQLMeta(ctx, data.normalizedSQLMap)
 	}()
 	go func() {
 		defer wg.Done()
-		errCh <- r.sendBatchPlanMeta(ctx, planMetas)
+		errCh <- r.sendBatchPlanMeta(ctx, data.normalizedPlanMap, decodePlan)
 	}()
 	go func() {
 		defer wg.Done()
-		errCh <- r.sendBatchCPUTimeRecord(ctx, records)
+		errCh <- r.sendBatchCPUTimeRecord(ctx, data.collectedData)
 	}()
 	wg.Wait()
 	close(errCh)
@@ -94,7 +94,7 @@ func (r *GRPCReportClient) Close() {
 }
 
 // sendBatchCPUTimeRecord sends a batch of TopSQL records by stream.
-func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records []*tipb.CPUTimeRecord) error {
+func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records map[string]*dataPoints) error {
 	if len(records) == 0 {
 		return nil
 	}
@@ -104,6 +104,12 @@ func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records [
 		return err
 	}
 	for _, record := range records {
+		record := &tipb.CPUTimeRecord{
+			TimestampList: record.TimestampList,
+			CpuTimeMsList: record.CPUTimeMsList,
+			SqlDigest:     record.SQLDigest,
+			PlanDigest:    record.PlanDigest,
+		}
 		if err := stream.Send(record); err != nil {
 			break
 		}
@@ -114,39 +120,48 @@ func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records [
 }
 
 // sendBatchSQLMeta sends a batch of SQL metas by stream.
-func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, metas []*tipb.SQLMeta) error {
-	if len(metas) == 0 {
-		return nil
-	}
+func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, sqlMap *sync.Map) error {
 	client := tipb.NewTopSQLAgentClient(r.conn)
 	stream, err := client.ReportSQLMeta(ctx)
 	if err != nil {
 		return err
 	}
-	for _, meta := range metas {
-		if err := stream.Send(meta); err != nil {
-			break
+	sqlMap.Range(func(key, value interface{}) bool {
+		sqlMeta := &tipb.SQLMeta{
+			SqlDigest:     []byte(key.(string)),
+			NormalizedSql: value.(string),
 		}
-	}
+		if err := stream.Send(sqlMeta); err != nil {
+			return false
+		}
+		return true
+	})
 	_, err = stream.CloseAndRecv()
 	return err
 }
 
-// sendBatchSQLMeta sends a batch of SQL metas by stream.
-func (r *GRPCReportClient) sendBatchPlanMeta(ctx context.Context, metas []*tipb.PlanMeta) error {
-	if len(metas) == 0 {
-		return nil
-	}
+// sendBatchPlanMeta sends a batch of SQL metas by stream.
+func (r *GRPCReportClient) sendBatchPlanMeta(ctx context.Context, planMap *sync.Map, decodePlan planBinaryDecodeFunc) error {
 	client := tipb.NewTopSQLAgentClient(r.conn)
 	stream, err := client.ReportPlanMeta(ctx)
 	if err != nil {
 		return err
 	}
-	for _, meta := range metas {
-		if err := stream.Send(meta); err != nil {
-			break
+	planMap.Range(func(key, value interface{}) bool {
+		planDecoded, err := decodePlan(value.(string))
+		if err != nil {
+			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(err))
+			return false
 		}
-	}
+		planMeta := &tipb.PlanMeta{
+			PlanDigest:     []byte(key.(string)),
+			NormalizedPlan: planDecoded,
+		}
+		if err := stream.Send(planMeta); err != nil {
+			return false
+		}
+		return true
+	})
 	_, err = stream.CloseAndRecv()
 	return err
 }

@@ -356,11 +356,11 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 	defer util.Recover("top-sql", "doReport", nil, false)
 
-	sqlMetas, planMetas, records := tsr.prepareReportDataForSending(data)
+	//sqlMetas, planMetas, records := tsr.prepareReportDataForSending(data)
 	agentAddr := variable.TopSQLVariable.AgentAddress.Load()
 
 	ctx, cancel := context.WithTimeout(tsr.ctx, reportTimeout)
-	err := tsr.client.Send(ctx, agentAddr, sqlMetas, planMetas, records)
+	err := tsr.client.Send(ctx, agentAddr, data, tsr.planBinaryDecoder)
 	if err != nil {
 		logutil.BgLogger().Warn("[top-sql] client failed to send data", zap.Error(err))
 	}
