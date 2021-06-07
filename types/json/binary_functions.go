@@ -794,6 +794,15 @@ func MergePatchBinary(bjs []*BinaryJSON) (*BinaryJSON, error) {
 		return bjs[length-1], nil
 	}
 
+	// recursive calling
+	if length > 2 {
+		tmp, e := MergePatchBinary(bjs[0 : length-1])
+		if e != nil {
+			return nil, e
+		}
+		return MergePatchBinary([]*BinaryJSON{tmp, bjs[length-1]})
+	}
+
 	target := bjs[0]
 	for _, patch := range bjs[1:] {
 		target, err = mergePatchBinary(target, patch)
