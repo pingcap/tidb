@@ -102,7 +102,7 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t2 group by a",
         "Plan": [
-          "TableReader_24 3.00 3.21 root  data:ExchangeSender_23",
+          "TableReader_24 3.00 3.33 root  data:ExchangeSender_23",
           "└─ExchangeSender_23 3.00 77.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "  └─Projection_22 3.00 0.00 batchCop[tiflash]  Column#4",
           "    └─HashAgg_8 3.00 77.00 batchCop[tiflash]  group by:test.t2.a, funcs:count(1)->Column#4",
@@ -152,8 +152,8 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a",
         "Plan": [
-          "StreamAgg_12 1.00 18.81 root  funcs:count(1)->Column#7",
-          "└─TableReader_44 3.00 9.81 root  data:ExchangeSender_43",
+          "StreamAgg_12 1.00 18.93 root  funcs:count(1)->Column#7",
+          "└─TableReader_44 3.00 9.93 root  data:ExchangeSender_43",
           "  └─ExchangeSender_43 3.00 235.38 cop[tiflash]  ExchangeType: PassThrough",
           "    └─HashJoin_40 3.00 235.38 cop[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
           "      ├─ExchangeReceiver_19(Build) 3.00 77.00 cop[tiflash]  ",
@@ -167,11 +167,11 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
         "Plan": [
-          "StreamAgg_15 1.00 60.48 root  funcs:count(1)->Column#10",
-          "└─HashJoin_65 3.00 51.48 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
+          "StreamAgg_15 1.00 60.60 root  funcs:count(1)->Column#10",
+          "└─HashJoin_65 3.00 51.60 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
           "  ├─IndexReader_53(Build) 3.00 11.66 root  index:IndexFullScan_52",
           "  │ └─IndexFullScan_52 3.00 150.50 cop[tikv] table:t3, index:c(b) keep order:false",
-          "  └─TableReader_39(Probe) 3.00 11.02 root  data:ExchangeSender_38",
+          "  └─TableReader_39(Probe) 3.00 11.14 root  data:ExchangeSender_38",
           "    └─ExchangeSender_38 3.00 264.38 cop[tiflash]  ExchangeType: PassThrough",
           "      └─HashJoin_29 3.00 264.38 cop[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
           "        ├─ExchangeReceiver_35(Build) 3.00 106.00 cop[tiflash]  ",
@@ -185,21 +185,22 @@
       {
         "SQL": "explain format = 'verbose' select (2) in (select count(*) from t1) from (select t.b < (select t.b from t2 limit 1 )  from t3 t) t",
         "Plan": [
-          "HashJoin_19 3.00 133.41 root  CARTESIAN left outer semi join",
-          "├─Selection_39(Build) 0.80 11.18 root  eq(2, Column#18)",
-          "│ └─StreamAgg_60 1.00 69.50 root  funcs:count(Column#32)->Column#18",
-          "│   └─TableReader_61 1.00 5.17 root  data:StreamAgg_44",
-          "│     └─StreamAgg_44 1.00 8.18 batchCop[tiflash]  funcs:count(1)->Column#32",
-          "│       └─TableFullScan_59 3.00 60.50 batchCop[tiflash] table:t1 keep order:false",
-          "└─Projection_20(Probe) 3.00 101.83 root  1->Column#28",
-          "  └─Apply_22 3.00 82.03 root  CARTESIAN left outer join",
+          "HashJoin_19 3.00 127.40 root  CARTESIAN left outer semi join",
+          "├─Selection_44(Build) 0.80 11.18 root  eq(2, Column#18)",
+          "│ └─StreamAgg_65 1.00 69.50 root  funcs:count(Column#32)->Column#18",
+          "│   └─TableReader_66 1.00 5.17 root  data:StreamAgg_49",
+          "│     └─StreamAgg_49 1.00 8.18 batchCop[tiflash]  funcs:count(1)->Column#32",
+          "│       └─TableFullScan_64 3.00 60.50 batchCop[tiflash] table:t1 keep order:false",
+          "└─Projection_20(Probe) 3.00 95.82 root  1->Column#28",
+          "  └─Apply_22 3.00 76.02 root  CARTESIAN left outer join",
           "    ├─TableReader_24(Build) 3.00 10.16 root  data:TableFullScan_23",
           "    │ └─TableFullScan_23 3.00 128.00 cop[tikv] table:t keep order:false",
-          "    └─Projection_27(Probe) 1.00 23.96 root  1->Column#26",
-          "      └─Limit_28 1.00 5.36 root  offset:0, count:1",
-          "        └─TableReader_34 1.00 5.36 root  data:Limit_33",
-          "          └─Limit_33 1.00 56.00 cop[tikv]  offset:0, count:1",
-          "            └─TableFullScan_31 1.00 56.00 cop[tikv] table:t2 keep order:false"
+          "    └─Projection_27(Probe) 1.00 21.95 root  1->Column#26",
+          "      └─Limit_31 1.00 3.35 root  offset:0, count:1",
+          "        └─TableReader_43 1.00 3.35 root  data:ExchangeSender_42",
+          "          └─ExchangeSender_42 1.00 79.50 cop[tiflash]  ExchangeType: PassThrough",
+          "            └─Limit_41 1.00 79.50 cop[tiflash]  offset:0, count:1",
+          "              └─TableFullScan_40 1.00 79.50 cop[tiflash] table:t2 keep order:false"
         ]
       },
       {
@@ -518,6 +519,113 @@
           "      │ └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: Broadcast",
           "      │   └─TableFullScan 2.00 cop[tiflash] table:d1_t keep order:false",
           "      └─TableFullScan(Probe) 8.00 cop[tiflash] table:fact_t keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestMPPOuterJoinBuildSideForBroadcastJoin",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select count(*) from a left join b on a.id = b.id",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─TableReader 2.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 2.00 cop[tiflash]  left outer join, equal:[eq(test.a.id, test.b.id)]",
+          "      ├─ExchangeReceiver(Build) 3.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender 3.00 cop[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 3.00 cop[tiflash]  not(isnull(test.b.id))",
+          "      │     └─TableFullScan 3.00 cop[tiflash] table:b keep order:false",
+          "      └─TableFullScan(Probe) 2.00 cop[tiflash] table:a keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*) from b right join a on a.id = b.id",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─TableReader 2.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 2.00 cop[tiflash]  right outer join, equal:[eq(test.b.id, test.a.id)]",
+          "      ├─ExchangeReceiver(Build) 3.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender 3.00 cop[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 3.00 cop[tiflash]  not(isnull(test.b.id))",
+          "      │     └─TableFullScan 3.00 cop[tiflash] table:b keep order:false",
+          "      └─TableFullScan(Probe) 2.00 cop[tiflash] table:a keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestMPPOuterJoinBuildSideForShuffleJoinWithFixedBuildSide",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select count(*) from a left join b on a.id = b.id",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─TableReader 2.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 2.00 cop[tiflash]  left outer join, equal:[eq(test.a.id, test.b.id)]",
+          "      ├─ExchangeReceiver(Build) 3.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender 3.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.b.id",
+          "      │   └─Selection 3.00 cop[tiflash]  not(isnull(test.b.id))",
+          "      │     └─TableFullScan 3.00 cop[tiflash] table:b keep order:false",
+          "      └─ExchangeReceiver(Probe) 2.00 cop[tiflash]  ",
+          "        └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.a.id",
+          "          └─TableFullScan 2.00 cop[tiflash] table:a keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*) from b right join a on a.id = b.id",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─TableReader 2.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 2.00 cop[tiflash]  right outer join, equal:[eq(test.b.id, test.a.id)]",
+          "      ├─ExchangeReceiver(Build) 3.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender 3.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.b.id",
+          "      │   └─Selection 3.00 cop[tiflash]  not(isnull(test.b.id))",
+          "      │     └─TableFullScan 3.00 cop[tiflash] table:b keep order:false",
+          "      └─ExchangeReceiver(Probe) 2.00 cop[tiflash]  ",
+          "        └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.a.id",
+          "          └─TableFullScan 2.00 cop[tiflash] table:a keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestMPPOuterJoinBuildSideForShuffleJoin",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select count(*) from a left join b on a.id = b.id",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─TableReader 2.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 2.00 cop[tiflash]  left outer join, equal:[eq(test.a.id, test.b.id)]",
+          "      ├─ExchangeReceiver(Build) 2.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.a.id",
+          "      │   └─TableFullScan 2.00 cop[tiflash] table:a keep order:false",
+          "      └─ExchangeReceiver(Probe) 3.00 cop[tiflash]  ",
+          "        └─ExchangeSender 3.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.b.id",
+          "          └─Selection 3.00 cop[tiflash]  not(isnull(test.b.id))",
+          "            └─TableFullScan 3.00 cop[tiflash] table:b keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*) from b right join a on a.id = b.id",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─TableReader 2.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 2.00 cop[tiflash]  right outer join, equal:[eq(test.b.id, test.a.id)]",
+          "      ├─ExchangeReceiver(Build) 2.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.a.id",
+          "      │   └─TableFullScan 2.00 cop[tiflash] table:a keep order:false",
+          "      └─ExchangeReceiver(Probe) 3.00 cop[tiflash]  ",
+          "        └─ExchangeSender 3.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.b.id",
+          "          └─Selection 3.00 cop[tiflash]  not(isnull(test.b.id))",
+          "            └─TableFullScan 3.00 cop[tiflash] table:b keep order:false"
         ]
       }
     ]
@@ -2561,6 +2669,55 @@
           "          │     └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo",
           "          └─Selection(Probe) 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
           "            └─TableFullScan 10000.00 batchCop[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select * from t join t t1 on t.id = t1.id limit 1",
+        "Plan": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─Limit 1.00 cop[tiflash]  offset:0, count:1",
+          "      └─HashJoin 12487.50 cop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "        ├─ExchangeReceiver(Build) 9990.00 cop[tiflash]  ",
+          "        │ └─ExchangeSender 9990.00 cop[tiflash]  ExchangeType: Broadcast",
+          "        │   └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "        │     └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "          └─TableFullScan 0.80 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select * from t join t t1 on t.id = t1.id limit 1",
+        "Plan": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─Limit 1.00 cop[tiflash]  offset:0, count:1",
+          "      └─HashJoin 12487.50 cop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "        ├─ExchangeReceiver(Build) 9990.00 cop[tiflash]  ",
+          "        │ └─ExchangeSender 9990.00 cop[tiflash]  ExchangeType: Broadcast",
+          "        │   └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "        │     └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "          └─TableFullScan 0.80 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select count(*) from (select t.id, t.value v1 from t join t t1 on t.id = t1.id limit 20) v group by v.v1",
+        "Plan": [
+          "HashAgg 20.00 root  group by:test.t.value, funcs:count(1)->Column#7",
+          "└─Limit 20.00 root  offset:0, count:20",
+          "  └─TableReader 20.00 root  data:ExchangeSender",
+          "    └─ExchangeSender 20.00 cop[tiflash]  ExchangeType: PassThrough",
+          "      └─Limit 20.00 cop[tiflash]  offset:0, count:20",
+          "        └─HashJoin 12487.50 cop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "          ├─ExchangeReceiver(Build) 9990.00 cop[tiflash]  ",
+          "          │ └─ExchangeSender 9990.00 cop[tiflash]  ExchangeType: Broadcast",
+          "          │   └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "          │     └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "          └─Selection(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "            └─TableFullScan 16.02 cop[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       }
     ]

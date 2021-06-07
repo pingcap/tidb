@@ -697,7 +697,7 @@ func (s *testSuite3) TestDropStatsFromKV(c *C) {
 	tk.MustExec(`insert into t values("1","1"),("2","2"),("3","3"),("4","4")`)
 	tk.MustExec("insert into t select * from t")
 	tk.MustExec("insert into t select * from t")
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t with 2 topn")
 	tblID := tk.MustQuery(`select tidb_table_id from information_schema.tables where table_name = "t" and table_schema = "test"`).Rows()[0][0].(string)
 	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(
 		testkit.Rows("0 16"))
