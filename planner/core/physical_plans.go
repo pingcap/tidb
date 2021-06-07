@@ -1058,7 +1058,7 @@ func (p *basePhysicalAgg) getAggFuncCostFactor() (factor float64) {
 		}
 	}
 	if factor == 0 {
-		factor = 0.1
+		factor = aggFuncFactor[ast.AggFuncFirstRow]
 	}
 	return
 }
