@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvmockstore "github.com/pingcap/tidb/store/tikv/mockstore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table/tables"
@@ -67,7 +68,6 @@ import (
 )
 
 var (
-	withTiKV        = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
 	pdAddrs         = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
 	pdAddrChan      chan string
 	initPdAddrsOnce sync.Once
@@ -183,7 +183,7 @@ func initPdAddrs() {
 func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 
-	if *withTiKV {
+	if *tikvmockstore.WithTiKV {
 		initPdAddrs()
 		s.pdAddr = <-pdAddrChan
 		var d driver.TiKVDriver
@@ -219,7 +219,7 @@ func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
-	if *withTiKV {
+	if *tikvmockstore.WithTiKV {
 		pdAddrChan <- s.pdAddr
 	}
 }
@@ -3370,7 +3370,7 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 func (s *testSessionSerialSuite) TestGlobalAndLocalTxn(c *C) {
 	// Because the PD config of check_dev_2 test is not compatible with local/global txn yet,
 	// so we will skip this test for now.
-	if *withTiKV {
+	if *tikvmockstore.WithTiKV {
 		return
 	}
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -3766,7 +3766,7 @@ func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
 
 func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 	// only run BR SQL integration test with tikv store.
-	if *withTiKV {
+	if *tikvmockstore.WithTiKV {
 		cfg := config.GetGlobalConfig()
 		cfg.Store = "tikv"
 		cfg.Path = s.pdAddr
