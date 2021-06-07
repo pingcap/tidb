@@ -34,18 +34,22 @@ func TestString(t *testing.T) {
 		BackoffTime:  time.Second,
 		RequestCount: 1,
 		CommitDetail: &util.CommitDetails{
-			GetCommitTsTime:   time.Second,
-			PrewriteTime:      time.Second,
-			CommitTime:        time.Second,
-			LocalLatchTime:    time.Second,
-			CommitBackoffTime: int64(time.Second),
+			GetCommitTsTime: time.Second,
+			PrewriteTime:    time.Second,
+			CommitTime:      time.Second,
+			LocalLatchTime:  time.Second,
+
 			Mu: struct {
 				sync.Mutex
-				BackoffTypes []string
-			}{BackoffTypes: []string{
-				"backoff1",
-				"backoff2",
-			}},
+				CommitBackoffTime int64
+				BackoffTypes      []string
+			}{
+				CommitBackoffTime: int64(time.Second),
+				BackoffTypes: []string{
+					"backoff1",
+					"backoff2",
+				},
+			},
 			ResolveLockTime:   1000000000, // 10^9 ns = 1s
 			WriteKeys:         1,
 			WriteSize:         1,
@@ -200,14 +204,17 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 }
 func TestRuntimeStatsWithCommit(t *testing.T) {
 	commitDetail := &util.CommitDetails{
-		GetCommitTsTime:   time.Second,
-		PrewriteTime:      time.Second,
-		CommitTime:        time.Second,
-		CommitBackoffTime: int64(time.Second),
+		GetCommitTsTime: time.Second,
+		PrewriteTime:    time.Second,
+		CommitTime:      time.Second,
 		Mu: struct {
 			sync.Mutex
-			BackoffTypes []string
-		}{BackoffTypes: []string{"backoff1", "backoff2", "backoff1"}},
+			CommitBackoffTime int64
+			BackoffTypes      []string
+		}{
+			CommitBackoffTime: int64(time.Second),
+			BackoffTypes:      []string{"backoff1", "backoff2", "backoff1"},
+		},
 		ResolveLockTime:   int64(time.Second),
 		WriteKeys:         3,
 		WriteSize:         66,
