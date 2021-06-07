@@ -2649,6 +2649,10 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		return nil, err
 	}
 	ts := v.GetTableScan()
+	if ts.Table.TempTableType != model.TempTableNone && b.IsStaleness() {
+		return nil, errors.New("can not stale read temporary table")
+	}
+
 	tbl, _ := b.is.TableByID(ts.Table.ID)
 	isPartition, physicalTableID := ts.IsPartition()
 	if isPartition {
@@ -2723,11 +2727,6 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) Executor {
-	if v.GetTableScan().Table.TempTableType != model.TempTableNone && b.IsStaleness() {
-		b.err = errors.New("can not stale read temporary table")
-		return nil
-	}
-
 	failpoint.Inject("checkUseMPP", func(val failpoint.Value) {
 		if val.(bool) != useMPPExecution(b.ctx, v) {
 			if val.(bool) {
@@ -2748,6 +2747,11 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	}
 
 	ts := v.GetTableScan()
+	if ts.Table.TempTableType != model.TempTableNone && b.IsStaleness() {
+		b.err = errors.New("can not stale read temporary table")
+		return nil
+	}
+
 	ret.ranges = ts.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
