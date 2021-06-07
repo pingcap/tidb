@@ -1032,6 +1032,14 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(ctx context.Contex
 		// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
 		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name, nil
 	}
+	if _, ok := field.Expr.(*ast.AggregateFuncExpr); ok {
+		var restoreFlag format.RestoreFlags
+		var sb strings.Builder
+		if err := field.Expr.Restore(format.NewRestoreCtx(restoreFlag, &sb)); err != nil {
+			return model.NewCIStr(""), err
+		}
+		return model.NewCIStr(sb.String()), nil
+	}
 
 	innerExpr := getInnerFromParenthesesAndUnaryPlus(field.Expr)
 	funcCall, isFuncCall := innerExpr.(*ast.FuncCallExpr)
