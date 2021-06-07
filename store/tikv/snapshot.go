@@ -105,6 +105,7 @@ type KVSnapshot struct {
 		replicaRead kv.ReplicaReadType
 		taskID      uint64
 		isStaleness bool
+		txnScope    string
 		// MatchStoreLabels indicates the labels the store should be matched
 		matchStoreLabels []*metapb.StoreLabel
 	}
@@ -130,7 +131,7 @@ func newTiKVSnapshot(store *KVStore, ts uint64, replicaReadSeed uint32) *KVSnaps
 	}
 }
 
-const batchGetMaxBackoff = 20000
+const batchGetMaxBackoff = 600000 // 10 minutes
 
 // SetSnapshotTS resets the timestamp for reads.
 func (s *KVSnapshot) SetSnapshotTS(ts uint64) {
@@ -234,6 +235,19 @@ type batchKeys struct {
 	keys   [][]byte
 }
 
+func (b *batchKeys) relocate(bo *Backoffer, c *RegionCache) (bool, error) {
+	begin, end := b.keys[0], b.keys[len(b.keys)-1]
+	loc, err := c.LocateKey(bo, begin)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if !loc.Contains(end) {
+		return false, nil
+	}
+	b.region = loc.Region
+	return true, nil
+}
+
 // appendBatchKeysBySize appends keys to b. It may split the keys to make
 // sure each batch's size does not exceed the limit.
 func appendBatchKeysBySize(b []batchKeys, region RegionVerID, keys [][]byte, sizeFn func([]byte) int, limit int) []batchKeys {
@@ -306,8 +320,6 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 
 	pending := batch.keys
 	for {
-		isStaleness := false
-		var matchStoreLabels []*metapb.StoreLabel
 		s.mu.RLock()
 		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdBatchGet, &pb.BatchGetRequest{
 			Keys:    pending,
@@ -318,13 +330,15 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 			TaskId:           s.mu.taskID,
 			ResourceGroupTag: s.resourceGroupTag,
 		})
-		isStaleness = s.mu.isStaleness
-		matchStoreLabels = s.mu.matchStoreLabels
+		txnScope := s.mu.txnScope
+		isStaleness := s.mu.isStaleness
+		matchStoreLabels := s.mu.matchStoreLabels
 		s.mu.RUnlock()
-		var ops []StoreSelectorOption
+		req.TxnScope = txnScope
 		if isStaleness {
 			req.EnableStaleRead()
 		}
+		ops := make([]StoreSelectorOption, 0, 2)
 		if len(matchStoreLabels) > 0 {
 			ops = append(ops, WithMatchLabels(matchStoreLabels))
 		}
@@ -338,9 +352,21 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+			// For other region error and the fake region error, backoff because
+			// there's something wrong.
+			// For the real EpochNotMatch error, don't backoff.
+			if regionErr.GetEpochNotMatch() == nil || isFakeRegionError(regionErr) {
+				err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+			same, err := batch.relocate(bo, cli.regionCache)
 			if err != nil {
 				return errors.Trace(err)
+			}
+			if same {
+				continue
 			}
 			err = s.batchGetKeysByRegions(bo, pending, collectF)
 			return errors.Trace(err)
@@ -401,7 +427,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 	}
 }
 
-const getMaxBackoff = 20000
+const getMaxBackoff = 600000 // 10 minutes
 
 // Get gets the value for key k from snapshot.
 func (s *KVSnapshot) Get(ctx context.Context, k []byte) ([]byte, error) {
@@ -452,8 +478,6 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 
 	cli := NewClientHelper(s.store, s.resolvedLocks)
 
-	isStaleness := false
-	var matchStoreLabels []*metapb.StoreLabel
 	s.mu.RLock()
 	if s.mu.stats != nil {
 		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
@@ -471,8 +495,8 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 			TaskId:           s.mu.taskID,
 			ResourceGroupTag: s.resourceGroupTag,
 		})
-	isStaleness = s.mu.isStaleness
-	matchStoreLabels = s.mu.matchStoreLabels
+	isStaleness := s.mu.isStaleness
+	matchStoreLabels := s.mu.matchStoreLabels
 	s.mu.RUnlock()
 	var ops []StoreSelectorOption
 	if isStaleness {
@@ -498,9 +522,14 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 			return nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return nil, errors.Trace(err)
+			// For other region error and the fake region error, backoff because
+			// there's something wrong.
+			// For the real EpochNotMatch error, don't backoff.
+			if regionErr.GetEpochNotMatch() == nil || isFakeRegionError(regionErr) {
+				err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 			}
 			continue
 		}
@@ -618,6 +647,13 @@ func (s *KVSnapshot) SetRuntimeStats(stats *SnapshotRuntimeStats) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mu.stats = stats
+}
+
+// SetTxnScope sets up the txn scope.
+func (s *KVSnapshot) SetTxnScope(txnScope string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.txnScope = txnScope
 }
 
 // SetIsStatenessReadOnly indicates whether the transaction is staleness read only transaction

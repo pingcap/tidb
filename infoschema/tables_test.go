@@ -15,6 +15,7 @@ package infoschema_test
 
 import (
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"net"
@@ -1625,8 +1626,11 @@ func (s *testDataLockWaitSuite) SetUpSuite(c *C) {
 func (s *testDataLockWaitSuite) TestDataLockWait(c *C) {
 	_, digest1 := parser.NormalizeDigest("select * from t1 for update;")
 	_, digest2 := parser.NormalizeDigest("update t1 set f1=1 where id=2;")
+	keyHex1 := hex.EncodeToString([]byte("a"))
+	keyHex2 := hex.EncodeToString([]byte("b"))
 	tk := s.newTestKitWithRoot(c)
-	tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS;").Check(testkit.Rows("a 1 2 "+digest1.String(), "b 4 5 "+digest2.String()))
+	tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS;").
+		Check(testkit.Rows(keyHex1+" 1 2 "+digest1.String(), keyHex2+" 4 5 "+digest2.String()))
 }
 
 func (s *testDataLockWaitSuite) TestDataLockPrivilege(c *C) {

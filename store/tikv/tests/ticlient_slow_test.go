@@ -21,10 +21,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/mockstore"
 )
 
 func (s *testTiclientSuite) TestSplitRegionIn2PC(c *C) {
-	if *WithTiKV {
+	if *mockstore.WithTiKV {
 		c.Skip("scatter will timeout with single node TiKV")
 	}
 	config := tikv.ConfigProbe{}

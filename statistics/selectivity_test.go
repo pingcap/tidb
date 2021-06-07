@@ -406,6 +406,7 @@ func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, key idx(a, b))")
+	testKit.MustExec("set @@tidb_analyze_version=1")
 	testKit.MustExec("analyze table t")
 	for i := 0; i < 10; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
@@ -645,23 +646,23 @@ func (s *testStatsSuite) TestTopNOutOfHist(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec("set tidb_analyze_version=3")
+	testKit.MustExec("set tidb_analyze_version=2")
 
 	testKit.MustExec("drop table if exists topn_before_hist")
 	testKit.MustExec("create table topn_before_hist(a int, index idx(a))")
-	testKit.MustExec("insert into topn_before_hist values(1), (1), (1), (1), (2), (2), (3), (4), (5)")
+	testKit.MustExec("insert into topn_before_hist values(1), (1), (1), (1), (3), (3), (4), (5), (6)")
 	testKit.MustExec("analyze table topn_before_hist with 2 topn, 3 buckets")
 
 	testKit.MustExec("create table topn_after_hist(a int, index idx(a))")
-	testKit.MustExec("insert into topn_after_hist values(2), (2), (3), (4), (5), (6), (6), (6), (6)")
+	testKit.MustExec("insert into topn_after_hist values(2), (2), (3), (4), (5), (7), (7), (7), (7)")
 	testKit.MustExec("analyze table topn_after_hist with 2 topn, 3 buckets")
 
 	testKit.MustExec("create table topn_before_hist_no_index(a int)")
-	testKit.MustExec("insert into topn_before_hist_no_index values(1), (1), (1), (1), (2), (2), (3), (4), (5)")
+	testKit.MustExec("insert into topn_before_hist_no_index values(1), (1), (1), (1), (3), (3), (4), (5), (6)")
 	testKit.MustExec("analyze table topn_before_hist_no_index with 2 topn, 3 buckets")
 
 	testKit.MustExec("create table topn_after_hist_no_index(a int)")
-	testKit.MustExec("insert into topn_after_hist_no_index values(2), (2), (3), (4), (5), (6), (6), (6), (6)")
+	testKit.MustExec("insert into topn_after_hist_no_index values(2), (2), (3), (4), (5), (7), (7), (7), (7)")
 	testKit.MustExec("analyze table topn_after_hist_no_index with 2 topn, 3 buckets")
 
 	var (
@@ -760,6 +761,7 @@ func (s *testStatsSuite) TestCollationColumnEstimate(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a varchar(20) collate utf8mb4_general_ci)")
 	tk.MustExec("insert into t values('aaa'), ('bbb'), ('AAA'), ('BBB')")
+	tk.MustExec("set @@session.tidb_analyze_version=1")
 	h := s.do.StatsHandle()
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	tk.MustExec("analyze table t")

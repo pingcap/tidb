@@ -44,7 +44,7 @@ import (
 )
 
 // GetPreparedStmt extract the prepared statement from the execute statement.
-func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.StmtNode, error) {
+func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*plannercore.CachedPrepareStmt, error) {
 	var ok bool
 	execID := stmt.ExecID
 	if stmt.Name != "" {
@@ -57,7 +57,7 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.Stm
 		if !ok {
 			return nil, errors.Errorf("invalid CachedPrepareStmt type")
 		}
-		return preparedObj.PreparedAst.Stmt, nil
+		return preparedObj, nil
 	}
 	return nil, plannercore.ErrStmtNotFound
 }
@@ -65,12 +65,12 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.Stm
 // IsReadOnly check whether the ast.Node is a read only statement.
 func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
-		s, err := GetPreparedStmt(execStmt, vars)
+		prepareStmt, err := GetPreparedStmt(execStmt, vars)
 		if err != nil {
 			logutil.BgLogger().Warn("GetPreparedStmt failed", zap.Error(err))
 			return false
 		}
-		return ast.IsReadOnly(s)
+		return ast.IsReadOnly(prepareStmt.PreparedAst.Stmt)
 	}
 	return ast.IsReadOnly(node)
 }

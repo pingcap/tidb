@@ -943,7 +943,7 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionEnlargeCausedByRegionM
 			mCluster := s.cluster.(*mocktikv.Cluster)
 			mCluster.Merge(s.initRegion.regionID, region2)
 			regionMeta, _ := mCluster.GetRegion(s.initRegion.regionID)
-			err := s.tikvStore.GetRegionCache().OnRegionEpochNotMatch(
+			_, err := s.tikvStore.GetRegionCache().OnRegionEpochNotMatch(
 				retry.NewNoopBackoff(context.Background()),
 				&tikv.RPCContext{Region: regionID, Store: &tikv.Store{}},
 				[]*metapb.Region{regionMeta})
