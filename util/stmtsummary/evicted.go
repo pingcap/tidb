@@ -230,7 +230,7 @@ func (ssbde *stmtSummaryByDigestEvicted) toCurrentDatum() []types.Datum {
 		return nil
 	}
 
-	// fake a stmtSummaryByDigest to induce datum
+	// fake a stmtSummaryByDigest
 	// beginTime and endTime are useless here so can be safely set to 0.
 	induceSsbd := newInduceSsbd(0, 0)
 
@@ -244,7 +244,7 @@ func (ssbde *stmtSummaryByDigestEvicted) toHistoryDatum(historySize int) [][]typ
 	seElements := ssbde.collectHistorySummaries(historySize)
 	rows := make([][]types.Datum, 0, len(seElements))
 
-	// fake a stmtSummaryByDigest to induce datum
+	// fake a stmtSummaryByDigest
 	// beginTime and endTime are useless here, can be safely set to 0.
 	induceSsbd := newInduceSsbd(0, 0)
 
