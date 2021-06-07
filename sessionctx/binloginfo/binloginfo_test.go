@@ -703,6 +703,7 @@ func (s *testBinlogSuite) TestTempTableBinlog(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.Se.GetSessionVars().BinlogClient = s.client
 	tk.MustExec("begin")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("drop table if exists temp_table")
 	ddlQuery := "create global temporary table temp_table(id int) on commit delete rows"
 	tk.MustExec(ddlQuery)

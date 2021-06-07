@@ -31,7 +31,7 @@ import (
 // Config is the configuration of the Backoff function.
 type Config struct {
 	name   string
-	metric prometheus.Observer
+	metric *prometheus.Observer
 	fnCfg  *BackoffFnCfg
 	err    error
 }
@@ -65,7 +65,7 @@ func NewBackoffFnCfg(base, cap, jitter int) *BackoffFnCfg {
 }
 
 // NewConfig creates a new Config for the Backoff operation.
-func NewConfig(name string, metric prometheus.Observer, backoffFnCfg *BackoffFnCfg, err error) *Config {
+func NewConfig(name string, metric *prometheus.Observer, backoffFnCfg *BackoffFnCfg, err error) *Config {
 	return &Config{
 		name:   name,
 		metric: metric,
@@ -80,22 +80,23 @@ func (c *Config) String() string {
 
 const txnLockFastName = "txnLockFast"
 
-// Backoff Config samples.
+// Backoff Config variables.
 var (
 	// TODO: distinguish tikv and tiflash in metrics
-	BoTiKVRPC    = NewConfig("tikvRPC", metrics.BackoffHistogramRPC, NewBackoffFnCfg(100, 2000, EqualJitter), tikverr.ErrTiKVServerTimeout)
-	BoTiFlashRPC = NewConfig("tiflashRPC", metrics.BackoffHistogramRPC, NewBackoffFnCfg(100, 2000, EqualJitter), tikverr.ErrTiFlashServerTimeout)
-	BoTxnLock    = NewConfig("txnLock", metrics.BackoffHistogramLock, NewBackoffFnCfg(200, 3000, EqualJitter), tikverr.ErrResolveLockTimeout)
-	BoPDRPC      = NewConfig("pdRPC", metrics.BackoffHistogramPD, NewBackoffFnCfg(500, 3000, EqualJitter), tikverr.NewErrPDServerTimeout(""))
+	BoTiKVRPC    = NewConfig("tikvRPC", &metrics.BackoffHistogramRPC, NewBackoffFnCfg(100, 2000, EqualJitter), tikverr.ErrTiKVServerTimeout)
+	BoTiFlashRPC = NewConfig("tiflashRPC", &metrics.BackoffHistogramRPC, NewBackoffFnCfg(100, 2000, EqualJitter), tikverr.ErrTiFlashServerTimeout)
+	BoTxnLock    = NewConfig("txnLock", &metrics.BackoffHistogramLock, NewBackoffFnCfg(200, 3000, EqualJitter), tikverr.ErrResolveLockTimeout)
+	BoPDRPC      = NewConfig("pdRPC", &metrics.BackoffHistogramPD, NewBackoffFnCfg(500, 3000, EqualJitter), tikverr.NewErrPDServerTimeout(""))
 	// change base time to 2ms, because it may recover soon.
-	BoRegionMiss        = NewConfig("regionMiss", metrics.BackoffHistogramRegionMiss, NewBackoffFnCfg(2, 500, NoJitter), tikverr.ErrRegionUnavailable)
-	BoTiKVServerBusy    = NewConfig("tikvServerBusy", metrics.BackoffHistogramServerBusy, NewBackoffFnCfg(2000, 10000, EqualJitter), tikverr.ErrTiKVServerBusy)
-	BoTiFlashServerBusy = NewConfig("tiflashServerBusy", metrics.BackoffHistogramServerBusy, NewBackoffFnCfg(2000, 10000, EqualJitter), tikverr.ErrTiFlashServerBusy)
-	BoTxnNotFound       = NewConfig("txnNotFound", metrics.BackoffHistogramEmpty, NewBackoffFnCfg(2, 500, NoJitter), tikverr.ErrResolveLockTimeout)
-	BoStaleCmd          = NewConfig("staleCommand", metrics.BackoffHistogramStaleCmd, NewBackoffFnCfg(2, 1000, NoJitter), tikverr.ErrTiKVStaleCommand)
-	BoMaxTsNotSynced    = NewConfig("maxTsNotSynced", metrics.BackoffHistogramEmpty, NewBackoffFnCfg(2, 500, NoJitter), tikverr.ErrTiKVMaxTimestampNotSynced)
+	BoRegionMiss        = NewConfig("regionMiss", &metrics.BackoffHistogramRegionMiss, NewBackoffFnCfg(2, 500, NoJitter), tikverr.ErrRegionUnavailable)
+	BoRegionScheduling  = NewConfig("regionScheduling", &metrics.BackoffHistogramRegionScheduling, NewBackoffFnCfg(2, 500, NoJitter), tikverr.ErrRegionUnavailable)
+	BoTiKVServerBusy    = NewConfig("tikvServerBusy", &metrics.BackoffHistogramServerBusy, NewBackoffFnCfg(2000, 10000, EqualJitter), tikverr.ErrTiKVServerBusy)
+	BoTiFlashServerBusy = NewConfig("tiflashServerBusy", &metrics.BackoffHistogramServerBusy, NewBackoffFnCfg(2000, 10000, EqualJitter), tikverr.ErrTiFlashServerBusy)
+	BoTxnNotFound       = NewConfig("txnNotFound", &metrics.BackoffHistogramEmpty, NewBackoffFnCfg(2, 500, NoJitter), tikverr.ErrResolveLockTimeout)
+	BoStaleCmd          = NewConfig("staleCommand", &metrics.BackoffHistogramStaleCmd, NewBackoffFnCfg(2, 1000, NoJitter), tikverr.ErrTiKVStaleCommand)
+	BoMaxTsNotSynced    = NewConfig("maxTsNotSynced", &metrics.BackoffHistogramEmpty, NewBackoffFnCfg(2, 500, NoJitter), tikverr.ErrTiKVMaxTimestampNotSynced)
 	// TxnLockFast's `base` load from vars.BackoffLockFast when create BackoffFn.
-	BoTxnLockFast = NewConfig(txnLockFastName, metrics.BackoffHistogramLockFast, NewBackoffFnCfg(2, 3000, EqualJitter), tikverr.ErrResolveLockTimeout)
+	BoTxnLockFast = NewConfig(txnLockFastName, &metrics.BackoffHistogramLockFast, NewBackoffFnCfg(2, 3000, EqualJitter), tikverr.ErrResolveLockTimeout)
 )
 
 const (

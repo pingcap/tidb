@@ -35,7 +35,7 @@ type StorageRCTestSuite struct{}
 func (test *StorageRCTestSuite) TestStorageBasic(c *check.C) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 1
-	storage := NewStorageRC(fields, chkSize)
+	storage := NewStorageRowContainer(fields, chkSize)
 	c.Assert(storage, check.NotNil)
 
 	// Close before open.
@@ -67,7 +67,7 @@ func (test *StorageRCTestSuite) TestStorageBasic(c *check.C) {
 func (test *StorageRCTestSuite) TestOpenAndClose(c *check.C) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 1
-	storage := NewStorageRC(fields, chkSize)
+	storage := NewStorageRowContainer(fields, chkSize)
 
 	for i := 0; i < 10; i++ {
 		err := storage.OpenAndRef()
@@ -89,7 +89,7 @@ func (test *StorageRCTestSuite) TestAddAndGetChunk(c *check.C) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 10
 
-	storage := NewStorageRC(fields, chkSize)
+	storage := NewStorageRowContainer(fields, chkSize)
 
 	inChk := chunk.NewChunkWithCapacity(fields, chkSize)
 	for i := 0; i < chkSize; i++ {
@@ -117,7 +117,7 @@ func (test *StorageRCTestSuite) TestAddAndGetChunk(c *check.C) {
 func (test *StorageRCTestSuite) TestSpillToDisk(c *check.C) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 10
-	storage := NewStorageRC(fields, chkSize)
+	storage := NewStorageRowContainer(fields, chkSize)
 	var tmp interface{} = storage
 
 	inChk := chunk.NewChunkWithCapacity(fields, chkSize)
@@ -171,7 +171,7 @@ func (test *StorageRCTestSuite) TestSpillToDisk(c *check.C) {
 func (test *StorageRCTestSuite) TestReopen(c *check.C) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 10
-	storage := NewStorageRC(fields, chkSize)
+	storage := NewStorageRowContainer(fields, chkSize)
 	err := storage.OpenAndRef()
 	c.Assert(err, check.IsNil)
 
@@ -216,7 +216,7 @@ func (test *StorageRCTestSuite) TestReopen(c *check.C) {
 func (test *StorageRCTestSuite) TestSwapData(c *check.C) {
 	tp1 := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 10
-	storage1 := NewStorageRC(tp1, chkSize)
+	storage1 := NewStorageRowContainer(tp1, chkSize)
 	err := storage1.OpenAndRef()
 	c.Assert(err, check.IsNil)
 	inChk1 := chunk.NewChunkWithCapacity(tp1, chkSize)
@@ -228,7 +228,7 @@ func (test *StorageRCTestSuite) TestSwapData(c *check.C) {
 	c.Assert(err, check.IsNil)
 
 	tp2 := []*types.FieldType{types.NewFieldType(mysql.TypeVarString)}
-	storage2 := NewStorageRC(tp2, chkSize)
+	storage2 := NewStorageRowContainer(tp2, chkSize)
 	err = storage2.OpenAndRef()
 	c.Assert(err, check.IsNil)
 

@@ -168,6 +168,9 @@ type StatementContext struct {
 	stmtCache map[StmtCacheKey]interface{}
 	// resourceGroupTag cache for the current statement resource group tag.
 	resourceGroupTag atomic.Value
+	// Map to store all CTE storages of current SQL.
+	// Will clean up at the end of the execution.
+	CTEStorageMap interface{}
 }
 
 // StmtHints are SessionVars related sql hints.

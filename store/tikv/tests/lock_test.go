@@ -25,7 +25,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	deadlockPB "github.com/pingcap/kvproto/pkg/deadlock"
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
@@ -714,7 +714,7 @@ func (s *testLockSuite) TestDeadlockReportWaitChain(c *C) {
 	}
 
 	// Check the given WaitForEntry is caused by txn[i] waiting for txn[j].
-	checkWaitChainEntry := func(txns []*txnWrapper, entry *deadlockPB.WaitForEntry, i, j int) {
+	checkWaitChainEntry := func(txns []*txnWrapper, entry *deadlockpb.WaitForEntry, i, j int) {
 		c.Assert(entry.Txn, Equals, txns[i].StartTS())
 		c.Assert(entry.WaitForTxn, Equals, txns[j].StartTS())
 		c.Assert(entry.Key, BytesEquals, []byte{'k', byte(j)})

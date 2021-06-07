@@ -73,6 +73,9 @@ type stmtSummaryByDigestMap struct {
 
 	// sysVars encapsulates system variables needed to control statement summary.
 	sysVars *systemVars
+
+	// other stores summary of evicted data.
+	other *stmtSummaryByDigestEvicted
 }
 
 // StmtSummaryByDigestMap is a global map containing all statement summaries.
@@ -235,11 +238,20 @@ type StmtExecInfo struct {
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
 func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	sysVars := newSysVars()
+
+	ssbde := newStmtSummaryByDigestEvicted()
+
 	maxStmtCount := uint(sysVars.getVariable(typeMaxStmtCount))
-	return &stmtSummaryByDigestMap{
+	newSsMap := &stmtSummaryByDigestMap{
 		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
 		sysVars:    sysVars,
+		other:      ssbde,
 	}
+	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
+		historySize := newSsMap.historySize()
+		newSsMap.other.AddEvicted(k.(*stmtSummaryByDigestKey), v.(*stmtSummaryByDigest), historySize)
+	})
+	return newSsMap
 }
 
 // AddStatement adds a statement to StmtSummaryByDigestMap.
@@ -291,7 +303,6 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		summary.isInternal = summary.isInternal && sei.IsInternal
 		return summary, beginTime
 	}()
-
 	// Lock a single entry, not the whole cache.
 	if summary != nil {
 		summary.add(sei, beginTime, intervalSeconds, historySize)
@@ -304,6 +315,7 @@ func (ssMap *stmtSummaryByDigestMap) Clear() {
 	defer ssMap.Unlock()
 
 	ssMap.summaryMap.DeleteAll()
+	ssMap.other.Clear()
 	ssMap.beginTimeForCurInterval = 0
 }
 
@@ -771,11 +783,6 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		if commitDetails.GetCommitTsTime > ssElement.maxGetCommitTsTime {
 			ssElement.maxGetCommitTsTime = commitDetails.GetCommitTsTime
 		}
-		commitBackoffTime := atomic.LoadInt64(&commitDetails.CommitBackoffTime)
-		ssElement.sumCommitBackoffTime += commitBackoffTime
-		if commitBackoffTime > ssElement.maxCommitBackoffTime {
-			ssElement.maxCommitBackoffTime = commitBackoffTime
-		}
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
 		ssElement.sumResolveLockTime += resolveLockTime
 		if resolveLockTime > ssElement.maxResolveLockTime {
@@ -803,6 +810,11 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 			ssElement.maxTxnRetry = commitDetails.TxnRetry
 		}
 		commitDetails.Mu.Lock()
+		commitBackoffTime := commitDetails.Mu.CommitBackoffTime
+		ssElement.sumCommitBackoffTime += commitBackoffTime
+		if commitBackoffTime > ssElement.maxCommitBackoffTime {
+			ssElement.maxCommitBackoffTime = commitBackoffTime
+		}
 		ssElement.sumBackoffTimes += int64(len(commitDetails.Mu.BackoffTypes))
 		for _, backoffType := range commitDetails.Mu.BackoffTypes {
 			ssElement.backoffTypes[backoffType] += 1

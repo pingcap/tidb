@@ -41,8 +41,8 @@ type Context interface {
 	// If old transaction is valid, it is committed first.
 	// It's used in BEGIN statement and DDL statements to commit old transaction.
 	NewTxn(context.Context) error
-	// NewTxnWithStartTS initializes a transaction with the given StartTS.
-	NewTxnWithStartTS(ctx context.Context, startTS uint64) error
+	// NewStaleTxnWithStartTS initializes a staleness transaction with the given StartTS.
+	NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) error
 
 	// Txn returns the current transaction which is created before executing a statement.
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.

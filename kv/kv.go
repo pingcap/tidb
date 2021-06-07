@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"time"
 
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
@@ -282,6 +283,8 @@ type Request struct {
 	TaskID uint64
 	// TiDBServerID is the specified TiDB serverID to execute request. `0` means all TiDB instances.
 	TiDBServerID uint64
+	// TxnScope is the scope of the current txn.
+	TxnScope string
 	// IsStaleness indicates whether the request read staleness data
 	IsStaleness bool
 	// MatchStoreLabels indicates the labels the store should be matched
@@ -340,7 +343,7 @@ type Driver interface {
 type Storage interface {
 	// Begin a global transaction
 	Begin() (Transaction, error)
-	// Begin a transaction with given option
+	// BeginWithOption begins a transaction with given option
 	BeginWithOption(option tikv.StartTSOption) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
@@ -369,6 +372,8 @@ type Storage interface {
 	GetMemCache() MemManager
 	// GetMinSafeTS return the minimal SafeTS of the storage with given txnScope.
 	GetMinSafeTS(txnScope string) uint64
+	// GetLockWaits return all lock wait information
+	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.

@@ -118,6 +118,9 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 		if l.size > l.capacity {
 			lru := l.cache.Back()
 			l.cache.Remove(lru)
+			if l.onEvict != nil {
+				l.onEvict(lru.Value.(*cacheEntry).key, lru.Value.(*cacheEntry).value)
+			}
 			delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
 			l.size--
 		}
