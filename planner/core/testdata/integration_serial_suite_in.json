@@ -60,13 +60,6 @@
     ]
   },
   {
-    "name": "TestMPPOuterJoinBuildSideForBroadcastJoin",
-    "cases": [
-      "explain format = 'brief' select count(*) from a left join b on a.id = b.id",
-      "explain format = 'brief' select count(*) from b right join a on a.id = b.id"
-    ]
-  },
-  {
     "name": "TestMPPOuterJoinBuildSideForShuffleJoinWithFixedBuildSide",
     "cases": [
       "explain format = 'brief' select count(*) from a left join b on a.id = b.id",
