@@ -973,7 +973,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 		logutil.BgLogger().Warn("tikv reports `RaftEntryTooLarge`", zap.Stringer("ctx", ctx))
 		return false, errors.New(regionErr.String())
 	}
-	// A request may be sent to a peer which the data is not ready yet because the region is merging or splitting,
+	// A stale read request may be sent to a peer whose data is not ready yet because the SafeTS is less than StartTS,
 	// we should backoff and retry in this case.
 	if regionErr.GetDataIsNotReady() != nil {
 		logutil.BgLogger().Warn("tikv reports `DataIsNotReady` retry later",
@@ -986,11 +986,9 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 		if err = bo.Backoff(retry.BoRegionMiss, errors.Errorf("data is not ready, ctx: %v", ctx)); err != nil {
 			return false, errors.Trace(err)
 		}
-		// For a replica-read request, increase the seed.
+		// For a replica-read request, increase the seed to try on the next peer.
 		if seed != nil {
 			*seed = *seed + 1
-		} else if s.leaderReplicaSelector != nil {
-			s.leaderReplicaSelector.rewind()
 		}
 		return true, nil
 	}
