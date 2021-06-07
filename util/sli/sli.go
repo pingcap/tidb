@@ -119,8 +119,8 @@ func (t *TxnWriteThroughputSLI) String() string {
 }
 
 // ObserveReadSLI Observe the read sli metric
-func ObserveReadSLI(readRow uint64, readTime float64) {
-	if readRow <= smallTxnAffectRow {
+func ObserveReadSLI(readKeys uint64, readTime float64) {
+	if readKeys <= smallTxnAffectRow && readKeys != 0 && readTime != 0 {
 		metrics.TiKVSmallReadDuration.Observe(readTime)
 	}
 }
