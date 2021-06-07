@@ -132,7 +132,7 @@ func newTiKVSnapshot(store *KVStore, ts uint64, replicaReadSeed uint32) *KVSnaps
 	}
 }
 
-const batchGetMaxBackoff = 20000
+const batchGetMaxBackoff = 600000 // 10 minutes
 
 // SetSnapshotTS resets the timestamp for reads.
 func (s *KVSnapshot) SetSnapshotTS(ts uint64) {
@@ -234,6 +234,19 @@ func (s *KVSnapshot) BatchGet(ctx context.Context, keys [][]byte) (map[string][]
 type batchKeys struct {
 	region RegionVerID
 	keys   [][]byte
+}
+
+func (b *batchKeys) relocate(bo *Backoffer, c *RegionCache) (bool, error) {
+	begin, end := b.keys[0], b.keys[len(b.keys)-1]
+	loc, err := c.LocateKey(bo, begin)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if !loc.Contains(end) {
+		return false, nil
+	}
+	b.region = loc.Region
+	return true, nil
 }
 
 // appendBatchKeysBySize appends keys to b. It may split the keys to make
@@ -340,9 +353,21 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+			// For other region error and the fake region error, backoff because
+			// there's something wrong.
+			// For the real EpochNotMatch error, don't backoff.
+			if regionErr.GetEpochNotMatch() == nil || isFakeRegionError(regionErr) {
+				err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+			same, err := batch.relocate(bo, cli.regionCache)
 			if err != nil {
 				return errors.Trace(err)
+			}
+			if same {
+				continue
 			}
 			err = s.batchGetKeysByRegions(bo, pending, collectF)
 			return errors.Trace(err)
@@ -406,7 +431,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 	}
 }
 
-const getMaxBackoff = 20000
+const getMaxBackoff = 600000 // 10 minutes
 
 // Get gets the value for key k from snapshot.
 func (s *KVSnapshot) Get(ctx context.Context, k []byte) ([]byte, error) {
@@ -501,9 +526,14 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 			return nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return nil, errors.Trace(err)
+			// For other region error and the fake region error, backoff because
+			// there's something wrong.
+			// For the real EpochNotMatch error, don't backoff.
+			if regionErr.GetEpochNotMatch() == nil || isFakeRegionError(regionErr) {
+				err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 			}
 			continue
 		}
