@@ -578,6 +578,7 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 	for i := 0; i < 10; i++ {
 		tk.MustExec("insert into t values (5,5,5), (10,10,10)")
 	}
+	tk.MustExec("set @@tidb_analyze_version=1")
 	tk.MustExec("analyze table t with 2 buckets")
 	// Force using the histogram to estimate.
 	tk.MustExec("update mysql.stats_histograms set stats_ver = 0")
