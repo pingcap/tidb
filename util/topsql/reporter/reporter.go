@@ -291,6 +291,7 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *m
 	}
 }
 
+// reportData contains data that reporter sends to the agent
 type reportData struct {
 	collectedData     map[string]*dataPoints
 	normalizedSQLMap  *sync.Map

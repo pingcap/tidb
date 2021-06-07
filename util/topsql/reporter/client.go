@@ -151,7 +151,7 @@ func (r *GRPCReportClient) sendBatchPlanMeta(ctx context.Context, planMap *sync.
 		planDecoded, err := decodePlan(value.(string))
 		if err != nil {
 			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(err))
-			return false
+			return true
 		}
 		planMeta := &tipb.PlanMeta{
 			PlanDigest:     []byte(key.(string)),
