@@ -262,13 +262,15 @@ func (s *replicaSelector) nextReplica() *replica {
 const maxReplicaAttempt = 10
 
 // next creates the RPCContext of the current candidate replica.
-// It returns a SendError if runs out of all replicas of the cached region is invalidated.
+// It returns a SendError if runs out of all replicas or the cached region is invalidated.
 func (s *replicaSelector) next(bo *Backoffer) (*RPCContext, error) {
 	for {
 		if !s.region.isValid() {
+			metrics.TiKVReplicaSelectorFailureCounter.WithLabelValues("invalid").Inc()
 			return nil, nil
 		}
 		if s.isExhausted() {
+			metrics.TiKVReplicaSelectorFailureCounter.WithLabelValues("exhausted").Inc()
 			s.invalidateRegion()
 			return nil, nil
 		}
@@ -284,6 +286,7 @@ func (s *replicaSelector) next(bo *Backoffer) (*RPCContext, error) {
 		storeFailEpoch := atomic.LoadUint32(&replica.store.epoch)
 		if storeFailEpoch != replica.epoch {
 			// TODO(youjiali1995): Is it necessary to invalidate the region?
+			metrics.TiKVReplicaSelectorFailureCounter.WithLabelValues("stale_store").Inc()
 			s.invalidateRegion()
 			return nil, nil
 		}
@@ -481,6 +484,11 @@ func (s *RegionRequestSender) SendReqCtx(
 
 	s.reset()
 	tryTimes := 0
+	defer func() {
+		if tryTimes > 0 {
+			metrics.TiKVRequestRetryTimesHistogram.Observe(float64(tryTimes))
+		}
+	}()
 	for {
 		if (tryTimes > 0) && (tryTimes%100 == 0) {
 			logutil.Logger(bo.GetCtx()).Warn("retry", zap.Uint64("region", regionID.GetID()), zap.Int("times", tryTimes))
