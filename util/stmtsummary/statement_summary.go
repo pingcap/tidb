@@ -787,11 +787,6 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		if commitDetails.GetCommitTsTime > ssElement.maxGetCommitTsTime {
 			ssElement.maxGetCommitTsTime = commitDetails.GetCommitTsTime
 		}
-		commitBackoffTime := atomic.LoadInt64(&commitDetails.CommitBackoffTime)
-		ssElement.sumCommitBackoffTime += commitBackoffTime
-		if commitBackoffTime > ssElement.maxCommitBackoffTime {
-			ssElement.maxCommitBackoffTime = commitBackoffTime
-		}
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
 		ssElement.sumResolveLockTime += resolveLockTime
 		if resolveLockTime > ssElement.maxResolveLockTime {
@@ -819,6 +814,11 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 			ssElement.maxTxnRetry = commitDetails.TxnRetry
 		}
 		commitDetails.Mu.Lock()
+		commitBackoffTime := commitDetails.Mu.CommitBackoffTime
+		ssElement.sumCommitBackoffTime += commitBackoffTime
+		if commitBackoffTime > ssElement.maxCommitBackoffTime {
+			ssElement.maxCommitBackoffTime = commitBackoffTime
+		}
 		ssElement.sumBackoffTimes += int64(len(commitDetails.Mu.BackoffTypes))
 		for _, backoffType := range commitDetails.Mu.BackoffTypes {
 			ssElement.backoffTypes[backoffType] += 1
