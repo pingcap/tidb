@@ -83,7 +83,7 @@ func NewRegionVerID(id, confVer, ver uint64) RegionVerID {
 
 // GetStoreTypeByMeta gets store type by store meta pb.
 func GetStoreTypeByMeta(store *metapb.Store) tikvrpc.EndpointType {
-	return region.GetStoreTypeByMeta(store)
+	return tikvrpc.GetStoreTypeByMeta(store)
 }
 
 // NewRegionRequestSender creates a new sender.

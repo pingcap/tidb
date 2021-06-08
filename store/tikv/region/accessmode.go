@@ -15,9 +15,6 @@ package region
 
 import (
 	"fmt"
-
-	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
 // accessMode uses to index stores for different region cache access requirements.
@@ -41,9 +38,4 @@ func (a accessMode) String() string {
 	default:
 		return fmt.Sprintf("%d", a)
 	}
-}
-
-// GetStoreTypeByMeta gets store type by store meta pb.
-func GetStoreTypeByMeta(store *metapb.Store) tikvrpc.EndpointType {
-	return tikvrpc.GetStoreTypeByMeta(store)
 }
