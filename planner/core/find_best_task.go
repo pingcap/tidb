@@ -141,7 +141,7 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, planCou
 	}.Init(p.ctx, p.stats, p.blockOffset)
 	dual.SetSchema(p.schema)
 	planCounter.Dec(1)
-	return &rootTask{p: dual}, 1, nil
+	return &rootTask{p: dual, isEmpty: p.RowCount == 0}, 1, nil
 }
 
 func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (task, int64, error) {
@@ -1903,3 +1903,45 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	cost += float64(len(is.Ranges)) * sessVars.SeekFactor
 	return is, cost, rowCount
 }
+<<<<<<< HEAD
+=======
+
+func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (t task, cntPlan int64, err error) {
+	if !prop.IsEmpty() {
+		return invalidTask, 1, nil
+	}
+	if p.cte.cteTask != nil {
+		// Already built it.
+		return p.cte.cteTask, 1, nil
+	}
+	sp, _, err := DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
+	if err != nil {
+		return nil, 1, err
+	}
+
+	var rp PhysicalPlan
+	if p.cte.recursivePartLogicalPlan != nil {
+		rp, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.recursivePartLogicalPlan)
+		if err != nil {
+			return nil, 1, err
+		}
+	}
+
+	pcte := PhysicalCTE{SeedPlan: sp, RecurPlan: rp, CTE: p.cte, cteAsName: p.cteAsName}.Init(p.ctx, p.stats)
+	pcte.SetSchema(p.schema)
+	t = &rootTask{pcte, sp.statsInfo().RowCount, false}
+	p.cte.cteTask = t
+	return t, 1, nil
+}
+
+func (p *LogicalCTETable) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (t task, cntPlan int64, err error) {
+	if !prop.IsEmpty() {
+		return nil, 1, nil
+	}
+
+	pcteTable := PhysicalCTETable{IDForStorage: p.idForStorage}.Init(p.ctx, p.stats)
+	pcteTable.SetSchema(p.schema)
+	t = &rootTask{p: pcteTable}
+	return t, 1, nil
+}
+>>>>>>> cad482c03... planner/core: remove the union branch with dual table. (#25218)
