@@ -747,7 +747,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 			return nil, false, errors.Trace(ctx.Err())
 		}
 
-		if val, err := util.EvalFailpoint("noRetryOnRpcError"); err == nil {
+		if val, e := util.EvalFailpoint("noRetryOnRpcError"); e == nil {
 			if val.(bool) {
 				return nil, false, err
 			}
