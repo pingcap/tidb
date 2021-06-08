@@ -576,30 +576,6 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 	c.checkOnePCFallBack(action, len(batchBuilder.allBatches()))
 
 	var err error
-	failpoint.Inject("skipKeyReturnOK", func(val failpoint.Value) {
-		valStr, ok := val.(string)
-		if ok && c.sessionID > 0 {
-			if firstIsPrimary && actionIsPessimiticLock {
-				logutil.Logger(bo.GetCtx()).Warn("pessimisticLock failpoint", zap.String("valStr", valStr))
-				switch valStr {
-				case "pessimisticLockSkipPrimary":
-					err = c.doActionOnBatches(bo, action, batchBuilder.allBatches())
-					failpoint.Return(err)
-				case "pessimisticLockSkipSecondary":
-					err = c.doActionOnBatches(bo, action, batchBuilder.primaryBatch())
-					failpoint.Return(err)
-				}
-			}
-		}
-	})
-	failpoint.Inject("pessimisticRollbackDoNth", func() {
-		_, actionIsPessimisticRollback := action.(actionPessimisticRollback)
-		if actionIsPessimisticRollback && c.sessionID > 0 {
-			logutil.Logger(bo.GetCtx()).Warn("pessimisticRollbackDoNth failpoint")
-			failpoint.Return(nil)
-		}
-	})
-
 	if firstIsPrimary &&
 		((actionIsCommit && !c.isAsyncCommit()) || actionIsCleanup || actionIsPessimiticLock) {
 		// primary should be committed(not async commit)/cleanup/pessimistically locked first
@@ -617,20 +593,6 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 	if actionIsCommit && !actionCommit.retry && !c.isAsyncCommit() {
 		secondaryBo := retry.NewBackofferWithVars(context.Background(), CommitSecondaryMaxBackoff, c.txn.vars)
 		go func() {
-			if c.sessionID > 0 {
-				failpoint.Inject("beforeCommitSecondaries", func(v failpoint.Value) {
-					if s, ok := v.(string); !ok {
-						logutil.Logger(bo.GetCtx()).Info("[failpoint] sleep 2s before commit secondary keys",
-							zap.Uint64("sessionID", c.sessionID), zap.Uint64("txnStartTS", c.startTS), zap.Uint64("txnCommitTS", c.commitTS))
-						time.Sleep(2 * time.Second)
-					} else if s == "skip" {
-						logutil.Logger(bo.GetCtx()).Info("[failpoint] injected skip committing secondaries",
-							zap.Uint64("sessionID", c.sessionID), zap.Uint64("txnStartTS", c.startTS), zap.Uint64("txnCommitTS", c.commitTS))
-						failpoint.Return()
-					}
-				})
-			}
-
 			e := c.doActionOnBatches(secondaryBo, action, batchBuilder.allBatches())
 			if e != nil {
 				logutil.BgLogger().Debug("2PC async doActionOnBatches",
@@ -713,14 +675,7 @@ func (tm *ttlManager) run(c *twoPhaseCommitter, lockCtx *kv.LockCtx) {
 		return
 	}
 	tm.lockCtx = lockCtx
-	noKeepAlive := false
-	failpoint.Inject("doNotKeepAlive", func() {
-		noKeepAlive = true
-	})
-
-	if !noKeepAlive {
-		go tm.keepAlive(c)
-	}
+	go tm.keepAlive(c)
 }
 
 func (tm *ttlManager) close() {
@@ -923,13 +878,6 @@ var VeryLongMaxBackoff = uint64(600000) // 10mins
 func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
 	c.cleanWg.Add(1)
 	go func() {
-		failpoint.Inject("commitFailedSkipCleanup", func() {
-			logutil.Logger(ctx).Info("[failpoint] injected skip cleanup secondaries on failure",
-				zap.Uint64("txnStartTS", c.startTS))
-			c.cleanWg.Done()
-			failpoint.Return()
-		})
-
 		cleanupKeysCtx := context.WithValue(context.Background(), retry.TxnStartKey, ctx.Value(retry.TxnStartKey))
 		var err error
 		if !c.isOnePC() {
@@ -1536,10 +1484,6 @@ func newBatched(primaryKey []byte) *batched {
 // appendBatchMutationsBySize appends mutations to b. It may split the keys to make
 // sure each batch's size does not exceed the limit.
 func (b *batched) appendBatchMutationsBySize(region RegionVerID, mutations CommitterMutations, sizeFn func(k, v []byte) int, limit int) {
-	failpoint.Inject("twoPCRequestBatchSizeLimit", func() {
-		limit = 1
-	})
-
 	var start, end int
 	for start = 0; start < mutations.Len(); start = end {
 		var size int

@@ -127,28 +127,6 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	// regions. It invokes `prewriteMutations` recursively here, and the number of batches will be
 	// checked there.
 
-	if c.sessionID > 0 {
-		if batch.isPrimary {
-			failpoint.Inject("prewritePrimaryFail", func() {
-				// Delay to avoid cancelling other normally ongoing prewrite requests.
-				time.Sleep(time.Millisecond * 50)
-				logutil.Logger(bo.GetCtx()).Info("[failpoint] injected error on prewriting primary batch",
-					zap.Uint64("txnStartTS", c.startTS))
-				failpoint.Return(errors.New("injected error on prewriting primary batch"))
-			})
-			failpoint.Inject("prewritePrimary", nil) // for other failures like sleep or pause
-		} else {
-			failpoint.Inject("prewriteSecondaryFail", func() {
-				// Delay to avoid cancelling other normally ongoing prewrite requests.
-				time.Sleep(time.Millisecond * 50)
-				logutil.Logger(bo.GetCtx()).Info("[failpoint] injected error on prewriting secondary batch",
-					zap.Uint64("txnStartTS", c.startTS))
-				failpoint.Return(errors.New("injected error on prewriting secondary batch"))
-			})
-			failpoint.Inject("prewriteSecondary", nil) // for other failures like sleep or pause
-		}
-	}
-
 	txnSize := uint64(c.regionTxnSize[batch.region.id])
 	// When we retry because of a region miss, we don't know the transaction size. We set the transaction size here
 	// to MaxUint64 to avoid unexpected "resolve lock lite".

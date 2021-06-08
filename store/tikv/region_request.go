@@ -652,81 +652,31 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		sendToAddr = rpcCtx.ProxyAddr
 	}
 
-	var sessionID uint64
-	if v := bo.GetCtx().Value(util.SessionID); v != nil {
-		sessionID = v.(uint64)
+	start := time.Now()
+	resp, err = s.client.SendRequest(ctx, sendToAddr, req, timeout)
+	if s.Stats != nil {
+		RecordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
+		failpoint.Inject("tikvStoreRespResult", func(val failpoint.Value) {
+			if val.(bool) {
+				if req.Type == tikvrpc.CmdCop && bo.GetTotalSleep() == 0 {
+					failpoint.Return(&tikvrpc.Response{
+						Resp: &coprocessor.Response{RegionError: &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}},
+					}, false, nil)
+				}
+			}
+		})
 	}
 
-	injectFailOnSend := false
-	failpoint.Inject("rpcFailOnSend", func(val failpoint.Value) {
-		inject := true
-		// Optional filters
-		if s, ok := val.(string); ok {
-			if s == "greengc" && !req.IsGreenGCRequest() {
-				inject = false
-			} else if s == "write" && !req.IsTxnWriteRequest() {
-				inject = false
-			}
-		} else if sessionID == 0 {
-			inject = false
-		}
-
-		if inject {
-			logutil.Logger(ctx).Info("[failpoint] injected RPC error on send", zap.Stringer("type", req.Type),
-				zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context))
-			injectFailOnSend = true
-			err = errors.New("injected RPC error on send")
+	failpoint.Inject("rpcContextCancelErr", func(val failpoint.Value) {
+		if val.(bool) {
+			ctx1, cancel := context.WithCancel(context.Background())
+			cancel()
+			<-ctx1.Done()
+			ctx = ctx1
+			err = ctx.Err()
+			resp = nil
 		}
 	})
-
-	if !injectFailOnSend {
-		start := time.Now()
-		resp, err = s.client.SendRequest(ctx, sendToAddr, req, timeout)
-		if s.Stats != nil {
-			RecordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
-			failpoint.Inject("tikvStoreRespResult", func(val failpoint.Value) {
-				if val.(bool) {
-					if req.Type == tikvrpc.CmdCop && bo.GetTotalSleep() == 0 {
-						failpoint.Return(&tikvrpc.Response{
-							Resp: &coprocessor.Response{RegionError: &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}},
-						}, false, nil)
-					}
-				}
-			})
-		}
-
-		failpoint.Inject("rpcFailOnRecv", func(val failpoint.Value) {
-			inject := true
-			// Optional filters
-			if s, ok := val.(string); ok {
-				if s == "greengc" && !req.IsGreenGCRequest() {
-					inject = false
-				} else if s == "write" && !req.IsTxnWriteRequest() {
-					inject = false
-				}
-			} else if sessionID == 0 {
-				inject = false
-			}
-
-			if inject {
-				logutil.Logger(ctx).Info("[failpoint] injected RPC error on recv", zap.Stringer("type", req.Type),
-					zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context))
-				err = errors.New("injected RPC error on recv")
-				resp = nil
-			}
-		})
-
-		failpoint.Inject("rpcContextCancelErr", func(val failpoint.Value) {
-			if val.(bool) {
-				ctx1, cancel := context.WithCancel(context.Background())
-				cancel()
-				<-ctx1.Done()
-				ctx = ctx1
-				err = ctx.Err()
-				resp = nil
-			}
-		})
-	}
 
 	if rpcCtx.ProxyStore != nil {
 		fromStore := strconv.FormatUint(rpcCtx.ProxyStore.storeID, 10)
