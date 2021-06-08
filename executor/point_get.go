@@ -42,6 +42,11 @@ import (
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
+	if p.TblInfo.TempTableType != model.TempTableNone && b.IsStaleness() {
+		b.err = errors.New("can not stale read temporary table")
+		return nil
+	}
+
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
