@@ -294,9 +294,6 @@ func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElem
 		addTo.maxParseLatency = addWith.maxParseLatency
 	}
 	addTo.sumCompileLatency += addWith.sumCompileLatency
-	if addTo.maxParseLatency < addWith.maxParseLatency {
-		addTo.maxParseLatency = addWith.maxParseLatency
-	}
 	if addTo.maxCompileLatency < addWith.maxCompileLatency {
 		addTo.maxCompileLatency = addWith.maxCompileLatency
 	}
