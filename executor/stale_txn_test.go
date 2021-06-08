@@ -207,7 +207,6 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 	}
 
 	for _, testcase := range testcases {
-		fmt.Println(testcase.name)
 		c.Log(testcase.name)
 		if len(testcase.setTxnSQL) > 0 {
 			tk.MustExec(testcase.setTxnSQL)
