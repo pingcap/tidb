@@ -82,6 +82,11 @@ func (s *testStateChangeSuiteBase) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
+	// Set the variable to default 0 as it was before in case of modifying the test.
+	_, err = s.se.Execute(context.Background(), "set @@global.tidb_enable_change_column_type=0")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "set @@tidb_enable_change_column_type=0")
+	c.Assert(err, IsNil)
 	s.p = parser.New()
 }
 
