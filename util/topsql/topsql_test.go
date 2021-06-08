@@ -164,7 +164,7 @@ func (s *testSuite) TestTopSQLReporter(c *C) {
 	}
 
 	server.WaitCollectCnt(1, time.Second*5)
-	records := server.GetRecords()
+	records := server.GetLatestRecords()
 	checkSQLPlanMap := map[string]struct{}{}
 	for _, req := range records {
 		c.Assert(len(req.CpuTimeMsList) > 0, IsTrue)

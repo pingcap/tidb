@@ -1414,7 +1414,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	}
 
 	checkFn := func(n int) {
-		records := agentServer.GetRecords()
+		records := agentServer.GetLatestRecords()
 		c.Assert(len(records), Equals, n)
 		for _, r := range records {
 			sql, exist := agentServer.GetSQLMetaByDigest(r.SqlDigest, time.Second)

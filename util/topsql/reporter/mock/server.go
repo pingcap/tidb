@@ -140,16 +140,16 @@ func (svr *mockAgentServer) GetPlanMetaByDigest(digest []byte, timeout time.Dura
 	}
 }
 
-func (svr *mockAgentServer) GetRecords() []*tipb.CPUTimeRecord {
+func (svr *mockAgentServer) GetLatestRecords() []*tipb.CPUTimeRecord {
 	svr.Lock()
 	records := svr.records
 	svr.records = [][]*tipb.CPUTimeRecord{}
 	svr.Unlock()
-	result := make([]*tipb.CPUTimeRecord, 0, len(records)*10)
-	for _, r := range records {
-		result = append(result, r...)
+
+	if len(records) == 0 {
+		return nil
 	}
-	return result
+	return records[len(records)-1]
 }
 
 func (svr *mockAgentServer) Address() string {

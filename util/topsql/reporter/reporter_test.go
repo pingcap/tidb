@@ -99,10 +99,10 @@ func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
 
 	agentServer.WaitCollectCnt(1, time.Second*5)
 
-	c.Assert(agentServer.GetRecords(), HasLen, maxSQLNum)
+	c.Assert(agentServer.GetLatestRecords(), HasLen, maxSQLNum)
 
 	// check for equality of server received batch and the original data
-	records := agentServer.GetRecords()
+	records := agentServer.GetLatestRecords()
 	for _, req := range records {
 		id := 0
 		prefix := "sqlDigest"
@@ -139,10 +139,10 @@ func (s *testTopSQLReporter) TestCollectAndEvicted(c *C) {
 
 	agentServer.WaitCollectCnt(1, time.Second*10)
 
-	c.Assert(agentServer.GetRecords(), HasLen, maxSQLNum)
+	c.Assert(agentServer.GetLatestRecords(), HasLen, maxSQLNum)
 
 	// check for equality of server received batch and the original data
-	records := agentServer.GetRecords()
+	records := agentServer.GetLatestRecords()
 	for _, req := range records {
 		id := 0
 		prefix := "sqlDigest"
