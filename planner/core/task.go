@@ -1360,8 +1360,6 @@ func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 	for _, t := range tasks {
 		if _, ok := t.(*mppTask); ok {
 			return p.attach2MppTasks(tasks...)
-		} else if _, ok := t.(*rootTask); ok {
-			continue
 		}
 	}
 	t := &rootTask{p: p}
