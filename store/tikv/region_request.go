@@ -43,20 +43,19 @@ import (
 	"github.com/pingcap/tidb/store/tikv/util"
 )
 
-// ShuttingDown is a flag to indicate tidb-server is exiting (Ctrl+C signal
+// shuttingDown is a flag to indicate tidb-server is exiting (Ctrl+C signal
 // receved for example). If this flag is set, tikv client should not retry on
 // network error because tidb-server expect tikv client to exit as soon as possible.
-// TODO: make it private when br is ready.
-var ShuttingDown uint32
+var shuttingDown uint32
 
 // StoreShuttingDown atomically stores ShuttingDown into v.
 func StoreShuttingDown(v uint32) {
-	atomic.StoreUint32(&ShuttingDown, v)
+	atomic.StoreUint32(&shuttingDown, v)
 }
 
 // LoadShuttingDown atomically loads ShuttingDown.
 func LoadShuttingDown() uint32 {
-	return atomic.LoadUint32(&ShuttingDown)
+	return atomic.LoadUint32(&shuttingDown)
 }
 
 // RegionRequestSender sends KV/Cop requests to tikv server. It handles network
@@ -263,13 +262,15 @@ func (s *replicaSelector) nextReplica() *replica {
 const maxReplicaAttempt = 10
 
 // next creates the RPCContext of the current candidate replica.
-// It returns a SendError if runs out of all replicas of the cached region is invalidated.
+// It returns a SendError if runs out of all replicas or the cached region is invalidated.
 func (s *replicaSelector) next(bo *Backoffer) (*RPCContext, error) {
 	for {
 		if !s.region.isValid() {
+			metrics.TiKVReplicaSelectorFailureCounter.WithLabelValues("invalid").Inc()
 			return nil, nil
 		}
 		if s.isExhausted() {
+			metrics.TiKVReplicaSelectorFailureCounter.WithLabelValues("exhausted").Inc()
 			s.invalidateRegion()
 			return nil, nil
 		}
@@ -285,6 +286,7 @@ func (s *replicaSelector) next(bo *Backoffer) (*RPCContext, error) {
 		storeFailEpoch := atomic.LoadUint32(&replica.store.epoch)
 		if storeFailEpoch != replica.epoch {
 			// TODO(youjiali1995): Is it necessary to invalidate the region?
+			metrics.TiKVReplicaSelectorFailureCounter.WithLabelValues("stale_store").Inc()
 			s.invalidateRegion()
 			return nil, nil
 		}
@@ -482,6 +484,11 @@ func (s *RegionRequestSender) SendReqCtx(
 
 	s.reset()
 	tryTimes := 0
+	defer func() {
+		if tryTimes > 0 {
+			metrics.TiKVRequestRetryTimesHistogram.Observe(float64(tryTimes))
+		}
+	}()
 	for {
 		if (tryTimes > 0) && (tryTimes%100 == 0) {
 			logutil.Logger(bo.GetCtx()).Warn("retry", zap.Uint64("region", regionID.GetID()), zap.Int("times", tryTimes))

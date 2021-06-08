@@ -358,6 +358,7 @@ func (s *testSuiteP1) TestShow(c *C) {
 		"Update Tables To update existing rows",
 		"Usage Server Admin No privileges - allow connect only",
 		"BACKUP_ADMIN Server Admin ",
+		"RESTORE_ADMIN Server Admin ",
 		"SYSTEM_VARIABLES_ADMIN Server Admin ",
 		"ROLE_ADMIN Server Admin ",
 		"CONNECTION_ADMIN Server Admin ",
