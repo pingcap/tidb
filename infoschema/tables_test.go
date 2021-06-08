@@ -1414,12 +1414,13 @@ func (s *testTableSuite) TestStmtSummaryTableOther(c *C) {
 	// second sql, evict first sql from stmt_summary
 	tk.MustExec("show databases;")
 	// third sql, evict second sql from stmt_summary
-	tk.MustQuery("SELECT DIGEST_TEXT FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY`;").
+	tk.MustQuery("SELECT DIGEST_TEXT, DIGEST FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY`;").
 		Check(testkit.Rows(
 			// digest in cache
-			"show databases ;",
+			// "show databases ;"
+			"show databases ; dcd020298c5f79e8dc9d63b3098083601614a04a52db458738347d15ea5712a1",
 			// digest evicted
-			"other",
+			" <nil>",
 		))
 	// forth sql, evict third sql from stmt_summary
 	tk.MustQuery("SELECT SCHEMA_NAME FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY`;").
@@ -1427,7 +1428,7 @@ func (s *testTableSuite) TestStmtSummaryTableOther(c *C) {
 			// digest in cache
 			"test", // select xx from yy;
 			// digest evicted
-			"other",
+			"<nil>",
 		))
 }
 
@@ -1447,12 +1448,13 @@ func (s *testTableSuite) TestStmtSummaryHistoryTableOther(c *C) {
 	// second sql, evict first sql from stmt_summary
 	tk.MustExec("show databases;")
 	// third sql, evict second sql from stmt_summary
-	tk.MustQuery("SELECT DIGEST_TEXT FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY_HISTORY`;").
+	tk.MustQuery("SELECT DIGEST_TEXT, DIGEST FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY_HISTORY`;").
 		Check(testkit.Rows(
 			// digest in cache
-			"show databases ;",
+			// "show databases ;"
+			"show databases ; dcd020298c5f79e8dc9d63b3098083601614a04a52db458738347d15ea5712a1",
 			// digest evicted
-			"other",
+			" <nil>",
 		))
 	// forth sql, evict third sql from stmt_summary
 	tk.MustQuery("SELECT SCHEMA_NAME FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY_HISTORY`;").
@@ -1460,7 +1462,7 @@ func (s *testTableSuite) TestStmtSummaryHistoryTableOther(c *C) {
 			// digest in cache
 			"test", // select xx from yy;
 			// digest evicted
-			"other",
+			"<nil>",
 		))
 }
 

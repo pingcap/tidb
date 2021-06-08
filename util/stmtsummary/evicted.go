@@ -60,8 +60,8 @@ func newStmtSummaryByDigestEvictedElement(beginTime int64, endTime int64) *stmtS
 			beginTime: beginTime,
 			endTime:   endTime,
 			// basic
-			sampleSQL: "other",
-			prevSQL:   "other",
+			sampleSQL: "",
+			prevSQL:   "",
 			// user
 			authUsers: make(map[string]struct{}),
 			// latency
@@ -257,12 +257,11 @@ func (ssbde *stmtSummaryByDigestEvicted) collectHistorySummaries(historySize int
 
 func (seElement *stmtSummaryByDigestEvictedElement) toDatum() []types.Datum {
 	induceSsbd := &stmtSummaryByDigest{
-		schemaName:    "other",
-		digest:        "other",
-		planDigest:    "other",
-		stmtType:      "other",
-		normalizedSQL: "other",
-		tableNames:    "other",
+		planDigest:        "",
+		stmtType:          "",
+		normalizedSQL:     "",
+		tableNames:        "",
+		isForOtherSummary: true,
 	}
 	return seElement.otherSummary.toDatum(induceSsbd)
 }
