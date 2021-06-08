@@ -625,7 +625,7 @@ func (s *testStmtSummarySuite) TestAddInfo(c *C) {
 		sumWriteSQLRespTotal: 200,
 		sumErrors:            16,
 	}
-	c.Assert(reflect.DeepEqual(addTo, expectedSum), Equals, true)
+	c.Assert(reflect.DeepEqual(&addTo, &expectedSum), Equals, true)
 }
 
 func getAllEvicted(ssdbe *stmtSummaryByDigestEvicted) string {
