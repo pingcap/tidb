@@ -1410,6 +1410,7 @@ func (s *testTableSuite) TestStmtSummaryTableOther(c *C) {
 	// set stmt size to 1
 	// first sql
 	tk.MustExec("set global tidb_stmt_summary_max_stmt_count=1")
+	defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count=100")
 	// second sql, evict first sql from stmt_summary
 	tk.MustExec("show databases;")
 	// third sql, evict second sql from stmt_summary
@@ -1435,7 +1436,10 @@ func (s *testTableSuite) TestStmtSummaryHistoryTableOther(c *C) {
 	// disable refreshing summary
 	interval := int64(9999)
 	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
+	defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
 	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval = %v", interval))
+	defer tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval = %v", 1800))
+
 	tk.MustExec("set global tidb_enable_stmt_summary = 0")
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	// first sql
