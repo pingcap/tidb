@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/store/tikv"
+	tikvmockstore "github.com/pingcap/tidb/store/tikv/mockstore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table/tables"
@@ -67,7 +68,6 @@ import (
 )
 
 var (
-	withTiKV        = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
 	pdAddrs         = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
 	pdAddrChan      chan string
 	initPdAddrsOnce sync.Once
@@ -183,7 +183,7 @@ func initPdAddrs() {
 func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 
-	if *withTiKV {
+	if *tikvmockstore.WithTiKV {
 		initPdAddrs()
 		s.pdAddr = <-pdAddrChan
 		var d driver.TiKVDriver
@@ -219,7 +219,7 @@ func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
-	if *withTiKV {
+	if *tikvmockstore.WithTiKV {
 		pdAddrChan <- s.pdAddr
 	}
 }
@@ -789,6 +789,7 @@ func (s *testSessionSuite) TestRetryUnion(c *C) {
 
 func (s *testSessionSuite) TestRetryGlobalTempTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("drop table if exists normal_table")
 	tk.MustExec("create table normal_table(a int primary key, b int)")
 	defer tk.MustExec("drop table if exists normal_table")
@@ -2139,6 +2140,7 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerTempTable(c *C) {
 	tk.MustExec(`drop table if exists normal_table`)
 	tk.MustExec(`create table normal_table (id int, c int);`)
 	defer tk.MustExec(`drop table if exists normal_table`)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec(`drop table if exists temp_table`)
 	tk.MustExec(`create global temporary table temp_table (id int, c int) on commit delete rows;`)
 	defer tk.MustExec(`drop table if exists temp_table`)
@@ -3368,7 +3370,7 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 func (s *testSessionSerialSuite) TestGlobalAndLocalTxn(c *C) {
 	// Because the PD config of check_dev_2 test is not compatible with local/global txn yet,
 	// so we will skip this test for now.
-	if *withTiKV {
+	if *tikvmockstore.WithTiKV {
 		return
 	}
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -3764,7 +3766,7 @@ func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
 
 func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 	// only run BR SQL integration test with tikv store.
-	if *withTiKV {
+	if *tikvmockstore.WithTiKV {
 		cfg := config.GetGlobalConfig()
 		cfg.Store = "tikv"
 		cfg.Path = s.pdAddr
@@ -4158,6 +4160,7 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 
 func (s *testSessionSuite3) TestGlobalTemporaryTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table g_tmp (a int primary key, b int, c int, index i_b(b)) on commit delete rows")
 	tk.MustExec("begin")
 	tk.MustExec("insert into g_tmp values (3, 3, 3)")
@@ -4527,4 +4530,33 @@ func (s *testSessionSuite) TestInTxnPSProtoPointGet(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("commit")
+}
+
+func (s *testSessionSuite) TestTiDBEnableGlobalTemporaryTable(c *C) {
+	// Test the @@tidb_enable_global_temporary_table system variable.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// variable 'tidb_enable_global_temporary_table' should not be seen when show variables
+	tk.MustQuery("show variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows())
+	tk.MustQuery("show global variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows())
+
+	// variable 'tidb_enable_global_temporary_table' is turned off by default
+	tk.MustQuery("select @@global.tidb_enable_global_temporary_table").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@tidb_enable_global_temporary_table").Check(testkit.Rows("0"))
+	c.Assert(tk.Se.GetSessionVars().EnableGlobalTemporaryTable, IsFalse)
+
+	// cannot create global temporary table when 'tidb_enable_global_temporary_table' is off
+	tk.MustGetErrMsg(
+		"create global temporary table temp_test(id int primary key auto_increment) on commit delete rows",
+		"global temporary table is experimental and it is switched off by tidb_enable_global_temporary_table",
+	)
+	tk.MustQuery("show tables like 'temp_test'").Check(testkit.Rows())
+
+	// you can create global temporary table when 'tidb_enable_global_temporary_table' is on
+	tk.MustExec("set tidb_enable_global_temporary_table=on")
+	tk.MustQuery("select @@tidb_enable_global_temporary_table").Check(testkit.Rows("1"))
+	c.Assert(tk.Se.GetSessionVars().EnableGlobalTemporaryTable, IsTrue)
+	tk.MustExec("create global temporary table temp_test(id int primary key auto_increment) on commit delete rows")
+	tk.MustQuery("show tables like 'temp_test'").Check(testkit.Rows("temp_test"))
 }

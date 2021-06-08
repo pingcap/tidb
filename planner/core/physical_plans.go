@@ -1463,10 +1463,16 @@ type CTEDefinition PhysicalCTE
 
 // ExplainInfo overrides the ExplainInfo
 func (p *CTEDefinition) ExplainInfo() string {
+	var res string
 	if p.RecurPlan != nil {
-		return "Recursive CTE"
+		res = "Recursive CTE"
+	} else {
+		res = "Non-Recursive CTE"
 	}
-	return "None Recursive CTE"
+	if p.CTE.HasLimit {
+		res += fmt.Sprintf(", limit(offset:%v, count:%v)", p.CTE.LimitBeg, p.CTE.LimitEnd-p.CTE.LimitBeg)
+	}
+	return res
 }
 
 // ExplainID overrides the ExplainID.

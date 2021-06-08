@@ -1174,6 +1174,7 @@ func (ts *tidbTestSerialSuite) TestPrepareCount(c *C) {
 }
 
 func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
+	c.Skip("unstable")
 	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer func() {

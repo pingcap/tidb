@@ -2403,6 +2403,42 @@ func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
 	}
 }
 
+func (s *partitionTableSuite) TestIssue24636(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_issue_24636")
+	tk.MustExec("use test_issue_24636")
+
+	tk.MustExec(`CREATE TABLE t (a int, b date, c int, PRIMARY KEY (a,b))
+		PARTITION BY RANGE ( TO_DAYS(b) ) (
+		  PARTITION p0 VALUES LESS THAN (737821),
+		  PARTITION p1 VALUES LESS THAN (738289)
+		)`)
+	tk.MustExec(`INSERT INTO t (a, b, c) VALUES(0, '2021-05-05', 0)`)
+	tk.MustQuery(`select c from t use index(primary) where a=0 limit 1`).Check(testkit.Rows("0"))
+
+	tk.MustExec(`
+		CREATE TABLE test_partition (
+		  a varchar(100) NOT NULL,
+		  b date NOT NULL,
+		  c varchar(100) NOT NULL,
+		  d datetime DEFAULT NULL,
+		  e datetime DEFAULT NULL,
+		  f bigint(20) DEFAULT NULL,
+		  g bigint(20) DEFAULT NULL,
+		  h bigint(20) DEFAULT NULL,
+		  i bigint(20) DEFAULT NULL,
+		  j bigint(20) DEFAULT NULL,
+		  k bigint(20) DEFAULT NULL,
+		  l bigint(20) DEFAULT NULL,
+		  PRIMARY KEY (a,b,c) /*T![clustered_index] NONCLUSTERED */
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+		PARTITION BY RANGE ( TO_DAYS(b) ) (
+		  PARTITION pmin VALUES LESS THAN (737821),
+		  PARTITION p20200601 VALUES LESS THAN (738289))`)
+	tk.MustExec(`INSERT INTO test_partition (a, b, c, d, e, f, g, h, i, j, k, l) VALUES('aaa', '2021-05-05', '428ff6a1-bb37-42ac-9883-33d7a29961e6', '2021-05-06 08:13:38', '2021-05-06 13:28:08', 0, 8, 3, 0, 9, 1, 0)`)
+	tk.MustQuery(`select c,j,l from test_partition where c='428ff6a1-bb37-42ac-9883-33d7a29961e6' and a='aaa' limit 0, 200`).Check(testkit.Rows("428ff6a1-bb37-42ac-9883-33d7a29961e6 9 0"))
+}
+
 func (s *partitionTableSuite) TestIdexMerge(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")

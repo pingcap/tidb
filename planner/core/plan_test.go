@@ -211,6 +211,20 @@ func (s *testPlanNormalize) TestEncodeDecodePlan(c *C) {
 	c.Assert(strings.Contains(planTree, "Insert"), IsTrue)
 	c.Assert(strings.Contains(planTree, "time"), IsTrue)
 	c.Assert(strings.Contains(planTree, "loops"), IsTrue)
+
+	tk.MustExec("with cte(a) as (select 1) select * from cte")
+	planTree = getPlanTree()
+	c.Assert(strings.Contains(planTree, "CTE"), IsTrue)
+	c.Assert(strings.Contains(planTree, "1->Column#1"), IsTrue)
+	c.Assert(strings.Contains(planTree, "time"), IsTrue)
+	c.Assert(strings.Contains(planTree, "loops"), IsTrue)
+
+	tk.MustExec("with cte(a) as (select 2) select * from cte")
+	planTree = getPlanTree()
+	c.Assert(strings.Contains(planTree, "CTE"), IsTrue)
+	c.Assert(strings.Contains(planTree, "2->Column#1"), IsTrue)
+	c.Assert(strings.Contains(planTree, "time"), IsTrue)
+	c.Assert(strings.Contains(planTree, "loops"), IsTrue)
 }
 
 func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
