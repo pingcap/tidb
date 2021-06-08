@@ -189,6 +189,39 @@ func (s *testSuite) TestTopSQLReporter(c *C) {
 	c.Assert(len(checkSQLPlanMap) == 2, IsTrue)
 }
 
+func (s *testSuite) TestMaxSQLAndPlanTest(c *C) {
+	collector := mock.NewTopSQLCollector()
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{collector})
+
+	ctx := context.Background()
+
+	// Test for normal sql and plan
+	sql := "select * from t"
+	sqlDigest := mock.GenSQLDigest(sql)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil)
+	plan := "TableReader table:t"
+	planDigest := genDigest(plan)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest)
+
+	cSQL := collector.GetSQL(sqlDigest.Bytes())
+	c.Assert(cSQL, Equals, sql)
+	cPlan := collector.GetPlan(planDigest.Bytes())
+	c.Assert(cPlan, Equals, plan)
+
+	// Test for huge sql and plan
+	sql = genStr(topsql.MaxSQLTextSize + 10)
+	sqlDigest = mock.GenSQLDigest(sql)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil)
+	plan = genStr(topsql.MaxPlanTextSize + 10)
+	planDigest = genDigest(plan)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest)
+
+	cSQL = collector.GetSQL(sqlDigest.Bytes())
+	c.Assert(cSQL, Equals, sql[:topsql.MaxSQLTextSize])
+	cPlan = collector.GetPlan(planDigest.Bytes())
+	c.Assert(cPlan, Equals, "")
+}
+
 func (s *testSuite) setTopSQLEnable(enabled bool) {
 	variable.TopSQLVariable.Enable.Store(enabled)
 }
@@ -203,13 +236,6 @@ func (s *testSuite) mockExecuteSQL(sql, plan string) {
 	s.mockExecute(time.Millisecond * 300)
 }
 
-func genDigest(str string) *parser.Digest {
-	if str == "" {
-		return parser.NewDigest(nil)
-	}
-	return parser.DigestNormalized(str)
-}
-
 func (s *testSuite) mockExecute(d time.Duration) {
 	start := time.Now()
 	for {
@@ -219,4 +245,19 @@ func (s *testSuite) mockExecute(d time.Duration) {
 			return
 		}
 	}
+}
+
+func genDigest(str string) *parser.Digest {
+	if str == "" {
+		return parser.NewDigest(nil)
+	}
+	return parser.DigestNormalized(str)
+}
+
+func genStr(n int) string {
+	buf := make([]byte, n)
+	for i := range buf {
+		buf[i] = 'a' + byte(i%25)
+	}
+	return string(buf)
 }

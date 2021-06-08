@@ -23,6 +23,11 @@ import (
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 )
 
+const (
+	MaxSQLTextSize  = 4 * 1024
+	MaxPlanTextSize = 32 * 1024
+)
+
 var globalTopSQLReport reporter.TopSQLReporter
 
 // SetupTopSQL sets up the top-sql worker.
@@ -63,6 +68,10 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 }
 
 func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string) {
+	if len(normalizedSQL) > MaxSQLTextSize {
+		normalizedSQL = normalizedSQL[:MaxSQLTextSize]
+	}
+
 	c := tracecpu.GlobalSQLCPUProfiler.GetCollector()
 	if c == nil {
 		return
@@ -73,13 +82,18 @@ func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string) {
 	}
 }
 
-func linkPlanTextWithDigest(planDigest []byte, normalizedPlan string) {
+func linkPlanTextWithDigest(planDigest []byte, normalizedBinaryPlan string) {
+	if len(normalizedBinaryPlan) > MaxPlanTextSize {
+		// ignore the huge size plan
+		return
+	}
+
 	c := tracecpu.GlobalSQLCPUProfiler.GetCollector()
 	if c == nil {
 		return
 	}
 	topc, ok := c.(reporter.TopSQLReporter)
 	if ok {
-		topc.RegisterPlan(planDigest, normalizedPlan)
+		topc.RegisterPlan(planDigest, normalizedBinaryPlan)
 	}
 }
