@@ -519,6 +519,14 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustExec(`set tidb_enable_ordered_result_mode=1`)
 	tk.MustQuery(`select @@global.tidb_enable_ordered_result_mode`).Check(testkit.Rows("0"))
 	tk.MustQuery(`select @@tidb_enable_ordered_result_mode`).Check(testkit.Rows("1"))
+
+	// Test for restricted read only
+	tk.Exec(`drop table if exists t`)
+	tk.MustExec(`set global tidb_restricted_read_only='ON'`)
+	_, err = tk.Exec(`create table t(a int)`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1836]Running in read-only mode")
+	tk.MustExec(`set global tidb_restricted_read_only='OFF'`)
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
