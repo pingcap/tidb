@@ -35,10 +35,6 @@ const (
 	grpcInitialConnWindowSize = 1 << 30
 )
 
-func MockPlanBinaryDecoderFunc(plan string) (string, error) {
-	return plan, nil
-}
-
 var _ TopSQLReporter = &RemoteTopSQLReporter{}
 
 // TopSQLReporter collects Top SQL metrics.

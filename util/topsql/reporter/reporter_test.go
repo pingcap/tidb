@@ -68,12 +68,16 @@ func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) 
 	time.Sleep(100 * time.Millisecond)
 }
 
+func mockPlanBinaryDecoderFunc(plan string) (string, error) {
+	return plan, nil
+}
+
 func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) *RemoteTopSQLReporter {
 	variable.TopSQLVariable.MaxStatementCount.Store(int64(maxStatementsNum))
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(int64(interval))
 	variable.TopSQLVariable.AgentAddress.Store(addr)
 
-	rc := NewGRPCReportClient(MockPlanBinaryDecoderFunc)
+	rc := NewGRPCReportClient(mockPlanBinaryDecoderFunc)
 	ts := NewRemoteTopSQLReporter(rc)
 	return ts
 }

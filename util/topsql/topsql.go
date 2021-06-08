@@ -24,7 +24,9 @@ import (
 )
 
 const (
-	MaxSQLTextSize  = 4 * 1024
+	// MaxSQLTextSize exports for testing.
+	MaxSQLTextSize = 4 * 1024
+	// MaxPlanTextSize exports for testing.
 	MaxPlanTextSize = 32 * 1024
 )
 

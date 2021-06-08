@@ -116,6 +116,10 @@ func (s *testSuite) TestIsEnabled(c *C) {
 	c.Assert(tracecpu.GlobalSQLCPUProfiler.IsEnabled(), IsTrue)
 }
 
+func mockPlanBinaryDecoderFunc(plan string) (string, error) {
+	return plan, nil
+}
+
 func (s *testSuite) TestTopSQLReporter(c *C) {
 	server, err := mockServer.StartMockAgentServer()
 	c.Assert(err, IsNil)
@@ -123,7 +127,7 @@ func (s *testSuite) TestTopSQLReporter(c *C) {
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
 	variable.TopSQLVariable.AgentAddress.Store(server.Address())
 
-	client := reporter.NewGRPCReportClient(reporter.MockPlanBinaryDecoderFunc)
+	client := reporter.NewGRPCReportClient(mockPlanBinaryDecoderFunc)
 	report := reporter.NewRemoteTopSQLReporter(client)
 	defer report.Close()
 
