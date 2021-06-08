@@ -99,7 +99,7 @@ type stmtSummaryByDigest struct {
 	tableNames    string
 	isInternal    bool
 
-	// Whether this digest is used for inducing stmtSummaryByDigestEvictedElement.toDatum()
+	// Whether is used for stmtSummaryByDigestEvictedElement.toDatum()
 	isForOtherSummary bool
 }
 
