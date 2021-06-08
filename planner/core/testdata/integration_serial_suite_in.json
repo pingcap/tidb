@@ -236,7 +236,8 @@
       "explain format = 'brief' select count(*) from (select a , b from t union all select a , b from t1) tt",
       "explain format = 'brief' select count(*) from (select a , b from t union all select a , b from t1 union all select a, b from t where false) tt",
       "explain format = 'brief' select count(*) from (select a , b from t union all select a , c from t1) tt",
-      "explain format = 'brief' select count(*) from (select a , b from t union all select a , c from t1 where false) tt"
+      "explain format = 'brief' select count(*) from (select a , b from t union all select a , c from t1 where false) tt",
+      "explain format = 'brief' select count(*) from (select a , b from t where false union all select a , c from t1 where false) tt"
     ]
   },
   {

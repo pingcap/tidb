@@ -3354,7 +3354,7 @@ func (s *testIntegrationSerialSuite) TestMppUnionAll(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t (a int not null, b int, c varchar(20))")
 	tk.MustExec("create table t1 (a int, b int not null, c double)")
-	
+
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Se)
 	is := dom.InfoSchema()
