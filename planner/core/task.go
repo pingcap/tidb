@@ -1060,7 +1060,8 @@ func setTableScanToTableRowIDScan(p PhysicalPlan) {
 type rootTask struct {
 	p       PhysicalPlan
 	cst     float64
-	isEmpty bool
+	isEmpty bool // isEmpty indicates if this task contains a dual table and returns empty data.
+	// TODO: The flag 'isEmpty' is only checked by Projection and UnionAll. We should support more cases in the future.
 }
 
 func (t *rootTask) copy() task {
