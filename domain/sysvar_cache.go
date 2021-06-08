@@ -16,6 +16,7 @@ package domain
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 
 	"github.com/pingcap/tidb/sessionctx"
@@ -166,6 +167,29 @@ func checkEnableServerGlobalVar(name, sVal string) {
 		err = stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(sVal, false)
 	case variable.TiDBCapturePlanBaseline:
 		variable.CapturePlanBaseline.Set(sVal, false)
+	case variable.TiDBEnableTopSQL:
+		variable.TopSQLVariable.Enable.Store(variable.TiDBOptOn(sVal))
+	case variable.TiDBTopSQLPrecisionSeconds:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TopSQLVariable.PrecisionSeconds.Store(val)
+	case variable.TiDBTopSQLMaxStatementCount:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TopSQLVariable.MaxStatementCount.Store(val)
+	case variable.TiDBTopSQLReportIntervalSeconds:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TopSQLVariable.ReportIntervalSeconds.Store(val)
 	}
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))

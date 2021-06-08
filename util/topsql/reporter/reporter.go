@@ -297,6 +297,25 @@ type reportData struct {
 	normalizedPlanMap *sync.Map
 }
 
+func (d *reportData) hasData() bool {
+	if len(d.collectedData) > 0 {
+		return true
+	}
+	cnt := 0
+	d.normalizedSQLMap.Range(func(key, value interface{}) bool {
+		cnt++
+		return false
+	})
+	if cnt > 0 {
+		return true
+	}
+	d.normalizedPlanMap.Range(func(key, value interface{}) bool {
+		cnt++
+		return false
+	})
+	return cnt > 0
+}
+
 // reportWorker sends data to the gRPC endpoint from the `reportDataChan` one by one.
 func (tsr *RemoteTopSQLReporter) reportWorker() {
 	defer util.Recover("top-sql", "reportWorker", nil, false)
@@ -317,6 +336,10 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 
 func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 	defer util.Recover("top-sql", "doReport", nil, false)
+
+	if !data.hasData() {
+		return
+	}
 
 	agentAddr := variable.TopSQLVariable.AgentAddress.Load()
 
