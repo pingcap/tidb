@@ -247,7 +247,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		}
 		var results []distsql.SelectResult
 		for _, kvReq := range kvReqs {
-			result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e),e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+			result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
 			if err != nil {
 				return nil, err
 			}
