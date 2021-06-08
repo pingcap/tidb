@@ -1401,6 +1401,65 @@ func (s *testTableSuite) TestSimpleStmtSummaryEvictedCount(c *C) {
 	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 1800")
 }
 
+func (s *testTableSuite) TestStmtSummaryTableOther(c *C) {
+	interval := int64(1800)
+	tk := s.newTestKitWithRoot(c)
+	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval=%v", interval))
+	tk.MustExec("set global tidb_enable_stmt_summary=0")
+	tk.MustExec("set global tidb_enable_stmt_summary=1")
+	// set stmt size to 1
+	// first sql
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count=1")
+	// second sql, evict first sql from stmt_summary
+	tk.MustExec("show databases;")
+	// third sql, evict second sql from stmt_summary
+	tk.MustQuery("SELECT DIGEST_TEXT FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY`;").
+		Check(testkit.Rows(
+			// digest in cache
+			"show databases ;",
+			// digest evicted
+			"other",
+		))
+	// forth sql, evict third sql from stmt_summary
+	tk.MustQuery("SELECT SCHEMA_NAME FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY`;").
+		Check(testkit.Rows(
+			// digest in cache
+			"test", // select xx from yy;
+			// digest evicted
+			"other",
+		))
+}
+
+func (s *testTableSuite) TestStmtSummaryHistoryTableOther(c *C) {
+	tk := s.newTestKitWithRoot(c)
+	// disable refreshing summary
+	interval := int64(9999)
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
+	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval = %v", interval))
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	// first sql
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count=1")
+	// second sql, evict first sql from stmt_summary
+	tk.MustExec("show databases;")
+	// third sql, evict second sql from stmt_summary
+	tk.MustQuery("SELECT DIGEST_TEXT FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY_HISTORY`;").
+		Check(testkit.Rows(
+			// digest in cache
+			"show databases ;",
+			// digest evicted
+			"other",
+		))
+	// forth sql, evict third sql from stmt_summary
+	tk.MustQuery("SELECT SCHEMA_NAME FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY_HISTORY`;").
+		Check(testkit.Rows(
+			// digest in cache
+			"test", // select xx from yy;
+			// digest evicted
+			"other",
+		))
+}
+
 func (s *testTableSuite) TestPerformanceSchemaforPlanCache(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {

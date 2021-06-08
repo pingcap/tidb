@@ -431,7 +431,99 @@ func (s *testStmtSummarySuite) TestAddInfo(c *C) {
 		sumErrors:            8,
 	}
 
-	addWith := addTo
+	addWith := stmtSummaryByDigestElement{
+		// user
+		authUsers: map[string]struct{}{"a": {}},
+
+		// execCount and sumWarnings
+		execCount:   3,
+		sumWarnings: 8,
+
+		// latency
+		sumLatency:        8,
+		maxLatency:        5,
+		minLatency:        1,
+		sumParseLatency:   3,
+		maxParseLatency:   2,
+		sumCompileLatency: 3,
+		maxCompileLatency: 2,
+
+		// coprocessor
+		sumNumCopTasks:       4,
+		maxCopProcessTime:    4,
+		maxCopProcessAddress: "19.19.8.10",
+		maxCopWaitTime:       4,
+		maxCopWaitAddress:    "19.19.8.10",
+
+		// TiKV
+		sumProcessTime: 1,
+		maxProcessTime: 1,
+		sumWaitTime:    2,
+		maxWaitTime:    1,
+		sumBackoffTime: 2,
+		maxBackoffTime: 2,
+
+		sumTotalKeys:                 3,
+		maxTotalKeys:                 2,
+		sumProcessedKeys:             8,
+		maxProcessedKeys:             4,
+		sumRocksdbDeleteSkippedCount: 8,
+		maxRocksdbDeleteSkippedCount: 2,
+
+		sumRocksdbKeySkippedCount:    8,
+		maxRocksdbKeySkippedCount:    3,
+		sumRocksdbBlockCacheHitCount: 8,
+		maxRocksdbBlockCacheHitCount: 3,
+		sumRocksdbBlockReadCount:     3,
+		maxRocksdbBlockReadCount:     3,
+		sumRocksdbBlockReadByte:      4,
+		maxRocksdbBlockReadByte:      4,
+
+		// txn
+		commitCount:          8,
+		sumPrewriteTime:      3,
+		maxPrewriteTime:      3,
+		sumCommitTime:        8,
+		maxCommitTime:        5,
+		sumGetCommitTsTime:   8,
+		maxGetCommitTsTime:   8,
+		sumCommitBackoffTime: 8,
+		maxCommitBackoffTime: 8,
+
+		sumResolveLockTime:   8,
+		maxResolveLockTime:   8,
+		sumLocalLatchTime:    8,
+		maxLocalLatchTime:    8,
+		sumWriteKeys:         8,
+		maxWriteKeys:         8,
+		sumWriteSize:         8,
+		maxWriteSize:         8,
+		sumPrewriteRegionNum: 8,
+		maxPrewriteRegionNum: 8,
+		sumTxnRetry:          8,
+		maxTxnRetry:          8,
+		sumBackoffTimes:      8,
+		backoffTypes:         map[string]int{},
+
+		// plan cache
+		planCacheHits: 8,
+
+		// other
+		sumAffectedRows:      8,
+		sumMem:               8,
+		maxMem:               8,
+		sumDisk:              8,
+		maxDisk:              8,
+		firstSeen:            time.Unix(now-10, 0),
+		lastSeen:             time.Unix(now-8, 0),
+		execRetryCount:       8,
+		execRetryTime:        8,
+		sumKVTotal:           2,
+		sumPDTotal:           2,
+		sumBackoffTotal:      2,
+		sumWriteSQLRespTotal: 100,
+		sumErrors:            8,
+	}
 	addWith.authUsers["b"] = struct{}{}
 	addWith.maxCopProcessTime = 15
 	addWith.maxCopProcessAddress = "1.14.5.14"
