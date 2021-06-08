@@ -88,6 +88,10 @@ func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
 	s.ctx = se.(sessionctx.Context)
 	_, err = se.Execute(context.Background(), "create database test_db")
 	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_change_column_type=0")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "set @@tidb_enable_change_column_type=0")
+	c.Assert(err, IsNil)
 }
 
 func tearDownIntegrationSuiteTest(s *testIntegrationSuite, c *C) {

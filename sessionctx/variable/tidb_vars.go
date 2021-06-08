@@ -650,7 +650,7 @@ const (
 	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
 	DefTiDBMaxDeltaSchemaCount         = 1024
-	DefTiDBChangeColumnType            = false
+	DefTiDBChangeColumnType            = true
 	DefTiDBChangeMultiSchema           = false
 	DefTiDBPointGetCache               = false
 	DefTiDBEnableAlterPlacement        = false
