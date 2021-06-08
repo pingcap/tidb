@@ -20,42 +20,30 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
-// AccessMode uses to index stores for different region cache access requirements.
-type AccessMode int
+// accessMode uses to index stores for different region cache access requirements.
+type accessMode int
 
 const (
-	// TiKVOnly indicates stores list that use for TiKv access(include both leader request and follower read).
-	TiKVOnly AccessMode = iota
-	// TiFlashOnly indicates stores list that use for TiFlash request.
-	TiFlashOnly
-	// NumAccessMode reserved to keep max access mode value.
-	NumAccessMode
+	// tiKVOnly indicates stores list that use for TiKv access(include both leader request and follower read).
+	tiKVOnly accessMode = iota
+	// tiFlashOnly indicates stores list that use for TiFlash request.
+	tiFlashOnly
+	// numAccessMode reserved to keep max access mode value.
+	numAccessMode
 )
 
-func (a AccessMode) String() string {
+func (a accessMode) String() string {
 	switch a {
-	case TiKVOnly:
+	case tiKVOnly:
 		return "TiKvOnly"
-	case TiFlashOnly:
+	case tiFlashOnly:
 		return "TiFlashOnly"
 	default:
 		return fmt.Sprintf("%d", a)
 	}
 }
 
-// Constants to determine engine type.
-// They should be synced with PD.
-const (
-	engineLabelKey     = "engine"
-	engineLabelTiFlash = "tiflash"
-)
-
 // GetStoreTypeByMeta gets store type by store meta pb.
 func GetStoreTypeByMeta(store *metapb.Store) tikvrpc.EndpointType {
-	for _, label := range store.Labels {
-		if label.Key == engineLabelKey && label.Value == engineLabelTiFlash {
-			return tikvrpc.TiFlash
-		}
-	}
-	return tikvrpc.TiKV
+	return tikvrpc.GetStoreTypeByMeta(store)
 }

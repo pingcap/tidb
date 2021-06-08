@@ -1445,7 +1445,7 @@ func BenchmarkOnRequestFail(b *testing.B) {
 				AccessIdx:  accessIdx,
 				Peer:       peer,
 				Store:      store,
-				AccessMode: TiKVOnly,
+				AccessMode: tiKVOnly,
 			}
 			r := cache.GetCachedRegionWithRLock(rpcCtx.Region)
 			if r != nil {
