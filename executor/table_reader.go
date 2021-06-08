@@ -276,6 +276,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	}
 	var kvReqs []*kv.Request
 	for i, kvRange := range kvRanges {
+		e.kvRanges = append(e.kvRanges, kvRange...)
 		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, pids[i], true); err != nil {
 			return nil, err
 		}
