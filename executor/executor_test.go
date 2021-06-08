@@ -202,6 +202,13 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	}
 	d, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	// Set the variable to default 0 as it was before in case of modifying the test.
+	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_change_column_type=0")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "set @@tidb_enable_change_column_type=0")
+	c.Assert(err, IsNil)
 	d.SetStatsUpdating(true)
 	s.domain = d
 	config.UpdateGlobal(func(conf *config.Config) {

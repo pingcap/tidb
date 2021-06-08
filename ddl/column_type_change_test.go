@@ -1651,6 +1651,7 @@ func (s *testColumnTypeChangeSuite) TestRowFormat(c *C) {
 func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFlenErrorMsg(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.Se.GetSessionVars().EnableChangeColumnType = false
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int4)")
