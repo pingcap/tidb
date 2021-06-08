@@ -1059,6 +1059,10 @@ func (p *basePhysicalAgg) getAggFuncCostFactor(isMPP bool) (factor float64) {
 	}
 	if factor == 0 {
 		if isMPP {
+			// The default factor 1.0 will lead to 1-phase agg in pseudo stats settings.
+			// But in mpp cases, 2-phase is more usual. So we change this factor.
+			// TODO: This is still a little tricky and might cause regression. We should
+			// calibrate these factors and polish our cost model in the future.
 			factor = aggFuncFactor[ast.AggFuncFirstRow]
 		} else {
 			factor = 1.0
