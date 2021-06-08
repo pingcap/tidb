@@ -43,19 +43,7 @@ func (a accessMode) String() string {
 	}
 }
 
-// Constants to determine engine type.
-// They should be synced with PD.
-const (
-	engineLabelKey     = "engine"
-	engineLabelTiFlash = "tiflash"
-)
-
 // GetStoreTypeByMeta gets store type by store meta pb.
 func GetStoreTypeByMeta(store *metapb.Store) tikvrpc.EndpointType {
-	for _, label := range store.Labels {
-		if label.Key == engineLabelKey && label.Value == engineLabelTiFlash {
-			return tikvrpc.TiFlash
-		}
-	}
-	return tikvrpc.TiKV
+	return tikvrpc.GetStoreTypeByMeta(store)
 }

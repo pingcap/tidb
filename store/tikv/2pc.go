@@ -510,15 +510,15 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 }
 
 type groupedMutations struct {
-	region    region.VerID
+	region    RegionVerID
 	mutations CommitterMutations
 }
 
 // groupSortedMutationsByRegion separates keys into groups by their belonging Regions.
-func groupSortedMutationsByRegion(c *region.Cache, bo *retry.Backoffer, m CommitterMutations) ([]groupedMutations, error) {
+func groupSortedMutationsByRegion(c *RegionCache, bo *retry.Backoffer, m CommitterMutations) ([]groupedMutations, error) {
 	var (
 		groups  []groupedMutations
-		lastLoc *region.KeyLocation
+		lastLoc *KeyLocation
 	)
 	lastUpperBound := 0
 	for i := 0; i < m.Len(); i++ {

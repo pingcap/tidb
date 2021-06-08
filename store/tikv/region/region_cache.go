@@ -1973,7 +1973,7 @@ func (s *Store) initResolve(bo *retry.Backoffer, c *Cache) (addr string, err err
 		}
 		s.addr = addr
 		s.saddr = store.GetStatusAddress()
-		s.storeType = GetStoreTypeByMeta(store)
+		s.storeType = tikvrpc.GetStoreTypeByMeta(store)
 		s.labels = store.GetLabels()
 		// Shouldn't have other one changing its state concurrently, but we still use changeResolveStateTo for safety.
 		s.changeResolveStateTo(unresolved, resolved)
@@ -2015,7 +2015,7 @@ func (s *Store) reResolve(c *Cache) (bool, error) {
 		return false, nil
 	}
 
-	storeType := GetStoreTypeByMeta(store)
+	storeType := tikvrpc.GetStoreTypeByMeta(store)
 	addr = store.GetAddress()
 	if s.addr != addr || !s.IsSameLabels(store.GetLabels()) {
 		newStore := &Store{storeID: s.storeID, addr: addr, saddr: store.GetStatusAddress(), storeType: storeType, labels: store.GetLabels(), state: uint64(resolved)}
