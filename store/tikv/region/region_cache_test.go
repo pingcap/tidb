@@ -27,14 +27,14 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/mockstore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/store/tikv/util"
 	pd "github.com/tikv/pd/client"
 )
 
-type OneByOneSuite = util.OneByOneSuite
+type OneByOneSuite = mockstore.OneByOneSuite
 type testRegionCacheSuite struct {
 	OneByOneSuite
 	cluster *mocktikv.Cluster
