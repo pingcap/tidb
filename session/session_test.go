@@ -54,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	tikvmockstore "github.com/pingcap/tidb/store/tikv/mockstore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
-	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -2810,9 +2809,9 @@ func (s *testSessionSerialSuite) TestTxnRetryErrMsg(c *C) {
 	tk1.MustExec("begin")
 	tk2.MustExec("update no_retry set id = id + 1")
 	tk1.MustExec("update no_retry set id = id + 1")
-	c.Assert(tikvutil.MockRetryableErrorResp.Enable(`return(true)`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/mockRetryableErrorResp", `return(true)`), IsNil)
 	_, err := tk1.Se.Execute(context.Background(), "commit")
-	tikvutil.MockRetryableErrorResp.Disable()
+	failpoint.Disable("tikvclient/mockRetryableErrorResp")
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrTxnRetryable.Equal(err), IsTrue, Commentf("error: %s", err))
 	c.Assert(strings.Contains(err.Error(), "mock retryable error"), IsTrue, Commentf("error: %s", err))

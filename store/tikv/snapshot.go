@@ -695,7 +695,7 @@ func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 }
 
 func extractKeyErr(keyErr *pb.KeyError) error {
-	if val, err := util.MockRetryableErrorResp.Eval(); err == nil {
+	if val, err := util.EvalFailpoint("mockRetryableErrorResp"); err == nil {
 		if val.(bool) {
 			keyErr.Conflict = nil
 			keyErr.Retryable = "mock retryable error"
