@@ -1084,12 +1084,28 @@ func (d *MyDecimal) FromFloat64(f float64) error {
 }
 
 // ToFloat64 converts decimal to float64 value.
-func (d *MyDecimal) ToFloat64() (float64, error) {
-	f, err := strconv.ParseFloat(d.String(), 64)
-	if err != nil {
-		err = ErrOverflow
+func (d *MyDecimal) ToFloat64() (f float64, err error) {
+	digitsInt := int(d.digitsInt)
+	digitsFrac := int(d.digitsFrac)
+	wordsInt := (digitsInt-1)/digitsPerWord + 1
+	wordIdx := 0
+	for i := 0; i < digitsInt; i += digitsPerWord {
+		x := d.wordBuf[wordIdx]
+		wordIdx++
+		f += float64(x) * math.Pow10((wordsInt-wordIdx)*digitsPerWord)
 	}
-	return f, err
+	fracStart := wordIdx
+	for i := 0; i < digitsFrac; i += digitsPerWord {
+		x := d.wordBuf[wordIdx]
+		wordIdx++
+		f += float64(x) * math.Pow10(-digitsPerWord*(wordIdx-fracStart))
+	}
+	unit := math.Pow10(-int(d.resultFrac))
+	f = math.Round(f/unit) * unit
+	if d.negative {
+		f = -f
+	}
+	return
 }
 
 /*
