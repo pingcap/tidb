@@ -132,8 +132,9 @@ const (
 
 // PreprocessorReturn is used to retain information obtained in the preprocessor.
 type PreprocessorReturn struct {
-	SnapshotTS uint64
-	InfoSchema infoschema.InfoSchema
+	SnapshotTS        uint64
+	ExplicitStaleness bool
+	InfoSchema        infoschema.InfoSchema
 }
 
 // preprocessor is an ast.Visitor that preprocess
@@ -1420,6 +1421,7 @@ func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
 			return
 		}
 		p.SnapshotTS = ts
+		p.ExplicitStaleness = true
 		p.InfoSchema = is
 	}
 	if p.SnapshotTS != ts {
