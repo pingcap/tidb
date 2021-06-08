@@ -270,7 +270,7 @@ type TimeDetail struct {
 	// cannot be excluded for now, like Mutex wait time, which is included in this field, so that
 	// this field is called wall time instead of CPU time.
 	WaitTime time.Duration
-	// KvReadWallTimeMs is the time used in KV Scan/Get
+	// KvReadWallTimeMs is the time used in KV Scan/Get.
 	KvReadWallTimeMs time.Duration
 }
 
