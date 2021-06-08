@@ -3073,9 +3073,9 @@ func (s *testSerialSuite) TestTiDBLastTxnInfoCommitMode(c *C) {
 	c.Assert(rows[0][1], Equals, "false")
 	c.Assert(rows[0][2], Equals, "false")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/invalidMaxCommitTS", "return"), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/invalidMaxCommitTS", "return"), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/invalidMaxCommitTS"), IsNil)
+		c.Assert(failpoint.Disable("tikvclient/invalidMaxCommitTS"), IsNil)
 	}()
 
 	tk.MustExec("set @@tidb_enable_async_commit = 1")
@@ -7204,12 +7204,12 @@ func (s *testSerialSuite1) TestCollectCopRuntimeStats(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int, b int)")
 	tk.MustExec("set tidb_enable_collect_execution_info=1;")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreRespResult", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/tikvStoreRespResult", `return(true)`), IsNil)
 	rows := tk.MustQuery("explain analyze select * from t1").Rows()
 	c.Assert(len(rows), Equals, 2)
 	explain := fmt.Sprintf("%v", rows[0])
 	c.Assert(explain, Matches, ".*rpc_num: 2, .*regionMiss:.*")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreRespResult"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/tikvStoreRespResult"), IsNil)
 }
 
 func (s *testSerialSuite1) TestIndexLookupRuntimeStats(c *C) {

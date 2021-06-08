@@ -25,3 +25,9 @@ var (
 	// MockSplitRegionTimeout mocks timeout when trying to split region
 	MockSplitRegionTimeout failpoint.Failpoint
 )
+
+const failpointPrefix = "client-go/"
+
+func EvalFailpoint(name string) (interface{}, error) {
+	return failpoint.Eval(failpointPrefix + name)
+}

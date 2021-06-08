@@ -28,7 +28,6 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -449,32 +448,32 @@ func (s *RegionRequestSender) SendReqCtx(
 		bo.SetCtx(opentracing.ContextWithSpan(bo.GetCtx(), span1))
 	}
 
-	failpoint.Inject("tikvStoreSendReqResult", func(val failpoint.Value) {
+	if val, err := util.EvalFailpoint("tikvStoreSendReqResult"); err == nil {
 		switch val.(string) {
 		case "timeout":
-			failpoint.Return(nil, nil, errors.New("timeout"))
+			return nil, nil, errors.New("timeout")
 		case "GCNotLeader":
 			if req.Type == tikvrpc.CmdGC {
-				failpoint.Return(&tikvrpc.Response{
+				return &tikvrpc.Response{
 					Resp: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
-				}, nil, nil)
+				}, nil, nil
 			}
 		case "GCServerIsBusy":
 			if req.Type == tikvrpc.CmdGC {
-				failpoint.Return(&tikvrpc.Response{
+				return &tikvrpc.Response{
 					Resp: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
-				}, nil, nil)
+				}, nil, nil
 			}
 		case "requestTiDBStoreError":
 			if et == tikvrpc.TiDB {
-				failpoint.Return(nil, nil, tikverr.ErrTiKVServerTimeout)
+				return nil, nil, tikverr.ErrTiKVServerTimeout
 			}
 		case "requestTiFlashError":
 			if et == tikvrpc.TiFlash {
-				failpoint.Return(nil, nil, tikverr.ErrTiFlashServerTimeout)
+				return nil, nil, tikverr.ErrTiFlashServerTimeout
 			}
 		}
-	})
+	}
 
 	// If the MaxExecutionDurationMs is not set yet, we set it to be the RPC timeout duration
 	// so TiKV can give up the requests whose response TiDB cannot receive due to timeout.
@@ -502,13 +501,13 @@ func (s *RegionRequestSender) SendReqCtx(
 			rpcCtx.tryTimes = tryTimes
 		}
 
-		failpoint.Inject("invalidCacheAndRetry", func() {
+		if _, err := util.EvalFailpoint("invalidCacheAndRetry"); err == nil {
 			// cooperate with github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff
 			if c := bo.GetCtx().Value("injectedBackoff"); c != nil {
 				resp, err = tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}})
-				failpoint.Return(resp, nil, err)
+				return resp, nil, err
 			}
-		})
+		}
 		if rpcCtx == nil {
 			// TODO(youjiali1995): remove it when using the replica selector for all requests.
 			// If the region is not found in cache, it must be out
@@ -535,11 +534,11 @@ func (s *RegionRequestSender) SendReqCtx(
 		if boVars != nil && boVars.Killed != nil && atomic.LoadUint32(boVars.Killed) == 1 {
 			return nil, nil, tikverr.ErrQueryInterrupted
 		}
-		failpoint.Inject("mockRetrySendReqToRegion", func(val failpoint.Value) {
+		if val, err := util.EvalFailpoint("mockRetrySendReqToRegion"); err == nil {
 			if val.(bool) {
 				retry = true
 			}
-		})
+		}
 		if retry {
 			tryTimes++
 			continue
@@ -550,12 +549,12 @@ func (s *RegionRequestSender) SendReqCtx(
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		failpoint.Inject("mockDataIsNotReadyError", func(val failpoint.Value) {
+		if val, err := util.EvalFailpoint("mockDataIsNotReadyError"); err == nil {
 			regionErr = &errorpb.Error{}
 			if tryTimesLimit, ok := val.(int); ok && tryTimes <= tryTimesLimit {
 				regionErr.DataIsNotReady = &errorpb.DataIsNotReady{}
 			}
-		})
+		}
 		if regionErr != nil {
 			retry, err = s.onRegionError(bo, rpcCtx, req, regionErr, &opts)
 			if err != nil {
@@ -658,7 +657,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 	}
 
 	injectFailOnSend := false
-	failpoint.Inject("rpcFailOnSend", func(val failpoint.Value) {
+	if val, e := util.EvalFailpoint("rpcFailOnSend"); e == nil {
 		inject := true
 		// Optional filters
 		if s, ok := val.(string); ok {
@@ -677,25 +676,25 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 			injectFailOnSend = true
 			err = errors.New("injected RPC error on send")
 		}
-	})
+	}
 
 	if !injectFailOnSend {
 		start := time.Now()
 		resp, err = s.client.SendRequest(ctx, sendToAddr, req, timeout)
 		if s.Stats != nil {
 			RecordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
-			failpoint.Inject("tikvStoreRespResult", func(val failpoint.Value) {
+			if val, err := util.EvalFailpoint("tikvStoreRespResult"); err == nil {
 				if val.(bool) {
 					if req.Type == tikvrpc.CmdCop && bo.GetTotalSleep() == 0 {
-						failpoint.Return(&tikvrpc.Response{
+						return &tikvrpc.Response{
 							Resp: &coprocessor.Response{RegionError: &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}},
-						}, false, nil)
+						}, false, nil
 					}
 				}
-			})
+			}
 		}
 
-		failpoint.Inject("rpcFailOnRecv", func(val failpoint.Value) {
+		if val, e := util.EvalFailpoint("rpcFailOnRecv"); e == nil {
 			inject := true
 			// Optional filters
 			if s, ok := val.(string); ok {
@@ -714,9 +713,9 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 				err = errors.New("injected RPC error on recv")
 				resp = nil
 			}
-		})
+		}
 
-		failpoint.Inject("rpcContextCancelErr", func(val failpoint.Value) {
+		if val, e := util.EvalFailpoint("rpcContextCancelErr"); e == nil {
 			if val.(bool) {
 				ctx1, cancel := context.WithCancel(context.Background())
 				cancel()
@@ -725,7 +724,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 				err = ctx.Err()
 				resp = nil
 			}
-		})
+		}
 	}
 
 	if rpcCtx.ProxyStore != nil {
@@ -748,11 +747,11 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 			return nil, false, errors.Trace(ctx.Err())
 		}
 
-		failpoint.Inject("noRetryOnRpcError", func(val failpoint.Value) {
+		if val, err := util.EvalFailpoint("noRetryOnRpcError"); err == nil {
 			if val.(bool) {
-				failpoint.Return(nil, false, err)
+				return nil, false, err
 			}
-		})
+		}
 		if e := s.onSendFail(bo, rpcCtx, err); e != nil {
 			return nil, false, errors.Trace(e)
 		}

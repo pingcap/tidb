@@ -136,7 +136,7 @@ func (s *testSnapshotSuite) TestSnapshotCache(c *C) {
 	_, err := snapshot.BatchGet(context.Background(), [][]byte{[]byte("x"), []byte("y")})
 	c.Assert(err, IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/snapshot-get-cache-fail", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/snapshot-get-cache-fail", `return(true)`), IsNil)
 	ctx := context.WithValue(context.Background(), contextKey("TestSnapshotCache"), true)
 	_, err = snapshot.Get(ctx, []byte("x"))
 	c.Assert(err, IsNil)
@@ -144,7 +144,7 @@ func (s *testSnapshotSuite) TestSnapshotCache(c *C) {
 	_, err = snapshot.Get(ctx, []byte("y"))
 	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/snapshot-get-cache-fail"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/snapshot-get-cache-fail"), IsNil)
 }
 
 func (s *testSnapshotSuite) TestBatchGetNotExist(c *C) {

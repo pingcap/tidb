@@ -538,9 +538,9 @@ func (s *testLockSuite) TestZeroMinCommitTS(c *C) {
 	bo := tikv.NewBackofferWithVars(context.Background(), tikv.PrewriteMaxBackoff, nil)
 
 	mockValue := fmt.Sprintf(`return(%d)`, txn.StartTS())
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockZeroCommitTS", mockValue), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/mockZeroCommitTS", mockValue), IsNil)
 	s.prewriteTxnWithTTL(c, txn, 1000)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockZeroCommitTS"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/mockZeroCommitTS"), IsNil)
 
 	lock := s.mustGetLock(c, []byte("key"))
 	expire, pushed, err := s.store.NewLockResolver().ResolveLocks(bo, 0, []*tikv.Lock{lock})
