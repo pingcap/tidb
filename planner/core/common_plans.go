@@ -271,7 +271,8 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		if err != nil {
 			return errors.Trace(err)
 		}
-	} else if prepared.SchemaVersion != is.SchemaMetaVersion() {
+	}
+	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
 		// cached plan once the schema version is changed.
 		// Cached plan in prepared struct does NOT have a "cache key" with
