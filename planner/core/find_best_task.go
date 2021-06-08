@@ -1548,16 +1548,12 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		}
 		if prop.MPPPartitionTp != property.AnyType || ts.isPartition {
 			// If ts is a single partition, then this partition table is in static-only prune, then we should not choose mpp execution.
-			if vars := ds.SCtx().GetSessionVars(); vars.IsMPPEnforced() && vars.StmtCtx.InExplainStmt {
-				vars.StmtCtx.AppendWarning(errors.New("Can't use mpp mode because this table is a partition table."))
-			}
+			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("Can't use mpp mode because this table is a partition table.")
 			return &mppTask{}, nil
 		}
 		for _, col := range ts.schema.Columns {
 			if col.VirtualExpr != nil {
-				if vars := ds.SCtx().GetSessionVars(); vars.IsMPPEnforced() && vars.StmtCtx.InExplainStmt {
-					vars.StmtCtx.AppendWarning(errors.New("Can't use mpp mode because column `" + col.OrigName + "` is virtual."))
-				}
+				ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("Can't use mpp mode because column `" + col.OrigName + "` is virtual.")
 				return &mppTask{}, nil
 			}
 		}
