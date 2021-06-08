@@ -897,7 +897,8 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 
 	var schemaNameAndDigest []types.Datum
 	if ssbd.isForOtherSummary {
-		// if is used for otherSummary, schemaName and digest should to set to nil/NULL.
+		// if is used for otherSummary, schemaName and digest should be set to nil/NULL.
+		// This behaviour follow MySQL. see more in https://dev.mysql.com/doc/refman/5.7/en/performance-schema-statement-digests.html
 		schemaNameAndDigest = types.MakeDatums(nil, nil)
 	} else {
 		schemaNameAndDigest = types.MakeDatums(
