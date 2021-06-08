@@ -3029,6 +3029,45 @@ func (s *testIntegrationSerialSuite) TestPushDownAggForMPP(c *C) {
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestMppUnionAll(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t (a int not null, b int, c varchar(20))")
+	tk.MustExec("create table t1 (a int, b int not null, c double)")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" || tblInfo.Name.L == "t1" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+
+}
+
 func (s *testIntegrationSerialSuite) TestMppJoinDecimal(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

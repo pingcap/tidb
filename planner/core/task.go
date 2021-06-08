@@ -1027,8 +1027,10 @@ func setTableScanToTableRowIDScan(p PhysicalPlan) {
 
 // rootTask is the final sink node of a plan graph. It should be a single goroutine on tidb.
 type rootTask struct {
-	p   PhysicalPlan
-	cst float64
+	p       PhysicalPlan
+	cst     float64
+	isEmpty bool // isEmpty indicates if this task contains a dual table and returns empty data.
+	// TODO: The flag 'isEmpty' is only checked by Projection and UnionAll. We should support more cases in the future.
 }
 
 func (t *rootTask) copy() task {
@@ -1273,6 +1275,9 @@ func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	t = t.convertToRootTask(p.ctx)
 	t = attachPlan2Task(p, t)
 	t.addCost(p.GetCost(t.count()))
+	if root, ok := tasks[0].(*rootTask); ok && root.isEmpty {
+		t.(*rootTask).isEmpty = true
+	}
 	return t
 }
 
@@ -1287,9 +1292,14 @@ func (p *PhysicalUnionAll) attach2MppTasks(tasks ...task) task {
 				childMaxCost = childCost
 			}
 			childPlans = append(childPlans, mpp.plan())
+		} else if root, ok := tk.(*rootTask); ok && root.isEmpty {
+			continue
 		} else {
 			return invalidTask
 		}
+	}
+	if len(childPlans) == 0 {
+		return invalidTask
 	}
 	p.SetChildren(childPlans...)
 	t.cst = childMaxCost
@@ -1297,8 +1307,10 @@ func (p *PhysicalUnionAll) attach2MppTasks(tasks ...task) task {
 }
 
 func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
-	if _, ok := tasks[0].(*mppTask); ok {
-		return p.attach2MppTasks(tasks...)
+	for _, t := range tasks {
+		if _, ok := t.(*mppTask); ok {
+			return p.attach2MppTasks(tasks...)
+		}
 	}
 	t := &rootTask{p: p}
 	childPlans := make([]PhysicalPlan, 0, len(tasks))

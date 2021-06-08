@@ -141,7 +141,7 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, planCou
 	}.Init(p.ctx, p.stats, p.blockOffset)
 	dual.SetSchema(p.schema)
 	planCounter.Dec(1)
-	return &rootTask{p: dual}, 1, nil
+	return &rootTask{p: dual, isEmpty: p.RowCount == 0}, 1, nil
 }
 
 func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (task, int64, error) {
