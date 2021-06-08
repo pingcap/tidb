@@ -29,13 +29,7 @@ import (
 // fake a stmtSummaryByDigest
 func newInduceSsbd(beginTime int64, endTime int64) *stmtSummaryByDigest {
 	newSsbd := &stmtSummaryByDigest{
-		schemaName:    "other",
-		digest:        "other",
-		planDigest:    "other",
-		stmtType:      "other",
-		normalizedSQL: "other",
-		tableNames:    "other",
-		history:       list.New(),
+		history: list.New(),
 	}
 	newSsbd.history.PushBack(newInduceSsbde(beginTime, endTime))
 	return newSsbd
