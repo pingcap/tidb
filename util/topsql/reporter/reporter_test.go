@@ -103,8 +103,6 @@ func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
 
 	// check for equality of server received batch and the original data
 	records := agentServer.GetRecords()
-	sqlMetas := agentServer.GetSQLMetas()
-	planMetas := agentServer.GetPlanMetas()
 	for _, req := range records {
 		id := 0
 		prefix := "sqlDigest"
@@ -121,10 +119,10 @@ func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
 		for i := range req.TimestampList {
 			c.Assert(req.TimestampList[i], Equals, uint64(1))
 		}
-		normalizedSQL, exist := sqlMetas[string(req.SqlDigest)]
+		normalizedSQL, exist := agentServer.GetSQLMetaByDigest(req.SqlDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedSQL, Equals, "sqlNormalized"+strconv.Itoa(id))
-		normalizedPlan, exist := planMetas[string(req.PlanDigest)]
+		normalizedPlan, exist := agentServer.GetPlanMetaByDigest(req.PlanDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedPlan, Equals, "planNormalized"+strconv.Itoa(id))
 	}
@@ -145,8 +143,6 @@ func (s *testTopSQLReporter) TestCollectAndEvicted(c *C) {
 
 	// check for equality of server received batch and the original data
 	records := agentServer.GetRecords()
-	sqlMetas := agentServer.GetSQLMetas()
-	planMetas := agentServer.GetPlanMetas()
 	for _, req := range records {
 		id := 0
 		prefix := "sqlDigest"
@@ -164,10 +160,10 @@ func (s *testTopSQLReporter) TestCollectAndEvicted(c *C) {
 		for i := range req.TimestampList {
 			c.Assert(req.TimestampList[i], Equals, uint64(2))
 		}
-		normalizedSQL, exist := sqlMetas[string(req.SqlDigest)]
+		normalizedSQL, exist := agentServer.GetSQLMetaByDigest(req.SqlDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedSQL, Equals, "sqlNormalized"+strconv.Itoa(id))
-		normalizedPlan, exist := planMetas[string(req.PlanDigest)]
+		normalizedPlan, exist := agentServer.GetPlanMetaByDigest(req.PlanDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedPlan, Equals, "planNormalized"+strconv.Itoa(id))
 	}

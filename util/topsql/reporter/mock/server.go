@@ -114,24 +114,30 @@ func (svr *mockAgentServer) WaitCollectCnt(cnt int, timeout time.Duration) {
 	}
 }
 
-func (svr *mockAgentServer) GetSQLMetas() map[string]string {
-	m := make(map[string]string, 10)
-	svr.Lock()
-	for k, v := range svr.sqlMetas {
-		m[k] = v
+func (svr *mockAgentServer) GetSQLMetaByDigest(digest []byte, timeout time.Duration) (normalizedSQL string, exist bool) {
+	start := time.Now()
+	for {
+		svr.Lock()
+		normalizedSQL, exist = svr.sqlMetas[string(digest)]
+		svr.Unlock()
+		if exist || time.Since(start) > timeout {
+			return normalizedSQL, exist
+		}
+		time.Sleep(time.Millisecond)
 	}
-	svr.Unlock()
-	return m
 }
 
-func (svr *mockAgentServer) GetPlanMetas() map[string]string {
-	m := make(map[string]string, 10)
-	svr.Lock()
-	for k, v := range svr.planMetas {
-		m[k] = v
+func (svr *mockAgentServer) GetPlanMetaByDigest(digest []byte, timeout time.Duration) (normalizedPlan string, exist bool) {
+	start := time.Now()
+	for {
+		svr.Lock()
+		normalizedPlan, exist = svr.planMetas[string(digest)]
+		svr.Unlock()
+		if exist || time.Since(start) > timeout {
+			return normalizedPlan, exist
+		}
+		time.Sleep(time.Millisecond)
 	}
-	svr.Unlock()
-	return m
 }
 
 func (svr *mockAgentServer) GetRecords() []*tipb.CPUTimeRecord {

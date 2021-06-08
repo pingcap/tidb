@@ -164,17 +164,13 @@ func (s *testSuite) TestTopSQLReporter(c *C) {
 	}
 
 	server.WaitCollectCnt(1, time.Second*5)
-
 	records := server.GetRecords()
-	sqlMetas := server.GetSQLMetas()
-	planMetas := server.GetPlanMetas()
-
 	checkSQLPlanMap := map[string]struct{}{}
 	for _, req := range records {
 		c.Assert(len(req.CpuTimeMsList) > 0, IsTrue)
 		c.Assert(req.CpuTimeMsList[0] > 0, IsTrue)
 		c.Assert(req.TimestampList[0] > 0, IsTrue)
-		normalizedSQL, exist := sqlMetas[string(req.SqlDigest)]
+		normalizedSQL, exist := server.GetSQLMetaByDigest(req.SqlDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		expectedNormalizedSQL, exist := sqlMap[string(req.SqlDigest)]
 		c.Assert(exist, IsTrue)
@@ -185,7 +181,7 @@ func (s *testSuite) TestTopSQLReporter(c *C) {
 			c.Assert(len(req.PlanDigest), Equals, 0)
 			continue
 		}
-		normalizedPlan, exist := planMetas[string(req.PlanDigest)]
+		normalizedPlan, exist := server.GetPlanMetaByDigest(req.PlanDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedPlan, Equals, expectedNormalizedPlan)
 		checkSQLPlanMap[expectedNormalizedSQL] = struct{}{}

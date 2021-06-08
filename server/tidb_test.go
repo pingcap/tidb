@@ -1415,18 +1415,18 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 
 	checkFn := func(n int) {
 		records := agentServer.GetRecords()
-		sqlMetas := agentServer.GetSQLMetas()
-		planMetas := agentServer.GetPlanMetas()
 		c.Assert(len(records), Equals, n)
 		for _, r := range records {
-			sql := sqlMetas[string(r.SqlDigest)]
+			sql, exist := agentServer.GetSQLMetaByDigest(r.SqlDigest, time.Second)
+			c.Assert(exist, IsTrue)
+			c.Check(sql, Matches, "select.*from.*join.*")
 			if len(r.PlanDigest) == 0 {
 				continue
 			}
-			plan := planMetas[string(r.PlanDigest)]
+			plan, exist := agentServer.GetPlanMetaByDigest(r.PlanDigest, time.Second)
+			c.Assert(exist, IsTrue)
 			plan = strings.Replace(plan, "\n", " ", -1)
 			plan = strings.Replace(plan, "\t", " ", -1)
-			c.Assert(sql, Matches, "select.*from.*join.*")
 			c.Assert(plan, Matches, ".*Join.*Select.*")
 		}
 	}
