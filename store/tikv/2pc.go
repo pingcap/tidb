@@ -507,9 +507,46 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 	return c.doActionOnGroupMutations(bo, action, groups)
 }
 
+type groupedMutations struct {
+	region    RegionVerID
+	mutations CommitterMutations
+}
+
+// groupSortedMutationsByRegion separates keys into groups by their belonging Regions.
+func groupSortedMutationsByRegion(c *RegionCache, bo *retry.Backoffer, m CommitterMutations) ([]groupedMutations, error) {
+	var (
+		groups  []groupedMutations
+		lastLoc *KeyLocation
+	)
+	lastUpperBound := 0
+	for i := 0; i < m.Len(); i++ {
+		if lastLoc == nil || !lastLoc.Contains(m.GetKey(i)) {
+			if lastLoc != nil {
+				groups = append(groups, groupedMutations{
+					region:    lastLoc.Region,
+					mutations: m.Slice(lastUpperBound, i),
+				})
+				lastUpperBound = i
+			}
+			var err error
+			lastLoc, err = c.LocateKey(bo, m.GetKey(i))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+	}
+	if lastLoc != nil {
+		groups = append(groups, groupedMutations{
+			region:    lastLoc.Region,
+			mutations: m.Slice(lastUpperBound, m.Len()),
+		})
+	}
+	return groups, nil
+}
+
 // groupMutations groups mutations by region, then checks for any large groups and in that case pre-splits the region.
 func (c *twoPhaseCommitter) groupMutations(bo *Backoffer, mutations CommitterMutations) ([]groupedMutations, error) {
-	groups, err := c.store.regionCache.groupSortedMutationsByRegion(bo, mutations)
+	groups, err := groupSortedMutationsByRegion(c.store.regionCache, bo, mutations)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -530,7 +567,7 @@ func (c *twoPhaseCommitter) groupMutations(bo *Backoffer, mutations CommitterMut
 	}
 	// Reload region cache again.
 	if didPreSplit {
-		groups, err = c.store.regionCache.groupSortedMutationsByRegion(bo, mutations)
+		groups, err = groupSortedMutationsByRegion(c.store.regionCache, bo, mutations)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

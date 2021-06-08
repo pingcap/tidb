@@ -227,8 +227,8 @@ func newReplicaSelector(regionCache *RegionCache, regionID RegionVerID) (*replic
 		return nil, nil
 	}
 	regionStore := cachedRegion.getStore()
-	replicas := make([]*replica, 0, regionStore.accessStoreNum(TiKVOnly))
-	for _, storeIdx := range regionStore.accessIndex[TiKVOnly] {
+	replicas := make([]*replica, 0, regionStore.accessStoreNum(tiKVOnly))
+	for _, storeIdx := range regionStore.accessIndex[tiKVOnly] {
 		replicas = append(replicas, &replica{
 			store:    regionStore.stores[storeIdx],
 			peer:     cachedRegion.meta.Peers[storeIdx],
@@ -297,7 +297,7 @@ func (s *replicaSelector) next(bo *Backoffer) (*RPCContext, error) {
 				Peer:       replica.peer,
 				Store:      replica.store,
 				Addr:       addr,
-				AccessMode: TiKVOnly,
+				AccessMode: tiKVOnly,
 				TiKVNum:    len(s.replicas),
 			}, nil
 		}
@@ -839,9 +839,9 @@ func (s *RegionRequestSender) NeedReloadRegion(ctx *RPCContext) (need bool) {
 		s.failProxyStoreIDs[ctx.ProxyStore.storeID] = struct{}{}
 	}
 
-	if ctx.AccessMode == TiKVOnly && len(s.failStoreIDs)+len(s.failProxyStoreIDs) >= ctx.TiKVNum {
+	if ctx.AccessMode == tiKVOnly && len(s.failStoreIDs)+len(s.failProxyStoreIDs) >= ctx.TiKVNum {
 		need = true
-	} else if ctx.AccessMode == TiFlashOnly && len(s.failStoreIDs) >= len(ctx.Meta.Peers)-ctx.TiKVNum {
+	} else if ctx.AccessMode == tiFlashOnly && len(s.failStoreIDs) >= len(ctx.Meta.Peers)-ctx.TiKVNum {
 		need = true
 	} else if len(s.failStoreIDs)+len(s.failProxyStoreIDs) >= len(ctx.Meta.Peers) {
 		need = true
