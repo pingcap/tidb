@@ -3,7 +3,7 @@ version: 2
 jobs:
   build-ut:
     docker:
-      - image: golang:1.13
+      - image: golang:1.16
     working_directory: /go/src/github.com/pingcap/parser
     steps:
       - checkout
@@ -24,7 +24,7 @@ jobs:
           command: bash <(curl -s https://codecov.io/bash)
   build-integration:
     docker:
-    - image: golang:1.13
+    - image: golang:1.16
     working_directory: /go/src/github.com/pingcap/parser
     steps:
     - checkout
@@ -36,6 +36,7 @@ jobs:
           cd tidb
           rm go.sum
           GO111MODULE=on go mod edit -replace github.com/pingcap/parser=github.com/${CIRCLE_PR_USERNAME:-$CIRCLE_PROJECT_USERNAME}/${CIRCLE_PR_REPONAME:-$CIRCLE_PROJECT_REPONAME}@$CIRCLE_SHA1
+          go mod tidy
           # use only 1 thread to minimize memory usage (we've only got 2 CPU + 4 GB on Circle CI).
           make gotest P=1
 workflows:
