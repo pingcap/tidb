@@ -403,9 +403,14 @@ func (gs *tidbGlueSession) CreateSession(store kv.Storage) (glue.Session, error)
 }
 
 // Execute implements glue.Session
+// These queries execute without privilege checking, since the calling statements
+// such as BACKUP and RESTORE have already been privilege checked.
 func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
-	// FIXME: br relies on a deprecated API, it may be unsafe
-	_, err := gs.se.(sqlexec.SQLExecutor).Execute(ctx, sql)
+	stmt, err := gs.se.(sqlexec.RestrictedSQLExecutor).ParseWithParams(ctx, sql)
+	if err != nil {
+		return err
+	}
+	_, _, err = gs.se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(ctx, stmt)
 	return err
 }
 
