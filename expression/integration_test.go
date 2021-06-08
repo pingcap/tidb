@@ -94,6 +94,13 @@ func (s *testIntegrationSuiteBase) SetUpSuite(c *C) {
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	s.ctx = mock.NewContext()
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	// Set the variable to default 0 as it was before in case of modifying the test.
+	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_change_column_type=0")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "set @@tidb_enable_change_column_type=0")
+	c.Assert(err, IsNil)
 }
 
 func (s *testIntegrationSuiteBase) TearDownSuite(c *C) {
