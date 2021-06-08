@@ -18,7 +18,6 @@ import (
 	"sync"
 	"time"
 
-	// "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/prometheus/client_golang/api"
@@ -111,10 +110,6 @@ func readSQLMetric(timepoint time.Time, SQLResult *sqlUsageData) error {
 	result, err := querySQLMetric(ctx, timepoint, promQL)
 	if err != nil {
 		logutil.BgLogger().Info("querySQLMetric got error")
-		// if err1, ok := err.(*promv1.Error); ok {
-		// 	return errors.Errorf("query metric error, msg: %v, detail: %v", err1.Msg, err1.Detail)
-		// }
-		// return errors.Errorf("query metric error: %v", err.Error())
 	}
 
 	anylisSQLUsage(result, SQLResult)
