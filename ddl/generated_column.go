@@ -154,11 +154,11 @@ func hasDependentByGeneratedColumn(tblInfo *model.TableInfo, colName model.CIStr
 func isGeneratedRelatedColumn(tblInfo *model.TableInfo, newCol, col *model.ColumnInfo) error {
 	if newCol.IsGenerated() || col.IsGenerated() {
 		// TODO: Make it compatible with MySQL error.
-		msg := fmt.Sprintf("tidb_enable_change_column_type is true, newCol IsGenerated %v, oldCol IsGenerated %v", newCol.IsGenerated(), col.IsGenerated())
+		msg := fmt.Sprintf("newCol IsGenerated %v, oldCol IsGenerated %v", newCol.IsGenerated(), col.IsGenerated())
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
 	if ok, dep := hasDependentByGeneratedColumn(tblInfo, col.Name); ok {
-		msg := fmt.Sprintf("tidb_enable_change_column_type is true, oldCol is a dependent column '%s' for generated column", dep)
+		msg := fmt.Sprintf("oldCol is a dependent column '%s' for generated column", dep)
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
 	return nil
