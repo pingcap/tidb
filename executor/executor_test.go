@@ -8560,7 +8560,7 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 	}
 }
 
-func (s *testStaleTxnSuite) TestStaleOrHistoryReadTemporaryTable(c *C) {
+func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
@@ -8580,6 +8580,8 @@ func (s *testStaleTxnSuite) TestStaleOrHistoryReadTemporaryTable(c *C) {
 
 	// sleep 1us to make test stale
 	time.Sleep(time.Microsecond)
+
+	tk.MustGetErrMsg("select * from tmp1 tablesample regions()", "TABLESAMPLE clause can not be applied to temporary tables")
 
 	queries := []struct {
 		sql string
@@ -8604,9 +8606,6 @@ func (s *testStaleTxnSuite) TestStaleOrHistoryReadTemporaryTable(c *C) {
 		},
 		{
 			sql: "select /*+use_index(tmp1, code)*/ code from tmp1 where code > 1",
-		},
-		{
-			sql: "select * from tmp1 tablesample regions()",
 		},
 		{
 			sql: "select /*+ use_index_merge(tmp1, primary, code) */ * from tmp1 where id > 1 or code > 2",
