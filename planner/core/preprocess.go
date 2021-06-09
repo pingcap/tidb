@@ -1042,11 +1042,6 @@ func checkReferInfo(tableMetaInfo *model.TableInfo) error {
 	if tableMetaInfo.Partition != nil {
 		return ErrPartitionNoTemporary
 	}
-	for _, column := range tableMetaInfo.Columns {
-		if column.IsGenerated() && !column.GeneratedStored {
-			return ErrOptOnTemporaryTable.GenWithStackByArgs("virtual columns")
-		}
-	}
 
 	return nil
 }
