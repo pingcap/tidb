@@ -1088,7 +1088,11 @@ func (d *MyDecimal) FromFloat64(f float64) error {
 func (d *MyDecimal) ToFloat64() (f float64, err error) {
 	digitsInt := int(d.digitsInt)
 	digitsFrac := int(d.digitsFrac)
-	if digitsInt+digitsFrac >= 24 {
+	// https://en.wikipedia.org/wiki/Double-precision_floating-point_format
+	// The 53-bit significand precision gives from 15 to 17 significant decimal digits precision (2−53 ≈ 1.11 × 10−16).
+	// If a decimal string with at most 15 significant digits is converted to IEEE 754 double-precision representation,
+	// and then converted back to a decimal string with the same number of digits, the final result should match the original string.
+	if digitsInt+digitsFrac > 15 {
 		f, err = strconv.ParseFloat(d.String(), 64)
 		if err != nil {
 			err = ErrOverflow
