@@ -374,18 +374,6 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@session.tidb_store_limit;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("100"))
 
-	tk.MustQuery("select @@global.tidb_enable_change_column_type;").Check(testkit.Rows("0"))
-	tk.MustExec("set global tidb_enable_change_column_type = 1")
-	tk.MustQuery("select @@global.tidb_enable_change_column_type;").Check(testkit.Rows("1"))
-	tk.MustExec("set global tidb_enable_change_column_type = off")
-	tk.MustQuery("select @@global.tidb_enable_change_column_type;").Check(testkit.Rows("0"))
-	// test tidb_enable_change_column_type in session scope.
-	tk.MustQuery("select @@session.tidb_enable_change_column_type;").Check(testkit.Rows("0"))
-	tk.MustExec("set @@session.tidb_enable_change_column_type = 1")
-	tk.MustQuery("select @@session.tidb_enable_change_column_type;").Check(testkit.Rows("1"))
-	tk.MustExec("set @@session.tidb_enable_change_column_type = off")
-	tk.MustQuery("select @@session.tidb_enable_change_column_type;").Check(testkit.Rows("0"))
-
 	tk.MustQuery("select @@session.tidb_metric_query_step;").Check(testkit.Rows("60"))
 	tk.MustExec("set @@session.tidb_metric_query_step = 120")
 	_, err = tk.Exec("set @@session.tidb_metric_query_step = 9")
@@ -896,9 +884,9 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	result = tk.MustQuery("select @@tmp_table_size;")
 	result.Check(testkit.Rows("167772161"))
 
-	tk.MustExec("set @@tmp_table_size=18446744073709551615")
+	tk.MustExec("set @@tmp_table_size=9223372036854775807")
 	result = tk.MustQuery("select @@tmp_table_size;")
-	result.Check(testkit.Rows("18446744073709551615"))
+	result.Check(testkit.Rows("9223372036854775807"))
 
 	_, err = tk.Exec("set @@tmp_table_size=18446744073709551616")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
