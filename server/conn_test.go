@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -854,7 +853,12 @@ func testFallbackWork(c *C, tk *testkit.TestKit, cc *clientConn, sql string) {
 
 // For issue https://github.com/pingcap/tidb/issues/25069
 func (ts *ConnTestSuite) TestShowErrors(c *C) {
-	cc := &clientConn{}
+	cc := &clientConn{
+		alloc: arena.NewAllocator(1024),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+	}
 	ctx := context.Background()
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	cc.ctx = &TiDBContext{Session: tk.Se, stmts: make(map[int]*TiDBStatement)}
@@ -867,6 +871,6 @@ func (ts *ConnTestSuite) TestShowErrors(c *C) {
 	stmts, err := cc.ctx.Parse(ctx, "drop table idontexist")
 	c.Assert(err, IsNil)
 	_, err = cc.ctx.ExecuteStmt(ctx, stmts[0])
-	c.Assert(err, Equals, infoschema.ErrTableDropExists)
+	c.Assert(err, NotNil)
 	tk.MustQuery("show errors").Check(testkit.Rows("Error 1051 Unknown table 'test.idontexist'"))
 }
