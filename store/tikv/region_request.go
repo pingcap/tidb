@@ -550,12 +550,6 @@ func (s *RegionRequestSender) SendReqCtx(
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		failpoint.Inject("mockDataIsNotReadyError", func(val failpoint.Value) {
-			regionErr = &errorpb.Error{}
-			if tryTimesLimit, ok := val.(int); ok && tryTimes <= tryTimesLimit {
-				regionErr.DataIsNotReady = &errorpb.DataIsNotReady{}
-			}
-		})
 		if regionErr != nil {
 			retry, err = s.onRegionError(bo, rpcCtx, req, regionErr, &opts)
 			if err != nil {
