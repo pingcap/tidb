@@ -202,7 +202,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestStaleReadRetry(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
 	// Retry 1 time.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockDataIsNotReadyError", `return(1)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/locate/mockDataIsNotReadyError", `return(1)`), IsNil)
 	resp, ctx, err := s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, tikvrpc.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
@@ -214,7 +214,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestStaleReadRetry(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
 	// Retry 2 times.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockDataIsNotReadyError", `return(2)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/locate/mockDataIsNotReadyError", `return(2)`), IsNil)
 	resp, ctx, err = s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, tikvrpc.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
@@ -226,7 +226,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestStaleReadRetry(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
 	// Retry 3 times.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockDataIsNotReadyError", `return(3)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/locate/mockDataIsNotReadyError", `return(3)`), IsNil)
 	resp, ctx, err = s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, tikvrpc.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
@@ -240,7 +240,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestStaleReadRetry(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
 	// Retry 1 time.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockDataIsNotReadyError", `return(1)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/locate/mockDataIsNotReadyError", `return(1)`), IsNil)
 	resp, ctx, err = s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, tikvrpc.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
@@ -252,7 +252,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestStaleReadRetry(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
 	// Retry 2 times.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockDataIsNotReadyError", `return(2)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/locate/mockDataIsNotReadyError", `return(2)`), IsNil)
 	resp, ctx, err = s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, tikvrpc.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
@@ -265,7 +265,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestStaleReadRetry(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
 	// Retry 3 times.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockDataIsNotReadyError", `return(3)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/locate/mockDataIsNotReadyError", `return(3)`), IsNil)
 	resp, ctx, err = s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second, tikvrpc.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
@@ -273,7 +273,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestStaleReadRetry(c *C) {
 	peerID3 := ctx.Peer.GetId()
 	c.Assert(peerID3, Not(Equals), peerID1)
 	c.Assert(peerID3, Not(Equals), peerID2)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockDataIsNotReadyError"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/locate/mockDataIsNotReadyError"), IsNil)
 }
 
 func (s *testRegionRequestToSingleStoreSuite) TestOnSendFailedWithStoreRestart(c *C) {

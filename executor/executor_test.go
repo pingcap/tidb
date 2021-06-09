@@ -7139,7 +7139,7 @@ select * from t;
 }
 
 func (s *testSerialSuite) TestKillTableReader(c *C) {
-	var retry = "github.com/pingcap/tidb/store/tikv/mockRetrySendReqToRegion"
+	var retry = "github.com/pingcap/tidb/store/tikv/locate/mockRetrySendReqToRegion"
 	defer func() {
 		c.Assert(failpoint.Disable(retry), IsNil)
 	}()
