@@ -19,7 +19,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/client"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/locate"
@@ -45,11 +45,11 @@ func (actionCommit) tiKVTxnRegionsNumHistogram() prometheus.Observer {
 
 func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
 	keys := batch.mutations.GetKeys()
-	req := tikvrpc.NewRequest(tikvrpc.CmdCommit, &pb.CommitRequest{
+	req := tikvrpc.NewRequest(tikvrpc.CmdCommit, &kvrpcpb.CommitRequest{
 		StartVersion:  c.startTS,
 		Keys:          keys,
 		CommitVersion: c.commitTS,
-	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog, ResourceGroupTag: c.resourceGroupTag})
+	}, kvrpcpb.Context{Priority: c.priority, SyncLog: c.syncLog, ResourceGroupTag: c.resourceGroupTag})
 
 	tBegin := time.Now()
 	attempts := 0
@@ -105,7 +105,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 		if resp.Resp == nil {
 			return errors.Trace(tikverr.ErrBodyMissing)
 		}
-		commitResp := resp.Resp.(*pb.CommitResponse)
+		commitResp := resp.Resp.(*kvrpcpb.CommitResponse)
 		// Here we can make sure tikv has processed the commit primary key request. So
 		// we can clean undetermined error.
 		if batch.isPrimary && !c.isAsyncCommit() {
