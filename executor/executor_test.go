@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -73,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/gcutil"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
@@ -278,16 +278,6 @@ func (s *testSuiteP1) TestBind(c *C) {
 	tk.MustExec("create session binding for select * from testbind using select * from testbind use index for join(index_t)")
 	c.Assert(len(tk.MustQuery("show session bindings").Rows()), Equals, 1)
 	tk.MustExec("drop session binding for select * from testbind")
-}
-
-func (s *testSuiteP1) TestChange(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("alter table t change a b int")
-	tk.MustExec("alter table t change b c bigint")
-	c.Assert(tk.ExecToErr("alter table t change c d varchar(100)"), NotNil)
 }
 
 func (s *testSuiteP1) TestChangePumpAndDrainer(c *C) {
@@ -3286,7 +3276,7 @@ const (
 
 type checkRequestClient struct {
 	tikv.Client
-	priority       pb.CommandPri
+	priority       kvrpcpb.CommandPri
 	lowPriorityCnt uint32
 	mu             struct {
 		sync.RWMutex
@@ -3295,12 +3285,12 @@ type checkRequestClient struct {
 	}
 }
 
-func (c *checkRequestClient) setCheckPriority(priority pb.CommandPri) {
+func (c *checkRequestClient) setCheckPriority(priority kvrpcpb.CommandPri) {
 	atomic.StoreInt32((*int32)(&c.priority), int32(priority))
 }
 
-func (c *checkRequestClient) getCheckPriority() pb.CommandPri {
-	return (pb.CommandPri)(atomic.LoadInt32((*int32)(&c.priority)))
+func (c *checkRequestClient) getCheckPriority() kvrpcpb.CommandPri {
+	return (kvrpcpb.CommandPri)(atomic.LoadInt32((*int32)(&c.priority)))
 }
 
 func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
@@ -3324,7 +3314,7 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 				return nil, errors.New("fail to set priority")
 			}
 		} else if req.Type == tikvrpc.CmdPrewrite {
-			if c.getCheckPriority() == pb.CommandPri_Low {
+			if c.getCheckPriority() == kvrpcpb.CommandPri_Low {
 				atomic.AddUint32(&c.lowPriorityCnt, 1)
 			}
 		}
@@ -3412,7 +3402,7 @@ func (s *testSuite2) TestAddIndexPriority(c *C) {
 	cli.mu.checkFlags = checkDDLAddIndexPriority
 	cli.mu.Unlock()
 
-	cli.setCheckPriority(pb.CommandPri_Low)
+	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
 	tk.MustExec("alter table t1 add index t1_index (id);")
 
 	c.Assert(atomic.LoadUint32(&cli.lowPriorityCnt) > 0, IsTrue)
@@ -3428,7 +3418,7 @@ func (s *testSuite2) TestAddIndexPriority(c *C) {
 	cli.mu.checkFlags = checkDDLAddIndexPriority
 	cli.mu.Unlock()
 
-	cli.setCheckPriority(pb.CommandPri_Normal)
+	cli.setCheckPriority(kvrpcpb.CommandPri_Normal)
 	tk.MustExec("alter table t1 add index t1_index (id);")
 
 	cli.mu.Lock()
@@ -3442,7 +3432,7 @@ func (s *testSuite2) TestAddIndexPriority(c *C) {
 	cli.mu.checkFlags = checkDDLAddIndexPriority
 	cli.mu.Unlock()
 
-	cli.setCheckPriority(pb.CommandPri_High)
+	cli.setCheckPriority(kvrpcpb.CommandPri_High)
 	tk.MustExec("alter table t1 add index t1_index (id);")
 
 	cli.mu.Lock()
@@ -8414,6 +8404,9 @@ func (s testSerialSuite) TestTemporaryTableNoNetwork(c *C) {
 }
 
 func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("unstable, skip it and fix it before 20210622")
+	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -8525,5 +8518,100 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 			continue
 		}
 		c.Assert(checkCnt > 0, IsTrue, commentf)
+	}
+}
+
+func (s *testStaleTxnSuite) TestStaleOrHistoryReadTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	tk.MustExec("set @@tidb_enable_global_temporary_table=1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tmp1")
+	tk.MustExec("create global temporary table tmp1 " +
+		"(id int not null primary key, code int not null, value int default null, unique key code(code))" +
+		"on commit delete rows")
+
+	// sleep 1us to make test stale
+	time.Sleep(time.Microsecond)
+
+	queries := []struct {
+		sql string
+	}{
+		{
+			sql: "select * from tmp1 where id=1",
+		},
+		{
+			sql: "select * from tmp1 where code=1",
+		},
+		{
+			sql: "select * from tmp1 where id in (1, 2, 3)",
+		},
+		{
+			sql: "select * from tmp1 where code in (1, 2, 3)",
+		},
+		{
+			sql: "select * from tmp1 where id > 1",
+		},
+		{
+			sql: "select /*+use_index(tmp1, code)*/ * from tmp1 where code > 1",
+		},
+		{
+			sql: "select /*+use_index(tmp1, code)*/ code from tmp1 where code > 1",
+		},
+		{
+			sql: "select * from tmp1 tablesample regions()",
+		},
+		{
+			sql: "select /*+ use_index_merge(tmp1, primary, code) */ * from tmp1 where id > 1 or code > 2",
+		},
+	}
+
+	addStaleReadToSQL := func(sql string) string {
+		idx := strings.Index(sql, " where ")
+		if idx < 0 {
+			return ""
+		}
+		return sql[0:idx] + " as of timestamp NOW(6)" + sql[idx:]
+	}
+
+	for _, query := range queries {
+		sql := addStaleReadToSQL(query.sql)
+		if sql != "" {
+			tk.MustGetErrMsg(sql, "can not stale read temporary table")
+		}
+	}
+
+	tk.MustExec("start transaction read only as of timestamp NOW(6)")
+	for _, query := range queries {
+		tk.MustGetErrMsg(query.sql, "can not stale read temporary table")
+	}
+	tk.MustExec("commit")
+
+	for _, query := range queries {
+		tk.MustExec(query.sql)
+	}
+
+	tk.MustExec("set transaction read only as of timestamp NOW(6)")
+	tk.MustExec("start transaction")
+	for _, query := range queries {
+		tk.MustGetErrMsg(query.sql, "can not stale read temporary table")
+	}
+	tk.MustExec("commit")
+
+	for _, query := range queries {
+		tk.MustExec(query.sql)
+	}
+
+	tk.MustExec("set @@tidb_snapshot=NOW(6)")
+	for _, query := range queries {
+		tk.MustGetErrMsg(query.sql, "can not read temporary table when 'tidb_snapshot' is set")
 	}
 }
