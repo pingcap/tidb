@@ -72,11 +72,6 @@ var ExecOptionAnalyzeVer2 OptionFuncAlias = func(option *ExecOption) {
 	option.AnalyzeVer = 2
 }
 
-// ExecOptionAnalyzeVer3 tells ExecRestrictedStmt to collect statistics with version3.
-var ExecOptionAnalyzeVer3 OptionFuncAlias = func(option *ExecOption) {
-	option.AnalyzeVer = 3
-}
-
 // ExecOptionWithSnapshot tells ExecRestrictedStmt to use a snapshot.
 func ExecOptionWithSnapshot(snapshot uint64) OptionFuncAlias {
 	return func(option *ExecOption) {

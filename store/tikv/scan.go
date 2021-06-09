@@ -18,7 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/client"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
@@ -32,7 +32,7 @@ import (
 type Scanner struct {
 	snapshot     *KVSnapshot
 	batchSize    int
-	cache        []*pb.KvPair
+	cache        []*kvrpcpb.KvPair
 	idx          int
 	nextStartKey []byte
 	endKey       []byte
@@ -87,7 +87,7 @@ func (s *Scanner) Value() []byte {
 	return nil
 }
 
-const scannerNextMaxBackoff = 20000
+const scannerNextMaxBackoff = 600000 // 10 minutes
 
 // Next return next element.
 func (s *Scanner) Next() error {
@@ -148,7 +148,7 @@ func (s *Scanner) startTS() uint64 {
 	return s.snapshot.version
 }
 
-func (s *Scanner) resolveCurrentLock(bo *Backoffer, current *pb.KvPair) error {
+func (s *Scanner) resolveCurrentLock(bo *Backoffer, current *kvrpcpb.KvPair) error {
 	ctx := context.Background()
 	val, err := s.snapshot.get(ctx, bo, current.Key)
 	if err != nil {
@@ -191,8 +191,8 @@ func (s *Scanner) getData(bo *Backoffer) error {
 				reqStartKey = loc.StartKey
 			}
 		}
-		sreq := &pb.ScanRequest{
-			Context: &pb.Context{
+		sreq := &kvrpcpb.ScanRequest{
+			Context: &kvrpcpb.Context{
 				Priority:         s.snapshot.priority.ToPB(),
 				NotFillCache:     s.snapshot.notFillCache,
 				IsolationLevel:   s.snapshot.isolationLevel.ToPB(),
@@ -211,7 +211,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			sreq.Reverse = true
 		}
 		s.snapshot.mu.RLock()
-		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdScan, sreq, s.snapshot.mu.replicaRead, &s.snapshot.replicaReadSeed, pb.Context{
+		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdScan, sreq, s.snapshot.mu.replicaRead, &s.snapshot.replicaReadSeed, kvrpcpb.Context{
 			Priority:         s.snapshot.priority.ToPB(),
 			NotFillCache:     s.snapshot.notFillCache,
 			TaskId:           s.snapshot.mu.taskID,
@@ -229,16 +229,21 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		if regionErr != nil {
 			logutil.BgLogger().Debug("scanner getData failed",
 				zap.Stringer("regionErr", regionErr))
-			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return errors.Trace(err)
+			// For other region error and the fake region error, backoff because
+			// there's something wrong.
+			// For the real EpochNotMatch error, don't backoff.
+			if regionErr.GetEpochNotMatch() == nil || isFakeRegionError(regionErr) {
+				err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			continue
 		}
 		if resp.Resp == nil {
 			return errors.Trace(tikverr.ErrBodyMissing)
 		}
-		cmdScanResp := resp.Resp.(*pb.ScanResponse)
+		cmdScanResp := resp.Resp.(*kvrpcpb.ScanResponse)
 
 		err = s.snapshot.store.CheckVisibility(s.startTS())
 		if err != nil {

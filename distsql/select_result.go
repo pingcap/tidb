@@ -57,6 +57,7 @@ var (
 var (
 	_ SelectResult = (*selectResult)(nil)
 	_ SelectResult = (*streamResult)(nil)
+	_ SelectResult = (*serialSelectResults)(nil)
 )
 
 // SelectResult is an iterator of coprocessor partial results.
@@ -67,6 +68,56 @@ type SelectResult interface {
 	Next(context.Context, *chunk.Chunk) error
 	// Close closes the iterator.
 	Close() error
+}
+
+// NewSerialSelectResults create a SelectResult which will read each SelectResult serially.
+func NewSerialSelectResults(selectResults []SelectResult) SelectResult {
+	return &serialSelectResults{
+		selectResults: selectResults,
+		cur:           0,
+	}
+}
+
+// serialSelectResults reads each SelectResult serially
+type serialSelectResults struct {
+	selectResults []SelectResult
+	cur           int
+}
+
+func (ssr *serialSelectResults) NextRaw(ctx context.Context) ([]byte, error) {
+	for ssr.cur < len(ssr.selectResults) {
+		resultSubset, err := ssr.selectResults[ssr.cur].NextRaw(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if len(resultSubset) > 0 {
+			return resultSubset, nil
+		}
+		ssr.cur++ // move to the next SelectResult
+	}
+	return nil, nil
+}
+
+func (ssr *serialSelectResults) Next(ctx context.Context, chk *chunk.Chunk) error {
+	for ssr.cur < len(ssr.selectResults) {
+		if err := ssr.selectResults[ssr.cur].Next(ctx, chk); err != nil {
+			return err
+		}
+		if chk.NumRows() > 0 {
+			return nil
+		}
+		ssr.cur++ // move to the next SelectResult
+	}
+	return nil
+}
+
+func (ssr *serialSelectResults) Close() (err error) {
+	for _, r := range ssr.selectResults {
+		if rerr := r.Close(); rerr != nil {
+			err = rerr
+		}
+	}
+	return
 }
 
 type selectResult struct {

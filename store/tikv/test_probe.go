@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -69,7 +68,8 @@ func (s StoreProbe) ClearTxnLatches() {
 // SendTxnHeartbeat renews a txn's ttl.
 func (s StoreProbe) SendTxnHeartbeat(ctx context.Context, key []byte, startTS uint64, ttl uint64) (uint64, error) {
 	bo := retry.NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil)
-	return sendTxnHeartBeat(bo, s.KVStore, key, startTS, ttl)
+	newTTL, _, err := sendTxnHeartBeat(bo, s.KVStore, key, startTS, ttl)
+	return newTTL, err
 }
 
 // LoadSafePoint from safepoint kv.
@@ -405,7 +405,7 @@ func (s SnapshotProbe) RecordBackoffInfo(bo *Backoffer) {
 }
 
 // MergeExecDetail merges exec stats into snapshot's stats.
-func (s SnapshotProbe) MergeExecDetail(detail *pb.ExecDetailsV2) {
+func (s SnapshotProbe) MergeExecDetail(detail *kvrpcpb.ExecDetailsV2) {
 	s.mergeExecDetail(detail)
 }
 
@@ -421,7 +421,7 @@ type LockProbe struct {
 }
 
 // ExtractLockFromKeyErr makes a Lock based on a key error.
-func (l LockProbe) ExtractLockFromKeyErr(err *pb.KeyError) (*Lock, error) {
+func (l LockProbe) ExtractLockFromKeyErr(err *kvrpcpb.KeyError) (*Lock, error) {
 	return extractLockFromKeyErr(err)
 }
 

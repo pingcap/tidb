@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-	"github.com/pingcap/kvproto/pkg/coprocessor_v2"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -191,7 +190,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestStoreTokenLimit(c *C) {
 
 // Test whether the Stale Read request will retry the leader or other peers on error.
 func (s *testRegionRequestToThreeStoresSuite) TestStaleReadRetry(c *C) {
-	var seed uint32 = 0
+	var seed uint32
 	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{}, kv.ReplicaReadMixed, &seed)
 	req.EnableStaleRead()
 
@@ -586,10 +585,6 @@ func (s *mockTikvGrpcServer) RawCompareAndSwap(context.Context, *kvrpcpb.RawCASR
 	return nil, errors.New("unreachable")
 }
 
-func (s *mockTikvGrpcServer) CoprocessorV2(context.Context, *coprocessor_v2.RawCoprocessorRequest) (*coprocessor_v2.RawCoprocessorResponse, error) {
-	return nil, errors.New("unreachable")
-}
-
 func (s *mockTikvGrpcServer) GetLockWaitInfo(context.Context, *kvrpcpb.GetLockWaitInfoRequest) (*kvrpcpb.GetLockWaitInfoResponse, error) {
 	return nil, errors.New("unreachable")
 }
@@ -878,12 +873,12 @@ func (s *testRegionRequestToThreeStoresSuite) TestReplicaSelector(c *C) {
 	// Create a fake region and change its leader to the last peer.
 	regionStore = regionStore.clone()
 	regionStore.workTiKVIdx = AccessIndex(len(regionStore.stores) - 1)
-	sidx, _ := regionStore.accessStore(TiKVOnly, regionStore.workTiKVIdx)
+	sidx, _ := regionStore.accessStore(tiKVOnly, regionStore.workTiKVIdx)
 	regionStore.stores[sidx].epoch++
 	regionStore.storeEpochs[sidx]++
 	// Add a TiFlash peer to the region.
 	peer := &metapb.Peer{Id: s.cluster.AllocID(), StoreId: s.cluster.AllocID()}
-	regionStore.accessIndex[TiFlashOnly] = append(regionStore.accessIndex[TiFlashOnly], len(regionStore.stores))
+	regionStore.accessIndex[tiFlashOnly] = append(regionStore.accessIndex[tiFlashOnly], len(regionStore.stores))
 	regionStore.stores = append(regionStore.stores, &Store{storeID: peer.StoreId, storeType: tikvrpc.TiFlash})
 	regionStore.storeEpochs = append(regionStore.storeEpochs, 0)
 
@@ -904,7 +899,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestReplicaSelector(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(replicaSelector.region, Equals, region)
 	// Should only contains TiKV stores.
-	c.Assert(len(replicaSelector.replicas), Equals, regionStore.accessStoreNum(TiKVOnly))
+	c.Assert(len(replicaSelector.replicas), Equals, regionStore.accessStoreNum(tiKVOnly))
 	c.Assert(len(replicaSelector.replicas), Equals, len(regionStore.stores)-1)
 	c.Assert(replicaSelector.nextReplicaIdx == 0, IsTrue)
 	c.Assert(replicaSelector.isExhausted(), IsFalse)
@@ -931,7 +926,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestReplicaSelector(c *C) {
 		c.Assert(rpcCtx.Store, Equals, replicaSelector.replicas[replicaSelector.nextReplicaIdx-1].store)
 		c.Assert(rpcCtx.Peer, Equals, replicaSelector.replicas[replicaSelector.nextReplicaIdx-1].peer)
 		c.Assert(rpcCtx.Addr, Equals, replicaSelector.replicas[replicaSelector.nextReplicaIdx-1].store.addr)
-		c.Assert(rpcCtx.AccessMode, Equals, TiKVOnly)
+		c.Assert(rpcCtx.AccessMode, Equals, tiKVOnly)
 	}
 
 	// Verify the correctness of next()
@@ -1145,14 +1140,14 @@ func (s *testRegionRequestToThreeStoresSuite) TestSendReqWithReplicaSelector(c *
 	c.Assert(bo.GetTotalBackoffTimes(), Equals, maxReplicaAttempt+2)
 	s.cluster.StartStore(s.storeIDs[0])
 
-	// Verify that retry the same replica when meets ServerIsBusy/MaxTimestampNotSynced/ReadIndexNotReady/ProposalInMergingMode/DataIsNotReady.
+	// Verify that retry the same replica when meets ServerIsBusy/MaxTimestampNotSynced/ReadIndexNotReady/ProposalInMergingMode.
 	for _, regionErr := range []*errorpb.Error{
 		// ServerIsBusy takes too much time to test.
 		// {ServerIsBusy: &errorpb.ServerIsBusy{}},
 		{MaxTimestampNotSynced: &errorpb.MaxTimestampNotSynced{}},
 		{ReadIndexNotReady: &errorpb.ReadIndexNotReady{}},
 		{ProposalInMergingMode: &errorpb.ProposalInMergingMode{}},
-		{DataIsNotReady: &errorpb.DataIsNotReady{}}} {
+	} {
 		func() {
 			oc := sender.client
 			defer func() {
