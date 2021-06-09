@@ -100,7 +100,7 @@ type stmtSummaryByDigest struct {
 	isInternal    bool
 
 	// Whether is used for stmtSummaryByDigestEvictedElement.toDatum()
-	isForOtherSummary bool
+	isOtherSummary bool
 }
 
 // stmtSummaryByDigestElement is the summary for each type of statements in current interval.
@@ -896,7 +896,7 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 	cols = append(cols, timeAndType...)
 
 	var schemaNameAndDigest []types.Datum
-	if ssbd.isForOtherSummary {
+	if ssbd.isOtherSummary {
 		// if is used for otherSummary, schemaName and digest should be set to nil/NULL.
 		// This behaviour follow MySQL. see more in https://dev.mysql.com/doc/refman/5.7/en/performance-schema-statement-digests.html
 		schemaNameAndDigest = types.MakeDatums(nil, nil)

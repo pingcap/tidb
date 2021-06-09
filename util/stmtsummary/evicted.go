@@ -250,11 +250,7 @@ func (ssbde *stmtSummaryByDigestEvicted) collectHistorySummaries(historySize int
 
 func (seElement *stmtSummaryByDigestEvictedElement) toDatum() []types.Datum {
 	induceSsbd := &stmtSummaryByDigest{
-		planDigest:        "",
-		stmtType:          "",
-		normalizedSQL:     "",
-		tableNames:        "",
-		isForOtherSummary: true,
+		isOtherSummary: true,
 	}
 	return seElement.otherSummary.toDatum(induceSsbd)
 }
