@@ -1400,6 +1400,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	r := reporter.NewRemoteTopSQLReporter(reporter.NewGRPCReportClient(plancodec.DecodeNormalizedPlan))
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{r})
 
+	// TODO: change to ensure that the right sql statements are reported, not just counts
 	checkFn := func(n int) {
 		records := agentServer.GetLatestRecords()
 		c.Assert(len(records), Equals, n)
@@ -1450,9 +1451,8 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(8)
-
 	cancel() // cancel case 1
-	time.Sleep(time.Second)
+	time.Sleep(time.Millisecond * 100)
 
 	// case 2:
 	cancel = runWorkload(0, 10)
@@ -1468,7 +1468,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	agentServer.HangFromNow(time.Second * 6)
 	// run another set of SQL queries
 	cancel()
-	time.Sleep(time.Millisecond*100)
+	time.Sleep(time.Millisecond * 100)
 	cancel = runWorkload(11, 20)
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(5)
