@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/tikv/client"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
@@ -321,10 +320,10 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 	pending := batch.keys
 	for {
 		s.mu.RLock()
-		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdBatchGet, &pb.BatchGetRequest{
+		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdBatchGet, &kvrpcpb.BatchGetRequest{
 			Keys:    pending,
 			Version: s.version,
-		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
+		}, s.mu.replicaRead, &s.replicaReadSeed, kvrpcpb.Context{
 			Priority:         s.priority.ToPB(),
 			NotFillCache:     s.notFillCache,
 			TaskId:           s.mu.taskID,
@@ -374,7 +373,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 		if resp.Resp == nil {
 			return errors.Trace(tikverr.ErrBodyMissing)
 		}
-		batchGetResp := resp.Resp.(*pb.BatchGetResponse)
+		batchGetResp := resp.Resp.(*kvrpcpb.BatchGetResponse)
 		var (
 			lockedKeys [][]byte
 			locks      []*Lock
@@ -486,10 +485,10 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 		}()
 	}
 	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet,
-		&pb.GetRequest{
+		&kvrpcpb.GetRequest{
 			Key:     k,
 			Version: s.version,
-		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
+		}, s.mu.replicaRead, &s.replicaReadSeed, kvrpcpb.Context{
 			Priority:         s.priority.ToPB(),
 			NotFillCache:     s.notFillCache,
 			TaskId:           s.mu.taskID,
@@ -536,7 +535,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 		if resp.Resp == nil {
 			return nil, errors.Trace(tikverr.ErrBodyMissing)
 		}
-		cmdGetResp := resp.Resp.(*pb.GetResponse)
+		cmdGetResp := resp.Resp.(*kvrpcpb.GetResponse)
 		if cmdGetResp.ExecDetailsV2 != nil {
 			s.mergeExecDetail(cmdGetResp.ExecDetailsV2)
 		}
@@ -572,7 +571,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 	}
 }
 
-func (s *KVSnapshot) mergeExecDetail(detail *pb.ExecDetailsV2) {
+func (s *KVSnapshot) mergeExecDetail(detail *kvrpcpb.ExecDetailsV2) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if detail == nil || s.mu.stats == nil {
@@ -687,14 +686,14 @@ func (s *KVSnapshot) SnapCacheSize() int {
 	return len(s.mu.cached)
 }
 
-func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
+func extractLockFromKeyErr(keyErr *kvrpcpb.KeyError) (*Lock, error) {
 	if locked := keyErr.GetLocked(); locked != nil {
 		return NewLock(locked), nil
 	}
 	return nil, extractKeyErr(keyErr)
 }
 
-func extractKeyErr(keyErr *pb.KeyError) error {
+func extractKeyErr(keyErr *kvrpcpb.KeyError) error {
 	if val, err := util.MockRetryableErrorResp.Eval(); err == nil {
 		if val.(bool) {
 			keyErr.Conflict = nil
