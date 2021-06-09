@@ -175,4 +175,13 @@ func RegisterMetrics() {
 	prometheus.MustRegister(ConfigStatus)
 	prometheus.MustRegister(SmallTxnWriteDuration)
 	prometheus.MustRegister(TxnWriteThroughput)
+<<<<<<< HEAD
+=======
+	prometheus.MustRegister(TiKVSmallReadDuration)
+	prometheus.MustRegister(LoadSysVarCacheCounter)
+
+	tikvmetrics.InitMetrics(TiDB, TiKVClient)
+	tikvmetrics.RegisterMetrics()
+	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
+>>>>>>> 9900f889c... Metric: Collect TiKV Read Duration Metric for SLI/SLO (#23884)
 }

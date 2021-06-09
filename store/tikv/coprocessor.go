@@ -1013,6 +1013,7 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 		}
 	}
 
+<<<<<<< HEAD:store/tikv/coprocessor.go
 	if detail != nil && detail.TimeDetail != nil {
 		processMs := detail.TimeDetail.ProcessWallTimeMs
 		waitMs := detail.TimeDetail.WaitWallTimeMs
@@ -1029,6 +1030,20 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 			if processMs <= minLogKVProcessTime {
 				logStr = strings.Replace(logStr, "TIME_COP_PROCESS", "TIME_COP_WAIT", 1)
 			}
+=======
+	var timeDetail *kvrpcpb.TimeDetail
+	if detailV2 != nil && detailV2.TimeDetail != nil {
+		timeDetail = detailV2.TimeDetail
+	} else if detail != nil && detail.TimeDetail != nil {
+		timeDetail = detail.TimeDetail
+	}
+	if timeDetail != nil {
+		logStr += fmt.Sprintf(" kv_process_ms:%d", timeDetail.ProcessWallTimeMs)
+		logStr += fmt.Sprintf(" kv_wait_ms:%d", timeDetail.WaitWallTimeMs)
+		logStr += fmt.Sprintf(" kv_read_ms:%d", timeDetail.KvReadWallTimeMs)
+		if timeDetail.ProcessWallTimeMs <= minLogKVProcessTime {
+			logStr = strings.Replace(logStr, "TIME_COP_PROCESS", "TIME_COP_WAIT", 1)
+>>>>>>> 9900f889c... Metric: Collect TiKV Read Duration Metric for SLI/SLO (#23884):store/copr/coprocessor.go
 		}
 	}
 	logutil.Logger(bo.ctx).Info(logStr)
