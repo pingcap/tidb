@@ -35,8 +35,12 @@ import (
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
+=======
+	"github.com/pingcap/tidb/util/sli"
+>>>>>>> 9900f889c... Metric: Collect TiKV Read Duration Metric for SLI/SLO (#23884)
 	"go.uber.org/zap"
 )
 
@@ -346,6 +350,9 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			}
 		}
 		if batchGetResp.ExecDetailsV2 != nil {
+			readKeys := len(batchGetResp.Pairs)
+			readTime := float64(batchGetResp.ExecDetailsV2.GetTimeDetail().GetKvReadWallTimeMs() / 1000)
+			sli.ObserveReadSLI(uint64(readKeys), readTime)
 			s.mergeExecDetail(batchGetResp.ExecDetailsV2)
 		}
 		if len(lockedKeys) > 0 {
@@ -475,6 +482,9 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 		}
 		cmdGetResp := resp.Resp.(*pb.GetResponse)
 		if cmdGetResp.ExecDetailsV2 != nil {
+			readKeys := len(cmdGetResp.Value)
+			readTime := float64(cmdGetResp.ExecDetailsV2.GetTimeDetail().GetKvReadWallTimeMs() / 1000)
+			sli.ObserveReadSLI(uint64(readKeys), readTime)
 			s.mergeExecDetail(cmdGetResp.ExecDetailsV2)
 		}
 		val := cmdGetResp.GetValue()
