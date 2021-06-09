@@ -32,9 +32,9 @@ import (
 	"github.com/pingcap/tidb/store/tikv/client"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/locate"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
-	"github.com/pingcap/tidb/store/tikv/region"
 	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
@@ -232,7 +232,7 @@ func (s *KVSnapshot) BatchGet(ctx context.Context, keys [][]byte) (map[string][]
 }
 
 type batchKeys struct {
-	region region.VerID
+	region locate.RegionVerID
 	keys   [][]byte
 }
 
@@ -251,7 +251,7 @@ func (b *batchKeys) relocate(bo *Backoffer, c *RegionCache) (bool, error) {
 
 // appendBatchKeysBySize appends keys to b. It may split the keys to make
 // sure each batch's size does not exceed the limit.
-func appendBatchKeysBySize(b []batchKeys, region region.VerID, keys [][]byte, sizeFn func([]byte) int, limit int) []batchKeys {
+func appendBatchKeysBySize(b []batchKeys, region locate.RegionVerID, keys [][]byte, sizeFn func([]byte) int, limit int) []batchKeys {
 	var start, end int
 	for start = 0; start < len(keys); start = end {
 		var size int
@@ -312,7 +312,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 	cli := NewClientHelper(s.store, s.resolvedLocks)
 	s.mu.RLock()
 	if s.mu.stats != nil {
-		cli.Stats = make(map[tikvrpc.CmdType]*region.RPCRuntimeStats)
+		cli.Stats = make(map[tikvrpc.CmdType]*locate.RPCRuntimeStats)
 		defer func() {
 			s.mergeRegionRequestStats(cli.Stats)
 		}()
@@ -341,7 +341,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 		}
 		ops := make([]StoreSelectorOption, 0, 2)
 		if len(matchStoreLabels) > 0 {
-			ops = append(ops, region.WithMatchLabels(matchStoreLabels))
+			ops = append(ops, locate.WithMatchLabels(matchStoreLabels))
 		}
 		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, client.ReadTimeoutMedium, tikvrpc.TiKV, "", ops...)
 
@@ -356,7 +356,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 			// For other region error and the fake region error, backoff because
 			// there's something wrong.
 			// For the real EpochNotMatch error, don't backoff.
-			if regionErr.GetEpochNotMatch() == nil || region.IsFakeRegionError(regionErr) {
+			if regionErr.GetEpochNotMatch() == nil || locate.IsFakeRegionError(regionErr) {
 				err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 				if err != nil {
 					return errors.Trace(err)
@@ -481,7 +481,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 
 	s.mu.RLock()
 	if s.mu.stats != nil {
-		cli.Stats = make(map[tikvrpc.CmdType]*region.RPCRuntimeStats)
+		cli.Stats = make(map[tikvrpc.CmdType]*locate.RPCRuntimeStats)
 		defer func() {
 			s.mergeRegionRequestStats(cli.Stats)
 		}()
@@ -499,12 +499,12 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 	isStaleness := s.mu.isStaleness
 	matchStoreLabels := s.mu.matchStoreLabels
 	s.mu.RUnlock()
-	var ops []region.StoreSelectorOption
+	var ops []locate.StoreSelectorOption
 	if isStaleness {
 		req.EnableStaleRead()
 	}
 	if len(matchStoreLabels) > 0 {
-		ops = append(ops, region.WithMatchLabels(matchStoreLabels))
+		ops = append(ops, locate.WithMatchLabels(matchStoreLabels))
 	}
 
 	var firstLock *Lock
@@ -526,7 +526,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 			// For other region error and the fake region error, backoff because
 			// there's something wrong.
 			// For the real EpochNotMatch error, don't backoff.
-			if regionErr.GetEpochNotMatch() == nil || region.IsFakeRegionError(regionErr) {
+			if regionErr.GetEpochNotMatch() == nil || locate.IsFakeRegionError(regionErr) {
 				err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 				if err != nil {
 					return nil, errors.Trace(err)
@@ -753,7 +753,7 @@ func (s *KVSnapshot) recordBackoffInfo(bo *Backoffer) {
 	}
 }
 
-func (s *KVSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*region.RPCRuntimeStats) {
+func (s *KVSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*locate.RPCRuntimeStats) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.mu.stats == nil {
@@ -776,7 +776,7 @@ func (s *KVSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*region.R
 
 // SnapshotRuntimeStats records the runtime stats of snapshot.
 type SnapshotRuntimeStats struct {
-	rpcStats       region.RequestRuntimeStats
+	rpcStats       locate.RegionRequestRuntimeStats
 	backoffSleepMS map[string]int
 	backoffTimes   map[string]int
 	scanDetail     *util.ScanDetail
@@ -785,7 +785,7 @@ type SnapshotRuntimeStats struct {
 
 // Clone implements the RuntimeStats interface.
 func (rs *SnapshotRuntimeStats) Clone() *SnapshotRuntimeStats {
-	newRs := SnapshotRuntimeStats{rpcStats: region.NewRegionRequestRuntimeStats()}
+	newRs := SnapshotRuntimeStats{rpcStats: locate.NewRegionRequestRuntimeStats()}
 	if rs.rpcStats.Stats != nil {
 		for k, v := range rs.rpcStats.Stats {
 			newRs.rpcStats.Stats[k] = v
@@ -808,7 +808,7 @@ func (rs *SnapshotRuntimeStats) Clone() *SnapshotRuntimeStats {
 func (rs *SnapshotRuntimeStats) Merge(other *SnapshotRuntimeStats) {
 	if other.rpcStats.Stats != nil {
 		if rs.rpcStats.Stats == nil {
-			rs.rpcStats.Stats = make(map[tikvrpc.CmdType]*region.RPCRuntimeStats, len(other.rpcStats.Stats))
+			rs.rpcStats.Stats = make(map[tikvrpc.CmdType]*locate.RPCRuntimeStats, len(other.rpcStats.Stats))
 		}
 		rs.rpcStats.Merge(other.rpcStats)
 	}

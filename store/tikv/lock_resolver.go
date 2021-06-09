@@ -29,10 +29,10 @@ import (
 	"github.com/pingcap/tidb/store/tikv/client"
 	"github.com/pingcap/tidb/store/tikv/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	"github.com/pingcap/tidb/store/tikv/locate"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/region"
 	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
@@ -97,7 +97,7 @@ func NewLockResolver(etcdAddrs []string, security config.Security, opts ...pd.Cl
 		return nil, errors.Trace(err)
 	}
 
-	s, err := NewKVStore(uuid, region.NewCodeCPDClient(pdCli), spkv, client.NewRPCClient(security))
+	s, err := NewKVStore(uuid, locate.NewCodeCPDClient(pdCli), spkv, client.NewRPCClient(security))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -220,7 +220,7 @@ func (lr *LockResolver) getResolved(txnID uint64) (TxnStatus, bool) {
 
 // BatchResolveLocks resolve locks in a batch.
 // Used it in gcworker only!
-func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc region.VerID) (bool, error) {
+func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc locate.RegionVerID) (bool, error) {
 	if len(locks) == 0 {
 		return true, nil
 	}
@@ -352,7 +352,7 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 	var pushFail bool
 	// TxnID -> []Region, record resolved Regions.
 	// TODO: Maybe put it in LockResolver and share by all txns.
-	cleanTxns := make(map[uint64]map[region.VerID]struct{})
+	cleanTxns := make(map[uint64]map[locate.RegionVerID]struct{})
 	var pushed []uint64
 	// pushed is only used in the read operation.
 	if !forWrite {
@@ -371,7 +371,7 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 			// If the lock is committed or rollbacked, resolve lock.
 			cleanRegions, exists := cleanTxns[l.TxnID]
 			if !exists {
-				cleanRegions = make(map[region.VerID]struct{})
+				cleanRegions = make(map[locate.RegionVerID]struct{})
 				cleanTxns[l.TxnID] = cleanRegions
 			}
 
@@ -717,7 +717,7 @@ func (data *asyncResolveData) addKeys(locks []*kvrpcpb.LockInfo, expected int, s
 	return nil
 }
 
-func (lr *LockResolver) checkSecondaries(bo *Backoffer, txnID uint64, curKeys [][]byte, curRegionID region.VerID, shared *asyncResolveData) error {
+func (lr *LockResolver) checkSecondaries(bo *Backoffer, txnID uint64, curKeys [][]byte, curRegionID locate.RegionVerID, shared *asyncResolveData) error {
 	checkReq := &kvrpcpb.CheckSecondaryLocksRequest{
 		Keys:         curKeys,
 		StartVersion: txnID,
@@ -844,7 +844,7 @@ func (lr *LockResolver) checkAllSecondaries(bo *Backoffer, l *Lock, status *TxnS
 }
 
 // resolveRegionLocks is essentially the same as resolveLock, but we resolve all keys in the same region at the same time.
-func (lr *LockResolver) resolveRegionLocks(bo *Backoffer, l *Lock, region region.VerID, keys [][]byte, status TxnStatus) error {
+func (lr *LockResolver) resolveRegionLocks(bo *Backoffer, l *Lock, region locate.RegionVerID, keys [][]byte, status TxnStatus) error {
 	lreq := &kvrpcpb.ResolveLockRequest{
 		StartVersion: l.TxnID,
 	}
@@ -896,7 +896,7 @@ func (lr *LockResolver) resolveRegionLocks(bo *Backoffer, l *Lock, region region
 	return nil
 }
 
-func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, lite bool, cleanRegions map[region.VerID]struct{}) error {
+func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, lite bool, cleanRegions map[locate.RegionVerID]struct{}) error {
 	metrics.LockResolverCountWithResolveLocks.Inc()
 	resolveLite := lite || l.TxnSize < bigTxnThreshold
 	for {
@@ -954,7 +954,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, li
 	}
 }
 
-func (lr *LockResolver) resolvePessimisticLock(bo *Backoffer, l *Lock, cleanRegions map[region.VerID]struct{}) error {
+func (lr *LockResolver) resolvePessimisticLock(bo *Backoffer, l *Lock, cleanRegions map[locate.RegionVerID]struct{}) error {
 	metrics.LockResolverCountWithResolveLocks.Inc()
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, l.Key)

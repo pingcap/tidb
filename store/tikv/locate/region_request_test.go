@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package region
+package locate
 
 import (
 	"context"
@@ -49,9 +49,9 @@ type testRegionRequestToSingleStoreSuite struct {
 	store               uint64
 	peer                uint64
 	region              uint64
-	cache               *Cache
+	cache               *RegionCache
 	bo                  *retry.Backoffer
-	regionRequestSender *RequestSender
+	regionRequestSender *RegionRequestSender
 	mvccStore           mocktikv.MVCCStore
 }
 
@@ -62,9 +62,9 @@ type testRegionRequestToThreeStoresSuite struct {
 	peerIDs             []uint64
 	regionID            uint64
 	leaderPeer          uint64
-	cache               *Cache
+	cache               *RegionCache
 	bo                  *retry.Backoffer
-	regionRequestSender *RequestSender
+	regionRequestSender *RegionRequestSender
 	mvccStore           mocktikv.MVCCStore
 }
 
@@ -119,7 +119,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestGetRPCContext(c *C) {
 	c.Assert(err, IsNil)
 
 	var seed uint32
-	var regionID = VerID{s.regionID, 0, 0}
+	var regionID = RegionVerID{s.regionID, 0, 0}
 
 	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{}, kv.ReplicaReadLeader, &seed)
 	rpcCtx, err := s.regionRequestSender.getRPCContext(s.bo, req, regionID, tikvrpc.TiKV)

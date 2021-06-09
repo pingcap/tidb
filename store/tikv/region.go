@@ -5,28 +5,28 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/tikv/client"
-	"github.com/pingcap/tidb/store/tikv/region"
+	"github.com/pingcap/tidb/store/tikv/locate"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	pd "github.com/tikv/pd/client"
 )
 
 // RPCContext contains data that is needed to send RPC to a region.
-type RPCContext = region.RPCContext
+type RPCContext = locate.RPCContext
 
 // RPCCanceller is rpc send cancelFunc collector.
-type RPCCanceller = region.RPCCanceller
+type RPCCanceller = locate.RPCCanceller
 
 // RegionVerID is a unique ID that can identify a Region at a specific version.
-type RegionVerID = region.VerID
+type RegionVerID = locate.RegionVerID
 
 // RegionCache caches Regions loaded from PD.
-type RegionCache = region.Cache
+type RegionCache = locate.RegionCache
 
 // KeyLocation is the region and range that a key is located.
-type KeyLocation = region.KeyLocation
+type KeyLocation = locate.KeyLocation
 
 // RPCCancellerCtxKey is context key attach rpc send cancelFunc collector to ctx.
-type RPCCancellerCtxKey = region.RPCCancellerCtxKey
+type RPCCancellerCtxKey = locate.RPCCancellerCtxKey
 
 // RegionRequestSender sends KV/Cop requests to tikv server. It handles network
 // errors and some region errors internally.
@@ -43,42 +43,42 @@ type RPCCancellerCtxKey = region.RPCCancellerCtxKey
 // range, such as 'I/O timeout', 'NotLeader', and 'ServerIsBusy'. For other
 // errors, since region range have changed, the request may need to split, so we
 // simply return the error to caller.
-type RegionRequestSender = region.RequestSender
+type RegionRequestSender = locate.RegionRequestSender
 
 // StoreSelectorOption configures storeSelectorOp.
-type StoreSelectorOption = region.StoreSelectorOption
+type StoreSelectorOption = locate.StoreSelectorOption
 
 // RegionRequestRuntimeStats records the runtime stats of send region requests.
-type RegionRequestRuntimeStats = region.RequestRuntimeStats
+type RegionRequestRuntimeStats = locate.RegionRequestRuntimeStats
 
 // RPCRuntimeStats indicates the RPC request count and consume time.
-type RPCRuntimeStats = region.RPCRuntimeStats
+type RPCRuntimeStats = locate.RPCRuntimeStats
 
 // CodecPDClient wraps a PD Client to decode the encoded keys in region meta.
-type CodecPDClient = region.CodecPDClient
+type CodecPDClient = locate.CodecPDClient
 
 // RecordRegionRequestRuntimeStats records request runtime stats.
-func RecordRegionRequestRuntimeStats(stats map[tikvrpc.CmdType]*region.RPCRuntimeStats, cmd tikvrpc.CmdType, d time.Duration) {
-	region.RecordRegionRequestRuntimeStats(stats, cmd, d)
+func RecordRegionRequestRuntimeStats(stats map[tikvrpc.CmdType]*locate.RPCRuntimeStats, cmd tikvrpc.CmdType, d time.Duration) {
+	locate.RecordRegionRequestRuntimeStats(stats, cmd, d)
 }
 
 // Store contains a kv process's address.
-type Store = region.Store
+type Store = locate.Store
 
 // Region presents kv region
-type Region = region.Region
+type Region = locate.Region
 
 // EpochNotMatch indicates it's invalidated due to epoch not match
-const EpochNotMatch = region.EpochNotMatch
+const EpochNotMatch = locate.EpochNotMatch
 
 // NewRPCanceller creates RPCCanceller with init state.
 func NewRPCanceller() *RPCCanceller {
-	return region.NewRPCanceller()
+	return locate.NewRPCanceller()
 }
 
 // NewRegionVerID creates a region ver id, which used for invalidating regions.
 func NewRegionVerID(id, confVer, ver uint64) RegionVerID {
-	return region.NewRegionVerID(id, confVer, ver)
+	return locate.NewRegionVerID(id, confVer, ver)
 }
 
 // GetStoreTypeByMeta gets store type by store meta pb.
@@ -88,40 +88,40 @@ func GetStoreTypeByMeta(store *metapb.Store) tikvrpc.EndpointType {
 
 // NewRegionRequestSender creates a new sender.
 func NewRegionRequestSender(regionCache *RegionCache, client client.Client) *RegionRequestSender {
-	return region.NewRegionRequestSender(regionCache, client)
+	return locate.NewRegionRequestSender(regionCache, client)
 }
 
 // LoadShuttingDown atomically loads ShuttingDown.
 func LoadShuttingDown() uint32 {
-	return region.LoadShuttingDown()
+	return locate.LoadShuttingDown()
 }
 
 // StoreShuttingDown atomically stores ShuttingDown into v.
 func StoreShuttingDown(v uint32) {
-	region.StoreShuttingDown(v)
+	locate.StoreShuttingDown(v)
 }
 
 // WithMatchLabels indicates selecting stores with matched labels
 func WithMatchLabels(labels []*metapb.StoreLabel) StoreSelectorOption {
-	return region.WithMatchLabels(labels)
+	return locate.WithMatchLabels(labels)
 }
 
 // NewRegionRequestRuntimeStats returns a new RegionRequestRuntimeStats.
 func NewRegionRequestRuntimeStats() RegionRequestRuntimeStats {
-	return region.NewRegionRequestRuntimeStats()
+	return locate.NewRegionRequestRuntimeStats()
 }
 
 // SetRegionCacheTTLSec sets regionCacheTTLSec to t.
 func SetRegionCacheTTLSec(t int64) {
-	region.SetRegionCacheTTLSec(t)
+	locate.SetRegionCacheTTLSec(t)
 }
 
 // SetStoreLivenessTimeout sets storeLivenessTimeout to t.
 func SetStoreLivenessTimeout(t time.Duration) {
-	region.SetStoreLivenessTimeout(t)
+	locate.SetStoreLivenessTimeout(t)
 }
 
 // NewRegionCache creates a RegionCache.
-func NewRegionCache(pdClient pd.Client) *region.Cache {
-	return region.NewRegionCache(pdClient)
+func NewRegionCache(pdClient pd.Client) *locate.RegionCache {
+	return locate.NewRegionCache(pdClient)
 }

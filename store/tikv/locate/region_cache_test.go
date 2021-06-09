@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package region
+package locate
 
 import (
 	"context"
@@ -43,7 +43,7 @@ type testRegionCacheSuite struct {
 	peer1   uint64 // peer1 is leader
 	peer2   uint64 // peer2 is follower
 	region1 uint64
-	cache   *Cache
+	cache   *RegionCache
 	bo      *retry.Backoffer
 }
 
@@ -78,8 +78,8 @@ func (s *testRegionCacheSuite) checkCache(c *C, len int) {
 }
 
 func validRegionsSearchedByVersions(
-	versions map[uint64]VerID,
-	regions map[VerID]*Region,
+	versions map[uint64]RegionVerID,
+	regions map[RegionVerID]*Region,
 	ts int64,
 ) (count int) {
 	for _, ver := range versions {
@@ -92,7 +92,7 @@ func validRegionsSearchedByVersions(
 	return
 }
 
-func validRegions(regions map[VerID]*Region, ts int64) (len int) {
+func validRegions(regions map[RegionVerID]*Region, ts int64) (len int) {
 	for _, region := range regions {
 		if !region.checkRegionCacheTTL(ts) {
 			continue
@@ -1072,7 +1072,7 @@ func createClusterWithStoresAndRegions(regionCnt, storeCount int) *mocktikv.Clus
 	return cluster
 }
 
-func loadRegionsToCache(cache *Cache, regionCnt int) {
+func loadRegionsToCache(cache *RegionCache, regionCnt int) {
 	for i := 0; i < regionCnt; i++ {
 		rawKey := []byte(fmt.Sprintf(regionSplitKeyFormat, i))
 		cache.LocateKey(retry.NewBackofferWithVars(context.Background(), 1, nil), rawKey)

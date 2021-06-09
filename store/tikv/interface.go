@@ -16,18 +16,18 @@ package tikv
 import (
 	"time"
 
+	"github.com/pingcap/tidb/store/tikv/locate"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/region"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
 // Storage represent the kv.Storage runs on TiKV.
 type Storage interface {
 	// GetRegionCache gets the RegionCache.
-	GetRegionCache() *region.Cache
+	GetRegionCache() *locate.RegionCache
 
 	// SendReq sends a request to TiKV.
-	SendReq(bo *Backoffer, req *tikvrpc.Request, regionID region.VerID, timeout time.Duration) (*tikvrpc.Response, error)
+	SendReq(bo *Backoffer, req *tikvrpc.Request, regionID locate.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
 
 	// GetLockResolver gets the LockResolver.
 	GetLockResolver() *LockResolver

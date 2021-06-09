@@ -18,7 +18,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/store/tikv/region"
+	"github.com/pingcap/tidb/store/tikv/locate"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -28,7 +28,7 @@ func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Clien
 		client = clientHijack(client)
 	}
 
-	pdCli := pd.Client(region.NewCodeCPDClient(pdClient))
+	pdCli := pd.Client(locate.NewCodeCPDClient(pdClient))
 	if pdClientHijack != nil {
 		pdCli = pdClientHijack(pdCli)
 	}
