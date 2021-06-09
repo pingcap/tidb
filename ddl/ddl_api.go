@@ -3487,7 +3487,7 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 // There are two cases when types incompatible:
 // 1. returned canReorg == true: types can be changed by reorg
 // 2. returned canReorg == false: type change not supported yet
-func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (canReorg bool, errMsg string, err error) {
+func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (canReorg bool, err error) {
 	// Deal with the same type.
 	if origin.Tp == to.Tp {
 		if origin.Tp == mysql.TypeEnum || origin.Tp == mysql.TypeSet {
@@ -3497,13 +3497,13 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (ca
 			}
 			if len(to.Elems) < len(origin.Elems) {
 				msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", typeVar, len(origin.Elems))
-				return true, msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+				return true, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 			}
 			for index, originElem := range origin.Elems {
 				toElem := to.Elems[index]
 				if originElem != toElem {
 					msg := fmt.Sprintf("cannot modify %s column value %s to %s", typeVar, originElem, toElem)
-					return true, msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+					return true, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 				}
 			}
 		}
@@ -3514,21 +3514,21 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (ca
 			// remains the same.
 			if to.Flen != origin.Flen || to.Decimal != origin.Decimal || mysql.HasUnsignedFlag(to.Flag) != mysql.HasUnsignedFlag(origin.Flag) {
 				msg := fmt.Sprintf("decimal change from decimal(%d, %d) to decimal(%d, %d)", origin.Flen, origin.Decimal, to.Flen, to.Decimal)
-				return true, msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+				return true, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 			}
 		}
 
 		needReorg, reason := needReorgToChange(origin, to)
 		if !needReorg {
-			return false, "", nil
+			return false, nil
 		}
-		return true, reason, errUnsupportedModifyColumn.GenWithStackByArgs(reason)
+		return true, errUnsupportedModifyColumn.GenWithStackByArgs(reason)
 	}
 
 	// Deal with the different type.
 	if !checkTypeChangeSupported(origin, to) {
 		unsupportedMsg := fmt.Sprintf("change from original type %v to %v is currently unsupported yet", origin.CompactStr(), to.CompactStr())
-		return false, unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		return false, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 	}
 
 	// Check if different type can directly convert and no need to reorg.
@@ -3537,13 +3537,13 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (ca
 	if stringToString || integerToInteger {
 		needReorg, reason := needReorgToChange(origin, to)
 		if !needReorg {
-			return false, "", nil
+			return false, nil
 		}
-		return true, reason, errUnsupportedModifyColumn.GenWithStackByArgs(reason)
+		return true, errUnsupportedModifyColumn.GenWithStackByArgs(reason)
 	}
 
 	notCompatibleMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
-	return true, notCompatibleMsg, errUnsupportedModifyColumn.GenWithStackByArgs(notCompatibleMsg)
+	return true, errUnsupportedModifyColumn.GenWithStackByArgs(notCompatibleMsg)
 }
 
 func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needReorg bool, reasonMsg string) {
@@ -3605,20 +3605,15 @@ func checkTypeChangeSupported(origin *types.FieldType, to *types.FieldType) bool
 
 // checkModifyTypes checks if the 'origin' type can be modified to 'to' type no matter directly change
 // or change by reorg. It returns error if the two types are incompatible and correlated change are not
-// supported. However, even the two types can be change, if the flag "tidb_enable_change_column_type" not
-// set, or the "origin" type contains primary key, error will be returned.
+// supported. However, even the two types can be change, if the "origin" type contains primary key, error will be returned.
 func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
-	canReorg, changeColumnErrMsg, err := CheckModifyTypeCompatible(origin, to)
+	canReorg, err := CheckModifyTypeCompatible(origin, to)
 	if err != nil {
 		if !canReorg {
 			return errors.Trace(err)
 		}
-		enableChangeColumnType := ctx.GetSessionVars().EnableChangeColumnType
-		if !enableChangeColumnType {
-			msg := fmt.Sprintf("%s, and tidb_enable_change_column_type is false", changeColumnErrMsg)
-			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-		} else if mysql.HasPriKeyFlag(origin.Flag) {
-			msg := "tidb_enable_change_column_type is true and this column has primary key flag"
+		if mysql.HasPriKeyFlag(origin.Flag) {
+			msg := "this column has primary key flag"
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 	}
@@ -3896,12 +3891,12 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		}
 		return nil, errors.Trace(err)
 	}
-	if ctx.GetSessionVars().EnableChangeColumnType && needChangeColumnData(col.ColumnInfo, newCol.ColumnInfo) {
+	if needChangeColumnData(col.ColumnInfo, newCol.ColumnInfo) {
 		if err = isGeneratedRelatedColumn(t.Meta(), newCol.ColumnInfo, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
 		if t.Meta().Partition != nil {
-			return nil, errUnsupportedModifyColumn.GenWithStackByArgs("tidb_enable_change_column_type is true, table is partition table")
+			return nil, errUnsupportedModifyColumn.GenWithStackByArgs("table is partition table")
 		}
 	}
 
