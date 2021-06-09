@@ -98,9 +98,6 @@ type stmtSummaryByDigest struct {
 	normalizedSQL string
 	tableNames    string
 	isInternal    bool
-
-	// Whether is used for stmtSummaryByDigestEvictedElement.toDatum()
-	isOtherSummary bool
 }
 
 // stmtSummaryByDigestElement is the summary for each type of statements in current interval.
@@ -887,29 +884,14 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		break
 	}
 
-	var cols []types.Datum
 	// Actually, there's a small chance that endTime is out of date, but it's hard to keep it up to date all the time.
-	timeAndType := types.MakeDatums(
+	return types.MakeDatums(
 		types.NewTime(types.FromGoTime(time.Unix(ssElement.beginTime, 0)), mysql.TypeTimestamp, 0),
 		types.NewTime(types.FromGoTime(time.Unix(ssElement.endTime, 0)), mysql.TypeTimestamp, 0),
 		ssbd.stmtType,
-	)
-	cols = append(cols, timeAndType...)
-
-	var schemaNameAndDigest []types.Datum
-	if ssbd.isOtherSummary {
-		// if is used for otherSummary, schemaName and digest should be set to nil/NULL.
 		// This behaviour follow MySQL. see more in https://dev.mysql.com/doc/refman/5.7/en/performance-schema-statement-digests.html
-		schemaNameAndDigest = types.MakeDatums(nil, nil)
-	} else {
-		schemaNameAndDigest = types.MakeDatums(
-			ssbd.schemaName,
-			ssbd.digest,
-		)
-	}
-	cols = append(cols, schemaNameAndDigest...)
-
-	rest := types.MakeDatums(
+		convertEmptyToNil(ssbd.schemaName),
+		convertEmptyToNil(ssbd.digest),
 		ssbd.normalizedSQL,
 		convertEmptyToNil(ssbd.tableNames),
 		convertEmptyToNil(strings.Join(ssElement.indexNames, ",")),
@@ -994,8 +976,6 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		ssbd.planDigest,
 		plan,
 	)
-	cols = append(cols, rest...)
-	return cols
 }
 
 // Truncate SQL to maxSQLLength.

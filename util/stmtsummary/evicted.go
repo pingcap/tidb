@@ -249,10 +249,7 @@ func (ssbde *stmtSummaryByDigestEvicted) collectHistorySummaries(historySize int
 }
 
 func (seElement *stmtSummaryByDigestEvictedElement) toDatum() []types.Datum {
-	induceSsbd := &stmtSummaryByDigest{
-		isOtherSummary: true,
-	}
-	return seElement.otherSummary.toDatum(induceSsbd)
+	return seElement.otherSummary.toDatum(new(stmtSummaryByDigest))
 }
 
 // addInfo adds information in addWith into addTo.
