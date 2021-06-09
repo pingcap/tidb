@@ -873,12 +873,12 @@ func (s *testRegionRequestToThreeStoresSuite) TestReplicaSelector(c *C) {
 	// Create a fake region and change its leader to the last peer.
 	regionStore = regionStore.clone()
 	regionStore.workTiKVIdx = AccessIndex(len(regionStore.stores) - 1)
-	sidx, _ := regionStore.accessStore(TiKVOnly, regionStore.workTiKVIdx)
+	sidx, _ := regionStore.accessStore(tiKVOnly, regionStore.workTiKVIdx)
 	regionStore.stores[sidx].epoch++
 	regionStore.storeEpochs[sidx]++
 	// Add a TiFlash peer to the region.
 	peer := &metapb.Peer{Id: s.cluster.AllocID(), StoreId: s.cluster.AllocID()}
-	regionStore.accessIndex[TiFlashOnly] = append(regionStore.accessIndex[TiFlashOnly], len(regionStore.stores))
+	regionStore.accessIndex[tiFlashOnly] = append(regionStore.accessIndex[tiFlashOnly], len(regionStore.stores))
 	regionStore.stores = append(regionStore.stores, &Store{storeID: peer.StoreId, storeType: tikvrpc.TiFlash})
 	regionStore.storeEpochs = append(regionStore.storeEpochs, 0)
 
@@ -899,7 +899,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestReplicaSelector(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(replicaSelector.region, Equals, region)
 	// Should only contains TiKV stores.
-	c.Assert(len(replicaSelector.replicas), Equals, regionStore.accessStoreNum(TiKVOnly))
+	c.Assert(len(replicaSelector.replicas), Equals, regionStore.accessStoreNum(tiKVOnly))
 	c.Assert(len(replicaSelector.replicas), Equals, len(regionStore.stores)-1)
 	c.Assert(replicaSelector.nextReplicaIdx == 0, IsTrue)
 	c.Assert(replicaSelector.isExhausted(), IsFalse)
@@ -926,7 +926,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestReplicaSelector(c *C) {
 		c.Assert(rpcCtx.Store, Equals, replicaSelector.replicas[replicaSelector.nextReplicaIdx-1].store)
 		c.Assert(rpcCtx.Peer, Equals, replicaSelector.replicas[replicaSelector.nextReplicaIdx-1].peer)
 		c.Assert(rpcCtx.Addr, Equals, replicaSelector.replicas[replicaSelector.nextReplicaIdx-1].store.addr)
-		c.Assert(rpcCtx.AccessMode, Equals, TiKVOnly)
+		c.Assert(rpcCtx.AccessMode, Equals, tiKVOnly)
 	}
 
 	// Verify the correctness of next()
