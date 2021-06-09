@@ -340,7 +340,7 @@ func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum(user *auth.UserIdentity, isS
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
 	beginTime := ssMap.beginTimeForCurInterval
-	otherDatum := ssMap.other.toCurrentDatum()
+	other := ssMap.other
 	ssMap.Unlock()
 
 	rows := make([][]types.Datum, 0, len(values))
@@ -350,7 +350,7 @@ func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum(user *auth.UserIdentity, isS
 			rows = append(rows, record)
 		}
 	}
-	if otherDatum != nil {
+	if otherDatum := other.toCurrentDatum(); otherDatum != nil {
 		rows = append(rows, otherDatum)
 	}
 	return rows
@@ -362,7 +362,7 @@ func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum(user *auth.UserIdentity, isS
 
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
-	otherDatum := ssMap.other.toHistoryDatum(historySize)
+	other := ssMap.other
 	ssMap.Unlock()
 
 	rows := make([][]types.Datum, 0, len(values)*historySize)
@@ -370,6 +370,8 @@ func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum(user *auth.UserIdentity, isS
 		records := value.(*stmtSummaryByDigest).toHistoryDatum(historySize, user, isSuper)
 		rows = append(rows, records...)
 	}
+
+	otherDatum := other.toHistoryDatum(historySize)
 	rows = append(rows, otherDatum...)
 	return rows
 }
