@@ -647,10 +647,6 @@ const (
 	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
 	DefTiDBMaxDeltaSchemaCount         = 1024
-<<<<<<< HEAD
-	DefTiDBChangeColumnType            = false
-=======
->>>>>>> ac06d7869... *: enable column-type-change totally (#25263)
 	DefTiDBChangeMultiSchema           = false
 	DefTiDBPointGetCache               = false
 	DefTiDBEnableAlterPlacement        = false

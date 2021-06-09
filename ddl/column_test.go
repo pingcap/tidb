@@ -1159,10 +1159,6 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		WithLease(testLease),
 	)
 	ctx := testNewContext(d)
-<<<<<<< HEAD
-=======
-
->>>>>>> ac06d7869... *: enable column-type-change totally (#25263)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)

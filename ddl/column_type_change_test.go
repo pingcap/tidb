@@ -1590,42 +1590,6 @@ func (s *testColumnTypeChangeSuite) TestRowFormat(c *C) {
 	tk.MustExec("drop table if exists t")
 }
 
-<<<<<<< HEAD
-// Close issue #17530
-func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFlenErrorMsg(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int4)")
-	_, err := tk.Exec("alter table t MODIFY COLUMN a tinyint(11)")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: length 4 is less than origin 11, and tidb_enable_change_column_type is false")
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a decimal(20))")
-	tk.MustExec("insert into t values (12345678901234567890)")
-	_, err = tk.Exec("alter table t modify column a bigint")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type bigint(20) not match origin decimal(20,0), and tidb_enable_change_column_type is false")
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table a (a bigint(2))")
-	tk.MustExec("insert into a values(123456),(789123)")
-	_, err = tk.Exec("alter table a modify column a tinyint")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: length 4 is less than origin 20, and tidb_enable_change_column_type is false")
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("CREATE TABLE t ( id int not null primary key auto_increment, token varchar(512) NOT NULL DEFAULT '', index (token))")
-	tk.MustExec("INSERT INTO t VALUES (NULL, 'aa')")
-	_, err = tk.Exec("ALTER TABLE t CHANGE COLUMN token token varchar(255) DEFAULT '' NOT NULL")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: length 255 is less than origin 512, and tidb_enable_change_column_type is false")
-}
-
-=======
->>>>>>> ac06d7869... *: enable column-type-change totally (#25263)
 // Close issue #22395
 // Background:
 // Since the changing column is implemented as adding a new column and substitute the old one when it finished.
