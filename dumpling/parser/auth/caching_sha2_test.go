@@ -64,4 +64,8 @@ func (s *testAuthSuite) TestNewSha2Password(c *C) {
 	r, err := CheckShaPassword([]byte(pwhash), pwd)
 	c.Assert(err, IsNil)
 	c.Assert(r, IsTrue)
+
+	for r := range pwhash {
+		c.Assert(r < 128, IsTrue)
+	}
 }
