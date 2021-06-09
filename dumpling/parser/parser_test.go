@@ -5971,3 +5971,61 @@ func (s *testParserSuite) TestPartitionKeyAlgorithm(c *C) {
 
 	s.RunTest(c, table)
 }
+
+// For CTE bindings.
+func (s *testParserSuite) TestCTEBindings(c *C) {
+	table := []testCase{
+		{"WITH `cte` AS (SELECT * from t) SELECT `col1`,`col2` FROM `cte`", true, "WITH `cte` AS (SELECT * FROM `test`.`t`) SELECT `col1`,`col2` FROM `cte`"},
+		{"WITH `cte` (col1, col2) AS (SELECT * from t UNION ALL SELECT 3,4) SELECT col1, col2 FROM cte;", true, "WITH `cte` (`col1`, `col2`) AS (SELECT * FROM `test`.`t` UNION ALL SELECT 3,4) SELECT `col1`,`col2` FROM `cte`"},
+		{"WITH `cte` AS (SELECT * from t), cte2 as (select * from cte) SELECT `col1`,`col2` FROM `cte`", true, "WITH `cte` AS (SELECT * FROM `test`.`t`), `cte2` AS (SELECT * FROM `cte`) SELECT `col1`,`col2` FROM `cte`"},
+		{"WITH RECURSIVE cte (n) AS (  SELECT * from t  UNION ALL  SELECT n + 1 FROM cte WHERE n < 5)SELECT * FROM cte;", true, "WITH RECURSIVE `cte` (`n`) AS (SELECT * FROM `test`.`t` UNION ALL SELECT `n` + 1 FROM `cte` WHERE `n` < 5) SELECT * FROM `cte`"},
+		{"with cte(a) as (select * from t) update t, cte set t.a=1  where t.a=cte.a;", true, "WITH `cte` (`a`) AS (SELECT * FROM `test`.`t`) UPDATE (`test`.`t`) JOIN `cte` SET `t`.`a`=1 WHERE `t`.`a` = `cte`.`a`"},
+		{"with cte(a) as (select * from t) delete t from t, cte where t.a=cte.a;", true, "WITH `cte` (`a`) AS (SELECT * FROM `test`.`t`) DELETE `test`.`t` FROM (`test`.`t`) JOIN `cte` WHERE `t`.`a` = `cte`.`a`"},
+		{"WITH cte1 AS (SELECT * from t) SELECT * FROM (WITH cte2 AS (SELECT * from cte1) SELECT * FROM cte2 JOIN cte1) AS dt;", true, "WITH `cte1` AS (SELECT * FROM `test`.`t`) SELECT * FROM (WITH `cte2` AS (SELECT * FROM `cte1`) SELECT * FROM `cte2` JOIN `cte1`) AS `dt`"},
+		{"WITH cte AS (SELECT * from t) SELECT /*+ MAX_EXECUTION_TIME(1000) */ * FROM cte;", true, "WITH `cte` AS (SELECT * FROM `test`.`t`) SELECT /*+ MAX_EXECUTION_TIME(1000)*/ * FROM `cte`"},
+		{"with cte as (table t) table cte;", true, "WITH `cte` AS (TABLE `test`.`t`) TABLE `cte`"},
+		{"with cte as (select * from t) select 1 union with cte as (select * from t) select * from cte;", false, ""},
+		{"with cte as (select * from t) (select * from t);", true, "WITH `cte` AS (SELECT * FROM `test`.`t`) (SELECT * FROM `test`.`t`)"},
+		{"with cte as (select 1) (select 1 union select * from t)", true, "WITH `cte` AS (SELECT 1) (SELECT 1 UNION SELECT * FROM `test`.`t`)"},
+		{"select * from (with cte as (select * from t) select 1 union select * from t) qn", true, "SELECT * FROM (WITH `cte` AS (SELECT * FROM `test`.`t`) SELECT 1 UNION SELECT * FROM `test`.`t`) AS `qn`"},
+		{"select * from t where 1 > (with cte as (select * from t) select * from cte)", true, "SELECT * FROM `test`.`t` WHERE 1 > (WITH `cte` AS (SELECT * FROM `test`.`t`) SELECT * FROM `cte`)"},
+		{"( with cte(n) as ( select * from t )  select n+1 from cte  union select n+2 from cte) union select 1", true, "(WITH `cte` (`n`) AS (SELECT * FROM `test`.`t`) SELECT `n` + 1 FROM `cte` UNION SELECT `n` + 2 FROM `cte`) UNION SELECT 1"},
+		{"( with cte(n) as ( select * from t )  select n+1 from cte) union select * from t", true, "(WITH `cte` (`n`) AS (SELECT * FROM `test`.`t`) SELECT `n` + 1 FROM `cte`) UNION SELECT * FROM `test`.`t`"},
+		{"with cte as (select * from t union select * from cte) select * from cte", true, "WITH `cte` AS (SELECT * FROM `test`.`t` UNION SELECT * FROM `test`.`cte`) SELECT * FROM `cte`"},
+	}
+
+	parser := parser.New()
+	parser.EnableWindowFunc(s.enableWindowFunc)
+	for _, t := range table {
+		_, _, err := parser.Parse(t.src, "", "")
+		comment := Commentf("source %v", t.src)
+		if !t.ok {
+			c.Assert(err, NotNil, comment)
+			continue
+		}
+		c.Assert(err, IsNil, comment)
+		// restore correctness test
+		if t.ok {
+			var sb strings.Builder
+			comment := Commentf("source %v", t.src)
+			stmts, _, err := parser.Parse(t.src, "", "")
+			c.Assert(err, IsNil, comment)
+			restoreSQLs := ""
+			for _, stmt := range stmts {
+				sb.Reset()
+				ctx := NewRestoreCtx(RestoreStringSingleQuotes|RestoreSpacesAroundBinaryOperation|RestoreStringWithoutCharset|RestoreNameBackQuotes, &sb)
+				ctx.DefaultDB = "test"
+				err = stmt.Restore(ctx)
+				c.Assert(err, IsNil, comment)
+				restoreSQL := sb.String()
+				comment = Commentf("source %v; restore %v", t.src, restoreSQL)
+				if restoreSQLs != "" {
+					restoreSQLs += "; "
+				}
+				restoreSQLs += restoreSQL
+			}
+			comment = Commentf("restore %v; expect %v", restoreSQLs, t.restore)
+			c.Assert(restoreSQLs, Equals, t.restore, comment)
+		}
+	}
+}
