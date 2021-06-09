@@ -74,24 +74,23 @@ func BenchmarkToFloat64(b *testing.B) {
 	b.StopTimer()
 	tests := []struct {
 		input    string
-		scale    int
 		inputDec MyDecimal
 	}{
-		{input: "123456789.987654321", scale: 1},
-		{input: "15.1", scale: 0},
-		{input: "15.5", scale: 0},
-		{input: "15.9", scale: 0},
-		{input: "-15.1", scale: 0},
-		{input: "-15.5", scale: 0},
-		{input: "-15.9", scale: 0},
-		{input: "15.1", scale: 1},
-		{input: "-15.1", scale: 1},
-		{input: "15.17", scale: 1},
-		{input: "15.4", scale: -1},
-		{input: "-15.4", scale: -1},
-		{input: "5.4", scale: -1},
-		{input: ".999", scale: 0},
-		{input: "999999999", scale: -9},
+		{input: "123456789.987654321"},
+		{input: "15.1"},
+		{input: "15.5"},
+		{input: "15.9"},
+		{input: "-15.1"},
+		{input: "-15.5"},
+		{input: "-15.9"},
+		{input: "15.1"},
+		{input: "-15.1"},
+		{input: "15.17"},
+		{input: "15.4"},
+		{input: "-15.4"},
+		{input: "5.4"},
+		{input: ".999"},
+		{input: "999999999"},
 	}
 
 	for i := 0; i < len(tests); i++ {

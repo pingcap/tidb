@@ -143,6 +143,8 @@ func (s *testMyDecimalSuite) TestToFloat(c *C) {
 		{"-123.45", -123.45},
 		{"0.00012345000098765", 0.00012345000098765},
 		{"1234500009876.5", 1234500009876.5},
+		{"1e39", 1e39},
+		{"1e-39", 1e-39},
 	}
 	for _, ca := range tests {
 		var dec MyDecimal
