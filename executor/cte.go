@@ -328,7 +328,7 @@ func (e *CTEExec) nextChunkLimit(req *chunk.Chunk) error {
 		numRows := uint64(res.NumRows())
 		if e.cursor+numRows > e.limitEnd {
 			numRows = e.limitEnd - e.cursor
-			req.Append(res.CopyConstructSel(), 0, int(numRows)+1)
+			req.Append(res.CopyConstructSel(), 0, int(numRows))
 		} else {
 			req.SwapColumns(res.CopyConstructSel())
 		}
