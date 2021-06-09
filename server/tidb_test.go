@@ -51,9 +51,9 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/topsql/reporter"
-	mock2 "github.com/pingcap/tidb/util/topsql/reporter/mock"
+	mockTopSQLReporter "github.com/pingcap/tidb/util/topsql/reporter/mock"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
-	"github.com/pingcap/tidb/util/topsql/tracecpu/mock"
+	mockTopSQLTraceCPU "github.com/pingcap/tidb/util/topsql/tracecpu/mock"
 )
 
 type tidbTestSuite struct {
@@ -1185,7 +1185,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
-	collector := mock.NewTopSQLCollector()
+	collector := mockTopSQLTraceCPU.NewTopSQLCollector()
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{collector})
 
 	dbt := &DBTest{c, db}
@@ -1375,7 +1375,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
-	agentServer, err := mock2.StartMockAgentServer()
+	agentServer, err := mockTopSQLReporter.StartMockAgentServer()
 	c.Assert(err, IsNil)
 	defer func() {
 		agentServer.Stop()
