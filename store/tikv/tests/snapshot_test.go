@@ -23,7 +23,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -279,12 +279,12 @@ func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
 	snapshot.RecordBackoffInfo(bo)
 	expect := "Get:{num_rpc:4, total_time:2s},txnLockFast_backoff:{num:2, total_time:60ms}"
 	c.Assert(snapshot.FormatStats(), Equals, expect)
-	detail := &pb.ExecDetailsV2{
-		TimeDetail: &pb.TimeDetail{
+	detail := &kvrpcpb.ExecDetailsV2{
+		TimeDetail: &kvrpcpb.TimeDetail{
 			WaitWallTimeMs:    100,
 			ProcessWallTimeMs: 100,
 		},
-		ScanDetailV2: &pb.ScanDetailV2{
+		ScanDetailV2: &kvrpcpb.ScanDetailV2{
 			ProcessedVersions:         10,
 			TotalVersions:             15,
 			RocksdbBlockReadCount:     20,
