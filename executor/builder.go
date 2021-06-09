@@ -4152,7 +4152,7 @@ func fullRangePartition(idxArr []int) bool {
 
 func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *TableSampleExecutor {
 	if v.TableInfo.Meta().TempTableType != model.TempTableNone {
-		b.err = errors.New("TABLESAMPLE clause can only be applied to temporary tables")
+		b.err = errors.New("TABLESAMPLE clause can not be applied to temporary tables")
 		return nil
 	}
 

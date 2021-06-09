@@ -8543,7 +8543,7 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 	// sleep 1us to make test stale
 	time.Sleep(time.Microsecond)
 
-	tk.MustGetErrMsg("select * from tmp1 tablesample regions()", "TABLESAMPLE clause can only be applied to temporary tables")
+	tk.MustGetErrMsg("select * from tmp1 tablesample regions()", "TABLESAMPLE clause can not be applied to temporary tables")
 
 	queries := []struct {
 		sql string
