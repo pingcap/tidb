@@ -374,9 +374,6 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
-	// TiDBEnableChangeColumnType is used to control whether to enable the change column type.
-	TiDBEnableChangeColumnType = "tidb_enable_change_column_type"
-
 	// TiDBEnableChangeMultiSchema is used to control whether to enable the change multi schema.
 	TiDBEnableChangeMultiSchema = "tidb_enable_change_multi_schema"
 
@@ -647,7 +644,6 @@ const (
 	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
 	DefTiDBMaxDeltaSchemaCount         = 1024
-	DefTiDBChangeColumnType            = true
 	DefTiDBChangeMultiSchema           = false
 	DefTiDBPointGetCache               = false
 	DefTiDBEnableAlterPlacement        = false
