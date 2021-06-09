@@ -1076,8 +1076,7 @@ func (s *testSuite8) TestAdminCheckTable(c *C) {
 	tk.MustExec(`create table t1 (a decimal(2,1), index(a))`)
 	tk.MustExec(`insert into t1 set a='1.9'`)
 	err = tk.ExecToErr(`alter table t1 modify column a decimal(3,2);`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: decimal change from decimal(2, 1) to decimal(3, 2), and tidb_enable_change_column_type is false")
+	c.Assert(err, IsNil)
 	tk.MustExec(`delete from t1;`)
 	tk.MustExec(`admin check table t1;`)
 }

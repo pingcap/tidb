@@ -559,6 +559,7 @@ func (s *testSuite1) TestIssue15752(c *C) {
 }
 
 func (s *testSuite1) TestAnalyzeIndex(c *C) {
+	c.Skip("unstable, skip it and fix it before 20210622")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -582,6 +583,7 @@ func (s *testSuite1) TestAnalyzeIndex(c *C) {
 }
 
 func (s *testSuite1) TestAnalyzeIncremental(c *C) {
+	c.Skip("unstable, skip it and fix it before 20210622")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_analyze_version = 1")

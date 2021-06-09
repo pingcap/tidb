@@ -1478,7 +1478,7 @@ func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldTyp
 		return Datum{}, errors.Trace(ErrDataTooLong.GenWithStack("Data Too Long, field len %d", target.Flen))
 	}
 	if target.Flen < 64 && uintValue >= 1<<(uint64(target.Flen)) {
-		uintValue &= (1 << (uint64(target.Flen))) - 1
+		uintValue = (1 << (uint64(target.Flen))) - 1
 		err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d", target.Flen)
 	}
 	byteSize := (target.Flen + 7) >> 3

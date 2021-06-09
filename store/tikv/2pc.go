@@ -508,9 +508,46 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 	return c.doActionOnGroupMutations(bo, action, groups)
 }
 
+type groupedMutations struct {
+	region    RegionVerID
+	mutations CommitterMutations
+}
+
+// groupSortedMutationsByRegion separates keys into groups by their belonging Regions.
+func groupSortedMutationsByRegion(c *RegionCache, bo *retry.Backoffer, m CommitterMutations) ([]groupedMutations, error) {
+	var (
+		groups  []groupedMutations
+		lastLoc *KeyLocation
+	)
+	lastUpperBound := 0
+	for i := 0; i < m.Len(); i++ {
+		if lastLoc == nil || !lastLoc.Contains(m.GetKey(i)) {
+			if lastLoc != nil {
+				groups = append(groups, groupedMutations{
+					region:    lastLoc.Region,
+					mutations: m.Slice(lastUpperBound, i),
+				})
+				lastUpperBound = i
+			}
+			var err error
+			lastLoc, err = c.LocateKey(bo, m.GetKey(i))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+	}
+	if lastLoc != nil {
+		groups = append(groups, groupedMutations{
+			region:    lastLoc.Region,
+			mutations: m.Slice(lastUpperBound, m.Len()),
+		})
+	}
+	return groups, nil
+}
+
 // groupMutations groups mutations by region, then checks for any large groups and in that case pre-splits the region.
 func (c *twoPhaseCommitter) groupMutations(bo *Backoffer, mutations CommitterMutations) ([]groupedMutations, error) {
-	groups, err := c.store.regionCache.groupSortedMutationsByRegion(bo, mutations)
+	groups, err := groupSortedMutationsByRegion(c.store.regionCache, bo, mutations)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -531,7 +568,7 @@ func (c *twoPhaseCommitter) groupMutations(bo *Backoffer, mutations CommitterMut
 	}
 	// Reload region cache again.
 	if didPreSplit {
-		groups, err = c.store.regionCache.groupSortedMutationsByRegion(bo, mutations)
+		groups, err = groupSortedMutationsByRegion(c.store.regionCache, bo, mutations)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1079,11 +1116,13 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 
 	commitDetail := c.getDetail()
 	commitDetail.PrewriteTime = time.Since(start)
-	// TODO(youjiali1995): Record the backoff time of the last finished batch. It doesn't make sense to aggregate all batches'.
 	if bo.GetTotalSleep() > 0 {
-		atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(bo.GetTotalSleep())*int64(time.Millisecond))
+		boSleep := int64(bo.GetTotalSleep()) * int64(time.Millisecond)
 		commitDetail.Mu.Lock()
-		commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, bo.GetTypes()...)
+		if boSleep > commitDetail.Mu.CommitBackoffTime {
+			commitDetail.Mu.CommitBackoffTime = boSleep
+			commitDetail.Mu.BackoffTypes = bo.GetTypes()
+		}
 		commitDetail.Mu.Unlock()
 	}
 
@@ -1242,8 +1281,8 @@ func (c *twoPhaseCommitter) commitTxn(ctx context.Context, commitDetail *util.Co
 	err := c.commitMutations(commitBo, c.mutations)
 	commitDetail.CommitTime = time.Since(start)
 	if commitBo.GetTotalSleep() > 0 {
-		atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(commitBo.GetTotalSleep())*int64(time.Millisecond))
 		commitDetail.Mu.Lock()
+		commitDetail.Mu.CommitBackoffTime += int64(commitBo.GetTotalSleep()) * int64(time.Millisecond)
 		commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, commitBo.GetTypes()...)
 		commitDetail.Mu.Unlock()
 	}
@@ -1636,17 +1675,20 @@ func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, 
 					singleBatchBackoffer, singleBatchCancel = batchExe.backoffer.Fork()
 					defer singleBatchCancel()
 				}
-				beforeSleep := singleBatchBackoffer.GetTotalSleep()
 				ch <- batchExe.action.handleSingleBatch(batchExe.committer, singleBatchBackoffer, batch)
 				commitDetail := batchExe.committer.getDetail()
-				if commitDetail != nil { // lock operations of pessimistic-txn will let commitDetail be nil
-					if delta := singleBatchBackoffer.GetTotalSleep() - beforeSleep; delta > 0 {
-						atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(singleBatchBackoffer.GetTotalSleep()-beforeSleep)*int64(time.Millisecond))
-						commitDetail.Mu.Lock()
-						commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, singleBatchBackoffer.GetTypes()...)
-						commitDetail.Mu.Unlock()
+				// For prewrite, we record the max backoff time
+				if _, ok := batchExe.action.(actionPrewrite); ok {
+					commitDetail.Mu.Lock()
+					boSleep := int64(singleBatchBackoffer.GetTotalSleep()) * int64(time.Millisecond)
+					if boSleep > commitDetail.Mu.CommitBackoffTime {
+						commitDetail.Mu.CommitBackoffTime = boSleep
+						commitDetail.Mu.BackoffTypes = singleBatchBackoffer.GetTypes()
 					}
+					commitDetail.Mu.Unlock()
 				}
+				// Backoff time in the 2nd phase of a non-async-commit txn is added
+				// in the commitTxn method, so we don't add it here.
 			}()
 		} else {
 			logutil.Logger(batchExe.backoffer.GetCtx()).Info("break startWorker",
