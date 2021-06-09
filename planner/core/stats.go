@@ -175,7 +175,7 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 	ndvs := make([]property.GroupNDV, 0, len(colGroups))
 	for idxID, idx := range tbl.Indices {
 		colsLen := len(tbl.Idx2ColumnIDs[idxID])
-		// tbl.Idx2ColumnIDs may only contain the prefix of index columns.
+		// tbl.Idx2ColumnIDs may only contain the prefix of index columns, or contain the pk column if it's not a unique index.
 		if colsLen != len(idx.Info.Columns) {
 			continue
 		}
