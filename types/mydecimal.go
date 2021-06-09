@@ -1108,8 +1108,8 @@ func (d *MyDecimal) ToFloat64() (f float64, err error) {
 		wordIdx++
 		f += float64(x) * pow10off81[-digitsPerWord*(wordIdx-fracStart)+81]
 	}
-	unit := math.Pow10(-int(d.resultFrac))
-	f = math.Round(f/unit) * unit
+	unit := math.Pow10(int(d.resultFrac))
+	f = math.Round(f*unit) / unit
 	if d.negative {
 		f = -f
 	}
