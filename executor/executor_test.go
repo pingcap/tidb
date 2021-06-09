@@ -202,13 +202,6 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	}
 	d, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	// Set the variable to default 0 as it was before in case of modifying the test.
-	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_change_column_type=0")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "set @@tidb_enable_change_column_type=0")
-	c.Assert(err, IsNil)
 	d.SetStatsUpdating(true)
 	s.domain = d
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -286,16 +279,6 @@ func (s *testSuiteP1) TestBind(c *C) {
 	tk.MustExec("create session binding for select * from testbind using select * from testbind use index for join(index_t)")
 	c.Assert(len(tk.MustQuery("show session bindings").Rows()), Equals, 1)
 	tk.MustExec("drop session binding for select * from testbind")
-}
-
-func (s *testSuiteP1) TestChange(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("alter table t change a b int")
-	tk.MustExec("alter table t change b c bigint")
-	c.Assert(tk.ExecToErr("alter table t change c d varchar(100)"), NotNil)
 }
 
 func (s *testSuiteP1) TestChangePumpAndDrainer(c *C) {
