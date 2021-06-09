@@ -94,13 +94,6 @@ func (s *testIntegrationSuiteBase) SetUpSuite(c *C) {
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	s.ctx = mock.NewContext()
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	// Set the variable to default 0 as it was before in case of modifying the test.
-	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_change_column_type=0")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "set @@tidb_enable_change_column_type=0")
-	c.Assert(err, IsNil)
 }
 
 func (s *testIntegrationSuiteBase) TearDownSuite(c *C) {
@@ -8084,7 +8077,7 @@ func (s *testIntegrationSerialSuite) TestIssue19804(c *C) {
 	tk.MustExec(`create table t(a set('a', 'b', 'c'));`)
 	tk.MustExec(`alter table t change a a set('a', 'b', 'c', 'd');`)
 	tk.MustExec(`insert into t values('d');`)
-	tk.MustGetErrMsg(`alter table t change a a set('a', 'b', 'c', 'e', 'f');`, "[ddl:8200]Unsupported modify column: cannot modify set column value d to e, and tidb_enable_change_column_type is false")
+	tk.MustGetErrMsg(`alter table t change a a set('a', 'b', 'c', 'e', 'f');`, "[types:1265]Data truncated for column 'a', value is 'KindMysqlSet d'")
 }
 
 func (s *testIntegrationSerialSuite) TestIssue20209(c *C) {

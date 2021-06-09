@@ -231,6 +231,16 @@
     ]
   },
   {
+    "name": "TestMppUnionAll",
+    "cases": [
+      "explain format = 'brief' select count(*) from (select a , b from t union all select a , b from t1) tt",
+      "explain format = 'brief' select count(*) from (select a , b from t union all select a , b from t1 union all select a, b from t where false) tt",
+      "explain format = 'brief' select count(*) from (select a , b from t union all select a , c from t1) tt",
+      "explain format = 'brief' select count(*) from (select a , b from t union all select a , c from t1 where false) tt",
+      "explain format = 'brief' select count(*) from (select a , b from t where false union all select a , c from t1 where false) tt"
+    ]
+  },
+  {
     "name": "TestMppJoinDecimal",
     "cases": [
       "desc format = 'brief' select t1.c1, t1.c2, t2.c1, t2.c2, t2.c3 from t t1 join t t2 on t1.c1 + 1 = t2.c2 - 10 and t1.c1 * 3 = t2.c3 / 2",

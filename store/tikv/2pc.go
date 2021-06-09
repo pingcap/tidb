@@ -26,7 +26,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/store/tikv/client"
 	"github.com/pingcap/tidb/store/tikv/config"
@@ -65,7 +65,7 @@ type twoPhaseCommitter struct {
 	mutations           *memBufferMutations
 	lockTTL             uint64
 	commitTS            uint64
-	priority            pb.CommandPri
+	priority            kvrpcpb.CommandPri
 	sessionID           uint64 // sessionID is used for log.
 	cleanWg             sync.WaitGroup
 	detail              unsafe.Pointer
@@ -148,8 +148,8 @@ func (m *memBufferMutations) GetValue(i int) []byte {
 	return v
 }
 
-func (m *memBufferMutations) GetOp(i int) pb.Op {
-	return pb.Op(m.handles[i].UserData >> 1)
+func (m *memBufferMutations) GetOp(i int) kvrpcpb.Op {
+	return kvrpcpb.Op(m.handles[i].UserData >> 1)
 }
 
 func (m *memBufferMutations) IsPessimisticLock(i int) bool {
@@ -163,7 +163,7 @@ func (m *memBufferMutations) Slice(from, to int) CommitterMutations {
 	}
 }
 
-func (m *memBufferMutations) Push(op pb.Op, isPessimisticLock bool, handle unionstore.MemKeyHandle) {
+func (m *memBufferMutations) Push(op kvrpcpb.Op, isPessimisticLock bool, handle unionstore.MemKeyHandle) {
 	aux := uint16(op) << 1
 	if isPessimisticLock {
 		aux |= 1
@@ -177,7 +177,7 @@ type CommitterMutations interface {
 	Len() int
 	GetKey(i int) []byte
 	GetKeys() [][]byte
-	GetOp(i int) pb.Op
+	GetOp(i int) kvrpcpb.Op
 	GetValue(i int) []byte
 	IsPessimisticLock(i int) bool
 	Slice(from, to int) CommitterMutations
@@ -185,7 +185,7 @@ type CommitterMutations interface {
 
 // PlainMutations contains transaction operations.
 type PlainMutations struct {
-	ops               []pb.Op
+	ops               []kvrpcpb.Op
 	keys              [][]byte
 	values            [][]byte
 	isPessimisticLock []bool
@@ -194,7 +194,7 @@ type PlainMutations struct {
 // NewPlainMutations creates a PlainMutations object with sizeHint reserved.
 func NewPlainMutations(sizeHint int) PlainMutations {
 	return PlainMutations{
-		ops:               make([]pb.Op, 0, sizeHint),
+		ops:               make([]kvrpcpb.Op, 0, sizeHint),
 		keys:              make([][]byte, 0, sizeHint),
 		values:            make([][]byte, 0, sizeHint),
 		isPessimisticLock: make([]bool, 0, sizeHint),
@@ -218,7 +218,7 @@ func (c *PlainMutations) Slice(from, to int) CommitterMutations {
 }
 
 // Push another mutation into mutations.
-func (c *PlainMutations) Push(op pb.Op, key []byte, value []byte, isPessimisticLock bool) {
+func (c *PlainMutations) Push(op kvrpcpb.Op, key []byte, value []byte, isPessimisticLock bool) {
 	c.ops = append(c.ops, op)
 	c.keys = append(c.keys, key)
 	c.values = append(c.values, value)
@@ -241,7 +241,7 @@ func (c *PlainMutations) GetKeys() [][]byte {
 }
 
 // GetOps returns the key ops.
-func (c *PlainMutations) GetOps() []pb.Op {
+func (c *PlainMutations) GetOps() []kvrpcpb.Op {
 	return c.ops
 }
 
@@ -256,7 +256,7 @@ func (c *PlainMutations) GetPessimisticFlags() []bool {
 }
 
 // GetOp returns the key op at index.
-func (c *PlainMutations) GetOp(i int) pb.Op {
+func (c *PlainMutations) GetOp(i int) kvrpcpb.Op {
 	return c.ops[i]
 }
 
@@ -275,7 +275,7 @@ func (c *PlainMutations) IsPessimisticLock(i int) bool {
 
 // PlainMutation represents a single transaction operation.
 type PlainMutation struct {
-	KeyOp             pb.Op
+	KeyOp             kvrpcpb.Op
 	Key               []byte
 	Value             []byte
 	IsPessimisticLock bool
@@ -342,13 +342,13 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		key := it.Key()
 		flags := it.Flags()
 		var value []byte
-		var op pb.Op
+		var op kvrpcpb.Op
 
 		if !it.HasValue() {
 			if !flags.HasLocked() {
 				continue
 			}
-			op = pb.Op_Lock
+			op = kvrpcpb.Op_Lock
 			lockCnt++
 		} else {
 			value = it.Value()
@@ -361,12 +361,12 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 					// If the key was locked before, we should prewrite the lock even if
 					// the KV needn't be committed according to the filter. Otherwise, we
 					// were forgetting removing pessimistic locks added before.
-					op = pb.Op_Lock
+					op = kvrpcpb.Op_Lock
 					lockCnt++
 				} else {
-					op = pb.Op_Put
+					op = kvrpcpb.Op_Put
 					if flags.HasPresumeKeyNotExists() {
-						op = pb.Op_Insert
+						op = kvrpcpb.Op_Insert
 					}
 					putCnt++
 				}
@@ -374,13 +374,13 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 				if !txn.IsPessimistic() && flags.HasPresumeKeyNotExists() {
 					// delete-your-writes keys in optimistic txn need check not exists in prewrite-phase
 					// due to `Op_CheckNotExists` doesn't prewrite lock, so mark those keys should not be used in commit-phase.
-					op = pb.Op_CheckNotExists
+					op = kvrpcpb.Op_CheckNotExists
 					checkCnt++
 					memBuf.UpdateFlags(key, kv.SetPrewriteOnly)
 				} else {
 					// normal delete keys in optimistic txn can be delete without not exists checking
 					// delete-your-writes keys in pessimistic txn can ensure must be no exists so can directly delete them
-					op = pb.Op_Del
+					op = kvrpcpb.Op_Del
 					delCnt++
 				}
 			}
@@ -393,7 +393,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		c.mutations.Push(op, isPessimistic, it.Handle())
 		size += len(key) + len(value)
 
-		if len(c.primaryKey) == 0 && op != pb.Op_CheckNotExists {
+		if len(c.primaryKey) == 0 && op != kvrpcpb.Op_CheckNotExists {
 			c.primaryKey = key
 		}
 	}
@@ -451,7 +451,7 @@ func (c *twoPhaseCommitter) asyncSecondaries() [][]byte {
 	secondaries := make([][]byte, 0, c.mutations.Len())
 	for i := 0; i < c.mutations.Len(); i++ {
 		k := c.mutations.GetKey(i)
-		if bytes.Equal(k, c.primary()) || c.mutations.GetOp(i) == pb.Op_CheckNotExists {
+		if bytes.Equal(k, c.primary()) || c.mutations.GetOp(i) == kvrpcpb.Op_CheckNotExists {
 			continue
 		}
 		secondaries = append(secondaries, k)
@@ -836,7 +836,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 }
 
 func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, ttl uint64) (newTTL uint64, stopHeartBeat bool, err error) {
-	req := tikvrpc.NewRequest(tikvrpc.CmdTxnHeartBeat, &pb.TxnHeartBeatRequest{
+	req := tikvrpc.NewRequest(tikvrpc.CmdTxnHeartBeat, &kvrpcpb.TxnHeartBeatRequest{
 		PrimaryLock:   primary,
 		StartVersion:  startTS,
 		AdviseLockTtl: ttl,
@@ -869,7 +869,7 @@ func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, tt
 		if resp.Resp == nil {
 			return 0, false, errors.Trace(tikverr.ErrBodyMissing)
 		}
-		cmdResp := resp.Resp.(*pb.TxnHeartBeatResponse)
+		cmdResp := resp.Resp.(*kvrpcpb.TxnHeartBeatResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			return 0, true, errors.Errorf("txn %d heartbeat fail, primary key = %v, err = %s", startTS, hex.EncodeToString(primary), extractKeyErr(keyErr))
 		}
@@ -1427,7 +1427,7 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 			key := addMutations.GetKey(i)
 			op := addMutations.GetOp(i)
 			var err error
-			if op == pb.Op_Del {
+			if op == kvrpcpb.Op_Del {
 				err = memBuf.Delete(key)
 			} else {
 				err = memBuf.Set(key, addMutations.GetValue(i))
