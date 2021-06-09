@@ -1266,6 +1266,9 @@ workLoop:
 				}
 				val := row.Columns[task.slicePos]
 				ft := e.colsInfo[task.slicePos].FieldType
+				// When it's new collation data, we need to use its collate key instead of original value because only
+				// the collate key can ensure the correct ordering.
+				// This is also corresponding to similar operation in (*statistics.Column).GetColumnRowCount().
 				if ft.EvalType() == types.ETString {
 					val.SetBytes(collate.GetCollator(ft.Collate).Key(val.GetString()))
 				}

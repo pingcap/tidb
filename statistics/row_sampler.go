@@ -126,6 +126,8 @@ func (s *RowSampleBuilder) Collect() (*RowSampleCollector, error) {
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			datums := RowToDatums(row, s.RecordSet.Fields())
 			newCols := make([]types.Datum, len(datums))
+			// sizes are used to calculate the total size information. We calculate the sizes here because we need the
+			// length of the original bytes instead of the collate key when it's a new collation string.
 			sizes := make([]int64, 0, len(datums))
 			for i := range datums {
 				datums[i].Copy(&newCols[i])
