@@ -151,7 +151,7 @@ func (s *RowSampleBuilder) Collect() (*RowSampleCollector, error) {
 			if err != nil {
 				return nil, err
 			}
-			err = collector.collectColumnGroups(s.Sc, datums, s.ColGroups)
+			err = collector.collectColumnGroups(s.Sc, datums, s.ColGroups, sizes)
 			if err != nil {
 				return nil, err
 			}
@@ -181,7 +181,7 @@ func (s *RowSampleCollector) collectColumns(sc *stmtctx.StatementContext, cols [
 	return nil
 }
 
-func (s *RowSampleCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols []types.Datum, colGroups [][]int64) error {
+func (s *RowSampleCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols []types.Datum, colGroups [][]int64, sizes []int64) error {
 	colLen := len(cols)
 	datumBuffer := make([]types.Datum, 0, len(cols))
 	for i, group := range colGroups {
@@ -190,7 +190,7 @@ func (s *RowSampleCollector) collectColumnGroups(sc *stmtctx.StatementContext, c
 		for _, c := range group {
 			datumBuffer = append(datumBuffer, cols[c])
 			hasNull = hasNull && cols[c].IsNull()
-			s.TotalSizes[colLen+i] += int64(len(cols[c].GetBytes())) - 1
+			s.TotalSizes[colLen+i] += sizes[c] - 1
 		}
 		// We don't maintain the null counts information for the multi-column group
 		if hasNull && len(group) == 1 {
