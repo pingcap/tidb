@@ -8556,8 +8556,9 @@ func (s *testStaleTxnSuite) TestStaleOrHistoryReadTemporaryTable(c *C) {
 	tk.MustExec("create global temporary table tmp1 " +
 		"(id int not null primary key, code int not null, value int default null, unique key code(code))" +
 		"on commit delete rows")
-	time.Sleep(time.Second)
-	tk.MustGetErrMsg("select * from tmp1 as of timestamp NOW() where id=1", "can not stale read temporary table")
+
+	// sleep 1us to make test stale
+	time.Sleep(time.Microsecond)
 
 	queries := []struct {
 		sql string
@@ -8596,7 +8597,7 @@ func (s *testStaleTxnSuite) TestStaleOrHistoryReadTemporaryTable(c *C) {
 		if idx < 0 {
 			return ""
 		}
-		return sql[0:idx] + " as of timestamp NOW()" + sql[idx:]
+		return sql[0:idx] + " as of timestamp NOW(6)" + sql[idx:]
 	}
 
 	for _, query := range queries {
@@ -8606,7 +8607,7 @@ func (s *testStaleTxnSuite) TestStaleOrHistoryReadTemporaryTable(c *C) {
 		}
 	}
 
-	tk.MustExec("start transaction read only as of timestamp NOW()")
+	tk.MustExec("start transaction read only as of timestamp NOW(6)")
 	for _, query := range queries {
 		tk.MustGetErrMsg(query.sql, "can not stale read temporary table")
 	}
@@ -8616,7 +8617,7 @@ func (s *testStaleTxnSuite) TestStaleOrHistoryReadTemporaryTable(c *C) {
 		tk.MustExec(query.sql)
 	}
 
-	tk.MustExec("set transaction read only as of timestamp NOW()")
+	tk.MustExec("set transaction read only as of timestamp NOW(6)")
 	tk.MustExec("start transaction")
 	for _, query := range queries {
 		tk.MustGetErrMsg(query.sql, "can not stale read temporary table")
@@ -8627,7 +8628,7 @@ func (s *testStaleTxnSuite) TestStaleOrHistoryReadTemporaryTable(c *C) {
 		tk.MustExec(query.sql)
 	}
 
-	tk.MustExec("set @@tidb_snapshot=NOW()")
+	tk.MustExec("set @@tidb_snapshot=NOW(6)")
 	for _, query := range queries {
 		tk.MustGetErrMsg(query.sql, "can not read temporary table when 'tidb_snapshot' is set")
 	}
