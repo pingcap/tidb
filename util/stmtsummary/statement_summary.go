@@ -350,7 +350,9 @@ func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum(user *auth.UserIdentity, isS
 			rows = append(rows, record)
 		}
 	}
-	rows = append(rows, otherDatum)
+	if otherDatum != nil {
+		rows = append(rows, otherDatum)
+	}
 	return rows
 }
 
