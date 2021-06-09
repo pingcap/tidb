@@ -1159,6 +1159,8 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		WithLease(testLease),
 	)
 	ctx := testNewContext(d)
+	ctx.GetSessionVars().EnableChangeColumnType = false
+
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
