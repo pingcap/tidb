@@ -32,7 +32,7 @@ type WaitChainItem struct {
 	TryLockTxn     uint64
 	SQLDigest      string
 	Key            []byte
-	AllSQLs        []string
+	AllSQLDigests  []string
 	TxnHoldingLock uint64
 }
 
@@ -46,7 +46,7 @@ type DeadlockRecord struct {
 	WaitChain   []WaitChainItem
 }
 
-// DeadlockHistory is a collection for maintaining recent several deadlock events.
+// DeadlockHistory is a collection for maintaining recent several deadlock events. All its public APIs are thread safe.
 type DeadlockHistory struct {
 	sync.RWMutex
 
@@ -64,7 +64,7 @@ type DeadlockHistory struct {
 }
 
 // NewDeadlockHistory creates an instance of DeadlockHistory
-func NewDeadlockHistory(capacity int) *DeadlockHistory {
+func NewDeadlockHistory(capacity uint) *DeadlockHistory {
 	return &DeadlockHistory{
 		deadlocks: make([]*DeadlockRecord, capacity),
 		currentID: 1,
@@ -73,8 +73,29 @@ func NewDeadlockHistory(capacity int) *DeadlockHistory {
 
 // GlobalDeadlockHistory is the global instance of DeadlockHistory, which is used to maintain recent several recent
 // deadlock events globally.
-// TODO: Make the capacity configurable
-var GlobalDeadlockHistory = NewDeadlockHistory(10)
+// The real size of the deadlock history table should be initialized with `Resize`
+// in `setGlobalVars` in tidb-server/main.go
+var GlobalDeadlockHistory = NewDeadlockHistory(0)
+
+// Resize update the DeadlockHistory's table max capacity to newCapacity
+func (d *DeadlockHistory) Resize(newCapacity uint) {
+	d.Lock()
+	defer d.Unlock()
+	if newCapacity != uint(len(d.deadlocks)) {
+		current := d.getAll()
+		d.head = 0
+		if uint(len(current)) < newCapacity {
+			// extend deadlocks
+			d.deadlocks = make([]*DeadlockRecord, newCapacity)
+			copy(d.deadlocks, current)
+		} else {
+			// shrink deadlocks, keep the last len(current)-newCapacity items
+			// use append here to force golang to realloc the underlying array to save memory
+			d.deadlocks = append([]*DeadlockRecord{}, current[uint(len(current))-newCapacity:]...)
+			d.size = int(newCapacity)
+		}
+	}
+}
 
 // Push pushes an element into the queue. It will set the `ID` field of the record, and add the pointer directly to
 // the collection. Be aware that do not modify the record's content after pushing.
@@ -106,7 +127,11 @@ func (d *DeadlockHistory) Push(record *DeadlockRecord) {
 func (d *DeadlockHistory) GetAll() []*DeadlockRecord {
 	d.RLock()
 	defer d.RUnlock()
+	return d.getAll()
+}
 
+// getAll is a thread unsafe version of GetAll() for internal use
+func (d *DeadlockHistory) getAll() []*DeadlockRecord {
 	res := make([]*DeadlockRecord, 0, d.size)
 	capacity := len(d.deadlocks)
 	if d.head+d.size <= capacity {
@@ -129,7 +154,7 @@ func (d *DeadlockHistory) GetAllDatum() [][]types.Datum {
 
 	rows := make([][]types.Datum, 0, rowsCount)
 
-	row := make([]interface{}, 8)
+	row := make([]interface{}, 7)
 	for _, rec := range records {
 		row[0] = rec.ID
 		row[1] = types.NewTime(types.FromGoTime(rec.OccurTime), mysql.TypeTimestamp, types.MaxFsp)
@@ -148,12 +173,9 @@ func (d *DeadlockHistory) GetAllDatum() [][]types.Datum {
 				row[5] = strings.ToUpper(hex.EncodeToString(item.Key))
 			}
 
-			row[6] = nil
-			if item.AllSQLs != nil {
-				row[6] = "[" + strings.Join(item.AllSQLs, ", ") + "]"
-			}
+			row[6] = item.TxnHoldingLock
 
-			row[7] = item.TxnHoldingLock
+			// TODO: Implement the ALL_SQL_DIGESTS column for the deadlock table.
 
 			rows = append(rows, types.MakeDatums(row...))
 		}
@@ -183,9 +205,9 @@ func ErrDeadlockToDeadlockRecord(dl *tikverr.ErrDeadlock) *DeadlockRecord {
 		}
 		waitChain = append(waitChain, WaitChainItem{
 			TryLockTxn:     rawItem.Txn,
-			SQLDigest:      sqlDigest,
+			SQLDigest:      hex.EncodeToString(sqlDigest),
 			Key:            rawItem.Key,
-			AllSQLs:        nil,
+			AllSQLDigests:  nil,
 			TxnHoldingLock: rawItem.WaitForTxn,
 		})
 	}

@@ -11,15 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package copr
 
 import (
 	"context"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/store/tikv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -29,7 +29,7 @@ import (
 
 // RegionInfo contains region related information for batchCopTask
 type RegionInfo struct {
-	Region    RegionVerID
+	Region    tikv.RegionVerID
 	Meta      *metapb.Region
 	Ranges    *KeyRanges
 	AllStores []uint64
@@ -37,30 +37,30 @@ type RegionInfo struct {
 
 // RegionBatchRequestSender sends BatchCop requests to TiFlash server by stream way.
 type RegionBatchRequestSender struct {
-	*RegionRequestSender
+	*tikv.RegionRequestSender
 }
 
 // NewRegionBatchRequestSender creates a RegionBatchRequestSender object.
-func NewRegionBatchRequestSender(cache *RegionCache, client Client) *RegionBatchRequestSender {
+func NewRegionBatchRequestSender(cache *RegionCache, client tikv.Client) *RegionBatchRequestSender {
 	return &RegionBatchRequestSender{
-		RegionRequestSender: NewRegionRequestSender(cache, client),
+		RegionRequestSender: tikv.NewRegionRequestSender(cache.RegionCache, client),
 	}
 }
 
 // SendReqToAddr send batch cop request
-func (ss *RegionBatchRequestSender) SendReqToAddr(bo *Backoffer, rpcCtx *RPCContext, regionInfos []RegionInfo, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, retry bool, cancel func(), err error) {
+func (ss *RegionBatchRequestSender) SendReqToAddr(bo *Backoffer, rpcCtx *tikv.RPCContext, regionInfos []RegionInfo, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, retry bool, cancel func(), err error) {
 	cancel = func() {}
 	if e := tikvrpc.SetContext(req, rpcCtx.Meta, rpcCtx.Peer); e != nil {
 		return nil, false, cancel, errors.Trace(e)
 	}
 	ctx := bo.GetCtx()
-	if rawHook := ctx.Value(RPCCancellerCtxKey{}); rawHook != nil {
-		ctx, cancel = rawHook.(*RPCCanceller).WithCancel(ctx)
+	if rawHook := ctx.Value(tikv.RPCCancellerCtxKey{}); rawHook != nil {
+		ctx, cancel = rawHook.(*tikv.RPCCanceller).WithCancel(ctx)
 	}
 	start := time.Now()
 	resp, err = ss.GetClient().SendRequest(ctx, rpcCtx.Addr, req, timout)
 	if ss.Stats != nil {
-		RecordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
+		tikv.RecordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
 	}
 	if err != nil {
 		cancel()
@@ -75,11 +75,11 @@ func (ss *RegionBatchRequestSender) SendReqToAddr(bo *Backoffer, rpcCtx *RPCCont
 	return
 }
 
-func (ss *RegionBatchRequestSender) onSendFailForBatchRegions(bo *Backoffer, ctx *RPCContext, regionInfos []RegionInfo, err error) error {
+func (ss *RegionBatchRequestSender) onSendFailForBatchRegions(bo *Backoffer, ctx *tikv.RPCContext, regionInfos []RegionInfo, err error) error {
 	// If it failed because the context is cancelled by ourself, don't retry.
 	if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
 		return errors.Trace(err)
-	} else if atomic.LoadUint32(&ShuttingDown) > 0 {
+	} else if tikv.LoadShuttingDown() > 0 {
 		return tikverr.ErrTiDBShuttingDown
 	}
 
@@ -88,7 +88,8 @@ func (ss *RegionBatchRequestSender) onSendFailForBatchRegions(bo *Backoffer, ctx
 	// will change. If tiflash's replica is more than two, the "reload region" will always be false.
 	// Now that the batch cop and mpp has a relative low qps, it's reasonable to reload every time
 	// when meeting io error.
-	ss.GetRegionCache().OnSendFailForBatchRegions(bo, ctx.Store, regionInfos, true, err)
+	rc := RegionCache{ss.GetRegionCache()}
+	rc.OnSendFailForBatchRegions(bo, ctx.Store, regionInfos, true, err)
 
 	// Retry on send request failure when it's not canceled.
 	// When a store is not available, the leader of related region should be elected quickly.

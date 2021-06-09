@@ -922,6 +922,7 @@ const (
 	ErrAdminCheckTable                     = 8003
 	ErrTxnTooLarge                         = 8004
 	ErrWriteConflictInTiDB                 = 8005
+	ErrOptOnTemporaryTable                 = 8006
 	ErrUnsupportedReloadPlugin             = 8018
 	ErrUnsupportedReloadPluginVar          = 8019
 	ErrTableLocked                         = 8020
@@ -1002,6 +1003,8 @@ const (
 	ErrMultiStatementDisabled              = 8130
 	ErrPartitionStatsMissing               = 8131
 	ErrNotSupportedWithSem                 = 8132
+	ErrDataInConsistentExtraIndex          = 8133
+	ErrDataInConsistentMisMatchIndex       = 8134
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200

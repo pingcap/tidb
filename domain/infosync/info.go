@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"path"
@@ -334,7 +333,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			}
 		})
 		if err == nil {
-			bodyBytes, err := ioutil.ReadAll(res.Body)
+			bodyBytes, err := io.ReadAll(res.Body)
 			if err != nil {
 				return nil, err
 			}

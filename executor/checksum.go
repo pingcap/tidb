@@ -240,6 +240,7 @@ func (c *checksumContext) buildTableRequest(ctx sessionctx.Context, tableID int6
 	}
 
 	var builder distsql.RequestBuilder
+	builder.SetResourceGroupTag(ctx.GetSessionVars().StmtCtx)
 	return builder.SetHandleRanges(ctx.GetSessionVars().StmtCtx, tableID, c.TableInfo.IsCommonHandle, ranges, nil).
 		SetChecksumRequest(checksum).
 		SetStartTS(c.StartTs).
@@ -256,6 +257,7 @@ func (c *checksumContext) buildIndexRequest(ctx sessionctx.Context, tableID int6
 	ranges := ranger.FullRange()
 
 	var builder distsql.RequestBuilder
+	builder.SetResourceGroupTag(ctx.GetSessionVars().StmtCtx)
 	return builder.SetIndexRanges(ctx.GetSessionVars().StmtCtx, tableID, indexInfo.ID, ranges).
 		SetChecksumRequest(checksum).
 		SetStartTS(c.StartTs).

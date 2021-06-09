@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/store/tikv/client"
 	"github.com/pingcap/tidb/store/tikv/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -65,7 +66,7 @@ func NewRawKVClient(pdAddrs []string, security config.Security, opts ...pd.Clien
 		clusterID:   pdCli.GetClusterID(context.TODO()),
 		regionCache: NewRegionCache(pdCli),
 		pdClient:    pdCli,
-		rpcClient:   NewRPCClient(security),
+		rpcClient:   client.NewRPCClient(security),
 	}, nil
 }
 
@@ -366,7 +367,7 @@ func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, reverse bool) (*
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		resp, err := sender.SendReq(bo, req, loc.Region, ReadTimeoutShort)
+		resp, err := sender.SendReq(bo, req, loc.Region, client.ReadTimeoutShort)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -446,7 +447,7 @@ func (c *RawKVClient) doBatchReq(bo *Backoffer, batch batch, cmdType tikvrpc.Cmd
 	}
 
 	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
-	resp, err := sender.SendReq(bo, req, batch.regionID, ReadTimeoutShort)
+	resp, err := sender.SendReq(bo, req, batch.regionID, client.ReadTimeoutShort)
 
 	batchResp := singleBatchResp{}
 	if err != nil {
@@ -511,7 +512,7 @@ func (c *RawKVClient) sendDeleteRangeReq(startKey []byte, endKey []byte) (*tikvr
 			EndKey:   actualEndKey,
 		})
 
-		resp, err := sender.SendReq(bo, req, loc.Region, ReadTimeoutShort)
+		resp, err := sender.SendReq(bo, req, loc.Region, client.ReadTimeoutShort)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -616,7 +617,7 @@ func (c *RawKVClient) doBatchPut(bo *Backoffer, batch batch) error {
 	req := tikvrpc.NewRequest(tikvrpc.CmdRawBatchPut, &kvrpcpb.RawBatchPutRequest{Pairs: kvPair})
 
 	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
-	resp, err := sender.SendReq(bo, req, batch.regionID, ReadTimeoutShort)
+	resp, err := sender.SendReq(bo, req, batch.regionID, client.ReadTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -297,7 +297,7 @@ func (s *testSampleSuite) TestBuildStatsOnRowSample(c *C) {
 		TotalSize: int64(len(data)) * 8,
 	}
 	tp := types.NewFieldType(mysql.TypeLonglong)
-	hist, topN, err := BuildHistAndTopNOnRowSample(ctx, 5, 4, 1, collector, tp, true)
+	hist, topN, err := BuildHistAndTopN(ctx, 5, 4, 1, collector, tp, true)
 	c.Assert(err, IsNil, Commentf("%+v", err))
 	topNStr, err := topN.DecodedString(ctx, []byte{tp.Tp})
 	c.Assert(err, IsNil)
