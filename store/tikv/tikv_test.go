@@ -14,12 +14,10 @@
 package tikv
 
 import (
-	"os"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/tikv/mockstore"
-	"github.com/pingcap/tidb/util/logutil"
 )
 
 type OneByOneSuite = mockstore.OneByOneSuite
@@ -29,8 +27,6 @@ type testTiKVSuite struct {
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
-	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	TestingT(t)
 }
 
