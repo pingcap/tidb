@@ -294,11 +294,12 @@ type RestoreCtx struct {
 	Flags     RestoreFlags
 	In        io.Writer
 	DefaultDB string
+	CTENames  []string
 }
 
 // NewRestoreCtx returns a new `RestoreCtx`.
 func NewRestoreCtx(flags RestoreFlags, in io.Writer) *RestoreCtx {
-	return &RestoreCtx{flags, in, ""}
+	return &RestoreCtx{flags, in, "", make([]string, 0)}
 }
 
 // WriteKeyWord writes the `keyWord` into writer.
