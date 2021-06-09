@@ -1405,7 +1405,7 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 		// if the aggFunc contain VirtualColumn or CorrelatedColumn, it can not be pushed down.
 		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args) {
 			sctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
-				"Can't use mpp mode because expressions of aggFunc `" + aggFunc.Name + "` contain virtual column or correlated column.")
+				"Can't use mpp mode because expressions of aggFunc `" + aggFunc.Name + "` contain virtual column or correlated column, which is not supported now.")
 			return false
 		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
@@ -1427,7 +1427,7 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 		}
 	}
 	if expression.ContainVirtualColumn(groupByItems) {
-		sctx.GetSessionVars().RaiseWarningWhenMPPEnforced("Can't use mpp mode because groupByItems contain virtual column.")
+		sctx.GetSessionVars().RaiseWarningWhenMPPEnforced("Can't use mpp mode because groupByItems contain virtual column, which is not supported now.")
 		return false
 	}
 	return expression.CanExprsPushDown(sc, groupByItems, client, storeType)
@@ -2128,7 +2128,7 @@ func (t *mppTask) needEnforce(prop *property.PhysicalProperty) bool {
 
 func (t *mppTask) enforceExchanger(prop *property.PhysicalProperty) *mppTask {
 	if len(prop.SortItems) != 0 {
-		t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("Can't use mpp mode because sorted item is not supported now.")
+		t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("Can't use mpp mode because operator `Sort` is not supported now.")
 		return &mppTask{}
 	}
 	if !t.needEnforce(prop) {

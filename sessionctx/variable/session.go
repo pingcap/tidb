@@ -18,7 +18,6 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
-	"github.com/pingcap/errors"
 	"math"
 	"math/rand"
 	"net"
@@ -29,6 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"

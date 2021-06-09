@@ -2191,7 +2191,7 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 				}
 			}
 			ret = ret && validDs
-		case *LogicalUnionAll, *LogicalLimit, *LogicalTopN:
+		case *LogicalUnionAll:
 			if storeTp == kv.TiFlash {
 				ret = ret && c.canPushToCopImpl(storeTp, true)
 			} else {
@@ -2205,7 +2205,7 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 			}
 		case *LogicalTableDual:
 			return storeTp == kv.TiFlash && considerDual
-		case *LogicalAggregation, *LogicalSelection, *LogicalJoin:
+		case *LogicalAggregation, *LogicalSelection, *LogicalJoin, *LogicalLimit, *LogicalTopN:
 			if storeTp == kv.TiFlash {
 				ret = ret && c.canPushToCop(storeTp)
 			} else {
