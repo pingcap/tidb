@@ -123,6 +123,10 @@ func setUpSuite(s *testDBSuite, c *C) {
 	c.Assert(err, IsNil)
 	_, err = s.s.Execute(context.Background(), "set @@global.tidb_max_delta_schema_count= 4096")
 	c.Assert(err, IsNil)
+	_, err = s.s.Execute(context.Background(), "set @@global.tidb_enable_change_column_type=0")
+	c.Assert(err, IsNil)
+	_, err = s.s.Execute(context.Background(), "set @@tidb_enable_change_column_type=0")
+	c.Assert(err, IsNil)
 }
 
 func tearDownSuite(s *testDBSuite, c *C) {

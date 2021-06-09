@@ -83,6 +83,8 @@ type executorBuilder struct {
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
 	Ti               *TelemetryInfo
+	// ExplicitStaleness means whether the 'SELECT' clause are using 'AS OF TIMESTAMP' to perform stale read explicitly.
+	explicitStaleness bool
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -1371,6 +1373,11 @@ func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) Execu
 	return e
 }
 
+// IsStaleness returns if the query is staleness
+func (b *executorBuilder) IsStaleness() bool {
+	return b.ctx.GetSessionVars().TxnCtx.IsStaleness || b.explicitStaleness
+}
+
 // `getSnapshotTS` returns the timestamp of the snapshot that a reader should read.
 func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 	// `refreshForUpdateTSForRC` should always be invoked before returning the cached value to
@@ -2102,7 +2109,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 }
 
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
-	if task.StatsVersion == statistics.Version3 {
+	if task.StatsVersion == statistics.Version2 {
 		return b.buildAnalyzeSamplingPushdown(task, opts, autoAnalyze, schemaForVirtualColEval)
 	}
 	cols := task.ColsInfo
@@ -2642,6 +2649,10 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		return nil, err
 	}
 	ts := v.GetTableScan()
+	if ts.Table.TempTableType != model.TempTableNone && b.IsStaleness() {
+		return nil, errors.New("can not stale read temporary table")
+	}
+
 	tbl, _ := b.is.TableByID(ts.Table.ID)
 	isPartition, physicalTableID := ts.IsPartition()
 	if isPartition {
@@ -2736,6 +2747,11 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	}
 
 	ts := v.GetTableScan()
+	if ts.Table.TempTableType != model.TempTableNone && b.IsStaleness() {
+		b.err = errors.New("can not stale read temporary table")
+		return nil
+	}
+
 	ret.ranges = ts.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
@@ -2944,13 +2960,18 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 }
 
 func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) Executor {
+	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	if is.Table.TempTableType != model.TempTableNone && b.IsStaleness() {
+		b.err = errors.New("can not stale read temporary table")
+		return nil
+	}
+
 	ret, err := buildNoRangeIndexReader(b, v)
 	if err != nil {
 		b.err = err
 		return nil
 	}
 
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	ret.ranges = is.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
@@ -3091,13 +3112,18 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 }
 
 func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLookUpReader) Executor {
+	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	if is.Table.TempTableType != model.TempTableNone && b.IsStaleness() {
+		b.err = errors.New("can not stale read temporary table")
+		return nil
+	}
+
 	ret, err := buildNoRangeIndexLookUpReader(b, v)
 	if err != nil {
 		b.err = err
 		return nil
 	}
 
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 
 	ret.ranges = is.Ranges
@@ -3197,6 +3223,12 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 }
 
 func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) Executor {
+	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	if ts.Table.TempTableType != model.TempTableNone && b.IsStaleness() {
+		b.err = errors.New("can not stale read temporary table")
+		return nil
+	}
+
 	ret, err := buildNoRangeIndexMergeReader(b, v)
 	if err != nil {
 		b.err = err
@@ -3216,7 +3248,6 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 			}
 		}
 	}
-	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 	executorCounterIndexMergeReaderExecutor.Inc()
 
@@ -3450,6 +3481,22 @@ func dedupHandles(lookUpContents []*indexJoinLookUpContent) ([]kv.Handle, []*ind
 type kvRangeBuilderFromRangeAndPartition struct {
 	sctx       sessionctx.Context
 	partitions []table.PhysicalTable
+}
+
+func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error) {
+	var ret [][]kv.KeyRange
+	var pids []int64
+	for _, p := range h.partitions {
+		pid := p.GetPhysicalID()
+		meta := p.Meta()
+		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, ranges, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		pids = append(pids, pid)
+		ret = append(ret, kvRange)
+	}
+	return pids, ret, nil
 }
 
 func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(_ int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {
@@ -3972,6 +4019,11 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 }
 
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) Executor {
+	if plan.TblInfo.TempTableType != model.TempTableNone && b.IsStaleness() {
+		b.err = errors.New("can not stale read temporary table")
+		return nil
+	}
+
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
@@ -4104,6 +4156,11 @@ func fullRangePartition(idxArr []int) bool {
 }
 
 func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *TableSampleExecutor {
+	if v.TableInfo.Meta().TempTableType != model.TempTableNone && b.IsStaleness() {
+		b.err = errors.New("can not stale read temporary table")
+		return nil
+	}
+
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err

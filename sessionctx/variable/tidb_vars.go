@@ -650,7 +650,7 @@ const (
 	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
 	DefTiDBMaxDeltaSchemaCount         = 1024
-	DefTiDBChangeColumnType            = false
+	DefTiDBChangeColumnType            = true
 	DefTiDBChangeMultiSchema           = false
 	DefTiDBPointGetCache               = false
 	DefTiDBEnableAlterPlacement        = false
@@ -698,7 +698,7 @@ const (
 	DefTiDBEnableAsyncCommit           = false
 	DefTiDBEnable1PC                   = false
 	DefTiDBGuaranteeLinearizability    = true
-	DefTiDBAnalyzeVersion              = 1
+	DefTiDBAnalyzeVersion              = 2
 	DefTiDBEnableIndexMergeJoin        = false
 	DefTiDBTrackAggregateMemoryUsage   = true
 	DefTiDBEnableExchangePartition     = false

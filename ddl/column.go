@@ -861,12 +861,15 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		// Since column type change is implemented as adding a new column then substituting the old one.
 		// Case exists when update-where statement fetch a NULL for not-null column without any default data,
 		// it will errors.
-		// So we set zero original default value here to prevent this error. besides, in insert & update records,
+		// So we set zero original default value here to prevent this error. Besides, in insert & update records,
 		// we have already implement using the casted value of relative column to insert rather than the origin
 		// default value.
-		originDefVal, err := generateOriginDefaultValue(jobParam.newCol)
-		if err != nil {
-			return ver, errors.Trace(err)
+		originDefVal := oldCol.GetOriginDefaultValue()
+		if originDefVal == nil {
+			originDefVal, err = generateOriginDefaultValue(jobParam.newCol)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 		}
 		if err = jobParam.changingCol.SetOriginDefaultValue(originDefVal); err != nil {
 			return ver, errors.Trace(err)
@@ -1076,6 +1079,13 @@ func (w *worker) doModifyColumnTypeWithData(
 		changingColumnUniqueName := changingCol.Name
 		changingCol.Name = colName
 		changingCol.ChangeStateInfo = nil
+		// After changing the column, the column's type is change, so it needs to set OriginDefaultValue back
+		// so that there is no error in getting the default value from OriginDefaultValue.
+		// Besides, nil data that was not backfilled in the "add column" is backfilled after the column is changed.
+		// So it can set OriginDefaultValue to nil.
+		if err = changingCol.SetOriginDefaultValue(nil); err != nil {
+			return ver, errors.Trace(err)
+		}
 		tblInfo.Indices = tblInfo.Indices[:len(tblInfo.Indices)-len(changingIdxs)]
 		// Adjust table column offset.
 		if err = adjustColumnInfoInModifyColumn(job, tblInfo, changingCol, oldCol, pos, changingColumnUniqueName.L); err != nil {
