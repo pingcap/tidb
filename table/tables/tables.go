@@ -324,7 +324,12 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	defer memBuffer.Cleanup(sh)
 
 	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
-		addTemporaryTable(sctx, m)
+		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
+			if tmpTable.GetSize() > sctx.GetSessionVars().TMPTableSize {
+				return table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
+			}
+			defer handleTempTableSize(tmpTable, txn.Size(), txn)
+		}
 	}
 
 	var colIDs, binlogColIDs []int64
@@ -590,9 +595,20 @@ func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
 	return pkCols
 }
 
-func addTemporaryTable(sctx sessionctx.Context, tblInfo *model.TableInfo) {
+func addTemporaryTable(sctx sessionctx.Context, tblInfo *model.TableInfo) tableutil.TempTable {
 	tempTable := sctx.GetSessionVars().GetTemporaryTable(tblInfo)
 	tempTable.SetModified(true)
+	return tempTable
+}
+
+// The size of a temporary table is calculated by accumulating the transaction size delta.
+func handleTempTableSize(t tableutil.TempTable, txnSizeBefore int, txn kv.Transaction) {
+	txnSizeNow := txn.Size()
+	delta := txnSizeNow - txnSizeBefore
+
+	oldSize := t.GetSize()
+	newSize := oldSize + int64(delta)
+	t.SetSize(newSize)
 }
 
 // AddRecord implements table.Table AddRecord interface.
@@ -608,7 +624,12 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	}
 
 	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
-		addTemporaryTable(sctx, m)
+		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
+			if tmpTable.GetSize() > sctx.GetSessionVars().TMPTableSize {
+				return nil, table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
+			}
+			defer handleTempTableSize(tmpTable, txn.Size(), txn)
+		}
 	}
 
 	var ctx context.Context
@@ -1009,8 +1030,17 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		return err
 	}
 
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return err
+	}
 	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
-		addTemporaryTable(ctx, m)
+		if tmpTable := addTemporaryTable(ctx, m); tmpTable != nil {
+			if tmpTable.GetSize() > ctx.GetSessionVars().TMPTableSize {
+				return table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
+			}
+			defer handleTempTableSize(tmpTable, txn.Size(), txn)
+		}
 	}
 
 	// The table has non-public column and this column is doing the operation of "modify/change column".
@@ -1795,6 +1825,8 @@ type TemporaryTable struct {
 	stats *statistics.Table
 	// The autoID allocator of this table.
 	autoIDAllocator autoid.Allocator
+	// Table size.
+	size int64
 }
 
 // TempTableFromMeta builds a TempTable from model.TableInfo.
@@ -1824,4 +1856,14 @@ func (t *TemporaryTable) GetModified() bool {
 // GetStats is implemented from TempTable.GetStats.
 func (t *TemporaryTable) GetStats() interface{} {
 	return t.stats
+}
+
+// GetSize gets the table size.
+func (t *TemporaryTable) GetSize() int64 {
+	return t.size
+}
+
+// SetSize sets the table size.
+func (t *TemporaryTable) SetSize(v int64) {
+	t.size = v
 }
