@@ -170,7 +170,7 @@ func (s *testSuite) TestTopSQLReporter(c *C) {
 		c.Assert(len(req.CpuTimeMsList) > 0, IsTrue)
 		c.Assert(req.CpuTimeMsList[0] > 0, IsTrue)
 		c.Assert(req.TimestampList[0] > 0, IsTrue)
-		normalizedSQL, exist := server.GetSQLMetaByDigest(req.SqlDigest, time.Second)
+		normalizedSQL, exist := server.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		expectedNormalizedSQL, exist := sqlMap[string(req.SqlDigest)]
 		c.Assert(exist, IsTrue)
@@ -181,7 +181,7 @@ func (s *testSuite) TestTopSQLReporter(c *C) {
 			c.Assert(len(req.PlanDigest), Equals, 0)
 			continue
 		}
-		normalizedPlan, exist := server.GetPlanMetaByDigest(req.PlanDigest, time.Second)
+		normalizedPlan, exist := server.GetPlanMetaByDigestBlocking(req.PlanDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedPlan, Equals, expectedNormalizedPlan)
 		checkSQLPlanMap[expectedNormalizedSQL] = struct{}{}

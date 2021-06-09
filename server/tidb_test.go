@@ -1381,12 +1381,11 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 		agentServer.Stop()
 	}()
 
-	size := 10
 	dbt := &DBTest{c, db}
 	dbt.mustExec("drop database if exists topsql")
 	dbt.mustExec("create database topsql")
 	dbt.mustExec("use topsql;")
-	for i := 0; i < size; i++ {
+	for i := 0; i < 20; i++ {
 		dbt.mustExec(fmt.Sprintf("create table t%v (a int auto_increment, b int, unique index idx(a));", i))
 		for j := 0; j < 100; j++ {
 			dbt.mustExec(fmt.Sprintf("insert into t%v (b) values (%v);", i, j))
@@ -1401,56 +1400,78 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	r := reporter.NewRemoteTopSQLReporter(reporter.NewGRPCReportClient(plancodec.DecodeNormalizedPlan))
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{r})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	for i := 0; i < size; i++ {
-		query := fmt.Sprintf("select /*+ HASH_JOIN(ta, tb) */ * from t%[1]v ta join t%[1]v tb on ta.a=tb.a where ta.b is not null;", i)
-		go ts.loopExec(ctx, c, func(db *sql.DB) {
-			dbt := &DBTest{c, db}
-			rows := dbt.mustQuery(query)
-			for rows.Next() {
-			}
-		})
-	}
-
 	checkFn := func(n int) {
 		records := agentServer.GetLatestRecords()
 		c.Assert(len(records), Equals, n)
 		for _, r := range records {
-			sql, exist := agentServer.GetSQLMetaByDigest(r.SqlDigest, time.Second)
+			sqlNormalized, exist := agentServer.GetSQLMetaByDigestBlocking(r.SqlDigest, time.Second)
 			c.Assert(exist, IsTrue)
-			c.Check(sql, Matches, "select.*from.*join.*")
+			c.Check(sqlNormalized, Matches, "select.*from.*join.*")
 			if len(r.PlanDigest) == 0 {
 				continue
 			}
-			plan, exist := agentServer.GetPlanMetaByDigest(r.PlanDigest, time.Second)
+			plan, exist := agentServer.GetPlanMetaByDigestBlocking(r.PlanDigest, time.Second)
 			c.Assert(exist, IsTrue)
 			plan = strings.Replace(plan, "\n", " ", -1)
 			plan = strings.Replace(plan, "\t", " ", -1)
 			c.Assert(plan, Matches, ".*Join.*Select.*")
 		}
 	}
+	runWorkload := func(start, end int) context.CancelFunc {
+		ctx, cancel := context.WithCancel(context.Background())
+		for i := start; i < end; i++ {
+			query := fmt.Sprintf("select /*+ HASH_JOIN(ta, tb) */ * from t%[1]v ta join t%[1]v tb on ta.a=tb.a where ta.b is not null;", i)
+			go ts.loopExec(ctx, c, func(db *sql.DB) {
+				dbt := &DBTest{c, db}
+				rows := dbt.mustQuery(query)
+				for rows.Next() {
+				}
+			})
+		}
+		return cancel
+	}
 
+	// case 1: dynamically change agent endpoint
+	cancel := runWorkload(0, 10)
 	// Test with null agent address, the agent server can't receive any record.
 	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
-
 	// Test after set agent address and the evict take effect.
 	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(5)
-
 	// Test with wrong agent address, the agent server can't receive any record.
 	dbt.mustExec("set @@tidb_top_sql_agent_address='127.0.0.1:65530';")
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=8;")
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
-
 	// Test after set agent address and the evict take effect.
 	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(8)
+
+	cancel() // cancel case 1
+	time.Sleep(time.Second)
+
+	// case 2:
+	cancel = runWorkload(0, 10)
+	// empty agent address, should not collect records
+	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
+	agentServer.WaitCollectCnt(1, time.Second*4)
+	checkFn(0)
+	// set correct address, should collect records
+	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
+	agentServer.WaitCollectCnt(1, time.Second*4)
+	checkFn(5)
+	// agent server hangs for a while
+	agentServer.HangFromNow(time.Second * 6)
+	// run another set of SQL queries
+	cancel()
+	time.Sleep(time.Millisecond*100)
+	cancel = runWorkload(11, 20)
+	agentServer.WaitCollectCnt(1, time.Second*4)
+	checkFn(5)
 }
 
 func (ts *tidbTestTopSQLSuite) loopExec(ctx context.Context, c *C, fn func(db *sql.DB)) {

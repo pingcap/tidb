@@ -119,10 +119,10 @@ func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
 		for i := range req.TimestampList {
 			c.Assert(req.TimestampList[i], Equals, uint64(1))
 		}
-		normalizedSQL, exist := agentServer.GetSQLMetaByDigest(req.SqlDigest, time.Second)
+		normalizedSQL, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedSQL, Equals, "sqlNormalized"+strconv.Itoa(id))
-		normalizedPlan, exist := agentServer.GetPlanMetaByDigest(req.PlanDigest, time.Second)
+		normalizedPlan, exist := agentServer.GetPlanMetaByDigestBlocking(req.PlanDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedPlan, Equals, "planNormalized"+strconv.Itoa(id))
 	}
@@ -160,10 +160,10 @@ func (s *testTopSQLReporter) TestCollectAndEvicted(c *C) {
 		for i := range req.TimestampList {
 			c.Assert(req.TimestampList[i], Equals, uint64(2))
 		}
-		normalizedSQL, exist := agentServer.GetSQLMetaByDigest(req.SqlDigest, time.Second)
+		normalizedSQL, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedSQL, Equals, "sqlNormalized"+strconv.Itoa(id))
-		normalizedPlan, exist := agentServer.GetPlanMetaByDigest(req.PlanDigest, time.Second)
+		normalizedPlan, exist := agentServer.GetPlanMetaByDigestBlocking(req.PlanDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedPlan, Equals, "planNormalized"+strconv.Itoa(id))
 	}
