@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -341,6 +342,13 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	if r.rootPlanID <= 0 || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
 		return
 	}
+
+	if copStats.ScanDetail != nil {
+		readKeys := copStats.ScanDetail.ProcessedKeys
+		readTime := copStats.TimeDetail.KvReadWallTimeMs.Seconds()
+		sli.ObserveReadSLI(uint64(readKeys), readTime)
+	}
+
 	if r.stats == nil {
 		id := r.rootPlanID
 		r.stats = &selectResultRuntimeStats{
