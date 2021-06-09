@@ -1875,7 +1875,7 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 	if !plannercore.IsAutoCommitTxn(s) {
 		return false, nil
 	}
-	// SnapshotTS != nil, it is stale read
+	// SnapshotTSEvaluator != nil, it is stale read
 	// stale read expect a stale infoschema
 	// so skip infoschema check
 	if preparedStmt.SnapshotTSEvaluator == nil {
