@@ -128,8 +128,8 @@ const (
 type PreprocessorReturn struct {
 	initedLastSnapshotTS bool
 	ExplicitStaleness    bool
-	SnapshotTS           func(sessionctx.Context) (uint64, error)
-	// LastSnapshotTS is the last calculated snapshotTS, if any
+	SnapshotTSEvaluator  func(sessionctx.Context) (uint64, error)
+	// LastSnapshotTS is the last evaluated snapshotTS if any
 	// otherwise it defaults to zero
 	LastSnapshotTS uint64
 	InfoSchema     infoschema.InfoSchema
@@ -1403,7 +1403,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			return
 		}
 		if !p.initedLastSnapshotTS {
-			p.SnapshotTS = func(sessionctx.Context) (uint64, error) {
+			p.SnapshotTSEvaluator = func(sessionctx.Context) (uint64, error) {
 				return ts, nil
 			}
 			p.LastSnapshotTS = ts
@@ -1420,7 +1420,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			return
 		}
 		if !p.initedLastSnapshotTS {
-			p.SnapshotTS = func(ctx sessionctx.Context) (uint64, error) {
+			p.SnapshotTSEvaluator = func(ctx sessionctx.Context) (uint64, error) {
 				return calculateTsExpr(ctx, node)
 			}
 			p.LastSnapshotTS = ts

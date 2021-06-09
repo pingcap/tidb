@@ -1878,7 +1878,7 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 	// SnapshotTS != nil, it is stale read
 	// stale read expect a stale infoschema
 	// so skip infoschema check
-	if preparedStmt.SnapshotTS == nil {
+	if preparedStmt.SnapshotTSEvaluator == nil {
 		// check schema version
 		is := s.GetInfoSchema().(infoschema.InfoSchema)
 		if prepared.SchemaVersion != is.SchemaMetaVersion() {
@@ -1932,8 +1932,8 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	var snapshotTS uint64
 	if preparedStmt.ForUpdateRead {
 		is = domain.GetDomain(s).InfoSchema()
-	} else if preparedStmt.SnapshotTS != nil {
-		snapshotTS, err = preparedStmt.SnapshotTS(s)
+	} else if preparedStmt.SnapshotTSEvaluator != nil {
+		snapshotTS, err = preparedStmt.SnapshotTSEvaluator(s)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -195,14 +195,14 @@ func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*mod
 
 // CachedPrepareStmt store prepared ast from PrepareExec and other related fields
 type CachedPrepareStmt struct {
-	PreparedAst    *ast.Prepared
-	VisitInfos     []visitInfo
-	ColumnInfos    interface{}
-	Executor       interface{}
-	NormalizedSQL  string
-	NormalizedPlan string
-	SQLDigest      *parser.Digest
-	PlanDigest     *parser.Digest
-	ForUpdateRead  bool
-	SnapshotTS     func(sessionctx.Context) (uint64, error)
+	PreparedAst         *ast.Prepared
+	VisitInfos          []visitInfo
+	ColumnInfos         interface{}
+	Executor            interface{}
+	NormalizedSQL       string
+	NormalizedPlan      string
+	SQLDigest           *parser.Digest
+	PlanDigest          *parser.Digest
+	ForUpdateRead       bool
+	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
 }

@@ -220,12 +220,12 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	preparedObj := &plannercore.CachedPrepareStmt{
-		PreparedAst:   prepared,
-		VisitInfos:    destBuilder.GetVisitInfo(),
-		NormalizedSQL: normalizedSQL,
-		SQLDigest:     digest,
-		ForUpdateRead: destBuilder.GetIsForUpdateRead(),
-		SnapshotTS:    ret.SnapshotTS,
+		PreparedAst:         prepared,
+		VisitInfos:          destBuilder.GetVisitInfo(),
+		NormalizedSQL:       normalizedSQL,
+		SQLDigest:           digest,
+		ForUpdateRead:       destBuilder.GetIsForUpdateRead(),
+		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
 	}
 	return vars.AddPreparedStmt(e.ID, preparedObj)
 }

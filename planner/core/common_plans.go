@@ -259,11 +259,11 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	}
 
 	var snapshotTS uint64
-	if preparedObj.SnapshotTS != nil {
+	if preparedObj.SnapshotTSEvaluator != nil {
 		// if preparedObj.SnapshotTS != nil, it is a stale read SQL:
 		// which means its infoschema is specified by the SQL, not the current/latest infoschema
 		var err error
-		snapshotTS, err = preparedObj.SnapshotTS(sctx)
+		snapshotTS, err = preparedObj.SnapshotTSEvaluator(sctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
