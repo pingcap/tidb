@@ -69,3 +69,45 @@ func BenchmarkRound(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkToFloat64(b *testing.B) {
+	b.StopTimer()
+	tests := []struct {
+		input    string
+		scale    int
+		inputDec MyDecimal
+	}{
+		{input: "123456789.987654321", scale: 1},
+		{input: "15.1", scale: 0},
+		{input: "15.5", scale: 0},
+		{input: "15.9", scale: 0},
+		{input: "-15.1", scale: 0},
+		{input: "-15.5", scale: 0},
+		{input: "-15.9", scale: 0},
+		{input: "15.1", scale: 1},
+		{input: "-15.1", scale: 1},
+		{input: "15.17", scale: 1},
+		{input: "15.4", scale: -1},
+		{input: "-15.4", scale: -1},
+		{input: "5.4", scale: -1},
+		{input: ".999", scale: 0},
+		{input: "999999999", scale: -9},
+	}
+
+	for i := 0; i < len(tests); i++ {
+		err := tests[i].inputDec.FromString([]byte(tests[i].input))
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	b.StartTimer()
+	for n := 0; n < b.N; n++ {
+		for i := 0; i < len(tests); i++ {
+			_, err := tests[i].inputDec.ToFloat64()
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+}
