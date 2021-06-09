@@ -212,12 +212,12 @@ func (ssMap *stmtSummaryByDigestMap) ToEvictedCountDatum() [][]types.Datum {
 
 func (ssbde *stmtSummaryByDigestEvicted) toCurrentDatum() []types.Datum {
 	var seElement *stmtSummaryByDigestEvictedElement
-	ssbde.Lock()
-	defer ssbde.Unlock()
 
+	ssbde.Lock()
 	if ssbde.history.Len() > 0 {
 		seElement = ssbde.history.Back().Value.(*stmtSummaryByDigestEvictedElement)
 	}
+	ssbde.Unlock()
 
 	if seElement == nil {
 		return nil
@@ -229,8 +229,8 @@ func (ssbde *stmtSummaryByDigestEvicted) toCurrentDatum() []types.Datum {
 func (ssbde *stmtSummaryByDigestEvicted) toHistoryDatum(historySize int) [][]types.Datum {
 	// Collect all history summaries to an array.
 	ssbde.Lock()
-	defer ssbde.Unlock()
 	seElements := ssbde.collectHistorySummaries(historySize)
+	ssbde.Unlock()
 	rows := make([][]types.Datum, 0, len(seElements))
 
 	for _, seElement := range seElements {
