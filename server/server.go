@@ -382,13 +382,13 @@ func (s *Server) onConn(conn *clientConn) {
 	s.rwlock.Unlock()
 	metrics.ConnGauge.Set(float64(connections))
 
+	sessionVars := conn.ctx.GetSessionVars()
 	if plugin.IsEnable(plugin.Audit) {
-		conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
+		sessionVars.ConnectionInfo = conn.connectInfo()
 	}
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
-			sessionVars := conn.ctx.GetSessionVars()
 			return authPlugin.OnConnectionEvent(context.Background(), plugin.Connected, sessionVars.ConnectionInfo)
 		}
 		return nil
@@ -407,7 +407,6 @@ func (s *Server) onConn(conn *clientConn) {
 		}
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
-			sessionVars := conn.ctx.GetSessionVars()
 			sessionVars.ConnectionInfo.Duration = float64(time.Since(connectedTime)) / float64(time.Millisecond)
 			err := authPlugin.OnConnectionEvent(context.Background(), plugin.Disconnect, sessionVars.ConnectionInfo)
 			if err != nil {
