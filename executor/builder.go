@@ -3478,6 +3478,22 @@ type kvRangeBuilderFromRangeAndPartition struct {
 	partitions []table.PhysicalTable
 }
 
+func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error) {
+	var ret [][]kv.KeyRange
+	var pids []int64
+	for _, p := range h.partitions {
+		pid := p.GetPhysicalID()
+		meta := p.Meta()
+		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, ranges, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		pids = append(pids, pid)
+		ret = append(ret, kvRange)
+	}
+	return pids, ret, nil
+}
+
 func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(_ int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {
 	var ret []kv.KeyRange
 	for _, p := range h.partitions {
