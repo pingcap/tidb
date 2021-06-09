@@ -1391,11 +1391,6 @@ func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) Execu
 	return e
 }
 
-// IsStaleness returns if the query is staleness
-func (b *executorBuilder) IsStaleness() bool {
-	return b.ctx.GetSessionVars().TxnCtx.IsStaleness || b.explicitStaleness
-}
-
 // `getSnapshotTS` returns the timestamp of the snapshot that a reader should read.
 func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 	// `refreshForUpdateTSForRC` should always be invoked before returning the cached value to
@@ -2667,8 +2662,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		return nil, err
 	}
 	ts := v.GetTableScan()
-	if ts.Table.TempTableType != model.TempTableNone && b.IsStaleness() {
-		return nil, errors.New("can not stale read temporary table")
+	if err = b.validCanReadTemporaryTable(ts.Table); err != nil {
+		return nil, err
 	}
 
 	tbl, _ := b.is.TableByID(ts.Table.ID)
@@ -2783,8 +2778,8 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	}
 
 	ts := v.GetTableScan()
-	if ts.Table.TempTableType != model.TempTableNone && b.IsStaleness() {
-		b.err = errors.New("can not stale read temporary table")
+	if err = b.validCanReadTemporaryTable(ts.Table); err != nil {
+		b.err = err
 		return nil
 	}
 
@@ -3006,8 +3001,8 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 
 func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) Executor {
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	if is.Table.TempTableType != model.TempTableNone && b.IsStaleness() {
-		b.err = errors.New("can not stale read temporary table")
+	if err := b.validCanReadTemporaryTable(is.Table); err != nil {
+		b.err = err
 		return nil
 	}
 
@@ -3165,8 +3160,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 
 func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLookUpReader) Executor {
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	if is.Table.TempTableType != model.TempTableNone && b.IsStaleness() {
-		b.err = errors.New("can not stale read temporary table")
+	if err := b.validCanReadTemporaryTable(is.Table); err != nil {
+		b.err = err
 		return nil
 	}
 
@@ -3280,8 +3275,8 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 
 func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) Executor {
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
-	if ts.Table.TempTableType != model.TempTableNone && b.IsStaleness() {
-		b.err = errors.New("can not stale read temporary table")
+	if err := b.validCanReadTemporaryTable(ts.Table); err != nil {
+		b.err = err
 		return nil
 	}
 
@@ -4077,8 +4072,8 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 }
 
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) Executor {
-	if plan.TblInfo.TempTableType != model.TempTableNone && b.IsStaleness() {
-		b.err = errors.New("can not stale read temporary table")
+	if err := b.validCanReadTemporaryTable(plan.TblInfo); err != nil {
+		b.err = err
 		return nil
 	}
 
@@ -4216,8 +4211,8 @@ func fullRangePartition(idxArr []int) bool {
 }
 
 func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *TableSampleExecutor {
-	if v.TableInfo.Meta().TempTableType != model.TempTableNone && b.IsStaleness() {
-		b.err = errors.New("can not stale read temporary table")
+	if err := b.validCanReadTemporaryTable(v.TableInfo.Meta()); err != nil {
+		b.err = err
 		return nil
 	}
 
@@ -4333,4 +4328,21 @@ func (b *executorBuilder) buildCTETableReader(v *plannercore.PhysicalCTETable) E
 		iterInTbl:    storages.IterInTbl,
 		chkIdx:       0,
 	}
+}
+
+func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error {
+	if tbl.TempTableType == model.TempTableNone {
+		return nil
+	}
+
+	sessionVars := b.ctx.GetSessionVars()
+	if sessionVars.SnapshotTS != 0 {
+		return errors.New("can not read temporary table when 'tidb_snapshot' is set")
+	}
+
+	if sessionVars.TxnCtx.IsStaleness || b.explicitStaleness {
+		return errors.New("can not stale read temporary table")
+	}
+
+	return nil
 }
