@@ -8530,45 +8530,48 @@ func (s *testSerialSuite2) TestIssue24933(c *C) {
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1), (2), (3);")
 
-	tk.MustExec("create view v as select count(*) as c1 from t;")
+	tk.MustExec("create definer='root'@'localhost' view v as select count(*) as c1 from t;")
 	rows := tk.MustQuery("select * from v;")
 	rows.Check(testkit.Rows("3"))
 
 	// Test subquery and outer field is wildcard.
-	tk.MustExec("create view v as select * from (select count(*) from t) s;")
+	tk.MustExec("drop view v;")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from (select count(*) from t) s;")
 	rows = tk.MustQuery("select * from v order by 1;")
 	rows.Check(testkit.Rows("3"))
 
 	tk.MustExec("drop view v;")
-	tk.MustExec("create view v as select * from (select avg(a) from t group by a) s;")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from (select avg(a) from t group by a) s;")
 	rows = tk.MustQuery("select * from v order by 1;")
-	rows.Check(testkit.Rows("1.0000", "2.000", "3.000"))
+	rows.Check(testkit.Rows("1.0000", "2.0000", "3.0000"))
 
 	tk.MustExec("drop view v;")
-	tk.MustExec("create view v as select * from (select sum(a) from t group by a) s;")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from (select sum(a) from t group by a) s;")
 	rows = tk.MustQuery("select * from v order by 1;")
 	rows.Check(testkit.Rows("1", "2", "3"))
 
 	tk.MustExec("drop view v;")
-	tk.MustExec("create view v as select * from (select group_concat(a) from t group by a) s;")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from (select group_concat(a) from t group by a) s;")
 	rows = tk.MustQuery("select * from v order by 1;")
 	rows.Check(testkit.Rows("1", "2", "3"))
 
 	// Test alias names.
 	tk.MustExec("drop view v;")
-	tk.MustExec("create view v as select * from (select count(0) as c1 from t) s;")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from (select count(0) as c1 from t) s;")
 	rows = tk.MustQuery("select * from v order by 1;")
 	rows.Check(testkit.Rows("3"))
 
 	tk.MustExec("drop view v;")
-	tk.MustExec("create view v as select * from (select count(*) as c1 from t) s;")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from (select count(*) as c1 from t) s;")
 	rows = tk.MustQuery("select * from v order by 1;")
 	rows.Check(testkit.Rows("3"))
 
 	tk.MustExec("drop view v;")
-	tk.MustExec("create view v as select * from (select group_concat(a) as `concat(a)` from t group by a) s;")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from (select group_concat(a) as `concat(a)` from t group by a) s;")
 	rows = tk.MustQuery("select * from v order by 1;")
 	rows.Check(testkit.Rows("1", "2", "3"))
+
+	tk.MustExec("drop view v;")
 }
 
 func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
