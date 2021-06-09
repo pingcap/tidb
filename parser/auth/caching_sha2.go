@@ -205,8 +205,15 @@ func CheckShaPassword(pwhash []byte, password string) (bool, error) {
 func NewSha2Password(pwd string) string {
 	salt := make([]byte, SALT_LENGTH)
 	rand.Read(salt)
+
+	// Restrict to 7-bit to avoid multi-byte UTF-8
 	for i := range salt {
-		salt[i] = salt[i] ^ 128
+		salt[i] = salt[i] &^ 128
+		if salt[i] == 36 { // '$'
+			newval := make([]byte, 1)
+			rand.Read(newval)
+			salt[i] = newval[0]
+		}
 	}
 
 	return sha256crypt(pwd, salt, 5*ITERATION_MULTIPLIER)
