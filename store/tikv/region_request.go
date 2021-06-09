@@ -1024,6 +1024,10 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 			zap.Uint64("store-id", ctx.Store.storeID),
 			zap.Uint64("region-id", regionErr.GetRegionNotInitialized().GetRegionId()),
 			zap.Stringer("ctx", ctx))
+		err = bo.Backoff(retry.BoMaxRegionNotInitialized, errors.Errorf("region not initialized"))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
 		if seed != nil {
 			*seed = *seed + 1
 		}
@@ -1073,6 +1077,10 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 			zap.Uint64("region-id", regionErr.GetDataIsNotReady().GetRegionId()),
 			zap.Uint64("safe-ts", regionErr.GetDataIsNotReady().GetSafeTs()),
 			zap.Stringer("ctx", ctx))
+		err = bo.Backoff(retry.BoMaxDataNotReady, errors.Errorf("data is not ready"))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
 		if seed != nil {
 			*seed = *seed + 1
 		}
