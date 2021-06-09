@@ -35,7 +35,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -231,7 +233,7 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 }
 
 func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
-	if *withTiKV {
+	if *mockstore.WithTiKV {
 		c.Skip("skip with tikv because cluster manipulate is not available")
 	}
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -2077,7 +2079,7 @@ func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 
 func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 	// TODO: implement commit_ts calculation in unistore
-	if !*withTiKV {
+	if !*mockstore.WithTiKV {
 		return
 	}
 
@@ -2151,7 +2153,7 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 
 func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 	// TODO: implement commit_ts calculation in unistore
-	if !*withTiKV {
+	if !*mockstore.WithTiKV {
 		return
 	}
 
@@ -2332,10 +2334,6 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 
 func (s *testPessimisticSuite) TestAmendWithColumnTypeChange(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("set global tidb_enable_change_column_type = 1;")
-	defer func() {
-		tk.MustExec("set global tidb_enable_change_column_type = 0;")
-	}()
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop database if exists test_db")
 	tk.MustExec("create database test_db")

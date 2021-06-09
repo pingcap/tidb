@@ -146,7 +146,7 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, planCou
 	}.Init(p.ctx, p.stats, p.blockOffset)
 	dual.SetSchema(p.schema)
 	planCounter.Dec(1)
-	return &rootTask{p: dual}, 1, nil
+	return &rootTask{p: dual, isEmpty: p.RowCount == 0}, 1, nil
 }
 
 func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (task, int64, error) {
@@ -212,7 +212,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		childTasks = childTasks[:0]
 		// The curCntPlan records the number of possible plans for pp
 		curCntPlan = 1
-		TimeStampNow := p.GetlogicalTS4TaskMap()
+		TimeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.ctx.GetSessionVars().PlanID
 		for j, child := range p.children {
 			childTask, cnt, err := child.findBestTask(pp.GetChildReqProps(j), &PlanCounterDisabled)
@@ -1966,7 +1966,7 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *
 
 	pcte := PhysicalCTE{SeedPlan: sp, RecurPlan: rp, CTE: p.cte, cteAsName: p.cteAsName}.Init(p.ctx, p.stats)
 	pcte.SetSchema(p.schema)
-	t = &rootTask{pcte, sp.statsInfo().RowCount}
+	t = &rootTask{pcte, sp.statsInfo().RowCount, false}
 	p.cte.cteTask = t
 	return t, 1, nil
 }
