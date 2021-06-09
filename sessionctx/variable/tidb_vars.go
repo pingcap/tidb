@@ -592,7 +592,7 @@ const (
 	DefOptAggPushDown                  = false
 	DefOptBCJ                          = false
 	DefOptCartesianBCJ                 = 1
-	DefOptMPPOuterJoinFixedBuildSide   = true
+	DefOptMPPOuterJoinFixedBuildSide   = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
