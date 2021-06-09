@@ -87,6 +87,9 @@ func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
 	tk.MustExec("insert into t values(2,0)")
 	tk.MustExec("insert into t values(3,0)")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	// mock executor does not support use outer table as build side for outer join, so need to
+	// force the inner table as build side
+	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 	tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("3"))
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 0", "2 0", "3 0"))
 
@@ -131,6 +134,9 @@ func (s *tiflashTestSuite) TestReadUnsigedPK(c *C) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	tk.MustExec("set @@session.tidb_opt_broadcast_join=ON")
+	// mock executor does not support use outer table as build side for outer join, so need to
+	// force the inner table as build side
+	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 
 	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a").Check(testkit.Rows("5"))
 	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a and ((t1.a < 9223372036854775800 and t1.a > 2) or (t1.a <= 1 and t1.a > -1))").Check(testkit.Rows("3"))
@@ -163,6 +169,9 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	// mock executor does not support use outer table as build side for outer join, so need to
+	// force the inner table as build side
+	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 	for i := 0; i < 20; i++ {
 		// test if it is stable.
 		tk.MustQuery("select count(*) from t1 , t where t1.a = t.a").Check(testkit.Rows("3"))
@@ -296,6 +305,9 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableShuffledHashJoin(c *C) {
 	tk.MustExec("SET tidb_broadcast_join_threshold_count=0")
 	tk.MustExec("SET tidb_broadcast_join_threshold_size=0")
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
+	// mock executor does not support use outer table as build side for outer join, so need to
+	// force the inner table as build side
+	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 
 	lr := func() (int, int) {
 		l, r := rand.Intn(400), rand.Intn(400)
@@ -354,6 +366,9 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableReader(c *C) {
 		err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
 		c.Assert(err, IsNil)
 	}
+	// mock executor does not support use outer table as build side for outer join, so need to
+	// force the inner table as build side
+	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 
 	vals := make([]string, 0, 500)
 	for i := 0; i < 500; i++ {
@@ -404,6 +419,9 @@ func (s *tiflashTestSuite) TestPartitionTable(c *C) {
 	failpoint.Enable("github.com/pingcap/tidb/executor/checkUseMPP", `return(true)`)
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	// mock executor does not support use outer table as build side for outer join, so need to
+	// force the inner table as build side
+	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(4)`)
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
 	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
@@ -488,6 +506,9 @@ func (s *tiflashTestSuite) TestMppEnum(c *C) {
 	tk.MustExec("insert into t values(3,'zca')")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	// mock executor does not support use outer table as build side for outer join, so need to
+	// force the inner table as build side
+	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 	tk.MustQuery("select t1.b from t t1 join t t2 on t1.a = t2.a order by t1.b").Check(testkit.Rows("aca", "bca", "zca"))
 }
 
@@ -509,6 +530,9 @@ func (s *tiflashTestSuite) TestCancelMppTasks(c *C) {
 	c.Assert(err, IsNil)
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	// mock executor does not support use outer table as build side for outer join, so need to
+	// force the inner table as build side
+	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 	atomic.StoreUint32(&tk.Se.GetSessionVars().Killed, 0)
 	c.Assert(failpoint.Enable(hang, `return(true)`), IsNil)
 	wg := &sync.WaitGroup{}
@@ -553,6 +577,9 @@ func (s *tiflashTestSuite) TestMppGoroutinesExitFromErrors(c *C) {
 	tk.MustExec("insert into t1 values(3,0)")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	// mock executor does not support use outer table as build side for outer join, so need to
+	// force the inner table as build side
+	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 	c.Assert(failpoint.Enable(mppNonRootTaskError, `return(true)`), IsNil)
 	c.Assert(failpoint.Enable(hang, `return(true)`), IsNil)
 
@@ -581,6 +608,9 @@ func (s *tiflashTestSuite) TestMppUnionAll(c *C) {
 
 	tk.MustExec("insert into x1 values (1, 1), (2, 2), (3, 3), (4, 4)")
 	tk.MustExec("insert into x2 values (5, 1), (2, 2), (3, 3), (4, 4)")
+	// mock executor does not support use outer table as build side for outer join, so need to
+	// force the inner table as build side
+	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 
 	// test join + union (join + select)
 	tk.MustQuery("select x1.a, x.a from x1 left join (select x2.b a, x1.b from x1 join x2 on x1.a = x2.b union all select * from x1 ) x on x1.a = x.a order by x1.a").Check(testkit.Rows("1 1", "1 1", "2 2", "2 2", "3 3", "3 3", "4 4", "4 4"))
@@ -626,6 +656,9 @@ func (s *tiflashTestSuite) TestMppApply(c *C) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	// mock executor does not support use outer table as build side for outer join, so need to
+	// force the inner table as build side
+	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 	// table full scan with correlated filter
 	tk.MustQuery("select /*+ agg_to_cop(), hash_agg()*/ count(*) from x1 where a >= any (select a from x2 where x1.a = x2.a) order by 1;").Check(testkit.Rows("3"))
 	// table range scan with correlated access conditions
@@ -659,6 +692,9 @@ func (s *tiflashTestSuite) TestTiFlashVirtualColumn(c *C) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	// mock executor does not support use outer table as build side for outer join, so need to
+	// force the inner table as build side
+	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 
 	tk.MustQuery("select /*+ hash_agg() */ count(*) from t1 where c > b'01'").Check(testkit.Rows("2"))
 	tk.MustQuery("select /*+ hash_agg() */ count(*) from t2 where c > 1").Check(testkit.Rows("2"))
@@ -707,6 +743,9 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableShuffledHashAggregation(c *C
 	}
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp=2")
+	// mock executor does not support use outer table as build side for outer join, so need to
+	// force the inner table as build side
+	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 
 	lr := func() (int, int) {
 		l, r := rand.Intn(400), rand.Intn(400)
@@ -777,6 +816,9 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableBroadcastJoin(c *C) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp=2")
 	tk.MustExec("set @@session.tidb_opt_broadcast_join=ON")
+	// mock executor does not support use outer table as build side for outer join, so need to
+	// force the inner table as build side
+	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 
 	lr := func() (int, int) {
 		l, r := rand.Intn(400), rand.Intn(400)
