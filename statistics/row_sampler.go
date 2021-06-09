@@ -125,6 +125,13 @@ func (s *RowSampleBuilder) Collect() (*RowSampleCollector, error) {
 		collector.Count += int64(chk.NumRows())
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			datums := RowToDatums(row, s.RecordSet.Fields())
+			newCols := make([]types.Datum, len(datums))
+			sizes := make([]int64, 0, len(datums))
+			for i := range datums {
+				datums[i].Copy(&newCols[i])
+				sizes = append(sizes, int64(len(datums[i].GetBytes())))
+			}
+
 			for i, val := range datums {
 				// For string values, we use the collation key instead of the original value.
 				if s.Collators[i] != nil && !val.IsNull() {
@@ -137,10 +144,10 @@ func (s *RowSampleBuilder) Collect() (*RowSampleCollector, error) {
 					if err != nil {
 						return nil, err
 					}
-					val.SetBytes(encodedKey)
+					datums[i].SetBytes(encodedKey)
 				}
 			}
-			err := collector.collectColumns(s.Sc, datums)
+			err := collector.collectColumns(s.Sc, datums, sizes)
 			if err != nil {
 				return nil, err
 			}
@@ -149,10 +156,6 @@ func (s *RowSampleBuilder) Collect() (*RowSampleCollector, error) {
 				return nil, err
 			}
 			weight := s.Rng.Int63()
-			newCols := make([]types.Datum, len(datums))
-			for i := range datums {
-				datums[i].Copy(&newCols[i])
-			}
 			item := &RowSampleItem{
 				Columns: newCols,
 				Weight:  weight,
@@ -162,14 +165,14 @@ func (s *RowSampleBuilder) Collect() (*RowSampleCollector, error) {
 	}
 }
 
-func (s *RowSampleCollector) collectColumns(sc *stmtctx.StatementContext, cols []types.Datum) error {
+func (s *RowSampleCollector) collectColumns(sc *stmtctx.StatementContext, cols []types.Datum, sizes []int64) error {
 	for i, col := range cols {
 		if col.IsNull() {
 			s.NullCount[i]++
 			continue
 		}
-		s.TotalSizes[i] += int64(len(col.GetBytes())) - 1
 		// Minus one is to remove the flag byte.
+		s.TotalSizes[i] += sizes[i] - 1
 		err := s.FMSketches[i].InsertValue(sc, col)
 		if err != nil {
 			return err
