@@ -1412,4 +1412,8 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_top_sql_report_interval_seconds' can't be set to the value of '5000'")
 	tk.MustQuery("select @@global.tidb_top_sql_report_interval_seconds;").Check(testkit.Rows("120"))
 	c.Assert(variable.TopSQLVariable.ReportIntervalSeconds.Load(), Equals, int64(120))
+
+	// Test for hide top sql variable in show variable.
+	tk.MustQuery("show variables like '%top_sql%'").Check(testkit.Rows())
+	tk.MustQuery("show global variables like '%top_sql%'").Check(testkit.Rows())
 }
