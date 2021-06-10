@@ -1682,41 +1682,41 @@ var defaultSysVars = []*SysVar{
 
 	/* tikv gc metrics */
 	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: On, Type: TypeBool, GetGlobal: func(s *SessionVars) (string, error) {
-		return getTikvTableValue(s, "tikv_gc_enable", On)
+		return getTiDBTableValue(s, "tikv_gc_enable", On)
 	}, SetGlobal: func(s *SessionVars, val string) error {
-		return setTikvTableValue(s, "tikv_gc_enable", val, "Current GC enable status")
+		return setTiDBTableValue(s, "tikv_gc_enable", val, "Current GC enable status")
 	}},
 	{Scope: ScopeGlobal, Name: TiDBGCRunInterval, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: math.MaxInt64, GetGlobal: func(s *SessionVars) (string, error) {
-		return getTikvTableValue(s, "tikv_gc_run_interval", "10m0s")
+		return getTiDBTableValue(s, "tikv_gc_run_interval", "10m0s")
 	}, SetGlobal: func(s *SessionVars, val string) error {
-		return setTikvTableValue(s, "tikv_gc_run_interval", val, "GC run interval, at least 10m, in Go format.")
+		return setTiDBTableValue(s, "tikv_gc_run_interval", val, "GC run interval, at least 10m, in Go format.")
 	}},
 	{Scope: ScopeGlobal, Name: TiDBGCLifetime, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: math.MaxInt64, GetGlobal: func(s *SessionVars) (string, error) {
-		return getTikvTableValue(s, "tikv_gc_life_time", "10m0s")
+		return getTiDBTableValue(s, "tikv_gc_life_time", "10m0s")
 	}, SetGlobal: func(s *SessionVars, val string) error {
-		return setTikvTableValue(s, "tikv_gc_life_time", val, "All versions within life time will not be collected by GC, at least 10m, in Go format.")
+		return setTiDBTableValue(s, "tikv_gc_life_time", val, "All versions within life time will not be collected by GC, at least 10m, in Go format.")
 	}},
 	{Scope: ScopeGlobal, Name: TiDBGCConcurrency, Value: "-1", Type: TypeInt, MinValue: 1, MaxValue: 128, AllowAutoValue: true, GetGlobal: func(s *SessionVars) (string, error) {
-		autoConcurrencyVal, err := getTikvTableValue(s, "tikv_gc_auto_concurrency", On)
+		autoConcurrencyVal, err := getTiDBTableValue(s, "tikv_gc_auto_concurrency", On)
 		if err == nil && autoConcurrencyVal == On {
 			return "-1", nil // convention for "AUTO"
 		}
-		return getTikvTableValue(s, "tikv_gc_concurrency", "-1")
+		return getTiDBTableValue(s, "tikv_gc_concurrency", "-1")
 	}, SetGlobal: func(s *SessionVars, val string) error {
 		autoConcurrency := "OFF"
 		if val == "-1" {
 			autoConcurrency = "ON"
 		}
 		// Update both autoconcurrency and concurrency.
-		if err := setTikvTableValue(s, "tikv_gc_auto_concurrency", autoConcurrency, "Let TiDB pick the concurrency automatically. If set false, tikv_gc_concurrency will be used"); err != nil {
+		if err := setTiDBTableValue(s, "tikv_gc_auto_concurrency", autoConcurrency, "Let TiDB pick the concurrency automatically. If set false, tikv_gc_concurrency will be used"); err != nil {
 			return err
 		}
-		return setTikvTableValue(s, "tikv_gc_concurrency", val, "How many goroutines used to do GC parallel, [1, 128], default 2")
+		return setTiDBTableValue(s, "tikv_gc_concurrency", val, "How many goroutines used to do GC parallel, [1, 128], default 2")
 	}},
 	{Scope: ScopeGlobal, Name: TiDBGCScanLockMode, Value: "LEGACY", Type: TypeEnum, PossibleValues: []string{"PHYSICAL", "LEGACY"}, GetGlobal: func(s *SessionVars) (string, error) {
-		return getTikvTableValue(s, "tikv_gc_scan_lock_mode", "LEGACY")
+		return getTiDBTableValue(s, "tikv_gc_scan_lock_mode", "LEGACY")
 	}, SetGlobal: func(s *SessionVars, val string) error {
-		return setTikvTableValue(s, "tikv_gc_scan_lock_mode", val, "Mode of scanning locks, \"physical\" or \"legacy\"")
+		return setTiDBTableValue(s, "tikv_gc_scan_lock_mode", val, "Mode of scanning locks, \"physical\" or \"legacy\"")
 	}},
 	// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_tmp_table_size
 	{Scope: ScopeGlobal | ScopeSession, Name: TMPTableSize, Value: strconv.Itoa(DefTMPTableSize), Type: TypeUnsigned, MinValue: 1024, MaxValue: math.MaxInt64, AutoConvertOutOfRange: true, IsHintUpdatable: true, AllowEmpty: true, SetSession: func(s *SessionVars, val string) error {

@@ -227,7 +227,7 @@ func SetStmtVar(vars *SessionVars, name string, value string) error {
 	return vars.SetStmtVar(name, sVal)
 }
 
-func getTikvTableValue(vars *SessionVars, name, defaultVal string) (string, error) {
+func getTiDBTableValue(vars *SessionVars, name, defaultVal string) (string, error) {
 	val, err := vars.GlobalVarsAccessor.GetTiDBTableValue(name)
 	if err != nil { // handle empty result or other errors
 		return defaultVal, nil
@@ -235,7 +235,7 @@ func getTikvTableValue(vars *SessionVars, name, defaultVal string) (string, erro
 	return trueFalseToOnOff(val), nil
 }
 
-func setTikvTableValue(vars *SessionVars, name, value, comment string) error {
+func setTiDBTableValue(vars *SessionVars, name, value, comment string) error {
 	value = onOffToTrueFalse(value)
 	return vars.GlobalVarsAccessor.SetTiDBTableValue(name, value, comment)
 }
