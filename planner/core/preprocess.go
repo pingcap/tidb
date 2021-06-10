@@ -645,7 +645,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			return
 		}
 		if stmt.TemporaryKeyword != ast.TemporaryNone {
-			err := checkReferInfo(tableMetaInfo)
+			err := checkReferInfoForTemporaryTable(tableMetaInfo)
 			if err != nil {
 				p.err = err
 				return
@@ -1032,7 +1032,7 @@ func checkTableEngine(engineName string) error {
 	return nil
 }
 
-func checkReferInfo(tableMetaInfo *model.TableInfo) error {
+func checkReferInfoForTemporaryTable(tableMetaInfo *model.TableInfo) error {
 	if tableMetaInfo.AutoRandomBits != 0 {
 		return ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random")
 	}
@@ -1041,6 +1041,9 @@ func checkReferInfo(tableMetaInfo *model.TableInfo) error {
 	}
 	if tableMetaInfo.Partition != nil {
 		return ErrPartitionNoTemporary
+	}
+	if tableMetaInfo.ShardRowIDBits != 0 {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
 	}
 
 	return nil

@@ -557,6 +557,17 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	_, err = tk.Exec("create global temporary table temporary_table_pre_split like table_pre_split ON COMMIT DELETE ROWS;")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error())
 
+	// Test shard_row_id_bits.
+	tk.MustExec("drop table if exists shard_row_id_table, shard_row_id_temporary_table, shard_row_id_table_plus, shard_row_id_temporary_table_plus")
+	_, err = tk.Exec("create table shard_row_id_table (a int) shard_row_id_bits = 5;")
+	_, err = tk.Exec("create global temporary table shard_row_id_temporary_table like shard_row_id_table on commit delete rows;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
+	tk.MustExec("create table shard_row_id_table_plus (a int);")
+	tk.MustExec("create global temporary table shard_row_id_temporary_table_plus (a int) on commit delete rows;")
+	defer tk.MustExec("drop table if exists shard_row_id_table, shard_row_id_temporary_table, shard_row_id_table_plus, shard_row_id_temporary_table_plus")
+	_, err = tk.Exec("alter table shard_row_id_temporary_table_plus shard_row_id_bits = 4;")
+	c.Assert(err.Error(), Equals, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
+
 	// Test partition.
 	tk.MustExec("drop table if exists global_partition_table;")
 	tk.MustExec("create table global_partition_table (a int, b int) partition by hash(a) partitions 3;")
