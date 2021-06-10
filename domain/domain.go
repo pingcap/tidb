@@ -907,7 +907,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 		return err
 	}
 	var watchCh clientv3.WatchChan
-	duration := 3 * time.Second
+	duration := 30 * time.Second
 	if do.etcdClient != nil {
 		watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
 	}
