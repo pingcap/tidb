@@ -1021,6 +1021,11 @@ type LogicalLimit struct {
 	limitHints limitHintInfo
 }
 
+// extraPIDInfo is used by SelectLock on partitioned table, the TableReader need
+// to return the partition id column.
+// Because SelectLock has to used that partition id to encode the lock key.
+// the child of SelectLock may be Join, so that table can be multiple extra PID columns.
+// fields are for each of the table, and TblIDs are the corresponding table IDs.
 type extraPIDInfo struct {
 	Columns []*expression.Column
 	TblIDs  []int64
