@@ -55,6 +55,10 @@ var (
 	ErrTiFlashServerBusy = errors.New("tiflash server busy")
 	// ErrRegionUnavailable is the error when region is not available.
 	ErrRegionUnavailable = errors.New("region unavailable")
+	// ErrRegionDataNotReady is the error when region's data is not ready when querying it with safe_ts
+	ErrRegionDataNotReady = errors.New("region data not ready")
+	// ErrRegionNotInitialized is error when region is not initialized
+	ErrRegionNotInitialized = errors.New("region not Initialized")
 	// ErrUnknown is the unknow error.
 	ErrUnknown = errors.New("unknow")
 )
