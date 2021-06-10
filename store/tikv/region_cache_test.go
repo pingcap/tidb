@@ -25,9 +25,11 @@ import (
 	"github.com/google/btree"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	pd "github.com/tikv/pd/client"
@@ -1050,6 +1052,51 @@ func (s *testRegionCacheSuite) TestRegionEpochOnTiFlash(c *C) {
 	lctx, err = s.cache.GetTiKVRPCContext(s.bo, loc1.Region, kv.ReplicaReadLeader, 0)
 	c.Assert(err, IsNil)
 	c.Assert(lctx.Peer.Id, Not(Equals), s.peer1)
+}
+
+func (s *testRegionCacheSuite) TestRegionDataNotReady(c *C) {
+	loc1, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(loc1.Region.id, Equals, s.region1)
+	testcases := []struct {
+		scope         string
+		readType      kv.ReplicaReadType
+		expectPeerID  uint64
+		expectOptsLen int
+		expectSeed    uint32
+	}{
+		{
+			scope:         oracle.GlobalTxnScope,
+			readType:      kv.ReplicaReadFollower,
+			expectPeerID:  s.peer2,
+			expectOptsLen: 1,
+			expectSeed:    1,
+		},
+		{
+			scope:         "local",
+			readType:      kv.ReplicaReadFollower,
+			expectPeerID:  s.peer2,
+			expectOptsLen: 0,
+			expectSeed:    1,
+		},
+	}
+
+	for _, testcase := range testcases {
+		fctx, err := s.cache.GetTiKVRPCContext(s.bo, loc1.Region, testcase.readType, 0)
+		c.Assert(err, IsNil)
+		c.Assert(fctx.Peer.Id, Equals, testcase.expectPeerID)
+		reqSend := NewRegionRequestSender(s.cache, nil)
+		regionErr := &errorpb.Error{DataIsNotReady: &errorpb.DataIsNotReady{}}
+		var opts []StoreSelectorOption
+		seed := uint32(0)
+		s.bo.Reset()
+		req := &tikvrpc.Request{TxnScope: testcase.scope, Context: kvrpcpb.Context{StaleRead: true}, ReplicaReadSeed: &seed}
+		retry, err := reqSend.onRegionError(s.bo, fctx, req, regionErr, &opts)
+		c.Assert(err, IsNil)
+		c.Assert(retry, IsTrue)
+		c.Assert(len(opts), Equals, testcase.expectOptsLen)
+		c.Assert(*req.GetReplicaReadSeed(), Equals, testcase.expectSeed)
+	}
 }
 
 const regionSplitKeyFormat = "t%08d"
