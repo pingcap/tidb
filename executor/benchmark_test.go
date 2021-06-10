@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"sort"
@@ -291,7 +290,7 @@ func buildHashAggExecutor(ctx sessionctx.Context, src Executor, schema *expressi
 	plan.SetSchema(schema)
 	plan.Init(ctx, nil, 0)
 	plan.SetChildren(nil)
-	b := newExecutorBuilder(ctx, nil)
+	b := newExecutorBuilder(ctx, nil, nil)
 	exec := b.build(plan)
 	hashAgg := exec.(*HashAggExec)
 	hashAgg.children[0] = src
@@ -343,7 +342,7 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec Executor, schema *ex
 		plan = sg
 	}
 
-	b := newExecutorBuilder(ctx, nil)
+	b := newExecutorBuilder(ctx, nil, nil)
 	return b.build(plan)
 }
 
@@ -576,7 +575,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		plan = win
 	}
 
-	b := newExecutorBuilder(ctx, nil)
+	b := newExecutorBuilder(ctx, nil, nil)
 	exec := b.build(plan)
 	return exec
 }
@@ -589,6 +588,7 @@ type windowTestCase struct {
 	ndv              int // the number of distinct group-by keys
 	rows             int
 	concurrency      int
+	pipelined        int
 	dataSourceSorted bool
 	ctx              sessionctx.Context
 	rawDataSmall     string
@@ -596,15 +596,15 @@ type windowTestCase struct {
 }
 
 func (a windowTestCase) String() string {
-	return fmt.Sprintf("(func:%v, aggColType:%s, numFunc:%v, ndv:%v, rows:%v, sorted:%v, concurrency:%v)",
-		a.windowFunc, a.columns[0].RetType, a.numFunc, a.ndv, a.rows, a.dataSourceSorted, a.concurrency)
+	return fmt.Sprintf("(func:%v, aggColType:%s, numFunc:%v, ndv:%v, rows:%v, sorted:%v, concurrency:%v, pipelined:%v)",
+		a.windowFunc, a.columns[0].RetType, a.numFunc, a.ndv, a.rows, a.dataSourceSorted, a.concurrency, a.pipelined)
 }
 
 func defaultWindowTestCase() *windowTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	return &windowTestCase{ast.WindowFuncRowNumber, 1, nil, 1000, 10000000, 1, true, ctx, strings.Repeat("x", 16),
+	return &windowTestCase{ast.WindowFuncRowNumber, 1, nil, 1000, 10000000, 1, 0, true, ctx, strings.Repeat("x", 16),
 		[]*expression.Column{
 			{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
 			{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
@@ -616,6 +616,9 @@ func defaultWindowTestCase() *windowTestCase {
 func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 	ctx := casTest.ctx
 	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBWindowConcurrency, fmt.Sprintf("%v", casTest.concurrency)); err != nil {
+		b.Fatal(err)
+	}
+	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBEnablePipelinedWindowFunction, fmt.Sprintf("%v", casTest.pipelined)); err != nil {
 		b.Fatal(err)
 	}
 
@@ -658,10 +661,10 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 	}
 }
 
-func BenchmarkWindowRows(b *testing.B) {
+func baseBenchmarkWindowRows(b *testing.B, pipelined int) {
 	b.ReportAllocs()
 	rows := []int{1000, 100000}
-	ndvs := []int{10, 1000}
+	ndvs := []int{1, 10, 1000}
 	concs := []int{1, 2, 4}
 	for _, row := range rows {
 		for _, ndv := range ndvs {
@@ -672,6 +675,7 @@ func BenchmarkWindowRows(b *testing.B) {
 				cas.concurrency = con
 				cas.dataSourceSorted = false
 				cas.windowFunc = ast.WindowFuncRowNumber // cheapest
+				cas.pipelined = pipelined
 				b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 					benchmarkWindowExecWithCase(b, cas)
 				})
@@ -680,20 +684,25 @@ func BenchmarkWindowRows(b *testing.B) {
 	}
 }
 
-func BenchmarkWindowFunctions(b *testing.B) {
+func BenchmarkWindowRows(b *testing.B) {
+	baseBenchmarkWindowRows(b, 0)
+	baseBenchmarkWindowRows(b, 1)
+}
+
+func baseBenchmarkWindowFunctions(b *testing.B, pipelined int) {
 	b.ReportAllocs()
 	windowFuncs := []string{
-		ast.WindowFuncRowNumber,
-		ast.WindowFuncRank,
-		ast.WindowFuncDenseRank,
-		ast.WindowFuncCumeDist,
-		ast.WindowFuncPercentRank,
-		ast.WindowFuncNtile,
-		ast.WindowFuncLead,
+		// ast.WindowFuncRowNumber,
+		// ast.WindowFuncRank,
+		// ast.WindowFuncDenseRank,
+		// ast.WindowFuncCumeDist,
+		// ast.WindowFuncPercentRank,
+		// ast.WindowFuncNtile,
+		// ast.WindowFuncLead,
 		ast.WindowFuncLag,
-		ast.WindowFuncFirstValue,
-		ast.WindowFuncLastValue,
-		ast.WindowFuncNthValue,
+		// ast.WindowFuncFirstValue,
+		// ast.WindowFuncLastValue,
+		// ast.WindowFuncNthValue,
 	}
 	concs := []int{1, 4}
 	for _, windowFunc := range windowFuncs {
@@ -704,6 +713,7 @@ func BenchmarkWindowFunctions(b *testing.B) {
 			cas.concurrency = con
 			cas.dataSourceSorted = false
 			cas.windowFunc = windowFunc
+			cas.pipelined = pipelined
 			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 				benchmarkWindowExecWithCase(b, cas)
 			})
@@ -711,7 +721,12 @@ func BenchmarkWindowFunctions(b *testing.B) {
 	}
 }
 
-func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
+func BenchmarkWindowFunctions(b *testing.B) {
+	baseBenchmarkWindowFunctions(b, 0)
+	baseBenchmarkWindowFunctions(b, 1)
+}
+
+func baseBenchmarkWindowFunctionsWithFrame(b *testing.B, pipelined int) {
 	b.ReportAllocs()
 	windowFuncs := []string{
 		ast.WindowFuncRowNumber,
@@ -737,6 +752,7 @@ func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
 					if i < len(frames) {
 						cas.frame = frames[i]
 					}
+					cas.pipelined = pipelined
 					b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 						benchmarkWindowExecWithCase(b, cas)
 					})
@@ -744,9 +760,15 @@ func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
 			}
 		}
 	}
+
 }
 
-func BenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b *testing.B) {
+func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
+	baseBenchmarkWindowFunctionsWithFrame(b, 0)
+	baseBenchmarkWindowFunctionsWithFrame(b, 1)
+}
+
+func baseBenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b *testing.B, pipelined int) {
 	b.ReportAllocs()
 	windowFunc := ast.AggFuncMax
 	frame := &core.WindowFrame{Type: ast.Rows, Start: &core.FrameBound{UnBounded: true}, End: &core.FrameBound{UnBounded: true}}
@@ -758,12 +780,18 @@ func BenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b *testing.B) {
 	cas.windowFunc = windowFunc
 	cas.numFunc = 1
 	cas.frame = frame
+	cas.pipelined = pipelined
 	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 		benchmarkWindowExecWithCase(b, cas)
 	})
 }
 
-func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.FrameType) {
+func BenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b *testing.B) {
+	baseBenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b, 0)
+	baseBenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b, 1)
+}
+
+func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.FrameType, pipelined int) {
 	b.ReportAllocs()
 	windowFuncs := []struct {
 		aggFunc     string
@@ -795,6 +823,7 @@ func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.F
 		cas.windowFunc = windowFunc.aggFunc
 		cas.frame = frame
 		cas.columns[0].RetType.Tp = windowFunc.aggColTypes
+		cas.pipelined = pipelined
 		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 			benchmarkWindowExecWithCase(b, cas)
 		})
@@ -802,8 +831,10 @@ func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.F
 }
 
 func BenchmarkWindowFunctionsWithSlidingWindow(b *testing.B) {
-	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Rows)
-	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Ranges)
+	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Rows, 0)
+	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Ranges, 0)
+	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Rows, 1)
+	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Ranges, 1)
 }
 
 type hashJoinTestCase struct {
@@ -1291,7 +1322,7 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 			hashCols: tc.outerHashKeyIdx,
 		},
 		innerCtx: innerCtx{
-			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil)},
+			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil, nil)},
 			rowTypes:      rightTypes,
 			colLens:       colLens,
 			keyCols:       tc.innerJoinKeyIdx,
@@ -1357,7 +1388,7 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 			compareFuncs:  outerCompareFuncs,
 		},
 		innerMergeCtx: innerMergeCtx{
-			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil)},
+			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil, nil)},
 			rowTypes:      rightTypes,
 			joinKeys:      innerJoinKeys,
 			colLens:       colLens,
@@ -1991,7 +2022,7 @@ func BenchmarkReadLastLinesOfHugeLine(b *testing.B) {
 		hugeLine[i] = 'a' + byte(i%26)
 	}
 	fileName := "tidb.log"
-	err := ioutil.WriteFile(fileName, hugeLine, 0644)
+	err := os.WriteFile(fileName, hugeLine, 0644)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -2061,4 +2092,9 @@ func BenchmarkAggPartialResultMapperMemoryUsage(b *testing.B) {
 			}
 		})
 	}
+}
+
+func BenchmarkPipelinedRowNumberWindowFunctionExecution(b *testing.B) {
+	b.ReportAllocs()
+
 }

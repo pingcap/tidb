@@ -535,6 +535,7 @@ func (s *TestGlobalKillSuite) TestMultipleTiDB(c *C) {
 }
 
 func (s *TestGlobalKillSuite) TestLostConnection(c *C) {
+	c.Skip("unstable, skip race test")
 	c.Assert(s.pdErr, IsNil, Commentf(msgErrConnectPD, s.pdErr))
 
 	// tidb1

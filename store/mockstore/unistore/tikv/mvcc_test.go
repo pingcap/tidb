@@ -16,7 +16,6 @@ package tikv
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"os"
 	"path/filepath"
@@ -89,11 +88,11 @@ func CreateTestDB(dbPath, LogPath string) (*badger.DB, error) {
 }
 
 func NewTestStore(dbPrefix string, logPrefix string, c *C) (*TestStore, error) {
-	dbPath, err := ioutil.TempDir("", dbPrefix)
+	dbPath, err := os.MkdirTemp("", dbPrefix)
 	if err != nil {
 		return nil, err
 	}
-	LogPath, err := ioutil.TempDir("", logPrefix)
+	LogPath, err := os.MkdirTemp("", logPrefix)
 	if err != nil {
 		return nil, err
 	}

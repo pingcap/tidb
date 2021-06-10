@@ -23,10 +23,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
-	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"go.uber.org/zap"
@@ -270,22 +269,22 @@ func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
 	tikv.RecordRegionRequestRuntimeStats(reqStats.Stats, tikvrpc.CmdGet, time.Second)
 	tikv.RecordRegionRequestRuntimeStats(reqStats.Stats, tikvrpc.CmdGet, time.Millisecond)
 	snapshot := s.store.GetSnapshot(0)
-	snapshot.SetOption(kv.CollectRuntimeStats, &tikv.SnapshotRuntimeStats{})
+	snapshot.SetRuntimeStats(&tikv.SnapshotRuntimeStats{})
 	snapshot.MergeRegionRequestStats(reqStats.Stats)
 	snapshot.MergeRegionRequestStats(reqStats.Stats)
 	bo := tikv.NewBackofferWithVars(context.Background(), 2000, nil)
-	err := bo.BackoffWithMaxSleep(tikv.BoTxnLockFast, 30, errors.New("test"))
+	err := bo.BackoffWithMaxSleepTxnLockFast(30, errors.New("test"))
 	c.Assert(err, IsNil)
 	snapshot.RecordBackoffInfo(bo)
 	snapshot.RecordBackoffInfo(bo)
 	expect := "Get:{num_rpc:4, total_time:2s},txnLockFast_backoff:{num:2, total_time:60ms}"
 	c.Assert(snapshot.FormatStats(), Equals, expect)
-	detail := &pb.ExecDetailsV2{
-		TimeDetail: &pb.TimeDetail{
+	detail := &kvrpcpb.ExecDetailsV2{
+		TimeDetail: &kvrpcpb.TimeDetail{
 			WaitWallTimeMs:    100,
 			ProcessWallTimeMs: 100,
 		},
-		ScanDetailV2: &pb.ScanDetailV2{
+		ScanDetailV2: &kvrpcpb.ScanDetailV2{
 			ProcessedVersions:         10,
 			TotalVersions:             15,
 			RocksdbBlockReadCount:     20,

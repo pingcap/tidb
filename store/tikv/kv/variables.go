@@ -21,9 +21,6 @@ type Variables struct {
 	// BackOffWeight specifies the weight of the max back off time duration.
 	BackOffWeight int
 
-	// Hook is used for test to verify the variable take effect.
-	Hook func(name string, vars *Variables)
-
 	// Pointer to SessionVars.Killed
 	// Killed is a flag to indicate that this query is killed.
 	Killed *uint32

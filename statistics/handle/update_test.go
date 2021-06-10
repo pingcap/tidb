@@ -504,7 +504,8 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 		hg, ok := stats.Indices[tableInfo.Indices[0].ID]
 		c.Assert(ok, IsTrue)
 		c.Assert(hg.NDV, Equals, int64(3))
-		c.Assert(hg.Len(), Equals, 3)
+		c.Assert(hg.Len(), Equals, 0)
+		c.Assert(hg.TopN.Num(), Equals, 3)
 	})
 }
 
@@ -577,8 +578,8 @@ func (s *testSerialStatsSuite) TestAutoAnalyzeOnEmptyTable(c *C) {
 	// test if it will be limited by the time range
 	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsFalse)
 
-	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='00:00 +0000'"))
-	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='23:59 +0000'"))
+	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
+	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
 }
 
@@ -1453,7 +1454,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 	}{
 		// table was never analyzed and has reach the limit
 		{
-			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
+			tbl:    &statistics.Table{Version: oracle.GoTimeToTS(time.Now())},
 			limit:  0,
 			ratio:  0,
 			start:  "00:00 +0800",
@@ -1464,7 +1465,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 		},
 		// table was never analyzed but has not reach the limit
 		{
-			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
+			tbl:    &statistics.Table{Version: oracle.GoTimeToTS(time.Now())},
 			limit:  time.Hour,
 			ratio:  0,
 			start:  "00:00 +0800",
@@ -1758,6 +1759,7 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i/5, i))
 	}
+	testKit.MustExec("set @@session.tidb_analyze_version = 1")
 	testKit.MustExec("analyze table t with 3 buckets, 0 topn")
 	testKit.MustExec("delete from t where a = 1")
 	testKit.MustExec("delete from t where b > 10")
@@ -1836,6 +1838,7 @@ func (s *testStatsSuite) TestFeedbackRanges(c *C) {
 	err := h.HandleDDLEvent(<-h.DDLEventCh())
 	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	testKit.MustExec("set @@session.tidb_analyze_version=1")
 	testKit.MustExec("analyze table t with 3 buckets")
 	for i := 30; i < 40; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))

@@ -57,6 +57,7 @@ check-static: tools/bin/golangci-lint
 	  --enable=unused \
 	  --enable=structcheck \
 	  --enable=deadcode \
+	  --enable=gosimple \
 	  $$($(PACKAGE_DIRECTORIES))
 
 check-slow:tools/bin/gometalinter tools/bin/gosec
@@ -238,11 +239,13 @@ tools/bin/unconvert: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/unconvert github.com/mdempsky/unconvert
 
-tools/bin/failpoint-ctl: go.mod
-	$(GO) build -o $@ github.com/pingcap/failpoint/failpoint-ctl
+tools/bin/failpoint-ctl: tools/check/go.mod
+	cd tools/check; \
+	$(GO) build -o ../bin/failpoint-ctl github.com/pingcap/failpoint/failpoint-ctl
 
-tools/bin/errdoc-gen: go.mod
-	$(GO) build -o $@ github.com/pingcap/errors/errdoc-gen
+tools/bin/errdoc-gen: tools/check/go.mod
+	cd tools/check; \
+	$(GO) build -o ../bin/errdoc-gen github.com/pingcap/errors/errdoc-gen
 
 tools/bin/golangci-lint:
 	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.29.0

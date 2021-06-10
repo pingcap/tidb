@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -499,14 +498,14 @@ func (cli *testServerClient) runTestLoadDataForSlowLog(c *C, server *Server) {
 		}
 
 		// Test for record slow log for load data statement.
-		rows := dbt.mustQuery(fmt.Sprintf("select plan from information_schema.slow_query where query like 'load data local infile %% into table t_slow;' order by time desc limit 1"))
+		rows := dbt.mustQuery("select plan from information_schema.slow_query where query like 'load data local infile % into table t_slow;' order by time desc limit 1")
 		expectedPlan := ".*LoadData.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.* commit_txn.*"
 		checkPlan(rows, expectedPlan)
 		// Test for record statements_summary for load data statement.
-		rows = dbt.mustQuery(fmt.Sprintf("select plan from information_schema.STATEMENTS_SUMMARY where QUERY_SAMPLE_TEXT like 'load data local infile %%' limit 1"))
+		rows = dbt.mustQuery("select plan from information_schema.STATEMENTS_SUMMARY where QUERY_SAMPLE_TEXT like 'load data local infile %' limit 1")
 		checkPlan(rows, expectedPlan)
 		// Test log normal statement after executing load date.
-		rows = dbt.mustQuery(fmt.Sprintf("select plan from information_schema.slow_query where query = 'insert ignore into t_slow values (1,1);' order by time desc limit 1"))
+		rows = dbt.mustQuery("select plan from information_schema.slow_query where query = 'insert ignore into t_slow values (1,1);' order by time desc limit 1")
 		expectedPlan = ".*Insert.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.*"
 		checkPlan(rows, expectedPlan)
 	})
@@ -1913,7 +1912,7 @@ func (cli *testServerClient) runTestSumAvg(c *C) {
 func (cli *testServerClient) getMetrics(t *C) []byte {
 	resp, err := cli.fetchStatus("/metrics")
 	t.Assert(err, IsNil)
-	content, err := ioutil.ReadAll(resp.Body)
+	content, err := io.ReadAll(resp.Body)
 	t.Assert(err, IsNil)
 	err = resp.Body.Close()
 	t.Assert(err, IsNil)
@@ -1955,7 +1954,7 @@ func (cli *testServerClient) waitUntilServerOnline() {
 		// fetch http status
 		resp, err := cli.fetchStatus("/status")
 		if err == nil {
-			_, err = ioutil.ReadAll(resp.Body)
+			_, err = io.ReadAll(resp.Body)
 			if err != nil {
 				panic(err)
 			}
@@ -2058,6 +2057,7 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *C) {
 				if rows.Next() {
 					rows.Scan(&errors, &warnings)
 				}
+				rows.Close()
 
 				if test.incrementErrors {
 					errors++
@@ -2065,14 +2065,22 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *C) {
 				if test.incrementWarnings {
 					warnings++
 				}
-
-				dbt.db.Query(test.stmt) // ignore results and errors (query table)
+				var err error
+				rows, err = dbt.db.Query(test.stmt)
+				if err == nil {
+					// make sure to read the result since the error/warnings are populated in the network send code.
+					if rows.Next() {
+						var fake string
+						rows.Scan(&fake)
+					}
+					rows.Close()
+				}
 				var newErrors, newWarnings int
 				rows = dbt.mustQuery("SELECT SUM(error_count), SUM(warning_count) FROM information_schema."+tbl+" WHERE error_number = ? GROUP BY error_number", test.errCode)
 				if rows.Next() {
 					rows.Scan(&newErrors, &newWarnings)
 				}
-
+				rows.Close()
 				dbt.Check(newErrors, Equals, errors)
 				dbt.Check(newWarnings, Equals, warnings)
 			}

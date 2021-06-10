@@ -17,34 +17,40 @@ import (
 	"context"
 	"crypto/tls"
 
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
 	driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 // Wraps tikv.KVStore and make it compatible with kv.Storage.
 type mockStorage struct {
 	*tikv.KVStore
 	*copr.Store
-	memCache kv.MemManager
+	memCache  kv.MemManager
+	LockWaits []*deadlockpb.WaitForEntry
 }
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
 func NewMockStorage(tikvStore *tikv.KVStore) (kv.Storage, error) {
+	return NewMockStorageWithLockWaits(tikvStore, nil)
+}
+
+// NewMockStorageWithLockWaits wraps tikv.KVStore as kv.Storage, with mock LockWaits.
+func NewMockStorageWithLockWaits(tikvStore *tikv.KVStore, lockWaits []*deadlockpb.WaitForEntry) (kv.Storage, error) {
 	coprConfig := config.DefaultConfig().TiKVClient.CoprCache
 	coprStore, err := copr.NewStore(tikvStore, &coprConfig)
 	if err != nil {
 		return nil, err
 	}
 	return &mockStorage{
-		KVStore:  tikvStore,
-		Store:    coprStore,
-		memCache: kv.NewCacheDB(),
+		KVStore:   tikvStore,
+		Store:     coprStore,
+		memCache:  kv.NewCacheDB(),
+		LockWaits: lockWaits,
 	}, nil
-
 }
 
 func (s *mockStorage) EtcdAddrs() ([]string, error) {
@@ -84,21 +90,8 @@ func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, 
 }
 
 // BeginWithOption begins a transaction with given option
-func (s *mockStorage) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
-	txnScope := option.TxnScope
-	if txnScope == "" {
-		txnScope = oracle.GlobalTxnScope
-	}
-	if option.StartTS != nil {
-		return newTiKVTxn(s.BeginWithStartTS(txnScope, *option.StartTS))
-	} else if option.PrevSec != nil {
-		return newTiKVTxn(s.BeginWithExactStaleness(txnScope, *option.PrevSec))
-	} else if option.MaxPrevSec != nil {
-		return newTiKVTxn(s.BeginWithMaxPrevSec(txnScope, *option.MaxPrevSec))
-	} else if option.MinStartTS != nil {
-		return newTiKVTxn(s.BeginWithMinStartTS(txnScope, *option.MinStartTS))
-	}
-	return newTiKVTxn(s.BeginWithTxnScope(txnScope))
+func (s *mockStorage) BeginWithOption(option tikv.StartTSOption) (kv.Transaction, error) {
+	return newTiKVTxn(s.KVStore.BeginWithOption(option))
 }
 
 // GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
@@ -113,11 +106,20 @@ func (s *mockStorage) CurrentVersion(txnScope string) (kv.Version, error) {
 	return kv.NewVersion(ver), err
 }
 
+// GetMinSafeTS return the minimal SafeTS of the storage with given txnScope.
+func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
+	return 0
+}
+
 func newTiKVTxn(txn *tikv.KVTxn, err error) (kv.Transaction, error) {
 	if err != nil {
 		return nil, err
 	}
 	return driver.NewTiKVTxn(txn), nil
+}
+
+func (s *mockStorage) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
+	return s.LockWaits, nil
 }
 
 func (s *mockStorage) Close() error {

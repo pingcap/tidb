@@ -17,6 +17,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/kv"
+	derr "github.com/pingcap/tidb/store/driver/error"
 	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/unionstore"
 )
@@ -37,19 +38,19 @@ func (m *memBuffer) Delete(k kv.Key) error {
 	return m.MemDB.Delete(k)
 }
 
-func (m *memBuffer) DeleteWithFlags(k kv.Key, ops ...tikvstore.FlagsOp) error {
-	err := m.MemDB.DeleteWithFlags(k, ops...)
-	return ToTiDBErr(err)
+func (m *memBuffer) DeleteWithFlags(k kv.Key, ops ...kv.FlagsOp) error {
+	err := m.MemDB.DeleteWithFlags(k, getTiKVFlagsOps(ops)...)
+	return derr.ToTiDBErr(err)
 }
 
 func (m *memBuffer) Get(_ context.Context, key kv.Key) ([]byte, error) {
 	data, err := m.MemDB.Get(key)
-	return data, ToTiDBErr(err)
+	return data, derr.ToTiDBErr(err)
 }
 
-func (m *memBuffer) GetFlags(key kv.Key) (tikvstore.KeyFlags, error) {
+func (m *memBuffer) GetFlags(key kv.Key) (kv.KeyFlags, error) {
 	data, err := m.MemDB.GetFlags(key)
-	return data, ToTiDBErr(err)
+	return getTiDBKeyFlags(data), derr.ToTiDBErr(err)
 }
 
 func (m *memBuffer) Staging() kv.StagingHandle {
@@ -64,21 +65,21 @@ func (m *memBuffer) Release(h kv.StagingHandle) {
 	m.MemDB.Release(int(h))
 }
 
-func (m *memBuffer) InspectStage(handle kv.StagingHandle, f func(kv.Key, tikvstore.KeyFlags, []byte)) {
+func (m *memBuffer) InspectStage(handle kv.StagingHandle, f func(kv.Key, kv.KeyFlags, []byte)) {
 	tf := func(key []byte, flag tikvstore.KeyFlags, value []byte) {
-		f(kv.Key(key), flag, value)
+		f(kv.Key(key), getTiDBKeyFlags(flag), value)
 	}
 	m.MemDB.InspectStage(int(handle), tf)
 }
 
 func (m *memBuffer) Set(key kv.Key, value []byte) error {
 	err := m.MemDB.Set(key, value)
-	return ToTiDBErr(err)
+	return derr.ToTiDBErr(err)
 }
 
 func (m *memBuffer) SetWithFlags(key kv.Key, value []byte, ops ...kv.FlagsOp) error {
-	err := m.MemDB.SetWithFlags(key, value, ops...)
-	return ToTiDBErr(err)
+	err := m.MemDB.SetWithFlags(key, value, getTiKVFlagsOps(ops)...)
+	return derr.ToTiDBErr(err)
 }
 
 // Iter creates an Iterator positioned on the first entry that k <= entry's key.
@@ -87,7 +88,7 @@ func (m *memBuffer) SetWithFlags(key kv.Key, value []byte, ops ...kv.FlagsOp) er
 // The Iterator must be Closed after use.
 func (m *memBuffer) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	it, err := m.MemDB.Iter(k, upperBound)
-	return &tikvIterator{Iterator: it}, ToTiDBErr(err)
+	return &tikvIterator{Iterator: it}, derr.ToTiDBErr(err)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
@@ -96,7 +97,7 @@ func (m *memBuffer) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 // TODO: Add lower bound limit
 func (m *memBuffer) IterReverse(k kv.Key) (kv.Iterator, error) {
 	it, err := m.MemDB.IterReverse(k)
-	return &tikvIterator{Iterator: it}, ToTiDBErr(err)
+	return &tikvIterator{Iterator: it}, derr.ToTiDBErr(err)
 }
 
 // SnapshotIter returns a Iterator for a snapshot of MemBuffer.
@@ -110,42 +111,6 @@ func (m *memBuffer) SnapshotGetter() kv.Getter {
 	return newKVGetter(m.MemDB.SnapshotGetter())
 }
 
-//tikvUnionStore implements kv.UnionStore
-type tikvUnionStore struct {
-	*unionstore.KVUnionStore
-}
-
-func (u *tikvUnionStore) GetMemBuffer() kv.MemBuffer {
-	return newMemBuffer(u.KVUnionStore.GetMemBuffer())
-}
-
-func (u *tikvUnionStore) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	data, err := u.KVUnionStore.Get(ctx, k)
-	return data, ToTiDBErr(err)
-}
-
-func (u *tikvUnionStore) HasPresumeKeyNotExists(k kv.Key) bool {
-	return u.KVUnionStore.HasPresumeKeyNotExists(k)
-}
-
-func (u *tikvUnionStore) UnmarkPresumeKeyNotExists(k kv.Key) {
-	u.KVUnionStore.UnmarkPresumeKeyNotExists(k)
-}
-
-func (u *tikvUnionStore) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	it, err := u.KVUnionStore.Iter(k, upperBound)
-	return newKVIterator(it), ToTiDBErr(err)
-}
-
-// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-// The returned iterator will iterate from greater key to smaller key.
-// If k is nil, the returned iterator will be positioned at the last key.
-// TODO: Add lower bound limit
-func (u *tikvUnionStore) IterReverse(k kv.Key) (kv.Iterator, error) {
-	it, err := u.KVUnionStore.IterReverse(k)
-	return newKVIterator(it), ToTiDBErr(err)
-}
-
 type tikvGetter struct {
 	unionstore.Getter
 }
@@ -156,7 +121,7 @@ func newKVGetter(getter unionstore.Getter) kv.Getter {
 
 func (g *tikvGetter) Get(_ context.Context, k kv.Key) ([]byte, error) {
 	data, err := g.Getter.Get(k)
-	return data, ToTiDBErr(err)
+	return data, derr.ToTiDBErr(err)
 }
 
 // tikvIterator wraps unionstore.Iterator as kv.Iterator
@@ -173,4 +138,33 @@ func newKVIterator(it unionstore.Iterator) kv.Iterator {
 
 func (it *tikvIterator) Key() kv.Key {
 	return kv.Key(it.Iterator.Key())
+}
+
+func getTiDBKeyFlags(flag tikvstore.KeyFlags) kv.KeyFlags {
+	var v kv.KeyFlags
+	if flag.HasPresumeKeyNotExists() {
+		v = kv.ApplyFlagsOps(v, kv.SetPresumeKeyNotExists)
+	}
+	if flag.HasNeedLocked() {
+		v = kv.ApplyFlagsOps(v, kv.SetNeedLocked)
+	}
+	return v
+}
+
+func getTiKVFlagsOp(op kv.FlagsOp) tikvstore.FlagsOp {
+	switch op {
+	case kv.SetPresumeKeyNotExists:
+		return tikvstore.SetPresumeKeyNotExists
+	case kv.SetNeedLocked:
+		return tikvstore.SetNeedLocked
+	}
+	return 0
+}
+
+func getTiKVFlagsOps(ops []kv.FlagsOp) []tikvstore.FlagsOp {
+	v := make([]tikvstore.FlagsOp, len(ops))
+	for i := range ops {
+		v[i] = getTiKVFlagsOp(ops[i])
+	}
+	return v
 }

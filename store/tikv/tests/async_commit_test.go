@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
-	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/mockstore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -48,7 +48,7 @@ type testAsyncCommitCommon struct {
 }
 
 func (s *testAsyncCommitCommon) setUpTest(c *C) {
-	if *WithTiKV {
+	if *mockstore.WithTiKV {
 		s.store = NewTestStore(c)
 		return
 	}
@@ -127,14 +127,14 @@ func (s *testAsyncCommitCommon) mustGetNoneFromSnapshot(c *C, version uint64, ke
 
 func (s *testAsyncCommitCommon) beginAsyncCommitWithLinearizability(c *C) tikv.TxnProbe {
 	txn := s.beginAsyncCommit(c)
-	txn.SetOption(kv.GuaranteeLinearizability, true)
+	txn.SetCausalConsistency(false)
 	return txn
 }
 
 func (s *testAsyncCommitCommon) beginAsyncCommit(c *C) tikv.TxnProbe {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.SetOption(kv.EnableAsyncCommit, true)
+	txn.SetEnableAsyncCommit(true)
 	return tikv.TxnProbe{KVTxn: txn}
 }
 
@@ -160,7 +160,7 @@ func (s *testAsyncCommitSuite) SetUpTest(c *C) {
 func (s *testAsyncCommitSuite) lockKeysWithAsyncCommit(c *C, keys, values [][]byte, primaryKey, primaryValue []byte, commitPrimary bool) (uint64, uint64) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.SetOption(kv.EnableAsyncCommit, true)
+	txn.SetEnableAsyncCommit(true)
 	for i, k := range keys {
 		if len(values[i]) > 0 {
 			err = txn.Set(k, values[i])
@@ -196,7 +196,7 @@ func (s *testAsyncCommitSuite) lockKeysWithAsyncCommit(c *C, keys, values [][]by
 
 func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 	// This test doesn't support tikv mode.
-	if *WithTiKV {
+	if *mockstore.WithTiKV {
 		return
 	}
 
@@ -403,7 +403,7 @@ func (s *testAsyncCommitSuite) TestAsyncCommitLinearizability(c *C) {
 // TestAsyncCommitWithMultiDC tests that async commit can only be enabled in global transactions
 func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
 	// It requires setting placement rules to run with TiKV
-	if *WithTiKV {
+	if *mockstore.WithTiKV {
 		return
 	}
 

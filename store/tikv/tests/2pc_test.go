@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	drivertxn "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
@@ -57,6 +56,7 @@ func (s *testCommitterSuite) SetUpSuite(c *C) {
 	atomic.StoreUint64(&tikv.ManagedLockTTL, 3000) // 3s
 	s.OneByOneSuite.SetUpSuite(c)
 	atomic.StoreUint64(&tikv.CommitMaxBackoff, 1000)
+	atomic.StoreUint64(&tikv.VeryLongMaxBackoff, 1000)
 }
 
 func (s *testCommitterSuite) SetUpTest(c *C) {
@@ -91,6 +91,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 
 func (s *testCommitterSuite) TearDownSuite(c *C) {
 	atomic.StoreUint64(&tikv.CommitMaxBackoff, 20000)
+	atomic.StoreUint64(&tikv.VeryLongMaxBackoff, 600000)
 	s.store.Close()
 	s.OneByOneSuite.TearDownSuite(c)
 }
@@ -104,7 +105,7 @@ func (s *testCommitterSuite) begin(c *C) tikv.TxnProbe {
 func (s *testCommitterSuite) beginAsyncCommit(c *C) tikv.TxnProbe {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.SetOption(kv.EnableAsyncCommit, true)
+	txn.SetEnableAsyncCommit(true)
 	return txn
 }
 
@@ -602,12 +603,12 @@ func (s *testCommitterSuite) TestRejectCommitTS(c *C) {
 	// Use max.Uint64 to read the data and success.
 	// That means the final commitTS > startTS+2, it's not the one we provide.
 	// So we cover the rety commitTS logic.
-	txn1, err := s.store.BeginWithStartTS(oracle.GlobalTxnScope, committer.GetStartTS()+2)
+	txn1, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(committer.GetStartTS() + 2))
 	c.Assert(err, IsNil)
 	_, err = txn1.Get(bo.GetCtx(), []byte("x"))
 	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 
-	txn2, err := s.store.BeginWithStartTS(oracle.GlobalTxnScope, math.MaxUint64)
+	txn2, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(math.MaxUint64))
 	c.Assert(err, IsNil)
 	val, err := txn2.Get(bo.GetCtx(), []byte("x"))
 	c.Assert(err, IsNil)
@@ -712,8 +713,7 @@ func (s *testCommitterSuite) TestPessimisticLockReturnValues(c *C) {
 	txn = s.begin(c)
 	txn.SetPessimistic(true)
 	lockCtx := &kv.LockCtx{ForUpdateTS: txn.StartTS(), WaitStartTime: time.Now()}
-	lockCtx.ReturnValues = true
-	lockCtx.Values = map[string]kv.ReturnedValue{}
+	lockCtx.InitReturnValues(2)
 	c.Assert(txn.LockKeys(context.Background(), lockCtx, key, key2), IsNil)
 	c.Assert(lockCtx.Values, HasLen, 2)
 	c.Assert(lockCtx.Values[string(key)].Value, BytesEquals, key)
@@ -724,7 +724,7 @@ func (s *testCommitterSuite) TestPessimisticLockReturnValues(c *C) {
 func (s *testCommitterSuite) TestElapsedTTL(c *C) {
 	key := []byte("key")
 	txn := s.begin(c)
-	txn.SetStartTS(oracle.ComposeTS(oracle.GetPhysical(time.Now().Add(time.Second*10)), 1))
+	txn.SetStartTS(oracle.GoTimeToTS(time.Now().Add(time.Second*10)) + 1)
 	txn.SetPessimistic(true)
 	time.Sleep(time.Millisecond * 100)
 	lockCtx := &kv.LockCtx{
@@ -1024,7 +1024,7 @@ func (s *testCommitterSuite) TestPessimisticLockPrimary(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL"), IsNil)
 	c.Assert(err, IsNil)
 	waitErr := <-doneCh
-	c.Assert(tikverr.ErrLockWaitTimeout.Equal(waitErr), IsTrue)
+	c.Assert(tikverr.ErrLockWaitTimeout, Equals, waitErr)
 }
 
 func (s *testCommitterSuite) TestResolvePessimisticLock(c *C) {
@@ -1042,10 +1042,10 @@ func (s *testCommitterSuite) TestResolvePessimisticLock(c *C) {
 	c.Assert(err, IsNil)
 	mutation := commit.MutationsOfKeys([][]byte{untouchedIndexKey, noValueIndexKey})
 	c.Assert(mutation.Len(), Equals, 2)
-	c.Assert(mutation.GetOp(0), Equals, pb.Op_Lock)
+	c.Assert(mutation.GetOp(0), Equals, kvrpcpb.Op_Lock)
 	c.Assert(mutation.GetKey(0), BytesEquals, untouchedIndexKey)
 	c.Assert(mutation.GetValue(0), BytesEquals, untouchedIndexValue)
-	c.Assert(mutation.GetOp(1), Equals, pb.Op_Lock)
+	c.Assert(mutation.GetOp(1), Equals, kvrpcpb.Op_Lock)
 	c.Assert(mutation.GetKey(1), BytesEquals, noValueIndexKey)
 	c.Assert(mutation.GetValue(1), BytesEquals, []byte{})
 }
