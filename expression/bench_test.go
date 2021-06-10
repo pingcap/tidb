@@ -263,6 +263,13 @@ func (g *defaultGener) gen() interface{} {
 	case types.ETDatetime, types.ETTimestamp:
 		gt := getRandomTime(g.randGen.Rand)
 		t := types.NewTime(gt, convertETType(g.eType), 0)
+		// TiDB has DST time problem, and it causes ErrWrongValue.
+		// We should ignore ambiguous Time. See https://timezonedb.com/time-zones/Asia/Shanghai.
+		for _, err := t.GoTime(time.Local); err != nil; {
+			gt = getRandomTime(g.randGen.Rand)
+			t = types.NewTime(gt, convertETType(g.eType), 0)
+			_, err = t.GoTime(time.Local)
+		}
 		return t
 	case types.ETDuration:
 		d := types.Duration{
