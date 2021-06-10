@@ -300,6 +300,7 @@ func (cc *clientConn) Close() error {
 
 func closeConn(cc *clientConn, connections int) error {
 	metrics.ConnGauge.Set(float64(connections))
+	cc.server.globalConnIDAllocator.Release(cc.connectionID)
 	err := cc.bufReadConn.Close()
 	terror.Log(err)
 	if cc.ctx != nil {

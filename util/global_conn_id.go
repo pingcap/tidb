@@ -17,7 +17,10 @@ import (
 	"errors"
 	"sync/atomic"
 
+	"github.com/cznic/mathutil"
 	"github.com/ngaut/sync2"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
@@ -161,6 +164,23 @@ func (g *GlobalConnIDAllocator) NextID() GlobalConnID {
 	}
 }
 
+// Release releases connectionID to pool.
+func (g *GlobalConnIDAllocator) Release(connectionID uint64) {
+	globalConnID, isTruncated, err := ParseGlobalConnID(connectionID)
+	if err != nil || isTruncated {
+		logutil.BgLogger().Error("failed to ParseGlobalConnID", zap.Uint64("connectionID", connectionID), zap.Error(err), zap.Bool("isTruncated", isTruncated))
+		return
+	}
+
+	if globalConnID.Is64bits {
+		g.localAllocator64.Deallocate(globalConnID.LocalConnID)
+	} else {
+		if err = g.localAllocator32.Deallocate(globalConnID.LocalConnID); err != nil {
+			logutil.BgLogger().Error("failed to release connection ID", zap.Uint64("connectionID", connectionID), zap.Error(err), zap.Uint64("localConnID", globalConnID.LocalConnID))
+		}
+	}
+}
+
 // LocalConnIDAllocator64 is local connID allocator for 64bits global connection ID.
 type LocalConnIDAllocator64 struct {
 	existedChecker globalConnIDExistCheckerFn
@@ -188,6 +208,11 @@ func (a *LocalConnIDAllocator64) Allocate(serverID uint64) (localConnID uint64) 
 	}
 }
 
+// Deallocate local connID to pool.
+func (a *LocalConnIDAllocator64) Deallocate(localConnID uint64) {
+	// Do nothing. 64bits connection IDs are maintained by `Server.clients`.
+}
+
 // LocalConnIDAllocator32 is local connID allocator for 32bits global connection ID.
 type LocalConnIDAllocator32 struct {
 	lastID uint32
@@ -197,7 +222,105 @@ type LocalConnIDAllocator32 struct {
 func (a *LocalConnIDAllocator32) Init() {
 }
 
-// Allocate local connID for 32bits global connID.
+// Allocate local connID.
 func (a *LocalConnIDAllocator32) Allocate() (localConnID uint64, isExhausted bool) {
 	return (uint64)(atomic.AddUint32(&a.lastID, 1) & MaxLocalConnID32), false
+}
+
+// Deallocate local connID to pool.
+func (a *LocalConnIDAllocator32) Deallocate(localConnID uint64) error {
+	return nil
+}
+
+const (
+	PoolInvalidValue = 0xffff_ffff
+)
+
+type poolItem struct {
+	value uint32
+
+	// seq indicates read/write status
+	// Sequence:
+	//   seq==tail: writable ---> doWrite,seq:=tail+1 ---> seq==head+1:written/readable ---> doRead,seq:=head+size
+	//       ^                                                                                          |
+	//       +------------------------------------------------------------------------------------------+
+	seq uint32
+}
+
+type Pool struct {
+	head sync2.AtomicUint32 // first available slot
+	tail sync2.AtomicUint32 // first empty slot. `head==tail` means empty.
+	cap  uint32
+
+	slots []poolItem
+}
+
+func (p *Pool) Init(sizeInBits uint32, fillCount uint32) {
+	p.cap = 1 << sizeInBits
+	p.slots = make([]poolItem, p.cap)
+	fillCount = mathutil.MinUint32(p.cap-1, fillCount)
+	var i uint32
+	for i = 0; i < fillCount; i++ {
+		p.slots[i] = poolItem{value: i + 1, seq: i + p.cap}
+	}
+	for ; i < p.cap; i++ {
+		p.slots[i] = poolItem{value: PoolInvalidValue, seq: i}
+	}
+
+	p.head.Set(0)
+	p.tail.Set(fillCount)
+}
+
+func (p *Pool) Len() uint32 {
+	return p.tail.Get() - p.head.Get()
+}
+
+func (p *Pool) Put(val uint32) (ok bool) {
+	for {
+		head := p.head.Get()
+		tail := p.tail.Get()
+
+		if tail-head == p.cap-1 { // full
+			return false
+		}
+
+		slot := &p.slots[tail&(p.cap-1)]
+		seq := atomic.LoadUint32(&slot.seq)
+
+		if seq == tail { // writable
+			if p.tail.CompareAndSwap(tail, tail+1) {
+				slot.value = val
+				atomic.StoreUint32(&slot.seq, tail+1)
+				return true
+			}
+		} else if seq < tail {
+			panic("Pool in a corrupted state during a Put operation.")
+		}
+		// else: preempted by another thread, try again.
+	}
+}
+
+func (p *Pool) Get() (val uint32, ok bool) {
+	for {
+		head := p.head.Get()
+		tail := p.tail.Get()
+		if head == tail { // empty
+			return PoolInvalidValue, false
+		}
+
+		slot := &p.slots[head&(p.cap-1)]
+		seq := atomic.LoadUint32(&slot.seq)
+
+		if seq == head+1 { // readable
+			if p.head.CompareAndSwap(head, head+1) {
+				val = slot.value
+				slot.value = PoolInvalidValue
+				atomic.StoreUint32(&slot.seq, head+p.cap)
+				return val, true
+			}
+		} else if seq < head+1 { // corrupted, should not happen
+			panic("Pool in a corrupted state during a Get operation.")
+		}
+		// else: preempted by another thread, try again.
+	}
 }
