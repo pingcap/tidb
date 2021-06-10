@@ -322,9 +322,9 @@ func (s *testCommitterSuite) TestContextCancelCausingUndetermined(c *C) {
 	committer.PrewriteAllMutations(context.Background())
 	c.Assert(err, IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/rpcContextCancelErr", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/locate/rpcContextCancelErr", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/rpcContextCancelErr"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/locate/rpcContextCancelErr"), IsNil)
 	}()
 
 	err = committer.CommitMutations(context.Background())
