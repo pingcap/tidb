@@ -549,12 +549,6 @@ func (s *RegionRequestSender) SendReqCtx(
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		if val, err := util.EvalFailpoint("mockDataIsNotReadyError"); err == nil {
-			regionErr = &errorpb.Error{}
-			if tryTimesLimit, ok := val.(int); ok && tryTimes <= tryTimesLimit {
-				regionErr.DataIsNotReady = &errorpb.DataIsNotReady{}
-			}
-		}
 		if regionErr != nil {
 			retry, err = s.onRegionError(bo, rpcCtx, req, regionErr, &opts)
 			if err != nil {
@@ -1023,6 +1017,10 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 			zap.Uint64("store-id", ctx.Store.storeID),
 			zap.Uint64("region-id", regionErr.GetRegionNotInitialized().GetRegionId()),
 			zap.Stringer("ctx", ctx))
+		err = bo.Backoff(retry.BoMaxRegionNotInitialized, errors.Errorf("region not initialized"))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
 		if seed != nil {
 			*seed = *seed + 1
 		}
@@ -1072,6 +1070,10 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 			zap.Uint64("region-id", regionErr.GetDataIsNotReady().GetRegionId()),
 			zap.Uint64("safe-ts", regionErr.GetDataIsNotReady().GetSafeTs()),
 			zap.Stringer("ctx", ctx))
+		err = bo.Backoff(retry.BoMaxDataNotReady, errors.Errorf("data is not ready"))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
 		if seed != nil {
 			*seed = *seed + 1
 		}
