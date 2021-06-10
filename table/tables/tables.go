@@ -1044,7 +1044,16 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 
 	// The table has non-public column and this column is doing the operation of "modify/change column".
 	if len(t.Columns) > len(r) && t.Columns[len(r)].ChangeStateInfo != nil {
-		r = append(r, r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset])
+		// See https://github.com/pingcap/tidb/issues/25319
+		// The changing column datum derived from related column should be casted here.
+		// Otherwise, the existed changing indexes will not be deleted.
+		relatedColDatum := r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset]
+		value, err := table.CastValue(ctx, relatedColDatum, t.Columns[len(r)].ColumnInfo, false, false)
+		if err != nil {
+			logutil.BgLogger().Info("update record cast value failed", zap.Any("col", t.Columns[len(r)]),
+				zap.String("handle", h.String()), zap.Any("val", relatedColDatum), zap.Error(err))
+		}
+		r = append(r, value)
 	}
 	err = t.removeRowIndices(ctx, h, r)
 	if err != nil {
