@@ -28,7 +28,6 @@ import (
 	"github.com/google/btree"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/store/tikv/client"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/util"
 	pd "github.com/tikv/pd/client"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -259,9 +259,9 @@ func (r *Region) compareAndSwapStore(oldStore, newStore *regionStore) bool {
 
 func (r *Region) checkRegionCacheTTL(ts int64) bool {
 	// Only consider use percentage on this failpoint, for example, "2%return"
-	failpoint.Inject("invalidateRegionCache", func() {
+	if _, err := util.EvalFailpoint("invalidateRegionCache"); err == nil {
 		r.invalidate(Other)
-	})
+	}
 	for {
 		lastAccess := atomic.LoadInt64(&r.lastAccess)
 		if ts-lastAccess > regionCacheTTLSec {
@@ -516,7 +516,7 @@ func (c *RegionCache) GetTiKVRPCContext(bo *retry.Backoffer, id RegionVerID, rep
 	for _, op := range opts {
 		op(options)
 	}
-	failpoint.Inject("assertStoreLabels", func(val failpoint.Value) {
+	if val, err := util.EvalFailpoint("assertStoreLabels"); err == nil {
 		if len(opts) > 0 {
 			kv := strings.Split(val.(string), "_")
 			for _, label := range options.labels {
@@ -525,7 +525,7 @@ func (c *RegionCache) GetTiKVRPCContext(bo *retry.Backoffer, id RegionVerID, rep
 				}
 			}
 		}
-	})
+	}
 	isLeaderReq := false
 	switch replicaRead {
 	case kv.ReplicaReadFollower:
@@ -540,12 +540,12 @@ func (c *RegionCache) GetTiKVRPCContext(bo *retry.Backoffer, id RegionVerID, rep
 	if err != nil {
 		return nil, err
 	}
-	// enable by `curl -XPUT -d '1*return("[some-addr]")->return("")' http://host:port/github.com/pingcap/tidb/store/tikv/locate/injectWrongStoreAddr`
-	failpoint.Inject("injectWrongStoreAddr", func(val failpoint.Value) {
+	// enable by `curl -XPUT -d '1*return("[some-addr]")->return("")' http://host:port/tikvclient/injectWrongStoreAddr`
+	if val, err := util.EvalFailpoint("injectWrongStoreAddr"); err == nil {
 		if a, ok := val.(string); ok && len(a) > 0 {
 			addr = a
 		}
-	})
+	}
 	if store == nil || len(addr) == 0 {
 		// Store not found, region must be out of date.
 		cachedRegion.invalidate(StoreNotFound)
