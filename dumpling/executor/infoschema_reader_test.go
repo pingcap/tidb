@@ -110,6 +110,7 @@ func (s *inspectionSuite) TearDownSuite(c *C) {
 }
 
 func (s *inspectionSuite) TestInspectionTables(c *C) {
+	c.Skip("unstable, skip it and fix it before 20210624")
 	tk := testkit.NewTestKit(c, s.store)
 	instances := []string{
 		"pd,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash,0",
