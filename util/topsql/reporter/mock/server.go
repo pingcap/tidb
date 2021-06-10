@@ -75,6 +75,7 @@ func (svr *mockAgentServer) mayHang() {
 }
 
 func (svr *mockAgentServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportCPUTimeRecordsServer) error {
+	logutil.BgLogger().Info("[top-sql] mock server start in ReportCPUTimeRecords")
 	records := make([]*tipb.CPUTimeRecord, 0, 10)
 	for {
 		svr.mayHang()
@@ -88,11 +89,15 @@ func (svr *mockAgentServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportC
 	}
 	svr.Lock()
 	svr.records = append(svr.records, records)
+	l := len(svr.records)
 	svr.Unlock()
+	logutil.BgLogger().Info("[top-sql] mock server finish in ReportCPUTimeRecords", zap.Int("len", l))
 	return stream.SendAndClose(&tipb.EmptyResponse{})
 }
 
 func (svr *mockAgentServer) ReportSQLMeta(stream tipb.TopSQLAgent_ReportSQLMetaServer) error {
+	logutil.BgLogger().Info("[top-sql] mock server start in ReportSQLMeta")
+	var size int
 	for {
 		svr.mayHang()
 		req, err := stream.Recv()
@@ -103,12 +108,16 @@ func (svr *mockAgentServer) ReportSQLMeta(stream tipb.TopSQLAgent_ReportSQLMetaS
 		}
 		svr.Lock()
 		svr.sqlMetas[string(req.SqlDigest)] = req.NormalizedSql
+		size = len(svr.sqlMetas)
 		svr.Unlock()
 	}
+	logutil.BgLogger().Info("[top-sql] mock server finish in ReportSQLMeta", zap.Int("len", size))
 	return stream.SendAndClose(&tipb.EmptyResponse{})
 }
 
 func (svr *mockAgentServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMetaServer) error {
+	logutil.BgLogger().Info("[top-sql] mock server start in ReportPlanMeta")
+	var size int
 	for {
 		svr.mayHang()
 		req, err := stream.Recv()
@@ -119,8 +128,10 @@ func (svr *mockAgentServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMet
 		}
 		svr.Lock()
 		svr.planMetas[string(req.PlanDigest)] = req.NormalizedPlan
+		size = len(svr.sqlMetas)
 		svr.Unlock()
 	}
+	logutil.BgLogger().Info("[top-sql] mock server finish in ReportPlanMeta", zap.Int("len", size))
 	return stream.SendAndClose(&tipb.EmptyResponse{})
 }
 
@@ -129,17 +140,20 @@ func (svr *mockAgentServer) WaitCollectCnt(cnt int, timeout time.Duration) {
 	svr.Lock()
 	old := len(svr.records)
 	svr.Unlock()
+	logutil.BgLogger().Info("[top-sql] mock server start to wait collect cnt", zap.Int("start-cnt", old), zap.Int("cnt", cnt))
 	for {
 		svr.Lock()
 		if len(svr.records)-old >= cnt {
 			svr.Unlock()
+			logutil.BgLogger().Info("[top-sql] mock server finish wait collect cnt", zap.Int("start-cnt", old), zap.Int("current", len(svr.records)), zap.Int("cnt", cnt))
 			return
 		}
 		svr.Unlock()
 		if time.Since(start) > timeout {
+			logutil.BgLogger().Info("[top-sql] mock server wait collect cnt timeout", zap.Int("start-cnt", old), zap.Int("current", len(svr.records)), zap.Int("cnt", cnt))
 			return
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(1 * time.Millisecond)
 	}
 }
 

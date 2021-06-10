@@ -363,9 +363,11 @@ func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 	agentAddr := variable.TopSQLVariable.AgentAddress.Load()
 
 	ctx, cancel := context.WithTimeout(tsr.ctx, reportTimeout)
+	logutil.BgLogger().Info("[top-sql] client start to send data", zap.Int("data-sql-cnt", len(data.collectedData)))
 	err := tsr.client.Send(ctx, agentAddr, data)
 	if err != nil {
 		logutil.BgLogger().Warn("[top-sql] client failed to send data", zap.Error(err))
 	}
+	logutil.BgLogger().Info("[top-sql] client finish send data", zap.Error(err))
 	cancel()
 }
