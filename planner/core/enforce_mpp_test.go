@@ -14,6 +14,7 @@
 package core_test
 
 import (
+	"github.com/pingcap/tidb/util/collate"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -65,7 +66,7 @@ func (s *testEnforceMPPSuite) TestSetVariables(c *C) {
 	// test set tidb_enforce_mpp when tidb_allow_mpp=false;
 	err = tk.ExecToErr("set @@tidb_allow_mpp = 0; set @@tidb_enforce_mpp = 1;")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, `[variable:1231]Variable 'tidb_enforce_mpp' can't be set to the value of '1' but tidb_allow_mpp is 0, please active tidb_allow_mpp at first.'`)
+	c.Assert(err.Error(), Equals, `[variable:1231]Variable 'tidb_enforce_mpp' can't be set to the value of '1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first.'`)
 
 	err = tk.ExecToErr("set @@tidb_allow_mpp = 1; set @@tidb_enforce_mpp = 1;")
 	c.Assert(err, IsNil)
@@ -98,13 +99,16 @@ func (s *testEnforceMPPSuite) TestEnforceMPP(c *C) {
 	}
 
 	var input []string
-	var output[]struct {
+	var output []struct {
 		SQL  string
 		Plan []string
 		Warn []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+		})
 		if strings.HasPrefix(tt, "set") {
 			tk.MustExec(tt)
 			continue
@@ -120,23 +124,27 @@ func (s *testEnforceMPPSuite) TestEnforceMPP(c *C) {
 	}
 }
 
-func (s *testEnforceMPPSuite) TestEnforceMPPWarningForReplica(c *C) {
+// general cases.
+func (s *testEnforceMPPSuite) TestEnforceMPPWarning1(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	// test query
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
+	tk.MustExec("create table t(a int, b int as (a+1), c time)")
 	tk.MustExec("create index idx on t(a)")
 
 	var input []string
-	var output[]struct {
+	var output []struct {
 		SQL  string
 		Plan []string
 		Warn []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+		})
 		if strings.HasPrefix(tt, "set") {
 			tk.MustExec(tt)
 			continue
@@ -183,3 +191,114 @@ func (s *testEnforceMPPSuite) TestEnforceMPPWarningForReplica(c *C) {
 		c.Assert(s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings()), DeepEquals, output[i].Warn)
 	}
 }
+
+// partition table.
+func (s *testEnforceMPPSuite) TestEnforceMPPWarning2(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// test query
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a int, b char(20)) PARTITION BY HASH(a)")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+		})
+		if strings.HasPrefix(tt, "set") {
+			tk.MustExec(tt)
+			continue
+		}
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+		c.Assert(s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings()), DeepEquals, output[i].Warn)
+	}
+}
+
+// new collation.
+func (s *testEnforceMPPSuite) TestEnforceMPPWarning3(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// test query
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a int, b char(20))")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+		})
+		if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
+			tk.MustExec(tt)
+			continue
+		}
+		if strings.HasPrefix(tt, "cmd: enable-new-collation") {
+			collate.SetNewCollationEnabledForTest(true)
+			continue
+		}
+		if strings.HasPrefix(tt, "cmd: disable-new-collation") {
+			collate.SetNewCollationEnabledForTest(false)
+			continue
+		}
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+		c.Assert(s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings()), DeepEquals, output[i].Warn)
+	}
+}
+
+//
+//parition
+//collation
+//"EXPLAIN SELECT t1.b FROM t t1 join t t2 where t1.a=t2.a; -- 6. virtual column",
