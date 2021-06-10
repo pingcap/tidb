@@ -182,7 +182,7 @@ func checkEnableServerGlobalVar(name, sVal string) {
 		if err != nil {
 			break
 		}
-		logutil.BgLogger().Info("set max stmt--", zap.Stack("stack"))
+		logutil.BgLogger().Info("set max stmt--", zap.Int64("val", val), zap.Stack("stack"))
 		variable.TopSQLVariable.MaxStatementCount.Store(val)
 	case variable.TiDBTopSQLMaxCollect:
 		var val int64

@@ -55,6 +55,7 @@ import (
 	mockTopSQLReporter "github.com/pingcap/tidb/util/topsql/reporter/mock"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	mockTopSQLTraceCPU "github.com/pingcap/tidb/util/topsql/tracecpu/mock"
+	"go.uber.org/zap"
 )
 
 type tidbTestSuite struct {
@@ -1438,6 +1439,20 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 		}
 		return cancel
 	}
+
+	go func() {
+		for {
+			logutil.BgLogger().Info("top-sql variable--",
+				zap.Bool("enable", variable.TopSQLVariable.Enable.Load()),
+				zap.String("addr", variable.TopSQLVariable.AgentAddress.Load()),
+				zap.Int64("precision", variable.TopSQLVariable.PrecisionSeconds.Load()),
+				zap.Int64("max-stmt", variable.TopSQLVariable.MaxStatementCount.Load()),
+				zap.Int64("max-collect", variable.TopSQLVariable.MaxCollect.Load()),
+				zap.Int64("report-interval", variable.TopSQLVariable.ReportIntervalSeconds.Load()),
+			)
+			time.Sleep(time.Second)
+		}
+	}()
 
 	// case 1: dynamically change agent endpoint
 	cancel := runWorkload(0, 10)

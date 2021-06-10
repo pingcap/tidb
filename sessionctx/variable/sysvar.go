@@ -1710,7 +1710,7 @@ var defaultSysVars = []*SysVar{
 		if err != nil {
 			return err
 		}
-		logutil.BgLogger().Info("set max stmt--", zap.Stack("stack"))
+		logutil.BgLogger().Info("set max stmt--", zap.Int64("val", val), zap.Stack("stack"))
 		TopSQLVariable.MaxStatementCount.Store(val)
 		return nil
 	}},
