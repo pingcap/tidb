@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"go.uber.org/zap"
 )
 
 // InjectExtraProjection is used to extract the expressions of specific
@@ -85,6 +87,12 @@ func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
 				needChange = true
 			} else {
 				exprs[i] = srcCol
+			}
+			exprs[i].ResolveIndices(ch.Schema())
+			logutil.BgLogger().Info("expr and schema", zap.String("expr", exprs[i].ExplainInfo()), zap.String("schema", ch.Schema().String()), zap.Int64("unique", srcCol.UniqueID))
+			if ff, ok := exprs[i].(*expression.ScalarFunction); ok {
+				col := ff.GetArgs()[0].(*expression.Column)
+				logutil.BgLogger().Info("col", zap.Int("idx", col.Index))
 			}
 		}
 		if needChange {
