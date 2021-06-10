@@ -56,6 +56,8 @@ const (
 	ModeTruncate RoundMode = 10
 	// Ceiling is not supported now.
 	modeCeiling RoundMode = 0
+
+	pow10off int = 81
 )
 
 var (
@@ -1104,17 +1106,17 @@ func (d *MyDecimal) ToFloat64() (f float64, err error) {
 	for i := 0; i < digitsInt; i += digitsPerWord {
 		x := d.wordBuf[wordIdx]
 		wordIdx++
-		f += float64(x) * pow10off81[(wordsInt-wordIdx)*digitsPerWord+81]
+		f += float64(x) * pow10off81[(wordsInt-wordIdx)*digitsPerWord+pow10off]
 		//f += float64(x) * math.Pow10((wordsInt-wordIdx)*digitsPerWord)
 	}
 	fracStart := wordIdx
 	for i := 0; i < digitsFrac; i += digitsPerWord {
 		x := d.wordBuf[wordIdx]
 		wordIdx++
-		f += float64(x) * pow10off81[-digitsPerWord*(wordIdx-fracStart)+81]
+		f += float64(x) * pow10off81[-digitsPerWord*(wordIdx-fracStart)+pow10off]
 		//f += float64(x) * math.Pow10(-digitsPerWord*(wordIdx-fracStart))
 	}
-	unit := pow10off81[int(d.resultFrac)+81]
+	unit := pow10off81[int(d.resultFrac)+pow10off]
 	//unit := math.Pow10(int(d.resultFrac))
 	f = math.Round(f*unit) / unit
 	if d.negative {
