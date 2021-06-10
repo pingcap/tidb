@@ -275,10 +275,14 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 	normalizedPlanMap := tsr.normalizedPlanMap.Load().(*sync.Map)
 	for _, evict := range itemsToEvict {
 		delete(collectTarget, evict.Key)
-		normalizedSQLMap.Delete(string(evict.SQLDigest))
-		normalizedPlanMap.Delete(string(evict.PlanDigest))
-		tsr.sqlMapLength.Add(-1)
-		tsr.planMapLength.Add(-1)
+		_, loaded := normalizedSQLMap.LoadAndDelete(string(evict.SQLDigest))
+		if loaded {
+			tsr.sqlMapLength.Add(-1)
+		}
+		_, loaded = normalizedPlanMap.LoadAndDelete(string(evict.PlanDigest))
+		if loaded {
+			tsr.planMapLength.Add(-1)
+		}
 	}
 }
 
