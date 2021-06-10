@@ -1440,16 +1440,16 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	checkFn(0)
 	// Test after set agent address and the evict take effect.
 	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
-	agentServer.WaitCollectCnt(1, time.Second*4)
+	agentServer.WaitCollectCnt(1, time.Second*8)
 	checkFn(5)
 	// Test with wrong agent address, the agent server can't receive any record.
 	dbt.mustExec("set @@tidb_top_sql_agent_address='127.0.0.1:65530';")
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=8;")
-	agentServer.WaitCollectCnt(1, time.Second*4)
+	agentServer.WaitCollectCnt(1, time.Second*8)
 	checkFn(0)
 	// Test after set agent address and the evict take effect.
 	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
-	agentServer.WaitCollectCnt(1, time.Second*4)
+	agentServer.WaitCollectCnt(1, time.Second*8)
 	checkFn(8)
 	cancel() // cancel case 1
 	time.Sleep(time.Millisecond * 100)
