@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/pingcap/tidb/sessionctx"
@@ -121,8 +122,13 @@ func (svc *SysVarCache) RebuildSysVarCache(ctx sessionctx.Context) error {
 
 	for _, sv := range variable.GetSysVars() {
 		sVal := sv.Value
+		exist := false
 		if _, ok := tableContents[sv.Name]; ok {
 			sVal = tableContents[sv.Name]
+			exist = true
+		}
+		if strings.Contains(sv.Name, "top_sql") {
+			logutil.BgLogger().Info("domain RebuildSysVarCache", zap.String("key", sv.Name), zap.String("value", sVal), zap.Bool("exist", exist))
 		}
 		// session cache stores non-skippable variables, which essentially means session scope.
 		// for historical purposes there are some globals, but these should eventually be removed.
