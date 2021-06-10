@@ -983,7 +983,6 @@ func (s *testSuite1) TestAnalyzeClusteredIndexPrimary(c *C) {
 }
 
 func (s *testSuite1) TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColumn(c *C) {
-	c.Skip("unstable, skip it and fix it before 20210624")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists sampling_index_virtual_col")
