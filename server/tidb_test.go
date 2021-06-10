@@ -36,6 +36,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
@@ -1400,6 +1401,12 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	r := reporter.NewRemoteTopSQLReporter(reporter.NewGRPCReportClient(plancodec.DecodeNormalizedPlan))
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{r})
 
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/topsql/reporter/resetTimeoutForTest", `return(true)`), IsNil)
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/util/topsql/reporter/resetTimeoutForTest")
+		c.Assert(err, IsNil)
+	}()
+
 	// TODO: change to ensure that the right sql statements are reported, not just counts
 	checkFn := func(n int) {
 		records := agentServer.GetLatestRecords()
@@ -1445,7 +1452,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	// Test with wrong agent address, the agent server can't receive any record.
 	dbt.mustExec("set @@tidb_top_sql_agent_address='127.0.0.1:65530';")
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=8;")
-	agentServer.WaitCollectCnt(1, time.Second*8)
+	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// Test after set agent address and the evict take effect.
 	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
@@ -1463,7 +1470,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	checkFn(0)
 	// set correct address, should collect records
 	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
-	agentServer.WaitCollectCnt(1, time.Second*4)
+	agentServer.WaitCollectCnt(1, time.Second*8)
 	checkFn(5)
 	// agent server hangs for a while
 	agentServer.HangFromNow(time.Second * 6)

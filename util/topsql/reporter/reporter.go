@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -362,7 +363,17 @@ func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 
 	agentAddr := variable.TopSQLVariable.AgentAddress.Load()
 
-	ctx, cancel := context.WithTimeout(tsr.ctx, reportTimeout)
+	timeout := reportTimeout
+	failpoint.Inject("resetTimeoutForTest", func(val failpoint.Value) {
+		if val.(bool) {
+			interval := time.Duration(variable.TopSQLVariable.ReportIntervalSeconds.Load()) * time.Second
+			if interval < timeout {
+				timeout = interval
+			}
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(tsr.ctx, timeout)
 	logutil.BgLogger().Info("[top-sql] client start to send data", zap.Int("data-sql-cnt", len(data.collectedData)))
 	err := tsr.client.Send(ctx, agentAddr, data)
 	if err != nil {
