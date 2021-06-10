@@ -1061,21 +1061,21 @@ func (s *testRegionCacheSuite) TestRegionDataNotReady(c *C) {
 	testcases := []struct {
 		scope         string
 		readType      kv.ReplicaReadType
-		expectPeerId  uint64
+		expectPeerID  uint64
 		expectOptsLen int
 		expectSeed    uint32
 	}{
 		{
 			scope:         oracle.GlobalTxnScope,
 			readType:      kv.ReplicaReadFollower,
-			expectPeerId:  s.peer2,
+			expectPeerID:  s.peer2,
 			expectOptsLen: 1,
 			expectSeed:    1,
 		},
 		{
 			scope:         "local",
 			readType:      kv.ReplicaReadFollower,
-			expectPeerId:  s.peer2,
+			expectPeerID:  s.peer2,
 			expectOptsLen: 0,
 			expectSeed:    1,
 		},
@@ -1084,7 +1084,7 @@ func (s *testRegionCacheSuite) TestRegionDataNotReady(c *C) {
 	for _, testcase := range testcases {
 		fctx, err := s.cache.GetTiKVRPCContext(s.bo, loc1.Region, testcase.readType, 0)
 		c.Assert(err, IsNil)
-		c.Assert(fctx.Peer.Id, Equals, testcase.expectPeerId)
+		c.Assert(fctx.Peer.Id, Equals, testcase.expectPeerID)
 		reqSend := NewRegionRequestSender(s.cache, nil)
 		regionErr := &errorpb.Error{DataIsNotReady: &errorpb.DataIsNotReady{}}
 		var opts []StoreSelectorOption
