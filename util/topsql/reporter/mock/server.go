@@ -41,8 +41,9 @@ func StartMockAgentServer() (*mockAgentServer, error) {
 		sqlMetas:   make(map[string]string, 5000),
 		planMetas:  make(map[string]string, 5000),
 	}
-	agentServer.hang.beginTime.Store(time.Now())
-	agentServer.hang.endTime.Store(time.Now())
+	now := time.Now()
+	agentServer.hang.beginTime.Store(now)
+	agentServer.hang.endTime.Store(now)
 	tipb.RegisterTopSQLAgentServer(server, agentServer)
 
 	go func() {
@@ -68,6 +69,7 @@ func (svr *mockAgentServer) mayHang() {
 	beginTime := svr.hang.beginTime.Load().(time.Time)
 	endTime := svr.hang.endTime.Load().(time.Time)
 	if now.Before(endTime) && now.After(beginTime) {
+		logutil.BgLogger().Info("[top-sql] mock agent server is hang", zap.Duration("gap", endTime.Sub(now)))
 		time.Sleep(endTime.Sub(now))
 	}
 }

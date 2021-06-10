@@ -1377,6 +1377,9 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	}()
 	agentServer, err := mockTopSQLReporter.StartMockAgentServer()
 	c.Assert(err, IsNil)
+	defer func() {
+		agentServer.Stop()
+	}()
 
 	dbt := &DBTest{c, db}
 	dbt.mustExec("drop database if exists topsql")
