@@ -270,6 +270,8 @@ type TimeDetail struct {
 	// cannot be excluded for now, like Mutex wait time, which is included in this field, so that
 	// this field is called wall time instead of CPU time.
 	WaitTime time.Duration
+	// KvReadWallTimeMs is the time used in KV Scan/Get.
+	KvReadWallTimeMs time.Duration
 }
 
 // String implements the fmt.Stringer interface.
@@ -297,5 +299,6 @@ func (td *TimeDetail) MergeFromTimeDetail(timeDetail *kvrpcpb.TimeDetail) {
 	if timeDetail != nil {
 		td.WaitTime += time.Duration(timeDetail.WaitWallTimeMs) * time.Millisecond
 		td.ProcessTime += time.Duration(timeDetail.ProcessWallTimeMs) * time.Millisecond
+		td.KvReadWallTimeMs += time.Duration(timeDetail.KvReadWallTimeMs) * time.Millisecond
 	}
 }
