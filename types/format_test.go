@@ -126,8 +126,8 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`200442 Sun`, `%x%v%W`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)},
 		{`200442 sun`, `%x%v%W`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)},
 		{`200442 suNd`, `%x%v%W`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)}, // Weird MySQL behavior, matched as sunday
-		{"2004421", "%Y%U%w", types.FromDate(2004, 10, 18, 0, 0, 0, 0)}, // %U,%u should be used with %Y and not %X or %x
-		{"69421", "%y%U%w", types.FromDate(2069, 10, 21, 0, 0, 0, 0)},   // %U,%u should be used with %Y and not %X or %x
+		{"2004421", "%Y%U%w", types.FromDate(2004, 10, 18, 0, 0, 0, 0)},     // %U,%u should be used with %Y and not %X or %x
+		{"69421", "%y%U%w", types.FromDate(2069, 10, 21, 0, 0, 0, 0)},       // %U,%u should be used with %Y and not %X or %x
 	}
 	for i, tt := range tests {
 		var t types.Time
