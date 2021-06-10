@@ -19,7 +19,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/store/tikv/client"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
@@ -77,6 +80,8 @@ func (t *DeleteRangeTask) Execute(ctx context.Context) error {
 	return err
 }
 
+const deleteRangeOneRegionMaxBackoff = 100000
+
 // Execute performs the delete range operation.
 func (t *DeleteRangeTask) sendReqOnRange(ctx context.Context, r kv.KeyRange) (RangeTaskStat, error) {
 	startKey, rangeEndKey := r.StartKey, r.EndKey
@@ -92,7 +97,7 @@ func (t *DeleteRangeTask) sendReqOnRange(ctx context.Context, r kv.KeyRange) (Ra
 			break
 		}
 
-		bo := NewBackofferWithVars(ctx, deleteRangeOneRegionMaxBackoff, nil)
+		bo := retry.NewBackofferWithVars(ctx, deleteRangeOneRegionMaxBackoff, nil)
 		loc, err := t.store.GetRegionCache().LocateKey(bo, startKey)
 		if err != nil {
 			return stat, errors.Trace(err)
@@ -111,7 +116,7 @@ func (t *DeleteRangeTask) sendReqOnRange(ctx context.Context, r kv.KeyRange) (Ra
 			NotifyOnly: t.notifyOnly,
 		})
 
-		resp, err := t.store.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
+		resp, err := t.store.SendReq(bo, req, loc.Region, client.ReadTimeoutMedium)
 		if err != nil {
 			return stat, errors.Trace(err)
 		}
@@ -120,14 +125,14 @@ func (t *DeleteRangeTask) sendReqOnRange(ctx context.Context, r kv.KeyRange) (Ra
 			return stat, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return stat, errors.Trace(err)
 			}
 			continue
 		}
 		if resp.Resp == nil {
-			return stat, errors.Trace(kv.ErrBodyMissing)
+			return stat, errors.Trace(tikverr.ErrBodyMissing)
 		}
 		deleteRangeResp := resp.Resp.(*kvrpcpb.DeleteRangeResponse)
 		if err := deleteRangeResp.GetError(); err != "" {

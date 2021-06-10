@@ -92,14 +92,3 @@ func BackOff(attempts uint) int {
 	time.Sleep(sleep)
 	return int(sleep)
 }
-
-// TxnInfo is used to keep track the info of a committed transaction (mainly for diagnosis and testing)
-type TxnInfo struct {
-	TxnScope            string `json:"txn_scope"`
-	StartTS             uint64 `json:"start_ts"`
-	CommitTS            uint64 `json:"commit_ts"`
-	TxnCommitMode       string `json:"txn_commit_mode"`
-	AsyncCommitFallback bool   `json:"async_commit_fallback"`
-	OnePCFallback       bool   `json:"one_pc_fallback"`
-	ErrMsg              string `json:"error,omitempty"`
-}

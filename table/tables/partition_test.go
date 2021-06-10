@@ -530,3 +530,19 @@ func (ts *testSuite) TestIssue21574(c *C) {
 	tk.MustExec("drop table t_21574")
 	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by list columns (`key`,`table`) (partition p0 values in ((1,1)));")
 }
+
+func (ts *testSuite) TestIssue24746(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop tables if exists t_24746")
+	tk.MustExec("create table t_24746 (a int, b varchar(60), c int, primary key(a)) partition by range(a) (partition p0 values less than (5),partition p1 values less than (10), partition p2 values less than maxvalue)")
+	defer tk.MustExec("drop table t_24746")
+	err := tk.ExecToErr("insert into t_24746 partition (p1) values(4,'ERROR, not matching partition p1',4)")
+	c.Assert(table.ErrRowDoesNotMatchGivenPartitionSet.Equal(err), IsTrue)
+	tk.MustExec("insert into t_24746 partition (p0) values(4,'OK, first row in correct partition',4)")
+	err = tk.ExecToErr("insert into t_24746 partition (p0) values(4,'DUPLICATE, in p0',4) on duplicate key update a = a + 1, b = 'ERROR, not allowed to write to p1'")
+	c.Assert(table.ErrRowDoesNotMatchGivenPartitionSet.Equal(err), IsTrue)
+	// Actual bug, before the fix this was updating the row in p0 (deleting it in p0 and inserting in p1):
+	err = tk.ExecToErr("insert into t_24746 partition (p1) values(4,'ERROR, not allowed to read from partition p0',4) on duplicate key update a = a + 1, b = 'ERROR, not allowed to read from p0!'")
+	c.Assert(table.ErrRowDoesNotMatchGivenPartitionSet.Equal(err), IsTrue)
+}

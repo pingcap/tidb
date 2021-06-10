@@ -15,6 +15,7 @@ package mockcopr_test
 
 import (
 	"context"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -31,6 +32,11 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/testkit"
 )
+
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	TestingT(t)
+}
 
 var _ = Suite(&testExecutorSuite{})
 
@@ -49,7 +55,8 @@ func (s *testExecutorSuite) SetUpSuite(c *C) {
 	s.mvccStore = rpcClient.MvccStore
 	store, err := tikv.NewTestTiKVStore(rpcClient, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
-	s.store = mockstorage.NewMockStorage(store)
+	s.store, err = mockstorage.NewMockStorage(store)
+	c.Assert(err, IsNil)
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	s.dom, err = session.BootstrapSession(s.store)
@@ -76,7 +83,7 @@ func (s *testExecutorSuite) TestResolvedLargeTxnLocks(c *C) {
 	tk.MustExec("insert into t values (1, 1)")
 
 	o := s.store.GetOracle()
-	tso, err := o.GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	tso, err := o.GetTimestamp(context.Background(), &oracle.Option{TxnScope: kv.GlobalTxnScope})
 	c.Assert(err, IsNil)
 
 	key := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))

@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 )
 
 // TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when
@@ -40,7 +40,7 @@ func (s *testCommitterSuite) TestFailCommitPrimaryRpcErrors(c *C) {
 
 	// We don't need to call "Rollback" after "Commit" fails.
 	err = t1.Rollback()
-	c.Assert(err, Equals, kv.ErrInvalidTxn)
+	c.Assert(err, Equals, tikverr.ErrInvalidTxn)
 }
 
 // TestFailCommitPrimaryRegionError tests RegionError is handled properly when
@@ -91,6 +91,22 @@ func (s *testCommitterSuite) TestFailCommitPrimaryKeyError(c *C) {
 	err = t3.Commit(context.Background())
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorNotEqual(err, terror.ErrResultUndetermined), IsTrue)
+}
+
+// TestFailCommitPrimaryRPCErrorThenKeyError tests KeyError overwrites the undeterminedErr.
+func (s *testCommitterSuite) TestFailCommitPrimaryRPCErrorThenKeyError(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockstore/mocktikv/rpcCommitResult", `1*return("timeout")->return("keyError")`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockstore/mocktikv/rpcCommitResult"), IsNil)
+	}()
+	// Ensure it returns the original error without wrapped to ErrResultUndetermined
+	// if it meets KeyError.
+	t3 := s.begin(c)
+	err := t3.Set([]byte("c"), []byte("c1"))
+	c.Assert(err, IsNil)
+	err = t3.Commit(context.Background())
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsFalse)
 }
 
 func (s *testCommitterSuite) TestFailCommitTimeout(c *C) {

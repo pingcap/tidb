@@ -18,7 +18,6 @@ import (
 )
 
 var _ = Suite(&testBundleSuite{})
-var _ = Suite(&testRuleSuite{})
 
 type testBundleSuite struct{}
 
@@ -48,15 +47,4 @@ func (t *testBundleSuite) TestClone(c *C) {
 
 	c.Assert(bundle, DeepEquals, &Bundle{ID: GroupID(1), Rules: []*Rule{{ID: "434"}}})
 	c.Assert(newBundle, DeepEquals, &Bundle{ID: GroupID(2), Rules: []*Rule{{ID: "121"}}})
-}
-
-type testRuleSuite struct{}
-
-func (t *testRuleSuite) TestClone(c *C) {
-	rule := &Rule{ID: "434"}
-	newRule := rule.Clone()
-	newRule.ID = "121"
-
-	c.Assert(rule, DeepEquals, &Rule{ID: "434"})
-	c.Assert(newRule, DeepEquals, &Rule{ID: "121"})
 }

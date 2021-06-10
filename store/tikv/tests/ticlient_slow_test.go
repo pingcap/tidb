@@ -21,10 +21,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/mockstore"
 )
 
 func (s *testTiclientSuite) TestSplitRegionIn2PC(c *C) {
-	if *WithTiKV {
+	if *mockstore.WithTiKV {
 		c.Skip("scatter will timeout with single node TiKV")
 	}
 	config := tikv.ConfigProbe{}
@@ -64,7 +65,7 @@ func (s *testTiclientSuite) TestSplitRegionIn2PC(c *C) {
 		checkKeyRegion(bo, startKey, endKey, Equals)
 		txn := s.beginTxn(c)
 		if m == "pessimistic" {
-			txn.SetOption(kv.Pessimistic, true)
+			txn.SetPessimistic(true)
 			lockCtx := &kv.LockCtx{}
 			lockCtx.ForUpdateTS = txn.StartTS()
 			keys := make([][]byte, 0, preSplitThresholdInTest)

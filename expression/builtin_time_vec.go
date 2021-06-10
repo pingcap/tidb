@@ -854,6 +854,70 @@ func (b *builtinTidbParseTsoSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 	return nil
 }
 
+func (b *builtinTiDBBoundedStalenessSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinTiDBBoundedStalenessSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err = b.args[0].VecEvalTime(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err = b.args[1].VecEvalTime(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	args0 := buf0.Times()
+	args1 := buf1.Times()
+	timeZone := getTimeZone(b.ctx)
+	minSafeTime := getMinSafeTime(b.ctx, timeZone)
+	result.ResizeTime(n, false)
+	result.MergeNulls(buf0, buf1)
+	times := result.Times()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if invalidArg0, invalidArg1 := args0[i].InvalidZero(), args1[i].InvalidZero(); invalidArg0 || invalidArg1 {
+			if invalidArg0 {
+				err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, args0[i].String()))
+			}
+			if invalidArg1 {
+				err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, args1[i].String()))
+			}
+			if err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		minTime, err := args0[i].GoTime(timeZone)
+		if err != nil {
+			return err
+		}
+		maxTime, err := args1[i].GoTime(timeZone)
+		if err != nil {
+			return err
+		}
+		if minTime.After(maxTime) {
+			result.SetNull(i, true)
+			continue
+		}
+		// Because the minimum unit of a TSO is millisecond, so we only need fsp to be 3.
+		times[i] = types.NewTime(types.FromGoTime(calAppropriateTime(minTime, maxTime, minSafeTime)), mysql.TypeDatetime, 3)
+	}
+	return nil
+}
+
 func (b *builtinFromDaysSig) vectorized() bool {
 	return true
 }

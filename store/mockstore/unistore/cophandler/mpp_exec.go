@@ -343,6 +343,20 @@ type joinExec struct {
 
 	defaultInner chunk.Row
 	inited       bool
+	// align the types of join keys and build keys
+	comKeyTp *types.FieldType
+}
+
+func (e *joinExec) getHashKey(keyCol types.Datum) (str string, err error) {
+	keyCol, err = keyCol.ConvertTo(e.sc, e.comKeyTp)
+	if err != nil {
+		return str, errors.Trace(err)
+	}
+	str, err = keyCol.ToString()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return str, nil
 }
 
 func (e *joinExec) buildHashTable() error {
@@ -358,7 +372,7 @@ func (e *joinExec) buildHashTable() error {
 		for i := 0; i < rows; i++ {
 			row := chk.GetRow(i)
 			keyCol := row.GetDatum(e.buildKey.Index, e.buildChild.getFieldTypes()[e.buildKey.Index])
-			key, err := keyCol.ToString()
+			key, err := e.getHashKey(keyCol)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -386,7 +400,7 @@ func (e *joinExec) fetchRows() (bool, error) {
 	for i := 0; i < chkSize; i++ {
 		row := chk.GetRow(i)
 		keyCol := row.GetDatum(e.probeKey.Index, e.probeChild.getFieldTypes()[e.probeKey.Index])
-		key, err := keyCol.ToString()
+		key, err := e.getHashKey(keyCol)
 		if err != nil {
 			return false, errors.Trace(err)
 		}

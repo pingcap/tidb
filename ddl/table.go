@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	tidb_util "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gcutil"
 )
 
@@ -487,34 +488,32 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		}
 	}
 
-	if d.infoHandle != nil && d.infoHandle.IsValid() {
-		is := d.infoHandle.Get()
+	is := d.infoCache.GetLatest()
 
-		bundles := make([]*placement.Bundle, 0, len(oldPartitionIDs)+1)
-		if oldBundle, ok := is.BundleByName(placement.GroupID(tableID)); ok {
-			bundles = append(bundles, placement.BuildPlacementCopyBundle(oldBundle, newTableID))
-		}
+	bundles := make([]*placement.Bundle, 0, len(oldPartitionIDs)+1)
+	if oldBundle, ok := is.BundleByName(placement.GroupID(tableID)); ok {
+		bundles = append(bundles, placement.BuildPlacementCopyBundle(oldBundle, newTableID))
+	}
 
-		if pi := tblInfo.GetPartitionInfo(); pi != nil {
-			oldIDs := make([]int64, 0, len(oldPartitionIDs))
-			newIDs := make([]int64, 0, len(oldPartitionIDs))
-			newDefs := pi.Definitions
-			for i := range oldPartitionIDs {
-				newID := newDefs[i].ID
-				if oldBundle, ok := is.BundleByName(placement.GroupID(oldPartitionIDs[i])); ok && !oldBundle.IsEmpty() {
-					oldIDs = append(oldIDs, oldPartitionIDs[i])
-					newIDs = append(newIDs, newID)
-					bundles = append(bundles, placement.BuildPlacementCopyBundle(oldBundle, newID))
-				}
+	if pi := tblInfo.GetPartitionInfo(); pi != nil {
+		oldIDs := make([]int64, 0, len(oldPartitionIDs))
+		newIDs := make([]int64, 0, len(oldPartitionIDs))
+		newDefs := pi.Definitions
+		for i := range oldPartitionIDs {
+			newID := newDefs[i].ID
+			if oldBundle, ok := is.BundleByName(placement.GroupID(oldPartitionIDs[i])); ok && !oldBundle.IsEmpty() {
+				oldIDs = append(oldIDs, oldPartitionIDs[i])
+				newIDs = append(newIDs, newID)
+				bundles = append(bundles, placement.BuildPlacementCopyBundle(oldBundle, newID))
 			}
-			job.CtxVars = []interface{}{oldIDs, newIDs}
 		}
+		job.CtxVars = []interface{}{oldIDs, newIDs}
+	}
 
-		err = infosync.PutRuleBundles(context.TODO(), bundles)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
+	err = infosync.PutRuleBundles(context.TODO(), bundles)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
 	// Clear the tiflash replica available status.
@@ -877,6 +876,11 @@ func (w *worker) onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64
 		return ver, errors.Trace(err)
 	}
 
+	// Ban setting replica count for tables in system database.
+	if tidb_util.IsMemOrSysDB(job.SchemaName) {
+		return ver, errors.Trace(errUnsupportedAlterReplicaForSysTable)
+	}
+
 	err = w.checkTiFlashReplicaCount(replicaInfo.Count)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -967,16 +971,12 @@ func onUpdateFlashReplicaStatus(t *meta.Meta, job *model.Job) (ver int64, _ erro
 }
 
 func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName string) error {
-	// d.infoHandle maybe nil in some test.
-	if d.infoHandle == nil || !d.infoHandle.IsValid() {
-		return checkTableNotExistsFromStore(t, schemaID, tableName)
-	}
 	// Try to use memory schema info to check first.
 	currVer, err := t.GetSchemaVersion()
 	if err != nil {
 		return err
 	}
-	is := d.infoHandle.Get()
+	is := d.infoCache.GetLatest()
 	if is.SchemaMetaVersion() == currVer {
 		return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
 	}

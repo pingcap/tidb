@@ -239,7 +239,11 @@ func (store *MVCCStore) PessimisticLock(reqCtx *requestCtx, req *kvrpcpb.Pessimi
 	for _, m := range mutations {
 		lock, err := store.checkConflictInLockStore(reqCtx, m, startTS)
 		if err != nil {
-			return store.handleCheckPessimisticErr(startTS, err, req.IsFirstLock, req.WaitTimeout)
+			var resourceGroupTag []byte = nil
+			if req.Context != nil {
+				resourceGroupTag = req.Context.ResourceGroupTag
+			}
+			return store.handleCheckPessimisticErr(startTS, err, req.IsFirstLock, req.WaitTimeout, m.Key, resourceGroupTag)
 		}
 		if lock != nil {
 			if lock.Op != uint8(kvrpcpb.Op_PessimisticLock) {
@@ -533,11 +537,13 @@ func (store *MVCCStore) CheckSecondaryLocks(reqCtx *requestCtx, keys [][]byte, s
 func (store *MVCCStore) normalizeWaitTime(lockWaitTime int64) time.Duration {
 	if lockWaitTime > store.conf.PessimisticTxn.WaitForLockTimeout {
 		lockWaitTime = store.conf.PessimisticTxn.WaitForLockTimeout
+	} else if lockWaitTime == 0 {
+		lockWaitTime = store.conf.PessimisticTxn.WaitForLockTimeout
 	}
 	return time.Duration(lockWaitTime) * time.Millisecond
 }
 
-func (store *MVCCStore) handleCheckPessimisticErr(startTS uint64, err error, isFirstLock bool, lockWaitTime int64) (*lockwaiter.Waiter, error) {
+func (store *MVCCStore) handleCheckPessimisticErr(startTS uint64, err error, isFirstLock bool, lockWaitTime int64, key []byte, resourceGroupTag []byte) (*lockwaiter.Waiter, error) {
 	if locked, ok := err.(*ErrLocked); ok {
 		if lockWaitTime != lockwaiter.LockNoWait {
 			keyHash := farm.Fingerprint64(locked.Key)
@@ -546,7 +552,7 @@ func (store *MVCCStore) handleCheckPessimisticErr(startTS uint64, err error, isF
 			log.S().Debugf("%d blocked by %d on key %d", startTS, lock.StartTS, keyHash)
 			waiter := store.lockWaiterManager.NewWaiter(startTS, lock.StartTS, keyHash, waitTimeDuration)
 			if !isFirstLock {
-				store.DeadlockDetectCli.Detect(startTS, lock.StartTS, keyHash)
+				store.DeadlockDetectCli.Detect(startTS, lock.StartTS, keyHash, key, resourceGroupTag)
 			}
 			return waiter, err
 		}

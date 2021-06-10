@@ -14,7 +14,7 @@
 package unionstore
 
 import (
-	tidbkv "github.com/pingcap/tidb/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 )
 
 // SnapshotGetter returns a Getter for a snapshot of MemBuffer.
@@ -54,15 +54,15 @@ type memdbSnapGetter struct {
 func (snap *memdbSnapGetter) Get(key []byte) ([]byte, error) {
 	x := snap.db.traverse(key, false)
 	if x.isNull() {
-		return nil, tidbkv.ErrNotExist
+		return nil, tikverr.ErrNotExist
 	}
 	if x.vptr.isNull() {
 		// A flag only key, act as value not exists
-		return nil, tidbkv.ErrNotExist
+		return nil, tikverr.ErrNotExist
 	}
 	v, ok := snap.db.vlog.getSnapshotValue(x.vptr, &snap.cp)
 	if !ok {
-		return nil, tidbkv.ErrNotExist
+		return nil, tikverr.ErrNotExist
 	}
 	return v, nil
 }

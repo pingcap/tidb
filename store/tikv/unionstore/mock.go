@@ -16,7 +16,7 @@ package unionstore
 import (
 	"context"
 
-	tidbkv "github.com/pingcap/tidb/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 )
 
 type mockSnapshot struct {
@@ -35,7 +35,7 @@ func (s *mockSnapshot) BatchGet(_ context.Context, keys [][]byte) (map[string][]
 	m := make(map[string][]byte, len(keys))
 	for _, k := range keys {
 		v, err := s.store.Get(k)
-		if tidbkv.IsErrNotFound(err) {
+		if tikverr.IsErrNotFound(err) {
 			continue
 		}
 		if err != nil {
@@ -55,4 +55,3 @@ func (s *mockSnapshot) IterReverse(k []byte) (Iterator, error) {
 }
 
 func (s *mockSnapshot) SetOption(opt int, val interface{}) {}
-func (s *mockSnapshot) DelOption(opt int)                  {}

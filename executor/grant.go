@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -74,7 +73,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// Make sure the table exist.
 	if e.Level.Level == ast.GrantLevelTable {
 		dbNameStr := model.NewCIStr(dbName)
-		schema := infoschema.GetInfoSchema(e.ctx)
+		schema := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
 		tbl, err := schema.TableByName(dbNameStr, model.NewCIStr(e.Level.TableName))
 		if err != nil {
 			return err
@@ -137,7 +136,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if !ok {
 				return errors.Trace(ErrPasswordFormat)
 			}
-			_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, `INSERT INTO %n.%n (Host, User, authentication_string) VALUES (%?, %?, %?);`, mysql.SystemDB, mysql.UserTable, user.User.Hostname, user.User.Username, pwd)
+			_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, `INSERT INTO %n.%n (Host, User, authentication_string, plugin) VALUES (%?, %?, %?, %?);`, mysql.SystemDB, mysql.UserTable, user.User.Hostname, user.User.Username, pwd, mysql.AuthNativePassword)
 			if err != nil {
 				return err
 			}
@@ -429,9 +428,6 @@ func (e *GrantExec) grantLevelPriv(priv *ast.PrivElem, user *ast.UserSpec, inter
 
 func (e *GrantExec) grantDynamicPriv(privName string, user *ast.UserSpec, internalSession sessionctx.Context) error {
 	privName = strings.ToUpper(privName)
-	if !e.ctx.GetSessionVars().EnableDynamicPrivileges {
-		return fmt.Errorf("dynamic privileges is an experimental feature. Run 'SET tidb_enable_dynamic_privileges=1'")
-	}
 	if e.Level.Level != ast.GrantLevelGlobal { // DYNAMIC can only be *.*
 		return ErrIllegalPrivilegeLevel.GenWithStackByArgs(privName)
 	}
@@ -473,6 +469,12 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 	if priv.Priv == mysql.UsagePriv {
 		return nil
 	}
+	for _, v := range mysql.StaticGlobalOnlyPrivs {
+		if v == priv.Priv {
+			return ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")
+		}
+	}
+
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB

@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -138,7 +138,7 @@ func waitScatterRegionFinish(ctx context.Context, store kv.SplittableStore, regi
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
 			// We don't break for PDError because it may caused by ScatterRegion request failed.
-			if _, ok := errors.Cause(err).(*tikvstore.PDError); !ok {
+			if _, ok := errors.Cause(err).(*tikverr.PDError); !ok {
 				break
 			}
 		}

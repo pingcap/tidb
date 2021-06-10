@@ -25,7 +25,10 @@ const eps = 1e-9
 
 func getDecimal(value float64) *types.MyDecimal {
 	dec := &types.MyDecimal{}
-	dec.FromFloat64(value)
+	err := dec.FromFloat64(value)
+	if err != nil {
+		panic(err)
+	}
 	return dec
 }
 

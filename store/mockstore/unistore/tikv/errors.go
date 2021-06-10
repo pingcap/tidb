@@ -16,6 +16,7 @@ package tikv
 import (
 	"fmt"
 
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 )
@@ -90,6 +91,7 @@ type ErrDeadlock struct {
 	LockKey         []byte
 	LockTS          uint64
 	DeadlockKeyHash uint64
+	WaitChain       []*deadlockpb.WaitForEntry
 }
 
 func (e ErrDeadlock) Error() string {

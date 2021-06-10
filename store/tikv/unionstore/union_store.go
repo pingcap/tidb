@@ -16,7 +16,7 @@ package unionstore
 import (
 	"context"
 
-	tidbkv "github.com/pingcap/tidb/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
@@ -27,6 +27,13 @@ type Iterator interface {
 	Value() []byte
 	Next() error
 	Close()
+}
+
+// Getter is the interface for the Get method.
+type Getter interface {
+	// Get gets the value for key k from kv store.
+	// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
+	Get(k []byte) ([]byte, error)
 }
 
 // uSnapshot defines the interface for the snapshot fetched from KV store.
@@ -52,7 +59,6 @@ type uSnapshot interface {
 type KVUnionStore struct {
 	memBuffer *MemDB
 	snapshot  uSnapshot
-	opts      options
 }
 
 // NewUnionStore builds a new unionStore.
@@ -60,7 +66,6 @@ func NewUnionStore(snapshot uSnapshot) *KVUnionStore {
 	return &KVUnionStore{
 		snapshot:  snapshot,
 		memBuffer: newMemDB(),
-		opts:      make(map[int]interface{}),
 	}
 }
 
@@ -72,14 +77,14 @@ func (us *KVUnionStore) GetMemBuffer() *MemDB {
 // Get implements the Retriever interface.
 func (us *KVUnionStore) Get(ctx context.Context, k []byte) ([]byte, error) {
 	v, err := us.memBuffer.Get(k)
-	if tidbkv.IsErrNotFound(err) {
+	if tikverr.IsErrNotFound(err) {
 		v, err = us.snapshot.Get(ctx, k)
 	}
 	if err != nil {
 		return v, err
 	}
 	if len(v) == 0 {
-		return nil, tidbkv.ErrNotExist
+		return nil, tikverr.ErrNotExist
 	}
 	return v, nil
 }
@@ -124,24 +129,8 @@ func (us *KVUnionStore) UnmarkPresumeKeyNotExists(k []byte) {
 	us.memBuffer.UpdateFlags(k, kv.DelPresumeKeyNotExists)
 }
 
-// SetOption implements the unionStore SetOption interface.
-func (us *KVUnionStore) SetOption(opt int, val interface{}) {
-	us.opts[opt] = val
-}
-
-// DelOption implements the unionStore DelOption interface.
-func (us *KVUnionStore) DelOption(opt int) {
-	delete(us.opts, opt)
-}
-
-// GetOption implements the unionStore GetOption interface.
-func (us *KVUnionStore) GetOption(opt int) interface{} {
-	return us.opts[opt]
-}
-
-type options map[int]interface{}
-
-func (opts options) Get(opt int) (interface{}, bool) {
-	v, ok := opts[opt]
-	return v, ok
+// SetEntrySizeLimit sets the size limit for each entry and total buffer.
+func (us *KVUnionStore) SetEntrySizeLimit(entryLimit, bufferLimit uint64) {
+	us.memBuffer.entrySizeLimit = entryLimit
+	us.memBuffer.bufferSizeLimit = bufferLimit
 }
