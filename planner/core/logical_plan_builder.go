@@ -620,7 +620,7 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			warning := ErrInternal.GenWithStack(errMsg)
 			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		} else {
-			ds.ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("Can't use mpp mode because you have set a hint to read table `" + hintTbl.tblName.O + "` from TiKV.")
+			ds.ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have set a hint to read table `" + hintTbl.tblName.O + "` from TiKV.")
 		}
 	}
 	if hintTbl := hintInfo.ifPreferTiFlash(alias); hintTbl != nil {

@@ -42,7 +42,7 @@ import (
 func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	if prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-			"Can't use mpp mode because operator `UnionScan` is not supported now.")
+			"MPP mode may be blocked because operator `UnionScan` is not supported now.")
 		return nil, true, nil
 	}
 	childProp := prop.CloneEssentialFields()
@@ -2099,7 +2099,7 @@ func (la *LogicalApply) GetHashJoin(prop *property.PhysicalProperty) *PhysicalHa
 func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	if !prop.AllColsFromSchema(la.children[0].Schema()) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
 		la.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-			"Can't use mpp mode because operator `Apply` is not supported now.")
+			"MPP mode may be blocked because operator `Apply` is not supported now.")
 		return nil, true, nil
 	}
 	disableAggPushDownToCop(la.children[0])
@@ -2147,7 +2147,7 @@ func disableAggPushDownToCop(p LogicalPlan) {
 
 func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-		"Can't use mpp mode because operator `Window` is not supported now.")
+		"MPP mode may be blocked because operator `Window` is not supported now.")
 	if prop.IsFlashProp() {
 		return nil, true, nil
 	}
@@ -2216,7 +2216,7 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 			return false
 		default:
 			p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-				"Can't use mpp mode because operator `" + c.TP() + "` is not supported now.")
+				"MPP mode may be blocked because operator `" + c.TP() + "` is not supported now.")
 			return false
 		}
 	}
@@ -2569,7 +2569,7 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	if prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-			"Can't use mpp mode because operator `Lock` is not supported now.")
+			"MPP mode may be blocked because operator `Lock` is not supported now.")
 		return nil, true, nil
 	}
 	childProp := prop.CloneEssentialFields()
@@ -2663,7 +2663,7 @@ func (ls *LogicalSort) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 
 func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	if !prop.IsEmpty() || prop.IsFlashProp() {
-		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("Can't use mpp mode because operator `MaxOneRow` is not supported now.")
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `MaxOneRow` is not supported now.")
 		return nil, true, nil
 	}
 	mor := PhysicalMaxOneRow{}.Init(p.ctx, p.stats, p.blockOffset, &property.PhysicalProperty{ExpectedCnt: 2})

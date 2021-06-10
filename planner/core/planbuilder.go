@@ -975,9 +975,9 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	publicPaths = append(publicPaths, tablePath)
 
 	if tblInfo.TiFlashReplica == nil {
-		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("Can't use mpp mode because there aren't tiflash replicas of table `" + tblInfo.Name.O + "`.")
+		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there aren't tiflash replicas of table `" + tblInfo.Name.O + "`.")
 	} else if !tblInfo.TiFlashReplica.Available {
-		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("Can't use mpp mode because tiflash replicas of table `" + tblInfo.Name.O + "` not ready.")
+		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because tiflash replicas of table `" + tblInfo.Name.O + "` not ready.")
 	} else {
 		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, false))
 		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, true))
@@ -1123,7 +1123,7 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 	}
 	if _, ok := isolationReadEngines[kv.TiFlash]; !ok {
 		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
-			fmt.Sprintf("Can't use mpp mode because '%v'(value: '%v') not match, need 'tiflash'.", variable.TiDBIsolationReadEngines, engineVals))
+			fmt.Sprintf("MPP mode may be blocked because '%v'(value: '%v') not match, need 'tiflash'.", variable.TiDBIsolationReadEngines, engineVals))
 	}
 	return paths, err
 }

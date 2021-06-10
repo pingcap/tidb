@@ -1405,11 +1405,12 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 		// if the aggFunc contain VirtualColumn or CorrelatedColumn, it can not be pushed down.
 		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args) {
 			sctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
-				"Can't use mpp mode because expressions of aggFunc `" + aggFunc.Name + "` contain virtual column or correlated column, which is not supported now.")
+				"MPP mode may be blocked because expressions of AggFunc `" + aggFunc.Name + "` contain virtual column or correlated column, which is not supported now.")
 			return false
 		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
+			sctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because AggFunc `" + aggFunc.Name + "` is not supported now.")
 			return false
 		}
 		if !aggregation.CheckAggPushDown(aggFunc, storeType) {
@@ -1427,7 +1428,7 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 		}
 	}
 	if expression.ContainVirtualColumn(groupByItems) {
-		sctx.GetSessionVars().RaiseWarningWhenMPPEnforced("Can't use mpp mode because groupByItems contain virtual column, which is not supported now.")
+		sctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because groupByItems contain virtual column, which is not supported now.")
 		return false
 	}
 	return expression.CanExprsPushDown(sc, groupByItems, client, storeType)
@@ -2128,7 +2129,7 @@ func (t *mppTask) needEnforce(prop *property.PhysicalProperty) bool {
 
 func (t *mppTask) enforceExchanger(prop *property.PhysicalProperty) *mppTask {
 	if len(prop.SortItems) != 0 {
-		t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("Can't use mpp mode because operator `Sort` is not supported now.")
+		t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
 		return &mppTask{}
 	}
 	if !t.needEnforce(prop) {
@@ -2141,6 +2142,7 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 	if collate.NewCollationEnabled() && prop.MPPPartitionTp == property.HashType {
 		for _, col := range prop.MPPPartitionCols {
 			if types.IsString(col.RetType.Tp) {
+				t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because when `new_collation_enabled` is true, HashJoin or HashAgg with string key is not supported now.")
 				return &mppTask{cst: math.MaxFloat64}
 			}
 		}
