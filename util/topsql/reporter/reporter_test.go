@@ -187,6 +187,17 @@ func (s *testTopSQLReporter) TestCollectCapacity(c *C) {
 			tsr.RegisterPlan(key, value)
 		}
 	}
+	genRecord := func(n int) []tracecpu.SQLCPUTimeRecord {
+		records := make([]tracecpu.SQLCPUTimeRecord, 0, n)
+		for i := 0; i < n; i++ {
+			records = append(records, tracecpu.SQLCPUTimeRecord{
+				SQLDigest:  []byte("sqlDigest" + strconv.Itoa(i+1)),
+				PlanDigest: []byte("planDigest" + strconv.Itoa(i+1)),
+				CPUTimeMs:  uint32(i + 1),
+			})
+		}
+		return records
+	}
 
 	variable.TopSQLVariable.MaxCollect.Store(10000)
 	registerSQL(5000)
@@ -204,6 +215,18 @@ func (s *testTopSQLReporter) TestCollectCapacity(c *C) {
 	c.Assert(tsr.sqlMapLength.Load(), Equals, int64(20000))
 	registerPlan(50000)
 	c.Assert(tsr.planMapLength.Load(), Equals, int64(20000))
+
+	variable.TopSQLVariable.MaxStatementCount.Store(5000)
+	collectedData := make(map[string]*dataPoints)
+	tsr.doCollect(collectedData, 1, genRecord(20000))
+	c.Assert(len(collectedData), Equals, 5000)
+	c.Assert(tsr.sqlMapLength.Load(), Equals, int64(5000))
+	c.Assert(tsr.planMapLength.Load(), Equals, int64(5000))
+
+	tsr.takeDataAndSendToReportChan(&collectedData)
+	c.Assert(len(collectedData), Equals, 0)
+	c.Assert(tsr.sqlMapLength.Load(), Equals, int64(0))
+	c.Assert(tsr.planMapLength.Load(), Equals, int64(0))
 }
 
 func BenchmarkTopSQL_CollectAndIncrementFrequency(b *testing.B) {

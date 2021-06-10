@@ -277,6 +277,8 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 		delete(collectTarget, evict.Key)
 		normalizedSQLMap.Delete(string(evict.SQLDigest))
 		normalizedPlanMap.Delete(string(evict.PlanDigest))
+		tsr.sqlMapLength.Add(-1)
+		tsr.planMapLength.Add(-1)
 	}
 }
 
@@ -293,6 +295,8 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *m
 	*collectedDataPtr = make(map[string]*dataPoints)
 	tsr.normalizedSQLMap.Store(&sync.Map{})
 	tsr.normalizedPlanMap.Store(&sync.Map{})
+	tsr.sqlMapLength.Store(0)
+	tsr.planMapLength.Store(0)
 
 	// Send to report channel. When channel is full, data will be dropped.
 	select {
