@@ -7139,7 +7139,7 @@ select * from t;
 }
 
 func (s *testSerialSuite) TestKillTableReader(c *C) {
-	var retry = "github.com/pingcap/tidb/store/tikv/mockRetrySendReqToRegion"
+	var retry = "github.com/pingcap/tidb/store/tikv/locate/mockRetrySendReqToRegion"
 	defer func() {
 		c.Assert(failpoint.Disable(retry), IsNil)
 	}()
@@ -7194,12 +7194,12 @@ func (s *testSerialSuite1) TestCollectCopRuntimeStats(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int, b int)")
 	tk.MustExec("set tidb_enable_collect_execution_info=1;")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreRespResult", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/locate/tikvStoreRespResult", `return(true)`), IsNil)
 	rows := tk.MustQuery("explain analyze select * from t1").Rows()
 	c.Assert(len(rows), Equals, 2)
 	explain := fmt.Sprintf("%v", rows[0])
 	c.Assert(explain, Matches, ".*rpc_num: 2, .*regionMiss:.*")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreRespResult"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/locate/tikvStoreRespResult"), IsNil)
 }
 
 func (s *testSerialSuite1) TestIndexLookupRuntimeStats(c *C) {
@@ -7776,6 +7776,41 @@ func (s *testSuite) TestOOMActionPriority(c *C) {
 		action = action.GetFallback()
 	}
 	c.Assert(action.GetPriority(), Equals, int64(memory.DefLogPriority))
+}
+
+func (s *testSerialSuite) TestIssue21441(c *C) {
+	failpoint.Enable("github.com/pingcap/tidb/executor/issue21441", `return`)
+	defer failpoint.Disable("github.com/pingcap/tidb/executor/issue21441")
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec(`insert into t values(1),(2),(3)`)
+	tk.Se.GetSessionVars().InitChunkSize = 1
+	tk.Se.GetSessionVars().MaxChunkSize = 1
+	sql := `
+select a from t union all
+select a from t union all
+select a from t union all
+select a from t union all
+select a from t union all
+select a from t union all
+select a from t union all
+select a from t`
+	tk.MustQuery(sql).Sort().Check(testkit.Rows(
+		"1", "1", "1", "1", "1", "1", "1", "1",
+		"2", "2", "2", "2", "2", "2", "2", "2",
+		"3", "3", "3", "3", "3", "3", "3", "3",
+	))
+
+	tk.MustQuery("select a from (" + sql + ") t order by a limit 4").Check(testkit.Rows("1", "1", "1", "1"))
+	tk.MustQuery("select a from (" + sql + ") t order by a limit 7, 4").Check(testkit.Rows("1", "2", "2", "2"))
+
+	tk.MustExec("set @@tidb_executor_concurrency = 2")
+	c.Assert(tk.Se.GetSessionVars().UnionConcurrency(), Equals, 2)
+	tk.MustQuery("select a from (" + sql + ") t order by a limit 4").Check(testkit.Rows("1", "1", "1", "1"))
+	tk.MustQuery("select a from (" + sql + ") t order by a limit 7, 4").Check(testkit.Rows("1", "2", "2", "2"))
 }
 
 func (s *testSuite) Test17780(c *C) {
@@ -8521,7 +8556,7 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 	}
 }
 
-func (s *testStaleTxnSuite) TestStaleOrHistoryReadTemporaryTable(c *C) {
+func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
@@ -8541,6 +8576,8 @@ func (s *testStaleTxnSuite) TestStaleOrHistoryReadTemporaryTable(c *C) {
 
 	// sleep 1us to make test stale
 	time.Sleep(time.Microsecond)
+
+	tk.MustGetErrMsg("select * from tmp1 tablesample regions()", "TABLESAMPLE clause can not be applied to temporary tables")
 
 	queries := []struct {
 		sql string
@@ -8565,9 +8602,6 @@ func (s *testStaleTxnSuite) TestStaleOrHistoryReadTemporaryTable(c *C) {
 		},
 		{
 			sql: "select /*+use_index(tmp1, code)*/ code from tmp1 where code > 1",
-		},
-		{
-			sql: "select * from tmp1 tablesample regions()",
 		},
 		{
 			sql: "select /*+ use_index_merge(tmp1, primary, code) */ * from tmp1 where id > 1 or code > 2",

@@ -83,8 +83,8 @@ func (s *testSessionSerialSuite) TestKillFlagInBackoff(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table kill_backoff (id int)")
 	// Inject 1 time timeout. If `Killed` is not successfully passed, it will retry and complete query.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("timeout")->return("")`), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/locate/tikvStoreSendReqResult", `return("timeout")->return("")`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/locate/tikvStoreSendReqResult")
 	// Set kill flag and check its passed to backoffer.
 	tk.Se.GetSessionVars().Killed = 1
 	rs, err := tk.Exec("select * from kill_backoff")
@@ -96,8 +96,8 @@ func (s *testSessionSerialSuite) TestKillFlagInBackoff(c *C) {
 
 func (s *testSessionSerialSuite) TestClusterTableSendError(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("requestTiDBStoreError")`), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/locate/tikvStoreSendReqResult", `return("requestTiDBStoreError")`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/locate/tikvStoreSendReqResult")
 	tk.MustQuery("select * from information_schema.cluster_slow_query")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err, ErrorMatches, ".*TiDB server timeout, address is.*")
