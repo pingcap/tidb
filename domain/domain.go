@@ -940,8 +940,23 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			}
 			count = 0
 			logutil.BgLogger().Debug("Rebuilding sysvar cache from etcd watch event.")
-			logutil.BgLogger().Info("domain LoadSysVarCacheLoop--", zap.Bool("after", after), zap.Time("now", time.Now()), zap.Duration("duration", duration))
-			err := do.sysVarCache.RebuildSysVarCache(ctx)
+			logutil.BgLogger().Info("domain LoadSysVarCacheLoop--",
+				zap.Bool("after", after),
+				zap.Time("now", time.Now()),
+				zap.Duration("duration", duration))
+			txn, err := ctx.Txn(false)
+			if err != nil {
+				logutil.BgLogger().Info("domain LoadSysVarCacheLoop, txn error",
+					zap.Error(err))
+			} else {
+				logutil.BgLogger().Info("domain LoadSysVarCacheLoop, txn status--",
+					zap.String("txn", txn.String()),
+					zap.Bool("valid", txn.Valid()),
+					zap.Uint64("start_ts", txn.StartTS()),
+					zap.Int("size", txn.Size()))
+			}
+
+			err = do.sysVarCache.RebuildSysVarCache(ctx)
 			metrics.LoadSysVarCacheCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("LoadSysVarCacheLoop failed", zap.Error(err))
