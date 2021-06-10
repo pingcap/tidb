@@ -44,10 +44,12 @@ var dynamicPrivs = []string{
 	"SYSTEM_VARIABLES_ADMIN",
 	"ROLE_ADMIN",
 	"CONNECTION_ADMIN",
-	"RESTRICTED_TABLES_ADMIN",    // Can see system tables when SEM is enabled
-	"RESTRICTED_STATUS_ADMIN",    // Can see all status vars when SEM is enabled.
-	"RESTRICTED_VARIABLES_ADMIN", // Can see all variables when SEM is enabled
-	"RESTRICTED_USER_ADMIN",      // User can not have their access revoked by SUPER users.
+	"RESTRICTED_TABLES_ADMIN",     // Can see system tables when SEM is enabled
+	"RESTRICTED_STATUS_ADMIN",     // Can see all status vars when SEM is enabled.
+	"RESTRICTED_VARIABLES_ADMIN",  // Can see all variables when SEM is enabled
+	"RESTRICTED_USER_ADMIN",       // User can not have their access revoked by SUPER users.
+	"RESTRICTED_LOCAL_ADMIN",      // Can create/restore backups to local filesystem, or have local filesystem access.
+	"RESTRICTED_CONNECTION_ADMIN", // Can not be killed by PROCESS/CONNECTION_ADMIN privilege
 }
 var dynamicPrivLock sync.Mutex
 
