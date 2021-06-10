@@ -512,7 +512,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 
 	var firstLock *Lock
 	for {
-		failpoint.Inject("beforeSendPointGet", nil)
+		util.EvalFailpoint("beforeSendPointGet")
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -702,7 +702,7 @@ func extractLockFromKeyErr(keyErr *kvrpcpb.KeyError) (*Lock, error) {
 }
 
 func extractKeyErr(keyErr *kvrpcpb.KeyError) error {
-	if val, err := util.MockRetryableErrorResp.Eval(); err == nil {
+	if val, err := util.EvalFailpoint("mockRetryableErrorResp"); err == nil {
 		if val.(bool) {
 			keyErr.Conflict = nil
 			keyErr.Retryable = "mock retryable error"
