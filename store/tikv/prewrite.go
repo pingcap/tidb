@@ -21,15 +21,16 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/client"
 	"github.com/pingcap/tidb/store/tikv/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	"github.com/pingcap/tidb/store/tikv/locate"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -67,17 +68,17 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		minCommitTS = c.startTS + 1
 	}
 
-	failpoint.Inject("mockZeroCommitTS", func(val failpoint.Value) {
+	if val, err := util.EvalFailpoint("mockZeroCommitTS"); err == nil {
 		// Should be val.(uint64) but failpoint doesn't support that.
 		if tmp, ok := val.(int); ok && uint64(tmp) == c.startTS {
 			minCommitTS = 0
 		}
-	})
+	}
 
 	ttl := c.lockTTL
 
 	if c.sessionID > 0 {
-		failpoint.Inject("twoPCShortLockTTL", func() {
+		if _, err := util.EvalFailpoint("twoPCShortLockTTL"); err == nil {
 			ttl = 1
 			keys := make([]string, 0, len(mutations))
 			for _, m := range mutations {
@@ -85,7 +86,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 			}
 			logutil.BgLogger().Info("[failpoint] injected lock ttl = 1 on prewrite",
 				zap.Uint64("txnStartTS", c.startTS), zap.Strings("keys", keys))
-		})
+		}
 	}
 
 	req := &kvrpcpb.PrewriteRequest{
@@ -100,11 +101,11 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		MaxCommitTs:       c.maxCommitTS,
 	}
 
-	failpoint.Inject("invalidMaxCommitTS", func() {
+	if _, err := util.EvalFailpoint("invalidMaxCommitTS"); err == nil {
 		if req.MaxCommitTs > 0 {
 			req.MaxCommitTs = minCommitTS - 1
 		}
-	})
+	}
 
 	if c.isAsyncCommit() {
 		if batch.isPrimary {
@@ -129,27 +130,27 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 
 	if c.sessionID > 0 {
 		if batch.isPrimary {
-			failpoint.Inject("prewritePrimaryFail", func() {
+			if _, err := util.EvalFailpoint("prewritePrimaryFail"); err == nil {
 				// Delay to avoid cancelling other normally ongoing prewrite requests.
 				time.Sleep(time.Millisecond * 50)
 				logutil.Logger(bo.GetCtx()).Info("[failpoint] injected error on prewriting primary batch",
 					zap.Uint64("txnStartTS", c.startTS))
-				failpoint.Return(errors.New("injected error on prewriting primary batch"))
-			})
-			failpoint.Inject("prewritePrimary", nil) // for other failures like sleep or pause
+				return errors.New("injected error on prewriting primary batch")
+			}
+			util.EvalFailpoint("prewritePrimary") // for other failures like sleep or pause
 		} else {
-			failpoint.Inject("prewriteSecondaryFail", func() {
+			if _, err := util.EvalFailpoint("prewriteSecondaryFail"); err == nil {
 				// Delay to avoid cancelling other normally ongoing prewrite requests.
 				time.Sleep(time.Millisecond * 50)
 				logutil.Logger(bo.GetCtx()).Info("[failpoint] injected error on prewriting secondary batch",
 					zap.Uint64("txnStartTS", c.startTS))
-				failpoint.Return(errors.New("injected error on prewriting secondary batch"))
-			})
-			failpoint.Inject("prewriteSecondary", nil) // for other failures like sleep or pause
+				return errors.New("injected error on prewriting secondary batch")
+			}
+			util.EvalFailpoint("prewriteSecondary") // for other failures like sleep or pause
 		}
 	}
 
-	txnSize := uint64(c.regionTxnSize[batch.region.id])
+	txnSize := uint64(c.regionTxnSize[batch.region.GetID()])
 	// When we retry because of a region miss, we don't know the transaction size. We set the transaction size here
 	// to MaxUint64 to avoid unexpected "resolve lock lite".
 	if action.retry {
@@ -167,8 +168,8 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			// transaction has been successfully committed.
 			// If prewrite has been cancelled, all ongoing prewrite RPCs will become errors, we needn't set undetermined
 			// errors.
-			if (c.isAsyncCommit() || c.isOnePC()) && sender.rpcError != nil && atomic.LoadUint32(&c.prewriteCancelled) == 0 {
-				c.setUndeterminedErr(errors.Trace(sender.rpcError))
+			if (c.isAsyncCommit() || c.isOnePC()) && sender.GetRPCError() != nil && atomic.LoadUint32(&c.prewriteCancelled) == 0 {
+				c.setUndeterminedErr(errors.Trace(sender.GetRPCError()))
 			}
 		}
 	}()
@@ -193,7 +194,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			// For other region error and the fake region error, backoff because
 			// there's something wrong.
 			// For the real EpochNotMatch error, don't backoff.
-			if regionErr.GetEpochNotMatch() == nil || isFakeRegionError(regionErr) {
+			if regionErr.GetEpochNotMatch() == nil || locate.IsFakeRegionError(regionErr) {
 				err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 				if err != nil {
 					return errors.Trace(err)
@@ -203,7 +204,9 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			if err != nil {
 				return errors.Trace(err)
 			}
-			failpoint.Inject("forceRecursion", func() { same = false })
+			if _, err := util.EvalFailpoint("forceRecursion"); err == nil {
+				same = false
+			}
 			if same {
 				continue
 			}
