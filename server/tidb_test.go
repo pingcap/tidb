@@ -1377,9 +1377,6 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	}()
 	agentServer, err := mockTopSQLReporter.StartMockAgentServer()
 	c.Assert(err, IsNil)
-	defer func() {
-		agentServer.Stop()
-	}()
 
 	dbt := &DBTest{c, db}
 	dbt.mustExec("drop database if exists topsql")
@@ -1454,23 +1451,51 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	cancel() // cancel case 1
 	time.Sleep(time.Millisecond * 100)
 
-	// case 2:
+	// case 2: agent hangs for a while
 	cancel = runWorkload(0, 10)
 	// empty agent address, should not collect records
 	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
+	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// set correct address, should collect records
 	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
-	agentServer.WaitCollectCnt(2, time.Second*8)
-	checkFn(8)
+	agentServer.WaitCollectCnt(1, time.Second*4)
+	checkFn(5)
 	// agent server hangs for a while
 	agentServer.HangFromNow(time.Second * 6)
 	// run another set of SQL queries
 	cancel()
 	cancel = runWorkload(11, 20)
 	agentServer.WaitCollectCnt(1, time.Second*8)
-	checkFn(8)
+	checkFn(5)
+
+	// case 3: agent restart
+	cancel = runWorkload(0, 10)
+	// empty agent address, should not collect records
+	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
+	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
+	agentServer.WaitCollectCnt(1, time.Second*4)
+	checkFn(0)
+	// set correct address, should collect records
+	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
+	agentServer.WaitCollectCnt(1, time.Second*4)
+	checkFn(5)
+	// agent server shutdown
+	agentServer.Stop()
+	// run another set of SQL queries
+	cancel()
+	cancel = runWorkload(11, 20)
+	// agent server restart
+	agentServer, err = mockTopSQLReporter.StartMockAgentServer()
+	c.Assert(err, IsNil)
+	defer func() {
+		agentServer.Stop()
+	}()
+	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
+	// check result
+	agentServer.WaitCollectCnt(1, time.Second*4)
+	checkFn(5)
 }
 
 func (ts *tidbTestTopSQLSuite) loopExec(ctx context.Context, c *C, fn func(db *sql.DB)) {
