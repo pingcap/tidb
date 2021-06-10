@@ -170,6 +170,7 @@ func typeInferForNull(args []Expression) {
 	for _, arg := range args {
 		if isNull(arg) {
 			*arg.GetType() = *retFieldTp
+			arg.GetType().Flag &= ^mysql.NotNullFlag // Remove NotNullFlag of NullConst
 		}
 	}
 }
@@ -358,7 +359,13 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 	case types.ETJson:
 		res, isNull, err = sf.EvalJSON(sf.GetCtx(), row)
 	case types.ETString:
-		res, isNull, err = sf.EvalString(sf.GetCtx(), row)
+		var str string
+		str, isNull, err = sf.EvalString(sf.GetCtx(), row)
+		if !isNull && err == nil && tp.Tp == mysql.TypeEnum {
+			res, err = types.ParseEnumName(tp.Elems, str, tp.Collate)
+		} else {
+			res = str
+		}
 	}
 
 	if isNull || err != nil {
@@ -428,29 +435,6 @@ func (sf *ScalarFunction) ResolveIndices(schema *Schema) (Expression, error) {
 }
 
 func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
-	if sf.FuncName.L == ast.In {
-		args := []Expression{}
-		switch inFunc := sf.Function.(type) {
-		case *builtinInIntSig:
-			args = inFunc.nonConstArgs
-		case *builtinInStringSig:
-			args = inFunc.nonConstArgs
-		case *builtinInTimeSig:
-			args = inFunc.nonConstArgs
-		case *builtinInDurationSig:
-			args = inFunc.nonConstArgs
-		case *builtinInRealSig:
-			args = inFunc.nonConstArgs
-		case *builtinInDecimalSig:
-			args = inFunc.nonConstArgs
-		}
-		for _, arg := range args {
-			err := arg.resolveIndices(schema)
-			if err != nil {
-				return err
-			}
-		}
-	}
 	for _, arg := range sf.GetArgs() {
 		err := arg.resolveIndices(schema)
 		if err != nil {

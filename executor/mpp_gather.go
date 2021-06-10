@@ -17,17 +17,20 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 func useMPPExecution(ctx sessionctx.Context, tr *plannercore.PhysicalTableReader) bool {
-	if !ctx.GetSessionVars().AllowMPPExecution {
+	if !ctx.GetSessionVars().IsMPPAllowed() {
 		return false
 	}
 	_, ok := tr.GetTablePlan().(*plannercore.PhysicalExchangeSender)
@@ -42,13 +45,12 @@ type MPPGather struct {
 	originalPlan plannercore.PhysicalPlan
 	startTS      uint64
 
-	allocTaskID *int64
-	mppReqs     []*kv.MPPDispatchRequest
+	mppReqs []*kv.MPPDispatchRequest
 
 	respIter distsql.SelectResult
 }
 
-func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment, tasks []*kv.MPPTask, isRoot bool) error {
+func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 	dagReq, _, err := constructDAGReq(e.ctx, []plannercore.PhysicalPlan{pf.ExchangeSender}, kv.TiFlash)
 	if err != nil {
 		return errors.Trace(err)
@@ -56,12 +58,12 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment, tasks []*kv.M
 	for i := range pf.ExchangeSender.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
-	if !isRoot {
+	if !pf.IsRoot {
 		dagReq.EncodeType = tipb.EncodeType_TypeCHBlock
 	} else {
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
 	}
-	for _, mppTask := range tasks {
+	for _, mppTask := range pf.ExchangeSender.Tasks {
 		err := updateExecutorTableID(context.Background(), dagReq.RootExecutor, mppTask.TableID, true)
 		if err != nil {
 			return errors.Trace(err)
@@ -70,24 +72,28 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment, tasks []*kv.M
 		if err != nil {
 			return errors.Trace(err)
 		}
+		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", mppTask.StartTs), zap.Int64("ID", mppTask.ID), zap.String("address", mppTask.Meta.GetAddress()), zap.String("plan", plannercore.ToString(pf.ExchangeSender)))
 		req := &kv.MPPDispatchRequest{
 			Data:      pbData,
 			Meta:      mppTask.Meta,
 			ID:        mppTask.ID,
-			IsRoot:    isRoot,
+			IsRoot:    pf.IsRoot,
 			Timeout:   10,
 			SchemaVar: e.is.SchemaMetaVersion(),
 			StartTs:   e.startTS,
+			State:     kv.MppTaskReady,
 		}
 		e.mppReqs = append(e.mppReqs, req)
 	}
-	for _, r := range pf.ExchangeReceivers {
-		err = e.appendMPPDispatchReq(r.ChildPf, r.Tasks, false)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
 	return nil
+}
+
+func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
+	ids = append(ids, plan.ID())
+	for _, child := range plan.Children() {
+		ids = collectPlanIDS(child, ids)
+	}
+	return ids
 }
 
 // Open decides the task counts and locations and generate exchange operators for every plan fragment.
@@ -95,19 +101,26 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment, tasks []*kv.M
 func (e *MPPGather) Open(ctx context.Context) (err error) {
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
 	sender := e.originalPlan.(*plannercore.PhysicalExchangeSender)
-	rootTasks, err := plannercore.GenerateRootMPPTasks(e.ctx, e.startTS, sender, e.allocTaskID)
+	planIDs := collectPlanIDS(e.originalPlan, nil)
+	frags, err := plannercore.GenerateRootMPPTasks(e.ctx, e.startTS, sender, e.is)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = e.appendMPPDispatchReq(sender.Fragment, rootTasks, true)
+	for _, frag := range frags {
+		err = e.appendMPPDispatchReq(frag)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	failpoint.Inject("checkTotalMPPTasks", func(val failpoint.Value) {
+		if val.(int) != len(e.mppReqs) {
+			failpoint.Return(errors.Errorf("The number of tasks is not right, expect %d tasks but actually there are %d tasks", val.(int), len(e.mppReqs)))
+		}
+	})
+	e.respIter, err = distsql.DispatchMPPTasks(ctx, e.ctx, e.mppReqs, e.retFieldTypes, planIDs, e.id)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.respIter, err = distsql.DispatchMPPTasks(ctx, e.ctx, e.mppReqs, e.retFieldTypes)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	e.respIter.Fetch(ctx)
 	return nil
 }
 
@@ -119,6 +132,7 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // Close and release the used resources.
 func (e *MPPGather) Close() error {
+	e.mppReqs = nil
 	if e.respIter != nil {
 		return e.respIter.Close()
 	}

@@ -16,7 +16,10 @@ package executor
 import (
 	"context"
 	"crypto/tls"
+	"runtime"
+	"strconv"
 	"time"
+	"unsafe"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -24,8 +27,10 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	plannerutil "github.com/pingcap/tidb/planner/util"
+	txninfo "github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -54,6 +59,10 @@ type testExecSerialSuite struct {
 type mockSessionManager struct {
 	PS       []*util.ProcessInfo
 	serverID uint64
+}
+
+func (msm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
+	panic("unimplemented!")
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
@@ -445,4 +454,98 @@ func (s *pkgTestSuite) TestSlowQueryRuntimeStats(c *C) {
 	c.Assert(stats.String(), Equals, stats.Clone().String())
 	stats.Merge(stats.Clone())
 	c.Assert(stats.String(), Equals, "initialize: 2ms, read_file: 2s, parse_log: {time:200ms, concurrency:15}, total_file: 4, read_file: 4, read_size: 2 GB")
+}
+
+// Test whether the actual buckets in Golang Map is same with the estimated number.
+// The test relies the implement of Golang Map. ref https://github.com/golang/go/blob/go1.13/src/runtime/map.go#L114
+func (s *pkgTestSuite) TestAggPartialResultMapperB(c *C) {
+	if runtime.Version() < `go1.13` {
+		c.Skip("Unsupported version")
+	}
+	type testCase struct {
+		rowNum          int
+		expectedB       int
+		expectedGrowing bool
+	}
+	cases := []testCase{
+		{
+			rowNum:          0,
+			expectedB:       0,
+			expectedGrowing: false,
+		},
+		{
+			rowNum:          100,
+			expectedB:       4,
+			expectedGrowing: false,
+		},
+		{
+			rowNum:          10000,
+			expectedB:       11,
+			expectedGrowing: false,
+		},
+		{
+			rowNum:          1000000,
+			expectedB:       18,
+			expectedGrowing: false,
+		},
+		{
+			rowNum:          851968, // 6.5 * (1 << 17)
+			expectedB:       17,
+			expectedGrowing: false,
+		},
+		{
+			rowNum:          851969, // 6.5 * (1 << 17) + 1
+			expectedB:       18,
+			expectedGrowing: true,
+		},
+		{
+			rowNum:          425984, // 6.5 * (1 << 16)
+			expectedB:       16,
+			expectedGrowing: false,
+		},
+		{
+			rowNum:          425985, // 6.5 * (1 << 16) + 1
+			expectedB:       17,
+			expectedGrowing: true,
+		},
+	}
+
+	for _, tc := range cases {
+		aggMap := make(aggPartialResultMapper)
+		tempSlice := make([]aggfuncs.PartialResult, 10)
+		for num := 0; num < tc.rowNum; num++ {
+			aggMap[strconv.Itoa(num)] = tempSlice
+		}
+
+		c.Assert(getB(aggMap), Equals, tc.expectedB)
+		c.Assert(getGrowing(aggMap), Equals, tc.expectedGrowing)
+	}
+}
+
+// A header for a Go map.
+// nolint:structcheck
+type hmap struct {
+	// Note: the format of the hmap is also encoded in cmd/compile/internal/gc/reflect.go.
+	// Make sure this stays in sync with the compiler's definition.
+	count     int    // nolint:unused // # live cells == size of map.  Must be first (used by len() builtin)
+	flags     uint8  // nolint:unused
+	B         uint8  // nolint:unused // log_2 of # of buckets (can hold up to loadFactor * 2^B items)
+	noverflow uint16 // nolint:unused // approximate number of overflow buckets; see incrnoverflow for details
+	hash0     uint32 // nolint:unused // hash seed
+
+	buckets    unsafe.Pointer // nolint:unused // array of 2^B Buckets. may be nil if count==0.
+	oldbuckets unsafe.Pointer // nolint:unused // previous bucket array of half the size, non-nil only when growing
+	nevacuate  uintptr        // nolint:unused // progress counter for evacuation (buckets less than this have been evacuated)
+}
+
+func getB(m aggPartialResultMapper) int {
+	point := (**hmap)(unsafe.Pointer(&m))
+	value := *point
+	return int(value.B)
+}
+
+func getGrowing(m aggPartialResultMapper) bool {
+	point := (**hmap)(unsafe.Pointer(&m))
+	value := *point
+	return value.oldbuckets != nil
 }

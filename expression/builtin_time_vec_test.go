@@ -64,14 +64,6 @@ func (g *unitStrGener) gen() interface{} {
 	return units[n]
 }
 
-type dateTimeUnitStrGener struct {
-	randGen *defaultRandGen
-}
-
-func newDateTimeUnitStrGener() *dateTimeUnitStrGener {
-	return &dateTimeUnitStrGener{newDefaultRandGen()}
-}
-
 // tzStrGener is used to generate strings which are timezones
 type tzStrGener struct{}
 
@@ -86,24 +78,6 @@ func (g *tzStrGener) gen() interface{} {
 
 	n := rand.Int() % len(tzs)
 	return tzs[n]
-}
-
-func (g *dateTimeUnitStrGener) gen() interface{} {
-	dateTimes := []string{
-		"DAY",
-		"WEEK",
-		"MONTH",
-		"QUARTER",
-		"YEAR",
-		"DAY_MICROSECOND",
-		"DAY_SECOND",
-		"DAY_MINUTE",
-		"DAY_HOUR",
-		"YEAR_MONTH",
-	}
-
-	n := g.randGen.Intn(len(dateTimes))
-	return dateTimes[n]
 }
 
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
@@ -543,6 +517,13 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			retEvalType:   types.ETDatetime,
 			childrenTypes: []types.EvalType{types.ETInt},
 			geners:        []dataGenerator{newRangeInt64Gener(0, math.MaxInt64)},
+		},
+	},
+	// Todo: how to inject the safeTS for better testing.
+	ast.TiDBBoundedStaleness: {
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime},
 		},
 	},
 	ast.LastDay: {

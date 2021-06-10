@@ -17,7 +17,6 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 var _ = Suite(testMockSuite{})
@@ -29,7 +28,7 @@ func (s testMockSuite) TestInterface(c *C) {
 	storage := newMockStorage()
 	storage.GetClient()
 	storage.UUID()
-	version, err := storage.CurrentVersion(oracle.GlobalTxnScope)
+	version, err := storage.CurrentVersion(GlobalTxnScope)
 	c.Check(err, IsNil)
 	snapshot := storage.GetSnapshot(version)
 	_, err = snapshot.BatchGet(context.Background(), []Key{Key("abc"), Key("def")})
@@ -40,12 +39,11 @@ func (s testMockSuite) TestInterface(c *C) {
 	c.Check(err, IsNil)
 	err = transaction.LockKeys(context.Background(), new(LockCtx), Key("lock"))
 	c.Check(err, IsNil)
-	transaction.SetOption(Option(23), struct{}{})
+	transaction.SetOption(23, struct{}{})
 	if mock, ok := transaction.(*mockTxn); ok {
-		mock.GetOption(Option(23))
+		mock.GetOption(23)
 	}
 	transaction.StartTS()
-	transaction.DelOption(Option(23))
 	if transaction.IsReadOnly() {
 		_, err = transaction.Get(context.TODO(), Key("lock"))
 		c.Check(err, IsNil)
@@ -80,7 +78,7 @@ func (s testMockSuite) TestInterface(c *C) {
 	c.Assert(storage.Describe(), Equals, "KVMockStorage is a mock Store implementation, only for unittests in KV package")
 	c.Assert(storage.SupportDeleteRange(), IsFalse)
 
-	status, err := storage.ShowStatus(nil, "")
+	status, err := storage.ShowStatus(context.Background(), "")
 	c.Assert(status, IsNil)
 	c.Assert(err, IsNil)
 

@@ -142,34 +142,34 @@ insert into t1 values(5, 6, 7);
 insert into t1 values(6, 7, 8);
 insert into t1 values(7, 8, 9);
 insert into t1 values(9, 10, 11);
-explain select a, c from t1 use index(idx) order by a limit 5;
+explain format = 'brief' select a, c from t1 use index(idx) order by a limit 5;
 select c, a from t1 use index(idx) order by a limit 5;
 
 #test stream aggregation push down
 drop table if exists t;
 create table t (a int, b int, c int, key idx(a, b, c));
 #test for empty table
-explain select count(a) from t;
+explain format = 'brief' select count(a) from t;
 select count(a) from t;
 #test for one row
 insert t values(0,0,0);
-explain select distinct b from t group by a;
+explain format = 'brief' select distinct b from t group by a;
 select distinct b from t group by a;
-explain select count(b) from t group by a;
+explain format = 'brief' select count(b) from t group by a;
 select count(b) from t group by a;
 #test for rows
 insert t values(1,1,1),(3,3,6),(3,2,5),(2,1,4),(1,1,3),(1,1,2);
-explain select count(a) from t where b>0 group by a, b;
+explain format = 'brief' select count(a) from t where b>0 group by a, b;
 select count(a) from t where b>0 group by a, b;
-explain select count(a) from t where b>0 group by a, b order by a;
+explain format = 'brief' select count(a) from t where b>0 group by a, b order by a;
 select count(a) from t where b>0 group by a, b order by a;
-explain select count(a) from t where b>0 group by a, b order by a limit 1;
+explain format = 'brief' select count(a) from t where b>0 group by a, b order by a limit 1;
 select count(a) from t where b>0 group by a, b order by a limit 1;
 
 # test outer join simplification, issue #7687
 drop table if exists t;
 create table t (id int primary key, a int, b int);
-explain select * from (t t1 left join t t2 on t1.a = t2.a) left join (t t3 left join t t4 on t3.a = t4.a) on t2.b = 1;
+explain format = 'brief' select * from (t t1 left join t t2 on t1.a = t2.a) left join (t t3 left join t t4 on t3.a = t4.a) on t2.b = 1;
 
 drop table if exists t;
 create table t(a bigint primary key, b bigint);
@@ -191,35 +191,35 @@ desc select * from th partition (p2,p1);
 # test != any(subq) and = all(subq)
 drop table if exists t;
 create table t(a int, b int);
-explain select a != any (select a from t t2) from t t1;
-explain select a = all (select a from t t2) from t t1;
+explain format = 'brief' select a != any (select a from t t2) from t t1;
+explain format = 'brief' select a = all (select a from t t2) from t t1;
 
 drop table if exists t;
 create table t(a int, b int);
 drop table if exists s;
 create table s(a varchar(20), b varchar(20));
-explain select a in (select a from s where s.b = t.b) from t;
-explain select a in (select a+b from t t2 where t2.b = t1.b) from t t1;
+explain format = 'brief' select a in (select a from s where s.b = t.b) from t;
+explain format = 'brief' select a in (select a+b from t t2 where t2.b = t1.b) from t t1;
 drop table t;
 create table t(a int not null, b int);
-explain select a in (select a from t t2 where t2.b = t1.b) from t t1;
+explain format = 'brief' select a in (select a from t t2 where t2.b = t1.b) from t t1;
 
 # test sleep in subquery
-explain select 1 from (select sleep(1)) t;
+explain format = 'brief' select 1 from (select sleep(1)) t;
 
 # test order by rand()
 drop table if exists t;
 create table t(a int, b int);
-explain select a from t order by rand();
-explain select a, b from t order by abs(2);
-explain select a from t order by abs(rand())+1;
+explain format = 'brief' select a from t order by rand();
+explain format = 'brief' select a, b from t order by abs(2);
+explain format = 'brief' select a from t order by abs(rand())+1;
 
 # test order by correlated column
 drop table if exists t1;
 create table t1(a int, b int);
 drop table if exists t2;
 create table t2(a int, b int);
-explain select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1.b order by t1.b);
+explain format = 'brief' select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1.b order by t1.b);
 
 # test fields with windows function
 drop table t;
@@ -228,7 +228,7 @@ CREATE TABLE t (id int(10) unsigned NOT NULL AUTO_INCREMENT,
     x int(10) unsigned DEFAULT '0',
     PRIMARY KEY (`id`)
 );
-explain select row_number() over( partition by i ) - x as rnk from t;
+explain format = 'brief' select row_number() over( partition by i ) - x as rnk from t;
 
 # for issue 21692
 create table precise_types (

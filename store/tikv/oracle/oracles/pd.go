@@ -15,14 +15,15 @@ package oracles
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -92,7 +93,7 @@ type tsFuture struct {
 func (f *tsFuture) Wait() (uint64, error) {
 	now := time.Now()
 	physical, logical, err := f.TSFuture.Wait()
-	metrics.TSFutureWaitDuration.Observe(time.Since(now).Seconds())
+	metrics.TiKVTSFutureWaitDuration.Observe(time.Since(now).Seconds())
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -134,7 +135,7 @@ func (o *pdOracle) getTimestamp(ctx context.Context, txnScope string) (uint64, e
 }
 
 func (o *pdOracle) getArrivalTimestamp() uint64 {
-	return oracle.ComposeTS(oracle.GetPhysical(time.Now()), 0)
+	return oracle.GoTimeToTS(time.Now())
 }
 
 func (o *pdOracle) setLastTS(ts uint64, txnScope string) {
@@ -273,11 +274,11 @@ func (o *pdOracle) GetLowResolutionTimestampAsync(ctx context.Context, opt *orac
 func (o *pdOracle) getStaleTimestamp(txnScope string, prevSecond uint64) (uint64, error) {
 	ts, ok := o.getLastTS(txnScope)
 	if !ok {
-		return 0, errors.Errorf("get stale timestamp fail, invalid txnScope = %s", oracle.GlobalTxnScope)
+		return 0, errors.Errorf("get stale timestamp fail, txnScope: %s", txnScope)
 	}
 	arrivalTS, ok := o.getLastArrivalTS(txnScope)
 	if !ok {
-		return 0, errors.Errorf("get stale arrival timestamp fail, invalid txnScope = %s", oracle.GlobalTxnScope)
+		return 0, errors.Errorf("get stale arrival timestamp fail, txnScope: %s", txnScope)
 	}
 	arrivalTime := oracle.GetTimeFromTS(arrivalTS)
 	physicalTime := oracle.GetTimeFromTS(ts)
@@ -287,13 +288,20 @@ func (o *pdOracle) getStaleTimestamp(txnScope string, prevSecond uint64) (uint64
 
 	staleTime := physicalTime.Add(-arrivalTime.Sub(time.Now().Add(-time.Duration(prevSecond) * time.Second)))
 
-	return oracle.ComposeTS(oracle.GetPhysical(staleTime), 0), nil
+	return oracle.GoTimeToTS(staleTime), nil
 }
 
 // GetStaleTimestamp generate a TSO which represents for the TSO prevSecond secs ago.
 func (o *pdOracle) GetStaleTimestamp(ctx context.Context, txnScope string, prevSecond uint64) (ts uint64, err error) {
 	ts, err = o.getStaleTimestamp(txnScope, prevSecond)
 	if err != nil {
+		if !strings.HasPrefix(err.Error(), "invalid prevSecond") {
+			// If any error happened, we will try to fetch tso and set it as last ts.
+			_, tErr := o.GetTimestamp(ctx, &oracle.Option{TxnScope: txnScope})
+			if tErr != nil {
+				return 0, errors.Trace(tErr)
+			}
+		}
 		return 0, errors.Trace(err)
 	}
 	return ts, nil

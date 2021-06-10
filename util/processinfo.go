@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -32,6 +33,7 @@ type ProcessInfo struct {
 	ID               uint64
 	User             string
 	Host             string
+	Port             string
 	DB               string
 	Digest           string
 	Plan             interface{}
@@ -67,10 +69,16 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 	if len(pi.DB) > 0 {
 		db = pi.DB
 	}
+	var host string
+	if pi.Port != "" {
+		host = fmt.Sprintf("%s:%s", pi.Host, pi.Port)
+	} else {
+		host = pi.Host
+	}
 	return []interface{}{
 		pi.ID,
 		pi.User,
-		pi.Host,
+		host,
 		db,
 		mysql.Command2Str[pi.Command],
 		t,
@@ -91,10 +99,16 @@ func (pi *ProcessInfo) txnStartTs(tz *time.Location) (txnStart string) {
 // "SELECT * FROM INFORMATION_SCHEMA.PROCESSLIST".
 func (pi *ProcessInfo) ToRow(tz *time.Location) []interface{} {
 	bytesConsumed := int64(0)
-	if pi.StmtCtx != nil && pi.StmtCtx.MemTracker != nil {
-		bytesConsumed = pi.StmtCtx.MemTracker.BytesConsumed()
+	diskConsumed := int64(0)
+	if pi.StmtCtx != nil {
+		if pi.StmtCtx.MemTracker != nil {
+			bytesConsumed = pi.StmtCtx.MemTracker.BytesConsumed()
+		}
+		if pi.StmtCtx.DiskTracker != nil {
+			diskConsumed = pi.StmtCtx.DiskTracker.BytesConsumed()
+		}
 	}
-	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, pi.txnStartTs(tz))
+	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed, pi.txnStartTs(tz))
 }
 
 // ascServerStatus is a slice of all defined server status in ascending order.
@@ -148,6 +162,7 @@ func serverStatus2Str(state uint16) string {
 // kill statement rely on this interface.
 type SessionManager interface {
 	ShowProcessList() map[uint64]*ProcessInfo
+	ShowTxnList() []*txninfo.TxnInfo
 	GetProcessInfo(id uint64) (*ProcessInfo, bool)
 	Kill(connectionID uint64, query bool)
 	KillAllConnections()

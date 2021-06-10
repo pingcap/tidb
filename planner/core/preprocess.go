@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -34,6 +35,8 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
+	utilparser "github.com/pingcap/tidb/util/parser"
+	"github.com/pingcap/tidb/util/sem"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -47,6 +50,13 @@ func InPrepare(p *preprocessor) {
 // InTxnRetry is a PreprocessOpt that indicates preprocess is executing under transaction retry.
 func InTxnRetry(p *preprocessor) {
 	p.flag |= inTxnRetry
+}
+
+// WithPreprocessorReturn returns a PreprocessOpt to initialize the PreprocesorReturn.
+func WithPreprocessorReturn(ret *PreprocessorReturn) PreprocessOpt {
+	return func(p *preprocessor) {
+		p.PreprocessorReturn = ret
+	}
 }
 
 // TryAddExtraLimit trys to add an extra limit for SELECT or UNION statement when sql_select_limit is set.
@@ -80,12 +90,25 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 }
 
 // Preprocess resolves table names of the node, and checks some statements validation.
-func Preprocess(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema, preprocessOpt ...PreprocessOpt) error {
-	v := preprocessor{is: is, ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0)}
+// prepreocssReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
+func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
+	v := preprocessor{ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0), withName: make(map[string]interface{})}
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
 	}
+	// PreprocessorReturn must be non-nil before preprocessing
+	if v.PreprocessorReturn == nil {
+		v.PreprocessorReturn = &PreprocessorReturn{}
+	}
 	node.Accept(&v)
+	readTS := ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
+	if readTS > 0 {
+		v.PreprocessorReturn.SnapshotTS = readTS
+	}
+	// InfoSchema must be non-nil after preprocessing
+	if v.InfoSchema == nil {
+		v.ensureInfoSchema()
+	}
 	return errors.Trace(v.err)
 }
 
@@ -107,22 +130,34 @@ const (
 	inSequenceFunction
 )
 
+// PreprocessorReturn is used to retain information obtained in the preprocessor.
+type PreprocessorReturn struct {
+	SnapshotTS        uint64
+	ExplicitStaleness bool
+	InfoSchema        infoschema.InfoSchema
+}
+
 // preprocessor is an ast.Visitor that preprocess
 // ast Nodes parsed from parser.
 type preprocessor struct {
-	is     infoschema.InfoSchema
 	ctx    sessionctx.Context
-	err    error
 	flag   preprocessorFlag
 	stmtTp byte
 
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
 	tableAliasInJoin []map[string]interface{}
+	withName         map[string]interface{}
+
+	// values that may be returned
+	*PreprocessorReturn
+	err error
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
+	case *ast.AdminStmt:
+		p.checkAdminCheckTableGrammar(node)
 	case *ast.DeleteStmt:
 		p.stmtTp = TypeDelete
 	case *ast.SelectStmt:
@@ -131,6 +166,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeUpdate
 	case *ast.InsertStmt:
 		p.stmtTp = TypeInsert
+		// handle the insert table name imminently
+		// insert into t with t ..., the insert can not see t here. We should hand it before the CTE statement
+		p.handleTableName(node.Table.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName))
 	case *ast.CreateTableStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
@@ -179,14 +217,14 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeCreate
 		EraseLastSemicolon(node.OriginNode)
 		EraseLastSemicolon(node.HintedNode)
-		p.checkBindGrammar(node.OriginNode, node.HintedNode)
+		p.checkBindGrammar(node.OriginNode, node.HintedNode, p.ctx.GetSessionVars().CurrentDB)
 		return in, true
 	case *ast.DropBindingStmt:
 		p.stmtTp = TypeDrop
 		EraseLastSemicolon(node.OriginNode)
 		if node.HintedNode != nil {
 			EraseLastSemicolon(node.HintedNode)
-			p.checkBindGrammar(node.OriginNode, node.HintedNode)
+			p.checkBindGrammar(node.OriginNode, node.HintedNode, p.ctx.GetSessionVars().CurrentDB)
 		}
 		return in, true
 	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
@@ -213,6 +251,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.FnName.L == ast.NextVal || node.FnName.L == ast.LastVal || node.FnName.L == ast.SetVal {
 			p.flag |= inSequenceFunction
 		}
+
 	case *ast.BRIEStmt:
 		if node.Kind == ast.BRIEKindRestore {
 			p.flag |= inCreateOrDropTable
@@ -229,11 +268,12 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 				p.err = expression.ErrInvalidTableSample.GenWithStackByArgs("Only supports REGIONS sampling method")
 			}
 		}
-	case *ast.CreateStatisticsStmt, *ast.DropStatisticsStmt:
-		p.stmtTp = TypeCreate
-		p.checkStatisticsOpGrammar(in)
 	case *ast.GroupByClause:
 		p.checkGroupBy(node)
+	case *ast.WithClause:
+		for _, cte := range node.CTEs {
+			p.withName[cte.Name.L] = struct{}{}
+		}
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -246,6 +286,14 @@ func EraseLastSemicolon(stmt ast.StmtNode) {
 	if len(sql) > 0 && sql[len(sql)-1] == ';' {
 		stmt.SetText(sql[:len(sql)-1])
 	}
+}
+
+// EraseLastSemicolonInSQL removes last semicolon of the SQL.
+func EraseLastSemicolonInSQL(sql string) string {
+	if len(sql) > 0 && sql[len(sql)-1] == ';' {
+		return sql[:len(sql)-1]
+	}
+	return sql
 }
 
 const (
@@ -291,7 +339,7 @@ func bindableStmtType(node ast.StmtNode) byte {
 	return TypeInvalid
 }
 
-func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode) {
+func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, defaultDB string) {
 	origTp := bindableStmtType(originNode)
 	hintedTp := bindableStmtType(hintedNode)
 	if origTp == TypeInvalid || hintedTp == TypeInvalid {
@@ -309,8 +357,8 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode) {
 			return
 		}
 	}
-	originSQL := parser.Normalize(originNode.Text())
-	hintedSQL := parser.Normalize(hintedNode.Text())
+	originSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(originNode, defaultDB, originNode.Text()))
+	hintedSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(hintedNode, defaultDB, hintedNode.Text()))
 	if originSQL != hintedSQL {
 		p.err = errors.Errorf("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:%s, hintedSQL:%s", originSQL, hintedSQL)
 	}
@@ -550,10 +598,68 @@ func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
 	}
 }
 
+func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
+	for _, table := range stmt.Tables {
+		currentDB := p.ctx.GetSessionVars().CurrentDB
+		if table.Schema.String() != "" {
+			currentDB = table.Schema.L
+		}
+		if currentDB == "" {
+			p.err = errors.Trace(ErrNoDB)
+			return
+		}
+		sName := model.NewCIStr(currentDB)
+		tName := table.Name
+		tableInfo, err := p.ensureInfoSchema().TableByName(sName, tName)
+		if err != nil {
+			p.err = err
+			return
+		}
+		tempTableType := tableInfo.Meta().TempTableType
+		if (stmt.Tp == ast.AdminCheckTable || stmt.Tp == ast.AdminChecksumTable) && tempTableType != model.TempTableNone {
+			if stmt.Tp == ast.AdminChecksumTable {
+				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table")
+			} else {
+				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("admin check table")
+			}
+			return
+		}
+	}
+}
+
 func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
+	if stmt.ReferTable != nil {
+		schema := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
+		if stmt.ReferTable.Schema.String() != "" {
+			schema = stmt.ReferTable.Schema
+		}
+		// get the infoschema from the context.
+		tableInfo, err := p.ensureInfoSchema().TableByName(schema, stmt.ReferTable.Name)
+		if err != nil {
+			p.err = err
+			return
+		}
+		if tableInfo.Meta().TempTableType != model.TempTableNone {
+			p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("create table like")
+			return
+		}
+	}
+	if stmt.TemporaryKeyword != ast.TemporaryNone {
+		for _, opt := range stmt.Options {
+			if opt.Tp == ast.TableOptionShardRowID {
+				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
+				return
+			}
+		}
+	}
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
+		return
+	}
+	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
+	if stmt.TemporaryKeyword == ast.TemporaryLocal && !enableNoopFuncs {
+		p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("CREATE TEMPORARY TABLE")
 		return
 	}
 	countPrimaryKey := 0
@@ -562,7 +668,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			p.err = err
 			return
 		}
-		isPrimary, err := checkColumnOptions(colDef.Options)
+		isPrimary, err := checkColumnOptions(stmt.TemporaryKeyword != ast.TemporaryNone, colDef.Options)
 		if err != nil {
 			p.err = err
 			return
@@ -663,6 +769,11 @@ func (p *preprocessor) checkDropSequenceGrammar(stmt *ast.DropSequenceStmt) {
 
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 	p.checkDropTableNames(stmt.Tables)
+	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
+	if stmt.TemporaryKeyword == ast.TemporaryLocal && !enableNoopFuncs {
+		p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE")
+		return
+	}
 }
 
 func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {
@@ -714,7 +825,7 @@ func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]inter
 	return nil
 }
 
-func checkColumnOptions(ops []*ast.ColumnOption) (int, error) {
+func checkColumnOptions(isTempTable bool, ops []*ast.ColumnOption) (int, error) {
 	isPrimary, isGenerated, isStored := 0, 0, false
 
 	for _, op := range ops {
@@ -724,6 +835,10 @@ func checkColumnOptions(ops []*ast.ColumnOption) (int, error) {
 		case ast.ColumnOptionGenerated:
 			isGenerated = 1
 			isStored = op.Stored
+		case ast.ColumnOptionAutoRandom:
+			if isTempTable {
+				return isPrimary, ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random")
+			}
 		}
 	}
 
@@ -755,21 +870,6 @@ func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
 			return
 		}
 	}
-}
-
-func (p *preprocessor) checkStatisticsOpGrammar(node ast.Node) {
-	var statsName string
-	switch stmt := node.(type) {
-	case *ast.CreateStatisticsStmt:
-		statsName = stmt.StatsName
-	case *ast.DropStatisticsStmt:
-		statsName = stmt.StatsName
-	}
-	if isIncorrectName(statsName) {
-		msg := fmt.Sprintf("Incorrect statistics name: %s", statsName)
-		p.err = ErrInternal.GenWithStack(msg)
-	}
-	return
 }
 
 func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
@@ -842,6 +942,13 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 				}
 			default:
 				// Nothing to do now.
+			}
+		case ast.AlterTableAddStatistics, ast.AlterTableDropStatistics:
+			statsName := spec.Statistics.StatsName
+			if isIncorrectName(statsName) {
+				msg := fmt.Sprintf("Incorrect statistics name: %s", statsName)
+				p.err = ErrInternal.GenWithStack(msg)
+				return
 			}
 		default:
 			// Nothing to do now.
@@ -970,8 +1077,11 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			if tp.Decimal > mysql.MaxFloatingTypeScale {
 				return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
 			}
-			if tp.Flen > mysql.MaxFloatingTypeWidth {
+			if tp.Flen > mysql.MaxFloatingTypeWidth || tp.Flen == 0 {
 				return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
+			}
+			if tp.Flen < tp.Decimal {
+				return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
 			}
 		}
 	case mysql.TypeSet:
@@ -991,6 +1101,15 @@ func checkColumn(colDef *ast.ColumnDef) error {
 
 		if tp.Flen > mysql.MaxDecimalWidth {
 			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
+		}
+
+		if tp.Flen < tp.Decimal {
+			return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
+		}
+		// If decimal and flen all equals 0, just set flen to default value.
+		if tp.Decimal == 0 && tp.Flen == 0 {
+			defaultFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNewDecimal)
+			tp.Flen = defaultFlen
 		}
 	case mysql.TypeBit:
 		if tp.Flen <= 0 {
@@ -1091,6 +1210,10 @@ func (p *preprocessor) stmtType() string {
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
+		if _, ok := p.withName[tn.Name.L]; ok {
+			return
+		}
+
 		currentDB := p.ctx.GetSessionVars().CurrentDB
 		if currentDB == "" {
 			p.err = errors.Trace(ErrNoDB)
@@ -1098,6 +1221,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		}
 		tn.Schema = model.NewCIStr(currentDB)
 	}
+
 	if p.flag&inCreateOrDropTable > 0 {
 		// The table may not exist in create table or drop table statement.
 		if p.flag&inRepairTable > 0 {
@@ -1117,7 +1241,12 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
-	table, err := p.is.TableByName(tn.Schema, tn.Name)
+	p.handleAsOf(tn.AsOf)
+	if p.err != nil {
+		return
+	}
+
+	table, err := p.ensureInfoSchema().TableByName(tn.Schema, tn.Name)
 	if err != nil {
 		// We should never leak that the table doesn't exist (i.e. attach ErrTableNotExists)
 		// unless we know that the user has permissions to it, should it exist.
@@ -1139,7 +1268,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 	tableInfo := table.Meta()
-	dbInfo, _ := p.is.SchemaByName(tn.Schema)
+	dbInfo, _ := p.ensureInfoSchema().SchemaByName(tn.Schema)
 	// tableName should be checked as sequence object.
 	if p.flag&inSequenceFunction > 0 {
 		if !tableInfo.IsSequence() {
@@ -1182,6 +1311,9 @@ func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 }
 
 func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
+	if sem.IsEnabled() && node.Tp == ast.ShowConfig {
+		p.err = ErrNotSupportedWithSem.GenWithStackByArgs("SHOW CONFIG")
+	}
 	if node.DBName == "" {
 		if node.Table != nil && node.Table.Schema.L != "" {
 			node.DBName = node.Table.Schema.O
@@ -1260,4 +1392,51 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 			return
 		}
 	}
+}
+
+// handleAsOf tries to validate the timestamp.
+// If it is not nil, timestamp is used to get the history infoschema from the infocache.
+func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
+	readTS := p.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS()
+	if readTS > 0 && node != nil {
+		p.err = ErrAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
+		return
+	}
+	dom := domain.GetDomain(p.ctx)
+	ts := uint64(0)
+	if node != nil {
+		if p.ctx.GetSessionVars().InTxn() {
+			p.err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
+			return
+		}
+		ts, p.err = calculateTsExpr(p.ctx, node)
+		if p.err != nil {
+			return
+		}
+	}
+	if ts != 0 && p.InfoSchema == nil {
+		is, err := dom.GetSnapshotInfoSchema(ts)
+		if err != nil {
+			p.err = err
+			return
+		}
+		p.SnapshotTS = ts
+		p.ExplicitStaleness = true
+		p.InfoSchema = is
+	}
+	if p.SnapshotTS != ts {
+		p.err = ErrDifferentAsOf.GenWithStack("can not set different time in the as of")
+	}
+}
+
+// ensureInfoSchema get the infoschema from the preprecessor.
+// there some situations:
+//    - the stmt specifies the schema version.
+//    - session variable
+//    - transcation context
+func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
+	if p.InfoSchema == nil {
+		p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	}
+	return p.InfoSchema
 }

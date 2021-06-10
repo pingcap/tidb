@@ -19,7 +19,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
@@ -47,8 +46,6 @@ const (
 	DefaultMaxRetries = 30
 	// RetryInterval indicates retry interval.
 	RetryInterval uint64 = 500
-	// GCTimeFormat is the format that gc_worker used to store times.
-	GCTimeFormat = "20060102-15:04:05 -0700"
 )
 
 // RunWithRetry will run the f with backoff and retry.
@@ -125,26 +122,6 @@ func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
 	}
 }
 
-// CompatibleParseGCTime parses a string with `GCTimeFormat` and returns a time.Time. If `value` can't be parsed as that
-// format, truncate to last space and try again. This function is only useful when loading times that saved by
-// gc_worker. We have changed the format that gc_worker saves time (removed the last field), but when loading times it
-// should be compatible with the old format.
-func CompatibleParseGCTime(value string) (time.Time, error) {
-	t, err := time.Parse(GCTimeFormat, value)
-
-	if err != nil {
-		// Remove the last field that separated by space
-		parts := strings.Split(value, " ")
-		prefix := strings.Join(parts[:len(parts)-1], " ")
-		t, err = time.Parse(GCTimeFormat, prefix)
-	}
-
-	if err != nil {
-		err = errors.Errorf("string \"%v\" doesn't has a prefix that matches format \"%v\"", value, GCTimeFormat)
-	}
-	return t, err
-}
-
 // HasCancelled checks whether context has be cancelled.
 func HasCancelled(ctx context.Context) (cancel bool) {
 	select {
@@ -197,7 +174,7 @@ var (
 
 // IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.
 func IsMemOrSysDB(dbLowerName string) bool {
-	return IsMemDB(dbLowerName) || dbLowerName == mysql.SystemDB
+	return IsMemDB(dbLowerName) || IsSysDB(dbLowerName)
 }
 
 // IsMemDB checks whether dbLowerName is memory database.
@@ -209,6 +186,11 @@ func IsMemDB(dbLowerName string) bool {
 		return true
 	}
 	return false
+}
+
+// IsSysDB checks whether dbLowerName is system database.
+func IsSysDB(dbLowerName string) bool {
+	return dbLowerName == mysql.SystemDB
 }
 
 // IsSystemView is similar to IsMemOrSyDB, but does not include the mysql schema
@@ -473,7 +455,7 @@ func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error
 	var certPool *x509.CertPool
 	if len(ca) > 0 {
 		var caCert []byte
-		caCert, err = ioutil.ReadFile(ca)
+		caCert, err = os.ReadFile(ca)
 		if err != nil {
 			logutil.BgLogger().Warn("read file failed", zap.Error(err))
 			err = errors.Trace(err)
@@ -524,7 +506,8 @@ func InternalHTTPSchema() string {
 }
 
 func initInternalClient() {
-	tlsCfg, err := config.GetGlobalConfig().Security.ToTLSConfig()
+	clusterSecurity := config.GetGlobalConfig().Security.ClusterSecurity()
+	tlsCfg, err := clusterSecurity.ToTLSConfig()
 	if err != nil {
 		logutil.BgLogger().Fatal("could not load cluster ssl", zap.Error(err))
 	}
@@ -551,4 +534,13 @@ func GetLocalIP() string {
 		}
 	}
 	return ""
+}
+
+// QueryStrForLog trim the query if the query length more than 4096
+func QueryStrForLog(query string) string {
+	const size = 4096
+	if len(query) > size {
+		return query[:size] + fmt.Sprintf("(len: %d)", len(query))
+	}
+	return query
 }

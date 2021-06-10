@@ -18,9 +18,9 @@ import (
 	"sync"
 	"time"
 
-	us "github.com/ngaut/unistore/tikv"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
+	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -80,6 +80,11 @@ func (c *Cluster) handleDelay(startTS, regionID uint64) {
 func (c *Cluster) SplitRaw(regionID, newRegionID uint64, rawKey []byte, peerIDs []uint64, leaderPeerID uint64) *metapb.Region {
 	encodedKey := codec.EncodeBytes(nil, rawKey)
 	return c.MockRegionManager.SplitRaw(regionID, newRegionID, encodedKey, peerIDs, leaderPeerID)
+}
+
+// SplitKeys evenly splits the start, end key into "count" regions.
+func (c *Cluster) SplitKeys(start, end []byte, count int) {
+	c.MockRegionManager.SplitKeys(start, end, count)
 }
 
 // BootstrapWithSingleStore initializes a Cluster with 1 Region and 1 Store.

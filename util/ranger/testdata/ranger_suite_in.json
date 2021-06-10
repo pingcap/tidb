@@ -2,20 +2,20 @@
   {
     "name": "TestCompIndexInExprCorrCol",
     "cases": [
-      "explain select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t",
+      "explain format = 'brief' select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t",
       "select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t"
     ]
   },
   {
     "name": "TestIndexStringIsTrueRange",
     "cases": [
-      "explain select * from t0 where c0",
-      "explain select * from t0 where c0 and c0 > '123'",
-      "explain select * from t0 where c0 and c0 <> '123'",
-      "explain select * from t0 where c0 is true",
-      "explain select * from t0 where c0 is false",
-      "explain select * from t0 where c0 and c0 in ('123','456','789')",
-      "explain SELECT * FROM t0 WHERE ('a' != t0.c0) AND t0.c0;"
+      "explain format = 'brief' select * from t0 where c0",
+      "explain format = 'brief' select * from t0 where c0 and c0 > '123'",
+      "explain format = 'brief' select * from t0 where c0 and c0 <> '123'",
+      "explain format = 'brief' select * from t0 where c0 is true",
+      "explain format = 'brief' select * from t0 where c0 is false",
+      "explain format = 'brief' select * from t0 where c0 and c0 in ('123','456','789')",
+      "explain format = 'brief' select * FROM t0 WHERE ('a' != t0.c0) AND t0.c0;"
     ]
   },
   {
@@ -83,6 +83,23 @@
       "select * from t where a > 0;",
       "select * from t where a > -1;",
       "select * from t where a > 3;"
+    ]
+  },
+  {
+    "name": "TestIndexRangeForDecimal",
+    "cases": [
+      "select * from t1 use index(a) where a in (-1,0);",
+      "select * from t1 use index(a) where a = -1;",
+      "select * from t1 use index(a) where a > -1;",
+      "select * from t1 use index(a) where a < -1;",
+      "select * from t1 use index(a) where a <= -1;",
+      "select * from t1 use index(a) where a >= -1;",
+      "select * from t2 use index(idx) where a = 1 and b in (-1,0);",
+      "select * from t2 use index(idx) where a = 1 and b = -1;",
+      "select * from t2 use index(idx) where a = 1 and b > -1;",
+      "select * from t2 use index(idx) where a = 1 and b < -1;",
+      "select * from t2 use index(idx) where a = 1 and b <= -1;",
+      "select * from t2 use index(idx) where a = 1 and b >= -1;"
     ]
   }
 ]

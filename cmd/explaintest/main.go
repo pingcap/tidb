@@ -19,7 +19,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
@@ -93,7 +92,6 @@ func newTester(name string) *tester {
 	t.enableQueryLog = true
 	t.ctx = mock.NewContext()
 	t.ctx.GetSessionVars().EnableWindowFunction = true
-
 	return t
 }
 
@@ -164,7 +162,7 @@ LOOP:
 }
 
 func (t *tester) loadQueries() ([]query, error) {
-	data, err := ioutil.ReadFile(t.testFileName())
+	data, err := os.ReadFile(t.testFileName())
 	if err != nil {
 		return nil, err
 	}
@@ -428,12 +426,12 @@ func (t *tester) create(tableName string, qText string) error {
 		return err
 	}
 
-	js, err := ioutil.ReadAll(resp.Body)
+	js, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
 
-	return ioutil.WriteFile(t.statsFileName(tableName), js, 0644)
+	return os.WriteFile(t.statsFileName(tableName), js, 0644)
 }
 
 func (t *tester) commit() error {
@@ -532,7 +530,7 @@ func (t *tester) flushResult() error {
 	if !record {
 		return nil
 	}
-	return ioutil.WriteFile(t.resultFileName(), t.buf.Bytes(), 0644)
+	return os.WriteFile(t.resultFileName(), t.buf.Bytes(), 0644)
 }
 
 func (t *tester) statsFileName(tableName string) string {
@@ -551,7 +549,7 @@ func (t *tester) resultFileName() string {
 
 func loadAllTests() ([]string, error) {
 	// tests must be in t folder
-	files, err := ioutil.ReadDir("./t")
+	files, err := os.ReadDir("./t")
 	if err != nil {
 		return nil, err
 	}
@@ -656,7 +654,7 @@ func main() {
 		"set @@tidb_window_concurrency=4",
 		"set @@tidb_projection_concurrency=4",
 		"set @@tidb_distsql_scan_concurrency=15",
-		"set @@tidb_enable_clustered_index=0;",
+		"set @@global.tidb_enable_clustered_index=0;",
 	}
 	for _, sql := range resets {
 		if _, err = mdb.Exec(sql); err != nil {

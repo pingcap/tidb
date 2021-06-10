@@ -458,7 +458,12 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 				sql = fmt.Sprintf("select avg(value),min(value),max(value) from `%s`.`%s` %s",
 					util.MetricSchemaName.L, name, cond)
 			}
-			rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+			exec := sctx.(sqlexec.RestrictedSQLExecutor)
+			stmt, err := exec.ParseWithParams(ctx, sql)
+			if err != nil {
+				return nil, errors.Errorf("execute '%s' failed: %v", sql, err)
+			}
+			rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
 			if err != nil {
 				return nil, errors.Errorf("execute '%s' failed: %v", sql, err)
 			}

@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -26,7 +27,7 @@ import (
 	_ "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 type column struct {
@@ -73,7 +74,7 @@ func (col *column) parseRule(kvs []string, uniq bool) {
 		var err error
 		col.data.step, err = strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("parsing err", zap.String("key", key), zap.Error(err))
 		}
 	} else if key == "set" {
 		fields := strings.Split(value, ",")
@@ -84,12 +85,12 @@ func (col *column) parseRule(kvs []string, uniq bool) {
 		var err error
 		col.incremental, err = strconv.ParseBool(value)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("parsing err", zap.String("key", key), zap.Error(err))
 		}
 	} else if key == "repeats" {
 		repeats, err := strconv.ParseUint(value, 10, 64)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("parsing err", zap.String("key", key), zap.Error(err))
 		}
 		if uniq && repeats > 1 {
 			log.Fatal("cannot repeat more than 1 times on unique columns")
@@ -99,7 +100,7 @@ func (col *column) parseRule(kvs []string, uniq bool) {
 	} else if key == "probability" {
 		prob, err := strconv.ParseUint(value, 10, 32)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("parsing err", zap.String("key", key), zap.Error(err))
 		}
 		if prob > 100 || prob == 0 {
 			log.Fatal("probability must be in (0, 100]")
@@ -290,7 +291,7 @@ func parseIndex(table *table, stmt *ast.CreateIndexStmt) error {
 }
 
 func parseIndexSQL(table *table, sql string) error {
-	if len(sql) == 0 {
+	if sql == "" {
 		return nil
 	}
 

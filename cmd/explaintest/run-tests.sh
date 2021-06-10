@@ -26,6 +26,7 @@ record=0
 record_case=""
 create=0
 create_case=""
+stats="s"
 
 set -eu
 trap 'set +e; PIDS=$(jobs -p); [ -n "$PIDS" ] && kill -9 $PIDS' EXIT
@@ -94,6 +95,13 @@ function build_explain_test()
     GO111MODULE=on go build -o $explain_test
 }
 
+function extract_stats()
+{
+    echo "extracting statistics: $stats"
+    rm -rf $stats
+    unzip -qq s.zip
+}
+
 while getopts "t:s:r:b:c:i:h:p" opt; do
     case $opt in
         t)
@@ -140,6 +148,8 @@ while getopts "t:s:r:b:c:i:h:p" opt; do
             ;;
     esac
 done
+
+extract_stats
 
 if [ $build -eq 1 ]; then
     if [ -z "$tidb_server" ]; then
@@ -208,7 +218,7 @@ if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
     $tidb_server -P "$port" -status "$status" -config config.toml -store tikv -path "${TIKV_PATH}" > $explain_test_log 2>&1 &
     SERVER_PID=$!
 else
-    $tidb_server -P "$port" -status "$status" -config config.toml -store mocktikv -path "" > $explain_test_log 2>&1 &
+    $tidb_server -P "$port" -status "$status" -config config.toml -store unistore -path "" > $explain_test_log 2>&1 &
     SERVER_PID=$!
 fi
 echo "tidb-server(PID: $SERVER_PID) started"

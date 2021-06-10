@@ -52,6 +52,12 @@ check-static: tools/bin/golangci-lint
 	tools/bin/golangci-lint run -v --disable-all --deadline=3m \
 	  --enable=misspell \
 	  --enable=ineffassign \
+	  --enable=typecheck \
+	  --enable=varcheck \
+	  --enable=unused \
+	  --enable=structcheck \
+	  --enable=deadcode \
+	  --enable=gosimple \
 	  $$($(PACKAGE_DIRECTORIES))
 
 check-slow:tools/bin/gometalinter tools/bin/gosec
@@ -123,7 +129,7 @@ gotest: failpoint-enable
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
 	$(GO) get github.com/go-playground/overalls
-	@export log_level=error; \
+	@export log_level=info; \
 	$(OVERALLS) -project=github.com/pingcap/tidb \
 			-covermode=count \
 			-ignore='.git,vendor,cmd,docs,tests,LICENSES' \
@@ -132,7 +138,7 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 			|| { $(FAILPOINT_DISABLE); exit 1; }
 else
 	@echo "Running in native mode."
-	@export log_level=fatal; export TZ='Asia/Shanghai'; \
+	@export log_level=info; export TZ='Asia/Shanghai'; \
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES) -check.p true -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
 endif
 	@$(FAILPOINT_DISABLE)
@@ -233,11 +239,13 @@ tools/bin/unconvert: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/unconvert github.com/mdempsky/unconvert
 
-tools/bin/failpoint-ctl: go.mod
-	$(GO) build -o $@ github.com/pingcap/failpoint/failpoint-ctl
+tools/bin/failpoint-ctl: tools/check/go.mod
+	cd tools/check; \
+	$(GO) build -o ../bin/failpoint-ctl github.com/pingcap/failpoint/failpoint-ctl
 
-tools/bin/errdoc-gen: go.mod
-	$(GO) build -o $@ github.com/pingcap/errors/errdoc-gen
+tools/bin/errdoc-gen: tools/check/go.mod
+	cd tools/check; \
+	$(GO) build -o ../bin/errdoc-gen github.com/pingcap/errors/errdoc-gen
 
 tools/bin/golangci-lint:
 	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.29.0

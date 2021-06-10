@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -32,8 +33,8 @@ import (
 
 var (
 	// preparedPlanCacheEnabledValue stores the global config "prepared-plan-cache-enabled".
-	// The value is true unless "prepared-plan-cache-enabled" is FALSE in configuration.
-	preparedPlanCacheEnabledValue int32 = 1
+	// The value is false unless "prepared-plan-cache-enabled" is true in configuration.
+	preparedPlanCacheEnabledValue int32 = 0
 	// PreparedPlanCacheCapacity stores the global config "prepared-plan-cache-capacity".
 	PreparedPlanCacheCapacity uint = 100
 	// PreparedPlanCacheMemoryGuardRatio stores the global config "prepared-plan-cache-memory-guard-ratio".
@@ -66,7 +67,6 @@ type pstmtPlanCacheKey struct {
 	database             string
 	connID               uint64
 	pstmtID              uint32
-	snapshot             uint64
 	schemaVersion        int64
 	sqlMode              mysql.SQLMode
 	timezoneOffset       int
@@ -89,7 +89,6 @@ func (key *pstmtPlanCacheKey) Hash() []byte {
 		key.hash = append(key.hash, dbBytes...)
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
 		key.hash = codec.EncodeInt(key.hash, int64(key.pstmtID))
-		key.hash = codec.EncodeInt(key.hash, int64(key.snapshot))
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
 		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
 		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
@@ -133,7 +132,6 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 		database:             sessionVars.CurrentDB,
 		connID:               sessionVars.ConnectionID,
 		pstmtID:              pstmtID,
-		snapshot:             sessionVars.SnapshotTS,
 		schemaVersion:        schemaVersion,
 		sqlMode:              sessionVars.SQLMode,
 		timezoneOffset:       timezoneOffset,
@@ -150,12 +148,18 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 type FieldSlice []types.FieldType
 
 // Equal compares FieldSlice with []*types.FieldType
+// Currently this is only used in plan cache to invalidate cache when types of variables are different.
 func (s FieldSlice) Equal(tps []*types.FieldType) bool {
 	if len(s) != len(tps) {
 		return false
 	}
 	for i := range tps {
-		if !s[i].Equal(tps[i]) {
+		// We only use part of logic of `func (ft *FieldType) Equal(other *FieldType)` here because (1) only numeric and
+		// string types will show up here, and (2) we don't need flen and decimal to be matched exactly to use plan cache
+		tpEqual := (s[i].Tp == tps[i].Tp) ||
+			(s[i].Tp == mysql.TypeVarchar && tps[i].Tp == mysql.TypeVarString) ||
+			(s[i].Tp == mysql.TypeVarString && tps[i].Tp == mysql.TypeVarchar)
+		if !tpEqual || s[i].Charset != tps[i].Charset || s[i].Collate != tps[i].Collate {
 			return false
 		}
 	}
@@ -196,6 +200,7 @@ type CachedPrepareStmt struct {
 	Executor       interface{}
 	NormalizedSQL  string
 	NormalizedPlan string
-	SQLDigest      string
-	PlanDigest     string
+	SQLDigest      *parser.Digest
+	PlanDigest     *parser.Digest
+	ForUpdateRead  bool
 }

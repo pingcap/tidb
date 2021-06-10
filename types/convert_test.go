@@ -243,6 +243,15 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	v, err = Convert("-10000", ft)
 	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
 	c.Assert(v.(*MyDecimal).String(), Equals, "-9999.9999")
+	v, err = Convert("1,999.00", ft)
+	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue, Commentf("err %v", err))
+	c.Assert(v.(*MyDecimal).String(), Equals, "1.0000")
+	v, err = Convert("1,999,999.00", ft)
+	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue, Commentf("err %v", err))
+	c.Assert(v.(*MyDecimal).String(), Equals, "1.0000")
+	v, err = Convert("199.00 ", ft)
+	c.Assert(err, IsNil)
+	c.Assert(v.(*MyDecimal).String(), Equals, "199.0000")
 
 	// Test Datum.ToDecimal with bad number.
 	d := NewDatum("hello")
@@ -280,6 +289,14 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	bj2, err := json.ParseBinaryFromString("-1")
 	c.Assert(err, IsNil)
 	_, err = Convert(bj2, ft)
+	c.Assert(err, NotNil)
+	bj3, err := json.ParseBinaryFromString("{\"key\": 99}")
+	c.Assert(err, IsNil)
+	_, err = Convert(bj3, ft)
+	c.Assert(err, NotNil)
+	bj4, err := json.ParseBinaryFromString("[99, 0, 1]")
+	c.Assert(err, IsNil)
+	_, err = Convert(bj4, ft)
 	c.Assert(err, NotNil)
 
 	// For enum
@@ -755,8 +772,10 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeNewDecimal, "-123.456", "-123.456")
 	signedAccept(c, mysql.TypeNewDecimal, NewDecFromInt(12300000), "12300000")
 	dec := NewDecFromInt(-123)
-	dec.Shift(-5)
-	dec.Round(dec, 5, ModeHalfEven)
+	err := dec.Shift(-5)
+	c.Assert(err, IsNil)
+	err = dec.Round(dec, 5, ModeHalfEven)
+	c.Assert(err, IsNil)
 	signedAccept(c, mysql.TypeNewDecimal, dec, "-0.00123")
 }
 
@@ -1028,8 +1047,6 @@ func (s *testTypeConvertSuite) TestConvertJSONToDecimal(c *C) {
 		In  string
 		Out *MyDecimal
 	}{
-		{`{}`, NewDecFromStringForTest("0")},
-		{`[]`, NewDecFromStringForTest("0")},
 		{`3`, NewDecFromStringForTest("3")},
 		{`-3`, NewDecFromStringForTest("-3")},
 		{`4.5`, NewDecFromStringForTest("4.5")},

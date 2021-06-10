@@ -17,7 +17,8 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/config"
+	tidbcfg "github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/store/tikv/config"
 )
 
 func TestT(t *testing.T) {
@@ -31,7 +32,7 @@ func (s testSuite) SetUpSuite(c *C) {}
 var _ = Suite(testSuite{})
 
 func (s testSuite) TestConfig(c *C) {
-	config.UpdateGlobal(func(conf *config.Config) {
+	tidbcfg.UpdateGlobal(func(conf *tidbcfg.Config) {
 		conf.TxnLocalLatches = config.TxnLocalLatches{
 			Enabled:  true,
 			Capacity: 10240,
@@ -48,7 +49,7 @@ func (s testSuite) TestConfig(c *C) {
 	c.Assert(store.(LatchEnableChecker).IsLatchEnabled(), IsTrue)
 	store.Close()
 
-	config.UpdateGlobal(func(conf *config.Config) {
+	tidbcfg.UpdateGlobal(func(conf *tidbcfg.Config) {
 		conf.TxnLocalLatches = config.TxnLocalLatches{
 			Enabled:  false,
 			Capacity: 10240,

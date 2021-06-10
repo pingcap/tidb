@@ -180,6 +180,11 @@ func SetBinFlagOrBinStr(argTp *types.FieldType, resTp *types.FieldType) {
 	}
 }
 
+// addBinFlag add the binary flag to `tp` if its charset is binary
+func addBinFlag(tp *types.FieldType) {
+	SetBinFlagOrBinStr(tp, tp)
+}
+
 type lengthFunctionClass struct {
 	baseFunctionClass
 }
@@ -275,10 +280,10 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err != nil {
 		return nil, err
 	}
+	addBinFlag(bf.tp)
 	bf.tp.Flen = 0
 	for i := range args {
 		argType := args[i].GetType()
-		SetBinFlagOrBinStr(argType, bf.tp)
 
 		if argType.Flen < 0 {
 			bf.tp.Flen = mysql.MaxBlobWidth
@@ -350,9 +355,9 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	bf.tp.Flen = 0
 
+	addBinFlag(bf.tp)
 	for i := range args {
 		argType := args[i].GetType()
-		SetBinFlagOrBinStr(argType, bf.tp)
 
 		// skip separator param
 		if i != 0 {
@@ -2000,8 +2005,7 @@ func (c *lpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 	bf.tp.Flen = getFlen4LpadAndRpad(bf.ctx, args[1])
-	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
-	SetBinFlagOrBinStr(args[2].GetType(), bf.tp)
+	addBinFlag(bf.tp)
 
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
@@ -2133,8 +2137,7 @@ func (c *rpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 	bf.tp.Flen = getFlen4LpadAndRpad(bf.ctx, args[1])
-	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
-	SetBinFlagOrBinStr(args[2].GetType(), bf.tp)
+	addBinFlag(bf.tp)
 
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
@@ -2668,9 +2671,7 @@ func (c *makeSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err != nil {
 		return nil, err
 	}
-	for i, length := 0, len(args); i < length; i++ {
-		SetBinFlagOrBinStr(args[i].GetType(), bf.tp)
-	}
+	addBinFlag(bf.tp)
 	bf.tp.Flen = c.getFlen(bf.ctx, args)
 	if bf.tp.Flen > mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
@@ -3591,8 +3592,7 @@ func (c *insertFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, err
 	}
 	bf.tp.Flen = mysql.MaxBlobWidth
-	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
-	SetBinFlagOrBinStr(args[3].GetType(), bf.tp)
+	addBinFlag(bf.tp)
 
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
@@ -3885,7 +3885,12 @@ func (c *weightStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if padding == weightStringPaddingNull {
 		sig = &builtinWeightStringNullSig{bf}
 	} else {
-		sig = &builtinWeightStringSig{bf, padding, length}
+		valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+		maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		sig = &builtinWeightStringSig{bf, padding, length, maxAllowedPacket}
 	}
 	return sig, nil
 }
@@ -3909,8 +3914,9 @@ func (b *builtinWeightStringNullSig) evalString(row chunk.Row) (string, bool, er
 type builtinWeightStringSig struct {
 	baseBuiltinFunc
 
-	padding weightStringPadding
-	length  int
+	padding          weightStringPadding
+	length           int
+	maxAllowedPacket uint64
 }
 
 func (b *builtinWeightStringSig) Clone() builtinFunc {
@@ -3918,6 +3924,7 @@ func (b *builtinWeightStringSig) Clone() builtinFunc {
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	newSig.padding = b.padding
 	newSig.length = b.length
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -3941,6 +3948,10 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 		if b.length < lenRunes {
 			str = string(runes[:b.length])
 		} else if b.length > lenRunes {
+			if uint64(b.length-lenRunes) > b.maxAllowedPacket {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("weight_string", b.maxAllowedPacket))
+				return "", true, nil
+			}
 			str += strings.Repeat(" ", b.length-lenRunes)
 		}
 		ctor = collate.GetCollator(b.args[0].GetType().Collate)
@@ -3951,6 +3962,10 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errTruncatedWrongValue.GenWithStackByArgs(tpInfo, str))
 			str = str[:b.length]
 		} else if b.length > lenStr {
+			if uint64(b.length-lenStr) > b.maxAllowedPacket {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("cast_as_binary", b.maxAllowedPacket))
+				return "", true, nil
+			}
 			str += strings.Repeat("\x00", b.length-lenStr)
 		}
 		ctor = collate.GetCollator(charset.CollationBin)

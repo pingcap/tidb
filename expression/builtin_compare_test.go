@@ -27,7 +27,7 @@ import (
 )
 
 func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
-	tblInfo := newTestTableBuilder("").add("a", mysql.TypeLong).build()
+	tblInfo := newTestTableBuilder("").add("a", mysql.TypeLong, mysql.NotNullFlag).build()
 	tests := []struct {
 		exprStr string
 		result  string
@@ -309,6 +309,10 @@ func (s *testEvaluatorSuite) TestGreatestLeastFunc(c *C) {
 		{
 			[]interface{}{duration, "123"},
 			"12:59:59", "123", false, false,
+		},
+		{
+			[]interface{}{duration, duration},
+			"12:59:59", "12:59:59", false, false,
 		},
 		{
 			[]interface{}{"123", nil, "123"},
