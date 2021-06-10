@@ -202,8 +202,8 @@ func (c *Context) NewTxn(context.Context) error {
 	return nil
 }
 
-// NewTxnWithStartTS implements the sessionctx.Context interface.
-func (c *Context) NewTxnWithStartTS(ctx context.Context, startTS uint64) error {
+// NewStaleTxnWithStartTS implements the sessionctx.Context interface.
+func (c *Context) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) error {
 	return c.NewTxn(ctx)
 }
 

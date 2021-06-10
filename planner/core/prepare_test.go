@@ -1335,3 +1335,174 @@ func (s *testPlanSerialSuite) TestPartitionTable(c *C) {
 		}
 	}
 }
+
+func (s *testPlanSerialSuite) TestPartitionWithVariedDatasources(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	// enable plan cache
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	// enable partition table dynamic mode
+	tk.MustExec("create database test_plan_cache2")
+	tk.MustExec("use test_plan_cache2")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	// prepare tables
+	tk.MustExec(`create table trangePK (a int primary key, b int) partition by range (a) (
+			partition p0 values less than (10000),
+			partition p1 values less than (20000),
+			partition p2 values less than (30000),
+			partition p3 values less than (40000))`)
+	tk.MustExec(`create table thashPK (a int primary key, b int) partition by hash (a) partitions 4`)
+	tk.MustExec(`create table tnormalPK (a int primary key, b int)`)
+	tk.MustExec(`create table trangeIdx (a int unique key, b int) partition by range (a) (
+			partition p0 values less than (10000),
+			partition p1 values less than (20000),
+			partition p2 values less than (30000),
+			partition p3 values less than (40000))`)
+	tk.MustExec(`create table thashIdx (a int unique key, b int) partition by hash (a) partitions 4`)
+	tk.MustExec(`create table tnormalIdx (a int unique key, b int)`)
+	uniqueVals := make(map[int]struct{})
+	vals := make([]string, 0, 1000)
+	for len(vals) < 1000 {
+		a := rand.Intn(40000)
+		if _, ok := uniqueVals[a]; ok {
+			continue
+		}
+		uniqueVals[a] = struct{}{}
+		b := rand.Intn(40000)
+		vals = append(vals, fmt.Sprintf("(%v, %v)", a, b))
+	}
+	for _, tbl := range []string{"trangePK", "thashPK", "tnormalPK", "trangeIdx", "thashIdx", "tnormalIdx"} {
+		tk.MustExec(fmt.Sprintf(`insert into %v values %v`, tbl, strings.Join(vals, ", ")))
+	}
+
+	// TableReader, PointGet on PK, BatchGet on PK
+	for _, tbl := range []string{`trangePK`, `thashPK`, `tnormalPK`} {
+		tk.MustExec(fmt.Sprintf(`prepare stmt%v_tablescan from 'select * from %v use index(primary) where a > ? and a < ?'`, tbl, tbl))
+		tk.MustExec(fmt.Sprintf(`prepare stmt%v_pointget from 'select * from %v use index(primary) where a = ?'`, tbl, tbl))
+		tk.MustExec(fmt.Sprintf(`prepare stmt%v_batchget from 'select * from %v use index(primary) where a in (?, ?, ?)'`, tbl, tbl))
+	}
+	for i := 0; i < 100; i++ {
+		mina, maxa := rand.Intn(40000), rand.Intn(40000)
+		if mina > maxa {
+			mina, maxa = maxa, mina
+		}
+		tk.MustExec(fmt.Sprintf(`set @mina=%v, @maxa=%v`, mina, maxa))
+		tk.MustExec(fmt.Sprintf(`set @pointa=%v`, rand.Intn(40000)))
+		tk.MustExec(fmt.Sprintf(`set @a0=%v, @a1=%v, @a2=%v`, rand.Intn(40000), rand.Intn(40000), rand.Intn(40000)))
+
+		var rscan, rpoint, rbatch [][]interface{}
+		for id, tbl := range []string{`trangePK`, `thashPK`, `tnormalPK`} {
+			scan := tk.MustQuery(fmt.Sprintf(`execute stmt%v_tablescan using @mina, @maxa`, tbl)).Sort()
+			if i > 0 {
+				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+			}
+			if id == 0 {
+				rscan = scan.Rows()
+			} else {
+				scan.Check(rscan)
+			}
+
+			point := tk.MustQuery(fmt.Sprintf(`execute stmt%v_pointget using @pointa`, tbl)).Sort()
+			if tbl == `tnormalPK` && i > 0 {
+				// PlanCache cannot support PointGet now since we haven't relocated partition after rebuilding range.
+				// Please see Execute.rebuildRange for more details.
+				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+			}
+			if id == 0 {
+				rpoint = point.Rows()
+			} else {
+				point.Check(rpoint)
+			}
+
+			batch := tk.MustQuery(fmt.Sprintf(`execute stmt%v_batchget using @a0, @a1, @a2`, tbl)).Sort()
+			if i > 0 {
+				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+			}
+			if id == 0 {
+				rbatch = batch.Rows()
+			} else {
+				batch.Check(rbatch)
+			}
+		}
+	}
+
+	// IndexReader, IndexLookUp, PointGet on Idx, BatchGet on Idx
+	for _, tbl := range []string{"trangeIdx", "thashIdx", "tnormalIdx"} {
+		tk.MustExec(fmt.Sprintf(`prepare stmt%v_indexscan from 'select a from %v use index(a) where a > ? and a < ?'`, tbl, tbl))
+		tk.MustExec(fmt.Sprintf(`prepare stmt%v_indexlookup from 'select * from %v use index(a) where a > ? and a < ?'`, tbl, tbl))
+		tk.MustExec(fmt.Sprintf(`prepare stmt%v_pointget_idx from 'select * from %v use index(a) where a = ?'`, tbl, tbl))
+		tk.MustExec(fmt.Sprintf(`prepare stmt%v_batchget_idx from 'select * from %v use index(a) where a in (?, ?, ?)'`, tbl, tbl))
+	}
+	for i := 0; i < 100; i++ {
+		mina, maxa := rand.Intn(40000), rand.Intn(40000)
+		if mina > maxa {
+			mina, maxa = maxa, mina
+		}
+		tk.MustExec(fmt.Sprintf(`set @mina=%v, @maxa=%v`, mina, maxa))
+		tk.MustExec(fmt.Sprintf(`set @pointa=%v`, rand.Intn(40000)))
+		tk.MustExec(fmt.Sprintf(`set @a0=%v, @a1=%v, @a2=%v`, rand.Intn(40000), rand.Intn(40000), rand.Intn(40000)))
+
+		var rscan, rlookup, rpoint, rbatch [][]interface{}
+		for id, tbl := range []string{"trangeIdx", "thashIdx", "tnormalIdx"} {
+			scan := tk.MustQuery(fmt.Sprintf(`execute stmt%v_indexscan using @mina, @maxa`, tbl)).Sort()
+			if i > 0 {
+				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+			}
+			if id == 0 {
+				rscan = scan.Rows()
+			} else {
+				scan.Check(rscan)
+			}
+
+			lookup := tk.MustQuery(fmt.Sprintf(`execute stmt%v_indexlookup using @mina, @maxa`, tbl)).Sort()
+			if i > 0 {
+				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+			}
+			if id == 0 {
+				rlookup = lookup.Rows()
+			} else {
+				lookup.Check(rlookup)
+			}
+
+			point := tk.MustQuery(fmt.Sprintf(`execute stmt%v_pointget_idx using @pointa`, tbl)).Sort()
+			if tbl == `tnormalPK` && i > 0 {
+				// PlanCache cannot support PointGet now since we haven't relocated partition after rebuilding range.
+				// Please see Execute.rebuildRange for more details.
+				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+			}
+			if id == 0 {
+				rpoint = point.Rows()
+			} else {
+				point.Check(rpoint)
+			}
+
+			batch := tk.MustQuery(fmt.Sprintf(`execute stmt%v_batchget_idx using @a0, @a1, @a2`, tbl)).Sort()
+			if i > 0 {
+				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+			}
+			if id == 0 {
+				rbatch = batch.Rows()
+			} else {
+				batch.Check(rbatch)
+			}
+		}
+	}
+}

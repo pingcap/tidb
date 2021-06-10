@@ -33,8 +33,8 @@ type kvStore struct {
 }
 
 // GetRegionCache returns the region cache instance.
-func (s *kvStore) GetRegionCache() *tikv.RegionCache {
-	return s.store.GetRegionCache()
+func (s *kvStore) GetRegionCache() *RegionCache {
+	return &RegionCache{s.store.GetRegionCache()}
 }
 
 // CheckVisibility checks if it is safe to read using given ts.

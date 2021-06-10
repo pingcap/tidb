@@ -27,7 +27,6 @@ import (
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
-	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -40,13 +39,15 @@ type Backoffer struct {
 	fn         map[string]backoffFn
 	maxSleep   int
 	totalSleep int
-	errors     []error
-	configs    []*Config
-	vars       *kv.Variables
-	noop       bool
 
+	vars *kv.Variables
+	noop bool
+
+	errors         []error
+	configs        []*Config
 	backoffSleepMS map[string]int
 	backoffTimes   map[string]int
+	parent         *Backoffer
 }
 
 type txnStartCtxKeyType struct{}
@@ -80,7 +81,7 @@ func (b *Backoffer) withVars(vars *kv.Variables) *Backoffer {
 	}
 	// maxSleep is the max sleep time in millisecond.
 	// When it is multiplied by BackOffWeight, it should not be greater than MaxInt32.
-	if math.MaxInt32/b.vars.BackOffWeight >= b.maxSleep {
+	if b.maxSleep > 0 && math.MaxInt32/b.vars.BackOffWeight >= b.maxSleep {
 		b.maxSleep *= b.vars.BackOffWeight
 	}
 	return b
@@ -101,50 +102,6 @@ func (b *Backoffer) Backoff(cfg *Config, err error) error {
 // and never sleep more than maxSleepMs for each sleep.
 func (b *Backoffer) BackoffWithMaxSleepTxnLockFast(maxSleepMs int, err error) error {
 	cfg := BoTxnLockFast
-	return b.BackoffWithCfgAndMaxSleep(cfg, maxSleepMs, err)
-}
-
-// BackoffWithMaxSleep is deprecated, please use BackoffWithCfgAndMaxSleep instead. TODO: remove it when br is ready.
-func (b *Backoffer) BackoffWithMaxSleep(typ int, maxSleepMs int, err error) error {
-	// Back off types.
-	const (
-		boTiKVRPC int = iota
-		boTiFlashRPC
-		boTxnLock
-		boTxnLockFast
-		boPDRPC
-		boRegionMiss
-		boTiKVServerBusy
-		boTiFlashServerBusy
-		boTxnNotFound
-		boStaleCmd
-		boMaxTsNotSynced
-	)
-	switch typ {
-	case boTiKVRPC:
-		return b.BackoffWithCfgAndMaxSleep(BoTiKVRPC, maxSleepMs, err)
-	case boTiFlashRPC:
-		return b.BackoffWithCfgAndMaxSleep(BoTiFlashRPC, maxSleepMs, err)
-	case boTxnLock:
-		return b.BackoffWithCfgAndMaxSleep(BoTxnLock, maxSleepMs, err)
-	case boTxnLockFast:
-		return b.BackoffWithCfgAndMaxSleep(BoTxnLockFast, maxSleepMs, err)
-	case boPDRPC:
-		return b.BackoffWithCfgAndMaxSleep(BoPDRPC, maxSleepMs, err)
-	case boRegionMiss:
-		return b.BackoffWithCfgAndMaxSleep(BoRegionMiss, maxSleepMs, err)
-	case boTiKVServerBusy:
-		return b.BackoffWithCfgAndMaxSleep(BoTiKVServerBusy, maxSleepMs, err)
-	case boTiFlashServerBusy:
-		return b.BackoffWithCfgAndMaxSleep(BoTiFlashServerBusy, maxSleepMs, err)
-	case boTxnNotFound:
-		return b.BackoffWithCfgAndMaxSleep(BoTxnNotFound, maxSleepMs, err)
-	case boStaleCmd:
-		return b.BackoffWithCfgAndMaxSleep(BoStaleCmd, maxSleepMs, err)
-	case boMaxTsNotSynced:
-		return b.BackoffWithCfgAndMaxSleep(BoMaxTsNotSynced, maxSleepMs, err)
-	}
-	cfg := NewConfig("", metrics.BackoffHistogramEmpty, nil, tikverr.ErrUnknown)
 	return b.BackoffWithCfgAndMaxSleep(cfg, maxSleepMs, err)
 }
 
@@ -185,7 +142,9 @@ func (b *Backoffer) BackoffWithCfgAndMaxSleep(cfg *Config, maxSleepMs int, err e
 		b.fn[cfg.name] = f
 	}
 	realSleep := f(b.ctx, maxSleepMs)
-	cfg.metric.Observe(float64(realSleep) / 1000)
+	if cfg.metric != nil {
+		(*cfg.metric).Observe(float64(realSleep) / 1000)
+	}
 	b.totalSleep += realSleep
 	if b.backoffSleepMS == nil {
 		b.backoffSleepMS = make(map[string]int)
@@ -238,6 +197,7 @@ func (b *Backoffer) Clone() *Backoffer {
 		totalSleep: b.totalSleep,
 		errors:     b.errors,
 		vars:       b.vars,
+		parent:     b.parent,
 	}
 }
 
@@ -251,6 +211,7 @@ func (b *Backoffer) Fork() (*Backoffer, context.CancelFunc) {
 		totalSleep: b.totalSleep,
 		errors:     b.errors,
 		vars:       b.vars,
+		parent:     b,
 	}, cancel
 }
 
@@ -264,11 +225,14 @@ func (b *Backoffer) GetTotalSleep() int {
 	return b.totalSleep
 }
 
-// GetTypes returns type list.
+// GetTypes returns type list of this backoff and all its ancestors.
 func (b *Backoffer) GetTypes() []string {
 	typs := make([]string, 0, len(b.configs))
-	for _, cfg := range b.configs {
-		typs = append(typs, cfg.String())
+	for b != nil {
+		for _, cfg := range b.configs {
+			typs = append(typs, cfg.String())
+		}
+		b = b.parent
 	}
 	return typs
 }
@@ -288,6 +252,15 @@ func (b *Backoffer) GetBackoffTimes() map[string]int {
 	return b.backoffTimes
 }
 
+// GetTotalBackoffTimes returns the total backoff times of the backoffer.
+func (b *Backoffer) GetTotalBackoffTimes() int {
+	total := 0
+	for _, time := range b.backoffTimes {
+		total += time
+	}
+	return total
+}
+
 // GetBackoffSleepMS returns a map contains backoff sleep time by type.
 func (b *Backoffer) GetBackoffSleepMS() map[string]int {
 	return b.backoffSleepMS
@@ -296,4 +269,21 @@ func (b *Backoffer) GetBackoffSleepMS() map[string]int {
 // ErrorsNum returns the number of errors.
 func (b *Backoffer) ErrorsNum() int {
 	return len(b.errors)
+}
+
+// Reset resets the sleep state of the backoffer, so that following backoff
+// can sleep shorter. The reason why we don't create a new backoffer is that
+// backoffer is similar to context and it records some metrics that we
+// want to record for an entire process which is composed of serveral stages.
+func (b *Backoffer) Reset() {
+	b.fn = nil
+	b.totalSleep = 0
+}
+
+// ResetMaxSleep resets the sleep state and max sleep limit of the backoffer.
+// It's used when switches to the next stage of the process.
+func (b *Backoffer) ResetMaxSleep(maxSleep int) {
+	b.Reset()
+	b.maxSleep = maxSleep
+	b.withVars(b.vars)
 }

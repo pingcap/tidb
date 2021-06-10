@@ -370,7 +370,6 @@ func (s *testInfoschemaTableSuite) TestUserPrivilegesTable(c *C) {
 	tk.MustExec("GRANT SELECT ON *.* to usageuser WITH GRANT OPTION")
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def Select YES"))
 	// test DYNAMIC privs
-	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
 	tk.MustExec("GRANT BACKUP_ADMIN ON *.* to usageuser")
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'" ORDER BY privilege_type`).Check(testkit.Rows("'usageuser'@'%' def BACKUP_ADMIN NO", "'usageuser'@'%' def Select YES"))
 }

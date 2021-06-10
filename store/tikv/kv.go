@@ -336,7 +336,7 @@ func (s *KVStore) GetTiKVClient() (client Client) {
 // GetMinSafeTS return the minimal safeTS of the storage with given txnScope.
 func (s *KVStore) GetMinSafeTS(txnScope string) uint64 {
 	stores := make([]*Store, 0)
-	allStores := s.regionCache.getStoresByType(tikvrpc.TiKV)
+	allStores := s.regionCache.GetStoresByType(tikvrpc.TiKV)
 	if txnScope != oracle.GlobalTxnScope {
 		for _, store := range allStores {
 			if store.IsLabelsMatch([]*metapb.StoreLabel{
@@ -402,7 +402,7 @@ func (s *KVStore) safeTSUpdater() {
 }
 
 func (s *KVStore) updateSafeTS(ctx context.Context) {
-	stores := s.regionCache.getStoresByType(tikvrpc.TiKV)
+	stores := s.regionCache.GetStoresByType(tikvrpc.TiKV)
 	tikvClient := s.GetTiKVClient()
 	wg := &sync.WaitGroup{}
 	wg.Add(len(stores))
