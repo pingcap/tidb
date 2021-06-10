@@ -62,7 +62,7 @@ func newStmtSummaryByDigestEvictedElement(beginTime int64, endTime int64) *stmtS
 			authUsers:    make(map[string]struct{}),
 			minLatency:   time.Duration(math.MaxInt64),
 			backoffTypes: make(map[string]int),
-			firstSeen:    time.Now(),
+			firstSeen:    time.Unix(endTime, 0),
 		},
 	}
 }
@@ -253,7 +253,7 @@ func (seElement *stmtSummaryByDigestEvictedElement) toDatum() []types.Datum {
 }
 
 // addInfo adds information in addWith into addTo.
-func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElement) {
+func addInfo(addTo *stmtSummaryByDigestElement, addWith  *stmtSummaryByDigestElement) {
 	addTo.Lock()
 	defer addTo.Unlock()
 
