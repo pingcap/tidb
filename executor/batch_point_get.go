@@ -124,6 +124,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
+	snapshot.SetOption(kv.TxnScope, e.ctx.GetSessionVars().TxnCtx.TxnScope)
 	isStaleness := e.ctx.GetSessionVars().TxnCtx.IsStaleness
 	snapshot.SetOption(kv.IsStalenessReadOnly, isStaleness)
 	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != kv.GlobalTxnScope {

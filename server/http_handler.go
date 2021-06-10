@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
@@ -58,10 +59,10 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
-	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
 
@@ -625,13 +626,6 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 
-			l, err1 := log.ParseLevel(levelStr)
-			if err1 != nil {
-				writeError(w, err1)
-				return
-			}
-			log.SetLevel(l)
-
 			config.GetGlobalConfig().Log.Level = levelStr
 		}
 		if generalLog := req.Form.Get("tidb_general_log"); generalLog != "" {
@@ -709,6 +703,20 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				writeError(w, errors.New("illegal argument"))
 				return
 			}
+		}
+		if deadlockHistoryCapacity := req.Form.Get("tidb_deadlock_history_capacity"); deadlockHistoryCapacity != "" {
+			capacity, err := strconv.Atoi(deadlockHistoryCapacity)
+			if err != nil {
+				writeError(w, errors.New("illegal argument"))
+				return
+			} else if capacity < 0 || capacity > 10000 {
+				writeError(w, errors.New("tidb_deadlock_history_capacity out of range, should be in 0 to 10000"))
+				return
+			}
+			cfg := config.GetGlobalConfig()
+			cfg.PessimisticTxn.DeadlockHistoryCapacity = uint(capacity)
+			config.StoreGlobalConfig(cfg)
+			deadlockhistory.GlobalDeadlockHistory.Resize(uint(capacity))
 		}
 	} else {
 		writeData(w, config.GetGlobalConfig())
@@ -1090,7 +1098,7 @@ func (h ddlResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 
 	err := h.resignDDLOwner()
 	if err != nil {
-		log.Error(err)
+		log.Error("failed to resign DDL owner", zap.Error(err))
 		writeError(w, err)
 		return
 	}
@@ -1134,7 +1142,7 @@ func (h tableHandler) addScatterSchedule(startKey, endKey []byte, name string) e
 		return err
 	}
 	if err := resp.Body.Close(); err != nil {
-		log.Error(err)
+		log.Error("failed to close response body", zap.Error(err))
 	}
 	return nil
 }
@@ -1154,7 +1162,7 @@ func (h tableHandler) deleteScatterSchedule(name string) error {
 		return err
 	}
 	if err := resp.Body.Close(); err != nil {
-		log.Error(err)
+		log.Error("failed to close response body", zap.Error(err))
 	}
 	return nil
 }
@@ -1664,14 +1672,14 @@ func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	do, err := session.GetDomain(h.Store)
 	if err != nil {
 		writeError(w, errors.New("create session error"))
-		log.Error(err)
+		log.Error("failed to get session domain", zap.Error(err))
 		return
 	}
 	info := serverInfo{}
 	info.ServerInfo, err = infosync.GetServerInfo()
 	if err != nil {
 		writeError(w, err)
-		log.Error(err)
+		log.Error("failed to get server info", zap.Error(err))
 		return
 	}
 	info.IsOwner = do.DDL().OwnerManager().IsOwner()
@@ -1694,14 +1702,14 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	do, err := session.GetDomain(h.Store)
 	if err != nil {
 		writeError(w, errors.New("create session error"))
-		log.Error(err)
+		log.Error("failed to get session domain", zap.Error(err))
 		return
 	}
 	ctx := context.Background()
 	allServersInfo, err := infosync.GetAllServerInfo(ctx)
 	if err != nil {
 		writeError(w, errors.New("ddl server information not found"))
-		log.Error(err)
+		log.Error("failed to get all server info", zap.Error(err))
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -1709,7 +1717,7 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	cancel()
 	if err != nil {
 		writeError(w, errors.New("ddl server information not found"))
-		log.Error(err)
+		log.Error("failed to get owner id", zap.Error(err))
 		return
 	}
 	allVersionsMap := map[infosync.ServerVersionInfo]struct{}{}
@@ -1905,13 +1913,13 @@ func (h ddlHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	dom, err := session.GetDomain(h.store)
 	if err != nil {
-		log.Error(err)
+		log.Error("failed to get session domain", zap.Error(err))
 		writeError(w, err)
 	}
 
 	newCallbackFunc, err := ddl.GetCustomizedHook(req.FormValue("ddl_hook"))
 	if err != nil {
-		log.Error(err)
+		log.Error("failed to get customized hook", zap.Error(err))
 		writeError(w, err)
 	}
 	callback := newCallbackFunc(dom)

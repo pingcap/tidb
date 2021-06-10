@@ -291,6 +291,21 @@ func (c *Chunk) CopyConstruct() *Chunk {
 	return newChk
 }
 
+// CopyConstructSel is just like CopyConstruct,
+// but ignore the rows that was not selected.
+func (c *Chunk) CopyConstructSel() *Chunk {
+	if c.sel == nil {
+		return c.CopyConstruct()
+	}
+	newChk := renewWithCapacity(c, c.capacity, c.requiredRows)
+	for colIdx, dstCol := range newChk.columns {
+		for _, rowIdx := range c.sel {
+			appendCellByCell(dstCol, c.columns[colIdx], rowIdx)
+		}
+	}
+	return newChk
+}
+
 // GrowAndReset resets the Chunk and doubles the capacity of the Chunk.
 // The doubled capacity should not be larger than maxChunkSize.
 // TODO: this method will be used in following PR.

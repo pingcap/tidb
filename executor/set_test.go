@@ -374,18 +374,6 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@session.tidb_store_limit;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("100"))
 
-	tk.MustQuery("select @@global.tidb_enable_change_column_type;").Check(testkit.Rows("0"))
-	tk.MustExec("set global tidb_enable_change_column_type = 1")
-	tk.MustQuery("select @@global.tidb_enable_change_column_type;").Check(testkit.Rows("1"))
-	tk.MustExec("set global tidb_enable_change_column_type = off")
-	tk.MustQuery("select @@global.tidb_enable_change_column_type;").Check(testkit.Rows("0"))
-	// test tidb_enable_change_column_type in session scope.
-	tk.MustQuery("select @@session.tidb_enable_change_column_type;").Check(testkit.Rows("0"))
-	tk.MustExec("set @@session.tidb_enable_change_column_type = 1")
-	tk.MustQuery("select @@session.tidb_enable_change_column_type;").Check(testkit.Rows("1"))
-	tk.MustExec("set @@session.tidb_enable_change_column_type = off")
-	tk.MustQuery("select @@session.tidb_enable_change_column_type;").Check(testkit.Rows("0"))
-
 	tk.MustQuery("select @@session.tidb_metric_query_step;").Check(testkit.Rows("60"))
 	tk.MustExec("set @@session.tidb_metric_query_step = 120")
 	_, err = tk.Exec("set @@session.tidb_metric_query_step = 9")
@@ -896,9 +884,9 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	result = tk.MustQuery("select @@tmp_table_size;")
 	result.Check(testkit.Rows("167772161"))
 
-	tk.MustExec("set @@tmp_table_size=18446744073709551615")
+	tk.MustExec("set @@tmp_table_size=9223372036854775807")
 	result = tk.MustQuery("select @@tmp_table_size;")
-	result.Check(testkit.Rows("18446744073709551615"))
+	result.Check(testkit.Rows("9223372036854775807"))
 
 	_, err = tk.Exec("set @@tmp_table_size=18446744073709551616")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
@@ -1054,6 +1042,7 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 }
 
 func (s *testSuite5) TestSelectGlobalVar(c *C) {
+	c.Skip("unstable, skip it and fix it before 20210624")
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("151"))
@@ -1444,4 +1433,23 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_top_sql_max_statement_count' can't be set to the value of '5001'")
 	tk.MustQuery("select @@global.tidb_top_sql_precision_seconds;").Check(testkit.Rows("2"))
 	c.Assert(variable.TopSQLVariable.MaxStatementCount.Load(), Equals, int64(2))
+
+	tk.MustExec("set @@tidb_top_sql_report_interval_seconds=10;")
+	tk.MustQuery("select @@tidb_top_sql_report_interval_seconds;").Check(testkit.Rows("10"))
+	c.Assert(variable.TopSQLVariable.ReportIntervalSeconds.Load(), Equals, int64(10))
+	_, err = tk.Exec("set @@tidb_top_sql_report_interval_seconds='abc';")
+	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_top_sql_report_interval_seconds'")
+	_, err = tk.Exec("set @@tidb_top_sql_report_interval_seconds='5000';")
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_top_sql_report_interval_seconds' can't be set to the value of '5000'")
+	tk.MustQuery("select @@tidb_top_sql_report_interval_seconds;").Check(testkit.Rows("10"))
+	c.Assert(variable.TopSQLVariable.ReportIntervalSeconds.Load(), Equals, int64(10))
+	tk.MustExec("set @@global.tidb_top_sql_report_interval_seconds=120;")
+	tk.MustQuery("select @@global.tidb_top_sql_report_interval_seconds;").Check(testkit.Rows("120"))
+	c.Assert(variable.TopSQLVariable.ReportIntervalSeconds.Load(), Equals, int64(120))
+	_, err = tk.Exec("set @@global.tidb_top_sql_report_interval_seconds='abc';")
+	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_top_sql_report_interval_seconds'")
+	_, err = tk.Exec("set @@global.tidb_top_sql_report_interval_seconds='5000';")
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_top_sql_report_interval_seconds' can't be set to the value of '5000'")
+	tk.MustQuery("select @@global.tidb_top_sql_report_interval_seconds;").Check(testkit.Rows("120"))
+	c.Assert(variable.TopSQLVariable.ReportIntervalSeconds.Load(), Equals, int64(120))
 }

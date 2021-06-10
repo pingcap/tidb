@@ -326,6 +326,7 @@ func (s *testBatchPointGetSuite) TestPointGetForTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table t1 (id int primary key, val int) on commit delete rows")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 values (1,1)")

@@ -1257,7 +1257,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: "RESTORE DATABASE test FROM 'local:///tmp/a'",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "BACKUP_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "RESTORE_ADMIN", false},
 			},
 		},
 		{
@@ -1269,7 +1269,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: "SHOW RESTORES",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "BACKUP_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "RESTORE_ADMIN", false},
 			},
 		},
 		{
@@ -1794,7 +1794,7 @@ func (s *testPlanSuite) TestUpdateEQCond(c *C) {
 	}{
 		{
 			sql:  "select t1.a from t t1, t t2 where t1.a = t2.a+1",
-			best: "Join{DataScan(t1)->DataScan(t2)->Projection}(test.t.a,Column#25)->Projection",
+			best: "Join{DataScan(t1)->DataScan(t2)->Projection}(test.t.a,Column#25)->Projection->Projection",
 		},
 	}
 	ctx := context.TODO()
