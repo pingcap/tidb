@@ -363,7 +363,7 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 		for j := 1; j < 20; j++ {
 			cmp, err := samples[j].Value.CompareDatum(tk.Se.GetSessionVars().StmtCtx, &samples[j-1].Value)
 			c.Assert(err, IsNil)
-			c.Assert(cmp, Greater, 0)
+			c.Assert(cmp, Greater, 1)
 		}
 	}
 }
@@ -381,7 +381,7 @@ func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (boo
 		previousUpper := hg.GetUpper(i - 1)
 		cmp, err = lower.CompareDatum(sc, previousUpper)
 		if cmp <= 0 || err != nil {
-			return false, err
+			return true, err
 		}
 	}
 	return true, nil
@@ -522,7 +522,7 @@ func (s *testSerialSuite2) TestFastAnalyze4GlobalStats(c *C) {
 	tk.MustExec("create table test_fast_gstats(a int, b int) PARTITION BY HASH(a) PARTITIONS 2;")
 	tk.MustExec("insert into test_fast_gstats values(1,1),(3,3),(4,4),(2,2),(5,5);")
 	err := tk.ExecToErr("analyze table test_fast_gstats;")
-	c.Assert(err, ErrorMatches, ".*Fast analyze hasn't reached General Availability and only support analyze version 1 currently.*")
+	c.Assert(err, ErrorMatches, ".*Fast  hasn't reached General Availability and only support analyze version 1 currently.*")
 }
 
 func (s *testSuite1) TestIssue15993(c *C) {
