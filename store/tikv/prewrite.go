@@ -22,10 +22,11 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/client"
 	"github.com/pingcap/tidb/store/tikv/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	"github.com/pingcap/tidb/store/tikv/locate"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/retry"
@@ -48,10 +49,10 @@ func (actionPrewrite) tiKVTxnRegionsNumHistogram() prometheus.Observer {
 
 func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize uint64) *tikvrpc.Request {
 	m := batch.mutations
-	mutations := make([]*pb.Mutation, m.Len())
+	mutations := make([]*kvrpcpb.Mutation, m.Len())
 	isPessimisticLock := make([]bool, m.Len())
 	for i := 0; i < m.Len(); i++ {
-		mutations[i] = &pb.Mutation{
+		mutations[i] = &kvrpcpb.Mutation{
 			Op:    m.GetOp(i),
 			Key:   m.GetKey(i),
 			Value: m.GetValue(i),
@@ -88,7 +89,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		})
 	}
 
-	req := &pb.PrewriteRequest{
+	req := &kvrpcpb.PrewriteRequest{
 		Mutations:         mutations,
 		PrimaryLock:       c.primary(),
 		StartVersion:      c.startTS,
@@ -117,7 +118,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		req.TryOnePc = true
 	}
 
-	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog, ResourceGroupTag: c.resourceGroupTag})
+	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, kvrpcpb.Context{Priority: c.priority, SyncLog: c.syncLog, ResourceGroupTag: c.resourceGroupTag})
 }
 
 func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) (err error) {
@@ -149,7 +150,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 		}
 	}
 
-	txnSize := uint64(c.regionTxnSize[batch.region.id])
+	txnSize := uint64(c.regionTxnSize[batch.region.GetID()])
 	// When we retry because of a region miss, we don't know the transaction size. We set the transaction size here
 	// to MaxUint64 to avoid unexpected "resolve lock lite".
 	if action.retry {
@@ -167,8 +168,8 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			// transaction has been successfully committed.
 			// If prewrite has been cancelled, all ongoing prewrite RPCs will become errors, we needn't set undetermined
 			// errors.
-			if (c.isAsyncCommit() || c.isOnePC()) && sender.rpcError != nil && atomic.LoadUint32(&c.prewriteCancelled) == 0 {
-				c.setUndeterminedErr(errors.Trace(sender.rpcError))
+			if (c.isAsyncCommit() || c.isOnePC()) && sender.GetRPCError() != nil && atomic.LoadUint32(&c.prewriteCancelled) == 0 {
+				c.setUndeterminedErr(errors.Trace(sender.GetRPCError()))
 			}
 		}
 	}()
@@ -193,7 +194,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			// For other region error and the fake region error, backoff because
 			// there's something wrong.
 			// For the real EpochNotMatch error, don't backoff.
-			if regionErr.GetEpochNotMatch() == nil || isFakeRegionError(regionErr) {
+			if regionErr.GetEpochNotMatch() == nil || locate.IsFakeRegionError(regionErr) {
 				err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 				if err != nil {
 					return errors.Trace(err)
@@ -214,7 +215,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 		if resp.Resp == nil {
 			return errors.Trace(tikverr.ErrBodyMissing)
 		}
-		prewriteResp := resp.Resp.(*pb.PrewriteResponse)
+		prewriteResp := resp.Resp.(*kvrpcpb.PrewriteResponse)
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
 			if batch.isPrimary {

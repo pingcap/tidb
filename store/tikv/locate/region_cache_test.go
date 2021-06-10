@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package locate
 
 import (
 	"context"
@@ -25,14 +25,18 @@ import (
 	"github.com/google/btree"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/mockstore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	pd "github.com/tikv/pd/client"
 )
 
+type OneByOneSuite = mockstore.OneByOneSuite
 type testRegionCacheSuite struct {
 	OneByOneSuite
 	cluster *mocktikv.Cluster
@@ -42,7 +46,7 @@ type testRegionCacheSuite struct {
 	peer2   uint64 // peer2 is follower
 	region1 uint64
 	cache   *RegionCache
-	bo      *Backoffer
+	bo      *retry.Backoffer
 }
 
 var _ = Suite(&testRegionCacheSuite{})
@@ -57,7 +61,7 @@ func (s *testRegionCacheSuite) SetUpTest(c *C) {
 	s.peer2 = peerIDs[1]
 	pdCli := &CodecPDClient{mocktikv.NewPDClient(s.cluster)}
 	s.cache = NewRegionCache(pdCli)
-	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
+	s.bo = retry.NewBackofferWithVars(context.Background(), 5000, nil)
 }
 
 func (s *testRegionCacheSuite) TearDownTest(c *C) {
@@ -280,7 +284,7 @@ func (s *testRegionCacheSuite) TestResolveStateTransition(c *C) {
 // report errors in such cases if there are available peers.
 func (s *testRegionCacheSuite) TestFilterDownPeersOrPeersOnTombstoneOrDroppedStores(c *C) {
 	key := []byte("a")
-	bo := NewBackofferWithVars(context.Background(), 100, nil)
+	bo := retry.NewBackofferWithVars(context.Background(), 100, nil)
 
 	verifyGetRPCCtx := func(meta *metapb.Region) {
 		loc, err := s.cache.LocateKey(bo, key)
@@ -690,7 +694,7 @@ func (s *testRegionCacheSuite) TestSendFailEnableForwarding(c *C) {
 	s.cluster.Split(s.region1, region2, []byte("m"), newPeers, newPeers[0])
 
 	var storeState uint32 = uint32(unreachable)
-	s.cache.testingKnobs.mockRequestLiveness = func(s *Store, bo *Backoffer) livenessState {
+	s.cache.testingKnobs.mockRequestLiveness = func(s *Store, bo *retry.Backoffer) livenessState {
 		return livenessState(atomic.LoadUint32(&storeState))
 	}
 
@@ -1010,7 +1014,7 @@ func (s *testRegionCacheSuite) TestRegionEpochAheadOfTiKV(c *C) {
 	r1 := metapb.Region{Id: 1, RegionEpoch: &metapb.RegionEpoch{Version: 9, ConfVer: 10}}
 	r2 := metapb.Region{Id: 1, RegionEpoch: &metapb.RegionEpoch{Version: 10, ConfVer: 9}}
 
-	bo := NewBackofferWithVars(context.Background(), 2000000, nil)
+	bo := retry.NewBackofferWithVars(context.Background(), 2000000, nil)
 
 	_, err := cache.OnRegionEpochNotMatch(bo, &RPCContext{Region: region.VerID()}, []*metapb.Region{&r1})
 	c.Assert(err, IsNil)
@@ -1052,6 +1056,51 @@ func (s *testRegionCacheSuite) TestRegionEpochOnTiFlash(c *C) {
 	c.Assert(lctx.Peer.Id, Not(Equals), s.peer1)
 }
 
+func (s *testRegionCacheSuite) TestRegionDataNotReady(c *C) {
+	loc1, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(loc1.Region.id, Equals, s.region1)
+	testcases := []struct {
+		scope         string
+		readType      kv.ReplicaReadType
+		expectPeerID  uint64
+		expectOptsLen int
+		expectSeed    uint32
+	}{
+		{
+			scope:         oracle.GlobalTxnScope,
+			readType:      kv.ReplicaReadFollower,
+			expectPeerID:  s.peer2,
+			expectOptsLen: 1,
+			expectSeed:    1,
+		},
+		{
+			scope:         "local",
+			readType:      kv.ReplicaReadFollower,
+			expectPeerID:  s.peer2,
+			expectOptsLen: 0,
+			expectSeed:    1,
+		},
+	}
+
+	for _, testcase := range testcases {
+		fctx, err := s.cache.GetTiKVRPCContext(s.bo, loc1.Region, testcase.readType, 0)
+		c.Assert(err, IsNil)
+		c.Assert(fctx.Peer.Id, Equals, testcase.expectPeerID)
+		reqSend := NewRegionRequestSender(s.cache, nil)
+		regionErr := &errorpb.Error{DataIsNotReady: &errorpb.DataIsNotReady{}}
+		var opts []StoreSelectorOption
+		seed := uint32(0)
+		s.bo.Reset()
+		req := &tikvrpc.Request{TxnScope: testcase.scope, Context: kvrpcpb.Context{StaleRead: true}, ReplicaReadSeed: &seed}
+		retry, err := reqSend.onRegionError(s.bo, fctx, req, regionErr, &opts)
+		c.Assert(err, IsNil)
+		c.Assert(retry, IsTrue)
+		c.Assert(len(opts), Equals, testcase.expectOptsLen)
+		c.Assert(*req.GetReplicaReadSeed(), Equals, testcase.expectSeed)
+	}
+}
+
 const regionSplitKeyFormat = "t%08d"
 
 func createClusterWithStoresAndRegions(regionCnt, storeCount int) *mocktikv.Cluster {
@@ -1073,7 +1122,7 @@ func createClusterWithStoresAndRegions(regionCnt, storeCount int) *mocktikv.Clus
 func loadRegionsToCache(cache *RegionCache, regionCnt int) {
 	for i := 0; i < regionCnt; i++ {
 		rawKey := []byte(fmt.Sprintf(regionSplitKeyFormat, i))
-		cache.LocateKey(NewBackofferWithVars(context.Background(), 1, nil), rawKey)
+		cache.LocateKey(retry.NewBackofferWithVars(context.Background(), 1, nil), rawKey)
 	}
 }
 
@@ -1428,7 +1477,7 @@ func BenchmarkOnRequestFail(b *testing.B) {
 	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
 	defer cache.Close()
 	loadRegionsToCache(cache, regionCnt)
-	bo := NewBackofferWithVars(context.Background(), 1, nil)
+	bo := retry.NewBackofferWithVars(context.Background(), 1, nil)
 	loc, err := cache.LocateKey(bo, []byte{})
 	if err != nil {
 		b.Fatal(err)
@@ -1445,7 +1494,7 @@ func BenchmarkOnRequestFail(b *testing.B) {
 				AccessIdx:  accessIdx,
 				Peer:       peer,
 				Store:      store,
-				AccessMode: TiKVOnly,
+				AccessMode: tiKVOnly,
 			}
 			r := cache.GetCachedRegionWithRLock(rpcCtx.Region)
 			if r != nil {
