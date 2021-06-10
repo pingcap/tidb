@@ -14,13 +14,13 @@
 package core_test
 
 import (
-	"github.com/pingcap/tidb/util/collate"
 	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -297,8 +297,3 @@ func (s *testEnforceMPPSuite) TestEnforceMPPWarning3(c *C) {
 		c.Assert(s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings()), DeepEquals, output[i].Warn)
 	}
 }
-
-//
-//parition
-//collation
-//"EXPLAIN SELECT t1.b FROM t t1 join t t2 where t1.a=t2.a; -- 6. virtual column",
