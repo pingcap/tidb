@@ -1052,6 +1052,7 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		if err != nil {
 			logutil.BgLogger().Info("update record cast value failed", zap.Any("col", t.Columns[len(r)]),
 				zap.String("handle", h.String()), zap.Any("val", relatedColDatum), zap.Error(err))
+			return err
 		}
 		r = append(r, value)
 	}
