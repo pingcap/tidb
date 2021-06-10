@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package locate
 
 import (
 	"context"
@@ -25,6 +25,11 @@ import (
 // CodecPDClient wraps a PD Client to decode the encoded keys in region meta.
 type CodecPDClient struct {
 	pd.Client
+}
+
+// NewCodeCPDClient creates a CodecPDClient.
+func NewCodeCPDClient(client pd.Client) *CodecPDClient {
+	return &CodecPDClient{client}
 }
 
 // GetRegion encodes the key before send requests to pd-server and decodes the

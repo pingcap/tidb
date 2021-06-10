@@ -52,6 +52,8 @@ const (
 	// TiDBOptCartesianBCJ is used to disable/enable broadcast cartesian join in MPP mode
 	TiDBOptCartesianBCJ = "tidb_opt_broadcast_cartesian_join"
 
+	TiDBOptMPPOuterJoinFixedBuildSide = "tidb_opt_mpp_outer_join_fixed_build_side"
+
 	// tidb_opt_distinct_agg_push_down is used to decide whether agg with distinct should be pushed to tikv/tiflash.
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
 
@@ -372,9 +374,6 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
-	// TiDBEnableChangeColumnType is used to control whether to enable the change column type.
-	TiDBEnableChangeColumnType = "tidb_enable_change_column_type"
-
 	// TiDBEnableChangeMultiSchema is used to control whether to enable the change multi schema.
 	TiDBEnableChangeMultiSchema = "tidb_enable_change_multi_schema"
 
@@ -552,6 +551,8 @@ const (
 	// TiDBTopSQLMaxStatementCount indicates the max number of statements been collected.
 	TiDBTopSQLMaxStatementCount = "tidb_top_sql_max_statement_count"
 
+	// TiDBTopSQLReportIntervalSeconds indicates the top SQL report interval seconds.
+	TiDBTopSQLReportIntervalSeconds = "tidb_top_sql_report_interval_seconds"
 	// TiDBEnableGlobalTemporaryTable indicates whether to enable global temporary table
 	TiDBEnableGlobalTemporaryTable = "tidb_enable_global_temporary_table"
 )
@@ -594,6 +595,7 @@ const (
 	DefOptAggPushDown                  = false
 	DefOptBCJ                          = false
 	DefOptCartesianBCJ                 = 1
+	DefOptMPPOuterJoinFixedBuildSide   = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
@@ -645,7 +647,6 @@ const (
 	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
 	DefTiDBMaxDeltaSchemaCount         = 1024
-	DefTiDBChangeColumnType            = false
 	DefTiDBChangeMultiSchema           = false
 	DefTiDBPointGetCache               = false
 	DefTiDBEnableAlterPlacement        = false
@@ -688,12 +689,12 @@ const (
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableParallelApply         = false
 	DefTiDBEnableAmendPessimisticTxn   = false
-	DefTiDBPartitionPruneMode          = "static"
+	DefTiDBPartitionPruneMode          = "dynamic"
 	DefTiDBEnableRateLimitAction       = true
 	DefTiDBEnableAsyncCommit           = false
 	DefTiDBEnable1PC                   = false
 	DefTiDBGuaranteeLinearizability    = true
-	DefTiDBAnalyzeVersion              = 1
+	DefTiDBAnalyzeVersion              = 2
 	DefTiDBEnableIndexMergeJoin        = false
 	DefTiDBTrackAggregateMemoryUsage   = true
 	DefTiDBEnableExchangePartition     = false
@@ -702,7 +703,9 @@ const (
 	DefTiDBTopSQLAgentAddress          = ""
 	DefTiDBTopSQLPrecisionSeconds      = 1
 	DefTiDBTopSQLMaxStatementCount     = 200
+	DefTiDBTopSQLReportIntervalSeconds = 60
 	DefTiDBEnableGlobalTemporaryTable  = false
+	DefTMPTableSize                    = 16777216
 )
 
 // Process global variables.
@@ -728,23 +731,26 @@ var (
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
 	TopSQLVariable                        = TopSQL{
-		Enable:            atomic.NewBool(DefTiDBTopSQLEnable),
-		AgentAddress:      atomic.NewString(DefTiDBTopSQLAgentAddress),
-		PrecisionSeconds:  atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
-		MaxStatementCount: atomic.NewInt64(DefTiDBTopSQLMaxStatementCount),
+		Enable:                atomic.NewBool(DefTiDBTopSQLEnable),
+		AgentAddress:          atomic.NewString(DefTiDBTopSQLAgentAddress),
+		PrecisionSeconds:      atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
+		MaxStatementCount:     atomic.NewInt64(DefTiDBTopSQLMaxStatementCount),
+		ReportIntervalSeconds: atomic.NewInt64(DefTiDBTopSQLReportIntervalSeconds),
 	}
 )
 
 // TopSQL is the variable for control top sql feature.
 type TopSQL struct {
-	// Enable statement summary or not.
+	// Enable top-sql or not.
 	Enable *atomic.Bool
 	// AgentAddress indicate the collect agent address.
 	AgentAddress *atomic.String
-	// The refresh interval of statement summary.
+	// The refresh interval of top-sql.
 	PrecisionSeconds *atomic.Int64
 	// The maximum number of statements kept in memory.
 	MaxStatementCount *atomic.Int64
+	// The report data interval of top-sql.
+	ReportIntervalSeconds *atomic.Int64
 }
 
 // TopSQLEnabled uses to check whether enabled the top SQL feature.

@@ -494,10 +494,10 @@ func (s *testStateChangeSuite) TestAppendEnum(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1265]Data truncated for column 'c2' at row 1")
 	failAlterTableSQL1 := "alter table t change c2 c2 enum('N') DEFAULT 'N'"
 	_, err = s.se.Execute(context.Background(), failAlterTableSQL1)
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: the number of enum column's elements is less than the original: 2, and tidb_enable_change_column_type is false")
+	c.Assert(err, IsNil)
 	failAlterTableSQL2 := "alter table t change c2 c2 int default 0"
 	_, err = s.se.Execute(context.Background(), failAlterTableSQL2)
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type int(11) not match origin enum('N','Y'), and tidb_enable_change_column_type is false")
+	c.Assert(err, IsNil)
 	alterTableSQL := "alter table t change c2 c2 enum('N','Y','A') DEFAULT 'A'"
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
@@ -575,12 +575,7 @@ func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumnWithUniqIdx(c 
 
 // TestWriteReorgForModifyColumnWithPKIsHandle tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
 func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumnWithPKIsHandle(c *C) {
-	modifyColumnSQL := "alter table tt change column c cc tinyint unsigned not null default 1 first"
-	enableChangeColumnType := s.se.GetSessionVars().EnableChangeColumnType
-	s.se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		s.se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-	}()
+	modifyColumnSQL := "alter table tt change column c cc tinyint not null default 1 first"
 
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
@@ -638,12 +633,6 @@ func (s *serialTestStateChangeSuite) TestDeleteOnlyForModifyColumnWithoutDefault
 }
 
 func (s *serialTestStateChangeSuite) testModifyColumn(c *C, state model.SchemaState, modifyColumnSQL string, idx idxType) {
-	enableChangeColumnType := s.se.GetSessionVars().EnableChangeColumnType
-	s.se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		s.se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-	}()
-
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 	switch idx {
@@ -878,6 +867,7 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 	originalCallback := d.GetHook()
 	d.(ddl.DDLForTest).SetHook(callback)
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
+	fmt.Println(alterTableSQL)
 	c.Assert(err, IsNil)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	d.(ddl.DDLForTest).SetHook(originalCallback)
@@ -1057,18 +1047,11 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 }
 
 func (s *testStateChangeSuite) TestParallelAddGeneratedColumnAndAlterModifyColumn(c *C) {
-	_, err := s.se.Execute(context.Background(), "set global tidb_enable_change_column_type = 1")
-	c.Assert(err, IsNil)
-	defer func() {
-		_, err = s.se.Execute(context.Background(), "set global tidb_enable_change_column_type = 0")
-		c.Assert(err, IsNil)
-	}()
-
 	sql1 := "ALTER TABLE t ADD COLUMN f INT GENERATED ALWAYS AS(a+1);"
 	sql2 := "ALTER TABLE t MODIFY COLUMN a tinyint;"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true, oldCol is a dependent column 'a' for generated column")
+		c.Assert(err2.Error(), Equals, "[ddl:8200]Unsupported modify column: oldCol is a dependent column 'a' for generated column")
 		_, err := s.se.Execute(context.Background(), "select * from t")
 		c.Assert(err, IsNil)
 	}
@@ -1076,18 +1059,11 @@ func (s *testStateChangeSuite) TestParallelAddGeneratedColumnAndAlterModifyColum
 }
 
 func (s *testStateChangeSuite) TestParallelAlterModifyColumnAndAddPK(c *C) {
-	_, err := s.se.Execute(context.Background(), "set global tidb_enable_change_column_type = 1")
-	c.Assert(err, IsNil)
-	defer func() {
-		_, err = s.se.Execute(context.Background(), "set global tidb_enable_change_column_type = 0")
-		c.Assert(err, IsNil)
-	}()
-
 	sql1 := "ALTER TABLE t ADD PRIMARY KEY (b) NONCLUSTERED;"
 	sql2 := "ALTER TABLE t MODIFY COLUMN b tinyint;"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true and this column has primary key flag")
+		c.Assert(err2.Error(), Equals, "[ddl:8200]Unsupported modify column: this column has primary key flag")
 		_, err := s.se.Execute(context.Background(), "select * from t")
 		c.Assert(err, IsNil)
 	}
@@ -1740,12 +1716,6 @@ func (s *serialTestStateChangeSuite) TestModifyColumnTypeArgs(c *C) {
 	tk.MustExec("drop table if exists t_modify_column_args")
 	tk.MustExec("create table t_modify_column_args(a int, unique(a))")
 
-	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-	}()
-
 	_, err := tk.Exec("alter table t_modify_column_args modify column a tinyint")
 	c.Assert(err, NotNil)
 	// error goes like `mock update version and tableInfo error,jobID=xx`
@@ -1784,4 +1754,25 @@ func (s *serialTestStateChangeSuite) TestModifyColumnTypeArgs(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(changingCol, IsNil)
 	c.Assert(changingIdxs, IsNil)
+}
+
+func (s *testStateChangeSuite) TestWriteReorgForColumnTypeChange(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	tk.MustExec(`CREATE TABLE t_ctc (
+  a DOUBLE NULL DEFAULT '1.732088511183121',
+  c char(30) NOT NULL,
+  KEY idx (a,c)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='…comment';
+`)
+	defer func() {
+		tk.MustExec("drop table t_ctc")
+	}()
+
+	sqls := make([]sqlWithErr, 2)
+	sqls[0] = sqlWithErr{"INSERT INTO t_ctc SET c = 'zr36f7ywjquj1curxh9gyrwnx', a = '1.9897043136824033';", nil}
+	sqls[1] = sqlWithErr{"DELETE FROM t_ctc;", nil}
+	dropColumnsSQL := "alter table t_ctc change column a ddd TIME NULL DEFAULT '18:21:32' AFTER c;"
+	query := &expectQuery{sql: "admin check table t_ctc;", rows: nil}
+	s.runTestInSchemaState(c, model.StateWriteReorganization, false, dropColumnsSQL, sqls, query)
 }

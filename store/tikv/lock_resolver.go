@@ -24,11 +24,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/client"
 	"github.com/pingcap/tidb/store/tikv/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	"github.com/pingcap/tidb/store/tikv/locate"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -96,7 +96,7 @@ func NewLockResolver(etcdAddrs []string, security config.Security, opts ...pd.Cl
 		return nil, errors.Trace(err)
 	}
 
-	s, err := NewKVStore(uuid, &CodecPDClient{pdCli}, spkv, client.NewRPCClient(security))
+	s, err := NewKVStore(uuid, locate.NewCodeCPDClient(pdCli), spkv, client.NewRPCClient(security))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -219,7 +219,7 @@ func (lr *LockResolver) getResolved(txnID uint64) (TxnStatus, bool) {
 
 // BatchResolveLocks resolve locks in a batch.
 // Used it in gcworker only!
-func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc RegionVerID) (bool, error) {
+func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc locate.RegionVerID) (bool, error) {
 	if len(locks) == 0 {
 		return true, nil
 	}
@@ -351,7 +351,7 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 	var pushFail bool
 	// TxnID -> []Region, record resolved Regions.
 	// TODO: Maybe put it in LockResolver and share by all txns.
-	cleanTxns := make(map[uint64]map[RegionVerID]struct{})
+	cleanTxns := make(map[uint64]map[locate.RegionVerID]struct{})
 	var pushed []uint64
 	// pushed is only used in the read operation.
 	if !forWrite {
@@ -370,7 +370,7 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 			// If the lock is committed or rollbacked, resolve lock.
 			cleanRegions, exists := cleanTxns[l.TxnID]
 			if !exists {
-				cleanRegions = make(map[RegionVerID]struct{})
+				cleanRegions = make(map[locate.RegionVerID]struct{})
 				cleanTxns[l.TxnID] = cleanRegions
 			}
 
@@ -497,9 +497,9 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 	}
 
 	rollbackIfNotExist := false
-	failpoint.Inject("getTxnStatusDelay", func() {
+	if _, err := util.EvalFailpoint("getTxnStatusDelay"); err == nil {
 		time.Sleep(100 * time.Millisecond)
-	})
+	}
 	for {
 		status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS, rollbackIfNotExist, forceSyncCommit, l)
 		if err == nil {
@@ -511,9 +511,9 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 			return TxnStatus{}, err
 		}
 
-		failpoint.Inject("txnNotFoundRetTTL", func() {
-			failpoint.Return(TxnStatus{ttl: l.TTL, action: kvrpcpb.Action_NoAction}, nil)
-		})
+		if _, err := util.EvalFailpoint("txnNotFoundRetTTL"); err == nil {
+			return TxnStatus{ttl: l.TTL, action: kvrpcpb.Action_NoAction}, nil
+		}
 
 		// Handle txnNotFound error.
 		// getTxnStatus() returns it when the secondary locks exist while the primary lock doesn't.
@@ -528,12 +528,12 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 				zap.Uint64("CallerStartTs", callerStartTS),
 				zap.Stringer("lock str", l))
 			if l.LockType == kvrpcpb.Op_PessimisticLock {
-				failpoint.Inject("txnExpireRetTTL", func() {
-					failpoint.Return(TxnStatus{action: kvrpcpb.Action_LockNotExistDoNothing},
-						errors.New("error txn not found and lock expired"))
-				})
+				if _, err := util.EvalFailpoint("txnExpireRetTTL"); err == nil {
+					return TxnStatus{action: kvrpcpb.Action_LockNotExistDoNothing},
+						errors.New("error txn not found and lock expired")
+				}
 			}
-			// For pessimistic lock resolving, if the primary lock dose not exist and rollbackIfNotExist is true,
+			// For pessimistic lock resolving, if the primary lock does not exist and rollbackIfNotExist is true,
 			// The Action_LockNotExistDoNothing will be returned as the status.
 			rollbackIfNotExist = true
 		} else {
@@ -716,7 +716,7 @@ func (data *asyncResolveData) addKeys(locks []*kvrpcpb.LockInfo, expected int, s
 	return nil
 }
 
-func (lr *LockResolver) checkSecondaries(bo *Backoffer, txnID uint64, curKeys [][]byte, curRegionID RegionVerID, shared *asyncResolveData) error {
+func (lr *LockResolver) checkSecondaries(bo *Backoffer, txnID uint64, curKeys [][]byte, curRegionID locate.RegionVerID, shared *asyncResolveData) error {
 	checkReq := &kvrpcpb.CheckSecondaryLocksRequest{
 		Keys:         curKeys,
 		StartVersion: txnID,
@@ -843,7 +843,7 @@ func (lr *LockResolver) checkAllSecondaries(bo *Backoffer, l *Lock, status *TxnS
 }
 
 // resolveRegionLocks is essentially the same as resolveLock, but we resolve all keys in the same region at the same time.
-func (lr *LockResolver) resolveRegionLocks(bo *Backoffer, l *Lock, region RegionVerID, keys [][]byte, status TxnStatus) error {
+func (lr *LockResolver) resolveRegionLocks(bo *Backoffer, l *Lock, region locate.RegionVerID, keys [][]byte, status TxnStatus) error {
 	lreq := &kvrpcpb.ResolveLockRequest{
 		StartVersion: l.TxnID,
 	}
@@ -895,7 +895,7 @@ func (lr *LockResolver) resolveRegionLocks(bo *Backoffer, l *Lock, region Region
 	return nil
 }
 
-func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, lite bool, cleanRegions map[RegionVerID]struct{}) error {
+func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, lite bool, cleanRegions map[locate.RegionVerID]struct{}) error {
 	metrics.LockResolverCountWithResolveLocks.Inc()
 	resolveLite := lite || l.TxnSize < bigTxnThreshold
 	for {
@@ -953,7 +953,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, li
 	}
 }
 
-func (lr *LockResolver) resolvePessimisticLock(bo *Backoffer, l *Lock, cleanRegions map[RegionVerID]struct{}) error {
+func (lr *LockResolver) resolvePessimisticLock(bo *Backoffer, l *Lock, cleanRegions map[locate.RegionVerID]struct{}) error {
 	metrics.LockResolverCountWithResolveLocks.Inc()
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, l.Key)

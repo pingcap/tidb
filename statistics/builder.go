@@ -236,7 +236,7 @@ func BuildHistAndTopN(
 	if ndv > count {
 		ndv = count
 	}
-	if count == 0 || len(collector.Samples) == 0 {
+	if count == 0 || len(collector.Samples) == 0 || ndv == 0 {
 		return NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize), nil, nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
