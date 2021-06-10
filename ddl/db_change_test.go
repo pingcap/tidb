@@ -575,7 +575,7 @@ func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumnWithUniqIdx(c 
 
 // TestWriteReorgForModifyColumnWithPKIsHandle tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
 func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumnWithPKIsHandle(c *C) {
-	modifyColumnSQL := "alter table tt change column c cc tinyint unsigned not null default 1 first"
+	modifyColumnSQL := "alter table tt change column c cc tinyint not null default 1 first"
 
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
@@ -867,6 +867,7 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 	originalCallback := d.GetHook()
 	d.(ddl.DDLForTest).SetHook(callback)
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
+	fmt.Println(alterTableSQL)
 	c.Assert(err, IsNil)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	d.(ddl.DDLForTest).SetHook(originalCallback)
