@@ -42,7 +42,7 @@ func NewStructure(reader kv.Retriever, readWriter kv.RetrieverMutator, prefix []
 // TxStructure supports some simple data structures like string, hash, list, etc... and
 // you can use these in a transaction.
 type TxStructure struct {
-	reader         kv.Retriever
-	readWriter     kv.RetrieverMutator
-	prefix         []byte
+	reader     kv.Retriever
+	readWriter kv.RetrieverMutator
+	prefix     []byte
 }
