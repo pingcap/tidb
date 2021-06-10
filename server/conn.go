@@ -1479,7 +1479,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, lastStm
 		if handled {
 			execStmt := cc.ctx.Value(session.ExecStmtVarKey)
 			if execStmt != nil {
-				execStmt.(*executor.ExecStmt).FinishExecuteStmt(0, err == nil, false)
+				execStmt.(*executor.ExecStmt).FinishExecuteStmt(0, err, false)
 			}
 
 		}
