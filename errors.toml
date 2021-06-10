@@ -1381,6 +1381,11 @@ error = '''
 Unknown column '%-.192s' in '%-.192s'
 '''
 
+["table:1114"]
+error = '''
+The table '%-.192s' is full
+'''
+
 ["table:1192"]
 error = '''
 Can't execute the given command because you have active locked tables or an active transaction

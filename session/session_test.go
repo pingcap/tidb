@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -4530,6 +4531,36 @@ func (s *testSessionSuite) TestInTxnPSProtoPointGet(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("commit")
+}
+
+func (s *testSessionSuite) TestTMPTableSize(c *C) {
+	// Test the @@tmp_table_size system variable.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_temporary_table=on")
+	tk.MustExec("create global temporary table t (c1 int, c2 varchar(512)) on commit delete rows")
+
+	tk.MustQuery("select @@global.tmp_table_size").Check(testkit.Rows(strconv.Itoa(variable.DefTMPTableSize)))
+	c.Assert(tk.Se.GetSessionVars().TMPTableSize, Equals, int64(variable.DefTMPTableSize))
+
+	// Min value 1024, so the result is change to 1024, with a warning.
+	tk.MustExec("set @@global.tmp_table_size = 123")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tmp_table_size value: '123'"))
+
+	// Change the session scope value.
+	tk.MustExec("set @@session.tmp_table_size = 2097152")
+	c.Assert(tk.Se.GetSessionVars().TMPTableSize, Equals, int64(2097152))
+
+	// Check in another sessin, change session scope value does not affect the global scope.
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustQuery("select @@global.tmp_table_size").Check(testkit.Rows("1024"))
+
+	// The value is now 1024, check the error when table size exceed it.
+	tk.MustExec("set @@session.tmp_table_size = 1024")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1, repeat('x', 512))")
+	tk.MustExec("insert into t values (1, repeat('x', 512))")
+	tk.MustGetErrCode("insert into t values (1, repeat('x', 512))", errno.ErrRecordFileFull)
 }
 
 func (s *testSessionSuite) TestTiDBEnableGlobalTemporaryTable(c *C) {
