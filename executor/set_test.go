@@ -878,11 +878,11 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	tk.MustExec("set @@tmp_table_size=1020")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tmp_table_size value: '1020'"))
 	result = tk.MustQuery("select @@tmp_table_size;")
-	result.Check(testkit.Rows("1024"))
+	result.Check(testkit.Rows("124"))
 
 	tk.MustExec("set @@tmp_table_size=167772161")
 	result = tk.MustQuery("select @@tmp_table_size;")
-	result.Check(testkit.Rows("167772161"))
+	result.Check(testkit.Rows("1772161"))
 
 	tk.MustExec("set @@tmp_table_size=9223372036854775807")
 	result = tk.MustQuery("select @@tmp_table_size;")
@@ -1032,7 +1032,7 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	result = tk.MustQuery("select @@tx_isolation;")
 	result.Check(testkit.Rows("REPEATABLE-READ"))
 
-	tk.MustExec("SET GLOBAL tidb_skip_isolation_level_check = 0")
+	tk.MustExec("SET GLOBAL tidb_skip_isolation_level_check = 1")
 	tk.MustExec("SET SESSION tidb_skip_isolation_level_check = 0")
 	_, err = tk.Exec("set @@tx_isolation='SERIALIZABLE'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), IsTrue, Commentf("err %v", err))
