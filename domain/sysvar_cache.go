@@ -183,6 +183,13 @@ func checkEnableServerGlobalVar(name, sVal string) {
 			break
 		}
 		variable.TopSQLVariable.MaxStatementCount.Store(val)
+	case variable.TiDBTopSQLMaxCollect:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TopSQLVariable.MaxCollect.Store(val)
 	case variable.TiDBTopSQLReportIntervalSeconds:
 		var val int64
 		val, err = strconv.ParseInt(sVal, 10, 64)

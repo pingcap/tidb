@@ -169,6 +169,43 @@ func (s *testTopSQLReporter) TestCollectAndEvicted(c *C) {
 	}
 }
 
+func (s *testTopSQLReporter) TestCollectCapacity(c *C) {
+	tsr := setupRemoteTopSQLReporter(maxSQLNum, 60, "")
+	defer tsr.Close()
+
+	registerSQL := func(n int) {
+		for i := 0; i < n; i++ {
+			key := []byte("sqlDigest" + strconv.Itoa(i))
+			value := "sqlNormalized" + strconv.Itoa(i)
+			tsr.RegisterSQL(key, value)
+		}
+	}
+	registerPlan := func(n int) {
+		for i := 0; i < n; i++ {
+			key := []byte("planDigest" + strconv.Itoa(i))
+			value := "planNormalized" + strconv.Itoa(i)
+			tsr.RegisterPlan(key, value)
+		}
+	}
+
+	variable.TopSQLVariable.MaxCollect.Store(10000)
+	registerSQL(5000)
+	c.Assert(tsr.sqlMapLength.Load(), Equals, int64(5000))
+	registerPlan(1000)
+	c.Assert(tsr.planMapLength.Load(), Equals, int64(1000))
+
+	registerSQL(20000)
+	c.Assert(tsr.sqlMapLength.Load(), Equals, int64(10000))
+	registerPlan(20000)
+	c.Assert(tsr.planMapLength.Load(), Equals, int64(10000))
+
+	variable.TopSQLVariable.MaxCollect.Store(20000)
+	registerSQL(50000)
+	c.Assert(tsr.sqlMapLength.Load(), Equals, int64(20000))
+	registerPlan(50000)
+	c.Assert(tsr.planMapLength.Load(), Equals, int64(20000))
+}
+
 func BenchmarkTopSQL_CollectAndIncrementFrequency(b *testing.B) {
 	tsr := initializeCache(maxSQLNum, 120, ":23333")
 	for i := 0; i < b.N; i++ {

@@ -1463,15 +1463,14 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	// set correct address, should collect records
 	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
 	agentServer.WaitCollectCnt(1, time.Second*4)
-	checkFn(5)
+	checkFn(8)
 	// agent server hangs for a while
 	agentServer.HangFromNow(time.Second * 6)
 	// run another set of SQL queries
 	cancel()
-	time.Sleep(time.Millisecond * 100)
 	cancel = runWorkload(11, 20)
-	agentServer.WaitCollectCnt(1, time.Second*4)
-	checkFn(5)
+	agentServer.WaitCollectCnt(1, time.Second*8)
+	checkFn(8)
 }
 
 func (ts *tidbTestTopSQLSuite) loopExec(ctx context.Context, c *C, fn func(db *sql.DB)) {

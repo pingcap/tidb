@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/wangjohn/quickselect"
+	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -92,10 +93,12 @@ type RemoteTopSQLReporter struct {
 
 	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are normalized SQL strings
 	normalizedSQLMap atomic.Value // sync.Map
+	sqlMapLength     atomic2.Int64
 
 	// normalizedPlanMap is an map, whose keys are plan digest strings and values are normalized plans **in binary**.
 	// The normalized plans in binary can be decoded to string using the `planBinaryDecoder`.
 	normalizedPlanMap atomic.Value // sync.Map
+	planMapLength     atomic2.Int64
 
 	collectCPUDataChan chan cpuData
 	reportDataChan     chan reportData
@@ -130,17 +133,29 @@ func NewRemoteTopSQLReporter(client ReportClient) *RemoteTopSQLReporter {
 // This function should be thread-safe, which means parallelly calling it in several goroutines should be fine.
 // It should also return immediately, and do any CPU-intensive job asynchronously.
 func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL string) {
+	if tsr.sqlMapLength.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
+		return
+	}
 	m := tsr.normalizedSQLMap.Load().(*sync.Map)
 	key := string(sqlDigest)
-	m.LoadOrStore(key, normalizedSQL)
+	_, loaded := m.LoadOrStore(key, normalizedSQL)
+	if !loaded {
+		tsr.sqlMapLength.Add(1)
+	}
 }
 
 // RegisterPlan is like RegisterSQL, but for normalized plan strings.
 // This function is thread-safe and efficient.
 func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedBinaryPlan string) {
+	if tsr.planMapLength.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
+		return
+	}
 	m := tsr.normalizedPlanMap.Load().(*sync.Map)
 	key := string(planDigest)
-	m.LoadOrStore(key, normalizedBinaryPlan)
+	_, loaded := m.LoadOrStore(key, normalizedBinaryPlan)
+	if !loaded {
+		tsr.planMapLength.Add(1)
+	}
 }
 
 // Collect receives CPU time records for processing. WARN: It will drop the records if the processing is not in time.
