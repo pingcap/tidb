@@ -1446,15 +1446,17 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// Test after set agent address and the evict take effect.
+	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
 	agentServer.WaitCollectCnt(1, time.Second*8)
 	checkFn(5)
 	// Test with wrong agent address, the agent server can't receive any record.
-	dbt.mustExec("set @@tidb_top_sql_agent_address='127.0.0.1:65530';")
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=8;")
+	dbt.mustExec("set @@tidb_top_sql_agent_address='127.0.0.1:65530';")
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// Test after set agent address and the evict take effect.
+	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=8;")
 	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
 	agentServer.WaitCollectCnt(1, time.Second*8)
 	checkFn(8)
@@ -1464,11 +1466,12 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	// case 2: agent hangs for a while
 	cancel = runWorkload(0, 10)
 	// empty agent address, should not collect records
-	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
+	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// set correct address, should collect records
+	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
 	agentServer.WaitCollectCnt(1, time.Second*8)
 	checkFn(5)
@@ -1483,11 +1486,12 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	// case 3: agent restart
 	cancel = runWorkload(0, 10)
 	// empty agent address, should not collect records
-	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
+	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// set correct address, should collect records
+	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(5)
@@ -1502,6 +1506,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	defer func() {
 		agentServer.Stop()
 	}()
+	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
 	// check result
 	agentServer.WaitCollectCnt(1, time.Second*4)

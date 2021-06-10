@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/versioninfo"
 	atomic2 "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
@@ -1709,6 +1710,7 @@ var defaultSysVars = []*SysVar{
 		if err != nil {
 			return err
 		}
+		logutil.BgLogger().Info("set max stmt--", zap.Stack("stack"))
 		TopSQLVariable.MaxStatementCount.Store(val)
 		return nil
 	}},
