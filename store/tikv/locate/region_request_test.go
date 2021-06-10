@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package locate
 
 import (
 	"context"
@@ -30,6 +30,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/tidb/store/tikv/client"
+	tikvclient "github.com/pingcap/tidb/store/tikv/client"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/retry"
@@ -46,7 +48,7 @@ type testRegionRequestToSingleStoreSuite struct {
 	peer                uint64
 	region              uint64
 	cache               *RegionCache
-	bo                  *Backoffer
+	bo                  *retry.Backoffer
 	regionRequestSender *RegionRequestSender
 	mvccStore           mocktikv.MVCCStore
 }
@@ -59,7 +61,7 @@ type testRegionRequestToThreeStoresSuite struct {
 	regionID            uint64
 	leaderPeer          uint64
 	cache               *RegionCache
-	bo                  *Backoffer
+	bo                  *retry.Backoffer
 	regionRequestSender *RegionRequestSender
 	mvccStore           mocktikv.MVCCStore
 }
@@ -159,7 +161,7 @@ func (s *testRegionRequestToSingleStoreSuite) TestOnRegionError(c *C) {
 			}}
 			return staleResp, nil
 		}}
-		bo := NewBackofferWithVars(context.Background(), 5, nil)
+		bo := retry.NewBackofferWithVars(context.Background(), 5, nil)
 		resp, err := s.regionRequestSender.SendReq(bo, req, region.Region, time.Second)
 		c.Assert(err, IsNil)
 		c.Assert(resp, NotNil)
@@ -247,7 +249,7 @@ func (s *testRegionRequestToSingleStoreSuite) TestOnSendFailedWithCloseKnownStor
 	s.cluster.ChangeLeader(s.region, s.peer)
 
 	// send to store2 fail and send to new leader store1.
-	bo2 := NewBackofferWithVars(context.Background(), 100, nil)
+	bo2 := retry.NewBackofferWithVars(context.Background(), 100, nil)
 	resp, err = s.regionRequestSender.SendReq(bo2, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
 	regionErr, err := resp.GetRegionError()
@@ -326,7 +328,7 @@ func (s *testRegionRequestToSingleStoreSuite) TestNoReloadRegionWhenCtxCanceled(
 
 // cancelContextClient wraps rpcClient and always cancels context before sending requests.
 type cancelContextClient struct {
-	Client
+	client.Client
 	redirectAddr string
 }
 
@@ -515,7 +517,7 @@ func (s *testRegionRequestToSingleStoreSuite) TestNoReloadRegionForGrpcWhenCtxCa
 		wg.Done()
 	}()
 
-	client := NewRPCClient(config.Security{})
+	client := tikvclient.NewRPCClient(config.Security{})
 	sender := NewRegionRequestSender(s.cache, client)
 	req := tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
 		Key:   []byte("key"),
@@ -532,7 +534,7 @@ func (s *testRegionRequestToSingleStoreSuite) TestNoReloadRegionForGrpcWhenCtxCa
 
 	// Just for covering error code = codes.Canceled.
 	client1 := &cancelContextClient{
-		Client:       NewRPCClient(config.Security{}),
+		Client:       tikvclient.NewRPCClient(config.Security{}),
 		redirectAddr: addr,
 	}
 	sender = NewRegionRequestSender(s.cache, client1)
@@ -568,7 +570,7 @@ func (s *testRegionRequestToSingleStoreSuite) TestOnMaxTimestampNotSyncedError(c
 			}
 			return resp, nil
 		}}
-		bo := NewBackofferWithVars(context.Background(), 5, nil)
+		bo := retry.NewBackofferWithVars(context.Background(), 5, nil)
 		resp, err := s.regionRequestSender.SendReq(bo, req, region.Region, time.Second)
 		c.Assert(err, IsNil)
 		c.Assert(resp, NotNil)
@@ -595,7 +597,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestSwitchPeerWhenNoLeader(c *C) {
 		Value: []byte("value"),
 	})
 
-	bo := NewBackofferWithVars(context.Background(), 5, nil)
+	bo := retry.NewBackofferWithVars(context.Background(), 5, nil)
 	loc, err := s.cache.LocateKey(s.bo, []byte("key"))
 	c.Assert(err, IsNil)
 	resp, err := s.regionRequestSender.SendReq(bo, req, loc.Region, time.Second)
@@ -619,7 +621,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 	// First get the leader's addr from region cache
 	leaderStore, leaderAddr := s.loadAndGetLeaderStore(c)
 
-	bo := NewBackoffer(context.Background(), 10000)
+	bo := retry.NewBackoffer(context.Background(), 10000)
 
 	// Simulate that the leader is network-partitioned but can be accessed by forwarding via a follower
 	innerClient := s.regionRequestSender.client
@@ -634,7 +636,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestForwarding(c *C) {
 		return innerClient.SendRequest(ctx, addr, req, timeout)
 	}}
 	var storeState uint32 = uint32(unreachable)
-	s.regionRequestSender.regionCache.testingKnobs.mockRequestLiveness = func(s *Store, bo *Backoffer) livenessState {
+	s.regionRequestSender.regionCache.testingKnobs.mockRequestLiveness = func(s *Store, bo *retry.Backoffer) livenessState {
 		return livenessState(atomic.LoadUint32(&storeState))
 	}
 
@@ -863,7 +865,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestReplicaSelector(c *C) {
 	region.lastAccess = time.Now().Unix()
 	replicaSelector, err = newReplicaSelector(cache, regionLoc.Region)
 	c.Assert(replicaSelector, NotNil)
-	cache.testingKnobs.mockRequestLiveness = func(s *Store, bo *Backoffer) livenessState {
+	cache.testingKnobs.mockRequestLiveness = func(s *Store, bo *retry.Backoffer) livenessState {
 		return reachable
 	}
 	for i := 0; i < maxReplicaAttempt; i++ {
@@ -974,7 +976,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestSendReqWithReplicaSelector(c *
 		if err != nil {
 			return false
 		}
-		return isFakeRegionError(regionErr)
+		return IsFakeRegionError(regionErr)
 	}
 
 	// Normal
@@ -1038,7 +1040,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestSendReqWithReplicaSelector(c *
 
 	// The leader store is alive but can't provide service.
 	// Region will be invalidated due to running out of all replicas.
-	s.regionRequestSender.regionCache.testingKnobs.mockRequestLiveness = func(s *Store, bo *Backoffer) livenessState {
+	s.regionRequestSender.regionCache.testingKnobs.mockRequestLiveness = func(s *Store, bo *retry.Backoffer) livenessState {
 		return reachable
 	}
 	reloadRegion()
@@ -1164,7 +1166,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestSendReqWithReplicaSelector(c *
 	}
 
 	// Runs out of all replicas and then returns a send error.
-	s.regionRequestSender.regionCache.testingKnobs.mockRequestLiveness = func(s *Store, bo *Backoffer) livenessState {
+	s.regionRequestSender.regionCache.testingKnobs.mockRequestLiveness = func(s *Store, bo *retry.Backoffer) livenessState {
 		return unreachable
 	}
 	reloadRegion()
