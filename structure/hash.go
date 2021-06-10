@@ -121,7 +121,6 @@ func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 		return ErrWriteOnSnapshot
 	}
 
-	// var value []byte
 	for _, field := range fields {
 		dataKey := t.encodeHashDataKey(key, field)
 

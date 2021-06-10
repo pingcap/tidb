@@ -45,5 +45,4 @@ type TxStructure struct {
 	reader         kv.Retriever
 	readWriter     kv.RetrieverMutator
 	prefix         []byte
-	ignoreHashMeta bool
 }
