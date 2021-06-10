@@ -9020,7 +9020,7 @@ PARTITION BY RANGE (c) (
 	}
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope",
+		failpoint.Enable("tikvclient/injectTxnScope",
 			fmt.Sprintf(`return("%v")`, testcase.zone))
 		tk.MustExec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
 		res, err := tk.Exec(testcase.sql)
@@ -9040,7 +9040,7 @@ PARTITION BY RANGE (c) (
 		if res != nil {
 			res.Close()
 		}
-		failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
+		failpoint.Disable("tikvclient/injectTxnScope")
 	}
 }
 
