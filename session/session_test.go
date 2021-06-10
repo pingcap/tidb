@@ -4689,11 +4689,11 @@ func (s *testStatisticsSuite) TestNewCollationStatsWithPrefixIndex(c *C) {
 	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
 		"test t  a 0 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C 2",
 	))
-	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
-		"0 1 15 0 250 1 0.8411764705882353",
-		"1 1 8 0 0 1 0",
-		"1 2 13 0 0 1 0",
-		"1 3 15 0 0 1 0",
+	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
+		"0 1 15 0 1 0.8411764705882353",
+		"1 1 8 0 1 0",
+		"1 2 13 0 1 0",
+		"1 3 15 0 1 0",
 	))
 
 	tk.MustExec("set @@session.tidb_analyze_version=2")
