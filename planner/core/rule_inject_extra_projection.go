@@ -81,6 +81,7 @@ func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
 		for i, dstCol := range un.schema.Columns {
 			dstType := dstCol.RetType
 			srcCol := ch.Schema().Columns[i]
+			srcCol.Index = i
 			srcType := srcCol.RetType
 			if !srcType.Equal(dstType) || !(mysql.HasNotNullFlag(dstType.Flag) == mysql.HasNotNullFlag(srcType.Flag)) {
 				exprs[i] = expression.BuildCastFunction4Union(un.ctx, srcCol, dstType)
@@ -88,7 +89,6 @@ func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
 			} else {
 				exprs[i] = srcCol
 			}
-			exprs[i].ResolveIndices(ch.Schema())
 			logutil.BgLogger().Info("expr and schema", zap.String("expr", exprs[i].ExplainInfo()), zap.String("schema", ch.Schema().String()), zap.Int64("unique", srcCol.UniqueID))
 			if ff, ok := exprs[i].(*expression.ScalarFunction); ok {
 				col := ff.GetArgs()[0].(*expression.Column)
