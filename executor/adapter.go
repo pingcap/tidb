@@ -888,7 +888,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	a.SummaryStmt(err == nil)
 	if sessVars.StmtCtx.IsTiFlash.Load() {
 		if err == nil {
-			metrics.TiFlashQueryTotalCounter.WithLabelValues(sessVars.StmtCtx.StmtType, metrics.LblOK).Inc()
+			metrics.TiFlashQueryTotalCounter.WithLabelValues("", metrics.LblOK).Inc()
 		} else {
 			metrics.TiFlashQueryTotalCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), metrics.LblError).Inc()
 		}
