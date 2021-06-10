@@ -2348,8 +2348,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 		p.setSchemaAndNames(buildBRIESchema())
 		if sem.IsEnabled() && strings.EqualFold(raw.Storage[:8], "local://") {
 			// Local storage is not permitted to be local when SEM is enabled.
-			err := ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_LOCAL_ADMIN")
-			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESTRICTED_LOCAL_ADMIN", false, err)
+			return nil, ErrNotSupportedWithSem.GenWithStackByArgs("local://")
 		}
 		if raw.Kind == ast.BRIEKindRestore {
 			err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESTORE_ADMIN")

@@ -1393,16 +1393,13 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeStatusVars(c *C) {
 
 }
 
-func (s *testPrivilegeSuite) TestSecurityEnhancedModeRestrictedLocalAdmin(c *C) {
+func (s *testPrivilegeSuite) TestSecurityEnhancedLocalBackupRestore(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("CREATE USER nolocal, yeslocal")
-	tk.MustExec("GRANT SUPER, BACKUP_ADMIN, RESTORE_ADMIN ON *.* to nolocal WITH GRANT OPTION")
-	tk.MustExec("GRANT SUPER, BACKUP_ADMIN, RESTORE_ADMIN, RESTRICTED_LOCAL_ADMIN ON *.* to yeslocal WITH GRANT OPTION")
+	tk.MustExec("CREATE USER backuprestore")
+	tk.MustExec("GRANT BACKUP_ADMIN,RESTORE_ADMIN ON *.* to backuprestore")
 	tk.Se.Auth(&auth.UserIdentity{
-		Username:     "nolocal",
-		Hostname:     "localhost",
-		AuthUsername: "nolocal",
-		AuthHostname: "%",
+		Username: "backuprestore",
+		Hostname: "localhost",
 	}, nil, nil)
 
 	// Prior to SEM nolocal has permission, the error should be because backup requires tikv
@@ -1417,23 +1414,10 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeRestrictedLocalAdmin(c *C) 
 
 	// With SEM enabled nolocal does not have permission, but yeslocal does.
 	_, err = tk.Se.ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'Local:///tmp/test';")
-	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_LOCAL_ADMIN privilege(s) for this operation")
+	c.Assert(err.Error(), Equals, "[planner:8132]Feature 'local://' is not supported when security enhanced mode is enabled")
 
 	_, err = tk.Se.ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
-	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_LOCAL_ADMIN privilege(s) for this operation")
-
-	tk.Se.Auth(&auth.UserIdentity{
-		Username:     "yeslocal",
-		Hostname:     "localhost",
-		AuthUsername: "yeslocal",
-		AuthHostname: "%",
-	}, nil, nil)
-
-	_, err = tk.Se.ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'Local:///tmp/test';")
-	c.Assert(err.Error(), Equals, "BACKUP requires tikv store, not unistore")
-
-	_, err = tk.Se.ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
-	c.Assert(err.Error(), Equals, "RESTORE requires tikv store, not unistore")
+	c.Assert(err.Error(), Equals, "[planner:8132]Feature 'local://' is not supported when security enhanced mode is enabled")
 
 }
 
