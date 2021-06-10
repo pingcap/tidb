@@ -123,6 +123,9 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`2004420`, `%X%V%w`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)},
 		{`2004423`, `%X%V%w`, types.FromDate(2004, 10, 20, 0, 0, 0, 0)},
 		{`200442 Sunday`, `%x%v%W`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)},
+		{`200442 Sun`, `%x%v%W`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)},
+		{`200442 sun`, `%x%v%W`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)},
+		{`200442 suNd`, `%x%v%W`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)},
 		{"2004421", "%Y%U%w", types.FromDate(2004, 10, 18, 0, 0, 0, 0)}, // %U,%u should be used with %Y and not %X or %x
 		{"69421", "%y%U%w", types.FromDate(2069, 10, 21, 0, 0, 0, 0)},   // %U,%u should be used with %Y and not %X or %x
 	}
@@ -151,6 +154,7 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{"2004421", "%X%v%w"}, // %X should be used with %V
 		{"2004421", "%X%U%w"}, // %U,%u should be used with %Y and not %X or %x
 		{`2004663`, `%X%V%w`}, // %V out of range [0, 53]
+		{`200442 S`, `%x%v%W`},
 	}
 	for i, tt := range errTests {
 		var t types.Time

@@ -3315,13 +3315,39 @@ func weekModeu(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 
 func weekdayName(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	for i, weekday := range WeekdayNames {
-		if strings.HasPrefix(input, weekday) {
+		// The behavior is weird in MySQL, it not full string prefix match like:
+		//     strings.HasPrefix(input, weekday)
+		// It's kind of a case insensitive match and success as long as the matched size > 2
+		// s => false
+		// sn => false
+		// sun => true
+		// sUn => true
+		// sunda => true
+		// sUnday => true
+		matched := 0
+		for matched < len(weekday) && matched < len(input) {
+			if !byteEqualCI(input[matched], weekday[matched]) {
+				break
+			}
+			matched++
+		}
+		if matched >= 2 {
 			// Use 1-7
 			ctx["WeekDay"] = i + 1
-			return input[len(weekday):], true
+			return input[matched:], true
 		}
 	}
 	return input, false
+}
+
+func byteEqualCI(x, y byte) bool {
+	if x == y {
+		return true
+	}
+	if unicode.ToUpper(rune(x)) == unicode.ToUpper(rune(y)) {
+		return true
+	}
+	return false
 }
 
 func dayOfWeek(t *CoreTime, input string, ctx map[string]int) (string, bool) {
