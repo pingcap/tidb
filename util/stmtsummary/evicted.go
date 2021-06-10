@@ -253,7 +253,7 @@ func (seElement *stmtSummaryByDigestEvictedElement) toDatum() []types.Datum {
 }
 
 // addInfo adds information in addWith into addTo.
-func addInfo(addTo *stmtSummaryByDigestElement, addWith  *stmtSummaryByDigestElement) {
+func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElement) {
 	addTo.Lock()
 	defer addTo.Unlock()
 
