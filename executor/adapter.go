@@ -856,6 +856,7 @@ func FormatSQL(sql string) stringutil.StringerFunc {
 var (
 	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
+	totalTiFlashQuerySuccCounter      = metrics.TiFlashQueryTotalCounter.WithLabelValues("", metrics.LblOK)
 )
 
 // FinishExecuteStmt is used to record some information after `ExecStmt` execution finished:
@@ -888,7 +889,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	a.SummaryStmt(err == nil)
 	if sessVars.StmtCtx.IsTiFlash.Load() {
 		if err == nil {
-			metrics.TiFlashQueryTotalCounter.WithLabelValues("", metrics.LblOK).Inc()
+			totalTiFlashQuerySuccCounter.Inc()
 		} else {
 			metrics.TiFlashQueryTotalCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), metrics.LblError).Inc()
 		}
