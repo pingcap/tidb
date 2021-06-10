@@ -842,7 +842,7 @@ func (s *testSerialSuite) TestRecoverTableByJobIDFail(c *C) {
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
-			c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockCommitError", `return(true)`), IsNil)
+			c.Assert(failpoint.Enable("tikvclient/mockCommitError", `return(true)`), IsNil)
 			c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`), IsNil)
 		}
 	}
@@ -852,7 +852,7 @@ func (s *testSerialSuite) TestRecoverTableByJobIDFail(c *C) {
 
 	// do recover table.
 	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockCommitError"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/mockCommitError"), IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr"), IsNil)
 
 	// make sure enable GC after recover table.
@@ -902,7 +902,7 @@ func (s *testSerialSuite) TestRecoverTableByTableNameFail(c *C) {
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
-			c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockCommitError", `return(true)`), IsNil)
+			c.Assert(failpoint.Enable("tikvclient/mockCommitError", `return(true)`), IsNil)
 			c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`), IsNil)
 		}
 	}
@@ -912,7 +912,7 @@ func (s *testSerialSuite) TestRecoverTableByTableNameFail(c *C) {
 
 	// do recover table.
 	tk.MustExec("recover table t_recover")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockCommitError"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/mockCommitError"), IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr"), IsNil)
 
 	// make sure enable GC after recover table.
