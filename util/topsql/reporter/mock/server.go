@@ -91,7 +91,7 @@ func (svr *mockAgentServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportC
 	svr.records = append(svr.records, records)
 	l := len(svr.records)
 	svr.Unlock()
-	logutil.BgLogger().Info("[top-sql] mock server finish in ReportCPUTimeRecords", zap.Int("len", l))
+	logutil.BgLogger().Info("[top-sql] mock server finish in ReportCPUTimeRecords", zap.Int("len", l), zap.Int("size", len(records)))
 	return stream.SendAndClose(&tipb.EmptyResponse{})
 }
 

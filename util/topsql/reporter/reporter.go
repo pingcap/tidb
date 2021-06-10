@@ -374,7 +374,8 @@ func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 	})
 
 	ctx, cancel := context.WithTimeout(tsr.ctx, timeout)
-	logutil.BgLogger().Info("[top-sql] client start to send data", zap.Int("data-sql-cnt", len(data.collectedData)))
+	logutil.BgLogger().Info("[top-sql] client start to send data", zap.Int("data-sql-cnt", len(data.collectedData)),
+		zap.Int64("max-stmt", variable.TopSQLVariable.MaxStatementCount.Load()))
 	err := tsr.client.Send(ctx, agentAddr, data)
 	if err != nil {
 		logutil.BgLogger().Warn("[top-sql] client failed to send data", zap.Error(err))
