@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/store/tikv/config"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -296,11 +296,11 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 		a.batchSize.Observe(float64(a.reqBuilder.len()))
 
 		// curl -XPUT -d 'return(true)' http://0.0.0.0:10080/fail/github.com/pingcap/tidb/store/tikv/mockBlockOnBatchClient
-		failpoint.Inject("mockBlockOnBatchClient", func(val failpoint.Value) {
+		if val, err := util.EvalFailpoint("mockBlockOnBatchClient"); err == nil {
 			if val.(bool) {
 				time.Sleep(1 * time.Hour)
 			}
-		})
+		}
 
 		if a.reqBuilder.len() < int(cfg.MaxBatchSize) && cfg.MaxBatchWaitTime > 0 {
 			// If the target TiKV is overload, wait a while to collect more requests.
@@ -413,10 +413,9 @@ func (s *batchCommandsStream) recv() (resp *tikvpb.BatchCommandsResponse, err er
 			err = errors.SuspendStack(errors.New("batch conn recv paniced"))
 		}
 	}()
-	failpoint.Inject("gotErrorInRecvLoop", func(_ failpoint.Value) (resp *tikvpb.BatchCommandsResponse, err error) {
-		err = errors.New("injected error in batchRecvLoop")
-		return
-	})
+	if _, err := util.EvalFailpoint("gotErrorInRecvLoop"); err == nil {
+		return nil, errors.New("injected error in batchRecvLoop")
+	}
 	// When `conn.Close()` is called, `client.Recv()` will return an error.
 	resp, err = s.Recv()
 	return
@@ -504,7 +503,7 @@ func (c *batchCommandsClient) send(forwardedHost string, req *tikvpb.BatchComman
 
 // `failPendingRequests` must be called in locked contexts in order to avoid double closing channels.
 func (c *batchCommandsClient) failPendingRequests(err error) {
-	failpoint.Inject("panicInFailPendingRequests", nil)
+	util.EvalFailpoint("panicInFailPendingRequests")
 	c.batched.Range(func(key, value interface{}) bool {
 		id, _ := key.(uint64)
 		entry, _ := value.(*batchCommandsEntry)
