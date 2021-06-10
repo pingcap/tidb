@@ -1109,6 +1109,11 @@ func (n *UserSpec) EncodedPassword() (string, bool) {
 		}
 	}
 
+	// In case we have 'IDENTIFIED WITH <plugin>' but no 'BY <password>' to set an empty password.
+	if opt.HashString == "" {
+		return opt.HashString, true
+	}
+
 	// Not a legal password string.
 	switch opt.AuthPlugin {
 	case mysql.AuthCachingSha2Password:
