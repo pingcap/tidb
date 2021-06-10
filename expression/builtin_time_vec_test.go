@@ -516,7 +516,8 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETDatetime,
 			childrenTypes: []types.EvalType{types.ETInt},
-			geners:        []dataGenerator{newRangeInt64Gener(0, math.MaxInt64)},
+			// TiDB has DST time problem. Change the random ranges to [2000-01-01 00:00:01, +inf]
+			geners: []dataGenerator{newRangeInt64Gener(248160190726144000, math.MaxInt64)},
 		},
 	},
 	// Todo: how to inject the safeTS for better testing.

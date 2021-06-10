@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -3277,7 +3276,7 @@ const (
 
 type checkRequestClient struct {
 	tikv.Client
-	priority       pb.CommandPri
+	priority       kvrpcpb.CommandPri
 	lowPriorityCnt uint32
 	mu             struct {
 		sync.RWMutex
@@ -3286,12 +3285,12 @@ type checkRequestClient struct {
 	}
 }
 
-func (c *checkRequestClient) setCheckPriority(priority pb.CommandPri) {
+func (c *checkRequestClient) setCheckPriority(priority kvrpcpb.CommandPri) {
 	atomic.StoreInt32((*int32)(&c.priority), int32(priority))
 }
 
-func (c *checkRequestClient) getCheckPriority() pb.CommandPri {
-	return (pb.CommandPri)(atomic.LoadInt32((*int32)(&c.priority)))
+func (c *checkRequestClient) getCheckPriority() kvrpcpb.CommandPri {
+	return (kvrpcpb.CommandPri)(atomic.LoadInt32((*int32)(&c.priority)))
 }
 
 func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
@@ -3315,7 +3314,7 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 				return nil, errors.New("fail to set priority")
 			}
 		} else if req.Type == tikvrpc.CmdPrewrite {
-			if c.getCheckPriority() == pb.CommandPri_Low {
+			if c.getCheckPriority() == kvrpcpb.CommandPri_Low {
 				atomic.AddUint32(&c.lowPriorityCnt, 1)
 			}
 		}
@@ -3403,7 +3402,7 @@ func (s *testSuite2) TestAddIndexPriority(c *C) {
 	cli.mu.checkFlags = checkDDLAddIndexPriority
 	cli.mu.Unlock()
 
-	cli.setCheckPriority(pb.CommandPri_Low)
+	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
 	tk.MustExec("alter table t1 add index t1_index (id);")
 
 	c.Assert(atomic.LoadUint32(&cli.lowPriorityCnt) > 0, IsTrue)
@@ -3419,7 +3418,7 @@ func (s *testSuite2) TestAddIndexPriority(c *C) {
 	cli.mu.checkFlags = checkDDLAddIndexPriority
 	cli.mu.Unlock()
 
-	cli.setCheckPriority(pb.CommandPri_Normal)
+	cli.setCheckPriority(kvrpcpb.CommandPri_Normal)
 	tk.MustExec("alter table t1 add index t1_index (id);")
 
 	cli.mu.Lock()
@@ -3433,7 +3432,7 @@ func (s *testSuite2) TestAddIndexPriority(c *C) {
 	cli.mu.checkFlags = checkDDLAddIndexPriority
 	cli.mu.Unlock()
 
-	cli.setCheckPriority(pb.CommandPri_High)
+	cli.setCheckPriority(kvrpcpb.CommandPri_High)
 	tk.MustExec("alter table t1 add index t1_index (id);")
 
 	cli.mu.Lock()
@@ -8522,7 +8521,7 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 	}
 }
 
-func (s *testStaleTxnSuite) TestStaleOrHistoryReadTemporaryTable(c *C) {
+func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
@@ -8542,6 +8541,8 @@ func (s *testStaleTxnSuite) TestStaleOrHistoryReadTemporaryTable(c *C) {
 
 	// sleep 1us to make test stale
 	time.Sleep(time.Microsecond)
+
+	tk.MustGetErrMsg("select * from tmp1 tablesample regions()", "TABLESAMPLE clause can not be applied to temporary tables")
 
 	queries := []struct {
 		sql string
@@ -8566,9 +8567,6 @@ func (s *testStaleTxnSuite) TestStaleOrHistoryReadTemporaryTable(c *C) {
 		},
 		{
 			sql: "select /*+use_index(tmp1, code)*/ code from tmp1 where code > 1",
-		},
-		{
-			sql: "select * from tmp1 tablesample regions()",
 		},
 		{
 			sql: "select /*+ use_index_merge(tmp1, primary, code) */ * from tmp1 where id > 1 or code > 2",

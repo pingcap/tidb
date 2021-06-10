@@ -709,6 +709,7 @@ const (
 	DefTiDBTopSQLMaxCollect            = 10000
 	DefTiDBTopSQLReportIntervalSeconds = 60
 	DefTiDBEnableGlobalTemporaryTable  = false
+	DefTMPTableSize                    = 16777216
 )
 
 // Process global variables.
