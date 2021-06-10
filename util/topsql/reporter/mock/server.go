@@ -139,7 +139,7 @@ func (svr *mockAgentServer) WaitCollectCnt(cnt int, timeout time.Duration) {
 		if time.Since(start) > timeout {
 			return
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -152,7 +152,7 @@ func (svr *mockAgentServer) GetSQLMetaByDigestBlocking(digest []byte, timeout ti
 		if exist || time.Since(start) > timeout {
 			return normalizedSQL, exist
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -165,7 +165,7 @@ func (svr *mockAgentServer) GetPlanMetaByDigestBlocking(digest []byte, timeout t
 		if exist || time.Since(start) > timeout {
 			return normalizedPlan, exist
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
