@@ -642,7 +642,7 @@ func (s *tiflashTestSuite) TestMppUnionAll(c *C) {
 
 	tk.MustExec("set @@session.tidb_allow_mpp=2")
 	tk.MustExec("insert into x4 values (2, 2), (2, 3)")
-	tk.MustQuery("(select * from x1 union all select * from x4) order by a, b").Check(testkit.Rows("1 1", "2 2", "2 2", "2 3", "3 3", "4 4", ))
+	tk.MustQuery("(select * from x1 union all select * from x4) order by a, b").Check(testkit.Rows("1 1", "2 2", "2 2", "2 3", "3 3", "4 4"))
 
 }
 
