@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/locate"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -588,7 +589,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		// Do not update regionTxnSize on retries. They are not used when building a PrewriteRequest.
 		if !act.retry {
 			for _, group := range groups {
-				c.regionTxnSize[group.region.id] = group.mutations.Len()
+				c.regionTxnSize[group.region.GetID()] = group.mutations.Len()
 			}
 		}
 		sizeFunc = c.keyValueSize
@@ -858,7 +859,7 @@ func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, tt
 			// For other region error and the fake region error, backoff because
 			// there's something wrong.
 			// For the real EpochNotMatch error, don't backoff.
-			if regionErr.GetEpochNotMatch() == nil || isFakeRegionError(regionErr) {
+			if regionErr.GetEpochNotMatch() == nil || locate.IsFakeRegionError(regionErr) {
 				err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 				if err != nil {
 					return 0, false, errors.Trace(err)
@@ -1538,7 +1539,7 @@ func (c *twoPhaseCommitter) shouldWriteBinlog() bool {
 const txnCommitBatchSize = 16 * 1024
 
 type batchMutations struct {
-	region    RegionVerID
+	region    locate.RegionVerID
 	mutations CommitterMutations
 	isPrimary bool
 }
@@ -1571,7 +1572,7 @@ func newBatched(primaryKey []byte) *batched {
 
 // appendBatchMutationsBySize appends mutations to b. It may split the keys to make
 // sure each batch's size does not exceed the limit.
-func (b *batched) appendBatchMutationsBySize(region RegionVerID, mutations CommitterMutations, sizeFn func(k, v []byte) int, limit int) {
+func (b *batched) appendBatchMutationsBySize(region locate.RegionVerID, mutations CommitterMutations, sizeFn func(k, v []byte) int, limit int) {
 	if _, err := util.EvalFailpoint("twoPCRequestBatchSizeLimit"); err == nil {
 		limit = 1
 	}

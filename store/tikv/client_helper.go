@@ -16,6 +16,7 @@ package tikv
 import (
 	"time"
 
+	"github.com/pingcap/tidb/store/tikv/locate"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
 )
@@ -29,11 +30,11 @@ import (
 // meet the secondary lock again and run into a deadloop.
 type ClientHelper struct {
 	lockResolver  *LockResolver
-	regionCache   *RegionCache
+	regionCache   *locate.RegionCache
 	resolvedLocks *util.TSSet
 	client        Client
 	resolveLite   bool
-	RegionRequestRuntimeStats
+	locate.RegionRequestRuntimeStats
 }
 
 // NewClientHelper creates a helper instance.
@@ -53,7 +54,7 @@ func (ch *ClientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 	var msBeforeTxnExpired int64
 	if ch.Stats != nil {
 		defer func(start time.Time) {
-			RecordRegionRequestRuntimeStats(ch.Stats, tikvrpc.CmdResolveLock, time.Since(start))
+			locate.RecordRegionRequestRuntimeStats(ch.Stats, tikvrpc.CmdResolveLock, time.Since(start))
 		}(time.Now())
 	}
 	if ch.resolveLite {
@@ -72,8 +73,8 @@ func (ch *ClientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 }
 
 // SendReqCtx wraps the SendReqCtx function and use the resolved lock result in the kvrpcpb.Context.
-func (ch *ClientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration, et tikvrpc.EndpointType, directStoreAddr string, opts ...StoreSelectorOption) (*tikvrpc.Response, *RPCContext, string, error) {
-	sender := NewRegionRequestSender(ch.regionCache, ch.client)
+func (ch *ClientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID locate.RegionVerID, timeout time.Duration, et tikvrpc.EndpointType, directStoreAddr string, opts ...locate.StoreSelectorOption) (*tikvrpc.Response, *locate.RPCContext, string, error) {
+	sender := locate.NewRegionRequestSender(ch.regionCache, ch.client)
 	if len(directStoreAddr) > 0 {
 		sender.SetStoreAddr(directStoreAddr)
 	}

@@ -32,6 +32,7 @@ import (
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/latch"
+	"github.com/pingcap/tidb/store/tikv/locate"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -76,7 +77,7 @@ type KVStore struct {
 		client Client
 	}
 	pdClient     pd.Client
-	regionCache  *RegionCache
+	regionCache  *locate.RegionCache
 	lockResolver *LockResolver
 	txnLatches   *latch.LatchesScheduler
 
@@ -139,7 +140,7 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, tikvclient Cl
 		uuid:            uuid,
 		oracle:          o,
 		pdClient:        pdClient,
-		regionCache:     NewRegionCache(pdClient),
+		regionCache:     locate.NewRegionCache(pdClient),
 		kv:              spkv,
 		safePoint:       0,
 		spTime:          time.Now(),
@@ -288,14 +289,14 @@ func (s *KVStore) SupportDeleteRange() (supported bool) {
 	return !s.mock
 }
 
-// SendReq sends a request to region.
-func (s *KVStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
-	sender := NewRegionRequestSender(s.regionCache, s.GetTiKVClient())
+// SendReq sends a request to locate.
+func (s *KVStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID locate.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
+	sender := locate.NewRegionRequestSender(s.regionCache, s.GetTiKVClient())
 	return sender.SendReq(bo, req, regionID, timeout)
 }
 
 // GetRegionCache returns the region cache instance.
-func (s *KVStore) GetRegionCache() *RegionCache {
+func (s *KVStore) GetRegionCache() *locate.RegionCache {
 	return s.regionCache
 }
 
@@ -335,7 +336,7 @@ func (s *KVStore) GetTiKVClient() (client Client) {
 
 // GetMinSafeTS return the minimal safeTS of the storage with given txnScope.
 func (s *KVStore) GetMinSafeTS(txnScope string) uint64 {
-	stores := make([]*Store, 0)
+	stores := make([]*locate.Store, 0)
 	allStores := s.regionCache.GetStoresByType(tikvrpc.TiKV)
 	if txnScope != oracle.GlobalTxnScope {
 		for _, store := range allStores {
@@ -367,7 +368,7 @@ func (s *KVStore) setSafeTS(storeID, safeTS uint64) {
 	s.safeTSMap.Store(storeID, safeTS)
 }
 
-func (s *KVStore) getMinSafeTSByStores(stores []*Store) uint64 {
+func (s *KVStore) getMinSafeTSByStores(stores []*locate.Store) uint64 {
 	if val, err := util.EvalFailpoint("injectSafeTS"); err == nil {
 		injectTS := val.(int)
 		return uint64(injectTS)
@@ -378,7 +379,7 @@ func (s *KVStore) getMinSafeTSByStores(stores []*Store) uint64 {
 		return 0
 	}
 	for _, store := range stores {
-		safeTS := s.getSafeTS(store.storeID)
+		safeTS := s.getSafeTS(store.StoreID())
 		if safeTS < minSafeTS {
 			minSafeTS = safeTS
 		}
@@ -407,8 +408,8 @@ func (s *KVStore) updateSafeTS(ctx context.Context) {
 	wg := &sync.WaitGroup{}
 	wg.Add(len(stores))
 	for _, store := range stores {
-		storeID := store.storeID
-		storeAddr := store.addr
+		storeID := store.StoreID()
+		storeAddr := store.GetAddr()
 		go func(ctx context.Context, wg *sync.WaitGroup, storeID uint64, storeAddr string) {
 			defer wg.Done()
 			resp, err := tikvClient.SendRequest(ctx, storeAddr, tikvrpc.NewRequest(tikvrpc.CmdStoreSafeTS, &kvrpcpb.StoreSafeTSRequest{KeyRange: &kvrpcpb.KeyRange{
