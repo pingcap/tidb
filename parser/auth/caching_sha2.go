@@ -209,7 +209,7 @@ func NewSha2Password(pwd string) string {
 	// Restrict to 7-bit to avoid multi-byte UTF-8
 	for i := range salt {
 		salt[i] = salt[i] &^ 128
-		if salt[i] == 36 { // '$'
+		if salt[i] == 36 || salt[i] == 0 { // '$' or NUL
 			newval := make([]byte, 1)
 			rand.Read(newval)
 			salt[i] = newval[0]
