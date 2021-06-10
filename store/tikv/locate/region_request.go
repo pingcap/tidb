@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package locate
 
 import (
 	"bytes"
@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/store/tikv/client"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -78,7 +79,7 @@ func LoadShuttingDown() uint32 {
 // split, so we simply return the error to caller.
 type RegionRequestSender struct {
 	regionCache           *RegionCache
-	client                Client
+	client                client.Client
 	storeAddr             string
 	rpcError              error
 	leaderReplicaSelector *replicaSelector
@@ -161,7 +162,7 @@ func RecordRegionRequestRuntimeStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats,
 }
 
 // NewRegionRequestSender creates a new sender.
-func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequestSender {
+func NewRegionRequestSender(regionCache *RegionCache, client client.Client) *RegionRequestSender {
 	return &RegionRequestSender{
 		regionCache: regionCache,
 		client:      client,
@@ -174,7 +175,7 @@ func (s *RegionRequestSender) GetRegionCache() *RegionCache {
 }
 
 // GetClient returns the RPC client.
-func (s *RegionRequestSender) GetClient() Client {
+func (s *RegionRequestSender) GetClient() client.Client {
 	return s.client
 }
 
@@ -200,7 +201,7 @@ func (s *RegionRequestSender) SetRPCError(err error) {
 
 // SendReq sends a request to tikv server. If fails to send the request to all replicas,
 // a fake region error may be returned. Caller which receives the error should retry the request.
-func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
+func (s *RegionRequestSender) SendReq(bo *retry.Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
 	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout, tikvrpc.TiKV)
 	return resp, err
 }
@@ -263,7 +264,7 @@ const maxReplicaAttempt = 10
 
 // next creates the RPCContext of the current candidate replica.
 // It returns a SendError if runs out of all replicas or the cached region is invalidated.
-func (s *replicaSelector) next(bo *Backoffer) (*RPCContext, error) {
+func (s *replicaSelector) next(bo *retry.Backoffer) (*RPCContext, error) {
 	for {
 		if !s.region.isValid() {
 			metrics.TiKVReplicaSelectorFailureCounter.WithLabelValues("invalid").Inc()
@@ -305,7 +306,7 @@ func (s *replicaSelector) next(bo *Backoffer) (*RPCContext, error) {
 	}
 }
 
-func (s *replicaSelector) onSendFailure(bo *Backoffer, err error) {
+func (s *replicaSelector) onSendFailure(bo *retry.Backoffer, err error) {
 	metrics.RegionCacheCounterWithSendFail.Inc()
 	replica := s.replicas[s.nextReplicaIdx-1]
 	if replica.store.requestLiveness(bo, s.regionCache) == reachable {
@@ -384,7 +385,7 @@ func (s *replicaSelector) invalidateRegion() {
 }
 
 func (s *RegionRequestSender) getRPCContext(
-	bo *Backoffer,
+	bo *retry.Backoffer,
 	req *tikvrpc.Request,
 	regionID RegionVerID,
 	et tikvrpc.EndpointType,
@@ -426,13 +427,14 @@ func (s *RegionRequestSender) reset() {
 	s.failProxyStoreIDs = nil
 }
 
-func isFakeRegionError(err *errorpb.Error) bool {
+// IsFakeRegionError returns true if err is fack region error.
+func IsFakeRegionError(err *errorpb.Error) bool {
 	return err != nil && err.GetEpochNotMatch() != nil && len(err.GetEpochNotMatch().CurrentRegions) == 0
 }
 
 // SendReqCtx sends a request to tikv server and return response and RPCCtx of this RPC.
 func (s *RegionRequestSender) SendReqCtx(
-	bo *Backoffer,
+	bo *retry.Backoffer,
 	req *tikvrpc.Request,
 	regionID RegionVerID,
 	timeout time.Duration,
@@ -617,7 +619,7 @@ func (h *RPCCanceller) CancelAll() {
 	h.Unlock()
 }
 
-func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext, req *tikvrpc.Request, timeout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
+func (s *RegionRequestSender) sendReqToRegion(bo *retry.Backoffer, rpcCtx *RPCContext, req *tikvrpc.Request, timeout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
 	if e := tikvrpc.SetContext(req, rpcCtx.Meta, rpcCtx.Peer); e != nil {
 		return nil, false, errors.Trace(e)
 	}
@@ -777,7 +779,7 @@ func (s *RegionRequestSender) releaseStoreToken(st *Store) {
 	logutil.BgLogger().Warn("release store token failed, count equals to 0")
 }
 
-func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
+func (s *RegionRequestSender) onSendFail(bo *retry.Backoffer, ctx *RPCContext, err error) error {
 	if span := opentracing.SpanFromContext(bo.GetCtx()); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("regionRequest.onSendFail", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -868,7 +870,7 @@ func regionErrorToLabel(e *errorpb.Error) string {
 	return "unknown"
 }
 
-func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req *tikvrpc.Request, regionErr *errorpb.Error, opts *[]StoreSelectorOption) (shouldRetry bool, err error) {
+func (s *RegionRequestSender) onRegionError(bo *retry.Backoffer, ctx *RPCContext, req *tikvrpc.Request, regionErr *errorpb.Error, opts *[]StoreSelectorOption) (shouldRetry bool, err error) {
 	if span := opentracing.SpanFromContext(bo.GetCtx()); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tikv.onRegionError", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
