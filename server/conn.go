@@ -1727,7 +1727,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 		if handled {
 			execStmt := cc.ctx.Value(session.ExecStmtVarKey)
 			if execStmt != nil {
-				execStmt.(*executor.ExecStmt).FinishExecuteStmt(0, err == nil, false)
+				execStmt.(*executor.ExecStmt).FinishExecuteStmt(0, err, false)
 			}
 		}
 		if err != nil {
