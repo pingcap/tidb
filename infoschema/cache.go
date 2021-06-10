@@ -27,6 +27,8 @@ type InfoCache struct {
 	mu sync.RWMutex
 	// cache is sorted by SchemaVersion in descending order
 	cache []InfoSchema
+	// record SnapshotTS of the latest schema Insert.
+	maxUpdatedSnapshotTS uint64
 }
 
 // NewCache creates a new InfoCache.
@@ -50,13 +52,30 @@ func (h *InfoCache) GetLatest() InfoSchema {
 func (h *InfoCache) GetByVersion(version int64) InfoSchema {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	metrics.InfoCacheCounters.WithLabelValues("get").Inc()
+	metrics.InfoCacheCounters.WithLabelValues("get_by_version").Inc()
 	i := sort.Search(len(h.cache), func(i int) bool {
 		return h.cache[i].SchemaMetaVersion() <= version
 	})
 	if i < len(h.cache) && h.cache[i].SchemaMetaVersion() == version {
-		metrics.InfoCacheCounters.WithLabelValues("hit").Inc()
+		metrics.InfoCacheCounters.WithLabelValues("hit_by_version").Inc()
 		return h.cache[i]
+	}
+	return nil
+}
+
+// GetBySnapshotTS gets the information schema based on snapshotTS.
+// if the snapshotTS is new than maxUpdatedSnapshotTS, that's mean it can be directly use
+// the latest infoschema.
+func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	metrics.InfoCacheCounters.WithLabelValues("get_by_ts").Inc()
+	if snapshotTS >= h.maxUpdatedSnapshotTS {
+		if len(h.cache) > 0 {
+			metrics.InfoCacheCounters.WithLabelValues("hit_by_ts").Inc()
+			return h.cache[0]
+		}
 	}
 	return nil
 }
@@ -64,7 +83,7 @@ func (h *InfoCache) GetByVersion(version int64) InfoSchema {
 // Insert will **TRY** to insert the infoschema into the cache.
 // It only promised to cache the newest infoschema.
 // It returns 'true' if it is cached, 'false' otherwise.
-func (h *InfoCache) Insert(is InfoSchema) bool {
+func (h *InfoCache) Insert(is InfoSchema, snapshotTS uint64) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -72,6 +91,10 @@ func (h *InfoCache) Insert(is InfoSchema) bool {
 	i := sort.Search(len(h.cache), func(i int) bool {
 		return h.cache[i].SchemaMetaVersion() <= version
 	})
+
+	if h.maxUpdatedSnapshotTS < snapshotTS {
+		h.maxUpdatedSnapshotTS = snapshotTS
+	}
 
 	// cached entry
 	if i < len(h.cache) && h.cache[i].SchemaMetaVersion() == version {
