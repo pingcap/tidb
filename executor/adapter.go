@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"math"
 	"runtime/trace"
-	g "strings"
+	"strings"
 	"sync/atomic"
 	"time"
 
