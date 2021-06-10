@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // make sure `TableReaderExecutor` implements `Executor`.
@@ -171,6 +172,14 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
 		}
 		return nil
+	}
+
+	tbInfo := e.table.Meta()
+	if tbInfo != nil && tbInfo.Name.L == "global_variables" {
+		logutil.BgLogger().Info("read global variable--",
+			zap.Uint64("start_ts", e.startTS),
+			zap.String("start_ts_time", ts2Time(e.startTS).String()),
+			zap.Stack("stack"))
 	}
 
 	firstResult, err := e.buildResp(ctx, firstPartRanges)

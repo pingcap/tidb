@@ -995,6 +995,12 @@ func (s *session) replaceTableValue(ctx context.Context, tblName string, varName
 		_, _, err = s.ExecRestrictedStmt(ctx, stmt)
 		return err
 	}
+	if strings.Contains(varName, "top_sql") {
+		logutil.BgLogger().Info("replace global variable--",
+			zap.String("name", varName),
+			zap.String("value", val),
+			zap.Stack("stack"))
+	}
 	stmt, err := s.ParseWithParams(ctx, `REPLACE INTO %n.%n (variable_name, variable_value) VALUES (%?, %?)`, mysql.SystemDB, tblName, varName, val)
 	if err != nil {
 		return err

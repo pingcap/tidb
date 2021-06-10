@@ -225,6 +225,14 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 		}
 	}
 	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, txn)
+
+	if e.Table != nil && e.Table.Meta() != nil && e.Table.Meta().Name.L == "global_variables" {
+		logutil.BgLogger().Info("replace global variable--",
+			zap.Uint64("start_ts", txn.StartTS()),
+			zap.String("start_ts_time", ts2Time(txn.StartTS()).String()),
+			zap.Stack("stack"))
+	}
+
 	prefetchStart := time.Now()
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
