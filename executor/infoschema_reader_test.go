@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
+	txninfo "github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -369,7 +370,6 @@ func (s *testInfoschemaTableSuite) TestUserPrivilegesTable(c *C) {
 	tk.MustExec("GRANT SELECT ON *.* to usageuser WITH GRANT OPTION")
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def Select YES"))
 	// test DYNAMIC privs
-	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
 	tk.MustExec("GRANT BACKUP_ADMIN ON *.* to usageuser")
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'" ORDER BY privilege_type`).Check(testkit.Rows("'usageuser'@'%' def BACKUP_ADMIN NO", "'usageuser'@'%' def Select YES"))
 }
@@ -550,6 +550,10 @@ func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
 	analyzeTester.MustExec("set role r_t1")
 	resultT1 := tk.MustQuery("select * from information_schema.analyze_status where TABLE_NAME='t1'").Sort()
 	c.Assert(len(resultT1.Rows()), Greater, 0)
+	for _, row := range resultT1.Rows() {
+		c.Assert(len(row), Equals, 8) // test length of row
+		c.Assert(row[6], NotNil)      // test `End_time` field
+	}
 }
 
 func (s *testInfoschemaTableSerialSuite) TestForServersInfo(c *C) {
@@ -722,6 +726,10 @@ func (s *testInfoschemaClusterTableSuite) TearDownSuite(c *C) {
 type mockSessionManager struct {
 	processInfoMap map[uint64]*util.ProcessInfo
 	serverID       uint64
+}
+
+func (sm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
+	panic("unimplemented!")
 }
 
 func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {

@@ -16,24 +16,56 @@ package unionstore
 import (
 	"context"
 
-	tidbkv "github.com/pingcap/tidb/kv"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 )
+
+// Iterator is the interface for a iterator on KV store.
+type Iterator interface {
+	Valid() bool
+	Key() []byte
+	Value() []byte
+	Next() error
+	Close()
+}
+
+// Getter is the interface for the Get method.
+type Getter interface {
+	// Get gets the value for key k from kv store.
+	// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
+	Get(k []byte) ([]byte, error)
+}
+
+// uSnapshot defines the interface for the snapshot fetched from KV store.
+type uSnapshot interface {
+	// Get gets the value for key k from kv store.
+	// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
+	Get(ctx context.Context, k []byte) ([]byte, error)
+	// Iter creates an Iterator positioned on the first entry that k <= entry's key.
+	// If such entry is not found, it returns an invalid Iterator with no error.
+	// It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
+	// The Iterator must be Closed after use.
+	Iter(k []byte, upperBound []byte) (Iterator, error)
+
+	// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
+	// The returned iterator will iterate from greater key to smaller key.
+	// If k is nil, the returned iterator will be positioned at the last key.
+	// TODO: Add lower bound limit
+	IterReverse(k []byte) (Iterator, error)
+}
 
 // KVUnionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.
 type KVUnionStore struct {
 	memBuffer *MemDB
-	snapshot  tidbkv.Snapshot
-	opts      options
+	snapshot  uSnapshot
 }
 
 // NewUnionStore builds a new unionStore.
-func NewUnionStore(snapshot tidbkv.Snapshot) *KVUnionStore {
+func NewUnionStore(snapshot uSnapshot) *KVUnionStore {
 	return &KVUnionStore{
 		snapshot:  snapshot,
 		memBuffer: newMemDB(),
-		opts:      make(map[int]interface{}),
 	}
 }
 
@@ -43,22 +75,22 @@ func (us *KVUnionStore) GetMemBuffer() *MemDB {
 }
 
 // Get implements the Retriever interface.
-func (us *KVUnionStore) Get(ctx context.Context, k tidbkv.Key) ([]byte, error) {
-	v, err := us.memBuffer.Get(ctx, k)
-	if tidbkv.IsErrNotFound(err) {
+func (us *KVUnionStore) Get(ctx context.Context, k []byte) ([]byte, error) {
+	v, err := us.memBuffer.Get(k)
+	if tikverr.IsErrNotFound(err) {
 		v, err = us.snapshot.Get(ctx, k)
 	}
 	if err != nil {
 		return v, err
 	}
 	if len(v) == 0 {
-		return nil, tidbkv.ErrNotExist
+		return nil, tikverr.ErrNotExist
 	}
 	return v, nil
 }
 
 // Iter implements the Retriever interface.
-func (us *KVUnionStore) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterator, error) {
+func (us *KVUnionStore) Iter(k, upperBound []byte) (Iterator, error) {
 	bufferIt, err := us.memBuffer.Iter(k, upperBound)
 	if err != nil {
 		return nil, err
@@ -71,7 +103,7 @@ func (us *KVUnionStore) Iter(k tidbkv.Key, upperBound tidbkv.Key) (tidbkv.Iterat
 }
 
 // IterReverse implements the Retriever interface.
-func (us *KVUnionStore) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
+func (us *KVUnionStore) IterReverse(k []byte) (Iterator, error) {
 	bufferIt, err := us.memBuffer.IterReverse(k)
 	if err != nil {
 		return nil, err
@@ -84,7 +116,7 @@ func (us *KVUnionStore) IterReverse(k tidbkv.Key) (tidbkv.Iterator, error) {
 }
 
 // HasPresumeKeyNotExists gets the key exist error info for the lazy check.
-func (us *KVUnionStore) HasPresumeKeyNotExists(k tidbkv.Key) bool {
+func (us *KVUnionStore) HasPresumeKeyNotExists(k []byte) bool {
 	flags, err := us.memBuffer.GetFlags(k)
 	if err != nil {
 		return false
@@ -93,28 +125,12 @@ func (us *KVUnionStore) HasPresumeKeyNotExists(k tidbkv.Key) bool {
 }
 
 // UnmarkPresumeKeyNotExists deletes the key exist error info for the lazy check.
-func (us *KVUnionStore) UnmarkPresumeKeyNotExists(k tidbkv.Key) {
+func (us *KVUnionStore) UnmarkPresumeKeyNotExists(k []byte) {
 	us.memBuffer.UpdateFlags(k, kv.DelPresumeKeyNotExists)
 }
 
-// SetOption implements the unionStore SetOption interface.
-func (us *KVUnionStore) SetOption(opt int, val interface{}) {
-	us.opts[opt] = val
-}
-
-// DelOption implements the unionStore DelOption interface.
-func (us *KVUnionStore) DelOption(opt int) {
-	delete(us.opts, opt)
-}
-
-// GetOption implements the unionStore GetOption interface.
-func (us *KVUnionStore) GetOption(opt int) interface{} {
-	return us.opts[opt]
-}
-
-type options map[int]interface{}
-
-func (opts options) Get(opt int) (interface{}, bool) {
-	v, ok := opts[opt]
-	return v, ok
+// SetEntrySizeLimit sets the size limit for each entry and total buffer.
+func (us *KVUnionStore) SetEntrySizeLimit(entryLimit, bufferLimit uint64) {
+	us.memBuffer.entrySizeLimit = entryLimit
+	us.memBuffer.bufferSizeLimit = bufferLimit
 }

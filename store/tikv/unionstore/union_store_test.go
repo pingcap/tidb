@@ -17,8 +17,8 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/testleak"
+	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	"github.com/pingcap/tidb/store/tikv/util/testleak"
 )
 
 var _ = Suite(&testUnionStoreSuite{})
@@ -56,7 +56,7 @@ func (s *testUnionStoreSuite) TestDelete(c *C) {
 	err = s.us.GetMemBuffer().Delete([]byte("1"))
 	c.Assert(err, IsNil)
 	_, err = s.us.Get(context.TODO(), []byte("1"))
-	c.Assert(kv.IsErrNotFound(err), IsTrue)
+	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 
 	err = s.us.GetMemBuffer().Set([]byte("1"), []byte("2"))
 	c.Assert(err, IsNil)
@@ -125,13 +125,13 @@ func (s *testUnionStoreSuite) TestIterReverse(c *C) {
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("0")}, [][]byte{[]byte("2"), []byte("0")})
 }
 
-func checkIterator(c *C, iter kv.Iterator, keys [][]byte, values [][]byte) {
+func checkIterator(c *C, iter Iterator, keys [][]byte, values [][]byte) {
 	defer iter.Close()
 	c.Assert(len(keys), Equals, len(values))
 	for i, k := range keys {
 		v := values[i]
 		c.Assert(iter.Valid(), IsTrue)
-		c.Assert([]byte(iter.Key()), BytesEquals, k)
+		c.Assert(iter.Key(), BytesEquals, k)
 		c.Assert(iter.Value(), BytesEquals, v)
 		c.Assert(iter.Next(), IsNil)
 	}

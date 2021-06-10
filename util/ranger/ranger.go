@@ -101,6 +101,16 @@ func convertPoint(sc *stmtctx.StatementContext, point *point, tp *types.FieldTyp
 			// Ignore the types.ErrOverflow when we convert TypeNewDecimal values.
 			// A trimmed valid boundary point value would be returned then. Accordingly, the `excl` of the point
 			// would be adjusted. Impossible ranges would be skipped by the `validInterval` call later.
+		} else if tp.Tp == mysql.TypeEnum && terror.ErrorEqual(err, types.ErrTruncated) {
+			// Ignore the types.ErrorTruncated when we convert TypeEnum values.
+			// We should cover Enum upper overflow, and convert to the biggest value.
+			if point.value.GetInt64() > 0 {
+				upperEnum, err := types.ParseEnumValue(tp.Elems, uint64(len(tp.Elems)))
+				if err != nil {
+					return nil, err
+				}
+				casted.SetMysqlEnum(upperEnum, tp.Collate)
+			}
 		} else {
 			return point, errors.Trace(err)
 		}
@@ -464,7 +474,7 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 	for _, ran := range ranges {
 		lowTail := len(ran.LowVal) - 1
 		for i := 0; i < lowTail; i++ {
-			CutDatumByPrefixLen(&ran.LowVal[i], lengths[i], tp[i])
+			hasCut = CutDatumByPrefixLen(&ran.LowVal[i], lengths[i], tp[i]) || hasCut
 		}
 		lowCut := CutDatumByPrefixLen(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail])
 		// If the length of the last column of LowVal is equal to the prefix length, LowExclude should be set false.
@@ -475,13 +485,13 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 		}
 		highTail := len(ran.HighVal) - 1
 		for i := 0; i < highTail; i++ {
-			CutDatumByPrefixLen(&ran.HighVal[i], lengths[i], tp[i])
+			hasCut = CutDatumByPrefixLen(&ran.HighVal[i], lengths[i], tp[i]) || hasCut
 		}
 		highCut := CutDatumByPrefixLen(&ran.HighVal[highTail], lengths[highTail], tp[highTail])
 		if highCut {
 			ran.HighExclude = false
 		}
-		hasCut = lowCut || highCut
+		hasCut = hasCut || lowCut || highCut
 	}
 	return hasCut
 }

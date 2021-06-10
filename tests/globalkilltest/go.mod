@@ -1,6 +1,6 @@
 module github.com/pingcap/tests/globalkilltest
 
-go 1.13
+go 1.16
 
 require (
 	github.com/go-sql-driver/mysql v1.5.0
@@ -12,5 +12,4 @@ require (
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20191023171146-3cf2f69b5738
 	go.uber.org/zap v1.16.0
 	google.golang.org/grpc v1.26.0
-	inet.af/tcpproxy v0.0.0-20200125044825-b6bb9b5b8252
 )

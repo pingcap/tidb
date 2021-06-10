@@ -82,5 +82,5 @@ func checkRegionStartWithTableID(c *C, id int64, store kvStore) {
 	c.Assert(err, IsNil)
 	// Region cache may be out of date, so we need to drop this expired region and load it again.
 	cache.InvalidateCachedRegion(loc.Region)
-	c.Assert([]byte(loc.StartKey), BytesEquals, []byte(regionStartKey))
+	c.Assert(loc.StartKey, BytesEquals, []byte(regionStartKey))
 }

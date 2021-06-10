@@ -31,8 +31,9 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/copr"
+	"github.com/pingcap/tidb/store/driver/backoff"
 	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
@@ -158,7 +159,7 @@ func newBackfillWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 		sessCtx:   sessCtx,
 		taskCh:    make(chan *reorgBackfillTask, 1),
 		resultCh:  make(chan *backfillResult, 1),
-		priority:  tikvstore.PriorityLow,
+		priority:  kv.PriorityLow,
 	}
 }
 
@@ -330,8 +331,9 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 	}
 
 	maxSleep := 10000 // ms
-	bo := tikv.NewBackofferWithVars(context.Background(), maxSleep, nil)
-	ranges, err := tikv.SplitRegionRanges(bo, s.GetRegionCache(), []kv.KeyRange{kvRange})
+	bo := backoff.NewBackofferWithVars(context.Background(), maxSleep, nil)
+	rc := copr.NewRegionCache(s.GetRegionCache())
+	ranges, err := rc.SplitRegionRanges(bo, []kv.KeyRange{kvRange})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -674,7 +676,7 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 
 	ver := kv.Version{Ver: version}
 	snap := store.GetSnapshot(ver)
-	snap.SetOption(tikvstore.Priority, priority)
+	snap.SetOption(kv.Priority, priority)
 
 	it, err := snap.Iter(firstKey, upperBound)
 	if err != nil {

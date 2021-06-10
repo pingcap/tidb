@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util"
@@ -68,6 +69,10 @@ type testSuite struct {
 
 type mockSessionManager struct {
 	PS []*util.ProcessInfo
+}
+
+func (msm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
+	panic("unimplemented!")
 }
 
 func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
@@ -151,7 +156,8 @@ func normalizeWithDefaultDB(c *C, sql, db string) (string, string) {
 	testParser := parser.New()
 	stmt, err := testParser.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
-	return parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, "test", ""))
+	normalized, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, "test", ""))
+	return normalized, digest.String()
 }
 
 func (s *testSuite) TestBindParse(c *C) {
@@ -177,7 +183,7 @@ func (s *testSuite) TestBindParse(c *C) {
 	c.Check(bindHandle.Size(), Equals, 1)
 
 	sql, hash := parser.NormalizeDigest("select * from test . t")
-	bindData := bindHandle.GetBindRecord(hash, sql, "test")
+	bindData := bindHandle.GetBindRecord(hash.String(), sql, "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from `test` . `t`")
 	bind := bindData.Bindings[0]
@@ -651,7 +657,7 @@ func (s *testSuite) TestBindingSymbolList(c *C) {
 	// Normalize
 	sql, hash := parser.NormalizeDigest("select a, b from test . t where a = 1 limit 0, 1")
 
-	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
+	bindData := s.domain.BindHandle().GetBindRecord(hash.String(), sql, "test")
 	c.Assert(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select `a` , `b` from `test` . `t` where `a` = ? limit ...")
 	bind := bindData.Bindings[0]
@@ -771,7 +777,7 @@ func (s *testSuite) TestErrorBind(c *C) {
 	c.Assert(err, IsNil, Commentf("err %v", err))
 
 	sql, hash := parser.NormalizeDigest("select * from test . t where i > ?")
-	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
+	bindData := s.domain.BindHandle().GetBindRecord(hash.String(), sql, "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from `test` . `t` where `i` > ?")
 	bind := bindData.Bindings[0]

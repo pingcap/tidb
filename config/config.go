@@ -60,9 +60,9 @@ const (
 	DefHost = "0.0.0.0"
 	// DefStatusHost is the default status host of TiDB
 	DefStatusHost = "0.0.0.0"
-	// Def TableColumnCountLimit is limit of the number of columns in a table
+	// DefTableColumnCountLimit is limit of the number of columns in a table
 	DefTableColumnCountLimit = 1017
-	// Def TableColumnCountLimit is maximum limitation of the number of columns in a table
+	// DefMaxOfTableColumnCountLimit is maximum limitation of the number of columns in a table
 	DefMaxOfTableColumnCountLimit = 4096
 )
 
@@ -73,7 +73,7 @@ var (
 		"tikv":     true,
 		"unistore": true,
 	}
-	// checkTableBeforeDrop enable to execute `admin check table` before `drop table`.
+	// CheckTableBeforeDrop enable to execute `admin check table` before `drop table`.
 	CheckTableBeforeDrop = false
 	// checkBeforeDropLDFlag is a go build flag.
 	checkBeforeDropLDFlag = "None"
@@ -198,7 +198,6 @@ func (c *Config) getTiKVConfig() *tikvcfg.Config {
 	return &tikvcfg.Config{
 		CommitterConcurrency:  c.Performance.CommitterConcurrency,
 		MaxTxnTTL:             c.Performance.MaxTxnTTL,
-		ServerMemoryQuota:     defTiKVCfg.ServerMemoryQuota,
 		TiKVClient:            c.TiKVClient,
 		Security:              c.Security.ClusterSecurity(),
 		PDClient:              c.PDClient,
@@ -208,6 +207,7 @@ func (c *Config) getTiKVConfig() *tikvcfg.Config {
 		OpenTracingEnable:     c.OpenTracing.Enable,
 		Path:                  c.Path,
 		EnableForwarding:      c.EnableForwarding,
+		TxnScope:              c.Labels["zone"],
 	}
 }
 
@@ -297,7 +297,7 @@ func (b *nullableBool) UnmarshalJSON(data []byte) error {
 type Log struct {
 	// Log level.
 	Level string `toml:"level" json:"level"`
-	// Log format. one of json, text, or console.
+	// Log format, one of json or text.
 	Format string `toml:"format" json:"format"`
 	// Disable automatic timestamps in output. Deprecated: use EnableTimestamp instead.
 	DisableTimestamp nullableBool `toml:"disable-timestamp" json:"disable-timestamp"`
@@ -363,6 +363,8 @@ type Security struct {
 	ClusterVerifyCN        []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
 	// If set to "plaintext", the spilled files will not be encrypted.
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
+	// EnableSEM prevents SUPER users from having full access.
+	EnableSEM bool `toml:"enable-sem" json:"enable-sem"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -379,7 +381,6 @@ func (e *ErrConfigValidationFailed) Error() string {
 		"TiDB manual to make sure this option has not been deprecated and removed from your TiDB "+
 		"version if the option does not appear to be a typo", e.confFile, strings.Join(
 		e.UndecodedItems, ", "))
-
 }
 
 // ClusterSecurity returns Security info for cluster
@@ -417,7 +418,7 @@ type Performance struct {
 	TCPNoDelay            bool    `toml:"tcp-no-delay" json:"tcp-no-delay"`
 	CrossJoin             bool    `toml:"cross-join" json:"cross-join"`
 	RunAutoAnalyze        bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
-	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
+	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
 	CommitterConcurrency  int     `toml:"committer-concurrency" json:"committer-concurrency"`
 	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	MemProfileInterval    string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
@@ -492,13 +493,15 @@ type Binlog struct {
 // PessimisticTxn is the config for pessimistic transaction.
 type PessimisticTxn struct {
 	// The max count of retry for a single statement in a pessimistic transaction.
-	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
+	MaxRetryCount           uint `toml:"max-retry-count" json:"max-retry-count"`
+	DeadlockHistoryCapacity uint `toml:"deadlock-history-capacity" json:"deadlock-history-capacity"`
 }
 
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn
 func DefaultPessimisticTxn() PessimisticTxn {
 	return PessimisticTxn{
-		MaxRetryCount: 256,
+		MaxRetryCount:           256,
+		DeadlockHistoryCapacity: 10,
 	}
 }
 
@@ -666,6 +669,7 @@ var defaultConf = Config{
 	EnableGlobalIndex:          false,
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
+		EnableSEM:                   false,
 	},
 	DeprecateIntegerDisplayWidth: false,
 	EnableEnumLengthLimit:        true,

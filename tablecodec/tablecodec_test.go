@@ -573,3 +573,9 @@ func (s *testTableCodecSuite) TestError(c *C) {
 		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
 	}
 }
+
+func (s *testTableCodecSuite) TestUntouchedIndexKValue(c *C) {
+	untouchedIndexKey := []byte("t00000001_i000000001")
+	untouchedIndexValue := []byte{0, 0, 0, 0, 0, 0, 0, 1, 49}
+	c.Assert(IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue), IsTrue)
+}

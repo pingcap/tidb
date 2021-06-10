@@ -61,7 +61,7 @@ func newCoprCache(config *config.CoprocessorCache) (*coprCache, error) {
 		return nil, nil
 	}
 	capacityInBytes := int64(config.CapacityMB * 1024.0 * 1024.0)
-	if capacityInBytes == 0 {
+	if capacityInBytes <= 0 {
 		return nil, errors.New("Capacity must be > 0 to enable the cache")
 	}
 	maxEntityInBytes := int64(config.AdmissionMaxResultMB * 1024.0 * 1024.0)

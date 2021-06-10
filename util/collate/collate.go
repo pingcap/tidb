@@ -193,6 +193,21 @@ func CollationName2ID(name string) int {
 	return mysql.DefaultCollationID
 }
 
+// SubstituteMissingCollationToDefault will switch to the default collation if
+// new collations are enabled and the specified collation is not supported.
+func SubstituteMissingCollationToDefault(co string) string {
+	var err error
+	if _, err = GetCollationByName(co); err == nil {
+		return co
+	}
+	logutil.BgLogger().Warn(err.Error())
+	var coll *charset.Collation
+	if coll, err = GetCollationByName(charset.CollationUTF8MB4); err != nil {
+		logutil.BgLogger().Warn(err.Error())
+	}
+	return coll.Name
+}
+
 // GetCollationByName wraps charset.GetCollationByName, it checks the collation.
 func GetCollationByName(name string) (coll *charset.Collation, err error) {
 	if coll, err = charset.GetCollationByName(name); err != nil {

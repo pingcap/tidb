@@ -217,6 +217,9 @@ func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_extended set version = %?, status = %? where table_id = %? and status in (%?, %?)", startTS, StatsStatusDeleted, statsID, StatsStatusAnalyzed, StatsStatusInited); err != nil {
 			return err
 		}
+		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_fm_sketch where table_id = %?", statsID); err != nil {
+			return err
+		}
 	}
 	return nil
 }

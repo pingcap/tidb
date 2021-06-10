@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
@@ -975,6 +976,11 @@ func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIden
 				}
 			}
 		}
+	}
+	// If SEM is enabled, and the privilege is of type restricted, do not fall through
+	// To using SUPER as a replacement privilege.
+	if sem.IsEnabled() && sem.IsRestrictedPrivilege(privName) {
+		return false
 	}
 	// For compatibility reasons, the SUPER privilege also has all DYNAMIC privileges granted to it (dynamic privs are a super replacement)
 	// This may be changed in future, but will require a bootstrap task to assign all dynamic privileges

@@ -33,7 +33,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
@@ -136,7 +137,8 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	tblID := tbl.Meta().ID
 
 	// Split the table.
-	s.cluster.SplitTable(tblID, N/2)
+	tableStart := tablecodec.GenTableRecordPrefix(tblID)
+	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), N/2)
 
 	ctx := context.Background()
 	for i := 0; i < N/2; i++ {
@@ -965,7 +967,7 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5000)
+	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5500)
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1093,19 +1095,19 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 
 type checkPrioClient struct {
 	tikv.Client
-	priority pb.CommandPri
+	priority kvrpcpb.CommandPri
 	mu       struct {
 		sync.RWMutex
 		checkPrio bool
 	}
 }
 
-func (c *checkPrioClient) setCheckPriority(priority pb.CommandPri) {
+func (c *checkPrioClient) setCheckPriority(priority kvrpcpb.CommandPri) {
 	atomic.StoreInt32((*int32)(&c.priority), int32(priority))
 }
 
-func (c *checkPrioClient) getCheckPriority() pb.CommandPri {
-	return (pb.CommandPri)(atomic.LoadInt32((*int32)(&c.priority)))
+func (c *checkPrioClient) getCheckPriority() kvrpcpb.CommandPri {
+	return (kvrpcpb.CommandPri)(atomic.LoadInt32((*int32)(&c.priority)))
 }
 
 func (c *checkPrioClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
@@ -1172,11 +1174,11 @@ func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
 	cli.mu.checkPrio = true
 	cli.mu.Unlock()
 
-	cli.setCheckPriority(pb.CommandPri_High)
+	cli.setCheckPriority(kvrpcpb.CommandPri_High)
 	tk.MustQuery("select id from t where id = 1")
 	tk.MustQuery("select * from t1 where id = 1")
 
-	cli.setCheckPriority(pb.CommandPri_Normal)
+	cli.setCheckPriority(kvrpcpb.CommandPri_Normal)
 	tk.MustQuery("select count(*) from t")
 	tk.MustExec("update t set id = 3")
 	tk.MustExec("delete from t")
@@ -1191,43 +1193,43 @@ func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
 		conf.Log.ExpensiveThreshold = 0
 	})
 
-	cli.setCheckPriority(pb.CommandPri_High)
+	cli.setCheckPriority(kvrpcpb.CommandPri_High)
 	tk.MustQuery("select id from t where id = 1")
 	tk.MustQuery("select * from t1 where id = 1")
 	tk.MustExec("delete from t where id = 2")
 	tk.MustExec("update t set id = 2 where id = 1")
 
-	cli.setCheckPriority(pb.CommandPri_Low)
+	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
 	tk.MustQuery("select count(*) from t")
 	tk.MustExec("delete from t")
 	tk.MustExec("insert into t values (3)")
 
 	// Test priority specified by SQL statement.
-	cli.setCheckPriority(pb.CommandPri_High)
+	cli.setCheckPriority(kvrpcpb.CommandPri_High)
 	tk.MustQuery("select HIGH_PRIORITY * from t")
 
-	cli.setCheckPriority(pb.CommandPri_Low)
+	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
 	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
 
-	cli.setCheckPriority(pb.CommandPri_High)
+	cli.setCheckPriority(kvrpcpb.CommandPri_High)
 	tk.MustExec("set tidb_force_priority = 'HIGH_PRIORITY'")
 	tk.MustQuery("select * from t").Check(testkit.Rows("3"))
 	tk.MustExec("update t set id = id + 1")
 	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
 
-	cli.setCheckPriority(pb.CommandPri_Low)
+	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
 	tk.MustExec("set tidb_force_priority = 'LOW_PRIORITY'")
 	tk.MustQuery("select * from t").Check(testkit.Rows("4"))
 	tk.MustExec("update t set id = id + 1")
 	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
 
-	cli.setCheckPriority(pb.CommandPri_Normal)
+	cli.setCheckPriority(kvrpcpb.CommandPri_Normal)
 	tk.MustExec("set tidb_force_priority = 'DELAYED'")
 	tk.MustQuery("select * from t").Check(testkit.Rows("5"))
 	tk.MustExec("update t set id = id + 1")
 	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
 
-	cli.setCheckPriority(pb.CommandPri_Low)
+	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
 	tk.MustExec("set tidb_force_priority = 'NO_PRIORITY'")
 	tk.MustQuery("select * from t").Check(testkit.Rows("6"))
 	tk.MustExec("update t set id = id + 1")
@@ -1471,8 +1473,6 @@ func (s *seqTestSuite) TestMaxDeltaSchemaCount(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	c.Assert(variable.GetMaxDeltaSchemaCount(), Equals, int64(variable.DefTiDBMaxDeltaSchemaCount))
-	gvc := domain.GetDomain(tk.Se).GetGlobalVarsCache()
-	gvc.Disable()
 
 	tk.MustExec("set @@global.tidb_max_delta_schema_count= -1")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_max_delta_schema_count value: '-1'"))

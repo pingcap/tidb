@@ -18,8 +18,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/ngaut/unistore/lockstore"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
 )
 
 type rawHandler struct {

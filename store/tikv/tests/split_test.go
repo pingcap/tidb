@@ -21,9 +21,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
+	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -37,7 +38,7 @@ type testSplitSuite struct {
 var _ = Suite(&testSplitSuite{})
 
 func (s *testSplitSuite) SetUpTest(c *C) {
-	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("")
+	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("", mockcopr.NewCoprRPCHandler())
 	c.Assert(err, IsNil)
 	mocktikv.BootstrapWithSingleStore(cluster)
 	s.cluster = cluster
@@ -118,12 +119,6 @@ type mockPDClient struct {
 	sync.RWMutex
 	client pd.Client
 	stop   bool
-}
-
-func (c *mockPDClient) enable() {
-	c.Lock()
-	defer c.Unlock()
-	c.stop = false
 }
 
 func (c *mockPDClient) disable() {
