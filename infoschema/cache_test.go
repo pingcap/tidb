@@ -37,6 +37,7 @@ func (s *testInfoCacheSuite) TestInsert(c *C) {
 	c.Assert(ic.GetByVersion(2), DeepEquals, is2)
 	c.Assert(ic.GetBySnapshotTS(2), DeepEquals, is2)
 	c.Assert(ic.GetBySnapshotTS(10), DeepEquals, is2)
+	c.Assert(ic.GetBySnapshotTS(0), IsNil)
 
 	// newer
 	is5 := infoschema.MockInfoSchemaWithSchemaVer(nil, 5)

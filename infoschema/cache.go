@@ -40,9 +40,9 @@ func NewCache(capcity int) *InfoCache {
 func (h *InfoCache) GetLatest() InfoSchema {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	metrics.InfoCacheCounters.WithLabelValues("get").Inc()
+	metrics.InfoCacheCounters.WithLabelValues("get", "latest").Inc()
 	if len(h.cache) > 0 {
-		metrics.InfoCacheCounters.WithLabelValues("hit").Inc()
+		metrics.InfoCacheCounters.WithLabelValues("hit", "latest").Inc()
 		return h.cache[0]
 	}
 	return nil
@@ -52,28 +52,28 @@ func (h *InfoCache) GetLatest() InfoSchema {
 func (h *InfoCache) GetByVersion(version int64) InfoSchema {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	metrics.InfoCacheCounters.WithLabelValues("get_by_version").Inc()
+	metrics.InfoCacheCounters.WithLabelValues("get", "version").Inc()
 	i := sort.Search(len(h.cache), func(i int) bool {
 		return h.cache[i].SchemaMetaVersion() <= version
 	})
 	if i < len(h.cache) && h.cache[i].SchemaMetaVersion() == version {
-		metrics.InfoCacheCounters.WithLabelValues("hit_by_version").Inc()
+		metrics.InfoCacheCounters.WithLabelValues("hit", "version").Inc()
 		return h.cache[i]
 	}
 	return nil
 }
 
 // GetBySnapshotTS gets the information schema based on snapshotTS.
-// if the snapshotTS is new than maxUpdatedSnapshotTS, that's mean it can be directly use
-// the latest infoschema.
+// If the snapshotTS is new than maxUpdatedSnapshotTS, that's mean it can directly use
+// the latest infoschema. otherwise, will return nil.
 func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	metrics.InfoCacheCounters.WithLabelValues("get_by_ts").Inc()
+	metrics.InfoCacheCounters.WithLabelValues("get", "ts").Inc()
 	if snapshotTS >= h.maxUpdatedSnapshotTS {
 		if len(h.cache) > 0 {
-			metrics.InfoCacheCounters.WithLabelValues("hit_by_ts").Inc()
+			metrics.InfoCacheCounters.WithLabelValues("hit", "ts").Inc()
 			return h.cache[0]
 		}
 	}
