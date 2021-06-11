@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"go.uber.org/zap"
 )
 
@@ -35,11 +36,15 @@ const (
 	DefStoresRefreshInterval = 60
 )
 
+func init() {
+	conf := DefaultConfig()
+	StoreGlobalConfig(&conf)
+}
+
 // Config contains configuration options.
 type Config struct {
 	CommitterConcurrency int
 	MaxTxnTTL            uint64
-	ServerMemoryQuota    uint64
 	TiKVClient           TiKVClient
 	Security             Security
 	PDClient             PDClient
@@ -50,6 +55,7 @@ type Config struct {
 	OpenTracingEnable     bool
 	Path                  string
 	EnableForwarding      bool
+	TxnScope              string
 }
 
 // DefaultConfig returns the default configuration.
@@ -57,7 +63,6 @@ func DefaultConfig() Config {
 	return Config{
 		CommitterConcurrency:  128,
 		MaxTxnTTL:             60 * 60 * 1000, // 1hour
-		ServerMemoryQuota:     0,
 		TiKVClient:            DefaultTiKVClient(),
 		PDClient:              DefaultPDClient(),
 		TxnLocalLatches:       DefaultTxnLocalLatches(),
@@ -65,6 +70,7 @@ func DefaultConfig() Config {
 		OpenTracingEnable:     false,
 		Path:                  "",
 		EnableForwarding:      false,
+		TxnScope:              "",
 	}
 }
 
@@ -131,6 +137,26 @@ func UpdateGlobal(f func(conf *Config)) func() {
 	f(&newConf)
 	StoreGlobalConfig(&newConf)
 	return restore
+}
+
+const (
+	globalTxnScope = "global"
+)
+
+// GetTxnScopeFromConfig extracts @@txn_scope value from config
+func GetTxnScopeFromConfig() (bool, string) {
+	if val, err := util.EvalFailpoint("injectTxnScope"); err == nil {
+		v := val.(string)
+		if len(v) > 0 {
+			return false, v
+		}
+		return true, globalTxnScope
+	}
+
+	if kvcfg := GetGlobalConfig(); kvcfg != nil && len(kvcfg.TxnScope) > 0 {
+		return false, kvcfg.TxnScope
+	}
+	return true, globalTxnScope
 }
 
 // ParsePath parses this path.

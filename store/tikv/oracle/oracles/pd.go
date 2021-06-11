@@ -135,7 +135,7 @@ func (o *pdOracle) getTimestamp(ctx context.Context, txnScope string) (uint64, e
 }
 
 func (o *pdOracle) getArrivalTimestamp() uint64 {
-	return oracle.ComposeTS(oracle.GetPhysical(time.Now()), 0)
+	return oracle.GoTimeToTS(time.Now())
 }
 
 func (o *pdOracle) setLastTS(ts uint64, txnScope string) {
@@ -288,7 +288,7 @@ func (o *pdOracle) getStaleTimestamp(txnScope string, prevSecond uint64) (uint64
 
 	staleTime := physicalTime.Add(-arrivalTime.Sub(time.Now().Add(-time.Duration(prevSecond) * time.Second)))
 
-	return oracle.ComposeTS(oracle.GetPhysical(staleTime), 0), nil
+	return oracle.GoTimeToTS(staleTime), nil
 }
 
 // GetStaleTimestamp generate a TSO which represents for the TSO prevSecond secs ago.

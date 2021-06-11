@@ -16,9 +16,15 @@ package kv
 import (
 	"context"
 	"strconv"
+	"testing"
 
 	. "github.com/pingcap/check"
 )
+
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	TestingT(t)
+}
 
 var _ = Suite(testUtilsSuite{})
 
@@ -50,7 +56,7 @@ func (s *mockMap) Get(ctx context.Context, k Key) ([]byte, error) {
 			return s.value[i], nil
 		}
 	}
-	return nil, nil
+	return nil, ErrNotExist
 }
 
 func (s *mockMap) Set(k Key, v []byte) error {

@@ -15,7 +15,6 @@ package expensivequery
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -65,7 +64,7 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 	}
 	record.lastProfileFileName = make([][]string, 2)
 	// Read last records
-	files, err := ioutil.ReadDir(record.tmpDir)
+	files, err := os.ReadDir(record.tmpDir)
 	if err != nil {
 		record.err = err
 		return
@@ -83,7 +82,6 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 		}
 	}
 	record.initialized = true
-	return
 }
 
 // If Performance.ServerMemoryQuota is set, use `ServerMemoryQuota * MemoryUsageAlarmRatio` to check oom risk.

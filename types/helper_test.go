@@ -63,3 +63,25 @@ func (s *testTypeHelperSuite) TestTruncate(c *C) {
 		c.Assert(res, Equals, tt.expected)
 	}
 }
+
+func (s *testTypeHelperSuite) TestTruncateFloatToString(c *C) {
+	c.Parallel()
+	tests := []struct {
+		f        float64
+		dec      int
+		expected string
+	}{
+		{12.13, -1, "10"},
+		{13.15, 0, "13"},
+		{0, 2, "0"},
+		{0.001, 2, "0"},
+		{0.539, 2, "0.53"},
+		{0.9951, 2, "0.99"},
+		{1, 2, "1"},
+		{-0.456, 2, "-0.45"},
+	}
+	for _, tt := range tests {
+		res := TruncateFloatToString(tt.f, tt.dec)
+		c.Assert(res, Equals, tt.expected)
+	}
+}

@@ -14,6 +14,8 @@
 package ddl
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -135,6 +137,31 @@ func findColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
 	var c generatedColumnChecker
 	expr.Accept(&c)
 	return c.cols
+}
+
+// hasDependentByGeneratedColumn checks whether there are other columns depend on this column or not.
+func hasDependentByGeneratedColumn(tblInfo *model.TableInfo, colName model.CIStr) (bool, string) {
+	for _, col := range tblInfo.Columns {
+		for dep := range col.Dependences {
+			if dep == colName.L {
+				return true, dep
+			}
+		}
+	}
+	return false, ""
+}
+
+func isGeneratedRelatedColumn(tblInfo *model.TableInfo, newCol, col *model.ColumnInfo) error {
+	if newCol.IsGenerated() || col.IsGenerated() {
+		// TODO: Make it compatible with MySQL error.
+		msg := fmt.Sprintf("newCol IsGenerated %v, oldCol IsGenerated %v", newCol.IsGenerated(), col.IsGenerated())
+		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+	}
+	if ok, dep := hasDependentByGeneratedColumn(tblInfo, col.Name); ok {
+		msg := fmt.Sprintf("oldCol is a dependent column '%s' for generated column", dep)
+		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+	}
+	return nil
 }
 
 type generatedColumnChecker struct {

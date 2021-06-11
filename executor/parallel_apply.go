@@ -68,6 +68,7 @@ type ParallelNestedLoopApplyExec struct {
 	// fields about concurrency control
 	concurrency int
 	started     uint32
+	drained     uint32 // drained == true indicates there is no more data
 	freeChkCh   chan *chunk.Chunk
 	resultChkCh chan result
 	outerRowCh  chan outerRow
@@ -130,6 +131,11 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 
 // Next implements the Executor interface.
 func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
+	if atomic.LoadUint32(&e.drained) == 1 {
+		req.Reset()
+		return nil
+	}
+
 	if atomic.CompareAndSwapUint32(&e.started, 0, 1) {
 		e.workerWg.Add(1)
 		go e.outerWorker(ctx)
@@ -147,6 +153,7 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 	}
 	if result.chk == nil { // no more data
 		req.Reset()
+		atomic.StoreUint32(&e.drained, 1)
 		return nil
 	}
 	req.SwapColumns(result.chk)
@@ -157,12 +164,14 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 // Close implements the Executor interface.
 func (e *ParallelNestedLoopApplyExec) Close() error {
 	e.memTracker = nil
-	err := e.outerExec.Close()
 	if atomic.LoadUint32(&e.started) == 1 {
 		close(e.exit)
 		e.notifyWg.Wait()
 		e.started = 0
 	}
+	// Wait all workers to finish before Close() is called.
+	// Otherwise we may got data race.
+	err := e.outerExec.Close()
 
 	if e.runtimeStats != nil {
 		runtimeStats := newJoinRuntimeStats()

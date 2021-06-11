@@ -21,9 +21,9 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/tikv/client-go/v2/mockstore/cluster"
 )
 
 var _ = Suite(&testFeatureInfoSuite{})
@@ -89,4 +89,18 @@ func (s *testFeatureInfoSuite) TestTxnUsageInfo(c *C) {
 	c.Assert(txnUsage.TxnCommitCounter.AsyncCommit, Greater, int64(0))
 	c.Assert(txnUsage.TxnCommitCounter.OnePC, Greater, int64(0))
 	c.Assert(txnUsage.TxnCommitCounter.TwoPC, Greater, int64(0))
+}
+
+func (s *testFeatureInfoSuite) TestTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	tk.MustExec("use test")
+	usage, err := telemetry.GetFeatureUsage(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(usage.TemporaryTable, IsFalse)
+
+	tk.MustExec("create global temporary table t (id int) on commit delete rows")
+	usage, err = telemetry.GetFeatureUsage(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(usage.TemporaryTable, IsTrue)
 }

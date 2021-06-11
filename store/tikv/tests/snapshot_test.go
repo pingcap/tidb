@@ -23,12 +23,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	tidbkv "github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/logutil"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	tikverr "github.com/tikv/client-go/v2/error"
+	"github.com/tikv/client-go/v2/logutil"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
 )
 
@@ -137,15 +136,15 @@ func (s *testSnapshotSuite) TestSnapshotCache(c *C) {
 	_, err := snapshot.BatchGet(context.Background(), [][]byte{[]byte("x"), []byte("y")})
 	c.Assert(err, IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/snapshot-get-cache-fail", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/snapshot-get-cache-fail", `return(true)`), IsNil)
 	ctx := context.WithValue(context.Background(), contextKey("TestSnapshotCache"), true)
 	_, err = snapshot.Get(ctx, []byte("x"))
 	c.Assert(err, IsNil)
 
 	_, err = snapshot.Get(ctx, []byte("y"))
-	c.Assert(tidbkv.IsErrNotFound(err), IsTrue)
+	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/snapshot-get-cache-fail"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/snapshot-get-cache-fail"), IsNil)
 }
 
 func (s *testSnapshotSuite) TestBatchGetNotExist(c *C) {
@@ -192,9 +191,9 @@ func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
 	txn1 := s.beginTxn(c)
 	// txn1 is not blocked by txn in the large txn protocol.
 	_, err = txn1.Get(ctx, x)
-	c.Assert(tidbkv.IsErrNotFound(errors.Trace(err)), IsTrue)
+	c.Assert(tikverr.IsErrNotFound(errors.Trace(err)), IsTrue)
 
-	res, err := txn1.BatchGet(ctx, [][]byte{x, y, []byte("z")})
+	res, err := toTiDBTxn(&txn1).BatchGet(ctx, toTiDBKeys([][]byte{x, y, []byte("z")}))
 	c.Assert(err, IsNil)
 	c.Assert(res, HasLen, 0)
 
@@ -224,7 +223,7 @@ func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
 	c.Assert(committer.GetPrimaryKey(), BytesEquals, x)
 	// Point get secondary key. Shouldn't be blocked by the lock and read old data.
 	_, err = snapshot.Get(ctx, y)
-	c.Assert(tidbkv.IsErrNotFound(errors.Trace(err)), IsTrue)
+	c.Assert(tikverr.IsErrNotFound(errors.Trace(err)), IsTrue)
 	c.Assert(time.Since(start), Less, 500*time.Millisecond)
 
 	// Commit the primary key
@@ -270,22 +269,22 @@ func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
 	tikv.RecordRegionRequestRuntimeStats(reqStats.Stats, tikvrpc.CmdGet, time.Second)
 	tikv.RecordRegionRequestRuntimeStats(reqStats.Stats, tikvrpc.CmdGet, time.Millisecond)
 	snapshot := s.store.GetSnapshot(0)
-	snapshot.SetOption(kv.CollectRuntimeStats, &tikv.SnapshotRuntimeStats{})
+	snapshot.SetRuntimeStats(&tikv.SnapshotRuntimeStats{})
 	snapshot.MergeRegionRequestStats(reqStats.Stats)
 	snapshot.MergeRegionRequestStats(reqStats.Stats)
 	bo := tikv.NewBackofferWithVars(context.Background(), 2000, nil)
-	err := bo.BackoffWithMaxSleep(tikv.BoTxnLockFast, 30, errors.New("test"))
+	err := bo.BackoffWithMaxSleepTxnLockFast(30, errors.New("test"))
 	c.Assert(err, IsNil)
 	snapshot.RecordBackoffInfo(bo)
 	snapshot.RecordBackoffInfo(bo)
 	expect := "Get:{num_rpc:4, total_time:2s},txnLockFast_backoff:{num:2, total_time:60ms}"
 	c.Assert(snapshot.FormatStats(), Equals, expect)
-	detail := &pb.ExecDetailsV2{
-		TimeDetail: &pb.TimeDetail{
+	detail := &kvrpcpb.ExecDetailsV2{
+		TimeDetail: &kvrpcpb.TimeDetail{
 			WaitWallTimeMs:    100,
 			ProcessWallTimeMs: 100,
 		},
-		ScanDetailV2: &pb.ScanDetailV2{
+		ScanDetailV2: &kvrpcpb.ScanDetailV2{
 			ProcessedVersions:         10,
 			TotalVersions:             15,
 			RocksdbBlockReadCount:     20,

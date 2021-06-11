@@ -20,8 +20,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
+	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 type testTiclientSuite struct {
@@ -122,6 +122,7 @@ func (s *testTiclientSuite) TestNotExist(c *C) {
 func (s *testTiclientSuite) TestLargeRequest(c *C) {
 	largeValue := make([]byte, 9*1024*1024) // 9M value.
 	txn := s.beginTxn(c)
+	txn.GetUnionStore().SetEntrySizeLimit(1024*1024, 100*1024*1024)
 	err := txn.Set([]byte("key"), largeValue)
 	c.Assert(err, NotNil)
 	err = txn.Commit(context.Background())
