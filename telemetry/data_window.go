@@ -109,8 +109,7 @@ func readSQLMetric(timepoint time.Time, SQLResult *sqlUsageData) error {
 	promQL := "sum(tidb_executor_statement_total{}) by (instance,type)"
 	result, err := querySQLMetric(ctx, timepoint, promQL)
 	if err != nil {
-		logutil.BgLogger().Info("querySQLMetric got error")
-		return nil
+		logutil.BgLogger().Warn("querySQLMetric got error")
 	}
 	anylisSQLUsage(result, SQLResult)
 	return nil
@@ -151,6 +150,9 @@ func querySQLMetric(ctx context.Context, queryTime time.Time, promQL string) (re
 }
 
 func anylisSQLUsage(promResult pmodel.Value, SQLResult *sqlUsageData) {
+	if promResult == nil {
+		return
+	}
 	switch promResult.Type() {
 	case pmodel.ValVector:
 		matrix := promResult.(pmodel.Vector)
