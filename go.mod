@@ -43,7 +43,7 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
-	github.com/pingcap/kvproto v0.0.0-20210602120243-804ac0a6ce21
+	github.com/pingcap/kvproto v0.0.0-20210611081648-a215b4e61d2f
 	github.com/pingcap/log v0.0.0-20210317133921-96f4fcab92a4
 	github.com/pingcap/parser v0.0.0-20210610080504-cb77169bfed9
 	github.com/pingcap/sysutil v0.0.0-20210315073920-cc0985d983a3
@@ -83,4 +83,7 @@ require (
 go 1.16
 
 // Fix panic in unit test with go >= 1.14, ref: etcd-io/bbolt#201 https://github.com/etcd-io/bbolt/pull/201
-replace go.etcd.io/bbolt => go.etcd.io/bbolt v1.3.5
+replace (
+	github.com/pingcap/br => github.com/disksing/br v4.0.0-beta.2.0.20210611095841-fac4663d271a+incompatible
+	go.etcd.io/bbolt => go.etcd.io/bbolt v1.3.5
+)
