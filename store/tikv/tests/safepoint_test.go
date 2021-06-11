@@ -21,6 +21,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
+
+	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/tikv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 )
@@ -82,43 +84,41 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 	err := txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	// for txn get
+	// for txn get normally
 	txn2 := s.beginTxn(c)
 	_, err = txn2.Get(context.TODO(), encodeKey(s.prefix, s08d("key", 0)))
 	c.Assert(err, IsNil)
 
+	// for txn get
 	s.waitUntilErrorPlugIn(txn2.StartTS())
-
-	_, geterr2 := txn2.Get(context.TODO(), encodeKey(s.prefix, s08d("key", 0)))
-	c.Assert(geterr2, NotNil)
-
-	_, isFallBehind := errors.Cause(geterr2).(*tikverr.ErrGCTooEarly)
-	isMayFallBehind := terror.ErrorEqual(errors.Cause(geterr2), tikverr.NewErrPDServerTimeout("start timestamp may fall behind safe point"))
-	isBehind := isFallBehind || isMayFallBehind
-	c.Assert(isBehind, IsTrue)
+	_, geterr := txn2.Get(context.TODO(), encodeKey(s.prefix, s08d("key", 0)))
+	c.Assert(geterr, NotNil)
+	_, isFallBehind := errors.Cause(geterr).(*tikverr.ErrGCTooEarly)
+	c.Assert(isFallBehind, IsTrue)
 
 	// for txn seek
 	txn3 := s.beginTxn(c)
-
 	s.waitUntilErrorPlugIn(txn3.StartTS())
-
 	_, seekerr := txn3.Iter(encodeKey(s.prefix, ""), nil)
 	c.Assert(seekerr, NotNil)
-	_, isFallBehind = errors.Cause(geterr2).(*tikverr.ErrGCTooEarly)
-	isMayFallBehind = terror.ErrorEqual(errors.Cause(geterr2), tikverr.NewErrPDServerTimeout("start timestamp may fall behind safe point"))
-	isBehind = isFallBehind || isMayFallBehind
-	c.Assert(isBehind, IsTrue)
+	_, isFallBehind = errors.Cause(seekerr).(*tikverr.ErrGCTooEarly)
+	c.Assert(isFallBehind, IsTrue)
 
 	// for snapshot batchGet
 	keys := mymakeKeys(10, s.prefix)
 	txn4 := s.beginTxn(c)
-
 	s.waitUntilErrorPlugIn(txn4.StartTS())
-
 	_, batchgeterr := toTiDBTxn(&txn4).BatchGet(context.Background(), toTiDBKeys(keys))
 	c.Assert(batchgeterr, NotNil)
-	_, isFallBehind = errors.Cause(geterr2).(*tikverr.ErrGCTooEarly)
-	isMayFallBehind = terror.ErrorEqual(errors.Cause(geterr2), tikverr.NewErrPDServerTimeout("start timestamp may fall behind safe point"))
-	isBehind = isFallBehind || isMayFallBehind
-	c.Assert(isBehind, IsTrue)
+	// FIXME: batch get returns a TiDB error, instead of a normal error,
+	// should it be unified with get/iter?
+	c.Assert(terror.ErrorEqual(batchgeterr, storeerr.ErrGCTooEarly), IsTrue)
+
+	// test safepoint cache is expired and returns expected error
+	msgSPCacheExpired := "safe point cache is expired, can't check start-ts"
+	txn5 := s.beginTxn(c)
+	s.store.UpdateSPCache(txn5.StartTS(), time.Now().Add(-tikv.GcSafePointCacheInterval))
+	_, geterr2 := txn2.Get(context.TODO(), encodeKey(s.prefix, s08d("key", 0)))
+	c.Assert(geterr2, NotNil)
+	c.Assert(geterr2, ErrorMatches, tikverr.NewErrPDServerTimeout(msgSPCacheExpired).Error())
 }
