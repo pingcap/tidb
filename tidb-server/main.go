@@ -178,7 +178,6 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
-	topsql.SetupTopSQL()
 
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
@@ -189,6 +188,7 @@ func main() {
 		cleanup(svr, storage, dom, graceful)
 		close(exited)
 	})
+	topsql.SetupTopSQL()
 	terror.MustNil(svr.Run())
 	<-exited
 	syncLog()

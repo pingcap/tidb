@@ -927,6 +927,19 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			case _, ok = <-watchCh:
 			case <-time.After(duration):
 			}
+
+			failpoint.Inject("skipLoadSysVarCacheLoop", func(val failpoint.Value) {
+				// In some pkg integration test, there are many testSuite, and each testSuite has separate storage and
+				// `LoadSysVarCacheLoop` background goroutine. Then each testSuite `RebuildSysVarCache` from it's
+				// own storage.
+				// Each testSuit will also call `checkEnableServerGlobalVar` to update some local variables.
+				// That's the problem, each testSuit use different storage to update some same local variables.
+				// So just skip `RebuildSysVarCache` in some integration testing.
+				if val.(bool) {
+					failpoint.Continue()
+				}
+			})
+
 			if !ok {
 				logutil.BgLogger().Error("LoadSysVarCacheLoop loop watch channel closed")
 				watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
