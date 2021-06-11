@@ -921,13 +921,11 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 		var count int
 		for {
 			ok := true
-			after := false
 			select {
 			case <-do.exit:
 				return
 			case _, ok = <-watchCh:
 			case <-time.After(duration):
-				after = true
 			}
 			if !ok {
 				logutil.BgLogger().Error("LoadSysVarCacheLoop loop watch channel closed")
@@ -938,9 +936,15 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 				}
 				continue
 			}
+			failpoint.Inject("skipLoadSysVarCacheLoop", func(val failpoint.Value) {
+				// In server pkg test, there are many TestSuite, and each TestSuite has separate storage and
+				// `LoadSysVarCacheLoop` background goroutine.
+				if val.(bool) {
+					failpoint.Continue()
+				}
+			})
 			count = 0
 			logutil.BgLogger().Debug("Rebuilding sysvar cache from etcd watch event.")
-			logutil.BgLogger().Info("domain LoadSysVarCacheLoop--", zap.Bool("after", after), zap.Time("now", time.Now()), zap.Duration("duration", duration))
 			err := do.sysVarCache.RebuildSysVarCache(ctx)
 			metrics.LoadSysVarCacheCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {

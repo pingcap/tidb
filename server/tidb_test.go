@@ -1403,8 +1403,11 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{r})
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/topsql/reporter/resetTimeoutForTest", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`), IsNil)
 	defer func() {
 		err := failpoint.Disable("github.com/pingcap/tidb/util/topsql/reporter/resetTimeoutForTest")
+		c.Assert(err, IsNil)
+		err = failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop")
 		c.Assert(err, IsNil)
 	}()
 
