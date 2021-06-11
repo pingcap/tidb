@@ -147,5 +147,4 @@ const (
 	LblVersion     = "version"
 	LblHash        = "hash"
 	LblCTEType     = "cte_type"
-	LblAction      = "action"
 )
