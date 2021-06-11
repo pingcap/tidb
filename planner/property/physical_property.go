@@ -30,12 +30,12 @@ type SortItem struct {
 	Desc bool
 }
 
-// PartitionType is the way to partition during mpp data exchanging.
-type PartitionType int
+// MPPPartitionType is the way to partition during mpp data exchanging.
+type MPPPartitionType int
 
 const (
 	// AnyType will not require any special partition types.
-	AnyType PartitionType = iota
+	AnyType MPPPartitionType = iota
 	// BroadcastType requires current task to broadcast its data.
 	BroadcastType
 	// HashType requires current task to shuffle its data according to some columns.
@@ -70,10 +70,10 @@ type PhysicalProperty struct {
 	CanAddEnforcer bool
 
 	// If the partition type is hash, the data should be reshuffled by partition cols.
-	PartitionCols []*expression.Column
+	MPPPartitionCols []*expression.Column
 
 	// which types the exchange sender belongs to, only take effects when it's a mpp task.
-	PartitionTp PartitionType
+	MPPPartitionTp MPPPartitionType
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -97,11 +97,11 @@ func SortItemsFromCols(cols []*expression.Column, desc bool) []SortItem {
 
 // IsSubsetOf check if the keys can match the needs of partition.
 func (p *PhysicalProperty) IsSubsetOf(keys []*expression.Column) []int {
-	if len(p.PartitionCols) > len(keys) {
+	if len(p.MPPPartitionCols) > len(keys) {
 		return nil
 	}
 	matches := make([]int, 0, len(keys))
-	for _, partCol := range p.PartitionCols {
+	for _, partCol := range p.MPPPartitionCols {
 		found := false
 		for i, key := range keys {
 			if partCol.Equal(nil, key) {
@@ -183,8 +183,8 @@ func (p *PhysicalProperty) HashCode() []byte {
 		}
 	}
 	if p.TaskTp == MppTaskType {
-		p.hashcode = codec.EncodeInt(p.hashcode, int64(p.PartitionTp))
-		for _, col := range p.PartitionCols {
+		p.hashcode = codec.EncodeInt(p.hashcode, int64(p.MPPPartitionTp))
+		for _, col := range p.MPPPartitionCols {
 			p.hashcode = append(p.hashcode, col.HashCode(nil)...)
 		}
 	}
@@ -200,11 +200,11 @@ func (p *PhysicalProperty) String() string {
 // property, specifically, `CanAddEnforcer` should not be included.
 func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 	prop := &PhysicalProperty{
-		SortItems:     p.SortItems,
-		TaskTp:        p.TaskTp,
-		ExpectedCnt:   p.ExpectedCnt,
-		PartitionTp:   p.PartitionTp,
-		PartitionCols: p.PartitionCols,
+		SortItems:        p.SortItems,
+		TaskTp:           p.TaskTp,
+		ExpectedCnt:      p.ExpectedCnt,
+		MPPPartitionTp:   p.MPPPartitionTp,
+		MPPPartitionCols: p.MPPPartitionCols,
 	}
 	return prop
 }
