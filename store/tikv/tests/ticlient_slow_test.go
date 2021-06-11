@@ -19,9 +19,9 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/mockstore"
+	"github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/mockstore"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 func (s *testTiclientSuite) TestSplitRegionIn2PC(c *C) {
