@@ -268,16 +268,16 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 		c.Log(testcase.name)
 		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
 		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", fmt.Sprintf(`return("%v")`, testcase.zone))
-		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStoreLabels", fmt.Sprintf(`return("%v_%v")`, placement.DCLabelKey, testcase.txnScope))
-		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag", `return(true)`)
+		failpoint.Enable("tikvclient/assertStoreLabels", fmt.Sprintf(`return("%v_%v")`, placement.DCLabelKey, testcase.txnScope))
+		failpoint.Enable("tikvclient/assertStaleReadFlag", `return(true)`)
 		// Using NOW() will cause the loss of fsp precision, so we use NOW(3) to be accurate to the millisecond.
 		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
 		tk.MustQuery(testcase.sql)
 		tk.MustExec(`commit`)
 	}
 	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStoreLabels")
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag")
+	failpoint.Disable("tikvclient/assertStoreLabels")
+	failpoint.Disable("tikvclient/assertStaleReadFlag")
 }
 
 func (s *testStaleTxnSuite) TestStalenessAndHistoryRead(c *C) {
@@ -364,7 +364,7 @@ func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 	}
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/injectSafeTS",
+		c.Assert(failpoint.Enable("tikvclient/injectSafeTS",
 			fmt.Sprintf("return(%v)", testcase.injectSafeTS)), IsNil)
 		c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
 			fmt.Sprintf("return(%v)", testcase.injectSafeTS)), IsNil)
@@ -379,7 +379,7 @@ func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 		tk.MustExec("commit")
 	}
 	failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS")
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/injectSafeTS")
+	failpoint.Disable("tikvclient/injectSafeTS")
 }
 
 func (s *testStaleTxnSerialSuite) TestStalenessTransactionSchemaVer(c *C) {

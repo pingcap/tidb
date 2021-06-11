@@ -19,9 +19,10 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/client"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	"github.com/pingcap/tidb/store/tikv/locate"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/retry"
@@ -44,11 +45,11 @@ func (actionCommit) tiKVTxnRegionsNumHistogram() prometheus.Observer {
 
 func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
 	keys := batch.mutations.GetKeys()
-	req := tikvrpc.NewRequest(tikvrpc.CmdCommit, &pb.CommitRequest{
+	req := tikvrpc.NewRequest(tikvrpc.CmdCommit, &kvrpcpb.CommitRequest{
 		StartVersion:  c.startTS,
 		Keys:          keys,
 		CommitVersion: c.commitTS,
-	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog, ResourceGroupTag: c.resourceGroupTag})
+	}, kvrpcpb.Context{Priority: c.priority, SyncLog: c.syncLog, ResourceGroupTag: c.resourceGroupTag})
 
 	tBegin := time.Now()
 	attempts := 0
@@ -67,8 +68,8 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 		// Under this circumstance, we can not declare the commit is complete (may lead to data lost), nor can we throw
 		// an error (may lead to the duplicated key error when upper level restarts the transaction). Currently the best
 		// solution is to populate this error and let upper layer drop the connection to the corresponding mysql client.
-		if batch.isPrimary && sender.rpcError != nil && !c.isAsyncCommit() {
-			c.setUndeterminedErr(errors.Trace(sender.rpcError))
+		if batch.isPrimary && sender.GetRPCError() != nil && !c.isAsyncCommit() {
+			c.setUndeterminedErr(errors.Trace(sender.GetRPCError()))
 		}
 
 		// Unexpected error occurs, return it.
@@ -84,7 +85,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 			// For other region error and the fake region error, backoff because
 			// there's something wrong.
 			// For the real EpochNotMatch error, don't backoff.
-			if regionErr.GetEpochNotMatch() == nil || isFakeRegionError(regionErr) {
+			if regionErr.GetEpochNotMatch() == nil || locate.IsFakeRegionError(regionErr) {
 				err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 				if err != nil {
 					return errors.Trace(err)
@@ -104,7 +105,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 		if resp.Resp == nil {
 			return errors.Trace(tikverr.ErrBodyMissing)
 		}
-		commitResp := resp.Resp.(*pb.CommitResponse)
+		commitResp := resp.Resp.(*kvrpcpb.CommitResponse)
 		// Here we can make sure tikv has processed the commit primary key request. So
 		// we can clean undetermined error.
 		if batch.isPrimary && !c.isAsyncCommit() {
