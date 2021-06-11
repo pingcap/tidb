@@ -115,8 +115,8 @@ The meanings of main members in CTEClass are as follows:
 type LogicalCTETable struct {
     logicalSchemaProducer
 
-	name         string
-	idForStorage int
+    name         string
+    idForStorage int
 }
 ```
 `LogicalCTETable` will read the temporary result set of CTE. `idForStorage` points to the intermediate storage.
@@ -192,13 +192,13 @@ The parsing phase will generate an AST tree, which will be used to generate `Log
 1. Distinguish between seed part and recursive part of the definition of CTE.
 2. Do some validation checks.
 
-    1 Mutual recursive(cte1 -> cte2 -> cte1) is not supported.
+    1. Mutual recursive(cte1 -> cte2 -> cte1) is not supported.
 
-    2 Column number of the seed part and the recursive part must be same.
+    2. Column number of the seed part and the recursive part must be same.
     
-    3 All seed parts should follow recursive parts.
+    3. All seed parts should follow recursive parts.
 
-    4 recursive parts cannot include: `ORDER BY`, `Aggregate Function`, `Window Function`, `DISTINCT`.
+    4. recursive parts cannot include: `ORDER BY`, `Aggregate Function`, `Window Function`, `DISTINCT`.
 
 3. Recognize the same CTE. If there are multiple references to the same CTE.
 
@@ -267,7 +267,7 @@ The filling of `Storage` is done by `CTEExec` and `CTETableReaderExec` together.
 
 Data in storage will be spilled to disk if memory usage reaches `@@tidb_mem_quota_query`. `MemTracker` and `RowContainer` will handle all the spilling process.
 
-Also we use a hash table to de-duplicate data in `resTbl`. Before copying data from `iterOutTbl` to `resTbl`, we use a hash table to check if there are duplications.
+Also we use a hash table to de-duplicate data in `resTbl`. Before copying data from `iterOutTbl` to `resTbl`, we use this hash table to check if there are duplications.
 
 ## Test Design
 
