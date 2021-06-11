@@ -66,6 +66,40 @@ func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 	return plan
 }
 
+<<<<<<< HEAD
+=======
+func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
+	if !un.mpp {
+		return un
+	}
+	for i, ch := range un.children {
+		exprs := make([]expression.Expression, len(ch.Schema().Columns))
+		needChange := false
+		for i, dstCol := range un.schema.Columns {
+			dstType := dstCol.RetType
+			srcCol := ch.Schema().Columns[i]
+			srcCol.Index = i
+			srcType := srcCol.RetType
+			if !srcType.Equal(dstType) || !(mysql.HasNotNullFlag(dstType.Flag) == mysql.HasNotNullFlag(srcType.Flag)) {
+				exprs[i] = expression.BuildCastFunction4Union(un.ctx, srcCol, dstType)
+				needChange = true
+			} else {
+				exprs[i] = srcCol
+			}
+		}
+		if needChange {
+			proj := PhysicalProjection{
+				Exprs: exprs,
+			}.Init(un.ctx, ch.statsInfo(), 0)
+			proj.SetSchema(un.schema.Clone())
+			proj.SetChildren(ch)
+			un.children[i] = proj
+		}
+	}
+	return un
+}
+
+>>>>>>> b76d4675d... planner/core: fix bug that injected proj get wrong index. (#25336)
 // wrapCastForAggFunc wraps the args of an aggregate function with a cast function.
 // If the mode is FinalMode or Partial2Mode, we do not need to wrap cast upon the args,
 // since the types of the args are already the expected.
