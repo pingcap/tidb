@@ -256,9 +256,9 @@ The filling of `Storage` is done by `CTEExec` and `CTETableReaderExec` together.
 
 ![cte_computation](./imgs/cte_computation.png)
 
-1. Compute the `SeedExec` and all output chunks will be stored into `iterInTbl`, which will be the input data of next iteration.
-2. Compute the `RecursiveExec` iteratively. `iterInTbl` will be read by `CTETableReaderExec` and its output will be processed by executors in `RecursiveExec`.And finally the data will be put into `iterOutTbl`.
-3. At the end of each iteration, we copy all data from `iterOutTbl` to `iterInTbl` and `resTbl`. So the output of the previous iteration will be the input of the next iteration.
+1. Compute the `SeedExec`(step 1) and all output chunks will be stored into `iterInTbl`(step 2), which will be the input data of next iteration.
+2. Compute the `RecursiveExec` iteratively. `iterInTbl` will be read by `CTETableReaderExec`(step 3) and its output will be processed by executors in `RecursiveExec`(step 4,5). And finally the data will be put into `iterOutTbl`(step 5).
+3. At the end of each iteration, we copy all data from `iterOutTbl` to `iterInTbl` and `resTbl`(step 7). So the output of the previous iteration will be the input of the next iteration.
 4. Iteration will be terminated if:
 
     1. No data is generated in this iteration or
