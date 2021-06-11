@@ -633,6 +633,17 @@ func (s *tiflashTestSuite) TestMppUnionAll(c *C) {
 	tk.MustQuery("select count(*) from (select * from x1 union all select * from x2 union all select * from x3) x join (select * from x1 union all select * from x2 union all select * from x3) y on x.a = y.b").Check(testkit.Rows("29"))
 	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
 
+	tk.MustExec("drop table if exists x4")
+	tk.MustExec("create table x4(a int not null, b int not null);")
+	tk.MustExec("alter table x4 set tiflash replica 1")
+	tb = testGetTableByName(c, tk.Se, "test", "x4")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("set @@tidb_enforce_mpp=1")
+	tk.MustExec("insert into x4 values (2, 2), (2, 3)")
+	tk.MustQuery("(select * from x1 union all select * from x4) order by a, b").Check(testkit.Rows("1 1", "2 2", "2 2", "2 3", "3 3", "4 4"))
+
 }
 
 func (s *tiflashTestSuite) TestMppApply(c *C) {
