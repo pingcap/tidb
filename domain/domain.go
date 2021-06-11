@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -55,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/clientv3/concurrency"
 	"go.uber.org/zap"
@@ -931,6 +931,19 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			case _, ok = <-watchCh:
 			case <-time.After(duration):
 			}
+
+			failpoint.Inject("skipLoadSysVarCacheLoop", func(val failpoint.Value) {
+				// In some pkg integration test, there are many testSuite, and each testSuite has separate storage and
+				// `LoadSysVarCacheLoop` background goroutine. Then each testSuite `RebuildSysVarCache` from it's
+				// own storage.
+				// Each testSuit will also call `checkEnableServerGlobalVar` to update some local variables.
+				// That's the problem, each testSuit use different storage to update some same local variables.
+				// So just skip `RebuildSysVarCache` in some integration testing.
+				if val.(bool) {
+					failpoint.Continue()
+				}
+			})
+
 			if !ok {
 				logutil.BgLogger().Error("LoadSysVarCacheLoop loop watch channel closed")
 				watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)

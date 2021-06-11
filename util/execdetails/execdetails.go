@@ -24,8 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
