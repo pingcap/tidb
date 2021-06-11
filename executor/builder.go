@@ -2381,6 +2381,9 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) *
 	ret.ranges = ts.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
+	if v.StoreType == kv.TiFlash {
+		sctx.IsTiFlash.Store(true)
+	}
 	return ret
 }
 
