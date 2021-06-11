@@ -178,7 +178,6 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
-	topsql.SetupTopSQL()
 
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
@@ -189,6 +188,7 @@ func main() {
 		cleanup(svr, storage, dom, graceful)
 		close(exited)
 	})
+	topsql.SetupTopSQL()
 	terror.MustNil(svr.Run())
 	<-exited
 	syncLog()
@@ -537,6 +537,7 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.DataDir, cfg.Path)
 	variable.SetSysVar(variable.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
 	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ","))
+	variable.SetSysVar(variable.TiDBEnforceMPPExecution, variable.BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP))
 	variable.MemoryUsageAlarmRatio.Store(cfg.Performance.MemoryUsageAlarmRatio)
 	if hostname, err := os.Hostname(); err != nil {
 		variable.SetSysVar(variable.Hostname, hostname)
