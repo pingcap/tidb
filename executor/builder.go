@@ -95,10 +95,10 @@ type CTEStorages struct {
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64) *executorBuilder {
 	return &executorBuilder{
-		ctx:               ctx,
-		is:                is,
-		Ti:                ti,
-		snapshotTS:        snapshotTS,
+		ctx:        ctx,
+		is:         is,
+		Ti:         ti,
+		snapshotTS: snapshotTS,
 	}
 }
 
