@@ -340,6 +340,7 @@ func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum(user *auth.UserIdentity, isS
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
 	beginTime := ssMap.beginTimeForCurInterval
+	other := ssMap.other
 	ssMap.Unlock()
 
 	rows := make([][]types.Datum, 0, len(values))
@@ -349,21 +350,29 @@ func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum(user *auth.UserIdentity, isS
 			rows = append(rows, record)
 		}
 	}
+	if otherDatum := other.toCurrentDatum(); otherDatum != nil {
+		rows = append(rows, otherDatum)
+	}
 	return rows
 }
 
 // ToHistoryDatum converts history statements summaries to datum.
 func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum(user *auth.UserIdentity, isSuper bool) [][]types.Datum {
+	historySize := ssMap.historySize()
+
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
+	other := ssMap.other
 	ssMap.Unlock()
 
-	historySize := ssMap.historySize()
 	rows := make([][]types.Datum, 0, len(values)*historySize)
 	for _, value := range values {
 		records := value.(*stmtSummaryByDigest).toHistoryDatum(historySize, user, isSuper)
 		rows = append(rows, records...)
 	}
+
+	otherDatum := other.toHistoryDatum(historySize)
+	rows = append(rows, otherDatum...)
 	return rows
 }
 
@@ -884,8 +893,9 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		types.NewTime(types.FromGoTime(time.Unix(ssElement.beginTime, 0)), mysql.TypeTimestamp, 0),
 		types.NewTime(types.FromGoTime(time.Unix(ssElement.endTime, 0)), mysql.TypeTimestamp, 0),
 		ssbd.stmtType,
-		ssbd.schemaName,
-		ssbd.digest,
+		// This behaviour follow MySQL. see more in https://dev.mysql.com/doc/refman/5.7/en/performance-schema-statement-digests.html
+		convertEmptyToNil(ssbd.schemaName),
+		convertEmptyToNil(ssbd.digest),
 		ssbd.normalizedSQL,
 		convertEmptyToNil(ssbd.tableNames),
 		convertEmptyToNil(strings.Join(ssElement.indexNames, ",")),

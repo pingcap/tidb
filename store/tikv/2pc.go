@@ -26,13 +26,13 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/store/tikv/client"
 	"github.com/pingcap/tidb/store/tikv/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/locate"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -66,7 +66,7 @@ type twoPhaseCommitter struct {
 	mutations           *memBufferMutations
 	lockTTL             uint64
 	commitTS            uint64
-	priority            pb.CommandPri
+	priority            kvrpcpb.CommandPri
 	sessionID           uint64 // sessionID is used for log.
 	cleanWg             sync.WaitGroup
 	detail              unsafe.Pointer
@@ -149,8 +149,8 @@ func (m *memBufferMutations) GetValue(i int) []byte {
 	return v
 }
 
-func (m *memBufferMutations) GetOp(i int) pb.Op {
-	return pb.Op(m.handles[i].UserData >> 1)
+func (m *memBufferMutations) GetOp(i int) kvrpcpb.Op {
+	return kvrpcpb.Op(m.handles[i].UserData >> 1)
 }
 
 func (m *memBufferMutations) IsPessimisticLock(i int) bool {
@@ -164,7 +164,7 @@ func (m *memBufferMutations) Slice(from, to int) CommitterMutations {
 	}
 }
 
-func (m *memBufferMutations) Push(op pb.Op, isPessimisticLock bool, handle unionstore.MemKeyHandle) {
+func (m *memBufferMutations) Push(op kvrpcpb.Op, isPessimisticLock bool, handle unionstore.MemKeyHandle) {
 	aux := uint16(op) << 1
 	if isPessimisticLock {
 		aux |= 1
@@ -178,7 +178,7 @@ type CommitterMutations interface {
 	Len() int
 	GetKey(i int) []byte
 	GetKeys() [][]byte
-	GetOp(i int) pb.Op
+	GetOp(i int) kvrpcpb.Op
 	GetValue(i int) []byte
 	IsPessimisticLock(i int) bool
 	Slice(from, to int) CommitterMutations
@@ -186,7 +186,7 @@ type CommitterMutations interface {
 
 // PlainMutations contains transaction operations.
 type PlainMutations struct {
-	ops               []pb.Op
+	ops               []kvrpcpb.Op
 	keys              [][]byte
 	values            [][]byte
 	isPessimisticLock []bool
@@ -195,7 +195,7 @@ type PlainMutations struct {
 // NewPlainMutations creates a PlainMutations object with sizeHint reserved.
 func NewPlainMutations(sizeHint int) PlainMutations {
 	return PlainMutations{
-		ops:               make([]pb.Op, 0, sizeHint),
+		ops:               make([]kvrpcpb.Op, 0, sizeHint),
 		keys:              make([][]byte, 0, sizeHint),
 		values:            make([][]byte, 0, sizeHint),
 		isPessimisticLock: make([]bool, 0, sizeHint),
@@ -219,7 +219,7 @@ func (c *PlainMutations) Slice(from, to int) CommitterMutations {
 }
 
 // Push another mutation into mutations.
-func (c *PlainMutations) Push(op pb.Op, key []byte, value []byte, isPessimisticLock bool) {
+func (c *PlainMutations) Push(op kvrpcpb.Op, key []byte, value []byte, isPessimisticLock bool) {
 	c.ops = append(c.ops, op)
 	c.keys = append(c.keys, key)
 	c.values = append(c.values, value)
@@ -242,7 +242,7 @@ func (c *PlainMutations) GetKeys() [][]byte {
 }
 
 // GetOps returns the key ops.
-func (c *PlainMutations) GetOps() []pb.Op {
+func (c *PlainMutations) GetOps() []kvrpcpb.Op {
 	return c.ops
 }
 
@@ -257,7 +257,7 @@ func (c *PlainMutations) GetPessimisticFlags() []bool {
 }
 
 // GetOp returns the key op at index.
-func (c *PlainMutations) GetOp(i int) pb.Op {
+func (c *PlainMutations) GetOp(i int) kvrpcpb.Op {
 	return c.ops[i]
 }
 
@@ -276,7 +276,7 @@ func (c *PlainMutations) IsPessimisticLock(i int) bool {
 
 // PlainMutation represents a single transaction operation.
 type PlainMutation struct {
-	KeyOp             pb.Op
+	KeyOp             kvrpcpb.Op
 	Key               []byte
 	Value             []byte
 	IsPessimisticLock bool
@@ -343,13 +343,13 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		key := it.Key()
 		flags := it.Flags()
 		var value []byte
-		var op pb.Op
+		var op kvrpcpb.Op
 
 		if !it.HasValue() {
 			if !flags.HasLocked() {
 				continue
 			}
-			op = pb.Op_Lock
+			op = kvrpcpb.Op_Lock
 			lockCnt++
 		} else {
 			value = it.Value()
@@ -362,12 +362,12 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 					// If the key was locked before, we should prewrite the lock even if
 					// the KV needn't be committed according to the filter. Otherwise, we
 					// were forgetting removing pessimistic locks added before.
-					op = pb.Op_Lock
+					op = kvrpcpb.Op_Lock
 					lockCnt++
 				} else {
-					op = pb.Op_Put
+					op = kvrpcpb.Op_Put
 					if flags.HasPresumeKeyNotExists() {
-						op = pb.Op_Insert
+						op = kvrpcpb.Op_Insert
 					}
 					putCnt++
 				}
@@ -375,13 +375,13 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 				if !txn.IsPessimistic() && flags.HasPresumeKeyNotExists() {
 					// delete-your-writes keys in optimistic txn need check not exists in prewrite-phase
 					// due to `Op_CheckNotExists` doesn't prewrite lock, so mark those keys should not be used in commit-phase.
-					op = pb.Op_CheckNotExists
+					op = kvrpcpb.Op_CheckNotExists
 					checkCnt++
 					memBuf.UpdateFlags(key, kv.SetPrewriteOnly)
 				} else {
 					// normal delete keys in optimistic txn can be delete without not exists checking
 					// delete-your-writes keys in pessimistic txn can ensure must be no exists so can directly delete them
-					op = pb.Op_Del
+					op = kvrpcpb.Op_Del
 					delCnt++
 				}
 			}
@@ -394,7 +394,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		c.mutations.Push(op, isPessimistic, it.Handle())
 		size += len(key) + len(value)
 
-		if len(c.primaryKey) == 0 && op != pb.Op_CheckNotExists {
+		if len(c.primaryKey) == 0 && op != kvrpcpb.Op_CheckNotExists {
 			c.primaryKey = key
 		}
 	}
@@ -452,7 +452,7 @@ func (c *twoPhaseCommitter) asyncSecondaries() [][]byte {
 	secondaries := make([][]byte, 0, c.mutations.Len())
 	for i := 0; i < c.mutations.Len(); i++ {
 		k := c.mutations.GetKey(i)
-		if bytes.Equal(k, c.primary()) || c.mutations.GetOp(i) == pb.Op_CheckNotExists {
+		if bytes.Equal(k, c.primary()) || c.mutations.GetOp(i) == kvrpcpb.Op_CheckNotExists {
 			continue
 		}
 		secondaries = append(secondaries, k)
@@ -589,7 +589,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		// Do not update regionTxnSize on retries. They are not used when building a PrewriteRequest.
 		if !act.retry {
 			for _, group := range groups {
-				c.regionTxnSize[group.region.id] = group.mutations.Len()
+				c.regionTxnSize[group.region.GetID()] = group.mutations.Len()
 			}
 		}
 		sizeFunc = c.keyValueSize
@@ -613,7 +613,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 	c.checkOnePCFallBack(action, len(batchBuilder.allBatches()))
 
 	var err error
-	failpoint.Inject("skipKeyReturnOK", func(val failpoint.Value) {
+	if val, err := util.EvalFailpoint("skipKeyReturnOK"); err == nil {
 		valStr, ok := val.(string)
 		if ok && c.sessionID > 0 {
 			if firstIsPrimary && actionIsPessimiticLock {
@@ -621,21 +621,21 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 				switch valStr {
 				case "pessimisticLockSkipPrimary":
 					err = c.doActionOnBatches(bo, action, batchBuilder.allBatches())
-					failpoint.Return(err)
+					return err
 				case "pessimisticLockSkipSecondary":
 					err = c.doActionOnBatches(bo, action, batchBuilder.primaryBatch())
-					failpoint.Return(err)
+					return err
 				}
 			}
 		}
-	})
-	failpoint.Inject("pessimisticRollbackDoNth", func() {
+	}
+	if _, err := util.EvalFailpoint("pessimisticRollbackDoNth"); err == nil {
 		_, actionIsPessimisticRollback := action.(actionPessimisticRollback)
 		if actionIsPessimisticRollback && c.sessionID > 0 {
 			logutil.Logger(bo.GetCtx()).Warn("pessimisticRollbackDoNth failpoint")
-			failpoint.Return(nil)
+			return nil
 		}
-	})
+	}
 
 	if firstIsPrimary &&
 		((actionIsCommit && !c.isAsyncCommit()) || actionIsCleanup || actionIsPessimiticLock) {
@@ -655,7 +655,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		secondaryBo := retry.NewBackofferWithVars(context.Background(), CommitSecondaryMaxBackoff, c.txn.vars)
 		go func() {
 			if c.sessionID > 0 {
-				failpoint.Inject("beforeCommitSecondaries", func(v failpoint.Value) {
+				if v, err := util.EvalFailpoint("beforeCommitSecondaries"); err == nil {
 					if s, ok := v.(string); !ok {
 						logutil.Logger(bo.GetCtx()).Info("[failpoint] sleep 2s before commit secondary keys",
 							zap.Uint64("sessionID", c.sessionID), zap.Uint64("txnStartTS", c.startTS), zap.Uint64("txnCommitTS", c.commitTS))
@@ -663,9 +663,9 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 					} else if s == "skip" {
 						logutil.Logger(bo.GetCtx()).Info("[failpoint] injected skip committing secondaries",
 							zap.Uint64("sessionID", c.sessionID), zap.Uint64("txnStartTS", c.startTS), zap.Uint64("txnCommitTS", c.commitTS))
-						failpoint.Return()
+						return
 					}
-				})
+				}
 			}
 
 			e := c.doActionOnBatches(secondaryBo, action, batchBuilder.allBatches())
@@ -751,9 +751,9 @@ func (tm *ttlManager) run(c *twoPhaseCommitter, lockCtx *kv.LockCtx) {
 	}
 	tm.lockCtx = lockCtx
 	noKeepAlive := false
-	failpoint.Inject("doNotKeepAlive", func() {
+	if _, err := util.EvalFailpoint("doNotKeepAlive"); err == nil {
 		noKeepAlive = true
-	})
+	}
 
 	if !noKeepAlive {
 		go tm.keepAlive(c)
@@ -837,7 +837,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 }
 
 func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, ttl uint64) (newTTL uint64, stopHeartBeat bool, err error) {
-	req := tikvrpc.NewRequest(tikvrpc.CmdTxnHeartBeat, &pb.TxnHeartBeatRequest{
+	req := tikvrpc.NewRequest(tikvrpc.CmdTxnHeartBeat, &kvrpcpb.TxnHeartBeatRequest{
 		PrimaryLock:   primary,
 		StartVersion:  startTS,
 		AdviseLockTtl: ttl,
@@ -859,7 +859,7 @@ func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, tt
 			// For other region error and the fake region error, backoff because
 			// there's something wrong.
 			// For the real EpochNotMatch error, don't backoff.
-			if regionErr.GetEpochNotMatch() == nil || isFakeRegionError(regionErr) {
+			if regionErr.GetEpochNotMatch() == nil || locate.IsFakeRegionError(regionErr) {
 				err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 				if err != nil {
 					return 0, false, errors.Trace(err)
@@ -870,7 +870,7 @@ func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, tt
 		if resp.Resp == nil {
 			return 0, false, errors.Trace(tikverr.ErrBodyMissing)
 		}
-		cmdResp := resp.Resp.(*pb.TxnHeartBeatResponse)
+		cmdResp := resp.Resp.(*kvrpcpb.TxnHeartBeatResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			return 0, true, errors.Errorf("txn %d heartbeat fail, primary key = %v, err = %s", startTS, hex.EncodeToString(primary), extractKeyErr(keyErr))
 		}
@@ -960,12 +960,12 @@ var VeryLongMaxBackoff = uint64(600000) // 10mins
 func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
 	c.cleanWg.Add(1)
 	go func() {
-		failpoint.Inject("commitFailedSkipCleanup", func() {
+		if _, err := util.EvalFailpoint("commitFailedSkipCleanup"); err == nil {
 			logutil.Logger(ctx).Info("[failpoint] injected skip cleanup secondaries on failure",
 				zap.Uint64("txnStartTS", c.startTS))
 			c.cleanWg.Done()
-			failpoint.Return()
-		})
+			return
+		}
 
 		cleanupKeysCtx := context.WithValue(context.Background(), retry.TxnStartKey, ctx.Value(retry.TxnStartKey))
 		var err error
@@ -1067,7 +1067,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	// than the snapshot TS of all existent readers. So we get a new timestamp
 	// from PD and plus one as our MinCommitTS.
 	if commitTSMayBeCalculated && c.needLinearizability() {
-		failpoint.Inject("getMinCommitTSFromTSO", nil)
+		util.EvalFailpoint("getMinCommitTSFromTSO")
 		latestTS, err := c.store.getTimestampWithRetry(bo, c.txn.GetScope())
 		// If we fail to get a timestamp from PD, we just propagate the failure
 		// instead of falling back to the normal 2PC because a normal 2PC will
@@ -1086,7 +1086,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}
 
 	if c.sessionID > 0 {
-		failpoint.Inject("beforePrewrite", nil)
+		util.EvalFailpoint("beforePrewrite")
 	}
 
 	c.prewriteStarted = true
@@ -1230,7 +1230,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}
 
 	if c.sessionID > 0 {
-		failpoint.Inject("beforeCommit", func(val failpoint.Value) {
+		if val, err := util.EvalFailpoint("beforeCommit"); err == nil {
 			// Pass multiple instructions in one string, delimited by commas, to trigger multiple behaviors, like
 			// `return("delay,fail")`. Then they will be executed sequentially at once.
 			if v, ok := val.(string); ok {
@@ -1238,7 +1238,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 					// Async commit transactions cannot return error here, since it's already successful.
 					if action == "fail" && !c.isAsyncCommit() {
 						logutil.Logger(ctx).Info("[failpoint] injected failure before commit", zap.Uint64("txnStartTS", c.startTS))
-						failpoint.Return(errors.New("injected failure before commit"))
+						return errors.New("injected failure before commit")
 					} else if action == "delay" {
 						duration := time.Duration(rand.Int63n(int64(time.Second) * 5))
 						logutil.Logger(ctx).Info("[failpoint] injected delay before commit",
@@ -1247,7 +1247,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 					}
 				}
 			}
-		})
+		}
 	}
 
 	if c.isAsyncCommit() {
@@ -1257,9 +1257,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			zap.Uint64("startTS", c.startTS), zap.Uint64("commitTS", c.commitTS),
 			zap.Uint64("sessionID", c.sessionID))
 		go func() {
-			failpoint.Inject("asyncCommitDoNothing", func() {
-				failpoint.Return()
-			})
+			if _, err := util.EvalFailpoint("asyncCommitDoNothing"); err == nil {
+				return
+			}
 			commitBo := retry.NewBackofferWithVars(ctx, CommitSecondaryMaxBackoff, c.txn.vars)
 			err := c.commitMutations(commitBo, c.mutations)
 			if err != nil {
@@ -1428,7 +1428,7 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 			key := addMutations.GetKey(i)
 			op := addMutations.GetOp(i)
 			var err error
-			if op == pb.Op_Del {
+			if op == kvrpcpb.Op_Del {
 				err = memBuf.Delete(key)
 			} else {
 				err = memBuf.Set(key, addMutations.GetValue(i))
@@ -1472,12 +1472,12 @@ func (c *twoPhaseCommitter) getCommitTS(ctx context.Context, commitDetail *util.
 // this transaction using the related schema changes.
 func (c *twoPhaseCommitter) checkSchemaValid(ctx context.Context, checkTS uint64, startInfoSchema SchemaVer,
 	tryAmend bool) (*RelatedSchemaChange, bool, error) {
-	failpoint.Inject("failCheckSchemaValid", func() {
+	if _, err := util.EvalFailpoint("failCheckSchemaValid"); err == nil {
 		logutil.Logger(ctx).Info("[failpoint] injected fail schema check",
 			zap.Uint64("txnStartTS", c.startTS))
 		err := errors.Errorf("mock check schema valid failure")
-		failpoint.Return(nil, false, err)
-	})
+		return nil, false, err
+	}
 	if c.txn.schemaLeaseChecker == nil {
 		if c.sessionID > 0 {
 			logutil.Logger(ctx).Warn("schemaLeaseChecker is not set for this transaction",
@@ -1539,7 +1539,7 @@ func (c *twoPhaseCommitter) shouldWriteBinlog() bool {
 const txnCommitBatchSize = 16 * 1024
 
 type batchMutations struct {
-	region    RegionVerID
+	region    locate.RegionVerID
 	mutations CommitterMutations
 	isPrimary bool
 }
@@ -1572,10 +1572,10 @@ func newBatched(primaryKey []byte) *batched {
 
 // appendBatchMutationsBySize appends mutations to b. It may split the keys to make
 // sure each batch's size does not exceed the limit.
-func (b *batched) appendBatchMutationsBySize(region RegionVerID, mutations CommitterMutations, sizeFn func(k, v []byte) int, limit int) {
-	failpoint.Inject("twoPCRequestBatchSizeLimit", func() {
+func (b *batched) appendBatchMutationsBySize(region locate.RegionVerID, mutations CommitterMutations, sizeFn func(k, v []byte) int, limit int) {
+	if _, err := util.EvalFailpoint("twoPCRequestBatchSizeLimit"); err == nil {
 		limit = 1
-	})
+	}
 
 	var start, end int
 	for start = 0; start < mutations.Len(); start = end {
