@@ -17,11 +17,10 @@ import (
 	"github.com/pingcap/failpoint"
 )
 
-var (
-	// MockRetryableErrorResp mocks an retryable error while processing response
-	MockRetryableErrorResp failpoint.Failpoint
-	// MockScatterRegionTimeout mocks timeout when trying to scatter region
-	MockScatterRegionTimeout failpoint.Failpoint
-	// MockSplitRegionTimeout mocks timeout when trying to split region
-	MockSplitRegionTimeout failpoint.Failpoint
-)
+const failpointPrefix = "tikvclient/"
+
+// EvalFailpoint injects code for testing. It is used to replace `failpoint.Inject`
+// to make it possible to be used in a library.
+func EvalFailpoint(name string) (interface{}, error) {
+	return failpoint.Eval(failpointPrefix + name)
+}
