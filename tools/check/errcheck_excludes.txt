@@ -1,4 +1,4 @@
 fmt.Fprintf
 fmt.Fprint
 fmt.Sscanf
-github.com/pingcap/tidb/store/tikv/util.EvalFailpoint
+github.com/tikv/client-go/v2/util.EvalFailpoint

@@ -17,7 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 type testPrewriteSuite struct {
