@@ -189,7 +189,7 @@ In parsing phase, definition of CTE will be parsed as a subtree of the outermost
 
 #### Logical Plan
 The parsing phase will generate an AST tree, which will be used to generate `LogicalCTE`. This stage will complete the following steps:
-1. Distinguish between seed part and recursive part of the definition of CTE.
+1. Distinguish between seed part and recursive part of the definition of CTE. And build logical plans for them.
 2. Do some validation checks.
 
     1. Mutual recursive(cte1 -> cte2 -> cte1) is not supported.
@@ -268,6 +268,9 @@ The filling of `Storage` is done by `CTEExec` and `CTETableReaderExec` together.
 Data in storage will be spilled to disk if memory usage reaches `@@tidb_mem_quota_query`. `MemTracker` and `RowContainer` will handle all the spilling process.
 
 Also we use a hash table to de-duplicate data in `resTbl`. Before copying data from `iterOutTbl` to `resTbl`, we use this hash table to check if there are duplications.
+
+We also support use LIMIT in recursive CTE. By using LIMIT, users don’t have to worry about infinite recursion.
+Because if the number of output rows reaches the LIMIT requirement, the iteration will be terminated early.
 
 ## Test Design
 
