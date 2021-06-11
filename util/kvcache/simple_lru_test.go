@@ -14,6 +14,8 @@
 package kvcache
 
 import (
+	"fmt"
+	"reflect"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -63,9 +65,6 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]int64, 5)
-<<<<<<< HEAD
-
-=======
 	maxMemDroppedKv := make(map[Key]Value)
 	zeroQuotaDroppedKv := make(map[Key]Value)
 
@@ -77,7 +76,6 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 	lruZeroQuota.SetOnEvict(func(key Key, value Value) {
 		zeroQuotaDroppedKv[key] = value
 	})
->>>>>>> 0367c5469... inforschema, executor, util/kvcache, util/statement_summary : Add STATEMENTS_SUMMARY_EVICTED into information_schema (#24513)
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = int64(i)
@@ -90,19 +88,13 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 	c.Assert(lruZeroQuota.size, Equals, lruMaxMem.size)
 
 	// test for non-existent elements
-<<<<<<< HEAD
-=======
 	c.Assert(len(maxMemDroppedKv), Equals, 2)
->>>>>>> 0367c5469... inforschema, executor, util/kvcache, util/statement_summary : Add STATEMENTS_SUMMARY_EVICTED into information_schema (#24513)
 	for i := 0; i < 2; i++ {
 		element, exists := lruMaxMem.elements[string(keys[i].Hash())]
 		c.Assert(exists, IsFalse)
 		c.Assert(element, IsNil)
-<<<<<<< HEAD
-=======
 		c.Assert(maxMemDroppedKv[keys[i]], Equals, vals[i])
 		c.Assert(zeroQuotaDroppedKv[keys[i]], Equals, vals[i])
->>>>>>> 0367c5469... inforschema, executor, util/kvcache, util/statement_summary : Add STATEMENTS_SUMMARY_EVICTED into information_schema (#24513)
 	}
 
 	// test for existent elements
@@ -130,6 +122,7 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 
 		root = root.Next()
 	}
+
 	// test for end of double-linked list
 	c.Assert(root, IsNil)
 }
@@ -293,4 +286,19 @@ func (s *testLRUCacheSuite) TestValues(c *C) {
 	for i := 0; i < 5; i++ {
 		c.Assert(values[i], Equals, int64(4-i))
 	}
+}
+
+func (s *testLRUCacheSuite) TestPutProfileName(c *C) {
+	lru := NewSimpleLRUCache(3, 0, 10)
+	c.Assert(lru.capacity, Equals, uint(3))
+	t := reflect.TypeOf(*lru)
+	pt := reflect.TypeOf(lru)
+	functionName := ""
+	for i := 0; i < pt.NumMethod(); i++ {
+		if pt.Method(i).Name == "Put" {
+			functionName = "Put"
+		}
+	}
+	pName := fmt.Sprintf("%s.(*%s).%s", t.PkgPath(), t.Name(), functionName)
+	c.Assert(pName, Equals, ProfileName)
 }

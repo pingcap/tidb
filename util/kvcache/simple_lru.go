@@ -35,6 +35,20 @@ type cacheEntry struct {
 	value Value
 }
 
+var (
+	// GlobalLRUMemUsageTracker tracks all the memory usage of SimpleLRUCache
+	GlobalLRUMemUsageTracker *memory.Tracker
+)
+
+const (
+	// ProfileName is the function name in heap profile
+	ProfileName = "github.com/pingcap/tidb/util/kvcache.(*SimpleLRUCache).Put"
+)
+
+func init() {
+	GlobalLRUMemUsageTracker = memory.NewTracker(memory.LabelForGlobalSimpleLRUCache, -1)
+}
+
 // SimpleLRUCache is a simple least recently used cache, not thread-safe, use it carefully.
 type SimpleLRUCache struct {
 	capacity uint
@@ -43,7 +57,10 @@ type SimpleLRUCache struct {
 	quota    uint64
 	guard    float64
 	elements map[string]*list.Element
-	cache    *list.List
+
+	// onEvict function will be called if any eviction happened
+	onEvict func(Key, Value)
+	cache   *list.List
 }
 
 // NewSimpleLRUCache creates a SimpleLRUCache object, whose capacity is "capacity".
@@ -58,8 +75,14 @@ func NewSimpleLRUCache(capacity uint, guard float64, quota uint64) *SimpleLRUCac
 		quota:    quota,
 		guard:    guard,
 		elements: make(map[string]*list.Element),
+		onEvict:  nil,
 		cache:    list.New(),
 	}
+}
+
+// SetOnEvict set the function called on each eviction.
+func (l *SimpleLRUCache) SetOnEvict(onEvict func(Key, Value)) {
+	l.onEvict = onEvict
 }
 
 // Get tries to find the corresponding value according to the given key.
@@ -77,6 +100,7 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 	hash := string(key.Hash())
 	element, exists := l.elements[hash]
 	if exists {
+		element.Value.(*cacheEntry).value = value
 		l.cache.MoveToFront(element)
 		return
 	}
@@ -89,7 +113,6 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 	element = l.cache.PushFront(newCacheEntry)
 	l.elements[hash] = element
 	l.size++
-
 	// Getting used memory is expensive and can be avoided by setting quota to 0.
 	if l.quota == 0 {
 		if l.size > l.capacity {
@@ -115,6 +138,11 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 		if lru == nil {
 			break
 		}
+
+		if l.onEvict != nil {
+			l.onEvict(lru.Value.(*cacheEntry).key, lru.Value.(*cacheEntry).value)
+		}
+
 		l.cache.Remove(lru)
 		delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
 		l.size--
@@ -187,4 +215,16 @@ func (l *SimpleLRUCache) SetCapacity(capacity uint) error {
 		l.size--
 	}
 	return nil
+}
+
+// RemoveOldest removes the oldest element from the cache.
+func (l *SimpleLRUCache) RemoveOldest() (key Key, value Value, ok bool) {
+	if l.size > 0 {
+		ele := l.cache.Back()
+		l.cache.Remove(ele)
+		delete(l.elements, string(ele.Value.(*cacheEntry).key.Hash()))
+		l.size--
+		return ele.Value.(*cacheEntry).key, ele.Value.(*cacheEntry).value, true
+	}
+	return nil, nil, false
 }
