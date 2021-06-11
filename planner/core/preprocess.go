@@ -1454,7 +1454,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 		}
 	}
 	if p.LastSnapshotTS != ts {
-		p.err = ErrDifferentAsOf.GenWithStack("can not set different time in the as of")
+		p.err = ErrAsOf.GenWithStack("can not set different time in the as of")
 		return
 	}
 	if p.LastSnapshotTS != 0 {
