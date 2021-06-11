@@ -3765,8 +3765,6 @@ func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
 }
 
 func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
-	c.Skip("Temporary disabled until br finishes switching client-go/v2")
-
 	// only run BR SQL integration test with tikv store.
 	if *tikvmockstore.WithTiKV {
 		cfg := config.GetGlobalConfig()
