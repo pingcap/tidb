@@ -4,9 +4,9 @@ This is a template for TiDB's change proposal process, documented [here](./READM
 
 # Proposal: Support Common Table Expression
 
-- Author(s):     [@guo-shaoge](https://github.com/guo-shaoge) [@wjhuang2016](https://github.com/wjhuang2016) 
-- Last updated:  2021-04-18
-- Discussion at: https://github.com/pingcap/tidb/issues/17472 <!-- https://github.com/pingcap/tidb/issues/XXX -->
+- Author(s): [@guo-shaoge](https://github.com/guo-shaoge), [@wjhuang2016](https://github.com/wjhuang2016)
+- Discussion PR: https://github.com/pingcap/tidb/pull/24147
+- Tracking Issue: https://github.com/pingcap/tidb/issues/17472
 
 ## Table of Contents
 
@@ -30,7 +30,7 @@ This proposal describes the basic implementation of Common Table Expression(CTE)
 
 ## Motivation or Background
 
-CTE is introduced in SQL:1999. It's a temporary result set which exists within a statement. You can reference it later in the statement.
+CTE was introduced in SQL:1999. It's a temporary result set which exists within a statement. You can reference it later in the statement.
 It's similar to derived tables in some way. But CTE has extra advantages over derived tables.
 
 1. CTE can be referenced multiple times.
@@ -47,7 +47,7 @@ There are two kinds of CTE:
     SELECT cte1.c1, cte2.c2 FROM cte1, cte2 WHERE cte1.c1 = cte2.c2 AND cte1.c1 = 100;
     ```
 2. recursive CTE, which can be used to do hierarchical queries. Recursive CTE normally consists of the seed part and the recursive part.
-   Seed part will generate the origin data, the remaining computation will be done by recursive part.
+   Seed part will generate the origin data, the remaining computation will be done by the recursive part.
 
     ```
     WITH RECURSIVE cte1 AS (
@@ -86,54 +86,102 @@ So we will add a map to record all CTE's subplan, these subplans will only be op
 ```Go
 type LogicalCTE struct {
 	logicalSchemaProducer
-	isDistinct bool
-	seedPartPlanID int
-	recursivePartPlanID int
+
+	cte       *CTEClass
+	cteAsName model.CIStr
+}
+
+type CTEClass struct {
+	IsDistinct bool
+	seedPartLogicalPlan      LogicalPlan
+	recursivePartLogicalPlan LogicalPlan
+	IDForStorage int
+	LimitBeg uint64
+	LimitEnd uint64
 }
 ```
 
-`LogicalCTE` is logical operator for CTE:
-1. `isDistinct` is true if CTE is recursive and `UNION [DISTINCT]` is used to connect the seed part and the recursive part.
-2. `seedPartPlanID` is the plan id of the seed part's logical plan. We will add a map[PlanID]Plan in stmt ctx to record plans used by CTE.
-    Different references of the same CTE will use same seed/recursive part's plan.
-3. `recursivePartPlanID` is the plan id of the recursive part's logical plan.
+`LogicalCTE` is the logical operator for CTE. `cte` is a member of `CTEClass` type.
+The content of `CTEClass` will be the same if different CTE references point to the same CTE.
+
+The meanings of main members in CTEClass are as follows:
+1. `IsDistinct`: True if UNION [DISTINCT] and false if UNION ALL.
+2. `seedPartLogicalPlan`: Logical Plan of seed part.
+3. `recursivePartLogicalPlan`: Logical Plan of recursive part. It will be nil if CTE is non-recursive.
+4. `IDForStorage`: ID of intermediate storage.
+5. `LimitBeg` and `LimitEnd`: Useful when limit is used in recursive CTE.
 
 ```Go
 type LogicalCTETable struct {
     logicalSchemaProducer
-    refCTEID int
+
+	name         string
+	idForStorage int
 }
 ```
-`LogicalCTETable` will read the temporary result set of CTE. `refCTEID` points to the corresponding `LogicalCTE`.
+`LogicalCTETable` will read the temporary result set of CTE. `idForStorage` points to the intermediate storage.
 
 #### Physical Operator
-`PhysicalCTE` and `PhysicalCTETableReader` will be added corresponding to `LogicalCTE` and `LogicalCTETable`.
+`PhysicalCTE` and `PhysicalCTETable` will be added corresponding to `LogicalCTE` and `LogicalCTETable`.
 
 #### Executor
-`CTEExec` and `CTETableReaderExec` will be added corresponding to `PhysicalCTE` and `PhysicalCTETableReader`.
 
-#### CTEStorage
 ```Go
-type CTEStorage interface {
-    OpenAndRef() bool
-    DerefAndClose() (is_closed bool, err error)
-    Add(chk *Chunk, iter int) error
-    GetIterChunkIds(iter int) ([]int, error)
-    GetChunk(chkId int) (*Chunk, error)
+type CTEExec struct {
+	baseExecutor
+
+	seedExec      Executor
+	recursiveExec Executor
+
+	resTbl     cteutil.Storage
+	iterInTbl  cteutil.Storage
+	iterOutTbl cteutil.Storage
+
+	hashTbl baseHashTable
 }
 ```
-`CTEStorage` will be added as a member of `CTEExec` and `CTETableReaderExec`.
-`CTETableReaderExec` reads data of a specific iteration and returns to its parent operator for calculation.
-Then `CTEExec` reads the calculation result and writes to `CTEStorage`.
 
-Since there will be multiple executors using one `CTEStorage`, we use a ref count to record how many users currently there are.
-When the last user calls Close(), the `CTEStorage` will really be closed.
+`CTEExec` will handle the main execution. Detailed execution process will be explained later.
+1. `seedExec` and `recursiveExec`: Executors of seed part and recursive part.
+2. `resTbl`: The final output is stored in this storage.
+3. `iterInTbl`: Input data of each iteration.
+4. `iterOutTbl`: Output data of each iteration.
+5. `hashTbl`: Data will be deduplicated if UNION [DISTINCT] is used.
 
-1. `OpenAndRef()`: Open this `CTEStorage`, if already opened, add ref count by one.
+```Go
+type CTETableReaderExec struct {
+	baseExecutor
+
+	iterInTbl cteutil.Storage
+	chkIdx    int
+	curIter   int
+}
+```
+
+`CTETableReaderExec` is used in recursive CTE. It will read `iterInTbl` and the output chunk will be processed in `CTEExec`.
+
+#### Storage
+```Go
+type Storage interface {
+    OpenAndRef() bool
+    DerefAndClose() error
+    Add(chk *chunk.Chunk) error
+    GetChunk(chkdIdx int) (*chunk.Chunk, error)
+    Lock()
+    Unlock()
+}
+```
+
+`Storage` is used to store the intermediate data of CTE. Check the `resTbl`, `iterInTbl` and `iterOutTbl` in `CTEExec`.
+
+Since there will be multiple executors using one `Storage`, we use a ref count to record how many users currently there are.
+When the last user calls Close(), the `Storage` will really be closed.
+
+1. `OpenAndRef()`: Open this `Storage`, if already opened, add ref count by one.
 2. `DerefAndClose()`: Deref and check if ref count is zero, if true, the underlying storage will be truly closed.
 3. `Add()`: Add chunk into storage.
-4. `GetIterChunkIds()`: Get all chunk ids for specific iteration.
-5. `GetChunk()`: Get chunk by chunk id.
+4. `GetChunk()`: Get chunk by chunk id.
+5. `Lock()` and `Unlock`: `Storage` may be used concurrently. So we need to add a lock.
 
 ### Life of a CTE
 #### Parsing
@@ -141,21 +189,18 @@ In parsing phase, definition of CTE will be parsed as a subtree of the outermost
 
 #### Logical Plan
 The parsing phase will generate an AST tree, which will be used to generate `LogicalCTE`. This stage will complete the following steps:
-1. Build logical plans of seed part and recursive part and store their plan id. The plans will be stored to a map in stmt ctx.
+1. Distinguish between seed part and recursive part of the definition of CTE.
 2. Do some validation checks.
 
-    2.1 mutual recursive(cte1 -> cte2 -> cte1) is not supported.
+    1 Mutual recursive(cte1 -> cte2 -> cte1) is not supported.
 
-    2.2 column num of seed part and recursive part are same.
+    2 Column number of the seed part and the recursive part must be same.
     
-    2.3 all seed parts should follow recursive parts.
+    3 All seed parts should follow recursive parts.
 
-    2.4 recursive query blocks with UNION DISTINCT then UNION ALL are not supported.
+    4 recursive parts cannot include: `ORDER BY`, `Aggregate Function`, `Window Function`, `DISTINCT`.
 
-    2.5 recursive parts cannot include: `ORDER BY`, `Aggregate Function`, `Window Function`, `DISTINCT`.
-
-3. Recognize the same CTE. If there are multiple references to the same CTE, `seedPartPlanID` and `recursivePartPlanID` of these references should be same.
-   These plans will only be optimized only once.
+3. Recognize the same CTE. If there are multiple references to the same CTE.
 
 We use the following SQL to illustrate:
 ```SQL
@@ -167,8 +212,8 @@ The logical plan of above SQL will be like:
 ![logical_plan](./imgs/logical_plan.png)
 
 #### Physical Plan
-In this stage, the `LogicalCTE` will be converted to `PhysicalCTE`. We just convert logical plans of seed part and recursive part to its physical plan.
-Also `LogicalCTETable` will be converted to `PhysicalCTETableReader`.
+In this stage, the `LogicalCTE` will be converted to `PhysicalCTE`. We just convert logical plans of the seed part and the recursive part to its physical plan.
+Also `LogicalCTETable` will be converted to `PhysicalCTETable`.
 
 The Physical Plan will be like:
 
@@ -178,42 +223,51 @@ The Physical Plan will be like:
 Three structures will be constructed:
 1. `CTEExec`: Evaluate seed part and recursive part iteratively.
 2. `CTETableReaderExec`: Read result of previous iteration and return result to parent operator.
-3. `CTEStorage`: This is where the materialized results are stored. `CTEExec` will write it and `CTETableReaderExec` will read it.
+3. `Storage`: This is where the materialized results are stored. `CTEExec` will write it and `CTETableReaderExec` will read it.
 
 The executor tree will be like:
 
 ![executors](./imgs/executors.png)
 
 #### Execution
-The implementation of `CTEExec` is as follows. It first checks whether `CTEStorage` is filled, if not, it will compute seed part and recursive part to fill `CTEStorage`.
-So the `CTEStorage` will only be filled by first executed `CTEExec`, and other `CTEExec` which references to the same `CTEStorage` just reads it.
+The following pseudo code describes the execution of `CTEExec`:
 
 ```Go
 func (e *CTEExec) Next(req *Chunk) {
-    // 1. the first executed CTEExec will be responsible to fill storage.
+    // 1. The first executed CTEExec will be responsible for filling storage.
+    e.storage.Lock()
+    defer e.storage.Unlock()
     if !e.storage.Done() {
-        // 1.1 compute seed part.
-        // 1.2 compute recursive part iteratively.
+        // 1.1 Compute seed part and store data into e.iterInTbl.
+        for {
+            // 1.2 Compute recursive part iteratively and break if reaches termination conditions.
+        }
         e.storage.SetDone()
     }
-    // 2. return chunk in e.storage
+    // 2. Return chunk in e.resTbl.
 }
 ```
 
-The filling of `CTEStorage` is done by `CTEExec` and `CTETableReaderExec` together. The following figure describes the process.
+Only the first `CTEExec` will fill the storage. Others will be waiting until the filling process is done.
+So we use `Done()` to check at the beginning of execution.
+If the filling process is already done, we just read the chunk from storage.
+
+The filling of `Storage` is done by `CTEExec` and `CTETableReaderExec` together. The following figure describes the process.
 
 ![cte_computation](./imgs/cte_computation.png)
 
-The data of iter_0 is generated by computing seed part and stored into `CTEStorage`. Data of iter_i is generated as follows:
-1. `CTEExec` calls child's next() method, then `CTETableReaderExec` will read iter_i-1 data from `CTEStorage`.
-2. Data is returned to `Selection`.
-3. `Selection` filter data and return it to `CTEExec`.
-4. `CTEExec` stores the result to `CTEStorage`, and the result labeled as iter_1 data.
+1. Compute the `SeedExec` and all output chunks will be stored into `iterInTbl`, which will be the input data of next iteration.
+2. Compute the `RecursiveExec` iteratively. `iterInTbl` will be read by `CTETableReaderExec` and its output will be processed by executors in `RecursiveExec`.And finally the data will be put into `iterOutTbl`.
+3. At the end of each iteration, we copy all data from `iterOutTbl` to `iterInTbl` and `resTbl`. So the output of the previous iteration will be the input of the next iteration.
+4. Iteration will be terminated if:
 
-The above steps will continue to iterate until:
-1. No data is generated by the recursive part.
-2. Iteration number reaches `cte_max_recursion_depth`.
-3. Execution time reaches `max_execution_time`
+    1. No data is generated in this iteration or
+    2. Iteration number reaches `@@cte_max_recursion_depth` or
+    3. Execution time reaches `@@max_execution_time`.
+
+Data in storage will be spilled to disk if memory usage reaches `@@tidb_mem_quota_query`. `MemTracker` and `RowContainer` will handle all the spilling process.
+
+Also we use a hash table to de-duplicate data in `resTbl`. Before copying data from `iterOutTbl` to `resTbl`, we use a hash table to check if there are duplications.
 
 ## Test Design
 
@@ -225,15 +279,16 @@ The above steps will continue to iterate until:
 4. Use CTE in UPDATE/DELETE/INSERT statements.
 5. CTE name conflicts with other table names.
 6. Join CTE with other tables/CTE.
-7. Use expression with CTE.
+7. Use expressions with CTE.
 
 ### Scenario Tests
 
 We should test CTE used together with other features:
 1. Use CTE with PREPARE/EXECUTE/PlanCache.
-2. Use CTE with partition table.
+2. Use CTE with a partition table.
 3. Stale read.
 4. Clustered index.
+5. SPM/Hint/Binding.
 
 ### Compatibility Tests
 
@@ -241,14 +296,14 @@ None
 
 ### Benchmark Tests
 
-A basic performance test should be given in specific scenario.
+A basic performance test should be given in a specific scenario.
 The memory usage, disk usage and QPS should be reported.
 
 ## Impacts & Risks
 
 CTE is a new feature and it will not affect the overall performance.
 But for now we only use `Materialization` to implement non-recursive CTE.
-In some scenario, the performance may not be as good as implementations which use `Merge`.
+In some scenarios, the performance may not be as good as implementations which use `Merge`.
 
 ## Investigation & Alternatives
 
@@ -264,13 +319,13 @@ which will be spilled to disk if the size is too large. The computation steps fo
 
 But different system use different ways to try to optimize:
 1. Try to postpone materialization.
-3. Pushdown predicates to reduce the size of temporary table.
+3. Pushdown predicates to reduce the size of the temporary table.
 
 ## Unresolved Questions
 
 None
 
 ## Future Work
-1. Support `Merge` and related hint(merge/no_merge).
-2. Optimize `Materialization`, pushdown predicates to materialized table.
-2. MPP support. `CTEExec` will be implemented in TiFlash.
+1. Support `Merge` and related hints(merge/no_merge).
+2. Optimize `Materialization`, pushdown predicates to the materialized table.
+2. MPP support. `CTEExec` will be implemented in TiFlash later. But SQL used in CTE definition still can be pushed to TiFlash.
