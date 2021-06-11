@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/store/tikv/client"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/retry"
@@ -115,7 +116,7 @@ func (t *DeleteRangeTask) sendReqOnRange(ctx context.Context, r kv.KeyRange) (Ra
 			NotifyOnly: t.notifyOnly,
 		})
 
-		resp, err := t.store.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
+		resp, err := t.store.SendReq(bo, req, loc.Region, client.ReadTimeoutMedium)
 		if err != nil {
 			return stat, errors.Trace(err)
 		}

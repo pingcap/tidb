@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
 	derr "github.com/pingcap/tidb/store/driver/error"
@@ -31,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
@@ -231,7 +234,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	for {
 		members, err := pdClient.GetAllMembers(ctx)
 		if err != nil {
-			err := bo.Backoff(tikv.BoRegionMiss, err)
+			err := bo.Backoff(tikv.BoRegionMiss(), err)
 			if err != nil {
 				return nil, err
 			}
@@ -307,7 +310,7 @@ func (s *tikvStore) Begin() (kv.Transaction, error) {
 }
 
 // BeginWithOption begins a transaction with given option
-func (s *tikvStore) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
+func (s *tikvStore) BeginWithOption(option tikv.StartTSOption) (kv.Transaction, error) {
 	txn, err := s.KVStore.BeginWithOption(option)
 	if err != nil {
 		return nil, derr.ToTiDBErr(err)
@@ -330,4 +333,24 @@ func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
 // ShowStatus returns the specified status of the storage
 func (s *tikvStore) ShowStatus(ctx context.Context, key string) (interface{}, error) {
 	return nil, kv.ErrNotImplemented
+}
+
+// GetLockWaits get return lock waits info
+func (s *tikvStore) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
+	stores := s.GetRegionCache().GetStoresByType(tikvrpc.TiKV)
+	var result []*deadlockpb.WaitForEntry
+	for _, store := range stores {
+		resp, err := s.GetTiKVClient().SendRequest(context.TODO(), store.GetAddr(), tikvrpc.NewRequest(tikvrpc.CmdLockWaitInfo, &kvrpcpb.GetLockWaitInfoRequest{}), time.Second*30)
+		if err != nil {
+			logutil.BgLogger().Warn("query lock wait info failed", zap.Error(err))
+			continue
+		}
+		if resp.Resp == nil {
+			logutil.BgLogger().Warn("lock wait info from store is nil")
+			continue
+		}
+		entries := resp.Resp.(*kvrpcpb.GetLockWaitInfoResponse).Entries
+		result = append(result, entries...)
+	}
+	return result, nil
 }

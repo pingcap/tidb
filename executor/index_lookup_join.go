@@ -537,7 +537,7 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 			// Store the encoded lookup key in chunk, so we can use it to lookup the matched inners directly.
 			task.encodedLookUpKeys[chkIdx].AppendBytes(0, keyBuf)
 			if iw.hasPrefixCol {
-				for i, outerOffset := range iw.outerCtx.keyCols {
+				for i, outerOffset := range iw.keyOff2IdxOff {
 					// If it's a prefix column. Try to fix it.
 					joinKeyColPrefixLen := iw.colLens[outerOffset]
 					if joinKeyColPrefixLen != types.UnspecifiedLength {
@@ -577,12 +577,9 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, row
 		}
 		innerColType := iw.rowTypes[iw.hashCols[i]]
 		innerValue, err := outerValue.ConvertTo(sc, innerColType)
-		if err != nil {
+		if err != nil && !(terror.ErrorEqual(err, types.ErrTruncated) && (innerColType.Tp == mysql.TypeSet || innerColType.Tp == mysql.TypeEnum)) {
 			// If the converted outerValue overflows, we don't need to lookup it.
 			if terror.ErrorEqual(err, types.ErrOverflow) {
-				return nil, nil, nil
-			}
-			if terror.ErrorEqual(err, types.ErrTruncated) && (innerColType.Tp == mysql.TypeSet || innerColType.Tp == mysql.TypeEnum) {
 				return nil, nil, nil
 			}
 			return nil, nil, err

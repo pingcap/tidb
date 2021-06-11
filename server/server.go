@@ -54,11 +54,11 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/fastrand"
@@ -311,9 +311,9 @@ func setSSLVariable(ca, key, cert string) {
 func setTxnScope() {
 	variable.SetSysVar("txn_scope", func() string {
 		if isGlobal, _ := config.GetTxnScopeFromConfig(); isGlobal {
-			return oracle.GlobalTxnScope
+			return kv.GlobalTxnScope
 		}
-		return oracle.LocalTxnScope
+		return kv.LocalTxnScope
 	}())
 }
 

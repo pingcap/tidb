@@ -14,7 +14,6 @@
 package disk
 
 import (
-	"io/ioutil"
 	"os"
 	"sync"
 	"testing"
@@ -24,7 +23,7 @@ import (
 )
 
 func TestT(t *testing.T) {
-	path, _ := ioutil.TempDir("", "tmp-storage-disk-pkg")
+	path, _ := os.MkdirTemp("", "tmp-storage-disk-pkg")
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempStoragePath = path
 	})

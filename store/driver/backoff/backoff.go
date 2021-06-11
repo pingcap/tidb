@@ -43,29 +43,22 @@ func (b *Backoffer) TiKVBackoffer() *tikv.Backoffer {
 	return b.b
 }
 
-// Backoff sleeps a while base on the backoffType and records the error message.
+// Backoff sleeps a while base on the BackoffConfig and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
-func (b *Backoffer) Backoff(typ tikv.BackoffType, err error) error {
-	e := b.b.Backoff(typ, err)
+func (b *Backoffer) Backoff(cfg *tikv.BackoffConfig, err error) error {
+	e := b.b.Backoff(cfg, err)
 	return derr.ToTiDBErr(e)
 }
 
-// BackoffTiKVRPC sleeps a while base on the TiKVRPC and records the error message.
-// It returns a retryable error if total sleep time exceeds maxSleep.
-func (b *Backoffer) BackoffTiKVRPC(err error) error {
-	e := b.b.BackoffTiKVRPC(err)
-	return derr.ToTiDBErr(e)
-}
-
-// BackoffWithMaxSleep sleeps a while base on the backoffType and records the error message
+// BackoffWithMaxSleepTxnLockFast sleeps a while for the operation TxnLockFast and records the error message
 // and never sleep more than maxSleepMs for each sleep.
-func (b *Backoffer) BackoffWithMaxSleep(typ tikv.BackoffType, maxSleepMs int, err error) error {
-	e := b.b.BackoffWithMaxSleep(typ, maxSleepMs, err)
+func (b *Backoffer) BackoffWithMaxSleepTxnLockFast(maxSleepMs int, err error) error {
+	e := b.b.BackoffWithMaxSleepTxnLockFast(maxSleepMs, err)
 	return derr.ToTiDBErr(e)
 }
 
 // GetBackoffTimes returns a map contains backoff time count by type.
-func (b *Backoffer) GetBackoffTimes() map[tikv.BackoffType]int {
+func (b *Backoffer) GetBackoffTimes() map[string]int {
 	return b.b.GetBackoffTimes()
 }
 
@@ -80,7 +73,7 @@ func (b *Backoffer) GetVars() *tikv.Variables {
 }
 
 // GetBackoffSleepMS returns a map contains backoff sleep time by type.
-func (b *Backoffer) GetBackoffSleepMS() map[tikv.BackoffType]int {
+func (b *Backoffer) GetBackoffSleepMS() map[string]int {
 	return b.b.GetBackoffSleepMS()
 }
 

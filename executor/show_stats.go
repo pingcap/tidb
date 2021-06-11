@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -203,7 +202,7 @@ func (e *ShowExec) histogramToRow(dbName, tblName, partitionName, colName string
 }
 
 func (e *ShowExec) versionToTime(version uint64) types.Time {
-	t := time.Unix(0, oracle.ExtractPhysical(version)*int64(time.Millisecond))
+	t := oracle.GetTimeFromTS(version)
 	return types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, 0)
 }
 

@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -76,8 +77,9 @@ var _ = Suite(&testDBSuite4{&testDBSuite{}})
 var _ = Suite(&testDBSuite5{&testDBSuite{}})
 var _ = Suite(&testDBSuite6{&testDBSuite{}})
 var _ = Suite(&testDBSuite7{&testDBSuite{}})
-var _ = SerialSuites(&testSerialDBSuite{&testDBSuite{}})
 var _ = Suite(&testDBSuite8{&testDBSuite{}})
+var _ = SerialSuites(&testSerialDBSuite{&testDBSuite{}})
+var _ = SerialSuites(&testSerialDBSuite1{&testDBSuite{}})
 
 const defaultBatchSize = 1024
 const defaultReorgBatchSize = 256
@@ -90,6 +92,7 @@ type testDBSuite struct {
 	s          session.Session
 	lease      time.Duration
 	autoIDStep int64
+	ctx        sessionctx.Context
 }
 
 func setUpSuite(s *testDBSuite, c *C) {
@@ -114,6 +117,7 @@ func setUpSuite(s *testDBSuite, c *C) {
 	c.Assert(err, IsNil)
 	s.s, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
+	s.ctx = s.s.(sessionctx.Context)
 
 	_, err = s.s.Execute(context.Background(), "create database test_db")
 	c.Assert(err, IsNil)
@@ -145,8 +149,9 @@ type testDBSuite4 struct{ *testDBSuite }
 type testDBSuite5 struct{ *testDBSuite }
 type testDBSuite6 struct{ *testDBSuite }
 type testDBSuite7 struct{ *testDBSuite }
-type testSerialDBSuite struct{ *testDBSuite }
 type testDBSuite8 struct{ *testDBSuite }
+type testSerialDBSuite struct{ *testDBSuite }
+type testSerialDBSuite1 struct{ *testDBSuite }
 
 func testAddIndexWithPK(tk *testkit.TestKit) {
 	tk.MustExec("drop table if exists test_add_index_with_pk")
@@ -287,7 +292,7 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 }
 
 // TestAddPrimaryKeyRollback1 is used to test scenarios that will roll back when a duplicate primary key is encountered.
-func (s *testDBSuite5) TestAddPrimaryKeyRollback1(c *C) {
+func (s *testDBSuite8) TestAddPrimaryKeyRollback1(c *C) {
 	hasNullValsInKey := false
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
@@ -296,7 +301,7 @@ func (s *testDBSuite5) TestAddPrimaryKeyRollback1(c *C) {
 }
 
 // TestAddPrimaryKeyRollback2 is used to test scenarios that will roll back when a null primary key is encountered.
-func (s *testDBSuite1) TestAddPrimaryKeyRollback2(c *C) {
+func (s *testDBSuite8) TestAddPrimaryKeyRollback2(c *C) {
 	hasNullValsInKey := true
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
@@ -444,7 +449,7 @@ LOOP:
 	tk.MustExec("drop table t1")
 }
 
-func (s *testDBSuite5) TestCancelAddPrimaryKey(c *C) {
+func (s *testDBSuite8) TestCancelAddPrimaryKey(c *C) {
 	idxName := "primary"
 	addIdxSQL := "alter table t1 add primary key idx_c2 (c2);"
 	testCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL, "", s.dom)
@@ -460,7 +465,7 @@ func (s *testDBSuite5) TestCancelAddPrimaryKey(c *C) {
 	tk.MustExec("drop table t1")
 }
 
-func (s *testDBSuite3) TestCancelAddIndex(c *C) {
+func (s *testDBSuite7) TestCancelAddIndex(c *C) {
 	idxName := "c3_index "
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
 	testCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL, "", s.dom)
@@ -1072,7 +1077,7 @@ func (s *testDBSuite6) TestAddMultiColumnsIndexClusterIndex(c *C) {
 	tk.MustExec("admin check table t;")
 }
 
-func (s *testDBSuite1) TestAddPrimaryKey1(c *C) {
+func (s *testDBSuite6) TestAddPrimaryKey1(c *C) {
 	testAddIndex(c, s.store, s.lease, testPlain,
 		"create table test_add_index (c1 bigint, c2 bigint, c3 bigint, unique key(c1))", "primary")
 }
@@ -1105,7 +1110,7 @@ func (s *testDBSuite4) TestAddPrimaryKey4(c *C) {
 			      partition p4 values less than maxvalue)`, "primary")
 }
 
-func (s *testDBSuite1) TestAddIndex1(c *C) {
+func (s *testDBSuite6) TestAddIndex1(c *C) {
 	testAddIndex(c, s.store, s.lease, testPlain,
 		"create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))", "")
 }
@@ -1127,7 +1132,7 @@ func (s *testDBSuite3) TestAddIndex3(c *C) {
 			      partition by hash (c1) partitions 4;`, "")
 }
 
-func (s *testDBSuite4) TestAddIndex4(c *C) {
+func (s *testDBSuite8) TestAddIndex4(c *C) {
 	testAddIndex(c, s.store, s.lease, testPartition,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by range columns (c1) (
@@ -2035,7 +2040,7 @@ func (s *testDBSuite5) TestCreateIndexType(c *C) {
 	tk.MustExec(sql)
 }
 
-func (s *testDBSuite1) TestColumn(c *C) {
+func (s *testDBSuite6) TestColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use " + s.schemaName)
 	tk.MustExec("create table t2 (c1 int, c2 int, c3 int)")
@@ -2363,7 +2368,7 @@ func (s *testDBSuite4) TestChangeColumn(c *C) {
 	sql = "alter table t4 change c2 a bigint not null;"
 	tk.MustGetErrCode(sql, mysql.WarnDataTruncated)
 	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c') not null default 'a'"
-	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
+	tk.MustExec(sql)
 	// Rename to an existing column.
 	s.mustExec(tk, c, "alter table t3 add column a bigint")
 	sql = "alter table t3 change aa a bigint"
@@ -3007,7 +3012,7 @@ func (s *testDBSuite2) TestTableForeignKey(c *C) {
 	tk.MustExec("create table t3 (a int, b int);")
 	failSQL = "alter table t1 add foreign key (c) REFERENCES t3(a);"
 	tk.MustGetErrCode(failSQL, errno.ErrKeyColumnDoesNotExits)
-	// test oreign key not match error
+	// test origin key not match error
 	failSQL = "alter table t1 add foreign key (a) REFERENCES t3(a, b);"
 	tk.MustGetErrCode(failSQL, errno.ErrWrongFkDef)
 	// Test drop column with foreign key.
@@ -3026,7 +3031,26 @@ func (s *testDBSuite2) TestTableForeignKey(c *C) {
 	tk.MustExec("drop table if exists t1,t2,t3,t4;")
 }
 
-func (s *testDBSuite3) TestFKOnGeneratedColumns(c *C) {
+func (s *testDBSuite2) TestTemporaryTableForeignKey(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (a int, b int);")
+	tk.MustExec("drop table if exists t1_tmp;")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	tk.MustExec("create global temporary table t1_tmp (a int, b int) on commit delete rows;")
+	// test add foreign key.
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2 (a int, b int);")
+	failSQL := "alter table t1_tmp add foreign key (c) REFERENCES t2(a);"
+	tk.MustGetErrCode(failSQL, mysql.ErrCannotAddForeign)
+	// Test drop column with foreign key.
+	failSQL = "create global temporary table t3 (c int,d int,foreign key (d) references t1 (b)) on commit delete rows;"
+	tk.MustGetErrCode(failSQL, mysql.ErrCannotAddForeign)
+	tk.MustExec("drop table if exists t1,t2,t3,t1_tmp;")
+}
+
+func (s *testDBSuite8) TestFKOnGeneratedColumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// test add foreign key to generated column
@@ -3490,6 +3514,37 @@ out:
 	tk.MustExec("drop table tnn")
 }
 
+func (s *testDBSuite3) TestVirtualColumnDDL(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_gv_ddl")
+	tk.MustExec(`create global temporary table test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored) on commit delete rows;`)
+	defer tk.MustExec("drop table if exists test_gv_ddl")
+	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_gv_ddl"))
+	c.Assert(err, IsNil)
+	testCases := []struct {
+		generatedExprString string
+		generatedStored     bool
+	}{
+		{"", false},
+		{"`a` + 8", false},
+		{"`b` + 2", true},
+	}
+	for i, column := range table.Meta().Columns {
+		c.Assert(column.GeneratedExprString, Equals, testCases[i].generatedExprString)
+		c.Assert(column.GeneratedStored, Equals, testCases[i].generatedStored)
+	}
+	result := tk.MustQuery(`DESC test_gv_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
+	tk.MustExec("begin;")
+	tk.MustExec("insert into test_gv_ddl values (1, default, default)")
+	tk.MustQuery("select * from test_gv_ddl").Check(testkit.Rows("1 9 11"))
+	_, err = tk.Exec("commit")
+	c.Assert(err, IsNil)
+}
+
 func (s *testDBSuite3) TestGeneratedColumnDDL(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3946,12 +4001,6 @@ func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
 	// Make sure the count of regions more than backfill workers.
 	tk.MustQuery("split table t1 between (0) and (8192) regions 8;").Check(testkit.Rows("8 1"))
 
-	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-	}()
-
 	tbl := s.testGetTable(c, "t1")
 	originalHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
@@ -4052,11 +4101,8 @@ func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
 func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal2(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockInsertValueAfterCheckNull", `return("insert into test.tt values (NULL, NULL)")`), IsNil)
 	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
 		err := failpoint.Disable("github.com/pingcap/tidb/ddl/mockInsertValueAfterCheckNull")
 		c.Assert(err, IsNil)
 	}()
@@ -4085,7 +4131,6 @@ func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal(c *C) {
 
 func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
 
 	// varchar to varchar
 	tk.MustExec("drop table if exists tt;")
@@ -4098,9 +4143,11 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	tk.MustGetErrMsg("alter table tt change a a varchar(4);", "[types:1406]Data Too Long, field len 4, data len 5")
 	tk.MustExec("alter table tt change a a varchar(100);")
 
-	tk.MustExec("drop table if exists tt;")
-	tk.MustExec("create table tt (a char(10));")
-	tk.MustExec("insert into tt values ('111'),('10000');")
+	// varchar to char
+	tk.MustExec("alter table tt change a a char(10);")
+	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeString)
+	c.Assert(c2.FieldType.Flen, Equals, 10)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 	tk.MustGetErrMsg("alter table tt change a a char(4);", "[types:1406]Data Too Long, field len 4, data len 5")
 
@@ -4164,14 +4211,6 @@ func testModifyColumnNullToNotNull(c *C, s *testDBSuite, enableChangeColumnType 
 	s.mustExec(tk, c, "use test_db")
 	s.mustExec(tk, c, "drop table if exists t1")
 	s.mustExec(tk, c, "create table t1 (c1 int, c2 int);")
-
-	if enableChangeColumnType {
-		enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
-		tk.Se.GetSessionVars().EnableChangeColumnType = true
-		defer func() {
-			tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-		}()
-	}
 
 	tbl := s.testGetTable(c, "t1")
 	getModifyColumn(c, s.s.(sessionctx.Context), s.schemaName, "t1", "c2", false)
@@ -4902,7 +4941,7 @@ func (s *testDBSuite1) TestModifyColumnTime_TimeToTimestamp(c *C) {
 	testModifyColumnTime(c, s.store, tests)
 }
 
-func (s *testDBSuite1) TestModifyColumnTime_DateToTime(c *C) {
+func (s *testDBSuite7) TestModifyColumnTime_DateToTime(c *C) {
 	tests := []testModifyColumnTimeCase{
 		// date to time
 		{"date", `"2019-01-02"`, "time", "00:00:00", 0},
@@ -5161,15 +5200,12 @@ func testModifyColumnTime(c *C, store kv.Storage, tests []testModifyColumnTimeCa
 
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test_db")
-	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
 
 	// Set time zone to UTC.
 	originalTz := tk.Se.GetSessionVars().TimeZone
 	tk.Se.GetSessionVars().TimeZone = time.UTC
 	defer func() {
 		variable.SetDDLErrorCountLimit(limit)
-		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
 		tk.Se.GetSessionVars().TimeZone = originalTz
 	}()
 
@@ -5295,6 +5331,52 @@ func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
 	c.Assert(err.Error(), Equals, "the tiflash replica count: 2 should be less than the total tiflash server count: 0")
 }
 
+func (s *testSerialDBSuite) TestSetTableFlashReplicaForSystemTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	sysTables := make([]string, 0, 24)
+	memOrSysDB := []string{"MySQL", "INFORMATION_SCHEMA", "PERFORMANCE_SCHEMA", "METRICS_SCHEMA"}
+	for _, db := range memOrSysDB {
+		tk.MustExec("use " + db)
+		rows := tk.MustQuery("show tables").Rows()
+		for i := 0; i < len(rows); i++ {
+			sysTables = append(sysTables, rows[i][0].(string))
+		}
+		for _, one := range sysTables {
+			_, err := tk.Exec(fmt.Sprintf("alter table `%s` set tiflash replica 1", one))
+			c.Assert(err.Error(), Equals, "[ddl:8200]ALTER table replica for tables in system database is currently unsupported")
+		}
+		sysTables = sysTables[:0]
+	}
+}
+
+func (s *testSerialDBSuite) TestSetTiFlashReplicaForTemporaryTable(c *C) {
+	// test for tiflash replica
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+		c.Assert(err, IsNil)
+	}()
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	tk.MustExec("drop table if exists temp")
+	tk.MustExec("create global temporary table temp(id int) on commit delete rows")
+	tk.MustGetErrCode("alter table temp set tiflash replica 1", errno.ErrOptOnTemporaryTable)
+	tk.MustExec("drop table temp")
+
+	tk.MustExec("drop table if exists normal")
+	tk.MustExec("create table normal(id int)")
+	defer tk.MustExec("drop table normal")
+	tk.MustExec("alter table normal set tiflash replica 1")
+	tk.MustQuery("select REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='normal'").Check(testkit.Rows("1"))
+	tk.MustExec("create global temporary table temp like normal on commit delete rows")
+	tk.MustQuery("select REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='temp'").Check(testkit.Rows())
+	tk.MustExec("drop table temp")
+	tk.MustExec("set tidb_enable_noop_functions = 1")
+	tk.MustExec("create temporary table temp like normal")
+	tk.MustQuery("select REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='temp'").Check(testkit.Rows())
+}
+
 func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
@@ -5334,6 +5416,19 @@ func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
 	_, err = tk.Exec("insert into t1 set a=1;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[autoid:1467]Failed to read auto-increment value from storage engine")
+}
+
+func (s *testSerialDBSuite) TestShardRowIDBitsOnTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists shard_row_id_temporary")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	_, err := tk.Exec("create global temporary table shard_row_id_temporary (a int) shard_row_id_bits = 5 on commit delete rows;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
+	tk.MustExec("create global temporary table shard_row_id_temporary (a int) on commit delete rows;")
+	defer tk.MustExec("drop table if exists shard_row_id_temporary")
+	_, err = tk.Exec("alter table shard_row_id_temporary shard_row_id_bits = 4;")
+	c.Assert(err.Error(), Equals, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
 }
 
 // port from mysql
@@ -6403,13 +6498,6 @@ func (s *testSerialDBSuite) TestColumnTypeChangeGenUniqueChangingName(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 
-	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-		config.RestoreFunc()()
-	}()
-
 	hook := &ddl.TestDDLCallback{}
 	var checkErr error
 	assertChangingColName := "_col$_c2_0"
@@ -6527,8 +6615,6 @@ func (s *testSerialDBSuite) TestColumnTypeChangeGenUniqueChangingName(c *C) {
 func (s *testSerialDBSuite) TestModifyColumnTypeWithWarnings(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	// Enable column change variable.
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
 
 	// Test normal warnings.
 	tk.MustExec("drop table if exists t")
@@ -6564,8 +6650,6 @@ func (s *testSerialDBSuite) TestModifyColumnTypeWithWarnings(c *C) {
 func (s *testSerialDBSuite) TestModifyColumnTypeWhenInterception(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	// Enable column change variable.
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
 
 	// Test normal warnings.
 	tk.MustExec("drop table if exists t")

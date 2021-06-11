@@ -151,7 +151,11 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	case kv.InfoSchema:
 		txn.SetSchemaVer(val.(tikv.SchemaVer))
 	case kv.CollectRuntimeStats:
-		txn.KVTxn.GetSnapshot().SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
+		if val == nil {
+			txn.KVTxn.GetSnapshot().SetRuntimeStats(nil)
+		} else {
+			txn.KVTxn.GetSnapshot().SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
+		}
 	case kv.SchemaAmender:
 		txn.SetSchemaAmender(val.(tikv.SchemaAmender))
 	case kv.SampleStep:
@@ -170,6 +174,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.GetSnapshot().SetIsStatenessReadOnly(val.(bool))
 	case kv.MatchStoreLabels:
 		txn.KVTxn.GetSnapshot().SetMatchStoreLabels(val.([]*metapb.StoreLabel))
+	case kv.ResourceGroupTag:
+		txn.KVTxn.SetResourceGroupTag(val.([]byte))
 	}
 }
 
@@ -181,13 +187,6 @@ func (txn *tikvTxn) GetOption(opt int) interface{} {
 		return txn.KVTxn.GetScope()
 	default:
 		return nil
-	}
-}
-
-func (txn *tikvTxn) DelOption(opt int) {
-	switch opt {
-	case kv.CollectRuntimeStats:
-		txn.KVTxn.GetSnapshot().SetRuntimeStats(nil)
 	}
 }
 

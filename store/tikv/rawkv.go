@@ -20,8 +20,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/store/tikv/client"
 	"github.com/pingcap/tidb/store/tikv/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	"github.com/pingcap/tidb/store/tikv/locate"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -46,7 +48,7 @@ const (
 // only GET/PUT/DELETE commands are supported.
 type RawKVClient struct {
 	clusterID   uint64
-	regionCache *RegionCache
+	regionCache *locate.RegionCache
 	pdClient    pd.Client
 	rpcClient   Client
 }
@@ -63,9 +65,9 @@ func NewRawKVClient(pdAddrs []string, security config.Security, opts ...pd.Clien
 	}
 	return &RawKVClient{
 		clusterID:   pdCli.GetClusterID(context.TODO()),
-		regionCache: NewRegionCache(pdCli),
+		regionCache: locate.NewRegionCache(pdCli),
 		pdClient:    pdCli,
-		rpcClient:   NewRPCClient(security),
+		rpcClient:   client.NewRPCClient(security),
 	}, nil
 }
 
@@ -352,11 +354,11 @@ func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]
 	return
 }
 
-func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, reverse bool) (*tikvrpc.Response, *KeyLocation, error) {
+func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, reverse bool) (*tikvrpc.Response, *locate.KeyLocation, error) {
 	bo := retry.NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
-	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
+	sender := locate.NewRegionRequestSender(c.regionCache, c.rpcClient)
 	for {
-		var loc *KeyLocation
+		var loc *locate.KeyLocation
 		var err error
 		if reverse {
 			loc, err = c.regionCache.LocateEndKey(bo, key)
@@ -366,7 +368,7 @@ func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, reverse bool) (*
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		resp, err := sender.SendReq(bo, req, loc.Region, ReadTimeoutShort)
+		resp, err := sender.SendReq(bo, req, loc.Region, client.ReadTimeoutShort)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -445,8 +447,8 @@ func (c *RawKVClient) doBatchReq(bo *Backoffer, batch batch, cmdType tikvrpc.Cmd
 		})
 	}
 
-	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
-	resp, err := sender.SendReq(bo, req, batch.regionID, ReadTimeoutShort)
+	sender := locate.NewRegionRequestSender(c.regionCache, c.rpcClient)
+	resp, err := sender.SendReq(bo, req, batch.regionID, client.ReadTimeoutShort)
 
 	batchResp := singleBatchResp{}
 	if err != nil {
@@ -494,7 +496,7 @@ func (c *RawKVClient) doBatchReq(bo *Backoffer, batch batch, cmdType tikvrpc.Cmd
 // TODO: Is there any better way to avoid duplicating code with func `sendReq` ?
 func (c *RawKVClient) sendDeleteRangeReq(startKey []byte, endKey []byte) (*tikvrpc.Response, []byte, error) {
 	bo := retry.NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
-	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
+	sender := locate.NewRegionRequestSender(c.regionCache, c.rpcClient)
 	for {
 		loc, err := c.regionCache.LocateKey(bo, startKey)
 		if err != nil {
@@ -511,7 +513,7 @@ func (c *RawKVClient) sendDeleteRangeReq(startKey []byte, endKey []byte) (*tikvr
 			EndKey:   actualEndKey,
 		})
 
-		resp, err := sender.SendReq(bo, req, loc.Region, ReadTimeoutShort)
+		resp, err := sender.SendReq(bo, req, loc.Region, client.ReadTimeoutShort)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -567,7 +569,7 @@ func (c *RawKVClient) sendBatchPut(bo *Backoffer, keys, values [][]byte) error {
 	return errors.Trace(err)
 }
 
-func appendKeyBatches(batches []batch, regionID RegionVerID, groupKeys [][]byte, limit int) []batch {
+func appendKeyBatches(batches []batch, regionID locate.RegionVerID, groupKeys [][]byte, limit int) []batch {
 	var keys [][]byte
 	for start, count := 0, 0; start < len(groupKeys); start++ {
 		if count > limit {
@@ -584,7 +586,7 @@ func appendKeyBatches(batches []batch, regionID RegionVerID, groupKeys [][]byte,
 	return batches
 }
 
-func appendBatches(batches []batch, regionID RegionVerID, groupKeys [][]byte, keyToValue map[string][]byte, limit int) []batch {
+func appendBatches(batches []batch, regionID locate.RegionVerID, groupKeys [][]byte, keyToValue map[string][]byte, limit int) []batch {
 	var start, size int
 	var keys, values [][]byte
 	for start = 0; start < len(groupKeys); start++ {
@@ -615,8 +617,8 @@ func (c *RawKVClient) doBatchPut(bo *Backoffer, batch batch) error {
 
 	req := tikvrpc.NewRequest(tikvrpc.CmdRawBatchPut, &kvrpcpb.RawBatchPutRequest{Pairs: kvPair})
 
-	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
-	resp, err := sender.SendReq(bo, req, batch.regionID, ReadTimeoutShort)
+	sender := locate.NewRegionRequestSender(c.regionCache, c.rpcClient)
+	resp, err := sender.SendReq(bo, req, batch.regionID, client.ReadTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -644,7 +646,7 @@ func (c *RawKVClient) doBatchPut(bo *Backoffer, batch batch) error {
 }
 
 type batch struct {
-	regionID RegionVerID
+	regionID locate.RegionVerID
 	keys     [][]byte
 	values   [][]byte
 }

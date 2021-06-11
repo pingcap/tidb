@@ -25,20 +25,21 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/client"
 	"github.com/pingcap/tidb/store/tikv/config"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/store/tikv/latch"
+	"github.com/pingcap/tidb/store/tikv/locate"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/retry"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/util"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
@@ -76,7 +77,7 @@ type KVStore struct {
 		client Client
 	}
 	pdClient     pd.Client
-	regionCache  *RegionCache
+	regionCache  *locate.RegionCache
 	lockResolver *LockResolver
 	txnLatches   *latch.LatchesScheduler
 
@@ -129,7 +130,7 @@ func (s *KVStore) CheckVisibility(startTime uint64) error {
 }
 
 // NewKVStore creates a new TiKV store instance.
-func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client) (*KVStore, error) {
+func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, tikvclient Client) (*KVStore, error) {
 	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -139,14 +140,14 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 		uuid:            uuid,
 		oracle:          o,
 		pdClient:        pdClient,
-		regionCache:     NewRegionCache(pdClient),
+		regionCache:     locate.NewRegionCache(pdClient),
 		kv:              spkv,
 		safePoint:       0,
 		spTime:          time.Now(),
 		closed:          make(chan struct{}),
 		replicaReadSeed: rand.Uint32(),
 	}
-	store.clientMu.client = reqCollapse{client}
+	store.clientMu.client = client.NewReqCollapse(tikvclient)
 	store.lockResolver = newLockResolver(store)
 
 	go store.runSafePointChecker()
@@ -189,11 +190,11 @@ func (s *KVStore) runSafePointChecker() {
 
 // Begin a global transaction.
 func (s *KVStore) Begin() (*KVTxn, error) {
-	return s.BeginWithOption(tidbkv.DefaultTransactionOption())
+	return s.BeginWithOption(DefaultStartTSOption())
 }
 
-// BeginWithOption begins a transaction with the given TransactionOption
-func (s *KVStore) BeginWithOption(options tidbkv.TransactionOption) (*KVTxn, error) {
+// BeginWithOption begins a transaction with the given StartTSOption
+func (s *KVStore) BeginWithOption(options StartTSOption) (*KVTxn, error) {
 	return newTiKVTxnWithOptions(s, options)
 }
 
@@ -241,13 +242,6 @@ func (s *KVStore) CurrentTimestamp(txnScope string) (uint64, error) {
 }
 
 func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64, error) {
-	failpoint.Inject("MockCurrentTimestamp", func(val failpoint.Value) {
-		if v, ok := val.(int); ok {
-			failpoint.Return(uint64(v), nil)
-		} else {
-			panic("MockCurrentTimestamp should be a number, try use this failpoint with \"return(ts)\"")
-		}
-	})
 	if span := opentracing.SpanFromContext(bo.GetCtx()); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("TiKVStore.getTimestampWithRetry", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -260,36 +254,16 @@ func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64,
 		// Then mockGetTSErrorInRetry will return retryable error when first retry.
 		// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout
 		// This may cause duplicate data to be written.
-		failpoint.Inject("mockGetTSErrorInRetry", func(val failpoint.Value) {
+		if val, err := util.EvalFailpoint("mockGetTSErrorInRetry"); err == nil {
 			if val.(bool) && !IsMockCommitErrorEnable() {
 				err = tikverr.NewErrPDServerTimeout("mock PD timeout")
 			}
-		})
+		}
 
 		if err == nil {
 			return startTS, nil
 		}
 		err = bo.Backoff(retry.BoPDRPC, errors.Errorf("get timestamp failed: %v", err))
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-	}
-}
-
-func (s *KVStore) getStalenessTimestamp(bo *Backoffer, txnScope string, prevSec uint64) (uint64, error) {
-	failpoint.Inject("MockStalenessTimestamp", func(val failpoint.Value) {
-		if v, ok := val.(int); ok {
-			failpoint.Return(uint64(v), nil)
-		} else {
-			panic("MockStalenessTimestamp should be a number, try use this failpoint with \"return(ts)\"")
-		}
-	})
-	for {
-		startTS, err := s.oracle.GetStaleTimestamp(bo.GetCtx(), txnScope, prevSec)
-		if err == nil {
-			return startTS, nil
-		}
-		err = bo.Backoff(retry.BoPDRPC, errors.Errorf("get staleness timestamp failed: %v", err))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -315,14 +289,14 @@ func (s *KVStore) SupportDeleteRange() (supported bool) {
 	return !s.mock
 }
 
-// SendReq sends a request to region.
-func (s *KVStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
-	sender := NewRegionRequestSender(s.regionCache, s.GetTiKVClient())
+// SendReq sends a request to locate.
+func (s *KVStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID locate.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
+	sender := locate.NewRegionRequestSender(s.regionCache, s.GetTiKVClient())
 	return sender.SendReq(bo, req, regionID, timeout)
 }
 
 // GetRegionCache returns the region cache instance.
-func (s *KVStore) GetRegionCache() *RegionCache {
+func (s *KVStore) GetRegionCache() *locate.RegionCache {
 	return s.regionCache
 }
 
@@ -362,8 +336,8 @@ func (s *KVStore) GetTiKVClient() (client Client) {
 
 // GetMinSafeTS return the minimal safeTS of the storage with given txnScope.
 func (s *KVStore) GetMinSafeTS(txnScope string) uint64 {
-	stores := make([]*Store, 0)
-	allStores := s.regionCache.getStoresByType(tikvrpc.TiKV)
+	stores := make([]*locate.Store, 0)
+	allStores := s.regionCache.GetStoresByType(tikvrpc.TiKV)
 	if txnScope != oracle.GlobalTxnScope {
 		for _, store := range allStores {
 			if store.IsLabelsMatch([]*metapb.StoreLabel{
@@ -389,22 +363,23 @@ func (s *KVStore) getSafeTS(storeID uint64) uint64 {
 	return safeTS.(uint64)
 }
 
+// setSafeTS sets safeTs for store storeID, export for testing
 func (s *KVStore) setSafeTS(storeID, safeTS uint64) {
 	s.safeTSMap.Store(storeID, safeTS)
 }
 
-func (s *KVStore) getMinSafeTSByStores(stores []*Store) uint64 {
-	failpoint.Inject("injectSafeTS", func(val failpoint.Value) {
+func (s *KVStore) getMinSafeTSByStores(stores []*locate.Store) uint64 {
+	if val, err := util.EvalFailpoint("injectSafeTS"); err == nil {
 		injectTS := val.(int)
-		failpoint.Return(uint64(injectTS))
-	})
+		return uint64(injectTS)
+	}
 	minSafeTS := uint64(math.MaxUint64)
 	// when there is no store, return 0 in order to let minStartTS become startTS directly
 	if len(stores) < 1 {
 		return 0
 	}
 	for _, store := range stores {
-		safeTS := s.getSafeTS(store.storeID)
+		safeTS := s.getSafeTS(store.StoreID())
 		if safeTS < minSafeTS {
 			minSafeTS = safeTS
 		}
@@ -428,19 +403,19 @@ func (s *KVStore) safeTSUpdater() {
 }
 
 func (s *KVStore) updateSafeTS(ctx context.Context) {
-	stores := s.regionCache.getStoresByType(tikvrpc.TiKV)
+	stores := s.regionCache.GetStoresByType(tikvrpc.TiKV)
 	tikvClient := s.GetTiKVClient()
 	wg := &sync.WaitGroup{}
 	wg.Add(len(stores))
 	for _, store := range stores {
-		storeID := store.storeID
-		storeAddr := store.addr
+		storeID := store.StoreID()
+		storeAddr := store.GetAddr()
 		go func(ctx context.Context, wg *sync.WaitGroup, storeID uint64, storeAddr string) {
 			defer wg.Done()
 			resp, err := tikvClient.SendRequest(ctx, storeAddr, tikvrpc.NewRequest(tikvrpc.CmdStoreSafeTS, &kvrpcpb.StoreSafeTSRequest{KeyRange: &kvrpcpb.KeyRange{
 				StartKey: []byte(""),
 				EndKey:   []byte(""),
-			}}), ReadTimeoutShort)
+			}}), client.ReadTimeoutShort)
 			storeIDStr := strconv.Itoa(int(storeID))
 			if err != nil {
 				metrics.TiKVSafeTSUpdateCounter.WithLabelValues("fail", storeIDStr).Inc()

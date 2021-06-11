@@ -36,8 +36,8 @@ func (s *testPDSuite) TestPDOracle_UntilExpired(c *C) {
 	lockAfter, lockExp := 10, 15
 	o := oracles.NewEmptyPDOracle()
 	start := time.Now()
-	oracles.SetEmptyPDOracleLastTs(o, oracle.ComposeTS(oracle.GetPhysical(start), 0))
-	lockTs := oracle.ComposeTS(oracle.GetPhysical(start.Add(time.Duration(lockAfter)*time.Millisecond)), 1)
+	oracles.SetEmptyPDOracleLastTs(o, oracle.GoTimeToTS(start))
+	lockTs := oracle.GoTimeToTS((start.Add(time.Duration(lockAfter) * time.Millisecond))) + 1
 	waitTs := o.UntilExpired(lockTs, uint64(lockExp), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(waitTs, Equals, int64(lockAfter+lockExp), Commentf("waitTs shoulb be %d but got %d", int64(lockAfter+lockExp), waitTs))
 }
@@ -45,7 +45,7 @@ func (s *testPDSuite) TestPDOracle_UntilExpired(c *C) {
 func (s *testPDSuite) TestPdOracle_GetStaleTimestamp(c *C) {
 	o := oracles.NewEmptyPDOracle()
 	start := time.Now()
-	oracles.SetEmptyPDOracleLastTs(o, oracle.ComposeTS(oracle.GetPhysical(start), 0))
+	oracles.SetEmptyPDOracleLastTs(o, oracle.GoTimeToTS(start))
 	ts, err := o.GetStaleTimestamp(context.Background(), oracle.GlobalTxnScope, 10)
 	c.Assert(err, IsNil)
 
@@ -75,7 +75,7 @@ func (s *testPDSuite) TestPdOracle_GetStaleTimestamp(c *C) {
 	for _, testcase := range testcases {
 		comment := Commentf("%s", testcase.name)
 		start = time.Now()
-		oracles.SetEmptyPDOracleLastTs(o, oracle.ComposeTS(oracle.GetPhysical(start), 0))
+		oracles.SetEmptyPDOracleLastTs(o, oracle.GoTimeToTS(start))
 		ts, err = o.GetStaleTimestamp(context.Background(), oracle.GlobalTxnScope, testcase.preSec)
 		if testcase.expectErr == "" {
 			c.Assert(err, IsNil, comment)

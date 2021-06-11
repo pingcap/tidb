@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -410,6 +411,30 @@ const (
 	renameView
 )
 
+type cteInfo struct {
+	def *ast.CommonTableExpression
+	// nonRecursive is used to decide if a CTE is visible. If a CTE start with `WITH RECURSIVE`, then nonRecursive is false,
+	// so it is visible in its definition.
+	nonRecursive bool
+	// useRecursive is used to record if a subSelect in CTE's definition refer to itself. This help us to identify the seed part and recursive part.
+	useRecursive bool
+	isBuilding   bool
+	// isDistinct indicates if the union between seed part and recursive part is distinct or not.
+	isDistinct bool
+	// seedLP is the seed part's logical plan.
+	seedLP LogicalPlan
+	// recurLP is the recursive part's logical plan.
+	recurLP LogicalPlan
+	// storageID for this CTE.
+	storageID int
+	// optFlag is the optFlag for the whole CTE.
+	optFlag uint64
+	// enterSubquery and recursiveRef are used to check "recursive table must be referenced only once, and not in any subquery".
+	enterSubquery bool
+	recursiveRef  bool
+	limitLP       LogicalPlan
+}
+
 // PlanBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type PlanBuilder struct {
@@ -417,6 +442,7 @@ type PlanBuilder struct {
 	is           infoschema.InfoSchema
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName
+	outerCTEs    []*cteInfo
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
@@ -475,7 +501,9 @@ type PlanBuilder struct {
 	// isForUpdateRead should be true in either of the following situations
 	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
 	// 2. isolation level is RC
-	isForUpdateRead bool
+	isForUpdateRead             bool
+	allocIDForCTEStorage        int
+	buildingRecursivePartForCTE bool
 }
 
 type handleColHelper struct {
@@ -583,6 +611,7 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 	return &PlanBuilder{
 		ctx:                 sctx,
 		is:                  is,
+		outerCTEs:           make([]*cteInfo, 0),
 		colMapper:           make(map[*ast.ColumnNameExpr]int),
 		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
 		hintProcessor:       processor,
@@ -641,8 +670,9 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt, *ast.BRIEStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
-		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt:
-		return b.buildSimple(node.(ast.StmtNode))
+		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
+		*ast.RenameUserStmt:
+		return b.buildSimple(ctx, node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
 	case *ast.CreateBindingStmt:
@@ -1654,24 +1684,35 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		}
 		idxInfos = append(idxInfos, idx)
 	}
+	if as.Incremental {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 stats would ignore the INCREMENTAL keyword and do full sampling"))
+	}
 	for i, id := range physicalIDs {
 		if id == tbl.TableInfo.ID {
 			id = -1
 		}
-		info := analyzeInfo{
+		info := AnalyzeInfo{
 			DBName:        tbl.Schema.O,
 			TableName:     tbl.Name.O,
 			PartitionName: names[i],
 			TableID:       AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
-			Incremental:   as.Incremental,
+			Incremental:   false,
 			StatsVersion:  version,
 		}
-		taskSlice = append(taskSlice, AnalyzeColumnsTask{
+		newTask := AnalyzeColumnsTask{
+			HandleCols:  BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo),
 			ColsInfo:    tbl.TableInfo.Columns,
-			analyzeInfo: info,
+			AnalyzeInfo: info,
 			TblInfo:     tbl.TableInfo,
 			Indexes:     idxInfos,
-		})
+		}
+		if newTask.HandleCols == nil {
+			extraCol := model.NewExtraHandleColInfo()
+			// Always place _tidb_rowid at the end of colsInfo, this is corresponding to logics in `analyzeColumnsPushdown`.
+			newTask.ColsInfo = append(newTask.ColsInfo, extraCol)
+			newTask.HandleCols = &IntHandleCols{col: colInfoToColumn(extraCol, len(newTask.ColsInfo)-1)}
+		}
+		taskSlice = append(taskSlice, newTask)
 	}
 	return taskSlice
 }
@@ -1702,7 +1743,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 					"If you want to switch to version 2 statistics, please first disable query feedback by setting feedback-probability to 0.0 in the config file."))
 			}
 		}
-		if version == statistics.Version3 {
+		if version == statistics.Version2 {
 			p.ColTasks = b.buildAnalyzeFullSamplingTask(as, p.ColTasks, physicalIDs, names, tbl, version)
 			continue
 		}
@@ -1717,7 +1758,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				if id == tbl.TableInfo.ID {
 					id = -1
 				}
-				info := analyzeInfo{
+				info := AnalyzeInfo{
 					DBName:        tbl.Schema.O,
 					TableName:     tbl.Name.O,
 					PartitionName: names[i],
@@ -1727,7 +1768,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				}
 				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
 					IndexInfo:   idx,
-					analyzeInfo: info,
+					AnalyzeInfo: info,
 					TblInfo:     tbl.TableInfo,
 				})
 			}
@@ -1738,7 +1779,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				if id == tbl.TableInfo.ID {
 					id = -1
 				}
-				info := analyzeInfo{
+				info := AnalyzeInfo{
 					DBName:        tbl.Schema.O,
 					TableName:     tbl.Name.O,
 					PartitionName: names[i],
@@ -1750,7 +1791,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 					HandleCols:       handleCols,
 					CommonHandleInfo: commonHandleInfo,
 					ColsInfo:         colInfo,
-					analyzeInfo:      info,
+					AnalyzeInfo:      info,
 					TblInfo:          tbl.TableInfo,
 				})
 			}
@@ -1777,8 +1818,8 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		}
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
-	if version == statistics.Version3 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 3 would collect all statistics not only the selected indexes"))
+	if version == statistics.Version2 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 would collect all statistics not only the selected indexes"))
 		return b.buildAnalyzeTable(as, opts, version)
 	}
 	for _, idxName := range as.IndexNames {
@@ -1790,14 +1831,14 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 					if id == tblInfo.ID {
 						id = -1
 					}
-					info := analyzeInfo{
+					info := AnalyzeInfo{
 						DBName:        as.TableNames[0].Schema.O,
 						TableName:     as.TableNames[0].Name.O,
 						PartitionName: names[i], TableID: AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
 						Incremental:  as.Incremental,
 						StatsVersion: version,
 					}
-					p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+					p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, AnalyzeInfo: info, TblInfo: tblInfo})
 				}
 				continue
 			}
@@ -1810,7 +1851,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 			if id == tblInfo.ID {
 				id = -1
 			}
-			info := analyzeInfo{
+			info := AnalyzeInfo{
 				DBName:        as.TableNames[0].Schema.O,
 				TableName:     as.TableNames[0].Name.O,
 				PartitionName: names[i],
@@ -1818,7 +1859,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 				Incremental:   as.Incremental,
 				StatsVersion:  version,
 			}
-			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
+			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, AnalyzeInfo: info, TblInfo: tblInfo})
 		}
 	}
 	return p, nil
@@ -1842,8 +1883,8 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 		}
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
-	if version == statistics.Version3 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 3 would collect all statistics not only the selected indexes"))
+	if version == statistics.Version2 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 would collect all statistics not only the selected indexes"))
 		return b.buildAnalyzeTable(as, opts, version)
 	}
 	for _, idx := range tblInfo.Indices {
@@ -1852,7 +1893,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 				if id == tblInfo.ID {
 					id = -1
 				}
-				info := analyzeInfo{
+				info := AnalyzeInfo{
 					DBName:        as.TableNames[0].Schema.O,
 					TableName:     as.TableNames[0].Name.O,
 					PartitionName: names[i],
@@ -1860,7 +1901,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 					Incremental:   as.Incremental,
 					StatsVersion:  version,
 				}
-				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
+				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, AnalyzeInfo: info, TblInfo: tblInfo})
 			}
 		}
 	}
@@ -1870,7 +1911,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 			if id == tblInfo.ID {
 				id = -1
 			}
-			info := analyzeInfo{
+			info := AnalyzeInfo{
 				DBName:        as.TableNames[0].Schema.O,
 				TableName:     as.TableNames[0].Name.O,
 				PartitionName: names[i],
@@ -1878,7 +1919,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 				Incremental:   as.Incremental,
 				StatsVersion:  version,
 			}
-			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, AnalyzeInfo: info, TblInfo: tblInfo})
 		}
 	}
 	return p, nil
@@ -1903,10 +1944,24 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumSamples:    10000,
 }
 
-func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
+var analyzeOptionDefaultV2 = map[ast.AnalyzeOptionType]uint64{
+	ast.AnalyzeOptNumBuckets:    256,
+	ast.AnalyzeOptNumTopN:       500,
+	ast.AnalyzeOptCMSketchWidth: 2048,
+	ast.AnalyzeOptCMSketchDepth: 5,
+	ast.AnalyzeOptNumSamples:    100000,
+}
+
+func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeOptionType]uint64, error) {
 	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
-	for key, val := range analyzeOptionDefault {
-		optMap[key] = val
+	if statsVer == statistics.Version1 {
+		for key, val := range analyzeOptionDefault {
+			optMap[key] = val
+		}
+	} else {
+		for key, val := range analyzeOptionDefaultV2 {
+			optMap[key] = val
+		}
 	}
 	for _, opt := range opts {
 		if opt.Type == ast.AnalyzeOptNumTopN {
@@ -1932,7 +1987,7 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 		return nil, errors.Errorf("Only support fast analyze in tikv storage.")
 	}
 	statsVersion := b.ctx.GetSessionVars().AnalyzeVersion
-	if b.ctx.GetSessionVars().EnableFastAnalyze && statsVersion == statistics.Version2 {
+	if b.ctx.GetSessionVars().EnableFastAnalyze && statsVersion >= statistics.Version2 {
 		return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently.")
 	}
 	for _, tbl := range as.TableNames {
@@ -1945,7 +2000,7 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", insertErr)
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", selectErr)
 	}
-	opts, err := handleAnalyzeOptions(as.AnalyzeOpts)
+	opts, err := handleAnalyzeOptions(as.AnalyzeOpts, statsVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -2190,9 +2245,12 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	case ast.ShowCreateView:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
-	case ast.ShowBackups, ast.ShowRestores:
+	case ast.ShowBackups:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or BACKUP_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "BACKUP_ADMIN", false, err)
+	case ast.ShowRestores:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESTORE_ADMIN")
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESTORE_ADMIN", false, err)
 	case ast.ShowTableNextRowId:
 		p := &ShowNextRowID{TableName: show.Table}
 		p.setSchemaAndNames(buildShowNextRowID())
@@ -2205,6 +2263,14 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			err = ErrDBaccessDenied.GenWithStackByArgs(user.AuthUsername, user.AuthHostname, mysql.SystemDB)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, mysql.SystemDB, "", "", err)
+	case ast.ShowRegions:
+		tableInfo, err := b.is.TableByName(show.Table.Schema, show.Table.Name)
+		if err != nil {
+			return nil, err
+		}
+		if tableInfo.Meta().TempTableType != model.TempTableNone {
+			return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions")
+		}
 	}
 	schema, names := buildShowSchema(show, isView, isSequence)
 	p.SetSchema(schema)
@@ -2258,7 +2324,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	return np, nil
 }
 
-func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
+func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan, error) {
 	p := &Simple{Statement: node}
 
 	switch raw := node.(type) {
@@ -2268,7 +2334,7 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 	case *ast.AlterInstanceStmt:
 		err := ErrSpecificAccessDenied.GenWithStack("SUPER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
-	case *ast.AlterUserStmt:
+	case *ast.AlterUserStmt, *ast.RenameUserStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
@@ -2280,8 +2346,13 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
 	case *ast.BRIEStmt:
 		p.setSchemaAndNames(buildBRIESchema())
-		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or BACKUP_ADMIN")
-		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "BACKUP_ADMIN", false, err)
+		if raw.Kind == ast.BRIEKindRestore {
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESTORE_ADMIN")
+			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESTORE_ADMIN", false, err)
+		} else {
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or BACKUP_ADMIN")
+			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "BACKUP_ADMIN", false, err)
+		}
 	case *ast.GrantRoleStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ROLE_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "ROLE_ADMIN", false, err)
@@ -2324,8 +2395,39 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		}
 	case *ast.ShutdownStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShutdownPriv, "", "", "", nil)
+	case *ast.BeginStmt:
+		readTS := b.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
+		if raw.AsOf != nil {
+			startTS, err := calculateTsExpr(b.ctx, raw.AsOf)
+			if err != nil {
+				return nil, err
+			}
+			p.StaleTxnStartTS = startTS
+		} else if readTS > 0 {
+			p.StaleTxnStartTS = readTS
+		}
 	}
 	return p, nil
+}
+
+// calculateTsExpr calculates the TsExpr of AsOfClause to get a StartTS.
+func calculateTsExpr(sctx sessionctx.Context, asOfClause *ast.AsOfClause) (uint64, error) {
+	tsVal, err := evalAstExpr(sctx, asOfClause.TsExpr)
+	if err != nil {
+		return 0, err
+	}
+	toTypeTimestamp := types.NewFieldType(mysql.TypeTimestamp)
+	// We need at least the millionsecond here, so set fsp to 3.
+	toTypeTimestamp.Decimal = 3
+	tsTimestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx, toTypeTimestamp)
+	if err != nil {
+		return 0, err
+	}
+	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(sctx.GetSessionVars().TimeZone)
+	if err != nil {
+		return 0, err
+	}
+	return oracle.GoTimeToTS(tsTime), nil
 }
 
 func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.RevokeStmt) []visitInfo {
@@ -2559,7 +2661,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 			givenPartitionSets[id] = struct{}{}
 		}
 		pt := tableInPlan.(table.PartitionedTable)
-		insertPlan.Table = tables.NewPartitionTableithGivenSets(pt, givenPartitionSets)
+		insertPlan.Table = tables.NewPartitionTableWithGivenSets(pt, givenPartitionSets)
 	} else if len(insert.PartitionNames) != 0 {
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
@@ -3069,6 +3171,9 @@ func (b *PlanBuilder) buildIndexAdvise(node *ast.IndexAdviseStmt) Plan {
 }
 
 func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) {
+	if node.Table.TableInfo.TempTableType != model.TempTableNone {
+		return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("split table")
+	}
 	if node.SplitSyntaxOpt != nil && node.SplitSyntaxOpt.HasPartition && node.Table.TableInfo.Partition == nil {
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
@@ -3317,7 +3422,11 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 			authErr = ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.AuthUsername,
 				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, v.Table.Schema.L,
+		dbName := v.Table.Schema.L
+		if dbName == "" {
+			dbName = b.ctx.GetSessionVars().CurrentDB
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, dbName,
 			v.Table.Name.L, "", authErr)
 		for _, spec := range v.Specs {
 			if spec.Tp == ast.AlterTableRenameTable || spec.Tp == ast.AlterTableExchangePartition {
@@ -3325,21 +3434,21 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 					authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
 						b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
 				}
-				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Table.Schema.L,
+				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, dbName,
 					v.Table.Name.L, "", authErr)
 
 				if b.ctx.GetSessionVars().User != nil {
 					authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
 						b.ctx.GetSessionVars().User.AuthHostname, spec.NewTable.Name.L)
 				}
-				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, spec.NewTable.Schema.L,
+				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, dbName,
 					spec.NewTable.Name.L, "", authErr)
 
 				if b.ctx.GetSessionVars().User != nil {
 					authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.AuthUsername,
 						b.ctx.GetSessionVars().User.AuthHostname, spec.NewTable.Name.L)
 				}
-				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, spec.NewTable.Schema.L,
+				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, dbName,
 					spec.NewTable.Name.L, "", authErr)
 			} else if spec.Tp == ast.AlterTableDropPartition {
 				if b.ctx.GetSessionVars().User != nil {
@@ -3395,6 +3504,13 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.IndexPriv, v.Table.Schema.L,
 			v.Table.Name.L, "", authErr)
 	case *ast.CreateTableStmt:
+		if v.TemporaryKeyword != ast.TemporaryNone {
+			for _, cons := range v.Constraints {
+				if cons.Tp == ast.ConstraintForeignKey {
+					return nil, infoschema.ErrCannotAddForeign
+				}
+			}
+		}
 		if b.ctx.GetSessionVars().User != nil {
 			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
 				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)

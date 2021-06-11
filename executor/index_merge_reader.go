@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -245,7 +244,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetStreaming(e.partialStreamings[workID]).
 					SetFromSessionVars(e.ctx.GetSessionVars()).
 					SetMemTracker(e.memTracker).
-					SetFromInfoSchema(e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema))
+					SetFromInfoSchema(e.ctx.GetInfoSchema())
 
 				worker := &partialIndexWorker{
 					stats:        e.stats,

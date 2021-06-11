@@ -22,8 +22,8 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"go.uber.org/zap"
 )
 
@@ -45,7 +45,6 @@ func init() {
 type Config struct {
 	CommitterConcurrency int
 	MaxTxnTTL            uint64
-	ServerMemoryQuota    uint64
 	TiKVClient           TiKVClient
 	Security             Security
 	PDClient             PDClient
@@ -64,7 +63,6 @@ func DefaultConfig() Config {
 	return Config{
 		CommitterConcurrency:  128,
 		MaxTxnTTL:             60 * 60 * 1000, // 1hour
-		ServerMemoryQuota:     0,
 		TiKVClient:            DefaultTiKVClient(),
 		PDClient:              DefaultPDClient(),
 		TxnLocalLatches:       DefaultTxnLocalLatches(),
@@ -147,13 +145,13 @@ const (
 
 // GetTxnScopeFromConfig extracts @@txn_scope value from config
 func GetTxnScopeFromConfig() (bool, string) {
-	failpoint.Inject("injectTxnScope", func(val failpoint.Value) {
+	if val, err := util.EvalFailpoint("injectTxnScope"); err == nil {
 		v := val.(string)
 		if len(v) > 0 {
-			failpoint.Return(false, v)
+			return false, v
 		}
-		failpoint.Return(true, globalTxnScope)
-	})
+		return true, globalTxnScope
+	}
 
 	if kvcfg := GetGlobalConfig(); kvcfg != nil && len(kvcfg.TxnScope) > 0 {
 		return false, kvcfg.TxnScope

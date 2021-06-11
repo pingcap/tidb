@@ -198,7 +198,6 @@ func (c *Config) getTiKVConfig() *tikvcfg.Config {
 	return &tikvcfg.Config{
 		CommitterConcurrency:  c.Performance.CommitterConcurrency,
 		MaxTxnTTL:             c.Performance.MaxTxnTTL,
-		ServerMemoryQuota:     defTiKVCfg.ServerMemoryQuota,
 		TiKVClient:            c.TiKVClient,
 		Security:              c.Security.ClusterSecurity(),
 		PDClient:              c.PDClient,
@@ -298,7 +297,7 @@ func (b *nullableBool) UnmarshalJSON(data []byte) error {
 type Log struct {
 	// Log level.
 	Level string `toml:"level" json:"level"`
-	// Log format. one of json, text, or console.
+	// Log format, one of json or text.
 	Format string `toml:"format" json:"format"`
 	// Disable automatic timestamps in output. Deprecated: use EnableTimestamp instead.
 	DisableTimestamp nullableBool `toml:"disable-timestamp" json:"disable-timestamp"`
@@ -382,7 +381,6 @@ func (e *ErrConfigValidationFailed) Error() string {
 		"TiDB manual to make sure this option has not been deprecated and removed from your TiDB "+
 		"version if the option does not appear to be a typo", e.confFile, strings.Join(
 		e.UndecodedItems, ", "))
-
 }
 
 // ClusterSecurity returns Security info for cluster
@@ -495,13 +493,15 @@ type Binlog struct {
 // PessimisticTxn is the config for pessimistic transaction.
 type PessimisticTxn struct {
 	// The max count of retry for a single statement in a pessimistic transaction.
-	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
+	MaxRetryCount           uint `toml:"max-retry-count" json:"max-retry-count"`
+	DeadlockHistoryCapacity uint `toml:"deadlock-history-capacity" json:"deadlock-history-capacity"`
 }
 
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn
 func DefaultPessimisticTxn() PessimisticTxn {
 	return PessimisticTxn{
-		MaxRetryCount: 256,
+		MaxRetryCount:           256,
+		DeadlockHistoryCapacity: 10,
 	}
 }
 
