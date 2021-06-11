@@ -347,6 +347,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 				if err != nil {
 					logutil.BgLogger().Info("update record cast value failed", zap.Any("col", col), zap.Uint64("txnStartTS", txn.StartTS()),
 						zap.String("handle", h.String()), zap.Any("val", oldData[col.DependencyColumnOffset]), zap.Error(err))
+					return err
 				}
 				oldData = append(oldData, value)
 				touched = append(touched, touched[col.DependencyColumnOffset])
@@ -1014,7 +1015,16 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 
 	// The table has non-public column and this column is doing the operation of "modify/change column".
 	if len(t.Columns) > len(r) && t.Columns[len(r)].ChangeStateInfo != nil {
-		r = append(r, r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset])
+		// The changing column datum derived from related column should be casted here.
+		// Otherwise, the existed changing indexes will not be deleted.
+		relatedColDatum := r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset]
+		value, err := table.CastValue(ctx, relatedColDatum, t.Columns[len(r)].ColumnInfo, false, false)
+		if err != nil {
+			logutil.BgLogger().Info("remove record cast value failed", zap.Any("col", t.Columns[len(r)]),
+				zap.String("handle", h.String()), zap.Any("val", relatedColDatum), zap.Error(err))
+			return err
+		}
+		r = append(r, value)
 	}
 	err = t.removeRowIndices(ctx, h, r)
 	if err != nil {
