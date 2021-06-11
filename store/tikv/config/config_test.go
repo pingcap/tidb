@@ -34,19 +34,19 @@ func (s *testConfigSuite) TestParsePath(c *C) {
 }
 
 func (s *testConfigSuite) TestTxnScopeValue(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("bj")`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`), IsNil)
 	isGlobal, v := GetTxnScopeFromConfig()
 	c.Assert(isGlobal, IsFalse)
 	c.Assert(v, Equals, "bj")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope"), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("")`), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/injectTxnScope"), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/injectTxnScope", `return("")`), IsNil)
 	isGlobal, v = GetTxnScopeFromConfig()
 	c.Assert(isGlobal, IsTrue)
 	c.Assert(v, Equals, "global")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope"), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("global")`), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/injectTxnScope"), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/injectTxnScope", `return("global")`), IsNil)
 	isGlobal, v = GetTxnScopeFromConfig()
 	c.Assert(isGlobal, IsFalse)
 	c.Assert(v, Equals, "global")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/injectTxnScope"), IsNil)
 }

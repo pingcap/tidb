@@ -202,6 +202,9 @@ cluster-ssl-key = ""
 # "plaintext" means encryption is disabled.
 spilled-file-encryption-method = "plaintext"
 
+# Security Enhanced Mode (SEM) restricts the "SUPER" privilege and requires fine-grained privileges instead.
+enable-sem = false
+
 [status]
 # If enable status report HTTP service.
 report-status = true

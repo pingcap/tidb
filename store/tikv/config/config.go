@@ -22,8 +22,8 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"go.uber.org/zap"
 )
 
@@ -145,13 +145,13 @@ const (
 
 // GetTxnScopeFromConfig extracts @@txn_scope value from config
 func GetTxnScopeFromConfig() (bool, string) {
-	failpoint.Inject("injectTxnScope", func(val failpoint.Value) {
+	if val, err := util.EvalFailpoint("injectTxnScope"); err == nil {
 		v := val.(string)
 		if len(v) > 0 {
-			failpoint.Return(false, v)
+			return false, v
 		}
-		failpoint.Return(true, globalTxnScope)
-	})
+		return true, globalTxnScope
+	}
 
 	if kvcfg := GetGlobalConfig(); kvcfg != nil && len(kvcfg.TxnScope) > 0 {
 		return false, kvcfg.TxnScope
