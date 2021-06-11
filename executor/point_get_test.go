@@ -949,7 +949,7 @@ func (s *testPointGetSuite) TestPointGetIssue25167(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int)")
+	tk.MustExec("create table t (a int) primary key")
 	defer func() {
 		tk.MustExec("drop table if exists t")
 	}()
