@@ -80,6 +80,12 @@ add placement policy
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
+	constraints="{'+zone=sh': 1}"
+	role=follower`)
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
 	constraints='{"+   zone   =   sh  ": 1}'
 	role=follower
 	replicas=3`)
@@ -129,7 +135,7 @@ drop placement policy
 	_, err = tk.Exec(`alter table t1 alter partition p0
 drop placement policy
 	role=follower`)
-	c.Assert(err, ErrorMatches, ".*no rule of role 'follower' to drop.*")
+	c.Assert(err, ErrorMatches, ".*no rule of such role to drop.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -142,7 +148,7 @@ add placement policy
 add placement policy
 	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*ROLE is not specified.*")
+	c.Assert(err, ErrorMatches, ".*the ROLE field is not specified.*")
 
 	// multiple statements
 	_, err = tk.Exec(`alter table t1 alter partition p0
@@ -202,7 +208,7 @@ drop placement policy
 	role=leader,
 drop placement policy
 	role=leader`)
-	c.Assert(err, ErrorMatches, ".*no rule of role 'leader' to drop.*")
+	c.Assert(err, ErrorMatches, ".*no rule of such role to drop.*")
 
 	s.dom.InfoSchema().SetBundle(bundle)
 	_, err = tk.Exec(`alter table t1 alter partition p0
@@ -219,14 +225,14 @@ drop placement policy
 add placement policy
 	role=follower
 	constraints='[]'`)
-	c.Assert(err, ErrorMatches, ".*array CONSTRAINTS should be with a positive REPLICAS.*")
+	c.Assert(err, ErrorMatches, ".*label constraints with invalid REPLICAS: should be positive.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints=',,,'
 	role=follower
 	replicas=3`)
-	c.Assert(err, ErrorMatches, "(?s).*constraint is neither an array of string, nor a string-to-number map.*")
+	c.Assert(err, ErrorMatches, "(?s).*invalid label constraints format: .* or any yaml compatible representation.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -239,14 +245,14 @@ add placement policy
 	constraints='[,,,'
 	role=follower
 	replicas=3`)
-	c.Assert(err, ErrorMatches, "(?s).*constraint is neither an array of string, nor a string-to-number map.*")
+	c.Assert(err, ErrorMatches, "(?s).*invalid label constraints format: .* or any yaml compatible representation.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{,,,'
 	role=follower
 	replicas=3`)
-	c.Assert(err, ErrorMatches, "(?s).*constraint is neither an array of string, nor a string-to-number map.*")
+	c.Assert(err, ErrorMatches, "(?s).*invalid label constraints format: .* or any yaml compatible representation.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -273,7 +279,7 @@ add placement policy
 	constraints='{"+   zone   =   sh, -zone =   bj ": -1}'
 	role=follower
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*count should be positive.*")
+	c.Assert(err, ErrorMatches, ".*label constraints in map syntax have invalid replicas: count of labels.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -298,7 +304,7 @@ add placement policy
 	_, err = tk.Exec(`alter table t_part_pk_id alter partition p0 add placement policy constraints='["+host=store1"]' role=leader;`)
 	c.Assert(err, IsNil)
 	_, err = tk.Exec(`alter table t_part_pk_id alter partition p0 add placement policy constraints='["+host=store1"]' role=leader replicas=3;`)
-	c.Assert(err, ErrorMatches, ".*replicas can only be 1 when the role is leader")
+	c.Assert(err, ErrorMatches, ".*REPLICAS must be 1 if ROLE=leader.*")
 	tk.MustExec("drop table t_part_pk_id")
 }
 
