@@ -577,6 +577,7 @@ var defaultSysVars = []*SysVar{
 		if isGlobal, _ := config.GetTxnScopeFromConfig(); isGlobal {
 			return oracle.GlobalTxnScope
 		}
+<<<<<<< HEAD
 		return oracle.LocalTxnScope
 	}()},
 	/* TiDB specific variables */
@@ -585,6 +586,52 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBCJThresholdSize, Value: strconv.Itoa(DefBroadcastJoinThresholdSize), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64},
 	{Scope: ScopeSession, Name: TiDBSnapshot, Value: ""},
 	{Scope: ScopeSession, Name: TiDBOptAggPushDown, Value: BoolToOnOff(DefOptAggPushDown), Type: TypeBool},
+=======
+		return nil
+	}, GetSession: func(s *SessionVars) (string, error) {
+		return s.TxnScope.GetVarValue(), nil
+	}},
+	{Scope: ScopeSession, Name: TiDBTxnReadTS, Value: "", Hidden: true, SetSession: func(s *SessionVars, val string) error {
+		return setTxnReadTS(s, val)
+	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if vars.InTxn() {
+			return "", errors.New("as of timestamp can't be set in transaction")
+		}
+		return normalizedValue, nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowMPPExecution, Type: TypeBool, Value: BoolToOnOff(DefTiDBAllowMPPExecution), SetSession: func(s *SessionVars, val string) error {
+		s.allowMPPExecution = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnforceMPPExecution, Type: TypeBool, Value: BoolToOnOff(DefTiDBEnforceMPPExecution), Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if TiDBOptOn(normalizedValue) && !vars.allowMPPExecution {
+			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs("tidb_enforce_mpp", "1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first.")
+		}
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		s.enforceMPPExecution = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBCJThresholdCount, Value: strconv.Itoa(DefBroadcastJoinThresholdCount), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.BroadcastJoinThresholdCount = tidbOptInt64(val, DefBroadcastJoinThresholdCount)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBCJThresholdSize, Value: strconv.Itoa(DefBroadcastJoinThresholdSize), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.BroadcastJoinThresholdSize = tidbOptInt64(val, DefBroadcastJoinThresholdSize)
+		return nil
+	}},
+	{Scope: ScopeSession, Name: TiDBSnapshot, Value: "", skipInit: true, SetSession: func(s *SessionVars, val string) error {
+		err := setSnapshotTS(s, val)
+		if err != nil {
+			return err
+		}
+		return nil
+	}},
+	{Scope: ScopeSession, Name: TiDBOptAggPushDown, Value: BoolToOnOff(DefOptAggPushDown), Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
+		s.AllowAggPushDown = TiDBOptOn(val)
+		return nil
+	}},
+>>>>>>> 1f0245a82... planner: Revert `tidb_allow_mpp` modification for downgrade compatibility and add warnings for enforce mpp. (#25302)
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptBCJ, Value: BoolToOnOff(DefOptBCJ), Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if TiDBOptOn(normalizedValue) && vars.AllowBatchCop == 0 {
 			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs("Can't set Broadcast Join to 1 but tidb_allow_batch_cop is 0, please active batch cop at first.")
