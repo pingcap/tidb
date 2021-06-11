@@ -2332,10 +2332,6 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 
 func (s *testPessimisticSuite) TestAmendWithColumnTypeChange(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("set global tidb_enable_change_column_type = 1;")
-	defer func() {
-		tk.MustExec("set global tidb_enable_change_column_type = 0;")
-	}()
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop database if exists test_db")
 	tk.MustExec("create database test_db")

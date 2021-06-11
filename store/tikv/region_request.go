@@ -263,13 +263,15 @@ func (s *replicaSelector) nextReplica() *replica {
 const maxReplicaAttempt = 10
 
 // next creates the RPCContext of the current candidate replica.
-// It returns a SendError if runs out of all replicas of the cached region is invalidated.
+// It returns a SendError if runs out of all replicas or the cached region is invalidated.
 func (s *replicaSelector) next(bo *Backoffer) (*RPCContext, error) {
 	for {
 		if !s.region.isValid() {
+			metrics.TiKVReplicaSelectorFailureCounter.WithLabelValues("invalid").Inc()
 			return nil, nil
 		}
 		if s.isExhausted() {
+			metrics.TiKVReplicaSelectorFailureCounter.WithLabelValues("exhausted").Inc()
 			s.invalidateRegion()
 			return nil, nil
 		}
@@ -285,6 +287,7 @@ func (s *replicaSelector) next(bo *Backoffer) (*RPCContext, error) {
 		storeFailEpoch := atomic.LoadUint32(&replica.store.epoch)
 		if storeFailEpoch != replica.epoch {
 			// TODO(youjiali1995): Is it necessary to invalidate the region?
+			metrics.TiKVReplicaSelectorFailureCounter.WithLabelValues("stale_store").Inc()
 			s.invalidateRegion()
 			return nil, nil
 		}
@@ -482,6 +485,11 @@ func (s *RegionRequestSender) SendReqCtx(
 
 	s.reset()
 	tryTimes := 0
+	defer func() {
+		if tryTimes > 0 {
+			metrics.TiKVRequestRetryTimesHistogram.Observe(float64(tryTimes))
+		}
+	}()
 	for {
 		if (tryTimes > 0) && (tryTimes%100 == 0) {
 			logutil.Logger(bo.GetCtx()).Warn("retry", zap.Uint64("region", regionID.GetID()), zap.Int("times", tryTimes))
@@ -543,12 +551,6 @@ func (s *RegionRequestSender) SendReqCtx(
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		failpoint.Inject("mockDataIsNotReadyError", func(val failpoint.Value) {
-			regionErr = &errorpb.Error{}
-			if tryTimesLimit, ok := val.(int); ok && tryTimes <= tryTimesLimit {
-				regionErr.DataIsNotReady = &errorpb.DataIsNotReady{}
-			}
-		})
 		if regionErr != nil {
 			retry, err = s.onRegionError(bo, rpcCtx, req, regionErr, &opts)
 			if err != nil {
@@ -1017,6 +1019,10 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 			zap.Uint64("store-id", ctx.Store.storeID),
 			zap.Uint64("region-id", regionErr.GetRegionNotInitialized().GetRegionId()),
 			zap.Stringer("ctx", ctx))
+		err = bo.Backoff(retry.BoMaxRegionNotInitialized, errors.Errorf("region not initialized"))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
 		if seed != nil {
 			*seed = *seed + 1
 		}
@@ -1066,6 +1072,10 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 			zap.Uint64("region-id", regionErr.GetDataIsNotReady().GetRegionId()),
 			zap.Uint64("safe-ts", regionErr.GetDataIsNotReady().GetSafeTs()),
 			zap.Stringer("ctx", ctx))
+		err = bo.Backoff(retry.BoMaxDataNotReady, errors.Errorf("data is not ready"))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
 		if seed != nil {
 			*seed = *seed + 1
 		}
