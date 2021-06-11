@@ -52,9 +52,6 @@ import (
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mockcopr"
-	"github.com/pingcap/tidb/store/tikv"
-	tikvmockstore "github.com/pingcap/tidb/store/tikv/mockstore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -63,6 +60,9 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tipb/go-binlog"
+	tikvmockstore "github.com/tikv/client-go/v2/mockstore"
+	"github.com/tikv/client-go/v2/mockstore/cluster"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.etcd.io/etcd/clientv3"
 	"google.golang.org/grpc"
 )
@@ -3765,6 +3765,8 @@ func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
 }
 
 func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
+	c.Skip("Temporary disabled until br finishes switching client-go/v2")
+
 	// only run BR SQL integration test with tikv store.
 	if *tikvmockstore.WithTiKV {
 		cfg := config.GetGlobalConfig()
