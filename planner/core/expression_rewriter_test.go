@@ -43,6 +43,16 @@ func (s *testExpressionRewriterSuite) TestIfNullEliminateColName(c *C) {
 	c.Assert(err, IsNil)
 	fields := rs.Fields()
 	c.Assert(fields[0].Column.Name.L, Equals, "ifnull(a,b)")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(e int not null, b int)")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("create table t1(e int not null, b int)")
+	tk.MustExec("insert into t1 values(1, 1)")
+	rows := tk.MustQuery("select b from t where ifnull(e, b)")
+	rows.Check(testkit.Rows("1"))
+	rows = tk.MustQuery("select b from t1 where ifnull(e, b)")
+	rows.Check(testkit.Rows("1"))
 }
 
 func (s *testExpressionRewriterSuite) TestBinaryOpFunction(c *C) {
@@ -306,4 +316,110 @@ func (s *testExpressionRewriterSuite) TestIssue20007(c *C) {
 		tk.MustQuery("select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str); ").Check(
 			testkit.Rows("2 epic wiles 2020-01-02 23:29:51", "3 silly burnell 2020-02-25 07:43:07"))
 	}
+}
+
+func (s *testExpressionRewriterSuite) TestIssue9869(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(a int, b bigint unsigned);")
+	tk.MustExec("insert into t1 (a, b) values (1,4572794622775114594), (2,18196094287899841997),(3,11120436154190595086);")
+	tk.MustQuery("select (case t1.a when 0 then 0 else t1.b end), cast(t1.b as signed)  from t1;").Check(
+		testkit.Rows("4572794622775114594 4572794622775114594", "18196094287899841997 -250649785809709619", "11120436154190595086 -7326307919518956530"))
+}
+
+func (s *testExpressionRewriterSuite) TestIssue17652(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(x bigint unsigned);")
+	tk.MustExec("insert into t values( 9999999703771440633);")
+	tk.MustQuery("select ifnull(max(x), 0) from t").Check(
+		testkit.Rows("9999999703771440633"))
+}
+
+func (s *testExpressionRewriterSuite) TestCompareMultiFieldsInSubquery(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1, t2, t3, t4;")
+	tk.MustExec("CREATE TABLE t1(c1 int, c2 int);")
+	tk.MustExec("CREATE TABLE t2(c1 int, c2 int);")
+	tk.MustExec("CREATE TABLE t3(c1 int, c2 int);")
+	tk.MustExec("CREATE TABLE t4(c1 int, c2 int);")
+	tk.MustExec("INSERT INTO t1 VALUES (0, 0), (NULL, NULL);")
+	tk.MustExec("INSERT INTO t2 VALUES (0, 0), (NULL, NULL);")
+	tk.MustExec("INSERT INTO t3 VALUES (1, 2);")
+	// issue #13551 and #21674
+	tk.MustQuery("SELECT * FROM t2 WHERE (SELECT c1, c2 FROM t2 LIMIT 1) = ANY (SELECT c1, c2 FROM t1);").Check(testkit.Rows("0 0", "<nil> <nil>"))
+	tk.MustQuery("SELECT * FROM t2 WHERE (SELECT c1 FROM t2 LIMIT 1) = ANY (SELECT c1 FROM t1);").Check(testkit.Rows("0 0", "<nil> <nil>"))
+	tk.MustQuery("SELECT * FROM t2 WHERE (SELECT c1, c2 FROM t2 order by c1 LIMIT 1) = ANY (SELECT c1, c2 FROM t1);").Check(testkit.Rows())
+
+	tk.MustQuery("SELECT * FROM t3 WHERE (SELECT c1 FROM t3 LIMIT 1) != ALL(SELECT c1 FROM t4);").Check(testkit.Rows("1 2"))
+	tk.MustQuery("SELECT * FROM t3 WHERE (SELECT c1, c2 FROM t3 LIMIT 1) != ALL(SELECT c1, c2 FROM t4);").Check(testkit.Rows("1 2"))
+	tk.MustExec("INSERT INTO t4 VALUES (1, 3);")
+	tk.MustQuery("SELECT * FROM t3 WHERE (SELECT c1 FROM t3 LIMIT 1) != ALL(SELECT c1 FROM t4);").Check(testkit.Rows())
+	tk.MustQuery("SELECT * FROM t3 WHERE (SELECT c1, c2 FROM t3 LIMIT 1) != ALL(SELECT c1, c2 FROM t4);").Check(testkit.Rows("1 2"))
+	tk.MustExec("INSERT INTO t4 VALUES (1, 2);")
+	tk.MustQuery("SELECT * FROM t3 WHERE (SELECT c1 FROM t3 LIMIT 1) != ALL(SELECT c1 FROM t4);").Check(testkit.Rows())
+	tk.MustQuery("SELECT * FROM t3 WHERE (SELECT c1, c2 FROM t3 LIMIT 1) != ALL(SELECT c1, c2 FROM t4);").Check(testkit.Rows())
+
+}
+
+func (s *testExpressionRewriterSuite) TestIssue22818(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a time);")
+	tk.MustExec("insert into t values(\"23:22:22\");")
+	tk.MustQuery("select * from t where a between \"23:22:22\" and \"23:22:22\"").Check(
+		testkit.Rows("23:22:22"))
+}
+
+func (s *testExpressionRewriterSuite) TestIssue24705(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1,t2;")
+	tk.MustExec("create table t1 (c_int int, c_str varchar(40) character set utf8 collate utf8_general_ci);")
+	tk.MustExec("create table t2 (c_int int, c_str varchar(40) character set utf8 collate utf8_unicode_ci);")
+	err = tk.ExecToErr("select * from t1 where c_str < any (select c_str from t2 where c_int between 6 and 9);")
+	c.Assert(err.Error(), Equals, "[expression:1267]Illegal mix of collations (utf8_general_ci,IMPLICIT) and (utf8_unicode_ci,IMPLICIT) for operation '<'")
 }

@@ -183,6 +183,10 @@ type baseAggFunc struct {
 	// ordinal stores the ordinal of the columns in the output chunk, which is
 	// used to append the final result of this function.
 	ordinal int
+
+	// frac stores digits of the fractional part of decimals,
+	// which makes the decimal be the result of type inferring.
+	frac int
 }
 
 func (*baseAggFunc) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
@@ -197,5 +201,11 @@ type SlidingWindowAggFunc interface {
 	// PartialResult stores the intermediate result which will be used in the next
 	// sliding window, ensure call ResetPartialResult after a frame are evaluated
 	// completely.
-	Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error
+	Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error
+}
+
+// MaxMinSlidingWindowAggFunc is the interface to evaluate the max/min agg function using sliding window
+type MaxMinSlidingWindowAggFunc interface {
+	// SetWindowStart sets the start position of window
+	SetWindowStart(start uint64)
 }

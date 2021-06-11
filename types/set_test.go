@@ -53,21 +53,21 @@ func (s *testSetSuite) TestSet(c *C) {
 	}
 
 	for _, t := range tbl {
-		e, err := ParseSetName(elems, t.Name, mysql.DefaultCollationName)
+		e, err := ParseSet(elems, t.Name, mysql.DefaultCollationName)
 		c.Assert(err, IsNil)
 		c.Assert(e.ToNumber(), Equals, float64(t.ExpectedValue))
 		c.Assert(e.String(), Equals, t.ExpectedName)
 	}
 
 	for _, t := range tbl {
-		e, err := ParseSetName(elems, t.Name, "utf8_unicode_ci")
+		e, err := ParseSet(elems, t.Name, "utf8_unicode_ci")
 		c.Assert(err, IsNil)
 		c.Assert(e.ToNumber(), Equals, float64(t.ExpectedValue))
 		c.Assert(e.String(), Equals, t.ExpectedName)
 	}
 
 	for _, t := range citbl {
-		e, err := ParseSetName(elems, t.Name, "utf8_general_ci")
+		e, err := ParseSet(elems, t.Name, "utf8_general_ci")
 		c.Assert(err, IsNil)
 		c.Assert(e.ToNumber(), Equals, float64(t.ExpectedValue))
 		c.Assert(e.String(), Equals, t.ExpectedName)
@@ -95,7 +95,7 @@ func (s *testSetSuite) TestSet(c *C) {
 		"e.f",
 	}
 	for _, t := range tblErr {
-		_, err := ParseSetName(elems, t, mysql.DefaultCollationName)
+		_, err := ParseSet(elems, t, mysql.DefaultCollationName)
 		c.Assert(err, NotNil)
 	}
 

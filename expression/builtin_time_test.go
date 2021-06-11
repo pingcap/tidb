@@ -14,12 +14,14 @@
 package expression
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -27,20 +29,13 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 )
-
-func init() {
-	// Some test depends on the values of timeutil.SystemLocation()
-	// If we don't SetSystemTZ() here, the value would change unpredictable.
-	// Affectd by the order whether a testsuite runs before or after integration test.
-	// Note, SetSystemTZ() is a sync.Once operation.
-	timeutil.SetSystemTZ("system")
-}
 
 func (s *testEvaluatorSuite) TestDate(c *C) {
 	tblDate := []struct {
@@ -335,7 +330,8 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 	}
 
 	dtblNil = tblToDtbl(tblNil)
-	s.ctx.GetSessionVars().SetSystemVar("sql_mode", "NO_ZERO_DATE")
+	err := s.ctx.GetSessionVars().SetSystemVar("sql_mode", "NO_ZERO_DATE")
+	c.Assert(err, IsNil)
 	for _, t := range dtblNil {
 		fc := funcs[ast.Year]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
@@ -811,7 +807,7 @@ func (s *testEvaluatorSuite) TestTime(c *C) {
 }
 
 func resetStmtContext(ctx sessionctx.Context) {
-	ctx.GetSessionVars().StmtCtx.ResetNowTs()
+	ctx.GetSessionVars().StmtCtx.ResetStmtCache()
 }
 
 func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
@@ -825,7 +821,7 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		fc  functionClass
 		now func() time.Time
 	}{
-		{funcs[ast.Now], func() time.Time { return time.Now() }},
+		{funcs[ast.Now], time.Now},
 		{funcs[ast.UTCTimestamp], func() time.Time { return time.Now().UTC() }},
 	} {
 		f, err := x.fc.getFunction(s.ctx, s.datumsToConstants(nil))
@@ -838,7 +834,7 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		// we canot use a constant value to check timestamp funcs, so here
 		// just to check the fractional seconds part and the time delta.
 		c.Assert(strings.Contains(t.String(), "."), IsFalse)
-		c.Assert(ts.Sub(gotime(t, ts.Location())), LessEqual, time.Second)
+		c.Assert(ts.Sub(gotime(t, ts.Location())), LessEqual, 3*time.Second)
 
 		f, err = x.fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(6)))
 		c.Assert(err, IsNil)
@@ -848,7 +844,7 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		c.Assert(err, IsNil)
 		t = v.GetMysqlTime()
 		c.Assert(strings.Contains(t.String(), "."), IsTrue)
-		c.Assert(ts.Sub(gotime(t, ts.Location())), LessEqual, time.Second)
+		c.Assert(ts.Sub(gotime(t, ts.Location())), LessEqual, 3*time.Second)
 
 		resetStmtContext(s.ctx)
 		f, err = x.fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(8)))
@@ -864,8 +860,10 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	}
 
 	// Test that "timestamp" and "time_zone" variable may affect the result of Now() builtin function.
-	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", types.NewDatum("+00:00"))
-	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", types.NewDatum(1234))
+	err := variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", "+00:00")
+	c.Assert(err, IsNil)
+	err = variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", "1234")
+	c.Assert(err, IsNil)
 	fc := funcs[ast.Now]
 	resetStmtContext(s.ctx)
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(nil))
@@ -875,8 +873,10 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	result, err := v.ToString()
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, "1970-01-01 00:20:34")
-	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", types.NewDatum(0))
-	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", types.NewDatum("system"))
+	err = variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", "0")
+	c.Assert(err, IsNil)
+	err = variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", "system")
+	c.Assert(err, IsNil)
 }
 
 func (s *testEvaluatorSuite) TestIsDuration(c *C) {
@@ -915,6 +915,8 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		{"2017-12-31 23:59:59", "1", "2018-01-01 00:00:00"},
 		{"2007-12-31 23:59:59.999999", "2 1:1:1.000002", "2008-01-03 01:01:01.000001"},
 		{"2018-08-16 20:21:01", "00:00:00.000001", "2018-08-16 20:21:01.000001"},
+		{"1", "xxcvadfgasd", ""},
+		{"xxcvadfgasd", "1", ""},
 	}
 	fc := funcs[ast.AddTime]
 	for _, t := range tbl {
@@ -992,7 +994,10 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		{types.CurrentTime(mysql.TypeTimestamp), "-32073", types.ErrTruncatedWrongVal},
 		{types.CurrentTime(mysql.TypeDate), "-32073", types.ErrTruncatedWrongVal},
 		{types.CurrentTime(mysql.TypeDatetime), "-32073", types.ErrTruncatedWrongVal},
+		{"1", "xxcvadfgasd", types.ErrTruncatedWrongVal},
+		{"xxcvadfgasd", "1", types.ErrTruncatedWrongVal},
 	}
+	beforeWarnCnt := int(s.ctx.GetSessionVars().StmtCtx.WarningCount())
 	for i, t := range tblWarning {
 		tmpInput := types.NewDatum(t.Input)
 		tmpInputDuration := types.NewDatum(t.InputDuration)
@@ -1004,7 +1009,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		c.Assert(result, Equals, "")
 		c.Assert(d.IsNull(), Equals, true)
 		warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
-		c.Assert(len(warnings), Equals, i+1)
+		c.Assert(len(warnings), Equals, i+1+beforeWarnCnt)
 		c.Assert(terror.ErrorEqual(t.warning, warnings[i].Err), IsTrue, Commentf("err %v", warnings[i].Err))
 	}
 }
@@ -1019,6 +1024,8 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 		{"110:00:00", "1 02:00:00", "84:00:00"},
 		{"2017-01-01 01:01:01.11", "01:01:01.11111", "2016-12-31 23:59:59.998890"},
 		{"2007-12-31 23:59:59.999999", "1 1:1:1.000002", "2007-12-30 22:58:58.999997"},
+		{"1", "xxcvadfgasd", ""},
+		{"xxcvadfgasd", "1", ""},
 	}
 	fc := funcs[ast.SubTime]
 	for _, t := range tbl {
@@ -1084,7 +1091,10 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 		{types.CurrentTime(mysql.TypeTimestamp), "-32073", types.ErrTruncatedWrongVal},
 		{types.CurrentTime(mysql.TypeDate), "-32073", types.ErrTruncatedWrongVal},
 		{types.CurrentTime(mysql.TypeDatetime), "-32073", types.ErrTruncatedWrongVal},
+		{"1", "xxcvadfgasd", types.ErrTruncatedWrongVal},
+		{"xxcvadfgasd", "1", types.ErrTruncatedWrongVal},
 	}
+	beforeWarnCnt := int(s.ctx.GetSessionVars().StmtCtx.WarningCount())
 	for i, t := range tblWarning {
 		tmpInput := types.NewDatum(t.Input)
 		tmpInputDuration := types.NewDatum(t.InputDuration)
@@ -1096,7 +1106,7 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 		c.Assert(result, Equals, "")
 		c.Assert(d.IsNull(), Equals, true)
 		warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
-		c.Assert(len(warnings), Equals, i+1)
+		c.Assert(len(warnings), Equals, i+1+beforeWarnCnt)
 		c.Assert(terror.ErrorEqual(t.warning, warnings[i].Err), IsTrue, Commentf("err %v", warnings[i].Err))
 	}
 }
@@ -1106,10 +1116,11 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx.TimeZone = timeutil.SystemLocation()
-	timezones := []types.Datum{types.NewDatum(1234), types.NewDatum(0)}
+	timezones := []string{"1234", "0"}
 	for _, timezone := range timezones {
 		// sysdate() result is not affected by "timestamp" session variable.
-		variable.SetSessionSystemVar(ctx.GetSessionVars(), "timestamp", timezone)
+		err := variable.SetSessionSystemVar(ctx.GetSessionVars(), "timestamp", timezone)
+		c.Assert(err, IsNil)
 		f, err := fc.getFunction(ctx, s.datumsToConstants(nil))
 		c.Assert(err, IsNil)
 		resetStmtContext(s.ctx)
@@ -1401,6 +1412,15 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 		{"15-01-2001 1:9:8.999", "%d-%m-%Y %H:%i:%S.%f", true, time.Date(2001, 1, 15, 1, 9, 8, 999000000, time.Local)},
 		{"2003-01-02 10:11:12 PM", "%Y-%m-%d %H:%i:%S %p", false, time.Time{}},
 		{"10:20:10AM", "%H:%i:%S%p", false, time.Time{}},
+		// test %@(skip alpha), %#(skip number), %.(skip punct)
+		{"2020-10-10ABCD", "%Y-%m-%d%@", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"2020-10-101234", "%Y-%m-%d%#", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"2020-10-10....", "%Y-%m-%d%.", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"2020-10-10.1", "%Y-%m-%d%.%#%@", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"abcd2020-10-10.1", "%@%Y-%m-%d%.%#%@", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"abcd-2020-10-10.1", "%@-%Y-%m-%d%.%#%@", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"2020-10-10", "%Y-%m-%d%@", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"2020-10-10abcde123abcdef", "%Y-%m-%d%@%#", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
 	}
 
 	fc := funcs[ast.StrToDate]
@@ -1612,8 +1632,8 @@ func (s *testEvaluatorSuite) TestWeekWithoutModeSig(c *C) {
 	}{
 		{"2008-02-20", 7},
 		{"2000-12-31", 53},
-		{"2000-12-31", 1}, //set default week mode
-		{"2005-12-3", 48}, //set default week mode
+		{"2000-12-31", 1}, // set default week mode
+		{"2005-12-3", 48}, // set default week mode
 		{"2008-02-20", 7},
 	}
 
@@ -1626,9 +1646,11 @@ func (s *testEvaluatorSuite) TestWeekWithoutModeSig(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(result.GetInt64(), Equals, test.expect)
 		if i == 1 {
-			s.ctx.GetSessionVars().SetSystemVar("default_week_format", "6")
+			err = s.ctx.GetSessionVars().SetSystemVar("default_week_format", "6")
+			c.Assert(err, IsNil)
 		} else if i == 3 {
-			s.ctx.GetSessionVars().SetSystemVar("default_week_format", "")
+			err = s.ctx.GetSessionVars().SetSystemVar("default_week_format", "")
+			c.Assert(err, IsNil)
 		}
 	}
 }
@@ -1778,9 +1800,9 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 		{0, types.NewStringDatum("1969-12-31 23:59:59.999999"), types.KindMysqlDecimal, "0"},                 // Invalid timestamp
 		{0, types.NewStringDatum("2038-01-19 03:14:08"), types.KindInt64, "0"},                               // Invalid timestamp
 		// Below tests irregular inputs.
-		//{0, types.NewIntDatum(0), types.KindInt64, "0"},
-		//{0, types.NewIntDatum(-1), types.KindInt64, "0"},
-		//{0, types.NewIntDatum(12345), types.KindInt64, "0"},
+		// {0, types.NewIntDatum(0), types.KindInt64, "0"},
+		// {0, types.NewIntDatum(-1), types.KindInt64, "0"},
+		// {0, types.NewIntDatum(12345), types.KindInt64, "0"},
 	}
 
 	for _, test := range tests {
@@ -2058,6 +2080,7 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 		{[]types.Datum{types.NewStringDatum("2017-01-18"), types.NewStringDatum("12:30:59")}, "2017-01-18 12:30:59"},
 		{[]types.Datum{types.NewStringDatum("2017-01-18 01:01:01"), types.NewStringDatum("12:30:50")}, "2017-01-18 13:31:51"},
 		{[]types.Datum{types.NewStringDatum("2017-01-18 01:01:01"), types.NewStringDatum("838:59:59")}, "2017-02-22 00:01:00"},
+		{[]types.Datum{types.NewStringDatum("0000-01-01"), types.NewStringDatum("1")}, ""},
 
 		{[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123"))}, "2017-01-18 12:39:50.123"},
 		{[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.999"))}, "2017-01-18 12:39:50.999"},
@@ -2155,7 +2178,7 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 
 		{[]interface{}{0, 58.4, 0}, "00:58:00"},
 		{[]interface{}{0, "58.4", 0}, "00:58:00"},
-		{[]interface{}{0, 58.5, 1}, "00:59:01"},
+		{[]interface{}{0, 58.5, 1}, "00:58:01"},
 		{[]interface{}{0, "58.5", 1}, "00:58:01"},
 		{[]interface{}{0, 59.5, 1}, nil},
 		{[]interface{}{0, "59.5", 1}, "00:59:01"},
@@ -2169,7 +2192,10 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 		{[]interface{}{0, 0, 0}, "00:00:00"},
 
 		{[]interface{}{837, 59, 59.1}, "837:59:59.100000"},
-		{[]interface{}{838, 59, 59.1}, "838:59:59.000000"},
+		{[]interface{}{838, 0, 59.1}, "838:00:59.100000"},
+		{[]interface{}{838, 50, 59.999}, "838:50:59.999000"},
+		{[]interface{}{838, 58, 59.1}, "838:58:59.100000"},
+		{[]interface{}{838, 58, 59.999}, "838:58:59.999000"}, {[]interface{}{838, 59, 59.1}, "838:59:59.000000"},
 		{[]interface{}{-838, 59, 59.1}, "-838:59:59.000000"},
 		{[]interface{}{1000, 1, 1}, "838:59:59"},
 		{[]interface{}{-1000, 1, 1.23}, "-838:59:59.000000"},
@@ -2410,6 +2436,7 @@ func (s *testEvaluatorSuite) TestTimestampAdd(c *C) {
 		{"MINUTE", 1, "2003-01-02", "2003-01-02 00:01:00"},
 		{"WEEK", 1, "2003-01-02 23:59:59", "2003-01-09 23:59:59"},
 		{"MICROSECOND", 1, 950501, "1995-05-01 00:00:00.000001"},
+		{"DAY", 28768, 0, ""},
 	}
 
 	fc := funcs[ast.TimestampAdd]
@@ -2830,8 +2857,105 @@ func (s *testEvaluatorSuite) TestTidbParseTso(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestTiDBBoundedStaleness(c *C) {
+	t1, err := time.Parse(types.TimeFormat, "2015-09-21 09:53:04")
+	c.Assert(err, IsNil)
+	// time.Parse uses UTC time zone by default, we need to change it to Local manually.
+	t1 = t1.Local()
+	t1Str := t1.Format(types.TimeFormat)
+	t2 := time.Now()
+	t2Str := t2.Format(types.TimeFormat)
+	timeZone := time.Local
+	s.ctx.GetSessionVars().TimeZone = timeZone
+	tests := []struct {
+		leftTime     interface{}
+		rightTime    interface{}
+		injectSafeTS uint64
+		isNull       bool
+		expect       time.Time
+	}{
+		// SafeTS is in the range.
+		{
+			leftTime:     t1Str,
+			rightTime:    t2Str,
+			injectSafeTS: oracle.GoTimeToTS(t2.Add(-1 * time.Second)),
+			isNull:       false,
+			expect:       t2.Add(-1 * time.Second),
+		},
+		// SafeTS is less than the left time.
+		{
+			leftTime:     t1Str,
+			rightTime:    t2Str,
+			injectSafeTS: oracle.GoTimeToTS(t1.Add(-1 * time.Second)),
+			isNull:       false,
+			expect:       t1,
+		},
+		// SafeTS is bigger than the right time.
+		{
+			leftTime:     t1Str,
+			rightTime:    t2Str,
+			injectSafeTS: oracle.GoTimeToTS(t2.Add(time.Second)),
+			isNull:       false,
+			expect:       t2,
+		},
+		// Wrong time order.
+		{
+			leftTime:     t2Str,
+			rightTime:    t1Str,
+			injectSafeTS: 0,
+			isNull:       true,
+			expect:       time.Time{},
+		},
+	}
+
+	fc := funcs[ast.TiDBBoundedStaleness]
+	for _, test := range tests {
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+			fmt.Sprintf("return(%v)", test.injectSafeTS)), IsNil)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(test.leftTime), types.NewDatum(test.rightTime)}))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		if test.isNull {
+			c.Assert(d.IsNull(), IsTrue)
+		} else {
+			goTime, err := d.GetMysqlTime().GoTime(timeZone)
+			c.Assert(err, IsNil)
+			c.Assert(goTime.Format(types.TimeFormat), Equals, test.expect.Format(types.TimeFormat))
+		}
+		resetStmtContext(s.ctx)
+	}
+
+	// Test whether it's deterministic.
+	safeTime1 := t2.Add(-1 * time.Second)
+	safeTS1 := oracle.GoTimeToTS(safeTime1)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		fmt.Sprintf("return(%v)", safeTS1)), IsNil)
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(t1Str), types.NewDatum(t2Str)}))
+	c.Assert(err, IsNil)
+	d, err := evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err, IsNil)
+	goTime, err := d.GetMysqlTime().GoTime(timeZone)
+	c.Assert(err, IsNil)
+	resultTime := goTime.Format(types.TimeFormat)
+	c.Assert(resultTime, Equals, safeTime1.Format(types.TimeFormat))
+	// SafeTS updated.
+	safeTime2 := t2.Add(1 * time.Second)
+	safeTS2 := oracle.GoTimeToTS(safeTime2)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		fmt.Sprintf("return(%v)", safeTS2)), IsNil)
+	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(t1Str), types.NewDatum(t2Str)}))
+	c.Assert(err, IsNil)
+	d, err = evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err, IsNil)
+	// Still safeTime1
+	c.Assert(resultTime, Equals, safeTime1.Format(types.TimeFormat))
+	resetStmtContext(s.ctx)
+	failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS")
+}
+
 func (s *testEvaluatorSuite) TestGetIntervalFromDecimal(c *C) {
-	du := baseDateArithmitical{}
+	du := baseDateArithmetical{}
 
 	tests := []struct {
 		param  string

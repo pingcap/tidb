@@ -26,8 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -37,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -66,7 +65,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 
 	ddlLease := time.Duration(atomic.LoadInt64(&schemaLease))
 	statisticLease := time.Duration(atomic.LoadInt64(&statsLease))
-	idxUsageSyncLease := time.Duration(atomic.LoadInt64(&indexUsageSyncLease))
+	idxUsageSyncLease := GetIndexUsageSyncLease()
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		logutil.BgLogger().Info("new domain",
 			zap.String("store", store.UUID()),
@@ -119,7 +118,9 @@ var (
 	statsLease = int64(3 * time.Second)
 
 	// indexUsageSyncLease is the time for index usage synchronization.
-	indexUsageSyncLease = int64(60 * time.Second)
+	// Because we have not completed GC and other functions, we set it to 0.
+	// TODO: Set indexUsageSyncLease to 60s.
+	indexUsageSyncLease = int64(0 * time.Second)
 )
 
 // ResetStoreForWithTiKVTest is only used in the test code.
@@ -160,6 +161,11 @@ func SetIndexUsageSyncLease(lease time.Duration) {
 	atomic.StoreInt64(&indexUsageSyncLease, int64(lease))
 }
 
+// GetIndexUsageSyncLease returns the index usage sync lease time.
+func GetIndexUsageSyncLease() time.Duration {
+	return time.Duration(atomic.LoadInt64(&indexUsageSyncLease))
+}
+
 // DisableStats4Test disables the stats for tests.
 func DisableStats4Test() {
 	SetStatsLease(-1)
@@ -170,7 +176,7 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	logutil.BgLogger().Debug("compiling", zap.String("source", src))
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
 	p := parser.New()
-	p.EnableWindowFunc(ctx.GetSessionVars().EnableWindowFunction)
+	p.SetParserConfig(ctx.GetSessionVars().BuildParserConfig())
 	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
 	stmts, warns, err := p.Parse(src, charset, collation)
 	for _, warn := range warns {
@@ -195,6 +201,22 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars) {
 }
 
 func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
+	sessVars := se.sessionVars
+	if !sql.IsReadOnly(sessVars) {
+		// All the history should be added here.
+		if meetsErr == nil && sessVars.TxnCtx.CouldRetry {
+			GetHistory(se).Add(sql, sessVars.StmtCtx)
+		}
+
+		// Handle the stmt commit/rollback.
+		if se.txn.Valid() {
+			if meetsErr != nil {
+				se.StmtRollback()
+			} else {
+				se.StmtCommit()
+			}
+		}
+	}
 	err := autoCommitAfterStmt(ctx, se, meetsErr, sql)
 	if se.txn.pending() {
 		// After run statement finish, txn state is still pending means the
@@ -217,7 +239,7 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 	sessVars := se.sessionVars
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
-			logutil.BgLogger().Info("rollbackTxn for ddl/autocommit failed")
+			logutil.BgLogger().Info("rollbackTxn called due to ddl/autocommit failure")
 			se.RollbackTxn(ctx)
 			recordAbortTxnDuration(sessVars)
 		} else if se.txn.Valid() && se.txn.IsPessimistic() && executor.ErrDeadlock.Equal(meetsErr) {
@@ -257,7 +279,7 @@ func checkStmtLimit(ctx context.Context, se *session) error {
 		// The last history could not be "commit"/"rollback" statement.
 		// It means it is impossible to start a new transaction at the end of the transaction.
 		// Because after the server executed "commit"/"rollback" statement, the session is out of the transaction.
-		sessVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+		sessVars.SetInTxn(true)
 	}
 	return err
 }
@@ -330,5 +352,5 @@ func ResultSetToStringSlice(ctx context.Context, s Session, rs sqlexec.RecordSet
 
 // Session errors.
 var (
-	ErrForUpdateCantRetry = terror.ClassSession.New(errno.ErrForUpdateCantRetry, errno.MySQLErrName[errno.ErrForUpdateCantRetry])
+	ErrForUpdateCantRetry = dbterror.ClassSession.NewStd(errno.ErrForUpdateCantRetry)
 )

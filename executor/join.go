@@ -487,7 +487,7 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 
 	iter := chunk.NewIterator4Slice(buildSideRows)
 	var outerMatchStatus []outerRowStatusFlag
-	rowIdx := 0
+	rowIdx, ok := 0, false
 	for iter.Begin(); iter.Current() != iter.End(); {
 		outerMatchStatus, err = e.joiners[workerID].tryToMatchOuters(iter, probeSideRow, joinResult.chk, outerMatchStatus)
 		if err != nil {
@@ -502,7 +502,7 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 		rowIdx += len(outerMatchStatus)
 		if joinResult.chk.IsFull() {
 			e.joinResultCh <- joinResult
-			ok, joinResult := e.getNewJoinResult(workerID)
+			ok, joinResult = e.getNewJoinResult(workerID)
 			if !ok {
 				return false, joinResult
 			}
@@ -522,7 +522,7 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uin
 		return true, joinResult
 	}
 	iter := chunk.NewIterator4Slice(buildSideRows)
-	hasMatch, hasNull := false, false
+	hasMatch, hasNull, ok := false, false, false
 	for iter.Begin(); iter.Current() != iter.End(); {
 		matched, isNull, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter, joinResult.chk)
 		if err != nil {
@@ -534,7 +534,7 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uin
 
 		if joinResult.chk.IsFull() {
 			e.joinResultCh <- joinResult
-			ok, joinResult := e.getNewJoinResult(workerID)
+			ok, joinResult = e.getNewJoinResult(workerID)
 			if !ok {
 				return false, joinResult
 			}
@@ -579,6 +579,16 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 	}
 
 	for i := range selected {
+		killed := atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1
+		failpoint.Inject("killedInJoin2Chunk", func(val failpoint.Value) {
+			if val.(bool) {
+				killed = true
+			}
+		})
+		if killed {
+			joinResult.err = ErrQueryInterrupted
+			return false, joinResult
+		}
 		if !selected[i] || hCtx.hasNull[i] { // process unmatched probe side rows
 			e.joiners[workerID].onMissMatch(false, probeSideChk.GetRow(i), joinResult.chk)
 		} else { // process matched probe side rows
@@ -610,6 +620,16 @@ func (e *HashJoinExec) join2ChunkForOuterHashJoin(workerID uint, probeSideChk *c
 		}
 	}
 	for i := 0; i < probeSideChk.NumRows(); i++ {
+		killed := atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1
+		failpoint.Inject("killedInJoin2ChunkForOuterHashJoin", func(val failpoint.Value) {
+			if val.(bool) {
+				killed = true
+			}
+		})
+		if killed {
+			joinResult.err = ErrQueryInterrupted
+			return false, joinResult
+		}
 		probeKey, probeRow := hCtx.hashVals[i].Sum64(), probeSideChk.GetRow(i)
 		ok, joinResult = e.joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID, probeKey, probeRow, hCtx, joinResult)
 		if !ok {
@@ -849,6 +869,39 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	return nil
 }
 
+// aggExecutorTreeInputEmpty checks whether the executor tree returns empty if without aggregate operators.
+// Note that, the prerequisite is that this executor tree has been executed already and it returns one row.
+func aggExecutorTreeInputEmpty(e Executor) bool {
+	children := e.base().children
+	if len(children) == 0 {
+		return false
+	}
+	if len(children) > 1 {
+		_, ok := e.(*UnionExec)
+		if !ok {
+			// It is a Join executor.
+			return false
+		}
+		for _, child := range children {
+			if !aggExecutorTreeInputEmpty(child) {
+				return false
+			}
+		}
+		return true
+	}
+	// Single child executors.
+	if aggExecutorTreeInputEmpty(children[0]) {
+		return true
+	}
+	if hashAgg, ok := e.(*HashAggExec); ok {
+		return hashAgg.isChildReturnEmpty
+	}
+	if streamAgg, ok := e.(*StreamAggExec); ok {
+		return streamAgg.isChildReturnEmpty
+	}
+	return false
+}
+
 func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *chunk.Chunk) (*chunk.Row, error) {
 	outerIter := chunk.NewIterator4Chunk(e.outerChunk)
 	for {
@@ -863,6 +916,13 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 			e.outerSelected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, outerIter, e.outerSelected)
 			if err != nil {
 				return nil, err
+			}
+			// For cases like `select count(1), (select count(1) from s where s.a > t.a) as sub from t where t.a = 1`,
+			// if outer child has no row satisfying `t.a = 1`, `sub` should be `null` instead of `0` theoretically; however, the
+			// outer `count(1)` produces one row <0, null> over the empty input, we should specially mark this outer row
+			// as not selected, to trigger the mismatch join procedure.
+			if e.outerChunkCursor == 0 && e.outerChunk.NumRows() == 1 && e.outerSelected[0] && aggExecutorTreeInputEmpty(e.outerExec) {
+				e.outerSelected[0] = false
 			}
 			e.outerChunkCursor = 0
 		}
@@ -1011,13 +1071,6 @@ func (e *joinRuntimeStats) setCacheInfo(useCache bool, hitRatio float64) {
 	e.Unlock()
 }
 
-func (e *joinRuntimeStats) setHashStat(hashStat hashStatistic) {
-	e.Lock()
-	e.hasHashStat = true
-	e.hashStat = hashStat
-	e.Unlock()
-}
-
 func (e *joinRuntimeStats) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	buf.WriteString(e.RuntimeStatsWithConcurrencyInfo.String())
@@ -1025,7 +1078,7 @@ func (e *joinRuntimeStats) String() string {
 		if e.cache.useCache {
 			buf.WriteString(fmt.Sprintf(", cache:ON, cacheHitRatio:%.3f%%", e.cache.hitRatio*100))
 		} else {
-			buf.WriteString(fmt.Sprintf(", cache:OFF"))
+			buf.WriteString(", cache:OFF")
 		}
 	}
 	if e.hasHashStat {
@@ -1069,24 +1122,24 @@ func (e *hashJoinRuntimeStats) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 128))
 	if e.fetchAndBuildHashTable > 0 {
 		buf.WriteString("build_hash_table:{total:")
-		buf.WriteString(e.fetchAndBuildHashTable.String())
+		buf.WriteString(execdetails.FormatDuration(e.fetchAndBuildHashTable))
 		buf.WriteString(", fetch:")
-		buf.WriteString((e.fetchAndBuildHashTable - e.hashStat.buildTableElapse).String())
+		buf.WriteString(execdetails.FormatDuration((e.fetchAndBuildHashTable - e.hashStat.buildTableElapse)))
 		buf.WriteString(", build:")
-		buf.WriteString(e.hashStat.buildTableElapse.String())
+		buf.WriteString(execdetails.FormatDuration(e.hashStat.buildTableElapse))
 		buf.WriteString("}")
 	}
 	if e.probe > 0 {
 		buf.WriteString(", probe:{concurrency:")
 		buf.WriteString(strconv.Itoa(e.concurrent))
 		buf.WriteString(", total:")
-		buf.WriteString(time.Duration(e.fetchAndProbe).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe)))
 		buf.WriteString(", max:")
-		buf.WriteString(time.Duration(atomic.LoadInt64(&e.maxFetchAndProbe)).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(atomic.LoadInt64(&e.maxFetchAndProbe))))
 		buf.WriteString(", probe:")
-		buf.WriteString(time.Duration(e.probe).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.probe)))
 		buf.WriteString(", fetch:")
-		buf.WriteString(time.Duration(e.fetchAndProbe - e.probe).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe - e.probe)))
 		if e.hashStat.probeCollision > 0 {
 			buf.WriteString(", probe_collision:")
 			buf.WriteString(strconv.Itoa(e.hashStat.probeCollision))

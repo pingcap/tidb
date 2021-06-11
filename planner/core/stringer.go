@@ -37,6 +37,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		for _, c := range x.Children() {
 			strs, idxs = toString(c, strs, idxs)
 		}
+	case *PhysicalExchangeReceiver: // do nothing
 	case PhysicalPlan:
 		if len(x.Children()) > 1 {
 			idxs = append(idxs, len(strs))
@@ -266,22 +267,34 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("Window(%s)", x.ExplainInfo())
 	case *PhysicalShuffle:
 		str = fmt.Sprintf("Partition(%s)", x.ExplainInfo())
-	case *PhysicalShuffleDataSourceStub:
-		str = fmt.Sprintf("PartitionDataSourceStub(%s)", x.ExplainInfo())
+	case *PhysicalShuffleReceiverStub:
+		str = fmt.Sprintf("PartitionReceiverStub(%s)", x.ExplainInfo())
 	case *PointGetPlan:
-		str = fmt.Sprintf("PointGet(")
+		str = "PointGet("
 		if x.IndexInfo != nil {
 			str += fmt.Sprintf("Index(%s.%s)%v)", x.TblInfo.Name.L, x.IndexInfo.Name.L, x.IndexValues)
 		} else {
 			str += fmt.Sprintf("Handle(%s.%s)%v)", x.TblInfo.Name.L, x.TblInfo.GetPkName().L, x.Handle)
 		}
 	case *BatchPointGetPlan:
-		str = fmt.Sprintf("BatchPointGet(")
+		str = "BatchPointGet("
 		if x.IndexInfo != nil {
 			str += fmt.Sprintf("Index(%s.%s)%v)", x.TblInfo.Name.L, x.IndexInfo.Name.L, x.IndexValues)
 		} else {
 			str += fmt.Sprintf("Handle(%s.%s)%v)", x.TblInfo.Name.L, x.TblInfo.GetPkName().L, x.Handles)
 		}
+	case *PhysicalExchangeReceiver:
+		str = "Recv("
+		for _, task := range x.Tasks {
+			str += fmt.Sprintf("%d, ", task.ID)
+		}
+		str += ")"
+	case *PhysicalExchangeSender:
+		str = "Send("
+		for _, task := range x.TargetTasks {
+			str += fmt.Sprintf("%d, ", task.ID)
+		}
+		str += ")"
 	default:
 		str = fmt.Sprintf("%T", in)
 	}

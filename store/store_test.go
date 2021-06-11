@@ -542,12 +542,11 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	ver, err := store.CurrentVersion()
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	c.Assert(kv.MaxVersion.Cmp(ver), Equals, 1)
 
-	snap, err := store.GetSnapshot(kv.MaxVersion)
-	c.Assert(err, IsNil)
+	snap := store.GetSnapshot(kv.MaxVersion)
 
 	_, err = snap.Get(context.TODO(), []byte("a"))
 	c.Assert(err, IsNil)
@@ -561,8 +560,7 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	_, err = store.Begin()
 	c.Assert(err, NotNil)
 
-	_, err = store.GetSnapshot(kv.MaxVersion)
-	c.Assert(err, NotNil)
+	_ = store.GetSnapshot(kv.MaxVersion)
 
 	err = txn.Set([]byte("a"), []byte("b"))
 	c.Assert(err, IsNil)
@@ -584,7 +582,7 @@ func (s *testKVSuite) TestIsolationInc(c *C) {
 			defer wg.Done()
 			for j := 0; j < 100; j++ {
 				var id int64
-				err := kv.RunInNewTxn(s.s, true, func(txn kv.Transaction) error {
+				err := kv.RunInNewTxn(context.Background(), s.s, true, func(ctx context.Context, txn kv.Transaction) error {
 					var err1 error
 					id, err1 = kv.IncInt64(txn, []byte("key"), 1)
 					return err1
@@ -626,7 +624,7 @@ func (s *testKVSuite) TestIsolationMultiInc(c *C) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < incCnt; j++ {
-				err := kv.RunInNewTxn(s.s, true, func(txn kv.Transaction) error {
+				err := kv.RunInNewTxn(context.Background(), s.s, true, func(ctx context.Context, txn kv.Transaction) error {
 					for _, key := range keys {
 						_, err1 := kv.IncInt64(txn, key, 1)
 						if err1 != nil {
@@ -643,7 +641,7 @@ func (s *testKVSuite) TestIsolationMultiInc(c *C) {
 
 	wg.Wait()
 
-	err := kv.RunInNewTxn(s.s, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), s.s, false, func(ctx context.Context, txn kv.Transaction) error {
 		for _, key := range keys {
 			id, err1 := kv.GetInt64(context.TODO(), txn, key)
 			if err1 != nil {

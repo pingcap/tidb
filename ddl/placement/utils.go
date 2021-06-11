@@ -14,64 +14,66 @@
 package placement
 
 import (
-	"fmt"
+	"encoding/hex"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 )
 
-func checkLabelConstraint(label string) (LabelConstraint, error) {
-	r := LabelConstraint{}
-
-	if len(label) < 4 {
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
+// ObjectIDFromGroupID extracts the db/table/partition ID from the group ID
+func ObjectIDFromGroupID(groupID string) (int64, error) {
+	// If the rule doesn't come from TiDB, skip it.
+	if !strings.HasPrefix(groupID, BundleIDPrefix) {
+		return 0, nil
 	}
-
-	var op LabelConstraintOp
-	switch label[0] {
-	case '+':
-		op = In
-	case '-':
-		op = NotIn
-	default:
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
+	id, err := strconv.ParseInt(groupID[len(BundleIDPrefix):], 10, 64)
+	if err != nil || id <= 0 {
+		return 0, errors.Errorf("Rule %s doesn't include an id", groupID)
 	}
-
-	kv := strings.Split(label[1:], "=")
-	if len(kv) != 2 {
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	key := strings.TrimSpace(kv[0])
-	if key == "" {
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	val := strings.TrimSpace(kv[1])
-	if val == "" {
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	r.Key = key
-	r.Op = op
-	r.Values = []string{val}
-	return r, nil
+	return id, nil
 }
 
-// CheckLabelConstraints will check labels, and build LabelConstraints for rule.
-func CheckLabelConstraints(labels []string) ([]LabelConstraint, error) {
-	constraints := make([]LabelConstraint, 0, len(labels))
-	for _, str := range labels {
-		label, err := checkLabelConstraint(strings.TrimSpace(str))
-		if err != nil {
-			return constraints, err
+// BuildPlacementDropBundle builds the bundle to drop placement rules.
+func BuildPlacementDropBundle(partitionID int64) *Bundle {
+	return &Bundle{
+		ID: GroupID(partitionID),
+	}
+}
+
+// BuildPlacementCopyBundle copies a new bundle from the old, with a new name and a new key range.
+func BuildPlacementCopyBundle(oldBundle *Bundle, newID int64) *Bundle {
+	newBundle := oldBundle.Clone()
+	newBundle.ID = GroupID(newID)
+	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(newID)))
+	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(newID+1)))
+	for _, rule := range newBundle.Rules {
+		rule.GroupID = newBundle.ID
+		rule.StartKeyHex = startKey
+		rule.EndKeyHex = endKey
+	}
+	return newBundle
+}
+
+// GetLeaderDCByBundle returns the leader's DC by Bundle if found
+func GetLeaderDCByBundle(bundle *Bundle, dcLabelKey string) (string, bool) {
+	for _, rule := range bundle.Rules {
+		if isValidLeaderRule(rule, dcLabelKey) {
+			return rule.Constraints[0].Values[0], true
 		}
-		constraints = append(constraints, label)
 	}
-	return constraints, nil
+	return "", false
 }
 
-// GroupID accepts a tableID or whatever integer, and encode the integer into a valid GroupID for PD.
-func GroupID(id int64) string {
-	return fmt.Sprintf("TIDB_DDL_%d", id)
+func isValidLeaderRule(rule *Rule, dcLabelKey string) bool {
+	if rule.Role == Leader && rule.Count == 1 {
+		for _, con := range rule.Constraints {
+			if con.Op == In && con.Key == dcLabelKey && len(con.Values) == 1 {
+				return true
+			}
+		}
+	}
+	return false
 }

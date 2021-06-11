@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"context"
+	"strconv"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -28,7 +29,10 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -56,6 +60,16 @@ func (s *testSuite3) TestDo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("do 1, @a:=1")
 	tk.MustQuery("select @a").Check(testkit.Rows("1"))
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int)")
+	tk.MustExec("insert into t values (1)")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+	tk.MustExec("do @a := (select * from t where i = 1)")
+	tk2.MustExec("insert into t values (2)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 }
 
 func (s *testSuite3) TestSetRoleAllCorner(c *C) {
@@ -502,10 +516,43 @@ func (s *testSuite3) TestSetPwd(c *C) {
 func (s *testSuite3) TestKillStmt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	sm := &mockSessionManager{
+		serverID: 0,
+	}
+	tk.Se.SetSessionManager(sm)
 	tk.MustExec("kill 1")
-
 	result := tk.MustQuery("show warnings")
 	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead"))
+
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Experimental.EnableGlobalKill = true
+	config.StoreGlobalConfig(&newCfg)
+
+	// ZERO serverID, treated as truncated.
+	tk.MustExec("kill 1")
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."))
+
+	// truncated
+	sm.SetServerID(1)
+	tk.MustExec("kill 101")
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."))
+
+	// excceed int64
+	tk.MustExec("kill 9223372036854775808") // 9223372036854775808 == 2^63
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Parse ConnectionID failed: Unexpected connectionID excceeds int64"))
+
+	// local kill
+	connID := util.GlobalConnID{Is64bits: true, ServerID: 1, LocalConnID: 101}
+	tk.MustExec("kill " + strconv.FormatUint(connID.ID(), 10))
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows())
+
+	config.StoreGlobalConfig(originCfg)
+	// remote kill is tested in `tests/globalkilltest`
 }
 
 func (s *testSuite3) TestFlushPrivileges(c *C) {
@@ -539,7 +586,10 @@ func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
 	// Run in a separate suite because this test need to set SkipGrantTable config.
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -552,6 +602,60 @@ func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
 
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("FLUSH PRIVILEGES")
+}
+
+func (s *testSerialSuite) TestDropPartitionStats(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("unstable, skip race test")
+	}
+	// Use the testSerialSuite to fix the unstable test
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`create database if not exists test_drop_gstats`)
+	tk.MustExec("use test_drop_gstats")
+	tk.MustExec("drop table if exists test_drop_gstats;")
+	tk.MustExec(`create table test_drop_gstats (
+	a int,
+	key(a)
+)
+partition by range (a) (
+	partition p0 values less than (10),
+	partition p1 values less than (20),
+	partition global values less than (30)
+)`)
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("insert into test_drop_gstats values (1), (5), (11), (15), (21), (25)")
+	c.Assert(s.domain.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+
+	checkPartitionStats := func(names ...string) {
+		rs := tk.MustQuery("show stats_meta").Rows()
+		c.Assert(len(rs), Equals, len(names))
+		for i := range names {
+			c.Assert(rs[i][2].(string), Equals, names[i])
+		}
+	}
+
+	tk.MustExec("analyze table test_drop_gstats")
+	checkPartitionStats("global", "p0", "p1", "global")
+
+	tk.MustExec("drop stats test_drop_gstats partition p0")
+	checkPartitionStats("global", "p1", "global")
+
+	err := tk.ExecToErr("drop stats test_drop_gstats partition abcde")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "can not found the specified partition name abcde in the table definition")
+
+	tk.MustExec("drop stats test_drop_gstats partition global")
+	checkPartitionStats("global", "p1")
+
+	tk.MustExec("drop stats test_drop_gstats global")
+	checkPartitionStats("p1")
+
+	tk.MustExec("analyze table test_drop_gstats")
+	checkPartitionStats("global", "p0", "p1", "global")
+
+	tk.MustExec("drop stats test_drop_gstats partition p0, p1, global")
+	checkPartitionStats("global")
 }
 
 func (s *testSuite3) TestDropStats(c *C) {
@@ -593,23 +697,16 @@ func (s *testSuite3) TestDropStatsFromKV(c *C) {
 	tk.MustExec(`insert into t values("1","1"),("2","2"),("3","3"),("4","4")`)
 	tk.MustExec("insert into t select * from t")
 	tk.MustExec("insert into t select * from t")
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t with 2 topn")
 	tblID := tk.MustQuery(`select tidb_table_id from information_schema.tables where table_name = "t" and table_schema = "test"`).Rows()[0][0].(string)
 	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(
 		testkit.Rows("0 16"))
 	tk.MustQuery("select hist_id from mysql.stats_histograms where table_id = " + tblID).Check(
 		testkit.Rows("1", "2"))
-	tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID).Check(
-		testkit.Rows("1 0",
-			"1 1",
-			"1 2",
-			"1 3",
-			"2 0",
-			"2 1",
-			"2 2",
-			"2 3"))
-	tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID).Check(
-		testkit.Rows("1", "1", "1", "1", "2", "2", "2", "2"))
+	ret := tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID)
+	c.Assert(len(ret.Rows()) > 0, IsTrue)
+	ret = tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID)
+	c.Assert(len(ret.Rows()) > 0, IsTrue)
 
 	tk.MustExec("drop stats t")
 	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(
@@ -734,24 +831,30 @@ func (s *testSuite3) TestExtendedStatsPrivileges(c *C) {
 	defer se.Close()
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil), IsTrue)
 	ctx := context.Background()
-	_, err = se.Execute(ctx, "create statistics s1(correlation) on test.t(a,b)")
+	_, err = se.Execute(ctx, "set session tidb_enable_extended_stats = on")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1142]CREATE STATISTICS command denied to user 'u1'@'%' for table 't'")
+	c.Assert(err.Error(), Equals, "[planner:1142]ALTER command denied to user 'u1'@'%' for table 't'")
+	tk.MustExec("grant alter on test.* to 'u1'@'%'")
+	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1142]ADD STATS_EXTENDED command denied to user 'u1'@'%' for table 't'")
 	tk.MustExec("grant select on test.* to 'u1'@'%'")
-	_, err = se.Execute(ctx, "create statistics s1(correlation) on test.t(a,b)")
+	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1142]CREATE STATISTICS command denied to user 'u1'@'%' for table 'stats_extended'")
+	c.Assert(err.Error(), Equals, "[planner:1142]ADD STATS_EXTENDED command denied to user 'u1'@'%' for table 'stats_extended'")
 	tk.MustExec("grant insert on mysql.stats_extended to 'u1'@'%'")
-	_, err = se.Execute(ctx, "create statistics s1(correlation) on test.t(a,b)")
+	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
 	c.Assert(err, IsNil)
 
 	_, err = se.Execute(ctx, "use test")
 	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, "drop statistics s1")
+	_, err = se.Execute(ctx, "alter table t drop stats_extended s1")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1142]DROP STATISTICS command denied to user 'u1'@'%' for table 'stats_extended'")
+	c.Assert(err.Error(), Equals, "[planner:1142]DROP STATS_EXTENDED command denied to user 'u1'@'%' for table 'stats_extended'")
 	tk.MustExec("grant update on mysql.stats_extended to 'u1'@'%'")
-	_, err = se.Execute(ctx, "drop statistics s1")
+	_, err = se.Execute(ctx, "alter table t drop stats_extended s1")
 	c.Assert(err, IsNil)
 	tk.MustExec("drop user 'u1'@'%'")
 }
@@ -772,4 +875,16 @@ func (s *testSuite3) TestIssue17247(c *C) {
 	// Wrong grammar
 	_, err := tk1.Exec("ALTER USER USER() IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F'")
 	c.Assert(err, NotNil)
+}
+
+// Close issue #23649.
+// See https://github.com/pingcap/tidb/issues/23649
+func (s *testSuite3) TestIssue23649(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("DROP USER IF EXISTS issue23649;")
+	tk.MustExec("CREATE USER issue23649;")
+	_, err := tk.Exec("GRANT bogusrole to issue23649;")
+	c.Assert(err.Error(), Equals, "[executor:3523]Unknown authorization ID `bogusrole`@`%`")
+	_, err = tk.Exec("GRANT bogusrole to nonexisting;")
+	c.Assert(err.Error(), Equals, "[executor:3523]Unknown authorization ID `bogusrole`@`%`")
 }

@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	//DefPartialResult4RankSize is the size of partialResult4Rank
+	// DefPartialResult4RankSize is the size of partialResult4Rank
 	DefPartialResult4RankSize = int64(unsafe.Sizeof(partialResult4Rank{}))
 )
 

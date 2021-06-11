@@ -12,7 +12,7 @@
 # limitations under the License.
 
 # Builder image
-FROM golang:1.13-alpine as builder
+FROM golang:1.16-alpine as builder
 
 RUN apk add --no-cache \
     wget \
@@ -39,6 +39,9 @@ RUN make
 
 # Executable image
 FROM alpine
+
+RUN apk add --no-cache \
+    curl
 
 COPY --from=builder /go/src/github.com/pingcap/tidb/bin/tidb-server /tidb-server
 COPY --from=builder /usr/local/bin/dumb-init /usr/local/bin/dumb-init

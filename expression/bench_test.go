@@ -21,7 +21,6 @@ import (
 	"math/rand"
 	"net"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -264,6 +263,13 @@ func (g *defaultGener) gen() interface{} {
 	case types.ETDatetime, types.ETTimestamp:
 		gt := getRandomTime(g.randGen.Rand)
 		t := types.NewTime(gt, convertETType(g.eType), 0)
+		// TiDB has DST time problem, and it causes ErrWrongValue.
+		// We should ignore ambiguous Time. See https://timezonedb.com/time-zones/Asia/Shanghai.
+		for _, err := t.GoTime(time.Local); err != nil; {
+			gt = getRandomTime(g.randGen.Rand)
+			t = types.NewTime(gt, convertETType(g.eType), 0)
+			_, err = t.GoTime(time.Local)
+		}
 		return t
 	case types.ETDuration:
 		d := types.Duration{
@@ -287,23 +293,9 @@ func (g *defaultGener) gen() interface{} {
 type charInt64Gener struct{}
 
 func (g *charInt64Gener) gen() interface{} {
-	rand := time.Now().Nanosecond()
-	rand = rand % 1024
-	return int64(rand)
-}
-
-// charsetStringGener is used to generate "ascii" or "gbk"
-type charsetStringGener struct{}
-
-func (g *charsetStringGener) gen() interface{} {
-	rand := time.Now().Nanosecond() % 3
-	if rand == 0 {
-		return "ascii"
-	}
-	if rand == 1 {
-		return "utf8"
-	}
-	return "gbk"
+	nanosecond := time.Now().Nanosecond()
+	nanosecond = nanosecond % 1024
+	return int64(nanosecond)
 }
 
 // selectStringGener select one string randomly from the candidates array
@@ -706,10 +698,6 @@ type dateTimeGener struct {
 	randGen *defaultRandGen
 }
 
-func newDateTimeGener(fsp, year, month, day int) *dateTimeGener {
-	return &dateTimeGener{fsp, year, month, day, newDefaultRandGen()}
-}
-
 func (g *dateTimeGener) gen() interface{} {
 	if g.Year == 0 {
 		g.Year = 1970 + g.randGen.Intn(100)
@@ -780,10 +768,10 @@ func (g *dateStrGener) gen() interface{} {
 		g.Year = 1970 + g.randGen.Intn(100)
 	}
 	if g.Month == 0 {
-		g.Month = g.randGen.Intn(10) + 1
+		g.Month = g.randGen.Intn(10)
 	}
 	if g.Day == 0 {
-		g.Day = g.randGen.Intn(20) + 1
+		g.Day = g.randGen.Intn(20)
 	}
 
 	return fmt.Sprintf("%d-%d-%d", g.Year, g.Month, g.Day)
@@ -868,12 +856,6 @@ func newRandDurDecimal() *randDurDecimal {
 func (g *randDurDecimal) gen() interface{} {
 	d := new(types.MyDecimal)
 	return d.FromFloat64(float64(g.randGen.Intn(types.TimeMaxHour)*10000 + g.randGen.Intn(60)*100 + g.randGen.Intn(60)))
-}
-
-type randDurString struct{}
-
-func (g *randDurString) gen() interface{} {
-	return strconv.Itoa(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
 }
 
 // locationGener is used to generate location for the built-in function GetFormat.
@@ -1242,6 +1224,20 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 			fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 		case types.ETString:
 			fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		}
+		baseFunc, err = fc.getFunction(ctx, cols)
+	} else if funcName == ast.GetVar {
+		var fc functionClass
+		tp := eType2FieldType(testCase.retEvalType)
+		switch testCase.retEvalType {
+		case types.ETInt:
+			fc = &getIntVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, tp}}
+		case types.ETDecimal:
+			fc = &getDecimalVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, tp}}
+		case types.ETReal:
+			fc = &getRealVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, tp}}
+		default:
+			fc = &getStringVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, tp}}
 		}
 		baseFunc, err = fc.getFunction(ctx, cols)
 	} else {

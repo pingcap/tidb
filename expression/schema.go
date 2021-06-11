@@ -33,6 +33,9 @@ func (ki KeyInfo) Clone() KeyInfo {
 type Schema struct {
 	Columns []*Column
 	Keys    []KeyInfo
+	// UniqueKeys stores those unique indexes that allow null values, but Keys does not allow null values.
+	// since equivalence conditions can filter out null values, in this case a unique index with null values can be a Key.
+	UniqueKeys []KeyInfo
 }
 
 // String implements fmt.Stringer interface.
@@ -104,14 +107,34 @@ func (s *Schema) IsUniqueKey(col *Column) bool {
 	return false
 }
 
+// IsUnique checks if this column is a unique key which may contain duplicate nulls .
+func (s *Schema) IsUnique(col *Column) bool {
+	for _, key := range s.UniqueKeys {
+		if len(key) == 1 && key[0].Equal(nil, col) {
+			return true
+		}
+	}
+	return false
+}
+
 // ColumnIndex finds the index for a column.
 func (s *Schema) ColumnIndex(col *Column) int {
+	backupIdx := -1
 	for i, c := range s.Columns {
 		if c.UniqueID == col.UniqueID {
+			backupIdx = i
+			if c.IsPrefix {
+				// instead of returning a prefix column
+				// prefer to find a full column
+				// only clustered index table can meet this:
+				//	same column `c1` maybe appear in both primary key and secondary index
+				// so secondary index itself can have two `c1` column one for indexKey and one for handle
+				continue
+			}
 			return i
 		}
 	}
-	return -1
+	return backupIdx
 }
 
 // Contains checks if the schema contains the column.

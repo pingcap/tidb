@@ -19,16 +19,19 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 var _ = SerialSuites(&testEvaluatorSerialSuites{})
@@ -37,12 +40,35 @@ var _ = Suite(&testVectorizeSuite1{})
 var _ = Suite(&testVectorizeSuite2{})
 
 func TestT(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
+
 	testleak.BeforeTest()
 	defer testleak.AfterTestT(t)()
 
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
+
+	// Some test depends on the values of timeutil.SystemLocation()
+	// If we don't SetSystemTZ() here, the value would change unpredictable.
+	// Affectd by the order whether a testsuite runs before or after integration test.
+	// Note, SetSystemTZ() is a sync.Once operation.
+	timeutil.SetSystemTZ("system")
+
+	fpname := "github.com/pingcap/tidb/expression/PanicIfPbCodeUnspecified"
+	err := failpoint.Enable(fpname, "return(true)")
+	if err != nil {
+		t.Fatalf("enable global failpoint `%s` failed: %v", fpname, err)
+	}
+
 	TestingT(t)
+
+	err = failpoint.Disable(fpname)
+	if err != nil {
+		t.Fatalf("disable global failpoint `%s` failed: %v", fpname, err)
+	}
 }
 
 type testEvaluatorSuiteBase struct {
@@ -78,7 +104,8 @@ func (s *testEvaluatorSuiteBase) SetUpTest(c *C) {
 	s.ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
 	sc := s.ctx.GetSessionVars().StmtCtx
 	sc.TruncateAsWarning = true
-	s.ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864")
+	err := s.ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864")
+	c.Assert(err, IsNil)
 	s.ctx.GetSessionVars().PlanColumnID = 0
 }
 

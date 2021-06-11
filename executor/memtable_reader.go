@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
@@ -53,9 +54,12 @@ type dummyCloser struct{}
 
 func (dummyCloser) close() error { return nil }
 
+func (dummyCloser) getRuntimeStats() execdetails.RuntimeStats { return nil }
+
 type memTableRetriever interface {
 	retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error)
 	close() error
+	getRuntimeStats() execdetails.RuntimeStats
 }
 
 // MemTableReaderExec executes memTable information retrieving from the MemTable components
@@ -127,6 +131,9 @@ func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // Close implements the Executor Close interface.
 func (e *MemTableReaderExec) Close() error {
+	if stats := e.retriever.getRuntimeStats(); stats != nil && e.runtimeStats != nil {
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, stats)
+	}
 	return e.retriever.close()
 }
 
@@ -184,6 +191,9 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 					url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), statusAddr, pdapi.Config)
 				case "tikv", "tidb":
 					url = fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), statusAddr)
+				case "tiflash":
+					// TODO: support show tiflash config once tiflash supports it
+					return
 				default:
 					ch <- result{err: errors.Errorf("unknown node type: %s(%s)", typ, address)}
 					return
@@ -219,10 +229,13 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 				}
 				var items []item
 				for key, val := range data {
+					if config.ContainHiddenConfig(key) {
+						continue
+					}
 					var str string
-					switch val.(type) {
+					switch val := val.(type) {
 					case string: // remove quotes
-						str = val.(string)
+						str = val
 					default:
 						tmp, err := json.Marshal(val)
 						if err != nil {
@@ -356,7 +369,8 @@ func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.S
 	opt := grpc.WithInsecure()
 	security := config.GetGlobalConfig().Security
 	if len(security.ClusterSSLCA) != 0 {
-		tlsConfig, err := security.ToTLSConfig()
+		clusterSecurity := security.ClusterSecurity()
+		tlsConfig, err := clusterSecurity.ToTLSConfig()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -384,8 +398,8 @@ func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.S
 }
 
 func parseFailpointServerInfo(s string) []infoschema.ServerInfo {
-	var serversInfo []infoschema.ServerInfo
 	servers := strings.Split(s, ";")
+	serversInfo := make([]infoschema.ServerInfo, 0, len(servers))
 	for _, server := range servers {
 		parts := strings.Split(server, ",")
 		serversInfo = append(serversInfo, infoschema.ServerInfo{
@@ -483,7 +497,7 @@ func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Co
 	nodeTypes := e.extractor.NodeTypes
 	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, instances)
 
-	var levels []diagnosticspb.LogLevel
+	var levels = make([]diagnosticspb.LogLevel, 0, len(e.extractor.LogLevels))
 	for l := range e.extractor.LogLevels {
 		levels = append(levels, sysutil.ParseLogLevel(l))
 	}
@@ -520,7 +534,8 @@ func (e *clusterLogRetriever) startRetrieving(
 	opt := grpc.WithInsecure()
 	security := config.GetGlobalConfig().Security
 	if len(security.ClusterSSLCA) != 0 {
-		tlsConfig, err := security.ToTLSConfig()
+		clusterSecurity := security.ClusterSecurity()
+		tlsConfig, err := clusterSecurity.ToTLSConfig()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -659,5 +674,9 @@ func (e *clusterLogRetriever) close() error {
 	if e.cancel != nil {
 		e.cancel()
 	}
+	return nil
+}
+
+func (e *clusterLogRetriever) getRuntimeStats() execdetails.RuntimeStats {
 	return nil
 }

@@ -17,6 +17,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 )
 
 // canProjectionBeEliminatedLoose checks whether a projection can be eliminated,
@@ -34,6 +35,27 @@ func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
 // canProjectionBeEliminatedStrict checks whether a projection can be
 // eliminated, returns true if the projection just copy its child's output.
 func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
+	// This is due to the in-compatibility between TiFlash and TiDB:
+	// For TiDB, the output schema of final agg is all the aggregated functions and for
+	// TiFlash, the output schema of agg(TiFlash not aware of the aggregation mode) is
+	// aggregated functions + group by columns, so to make the things work, for final
+	// mode aggregation that need to be running in TiFlash, always add an extra Project
+	// the align the output schema. In the future, we can solve this in-compatibility by
+	// passing down the aggregation mode to TiFlash.
+	if physicalAgg, ok := p.Children()[0].(*PhysicalHashAgg); ok {
+		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase {
+			if physicalAgg.isFinalAgg() {
+				return false
+			}
+		}
+	}
+	if physicalAgg, ok := p.Children()[0].(*PhysicalStreamAgg); ok {
+		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase {
+			if physicalAgg.isFinalAgg() {
+				return false
+			}
+		}
+	}
 	// If this projection is specially added for `DO`, we keep it.
 	if p.CalculateNoDelay {
 		return false
@@ -82,11 +104,22 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 		p.Children()[i] = doPhysicalProjectionElimination(child)
 	}
 
+	// eliminate projection in a coprocessor task
+	tableReader, isTableReader := p.(*PhysicalTableReader)
+	if isTableReader && tableReader.StoreType == kv.TiFlash {
+		tableReader.tablePlan = eliminatePhysicalProjection(tableReader.tablePlan)
+		tableReader.TablePlans = flattenPushDownPlan(tableReader.tablePlan)
+		return p
+	}
+
 	proj, isProj := p.(*PhysicalProjection)
 	if !isProj || !canProjectionBeEliminatedStrict(proj) {
 		return p
 	}
 	child := p.Children()[0]
+	if childProj, ok := child.(*PhysicalProjection); ok {
+		childProj.SetSchema(p.Schema())
+	}
 	return child
 }
 
@@ -206,7 +239,6 @@ func (la *LogicalAggregation) replaceExprColumns(replace map[string]*expression.
 	for _, gbyItem := range la.GroupByItems {
 		ResolveExprAndReplace(gbyItem, replace)
 	}
-	la.collectGroupByColumns()
 }
 
 func (p *LogicalSelection) replaceExprColumns(replace map[string]*expression.Column) {

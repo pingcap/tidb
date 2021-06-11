@@ -44,7 +44,7 @@ func genVecBuiltinRegexpBenchCaseForConstants() (baseFunc builtinFunc, childrenF
 
 	args := make([]Expression, numArgs)
 	args[0] = &Column{Index: 0, RetType: childrenFieldTypes[0]}
-	args[1] = DatumToConstant(types.NewStringDatum(rePat), mysql.TypeString)
+	args[1] = DatumToConstant(types.NewStringDatum(rePat), mysql.TypeString, 0)
 
 	var err error
 	baseFunc, err = funcs[ast.Regexp].getFunction(mock.NewContext(), args)

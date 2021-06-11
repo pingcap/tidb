@@ -154,7 +154,7 @@ task DownloadLinter -If (-not (Test-Path $tools.Linter.Path)) {
 }
 
 task RunLinter DownloadLinter, {
-    exec { & $tools.Linter.Path run -v --disable-all --deadline=3m --enable=misspell --enable=ineffassign $directories }
+    exec { & $tools.Linter.Path run -v --disable-all --deadline=3m --enable=misspell --enable=ineffassign --enable=varcheck $directories }
 }
 
 task GoModTidy {

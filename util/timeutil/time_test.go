@@ -19,6 +19,8 @@ package timeutil
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -63,4 +65,25 @@ func (s *testTimeSuite) TestLocal(c *C) {
 	loc = SystemLocation()
 	c.Assert(loc.String(), Equals, "UTC")
 	os.Unsetenv("TZ")
+}
+
+func (s *testTimeSuite) TestInferOneStepLinkForPath(c *C) {
+	os.Remove(filepath.Join(os.TempDir(), "testlink1"))
+	os.Remove(filepath.Join(os.TempDir(), "testlink2"))
+	os.Remove(filepath.Join(os.TempDir(), "testlink3"))
+	var link2, link3 string
+	var err error
+	var link1 *os.File
+	link1, err = os.Create(filepath.Join(os.TempDir(), "testlink1"))
+	c.Assert(err, IsNil)
+	err = os.Symlink(link1.Name(), filepath.Join(os.TempDir(), "testlink2"))
+	c.Assert(err, IsNil)
+	err = os.Symlink(filepath.Join(os.TempDir(), "testlink2"), filepath.Join(os.TempDir(), "testlink3"))
+	c.Assert(err, IsNil)
+	link2, err = inferOneStepLinkForPath(filepath.Join(os.TempDir(), "testlink3"))
+	c.Assert(err, IsNil)
+	c.Assert(link2, Equals, filepath.Join(os.TempDir(), "testlink2"))
+	link3, err = filepath.EvalSymlinks(filepath.Join(os.TempDir(), "testlink3"))
+	c.Assert(err, IsNil)
+	c.Assert(strings.Index(link3, link1.Name()), Not(Equals), -1)
 }

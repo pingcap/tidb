@@ -15,6 +15,8 @@ package expression
 
 import (
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -28,6 +30,7 @@ func init() {
 		ast.If:     ifFoldHandler,
 		ast.Ifnull: ifNullFoldHandler,
 		ast.Case:   caseWhenHandler,
+		ast.IsNull: isNullHandler,
 	}
 }
 
@@ -37,6 +40,29 @@ func FoldConstant(expr Expression) Expression {
 	// keep the original coercibility values after folding
 	e.SetCoercibility(expr.Coercibility())
 	return e
+}
+
+func isNullHandler(expr *ScalarFunction) (Expression, bool) {
+	arg0 := expr.GetArgs()[0]
+	if constArg, isConst := arg0.(*Constant); isConst {
+		isDeferredConst := constArg.DeferredExpr != nil || constArg.ParamMarker != nil
+		value, err := expr.Eval(chunk.Row{})
+		if err != nil {
+			// Failed to fold this expr to a constant, print the DEBUG log and
+			// return the original expression to let the error to be evaluated
+			// again, in that time, the error is returned to the client.
+			logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", expr.ExplainInfo()), zap.Error(err))
+			return expr, isDeferredConst
+		}
+		if isDeferredConst {
+			return &Constant{Value: value, RetType: expr.RetType, DeferredExpr: expr}, true
+		}
+		return &Constant{Value: value, RetType: expr.RetType}, false
+	}
+	if mysql.HasNotNullFlag(arg0.GetType().Flag) {
+		return NewZero(), false
+	}
+	return expr, false
 }
 
 func ifFoldHandler(expr *ScalarFunction) (Expression, bool) {
@@ -97,7 +123,7 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 					foldedExpr.GetType().Decimal = expr.GetType().Decimal
 					return foldedExpr, isDeferredConst
 				}
-				return BuildCastFunction(expr.GetCtx(), foldedExpr, foldedExpr.GetType()), isDeferredConst
+				return foldedExpr, isDeferredConst
 			}
 		} else {
 			// for no-const, here should return directly, because the following branches are unknown to be run or not
@@ -166,28 +192,40 @@ func foldConstant(expr Expression) (Expression, bool) {
 				return expr, isDeferredConst
 			}
 			if value.IsNull() {
-				if isDeferredConst {
-					return &Constant{Value: value, RetType: x.RetType, DeferredExpr: x}, true
-				}
+				// This Constant is created to compose the result expression of EvaluateExprWithNull when InNullRejectCheck
+				// is true. We just check whether the result expression is null or false and then let it die. Basically,
+				// the constant is used once briefly and will not be retained for a long time. Hence setting DeferredExpr
+				// of Constant to nil is ok.
 				return &Constant{Value: value, RetType: x.RetType}, false
 			}
 			if isTrue, err := value.ToBool(sc); err == nil && isTrue == 0 {
-				if isDeferredConst {
-					return &Constant{Value: value, RetType: x.RetType, DeferredExpr: x}, true
-				}
+				// This Constant is created to compose the result expression of EvaluateExprWithNull when InNullRejectCheck
+				// is true. We just check whether the result expression is null or false and then let it die. Basically,
+				// the constant is used once briefly and will not be retained for a long time. Hence setting DeferredExpr
+				// of Constant to nil is ok.
 				return &Constant{Value: value, RetType: x.RetType}, false
 			}
 			return expr, isDeferredConst
 		}
 		value, err := x.Eval(chunk.Row{})
+		retType := x.RetType.Clone()
+		if !hasNullArg {
+			// set right not null flag for constant value
+			switch value.Kind() {
+			case types.KindNull:
+				retType.Flag &= ^mysql.NotNullFlag
+			default:
+				retType.Flag |= mysql.NotNullFlag
+			}
+		}
 		if err != nil {
 			logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", x.ExplainInfo()), zap.Error(err))
 			return expr, isDeferredConst
 		}
 		if isDeferredConst {
-			return &Constant{Value: value, RetType: x.RetType, DeferredExpr: x}, true
+			return &Constant{Value: value, RetType: retType, DeferredExpr: x}, true
 		}
-		return &Constant{Value: value, RetType: x.RetType}, false
+		return &Constant{Value: value, RetType: retType}, false
 	case *Constant:
 		if x.ParamMarker != nil {
 			return &Constant{

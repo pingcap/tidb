@@ -151,47 +151,54 @@ func (s *testEvaluatorSuite) TestRowFunc(c *C) {
 
 func (s *testEvaluatorSuite) TestSetVar(c *C) {
 	fc := funcs[ast.SetVar]
+	dec := types.NewDecFromInt(5)
 	testCases := []struct {
 		args []interface{}
 		res  interface{}
 	}{
 		{[]interface{}{"a", "12"}, "12"},
 		{[]interface{}{"b", "34"}, "34"},
-		{[]interface{}{"c", nil}, ""},
+		{[]interface{}{"c", nil}, nil},
 		{[]interface{}{"c", "ABC"}, "ABC"},
 		{[]interface{}{"c", "dEf"}, "dEf"},
+		{[]interface{}{"d", int64(3)}, int64(3)},
+		{[]interface{}{"e", float64(2.5)}, float64(2.5)},
+		{[]interface{}{"f", dec}, dec},
 	}
 	for _, tc := range testCases {
 		fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(fn, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
 		c.Assert(err, IsNil)
-		c.Assert(d.GetString(), Equals, tc.res)
+		c.Assert(d.GetValue(), Equals, tc.res)
 		if tc.args[1] != nil {
 			key, ok := tc.args[0].(string)
 			c.Assert(ok, Equals, true)
-			val, ok := tc.res.(string)
-			c.Assert(ok, Equals, true)
 			sessionVar, ok := s.ctx.GetSessionVars().Users[key]
 			c.Assert(ok, Equals, true)
-			c.Assert(sessionVar.GetString(), Equals, val)
+			c.Assert(sessionVar.GetValue(), Equals, tc.res)
 		}
 	}
 }
 
 func (s *testEvaluatorSuite) TestGetVar(c *C) {
-	fc := funcs[ast.GetVar]
-
+	dec := types.NewDecFromInt(5)
 	sessionVars := []struct {
 		key string
-		val string
+		val interface{}
 	}{
 		{"a", "中"},
 		{"b", "文字符chuan"},
 		{"c", ""},
+		{"e", int64(3)},
+		{"f", float64(2.5)},
+		{"g", dec},
 	}
 	for _, kv := range sessionVars {
-		s.ctx.GetSessionVars().Users[kv.key] = types.NewStringDatum(kv.val)
+		s.ctx.GetSessionVars().Users[kv.key] = types.NewDatum(kv.val)
+		tp := types.NewFieldType(mysql.TypeVarString)
+		types.DefaultParamTypeForValue(kv.val, tp)
+		s.ctx.GetSessionVars().UserVarTypes[kv.key] = tp
 	}
 
 	testCases := []struct {
@@ -201,24 +208,25 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 		{[]interface{}{"a"}, "中"},
 		{[]interface{}{"b"}, "文字符chuan"},
 		{[]interface{}{"c"}, ""},
-		{[]interface{}{"d"}, ""},
+		{[]interface{}{"d"}, nil},
+		{[]interface{}{"e"}, int64(3)},
+		{[]interface{}{"f"}, float64(2.5)},
+		{[]interface{}{"g"}, dec},
 	}
 	for _, tc := range testCases {
-		fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
+		tp, ok := s.ctx.GetSessionVars().UserVarTypes[tc.args[0].(string)]
+		if !ok {
+			tp = types.NewFieldType(mysql.TypeVarString)
+		}
+		fn, err := BuildGetVarFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...))[0], tp)
 		c.Assert(err, IsNil)
-		d, err := evalBuiltinFunc(fn, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
+		d, err := fn.Eval(chunk.Row{})
 		c.Assert(err, IsNil)
-		c.Assert(d.GetString(), Equals, tc.res)
+		c.Assert(d.GetValue(), Equals, tc.res)
 	}
 }
 
 func (s *testEvaluatorSuite) TestValues(c *C) {
-	origin := s.ctx.GetSessionVars().StmtCtx.InInsertStmt
-	s.ctx.GetSessionVars().StmtCtx.InInsertStmt = false
-	defer func() {
-		s.ctx.GetSessionVars().StmtCtx.InInsertStmt = origin
-	}()
-
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, 1, types.NewFieldType(mysql.TypeVarchar)}
 	_, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("")))
 	c.Assert(err, ErrorMatches, "*Incorrect parameter count in the call to native function 'values'")
@@ -232,11 +240,10 @@ func (s *testEvaluatorSuite) TestValues(c *C) {
 
 	s.ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(types.MakeDatums("1")).ToRow()
 	ret, err = evalBuiltinFunc(sig, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(ret.IsNull(), IsTrue)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, "Session current insert values len.*")
 
 	currInsertValues := types.MakeDatums("1", "2")
-	s.ctx.GetSessionVars().StmtCtx.InInsertStmt = true
 	s.ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(currInsertValues).ToRow()
 	ret, err = evalBuiltinFunc(sig, chunk.Row{})
 	c.Assert(err, IsNil)

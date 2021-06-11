@@ -13,38 +13,14 @@
 
 package kv
 
-// Variables defines the variables used by KV storage.
-type Variables struct {
-	// BackoffLockFast specifies the LockFast backoff base duration in milliseconds.
-	BackoffLockFast int
-
-	// BackOffWeight specifies the weight of the max back off time duration.
-	BackOffWeight int
-
-	// Hook is used for test to verify the variable take effect.
-	Hook func(name string, vars *Variables)
-
-	// Pointer to SessionVars.Killed
-	// Killed is a flag to indicate that this query is killed.
-	Killed *uint32
-}
-
-// NewVariables create a new Variables instance with default values.
-func NewVariables(killed *uint32) *Variables {
-	return &Variables{
-		BackoffLockFast: DefBackoffLockFast,
-		BackOffWeight:   DefBackOffWeight,
-		Killed:          killed,
-	}
-}
-
-var ignoreKill uint32
-
-// DefaultVars is the default variables instance.
-var DefaultVars = NewVariables(&ignoreKill)
-
-// Default values
-const (
-	DefBackoffLockFast = 100
-	DefBackOffWeight   = 2
+import (
+	tikv "github.com/pingcap/tidb/store/tikv/kv"
 )
+
+// Variables defines the variables used by KV storage. TODO:remove it when br is ready.
+type Variables = tikv.Variables
+
+// NewVariables create a new Variables instance with default values. TODO:remove it when br is ready.
+func NewVariables(killed *uint32) *Variables {
+	return tikv.NewVariables(killed)
+}

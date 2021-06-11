@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -53,13 +52,13 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	infoSchema := infoschema.GetInfoSchema(c.Ctx)
-	if err := plannercore.Preprocess(c.Ctx, stmtNode, infoSchema); err != nil {
+	ret := &plannercore.PreprocessorReturn{}
+	if err := plannercore.Preprocess(c.Ctx, stmtNode, plannercore.WithPreprocessorReturn(ret)); err != nil {
 		return nil, err
 	}
 	stmtNode = plannercore.TryAddExtraLimit(c.Ctx, stmtNode)
 
-	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, infoSchema)
+	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, ret.InfoSchema)
 	if err != nil {
 		return nil, err
 	}
@@ -70,14 +69,17 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		lowerPriority = needLowerPriority(finalPlan)
 	}
 	return &ExecStmt{
-		GoCtx:         ctx,
-		InfoSchema:    infoSchema,
-		Plan:          finalPlan,
-		LowerPriority: lowerPriority,
-		Text:          stmtNode.Text(),
-		StmtNode:      stmtNode,
-		Ctx:           c.Ctx,
-		OutputNames:   names,
+		GoCtx:             ctx,
+		SnapshotTS:        ret.SnapshotTS,
+		ExplicitStaleness: ret.ExplicitStaleness,
+		InfoSchema:        ret.InfoSchema,
+		Plan:              finalPlan,
+		LowerPriority:     lowerPriority,
+		Text:              stmtNode.Text(),
+		StmtNode:          stmtNode,
+		Ctx:               c.Ctx,
+		OutputNames:       names,
+		Ti:                &TelemetryInfo{},
 	}, nil
 }
 
@@ -218,17 +220,36 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 			}
 		}
 	case *ast.CreateBindingStmt:
+		var resNode ast.ResultSetNode
 		if x.OriginNode != nil {
-			originSelect := x.OriginNode.(*ast.SelectStmt)
-			dbLabels := getDbFromResultNode(originSelect.From.TableRefs)
+			switch n := x.OriginNode.(type) {
+			case *ast.SelectStmt:
+				resNode = n.From.TableRefs
+			case *ast.DeleteStmt:
+				resNode = n.TableRefs.TableRefs
+			case *ast.UpdateStmt:
+				resNode = n.TableRefs.TableRefs
+			case *ast.InsertStmt:
+				resNode = n.Table.TableRefs
+			}
+			dbLabels := getDbFromResultNode(resNode)
 			for _, db := range dbLabels {
 				dbLabelSet[db] = struct{}{}
 			}
 		}
 
 		if len(dbLabelSet) == 0 && x.HintedNode != nil {
-			hintedSelect := x.HintedNode.(*ast.SelectStmt)
-			dbLabels := getDbFromResultNode(hintedSelect.From.TableRefs)
+			switch n := x.HintedNode.(type) {
+			case *ast.SelectStmt:
+				resNode = n.From.TableRefs
+			case *ast.DeleteStmt:
+				resNode = n.TableRefs.TableRefs
+			case *ast.UpdateStmt:
+				resNode = n.TableRefs.TableRefs
+			case *ast.InsertStmt:
+				resNode = n.Table.TableRefs
+			}
+			dbLabels := getDbFromResultNode(resNode)
 			for _, db := range dbLabels {
 				dbLabelSet[db] = struct{}{}
 			}
@@ -238,7 +259,7 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 	return dbLabelSet
 }
 
-func getDbFromResultNode(resultNode ast.ResultSetNode) []string { //may have duplicate db name
+func getDbFromResultNode(resultNode ast.ResultSetNode) []string { // may have duplicate db name
 	var dbLabels []string
 
 	if resultNode == nil {

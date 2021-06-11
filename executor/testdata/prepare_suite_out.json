@@ -1,0 +1,220 @@
+[
+  {
+    "Name": "TestPlanCacheWithDifferentVariableTypes",
+    "Cases": [
+      {
+        "PrepareStmt": "prepare stmt from \"select ?, ?\"",
+        "Executes": [
+          {
+            "SQL": "execute stmt using @v1, @v2",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "1"
+              },
+              {
+                "Name": "v2",
+                "Value": "2"
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  1->Column#1, 2->Column#2",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "0",
+            "Result": [
+              "1 2"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1, @v2",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "1"
+              },
+              {
+                "Name": "v2",
+                "Value": "\"abc\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  1->Column#1, abc->Column#2",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "0",
+            "Result": [
+              "1 abc"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1, @v2",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "10"
+              },
+              {
+                "Name": "v2",
+                "Value": "\"cba\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  10->Column#1, cba->Column#2",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "10 cba"
+            ]
+          }
+        ]
+      },
+      {
+        "PrepareStmt": "prepare stmt from \"select a from t1 where t1.b = ?\"",
+        "Executes": [
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "3"
+              }
+            ],
+            "Plan": [
+              "Projection_4 10.00 root  test.t1.a",
+              "└─IndexReader_6 10.00 root  index:IndexRangeScan_5",
+              "  └─IndexRangeScan_5 10.00 cop[tikv] table:t1, index:b(b, a) range:[3,3], keep order:false, stats:pseudo"
+            ],
+            "LastPlanUseCache": "0",
+            "Result": [
+              "3"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "2"
+              }
+            ],
+            "Plan": [
+              "Projection_4 10.00 root  test.t1.a",
+              "└─IndexReader_6 10.00 root  index:IndexRangeScan_5",
+              "  └─IndexRangeScan_5 10.00 cop[tikv] table:t1, index:b(b, a) range:[2,2], keep order:false, stats:pseudo"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "2"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "-200"
+              }
+            ],
+            "Plan": [
+              "Projection_4 10.00 root  test.t1.a",
+              "└─IndexReader_6 10.00 root  index:IndexRangeScan_5",
+              "  └─IndexRangeScan_5 10.00 cop[tikv] table:t1, index:b(b, a) range:[-200,-200], keep order:false, stats:pseudo"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": null
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"abc\""
+              }
+            ],
+            "Plan": [
+              "Projection_4 8000.00 root  test.t1.a",
+              "└─IndexReader_10 8000.00 root  index:Selection_9",
+              "  └─Selection_9 8000.00 cop[tikv]  eq(cast(test.t1.b, double BINARY), 0)",
+              "    └─IndexFullScan_8 10000.00 cop[tikv] table:t1, index:b(b, a) keep order:false, stats:pseudo"
+            ],
+            "LastPlanUseCache": "0",
+            "Result": null
+          }
+        ]
+      },
+      {
+        "PrepareStmt": "prepare stmt from \"select t1.c, t2.c from t1 join t2 on t1.b = t2.b and t1.a = t2.a where t1.b = ?\"",
+        "Executes": [
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "1"
+              }
+            ],
+            "Plan": [
+              "HashJoin_38 6387.21 root  inner join, equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
+              "├─IndexLookUp_63(Build) 99.80 root  ",
+              "│ ├─Selection_62(Build) 99.80 cop[tikv]  not(isnull(test.t2.b))",
+              "│ │ └─IndexRangeScan_60 99.90 cop[tikv] table:t2, index:b(b, a) range:[1 -inf,1 +inf], keep order:false, stats:pseudo",
+              "│ └─TableRowIDScan_61(Probe) 99.80 cop[tikv] table:t2 keep order:false, stats:pseudo",
+              "└─IndexLookUp_56(Probe) 99.80 root  ",
+              "  ├─Selection_55(Build) 99.80 cop[tikv]  not(isnull(test.t1.b))",
+              "  │ └─IndexRangeScan_53 99.90 cop[tikv] table:t1, index:b(b, a) range:[1 -inf,1 +inf], keep order:false, stats:pseudo",
+              "  └─TableRowIDScan_54(Probe) 99.80 cop[tikv] table:t1 keep order:false, stats:pseudo"
+            ],
+            "LastPlanUseCache": "0",
+            "Result": null
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "2"
+              }
+            ],
+            "Plan": [
+              "HashJoin_38 6387.21 root  inner join, equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
+              "├─IndexLookUp_63(Build) 99.80 root  ",
+              "│ ├─Selection_62(Build) 99.80 cop[tikv]  not(isnull(test.t2.b))",
+              "│ │ └─IndexRangeScan_60 99.90 cop[tikv] table:t2, index:b(b, a) range:[2 -inf,2 +inf], keep order:false, stats:pseudo",
+              "│ └─TableRowIDScan_61(Probe) 99.80 cop[tikv] table:t2 keep order:false, stats:pseudo",
+              "└─IndexLookUp_56(Probe) 99.80 root  ",
+              "  ├─Selection_55(Build) 99.80 cop[tikv]  not(isnull(test.t1.b))",
+              "  │ └─IndexRangeScan_53 99.90 cop[tikv] table:t1, index:b(b, a) range:[2 -inf,2 +inf], keep order:false, stats:pseudo",
+              "  └─TableRowIDScan_54(Probe) 99.80 cop[tikv] table:t1 keep order:false, stats:pseudo"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "222 222"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"abc\""
+              }
+            ],
+            "Plan": [
+              "HashJoin_38 63744383.74 root  inner join, equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
+              "├─TableReader_59(Build) 7984.01 root  data:Selection_58",
+              "│ └─Selection_58 7984.01 cop[tikv]  eq(cast(test.t2.b, double BINARY), 0), not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+              "│   └─TableFullScan_57 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+              "└─TableReader_52(Probe) 7984.01 root  data:Selection_51",
+              "  └─Selection_51 7984.01 cop[tikv]  eq(cast(test.t1.b, double BINARY), 0), not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+              "    └─TableFullScan_50 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+            ],
+            "LastPlanUseCache": "0",
+            "Result": null
+          }
+        ]
+      }
+    ]
+  }
+]

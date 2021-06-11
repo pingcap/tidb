@@ -16,6 +16,7 @@ package owner
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"net"
 	"os"
@@ -37,7 +38,10 @@ import (
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
+	if err != nil {
+		t.Fatal(err)
+	}
 	TestingT(t)
 }
 
@@ -53,13 +57,16 @@ func (s *testSuite) TearDownSuite(c *C) {
 }
 
 var (
-	endpoints   = []string{"unix://new_session:12379"}
 	dialTimeout = 5 * time.Second
 	retryCnt    = math.MaxInt32
 )
 
 func (s *testSuite) TestFailNewSession(c *C) {
+	os.Remove("new_session:0")
 	ln, err := net.Listen("unix", "new_session:0")
+	c.Assert(err, IsNil)
+	addr := ln.Addr()
+	endpoints := []string{fmt.Sprintf("%s://%s", addr.Network(), addr.String())}
 	c.Assert(err, IsNil)
 	srv := grpc.NewServer(grpc.ConnectionTimeout(time.Minute))
 	var stop sync.WaitGroup

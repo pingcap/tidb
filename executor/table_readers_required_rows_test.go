@@ -42,7 +42,6 @@ type requiredRowsSelectResult struct {
 	numNextCalled   int
 }
 
-func (r *requiredRowsSelectResult) Fetch(context.Context)                   {}
 func (r *requiredRowsSelectResult) NextRaw(context.Context) ([]byte, error) { return nil, nil }
 func (r *requiredRowsSelectResult) Close() error                            { return nil }
 
@@ -89,16 +88,24 @@ func (r *requiredRowsSelectResult) genValue(valType *types.FieldType) interface{
 	}
 }
 
+type totalRowsContextKey struct{}
+
+var totalRowsKey = totalRowsContextKey{}
+
+type expectedRowsRetContextKey struct{}
+
+var expectedRowsRetKey = expectedRowsRetContextKey{}
+
 func mockDistsqlSelectCtxSet(totalRows int, expectedRowsRet []int) context.Context {
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, "totalRows", totalRows)
-	ctx = context.WithValue(ctx, "expectedRowsRet", expectedRowsRet)
+	ctx = context.WithValue(ctx, totalRowsKey, totalRows)
+	ctx = context.WithValue(ctx, expectedRowsRetKey, expectedRowsRet)
 	return ctx
 }
 
 func mockDistsqlSelectCtxGet(ctx context.Context) (totalRows int, expectedRowsRet []int) {
-	totalRows = ctx.Value("totalRows").(int)
-	expectedRowsRet = ctx.Value("expectedRowsRet").([]int)
+	totalRows = ctx.Value(totalRowsKey).(int)
+	expectedRowsRet = ctx.Value(expectedRowsRetKey).([]int)
 	return
 }
 
@@ -123,8 +130,7 @@ func buildTableReader(sctx sessionctx.Context) Executor {
 }
 
 func buildMockDAGRequest(sctx sessionctx.Context) *tipb.DAGRequest {
-	builder := newExecutorBuilder(sctx, nil)
-	req, _, err := builder.constructDAGReq([]core.PhysicalPlan{&core.PhysicalTableScan{
+	req, _, err := constructDAGReq(sctx, []core.PhysicalPlan{&core.PhysicalTableScan{
 		Columns: []*model.ColumnInfo{},
 		Table:   &model.TableInfo{ID: 12345, PKIsHandle: false},
 		Desc:    false,

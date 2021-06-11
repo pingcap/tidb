@@ -17,14 +17,15 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -36,7 +37,7 @@ func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, clien
 	for _, expr := range exprs {
 		v := pc.ExprToPB(expr)
 		if v == nil {
-			return nil, terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).
+			return nil, dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).
 				GenWithStack("expression %v cannot be pushed down", expr)
 		}
 		pbExpr = append(pbExpr, v)
@@ -62,9 +63,6 @@ func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 		pbExpr := pc.conOrCorColToPBExpr(expr)
 		if pbExpr == nil {
 			return nil
-		}
-		if !x.Value.IsNull() {
-			pbExpr.FieldType.Flag |= uint32(mysql.NotNullFlag)
 		}
 		return pbExpr
 	case *CorrelatedColumn:
@@ -143,6 +141,9 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 			return tp, val, true
 		}
 		return tp, nil, false
+	case types.KindMysqlEnum:
+		tp = tipb.ExprType_MysqlEnum
+		val = codec.EncodeUint(nil, d.GetUint64())
 	default:
 		return tp, nil, false
 	}
@@ -158,6 +159,7 @@ func ToPBFieldType(ft *types.FieldType) *tipb.FieldType {
 		Decimal: int32(ft.Decimal),
 		Charset: ft.Charset,
 		Collate: collationToProto(ft.Collate),
+		Elems:   ft.Elems,
 	}
 }
 
@@ -170,12 +172,13 @@ func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
 		Decimal: int(ft.Decimal),
 		Charset: ft.Charset,
 		Collate: protoToCollation(ft.Collate),
+		Elems:   ft.Elems,
 	}
 }
 
 func collationToProto(c string) int32 {
-	if v, ok := mysql.CollationNames[c]; ok {
-		return collate.RewriteNewCollationIDIfNeeded(int32(v))
+	if coll, err := charset.GetCollationByName(c); err == nil {
+		return collate.RewriteNewCollationIDIfNeeded(int32(coll.ID))
 	}
 	v := collate.RewriteNewCollationIDIfNeeded(int32(mysql.DefaultCollationID))
 	logutil.BgLogger().Warn(
@@ -188,9 +191,9 @@ func collationToProto(c string) int32 {
 }
 
 func protoToCollation(c int32) string {
-	v, ok := mysql.Collations[uint8(collate.RestoreCollationIDIfNeeded(c))]
-	if ok {
-		return v
+	coll, err := charset.GetCollationByID(int(collate.RestoreCollationIDIfNeeded(c)))
+	if err == nil {
+		return coll.Name
 	}
 	logutil.BgLogger().Warn(
 		"Unable to get collation name from ID, use name of the default collation instead",
@@ -206,8 +209,12 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 		return nil
 	}
 	switch column.GetType().Tp {
-	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeGeometry, mysql.TypeUnspecified:
+	case mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
 		return nil
+	case mysql.TypeEnum:
+		if !IsPushDownEnabled("enum", kv.UnSpecified) {
+			return nil
+		}
 	}
 
 	if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {

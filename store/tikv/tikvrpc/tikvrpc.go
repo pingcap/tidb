@@ -25,8 +25,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/kv"
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.
@@ -67,9 +68,15 @@ const (
 	CmdRemoveLockObserver
 	CmdPhysicalScanLock
 
+	CmdStoreSafeTS
+	CmdLockWaitInfo
+
 	CmdCop CmdType = 512 + iota
 	CmdCopStream
 	CmdBatchCop
+	CmdMPPTask
+	CmdMPPConn
+	CmdMPPCancel
 
 	CmdMvccGetByKey CmdType = 1024 + iota
 	CmdMvccGetByStartTs
@@ -140,6 +147,12 @@ func (t CmdType) String() string {
 		return "CopStream"
 	case CmdBatchCop:
 		return "BatchCop"
+	case CmdMPPTask:
+		return "DispatchMPPTask"
+	case CmdMPPConn:
+		return "EstablishMPPConnection"
+	case CmdMPPCancel:
+		return "CancelMPPTask"
 	case CmdMvccGetByKey:
 		return "MvccGetByKey"
 	case CmdMvccGetByStartTs:
@@ -154,6 +167,10 @@ func (t CmdType) String() string {
 		return "DebugGetRegionProperties"
 	case CmdTxnHeartBeat:
 		return "TxnHeartBeat"
+	case CmdStoreSafeTS:
+		return "StoreSafeTS"
+	case CmdLockWaitInfo:
+		return "LockWaitInfo"
 	}
 	return "Unknown"
 }
@@ -163,8 +180,15 @@ type Request struct {
 	Type CmdType
 	Req  interface{}
 	kvrpcpb.Context
-	ReplicaReadSeed *uint32 // pointer to follower read seed in snapshot/coprocessor
-	StoreTp         kv.StoreType
+	TxnScope        string
+	ReplicaReadType kv.ReplicaReadType // different from `kvrpcpb.Context.ReplicaRead`
+	ReplicaReadSeed *uint32            // pointer to follower read seed in snapshot/coprocessor
+	StoreTp         EndpointType
+	// ForwardedHost is the address of a store which will handle the request. It's different from
+	// the address the request sent to.
+	// If it's not empty, the store which receive the request will forward it to
+	// the forwarded host. It's useful when network partition occurs.
+	ForwardedHost string
 }
 
 // NewRequest returns new kv rpc request.
@@ -186,8 +210,33 @@ func NewRequest(typ CmdType, pointer interface{}, ctxs ...kvrpcpb.Context) *Requ
 func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType kv.ReplicaReadType, replicaReadSeed *uint32, ctxs ...kvrpcpb.Context) *Request {
 	req := NewRequest(typ, pointer, ctxs...)
 	req.ReplicaRead = replicaReadType.IsFollowerRead()
+	req.ReplicaReadType = replicaReadType
 	req.ReplicaReadSeed = replicaReadSeed
 	return req
+}
+
+// GetReplicaReadSeed returns ReplicaReadSeed pointer.
+func (req *Request) GetReplicaReadSeed() *uint32 {
+	if req != nil {
+		return req.ReplicaReadSeed
+	}
+	return nil
+}
+
+// EnableStaleRead enables stale read
+func (req *Request) EnableStaleRead() {
+	req.StaleRead = true
+	req.ReplicaReadType = kv.ReplicaReadMixed
+	req.ReplicaRead = false
+}
+
+// IsDebugReq check whether the req is debug req.
+func (req *Request) IsDebugReq() bool {
+	switch req.Type {
+	case CmdDebugGetRegionProperties:
+		return true
+	}
+	return false
 }
 
 // Get returns GetRequest in request.
@@ -315,9 +364,24 @@ func (req *Request) Cop() *coprocessor.Request {
 	return req.Req.(*coprocessor.Request)
 }
 
-// BatchCop returns coprocessor request in request.
+// BatchCop returns BatchCop request in request.
 func (req *Request) BatchCop() *coprocessor.BatchRequest {
 	return req.Req.(*coprocessor.BatchRequest)
+}
+
+// DispatchMPPTask returns dispatch task request in request.
+func (req *Request) DispatchMPPTask() *mpp.DispatchTaskRequest {
+	return req.Req.(*mpp.DispatchTaskRequest)
+}
+
+// EstablishMPPConn returns EstablishMPPConnectionRequest in request.
+func (req *Request) EstablishMPPConn() *mpp.EstablishMPPConnectionRequest {
+	return req.Req.(*mpp.EstablishMPPConnectionRequest)
+}
+
+// CancelMPPTask returns canceling task in request
+func (req *Request) CancelMPPTask() *mpp.CancelTaskRequest {
+	return req.Req.(*mpp.CancelTaskRequest)
 }
 
 // MvccGetByKey returns MvccGetByKeyRequest in request.
@@ -368,6 +432,16 @@ func (req *Request) CheckSecondaryLocks() *kvrpcpb.CheckSecondaryLocksRequest {
 // TxnHeartBeat returns TxnHeartBeatRequest in request.
 func (req *Request) TxnHeartBeat() *kvrpcpb.TxnHeartBeatRequest {
 	return req.Req.(*kvrpcpb.TxnHeartBeatRequest)
+}
+
+// StoreSafeTS returns StoreSafeTSRequest in request.
+func (req *Request) StoreSafeTS() *kvrpcpb.StoreSafeTSRequest {
+	return req.Req.(*kvrpcpb.StoreSafeTSRequest)
+}
+
+// LockWaitInfo returns GetLockWaitInfoRequest in request.
+func (req *Request) LockWaitInfo() *kvrpcpb.GetLockWaitInfoRequest {
+	return req.Req.(*kvrpcpb.GetLockWaitInfoRequest)
 }
 
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.
@@ -427,15 +501,6 @@ func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Reques
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_TxnHeartBeat{TxnHeartBeat: req.TxnHeartBeat()}}
 	}
 	return nil
-}
-
-// IsDebugReq check whether the req is debug req.
-func (req *Request) IsDebugReq() bool {
-	switch req.Type {
-	case CmdDebugGetRegionProperties:
-		return true
-	}
-	return false
 }
 
 // Response wraps all kv/coprocessor responses.
@@ -505,7 +570,7 @@ func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) (*Res
 	panic("unreachable")
 }
 
-// CopStreamResponse combinates tikvpb.Tikv_CoprocessorStreamClient and the first Recv() result together.
+// CopStreamResponse combines tikvpb.Tikv_CoprocessorStreamClient and the first Recv() result together.
 // In streaming API, get grpc stream client may not involve any network packet, then region error have
 // to be handled in Recv() function. This struct facilitates the error handling.
 type CopStreamResponse struct {
@@ -521,6 +586,14 @@ type BatchCopStreamResponse struct {
 	*coprocessor.BatchResponse
 	Timeout time.Duration
 	Lease   // Shared by this object and a background goroutine.
+}
+
+// MPPStreamResponse is indeed a wrapped client that can receive data packet from tiflash mpp server.
+type MPPStreamResponse struct {
+	tikvpb.Tikv_EstablishMPPConnectionClient
+	*mpp.MPPDataPacket
+	Timeout time.Duration
+	Lease
 }
 
 // SetContext set the Context field for the given req to the specified ctx.
@@ -591,6 +664,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.Cop().Context = ctx
 	case CmdBatchCop:
 		req.BatchCop().Context = ctx
+	case CmdMPPTask:
+		// Dispatching MPP tasks don't need a region context, because it's a request for store but not region.
 	case CmdMvccGetByKey:
 		req.MvccGetByKey().Context = ctx
 	case CmdMvccGetByStartTs:
@@ -767,7 +842,7 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 }
 
 // CallRPC launches a rpc call.
-// ch is needed to implement timeout for coprocessor streaing, the stream object's
+// ch is needed to implement timeout for coprocessor streaming, the stream object's
 // cancel function will be sent to the channel, together with a lease checked by a background goroutine.
 func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Response, error) {
 	resp := &Response{}
@@ -827,6 +902,17 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.Resp, err = client.PhysicalScanLock(ctx, req.PhysicalScanLock())
 	case CmdCop:
 		resp.Resp, err = client.Coprocessor(ctx, req.Cop())
+	case CmdMPPTask:
+		resp.Resp, err = client.DispatchMPPTask(ctx, req.DispatchMPPTask())
+	case CmdMPPConn:
+		var streamClient tikvpb.Tikv_EstablishMPPConnectionClient
+		streamClient, err = client.EstablishMPPConnection(ctx, req.EstablishMPPConn())
+		resp.Resp = &MPPStreamResponse{
+			Tikv_EstablishMPPConnectionClient: streamClient,
+		}
+	case CmdMPPCancel:
+		// it cannot use the ctx with cancel(), otherwise this cmd will fail.
+		resp.Resp, err = client.CancelMPPTask(ctx, req.CancelMPPTask())
 	case CmdCopStream:
 		var streamClient tikvpb.Tikv_CoprocessorStreamClient
 		streamClient, err = client.CoprocessorStream(ctx, req.Cop())
@@ -853,6 +939,10 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.Resp, err = client.KvCheckSecondaryLocks(ctx, req.CheckSecondaryLocks())
 	case CmdTxnHeartBeat:
 		resp.Resp, err = client.KvTxnHeartBeat(ctx, req.TxnHeartBeat())
+	case CmdStoreSafeTS:
+		resp.Resp, err = client.GetStoreSafeTS(ctx, req.StoreSafeTS())
+	case CmdLockWaitInfo:
+		resp.Resp, err = client.GetLockWaitInfo(ctx, req.LockWaitInfo())
 	default:
 		return nil, errors.Errorf("invalid request type: %v", req.Type)
 	}
@@ -913,7 +1003,7 @@ func (resp *BatchCopStreamResponse) Recv() (*coprocessor.BatchResponse, error) {
 	return ret, errors.Trace(err)
 }
 
-// Close closes the CopStreamResponse object.
+// Close closes the BatchCopStreamResponse object.
 func (resp *BatchCopStreamResponse) Close() {
 	atomic.StoreInt64(&resp.Lease.deadline, 1)
 	// We also call cancel here because CheckStreamTimeoutLoop
@@ -923,7 +1013,28 @@ func (resp *BatchCopStreamResponse) Close() {
 	}
 }
 
-// CheckStreamTimeoutLoop runs periodically to check is there any stream request timeouted.
+// Recv overrides the stream client Recv() function.
+func (resp *MPPStreamResponse) Recv() (*mpp.MPPDataPacket, error) {
+	deadline := time.Now().Add(resp.Timeout).UnixNano()
+	atomic.StoreInt64(&resp.Lease.deadline, deadline)
+
+	ret, err := resp.Tikv_EstablishMPPConnectionClient.Recv()
+
+	atomic.StoreInt64(&resp.Lease.deadline, 0) // Stop the lease check.
+	return ret, errors.Trace(err)
+}
+
+// Close closes the MPPStreamResponse object.
+func (resp *MPPStreamResponse) Close() {
+	atomic.StoreInt64(&resp.Lease.deadline, 1)
+	// We also call cancel here because CheckStreamTimeoutLoop
+	// is not guaranteed to cancel all items when it exits.
+	if resp.Lease.Cancel != nil {
+		resp.Lease.Cancel()
+	}
+}
+
+// CheckStreamTimeoutLoop runs periodically to check is there any stream request timed out.
 // Lease is an object to track stream requests, call this function with "go CheckStreamTimeoutLoop()"
 // It is not guaranteed to call every Lease.Cancel() putting into channel when exits.
 // If grpc-go supports SetDeadline(https://github.com/grpc/grpc-go/issues/2917), we can stop using this method.
@@ -967,4 +1078,34 @@ func keepOnlyActive(array []*Lease, now int64) []*Lease {
 		}
 	}
 	return array[:idx]
+}
+
+// IsGreenGCRequest checks if the request is used by Green GC's protocol. This is used for failpoints to inject errors
+// to specified RPC requests.
+func (req *Request) IsGreenGCRequest() bool {
+	if req.Type == CmdCheckLockObserver ||
+		req.Type == CmdRegisterLockObserver ||
+		req.Type == CmdRemoveLockObserver ||
+		req.Type == CmdPhysicalScanLock {
+		return true
+	}
+	return false
+}
+
+// IsTxnWriteRequest checks if the request is a transactional write request. This is used for failpoints to inject
+// errors to specified RPC requests.
+func (req *Request) IsTxnWriteRequest() bool {
+	if req.Type == CmdPessimisticLock ||
+		req.Type == CmdPrewrite ||
+		req.Type == CmdCommit ||
+		req.Type == CmdBatchRollback ||
+		req.Type == CmdPessimisticRollback ||
+		req.Type == CmdCheckTxnStatus ||
+		req.Type == CmdCheckSecondaryLocks ||
+		req.Type == CmdCleanup ||
+		req.Type == CmdTxnHeartBeat ||
+		req.Type == CmdResolveLock {
+		return true
+	}
+	return false
 }

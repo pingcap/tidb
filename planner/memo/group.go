@@ -109,7 +109,7 @@ type Group struct {
 	// by a transformation rule batch in a certain round.
 	ExploreMark
 
-	//hasBuiltKeyInfo indicates whether this group has called `BuildKeyInfo`.
+	// hasBuiltKeyInfo indicates whether this group has called `BuildKeyInfo`.
 	// BuildKeyInfo is lazily called when a rule needs information of
 	// unique key or maxOneRow (in LogicalProp). For each Group, we only need
 	// to collect these information once.

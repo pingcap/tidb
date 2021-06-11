@@ -14,30 +14,33 @@
 package tikv
 
 import (
+	"testing"
+
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/store/tikv/mockstore"
 )
 
-// OneByOneSuite is a suite, When with-tikv flag is true, there is only one storage, so the test suite have to run one by one.
-type OneByOneSuite struct{}
-
-func (s *OneByOneSuite) SetUpSuite(c *C) {
-	if *WithTiKV {
-		withTiKVGlobalLock.Lock()
-	} else {
-		withTiKVGlobalLock.RLock()
-	}
-}
-
-func (s *OneByOneSuite) TearDownSuite(c *C) {
-	if *WithTiKV {
-		withTiKVGlobalLock.Unlock()
-	} else {
-		withTiKVGlobalLock.RUnlock()
-	}
-}
-
+type OneByOneSuite = mockstore.OneByOneSuite
 type testTiKVSuite struct {
 	OneByOneSuite
 }
 
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	TestingT(t)
+}
+
 var _ = Suite(&testTiKVSuite{})
+
+func (s *testTiKVSuite) TestBasicFunc(c *C) {
+	if IsMockCommitErrorEnable() {
+		defer MockCommitErrorEnable()
+	} else {
+		defer MockCommitErrorDisable()
+	}
+
+	MockCommitErrorEnable()
+	c.Assert(IsMockCommitErrorEnable(), IsTrue)
+	MockCommitErrorDisable()
+	c.Assert(IsMockCommitErrorEnable(), IsFalse)
+}

@@ -128,12 +128,12 @@ func renewEmpty(chk *Chunk) *Chunk {
 	return newChk
 }
 
-// MemoryUsage returns the total memory usage of a Chunk in B.
+// MemoryUsage returns the total memory usage of a Chunk in bytes.
 // We ignore the size of Column.length and Column.nullCount
 // since they have little effect of the total memory usage.
 func (c *Chunk) MemoryUsage() (sum int64) {
 	for _, col := range c.columns {
-		curColMemUsage := int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*4) + int64(cap(col.data)) + int64(cap(col.elemBuf))
+		curColMemUsage := int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*8) + int64(cap(col.data)) + int64(cap(col.elemBuf))
 		sum += curColMemUsage
 	}
 	return
@@ -287,6 +287,21 @@ func (c *Chunk) CopyConstruct() *Chunk {
 	newChk.columns = make([]*Column, len(c.columns))
 	for i := range c.columns {
 		newChk.columns[i] = c.columns[i].CopyConstruct(nil)
+	}
+	return newChk
+}
+
+// CopyConstructSel is just like CopyConstruct,
+// but ignore the rows that was not selected.
+func (c *Chunk) CopyConstructSel() *Chunk {
+	if c.sel == nil {
+		return c.CopyConstruct()
+	}
+	newChk := renewWithCapacity(c, c.capacity, c.requiredRows)
+	for colIdx, dstCol := range newChk.columns {
+		for _, rowIdx := range c.sel {
+			appendCellByCell(dstCol, c.columns[colIdx], rowIdx)
+		}
 	}
 	return newChk
 }
@@ -505,8 +520,10 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 		} else {
 			beginOffset, endOffset := src.offsets[begin], src.offsets[end]
 			dst.data = append(dst.data, src.data[beginOffset:endOffset]...)
+			lastOffset := dst.offsets[len(dst.offsets)-1]
 			for i := begin; i < end; i++ {
-				dst.offsets = append(dst.offsets, dst.offsets[len(dst.offsets)-1]+src.offsets[i+1]-src.offsets[i])
+				lastOffset += src.offsets[i+1] - src.offsets[i]
+				dst.offsets = append(dst.offsets, lastOffset)
 			}
 		}
 		for i := begin; i < end; i++ {
@@ -705,4 +722,23 @@ func (c *Chunk) ToString(ft []*types.FieldType) string {
 		buf = append(buf, '\n')
 	}
 	return string(buf)
+}
+
+// AppendRows appends multiple rows to the chunk.
+func (c *Chunk) AppendRows(rows []Row) {
+	c.AppendPartialRows(0, rows)
+	c.numVirtualRows += len(rows)
+}
+
+// AppendPartialRows appends multiple rows to the chunk.
+func (c *Chunk) AppendPartialRows(colOff int, rows []Row) {
+	columns := c.columns[colOff:]
+	for i, dstCol := range columns {
+		for _, srcRow := range rows {
+			if i == 0 {
+				c.appendSel(colOff)
+			}
+			appendCellByCell(dstCol, srcRow.c.columns[i], srcRow.idx)
+		}
+	}
 }

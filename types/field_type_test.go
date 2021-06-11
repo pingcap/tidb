@@ -270,9 +270,11 @@ func (s *testFieldTypeSuite) TestAggFieldType(c *C) {
 			c.Assert(aggTp.Tp, Equals, mysql.TypeDouble)
 		case mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDuration,
 			mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeVarchar,
-			mysql.TypeBit, mysql.TypeJSON, mysql.TypeEnum, mysql.TypeSet,
+			mysql.TypeJSON, mysql.TypeEnum, mysql.TypeSet,
 			mysql.TypeVarString, mysql.TypeGeometry:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeVarchar)
+		case mysql.TypeBit:
+			c.Assert(aggTp.Tp, Equals, mysql.TypeLonglong)
 		case mysql.TypeString:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeString)
 		case mysql.TypeUnspecified, mysql.TypeNewDecimal:
@@ -325,6 +327,44 @@ func (s *testFieldTypeSuite) TestAggFieldTypeForTypeFlag(c *C) {
 	aggTp = AggFieldType(types)
 	c.Assert(aggTp.Tp, Equals, mysql.TypeLonglong)
 	c.Assert(aggTp.Flag, Equals, mysql.NotNullFlag)
+}
+
+func (s testFieldTypeSuite) TestAggFieldTypeForIntegralPromotion(c *C) {
+	fts := []*FieldType{
+		NewFieldType(mysql.TypeTiny),
+		NewFieldType(mysql.TypeShort),
+		NewFieldType(mysql.TypeInt24),
+		NewFieldType(mysql.TypeLong),
+		NewFieldType(mysql.TypeLonglong),
+		NewFieldType(mysql.TypeNewDecimal),
+	}
+
+	for i := 1; i < len(fts)-1; i++ {
+		tps := fts[i-1 : i+1]
+
+		tps[0].Flag = 0
+		tps[1].Flag = 0
+		aggTp := AggFieldType(tps)
+		c.Assert(aggTp.Tp, Equals, fts[i].Tp)
+		c.Assert(aggTp.Flag, Equals, uint(0))
+
+		tps[0].Flag = mysql.UnsignedFlag
+		aggTp = AggFieldType(tps)
+		c.Assert(aggTp.Tp, Equals, fts[i].Tp)
+		c.Assert(aggTp.Flag, Equals, uint(0))
+
+		tps[0].Flag = mysql.UnsignedFlag
+		tps[1].Flag = mysql.UnsignedFlag
+		aggTp = AggFieldType(tps)
+		c.Assert(aggTp.Tp, Equals, fts[i].Tp)
+		c.Assert(aggTp.Flag, Equals, mysql.UnsignedFlag)
+
+		tps[0].Flag = 0
+		tps[1].Flag = mysql.UnsignedFlag
+		aggTp = AggFieldType(tps)
+		c.Assert(aggTp.Tp, Equals, fts[i+1].Tp)
+		c.Assert(aggTp.Flag, Equals, uint(0))
+	}
 }
 
 func (s *testFieldTypeSuite) TestAggregateEvalType(c *C) {

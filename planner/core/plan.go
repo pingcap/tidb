@@ -67,29 +67,41 @@ type Plan interface {
 }
 
 func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
+	if p.TaskTp == property.MppTaskType {
+		if mpp, ok := tsk.(*mppTask); ok && !mpp.invalid() {
+			return mpp.enforceExchanger(p)
+		}
+		return &mppTask{}
+	}
 	if p.IsEmpty() || tsk.plan() == nil {
 		return tsk
 	}
-	tsk = finishCopTask(ctx, tsk)
-	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Items: p.Items, ExpectedCnt: math.MaxFloat64}
-	sort := PhysicalSort{ByItems: make([]*util.ByItems, 0, len(p.Items))}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
-	for _, col := range p.Items {
+	tsk = tsk.convertToRootTask(ctx)
+	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, SortItems: p.SortItems, ExpectedCnt: math.MaxFloat64}
+	sort := PhysicalSort{ByItems: make([]*util.ByItems, 0, len(p.SortItems))}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
+	for _, col := range p.SortItems {
 		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
 	}
 	return sort.attach2Task(tsk)
 }
 
 // optimizeByShuffle insert `PhysicalShuffle` to optimize performance by running in a parallel manner.
-func optimizeByShuffle(pp PhysicalPlan, tsk task, ctx sessionctx.Context) task {
+func optimizeByShuffle(tsk task, ctx sessionctx.Context) task {
 	if tsk.plan() == nil {
 		return tsk
 	}
 
-	// Don't use `tsk.plan()` here, which will probably be different from `pp`.
-	// Eg., when `pp` is `NominalSort`, `tsk.plan()` would be its child.
-	switch p := pp.(type) {
+	switch p := tsk.plan().(type) {
 	case *PhysicalWindow:
 		if shuffle := optimizeByShuffle4Window(p, ctx); shuffle != nil {
+			return shuffle.attach2Task(tsk)
+		}
+	case *PhysicalMergeJoin:
+		if shuffle := optimizeByShuffle4MergeJoin(p, ctx); shuffle != nil {
+			return shuffle.attach2Task(tsk)
+		}
+	case *PhysicalStreamAgg:
+		if shuffle := optimizeByShuffle4StreamAgg(p, ctx); shuffle != nil {
 			return shuffle.attach2Task(tsk)
 		}
 	}
@@ -127,10 +139,86 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
 		Concurrency:  concurrency,
-		Tail:         tail,
-		DataSource:   dataSource,
+		Tails:        []PhysicalPlan{tail},
+		DataSources:  []PhysicalPlan{dataSource},
 		SplitterType: PartitionHashSplitterType,
-		HashByItems:  byItems,
+		ByItemArrays: [][]expression.Expression{byItems},
+	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
+	return shuffle
+}
+
+func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) *PhysicalShuffle {
+	concurrency := ctx.GetSessionVars().StreamAggConcurrency()
+	if concurrency <= 1 {
+		return nil
+	}
+
+	sort, ok := pp.Children()[0].(*PhysicalSort)
+	if !ok {
+		// Multi-thread executing on SORTED data source is not effective enough by current implementation.
+		// TODO: Implement a better one.
+		return nil
+	}
+	tail, dataSource := sort, sort.Children()[0]
+
+	partitionBy := make([]*expression.Column, 0, len(pp.GroupByItems))
+	for _, item := range pp.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			partitionBy = append(partitionBy, col)
+		}
+	}
+	NDV := int(getCardinality(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	if NDV <= 1 {
+		return nil
+	}
+	concurrency = mathutil.Min(concurrency, NDV)
+
+	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+	shuffle := PhysicalShuffle{
+		Concurrency:  concurrency,
+		Tails:        []PhysicalPlan{tail},
+		DataSources:  []PhysicalPlan{dataSource},
+		SplitterType: PartitionHashSplitterType,
+		ByItemArrays: [][]expression.Expression{cloneExprs(pp.GroupByItems)},
+	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
+	return shuffle
+}
+
+func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx sessionctx.Context) *PhysicalShuffle {
+	concurrency := ctx.GetSessionVars().MergeJoinConcurrency()
+	if concurrency <= 1 {
+		return nil
+	}
+
+	children := pp.Children()
+	dataSources := make([]PhysicalPlan, len(children))
+	tails := make([]PhysicalPlan, len(children))
+
+	for i := range children {
+		sort, ok := children[i].(*PhysicalSort)
+		if !ok {
+			// Multi-thread executing on SORTED data source is not effective enough by current implementation.
+			// TODO: Implement a better one.
+			return nil
+		}
+		tails[i], dataSources[i] = sort, sort.Children()[0]
+	}
+
+	leftByItemArray := make([]expression.Expression, 0, len(pp.LeftJoinKeys))
+	for _, col := range pp.LeftJoinKeys {
+		leftByItemArray = append(leftByItemArray, col.Clone())
+	}
+	rightByItemArray := make([]expression.Expression, 0, len(pp.RightJoinKeys))
+	for _, col := range pp.RightJoinKeys {
+		rightByItemArray = append(rightByItemArray, col.Clone())
+	}
+	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+	shuffle := PhysicalShuffle{
+		Concurrency:  concurrency,
+		Tails:        tails,
+		DataSources:  dataSources,
+		SplitterType: PartitionHashSplitterType,
+		ByItemArrays: [][]expression.Expression{leftByItemArray, rightByItemArray},
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle
 }
@@ -194,7 +282,7 @@ type LogicalPlan interface {
 	// It will return:
 	// 1. All possible plans that can match the required property.
 	// 2. Whether the SQL hint can work. Return true if there is no hint.
-	exhaustPhysicalPlans(*property.PhysicalProperty) (physicalPlans []PhysicalPlan, hintCanWork bool)
+	exhaustPhysicalPlans(*property.PhysicalProperty) (physicalPlans []PhysicalPlan, hintCanWork bool, err error)
 
 	// ExtractCorrelatedCols extracts correlated columns inside the LogicalPlan.
 	ExtractCorrelatedCols() []*expression.CorrelatedColumn
@@ -213,6 +301,9 @@ type LogicalPlan interface {
 
 	// rollBackTaskMap roll back all taskMap's logs after TimeStamp TS.
 	rollBackTaskMap(TS uint64)
+
+	// canPushToCop check if we might push this plan to a specific store.
+	canPushToCop(store kv.StoreType) bool
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -250,6 +341,12 @@ type PhysicalPlan interface {
 	// Stats returns the StatsInfo of the plan.
 	Stats() *property.StatsInfo
 
+	// Cost returns the estimated cost of the subplan.
+	Cost() float64
+
+	// SetCost set the cost of the subplan.
+	SetCost(cost float64)
+
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
 
@@ -285,6 +382,17 @@ type basePhysicalPlan struct {
 	childrenReqProps []*property.PhysicalProperty
 	self             PhysicalPlan
 	children         []PhysicalPlan
+	cost             float64
+}
+
+// Cost implements PhysicalPlan interface.
+func (p *basePhysicalPlan) Cost() float64 {
+	return p.cost
+}
+
+// SetCost implements PhysicalPlan interface.
+func (p *basePhysicalPlan) SetCost(cost float64) {
+	p.cost = cost
 }
 
 func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPlan, error) {
@@ -300,7 +408,10 @@ func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPla
 		base.children = append(base.children, cloned)
 	}
 	for _, prop := range p.childrenReqProps {
-		base.childrenReqProps = append(base.childrenReqProps, prop.Clone())
+		if prop == nil {
+			continue
+		}
+		base.childrenReqProps = append(base.childrenReqProps, prop.CloneEssentialFields())
 	}
 	return base, nil
 }
@@ -315,7 +426,7 @@ func (p *basePhysicalPlan) ExplainInfo() string {
 	return ""
 }
 
-// ExplainInfo implements Plan interface.
+// ExplainNormalizedInfo implements PhysicalPlan interface.
 func (p *basePhysicalPlan) ExplainNormalizedInfo() string {
 	return ""
 }
@@ -329,8 +440,8 @@ func (p *basePhysicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColum
 	return nil
 }
 
-// GetlogicalTS4TaskMap get the logical TimeStamp now to help rollback the TaskMap changes after that.
-func (p *baseLogicalPlan) GetlogicalTS4TaskMap() uint64 {
+// GetLogicalTS4TaskMap get the logical TimeStamp now to help rollback the TaskMap changes after that.
+func (p *baseLogicalPlan) GetLogicalTS4TaskMap() uint64 {
 	p.ctx.GetSessionVars().StmtCtx.TaskMapBakTS += 1
 	return p.ctx.GetSessionVars().StmtCtx.TaskMapBakTS
 }
@@ -372,7 +483,7 @@ func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) 
 	key := prop.HashCode()
 	if p.ctx.GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
 		// Empty string for useless change.
-		TS := p.GetlogicalTS4TaskMap()
+		TS := p.GetLogicalTS4TaskMap()
 		p.taskMapBakTS = append(p.taskMapBakTS, TS)
 		p.taskMapBak = append(p.taskMapBak, string(key))
 	}
@@ -417,6 +528,22 @@ func (p *baseLogicalPlan) BuildKeyInfo(selfSchema *expression.Schema, childSchem
 func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = nil
 	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+
+	// default implementation for plans has only one child: proprgate child keys
+	// multi-children plans are likely to have particular implementation.
+	if len(childSchema) == 1 {
+		for _, key := range childSchema[0].Keys {
+			indices := selfSchema.ColumnsIndices(key)
+			if indices == nil {
+				continue
+			}
+			newKey := make([]*expression.Column, 0, len(key))
+			for _, i := range indices {
+				newKey = append(newKey, selfSchema.Columns[i])
+			}
+			selfSchema.Keys = append(selfSchema.Keys, newKey)
+		}
+	}
 }
 
 func newBasePlan(ctx sessionctx.Context, tp string, offset int) basePlan {
@@ -497,6 +624,9 @@ func (p *basePlan) ExplainInfo() string {
 
 func (p *basePlan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
+		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
+			return p.tp
+		}
 		return p.tp + "_" + strconv.Itoa(p.id)
 	})
 }

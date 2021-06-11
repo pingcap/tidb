@@ -89,7 +89,14 @@ func (s *profileInternalSuite) TestProfileToDatum(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		comment = Commentf("row %2d, actual (%s), expected (%s)", i, rowStr, expectStr)
-		equal, err := types.EqualDatums(nil, row, datums[i])
+		equal := true
+		for j, r := range row {
+			v, err := r.CompareDatum(nil, &datums[i][j])
+			if v != 0 || err != nil {
+				equal = false
+				break
+			}
+		}
 		c.Assert(err, IsNil, comment)
 		c.Assert(equal, IsTrue, comment)
 	}
