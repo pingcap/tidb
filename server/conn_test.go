@@ -34,11 +34,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/tikv/client-go/v2/mockstore/cluster"
 )
 
 type ConnTestSuite struct {
@@ -810,9 +810,9 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 
 	// simple TiFlash query (unary + non-streaming)
 	tk.MustExec("set @@tidb_allow_batch_cop=0; set @@tidb_allow_mpp=0;")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", "return(\"requestTiFlashError\")"), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/tikvStoreSendReqResult", "return(\"requestTiFlashError\")"), IsNil)
 	testFallbackWork(c, tk, cc, "select sum(a) from t")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/tikvStoreSendReqResult"), IsNil)
 
 	// TiFlash query based on batch cop (batch + streaming)
 	tk.MustExec("set @@tidb_allow_batch_cop=1; set @@tidb_allow_mpp=0;")

@@ -299,9 +299,16 @@ const (
 	// The default value is 0
 	TiDBAllowBatchCop = "tidb_allow_batch_cop"
 
-	// TiDBAllowMPPExecution means if we should use mpp way to execute query. Default value is 1 (or 'ON'), means to be determined by the optimizer.
-	// Value set to 2 (or 'ENFORCE') which means to use mpp whenever possible. Value set to 2 (or 'OFF') means never use mpp.
+	// TiDBAllowMPPExecution means if we should use mpp way to execute query or not.
+	// Default value is `true`, means to be determined by the optimizer.
+	// Value set to `false` means never use mpp.
 	TiDBAllowMPPExecution = "tidb_allow_mpp"
+
+	// TiDBEnforceMPPExecution means if we should enforce mpp way to execute query or not.
+	// Default value is `false`, means to be determined by variable `tidb_allow_mpp`.
+	// Value set to `true` means enforce use mpp.
+	// Note if you want to set `tidb_enforce_mpp` to `true`, you must set `tidb_allow_mpp` to `true` first.
+	TiDBEnforceMPPExecution = "tidb_enforce_mpp"
 
 	// TiDBInitChunkSize is used to control the init chunk size during query execution.
 	TiDBInitChunkSize = "tidb_init_chunk_size"
@@ -373,9 +380,6 @@ const (
 	// tidb_ddl_reorg_priority defines the operations priority of adding indices.
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
-
-	// TiDBEnableChangeColumnType is used to control whether to enable the change column type.
-	TiDBEnableChangeColumnType = "tidb_enable_change_column_type"
 
 	// TiDBEnableChangeMultiSchema is used to control whether to enable the change multi schema.
 	TiDBEnableChangeMultiSchema = "tidb_enable_change_multi_schema"
@@ -554,6 +558,9 @@ const (
 	// TiDBTopSQLMaxStatementCount indicates the max number of statements been collected.
 	TiDBTopSQLMaxStatementCount = "tidb_top_sql_max_statement_count"
 
+	// TiDBTopSQLMaxCollect indicates the max capacity of the collect map.
+	TiDBTopSQLMaxCollect = "tidb_top_sql_max_collect"
+
 	// TiDBTopSQLReportIntervalSeconds indicates the top SQL report interval seconds.
 	TiDBTopSQLReportIntervalSeconds = "tidb_top_sql_report_interval_seconds"
 	// TiDBEnableGlobalTemporaryTable indicates whether to enable global temporary table
@@ -598,7 +605,7 @@ const (
 	DefOptAggPushDown                  = false
 	DefOptBCJ                          = false
 	DefOptCartesianBCJ                 = 1
-	DefOptMPPOuterJoinFixedBuildSide   = true
+	DefOptMPPOuterJoinFixedBuildSide   = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
@@ -642,7 +649,8 @@ const (
 	DefBroadcastJoinThresholdCount     = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 1
-	DefTiDBAllowMPPExecution           = "ON"
+	DefTiDBAllowMPPExecution           = true
+	DefTiDBEnforceMPPExecution         = false
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
@@ -650,7 +658,6 @@ const (
 	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
 	DefTiDBMaxDeltaSchemaCount         = 1024
-	DefTiDBChangeColumnType            = true
 	DefTiDBChangeMultiSchema           = false
 	DefTiDBPointGetCache               = false
 	DefTiDBEnableAlterPlacement        = false
@@ -706,9 +713,11 @@ const (
 	DefTiDBTopSQLEnable                = false
 	DefTiDBTopSQLAgentAddress          = ""
 	DefTiDBTopSQLPrecisionSeconds      = 1
-	DefTiDBTopSQLMaxStatementCount     = 200
+	DefTiDBTopSQLMaxStatementCount     = 2000
+	DefTiDBTopSQLMaxCollect            = 10000
 	DefTiDBTopSQLReportIntervalSeconds = 60
 	DefTiDBEnableGlobalTemporaryTable  = false
+	DefTMPTableSize                    = 16777216
 )
 
 // Process global variables.
@@ -738,6 +747,7 @@ var (
 		AgentAddress:          atomic.NewString(DefTiDBTopSQLAgentAddress),
 		PrecisionSeconds:      atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
 		MaxStatementCount:     atomic.NewInt64(DefTiDBTopSQLMaxStatementCount),
+		MaxCollect:            atomic.NewInt64(DefTiDBTopSQLMaxCollect),
 		ReportIntervalSeconds: atomic.NewInt64(DefTiDBTopSQLReportIntervalSeconds),
 	}
 )
@@ -752,6 +762,8 @@ type TopSQL struct {
 	PrecisionSeconds *atomic.Int64
 	// The maximum number of statements kept in memory.
 	MaxStatementCount *atomic.Int64
+	// The maximum capacity of the collect map.
+	MaxCollect *atomic.Int64
 	// The report data interval of top-sql.
 	ReportIntervalSeconds *atomic.Int64
 }

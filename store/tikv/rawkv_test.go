@@ -125,7 +125,7 @@ func (s *testRawkvSuite) TestReplaceNewAddrAndOldOfflineImmediately(c *C) {
 	c.Assert(err, IsNil)
 	fctx, err := client.regionCache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadFollower, 0)
 	c.Assert(err, IsNil)
-	c.Assert(fctx.Store.storeID, Equals, s.store2)
+	c.Assert(fctx.Store.StoreID(), Equals, s.store2)
 	c.Assert(fctx.Addr, Equals, "store2")
 
 	// make store2 using store1's addr and store1 offline

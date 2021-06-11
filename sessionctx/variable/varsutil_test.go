@@ -102,9 +102,9 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.FoundInBinding, Equals, DefTiDBFoundInBinding)
 	c.Assert(vars.AllowAutoRandExplicitInsert, Equals, DefTiDBAllowAutoRandExplicitInsert)
 	c.Assert(vars.ShardAllocateStep, Equals, int64(DefTiDBShardAllocateStep))
-	c.Assert(vars.EnableChangeColumnType, Equals, DefTiDBChangeColumnType)
 	c.Assert(vars.AnalyzeVersion, Equals, DefTiDBAnalyzeVersion)
 	c.Assert(vars.CTEMaxRecursionDepth, Equals, DefCTEMaxRecursionDepth)
+	c.Assert(vars.TMPTableSize, Equals, int64(DefTMPTableSize))
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.BatchSize))
@@ -489,13 +489,6 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 
 	err = SetSessionSystemVar(v, TiDBFoundInBinding, "1")
 	c.Assert(err, ErrorMatches, ".*]Variable 'last_plan_from_binding' is a read only variable")
-
-	err = SetSessionSystemVar(v, TiDBEnableChangeColumnType, "ON")
-	c.Assert(err, IsNil)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBEnableChangeColumnType)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "ON")
-	c.Assert(v.systems[TiDBEnableChangeColumnType], Equals, "ON")
 
 	err = SetSessionSystemVar(v, "UnknownVariable", "on")
 	c.Assert(err, ErrorMatches, ".*]Unknown system variable 'UnknownVariable'")

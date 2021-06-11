@@ -15,7 +15,7 @@ package options
 
 import (
 	"github.com/pingcap/tidb/kv"
-	storekv "github.com/pingcap/tidb/store/tikv/kv"
+	storekv "github.com/tikv/client-go/v2/kv"
 )
 
 // GetTiKVReplicaReadType maps kv.ReplicaReadType to tikv/kv.ReplicaReadType.
