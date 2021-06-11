@@ -20,10 +20,10 @@ import (
 	"time"
 
 	"github.com/pingcap/parser/mysql"
-	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
+	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
 )
 

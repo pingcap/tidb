@@ -23,9 +23,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/store/tikv"
-	tikverr "github.com/pingcap/tidb/store/tikv/error"
-	"github.com/pingcap/tidb/store/tikv/util"
+	tikverr "github.com/tikv/client-go/v2/error"
+	"github.com/tikv/client-go/v2/mockstore"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/util"
 )
 
 type testAsyncCommitFailSuite struct {
@@ -43,15 +44,15 @@ func (s *testAsyncCommitFailSuite) SetUpTest(c *C) {
 // committing primary region task.
 func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
 	// This test doesn't support tikv mode because it needs setting failpoint in unistore.
-	if *WithTiKV {
+	if *mockstore.WithTiKV {
 		return
 	}
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/noRetryOnRpcError", "return(true)"), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/noRetryOnRpcError", "return(true)"), IsNil)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteTimeout", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteTimeout"), IsNil)
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/noRetryOnRpcError"), IsNil)
+		c.Assert(failpoint.Disable("tikvclient/noRetryOnRpcError"), IsNil)
 	}()
 	// The rpc error will be wrapped to ErrResultUndetermined.
 	t1 := s.beginAsyncCommit(c)
@@ -75,7 +76,7 @@ func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
 
 func (s *testAsyncCommitFailSuite) TestAsyncCommitPrewriteCancelled(c *C) {
 	// This test doesn't support tikv mode because it needs setting failpoint in unistore.
-	if *WithTiKV {
+	if *mockstore.WithTiKV {
 		return
 	}
 
@@ -116,14 +117,14 @@ func (s *testAsyncCommitFailSuite) TestPointGetWithAsyncCommit(c *C) {
 	s.mustPointGet(c, []byte("b"), []byte("b"))
 
 	// PointGet cannot ignore async commit transactions' locks.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", "return"), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/asyncCommitDoNothing", "return"), IsNil)
 	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 	err := txn.Commit(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(txn.GetCommitter().IsAsyncCommit(), IsTrue)
 	s.mustPointGet(c, []byte("a"), []byte("v1"))
 	s.mustPointGet(c, []byte("b"), []byte("v2"))
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/asyncCommitDoNothing"), IsNil)
 
 	// PointGet will not push the `max_ts` to its ts which is MaxUint64.
 	txn2 := s.beginAsyncCommit(c)
@@ -135,7 +136,7 @@ func (s *testAsyncCommitFailSuite) TestPointGetWithAsyncCommit(c *C) {
 
 func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 	// This test doesn't support tikv mode.
-	if *WithTiKV {
+	if *mockstore.WithTiKV {
 		return
 	}
 
@@ -174,7 +175,7 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 			txn.Set([]byte(keys[i]), []byte(values[i]))
 		}
 
-		c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", "return"), IsNil)
+		c.Assert(failpoint.Enable("tikvclient/asyncCommitDoNothing", "return"), IsNil)
 
 		err = txn.Commit(ctx)
 		c.Assert(err, IsNil)
@@ -205,7 +206,7 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 
 		c.Assert(gotSecondaries, DeepEquals, expectedSecondaries)
 
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing"), IsNil)
+		c.Assert(failpoint.Disable("tikvclient/asyncCommitDoNothing"), IsNil)
 		txn.GetCommitter().Cleanup(context.Background())
 	}
 
@@ -223,9 +224,9 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitContextCancelCausingUndetermin
 	err := txn.Set([]byte("a"), []byte("va"))
 	c.Assert(err, IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/rpcContextCancelErr", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/rpcContextCancelErr", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/rpcContextCancelErr"), IsNil)
+		c.Assert(failpoint.Disable("tikvclient/rpcContextCancelErr"), IsNil)
 	}()
 
 	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
@@ -237,7 +238,7 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitContextCancelCausingUndetermin
 // TestAsyncCommitRPCErrorThenWriteConflict verifies that the determined failure error overwrites undetermined error.
 func (s *testAsyncCommitFailSuite) TestAsyncCommitRPCErrorThenWriteConflict(c *C) {
 	// This test doesn't support tikv mode because it needs setting failpoint in unistore.
-	if *WithTiKV {
+	if *mockstore.WithTiKV {
 		return
 	}
 
@@ -260,7 +261,7 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitRPCErrorThenWriteConflict(c *C
 // overwrites the undetermined error in the parent.
 func (s *testAsyncCommitFailSuite) TestAsyncCommitRPCErrorThenWriteConflictInChild(c *C) {
 	// This test doesn't support tikv mode because it needs setting failpoint in unistore.
-	if *WithTiKV {
+	if *mockstore.WithTiKV {
 		return
 	}
 
@@ -269,11 +270,11 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitRPCErrorThenWriteConflictInChi
 	c.Assert(err, IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult", `1*return("timeout")->return("writeConflict")`), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/forceRecursion", `return`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/forceRecursion", `return`), IsNil)
 
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult"), IsNil)
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/forceRecursion"), IsNil)
+		c.Assert(failpoint.Disable("tikvclient/forceRecursion"), IsNil)
 	}()
 
 	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))

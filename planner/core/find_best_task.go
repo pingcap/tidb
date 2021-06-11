@@ -146,7 +146,7 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, planCou
 	}.Init(p.ctx, p.stats, p.blockOffset)
 	dual.SetSchema(p.schema)
 	planCounter.Dec(1)
-	return &rootTask{p: dual}, 1, nil
+	return &rootTask{p: dual, isEmpty: p.RowCount == 0}, 1, nil
 }
 
 func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (task, int64, error) {
@@ -212,7 +212,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		childTasks = childTasks[:0]
 		// The curCntPlan records the number of possible plans for pp
 		curCntPlan = 1
-		TimeStampNow := p.GetlogicalTS4TaskMap()
+		TimeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.ctx.GetSessionVars().PlanID
 		for j, child := range p.children {
 			childTask, cnt, err := child.findBestTask(pp.GetChildReqProps(j), &PlanCounterDisabled)
@@ -328,8 +328,8 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		// try to get the task with an enforced sort.
 		newProp.SortItems = []property.SortItem{}
 		newProp.ExpectedCnt = math.MaxFloat64
-		newProp.PartitionCols = nil
-		newProp.PartitionTp = property.AnyType
+		newProp.MPPPartitionCols = nil
+		newProp.MPPPartitionTp = property.AnyType
 		var hintCanWork bool
 		plansNeedEnforce, hintCanWork, err = p.self.exhaustPhysicalPlans(newProp)
 		if err != nil {
@@ -644,8 +644,8 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		}
 		// Next, get the bestTask with enforced prop
 		prop.SortItems = []property.SortItem{}
-		prop.PartitionTp = property.AnyType
-	} else if prop.PartitionTp != property.AnyType {
+		prop.MPPPartitionTp = property.AnyType
+	} else if prop.MPPPartitionTp != property.AnyType {
 		return invalidTask, 0, nil
 	}
 	defer func() {
@@ -1546,12 +1546,14 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		if ts.KeepOrder {
 			return &mppTask{}, nil
 		}
-		if prop.PartitionTp != property.AnyType || ts.isPartition {
+		if prop.MPPPartitionTp != property.AnyType || ts.isPartition {
 			// If ts is a single partition, then this partition table is in static-only prune, then we should not choose mpp execution.
+			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because table `" + ds.tableInfo.Name.O + "`is a partition table which is not supported when `@@tidb_partition_prune_mode=static`.")
 			return &mppTask{}, nil
 		}
 		for _, col := range ts.schema.Columns {
 			if col.VirtualExpr != nil {
+				ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because column `" + col.OrigName + "` is a virtual column which is not supported now.")
 				return &mppTask{}, nil
 			}
 		}
@@ -1964,7 +1966,7 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *
 
 	pcte := PhysicalCTE{SeedPlan: sp, RecurPlan: rp, CTE: p.cte, cteAsName: p.cteAsName}.Init(p.ctx, p.stats)
 	pcte.SetSchema(p.schema)
-	t = &rootTask{pcte, sp.statsInfo().RowCount}
+	t = &rootTask{pcte, sp.statsInfo().RowCount, false}
 	p.cte.cteTask = t
 	return t, 1, nil
 }

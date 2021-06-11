@@ -44,9 +44,6 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	tikverr "github.com/pingcap/tidb/store/tikv/error"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -58,6 +55,9 @@ import (
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/topsql"
+	tikverr "github.com/tikv/client-go/v2/error"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -189,6 +189,8 @@ type ExecStmt struct {
 	// SnapshotTS stores the timestamp for stale read.
 	// It is not equivalent to session variables's snapshot ts, it only use to build the executor.
 	SnapshotTS uint64
+	// ExplicitStaleness means whether the 'SELECT' clause are using 'AS OF TIMESTAMP' to perform stale read explicitly.
+	ExplicitStaleness bool
 	// InfoSchema stores a reference to the schema information.
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
@@ -243,7 +245,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		}
 	}
 	if a.PsStmt.Executor == nil {
-		b := newExecutorBuilder(a.Ctx, is, a.Ti)
+		b := newExecutorBuilder(a.Ctx, is, a.Ti, a.SnapshotTS, a.ExplicitStaleness)
 		newExecutor := b.build(a.Plan)
 		if b.err != nil {
 			return nil, b.err
@@ -287,7 +289,8 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	a.InfoSchema = ret.InfoSchema
-	a.SnapshotTS = ret.SnapshotTS
+	a.SnapshotTS = ret.LastSnapshotTS
+	a.ExplicitStaleness = ret.ExplicitStaleness
 	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, a.InfoSchema)
 	if err != nil {
 		return 0, err
@@ -333,7 +336,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		if n, ok := val.(int); ok {
 			startTS := oracle.ExtractPhysical(a.SnapshotTS) / 1000
 			if n != int(startTS) {
-				panic("different tso")
+				panic(fmt.Sprintf("different tso %d != %d", n, startTS))
 			}
 			failpoint.Return()
 		}
@@ -343,7 +346,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			// Convert to seconds
 			startTS := oracle.ExtractPhysical(a.SnapshotTS) / 1000
 			if int(startTS) <= n-1 || n+1 <= int(startTS) {
-				panic("tso violate tolerance")
+				panic(fmt.Sprintf("different tso %d != %d", n, startTS))
 			}
 			failpoint.Return()
 		}
@@ -789,8 +792,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
-	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti)
-	b.snapshotTS = a.SnapshotTS
+	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti, a.SnapshotTS, a.ExplicitStaleness)
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
@@ -852,8 +854,7 @@ func FormatSQL(sql string) stringutil.StringerFunc {
 var (
 	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
-	totalTiFlashQueryFailCounter      = metrics.TiFlashQueryTotalCounter.WithLabelValues(metrics.LblError)
-	totalTiFlashQuerySuccCounter      = metrics.TiFlashQueryTotalCounter.WithLabelValues(metrics.LblOK)
+	totalTiFlashQuerySuccCounter      = metrics.TiFlashQueryTotalCounter.WithLabelValues("", metrics.LblOK)
 )
 
 // FinishExecuteStmt is used to record some information after `ExecStmt` execution finished:
@@ -862,7 +863,7 @@ var (
 // 3. record execute duration metric.
 // 4. update the `PrevStmt` in session variable.
 // 5. reset `DurationParse` in session variable.
-func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults bool) {
+func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	// Attach commit/lockKeys runtime stats to executor runtime stats.
@@ -881,6 +882,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 		// Only record the read keys in write statement which affect row more than 0.
 		a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(execDetail.ScanDetail.ProcessedKeys)
 	}
+	succ := err == nil
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
@@ -888,7 +890,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 		if succ {
 			totalTiFlashQuerySuccCounter.Inc()
 		} else {
-			totalTiFlashQueryFailCounter.Inc()
+			metrics.TiFlashQueryTotalCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), metrics.LblError).Inc()
 		}
 	}
 	sessVars.PrevStmt = FormatSQL(a.GetTextToLog())
@@ -905,7 +907,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 
 // CloseRecordSet will finish the execution of current statement and do some record work
 func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
-	a.FinishExecuteStmt(txnStartTS, lastErr == nil, false)
+	a.FinishExecuteStmt(txnStartTS, lastErr, false)
 	a.logAudit()
 	// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
 	if stmtCtx := a.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil {

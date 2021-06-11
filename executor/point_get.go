@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -39,9 +38,15 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
+	if err := b.validCanReadTemporaryTable(p.TblInfo); err != nil {
+		b.err = err
+		return nil
+	}
+
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err

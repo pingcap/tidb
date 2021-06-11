@@ -83,6 +83,8 @@ type executorBuilder struct {
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
 	Ti               *TelemetryInfo
+	// ExplicitStaleness means whether the 'SELECT' clause are using 'AS OF TIMESTAMP' to perform stale read explicitly.
+	explicitStaleness bool
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -93,11 +95,13 @@ type CTEStorages struct {
 	IterInTbl cteutil.Storage
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *executorBuilder {
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, explicitStaleness bool) *executorBuilder {
 	return &executorBuilder{
-		ctx: ctx,
-		is:  is,
-		Ti:  ti,
+		ctx:               ctx,
+		is:                is,
+		Ti:                ti,
+		snapshotTS:        snapshotTS,
+		explicitStaleness: explicitStaleness,
 	}
 }
 
@@ -661,6 +665,10 @@ func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
 }
 
 func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
+	b.snapshotTS = v.SnapshotTS
+	if b.snapshotTS != 0 {
+		b.is, b.err = domain.GetDomain(b.ctx).GetSnapshotInfoSchema(b.snapshotTS)
+	}
 	e := &ExecuteExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		is:           b.is,
@@ -2642,6 +2650,10 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		return nil, err
 	}
 	ts := v.GetTableScan()
+	if err = b.validCanReadTemporaryTable(ts.Table); err != nil {
+		return nil, err
+	}
+
 	tbl, _ := b.is.TableByID(ts.Table.ID)
 	isPartition, physicalTableID := ts.IsPartition()
 	if isPartition {
@@ -2736,6 +2748,11 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	}
 
 	ts := v.GetTableScan()
+	if err = b.validCanReadTemporaryTable(ts.Table); err != nil {
+		b.err = err
+		return nil
+	}
+
 	ret.ranges = ts.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
@@ -2944,13 +2961,18 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 }
 
 func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) Executor {
+	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	if err := b.validCanReadTemporaryTable(is.Table); err != nil {
+		b.err = err
+		return nil
+	}
+
 	ret, err := buildNoRangeIndexReader(b, v)
 	if err != nil {
 		b.err = err
 		return nil
 	}
 
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	ret.ranges = is.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
@@ -3091,13 +3113,18 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 }
 
 func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLookUpReader) Executor {
+	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	if err := b.validCanReadTemporaryTable(is.Table); err != nil {
+		b.err = err
+		return nil
+	}
+
 	ret, err := buildNoRangeIndexLookUpReader(b, v)
 	if err != nil {
 		b.err = err
 		return nil
 	}
 
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 
 	ret.ranges = is.Ranges
@@ -3197,6 +3224,12 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 }
 
 func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) Executor {
+	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	if err := b.validCanReadTemporaryTable(ts.Table); err != nil {
+		b.err = err
+		return nil
+	}
+
 	ret, err := buildNoRangeIndexMergeReader(b, v)
 	if err != nil {
 		b.err = err
@@ -3216,7 +3249,6 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 			}
 		}
 	}
-	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 	executorCounterIndexMergeReaderExecutor.Inc()
 
@@ -3450,6 +3482,22 @@ func dedupHandles(lookUpContents []*indexJoinLookUpContent) ([]kv.Handle, []*ind
 type kvRangeBuilderFromRangeAndPartition struct {
 	sctx       sessionctx.Context
 	partitions []table.PhysicalTable
+}
+
+func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error) {
+	var ret [][]kv.KeyRange
+	var pids []int64
+	for _, p := range h.partitions {
+		pid := p.GetPhysicalID()
+		meta := p.Meta()
+		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, ranges, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		pids = append(pids, pid)
+		ret = append(ret, kvRange)
+	}
+	return pids, ret, nil
 }
 
 func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(_ int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {
@@ -3972,6 +4020,11 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 }
 
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) Executor {
+	if err := b.validCanReadTemporaryTable(plan.TblInfo); err != nil {
+		b.err = err
+		return nil
+	}
+
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
@@ -4104,6 +4157,11 @@ func fullRangePartition(idxArr []int) bool {
 }
 
 func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *TableSampleExecutor {
+	if v.TableInfo.Meta().TempTableType != model.TempTableNone {
+		b.err = errors.New("TABLESAMPLE clause can not be applied to temporary tables")
+		return nil
+	}
+
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
@@ -4216,4 +4274,21 @@ func (b *executorBuilder) buildCTETableReader(v *plannercore.PhysicalCTETable) E
 		iterInTbl:    storages.IterInTbl,
 		chkIdx:       0,
 	}
+}
+
+func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error {
+	if tbl.TempTableType == model.TempTableNone {
+		return nil
+	}
+
+	sessionVars := b.ctx.GetSessionVars()
+	if sessionVars.SnapshotTS != 0 {
+		return errors.New("can not read temporary table when 'tidb_snapshot' is set")
+	}
+
+	if sessionVars.TxnCtx.IsStaleness || b.explicitStaleness {
+		return errors.New("can not stale read temporary table")
+	}
+
+	return nil
 }

@@ -2403,6 +2403,26 @@ func (s *partitionTableSuite) TestDirectReadingWithAgg(c *C) {
 	}
 }
 
+func (s *partitionTableSuite) TestDynamicModeByDefault(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_dynamic_by_default")
+
+	tk.MustExec(`create table trange(a int, b int, primary key(a) clustered, index idx_b(b)) partition by range(a) (
+		partition p0 values less than(300),
+		partition p1 values less than(500),
+		partition p2 values less than(1100));`)
+	tk.MustExec(`create table thash(a int, b int, primary key(a) clustered, index idx_b(b)) partition by hash(a) partitions 4;`)
+
+	for _, q := range []string{
+		"explain select * from trange where a>400",
+		"explain select * from thash where a>=100",
+	} {
+		for _, r := range tk.MustQuery(q).Rows() {
+			c.Assert(strings.Contains(strings.ToLower(r[0].(string)), "partitionunion"), IsFalse)
+		}
+	}
+}
+
 func (s *partitionTableSuite) TestIssue24636(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create database test_issue_24636")
@@ -2664,6 +2684,7 @@ PARTITION BY RANGE (a) (
 }
 
 func (s *testSuiteWithData) TestRangePartitionBoundariesBetweenS(c *C) {
+	c.Skip("unstable, skip it and fix it before 20210624")
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("CREATE DATABASE IF NOT EXISTS TestRangePartitionBoundariesBetweenS")

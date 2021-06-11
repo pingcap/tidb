@@ -101,14 +101,8 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 		v.PreprocessorReturn = &PreprocessorReturn{}
 	}
 	node.Accept(&v)
-	readTS := ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
-	if readTS > 0 {
-		v.PreprocessorReturn.SnapshotTS = readTS
-	}
 	// InfoSchema must be non-nil after preprocessing
-	if v.InfoSchema == nil {
-		v.ensureInfoSchema()
-	}
+	v.ensureInfoSchema()
 	return errors.Trace(v.err)
 }
 
@@ -132,8 +126,13 @@ const (
 
 // PreprocessorReturn is used to retain information obtained in the preprocessor.
 type PreprocessorReturn struct {
-	SnapshotTS uint64
-	InfoSchema infoschema.InfoSchema
+	initedLastSnapshotTS bool
+	ExplicitStaleness    bool
+	SnapshotTSEvaluator  func(sessionctx.Context) (uint64, error)
+	// LastSnapshotTS is the last evaluated snapshotTS if any
+	// otherwise it defaults to zero
+	LastSnapshotTS uint64
+	InfoSchema     infoschema.InfoSchema
 }
 
 // preprocessor is an ast.Visitor that preprocess
@@ -638,9 +637,18 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			p.err = err
 			return
 		}
-		if tableInfo.Meta().TempTableType != model.TempTableNone {
+		tableMetaInfo := tableInfo.Meta()
+		if tableMetaInfo.TempTableType != model.TempTableNone {
 			p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("create table like")
 			return
+		}
+		if stmt.TemporaryKeyword != ast.TemporaryNone {
+			err := checkReferInfoForTemporaryTable(tableMetaInfo)
+			if err != nil {
+				p.err = err
+				return
+			}
+
 		}
 	}
 	if stmt.TemporaryKeyword != ast.TemporaryNone {
@@ -1022,6 +1030,23 @@ func checkTableEngine(engineName string) error {
 	return nil
 }
 
+func checkReferInfoForTemporaryTable(tableMetaInfo *model.TableInfo) error {
+	if tableMetaInfo.AutoRandomBits != 0 {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random")
+	}
+	if tableMetaInfo.PreSplitRegions != 0 {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions")
+	}
+	if tableMetaInfo.Partition != nil {
+		return ErrPartitionNoTemporary
+	}
+	if tableMetaInfo.ShardRowIDBits != 0 {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
+	}
+
+	return nil
+}
+
 // checkColumn checks if the column definition is valid.
 // See https://dev.mysql.com/doc/refman/5.7/en/storage-requirements.html
 func checkColumn(colDef *ast.ColumnDef) error {
@@ -1240,7 +1265,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
-	p.handleAsOf(tn.AsOf)
+	p.handleAsOfAndReadTS(tn.AsOf)
 	if p.err != nil {
 		return
 	}
@@ -1393,16 +1418,24 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 	}
 }
 
-// handleAsOf tries to validate the timestamp.
-// If it is not nil, timestamp is used to get the history infoschema from the infocache.
-func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
-	readTS := p.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS()
-	if readTS > 0 && node != nil {
-		p.err = ErrAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
-		return
+// handleAsOfAndReadTS tries to handle as of closure, or possibly read_ts.
+// If read_ts is not nil, it will be consumed.
+// If as of is not nil, timestamp is used to get the history infoschema from the infocache.
+func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
+	ts := p.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
+	if ts > 0 {
+		if node != nil {
+			p.err = ErrAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
+			return
+		}
+		if !p.initedLastSnapshotTS {
+			p.SnapshotTSEvaluator = func(sessionctx.Context) (uint64, error) {
+				return ts, nil
+			}
+			p.LastSnapshotTS = ts
+			p.ExplicitStaleness = true
+		}
 	}
-	dom := domain.GetDomain(p.ctx)
-	ts := uint64(0)
 	if node != nil {
 		if p.ctx.GetSessionVars().InTxn() {
 			p.err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
@@ -1412,19 +1445,26 @@ func (p *preprocessor) handleAsOf(node *ast.AsOfClause) {
 		if p.err != nil {
 			return
 		}
+		if !p.initedLastSnapshotTS {
+			p.SnapshotTSEvaluator = func(ctx sessionctx.Context) (uint64, error) {
+				return calculateTsExpr(ctx, node)
+			}
+			p.LastSnapshotTS = ts
+			p.ExplicitStaleness = true
+		}
 	}
-	if ts != 0 && p.InfoSchema == nil {
-		is, err := dom.GetSnapshotInfoSchema(ts)
-		if err != nil {
-			p.err = err
+	if p.LastSnapshotTS != ts {
+		p.err = ErrDifferentAsOf.GenWithStack("can not set different time in the as of")
+		return
+	}
+	if p.LastSnapshotTS != 0 {
+		dom := domain.GetDomain(p.ctx)
+		p.InfoSchema, p.err = dom.GetSnapshotInfoSchema(p.LastSnapshotTS)
+		if p.err != nil {
 			return
 		}
-		p.SnapshotTS = ts
-		p.InfoSchema = is
 	}
-	if p.SnapshotTS != ts {
-		p.err = ErrDifferentAsOf.GenWithStack("can not set different time in the as of")
-	}
+	p.initedLastSnapshotTS = true
 }
 
 // ensureInfoSchema get the infoschema from the preprecessor.

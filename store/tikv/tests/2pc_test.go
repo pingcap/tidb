@@ -28,16 +28,15 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	drivertxn "github.com/pingcap/tidb/store/driver/txn"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/config"
-	tikverr "github.com/pingcap/tidb/store/tikv/error"
-	"github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
-	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/tikv/client-go/v2/config"
+	tikverr "github.com/tikv/client-go/v2/error"
+	"github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/mockstore/cluster"
+	"github.com/tikv/client-go/v2/mockstore/mocktikv"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 var (
@@ -323,9 +322,9 @@ func (s *testCommitterSuite) TestContextCancelCausingUndetermined(c *C) {
 	committer.PrewriteAllMutations(context.Background())
 	c.Assert(err, IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/rpcContextCancelErr", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/rpcContextCancelErr", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/rpcContextCancelErr"), IsNil)
+		c.Assert(failpoint.Disable("tikvclient/rpcContextCancelErr"), IsNil)
 	}()
 
 	err = committer.CommitMutations(context.Background())
@@ -1020,9 +1019,9 @@ func (s *testCommitterSuite) TestPessimisticLockPrimary(c *C) {
 	txn3 := s.begin(c)
 	txn3.SetPessimistic(true)
 	lockCtx3 := &kv.LockCtx{ForUpdateTS: txn3.StartTS(), WaitStartTime: time.Now(), LockWaitTime: tikv.LockNoWait}
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL", "return"), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/txnNotFoundRetTTL", "return"), IsNil)
 	err = txn3.LockKeys(context.Background(), lockCtx3, k2)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/txnNotFoundRetTTL"), IsNil)
 	c.Assert(err, IsNil)
 	waitErr := <-doneCh
 	c.Assert(tikverr.ErrLockWaitTimeout, Equals, waitErr)
@@ -1043,10 +1042,10 @@ func (s *testCommitterSuite) TestResolvePessimisticLock(c *C) {
 	c.Assert(err, IsNil)
 	mutation := commit.MutationsOfKeys([][]byte{untouchedIndexKey, noValueIndexKey})
 	c.Assert(mutation.Len(), Equals, 2)
-	c.Assert(mutation.GetOp(0), Equals, pb.Op_Lock)
+	c.Assert(mutation.GetOp(0), Equals, kvrpcpb.Op_Lock)
 	c.Assert(mutation.GetKey(0), BytesEquals, untouchedIndexKey)
 	c.Assert(mutation.GetValue(0), BytesEquals, untouchedIndexValue)
-	c.Assert(mutation.GetOp(1), Equals, pb.Op_Lock)
+	c.Assert(mutation.GetOp(1), Equals, kvrpcpb.Op_Lock)
 	c.Assert(mutation.GetKey(1), BytesEquals, noValueIndexKey)
 	c.Assert(mutation.GetValue(1), BytesEquals, []byte{})
 }

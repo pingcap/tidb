@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -61,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/tikv/client-go/v2/mockstore/cluster"
 )
 
 const (
@@ -2368,7 +2368,7 @@ func (s *testDBSuite4) TestChangeColumn(c *C) {
 	sql = "alter table t4 change c2 a bigint not null;"
 	tk.MustGetErrCode(sql, mysql.WarnDataTruncated)
 	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c') not null default 'a'"
-	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
+	tk.MustExec(sql)
 	// Rename to an existing column.
 	s.mustExec(tk, c, "alter table t3 add column a bigint")
 	sql = "alter table t3 change aa a bigint"
@@ -4002,12 +4002,6 @@ func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
 	// Make sure the count of regions more than backfill workers.
 	tk.MustQuery("split table t1 between (0) and (8192) regions 8;").Check(testkit.Rows("8 1"))
 
-	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-	}()
-
 	tbl := s.testGetTable(c, "t1")
 	originalHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
@@ -4108,11 +4102,8 @@ func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
 func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal2(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockInsertValueAfterCheckNull", `return("insert into test.tt values (NULL, NULL)")`), IsNil)
 	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
 		err := failpoint.Disable("github.com/pingcap/tidb/ddl/mockInsertValueAfterCheckNull")
 		c.Assert(err, IsNil)
 	}()
@@ -4141,7 +4132,6 @@ func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal(c *C) {
 
 func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
 
 	// varchar to varchar
 	tk.MustExec("drop table if exists tt;")
@@ -4222,14 +4212,6 @@ func testModifyColumnNullToNotNull(c *C, s *testDBSuite, enableChangeColumnType 
 	s.mustExec(tk, c, "use test_db")
 	s.mustExec(tk, c, "drop table if exists t1")
 	s.mustExec(tk, c, "create table t1 (c1 int, c2 int);")
-
-	if enableChangeColumnType {
-		enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
-		tk.Se.GetSessionVars().EnableChangeColumnType = true
-		defer func() {
-			tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-		}()
-	}
 
 	tbl := s.testGetTable(c, "t1")
 	getModifyColumn(c, s.s.(sessionctx.Context), s.schemaName, "t1", "c2", false)
@@ -5219,15 +5201,12 @@ func testModifyColumnTime(c *C, store kv.Storage, tests []testModifyColumnTimeCa
 
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test_db")
-	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
 
 	// Set time zone to UTC.
 	originalTz := tk.Se.GetSessionVars().TimeZone
 	tk.Se.GetSessionVars().TimeZone = time.UTC
 	defer func() {
 		variable.SetDDLErrorCountLimit(limit)
-		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
 		tk.Se.GetSessionVars().TimeZone = originalTz
 	}()
 
@@ -6520,13 +6499,6 @@ func (s *testSerialDBSuite) TestColumnTypeChangeGenUniqueChangingName(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 
-	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-		config.RestoreFunc()()
-	}()
-
 	hook := &ddl.TestDDLCallback{}
 	var checkErr error
 	assertChangingColName := "_col$_c2_0"
@@ -6644,8 +6616,6 @@ func (s *testSerialDBSuite) TestColumnTypeChangeGenUniqueChangingName(c *C) {
 func (s *testSerialDBSuite) TestModifyColumnTypeWithWarnings(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	// Enable column change variable.
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
 
 	// Test normal warnings.
 	tk.MustExec("drop table if exists t")
@@ -6681,8 +6651,6 @@ func (s *testSerialDBSuite) TestModifyColumnTypeWithWarnings(c *C) {
 func (s *testSerialDBSuite) TestModifyColumnTypeWhenInterception(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	// Enable column change variable.
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
 
 	// Test normal warnings.
 	tk.MustExec("drop table if exists t")
