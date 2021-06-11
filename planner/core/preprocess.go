@@ -639,9 +639,18 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			p.err = err
 			return
 		}
-		if tableInfo.Meta().TempTableType != model.TempTableNone {
+		tableMetaInfo := tableInfo.Meta()
+		if tableMetaInfo.TempTableType != model.TempTableNone {
 			p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("create table like")
 			return
+		}
+		if stmt.TemporaryKeyword != ast.TemporaryNone {
+			err := checkReferInfoForTemporaryTable(tableMetaInfo)
+			if err != nil {
+				p.err = err
+				return
+			}
+
 		}
 	}
 	if stmt.TemporaryKeyword != ast.TemporaryNone {
@@ -1020,6 +1029,23 @@ func checkTableEngine(engineName string) error {
 	if _, have := mysqlValidTableEngineNames[strings.ToLower(engineName)]; !have {
 		return ddl.ErrUnknownEngine.GenWithStackByArgs(engineName)
 	}
+	return nil
+}
+
+func checkReferInfoForTemporaryTable(tableMetaInfo *model.TableInfo) error {
+	if tableMetaInfo.AutoRandomBits != 0 {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random")
+	}
+	if tableMetaInfo.PreSplitRegions != 0 {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions")
+	}
+	if tableMetaInfo.Partition != nil {
+		return ErrPartitionNoTemporary
+	}
+	if tableMetaInfo.ShardRowIDBits != 0 {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
+	}
+
 	return nil
 }
 
