@@ -929,7 +929,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			}
 
 			failpoint.Inject("skipLoadSysVarCacheLoop", func(val failpoint.Value) {
-				// In server pkg test, there are many TestSuite, and each testSuite has separate storage and
+				// In some pkg integration test, there are many testSuite, and each testSuite has separate storage and
 				// `LoadSysVarCacheLoop` background goroutine. Then each testSuite `RebuildSysVarCache` from it's
 				// own storage.
 				// Each testSuit will also call `checkEnableServerGlobalVar` to update some local variables.
