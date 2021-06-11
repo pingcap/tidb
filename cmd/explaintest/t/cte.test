@@ -168,3 +168,10 @@ create table t1(c1 bigint unsigned);
 insert into t1 values(0);
 --error 1690
 with recursive cte1 as (select c1 - 1 c1 from t1 union all select c1 - 1 c1 from cte1 where c1 != 0) select * from cte1 dt1, cte1 dt2;
+# case 32
+drop table if exists t;
+create table t(a int, b int, key (b));
+desc with cte as (select * from t) select * from cte;
+create SESSION binding for with cte as (select * from t) select * from cte using with cte as (select * from t use index(b)) select * from cte;
+desc with cte as (select * from t) select * from cte;
+desc with cte as (select * from t use index()) select * from cte;
