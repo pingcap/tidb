@@ -713,10 +713,11 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if worker.kvclient.Stats == nil {
 		worker.kvclient.Stats = make(map[tikvrpc.CmdType]*tikv.RPCRuntimeStats)
 	}
+	req.TxnScope = worker.req.TxnScope
 	if worker.req.IsStaleness {
 		req.EnableStaleRead()
 	}
-	var ops []tikv.StoreSelectorOption
+	ops := make([]tikv.StoreSelectorOption, 0, 2)
 	if len(worker.req.MatchStoreLabels) > 0 {
 		ops = append(ops, tikv.WithMatchLabels(worker.req.MatchStoreLabels))
 	}
@@ -784,6 +785,7 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 	if timeDetail != nil {
 		logStr += fmt.Sprintf(" kv_process_ms:%d", timeDetail.ProcessWallTimeMs)
 		logStr += fmt.Sprintf(" kv_wait_ms:%d", timeDetail.WaitWallTimeMs)
+		logStr += fmt.Sprintf(" kv_read_ms:%d", timeDetail.KvReadWallTimeMs)
 		if timeDetail.ProcessWallTimeMs <= minLogKVProcessTime {
 			logStr = strings.Replace(logStr, "TIME_COP_PROCESS", "TIME_COP_WAIT", 1)
 		}

@@ -28,7 +28,6 @@ import (
 	"github.com/dgryski/go-farm"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	tikv "github.com/pingcap/tidb/store/tikv/kv"
@@ -151,11 +150,11 @@ var SetSuccess = false
 func (txn *KVTxn) SetVars(vars *tikv.Variables) {
 	txn.vars = vars
 	txn.snapshot.vars = vars
-	failpoint.Inject("probeSetVars", func(val failpoint.Value) {
+	if val, err := util.EvalFailpoint("probeSetVars"); err == nil {
 		if val.(bool) {
 			SetSuccess = true
 		}
-	})
+	}
 }
 
 // GetVars gets variables from the transaction.
@@ -306,12 +305,12 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.close()
 
-	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
+	if val, err := util.EvalFailpoint("mockCommitError"); err == nil {
 		if val.(bool) && IsMockCommitErrorEnable() {
 			MockCommitErrorDisable()
-			failpoint.Return(errors.New("mock commit error"))
+			return errors.New("mock commit error")
 		}
-	})
+	}
 
 	start := time.Now()
 	defer func() { metrics.TxnCmdHistogramWithCommit.Observe(time.Since(start).Seconds()) }()
@@ -346,13 +345,19 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 	}
 
 	defer func() {
+		detail := committer.getDetail()
+		detail.Mu.Lock()
+		metrics.TiKVTxnCommitBackoffSeconds.Observe(float64(detail.Mu.CommitBackoffTime) / float64(time.Second))
+		metrics.TiKVTxnCommitBackoffCount.Observe(float64(len(detail.Mu.BackoffTypes)))
+		detail.Mu.Unlock()
+
 		ctxValue := ctx.Value(util.CommitDetailCtxKey)
 		if ctxValue != nil {
 			commitDetail := ctxValue.(**util.CommitDetails)
 			if *commitDetail != nil {
 				(*commitDetail).TxnRetry++
 			} else {
-				*commitDetail = committer.getDetail()
+				*commitDetail = detail
 			}
 		}
 	}()
@@ -601,9 +606,9 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tikv.LockCtx, keysInput
 						wg.Wait()
 						// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
 						time.Sleep(time.Millisecond * 5)
-						failpoint.Inject("SingleStmtDeadLockRetrySleep", func() {
+						if _, err := util.EvalFailpoint("SingleStmtDeadLockRetrySleep"); err == nil {
 							time.Sleep(300 * time.Millisecond)
-						})
+						}
 					}
 				}
 			}
@@ -661,13 +666,13 @@ func (txn *KVTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte) *
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
 	go func() {
-		failpoint.Inject("beforeAsyncPessimisticRollback", func(val failpoint.Value) {
+		if val, err := util.EvalFailpoint("beforeAsyncPessimisticRollback"); err == nil {
 			if s, ok := val.(string); ok {
 				if s == "skip" {
 					logutil.Logger(ctx).Info("[failpoint] injected skip async pessimistic rollback",
 						zap.Uint64("txnStartTS", txn.startTS))
 					wg.Done()
-					failpoint.Return()
+					return
 				} else if s == "delay" {
 					duration := time.Duration(rand.Int63n(int64(time.Second) * 2))
 					logutil.Logger(ctx).Info("[failpoint] injected delay before async pessimistic rollback",
@@ -675,7 +680,7 @@ func (txn *KVTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte) *
 					time.Sleep(duration)
 				}
 			}
-		})
+		}
 
 		err := committer.pessimisticRollbackMutations(retry.NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, txn.vars), &PlainMutations{keys: keys})
 		if err != nil {

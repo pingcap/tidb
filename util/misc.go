@@ -535,3 +535,12 @@ func GetLocalIP() string {
 	}
 	return ""
 }
+
+// QueryStrForLog trim the query if the query length more than 4096
+func QueryStrForLog(query string) string {
+	const size = 4096
+	if len(query) > size {
+		return query[:size] + fmt.Sprintf("(len: %d)", len(query))
+	}
+	return query
+}
