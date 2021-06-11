@@ -71,7 +71,7 @@ func TestSyncerSimple(t *testing.T) {
 	cli := clus.RandClient()
 	ctx := goctx.Background()
 	ic := infoschema.NewCache(2)
-	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0))
+	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	d := NewDDL(
 		ctx,
 		WithEtcdClient(cli),
@@ -115,7 +115,7 @@ func TestSyncerSimple(t *testing.T) {
 	}
 
 	ic2 := infoschema.NewCache(2)
-	ic2.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0))
+	ic2.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	d1 := NewDDL(
 		ctx,
 		WithEtcdClient(cli),
