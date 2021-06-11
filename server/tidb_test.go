@@ -36,6 +36,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
@@ -1185,6 +1186,13 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`), IsNil)
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop")
+		c.Assert(err, IsNil)
+	}()
+
 	collector := mockTopSQLTraceCPU.NewTopSQLCollector()
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{collector})
 
@@ -1377,6 +1385,18 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	}()
 	agentServer, err := mockTopSQLReporter.StartMockAgentServer()
 	c.Assert(err, IsNil)
+	defer func() {
+		agentServer.Stop()
+	}()
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/topsql/reporter/resetTimeoutForTest", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`), IsNil)
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/util/topsql/reporter/resetTimeoutForTest")
+		c.Assert(err, IsNil)
+		err = failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop")
+		c.Assert(err, IsNil)
+	}()
 
 	dbt := &DBTest{c, db}
 	dbt.mustExec("drop database if exists topsql")
@@ -1436,12 +1456,13 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// Test after set agent address and the evict take effect.
+	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(5)
 	// Test with wrong agent address, the agent server can't receive any record.
-	dbt.mustExec("set @@tidb_top_sql_agent_address='127.0.0.1:65530';")
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=8;")
+	dbt.mustExec("set @@tidb_top_sql_agent_address='127.0.0.1:65530';")
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// Test after set agent address and the evict take effect.
@@ -1449,13 +1470,12 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(8)
 	cancel() // cancel case 1
-	time.Sleep(time.Millisecond * 100)
 
 	// case 2: agent hangs for a while
 	cancel = runWorkload(0, 10)
 	// empty agent address, should not collect records
-	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
+	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// set correct address, should collect records
@@ -1474,7 +1494,6 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	cancel = runWorkload(0, 10)
 	// empty agent address, should not collect records
 	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
-	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// set correct address, should collect records
@@ -1489,9 +1508,6 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	// agent server restart
 	agentServer, err = mockTopSQLReporter.StartMockAgentServer()
 	c.Assert(err, IsNil)
-	defer func() {
-		agentServer.Stop()
-	}()
 	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
 	// check result
 	agentServer.WaitCollectCnt(1, time.Second*4)
