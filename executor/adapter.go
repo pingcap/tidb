@@ -243,7 +243,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		}
 	}
 	if a.PsStmt.Executor == nil {
-		b := newExecutorBuilder(a.Ctx, is, a.Ti, a.SnapshotTS, a.ExplicitStaleness)
+		b := newExecutorBuilder(a.Ctx, is, a.Ti, a.SnapshotTS)
 		newExecutor := b.build(a.Plan)
 		if b.err != nil {
 			return nil, b.err
@@ -287,12 +287,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	a.InfoSchema = ret.InfoSchema
-<<<<<<< HEAD
-	a.SnapshotTS = ret.SnapshotTS
-=======
 	a.SnapshotTS = ret.LastSnapshotTS
-	a.ExplicitStaleness = ret.ExplicitStaleness
->>>>>>> 9189ec66a... *: stale reads compatible with prepare (#25156)
 	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, a.InfoSchema)
 	if err != nil {
 		return 0, err
@@ -794,12 +789,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
-<<<<<<< HEAD
-	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti)
-	b.snapshotTS = a.SnapshotTS
-=======
-	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti, a.SnapshotTS, a.ExplicitStaleness)
->>>>>>> 9189ec66a... *: stale reads compatible with prepare (#25156)
+	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti, a.SnapshotTS)
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
