@@ -151,11 +151,11 @@ func (c *TopSQLCollector) WaitCollectCnt(count int64) {
 	for {
 		// Wait for reporter to collect sql stats count >= expected count
 		if c.collectCnt.Load() >= end {
-			break
+			return
 		}
 		select {
 		case <-timeout:
-			break
+			return
 		default:
 			time.Sleep(time.Millisecond * 10)
 		}

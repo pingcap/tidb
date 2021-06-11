@@ -558,6 +558,9 @@ const (
 	// TiDBTopSQLMaxStatementCount indicates the max number of statements been collected.
 	TiDBTopSQLMaxStatementCount = "tidb_top_sql_max_statement_count"
 
+	// TiDBTopSQLMaxCollect indicates the max capacity of the collect map.
+	TiDBTopSQLMaxCollect = "tidb_top_sql_max_collect"
+
 	// TiDBTopSQLReportIntervalSeconds indicates the top SQL report interval seconds.
 	TiDBTopSQLReportIntervalSeconds = "tidb_top_sql_report_interval_seconds"
 	// TiDBEnableGlobalTemporaryTable indicates whether to enable global temporary table
@@ -710,7 +713,8 @@ const (
 	DefTiDBTopSQLEnable                = false
 	DefTiDBTopSQLAgentAddress          = ""
 	DefTiDBTopSQLPrecisionSeconds      = 1
-	DefTiDBTopSQLMaxStatementCount     = 200
+	DefTiDBTopSQLMaxStatementCount     = 2000
+	DefTiDBTopSQLMaxCollect            = 10000
 	DefTiDBTopSQLReportIntervalSeconds = 60
 	DefTiDBEnableGlobalTemporaryTable  = false
 	DefTMPTableSize                    = 16777216
@@ -743,6 +747,7 @@ var (
 		AgentAddress:          atomic.NewString(DefTiDBTopSQLAgentAddress),
 		PrecisionSeconds:      atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
 		MaxStatementCount:     atomic.NewInt64(DefTiDBTopSQLMaxStatementCount),
+		MaxCollect:            atomic.NewInt64(DefTiDBTopSQLMaxCollect),
 		ReportIntervalSeconds: atomic.NewInt64(DefTiDBTopSQLReportIntervalSeconds),
 	}
 )
@@ -757,6 +762,8 @@ type TopSQL struct {
 	PrecisionSeconds *atomic.Int64
 	// The maximum number of statements kept in memory.
 	MaxStatementCount *atomic.Int64
+	// The maximum capacity of the collect map.
+	MaxCollect *atomic.Int64
 	// The report data interval of top-sql.
 	ReportIntervalSeconds *atomic.Int64
 }
