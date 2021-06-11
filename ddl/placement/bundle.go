@@ -21,7 +21,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hashicorp/go-multierror"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/tablecodec"
@@ -212,7 +211,7 @@ func (b *Bundle) ObjectID() (int64, error) {
 	}
 	id, err := strconv.ParseInt(b.ID[len(BundleIDPrefix):], 10, 64)
 	if err != nil {
-		return 0, multierror.Append(ErrInvalidBundleID, err)
+		return 0, fmt.Errorf("%w: %s", ErrInvalidBundleID, err)
 	}
 	if id <= 0 {
 		return 0, fmt.Errorf("%w: %s doesn't include an id", ErrInvalidBundleID, b.ID)
