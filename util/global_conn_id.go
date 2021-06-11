@@ -15,6 +15,7 @@ package util
 
 import (
 	"errors"
+	"fmt"
 	"sync/atomic"
 
 	"github.com/cznic/mathutil"
@@ -244,13 +245,17 @@ type poolItem struct {
 	//   seq==tail: writable ---> doWrite,seq:=tail+1 ---> seq==head+1:written/readable ---> doRead,seq:=head+size
 	//       ^                                                                                          |
 	//       +------------------------------------------------------------------------------------------+
+	//   slot i: i(writable) ---> i+1(readable) ---> i+cap(writable) ---> i+cap+1(readable) ---> i+2xcap ---> ...
 	seq uint32
 }
 
 type Pool struct {
-	head sync2.AtomicUint32 // first available slot
-	tail sync2.AtomicUint32 // first empty slot. `head==tail` means empty.
-	cap  uint32
+	_align    uint64
+	head      sync2.AtomicUint32 // first available slot
+	_padding1 uint32             // padding to avoid false sharing
+	tail      sync2.AtomicUint32 // first empty slot. `head==tail` means empty.
+	_padding2 uint32
+	cap       uint32
 
 	slots []poolItem
 }
@@ -258,10 +263,11 @@ type Pool struct {
 func (p *Pool) Init(sizeInBits uint32, fillCount uint32) {
 	p.cap = 1 << sizeInBits
 	p.slots = make([]poolItem, p.cap)
+
 	fillCount = mathutil.MinUint32(p.cap-1, fillCount)
 	var i uint32
 	for i = 0; i < fillCount; i++ {
-		p.slots[i] = poolItem{value: i + 1, seq: i + p.cap}
+		p.slots[i] = poolItem{value: i + 1, seq: i + 1}
 	}
 	for ; i < p.cap; i++ {
 		p.slots[i] = poolItem{value: PoolInvalidValue, seq: i}
@@ -271,8 +277,33 @@ func (p *Pool) Init(sizeInBits uint32, fillCount uint32) {
 	p.tail.Set(fillCount)
 }
 
+func (p *Pool) InitForTest(head uint32, fillCount uint32) {
+	fillCount = mathutil.MinUint32(p.cap-1, fillCount)
+	var i uint32
+	for i = 0; i < fillCount; i++ {
+		p.slots[i] = poolItem{value: i + 1, seq: head + i + 1}
+	}
+	for ; i < p.cap; i++ {
+		p.slots[i] = poolItem{value: PoolInvalidValue, seq: head + i}
+	}
+
+	p.head.Set(head)
+	p.tail.Set(head + fillCount)
+}
+
 func (p *Pool) Len() uint32 {
 	return p.tail.Get() - p.head.Get()
+}
+
+func (p Pool) String() string {
+	head := p.head.Get()
+	tail := p.tail.Get()
+	headSlot := &p.slots[head&(p.cap-1)]
+	tailSlot := &p.slots[tail&(p.cap-1)]
+	len := tail - head
+
+	return fmt.Sprintf("cap:%v, len:%v; head:%x, slot:{%x,%x}; tail:%x, slot:{%x,%x}",
+		p.cap, len, head, headSlot.value, headSlot.seq, tail, tailSlot.value, tailSlot.seq)
 }
 
 func (p *Pool) Put(val uint32) (ok bool) {
@@ -293,10 +324,12 @@ func (p *Pool) Put(val uint32) (ok bool) {
 				atomic.StoreUint32(&slot.seq, tail+1)
 				return true
 			}
-		} else if seq < tail {
-			panic("Pool in a corrupted state during a Put operation.")
 		}
-		// else: preempted by another thread, try again.
+		// else if seq < tail-p.cap {
+		// 	fmt.Printf("val: %v, head: %v, tail: %v, seq: %v\n", val, head, tail, seq)
+		// 	panic("Pool in a corrupted state during a Put operation.")
+		// }
+		// else: preempted by another Producer or waiting Consumer, try again.
 	}
 }
 
@@ -318,9 +351,11 @@ func (p *Pool) Get() (val uint32, ok bool) {
 				atomic.StoreUint32(&slot.seq, head+p.cap)
 				return val, true
 			}
-		} else if seq < head+1 { // corrupted, should not happen
-			panic("Pool in a corrupted state during a Get operation.")
 		}
-		// else: preempted by another thread, try again.
+		// else if seq < head { // corrupted, should not happen
+		// 	fmt.Printf("head: %v, tail: %v, seq: %v\n", head, tail, seq)
+		// 	panic("Pool in a corrupted state during a Get operation.")
+		// }
+		// else: preempted by another Consumer or waiting Producer, try again.
 	}
 }
