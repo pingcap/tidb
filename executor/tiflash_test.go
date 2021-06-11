@@ -300,7 +300,7 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableShuffledHashJoin(c *C) {
 		tk.MustExec(fmt.Sprintf("analyze table %v", tbl))
 	}
 
-	tk.MustExec("SET tidb_allow_mpp=2")
+	tk.MustExec("SET tidb_enforce_mpp=1")
 	tk.MustExec("SET tidb_opt_broadcast_join=0")
 	tk.MustExec("SET tidb_broadcast_join_threshold_count=0")
 	tk.MustExec("SET tidb_broadcast_join_threshold_size=0")
@@ -378,7 +378,7 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableReader(c *C) {
 		tk.MustExec(fmt.Sprintf("insert into %v values %v", tbl, strings.Join(vals, ", ")))
 	}
 
-	tk.MustExec("SET tidb_allow_mpp=2")
+	tk.MustExec("SET tidb_enforce_mpp=1")
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
 	for i := 0; i < 100; i++ {
 		l, r := rand.Intn(400), rand.Intn(400)
@@ -752,7 +752,7 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableShuffledHashAggregation(c *C
 		tk.MustExec(fmt.Sprintf("analyze table %v", tbl))
 	}
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
-	tk.MustExec("set @@session.tidb_allow_mpp=2")
+	tk.MustExec("set @@session.tidb_enforce_mpp=1")
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
@@ -824,7 +824,7 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableBroadcastJoin(c *C) {
 		tk.MustExec(fmt.Sprintf("analyze table %v", tbl))
 	}
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
-	tk.MustExec("set @@session.tidb_allow_mpp=2")
+	tk.MustExec("set @@session.tidb_enforce_mpp=1")
 	tk.MustExec("set @@session.tidb_opt_broadcast_join=ON")
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side

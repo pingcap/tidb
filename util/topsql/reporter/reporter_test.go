@@ -41,10 +41,6 @@ func (s *testTopSQLReporter) SetUpSuite(c *C) {}
 
 func (s *testTopSQLReporter) SetUpTest(c *C) {}
 
-func testPlanBinaryDecoderFunc(plan string) (string, error) {
-	return plan, nil
-}
-
 func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) {
 	// register normalized sql
 	for i := begin; i < end; i++ {
@@ -72,13 +68,17 @@ func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) 
 	time.Sleep(100 * time.Millisecond)
 }
 
+func mockPlanBinaryDecoderFunc(plan string) (string, error) {
+	return plan, nil
+}
+
 func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) *RemoteTopSQLReporter {
 	variable.TopSQLVariable.MaxStatementCount.Store(int64(maxStatementsNum))
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(int64(interval))
 	variable.TopSQLVariable.AgentAddress.Store(addr)
 
-	rc := NewGRPCReportClient()
-	ts := NewRemoteTopSQLReporter(rc, testPlanBinaryDecoderFunc)
+	rc := NewGRPCReportClient(mockPlanBinaryDecoderFunc)
+	ts := NewRemoteTopSQLReporter(rc)
 	return ts
 }
 
@@ -97,14 +97,12 @@ func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
 	defer tsr.Close()
 	populateCache(tsr, 0, maxSQLNum, 1)
 
-	agentServer.WaitServerCollect(maxSQLNum, time.Second*5)
+	agentServer.WaitCollectCnt(1, time.Second*5)
 
-	c.Assert(agentServer.GetRecords(), HasLen, maxSQLNum)
+	c.Assert(agentServer.GetLatestRecords(), HasLen, maxSQLNum)
 
 	// check for equality of server received batch and the original data
-	records := agentServer.GetRecords()
-	sqlMetas := agentServer.GetSQLMetas()
-	planMetas := agentServer.GetPlanMetas()
+	records := agentServer.GetLatestRecords()
 	for _, req := range records {
 		id := 0
 		prefix := "sqlDigest"
@@ -121,10 +119,10 @@ func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
 		for i := range req.TimestampList {
 			c.Assert(req.TimestampList[i], Equals, uint64(1))
 		}
-		normalizedSQL, exist := sqlMetas[string(req.SqlDigest)]
+		normalizedSQL, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedSQL, Equals, "sqlNormalized"+strconv.Itoa(id))
-		normalizedPlan, exist := planMetas[string(req.PlanDigest)]
+		normalizedPlan, exist := agentServer.GetPlanMetaByDigestBlocking(req.PlanDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedPlan, Equals, "planNormalized"+strconv.Itoa(id))
 	}
@@ -139,14 +137,12 @@ func (s *testTopSQLReporter) TestCollectAndEvicted(c *C) {
 	defer tsr.Close()
 	populateCache(tsr, 0, maxSQLNum*2, 2)
 
-	agentServer.WaitServerCollect(maxSQLNum, time.Second*10)
+	agentServer.WaitCollectCnt(1, time.Second*10)
 
-	c.Assert(agentServer.GetRecords(), HasLen, maxSQLNum)
+	c.Assert(agentServer.GetLatestRecords(), HasLen, maxSQLNum)
 
 	// check for equality of server received batch and the original data
-	records := agentServer.GetRecords()
-	sqlMetas := agentServer.GetSQLMetas()
-	planMetas := agentServer.GetPlanMetas()
+	records := agentServer.GetLatestRecords()
 	for _, req := range records {
 		id := 0
 		prefix := "sqlDigest"
@@ -164,13 +160,73 @@ func (s *testTopSQLReporter) TestCollectAndEvicted(c *C) {
 		for i := range req.TimestampList {
 			c.Assert(req.TimestampList[i], Equals, uint64(2))
 		}
-		normalizedSQL, exist := sqlMetas[string(req.SqlDigest)]
+		normalizedSQL, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedSQL, Equals, "sqlNormalized"+strconv.Itoa(id))
-		normalizedPlan, exist := planMetas[string(req.PlanDigest)]
+		normalizedPlan, exist := agentServer.GetPlanMetaByDigestBlocking(req.PlanDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedPlan, Equals, "planNormalized"+strconv.Itoa(id))
 	}
+}
+
+func (s *testTopSQLReporter) TestCollectCapacity(c *C) {
+	tsr := setupRemoteTopSQLReporter(maxSQLNum, 60, "")
+	defer tsr.Close()
+
+	registerSQL := func(n int) {
+		for i := 0; i < n; i++ {
+			key := []byte("sqlDigest" + strconv.Itoa(i))
+			value := "sqlNormalized" + strconv.Itoa(i)
+			tsr.RegisterSQL(key, value)
+		}
+	}
+	registerPlan := func(n int) {
+		for i := 0; i < n; i++ {
+			key := []byte("planDigest" + strconv.Itoa(i))
+			value := "planNormalized" + strconv.Itoa(i)
+			tsr.RegisterPlan(key, value)
+		}
+	}
+	genRecord := func(n int) []tracecpu.SQLCPUTimeRecord {
+		records := make([]tracecpu.SQLCPUTimeRecord, 0, n)
+		for i := 0; i < n; i++ {
+			records = append(records, tracecpu.SQLCPUTimeRecord{
+				SQLDigest:  []byte("sqlDigest" + strconv.Itoa(i+1)),
+				PlanDigest: []byte("planDigest" + strconv.Itoa(i+1)),
+				CPUTimeMs:  uint32(i + 1),
+			})
+		}
+		return records
+	}
+
+	variable.TopSQLVariable.MaxCollect.Store(10000)
+	registerSQL(5000)
+	c.Assert(tsr.sqlMapLength.Load(), Equals, int64(5000))
+	registerPlan(1000)
+	c.Assert(tsr.planMapLength.Load(), Equals, int64(1000))
+
+	registerSQL(20000)
+	c.Assert(tsr.sqlMapLength.Load(), Equals, int64(10000))
+	registerPlan(20000)
+	c.Assert(tsr.planMapLength.Load(), Equals, int64(10000))
+
+	variable.TopSQLVariable.MaxCollect.Store(20000)
+	registerSQL(50000)
+	c.Assert(tsr.sqlMapLength.Load(), Equals, int64(20000))
+	registerPlan(50000)
+	c.Assert(tsr.planMapLength.Load(), Equals, int64(20000))
+
+	variable.TopSQLVariable.MaxStatementCount.Store(5000)
+	collectedData := make(map[string]*dataPoints)
+	tsr.doCollect(collectedData, 1, genRecord(20000))
+	c.Assert(len(collectedData), Equals, 5000)
+	c.Assert(tsr.sqlMapLength.Load(), Equals, int64(5000))
+	c.Assert(tsr.planMapLength.Load(), Equals, int64(5000))
+
+	tsr.takeDataAndSendToReportChan(&collectedData)
+	c.Assert(len(collectedData), Equals, 0)
+	c.Assert(tsr.sqlMapLength.Load(), Equals, int64(0))
+	c.Assert(tsr.planMapLength.Load(), Equals, int64(0))
 }
 
 func BenchmarkTopSQL_CollectAndIncrementFrequency(b *testing.B) {
