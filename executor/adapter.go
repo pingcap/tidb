@@ -799,10 +799,7 @@ func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc 
 var (
 	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
-<<<<<<< HEAD
-=======
 	totalTiFlashQuerySuccCounter      = metrics.TiFlashQueryTotalCounter.WithLabelValues("", metrics.LblOK)
->>>>>>> d37062fe5... metrics: Add err label for TiFlashQueryTotalCounter (#25317)
 )
 
 // CloseRecordSet will finish the execution of current statement and do some record work
@@ -820,12 +817,7 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 // 2. record summary statement.
 // 3. record execute duration metric.
 // 4. update the `PrevStmt` in session variable.
-<<<<<<< HEAD
-func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults bool) {
-=======
-// 5. reset `DurationParse` in session variable.
 func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults bool) {
->>>>>>> d37062fe5... metrics: Add err label for TiFlashQueryTotalCounter (#25317)
 	sessVars := a.Ctx.GetSessionVars()
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	// Attach commit/lockKeys runtime stats to executor runtime stats.
@@ -848,21 +840,18 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
-<<<<<<< HEAD
 	prevStmt := a.GetTextToLog()
 	if sessVars.EnableRedactLog {
 		sessVars.PrevStmt = FormatSQL(prevStmt, nil)
 	} else {
 		pps := types.CloneRow(sessVars.PreparedParams)
 		sessVars.PrevStmt = FormatSQL(prevStmt, pps)
-=======
 	if sessVars.StmtCtx.IsTiFlash.Load() {
 		if succ {
 			totalTiFlashQuerySuccCounter.Inc()
 		} else {
 			metrics.TiFlashQueryTotalCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), metrics.LblError).Inc()
 		}
->>>>>>> d37062fe5... metrics: Add err label for TiFlashQueryTotalCounter (#25317)
 	}
 
 	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
@@ -871,26 +860,6 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	} else {
 		sessionExecuteRunDurationGeneral.Observe(executeDuration.Seconds())
 	}
-<<<<<<< HEAD
-=======
-	// Reset DurationParse due to the next statement may not need to be parsed (not a text protocol query).
-	sessVars.DurationParse = 0
-}
-
-// CloseRecordSet will finish the execution of current statement and do some record work
-func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
-	a.FinishExecuteStmt(txnStartTS, lastErr, false)
-	a.logAudit()
-	// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
-	if stmtCtx := a.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil {
-		if stmtCtx.DiskTracker != nil {
-			stmtCtx.DiskTracker.DetachFromGlobalTracker()
-		}
-		if stmtCtx.MemTracker != nil {
-			stmtCtx.MemTracker.DetachFromGlobalTracker()
-		}
-	}
->>>>>>> d37062fe5... metrics: Add err label for TiFlashQueryTotalCounter (#25317)
 }
 
 // LogSlowQuery is used to print the slow query in the log files.
