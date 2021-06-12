@@ -40,7 +40,7 @@ It's similar to derived tables in some way. But CTE has extra advantages over de
 There are two kinds of CTE:
 1. non-recursive CTE.
 
-    ```
+    ```SQL
     WITH
         cte1 AS (SELECT c1 FROM t1)
         cte2 AS (SELECT c2 FROM t2)
@@ -49,7 +49,7 @@ There are two kinds of CTE:
 2. recursive CTE, which can be used to do hierarchical queries. Recursive CTE normally consists of the seed part and the recursive part.
    Seed part will generate the origin data, the remaining computation will be done by the recursive part.
 
-    ```
+    ```SQL
     WITH RECURSIVE cte1 AS (
         SELECT part, sub_part FROM t WHERE part = 'human'
         UNION ALL
