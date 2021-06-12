@@ -16,6 +16,8 @@ package util
 import (
 	"errors"
 	"fmt"
+	"math"
+	"runtime"
 	"sync/atomic"
 
 	"github.com/cznic/mathutil"
@@ -216,28 +218,64 @@ func (a *LocalConnIDAllocator64) Deallocate(localConnID uint64) {
 
 // LocalConnIDAllocator32 is local connID allocator for 32bits global connection ID.
 type LocalConnIDAllocator32 struct {
-	lastID uint32
+	pool LocalConnIDPool
 }
 
 // Init initiates LocalConnIDAllocator32
 func (a *LocalConnIDAllocator32) Init() {
+	a.pool = &LockFreePool{}
+	a.pool.Init(20, math.MaxUint32)
 }
 
 // Allocate local connID.
 func (a *LocalConnIDAllocator32) Allocate() (localConnID uint64, isExhausted bool) {
-	return (uint64)(atomic.AddUint32(&a.lastID, 1) & MaxLocalConnID32), false
+	id, ok := a.pool.Get()
+	return uint64(id), !ok
 }
 
 // Deallocate local connID to pool.
 func (a *LocalConnIDAllocator32) Deallocate(localConnID uint64) error {
+	if ok := a.pool.Put(uint32(localConnID)); !ok {
+		return errors.New("LocalConnIDPool is unexpected full")
+	}
 	return nil
 }
 
 const (
+	// PoolInvalidValue indicates invalid value from LocalConnIDPool
 	PoolInvalidValue = 0xffff_ffff
 )
 
-type poolItem struct {
+// LocalConnIDPool is the pool allocating & deallocating local conn ID.
+type LocalConnIDPool interface {
+	fmt.Stringer
+	// Init initiates pool.
+	//   fillCount fills pool with [1, min(fillCount, 1<<(sizeInBits-1)].
+	//   pass "math.MaxUint32" to fillCount to fulfill the pool.
+	Init(sizeInBits uint32, fillCount uint32)
+	// Len returns length of available values in pool.
+	Len() uint32
+	// Put puts value to pool. "ok" is false when pool is full.
+	Put(val uint32) (ok bool)
+	// Get gets value from pool. "ok" is false when pool is empty.
+	Get() (val uint32, ok bool)
+}
+
+var _ LocalConnIDPool = (*LockFreePool)(nil)
+
+// LockFreePool is a lock-free implementation of LocalConnIDPool.
+type LockFreePool struct {
+	_align    uint64
+	head      sync2.AtomicUint32 // first available slot
+	_padding1 uint32             // padding to avoid false sharing
+	tail      sync2.AtomicUint32 // first empty slot. `head==tail` means empty.
+	_padding2 uint32             // padding to avoid false sharing
+
+	cap   uint32
+	slots []lockFreePoolItem
+}
+
+type lockFreePoolItem struct {
 	value uint32
 
 	// seq indicates read/write status
@@ -245,57 +283,50 @@ type poolItem struct {
 	//   seq==tail: writable ---> doWrite,seq:=tail+1 ---> seq==head+1:written/readable ---> doRead,seq:=head+size
 	//       ^                                                                                          |
 	//       +------------------------------------------------------------------------------------------+
-	//   slot i: i(writable) ---> i+1(readable) ---> i+cap(writable) ---> i+cap+1(readable) ---> i+2xcap ---> ...
+	//   slot i: i(writable) ---> i+1(readable) ---> i+cap(writable) ---> i+cap+1(readable) ---> i+2*cap ---> ...
 	seq uint32
 }
 
-type Pool struct {
-	_align    uint64
-	head      sync2.AtomicUint32 // first available slot
-	_padding1 uint32             // padding to avoid false sharing
-	tail      sync2.AtomicUint32 // first empty slot. `head==tail` means empty.
-	_padding2 uint32
-	cap       uint32
-
-	slots []poolItem
-}
-
-func (p *Pool) Init(sizeInBits uint32, fillCount uint32) {
+// Init implements LockFreePool interface.
+func (p *LockFreePool) Init(sizeInBits uint32, fillCount uint32) {
 	p.cap = 1 << sizeInBits
-	p.slots = make([]poolItem, p.cap)
+	p.slots = make([]lockFreePoolItem, p.cap)
 
 	fillCount = mathutil.MinUint32(p.cap-1, fillCount)
 	var i uint32
 	for i = 0; i < fillCount; i++ {
-		p.slots[i] = poolItem{value: i + 1, seq: i + 1}
+		p.slots[i] = lockFreePoolItem{value: i + 1, seq: i + 1}
 	}
 	for ; i < p.cap; i++ {
-		p.slots[i] = poolItem{value: PoolInvalidValue, seq: i}
+		p.slots[i] = lockFreePoolItem{value: PoolInvalidValue, seq: i}
 	}
 
 	p.head.Set(0)
 	p.tail.Set(fillCount)
 }
 
-func (p *Pool) InitForTest(head uint32, fillCount uint32) {
+// InitForTest used to unit test overflow of head & tail.
+func (p *LockFreePool) InitForTest(head uint32, fillCount uint32) {
 	fillCount = mathutil.MinUint32(p.cap-1, fillCount)
 	var i uint32
 	for i = 0; i < fillCount; i++ {
-		p.slots[i] = poolItem{value: i + 1, seq: head + i + 1}
+		p.slots[i] = lockFreePoolItem{value: i + 1, seq: head + i + 1}
 	}
 	for ; i < p.cap; i++ {
-		p.slots[i] = poolItem{value: PoolInvalidValue, seq: head + i}
+		p.slots[i] = lockFreePoolItem{value: PoolInvalidValue, seq: head + i}
 	}
 
 	p.head.Set(head)
 	p.tail.Set(head + fillCount)
 }
 
-func (p *Pool) Len() uint32 {
+// Len implements LockFreePool interface.
+func (p *LockFreePool) Len() uint32 {
 	return p.tail.Get() - p.head.Get()
 }
 
-func (p Pool) String() string {
+// String implements LockFreePool interface.
+func (p LockFreePool) String() string {
 	head := p.head.Get()
 	tail := p.tail.Get()
 	headSlot := &p.slots[head&(p.cap-1)]
@@ -306,34 +337,37 @@ func (p Pool) String() string {
 		p.cap, len, head, headSlot.value, headSlot.seq, tail, tailSlot.value, tailSlot.seq)
 }
 
-func (p *Pool) Put(val uint32) (ok bool) {
+// Put implements LockFreePool interface.
+func (p *LockFreePool) Put(val uint32) (ok bool) {
 	for {
+		tail := p.tail.Get() // `tail` should be loaded before `head`, to avoid "false full".
 		head := p.head.Get()
-		tail := p.tail.Get()
 
 		if tail-head == p.cap-1 { // full
 			return false
 		}
 
-		slot := &p.slots[tail&(p.cap-1)]
-		seq := atomic.LoadUint32(&slot.seq)
+		if !p.tail.CompareAndSwap(tail, tail+1) {
+			continue
+		}
 
-		if seq == tail { // writable
-			if p.tail.CompareAndSwap(tail, tail+1) {
+		slot := &p.slots[tail&(p.cap-1)]
+		for {
+			seq := atomic.LoadUint32(&slot.seq)
+
+			if seq == tail { // writable
 				slot.value = val
 				atomic.StoreUint32(&slot.seq, tail+1)
 				return true
 			}
+
+			runtime.Gosched()
 		}
-		// else if seq < tail-p.cap {
-		// 	fmt.Printf("val: %v, head: %v, tail: %v, seq: %v\n", val, head, tail, seq)
-		// 	panic("Pool in a corrupted state during a Put operation.")
-		// }
-		// else: preempted by another Producer or waiting Consumer, try again.
 	}
 }
 
-func (p *Pool) Get() (val uint32, ok bool) {
+// Get implements LockFreePool interface.
+func (p *LockFreePool) Get() (val uint32, ok bool) {
 	for {
 		head := p.head.Get()
 		tail := p.tail.Get()
@@ -341,21 +375,22 @@ func (p *Pool) Get() (val uint32, ok bool) {
 			return PoolInvalidValue, false
 		}
 
-		slot := &p.slots[head&(p.cap-1)]
-		seq := atomic.LoadUint32(&slot.seq)
+		if !p.head.CompareAndSwap(head, head+1) {
+			continue
+		}
 
-		if seq == head+1 { // readable
-			if p.head.CompareAndSwap(head, head+1) {
+		slot := &p.slots[head&(p.cap-1)]
+		for {
+			seq := atomic.LoadUint32(&slot.seq)
+
+			if seq == head+1 { // readable
 				val = slot.value
 				slot.value = PoolInvalidValue
 				atomic.StoreUint32(&slot.seq, head+p.cap)
 				return val, true
 			}
+
+			runtime.Gosched()
 		}
-		// else if seq < head { // corrupted, should not happen
-		// 	fmt.Printf("head: %v, tail: %v, seq: %v\n", head, tail, seq)
-		// 	panic("Pool in a corrupted state during a Get operation.")
-		// }
-		// else: preempted by another Consumer or waiting Producer, try again.
 	}
 }

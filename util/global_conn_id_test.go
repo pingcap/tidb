@@ -15,6 +15,7 @@ package util_test
 
 import (
 	"fmt"
+	"math"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -81,18 +82,18 @@ func (s *testGlobalConnIDSuite) TestParse(c *C) {
 	c.Assert(connID2.Is64bits, IsFalse)
 }
 
-func (s *testGlobalConnIDSuite) TestPoolBasic(c *C) {
+func (s *testGlobalConnIDSuite) TestLockFreePoolBasic(c *C) {
 	const SizeInBits uint32 = 8
 	const Size uint32 = 1<<SizeInBits - 1
 
 	var (
-		pool util.Pool
+		pool util.LockFreePool
 		val  uint32
 		ok   bool
 		i    uint32
 	)
 
-	pool.Init(SizeInBits, 0xffffffff)
+	pool.Init(SizeInBits, math.MaxUint32)
 	c.Assert(pool.Len(), Equals, Size)
 
 	// get all.
@@ -125,12 +126,12 @@ func (s *testGlobalConnIDSuite) TestPoolBasic(c *C) {
 	c.Assert(pool.Len(), Equals, uint32(0))
 }
 
-func (s *testGlobalConnIDSuite) TestPoolInitEmpty(c *C) {
+func (s *testGlobalConnIDSuite) TestLockFreePoolInitEmpty(c *C) {
 	const SizeInBits uint32 = 8
 	const Size uint32 = 1<<SizeInBits - 1
 
 	var (
-		pool util.Pool
+		pool util.LockFreePool
 		val  uint32
 		ok   bool
 		i    uint32
@@ -159,42 +160,48 @@ func (s *testGlobalConnIDSuite) TestPoolInitEmpty(c *C) {
 	c.Assert(pool.Len(), Equals, uint32(0))
 }
 
-type queue interface {
-	fmt.Stringer
-	Len() uint32
-	Put(val uint32) (ok bool)
-	Get() (val uint32, ok bool)
-}
+var _ util.LocalConnIDPool = (*LockingPool)(nil)
 
-var (
-	_ queue = &util.Pool{}
-	_ queue = &lockPool{}
-)
-
-type lockPool struct {
+// LockingPool implements LocalConnIDPool by locking manner.
+// For benchmark purpose.
+type LockingPool struct {
 	_align    uint64
 	head      uint32 // first available slot
 	_padding1 uint32 // padding to avoid false sharing
 	tail      uint32 // first empty slot. `head==tail` means empty.
-	_padding2 uint32
+	_padding2 uint32 // padding to avoid false sharing
 	cap       uint32
 
-	mu    sync.Mutex
+	mu    *sync.Mutex
 	slots []uint32
 }
 
-func (p *lockPool) Init(sizeInBits uint32) {
+func (p *LockingPool) Init(sizeInBits uint32, fillCount uint32) {
+	p.mu = &sync.Mutex{}
+
 	p.cap = 1 << sizeInBits
 	p.slots = make([]uint32, p.cap)
+
+	fillCount = mathutil.MinUint32(p.cap-1, fillCount)
+	var i uint32
+	for i = 0; i < fillCount; i++ {
+		p.slots[i] = i + 1
+	}
+	for ; i < p.cap; i++ {
+		p.slots[i] = util.PoolInvalidValue
+	}
+
+	p.head = 0
+	p.tail = fillCount
 }
 
-func (p *lockPool) Len() uint32 {
+func (p *LockingPool) Len() uint32 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.tail - p.head
 }
 
-func (p lockPool) String() string {
+func (p LockingPool) String() string {
 	head := p.head
 	tail := p.tail
 	headVal := p.slots[head&(p.cap-1)]
@@ -205,7 +212,7 @@ func (p lockPool) String() string {
 		p.cap, len, head, headVal, tail, tailVal)
 }
 
-func (p *lockPool) Put(val uint32) (ok bool) {
+func (p *LockingPool) Put(val uint32) (ok bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -218,7 +225,7 @@ func (p *lockPool) Put(val uint32) (ok bool) {
 	return true
 }
 
-func (p *lockPool) Get() (val uint32, ok bool) {
+func (p *LockingPool) Get() (val uint32, ok bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.head == p.tail { // empty
@@ -230,15 +237,15 @@ func (p *lockPool) Get() (val uint32, ok bool) {
 	return val, true
 }
 
-func prepareLockPool(poolSizeInBits uint32) queue {
-	var pool lockPool
-	pool.Init(poolSizeInBits)
+func prepareLockingPool(sizeInBits uint32, fillCount uint32) util.LocalConnIDPool {
+	var pool LockingPool
+	pool.Init(sizeInBits, fillCount)
 	return &pool
 }
 
-func preparePool(poolSizeInBits uint32, fillCount uint32, headPos uint32) queue {
-	var pool util.Pool
-	pool.Init(poolSizeInBits, fillCount)
+func prepareLockFreePool(sizeInBits uint32, fillCount uint32, headPos uint32) util.LocalConnIDPool {
+	var pool util.LockFreePool
+	pool.Init(sizeInBits, fillCount)
 	if headPos > 0 {
 		pool.InitForTest(headPos, fillCount)
 	}
@@ -246,7 +253,7 @@ func preparePool(poolSizeInBits uint32, fillCount uint32, headPos uint32) queue 
 	return &pool
 }
 
-func prepareConcurrencyTest(q queue, producers int, consumers int, requests int, total *int64) (ready chan struct{}, done chan struct{}, wgProducer *sync.WaitGroup, wgConsumer *sync.WaitGroup) {
+func prepareConcurrencyTest(pool util.LocalConnIDPool, producers int, consumers int, requests int, total *int64) (ready chan struct{}, done chan struct{}, wgProducer *sync.WaitGroup, wgConsumer *sync.WaitGroup) {
 	ready = make(chan struct{})
 	done = make(chan struct{})
 
@@ -260,7 +267,7 @@ func prepareConcurrencyTest(q queue, producers int, consumers int, requests int,
 				<-ready
 
 				for i := p * reqsPerProducer; i < (p+1)*reqsPerProducer && i < requests; i++ {
-					for !q.Put(uint32(i)) {
+					for !pool.Put(uint32(i)) {
 						runtime.Gosched()
 					}
 				}
@@ -279,7 +286,7 @@ func prepareConcurrencyTest(q queue, producers int, consumers int, requests int,
 				var sum int64
 			L:
 				for {
-					val, ok := q.Get()
+					val, ok := pool.Get()
 					if ok {
 						sum += int64(val)
 						continue
@@ -299,19 +306,17 @@ func prepareConcurrencyTest(q queue, producers int, consumers int, requests int,
 	return ready, done, wgProducer, wgConsumer
 }
 
-func testPoolConcurrency(poolSizeInBits uint32, fillCount uint32, producers int, consumers int, requests int, headPos uint32) (expected, actual int64) {
-	var total int64
-	q := preparePool(poolSizeInBits, fillCount, headPos)
-	ready, done, wgProducer, wgConsumer := prepareConcurrencyTest(q, producers, consumers, requests, &total)
-
-	// logutil.BgLogger().Info("Init", zap.Stringer("pool", pool))
+func doConcurrencyTest(ready chan struct{}, done chan struct{}, wgProducer *sync.WaitGroup, wgConsumer *sync.WaitGroup) {
+	// logutil.BgLogger().Info("Init", zap.Stringer("pool", q))
 	close(ready)
 	wgProducer.Wait()
-	// logutil.BgLogger().Info("Snapshot on producing done", zap.Stringer("pool", pool))
+	// logutil.BgLogger().Info("Snapshot on producing done", zap.Stringer("pool", q))
 	close(done)
 	wgConsumer.Wait()
-	// logutil.BgLogger().Info("Finally", zap.Stringer("pool", pool))
+	// logutil.BgLogger().Info("Finally", zap.Stringer("pool", q))
+}
 
+func expectedConcurrencyTestResult(poolSizeInBits uint32, fillCount uint32, producers int, consumers int, requests int) (expected int64) {
 	if producers > 0 && consumers > 0 {
 		expected += (int64(requests) - 1) * int64(requests) / 2
 	}
@@ -319,31 +324,32 @@ func testPoolConcurrency(poolSizeInBits uint32, fillCount uint32, producers int,
 		fillCount = mathutil.MinUint32(1<<poolSizeInBits-1, fillCount)
 		expected += (1 + int64(fillCount)) * int64(fillCount) / 2
 	}
-
-	return expected, atomic.LoadInt64(&total)
+	return expected
 }
 
-func testLockPoolConcurrency(poolSizeInBits uint32, producers int, consumers int, requests int) (expected, actual int64) {
+func testLockFreePoolConcurrency(poolSizeInBits uint32, fillCount uint32, producers int, consumers int, requests int, headPos uint32) (expected, actual int64) {
 	var total int64
-	q := prepareLockPool(poolSizeInBits)
-	ready, done, wgProducer, wgConsumer := prepareConcurrencyTest(q, producers, consumers, requests, &total)
+	pool := prepareLockFreePool(poolSizeInBits, fillCount, headPos)
+	ready, done, wgProducer, wgConsumer := prepareConcurrencyTest(pool, producers, consumers, requests, &total)
 
-	// logutil.BgLogger().Info("Init", zap.Stringer("pool", pool))
-	close(ready)
-	wgProducer.Wait()
-	// logutil.BgLogger().Info("Snapshot on producing done", zap.Stringer("pool", pool))
-	close(done)
-	wgConsumer.Wait()
-	// logutil.BgLogger().Info("Finally", zap.Stringer("pool", pool))
+	doConcurrencyTest(ready, done, wgProducer, wgConsumer)
 
-	if producers > 0 && consumers > 0 {
-		expected += (int64(requests) - 1) * int64(requests) / 2
-	}
-
+	expected = expectedConcurrencyTestResult(poolSizeInBits, fillCount, producers, consumers, requests)
 	return expected, atomic.LoadInt64(&total)
 }
 
-func (s *testGlobalConnIDSuite) TestPoolBasicConcurrencySafety(c *C) {
+func testLockingPoolConcurrency(poolSizeInBits uint32, producers int, consumers int, requests int) (expected, actual int64) {
+	var total int64
+	pool := prepareLockingPool(poolSizeInBits, 0)
+	ready, done, wgProducer, wgConsumer := prepareConcurrencyTest(pool, producers, consumers, requests, &total)
+
+	doConcurrencyTest(ready, done, wgProducer, wgConsumer)
+
+	expected = expectedConcurrencyTestResult(poolSizeInBits, 0, producers, consumers, requests)
+	return expected, atomic.LoadInt64(&total)
+}
+
+func (s *testGlobalConnIDSuite) TestLockFreePoolBasicConcurrencySafety(c *C) {
 	var (
 		expected int64
 		actual   int64
@@ -358,15 +364,15 @@ func (s *testGlobalConnIDSuite) TestPoolBasicConcurrencySafety(c *C) {
 		headPos    = uint32(0x1_0000_0000 - (1 << (sizeInBits + 8)))
 	)
 
-	expected, actual = testPoolConcurrency(sizeInBits, fillCount, producers, consumers, requests, 0)
+	expected, actual = testLockFreePoolConcurrency(sizeInBits, fillCount, producers, consumers, requests, 0)
 	c.Assert(actual, Equals, expected)
 
 	// test overflow of head & tail
-	expected, actual = testPoolConcurrency(sizeInBits, fillCount, producers, consumers, requests, headPos)
+	expected, actual = testLockFreePoolConcurrency(sizeInBits, fillCount, producers, consumers, requests, headPos)
 	c.Assert(actual, Equals, expected)
 }
 
-func (s *testGlobalConnIDSuite) TestLockPoolConcurrencySafety(c *C) {
+func (s *testGlobalConnIDSuite) TestLockingPoolConcurrencySafety(c *C) {
 	var (
 		expected int64
 		actual   int64
@@ -379,7 +385,7 @@ func (s *testGlobalConnIDSuite) TestLockPoolConcurrencySafety(c *C) {
 		requests   = 1 << 20
 	)
 
-	expected, actual = testLockPoolConcurrency(sizeInBits, producers, consumers, requests)
+	expected, actual = testLockingPoolConcurrency(sizeInBits, producers, consumers, requests)
 	c.Assert(actual, Equals, expected)
 }
 
@@ -388,34 +394,37 @@ type poolConcurrencyTestCase struct {
 	fillCount  uint32
 	producers  int
 	consumers  int
+	requests   int64
 }
 
 func (ta poolConcurrencyTestCase) String() string {
-	return fmt.Sprintf("sizeInBits:%v, fillCount:%v, producers:%v, consumers:%v",
-		ta.sizeInBits, ta.fillCount, ta.producers, ta.consumers)
+	return fmt.Sprintf("size:%v, fillCount:%v, producers:%v, consumers:%v, requests:%v",
+		1<<ta.sizeInBits, ta.fillCount, ta.producers, ta.consumers, ta.requests)
 }
 
-func (s *testGlobalConnIDSuite) TestPoolConcurrencySafety(c *C) {
+func (s *testGlobalConnIDSuite) TestLockFreePoolConcurrencySafety(c *C) {
 	const (
-		requests = 1 << 20
+		poolSizeInBits = 16
+		requests       = 1 << 20
+		concurrency    = 1000
 	)
 
-	// Test cases from "C++ Concurrency in Action", 11.2.2 "Locating concurrency-related bugs by testing":
+	// Test cases from Anthony Williams, "C++ Concurrency in Action, 2nd", 11.2.2 "Locating concurrency-related bugs by testing":
 	cases := []poolConcurrencyTestCase{
 		// #1 Multiple threads calling pop() on a partially full queue with insufficient items for all threads
-		{sizeInBits: 4, fillCount: 8, producers: 0, consumers: 32},
+		{sizeInBits: 4, fillCount: 1 << 3, producers: 0, consumers: 32, requests: requests},
 		// #2 Multiple threads calling push() while one thread calls pop() on an empty queue
-		{sizeInBits: 12, fillCount: 0, producers: 20, consumers: 1},
+		{sizeInBits: poolSizeInBits, fillCount: 0, producers: concurrency, consumers: 1, requests: requests},
 		// #3 Multiple threads calling push() while one thread calls pop() on a full queue
-		{sizeInBits: 12, fillCount: 0xffff_ffff, producers: 20, consumers: 1},
+		{sizeInBits: poolSizeInBits, fillCount: 0xffff_ffff, producers: concurrency, consumers: 1, requests: requests},
 		// #4 Multiple threads calling push() while multiple threads call pop() on an empty queue
-		{sizeInBits: 12, fillCount: 0, producers: 20, consumers: 20},
+		{sizeInBits: poolSizeInBits, fillCount: 0, producers: concurrency, consumers: concurrency, requests: requests},
 		// #5 Multiple threads calling push() while multiple threads call pop() on a full queue
-		{sizeInBits: 12, fillCount: 0xffff_ffff, producers: 20, consumers: 20},
+		{sizeInBits: poolSizeInBits, fillCount: 0xffff_ffff, producers: concurrency, consumers: concurrency, requests: requests},
 	}
 
 	for i, ca := range cases {
-		expected, actual := testPoolConcurrency(ca.sizeInBits, ca.fillCount, ca.producers, ca.consumers, requests, 0)
+		expected, actual := testLockFreePoolConcurrency(ca.sizeInBits, ca.fillCount, ca.producers, ca.consumers, requests, 0)
 		c.Assert(actual, Equals, expected, Commentf("case #%v: %v", i+1, ca))
 	}
 }
@@ -424,51 +433,112 @@ func BenchmarkPoolConcurrency(b *testing.B) {
 	b.ReportAllocs()
 
 	const (
-		poolSizeInBits = 12
+		poolSizeInBits = 16
+		requests       = 1 << 22
 	)
 
-	requests := []int{1 << 20}
-	producers := []int{2}
-	consumers := []int{2}
+	cases := []poolConcurrencyTestCase{
+		{producers: 1, consumers: 1},
+		{producers: 3, consumers: 3},
+		{producers: 20, consumers: 20},
+		{producers: 1000, consumers: 1000},
+		{producers: 10000, consumers: 10000},
+	}
 
-	for _, req := range requests {
-		for idx := range producers {
-			producer := producers[idx]
-			consumer := consumers[idx]
+	for _, ta := range cases {
+		b.Run(fmt.Sprintf("LockingPool: P:C: %v:%v", ta.producers, ta.consumers), func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				b.StopTimer()
+				var total int64
+				pool := prepareLockingPool(poolSizeInBits, 0)
+				ready, done, wgProducer, wgConsumer := prepareConcurrencyTest(pool, ta.producers, ta.consumers, requests, &total)
 
-			b.Run("LockPool", func(b *testing.B) {
-				for i := 0; i < b.N; i++ {
-					b.StopTimer()
-					var total int64
-					q := prepareLockPool(poolSizeInBits)
-					ready, done, wgProducer, wgConsumer := prepareConcurrencyTest(q, producer, consumer, req, &total)
+				b.StartTimer()
+				doConcurrencyTest(ready, done, wgProducer, wgConsumer)
+				b.StopTimer()
 
-					b.StartTimer()
-					close(ready)
-					wgProducer.Wait()
-					close(done)
-					wgConsumer.Wait()
-
-					b.StopTimer()
+				expected := expectedConcurrencyTestResult(poolSizeInBits, 0, ta.producers, ta.consumers, requests)
+				actual := atomic.LoadInt64(&total)
+				if expected != actual {
+					b.Fatalf("concurrency safety fail, expected:%v, actual:%v", expected, actual)
 				}
-			})
+			}
+		})
 
-			b.Run("LockFreePool", func(b *testing.B) {
-				for i := 0; i < b.N; i++ {
-					b.StopTimer()
-					var total int64
-					q := preparePool(poolSizeInBits, 0, 0)
-					ready, done, wgProducer, wgConsumer := prepareConcurrencyTest(q, producer, consumer, req, &total)
+		b.Run(fmt.Sprintf("LockFreePool: P:C: %v:%v", ta.producers, ta.consumers), func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				b.StopTimer()
+				var total int64
+				pool := prepareLockFreePool(poolSizeInBits, 0, 0)
+				ready, done, wgProducer, wgConsumer := prepareConcurrencyTest(pool, ta.producers, ta.consumers, requests, &total)
 
-					b.StartTimer()
-					close(ready)
-					wgProducer.Wait()
-					close(done)
-					wgConsumer.Wait()
+				b.StartTimer()
+				doConcurrencyTest(ready, done, wgProducer, wgConsumer)
+				b.StopTimer()
 
-					b.StopTimer()
+				expected := expectedConcurrencyTestResult(poolSizeInBits, 0, ta.producers, ta.consumers, requests)
+				actual := atomic.LoadInt64(&total)
+				if expected != actual {
+					b.Fatalf("concurrency safety fail, expected:%v, actual:%v", expected, actual)
 				}
-			})
+			}
+		})
+	}
+}
+
+func doPoolNearReality(b *testing.B, pool util.LocalConnIDPool) {
+	var (
+		id uint32
+		ok bool
+	)
+
+	// allocate local conn ID.
+	for {
+		if id, ok = pool.Get(); ok {
+			break
 		}
+		runtime.Gosched()
+	}
+
+	// deallocate local conn ID.
+	if ok = pool.Put(id); !ok {
+		b.Fatal("pool unexpected full")
+	}
+}
+
+func BenchmarkPoolNearReality(b *testing.B) {
+	b.ReportAllocs()
+
+	const (
+		poolSizeInBits = 20
+	)
+
+	concurrency_cases := []int{1, 3, 10, 100, 1000, 10000}
+	for _, concurrency := range concurrency_cases {
+		b.Run(fmt.Sprintf("LockingPool x%v", concurrency), func(b *testing.B) {
+			pool := prepareLockingPool(poolSizeInBits, math.MaxUint32)
+
+			b.SetParallelism(concurrency)
+			b.ResetTimer()
+			b.RunParallel(func(pb *testing.PB) {
+				for pb.Next() {
+					doPoolNearReality(b, pool)
+				}
+			})
+		})
+
+		b.Run(fmt.Sprintf("LockFreePool x%v", concurrency), func(b *testing.B) {
+			pool := prepareLockFreePool(poolSizeInBits, math.MaxUint32, 0)
+
+			b.SetParallelism(concurrency)
+			b.ResetTimer()
+			b.RunParallel(func(pb *testing.PB) {
+				for pb.Next() {
+					doPoolNearReality(b, pool)
+				}
+			})
+		})
 	}
 }
