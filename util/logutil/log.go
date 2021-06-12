@@ -97,7 +97,7 @@ const (
 // SlowQueryLogger is used to log slow query, InitLogger will modify it according to config file.
 var SlowQueryLogger = log.L()
 
-// InitLogger initializes a zap logger with cfg.
+// InitLogger initializes a logger with cfg.
 func InitLogger(cfg *LogConfig) error {
 	gl, props, err := log.InitLogger(&cfg.Config, zap.AddStacktrace(zapcore.FatalLevel))
 	if err != nil {
