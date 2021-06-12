@@ -306,7 +306,7 @@ func setupBinlogClient() {
 
 	terror.MustNil(err)
 
-	err = pumpcli.InitLogger(cfg.Log.ToLogConfig())
+	err = logutil.InitLogger(cfg.Log.ToLogConfig())
 	terror.MustNil(err)
 
 	binloginfo.SetPumpsClient(client)
@@ -587,7 +587,7 @@ func setGlobalVars() {
 
 func setupLog() {
 	cfg := config.GetGlobalConfig()
-	err := logutil.InitZapLogger(cfg.Log.ToLogConfig())
+	err := logutil.InitLogger(cfg.Log.ToLogConfig())
 	terror.MustNil(err)
 
 	// trigger internal http(s) client init.
