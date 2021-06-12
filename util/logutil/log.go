@@ -122,7 +122,8 @@ func InitLogger(cfg *LogConfig) error {
 	return nil
 }
 
-// Deprecated: InitZapLogger will be superseded by InitLogger later.
+// InitZapLogger is delegated to InitLogger.
+// Deprecated: prefer InitLogger
 func InitZapLogger(cfg *LogConfig) error {
 	return InitLogger(cfg)
 }
