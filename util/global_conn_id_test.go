@@ -434,7 +434,7 @@ func BenchmarkPoolConcurrency(b *testing.B) {
 
 	const (
 		poolSizeInBits = 16
-		requests       = 1 << 22
+		requests       = 1 << 18
 	)
 
 	cases := []poolConcurrencyTestCase{
