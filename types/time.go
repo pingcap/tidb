@@ -2950,40 +2950,38 @@ func matchDateWithToken(t *CoreTime, date string, token string, ctx map[string]i
 	return date, false
 }
 
-func parseDigits(input string, count int) (int, bool) {
-	if count <= 0 || len(input) < count {
-		return 0, false
+// Try to parse digits with number of `limit` starting from `input`
+// Return <number, n chars to step forward> if success.
+// Return <_, 0> if fail.
+func parseNDigits(input string, limit int) (int, int) {
+	if limit <= 0 {
+		return 0, 0
 	}
 
-	v, err := strconv.ParseUint(input[:count], 10, 64)
-	if err != nil {
-		return int(v), false
+	var num uint64 = 0
+	var step = 0
+	for ; step < len(input) && step < limit && '0' <= input[step] && input[step] <= '9'; step++ {
+		num = num*10 + uint64(input[step]-'0')
 	}
-	return int(v), true
+	return int(num), step
 }
 
 func secondsNumeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
-	result := oneOrTwoDigitRegex.FindString(input)
-	length := len(result)
-
-	v, succ := parseDigits(input, length)
-	if !succ || v >= 60 {
+	v, step := parseNDigits(input, 2)
+	if step <= 0 || v >= 60 {
 		return input, false
 	}
 	t.setSecond(uint8(v))
-	return input[length:], true
+	return input[step:], true
 }
 
 func minutesNumeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
-	result := oneOrTwoDigitRegex.FindString(input)
-	length := len(result)
-
-	v, succ := parseDigits(input, length)
-	if !succ || v >= 60 {
+	v, step := parseNDigits(input, 2)
+	if step <= 0 || v >= 60 {
 		return input, false
 	}
 	t.setMinute(uint8(v))
-	return input[length:], true
+	return input[step:], true
 }
 
 type parseState int32
@@ -3014,10 +3012,8 @@ func time12Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 		/// Note that we should update `t` as soon as possible, or we
 		/// can not get correct result for incomplete input like "12:13"
 		/// that is shorter than "hh:mm:ss"
-		result := oneOrTwoDigitRegex.FindString(input) // 1..12
-		length := len(result)
-		hour, succ := parseDigits(input, length)
-		if !succ || hour > 12 || hour == 0 {
+		hour, step := parseNDigits(input, 2) // 1..12
+		if step <= 0 || hour > 12 || hour == 0 {
 			return input, parseStateFail
 		}
 		// Handle special case: 12:34:56 AM -> 00:34:56
@@ -3029,32 +3025,28 @@ func time12Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 
 		// ':'
 		var state parseState
-		if input, state = parseSep(input[length:]); state != parseStateNormal {
+		if input, state = parseSep(input[step:]); state != parseStateNormal {
 			return input, state
 		}
 
-		result = oneOrTwoDigitRegex.FindString(input) // 0..59
-		length = len(result)
-		minute, succ := parseDigits(input, length)
-		if !succ || minute > 59 {
+		minute, step := parseNDigits(input, 2) // 0..59
+		if step <= 0 || minute > 59 {
 			return input, parseStateFail
 		}
 		t.setMinute(uint8(minute))
 
 		// ':'
-		if input, state = parseSep(input[length:]); state != parseStateNormal {
+		if input, state = parseSep(input[step:]); state != parseStateNormal {
 			return input, state
 		}
 
-		result = oneOrTwoDigitRegex.FindString(input) // 0..59
-		length = len(result)
-		second, succ := parseDigits(input, length)
-		if !succ || second > 59 {
+		second, step := parseNDigits(input, 2) // 0..59
+		if step <= 0 || second > 59 {
 			return input, parseStateFail
 		}
 		t.setSecond(uint8(second))
 
-		input = skipWhiteSpace(input[length:])
+		input = skipWhiteSpace(input[step:])
 		if len(input) == 0 {
 			// No "AM"/"PM" suffix, it is ok
 			return input, parseStateEndOfLine
@@ -3088,41 +3080,35 @@ func time24Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 		/// Note that we should update `t` as soon as possible, or we
 		/// can not get correct result for incomplete input like "12:13"
 		/// that is shorter than "hh:mm:ss"
-		result := oneOrTwoDigitRegex.FindString(input) // 0..23
-		length := len(result)
-		hour, succ := parseDigits(input, length)
-		if !succ || hour > 23 {
+		hour, step := parseNDigits(input, 2) // 0..23
+		if step <= 0 || hour > 23 {
 			return input, parseStateFail
 		}
 		t.setHour(uint8(hour))
 
 		// ':'
 		var state parseState
-		if input, state = parseSep(input[length:]); state != parseStateNormal {
+		if input, state = parseSep(input[step:]); state != parseStateNormal {
 			return input, state
 		}
 
-		result = oneOrTwoDigitRegex.FindString(input) // 0..59
-		length = len(result)
-		minute, succ := parseDigits(input, length)
-		if !succ || minute > 59 {
+		minute, step := parseNDigits(input, 2) // 0..59
+		if step <= 0 || minute > 59 {
 			return input, parseStateFail
 		}
 		t.setMinute(uint8(minute))
 
 		// ':'
-		if input, state = parseSep(input[length:]); state != parseStateNormal {
+		if input, state = parseSep(input[step:]); state != parseStateNormal {
 			return input, state
 		}
 
-		result = oneOrTwoDigitRegex.FindString(input) // 0..59
-		length = len(result)
-		second, succ := parseDigits(input, length)
-		if !succ || second > 59 {
+		second, step := parseNDigits(input, 2) // 0..59
+		if step <= 0 || second > 59 {
 			return input, parseStateFail
 		}
 		t.setSecond(uint8(second))
-		return input[length:], parseStateNormal
+		return input[step:], parseStateNormal
 	}
 
 	remain, state := tryParse(input)
@@ -3154,9 +3140,6 @@ func isAMOrPM(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	return input[2:], true
 }
 
-// digitRegex: it was used to scan a variable-length monthly day or month in the string. Ex:  "01" or "1" or "30"
-var oneOrTwoDigitRegex = regexp.MustCompile("^[0-9]{1,2}")
-
 // oneToSixDigitRegex: it was just for [0, 999999]
 var oneToSixDigitRegex = regexp.MustCompile("^[0-9]{0,6}")
 
@@ -3164,64 +3147,45 @@ var oneToSixDigitRegex = regexp.MustCompile("^[0-9]{0,6}")
 var numericRegex = regexp.MustCompile("[0-9]+")
 
 func dayOfMonthNumeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
-	result := oneOrTwoDigitRegex.FindString(input) // 0..31
-	length := len(result)
-
-	v, ok := parseDigits(input, length)
-
-	if !ok || v > 31 {
+	v, step := parseNDigits(input, 2) // 0..31
+	if step <= 0 || v > 31 {
 		return input, false
 	}
 	t.setDay(uint8(v))
-	return input[length:], true
+	return input[step:], true
 }
 
 func hour24Numeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
-	result := oneOrTwoDigitRegex.FindString(input) // 0..23
-	length := len(result)
-
-	v, ok := parseDigits(input, length)
-
-	if !ok || v > 23 {
+	v, step := parseNDigits(input, 2) // 0..23
+	if step <= 0 || v > 23 {
 		return input, false
 	}
 	t.setHour(uint8(v))
 	ctx["%H"] = v
-	return input[length:], true
+	return input[step:], true
 }
 
 func hour12Numeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
-	result := oneOrTwoDigitRegex.FindString(input) // 1..12
-	length := len(result)
-
-	v, ok := parseDigits(input, length)
-
-	if !ok || v > 12 || v == 0 {
+	v, step := parseNDigits(input, 2) // 1..12
+	if step <= 0 || v > 12 || v == 0 {
 		return input, false
 	}
 	t.setHour(uint8(v))
 	ctx["%h"] = v
-	return input[length:], true
+	return input[step:], true
 }
 
 func microSeconds(t *CoreTime, input string, ctx map[string]int) (string, bool) {
-	result := oneToSixDigitRegex.FindString(input)
-	length := len(result)
-	if length == 0 {
+	v, step := parseNDigits(input, 6)
+	if step <= 0 {
 		t.setMicrosecond(0)
 		return input, true
-	}
-
-	v, ok := parseDigits(input, length)
-
-	if !ok {
-		return input, false
 	}
 	for v > 0 && v*10 < 1000000 {
 		v *= 10
 	}
 	t.setMicrosecond(uint32(v))
-	return input[length:], true
+	return input[step:], true
 }
 
 func yearNumericFourDigits(t *CoreTime, input string, ctx map[string]int) (string, bool) {
@@ -3233,32 +3197,23 @@ func yearNumericTwoDigits(t *CoreTime, input string, ctx map[string]int) (string
 }
 
 func yearNumericNDigits(t *CoreTime, input string, ctx map[string]int, n int) (string, bool) {
-	effectiveCount, effectiveValue := 0, 0
-	for effectiveCount+1 <= n {
-		value, succeed := parseDigits(input, effectiveCount+1)
-		if !succeed {
-			break
-		}
-		effectiveCount++
-		effectiveValue = value
-	}
-	if effectiveCount == 0 {
+	year, step := parseNDigits(input, n)
+	if step <= 0 {
 		return input, false
+	} else if step <= 2 {
+		year = adjustYear(year)
 	}
-	if effectiveCount <= 2 {
-		effectiveValue = adjustYear(effectiveValue)
-	}
-	t.setYear(uint16(effectiveValue))
-	return input[effectiveCount:], true
+	t.setYear(uint16(year))
+	return input[step:], true
 }
 
 func dayOfYearThreeDigits(t *CoreTime, input string, ctx map[string]int) (string, bool) {
-	v, succ := parseDigits(input, 3)
-	if !succ || v == 0 || v > 366 {
+	v, step := parseNDigits(input, 3)
+	if step <= 0 || v == 0 || v > 366 {
 		return input, false
 	}
 	ctx["%j"] = v
-	return input[3:], true
+	return input[step:], true
 }
 
 func abbreviatedMonth(t *CoreTime, input string, ctx map[string]int) (string, bool) {
@@ -3290,16 +3245,12 @@ func fullNameMonth(t *CoreTime, input string, ctx map[string]int) (string, bool)
 }
 
 func monthNumeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
-	result := oneOrTwoDigitRegex.FindString(input) // 1..12
-	length := len(result)
-
-	v, ok := parseDigits(input, length)
-
-	if !ok || v > 12 {
+	v, step := parseNDigits(input, 2) // 1..12
+	if step <= 0 || v > 12 {
 		return input, false
 	}
 	t.setMonth(uint8(v))
-	return input[length:], true
+	return input[step:], true
 }
 
 // DateFSP gets fsp from date string.
