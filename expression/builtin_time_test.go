@@ -1421,6 +1421,11 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 		{"abcd-2020-10-10.1", "%@-%Y-%m-%d%.%#%@", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
 		{"2020-10-10", "%Y-%m-%d%@", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
 		{"2020-10-10abcde123abcdef", "%Y-%m-%d%@%#", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		//'%b'/'%M' should be case insensitive
+		{"31/may/2016 12:34:56.1234", "%d/%b/%Y %H:%i:%S.%f", true, time.Date(2016, 5, 31, 12, 34, 56, 123400000, time.Local)},
+		{"30/april/2016 12:34:56.", "%d/%M/%Y %H:%i:%s.%f", true, time.Date(2016, 4, 30, 12, 34, 56, 0, time.Local)},
+		{"31/mAy/2016 12:34:56.1234", "%d/%b/%Y %H:%i:%S.%f", true, time.Date(2016, 5, 31, 12, 34, 56, 123400000, time.Local)},
+		{"30/apRil/2016 12:34:56.", "%d/%M/%Y %H:%i:%s.%f", true, time.Date(2016, 4, 30, 12, 34, 56, 0, time.Local)},
 	}
 
 	fc := funcs[ast.StrToDate]

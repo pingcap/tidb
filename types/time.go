@@ -2849,18 +2849,18 @@ func skipWhiteSpace(input string) string {
 }
 
 var monthAbbrev = map[string]gotime.Month{
-	"Jan": gotime.January,
-	"Feb": gotime.February,
-	"Mar": gotime.March,
-	"Apr": gotime.April,
-	"May": gotime.May,
-	"Jun": gotime.June,
-	"Jul": gotime.July,
-	"Aug": gotime.August,
-	"Sep": gotime.September,
-	"Oct": gotime.October,
-	"Nov": gotime.November,
-	"Dec": gotime.December,
+	"jan": gotime.January,
+	"feb": gotime.February,
+	"mar": gotime.March,
+	"apr": gotime.April,
+	"may": gotime.May,
+	"jun": gotime.June,
+	"jul": gotime.July,
+	"aug": gotime.August,
+	"sep": gotime.September,
+	"oct": gotime.October,
+	"nov": gotime.November,
+	"dec": gotime.December,
 }
 
 type dateFormatParser func(t *CoreTime, date string, ctx map[string]int) (remain string, succ bool)
@@ -3183,7 +3183,7 @@ func dayOfYearThreeDigits(t *CoreTime, input string, ctx map[string]int) (string
 
 func abbreviatedMonth(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	if len(input) >= 3 {
-		monthName := input[:3]
+		monthName := strings.ToLower(input[:3])
 		if month, ok := monthAbbrev[monthName]; ok {
 			t.setMonth(uint8(month))
 			return input[len(monthName):], true
@@ -3192,9 +3192,16 @@ func abbreviatedMonth(t *CoreTime, input string, ctx map[string]int) (string, bo
 	return input, false
 }
 
+func hasCaseInsensitivePrefix(input, prefix string) bool {
+	if len(input) < len(prefix) {
+		return false
+	}
+	return strings.EqualFold(input[:len(prefix)], prefix)
+}
+
 func fullNameMonth(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	for i, month := range MonthNames {
-		if strings.HasPrefix(input, month) {
+		if hasCaseInsensitivePrefix(input, month) {
 			t.setMonth(uint8(i + 1))
 			return input[len(month):], true
 		}
