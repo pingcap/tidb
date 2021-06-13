@@ -26,6 +26,51 @@ import (
 	"go.uber.org/zap"
 )
 
+type serverIDGetterFn func() uint64
+type connectionIDExistCheckerFn func(connectionID uint64) bool
+
+// ConnectionIDAllocator allocates connection IDs.
+type ConnectionIDAllocator interface {
+	// Init initiates the allocator.
+	Init(serverIDGetter serverIDGetterFn, existedChecker connectionIDExistCheckerFn)
+	// SetServerIDGetter set serverIDGetter to allocator.
+	SetServerIDGetter(serverIDGetter serverIDGetterFn)
+	// NextID returns next connection ID.
+	NextID() uint64
+	// Release releases connectionID to pool.
+	Release(connectionID uint64)
+}
+
+var (
+	_ ConnectionIDAllocator = (*SimpleConnIDAllocator)(nil)
+	_ ConnectionIDAllocator = (*GlobalConnIDAllocator)(nil)
+)
+
+// SimpleConnIDAllocator is a simple auto-increment allocator.
+type SimpleConnIDAllocator struct {
+	lastID uint64
+}
+
+// Init implements ConnectionIDAllocator interface.
+func (a *SimpleConnIDAllocator) Init(_ serverIDGetterFn, _ connectionIDExistCheckerFn) {
+	// do nothing
+}
+
+// SetServerIDGetter implements ConnectionIDAllocator interface.
+func (a *SimpleConnIDAllocator) SetServerIDGetter(_ serverIDGetterFn) {
+	// do nothing
+}
+
+// NextID implements ConnectionIDAllocator interface.
+func (a *SimpleConnIDAllocator) NextID() uint64 {
+	return atomic.AddUint64(&a.lastID, 1)
+}
+
+// Release implements ConnectionIDAllocator interface.
+func (a *SimpleConnIDAllocator) Release(_ uint64) {
+	// do nothing
+}
+
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
 // See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md
 // 32 bits version:
@@ -48,10 +93,10 @@ type GlobalConnID struct {
 }
 
 const (
-	// LocalConnIDBits32 is the number of bits of localConnID for 32bits global connection ID.
-	LocalConnIDBits32 = 20
 	// MaxServerID32 is maximum serverID for 32bits global connection ID.
 	MaxServerID32 = 1<<11 - 1
+	// LocalConnIDBits32 is the number of bits of localConnID for 32bits global connection ID.
+	LocalConnIDBits32 = 20
 	// MaxLocalConnID32 is maximum localConnID for 32bits global connection ID.
 	MaxLocalConnID32 = 1<<LocalConnIDBits32 - 1
 
@@ -113,8 +158,8 @@ type GlobalConnIDAllocator struct {
 	is64bits       sync2.AtomicInt32 // !0: true, 0: false
 	serverIDGetter func() uint64
 
-	localAllocator32 LocalConnIDAllocator32
-	localAllocator64 LocalConnIDAllocator64
+	local32 LocalConnIDAllocator32
+	local64 LocalConnIDAllocator64
 }
 
 // Is64 indicates allocate 64bits global connection ID or not.
@@ -127,15 +172,12 @@ func (g *GlobalConnIDAllocator) UpgradeTo64() {
 	g.is64bits.Set(1)
 }
 
-type serverIDGetterFn func() uint64
-type globalConnIDExistCheckerFn func(globalConnID uint64) bool
-
 // Init initiate members.
-func (g *GlobalConnIDAllocator) Init(serverIDGetter serverIDGetterFn, existedChecker globalConnIDExistCheckerFn) {
+func (g *GlobalConnIDAllocator) Init(serverIDGetter serverIDGetterFn, existedChecker connectionIDExistCheckerFn) {
 	g.serverIDGetter = serverIDGetter
 
-	g.localAllocator32.Init(nil)
-	g.localAllocator64.Init(existedChecker)
+	g.local32.Init(nil)
+	g.local64.Init(existedChecker)
 
 	g.is64bits.Set(1) // TODO: set 32bits as default, after 32bits logics is fully implemented and tested.
 }
@@ -146,26 +188,32 @@ func (g *GlobalConnIDAllocator) SetServerIDGetter(serverIDGetter serverIDGetterF
 }
 
 // NextID returns next connection ID.
-func (g *GlobalConnIDAllocator) NextID() GlobalConnID {
+func (g *GlobalConnIDAllocator) NextID() uint64 {
+	globalConnID := g.Allocate()
+	return globalConnID.ID()
+}
+
+// Allocate allocates a new global connID.
+func (g *GlobalConnIDAllocator) Allocate() GlobalConnID {
 	serverID := g.serverIDGetter()
 
 	// 32bits.
 	if !g.Is64() {
-		localConnID, isExhausted := g.localAllocator32.Allocate()
-		if isExhausted {
-			g.UpgradeTo64() // go on to 64bits.
+		localConnID, ok := g.local32.Allocate()
+		if ok {
+			return GlobalConnID{
+				ServerID:    serverID,
+				LocalConnID: localConnID,
+				Is64bits:    false,
+			}
 		}
-		return GlobalConnID{
-			ServerID:    serverID,
-			LocalConnID: localConnID,
-			Is64bits:    false,
-		}
+		g.UpgradeTo64() // go on to 64bits.
 	}
 
 	// 64bits.
 	return GlobalConnID{
 		ServerID:    serverID,
-		LocalConnID: g.localAllocator64.Allocate(serverID),
+		LocalConnID: g.local64.Allocate(serverID),
 		Is64bits:    true,
 	}
 }
@@ -174,39 +222,43 @@ func (g *GlobalConnIDAllocator) NextID() GlobalConnID {
 func (g *GlobalConnIDAllocator) Release(connectionID uint64) {
 	globalConnID, isTruncated, err := ParseGlobalConnID(connectionID)
 	if err != nil || isTruncated {
-		logutil.BgLogger().Error("failed to ParseGlobalConnID", zap.Uint64("connectionID", connectionID), zap.Error(err), zap.Bool("isTruncated", isTruncated))
+		logutil.BgLogger().Error("failed to ParseGlobalConnID", zap.Error(err), zap.Uint64("connectionID", connectionID), zap.Bool("isTruncated", isTruncated))
 		return
 	}
 
 	if globalConnID.Is64bits {
-		g.localAllocator64.Deallocate(globalConnID.LocalConnID)
+		g.local64.Deallocate(globalConnID.LocalConnID)
 	} else {
-		if err = g.localAllocator32.Deallocate(globalConnID.LocalConnID); err != nil {
-			logutil.BgLogger().Error("failed to release connection ID", zap.Uint64("connectionID", connectionID), zap.Error(err), zap.Uint64("localConnID", globalConnID.LocalConnID))
+		if err = g.local32.Deallocate(globalConnID.LocalConnID); err != nil {
+			logutil.BgLogger().Error("failed to release 32bits connection ID", zap.Error(err), zap.Uint64("connectionID", connectionID), zap.Uint64("localConnID", globalConnID.LocalConnID))
 		}
 	}
 }
 
 // LocalConnIDAllocator64 is local connID allocator for 64bits global connection ID.
 type LocalConnIDAllocator64 struct {
-	existedChecker globalConnIDExistCheckerFn
+	existedChecker connectionIDExistCheckerFn
 	lastID         uint64
 }
 
 // Init initiates LocalConnIDAllocator64
-func (a *LocalConnIDAllocator64) Init(existedChecker globalConnIDExistCheckerFn) {
+func (a *LocalConnIDAllocator64) Init(existedChecker connectionIDExistCheckerFn) {
 	a.existedChecker = existedChecker
 }
 
+// LocalConnIDAllocator64RetryCount is the retry count of `LocalConnIDAllocator64.Allocate`
+const LocalConnIDAllocator64RetryCount = 20
+
 // Allocate local connID for 64bits global connID.
-// local connID has 40bits pool size and should not be exhausted, as `MaxServerConnections` is a uint32.
+// local connID with 40bits pool size is big enough and should not be exhausted, as `MaxServerConnections` is a uint32.
 func (a *LocalConnIDAllocator64) Allocate(serverID uint64) (localConnID uint64) {
-	for {
+	for i := 0; i < LocalConnIDAllocator64RetryCount; i++ {
 		localConnID := atomic.AddUint64(&a.lastID, 1) & MaxLocalConnID64
 		if !a.existedChecker(makeGlobalConnID(true, serverID, localConnID)) {
 			return localConnID
 		}
 	}
+	panic(fmt.Sprintf("Failed to allocate 64bits local connID after retry %v times. Should never happen", LocalConnIDAllocator64RetryCount))
 }
 
 // Deallocate local connID to pool.
@@ -220,7 +272,7 @@ type LocalConnIDAllocator32 struct {
 }
 
 // Init initiates LocalConnIDAllocator32.
-//   Pass `nil` to use default pool (`LockFreePool`).
+// Pass `nil` to use default pool (`LockFreePool`).
 func (a *LocalConnIDAllocator32) Init(pool LocalConnIDPool) {
 	if pool == nil {
 		a.pool = &LockFreePool{}
@@ -231,9 +283,10 @@ func (a *LocalConnIDAllocator32) Init(pool LocalConnIDPool) {
 }
 
 // Allocate local connID.
-func (a *LocalConnIDAllocator32) Allocate() (localConnID uint64, isExhausted bool) {
+// `ok` is false if local connID exhausted.
+func (a *LocalConnIDAllocator32) Allocate() (localConnID uint64, ok bool) {
 	id, ok := a.pool.Get()
-	return uint64(id), !ok
+	return uint64(id), ok
 }
 
 // Deallocate local connID to pool.
@@ -246,7 +299,7 @@ func (a *LocalConnIDAllocator32) Deallocate(localConnID uint64) error {
 
 const (
 	// PoolInvalidValue indicates invalid value from LocalConnIDPool
-	PoolInvalidValue = 0xffff_ffff
+	PoolInvalidValue = math.MaxUint32
 )
 
 // LocalConnIDPool is the pool allocating & deallocating local conn ID.
@@ -256,7 +309,7 @@ type LocalConnIDPool interface {
 	//   fillCount fills pool with [1, min(fillCount, 1<<(sizeInBits-1)].
 	//   pass "math.MaxUint32" to fillCount to fulfill the pool.
 	Init(sizeInBits uint32, fillCount uint32)
-	// Len returns length of available values in pool.
+	// Len returns length of available id's in pool.
 	Len() uint32
 	// Put puts value to pool. "ok" is false when pool is full.
 	Put(val uint32) (ok bool)
@@ -284,9 +337,9 @@ type lockFreePoolItem struct {
 	// seq indicates read/write status
 	// Sequence:
 	//   seq==tail: writable ---> doWrite,seq:=tail+1 ---> seq==head+1:written/readable ---> doRead,seq:=head+size
-	//       ^                                                                                          |
-	//       +------------------------------------------------------------------------------------------+
-	//   slot i: i(writable) ---> i+1(readable) ---> i+cap(writable) ---> i+cap+1(readable) ---> i+2*cap ---> ...
+	//         ^                                                                                        |
+	//         +----------------------------------------------------------------------------------------+
+	//   slot[i].seq: i(writable) ---> i+1(readable) ---> i+cap(writable) ---> i+cap+1(readable) ---> i+2*cap ---> ...
 	seq uint32
 }
 
@@ -329,6 +382,7 @@ func (p *LockFreePool) Len() uint32 {
 }
 
 // String implements LockFreePool interface.
+// Notice: NOT thread safe.
 func (p LockFreePool) String() string {
 	head := p.head.Get()
 	tail := p.tail.Get()

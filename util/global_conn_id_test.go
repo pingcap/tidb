@@ -284,7 +284,7 @@ func prepareConcurrencyTest(pool util.LocalConnIDPool, producers int, consumers 
 				<-ready
 
 				var sum int64
-			L:
+			Loop:
 				for {
 					val, ok := pool.Get()
 					if ok {
@@ -293,7 +293,7 @@ func prepareConcurrencyTest(pool util.LocalConnIDPool, producers int, consumers 
 					}
 					select {
 					case <-done:
-						break L
+						break Loop
 					default:
 						runtime.Gosched()
 					}
@@ -494,8 +494,8 @@ func benchmarkLocalConnIDAllocator32(b *testing.B, a *util.LocalConnIDAllocator3
 
 	// allocate local conn ID.
 	for {
-		var isExhausted bool
-		if id, isExhausted = a.Allocate(); !isExhausted {
+		var ok bool
+		if id, ok = a.Allocate(); ok {
 			break
 		}
 		runtime.Gosched()

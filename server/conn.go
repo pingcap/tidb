@@ -151,10 +151,9 @@ var (
 
 // newClientConn creates a *clientConn object.
 func newClientConn(s *Server) *clientConn {
-	globalConnID := s.globalConnIDAllocator.NextID()
 	return &clientConn{
 		server:       s,
-		connectionID: globalConnID.ID(),
+		connectionID: s.connectionIDAllocator.NextID(),
 		collation:    mysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(32 * 1024),
 		status:       connStatusDispatching,
@@ -300,7 +299,7 @@ func (cc *clientConn) Close() error {
 
 func closeConn(cc *clientConn, connections int) error {
 	metrics.ConnGauge.Set(float64(connections))
-	cc.server.globalConnIDAllocator.Release(cc.connectionID)
+	cc.server.connectionIDAllocator.Release(cc.connectionID)
 	err := cc.bufReadConn.Close()
 	terror.Log(err)
 	if cc.ctx != nil {

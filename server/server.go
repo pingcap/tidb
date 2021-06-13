@@ -123,7 +123,7 @@ type Server struct {
 	clients               map[uint64]*clientConn
 	capability            uint32
 	dom                   *domain.Domain
-	globalConnIDAllocator util.GlobalConnIDAllocator
+	connectionIDAllocator util.ConnectionIDAllocator
 
 	statusAddr     string
 	statusListener net.Listener
@@ -165,7 +165,7 @@ func (s *Server) releaseToken(token *Token) {
 // SetDomain use to set the server domain.
 func (s *Server) SetDomain(dom *domain.Domain) {
 	s.dom = dom
-	s.globalConnIDAllocator.SetServerIDGetter(dom.ServerID)
+	s.connectionIDAllocator.SetServerIDGetter(dom.ServerID)
 }
 
 // newConn creates a new *clientConn from a net.Conn.
@@ -231,7 +231,14 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
 	}
-	s.globalConnIDAllocator.Init(func() uint64 { return 0 }, s.IsConnectionIDExisted)
+
+	if config.GetGlobalConfig().Experimental.EnableGlobalKill {
+		s.connectionIDAllocator = &util.GlobalConnIDAllocator{}
+	} else {
+		s.connectionIDAllocator = &util.SimpleConnIDAllocator{}
+	}
+	s.connectionIDAllocator.Init(nil, s.IsConnectionIDExisted) // set `serverIDGetter` in domain.
+
 	setTxnScope()
 	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 	if err != nil {
