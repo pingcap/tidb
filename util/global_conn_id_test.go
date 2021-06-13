@@ -160,23 +160,23 @@ func (s *testGlobalConnIDSuite) TestLockFreePoolInitEmpty(c *C) {
 	c.Assert(pool.Len(), Equals, uint32(0))
 }
 
-var _ util.LocalConnIDPool = (*LockingPool)(nil)
+var _ util.LocalConnIDPool = (*LockBasedPool)(nil)
 
-// LockingPool implements LocalConnIDPool by locking manner.
+// LockBasedPool implements LocalConnIDPool by lock-based manner.
 // For benchmark purpose.
-type LockingPool struct {
-	_align    uint64
-	head      uint32 // first available slot
-	_padding1 uint32 // padding to avoid false sharing
-	tail      uint32 // first empty slot. `head==tail` means empty.
-	_padding2 uint32 // padding to avoid false sharing
-	cap       uint32
+type LockBasedPool struct {
+	_    uint64 // align to 64bits
+	head uint32 // first available slot
+	_    uint32 // padding to avoid false sharing
+	tail uint32 // first empty slot. `head==tail` means empty.
+	_    uint32 // padding to avoid false sharing
+	cap  uint32
 
 	mu    *sync.Mutex
 	slots []uint32
 }
 
-func (p *LockingPool) Init(sizeInBits uint32, fillCount uint32) {
+func (p *LockBasedPool) Init(sizeInBits uint32, fillCount uint32) {
 	p.mu = &sync.Mutex{}
 
 	p.cap = 1 << sizeInBits
@@ -195,13 +195,13 @@ func (p *LockingPool) Init(sizeInBits uint32, fillCount uint32) {
 	p.tail = fillCount
 }
 
-func (p *LockingPool) Len() uint32 {
+func (p *LockBasedPool) Len() uint32 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.tail - p.head
 }
 
-func (p LockingPool) String() string {
+func (p LockBasedPool) String() string {
 	head := p.head
 	tail := p.tail
 	headVal := p.slots[head&(p.cap-1)]
@@ -212,7 +212,7 @@ func (p LockingPool) String() string {
 		p.cap, len, head, headVal, tail, tailVal)
 }
 
-func (p *LockingPool) Put(val uint32) (ok bool) {
+func (p *LockBasedPool) Put(val uint32) (ok bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -225,7 +225,7 @@ func (p *LockingPool) Put(val uint32) (ok bool) {
 	return true
 }
 
-func (p *LockingPool) Get() (val uint32, ok bool) {
+func (p *LockBasedPool) Get() (val uint32, ok bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.head == p.tail { // empty
@@ -237,8 +237,8 @@ func (p *LockingPool) Get() (val uint32, ok bool) {
 	return val, true
 }
 
-func prepareLockingPool(sizeInBits uint32, fillCount uint32) util.LocalConnIDPool {
-	var pool LockingPool
+func prepareLockBasedPool(sizeInBits uint32, fillCount uint32) util.LocalConnIDPool {
+	var pool LockBasedPool
 	pool.Init(sizeInBits, fillCount)
 	return &pool
 }
@@ -338,9 +338,9 @@ func testLockFreePoolConcurrency(poolSizeInBits uint32, fillCount uint32, produc
 	return expected, atomic.LoadInt64(&total)
 }
 
-func testLockingPoolConcurrency(poolSizeInBits uint32, producers int, consumers int, requests int) (expected, actual int64) {
+func testLockBasedPoolConcurrency(poolSizeInBits uint32, producers int, consumers int, requests int) (expected, actual int64) {
 	var total int64
-	pool := prepareLockingPool(poolSizeInBits, 0)
+	pool := prepareLockBasedPool(poolSizeInBits, 0)
 	ready, done, wgProducer, wgConsumer := prepareConcurrencyTest(pool, producers, consumers, requests, &total)
 
 	doConcurrencyTest(ready, done, wgProducer, wgConsumer)
@@ -372,7 +372,7 @@ func (s *testGlobalConnIDSuite) TestLockFreePoolBasicConcurrencySafety(c *C) {
 	c.Assert(actual, Equals, expected)
 }
 
-func (s *testGlobalConnIDSuite) TestLockingPoolConcurrencySafety(c *C) {
+func (s *testGlobalConnIDSuite) TestLockBasedPoolConcurrencySafety(c *C) {
 	var (
 		expected int64
 		actual   int64
@@ -385,7 +385,7 @@ func (s *testGlobalConnIDSuite) TestLockingPoolConcurrencySafety(c *C) {
 		requests   = 1 << 20
 	)
 
-	expected, actual = testLockingPoolConcurrency(sizeInBits, producers, consumers, requests)
+	expected, actual = testLockBasedPoolConcurrency(sizeInBits, producers, consumers, requests)
 	c.Assert(actual, Equals, expected)
 }
 
@@ -440,18 +440,19 @@ func BenchmarkPoolConcurrency(b *testing.B) {
 	cases := []poolConcurrencyTestCase{
 		{producers: 1, consumers: 1},
 		{producers: 3, consumers: 3},
-		{producers: 20, consumers: 20},
+		{producers: 10, consumers: 10},
+		{producers: 100, consumers: 100},
 		{producers: 1000, consumers: 1000},
 		{producers: 10000, consumers: 10000},
 	}
 
 	for _, ta := range cases {
-		b.Run(fmt.Sprintf("LockingPool: P:C: %v:%v", ta.producers, ta.consumers), func(b *testing.B) {
+		b.Run(fmt.Sprintf("LockBasedPool: P:C: %v:%v", ta.producers, ta.consumers), func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
 				var total int64
-				pool := prepareLockingPool(poolSizeInBits, 0)
+				pool := prepareLockBasedPool(poolSizeInBits, 0)
 				ready, done, wgProducer, wgConsumer := prepareConcurrencyTest(pool, ta.producers, ta.consumers, requests, &total)
 
 				b.StartTimer()
@@ -488,55 +489,75 @@ func BenchmarkPoolConcurrency(b *testing.B) {
 	}
 }
 
-func doPoolNearReality(b *testing.B, pool util.LocalConnIDPool) {
-	var (
-		id uint32
-		ok bool
-	)
+func benchmarkLocalConnIDAllocator32(b *testing.B, a *util.LocalConnIDAllocator32) {
+	var id uint64
 
 	// allocate local conn ID.
 	for {
-		if id, ok = pool.Get(); ok {
+		var isExhausted bool
+		if id, isExhausted = a.Allocate(); !isExhausted {
 			break
 		}
 		runtime.Gosched()
 	}
 
 	// deallocate local conn ID.
-	if ok = pool.Put(id); !ok {
+	if err := a.Deallocate(id); err != nil {
 		b.Fatal("pool unexpected full")
 	}
 }
 
-func BenchmarkPoolNearReality(b *testing.B) {
+func BenchmarkLocalConnIDAllocator(b *testing.B) {
 	b.ReportAllocs()
 
-	const (
-		poolSizeInBits = 20
-	)
+	concurrencyCases := []int{1, 3, 10, 100, 1000, 10000}
+	for _, concurrency := range concurrencyCases {
+		b.Run(fmt.Sprintf("Allocator 64 x%v", concurrency), func(b *testing.B) {
+			const ServerID = 42
+			clients := make(map[uint64]struct{})
+			mu := sync.RWMutex{}
+			existedChecker := func(id uint64) bool {
+				mu.RLock()
+				_, ok := clients[id]
+				mu.RUnlock()
+				return ok
+			}
 
-	concurrency_cases := []int{1, 3, 10, 100, 1000, 10000}
-	for _, concurrency := range concurrency_cases {
-		b.Run(fmt.Sprintf("LockingPool x%v", concurrency), func(b *testing.B) {
-			pool := prepareLockingPool(poolSizeInBits, math.MaxUint32)
+			a := util.LocalConnIDAllocator64{}
+			a.Init(existedChecker)
 
 			b.SetParallelism(concurrency)
 			b.ResetTimer()
 			b.RunParallel(func(pb *testing.PB) {
 				for pb.Next() {
-					doPoolNearReality(b, pool)
+					id := a.Allocate(ServerID)
+					a.Deallocate(id)
+				}
+			})
+		})
+
+		b.Run(fmt.Sprintf("Allocator 32(LockBased) x%v", concurrency), func(b *testing.B) {
+			a := util.LocalConnIDAllocator32{}
+			a.Init(&LockBasedPool{})
+
+			b.SetParallelism(concurrency)
+			b.ResetTimer()
+			b.RunParallel(func(pb *testing.PB) {
+				for pb.Next() {
+					benchmarkLocalConnIDAllocator32(b, &a)
 				}
 			})
 		})
 
 		b.Run(fmt.Sprintf("LockFreePool x%v", concurrency), func(b *testing.B) {
-			pool := prepareLockFreePool(poolSizeInBits, math.MaxUint32, 0)
+			a := util.LocalConnIDAllocator32{}
+			a.Init(nil)
 
 			b.SetParallelism(concurrency)
 			b.ResetTimer()
 			b.RunParallel(func(pb *testing.PB) {
 				for pb.Next() {
-					doPoolNearReality(b, pool)
+					benchmarkLocalConnIDAllocator32(b, &a)
 				}
 			})
 		})

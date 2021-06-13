@@ -48,10 +48,12 @@ type GlobalConnID struct {
 }
 
 const (
+	// LocalConnIDBits32 is the number of bits of localConnID for 32bits global connection ID.
+	LocalConnIDBits32 = 20
 	// MaxServerID32 is maximum serverID for 32bits global connection ID.
 	MaxServerID32 = 1<<11 - 1
 	// MaxLocalConnID32 is maximum localConnID for 32bits global connection ID.
-	MaxLocalConnID32 = 1<<20 - 1
+	MaxLocalConnID32 = 1<<LocalConnIDBits32 - 1
 
 	// MaxServerID64 is maximum serverID for 64bits global connection ID.
 	MaxServerID64 = 1<<22 - 1
@@ -59,6 +61,7 @@ const (
 	MaxLocalConnID64 = 1<<40 - 1
 )
 
+// makeGlobalConnID composes GlobalConnID.
 func makeGlobalConnID(is64bits bool, serverID uint64, localConnID uint64) uint64 {
 	var id uint64
 	if is64bits {
@@ -131,7 +134,7 @@ type globalConnIDExistCheckerFn func(globalConnID uint64) bool
 func (g *GlobalConnIDAllocator) Init(serverIDGetter serverIDGetterFn, existedChecker globalConnIDExistCheckerFn) {
 	g.serverIDGetter = serverIDGetter
 
-	g.localAllocator32.Init()
+	g.localAllocator32.Init(nil)
 	g.localAllocator64.Init(existedChecker)
 
 	g.is64bits.Set(1) // TODO: set 32bits as default, after 32bits logics is fully implemented and tested.
@@ -195,11 +198,6 @@ func (a *LocalConnIDAllocator64) Init(existedChecker globalConnIDExistCheckerFn)
 	a.existedChecker = existedChecker
 }
 
-const (
-	// LocalConnIDAllocator64RetryCnt is retry count for localConnIDAllocator64
-	LocalConnIDAllocator64RetryCnt = 10
-)
-
 // Allocate local connID for 64bits global connID.
 // local connID has 40bits pool size and should not be exhausted, as `MaxServerConnections` is a uint32.
 func (a *LocalConnIDAllocator64) Allocate(serverID uint64) (localConnID uint64) {
@@ -221,10 +219,15 @@ type LocalConnIDAllocator32 struct {
 	pool LocalConnIDPool
 }
 
-// Init initiates LocalConnIDAllocator32
-func (a *LocalConnIDAllocator32) Init() {
-	a.pool = &LockFreePool{}
-	a.pool.Init(20, math.MaxUint32)
+// Init initiates LocalConnIDAllocator32.
+//   Pass `nil` to use default pool (`LockFreePool`).
+func (a *LocalConnIDAllocator32) Init(pool LocalConnIDPool) {
+	if pool == nil {
+		a.pool = &LockFreePool{}
+	} else {
+		a.pool = pool
+	}
+	a.pool.Init(LocalConnIDBits32, math.MaxUint32)
 }
 
 // Allocate local connID.
@@ -265,11 +268,11 @@ var _ LocalConnIDPool = (*LockFreePool)(nil)
 
 // LockFreePool is a lock-free implementation of LocalConnIDPool.
 type LockFreePool struct {
-	_align    uint64
-	head      sync2.AtomicUint32 // first available slot
-	_padding1 uint32             // padding to avoid false sharing
-	tail      sync2.AtomicUint32 // first empty slot. `head==tail` means empty.
-	_padding2 uint32             // padding to avoid false sharing
+	_    uint64             // align to 64bits
+	head sync2.AtomicUint32 // first available slot
+	_    uint32             // padding to avoid false sharing
+	tail sync2.AtomicUint32 // first empty slot. `head==tail` means empty.
+	_    uint32             // padding to avoid false sharing
 
 	cap   uint32
 	slots []lockFreePoolItem
