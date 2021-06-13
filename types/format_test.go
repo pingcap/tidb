@@ -118,11 +118,28 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`70/10/22`, `%Y/%m/%d`, types.FromDate(1970, 10, 22, 0, 0, 0, 0)},
 		{`18/10/22`, `%Y/%m/%d`, types.FromDate(2018, 10, 22, 0, 0, 0, 0)},
 		{`100/10/22`, `%Y/%m/%d`, types.FromDate(100, 10, 22, 0, 0, 0, 0)},
+		// '%r'
+		{" 04 :13:56 AM13/05/2019", "%r %d/%c/%Y", types.FromDate(2019, 5, 13, 4, 13, 56, 0)},  //
+		{"12: 13:56 AM 13/05/2019", "%r%d/%c/%Y", types.FromDate(2019, 5, 13, 0, 13, 56, 0)},   //
+		{"12:13 :56 pm 13/05/2019", "%r %d/%c/%Y", types.FromDate(2019, 5, 13, 12, 13, 56, 0)}, //
+		{"12:3: 56pm  13/05/2019", "%r %d/%c/%Y", types.FromDate(2019, 5, 13, 12, 3, 56, 0)},   //
+		{"11:13:56", "%r", types.FromDate(0, 0, 0, 11, 13, 56, 0)},                             // EOF before parsing "AM"/"PM"
+		{"11:13", "%r", types.FromDate(0, 0, 0, 11, 13, 0, 0)},                                 // EOF after hh:mm
+		{"11:", "%r", types.FromDate(0, 0, 0, 11, 0, 0, 0)},                                    // EOF after hh:
+		{"11", "%r", types.FromDate(0, 0, 0, 11, 0, 0, 0)},                                     // EOF after hh:
+		{"12", "%r", types.FromDate(0, 0, 0, 0, 0, 0, 0)},                                      // EOF after hh:, and hh=12 -> 0
+		// '%T'
+		{" 4 :13:56 13/05/2019", "%T %d/%c/%Y", types.FromDate(2019, 5, 13, 4, 13, 56, 0)},
+		{"23: 13:56  13/05/2019", "%T%d/%c/%Y", types.FromDate(2019, 5, 13, 23, 13, 56, 0)},
+		{"12:13 :56 13/05/2019", "%T %d/%c/%Y", types.FromDate(2019, 5, 13, 12, 13, 56, 0)},
+		{"19:3: 56  13/05/2019", "%T %d/%c/%Y", types.FromDate(2019, 5, 13, 19, 3, 56, 0)},
+		{"21:13", "%T", types.FromDate(0, 0, 0, 21, 13, 0, 0)}, // EOF after hh:mm
+		{"21:", "%T", types.FromDate(0, 0, 0, 21, 0, 0, 0)},    // EOF after hh:
 	}
 	for i, tt := range tests {
 		var t types.Time
-		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsTrue, Commentf("no.%d failed", i))
-		c.Assert(t.CoreTime(), Equals, tt.expect, Commentf("no.%d failed", i))
+		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsTrue, Commentf("no.%d failed input=%s format=%s", i, tt.input, tt.format))
+		c.Assert(t.CoreTime(), Equals, tt.expect, Commentf("no.%d failed input=%s format=%s", i, tt.input, tt.format))
 	}
 
 	errTests := []struct {
@@ -131,7 +148,7 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 	}{
 		{`04/31/2004`, `%m/%d/%Y`},
 		{`a09:30:17`, `%h:%i:%s`}, // format mismatch
-		{`12:43:24`, `%r`},        // no PM or AM followed
+		{`12:43:24 a`, `%r`},      // followed by incomplete 'AM'/'PM'
 		{`23:60:12`, `%T`},        // invalid minute
 		{`18`, `%l`},
 		{`00:21:22 AM`, `%h:%i:%s %p`},
@@ -139,9 +156,14 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{"2010-11-12 11 am", `%Y-%m-%d %H %p`},
 		{"2010-11-12 13 am", `%Y-%m-%d %h %p`},
 		{"2010-11-12 0 am", `%Y-%m-%d %h %p`},
+		// '%r'
+		{"13:13:56 AM13/5/2019", "%r"},  // hh = 13 with am is invalid
+		{"00:13:56 AM13/05/2019", "%r"}, // hh = 0 with am is invalid
+		{"00:13:56 pM13/05/2019", "%r"}, // hh = 0 with pm is invalid
+		{"11:13:56a", "%r"},             // EOF while parsing "AM"/"PM"
 	}
 	for i, tt := range errTests {
 		var t types.Time
-		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsFalse, Commentf("no.%d failed", i))
+		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsFalse, Commentf("no.%d failed input=%s format=%s", i, tt.input, tt.format))
 	}
 }
