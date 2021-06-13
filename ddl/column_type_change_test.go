@@ -1752,6 +1752,59 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 	tk.MustExec("drop table if exists t")
 }
 
+// TestChangingColOriginDefaultValueAfterAddCol1 tests #25383.
+func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol1(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+
+	tk.MustExec(fmt.Sprintf("set time_zone = 'UTC'"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a VARCHAR(31) NULL DEFAULT 'wwrzfwzb01j6ddj', b DECIMAL(12,0) NULL DEFAULT '-729850476163')")
+	tk.MustExec("ALTER TABLE t ADD COLUMN x CHAR(218) NULL DEFAULT 'lkittuae'")
+
+	tbl := testGetTableByName(c, tk.Se, "test", "t")
+	originalHook := s.dom.DDL().GetHook()
+	hook := &ddl.TestDDLCallback{Do: s.dom}
+	var checkErr error
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		if tbl.Meta().ID != job.TableID {
+			return
+		}
+
+		if job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
+			tbl := testGetTableByName(c, tk1.Se, "test", "t")
+			if len(tbl.WritableCols()) != 4 {
+				errMsg := fmt.Sprintf("cols len:%v", len(tbl.WritableCols()))
+				checkErr = errors.New("assert the writable column number error" + errMsg)
+				return
+			}
+			if tbl.Meta().Columns[3].OriginDefaultValue == nil {
+				checkErr = errors.New("assert the delete only column origin default value error")
+				return
+			}
+			// The casted value will be inserted into changing column too.
+			_, err := tk1.Exec("UPDATE t SET a = '18apf' WHERE x = '' AND a = 'mul'")
+			if err != nil {
+				checkErr = err
+				return
+			}
+		}
+	}
+
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	tk.MustExec("alter table t modify column x DATETIME NULL DEFAULT '3771-02-28 13:00:11' AFTER b;")
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	c.Assert(checkErr, IsNil)
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows())
+	tk.MustExec("drop table if exists t")
+}
+
 // Close issue #22820
 func (s *testColumnTypeChangeSuite) TestChangingAttributeOfColumnWithFK(c *C) {
 	tk := testkit.NewTestKit(c, s.store)

@@ -798,6 +798,33 @@ func getModifyColumnInfo(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.Ta
 	return dbInfo, tblInfo, oldCol, jobParam, errors.Trace(err)
 }
 
+// getOriginDefaultValueForModifyColumn gets the original default value for modifying column.
+// Since column type change is implemented as adding a new column then substituting the old one.
+// Case exists when update-where statement fetch a NULL for not-null column without any default data,
+// it will errors.
+// So we set original default value here to prevent this error. If the oldCol has the original default value, we use it.
+// Otherwise we set the zero value as original default value.
+// Besides, in insert & update records, we have already implement using the casted value of relative column to insert
+// rather than the original default value.
+func getOriginDefaultValueForModifyColumn(d *ddlCtx, changingCol, oldCol *model.ColumnInfo) (interface{}, error) {
+	var err error
+	originDefVal := oldCol.GetOriginDefaultValue()
+	if originDefVal != nil {
+		sessCtx := newContext(d.store)
+		originDefVal, err = table.CastValue(sessCtx, types.NewDatum(originDefVal), changingCol, false, false)
+		if err != nil {
+			logutil.BgLogger().Info("[ddl] cast origin default value failed", zap.Error(err))
+		}
+	}
+	if originDefVal == nil {
+		originDefVal, err = generateOriginDefaultValue(changingCol)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return originDefVal, nil
+}
+
 func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	dbInfo, tblInfo, oldCol, jobParam, err := getModifyColumnInfo(t, job)
 	if err != nil {
@@ -857,19 +884,9 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		jobParam.changingCol = jobParam.newCol.Clone()
 		jobParam.changingCol.Name = newColName
 		jobParam.changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
-
-		// Since column type change is implemented as adding a new column then substituting the old one.
-		// Case exists when update-where statement fetch a NULL for not-null column without any default data,
-		// it will errors.
-		// So we set zero original default value here to prevent this error. Besides, in insert & update records,
-		// we have already implement using the casted value of relative column to insert rather than the origin
-		// default value.
-		originDefVal := oldCol.GetOriginDefaultValue()
-		if originDefVal == nil {
-			originDefVal, err = generateOriginDefaultValue(jobParam.newCol)
-			if err != nil {
-				return ver, errors.Trace(err)
-			}
+		originDefVal, err := getOriginDefaultValueForModifyColumn(d, jobParam.changingCol, oldCol)
+		if err != nil {
+			return ver, errors.Trace(err)
 		}
 		if err = jobParam.changingCol.SetOriginDefaultValue(originDefVal); err != nil {
 			return ver, errors.Trace(err)
