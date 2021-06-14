@@ -118,6 +118,11 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`70/10/22`, `%Y/%m/%d`, types.FromDate(1970, 10, 22, 0, 0, 0, 0)},
 		{`18/10/22`, `%Y/%m/%d`, types.FromDate(2018, 10, 22, 0, 0, 0, 0)},
 		{`100/10/22`, `%Y/%m/%d`, types.FromDate(100, 10, 22, 0, 0, 0, 0)},
+		//'%b'/'%M' should be case insensitive
+		{"31/may/2016 12:34:56.1234", "%d/%b/%Y %H:%i:%S.%f", types.FromDate(2016, 5, 31, 12, 34, 56, 123400)},
+		{"30/april/2016 12:34:56.", "%d/%M/%Y %H:%i:%s.%f", types.FromDate(2016, 4, 30, 12, 34, 56, 0)},
+		{"31/mAy/2016 12:34:56.1234", "%d/%b/%Y %H:%i:%S.%f", types.FromDate(2016, 5, 31, 12, 34, 56, 123400)},
+		{"30/apRil/2016 12:34:56.", "%d/%M/%Y %H:%i:%s.%f", types.FromDate(2016, 4, 30, 12, 34, 56, 0)},
 		// '%r'
 		{" 04 :13:56 AM13/05/2019", "%r %d/%c/%Y", types.FromDate(2019, 5, 13, 4, 13, 56, 0)},  //
 		{"12: 13:56 AM 13/05/2019", "%r%d/%c/%Y", types.FromDate(2019, 5, 13, 0, 13, 56, 0)},   //
@@ -135,6 +140,9 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{"19:3: 56  13/05/2019", "%T %d/%c/%Y", types.FromDate(2019, 5, 13, 19, 3, 56, 0)},
 		{"21:13", "%T", types.FromDate(0, 0, 0, 21, 13, 0, 0)}, // EOF after hh:mm
 		{"21:", "%T", types.FromDate(0, 0, 0, 21, 0, 0, 0)},    // EOF after hh:
+		// More patterns than input string
+		{" 2/Jun", "%d/%b/%Y", types.FromDate(0, 6, 2, 0, 0, 0, 0)},
+		{" liter", "lit era l", types.ZeroCoreTime},
 	}
 	for i, tt := range tests {
 		var t types.Time
@@ -156,6 +164,9 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{"2010-11-12 11 am", `%Y-%m-%d %H %p`},
 		{"2010-11-12 13 am", `%Y-%m-%d %h %p`},
 		{"2010-11-12 0 am", `%Y-%m-%d %h %p`},
+		// MySQL accept `SEPTEMB` as `SEPTEMBER`, but we don't we this "feature" in TiDB
+		// unless we have to.
+		{"15 SEPTEMB 2001", "%d %M %Y"},
 		// '%r'
 		{"13:13:56 AM13/5/2019", "%r"},  // hh = 13 with am is invalid
 		{"00:13:56 AM13/05/2019", "%r"}, // hh = 0 with am is invalid
