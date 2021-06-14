@@ -813,6 +813,7 @@ func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 
 func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]interface{}) error {
 	if ts, ok := node.(*ast.TableSource); ok {
+		var key string
 		tabName := ts.AsName
 		if tabName.L == "" {
 			if tableNode, ok := ts.Source.(*ast.TableName); ok {
@@ -821,13 +822,19 @@ func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]inter
 				} else {
 					tabName = tableNode.Name
 				}
+				key = tabName.L
 			}
+		} else {
+			if tableNode, ok := ts.Source.(*ast.TableName); ok && tableNode.Schema.L != "" {
+				key = fmt.Sprintf("%s.", tableNode.Schema.L)
+			}
+			key += tabName.L
 		}
-		_, exists := tableAliases[tabName.L]
+		_, exists := tableAliases[key]
 		if len(tabName.L) != 0 && exists {
 			return ErrNonUniqTable.GenWithStackByArgs(tabName)
 		}
-		tableAliases[tabName.L] = nil
+		tableAliases[key] = nil
 	}
 	return nil
 }
