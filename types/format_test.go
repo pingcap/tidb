@@ -143,8 +143,15 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		// More patterns than input string
 		{" 2/Jun", "%d/%b/%Y", types.FromDate(0, 6, 2, 0, 0, 0, 0)},
 		{" liter", "lit era l", types.ZeroCoreTime},
+		// Feb 29 in leap-year
+		{"29/Feb/2020 12:34:56.", "%d/%b/%Y %H:%i:%s.%f", types.FromDate(2020, 2, 29, 12, 34, 56, 0)},
+		// When `AllowInvalidDate` is true, check only that the month is in the range from 1 to 12 and the day is in the range from 1 to 31
+		{"31/April/2016 12:34:56.", "%d/%M/%Y %H:%i:%s.%f", types.FromDate(2016, 4, 31, 12, 34, 56, 0)},        // April 31th
+		{"29/Feb/2021 12:34:56.", "%d/%b/%Y %H:%i:%s.%f", types.FromDate(2021, 2, 29, 12, 34, 56, 0)},          // Feb 29 in non-leap-year
+		{"30/Feb/2016 12:34:56.1234", "%d/%b/%Y %H:%i:%S.%f", types.FromDate(2016, 2, 30, 12, 34, 56, 123400)}, // Feb 30th
 	}
 	for i, tt := range tests {
+		sc.AllowInvalidDate = true
 		var t types.Time
 		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsTrue, Commentf("no.%d failed input=%s format=%s", i, tt.input, tt.format))
 		c.Assert(t.CoreTime(), Equals, tt.expect, Commentf("no.%d failed input=%s format=%s", i, tt.input, tt.format))
@@ -154,7 +161,10 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		input  string
 		format string
 	}{
-		{`04/31/2004`, `%m/%d/%Y`},
+		// invalid days when `AllowInvalidDate` is false
+		{`04/31/2004`, `%m/%d/%Y`},                        // not exists in the real world
+		{"29/Feb/2021 12:34:56.", "%d/%b/%Y %H:%i:%s.%f"}, // Feb 29 in non-leap-year
+
 		{`a09:30:17`, `%h:%i:%s`}, // format mismatch
 		{`12:43:24 a`, `%r`},      // followed by incomplete 'AM'/'PM'
 		{`23:60:12`, `%T`},        // invalid minute
@@ -174,6 +184,7 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{"11:13:56a", "%r"},             // EOF while parsing "AM"/"PM"
 	}
 	for i, tt := range errTests {
+		sc.AllowInvalidDate = false
 		var t types.Time
 		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsFalse, Commentf("no.%d failed input=%s format=%s", i, tt.input, tt.format))
 	}
