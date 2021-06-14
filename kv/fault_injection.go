@@ -17,7 +17,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 // InjectionConfig is used for fault injections for KV components.

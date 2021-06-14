@@ -70,7 +70,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 	return &ExecStmt{
 		GoCtx:             ctx,
-		SnapshotTS:        ret.SnapshotTS,
+		SnapshotTS:        ret.LastSnapshotTS,
 		ExplicitStaleness: ret.ExplicitStaleness,
 		InfoSchema:        ret.InfoSchema,
 		Plan:              finalPlan,
