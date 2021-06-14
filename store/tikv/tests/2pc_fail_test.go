@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
-	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	tikverr "github.com/tikv/client-go/v2/error"
 )
 
 // TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when
