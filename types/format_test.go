@@ -164,7 +164,7 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{"2010-11-12 11 am", `%Y-%m-%d %H %p`},
 		{"2010-11-12 13 am", `%Y-%m-%d %h %p`},
 		{"2010-11-12 0 am", `%Y-%m-%d %h %p`},
-		// MySQL accept `SEPTEMB` as `SEPTEMBER`, but we don't we this "feature" in TiDB
+		// MySQL accept `SEPTEMB` as `SEPTEMBER`, but we don't want this "feature" in TiDB
 		// unless we have to.
 		{"15 SEPTEMB 2001", "%d %M %Y"},
 		// '%r'
