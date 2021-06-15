@@ -561,6 +561,13 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 	if tableInfo == nil || jobInfo == nil {
 		return nil, nil, errors.Errorf("Can't find dropped/truncated table: %v in DDL history jobs", tableName.Name)
 	}
+<<<<<<< HEAD
+=======
+	// Dropping local temporary tables won't appear in DDL jobs.
+	if tableInfo.TempTableType == model.TempTableGlobal {
+		return nil, nil, errUnsupportedFlashbackTmpTable
+	}
+>>>>>>> 932148962... ddl, executor: fix test race in terror (#25405)
 	return jobInfo, tableInfo, nil
 }
 
