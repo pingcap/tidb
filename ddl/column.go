@@ -811,9 +811,15 @@ func getOriginDefaultValueForModifyColumn(d *ddlCtx, changingCol, oldCol *model.
 	originDefVal := oldCol.GetOriginDefaultValue()
 	if originDefVal != nil {
 		sessCtx := newContext(d.store)
-		originDefVal, err = table.CastValue(sessCtx, types.NewDatum(originDefVal), changingCol, false, false)
+		odv, err := table.CastValue(sessCtx, types.NewDatum(originDefVal), changingCol, false, false)
 		if err != nil {
 			logutil.BgLogger().Info("[ddl] cast origin default value failed", zap.Error(err))
+		}
+		if !odv.IsNull() {
+			if originDefVal, err = odv.ToString(); err != nil {
+				originDefVal = nil
+				logutil.BgLogger().Info("[ddl] convert default value to string failed", zap.Error(err))
+			}
 		}
 	}
 	if originDefVal == nil {

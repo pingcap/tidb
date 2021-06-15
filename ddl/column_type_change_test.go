@@ -1671,7 +1671,7 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValue(c *C) {
 	tk.MustExec("drop table if exists t")
 }
 
-func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol(c *C) {
+func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddColAndCastSucc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -1708,8 +1708,11 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 					checkErr = errors.New("assert the writable column number error")
 					return
 				}
-				if tbl.WritableCols()[3].OriginDefaultValue.(string) != "1971-06-09 00:00:00" {
-					checkErr = errors.New("assert the write only column origin default value error")
+				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
+				expectVal := "1971-06-09"
+				if originalDV != expectVal {
+					errMsg := fmt.Sprintf("expect: %v, got: %v", expectVal, originalDV)
+					checkErr = errors.New("assert the write only column origin default value error" + errMsg)
 					return
 				}
 			}
@@ -1752,8 +1755,8 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 	tk.MustExec("drop table if exists t")
 }
 
-// TestChangingColOriginDefaultValueAfterAddCol1 tests #25383.
-func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol1(c *C) {
+// TestChangingColOriginDefaultValueAfterAddColAndCastFail tests #25383.
+func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddColAndCastFail(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -1784,8 +1787,11 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 				checkErr = errors.New("assert the writable column number error" + errMsg)
 				return
 			}
-			if tbl.Meta().Columns[3].OriginDefaultValue == nil {
-				checkErr = errors.New("assert the delete only column origin default value error")
+			originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
+			expectVal := "0000-00-00 00:00:00"
+			if originalDV != expectVal {
+				errMsg := fmt.Sprintf("expect: %v, got: %v", expectVal, originalDV)
+				checkErr = errors.New("assert the write only column origin default value error" + errMsg)
 				return
 			}
 			// The casted value will be inserted into changing column too.
