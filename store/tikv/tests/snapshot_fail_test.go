@@ -21,9 +21,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv"
-	tikverr "github.com/pingcap/tidb/store/tikv/error"
-	"github.com/pingcap/tidb/store/tikv/mockstore"
+	tikverr "github.com/tikv/client-go/v2/error"
+	"github.com/tikv/client-go/v2/mockstore"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 type testSnapshotFailSuite struct {
@@ -38,7 +38,7 @@ func (s *testSnapshotFailSuite) SetUpSuite(c *C) {
 	client, pdClient, cluster, err := unistore.New("")
 	c.Assert(err, IsNil)
 	unistore.BootstrapWithSingleStore(cluster)
-	store, err := tikv.NewTestTiKVStore(client, pdClient, nil, nil, 0)
+	store, err := tikv.NewTestTiKVStore(fpClient{Client: client}, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
 	s.store = tikv.StoreProbe{KVStore: store}
 }
@@ -78,9 +78,9 @@ func (s *testSnapshotFailSuite) TestBatchGetResponseKeyError(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcBatchGetResult", `1*return("keyError")`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/rpcBatchGetResult", `1*return("keyError")`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcBatchGetResult"), IsNil)
+		c.Assert(failpoint.Disable("tikvclient/rpcBatchGetResult"), IsNil)
 	}()
 
 	txn, err = s.store.Begin()
@@ -109,7 +109,7 @@ func (s *testSnapshotFailSuite) TestScanResponseKeyError(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcScanResult", `1*return("keyError")`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/rpcScanResult", `1*return("keyError")`), IsNil)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	iter, err := txn.Iter([]byte("a"), []byte("z"))
@@ -124,9 +124,9 @@ func (s *testSnapshotFailSuite) TestScanResponseKeyError(c *C) {
 	c.Assert(iter.Value(), DeepEquals, []byte("v3"))
 	c.Assert(iter.Next(), IsNil)
 	c.Assert(iter.Valid(), IsFalse)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcScanResult"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/rpcScanResult"), IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcScanResult", `1*return("keyError")`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/rpcScanResult", `1*return("keyError")`), IsNil)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	iter, err = txn.Iter([]byte("k2"), []byte("k4"))
@@ -138,7 +138,7 @@ func (s *testSnapshotFailSuite) TestScanResponseKeyError(c *C) {
 	c.Assert(iter.Value(), DeepEquals, []byte("v3"))
 	c.Assert(iter.Next(), IsNil)
 	c.Assert(iter.Valid(), IsFalse)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcScanResult"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/rpcScanResult"), IsNil)
 }
 
 func (s *testSnapshotFailSuite) TestRetryMaxTsPointGetSkipLock(c *C) {

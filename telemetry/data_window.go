@@ -20,10 +20,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	pmodel "github.com/prometheus/common/model"
+	"github.com/tikv/client-go/v2/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
