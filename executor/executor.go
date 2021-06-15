@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
 	"strings"
@@ -29,6 +30,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -48,9 +50,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
-	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -58,10 +57,17 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/pingcap/tidb/util/topsql"
+	tikverr "github.com/tikv/client-go/v2/error"
+	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/tikv"
+	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -977,6 +983,11 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.LockCtx {
+	var planDigest *parser.Digest
+	_, sqlDigest := seVars.StmtCtx.SQLDigest()
+	if variable.TopSQLEnabled() {
+		_, planDigest = seVars.StmtCtx.GetPlanDigest()
+	}
 	return &tikvstore.LockCtx{
 		Killed:                &seVars.Killed,
 		ForUpdateTS:           seVars.TxnCtx.GetForUpdateTS(),
@@ -986,6 +997,14 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.Loc
 		LockKeysDuration:      &seVars.StmtCtx.LockKeysDuration,
 		LockKeysCount:         &seVars.StmtCtx.LockKeysCount,
 		LockExpired:           &seVars.TxnCtx.LockExpire,
+		ResourceGroupTag:      resourcegrouptag.EncodeResourceGroupTag(sqlDigest, planDigest),
+		OnDeadlock: func(deadlock *tikverr.ErrDeadlock) {
+			// TODO: Support collecting retryable deadlocks according to the config.
+			if !deadlock.IsRetryable {
+				rec := deadlockhistory.ErrDeadlockToDeadlockRecord(deadlock)
+				deadlockhistory.GlobalDeadlockHistory.Push(rec)
+			}
+		},
 	}
 }
 
@@ -994,7 +1013,8 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.Loc
 // locked by others. used for (select for update nowait) situation
 // except 0 means alwaysWait 1 means nowait
 func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.LockCtx, keys ...kv.Key) error {
-	sctx := se.GetSessionVars().StmtCtx
+	sessVars := se.GetSessionVars()
+	sctx := sessVars.StmtCtx
 	if !sctx.InUpdateStmt && !sctx.InDeleteStmt {
 		atomic.StoreUint32(&se.GetSessionVars().TxnCtx.ForUpdate, 1)
 	}
@@ -1003,6 +1023,10 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.L
 	if err != nil {
 		return err
 	}
+
+	// Skip the temporary table keys.
+	keys = filterTemporaryTableKeys(sessVars, keys)
+
 	var lockKeyStats *tikvutil.LockKeysDetails
 	ctx = context.WithValue(ctx, tikvutil.LockKeysDetailCtxKey, &lockKeyStats)
 	err = txn.LockKeys(tikvutil.SetSessionID(ctx, se.GetSessionVars().ConnectionID), lockCtx, keys...)
@@ -1010,6 +1034,22 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.L
 		sctx.MergeLockKeysExecDetails(lockKeyStats)
 	}
 	return err
+}
+
+func filterTemporaryTableKeys(vars *variable.SessionVars, keys []kv.Key) []kv.Key {
+	txnCtx := vars.TxnCtx
+	if txnCtx == nil || txnCtx.GlobalTemporaryTables == nil {
+		return keys
+	}
+
+	newKeys := keys[:]
+	for _, key := range keys {
+		tblID := tablecodec.DecodeTableID(key)
+		if _, ok := txnCtx.GlobalTemporaryTables[tblID]; !ok {
+			newKeys = append(newKeys, key)
+		}
+	}
+	return newKeys
 }
 
 // LimitExec represents limit executor
@@ -1457,6 +1497,12 @@ type UnionExec struct {
 	results     []*chunk.Chunk
 	wg          sync.WaitGroup
 	initialized bool
+	mu          struct {
+		*sync.Mutex
+		maxOpenedChildID int
+	}
+
+	childInFlightForTest int32
 }
 
 // unionWorkerResult stores the result for a union worker.
@@ -1476,12 +1522,11 @@ func (e *UnionExec) waitAllFinished() {
 
 // Open implements the Executor Open interface.
 func (e *UnionExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
 	e.stopFetchData.Store(false)
 	e.initialized = false
 	e.finished = make(chan struct{})
+	e.mu.Mutex = &sync.Mutex{}
+	e.mu.maxOpenedChildID = -1
 	return nil
 }
 
@@ -1527,6 +1572,19 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 		e.wg.Done()
 	}()
 	for childID := range e.childIDChan {
+		e.mu.Lock()
+		if childID > e.mu.maxOpenedChildID {
+			e.mu.maxOpenedChildID = childID
+		}
+		e.mu.Unlock()
+		if err := e.children[childID].Open(ctx); err != nil {
+			result.err = err
+			e.stopFetchData.Store(true)
+			e.resultPool <- result
+		}
+		failpoint.Inject("issue21441", func() {
+			atomic.AddInt32(&e.childInFlightForTest, 1)
+		})
 		for {
 			if e.stopFetchData.Load().(bool) {
 				return
@@ -1541,12 +1599,20 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 				e.resourcePools[workerID] <- result.chk
 				break
 			}
+			failpoint.Inject("issue21441", func() {
+				if int(atomic.LoadInt32(&e.childInFlightForTest)) > e.concurrency {
+					panic("the count of child in flight is larger than e.concurrency unexpectedly")
+				}
+			})
 			e.resultPool <- result
 			if result.err != nil {
 				e.stopFetchData.Store(true)
 				return
 			}
 		}
+		failpoint.Inject("issue21441", func() {
+			atomic.AddInt32(&e.childInFlightForTest, -1)
+		})
 	}
 }
 
@@ -1589,7 +1655,15 @@ func (e *UnionExec) Close() error {
 		for range e.childIDChan {
 		}
 	}
-	return e.baseExecutor.Close()
+	// We do not need to acquire the e.mu.Lock since all the resultPuller can be
+	// promised to exit when reaching here (e.childIDChan been closed).
+	var firstErr error
+	for i := 0; i <= e.mu.maxOpenedChildID; i++ {
+		if err := e.children[i].Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // ResetContextOfStmt resets the StmtContext and session variables.
@@ -1597,10 +1671,11 @@ func (e *UnionExec) Close() error {
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
 	sc := &stmtctx.StatementContext{
-		TimeZone:    vars.Location(),
-		MemTracker:  memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery),
-		DiskTracker: disk.NewTracker(memory.LabelForSQLText, -1),
-		TaskID:      stmtctx.AllocateTaskID(),
+		TimeZone:      vars.Location(),
+		MemTracker:    memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery),
+		DiskTracker:   disk.NewTracker(memory.LabelForSQLText, -1),
+		TaskID:        stmtctx.AllocateTaskID(),
+		CTEStorageMap: map[int]*CTEStorages{},
 	}
 	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 	globalConfig := config.GetGlobalConfig()
@@ -1620,9 +1695,20 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.MemTracker.SetActionOnExceed(action)
 	}
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
-		s, err = planner.GetPreparedStmt(execStmt, vars)
+		prepareStmt, err := planner.GetPreparedStmt(execStmt, vars)
 		if err != nil {
-			return
+			return err
+		}
+		s = prepareStmt.PreparedAst.Stmt
+		sc.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
+		// For `execute stmt` SQL, should reset the SQL digest with the prepare SQL digest.
+		goCtx := context.Background()
+		if variable.EnablePProfSQLCPU.Load() && len(prepareStmt.NormalizedSQL) > 0 {
+			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", util.QueryStrForLog(prepareStmt.NormalizedSQL)))
+			pprof.SetGoroutineLabels(goCtx)
+		}
+		if variable.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
+			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, "", nil)
 		}
 	}
 	// execute missed stmtID uses empty sql
@@ -1787,4 +1873,10 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 		req.SetCol(idx, virCols.Column(i))
 	}
 	return nil
+}
+
+func setResourceGroupTagForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
+	if snapshot != nil && variable.TopSQLEnabled() {
+		snapshot.SetOption(kv.ResourceGroupTag, sc.GetResourceGroupTag())
+	}
 }

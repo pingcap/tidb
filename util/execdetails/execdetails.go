@@ -24,8 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -142,11 +142,11 @@ func (d ExecDetails) String() string {
 		if commitDetails.GetCommitTsTime > 0 {
 			parts = append(parts, GetCommitTSTimeStr+": "+strconv.FormatFloat(commitDetails.GetCommitTsTime.Seconds(), 'f', -1, 64))
 		}
-		commitBackoffTime := atomic.LoadInt64(&commitDetails.CommitBackoffTime)
+		commitDetails.Mu.Lock()
+		commitBackoffTime := commitDetails.Mu.CommitBackoffTime
 		if commitBackoffTime > 0 {
 			parts = append(parts, CommitBackoffTimeStr+": "+strconv.FormatFloat(time.Duration(commitBackoffTime).Seconds(), 'f', -1, 64))
 		}
-		commitDetails.Mu.Lock()
 		if len(commitDetails.Mu.BackoffTypes) > 0 {
 			parts = append(parts, BackoffTypesStr+": "+fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes))
 		}
@@ -234,11 +234,11 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 		if commitDetails.GetCommitTsTime > 0 {
 			fields = append(fields, zap.String("get_commit_ts_time", fmt.Sprintf("%v", strconv.FormatFloat(commitDetails.GetCommitTsTime.Seconds(), 'f', -1, 64)+"s")))
 		}
-		commitBackoffTime := atomic.LoadInt64(&commitDetails.CommitBackoffTime)
+		commitDetails.Mu.Lock()
+		commitBackoffTime := commitDetails.Mu.CommitBackoffTime
 		if commitBackoffTime > 0 {
 			fields = append(fields, zap.String("commit_backoff_time", fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(commitBackoffTime).Seconds(), 'f', -1, 64)+"s")))
 		}
-		commitDetails.Mu.Lock()
 		if len(commitDetails.Mu.BackoffTypes) > 0 {
 			fields = append(fields, zap.String("backoff_types", fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes)))
 		}
@@ -640,7 +640,7 @@ func getPlanIDFromExecutionSummary(summary *tipb.ExecutorExecutionSummary) (int,
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
-func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType string, address string, summary *tipb.ExecutorExecutionSummary) {
+func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType string, address string, summary *tipb.ExecutorExecutionSummary) int {
 	// for TiFlash cop response, ExecutorExecutionSummary contains executor id, so if there is a valid executor id in
 	// summary, use it overwrite the planID
 	if id, valid := getPlanIDFromExecutionSummary(summary); valid {
@@ -648,6 +648,7 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType string, addres
 	}
 	copStats := e.GetOrCreateCopStats(planID, storeType)
 	copStats.RecordOneCopTask(address, summary)
+	return planID
 }
 
 // RecordScanDetail records a specific cop tasks's cop detail.
@@ -703,9 +704,7 @@ func (e *RuntimeStatsWithConcurrencyInfo) SetConcurrencyInfo(infos ...*Concurren
 	e.Lock()
 	defer e.Unlock()
 	e.concurrency = e.concurrency[:0]
-	for _, info := range infos {
-		e.concurrency = append(e.concurrency, info)
-	}
+	e.concurrency = append(e.concurrency, infos...)
 }
 
 // Clone implements the RuntimeStats interface.
@@ -736,12 +735,7 @@ func (e *RuntimeStatsWithConcurrencyInfo) String() string {
 }
 
 // Merge implements the RuntimeStats interface.
-func (e *RuntimeStatsWithConcurrencyInfo) Merge(rs RuntimeStats) {
-	tmp, ok := rs.(*RuntimeStatsWithConcurrencyInfo)
-	if !ok {
-		return
-	}
-	e.concurrency = append(e.concurrency, tmp.concurrency...)
+func (e *RuntimeStatsWithConcurrencyInfo) Merge(_ RuntimeStats) {
 }
 
 // RuntimeStatsWithCommit is the RuntimeStats with commit detail.
@@ -809,18 +803,18 @@ func (e *RuntimeStatsWithCommit) String() string {
 			buf.WriteString(", commit:")
 			buf.WriteString(FormatDuration(e.Commit.CommitTime))
 		}
-		commitBackoffTime := atomic.LoadInt64(&e.Commit.CommitBackoffTime)
+		e.Commit.Mu.Lock()
+		commitBackoffTime := e.Commit.Mu.CommitBackoffTime
 		if commitBackoffTime > 0 {
 			buf.WriteString(", backoff: {time: ")
 			buf.WriteString(FormatDuration(time.Duration(commitBackoffTime)))
-			e.Commit.Mu.Lock()
 			if len(e.Commit.Mu.BackoffTypes) > 0 {
 				buf.WriteString(", type: ")
 				buf.WriteString(e.formatBackoff(e.Commit.Mu.BackoffTypes))
 			}
-			e.Commit.Mu.Unlock()
 			buf.WriteString("}")
 		}
+		e.Commit.Mu.Unlock()
 		if e.Commit.ResolveLockTime > 0 {
 			buf.WriteString(", resolve_lock: ")
 			buf.WriteString(FormatDuration(time.Duration(e.Commit.ResolveLockTime)))
@@ -894,14 +888,13 @@ func (e *RuntimeStatsWithCommit) String() string {
 	return buf.String()
 }
 
-func (e *RuntimeStatsWithCommit) formatBackoff(backoffTypes []fmt.Stringer) string {
+func (e *RuntimeStatsWithCommit) formatBackoff(backoffTypes []string) string {
 	if len(backoffTypes) == 0 {
 		return ""
 	}
 	tpMap := make(map[string]struct{})
 	tpArray := []string{}
-	for _, tp := range backoffTypes {
-		tpStr := tp.String()
+	for _, tpStr := range backoffTypes {
 		_, ok := tpMap[tpStr]
 		if ok {
 			continue

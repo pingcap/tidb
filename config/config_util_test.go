@@ -16,7 +16,6 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -100,7 +99,7 @@ func (s *testConfigSuite) TestAtomicWriteConfig(c *C) {
 	conf.Performance.PseudoEstimateRatio = 3.45
 	c.Assert(atomicWriteConfig(conf, confPath), IsNil)
 
-	content, err := ioutil.ReadFile(confPath)
+	content, err := os.ReadFile(confPath)
 	c.Assert(err, IsNil)
 	dconf, err := decodeConfig(string(content))
 	c.Assert(err, IsNil)
@@ -113,7 +112,7 @@ func (s *testConfigSuite) TestAtomicWriteConfig(c *C) {
 	conf.Performance.PseudoEstimateRatio = 54.3
 	c.Assert(atomicWriteConfig(conf, confPath), IsNil)
 
-	content, err = ioutil.ReadFile(confPath)
+	content, err = os.ReadFile(confPath)
 	c.Assert(err, IsNil)
 	dconf, err = decodeConfig(string(content))
 	c.Assert(err, IsNil)

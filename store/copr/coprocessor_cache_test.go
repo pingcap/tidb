@@ -19,7 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/tikv/client-go/v2/config"
 )
 
 type testCoprocessorCacheSuite struct {
@@ -191,4 +191,9 @@ func (s *testCoprocessorSuite) TestGetSet(c *C) {
 	v = cache.Get([]byte("foo"))
 	c.Assert(v, NotNil)
 	c.Assert(v.Data, DeepEquals, []byte("bar"))
+}
+
+func (s *testCoprocessorSuite) TestIssue24118(c *C) {
+	_, err := newCoprCache(&config.CoprocessorCache{AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: -1})
+	c.Assert(err.Error(), Equals, "Capacity must be > 0 to enable the cache")
 }

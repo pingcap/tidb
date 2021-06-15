@@ -15,7 +15,6 @@ package util
 
 import (
 	"bytes"
-	"fmt"
 	"math"
 	"strconv"
 	"sync"
@@ -47,10 +46,10 @@ type CommitDetails struct {
 	WaitPrewriteBinlogTime time.Duration
 	CommitTime             time.Duration
 	LocalLatchTime         time.Duration
-	CommitBackoffTime      int64
 	Mu                     struct {
 		sync.Mutex
-		BackoffTypes []fmt.Stringer
+		CommitBackoffTime int64
+		BackoffTypes      []string
 	}
 	ResolveLockTime   int64
 	WriteKeys         int
@@ -66,12 +65,12 @@ func (cd *CommitDetails) Merge(other *CommitDetails) {
 	cd.WaitPrewriteBinlogTime += other.WaitPrewriteBinlogTime
 	cd.CommitTime += other.CommitTime
 	cd.LocalLatchTime += other.LocalLatchTime
-	cd.CommitBackoffTime += other.CommitBackoffTime
 	cd.ResolveLockTime += other.ResolveLockTime
 	cd.WriteKeys += other.WriteKeys
 	cd.WriteSize += other.WriteSize
 	cd.PrewriteRegionNum += other.PrewriteRegionNum
 	cd.TxnRetry += other.TxnRetry
+	cd.Mu.CommitBackoffTime += other.Mu.CommitBackoffTime
 	cd.Mu.BackoffTypes = append(cd.Mu.BackoffTypes, other.Mu.BackoffTypes...)
 }
 
@@ -83,14 +82,14 @@ func (cd *CommitDetails) Clone() *CommitDetails {
 		WaitPrewriteBinlogTime: cd.WaitPrewriteBinlogTime,
 		CommitTime:             cd.CommitTime,
 		LocalLatchTime:         cd.LocalLatchTime,
-		CommitBackoffTime:      cd.CommitBackoffTime,
 		ResolveLockTime:        cd.ResolveLockTime,
 		WriteKeys:              cd.WriteKeys,
 		WriteSize:              cd.WriteSize,
 		PrewriteRegionNum:      cd.PrewriteRegionNum,
 		TxnRetry:               cd.TxnRetry,
 	}
-	commit.Mu.BackoffTypes = append([]fmt.Stringer{}, cd.Mu.BackoffTypes...)
+	commit.Mu.BackoffTypes = append([]string{}, cd.Mu.BackoffTypes...)
+	commit.Mu.CommitBackoffTime = cd.Mu.CommitBackoffTime
 	return commit
 }
 
@@ -103,7 +102,7 @@ type LockKeysDetails struct {
 	BackoffTime     int64
 	Mu              struct {
 		sync.Mutex
-		BackoffTypes []fmt.Stringer
+		BackoffTypes []string
 	}
 	LockRPCTime  int64
 	LockRPCCount int64
@@ -135,7 +134,7 @@ func (ld *LockKeysDetails) Clone() *LockKeysDetails {
 		LockRPCCount:    ld.LockRPCCount,
 		RetryCount:      ld.RetryCount,
 	}
-	lock.Mu.BackoffTypes = append([]fmt.Stringer{}, ld.Mu.BackoffTypes...)
+	lock.Mu.BackoffTypes = append([]string{}, ld.Mu.BackoffTypes...)
 	return lock
 }
 
@@ -271,6 +270,8 @@ type TimeDetail struct {
 	// cannot be excluded for now, like Mutex wait time, which is included in this field, so that
 	// this field is called wall time instead of CPU time.
 	WaitTime time.Duration
+	// KvReadWallTimeMs is the time used in KV Scan/Get.
+	KvReadWallTimeMs time.Duration
 }
 
 // String implements the fmt.Stringer interface.
@@ -298,5 +299,6 @@ func (td *TimeDetail) MergeFromTimeDetail(timeDetail *kvrpcpb.TimeDetail) {
 	if timeDetail != nil {
 		td.WaitTime += time.Duration(timeDetail.WaitWallTimeMs) * time.Millisecond
 		td.ProcessTime += time.Duration(timeDetail.ProcessWallTimeMs) * time.Millisecond
+		td.KvReadWallTimeMs += time.Duration(timeDetail.KvReadWallTimeMs) * time.Millisecond
 	}
 }

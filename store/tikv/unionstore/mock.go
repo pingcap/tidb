@@ -55,4 +55,3 @@ func (s *mockSnapshot) IterReverse(k []byte) (Iterator, error) {
 }
 
 func (s *mockSnapshot) SetOption(opt int, val interface{}) {}
-func (s *mockSnapshot) DelOption(opt int)                  {}

@@ -818,7 +818,7 @@
       },
       {
         "SQL": "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([1]))->Projection}(test.t.a,test.t.a)->Projection"
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])->Projection}(test.t.a,test.t.a)->Projection"
       },
       {
         "SQL": "select sum(to_base64(e)) from t group by e,d,c order by c",
@@ -1233,12 +1233,12 @@
       },
       {
         "SQL": "select /*+ HASH_AGG() */ t1.a from t t1 where t1.a < any(select t2.b from t t2)",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->Sel([1]))->TableReader(Table(t)->Sel([1])->HashAgg)->HashAgg->Sel([ne(Column#27, 0) 1])}",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t)->HashAgg)->HashAgg->Sel([ne(Column#27, 0)])}",
         "Warning": ""
       },
       {
         "SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a != any(select t2.b from t t2)",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->Sel([1]))->TableReader(Table(t)->Sel([1]))->HashAgg->Sel([ne(Column#28, 0) 1])}",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))->HashAgg->Sel([ne(Column#28, 0)])}",
         "Warning": ""
       },
       {
@@ -2297,10 +2297,12 @@
       {
         "SQL": "select e from t where e != 'b'",
         "Plan": [
-          "IndexReader 20.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 20.00 cop[tikv] table:t, index:idx(e) range:[\"c\",\"c\"], [\"a\",\"a\"], keep order:false, stats:pseudo"
+          "IndexReader 40.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 40.00 cop[tikv] table:t, index:idx(e) range:[\"\",\"\"], [\"c\",\"c\"], [\"a\",\"a\"], [\"\",\"\"], keep order:false, stats:pseudo"
         ],
         "Result": [
+          "",
+          "",
           "a",
           "c"
         ]
@@ -2329,20 +2331,24 @@
       {
         "SQL": "select e from t where e < 'b'",
         "Plan": [
-          "IndexReader 10.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 10.00 cop[tikv] table:t, index:idx(e) range:[\"a\",\"a\"], keep order:false, stats:pseudo"
+          "IndexReader 30.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 30.00 cop[tikv] table:t, index:idx(e) range:[\"\",\"\"], [\"a\",\"a\"], [\"\",\"\"], keep order:false, stats:pseudo"
         ],
         "Result": [
+          "",
+          "",
           "a"
         ]
       },
       {
         "SQL": "select e from t where e <= 'b'",
         "Plan": [
-          "IndexReader 20.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 20.00 cop[tikv] table:t, index:idx(e) range:[\"b\",\"b\"], [\"a\",\"a\"], keep order:false, stats:pseudo"
+          "IndexReader 40.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 40.00 cop[tikv] table:t, index:idx(e) range:[\"\",\"\"], [\"b\",\"b\"], [\"a\",\"a\"], [\"\",\"\"], keep order:false, stats:pseudo"
         ],
         "Result": [
+          "",
+          "",
           "a",
           "b"
         ]
@@ -2364,6 +2370,8 @@
           "└─IndexRangeScan 6656.67 cop[tikv] table:t, index:idx(e) range:[-inf,\"b\"), (\"b\",+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
+          "",
+          "",
           "a",
           "c"
         ]
@@ -2375,6 +2383,7 @@
           "└─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx(e) range:(\"b\",+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
+          "",
           "a"
         ]
       },
@@ -2385,6 +2394,7 @@
           "└─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx(e) range:[\"b\",+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
+          "",
           "a",
           "b"
         ]
@@ -2396,6 +2406,7 @@
           "└─IndexRangeScan 3323.33 cop[tikv] table:t, index:idx(e) range:[-inf,\"b\"), keep order:false, stats:pseudo"
         ],
         "Result": [
+          "",
           "c"
         ]
       },
@@ -2406,6 +2417,7 @@
           "└─IndexRangeScan 3323.33 cop[tikv] table:t, index:idx(e) range:[-inf,\"b\"], keep order:false, stats:pseudo"
         ],
         "Result": [
+          "",
           "b",
           "c"
         ]
@@ -2436,6 +2448,8 @@
           "└─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx(e) range:[\"\",+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
+          "",
+          "",
           "a",
           "b",
           "c"
@@ -2445,9 +2459,32 @@
         "SQL": "select e from t where e > 5",
         "Plan": [
           "IndexReader 3333.33 root  index:IndexRangeScan",
-          "└─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx(e) range:(\"a\",+inf], keep order:false, stats:pseudo"
+          "└─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx(e) range:(\"\",+inf], keep order:false, stats:pseudo"
         ],
         "Result": null
+      },
+      {
+        "SQL": "select e from t where e = ''",
+        "Plan": [
+          "IndexReader 20.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 20.00 cop[tikv] table:t, index:idx(e) range:[\"\",\"\"], [\"\",\"\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          ""
+        ]
+      },
+      {
+        "SQL": "select e from t where e != ''",
+        "Plan": [
+          "IndexReader 30.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 30.00 cop[tikv] table:t, index:idx(e) range:[\"c\",\"c\"], [\"b\",\"b\"], [\"a\",\"a\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "a",
+          "b",
+          "c"
+        ]
       }
     ]
   }

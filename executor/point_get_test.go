@@ -27,14 +27,14 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
-	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 type testPointGetSuite struct {
@@ -536,15 +536,15 @@ func (s *testPointGetSuite) TestSelectCheckVisibility(c *C) {
 		c.Assert(expectErr.Equal(err), IsTrue)
 	}
 	// Test point get.
-	checkSelectResultError("select * from t where a='1'", tikverr.ErrGCTooEarly)
+	checkSelectResultError("select * from t where a='1'", storeerr.ErrGCTooEarly)
 	// Test batch point get.
-	checkSelectResultError("select * from t where a in ('1','2')", tikverr.ErrGCTooEarly)
+	checkSelectResultError("select * from t where a in ('1','2')", storeerr.ErrGCTooEarly)
 	// Test Index look up read.
-	checkSelectResultError("select * from t where b > 0 ", tikverr.ErrGCTooEarly)
+	checkSelectResultError("select * from t where b > 0 ", storeerr.ErrGCTooEarly)
 	// Test Index read.
-	checkSelectResultError("select b from t where b > 0 ", tikverr.ErrGCTooEarly)
+	checkSelectResultError("select b from t where b > 0 ", storeerr.ErrGCTooEarly)
 	// Test table read.
-	checkSelectResultError("select * from t", tikverr.ErrGCTooEarly)
+	checkSelectResultError("select * from t", storeerr.ErrGCTooEarly)
 }
 
 func (s *testPointGetSuite) TestReturnValues(c *C) {
@@ -943,4 +943,17 @@ func (s *testPointGetSuite) TestWithTiDBSnapshot(c *C) {
 	tk.MustQuery("select * from xx where id = 8").Check(testkit.Rows())
 
 	tk.MustQuery("select * from xx").Check(testkit.Rows("1", "7"))
+}
+
+func (s *testPointGetSuite) TestPointGetIssue25167(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key)")
+	defer func() {
+		tk.MustExec("drop table if exists t")
+	}()
+	tk.MustExec("set @a=(select current_timestamp(6))")
+	tk.MustExec("insert into t values (1)")
+	tk.MustQuery("select * from t as of timestamp @a where a = 1").Check(testkit.Rows())
 }

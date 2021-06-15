@@ -14,7 +14,6 @@
 package deadlock
 
 import (
-	"fmt"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -36,7 +35,7 @@ func (s *testDeadlockSuite) TestDeadlock(c *C) {
 	c.Assert(err, IsNil)
 	err = detector.Detect(3, 1, 300)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, fmt.Sprintf("deadlock(200)"))
+	c.Assert(err.Error(), Equals, "deadlock(200)")
 	detector.CleanUp(2)
 	list2 := detector.waitForMap[2]
 	c.Assert(list2, IsNil)
