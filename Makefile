@@ -110,7 +110,7 @@ test: test_part_1 test_part_2
 
 test_part_1: checklist explaintest
 
-test_part_2: checkdep gotest gogenerate
+test_part_2: gotest gogenerate
 
 explaintest: server_check
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
@@ -207,9 +207,6 @@ failpoint-enable: tools/bin/failpoint-ctl
 failpoint-disable: tools/bin/failpoint-ctl
 # Restoring gofail failpoints...
 	@$(FAILPOINT_DISABLE)
-
-checkdep:
-	$(GO) list -f '{{ join .Imports "\n" }}' github.com/pingcap/tidb/store/tikv | grep ^github.com/pingcap/parser$$ || exit 0; exit 1
 
 tools/bin/megacheck: tools/check/go.mod
 	cd tools/check; \
