@@ -142,7 +142,7 @@ func initGRPCLogger(cfg *LogConfig) error {
 }
 
 func deepcopyLogConfig(o *log.Config) *log.Config {
-	return &log.Config{
+	c := &log.Config{
 		Level:            o.Level,
 		Format:           o.Format,
 		DisableTimestamp: o.DisableTimestamp,
@@ -156,12 +156,15 @@ func deepcopyLogConfig(o *log.Config) *log.Config {
 		DisableCaller:       o.DisableCaller,
 		DisableStacktrace:   o.DisableStacktrace,
 		DisableErrorVerbose: o.DisableErrorVerbose,
-		Sampling: &zap.SamplingConfig{
+	}
+	if o.Sampling != nil {
+		c.Sampling = &zap.SamplingConfig{
 			Initial:    o.Sampling.Initial,
 			Thereafter: o.Sampling.Thereafter,
 			Hook:       o.Sampling.Hook,
-		},
+		}
 	}
+	return c
 }
 
 // InitZapLogger is delegated to InitLogger.
