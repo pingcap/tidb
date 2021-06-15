@@ -853,6 +853,25 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 			spec.User.Username = user.Username
 			spec.User.Hostname = user.AuthHostname
 		} else {
+
+			// The user executing the query (user) does not match the user specified (spec.User)
+			// The MySQL manual states:
+			// "In most cases, ALTER USER requires the global CREATE USER privilege, or the UPDATE privilege for the mysql system schema"
+			//
+			// This is *not* the observed behavior in 8.0.24. The permissions you require depend on the user you are changing. For example:
+			//
+			// CREATE USER u1, u2, root;
+			// GRANT CREATE USER ON *.* TO u1;
+			// GRANT ALL ON *.* to root;
+			//
+			// * u1 is permitted to change any property of u1, but no properties of root (not even REQUIRE SSL)
+			// * u2 is not permitted to change any user except themselves.
+			// * root can change any user.
+			//
+			// The MySQL behavior is presumably to prevent accidental privilege escalations. We should try and match it in future,
+			// but for now we can just require the SUPER privilege instead. This prevents u1 from changing root (intended), but
+			// has the consequence that u1 can not change u2 (unintended).
+
 			checker := privilege.GetPrivilegeManager(e.ctx)
 			activeRoles := e.ctx.GetSessionVars().ActiveRoles
 			if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
