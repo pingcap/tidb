@@ -219,7 +219,7 @@ func (b *builtinCurrentRoleSig) Clone() builtinFunc {
 
 // evalString evals a builtinCurrentUserSig.
 // See https://dev.mysql.com/doc/refman/8.0/en/information-functions.html#function_current-role
-func (b *builtinCurrentRoleSig) evalString(row chunk.Row) (res string, isNil bool, err error) {
+func (b *builtinCurrentRoleSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	data := b.ctx.GetSessionVars()
 	if data == nil || data.ActiveRoles == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
