@@ -924,9 +924,12 @@ func (s *testPrivilegeSuite) TestConfigPrivilege(c *C) {
 	mustExec(c, se, `REVOKE CONFIG ON *.* FROM tcd2`)
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthHostname: "tcd1", AuthUsername: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, `SHOW CONFIG`)
 	mustExec(c, se, `SET CONFIG TIKV testkey="testval"`)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd2", Hostname: "localhost", AuthHostname: "tcd2", AuthUsername: "%"}, nil, nil), IsTrue)
-	_, err := se.ExecuteInternal(context.Background(), `SET CONFIG TIKV testkey="testval"`)
+	_, err := se.ExecuteInternal(context.Background(), `SHOW CONFIG`)
+	c.Assert(err, ErrorMatches, ".*you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), `SET CONFIG TIKV testkey="testval"`)
 	c.Assert(err, ErrorMatches, ".*you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation")
 	mustExec(c, se, `DROP USER tcd1, tcd2`)
 }
