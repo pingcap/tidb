@@ -695,6 +695,7 @@ func (s *testStaleTxnSuite) TestAsOfTimestampCompatibility(c *C) {
 	tk.MustExec(updateSafePoint)
 	tk.MustExec("use test")
 	tk.MustExec("create table t5(id int);")
+	defer tk.MustExec("drop table if exists t5;")
 	time1 := time.Now()
 	testcases := []struct {
 		beginSQL string
@@ -732,6 +733,10 @@ func (s *testStaleTxnSuite) TestAsOfTimestampCompatibility(c *C) {
 		c.Assert(err.Error(), Matches, ".*as of timestamp can't be set in transaction.*")
 		tk.MustExec("commit")
 	}
+	tk.MustExec(`create table test.table1 (id int primary key, a int);`)
+	defer tk.MustExec("drop table if exists test.table1;")
+	time1 = time.Now()
+	tk.MustExec(fmt.Sprintf("explain analyze select * from test.table1 as of timestamp '%s' where id = 1;", time1.Format("2006-1-2 15:04:05.000")))
 }
 
 func (s *testStaleTxnSuite) TestSetTransactionInfoSchema(c *C) {
