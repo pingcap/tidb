@@ -28,7 +28,7 @@ import (
 
 // ReportClient send data to the target server.
 type ReportClient interface {
-	Send(ctx context.Context, addr string, sqlMetas []*tipb.SQLMeta, planMetas []*tipb.PlanMeta, records []*tipb.CPUTimeRecord) error
+	Send(ctx context.Context, addr string, data reportData) error
 	Close()
 }
 
@@ -36,17 +36,22 @@ type ReportClient interface {
 type GRPCReportClient struct {
 	curRPCAddr string
 	conn       *grpc.ClientConn
+	// calling decodePlan this can take a while, so should not block critical paths
+	decodePlan planBinaryDecodeFunc
 }
 
 // NewGRPCReportClient returns a new GRPCReportClient
-func NewGRPCReportClient() *GRPCReportClient {
-	return &GRPCReportClient{}
+func NewGRPCReportClient(decodePlan planBinaryDecodeFunc) *GRPCReportClient {
+	return &GRPCReportClient{
+		decodePlan: decodePlan,
+	}
 }
 
+var _ ReportClient = &GRPCReportClient{}
+
 // Send implements the ReportClient interface.
-func (r *GRPCReportClient) Send(
-	ctx context.Context, targetRPCAddr string,
-	sqlMetas []*tipb.SQLMeta, planMetas []*tipb.PlanMeta, records []*tipb.CPUTimeRecord) error {
+// Currently the implementation will establish a new connection every time, which is suitable for a per-minute sending period
+func (r *GRPCReportClient) Send(ctx context.Context, targetRPCAddr string, data reportData) error {
 	if targetRPCAddr == "" {
 		return nil
 	}
@@ -61,15 +66,15 @@ func (r *GRPCReportClient) Send(
 
 	go func() {
 		defer wg.Done()
-		errCh <- r.sendBatchSQLMeta(ctx, sqlMetas)
+		errCh <- r.sendBatchSQLMeta(ctx, data.normalizedSQLMap)
 	}()
 	go func() {
 		defer wg.Done()
-		errCh <- r.sendBatchPlanMeta(ctx, planMetas)
+		errCh <- r.sendBatchPlanMeta(ctx, data.normalizedPlanMap)
 	}()
 	go func() {
 		defer wg.Done()
-		errCh <- r.sendBatchCPUTimeRecord(ctx, records)
+		errCh <- r.sendBatchCPUTimeRecord(ctx, data.collectedData)
 	}()
 	wg.Wait()
 	close(errCh)
@@ -94,7 +99,7 @@ func (r *GRPCReportClient) Close() {
 }
 
 // sendBatchCPUTimeRecord sends a batch of TopSQL records by stream.
-func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records []*tipb.CPUTimeRecord) error {
+func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records map[string]*dataPoints) error {
 	if len(records) == 0 {
 		return nil
 	}
@@ -104,8 +109,14 @@ func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records [
 		return err
 	}
 	for _, record := range records {
+		record := &tipb.CPUTimeRecord{
+			TimestampList: record.TimestampList,
+			CpuTimeMsList: record.CPUTimeMsList,
+			SqlDigest:     record.SQLDigest,
+			PlanDigest:    record.PlanDigest,
+		}
 		if err := stream.Send(record); err != nil {
-			break
+			return err
 		}
 	}
 	// See https://pkg.go.dev/google.golang.org/grpc#ClientConn.NewStream for how to avoid leaking the stream
@@ -114,38 +125,55 @@ func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records [
 }
 
 // sendBatchSQLMeta sends a batch of SQL metas by stream.
-func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, metas []*tipb.SQLMeta) error {
-	if len(metas) == 0 {
-		return nil
-	}
+func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, sqlMap *sync.Map) error {
 	client := tipb.NewTopSQLAgentClient(r.conn)
 	stream, err := client.ReportSQLMeta(ctx)
 	if err != nil {
 		return err
 	}
-	for _, meta := range metas {
-		if err := stream.Send(meta); err != nil {
-			break
+	sqlMap.Range(func(key, value interface{}) bool {
+		sqlMeta := &tipb.SQLMeta{
+			SqlDigest:     []byte(key.(string)),
+			NormalizedSql: value.(string),
 		}
+		if err = stream.Send(sqlMeta); err != nil {
+			return false
+		}
+		return true
+	})
+	// stream.Send return error
+	if err != nil {
+		return err
 	}
 	_, err = stream.CloseAndRecv()
 	return err
 }
 
-// sendBatchSQLMeta sends a batch of SQL metas by stream.
-func (r *GRPCReportClient) sendBatchPlanMeta(ctx context.Context, metas []*tipb.PlanMeta) error {
-	if len(metas) == 0 {
-		return nil
-	}
+// sendBatchPlanMeta sends a batch of SQL metas by stream.
+func (r *GRPCReportClient) sendBatchPlanMeta(ctx context.Context, planMap *sync.Map) error {
 	client := tipb.NewTopSQLAgentClient(r.conn)
 	stream, err := client.ReportPlanMeta(ctx)
 	if err != nil {
 		return err
 	}
-	for _, meta := range metas {
-		if err := stream.Send(meta); err != nil {
-			break
+	planMap.Range(func(key, value interface{}) bool {
+		planDecoded, errDecode := r.decodePlan(value.(string))
+		if errDecode != nil {
+			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(errDecode))
+			return true
 		}
+		planMeta := &tipb.PlanMeta{
+			PlanDigest:     []byte(key.(string)),
+			NormalizedPlan: planDecoded,
+		}
+		if err = stream.Send(planMeta); err != nil {
+			return false
+		}
+		return true
+	})
+	// stream.Send return error
+	if err != nil {
+		return err
 	}
 	_, err = stream.CloseAndRecv()
 	return err
