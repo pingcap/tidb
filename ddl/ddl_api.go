@@ -36,6 +36,10 @@ import (
 	"github.com/pingcap/parser/mysql"
 	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/ddl/placement"
+>>>>>>> 932148962... ddl, executor: fix test race in terror (#25405)
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -1168,6 +1172,26 @@ func buildTableInfo(
 		tbInfo.Columns = append(tbInfo.Columns, v.ToInfo())
 	}
 	for _, constr := range constraints {
+<<<<<<< HEAD
+=======
+		// Build hidden columns if necessary.
+		hiddenCols, err := buildHiddenColumnInfo(ctx, constr.Keys, model.NewCIStr(constr.Name), tbInfo, tblColumns)
+		if err != nil {
+			return nil, err
+		}
+		for _, hiddenCol := range hiddenCols {
+			hiddenCol.State = model.StatePublic
+			hiddenCol.ID = allocateColumnID(tbInfo)
+			hiddenCol.Offset = len(tbInfo.Columns)
+			tbInfo.Columns = append(tbInfo.Columns, hiddenCol)
+			tblColumns = append(tblColumns, table.ToColumn(hiddenCol))
+		}
+		// Check clustered on non-primary key.
+		if constr.Option != nil && constr.Option.PrimaryKeyTp != model.PrimaryKeyTypeDefault &&
+			constr.Tp != ast.ConstraintPrimaryKey {
+			return nil, errUnsupportedClusteredSecondaryKey
+		}
+>>>>>>> 932148962... ddl, executor: fix test race in terror (#25405)
 		if constr.Tp == ast.ConstraintForeignKey {
 			for _, fk := range tbInfo.ForeignKeys {
 				if fk.Name.L == strings.ToLower(constr.Name) {

@@ -214,4 +214,58 @@ var (
 	ErrAddColumnWithSequenceAsDefault = dbterror.ClassDDL.NewStd(mysql.ErrAddColumnWithSequenceAsDefault)
 	// ErrUnsupportedExpressionIndex is returned when create an expression index without allow-expression-index.
 	ErrUnsupportedExpressionIndex = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "creating expression index without allow-expression-index in config"), nil))
+<<<<<<< HEAD
+=======
+	// ErrPartitionExchangePartTable is returned when exchange table partition with another table is partitioned.
+	ErrPartitionExchangePartTable = dbterror.ClassDDL.NewStd(mysql.ErrPartitionExchangePartTable)
+	// ErrTablesDifferentMetadata is returned when exchanges tables is not compatible.
+	ErrTablesDifferentMetadata = dbterror.ClassDDL.NewStd(mysql.ErrTablesDifferentMetadata)
+	// ErrRowDoesNotMatchPartition is returned when the row record of exchange table does not match the partition rule.
+	ErrRowDoesNotMatchPartition = dbterror.ClassDDL.NewStd(mysql.ErrRowDoesNotMatchPartition)
+	// ErrPartitionExchangeForeignKey is returned when exchanged normal table has foreign keys.
+	ErrPartitionExchangeForeignKey = dbterror.ClassDDL.NewStd(mysql.ErrPartitionExchangeForeignKey)
+	// ErrCheckNoSuchTable is returned when exchanged normal table is view or sequence.
+	ErrCheckNoSuchTable         = dbterror.ClassDDL.NewStd(mysql.ErrCheckNoSuchTable)
+	errUnsupportedPartitionType = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "partition type of table %s when exchanging partition"), nil))
+	// ErrPartitionExchangeDifferentOption is returned when attribute does not match between partition table and normal table.
+	ErrPartitionExchangeDifferentOption = dbterror.ClassDDL.NewStd(mysql.ErrPartitionExchangeDifferentOption)
+	// ErrTableOptionUnionUnsupported is returned when create/alter table with union option.
+	ErrTableOptionUnionUnsupported = dbterror.ClassDDL.NewStd(mysql.ErrTableOptionUnionUnsupported)
+	// ErrTableOptionInsertMethodUnsupported is returned when create/alter table with insert method option.
+	ErrTableOptionInsertMethodUnsupported = dbterror.ClassDDL.NewStd(mysql.ErrTableOptionInsertMethodUnsupported)
+
+	// ErrInvalidPlacementSpec is returned when add/alter an invalid placement rule
+	ErrInvalidPlacementSpec = dbterror.ClassDDL.NewStd(mysql.ErrInvalidPlacementSpec)
+
+	// ErrInvalidPlacementPolicyCheck is returned when txn_scope and commit data changing do not meet the placement policy
+	ErrInvalidPlacementPolicyCheck = dbterror.ClassDDL.NewStd(mysql.ErrPlacementPolicyCheck)
+
+	// ErrMultipleDefConstInListPart returns multiple definition of same constant in list partitioning.
+	ErrMultipleDefConstInListPart = dbterror.ClassDDL.NewStd(mysql.ErrMultipleDefConstInListPart)
+
+	// ErrTruncatedWrongValue is returned when data has been truncated during conversion.
+	ErrTruncatedWrongValue = dbterror.ClassDDL.NewStd(mysql.ErrTruncatedWrongValue)
+
+	// ErrWarnDataOutOfRange is returned when the value in a numeric column that is outside the permissible range of the column data type.
+	// See https://dev.mysql.com/doc/refman/5.5/en/out-of-range-and-overflow.html for details
+	ErrWarnDataOutOfRange = dbterror.ClassDDL.NewStd(mysql.ErrWarnDataOutOfRange)
+
+	// ErrTooLongValueForType is returned when the individual enum element length is too long.
+	ErrTooLongValueForType = dbterror.ClassDDL.NewStd(mysql.ErrTooLongValueForType)
+
+	// ErrUnknownEngine is returned when the table engine is unknown.
+	ErrUnknownEngine = dbterror.ClassDDL.NewStd(mysql.ErrUnknownStorageEngine)
+
+	errExchangePartitionDisabled = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Exchange Partition is disabled, please set 'tidb_enable_exchange_partition' if you need to need to enable it", nil))
+
+	// ErrPartitionNoTemporary returns when partition at temporary mode
+	ErrPartitionNoTemporary = dbterror.ClassDDL.NewStd(mysql.ErrPartitionNoTemporary)
+
+	// ErrOptOnTemporaryTable returns when exec unsupported opt at temporary mode
+	ErrOptOnTemporaryTable = dbterror.ClassDDL.NewStd(mysql.ErrOptOnTemporaryTable)
+
+	errUnsupportedOnCommitPreserve      = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support ON COMMIT PRESERVE ROWS for now", nil))
+	errUnsupportedEngineTemporary       = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support this kind of engine for temporary table", nil))
+	errUnsupportedClusteredSecondaryKey = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("CLUSTERED/NONCLUSTERED keyword is only supported for primary key", nil))
+>>>>>>> 932148962... ddl, executor: fix test race in terror (#25405)
 )

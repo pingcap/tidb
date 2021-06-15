@@ -299,6 +299,15 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
 	} else if types.ErrTruncated.Equal(err) {
 		err = types.ErrTruncated.GenWithStackByArgs(colName, rowIdx+1)
+<<<<<<< HEAD
+=======
+	} else if types.ErrTruncatedWrongVal.Equal(err) && (colTp == mysql.TypeDuration || colTp == mysql.TypeDatetime || colTp == mysql.TypeDate || colTp == mysql.TypeTimestamp) {
+		valStr, err1 := val.ToString()
+		if err1 != nil {
+			logutil.BgLogger().Debug("time truncated error", zap.Error(err1))
+		}
+		err = errTruncateWrongInsertValue.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
+>>>>>>> 932148962... ddl, executor: fix test race in terror (#25405)
 	} else if types.ErrTruncatedWrongVal.Equal(err) || types.ErrWrongValue.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
