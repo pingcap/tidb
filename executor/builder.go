@@ -2842,6 +2842,9 @@ func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, sch
 	}
 
 	// recalculate key column offsets
+	if len(lookUpContent) == 0 {
+		return nil, false, nil, nil
+	}
 	if lookUpContent[0].keyColIDs == nil {
 		return nil, false, nil,
 			dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("cannot get column IDs when dynamic pruning")
