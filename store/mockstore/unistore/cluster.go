@@ -20,8 +20,8 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/metapb"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/tikv/client-go/v2/mockstore/cluster"
 )
 
 type delayKey struct {

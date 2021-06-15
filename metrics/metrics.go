@@ -14,8 +14,8 @@
 package metrics
 
 import (
-	tikvmetrics "github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/prometheus/client_golang/prometheus"
+	tikvmetrics "github.com/tikv/client-go/v2/metrics"
 )
 
 var (
@@ -151,7 +151,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiFlashQueryTotalCounter)
 	prometheus.MustRegister(SmallTxnWriteDuration)
 	prometheus.MustRegister(TxnWriteThroughput)
-	prometheus.MustRegister(TiKVSmallReadDuration)
 	prometheus.MustRegister(LoadSysVarCacheCounter)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)

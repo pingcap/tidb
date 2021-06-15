@@ -1678,7 +1678,7 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test")
 
-	tk.MustExec(fmt.Sprintf("set time_zone = 'UTC'"))
+	tk.MustExec("set time_zone = 'UTC'")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int not null, unique key(a))")
 	tk.MustExec("insert into t values(1, 1)")
