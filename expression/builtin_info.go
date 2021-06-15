@@ -218,7 +218,7 @@ func (b *builtinCurrentRoleSig) Clone() builtinFunc {
 }
 
 // evalString evals a builtinCurrentUserSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
+// See https://dev.mysql.com/doc/refman/8.0/en/information-functions.html#function_current-role
 func (b *builtinCurrentRoleSig) evalString(row chunk.Row) (string, bool, error) {
 	data := b.ctx.GetSessionVars()
 	if data == nil || data.ActiveRoles == nil {
@@ -233,11 +233,15 @@ func (b *builtinCurrentRoleSig) evalString(row chunk.Row) (string, bool, error) 
 		sortedRes = append(sortedRes, r.String())
 	}
 	sort.Strings(sortedRes)
-	for i, r := range sortedRes {
-		res += r
-		if i != len(data.ActiveRoles)-1 {
-			res += ","
+	if len(sortedRes) > 0 {
+		for i, r := range sortedRes {
+			res += r
+			if i != len(data.ActiveRoles)-1 {
+				res += ","
+			}
 		}
+	} else {
+		res += "NONE"
 	}
 	return res, false, nil
 }
