@@ -25,6 +25,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
+// mock TiKV RPC client that hooks message by failpoint
 type fpClient struct {
 	client.Client
 }
