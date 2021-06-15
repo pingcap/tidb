@@ -1117,6 +1117,7 @@ func (h *Handle) columnCountFromStorage(reader *statsReader, tableID, colID, sta
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	// If there doesn't exist any buckets, the SQL will return NULL. So we only use the result if it's not NULL.
 	if !rows[0].IsNull(0) {
 		count, err = rows[0].GetMyDecimal(0).ToInt()
 		if err != nil {
