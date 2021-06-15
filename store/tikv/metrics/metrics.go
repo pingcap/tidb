@@ -65,6 +65,7 @@ var (
 	TiKVRequestRetryTimesHistogram         prometheus.Histogram
 	TiKVTxnCommitBackoffSeconds            prometheus.Histogram
 	TiKVTxnCommitBackoffCount              prometheus.Histogram
+	TiKVSmallReadDuration                  prometheus.Histogram
 )
 
 // Label constants.
@@ -467,6 +468,16 @@ func initMetrics(namespace, subsystem string) {
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 12), // 1 ~ 2048
 		})
 
+	// TiKVSmallReadDuration uses to collect small request read duration.
+	TiKVSmallReadDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Subsystem: "sli", // Always use "sli" to make it compatible with TiDB.
+			Name:      "tikv_small_read_duration",
+			Help:      "Read time of TiKV small read.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 28), // 0.5ms ~ 74h
+		})
+
 	initShortcuts()
 }
 
@@ -527,6 +538,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVRequestRetryTimesHistogram)
 	prometheus.MustRegister(TiKVTxnCommitBackoffSeconds)
 	prometheus.MustRegister(TiKVTxnCommitBackoffCount)
+	prometheus.MustRegister(TiKVSmallReadDuration)
 }
 
 // readCounter reads the value of a prometheus.Counter.
@@ -565,5 +577,14 @@ func GetTxnCommitCounter() TxnCommitCounter {
 		TwoPC:       readCounter(TwoPCTxnCounterOk),
 		AsyncCommit: readCounter(AsyncCommitTxnCounterOk),
 		OnePC:       readCounter(OnePCTxnCounterOk),
+	}
+}
+
+const smallTxnAffectRow = 20
+
+// ObserveReadSLI observes the read SLI metric.
+func ObserveReadSLI(readKeys uint64, readTime float64) {
+	if readKeys <= smallTxnAffectRow && readKeys != 0 && readTime != 0 {
+		TiKVSmallReadDuration.Observe(readTime)
 	}
 }

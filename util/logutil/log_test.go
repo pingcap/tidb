@@ -66,14 +66,14 @@ func (s *testLogSuite) TestZapLoggerWithKeys(c *C) {
 
 	fileCfg := FileLogConfig{log.FileLogConfig{Filename: "zap_log", MaxSize: 4096}}
 	conf := NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
-	err := InitZapLogger(conf)
+	err := InitLogger(conf)
 	c.Assert(err, IsNil)
 	connID := uint64(123)
 	ctx := WithConnID(context.Background(), connID)
 	s.testZapLogger(ctx, c, fileCfg.Filename, zapLogWithConnIDPattern)
 	os.Remove(fileCfg.Filename)
 
-	err = InitZapLogger(conf)
+	err = InitLogger(conf)
 	c.Assert(err, IsNil)
 	key := "ctxKey"
 	val := "ctxValue"
@@ -108,7 +108,7 @@ func (s *testLogSuite) testZapLogger(ctx context.Context, c *C, fileName, patter
 
 func (s *testLogSuite) TestSetLevel(c *C) {
 	conf := NewLogConfig("info", DefaultLogFormat, "", EmptyFileLogConfig, false)
-	err := InitZapLogger(conf)
+	err := InitLogger(conf)
 	c.Assert(err, IsNil)
 
 	c.Assert(log.GetLevel(), Equals, zap.InfoLevel)
