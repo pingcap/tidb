@@ -17,10 +17,11 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/metrics"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/util"
+	"github.com/tikv/client-go/v2/metrics"
+	"github.com/tikv/client-go/v2/mockstore"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func (s *testAsyncCommitCommon) begin1PC(c *C) tikv.TxnProbe {
@@ -179,7 +180,7 @@ func (s *testOnePCSuite) Test1PCIsolation(c *C) {
 
 func (s *testOnePCSuite) Test1PCDisallowMultiRegion(c *C) {
 	// This test doesn't support tikv mode.
-	if *WithTiKV {
+	if *mockstore.WithTiKV {
 		return
 	}
 
@@ -247,7 +248,7 @@ func (s *testOnePCSuite) Test1PCLinearizability(c *C) {
 
 func (s *testOnePCSuite) Test1PCWithMultiDC(c *C) {
 	// It requires setting placement rules to run with TiKV
-	if *WithTiKV {
+	if *mockstore.WithTiKV {
 		return
 	}
 

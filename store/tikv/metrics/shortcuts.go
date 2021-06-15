@@ -33,14 +33,16 @@ var (
 	RawkvSizeHistogramWithKey          prometheus.Observer
 	RawkvSizeHistogramWithValue        prometheus.Observer
 
-	BackoffHistogramRPC        prometheus.Observer
-	BackoffHistogramLock       prometheus.Observer
-	BackoffHistogramLockFast   prometheus.Observer
-	BackoffHistogramPD         prometheus.Observer
-	BackoffHistogramRegionMiss prometheus.Observer
-	BackoffHistogramServerBusy prometheus.Observer
-	BackoffHistogramStaleCmd   prometheus.Observer
-	BackoffHistogramEmpty      prometheus.Observer
+	BackoffHistogramRPC              prometheus.Observer
+	BackoffHistogramLock             prometheus.Observer
+	BackoffHistogramLockFast         prometheus.Observer
+	BackoffHistogramPD               prometheus.Observer
+	BackoffHistogramRegionMiss       prometheus.Observer
+	BackoffHistogramRegionScheduling prometheus.Observer
+	BackoffHistogramServerBusy       prometheus.Observer
+	BackoffHistogramStaleCmd         prometheus.Observer
+	BackoffHistogramDataNotReady     prometheus.Observer
+	BackoffHistogramEmpty            prometheus.Observer
 
 	TxnRegionsNumHistogramWithSnapshot         prometheus.Observer
 	TxnRegionsNumHistogramPrewrite             prometheus.Observer
@@ -120,8 +122,10 @@ func initShortcuts() {
 	BackoffHistogramLockFast = TiKVBackoffHistogram.WithLabelValues("tikvLockFast")
 	BackoffHistogramPD = TiKVBackoffHistogram.WithLabelValues("pdRPC")
 	BackoffHistogramRegionMiss = TiKVBackoffHistogram.WithLabelValues("regionMiss")
+	BackoffHistogramRegionScheduling = TiKVBackoffHistogram.WithLabelValues("regionScheduling")
 	BackoffHistogramServerBusy = TiKVBackoffHistogram.WithLabelValues("serverBusy")
 	BackoffHistogramStaleCmd = TiKVBackoffHistogram.WithLabelValues("staleCommand")
+	BackoffHistogramDataNotReady = TiKVBackoffHistogram.WithLabelValues("dataNotReady")
 	BackoffHistogramEmpty = TiKVBackoffHistogram.WithLabelValues("")
 
 	TxnRegionsNumHistogramWithSnapshot = TiKVTxnRegionsNumHistogram.WithLabelValues("snapshot")

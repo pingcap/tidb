@@ -21,9 +21,9 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/tikv/client-go/v2/mockstore/cluster"
 )
 
 var _ = Suite(&testFeatureInfoSuite{})
@@ -93,6 +93,7 @@ func (s *testFeatureInfoSuite) TestTxnUsageInfo(c *C) {
 
 func (s *testFeatureInfoSuite) TestTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("use test")
 	usage, err := telemetry.GetFeatureUsage(tk.Se)
 	c.Assert(err, IsNil)

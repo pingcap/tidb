@@ -468,6 +468,28 @@ func (s *testPrivilegeSuite) TestSetPasswdStmt(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testPrivilegeSuite) TestAlterUserStmt(c *C) {
+	se := newSession(c, s.store, s.dbName)
+
+	// high privileged user setting password for other user (passes)
+	mustExec(c, se, "CREATE USER 'superuser2'")
+	mustExec(c, se, "CREATE USER 'nobodyuser2'")
+	mustExec(c, se, "CREATE USER 'nobodyuser3'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'superuser2'")
+	mustExec(c, se, "GRANT CREATE USER ON *.* TO 'nobodyuser2'")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "superuser2", Hostname: "localhost", AuthUsername: "superuser2", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+
+	// low privileged user trying to set password for other user (fails)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser2", Hostname: "localhost", AuthUsername: "nobodyuser2", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+	_, err := se.ExecuteInternal(context.Background(), "ALTER USER 'superuser2' IDENTIFIED BY 'newpassword'")
+	c.Assert(err, NotNil)
+}
+
 func (s *testPrivilegeSuite) TestSelectViewSecurity(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	ctx, _ := se.(sessionctx.Context)
@@ -1253,11 +1275,9 @@ func (s *testPrivilegeSuite) TestDynamicPrivs(c *C) {
 	mustExec(c, rootSe, "CREATE USER notsuper")
 	mustExec(c, rootSe, "CREATE USER otheruser")
 	mustExec(c, rootSe, "CREATE ROLE anyrolename")
-	mustExec(c, rootSe, "SET tidb_enable_dynamic_privileges=1")
 
 	se := newSession(c, s.store, s.dbName)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "notsuper", Hostname: "%"}, nil, nil), IsTrue)
-	mustExec(c, se, "SET tidb_enable_dynamic_privileges=1")
 
 	// test SYSTEM_VARIABLES_ADMIN
 	_, err := se.ExecuteInternal(context.Background(), "SET GLOBAL wait_timeout = 86400")
@@ -1298,20 +1318,17 @@ func (s *testPrivilegeSuite) TestDynamicGrantOption(c *C) {
 	mustExec(c, rootSe, "CREATE USER varuser1")
 	mustExec(c, rootSe, "CREATE USER varuser2")
 	mustExec(c, rootSe, "CREATE USER varuser3")
-	mustExec(c, rootSe, "SET tidb_enable_dynamic_privileges=1")
 
 	mustExec(c, rootSe, "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser1")
 	mustExec(c, rootSe, "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser2 WITH GRANT OPTION")
 
 	se1 := newSession(c, s.store, s.dbName)
-	mustExec(c, se1, "SET tidb_enable_dynamic_privileges=1")
 
 	c.Assert(se1.Auth(&auth.UserIdentity{Username: "varuser1", Hostname: "%"}, nil, nil), IsTrue)
 	_, err := se1.ExecuteInternal(context.Background(), "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser3")
 	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the GRANT OPTION privilege(s) for this operation")
 
 	se2 := newSession(c, s.store, s.dbName)
-	mustExec(c, se2, "SET tidb_enable_dynamic_privileges=1")
 
 	c.Assert(se2.Auth(&auth.UserIdentity{Username: "varuser2", Hostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se2, "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser3")
@@ -1321,14 +1338,12 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeRestrictedTables(c *C) {
 	// This provides an integration test of the tests in util/security/security_test.go
 	cloudAdminSe := newSession(c, s.store, s.dbName)
 	mustExec(c, cloudAdminSe, "CREATE USER cloudadmin")
-	mustExec(c, cloudAdminSe, "SET tidb_enable_dynamic_privileges=1")
 	mustExec(c, cloudAdminSe, "GRANT RESTRICTED_TABLES_ADMIN, SELECT ON *.* to cloudadmin")
 	mustExec(c, cloudAdminSe, "GRANT CREATE ON mysql.* to cloudadmin")
 	mustExec(c, cloudAdminSe, "CREATE USER uroot")
 	mustExec(c, cloudAdminSe, "GRANT ALL ON *.* to uroot WITH GRANT OPTION") // A "MySQL" all powerful user.
 	c.Assert(cloudAdminSe.Auth(&auth.UserIdentity{Username: "cloudadmin", Hostname: "%"}, nil, nil), IsTrue)
 	urootSe := newSession(c, s.store, s.dbName)
-	mustExec(c, urootSe, "SET tidb_enable_dynamic_privileges=1")
 	c.Assert(urootSe.Auth(&auth.UserIdentity{Username: "uroot", Hostname: "%"}, nil, nil), IsTrue)
 
 	sem.Enable()
@@ -1352,7 +1367,6 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeInfoschema(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE USER uroot1, uroot2, uroot3")
 	tk.MustExec("GRANT SUPER ON *.* to uroot1 WITH GRANT OPTION") // super not process
-	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
 	tk.MustExec("GRANT SUPER, PROCESS, RESTRICTED_TABLES_ADMIN ON *.* to uroot2 WITH GRANT OPTION")
 	tk.Se.Auth(&auth.UserIdentity{
 		Username:     "uroot1",
@@ -1391,7 +1405,6 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeStatusVars(c *C) {
 	// and verify if it appears.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE USER unostatus, ustatus")
-	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
 	tk.MustExec("GRANT RESTRICTED_STATUS_ADMIN ON *.* to ustatus")
 	tk.Se.Auth(&auth.UserIdentity{
 		Username:     "unostatus",
@@ -1399,6 +1412,35 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeStatusVars(c *C) {
 		AuthUsername: "uroot",
 		AuthHostname: "%",
 	}, nil, nil)
+
+}
+
+func (s *testPrivilegeSuite) TestSecurityEnhancedLocalBackupRestore(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER backuprestore")
+	tk.MustExec("GRANT BACKUP_ADMIN,RESTORE_ADMIN ON *.* to backuprestore")
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "backuprestore",
+		Hostname: "localhost",
+	}, nil, nil)
+
+	// Prior to SEM nolocal has permission, the error should be because backup requires tikv
+	_, err := tk.Se.ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'Local:///tmp/test';")
+	c.Assert(err.Error(), Equals, "BACKUP requires tikv store, not unistore")
+
+	_, err = tk.Se.ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
+	c.Assert(err.Error(), Equals, "RESTORE requires tikv store, not unistore")
+
+	sem.Enable()
+	defer sem.Disable()
+
+	// With SEM enabled nolocal does not have permission, but yeslocal does.
+	_, err = tk.Se.ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'Local:///tmp/test';")
+	c.Assert(err.Error(), Equals, "[planner:8132]Feature 'local://' is not supported when security enhanced mode is enabled")
+
+	_, err = tk.Se.ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
+	c.Assert(err.Error(), Equals, "[planner:8132]Feature 'local://' is not supported when security enhanced mode is enabled")
+
 }
 
 func (s *testPrivilegeSuite) TestRenameUser(c *C) {
@@ -1453,7 +1495,6 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeSysVars(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE USER svroot1, svroot2")
 	tk.MustExec("GRANT SUPER ON *.* to svroot1 WITH GRANT OPTION")
-	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
 	tk.MustExec("GRANT SUPER, RESTRICTED_VARIABLES_ADMIN ON *.* to svroot2")
 
 	sem.Enable()
@@ -1531,7 +1572,6 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeRestrictedUsers(c *C) {
 	tk.MustExec("CREATE USER ruroot1, ruroot2, ruroot3")
 	tk.MustExec("CREATE ROLE notimportant")
 	tk.MustExec("GRANT SUPER, CREATE USER ON *.* to ruroot1 WITH GRANT OPTION")
-	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
 	tk.MustExec("GRANT SUPER, RESTRICTED_USER_ADMIN,  CREATE USER  ON *.* to ruroot2 WITH GRANT OPTION")
 	tk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* to ruroot3")
 	tk.MustExec("GRANT notimportant TO ruroot2, ruroot3")
@@ -1594,7 +1634,6 @@ func (s *testPrivilegeSuite) TestDynamicPrivsRegistration(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE USER privassigntest")
-	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
 
 	// Check that all privileges registered are assignable to users,
 	// including the recently registered ACDC_ADMIN
