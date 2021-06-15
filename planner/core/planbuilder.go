@@ -42,8 +42,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -56,6 +54,8 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/table/tables"
@@ -973,10 +973,16 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	tablePath := &util.AccessPath{StoreType: tp}
 	fillContentForTablePath(tablePath, tblInfo)
 	publicPaths = append(publicPaths, tablePath)
-	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
+
+	if tblInfo.TiFlashReplica == nil {
+		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there aren't tiflash replicas of table `" + tblInfo.Name.O + "`.")
+	} else if !tblInfo.TiFlashReplica.Available {
+		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because tiflash replicas of table `" + tblInfo.Name.O + "` not ready.")
+	} else {
 		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, false))
 		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, true))
 	}
+
 	optimizerUseInvisibleIndexes := ctx.GetSessionVars().OptimizerUseInvisibleIndexes
 
 	check = check && ctx.GetSessionVars().ConnectionID > 0
@@ -1110,10 +1116,14 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 		}
 	}
 	var err error
+	engineVals, _ := ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
 	if len(paths) == 0 {
-		engineVals, _ := ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
 		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("Can not find access path matching '%v'(value: '%v'). Available values are '%v'.",
 			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr))
+	}
+	if _, ok := isolationReadEngines[kv.TiFlash]; !ok {
+		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
+			fmt.Sprintf("MPP mode may be blocked because '%v'(value: '%v') not match, need 'tiflash'.", variable.TiDBIsolationReadEngines, engineVals))
 	}
 	return paths, err
 }

@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -55,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 var _ = Suite(&testIntegrationSuite{})
@@ -9020,7 +9020,7 @@ PARTITION BY RANGE (c) (
 	}
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope",
+		failpoint.Enable("tikvclient/injectTxnScope",
 			fmt.Sprintf(`return("%v")`, testcase.zone))
 		tk.MustExec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
 		res, err := tk.Exec(testcase.sql)
@@ -9040,7 +9040,7 @@ PARTITION BY RANGE (c) (
 		if res != nil {
 			res.Close()
 		}
-		failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
+		failpoint.Disable("tikvclient/injectTxnScope")
 	}
 }
 
