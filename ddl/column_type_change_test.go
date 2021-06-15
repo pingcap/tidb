@@ -1671,7 +1671,7 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValue(c *C) {
 	tk.MustExec("drop table if exists t")
 }
 
-func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol(c *C) {
+func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddColAndCastSucc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -1708,8 +1708,11 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 					checkErr = errors.New("assert the writable column number error")
 					return
 				}
-				if tbl.WritableCols()[3].OriginDefaultValue.(string) != "1971-06-09 00:00:00" {
-					checkErr = errors.New("assert the write only column origin default value error")
+				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
+				expectVal := "1971-06-09"
+				if originalDV != expectVal {
+					errMsg := fmt.Sprintf("expect: %v, got: %v", expectVal, originalDV)
+					checkErr = errors.New("assert the write only column origin default value error" + errMsg)
 					return
 				}
 			}
@@ -1749,6 +1752,62 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
 	tk.MustQuery("select * from t order by a").Check(
 		testkit.Rows("1 -1 1971-06-09", "2 -2 1971-06-09", "5 5 2021-06-06", "6 6 2021-06-06", "7 7 2021-06-06"))
+	tk.MustExec("drop table if exists t")
+}
+
+// TestChangingColOriginDefaultValueAfterAddColAndCastFail tests #25383.
+func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddColAndCastFail(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+
+	tk.MustExec(fmt.Sprintf("set time_zone = 'UTC'"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a VARCHAR(31) NULL DEFAULT 'wwrzfwzb01j6ddj', b DECIMAL(12,0) NULL DEFAULT '-729850476163')")
+	tk.MustExec("ALTER TABLE t ADD COLUMN x CHAR(218) NULL DEFAULT 'lkittuae'")
+
+	tbl := testGetTableByName(c, tk.Se, "test", "t")
+	originalHook := s.dom.DDL().GetHook()
+	hook := &ddl.TestDDLCallback{Do: s.dom}
+	var checkErr error
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		if tbl.Meta().ID != job.TableID {
+			return
+		}
+
+		if job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
+			tbl := testGetTableByName(c, tk1.Se, "test", "t")
+			if len(tbl.WritableCols()) != 4 {
+				errMsg := fmt.Sprintf("cols len:%v", len(tbl.WritableCols()))
+				checkErr = errors.New("assert the writable column number error" + errMsg)
+				return
+			}
+			originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
+			expectVal := "0000-00-00 00:00:00"
+			if originalDV != expectVal {
+				errMsg := fmt.Sprintf("expect: %v, got: %v", expectVal, originalDV)
+				checkErr = errors.New("assert the write only column origin default value error" + errMsg)
+				return
+			}
+			// The casted value will be inserted into changing column too.
+			_, err := tk1.Exec("UPDATE t SET a = '18apf' WHERE x = '' AND a = 'mul'")
+			if err != nil {
+				checkErr = err
+				return
+			}
+		}
+	}
+
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	tk.MustExec("alter table t modify column x DATETIME NULL DEFAULT '3771-02-28 13:00:11' AFTER b;")
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	c.Assert(checkErr, IsNil)
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows())
 	tk.MustExec("drop table if exists t")
 }
 
