@@ -49,9 +49,9 @@ func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
 	}
 
 	c.Assert(failpoint.Enable("tikvclient/noRetryOnRpcError", "return(true)"), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteTimeout", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/rpcPrewriteTimeout", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteTimeout"), IsNil)
+		c.Assert(failpoint.Disable("tikvclient/rpcPrewriteTimeout"), IsNil)
 		c.Assert(failpoint.Disable("tikvclient/noRetryOnRpcError"), IsNil)
 	}()
 	// The rpc error will be wrapped to ErrResultUndetermined.
@@ -90,9 +90,9 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitPrewriteCancelled(c *C) {
 	s.cluster.Split(loc.Region.GetID(), newRegionID, []byte(splitKey), []uint64{newPeerID}, newPeerID)
 	s.store.GetRegionCache().InvalidateCachedRegion(loc.Region)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult", `1*return("writeConflict")->sleep(50)`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/rpcPrewriteResult", `1*return("writeConflict")->sleep(50)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult"), IsNil)
+		c.Assert(failpoint.Disable("tikvclient/rpcPrewriteResult"), IsNil)
 	}()
 
 	t1 := s.beginAsyncCommit(c)
@@ -246,9 +246,9 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitRPCErrorThenWriteConflict(c *C
 	err := txn.Set([]byte("a"), []byte("va"))
 	c.Assert(err, IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult", `1*return("timeout")->return("writeConflict")`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/rpcPrewriteResult", `1*return("timeout")->return("writeConflict")`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult"), IsNil)
+		c.Assert(failpoint.Disable("tikvclient/rpcPrewriteResult"), IsNil)
 	}()
 
 	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
@@ -269,11 +269,11 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitRPCErrorThenWriteConflictInChi
 	err := txn.Set([]byte("a"), []byte("va"))
 	c.Assert(err, IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult", `1*return("timeout")->return("writeConflict")`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/rpcPrewriteResult", `1*return("timeout")->return("writeConflict")`), IsNil)
 	c.Assert(failpoint.Enable("tikvclient/forceRecursion", `return`), IsNil)
 
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult"), IsNil)
+		c.Assert(failpoint.Disable("tikvclient/rpcPrewriteResult"), IsNil)
 		c.Assert(failpoint.Disable("tikvclient/forceRecursion"), IsNil)
 	}()
 
