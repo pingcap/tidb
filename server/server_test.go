@@ -1684,6 +1684,35 @@ func (cli *testServerClient) runTestIssue3682(c *C) {
 	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'issue3682'@'127.0.0.1' (using password: YES)")
 }
 
+func (cli *testServerClient) runTestEmptyRoles(c *C) {
+	cli.runTests(c, nil, func(dbt *DBTest) {
+		dbt.mustExec(`CREATE USER 'authtest'@'%' IDENTIFIED BY '123';`)
+		dbt.mustExec(`GRANT ALL on test.* to 'authtest'`)
+	})
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "authtest"
+		config.Passwd = "123"
+	}, func(dbt *DBTest) {
+		dbt.mustExec(`USE information_schema;`)
+	})
+
+	// Test for loading empty active roles.
+	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+		config.User = "authtest"
+		config.Passwd = "123"
+	}))
+	c.Assert(err, IsNil)
+	rows, err := db.Query("select current_role;")
+	c.Assert(err, IsNil)
+	c.Assert(rows.Next(), IsTrue)
+	var outA string
+	err = rows.Scan(&outA)
+	c.Assert(err, IsNil)
+	c.Assert(outA, Equals, "NONE")
+	err = db.Close()
+	c.Assert(err, IsNil)
+}
+
 func (cli *testServerClient) runTestDBNameEscape(c *C) {
 	cli.runTests(c, nil, func(dbt *DBTest) {
 		dbt.mustExec("CREATE DATABASE `aa-a`;")

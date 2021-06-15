@@ -219,6 +219,10 @@ func (ts *tidbTestSuite) TestAuth(c *C) {
 	ts.runTestIssue3682(c)
 }
 
+func (ts *tidbTestSuite) TestEmptyRoles(c *C) {
+	ts.runTestEmptyRoles(c)
+}
+
 func (ts *tidbTestSuite) TestIssues(c *C) {
 	c.Parallel()
 	ts.runTestIssue3662(c)
