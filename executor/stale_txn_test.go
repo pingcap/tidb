@@ -815,7 +815,7 @@ func (s *testStaleTxnSuite) TestStaleSelect(c *C) {
 
 	// test prepared stale select in txn
 	tk.MustExec("begin")
-	tk.MustQuery("execute s").Check(staleRows)
+	c.Assert(tk.ExecToErr(staleSQL), NotNil)
 	tk.MustExec("commit")
 
 	// test stale select in stale txn
@@ -825,7 +825,7 @@ func (s *testStaleTxnSuite) TestStaleSelect(c *C) {
 
 	// test prepared stale select in stale txn
 	tk.MustExec(fmt.Sprintf(`start transaction read only as of timestamp '%s'`, time2.Format("2006-1-2 15:04:05.000")))
-	tk.MustQuery("execute s").Check(staleRows)
+	c.Assert(tk.ExecToErr(staleSQL), NotNil)
 	tk.MustExec("commit")
 
 	// test prepared stale select with schema change
