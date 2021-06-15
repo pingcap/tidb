@@ -42,8 +42,6 @@ const (
 	DefaultRecordPlanInSlowLog = 1
 	// DefaultTiDBEnableSlowLog enables TiDB to log slow queries.
 	DefaultTiDBEnableSlowLog = true
-	// GRPCLogDebugVerbosity enables max verbosity when debugging grpc code.
-	GRPCLogDebugVerbosity = 99
 )
 
 // EmptyFileLogConfig is an empty FileLogConfig.
@@ -111,12 +109,33 @@ func InitLogger(cfg *LogConfig) error {
 		return errors.Trace(err)
 	}
 
-	// init logger for grpc debugging
+	err = initGRPCLogger(cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
+}
+
+func initGRPCLogger(cfg *LogConfig) error {
+
+	config := &cfg.Config
+	// hack: force stdout
+	config.File.Filename = ""
 	if len(os.Getenv("GRPC_DEBUG")) > 0 {
-		// more information for verbosity: https://github.com/google/glog#verbose-logging
-		gzap.ReplaceGrpcLoggerV2WithVerbosity(gl, GRPCLogDebugVerbosity)
+		config.Level = "debug"
+		l, _, err := log.InitLogger(&cfg.Config, zap.AddStacktrace(zapcore.DebugLevel))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		gzap.ReplaceGrpcLoggerV2WithVerbosity(l, 999)
 	} else {
-		gzap.ReplaceGrpcLoggerV2(gl)
+		config.Level = "error"
+		l, _, err := log.InitLogger(&cfg.Config, zap.AddStacktrace(zapcore.FatalLevel))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		gzap.ReplaceGrpcLoggerV2(l)
 	}
 
 	return nil
