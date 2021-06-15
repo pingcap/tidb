@@ -1301,27 +1301,12 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
-	table, err := p.ensureInfoSchema().TableByName(tn.Schema, tn.Name)
+	table, err := p.tableByName(tn)
 	if err != nil {
-		// We should never leak that the table doesn't exist (i.e. attach ErrTableNotExists)
-		// unless we know that the user has permissions to it, should it exist.
-		// By checking here, this makes all SELECT/SHOW/INSERT/UPDATE/DELETE statements safe.
-		currentUser, activeRoles := p.ctx.GetSessionVars().User, p.ctx.GetSessionVars().ActiveRoles
-		if pm := privilege.GetPrivilegeManager(p.ctx); pm != nil {
-			if !pm.RequestVerification(activeRoles, tn.Schema.L, tn.Name.O, "", mysql.AllPrivMask) {
-				u := currentUser.Username
-				h := currentUser.Hostname
-				if currentUser.AuthHostname != "" {
-					u = currentUser.AuthUsername
-					h = currentUser.AuthHostname
-				}
-				p.err = ErrTableaccessDenied.GenWithStackByArgs(p.stmtType(), u, h, tn.Name.O)
-				return
-			}
-		}
 		p.err = err
 		return
 	}
+
 	tableInfo := table.Meta()
 	dbInfo, _ := p.ensureInfoSchema().SchemaByName(tn.Schema)
 	// tableName should be checked as sequence object.
