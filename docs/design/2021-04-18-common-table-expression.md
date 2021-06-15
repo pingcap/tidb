@@ -188,7 +188,7 @@ When the last user calls Close(), the `Storage` will really be closed.
 In parsing phase, definition of CTE will be parsed as a subtree of the outermost select stmt.
 
 #### Logical Plan
-The parsing phase will generate an AST tree, which will be used to generate `LogicalCTE`. This stage will complete the following steps:
+The parsing phase will generate an AST, which will be used to generate `LogicalCTE`. This stage will complete the following steps:
 1. Distinguish between seed part and recursive part of the definition of CTE. And build logical plans for them.
 2. Do some validation checks.
 
