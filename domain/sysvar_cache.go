@@ -140,6 +140,7 @@ func (svc *SysVarCache) RebuildSysVarCache(ctx sessionctx.Context) error {
 
 	svc.Lock()
 	defer svc.Unlock()
+	svc.session, svc.global = nil, nil // free old maps
 	svc.session = newSessionCache
 	svc.global = newGlobalCache
 	return nil
