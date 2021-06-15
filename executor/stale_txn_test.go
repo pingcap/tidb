@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
@@ -239,43 +240,45 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key);")
 	defer tk.MustExec(`drop table if exists t`)
+	conf := *config.GetGlobalConfig()
+	oldConf := conf
+	defer config.StoreGlobalConfig(&oldConf)
+	conf.Labels = map[string]string{
+		placement.DCLabelKey: "sh",
+	}
+	config.StoreGlobalConfig(&conf)
 	testcases := []struct {
-		name     string
-		sql      string
-		txnScope string
-		zone     string
+		name string
+		sql  string
+		zone string
 	}{
 		{
-			name:     "coprocessor read",
-			sql:      "select * from t",
-			txnScope: "local",
-			zone:     "sh",
+			name: "coprocessor read",
+			sql:  "select * from t",
+			zone: "sh",
 		},
-		{
-			name:     "point get read",
-			sql:      "select * from t where id = 1",
-			txnScope: "local",
-			zone:     "bj",
-		},
-		{
-			name:     "batch point get read",
-			sql:      "select * from t where id in (1,2,3)",
-			txnScope: "local",
-			zone:     "hz",
-		},
+		//{
+		//	name:     "point get read",
+		//	sql:      "select * from t where id = 1",
+		//	txnScope: "local",
+		//	zone:     "bj",
+		//},
+		//{
+		//	name:     "batch point get read",
+		//	sql:      "select * from t where id in (1,2,3)",
+		//	txnScope: "local",
+		//	zone:     "hz",
+		//},
 	}
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
-		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", fmt.Sprintf(`return("%v")`, testcase.zone))
-		failpoint.Enable("tikvclient/assertStoreLabels", fmt.Sprintf(`return("%v_%v")`, placement.DCLabelKey, testcase.txnScope))
+		failpoint.Enable("tikvclient/assertStoreLabels", fmt.Sprintf(`return("%v_%v")`, placement.DCLabelKey, "sh"))
 		failpoint.Enable("tikvclient/assertStaleReadFlag", `return(true)`)
 		// Using NOW() will cause the loss of fsp precision, so we use NOW(3) to be accurate to the millisecond.
 		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
 		tk.MustQuery(testcase.sql)
 		tk.MustExec(`commit`)
 	}
-	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
 	failpoint.Disable("tikvclient/assertStoreLabels")
 	failpoint.Disable("tikvclient/assertStaleReadFlag")
 }

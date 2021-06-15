@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -1471,6 +1472,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			}
 			p.LastSnapshotTS = ts
 			p.ExplicitStaleness = true
+			p.enableTxnCtxStaleness()
 		}
 	}
 	if node != nil {
@@ -1488,6 +1490,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			}
 			p.LastSnapshotTS = ts
 			p.ExplicitStaleness = true
+			p.enableTxnCtxStaleness()
 		}
 	}
 	if p.LastSnapshotTS != ts {
@@ -1514,4 +1517,10 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 		p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	}
 	return p.InfoSchema
+}
+
+func (p *preprocessor) enableTxnCtxStaleness() {
+	_, txnScope := config.GetTxnScopeFromConfig()
+	p.ctx.GetSessionVars().TxnCtx.TxnScope = txnScope
+	p.ctx.GetSessionVars().TxnCtx.IsStaleness = true
 }
