@@ -15,7 +15,7 @@ package kv
 
 import (
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // TxnScopeVar indicates the used txnScope for oracle
