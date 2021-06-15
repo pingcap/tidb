@@ -217,7 +217,7 @@ func (b *builtinCurrentRoleSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalString eval a builtinCurrentUserSig.
+// evalString evals a builtinCurrentUserSig.
 // See https://dev.mysql.com/doc/refman/8.0/en/information-functions.html#function_current-role
 func (b *builtinCurrentRoleSig) evalString(row chunk.Row) (res string, isNil bool, err error) {
 	data := b.ctx.GetSessionVars()
