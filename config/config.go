@@ -30,9 +30,9 @@ import (
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	tikvcfg "github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
+	tikvcfg "github.com/tikv/client-go/v2/config"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/zap"
 )
@@ -424,6 +424,7 @@ type Performance struct {
 	MemProfileInterval    string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
 	IndexUsageSyncLease   string  `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
 	GOGC                  int     `toml:"gogc" json:"gogc"`
+	EnforceMPP            bool    `toml:"enforce-mpp" json:"enforce-mpp"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -623,6 +624,7 @@ var defaultConf = Config{
 		// TODO: set indexUsageSyncLease to 60s.
 		IndexUsageSyncLease: "0s",
 		GOGC:                100,
+		EnforceMPP:          false,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
