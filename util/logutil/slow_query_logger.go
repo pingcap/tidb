@@ -17,7 +17,7 @@ func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, error) {
 
 	// reuse global config and override slow query log file
 	// if slow query log filename is empty, slow query log will behave the same as global log
-	sqConfig := &cfg.Config
+	sqConfig := deepcopyLogConfig(&cfg.Config)
 	if len(cfg.SlowQueryFile) != 0 {
 		sqConfig.File = log.FileLogConfig{
 			MaxSize:  cfg.File.MaxSize,
