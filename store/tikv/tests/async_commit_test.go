@@ -57,7 +57,7 @@ func (s *testAsyncCommitCommon) setUpTest(c *C) {
 	c.Assert(err, IsNil)
 	unistore.BootstrapWithSingleStore(cluster)
 	s.cluster = cluster
-	store, err := tikv.NewTestTiKVStore(client, pdClient, nil, nil, 0)
+	store, err := tikv.NewTestTiKVStore(fpClient{Client: client}, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
 
 	s.store = store
