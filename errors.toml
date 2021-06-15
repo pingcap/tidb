@@ -1211,6 +1211,11 @@ error = '''
 Feature '%s' is not supported when security enhanced mode is enabled
 '''
 
+["planner:8135"]
+error = '''
+invalid as of timestamp: %s
+'''
+
 ["privilege:1141"]
 error = '''
 There is no such grant defined for user '%-.48s' on host '%-.64s'
