@@ -18,8 +18,10 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/set"
+	"go.uber.org/zap"
 )
 
 type SpilledHashAggExec struct {
@@ -35,7 +37,7 @@ type SpilledHashAggExec struct {
 	tmpChk       *chunk.Chunk
 	haveData     bool
 	spillAction  *AggSpillDiskAction
-	spillTimes   int
+	spillTimes   uint32
 }
 
 const maxSpillTimes = 10
@@ -68,11 +70,11 @@ func (e *SpilledHashAggExec) initForExec() {
 	e.childResult = newFirstChunk(e.children[0])
 	e.tmpChk = newFirstChunk(e.children[0])
 	e.list = chunk.NewListInDisk(retTypes(e.children[0]))
-	e.idx = 0
+	e.idx, e.lastChunkNum = 0, 0
 	e.haveData = false
 	e.drained, e.childDrained = false, false
 	e.spillMode, e.spillTimes, e.spillAction = 0, 0, nil
-	e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(e.ActionSpill())
+	e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
 }
 
 func (e *SpilledHashAggExec) Next(ctx context.Context, req *chunk.Chunk) error {
@@ -106,7 +108,7 @@ func (e *SpilledHashAggExec) spilledExec(ctx context.Context, chk *chunk.Chunk) 
 			e.drained = e.lastChunkNum == e.list.NumChunks()
 			e.lastChunkNum = e.list.NumChunks()
 			e.memTracker.ReplaceBytesUsed(0)
-			e.spillTimes++
+			atomic.AddUint32(&e.spillTimes, 1)
 		}
 		if e.drained {
 			return nil
@@ -152,7 +154,7 @@ func (e *SpilledHashAggExec) prepare(ctx context.Context) (err error) {
 		for j := 0; j < e.childResult.NumRows(); j++ {
 			groupKey := string(e.groupKeyBuffer[j])
 			if !e.groupSet.Exist(groupKey) {
-				if atomic.LoadUint32(&e.spillMode) == 1 && e.groupSet.Count() > 0 && e.spillTimes < maxSpillTimes {
+				if atomic.LoadUint32(&e.spillMode) == 1 && e.groupSet.Count() > 0 && atomic.LoadUint32(&e.spillTimes) < maxSpillTimes {
 					e.tmpChk.Append(e.childResult, j, j+1)
 					if e.tmpChk.IsFull() {
 						err = e.list.Add(e.tmpChk)
@@ -219,6 +221,8 @@ type AggSpillDiskAction struct {
 
 func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
 	if atomic.LoadUint32(&a.e.spillMode) == 0 {
+		logutil.BgLogger().Info("memory exceeds quota, set aggregate mode to spill-mode",
+			zap.Uint32("spillTimes", atomic.LoadUint32(&a.e.spillTimes)+1))
 		atomic.StoreUint32(&a.e.spillMode, 1)
 		return
 	}
