@@ -287,6 +287,7 @@ var (
 	errUnsupportedOnCommitPreserve      = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support ON COMMIT PRESERVE ROWS for now", nil))
 	errUnsupportedEngineTemporary       = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support this kind of engine for temporary table", nil))
 	errUnsupportedClusteredSecondaryKey = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("CLUSTERED/NONCLUSTERED keyword is only supported for primary key", nil))
+<<<<<<< HEAD
 
 	// ErrUnsupportedLocalTempTableDDL returns when ddl operation unsupported for local temporary table
 	ErrUnsupportedLocalTempTableDDL = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support %s for local temporary table", nil))
@@ -298,4 +299,6 @@ var (
 	errDependentByFunctionalIndex = dbterror.ClassDDL.NewStd(mysql.ErrDependentByFunctionalIndex)
 	// errFunctionalIndexOnBlob when the expression of expression index returns blob or text.
 	errFunctionalIndexOnBlob = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexOnBlob)
+=======
+>>>>>>> 932148962... ddl, executor: fix test race in terror (#25405)
 )
