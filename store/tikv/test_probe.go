@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"sort"
 	"sync/atomic"
 	"time"
 
@@ -149,6 +150,7 @@ func (txn TxnProbe) CollectLockedKeys() [][]byte {
 // BatchGetSingleRegion gets a batch of keys from a region.
 func (txn TxnProbe) BatchGetSingleRegion(bo *Backoffer, region RegionVerID, keys [][]byte, collect func([]byte, []byte)) error {
 	snapshot := txn.GetSnapshot()
+	sort.Slice(keys, func(i, j int) bool { return bytes.Compare(keys[i], keys[j]) < 0 })
 	return snapshot.batchGetSingleRegion(bo, batchKeys{region: region, keys: keys}, collect)
 }
 
