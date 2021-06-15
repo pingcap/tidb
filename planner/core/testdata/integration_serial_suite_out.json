@@ -1898,18 +1898,11 @@
           "      └─Projection 6400.00 batchCop[tiflash]  cast(test.t.id, decimal(32,0) BINARY)->Column#21, test.t.value",
           "        └─Projection 6400.00 batchCop[tiflash]  test.t.id, test.t.value",
           "          └─HashAgg 6400.00 batchCop[tiflash]  group by:test.t.id, test.t.value, funcs:firstrow(test.t.id)->test.t.id, funcs:firstrow(test.t.value)->test.t.value",
-<<<<<<< HEAD
-          "            └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
-          "              └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.value",
-          "                └─Selection 8000.00 batchCop[tiflash]  gt(cast(test.t.id), test.t.value)",
-          "                  └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
-=======
           "            └─ExchangeReceiver 6400.00 batchCop[tiflash]  ",
           "              └─ExchangeSender 6400.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.value",
           "                └─HashAgg 6400.00 batchCop[tiflash]  group by:test.t.id, test.t.value, ",
-          "                  └─Selection 8000.00 batchCop[tiflash]  gt(cast(test.t.id, decimal(20,0) BINARY), test.t.value)",
+          "                  └─Selection 8000.00 batchCop[tiflash]  gt(cast(test.t.id), test.t.value)",
           "                    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
->>>>>>> a7f3c4d8b... planner/core: change agg cost factor (#25210)
         ]
       },
       {

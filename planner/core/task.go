@@ -1786,12 +1786,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		if proj != nil {
 			attachPlan2Task(proj, mpp)
 		}
-<<<<<<< HEAD
-		mpp.addCost(p.GetCost(inputRows, false))
-=======
 		mpp.addCost(p.GetCost(inputRows, false, true))
-		p.cost = mpp.cost()
->>>>>>> a7f3c4d8b... planner/core: change agg cost factor (#25210)
 		return mpp
 	case Mpp2Phase:
 		proj := p.convertAvgForMPP()
@@ -1822,38 +1817,18 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 			attachPlan2Task(proj, newMpp)
 		}
 		// TODO: how to set 2-phase cost?
-<<<<<<< HEAD
-		newMpp.addCost(p.GetCost(inputRows, false))
-=======
 		newMpp.addCost(p.GetCost(inputRows, false, true))
-		finalAgg.SetCost(mpp.cost())
-		if proj != nil {
-			proj.SetCost(mpp.cost())
-		}
->>>>>>> a7f3c4d8b... planner/core: change agg cost factor (#25210)
 		return newMpp
 	case MppTiDB:
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, false)
 		if partialAgg != nil {
 			attachPlan2Task(partialAgg, mpp)
 		}
-<<<<<<< HEAD
-		mpp.addCost(p.GetCost(inputRows, false))
-		t = mpp.convertToRootTask(p.ctx)
-		inputRows = t.count()
-		attachPlan2Task(finalAgg, t)
-		t.addCost(p.GetCost(inputRows, true))
-=======
 		mpp.addCost(p.GetCost(inputRows, false, true))
-		if partialAgg != nil {
-			partialAgg.SetCost(mpp.cost())
-		}
 		t = mpp.convertToRootTask(p.ctx)
 		inputRows = t.count()
 		attachPlan2Task(finalAgg, t)
 		t.addCost(p.GetCost(inputRows, true, false))
-		finalAgg.SetCost(t.cost())
->>>>>>> a7f3c4d8b... planner/core: change agg cost factor (#25210)
 		return t
 	default:
 		return invalidTask
@@ -1916,12 +1891,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	// hash aggregation, it would cause under-estimation as the reason mentioned in comment above.
 	// To make it simple, we also treat 2-phase parallel hash aggregation in TiDB layer as
 	// 1-phase when computing cost.
-<<<<<<< HEAD
-	t.addCost(p.GetCost(inputRows, true))
-=======
 	t.addCost(p.GetCost(inputRows, true, false))
-	p.cost = t.cost()
->>>>>>> a7f3c4d8b... planner/core: change agg cost factor (#25210)
 	return t
 }
 
