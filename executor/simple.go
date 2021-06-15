@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -48,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -848,10 +848,16 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 
 	failedUsers := make([]string, 0, len(s.Specs))
 	for _, spec := range s.Specs {
-		if spec.User.CurrentUser {
-			user := e.ctx.GetSessionVars().User
+		user := e.ctx.GetSessionVars().User
+		if spec.User.CurrentUser || ((user != nil) && (user.Username == spec.User.Username) && (user.AuthHostname == spec.User.Hostname)) {
 			spec.User.Username = user.Username
 			spec.User.Hostname = user.AuthHostname
+		} else {
+			checker := privilege.GetPrivilegeManager(e.ctx)
+			activeRoles := e.ctx.GetSessionVars().ActiveRoles
+			if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
+				return ErrDBaccessDenied.GenWithStackByArgs(spec.User.Username, spec.User.Hostname, "mysql")
+			}
 		}
 
 		exists, err := userExists(e.ctx, spec.User.Username, spec.User.Hostname)
@@ -863,22 +869,25 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 			failedUsers = append(failedUsers, user)
 			continue
 		}
-		pwd, ok := spec.EncodedPassword()
-		if !ok {
-			return errors.Trace(ErrPasswordFormat)
-		}
+
 		exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-		stmt, err := exec.ParseWithParams(context.TODO(), `UPDATE %n.%n SET authentication_string=%? WHERE Host=%? and User=%?;`, mysql.SystemDB, mysql.UserTable, pwd, spec.User.Hostname, spec.User.Username)
-		if err != nil {
-			return err
-		}
-		_, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
-		if err != nil {
-			failedUsers = append(failedUsers, spec.User.String())
+		if spec.AuthOpt != nil {
+			pwd, ok := spec.EncodedPassword()
+			if !ok {
+				return errors.Trace(ErrPasswordFormat)
+			}
+			stmt, err := exec.ParseWithParams(context.TODO(), `UPDATE %n.%n SET authentication_string=%? WHERE Host=%? and User=%?;`, mysql.SystemDB, mysql.UserTable, pwd, spec.User.Hostname, spec.User.Username)
+			if err != nil {
+				return err
+			}
+			_, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
+			if err != nil {
+				failedUsers = append(failedUsers, spec.User.String())
+			}
 		}
 
 		if len(privData) > 0 {
-			stmt, err = exec.ParseWithParams(context.TODO(), "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)", mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))
+			stmt, err := exec.ParseWithParams(context.TODO(), "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)", mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))
 			if err != nil {
 				return err
 			}

@@ -27,11 +27,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/tikv/client"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/store/tikv/locate"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/retry"
@@ -231,7 +231,7 @@ func (s *KVSnapshot) BatchGet(ctx context.Context, keys [][]byte) (map[string][]
 }
 
 type batchKeys struct {
-	region RegionVerID
+	region locate.RegionVerID
 	keys   [][]byte
 }
 
@@ -250,7 +250,7 @@ func (b *batchKeys) relocate(bo *Backoffer, c *RegionCache) (bool, error) {
 
 // appendBatchKeysBySize appends keys to b. It may split the keys to make
 // sure each batch's size does not exceed the limit.
-func appendBatchKeysBySize(b []batchKeys, region RegionVerID, keys [][]byte, sizeFn func([]byte) int, limit int) []batchKeys {
+func appendBatchKeysBySize(b []batchKeys, region locate.RegionVerID, keys [][]byte, sizeFn func([]byte) int, limit int) []batchKeys {
 	var start, end int
 	for start = 0; start < len(keys); start = end {
 		var size int
@@ -311,7 +311,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 	cli := NewClientHelper(s.store, s.resolvedLocks)
 	s.mu.RLock()
 	if s.mu.stats != nil {
-		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
+		cli.Stats = make(map[tikvrpc.CmdType]*locate.RPCRuntimeStats)
 		defer func() {
 			s.mergeRegionRequestStats(cli.Stats)
 		}()
@@ -321,10 +321,10 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 	pending := batch.keys
 	for {
 		s.mu.RLock()
-		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdBatchGet, &pb.BatchGetRequest{
+		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdBatchGet, &kvrpcpb.BatchGetRequest{
 			Keys:    pending,
 			Version: s.version,
-		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
+		}, s.mu.replicaRead, &s.replicaReadSeed, kvrpcpb.Context{
 			Priority:         s.priority.ToPB(),
 			NotFillCache:     s.notFillCache,
 			TaskId:           s.mu.taskID,
@@ -340,7 +340,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 		}
 		ops := make([]StoreSelectorOption, 0, 2)
 		if len(matchStoreLabels) > 0 {
-			ops = append(ops, WithMatchLabels(matchStoreLabels))
+			ops = append(ops, locate.WithMatchLabels(matchStoreLabels))
 		}
 		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, client.ReadTimeoutMedium, tikvrpc.TiKV, "", ops...)
 
@@ -355,7 +355,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 			// For other region error and the fake region error, backoff because
 			// there's something wrong.
 			// For the real EpochNotMatch error, don't backoff.
-			if regionErr.GetEpochNotMatch() == nil || isFakeRegionError(regionErr) {
+			if regionErr.GetEpochNotMatch() == nil || locate.IsFakeRegionError(regionErr) {
 				err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 				if err != nil {
 					return errors.Trace(err)
@@ -374,7 +374,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 		if resp.Resp == nil {
 			return errors.Trace(tikverr.ErrBodyMissing)
 		}
-		batchGetResp := resp.Resp.(*pb.BatchGetResponse)
+		batchGetResp := resp.Resp.(*kvrpcpb.BatchGetResponse)
 		var (
 			lockedKeys [][]byte
 			locks      []*Lock
@@ -403,6 +403,9 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collec
 			}
 		}
 		if batchGetResp.ExecDetailsV2 != nil {
+			readKeys := len(batchGetResp.Pairs)
+			readTime := float64(batchGetResp.ExecDetailsV2.GetTimeDetail().GetKvReadWallTimeMs() / 1000)
+			metrics.ObserveReadSLI(uint64(readKeys), readTime)
 			s.mergeExecDetail(batchGetResp.ExecDetailsV2)
 		}
 		if len(lockedKeys) > 0 {
@@ -480,16 +483,16 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 
 	s.mu.RLock()
 	if s.mu.stats != nil {
-		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
+		cli.Stats = make(map[tikvrpc.CmdType]*locate.RPCRuntimeStats)
 		defer func() {
 			s.mergeRegionRequestStats(cli.Stats)
 		}()
 	}
 	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet,
-		&pb.GetRequest{
+		&kvrpcpb.GetRequest{
 			Key:     k,
 			Version: s.version,
-		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
+		}, s.mu.replicaRead, &s.replicaReadSeed, kvrpcpb.Context{
 			Priority:         s.priority.ToPB(),
 			NotFillCache:     s.notFillCache,
 			TaskId:           s.mu.taskID,
@@ -498,17 +501,17 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 	isStaleness := s.mu.isStaleness
 	matchStoreLabels := s.mu.matchStoreLabels
 	s.mu.RUnlock()
-	var ops []StoreSelectorOption
+	var ops []locate.StoreSelectorOption
 	if isStaleness {
 		req.EnableStaleRead()
 	}
 	if len(matchStoreLabels) > 0 {
-		ops = append(ops, WithMatchLabels(matchStoreLabels))
+		ops = append(ops, locate.WithMatchLabels(matchStoreLabels))
 	}
 
 	var firstLock *Lock
 	for {
-		failpoint.Inject("beforeSendPointGet", nil)
+		util.EvalFailpoint("beforeSendPointGet")
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -525,7 +528,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 			// For other region error and the fake region error, backoff because
 			// there's something wrong.
 			// For the real EpochNotMatch error, don't backoff.
-			if regionErr.GetEpochNotMatch() == nil || isFakeRegionError(regionErr) {
+			if regionErr.GetEpochNotMatch() == nil || locate.IsFakeRegionError(regionErr) {
 				err = bo.Backoff(retry.BoRegionMiss, errors.New(regionErr.String()))
 				if err != nil {
 					return nil, errors.Trace(err)
@@ -536,8 +539,11 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 		if resp.Resp == nil {
 			return nil, errors.Trace(tikverr.ErrBodyMissing)
 		}
-		cmdGetResp := resp.Resp.(*pb.GetResponse)
+		cmdGetResp := resp.Resp.(*kvrpcpb.GetResponse)
 		if cmdGetResp.ExecDetailsV2 != nil {
+			readKeys := len(cmdGetResp.Value)
+			readTime := float64(cmdGetResp.ExecDetailsV2.GetTimeDetail().GetKvReadWallTimeMs() / 1000)
+			metrics.ObserveReadSLI(uint64(readKeys), readTime)
 			s.mergeExecDetail(cmdGetResp.ExecDetailsV2)
 		}
 		val := cmdGetResp.GetValue()
@@ -572,7 +578,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 	}
 }
 
-func (s *KVSnapshot) mergeExecDetail(detail *pb.ExecDetailsV2) {
+func (s *KVSnapshot) mergeExecDetail(detail *kvrpcpb.ExecDetailsV2) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if detail == nil || s.mu.stats == nil {
@@ -687,15 +693,15 @@ func (s *KVSnapshot) SnapCacheSize() int {
 	return len(s.mu.cached)
 }
 
-func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
+func extractLockFromKeyErr(keyErr *kvrpcpb.KeyError) (*Lock, error) {
 	if locked := keyErr.GetLocked(); locked != nil {
 		return NewLock(locked), nil
 	}
 	return nil, extractKeyErr(keyErr)
 }
 
-func extractKeyErr(keyErr *pb.KeyError) error {
-	if val, err := util.MockRetryableErrorResp.Eval(); err == nil {
+func extractKeyErr(keyErr *kvrpcpb.KeyError) error {
+	if val, err := util.EvalFailpoint("mockRetryableErrorResp"); err == nil {
 		if val.(bool) {
 			keyErr.Conflict = nil
 			keyErr.Retryable = "mock retryable error"
@@ -752,7 +758,7 @@ func (s *KVSnapshot) recordBackoffInfo(bo *Backoffer) {
 	}
 }
 
-func (s *KVSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats) {
+func (s *KVSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*locate.RPCRuntimeStats) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.mu.stats == nil {
@@ -775,7 +781,7 @@ func (s *KVSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRunti
 
 // SnapshotRuntimeStats records the runtime stats of snapshot.
 type SnapshotRuntimeStats struct {
-	rpcStats       RegionRequestRuntimeStats
+	rpcStats       locate.RegionRequestRuntimeStats
 	backoffSleepMS map[string]int
 	backoffTimes   map[string]int
 	scanDetail     *util.ScanDetail
@@ -784,7 +790,7 @@ type SnapshotRuntimeStats struct {
 
 // Clone implements the RuntimeStats interface.
 func (rs *SnapshotRuntimeStats) Clone() *SnapshotRuntimeStats {
-	newRs := SnapshotRuntimeStats{rpcStats: NewRegionRequestRuntimeStats()}
+	newRs := SnapshotRuntimeStats{rpcStats: locate.NewRegionRequestRuntimeStats()}
 	if rs.rpcStats.Stats != nil {
 		for k, v := range rs.rpcStats.Stats {
 			newRs.rpcStats.Stats[k] = v
@@ -807,7 +813,7 @@ func (rs *SnapshotRuntimeStats) Clone() *SnapshotRuntimeStats {
 func (rs *SnapshotRuntimeStats) Merge(other *SnapshotRuntimeStats) {
 	if other.rpcStats.Stats != nil {
 		if rs.rpcStats.Stats == nil {
-			rs.rpcStats.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats, len(other.rpcStats.Stats))
+			rs.rpcStats.Stats = make(map[tikvrpc.CmdType]*locate.RPCRuntimeStats, len(other.rpcStats.Stats))
 		}
 		rs.rpcStats.Merge(other.rpcStats)
 	}
