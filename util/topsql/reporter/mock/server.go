@@ -52,6 +52,7 @@ func StartMockAgentServer() (*mockAgentServer, error) {
 		}
 	}()
 
+	logutil.BgLogger().Info("mock agent server listen started", zap.String("addr", agentServer.addr))
 	return agentServer, nil
 }
 

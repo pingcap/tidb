@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	atomic2 "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
@@ -1697,6 +1698,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: TiDBTopSQLAgentAddress, Value: DefTiDBTopSQLAgentAddress, Type: TypeStr, Hidden: true, skipInit: true, AllowEmpty: true, GetSession: func(s *SessionVars) (string, error) {
 		return TopSQLVariable.AgentAddress.Load(), nil
 	}, SetSession: func(vars *SessionVars, s string) error {
+		logutil.BgLogger().Info("set tidb_top_sql_agent_address", zap.String("addr", s))
 		TopSQLVariable.AgentAddress.Store(s)
 		return nil
 	}},
