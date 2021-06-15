@@ -94,7 +94,7 @@ func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.Tabl
 		if err != nil {
 			return genKeyExistsError(name, key.String(), err)
 		}
-		if col.Length > 0 {
+		if col.Length > 0 && len(str) > col.Length {
 			str = str[:col.Length]
 		}
 		valueStr = append(valueStr, str)
