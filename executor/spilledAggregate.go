@@ -15,6 +15,8 @@ package executor
 
 import (
 	"context"
+	"math/rand"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/set"
@@ -22,20 +24,28 @@ import (
 
 type SpilledHashAggExec struct {
 	*HashAggExec
-	drained   bool
-	spillMode bool
+	childDrained bool
+	drained      bool
+	spillMode    uint32
 
 	// spill
-	list     *chunk.ListInDisk
-	idx      int
-	tmpChk   *chunk.Chunk
-	haveData bool
+	list         *chunk.ListInDisk
+	lastChunkNum int
+	idx          int
+	tmpChk       *chunk.Chunk
+	haveData     bool
 }
 
 func (e *SpilledHashAggExec) Close() error {
 	if err := e.HashAggExec.Close(); err != nil {
 		return err
 	}
+	if e.list != nil {
+		if err := e.list.Close(); err != nil {
+			return err
+		}
+	}
+	e.tmpChk = nil
 	return nil
 }
 
@@ -57,7 +67,8 @@ func (e *SpilledHashAggExec) initForExec() {
 	e.idx = 0
 	e.haveData = false
 	e.drained = false
-	e.spillMode = false
+	e.childDrained = false
+	e.spillMode = 0
 }
 
 func (e *SpilledHashAggExec) Next(ctx context.Context, req *chunk.Chunk) error {
@@ -66,6 +77,7 @@ func (e *SpilledHashAggExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *SpilledHashAggExec) spilledExec(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
 	for {
 		if e.prepared {
 			for ; e.cursor4GroupKey < len(e.groupKeys); e.cursor4GroupKey++ {
@@ -87,6 +99,16 @@ func (e *SpilledHashAggExec) spilledExec(ctx context.Context, chk *chunk.Chunk) 
 			e.groupKeys = e.groupKeys[:0]
 			e.partialResultMap = make(aggPartialResultMapper)
 			e.prepared = false
+			e.spillMode = 0
+			if e.tmpChk.NumRows() > 0 {
+				err := e.list.Add(e.tmpChk)
+				if err != nil {
+					return err
+				}
+				e.tmpChk.Reset()
+			}
+			e.drained = !(e.lastChunkNum < e.list.NumChunks())
+			e.lastChunkNum = e.list.NumChunks()
 		}
 		if e.drained {
 			return nil
@@ -124,7 +146,7 @@ func (e *SpilledHashAggExec) prepare(ctx context.Context) (err error) {
 		for j := 0; j < e.childResult.NumRows(); j++ {
 			groupKey := string(e.groupKeyBuffer[j])
 			if !e.groupSet.Exist(groupKey) {
-				if e.spillMode {
+				if atomic.LoadUint32(&e.spillMode) == 1 {
 					e.tmpChk.Append(e.childResult, j, j+1)
 					if e.tmpChk.IsFull() {
 						err = e.list.Add(e.tmpChk)
@@ -137,6 +159,7 @@ func (e *SpilledHashAggExec) prepare(ctx context.Context) (err error) {
 				} else {
 					_ = e.groupSet.Insert(groupKey)
 					e.groupKeys = append(e.groupKeys, groupKey)
+					e.randomOOMForTest()
 				}
 			}
 			partialResults := e.getPartialResults(groupKey)
@@ -150,27 +173,31 @@ func (e *SpilledHashAggExec) prepare(ctx context.Context) (err error) {
 	}
 }
 
+func (e *SpilledHashAggExec) randomOOMForTest() {
+	if rand.Int31n(200) < 1 {
+		e.spillMode = 1
+	}
+}
+
 func (e *SpilledHashAggExec) getNextChunk(ctx context.Context) (err error) {
 	e.childResult.Reset()
-	if !e.drained {
+	if !e.childDrained {
 		if err := Next(ctx, e.children[0], e.childResult); err != nil {
 			return err
 		}
 		if e.childResult.NumRows() == 0 {
-			e.drained = true
+			e.childDrained = true
 		} else {
 			return nil
 		}
 	}
-	if e.idx < e.list.NumChunks() {
+	if e.idx < e.lastChunkNum {
 		e.childResult, err = e.list.GetChunk(e.idx)
 		if err != nil {
 			return err
 		}
 		e.idx++
 	}
-	if e.tmpChk.NumRows() > 0 {
-		e.childResult, e.tmpChk = e.tmpChk, e.childResult
-	}
+	e.drained = true
 	return nil
 }
