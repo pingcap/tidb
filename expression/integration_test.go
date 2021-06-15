@@ -9421,12 +9421,8 @@ func (s *testIntegrationSuite) TestSecurityEnhancedMode(c *C) {
 
 	// When SEM is enabled these features are restricted to all users
 	// regardless of what privileges they have available.
-
-	_, err := tk.Exec("SHOW CONFIG")
-	c.Assert(err.Error(), Equals, "[planner:8132]Feature 'SHOW CONFIG' is not supported when security enhanced mode is enabled")
-	_, err = tk.Exec("SELECT 1 INTO OUTFILE '/tmp/aaaa'")
+	_, err := tk.Exec("SELECT 1 INTO OUTFILE '/tmp/aaaa'")
 	c.Assert(err.Error(), Equals, "[planner:8132]Feature 'SELECT INTO' is not supported when security enhanced mode is enabled")
-
 }
 
 func (s *testIntegrationSuite) TestIssue23925(c *C) {
