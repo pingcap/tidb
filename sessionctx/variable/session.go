@@ -833,6 +833,9 @@ type SessionVars struct {
 	// TrackAggregateMemoryUsage indicates whether to track the memory usage of aggregate function.
 	TrackAggregateMemoryUsage bool
 
+	// EnableSpilledAggregate
+	EnableSpilledAggregate bool
+
 	// TiDBEnableExchangePartition indicates whether to enable exchange partition
 	TiDBEnableExchangePartition bool
 

@@ -1249,7 +1249,9 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 	// |  NULL  |
 	// +--------+
 	// 1 row in set (0.00 sec)
-	e.isUnparallelExec = true
+	if sessionVars.EnableSpilledAggregate {
+		e.isUnparallelExec = true
+	}
 	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
 		e.defaultVal = nil
 	} else {
@@ -1296,7 +1298,10 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 	}
 
 	executorCounterHashAggExec.Inc()
-	return &SpilledHashAggExec{HashAggExec: e}
+	if sessionVars.EnableSpilledAggregate {
+		return &SpilledHashAggExec{HashAggExec: e}
+	}
+	return e
 }
 
 func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) Executor {

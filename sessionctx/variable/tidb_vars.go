@@ -536,6 +536,9 @@ const (
 	// TiDBTrackAggregateMemoryUsage indicates whether track the memory usage of aggregate function.
 	TiDBTrackAggregateMemoryUsage = "tidb_track_aggregate_memory_usage"
 
+	// TiDBEnableSpilledAggregate indicates whether spill intermediate data for aggregate when OOM.
+	TiDBEnableSpilledAggregate = "tidb_enable_spilled_aggregate"
+
 	// TiDBEnableExchangePartition indicates whether to enable exchange partition.
 	TiDBEnableExchangePartition = "tidb_enable_exchange_partition"
 
@@ -705,6 +708,7 @@ const (
 	DefTiDBAnalyzeVersion              = 2
 	DefTiDBEnableIndexMergeJoin        = false
 	DefTiDBTrackAggregateMemoryUsage   = true
+	DefTiDBEnableSpilledAggregate      = true
 	DefTiDBEnableExchangePartition     = false
 	DefCTEMaxRecursionDepth            = 1000
 	DefTiDBTopSQLEnable                = false

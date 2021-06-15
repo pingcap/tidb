@@ -1658,6 +1658,10 @@ var defaultSysVars = []*SysVar{
 		s.TrackAggregateMemoryUsage = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableSpilledAggregate, Value: BoolToOnOff(DefTiDBEnableSpilledAggregate), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableSpilledAggregate = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMultiStatementMode, Value: Off, Type: TypeEnum, PossibleValues: []string{Off, On, Warn}, SetSession: func(s *SessionVars, val string) error {
 		s.MultiStatementMode = TiDBOptMultiStmt(val)
 		return nil
