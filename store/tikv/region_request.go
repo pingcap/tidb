@@ -958,14 +958,12 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, req 
 	}
 	if regionErr.GetStaleCommand() != nil {
 		logutil.BgLogger().Debug("tikv reports `StaleCommand`", zap.Stringer("ctx", ctx))
+		err = bo.Backoff(retry.BoStaleCmd, errors.Errorf("stale command, ctx: %v", ctx))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
 		if s.leaderReplicaSelector != nil {
-			// Needn't backoff because stale command indicates the command is sent to the old leader.
-			// The new leader should be elected soon and the leaderReplicaSelector will try the next peer.
-		} else {
-			err = bo.Backoff(retry.BoStaleCmd, errors.Errorf("stale command, ctx: %v", ctx))
-			if err != nil {
-				return false, errors.Trace(err)
-			}
+			s.leaderReplicaSelector.rewind()
 		}
 		return true, nil
 	}
