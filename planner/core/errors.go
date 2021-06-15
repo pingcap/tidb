@@ -97,7 +97,6 @@ var (
 	ErrAccessDenied        = dbterror.ClassOptimizer.NewStdErr(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDeniedNoPassword])
 	ErrBadNull             = dbterror.ClassOptimizer.NewStd(mysql.ErrBadNull)
 	ErrNotSupportedWithSem = dbterror.ClassOptimizer.NewStd(mysql.ErrNotSupportedWithSem)
-	ErrDifferentAsOf       = dbterror.ClassOptimizer.NewStd(mysql.ErrUnknown)
-	ErrAsOf                = dbterror.ClassOptimizer.NewStd(mysql.ErrUnknown)
+	ErrAsOf                = dbterror.ClassOptimizer.NewStd(mysql.ErrAsOf)
 	ErrOptOnTemporaryTable = dbterror.ClassOptimizer.NewStd(mysql.ErrOptOnTemporaryTable)
 )
