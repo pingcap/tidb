@@ -1374,6 +1374,7 @@ func (s *testTableSuite) TestStmtSummarySensitiveQuery(c *C) {
 		))
 }
 
+// test stmtSummaryEvictedCount
 func (s *testTableSuite) TestSimpleStmtSummaryEvictedCount(c *C) {
 	now := time.Now().Unix()
 	interval := int64(1800)
@@ -1394,6 +1395,34 @@ func (s *testTableSuite) TestSimpleStmtSummaryEvictedCount(c *C) {
 				time.Unix(beginTimeForCurInterval+interval, 0).Format("2006-01-02 15:04:05"),
 				int64(2)),
 		))
+	// TODO: Add more tests.
+
+	// clean up side effects
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 1800")
+}
+
+// test stmtSummaryEvictedCount cluster table
+func (s *testClusterTableSuite) TestClusterStmtSummaryEvictedCount(c *C) {
+	tk := s.newTestKitWithRoot(c)
+	// disable refreshing
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval=9999")
+	// set information_schema.statements_summary's size to 1
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
+	// clear information_schema.statements_summary
+	tk.MustExec("set global tidb_enable_stmt_summary=0")
+	tk.MustExec("set global tidb_enable_stmt_summary=1")
+
+	// make a new session for test...
+	tk = s.newTestKitWithRoot(c)
+	// first sql
+	tk.MustExec("show databases;")
+	// no sql evicted, empty row.
+	tk.MustQuery("select instance, evicted_count from information_schema.cluster_statements_summary_evicted;").
+		Check(testkit.Rows())
+	// after executed the sql above
+	tk.MustQuery("select evicted_count from information_schema.cluster_statements_summary_evicted").
+		Check(testkit.Rows("1"))
 	// TODO: Add more tests.
 
 	// clean up side effects
