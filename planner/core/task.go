@@ -1988,7 +1988,7 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		p:   p,
 		cst: cst,
 	}
-    return rt
+	return rt
 }
 
 func (t *mppTask) needEnforce(prop *property.PhysicalProperty) bool {
