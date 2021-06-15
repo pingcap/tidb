@@ -51,13 +51,13 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/versioninfo"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -1144,7 +1144,7 @@ func dummyRecord() *deadlockhistory.DeadlockRecord {
 	return &deadlockhistory.DeadlockRecord{}
 }
 
-func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
+func (ts *HTTPHandlerTestSerialSuite) TestPostSettings(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
@@ -1238,6 +1238,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	form = make(url.Values)
 	form.Set("tidb_deadlock_history_capacity", "5")
 	resp, err = ts.formStatus("/settings", form)
+	c.Assert(err, IsNil)
 	c.Assert(len(deadlockhistory.GlobalDeadlockHistory.GetAll()), Equals, 5)
 	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[0].ID, Equals, uint64(6))
 	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[4].ID, Equals, uint64(10))
@@ -1248,10 +1249,13 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	form = make(url.Values)
 	form.Set("tidb_deadlock_history_capacity", "6")
 	resp, err = ts.formStatus("/settings", form)
+	c.Assert(err, IsNil)
 	deadlockhistory.GlobalDeadlockHistory.Push(dummyRecord())
 	c.Assert(len(deadlockhistory.GlobalDeadlockHistory.GetAll()), Equals, 6)
 	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[0].ID, Equals, uint64(7))
 	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[5].ID, Equals, uint64(12))
+	// restore original value.
+	config.GetGlobalConfig().CheckMb4ValueInUTF8 = true
 }
 
 func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {

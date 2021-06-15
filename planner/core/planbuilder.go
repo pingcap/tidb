@@ -42,8 +42,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -56,6 +54,8 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/table/tables"
@@ -973,10 +973,16 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	tablePath := &util.AccessPath{StoreType: tp}
 	fillContentForTablePath(tablePath, tblInfo)
 	publicPaths = append(publicPaths, tablePath)
-	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
+
+	if tblInfo.TiFlashReplica == nil {
+		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there aren't tiflash replicas of table `" + tblInfo.Name.O + "`.")
+	} else if !tblInfo.TiFlashReplica.Available {
+		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because tiflash replicas of table `" + tblInfo.Name.O + "` not ready.")
+	} else {
 		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, false))
 		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, true))
 	}
+
 	optimizerUseInvisibleIndexes := ctx.GetSessionVars().OptimizerUseInvisibleIndexes
 
 	check = check && ctx.GetSessionVars().ConnectionID > 0
@@ -1110,10 +1116,14 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 		}
 	}
 	var err error
+	engineVals, _ := ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
 	if len(paths) == 0 {
-		engineVals, _ := ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
 		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("Can not find access path matching '%v'(value: '%v'). Available values are '%v'.",
 			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr))
+	}
+	if _, ok := isolationReadEngines[kv.TiFlash]; !ok {
+		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
+			fmt.Sprintf("MPP mode may be blocked because '%v'(value: '%v') not match, need 'tiflash'.", variable.TiDBIsolationReadEngines, engineVals))
 	}
 	return paths, err
 }
@@ -1685,13 +1695,13 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		idxInfos = append(idxInfos, idx)
 	}
 	if as.Incremental {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 3 stats would ignore the INCREMENTAL keyword and do full sampling"))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 stats would ignore the INCREMENTAL keyword and do full sampling"))
 	}
 	for i, id := range physicalIDs {
 		if id == tbl.TableInfo.ID {
 			id = -1
 		}
-		info := analyzeInfo{
+		info := AnalyzeInfo{
 			DBName:        tbl.Schema.O,
 			TableName:     tbl.Name.O,
 			PartitionName: names[i],
@@ -1702,7 +1712,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		newTask := AnalyzeColumnsTask{
 			HandleCols:  BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo),
 			ColsInfo:    tbl.TableInfo.Columns,
-			analyzeInfo: info,
+			AnalyzeInfo: info,
 			TblInfo:     tbl.TableInfo,
 			Indexes:     idxInfos,
 		}
@@ -1743,7 +1753,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 					"If you want to switch to version 2 statistics, please first disable query feedback by setting feedback-probability to 0.0 in the config file."))
 			}
 		}
-		if version == statistics.Version3 {
+		if version == statistics.Version2 {
 			p.ColTasks = b.buildAnalyzeFullSamplingTask(as, p.ColTasks, physicalIDs, names, tbl, version)
 			continue
 		}
@@ -1758,7 +1768,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				if id == tbl.TableInfo.ID {
 					id = -1
 				}
-				info := analyzeInfo{
+				info := AnalyzeInfo{
 					DBName:        tbl.Schema.O,
 					TableName:     tbl.Name.O,
 					PartitionName: names[i],
@@ -1768,7 +1778,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				}
 				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
 					IndexInfo:   idx,
-					analyzeInfo: info,
+					AnalyzeInfo: info,
 					TblInfo:     tbl.TableInfo,
 				})
 			}
@@ -1779,7 +1789,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				if id == tbl.TableInfo.ID {
 					id = -1
 				}
-				info := analyzeInfo{
+				info := AnalyzeInfo{
 					DBName:        tbl.Schema.O,
 					TableName:     tbl.Name.O,
 					PartitionName: names[i],
@@ -1791,7 +1801,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 					HandleCols:       handleCols,
 					CommonHandleInfo: commonHandleInfo,
 					ColsInfo:         colInfo,
-					analyzeInfo:      info,
+					AnalyzeInfo:      info,
 					TblInfo:          tbl.TableInfo,
 				})
 			}
@@ -1818,8 +1828,8 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		}
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
-	if version == statistics.Version3 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 3 would collect all statistics not only the selected indexes"))
+	if version == statistics.Version2 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 would collect all statistics not only the selected indexes"))
 		return b.buildAnalyzeTable(as, opts, version)
 	}
 	for _, idxName := range as.IndexNames {
@@ -1831,14 +1841,14 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 					if id == tblInfo.ID {
 						id = -1
 					}
-					info := analyzeInfo{
+					info := AnalyzeInfo{
 						DBName:        as.TableNames[0].Schema.O,
 						TableName:     as.TableNames[0].Name.O,
 						PartitionName: names[i], TableID: AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
 						Incremental:  as.Incremental,
 						StatsVersion: version,
 					}
-					p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+					p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, AnalyzeInfo: info, TblInfo: tblInfo})
 				}
 				continue
 			}
@@ -1851,7 +1861,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 			if id == tblInfo.ID {
 				id = -1
 			}
-			info := analyzeInfo{
+			info := AnalyzeInfo{
 				DBName:        as.TableNames[0].Schema.O,
 				TableName:     as.TableNames[0].Name.O,
 				PartitionName: names[i],
@@ -1859,7 +1869,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 				Incremental:   as.Incremental,
 				StatsVersion:  version,
 			}
-			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
+			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, AnalyzeInfo: info, TblInfo: tblInfo})
 		}
 	}
 	return p, nil
@@ -1883,8 +1893,8 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 		}
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
-	if version == statistics.Version3 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 3 would collect all statistics not only the selected indexes"))
+	if version == statistics.Version2 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 would collect all statistics not only the selected indexes"))
 		return b.buildAnalyzeTable(as, opts, version)
 	}
 	for _, idx := range tblInfo.Indices {
@@ -1893,7 +1903,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 				if id == tblInfo.ID {
 					id = -1
 				}
-				info := analyzeInfo{
+				info := AnalyzeInfo{
 					DBName:        as.TableNames[0].Schema.O,
 					TableName:     as.TableNames[0].Name.O,
 					PartitionName: names[i],
@@ -1901,7 +1911,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 					Incremental:   as.Incremental,
 					StatsVersion:  version,
 				}
-				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
+				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, AnalyzeInfo: info, TblInfo: tblInfo})
 			}
 		}
 	}
@@ -1911,7 +1921,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 			if id == tblInfo.ID {
 				id = -1
 			}
-			info := analyzeInfo{
+			info := AnalyzeInfo{
 				DBName:        as.TableNames[0].Schema.O,
 				TableName:     as.TableNames[0].Name.O,
 				PartitionName: names[i],
@@ -1919,7 +1929,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 				Incremental:   as.Incremental,
 				StatsVersion:  version,
 			}
-			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, AnalyzeInfo: info, TblInfo: tblInfo})
 		}
 	}
 	return p, nil
@@ -1944,10 +1954,24 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumSamples:    10000,
 }
 
-func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
+var analyzeOptionDefaultV2 = map[ast.AnalyzeOptionType]uint64{
+	ast.AnalyzeOptNumBuckets:    256,
+	ast.AnalyzeOptNumTopN:       500,
+	ast.AnalyzeOptCMSketchWidth: 2048,
+	ast.AnalyzeOptCMSketchDepth: 5,
+	ast.AnalyzeOptNumSamples:    100000,
+}
+
+func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeOptionType]uint64, error) {
 	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
-	for key, val := range analyzeOptionDefault {
-		optMap[key] = val
+	if statsVer == statistics.Version1 {
+		for key, val := range analyzeOptionDefault {
+			optMap[key] = val
+		}
+	} else {
+		for key, val := range analyzeOptionDefaultV2 {
+			optMap[key] = val
+		}
 	}
 	for _, opt := range opts {
 		if opt.Type == ast.AnalyzeOptNumTopN {
@@ -1986,7 +2010,7 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", insertErr)
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", selectErr)
 	}
-	opts, err := handleAnalyzeOptions(as.AnalyzeOpts)
+	opts, err := handleAnalyzeOptions(as.AnalyzeOpts, statsVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -2231,9 +2255,12 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	case ast.ShowCreateView:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
-	case ast.ShowBackups, ast.ShowRestores:
+	case ast.ShowBackups:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or BACKUP_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "BACKUP_ADMIN", false, err)
+	case ast.ShowRestores:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESTORE_ADMIN")
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESTORE_ADMIN", false, err)
 	case ast.ShowTableNextRowId:
 		p := &ShowNextRowID{TableName: show.Table}
 		p.setSchemaAndNames(buildShowNextRowID())
@@ -2329,8 +2356,17 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
 	case *ast.BRIEStmt:
 		p.setSchemaAndNames(buildBRIESchema())
-		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or BACKUP_ADMIN")
-		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "BACKUP_ADMIN", false, err)
+		if sem.IsEnabled() && strings.EqualFold(raw.Storage[:8], "local://") {
+			// Local storage is not permitted to be local when SEM is enabled.
+			return nil, ErrNotSupportedWithSem.GenWithStackByArgs("local://")
+		}
+		if raw.Kind == ast.BRIEKindRestore {
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESTORE_ADMIN")
+			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESTORE_ADMIN", false, err)
+		} else {
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or BACKUP_ADMIN")
+			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "BACKUP_ADMIN", false, err)
+		}
 	case *ast.GrantRoleStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ROLE_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "ROLE_ADMIN", false, err)
@@ -2344,8 +2380,9 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 	case *ast.RevokeStmt:
 		b.visitInfo = collectVisitInfoFromRevokeStmt(b.ctx, b.visitInfo, raw)
 	case *ast.KillStmt:
-		// If you have the SUPER privilege, you can kill all threads and statements.
-		// Otherwise, you can kill only your own threads and statements.
+		// All users can kill their own connections regardless.
+		// If you have the SUPER privilege, you can kill all threads and statements unless SEM is enabled.
+		// In which case you require RESTRICTED_CONNECTION_ADMIN to kill connections that belong to RESTRICTED_USER_ADMIN users.
 		sm := b.ctx.GetSessionManager()
 		if sm != nil {
 			if pi, ok := sm.GetProcessInfo(raw.ConnectionID); ok {
@@ -2353,8 +2390,8 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 				if pi.User != loginUser.Username {
 					err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CONNECTION_ADMIN")
 					b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "CONNECTION_ADMIN", false, err)
+					b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, &auth.UserIdentity{Username: pi.User, Hostname: pi.Host}, "RESTRICTED_CONNECTION_ADMIN")
 				}
-				b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, &auth.UserIdentity{Username: pi.User, Hostname: pi.Host}, "RESTRICTED_CONNECTION_ADMIN")
 			}
 		}
 	case *ast.UseStmt:

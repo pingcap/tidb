@@ -18,13 +18,33 @@ import (
 	"runtime/pprof"
 
 	"github.com/pingcap/parser"
-	"github.com/pingcap/tidb/util/topsql/collector"
+	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/topsql/reporter"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 )
 
+const (
+	// MaxSQLTextSize exports for testing.
+	MaxSQLTextSize = 4 * 1024
+	// MaxPlanTextSize exports for testing.
+	MaxPlanTextSize = 32 * 1024
+)
+
+var globalTopSQLReport reporter.TopSQLReporter
+
 // SetupTopSQL sets up the top-sql worker.
 func SetupTopSQL() {
+	rc := reporter.NewGRPCReportClient(plancodec.DecodeNormalizedPlan)
+	globalTopSQLReport = reporter.NewRemoteTopSQLReporter(rc)
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(globalTopSQLReport)
 	tracecpu.GlobalSQLCPUProfiler.Run()
+}
+
+// Close uses to close and release the top sql resource.
+func Close() {
+	if globalTopSQLReport != nil {
+		globalTopSQLReport.Close()
+	}
 }
 
 // AttachSQLInfo attach the sql information info top sql.
@@ -50,23 +70,32 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 }
 
 func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string) {
+	if len(normalizedSQL) > MaxSQLTextSize {
+		normalizedSQL = normalizedSQL[:MaxSQLTextSize]
+	}
+
 	c := tracecpu.GlobalSQLCPUProfiler.GetCollector()
 	if c == nil {
 		return
 	}
-	topc, ok := c.(collector.TopSQLCollector)
+	topc, ok := c.(reporter.TopSQLReporter)
 	if ok {
 		topc.RegisterSQL(sqlDigest, normalizedSQL)
 	}
 }
 
-func linkPlanTextWithDigest(planDigest []byte, normalizedPlan string) {
+func linkPlanTextWithDigest(planDigest []byte, normalizedBinaryPlan string) {
+	if len(normalizedBinaryPlan) > MaxPlanTextSize {
+		// ignore the huge size plan
+		return
+	}
+
 	c := tracecpu.GlobalSQLCPUProfiler.GetCollector()
 	if c == nil {
 		return
 	}
-	topc, ok := c.(collector.TopSQLCollector)
+	topc, ok := c.(reporter.TopSQLReporter)
 	if ok {
-		topc.RegisterPlan(planDigest, normalizedPlan)
+		topc.RegisterPlan(planDigest, normalizedBinaryPlan)
 	}
 }

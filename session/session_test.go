@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -51,9 +52,6 @@ import (
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mockcopr"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
-	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -62,12 +60,14 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tipb/go-binlog"
+	tikvmockstore "github.com/tikv/client-go/v2/mockstore"
+	"github.com/tikv/client-go/v2/mockstore/cluster"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.etcd.io/etcd/clientv3"
 	"google.golang.org/grpc"
 )
 
 var (
-	withTiKV        = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
 	pdAddrs         = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
 	pdAddrChan      chan string
 	initPdAddrsOnce sync.Once
@@ -183,7 +183,7 @@ func initPdAddrs() {
 func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 
-	if *withTiKV {
+	if *tikvmockstore.WithTiKV {
 		initPdAddrs()
 		s.pdAddr = <-pdAddrChan
 		var d driver.TiKVDriver
@@ -219,7 +219,7 @@ func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
-	if *withTiKV {
+	if *tikvmockstore.WithTiKV {
 		pdAddrChan <- s.pdAddr
 	}
 }
@@ -2753,9 +2753,9 @@ func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	c.Assert(vars.BackOffWeight, Equals, 50)
 
 	tk.MustExec("set @@autocommit = 1")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/probeSetVars", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/probeSetVars", `return(true)`), IsNil)
 	tk.MustExec("select * from kvvars where a = 1")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/probeSetVars"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/probeSetVars"), IsNil)
 	c.Assert(tikv.SetSuccess, IsTrue)
 	tikv.SetSuccess = false
 }
@@ -2810,9 +2810,9 @@ func (s *testSessionSerialSuite) TestTxnRetryErrMsg(c *C) {
 	tk1.MustExec("begin")
 	tk2.MustExec("update no_retry set id = id + 1")
 	tk1.MustExec("update no_retry set id = id + 1")
-	c.Assert(tikvutil.MockRetryableErrorResp.Enable(`return(true)`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/mockRetryableErrorResp", `return(true)`), IsNil)
 	_, err := tk1.Se.Execute(context.Background(), "commit")
-	tikvutil.MockRetryableErrorResp.Disable()
+	failpoint.Disable("tikvclient/mockRetryableErrorResp")
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrTxnRetryable.Equal(err), IsTrue, Commentf("error: %s", err))
 	c.Assert(strings.Contains(err.Error(), "mock retryable error"), IsTrue, Commentf("error: %s", err))
@@ -3336,7 +3336,7 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("")`)
+	failpoint.Enable("tikvclient/injectTxnScope", `return("")`)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result := tk.MustQuery("select @@txn_scope;")
@@ -3347,9 +3347,9 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	result = tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(kv.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("bj")`)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
+	failpoint.Disable("tikvclient/injectTxnScope")
+	failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`)
+	defer failpoint.Disable("tikvclient/injectTxnScope")
 	tk = testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result = tk.MustQuery("select @@txn_scope;")
@@ -3370,7 +3370,7 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 func (s *testSessionSerialSuite) TestGlobalAndLocalTxn(c *C) {
 	// Because the PD config of check_dev_2 test is not compatible with local/global txn yet,
 	// so we will skip this test for now.
-	if *withTiKV {
+	if *tikvmockstore.WithTiKV {
 		return
 	}
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -3457,8 +3457,8 @@ PARTITION BY RANGE (c) (
 	result = tk.MustQuery("select * from t1")      // read dc-1 and dc-2 with global scope
 	c.Assert(len(result.Rows()), Equals, 3)
 
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("dc-1")`)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
+	failpoint.Enable("tikvclient/injectTxnScope", `return("dc-1")`)
+	defer failpoint.Disable("tikvclient/injectTxnScope")
 	// set txn_scope to local
 	tk.MustExec("set @@session.txn_scope = 'local';")
 	result = tk.MustQuery("select @@txn_scope;")
@@ -3766,7 +3766,7 @@ func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
 
 func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 	// only run BR SQL integration test with tikv store.
-	if *withTiKV {
+	if *tikvmockstore.WithTiKV {
 		cfg := config.GetGlobalConfig()
 		cfg.Store = "tikv"
 		cfg.Path = s.pdAddr
@@ -4198,7 +4198,7 @@ func (s *testTxnStateSerialSuite) TestBasic(c *C) {
 	startTS, err := strconv.ParseUint(startTSStr, 10, 64)
 	c.Assert(err, IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock", "pause"), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/beforePessimisticLock", "pause"), IsNil)
 	ch := make(chan interface{})
 	go func() {
 		tk.MustExec("select * from t for update;")
@@ -4212,7 +4212,7 @@ func (s *testTxnStateSerialSuite) TestBasic(c *C) {
 	c.Assert((*time.Time)(info.BlockStartTime), NotNil)
 	c.Assert(info.StartTS, Equals, startTS)
 
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/beforePessimisticLock"), IsNil)
 	<-ch
 
 	info = tk.Se.TxnInfo()
@@ -4230,7 +4230,7 @@ func (s *testTxnStateSerialSuite) TestBasic(c *C) {
 	c.Assert(info.CurrentDB, Equals, "test")
 	c.Assert(info.StartTS, Equals, startTS)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "pause"), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/beforePrewrite", "pause"), IsNil)
 	go func() {
 		tk.MustExec("commit;")
 		ch <- nil
@@ -4242,13 +4242,13 @@ func (s *testTxnStateSerialSuite) TestBasic(c *C) {
 	c.Assert(info.State, Equals, txninfo.TxnCommitting)
 	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest.String(), selectTSDigest.String(), expectedDigest.String(), commitDigest.String()})
 
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/beforePrewrite"), IsNil)
 	<-ch
 	info = tk.Se.TxnInfo()
 	c.Assert(info, IsNil)
 
 	// Test autocommit transaction
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "pause"), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/beforePrewrite", "pause"), IsNil)
 	go func() {
 		tk.MustExec("insert into t values (2)")
 		ch <- nil
@@ -4263,7 +4263,7 @@ func (s *testTxnStateSerialSuite) TestBasic(c *C) {
 	c.Assert(len(info.AllSQLDigests), Equals, 1)
 	c.Assert(info.AllSQLDigests[0], Equals, expectedDigest.String())
 
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/beforePrewrite"), IsNil)
 	<-ch
 	info = tk.Se.TxnInfo()
 	c.Assert(info, IsNil)
@@ -4352,7 +4352,7 @@ func (s *testTxnStateSerialSuite) TestTxnInfoWithPreparedStmt(c *C) {
 	tk.MustExec("set @v = 1")
 
 	tk.MustExec("begin pessimistic")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock", "pause"), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/beforePessimisticLock", "pause"), IsNil)
 	ch := make(chan interface{})
 	go func() {
 		tk.MustExec("execute s1 using @v")
@@ -4363,7 +4363,7 @@ func (s *testTxnStateSerialSuite) TestTxnInfoWithPreparedStmt(c *C) {
 	_, expectDigest := parser.NormalizeDigest("insert into t values (?)")
 	c.Assert(info.CurrentSQLDigest, Equals, expectDigest.String())
 
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/beforePessimisticLock"), IsNil)
 	<-ch
 	info = tk.Se.TxnInfo()
 	c.Assert(info.CurrentSQLDigest, Equals, "")
@@ -4383,7 +4383,7 @@ func (s *testTxnStateSerialSuite) TestTxnInfoWithScalarSubquery(c *C) {
 	tk.MustExec("select * from t where a = (select b from t where a = 2)")
 	_, s1Digest := parser.NormalizeDigest("select * from t where a = (select b from t where a = 2)")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock", "pause"), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/beforePessimisticLock", "pause"), IsNil)
 	ch := make(chan interface{})
 	go func() {
 		tk.MustExec("update t set b = b + 1 where a = (select b from t where a = 2)")
@@ -4395,7 +4395,7 @@ func (s *testTxnStateSerialSuite) TestTxnInfoWithScalarSubquery(c *C) {
 	c.Assert(info.CurrentSQLDigest, Equals, s2Digest.String())
 	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest.String(), s1Digest.String(), s2Digest.String()})
 
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/beforePessimisticLock"), IsNil)
 	<-ch
 	tk.MustExec("rollback")
 }
@@ -4409,7 +4409,7 @@ func (s *testTxnStateSerialSuite) TestTxnInfoWithPSProtocol(c *C) {
 	idInsert, _, _, err := tk.Se.PrepareStmt("insert into t values (?)")
 	c.Assert(err, IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "pause"), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/beforePrewrite", "pause"), IsNil)
 	ch := make(chan interface{})
 	go func() {
 		_, err := tk.Se.ExecutePreparedStmt(context.Background(), idInsert, types.MakeDatums(1))
@@ -4425,7 +4425,7 @@ func (s *testTxnStateSerialSuite) TestTxnInfoWithPSProtocol(c *C) {
 	c.Assert(info.CurrentSQLDigest, Equals, digest.String())
 	c.Assert(info.AllSQLDigests, DeepEquals, []string{digest.String()})
 
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/beforePrewrite"), IsNil)
 	<-ch
 	info = tk.Se.TxnInfo()
 	c.Assert(info, IsNil)
@@ -4444,7 +4444,7 @@ func (s *testTxnStateSerialSuite) TestTxnInfoWithPSProtocol(c *C) {
 	_, err = tk.Se.ExecutePreparedStmt(context.Background(), id1, types.MakeDatums(1))
 	c.Assert(err, IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock", "pause"), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/beforePessimisticLock", "pause"), IsNil)
 	go func() {
 		_, err := tk.Se.ExecutePreparedStmt(context.Background(), id2, types.MakeDatums(1))
 		c.Assert(err, IsNil)
@@ -4459,7 +4459,7 @@ func (s *testTxnStateSerialSuite) TestTxnInfoWithPSProtocol(c *C) {
 	_, beginDigest := parser.NormalizeDigest("begin pessimistic")
 	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest.String(), digest1.String(), digest2.String()})
 
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePessimisticLock"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/beforePessimisticLock"), IsNil)
 	<-ch
 	tk.MustExec("rollback")
 }
@@ -4530,6 +4530,36 @@ func (s *testSessionSuite) TestInTxnPSProtoPointGet(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("commit")
+}
+
+func (s *testSessionSuite) TestTMPTableSize(c *C) {
+	// Test the @@tmp_table_size system variable.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_temporary_table=on")
+	tk.MustExec("create global temporary table t (c1 int, c2 varchar(512)) on commit delete rows")
+
+	tk.MustQuery("select @@global.tmp_table_size").Check(testkit.Rows(strconv.Itoa(variable.DefTMPTableSize)))
+	c.Assert(tk.Se.GetSessionVars().TMPTableSize, Equals, int64(variable.DefTMPTableSize))
+
+	// Min value 1024, so the result is change to 1024, with a warning.
+	tk.MustExec("set @@global.tmp_table_size = 123")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tmp_table_size value: '123'"))
+
+	// Change the session scope value.
+	tk.MustExec("set @@session.tmp_table_size = 2097152")
+	c.Assert(tk.Se.GetSessionVars().TMPTableSize, Equals, int64(2097152))
+
+	// Check in another sessin, change session scope value does not affect the global scope.
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustQuery("select @@global.tmp_table_size").Check(testkit.Rows("1024"))
+
+	// The value is now 1024, check the error when table size exceed it.
+	tk.MustExec("set @@session.tmp_table_size = 1024")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1, repeat('x', 512))")
+	tk.MustExec("insert into t values (1, repeat('x', 512))")
+	tk.MustGetErrCode("insert into t values (1, repeat('x', 512))", errno.ErrRecordFileFull)
 }
 
 func (s *testSessionSuite) TestTiDBEnableGlobalTemporaryTable(c *C) {

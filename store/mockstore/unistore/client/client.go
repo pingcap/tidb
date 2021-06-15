@@ -16,7 +16,7 @@ package client
 import (
 	"time"
 
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"golang.org/x/net/context"
 )
 

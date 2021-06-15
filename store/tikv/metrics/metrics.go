@@ -61,6 +61,11 @@ var (
 	TiKVTSFutureWaitDuration               prometheus.Histogram
 	TiKVSafeTSUpdateCounter                *prometheus.CounterVec
 	TiKVSafeTSUpdateStats                  *prometheus.GaugeVec
+	TiKVReplicaSelectorFailureCounter      *prometheus.CounterVec
+	TiKVRequestRetryTimesHistogram         prometheus.Histogram
+	TiKVTxnCommitBackoffSeconds            prometheus.Histogram
+	TiKVTxnCommitBackoffCount              prometheus.Histogram
+	TiKVSmallReadDuration                  prometheus.Histogram
 )
 
 // Label constants.
@@ -431,6 +436,47 @@ func initMetrics(namespace, subsystem string) {
 			Name:      "safets_update_stats",
 			Help:      "stat of tikv updating safe_ts stats",
 		}, []string{LblStore})
+	TiKVReplicaSelectorFailureCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "replica_selector_failure_counter",
+			Help:      "Counter of the reason why the replica selector cannot yield a potential leader.",
+		}, []string{LblType})
+	TiKVRequestRetryTimesHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "request_retry_times",
+			Help:      "Bucketed histogram of how many times a region request retries.",
+			Buckets:   []float64{1, 2, 3, 4, 8, 16, 32, 64, 128, 256},
+		})
+	TiKVTxnCommitBackoffSeconds = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "txn_commit_backoff_seconds",
+			Help:      "Bucketed histogram of the total backoff duration in committing a transaction.",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22), // 1ms ~ 2097s
+		})
+	TiKVTxnCommitBackoffCount = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "txn_commit_backoff_count",
+			Help:      "Bucketed histogram of the backoff count in committing a transaction.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 12), // 1 ~ 2048
+		})
+
+	// TiKVSmallReadDuration uses to collect small request read duration.
+	TiKVSmallReadDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Subsystem: "sli", // Always use "sli" to make it compatible with TiDB.
+			Name:      "tikv_small_read_duration",
+			Help:      "Read time of TiKV small read.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 28), // 0.5ms ~ 74h
+		})
 
 	initShortcuts()
 }
@@ -488,6 +534,11 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVTSFutureWaitDuration)
 	prometheus.MustRegister(TiKVSafeTSUpdateCounter)
 	prometheus.MustRegister(TiKVSafeTSUpdateStats)
+	prometheus.MustRegister(TiKVReplicaSelectorFailureCounter)
+	prometheus.MustRegister(TiKVRequestRetryTimesHistogram)
+	prometheus.MustRegister(TiKVTxnCommitBackoffSeconds)
+	prometheus.MustRegister(TiKVTxnCommitBackoffCount)
+	prometheus.MustRegister(TiKVSmallReadDuration)
 }
 
 // readCounter reads the value of a prometheus.Counter.
@@ -526,5 +577,14 @@ func GetTxnCommitCounter() TxnCommitCounter {
 		TwoPC:       readCounter(TwoPCTxnCounterOk),
 		AsyncCommit: readCounter(AsyncCommitTxnCounterOk),
 		OnePC:       readCounter(OnePCTxnCounterOk),
+	}
+}
+
+const smallTxnAffectRow = 20
+
+// ObserveReadSLI observes the read SLI metric.
+func ObserveReadSLI(readKeys uint64, readTime float64) {
+	if readKeys <= smallTxnAffectRow && readKeys != 0 && readTime != 0 {
+		TiKVSmallReadDuration.Observe(readTime)
 	}
 }

@@ -69,16 +69,17 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		lowerPriority = needLowerPriority(finalPlan)
 	}
 	return &ExecStmt{
-		GoCtx:         ctx,
-		SnapshotTS:    ret.SnapshotTS,
-		InfoSchema:    ret.InfoSchema,
-		Plan:          finalPlan,
-		LowerPriority: lowerPriority,
-		Text:          stmtNode.Text(),
-		StmtNode:      stmtNode,
-		Ctx:           c.Ctx,
-		OutputNames:   names,
-		Ti:            &TelemetryInfo{},
+		GoCtx:             ctx,
+		SnapshotTS:        ret.LastSnapshotTS,
+		ExplicitStaleness: ret.ExplicitStaleness,
+		InfoSchema:        ret.InfoSchema,
+		Plan:              finalPlan,
+		LowerPriority:     lowerPriority,
+		Text:              stmtNode.Text(),
+		StmtNode:          stmtNode,
+		Ctx:               c.Ctx,
+		OutputNames:       names,
+		Ti:                &TelemetryInfo{},
 	}, nil
 }
 
