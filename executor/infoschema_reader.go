@@ -145,12 +145,11 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.dataForTiKVStoreStatus(sctx)
 		case infoschema.TableStatementsSummary,
 			infoschema.TableStatementsSummaryHistory,
+			infoschema.TableStatementsSummaryEvicted,
 			infoschema.ClusterTableStatementsSummary,
-			infoschema.ClusterTableStatementsSummaryHistory:
-			err = e.setDataForStatementsSummary(sctx, e.table.Name.O)
-		case infoschema.TableStatementsSummaryEvicted,
+			infoschema.ClusterTableStatementsSummaryHistory,
 			infoschema.ClusterTableStatementsSummaryEvicted:
-			e.setDataForStatementsSummaryEvicted(sctx)
+			err = e.setDataForStatementsSummary(sctx, e.table.Name.O)
 		case infoschema.TablePlacementPolicy:
 			err = e.setDataForPlacementPolicy(sctx)
 		case infoschema.TableClientErrorsSummaryGlobal,
@@ -1913,10 +1912,14 @@ func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, 
 	case infoschema.TableStatementsSummaryHistory,
 		infoschema.ClusterTableStatementsSummaryHistory:
 		e.rows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum(user, isSuper)
+	case infoschema.TableStatementsSummaryEvicted,
+		infoschema.ClusterTableStatementsSummaryEvicted:
+		e.rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
 	}
 	switch tableName {
 	case infoschema.ClusterTableStatementsSummary,
-		infoschema.ClusterTableStatementsSummaryHistory:
+		infoschema.ClusterTableStatementsSummaryHistory,
+		infoschema.ClusterTableStatementsSummaryEvicted:
 		rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
 		if err != nil {
 			return err
@@ -2100,10 +2103,6 @@ func (e *memtableRetriever) setDataForClusterDeadlock(ctx sessionctx.Context) er
 	}
 	e.rows = rows
 	return nil
-}
-
-func (e *memtableRetriever) setDataForStatementsSummaryEvicted(ctx sessionctx.Context) {
-	e.rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
 }
 
 type hugeMemTableRetriever struct {
