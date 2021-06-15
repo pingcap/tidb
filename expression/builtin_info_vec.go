@@ -122,7 +122,7 @@ func (b *builtinCurrentRoleSig) vectorized() bool {
 	return true
 }
 
-// evalString eval a builtinCurrentUserSig.
+// evalString evals a builtinCurrentUserSig.
 // See https://dev.mysql.com/doc/refman/8.0/en/information-functions.html#function_current-role
 func (b *builtinCurrentRoleSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
