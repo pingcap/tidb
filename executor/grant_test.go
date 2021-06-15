@@ -94,7 +94,7 @@ func (s *testSuite3) TestGrantDBScope(c *C) {
 	_, err := tk.Exec(` grant create user on test.* to 'testDB1'@'localhost';`)
 	c.Assert(terror.ErrorEqual(err, executor.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")), IsTrue)
 
-	_, err := tk.Exec("GRANT SUPER ON test.* TO 'testDB1'@'localhost';")
+	_, err = tk.Exec("GRANT SUPER ON test.* TO 'testDB1'@'localhost';")
 	c.Assert(terror.ErrorEqual(err, executor.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "NON-DB PRIVILEGES")), IsTrue)
 }
 
