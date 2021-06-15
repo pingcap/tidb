@@ -419,7 +419,7 @@ func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalT
 	if p.tablePlan != nil {
 		p.TablePlans = flattenPushDownPlan(p.tablePlan)
 		p.schema = p.tablePlan.Schema()
-		if p.StoreType == kv.TiFlash && !p.GetTableScan().KeepOrder {
+		if p.StoreType == kv.TiFlash && p.GetTableScan() != nil && !p.GetTableScan().KeepOrder {
 			// When allow batch cop is 1, only agg / topN uses batch cop.
 			// When allow batch cop is 2, every query uses batch cop.
 			switch ctx.GetSessionVars().AllowBatchCop {

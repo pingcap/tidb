@@ -8,7 +8,7 @@ TiDB admin check table failed.
 
 ["admin:8223"]
 error = '''
-data isn't equal
+index:%#v != record:%#v
 '''
 
 ["admin:8224"]
@@ -636,6 +636,16 @@ error = '''
 Export failed: %s
 '''
 
+["executor:8133"]
+error = '''
+handle %#v, index:%#v != record:%#v
+'''
+
+["executor:8134"]
+error = '''
+col %s, handle %#v, index:%#v != record:%#v, compare err:%#v
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
@@ -969,6 +979,11 @@ View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) o
 ["planner:1462"]
 error = '''
 `%-.192s`.`%-.192s` contains view recursion
+'''
+
+["planner:1562"]
+error = '''
+Cannot create temporary table with partitions
 '''
 
 ["planner:1706"]
@@ -1369,6 +1384,11 @@ Column '%-.192s' cannot be null
 ["table:1054"]
 error = '''
 Unknown column '%-.192s' in '%-.192s'
+'''
+
+["table:1114"]
+error = '''
+The table '%-.192s' is full
 '''
 
 ["table:1192"]

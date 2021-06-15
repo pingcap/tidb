@@ -13,6 +13,8 @@
 
 package tikvrpc
 
+import "github.com/pingcap/kvproto/pkg/metapb"
+
 // EndpointType represents the type of a remote endpoint..
 type EndpointType uint8
 
@@ -34,4 +36,21 @@ func (t EndpointType) Name() string {
 		return "tidb"
 	}
 	return "unspecified"
+}
+
+// Constants to determine engine type.
+// They should be synced with PD.
+const (
+	engineLabelKey     = "engine"
+	engineLabelTiFlash = "tiflash"
+)
+
+// GetStoreTypeByMeta gets store type by store meta pb.
+func GetStoreTypeByMeta(store *metapb.Store) EndpointType {
+	for _, label := range store.Labels {
+		if label.Key == engineLabelKey && label.Value == engineLabelTiFlash {
+			return TiFlash
+		}
+	}
+	return TiKV
 }

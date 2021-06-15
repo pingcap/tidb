@@ -15,9 +15,9 @@ package tikv_test
 
 import (
 	. "github.com/pingcap/check"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 type testPrewriteSuite struct {
@@ -45,9 +45,9 @@ func (s *testPrewriteSuite) TestSetMinCommitTSInAsyncCommit(c *C) {
 	c.Assert(err, IsNil)
 	committer.SetUseAsyncCommit()
 
-	buildRequest := func() *pb.PrewriteRequest {
+	buildRequest := func() *kvrpcpb.PrewriteRequest {
 		req := committer.BuildPrewriteRequest(1, 1, 1, committer.GetMutations(), 1)
-		return req.Req.(*pb.PrewriteRequest)
+		return req.Req.(*kvrpcpb.PrewriteRequest)
 	}
 
 	// no forUpdateTS

@@ -21,8 +21,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv"
-	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	tikverr "github.com/tikv/client-go/v2/error"
+	"github.com/tikv/client-go/v2/mockstore"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 type testSnapshotFailSuite struct {
@@ -62,7 +63,7 @@ func (s *testSnapshotFailSuite) cleanup(c *C) {
 
 func (s *testSnapshotFailSuite) TestBatchGetResponseKeyError(c *C) {
 	// Meaningless to test with tikv because it has a mock key error
-	if *WithTiKV {
+	if *mockstore.WithTiKV {
 		return
 	}
 	defer s.cleanup(c)
@@ -91,7 +92,7 @@ func (s *testSnapshotFailSuite) TestBatchGetResponseKeyError(c *C) {
 
 func (s *testSnapshotFailSuite) TestScanResponseKeyError(c *C) {
 	// Meaningless to test with tikv because it has a mock key error
-	if *WithTiKV {
+	if *mockstore.WithTiKV {
 		return
 	}
 	defer s.cleanup(c)
@@ -152,20 +153,20 @@ func (s *testSnapshotFailSuite) TestRetryMaxTsPointGetSkipLock(c *C) {
 	c.Assert(err, IsNil)
 	txn.SetEnableAsyncCommit(true)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", "return"), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/twoPCShortLockTTL", "return"), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/asyncCommitDoNothing", "return"), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/twoPCShortLockTTL", "return"), IsNil)
 	committer, err := txn.NewCommitter(1)
 	c.Assert(err, IsNil)
 	err = committer.Execute(context.Background())
 	c.Assert(err, IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/twoPCShortLockTTL"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/twoPCShortLockTTL"), IsNil)
 
 	snapshot := s.store.GetSnapshot(math.MaxUint64)
 	getCh := make(chan []byte)
 	go func() {
 		// Sleep a while to make the TTL of the first txn expire, then we make sure we resolve lock by this get
 		time.Sleep(200 * time.Millisecond)
-		c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeSendPointGet", "1*off->pause"), IsNil)
+		c.Assert(failpoint.Enable("tikvclient/beforeSendPointGet", "1*off->pause"), IsNil)
 		res, err := snapshot.Get(context.Background(), []byte("k2"))
 		c.Assert(err, IsNil)
 		getCh <- res
@@ -190,7 +191,7 @@ func (s *testSnapshotFailSuite) TestRetryMaxTsPointGetSkipLock(c *C) {
 	err = committer.Execute(context.Background())
 	c.Assert(err, IsNil)
 
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforeSendPointGet"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/beforeSendPointGet"), IsNil)
 
 	// After disabling the failpoint, the get request should bypass the new locks and read the old result
 	select {
@@ -214,7 +215,7 @@ func (s *testSnapshotFailSuite) TestRetryPointGetResolveTS(c *C) {
 	txn.SetCausalConsistency(true)
 
 	// Prewrite the lock without committing it
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeCommit", `pause`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/beforeCommit", `pause`), IsNil)
 	ch := make(chan struct{})
 	committer, err := txn.NewCommitter(1)
 	c.Assert(committer.GetPrimaryKey(), DeepEquals, []byte("k1"))
@@ -233,7 +234,7 @@ func (s *testSnapshotFailSuite) TestRetryPointGetResolveTS(c *C) {
 	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 
 	initialCommitTS := committer.GetCommitTS()
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforeCommit"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/beforeCommit"), IsNil)
 
 	<-ch
 	// check the minCommitTS is not pushed forward
