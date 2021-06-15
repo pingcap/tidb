@@ -2234,8 +2234,7 @@ func getHostByIP(ip string) []string {
 	}
 	addrs, err := net.LookupAddr(ip)
 	if err != nil {
-		// The error is ignorable.
-		// The empty line here makes the golint tool (which complains err is not checked) happy.
+		return []string{ip}
 	}
 	return addrs
 }
