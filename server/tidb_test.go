@@ -94,6 +94,20 @@ func (ts *tidbTestSuite) SetUpSuite(c *C) {
 
 func (ts *tidbTestTopSQLSuite) SetUpSuite(c *C) {
 	ts.tidbTestSuiteBase.SetUpSuite(c)
+
+	// Initialize global variable for top-sql test.
+	db, err := sql.Open("mysql", ts.getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer func() {
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
+
+	dbt := &DBTest{c, db}
+	dbt.mustExec("set @@global.tidb_top_sql_precision_seconds=1;")
+	dbt.mustExec("set @@global.tidb_top_sql_report_interval_seconds=2;")
+	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
+
 	tracecpu.GlobalSQLCPUProfiler.Run()
 }
 
