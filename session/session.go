@@ -2180,7 +2180,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 	}
 
 	// Check Hostname.
-	for _, addr := range getHostByIP(user.Hostname) {
+	for _, addr := range s.getHostByIP(user.Hostname) {
 		u, h, success := pm.ConnectionVerification(user.Username, addr, authentication, salt, s.sessionVars.TLSConnectionState)
 		if success {
 			s.sessionVars.User = &auth.UserIdentity{
@@ -2212,7 +2212,7 @@ func (s *session) AuthWithoutVerification(user *auth.UserIdentity) bool {
 	}
 
 	// Check Hostname.
-	for _, addr := range getHostByIP(user.Hostname) {
+	for _, addr := range s.getHostByIP(user.Hostname) {
 		u, h, success := pm.GetAuthWithoutVerification(user.Username, addr)
 		if success {
 			s.sessionVars.User = &auth.UserIdentity{
@@ -2228,12 +2228,23 @@ func (s *session) AuthWithoutVerification(user *auth.UserIdentity) bool {
 	return false
 }
 
-func getHostByIP(ip string) []string {
+func (s *session) getHostByIP(ip string) []string {
 	if ip == "127.0.0.1" {
 		return []string{variable.DefHostname}
 	}
+	skipNameResolve, err := s.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.SkipNameResolve)
+	if err == nil && variable.TiDBOptOn(skipNameResolve) {
+		return []string{ip} // user wants to skip name resolution
+	}
 	addrs, err := net.LookupAddr(ip)
 	if err != nil {
+		// These messages can be noisy.
+		// See: https://github.com/pingcap/tidb/pull/13989
+		logutil.BgLogger().Debug(
+			"net.LookupAddr returned an error during auth check",
+			zap.String("ip", ip),
+			zap.Error(err),
+		)
 		return []string{ip}
 	}
 	return addrs
