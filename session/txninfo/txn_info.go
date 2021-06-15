@@ -20,8 +20,8 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // TxnRunningState is the current state of a transaction
