@@ -18,10 +18,10 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -175,14 +175,12 @@ func (s *KVSnapshot) BatchGet(ctx context.Context, keys [][]byte) (map[string][]
 		return m, nil
 	}
 
-	// We want [][]byte instead of []kv.Key, use some magic to save memory.
-	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
 	ctx = context.WithValue(ctx, retry.TxnStartKey, s.version)
 	bo := retry.NewBackofferWithVars(ctx, batchGetMaxBackoff, s.vars)
 
 	// Create a map to collect key-values from region servers.
 	var mu sync.Mutex
-	err := s.batchGetKeysByRegions(bo, bytesKeys, func(k, v []byte) {
+	err := s.batchGetKeysByRegions(bo, keys, func(k, v []byte) {
 		if len(v) == 0 {
 			return
 		}
@@ -232,7 +230,8 @@ func (s *KVSnapshot) BatchGet(ctx context.Context, keys [][]byte) (map[string][]
 
 type batchKeys struct {
 	region locate.RegionVerID
-	keys   [][]byte
+	// keys are in ascending order.
+	keys [][]byte
 }
 
 func (b *batchKeys) relocate(bo *Backoffer, c *RegionCache) (bool, error) {
@@ -269,6 +268,8 @@ func (s *KVSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, collect
 	defer func(start time.Time) {
 		metrics.TxnCmdHistogramWithBatchGet.Observe(time.Since(start).Seconds())
 	}(time.Now())
+	// Sort keys so that keys located in the same region only require 1 request.
+	sort.Slice(keys, func(i, j int) bool { return bytes.Compare(keys[i], keys[j]) < 0 })
 	groups, _, err := s.store.regionCache.GroupKeysByRegion(bo, keys, nil)
 	if err != nil {
 		return errors.Trace(err)

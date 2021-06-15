@@ -2918,3 +2918,28 @@ func (s *testStatsSuite) TestIssues24401(c *C) {
 	rows = testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
 	c.Assert(len(rows), Equals, lenRows)
 }
+
+func (s *testStatsSuite) TestColumnCountFromStorage(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	do := s.do
+	h := do.StatsHandle()
+	originLease := h.Lease()
+	defer h.SetLease(originLease)
+	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
+	// `Lease` is not 0, so here we just change it.
+	h.SetLease(time.Millisecond)
+	testKit.MustExec("use test")
+	testKit.MustExec("set tidb_analyze_version = 2")
+	testKit.MustExec("create table tt (c int)")
+	testKit.MustExec("insert into tt values(1), (2)")
+	testKit.MustExec("analyze table tt")
+	is := do.InfoSchema()
+	h = do.StatsHandle()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tt"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	h.TableStatsFromStorage(tblInfo, tblInfo.ID, false, 0)
+	statsTbl := h.GetTableStats(tblInfo)
+	c.Assert(statsTbl.Columns[tblInfo.Columns[0].ID].Count, Equals, int64(2))
+}
