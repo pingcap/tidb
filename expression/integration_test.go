@@ -1083,7 +1083,6 @@ func (s *testIntegrationSuite2) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("101"))
 	result = tk.MustQuery(`select bin("中文");`)
 	result.Check(testkit.Rows("0"))
-
 	// for character_length
 	result = tk.MustQuery(`select character_length(null), character_length("Hello"), character_length("a中b文c"),
 	character_length(123), character_length(12.3456);`)
@@ -9518,7 +9517,7 @@ func (s *testIntegrationSuite) TestIssue23312(c *C) {
 	tk.MustExec("INSERT INTO `test_group_concat` VALUES (DEFAULT, 3.36769e38);")
 	tk.MustExec("INSERT INTO `test_group_concat` VALUES (DEFAULT, 3.18374e38);")
 	tk.MustQuery("select GROUP_CONCAT(col1) from test_group_concat;").Check(
-	testkit.Rows("3.18374e38,3.36769e38"))
+		testkit.Rows("3.18374e+38,3.36769e+38"))
 }
 
 func (s *testIntegrationSuite) TestRefineArgNullValues(c *C) {

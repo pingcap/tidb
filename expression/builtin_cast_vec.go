@@ -225,7 +225,6 @@ func (b *builtinCastRealAsStringSig) vecEvalString(input *chunk.Chunk, result *c
 		if err != nil {
 			return err
 		}
-		res = strings.Replace(res, "+", "", -1)
 		res, isNull, err = padZeroForBinaryType(res, b.tp, b.ctx)
 		if err != nil {
 			return err
