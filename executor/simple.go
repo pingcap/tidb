@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/core"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -847,6 +848,11 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 	}
 
 	failedUsers := make([]string, 0, len(s.Specs))
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	hasCreateUserPriv := checker != nil && checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv)
+	hasSystemUserPriv := checker != nil && checker.RequestDynamicVerification(activeRoles, "SYSTEM_USER", false)
+
 	for _, spec := range s.Specs {
 		user := e.ctx.GetSessionVars().User
 		if spec.User.CurrentUser || ((user != nil) && (user.Username == spec.User.Username) && (user.AuthHostname == spec.User.Hostname)) {
@@ -858,24 +864,21 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 			// The MySQL manual states:
 			// "In most cases, ALTER USER requires the global CREATE USER privilege, or the UPDATE privilege for the mysql system schema"
 			//
-			// This is *not* the observed behavior in 8.0.24. The permissions you require depend on the user you are changing. For example:
+			// This is true unless the user being modified has the SYSTEM_USER dynamic privilege.
+			// See: https://mysqlserverteam.com/the-system_user-dynamic-privilege/
 			//
-			// CREATE USER u1, u2, root;
-			// GRANT CREATE USER ON *.* TO u1;
-			// GRANT ALL ON *.* to root;
-			//
-			// * u1 is permitted to change any property of u1, but no properties of root (not even REQUIRE SSL)
-			// * u2 is not permitted to change any user except themselves.
-			// * root can change any user.
-			//
-			// The MySQL behavior is presumably to prevent accidental privilege escalations. We should try and match it in future,
-			// but for now we can just require the SUPER privilege instead. This prevents u1 from changing root (intended), but
-			// has the consequence that u1 can not change u2 (unintended).
+			// In the current implementation of DYNAMIC privileges, SUPER can be used as a substitute for any DYNAMIC privilege
+			// (unless SEM is enabled; in which case RESTRICTED_* privileges will not use SUPER as a substitute). This is intentional
+			// because visitInfo can not accept OR conditions for permissions and in many cases MySQL permits SUPER instead.
 
-			checker := privilege.GetPrivilegeManager(e.ctx)
-			activeRoles := e.ctx.GetSessionVars().ActiveRoles
-			if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
-				return ErrDBaccessDenied.GenWithStackByArgs(spec.User.Username, spec.User.Hostname, "mysql")
+			// Thus, any user with SUPER can effectively ALTER/DROP a SYSTEM_USER, and
+			// any user with only CREATE USER can not modify the properties of users with SUPER privilege.
+
+			if !hasCreateUserPriv {
+				return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+			}
+			if checker != nil && checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, spec.User) && !hasSystemUserPriv {
+				return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
 			}
 		}
 
@@ -1119,25 +1122,23 @@ func renameUserHostInSystemTable(sqlExecutor sqlexec.SQLExecutor, tableName, use
 func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	// Check privileges.
 	// Check `CREATE USER` privilege.
-	if !config.GetGlobalConfig().Security.SkipGrantTable {
-		checker := privilege.GetPrivilegeManager(e.ctx)
-		if checker == nil {
-			return errors.New("miss privilege checker")
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker == nil {
+		return errors.New("miss privilege checker")
+	}
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.DeletePriv) {
+		if s.IsDropRole {
+			if !checker.RequestVerification(activeRoles, "", "", "", mysql.DropRolePriv) &&
+				!checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+				return core.ErrSpecificAccessDenied.GenWithStackByArgs("DROP ROLE or CREATE USER")
+			}
 		}
-		activeRoles := e.ctx.GetSessionVars().ActiveRoles
-		if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.DeletePriv) {
-			if s.IsDropRole {
-				if !checker.RequestVerification(activeRoles, "", "", "", mysql.DropRolePriv) &&
-					!checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
-					return core.ErrSpecificAccessDenied.GenWithStackByArgs("DROP ROLE or CREATE USER")
-				}
-			}
-			if !s.IsDropRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
-				return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
-			}
+		if !s.IsDropRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+			return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		}
 	}
-
+	hasSystemUserPriv := checker.RequestDynamicVerification(activeRoles, "SYSTEM_USER", false)
 	failedUsers := make([]string, 0, len(s.UserList))
 	sysSession, err := e.getSysSession()
 	defer e.releaseSysSession(sysSession)
@@ -1163,6 +1164,17 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 				failedUsers = append(failedUsers, user.String())
 				break
 			}
+		}
+
+		// Certain users require additional privileges in order to be modified.
+		// If this is the case, we need to rollback all changes and return a privilege error.
+		// Because in TiDB SUPER can be used as a substitute for any dynamic privilege, this effectively means that
+		// any user with SUPER requires a user with SUPER to be able to DROP the user.
+		if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, user) && !hasSystemUserPriv {
+			if _, err := sqlExecutor.ExecuteInternal(context.TODO(), "rollback"); err != nil {
+				return err
+			}
+			return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
 		}
 
 		// begin a transaction to delete a user.

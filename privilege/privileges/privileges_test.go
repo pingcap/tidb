@@ -472,22 +472,37 @@ func (s *testPrivilegeSuite) TestAlterUserStmt(c *C) {
 	se := newSession(c, s.store, s.dbName)
 
 	// high privileged user setting password for other user (passes)
-	mustExec(c, se, "CREATE USER 'superuser2'")
-	mustExec(c, se, "CREATE USER 'nobodyuser2'")
-	mustExec(c, se, "CREATE USER 'nobodyuser3'")
+	mustExec(c, se, "CREATE USER superuser2, nobodyuser2, nobodyuser3, nobodyuser4")
 	mustExec(c, se, "GRANT ALL ON *.* TO 'superuser2'")
 	mustExec(c, se, "GRANT CREATE USER ON *.* TO 'nobodyuser2'")
+	mustExec(c, se, "GRANT SYSTEM_USER ON *.* TO nobodyuser4")
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "superuser2", Hostname: "localhost", AuthUsername: "superuser2", AuthHostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
 	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
 
-	// low privileged user trying to set password for other user (fails)
+	// low privileged user trying to set password for others
+	// nobodyuser3 = SUCCESS (not a SYSTEM_USER)
+	// nobodyuser4 = FAIL (has SYSTEM_USER)
+	// superuser2  = FAIL (has SYSTEM_USER privilege implied by SUPER)
+
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser2", Hostname: "localhost", AuthUsername: "nobodyuser2", AuthHostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
 	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
-	_, err := se.ExecuteInternal(context.Background(), "ALTER USER 'superuser2' IDENTIFIED BY 'newpassword'")
-	c.Assert(err, NotNil)
+	mustExec(c, se, "ALTER USER 'nobodyuser3' IDENTIFIED BY ''")
+	_, err := se.ExecuteInternal(context.Background(), "ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'superuser2' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation")
+
+	// Nobody3 has no privileges at all, but they can still alter their own password.
+	// Any other user fails.
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser3", Hostname: "localhost", AuthUsername: "nobodyuser3", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser3' IDENTIFIED BY ''")
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'superuser2' IDENTIFIED BY 'newpassword'") // it checks create user before SYSTEM_USER
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
 }
 
 func (s *testPrivilegeSuite) TestSelectViewSecurity(c *C) {
