@@ -1686,11 +1686,11 @@ func (cli *testServerClient) runTestIssue3682(c *C) {
 
 func (cli *testServerClient) runTestEmptyRoles(c *C) {
 	cli.runTests(c, nil, func(dbt *DBTest) {
-		dbt.mustExec(`CREATE USER 'authtest'@'%' IDENTIFIED BY '123';`)
-		dbt.mustExec(`GRANT ALL on test.* to 'authtest'`)
+		dbt.mustExec(`CREATE USER 'emptyroles'@'%' IDENTIFIED BY '123';`)
+		dbt.mustExec(`GRANT ALL on test.* to 'emptyroles'`)
 	})
 	cli.runTests(c, func(config *mysql.Config) {
-		config.User = "authtest"
+		config.User = "emptyroles"
 		config.Passwd = "123"
 	}, func(dbt *DBTest) {
 		dbt.mustExec(`USE information_schema;`)
@@ -1698,7 +1698,7 @@ func (cli *testServerClient) runTestEmptyRoles(c *C) {
 
 	// Test for loading empty active roles.
 	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
-		config.User = "authtest"
+		config.User = "emptyroles"
 		config.Passwd = "123"
 	}))
 	c.Assert(err, IsNil)
