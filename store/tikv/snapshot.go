@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -151,6 +150,7 @@ func (s *KVSnapshot) SetSnapshotTS(ts uint64) {
 
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
+// NOTE: Don't modify keys. Some codes rely on the order of keys.
 func (s *KVSnapshot) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
 	// Check the cached value first.
 	m := make(map[string][]byte)
@@ -230,18 +230,19 @@ func (s *KVSnapshot) BatchGet(ctx context.Context, keys [][]byte) (map[string][]
 
 type batchKeys struct {
 	region locate.RegionVerID
-	// keys are in ascending order.
-	keys [][]byte
+	keys   [][]byte
 }
 
 func (b *batchKeys) relocate(bo *Backoffer, c *RegionCache) (bool, error) {
-	begin, end := b.keys[0], b.keys[len(b.keys)-1]
-	loc, err := c.LocateKey(bo, begin)
+	loc, err := c.LocateKey(bo, b.keys[0])
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if !loc.Contains(end) {
-		return false, nil
+	// keys is not in order, so we have to iterate all keys.
+	for i := 1; i < len(b.keys); i++ {
+		if !loc.Contains(b.keys[i]) {
+			return false, nil
+		}
 	}
 	b.region = loc.Region
 	return true, nil
@@ -268,8 +269,6 @@ func (s *KVSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, collect
 	defer func(start time.Time) {
 		metrics.TxnCmdHistogramWithBatchGet.Observe(time.Since(start).Seconds())
 	}(time.Now())
-	// Sort keys so that keys located in the same region only require 1 request.
-	sort.Slice(keys, func(i, j int) bool { return bytes.Compare(keys[i], keys[j]) < 0 })
 	groups, _, err := s.store.regionCache.GroupKeysByRegion(bo, keys, nil)
 	if err != nil {
 		return errors.Trace(err)
