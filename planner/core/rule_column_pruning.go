@@ -428,8 +428,14 @@ func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column) error {
 		return nil
 	}
 
-	p.inlineProjection(parentUsedCols)
-	return p.children[0].PruneColumns(parentUsedCols)
+	savedUsedCols := make([]*expression.Column, len(parentUsedCols))
+	copy(savedUsedCols, parentUsedCols)
+	if err := p.children[0].PruneColumns(parentUsedCols); err != nil {
+		return err
+	}
+	p.schema = nil
+	p.inlineProjection(savedUsedCols)
+	return nil
 }
 
 func (*columnPruner) name() string {

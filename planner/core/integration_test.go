@@ -3168,6 +3168,15 @@ func (s *testIntegrationSuite) TestIssue24281(c *C) {
 		"UNION select 1 as v1, 2 as v2")
 }
 
+func (s *testIntegrationSuite) TestLimitWindowColPrune(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustQuery("select count(a) f1, row_number() over (order by count(a)) as f2 from t limit 1").Check(testkit.Rows("1 1"))
+}
+
 func (s *testIntegrationSerialSuite) TestMergeContinuousSelections(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
