@@ -1302,6 +1302,12 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.CreateUserPriv, "", "", "", ErrSpecificAccessDenied, false, "", false},
 			},
 		},
+		{
+			sql: "SHOW CONFIG",
+			ans: []visitInfo{
+				{mysql.ConfigPriv, "", "", "", ErrSpecificAccessDenied, false, "", false},
+			},
+		},
 	}
 
 	for _, tt := range tests {

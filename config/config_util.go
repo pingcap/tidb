@@ -24,7 +24,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
-	tikvcfg "github.com/pingcap/tidb/store/tikv/config"
+	tikvcfg "github.com/tikv/client-go/v2/config"
 )
 
 // CloneConf deeply clones this config.
