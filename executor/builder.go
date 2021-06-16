@@ -3582,7 +3582,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
-		SetTxnScope(e.txnScope, e.ctx.GetSessionVars()).
+		SetStoreSelectScope(e.txnScope, e.ctx.GetSessionVars()).
 		SetIsStaleness(e.isStaleness, e.ctx.GetSessionVars()).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).

@@ -244,7 +244,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetDesc(e.descs[workID]).
 					SetKeepOrder(false).
 					SetStreaming(e.partialStreamings[workID]).
-					SetTxnScope(e.txnScope, e.ctx.GetSessionVars()).
+					SetStoreSelectScope(e.txnScope, e.ctx.GetSessionVars()).
 					SetIsStaleness(e.isStaleness, e.ctx.GetSessionVars()).
 					SetFromSessionVars(e.ctx.GetSessionVars()).
 					SetMemTracker(e.memTracker).

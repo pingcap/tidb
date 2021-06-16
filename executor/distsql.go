@@ -292,7 +292,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
-		SetTxnScope(e.txnScope, e.ctx.GetSessionVars()).
+		SetStoreSelectScope(e.txnScope, e.ctx.GetSessionVars()).
 		SetIsStaleness(e.isStaleness, e.ctx.GetSessionVars()).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
@@ -554,7 +554,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
 			SetStreaming(e.indexStreaming).
-			SetTxnScope(e.txnScope, e.ctx.GetSessionVars()).
+			SetStoreSelectScope(e.txnScope, e.ctx.GetSessionVars()).
 			SetIsStaleness(e.isStaleness, e.ctx.GetSessionVars()).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
 			SetFromInfoSchema(e.ctx.GetInfoSchema()).

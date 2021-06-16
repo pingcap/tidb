@@ -39,10 +39,10 @@ import (
 // It is called before we issue a kv request by "Select".
 type RequestBuilder struct {
 	kv.Request
-	// txnScope indicates the value of txn_scope
-	txnScope string
-	is       infoschema.InfoSchema
-	err      error
+	// storeSelectorScope indicates the scope for selecting stores
+	storeSelectorScope string
+	is                 infoschema.InfoSchema
+	err                error
 }
 
 // Build builds a "kv.Request".
@@ -174,12 +174,12 @@ func (builder *RequestBuilder) SetStartTS(startTS uint64) *RequestBuilder {
 	return builder
 }
 
-// SetTxnScope sets txnScope from giving txnScope or TxnCtx
-func (builder *RequestBuilder) SetTxnScope(txnScope string, sv *variable.SessionVars) *RequestBuilder {
+// SetStoreSelectScope sets storeSelectorScope from giving scope or TxnCtx
+func (builder *RequestBuilder) SetStoreSelectScope(scope string, sv *variable.SessionVars) *RequestBuilder {
 	if sv.InTxn() {
-		builder.txnScope = sv.TxnCtx.TxnScope
+		builder.storeSelectorScope = sv.TxnCtx.TxnScope
 	} else {
-		builder.txnScope = txnScope
+		builder.storeSelectorScope = scope
 	}
 	return builder
 }
@@ -295,21 +295,21 @@ func (builder *RequestBuilder) SetResourceGroupTag(sc *stmtctx.StatementContext)
 }
 
 func (builder *RequestBuilder) setMatchStoreLabels() {
-	if builder.IsStaleness && builder.txnScope != kv.GlobalTxnScope {
+	if builder.IsStaleness && builder.storeSelectorScope != kv.GlobalTxnScope {
 		builder.MatchStoreLabels = []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
-				Value: builder.txnScope,
+				Value: builder.storeSelectorScope,
 			},
 		}
 	}
 }
 
 func (builder *RequestBuilder) verifyTxnScope() error {
-	if builder.txnScope == "" {
-		builder.txnScope = kv.GlobalTxnScope
+	if builder.storeSelectorScope == "" {
+		builder.storeSelectorScope = kv.GlobalTxnScope
 	}
-	if builder.txnScope == kv.GlobalTxnScope || builder.is == nil {
+	if builder.storeSelectorScope == kv.GlobalTxnScope || builder.is == nil {
 		return nil
 	}
 	visitPhysicalTableID := make(map[int64]struct{})
@@ -323,7 +323,7 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 	}
 
 	for phyTableID := range visitPhysicalTableID {
-		valid := VerifyTxnScope(builder.txnScope, phyTableID, builder.is)
+		valid := VerifyTxnScope(builder.storeSelectorScope, phyTableID, builder.is)
 		if !valid {
 			var tblName string
 			var partName string
@@ -335,10 +335,10 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 				tblInfo, _ = builder.is.TableByID(phyTableID)
 				tblName = tblInfo.Meta().Name.String()
 			}
-			err := fmt.Errorf("table %v can not be read by %v txn_scope", tblName, builder.txnScope)
+			err := fmt.Errorf("table %v can not be read by %v txn_scope", tblName, builder.storeSelectorScope)
 			if len(partName) > 0 {
 				err = fmt.Errorf("table %v's partition %v can not be read by %v txn_scope",
-					tblName, partName, builder.txnScope)
+					tblName, partName, builder.storeSelectorScope)
 			}
 			return err
 		}
