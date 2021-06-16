@@ -14,11 +14,11 @@ package core
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -231,6 +231,15 @@ func (s *partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.
 			})
 			continue
 		}
+		if colExpr.ID == model.ExtraPidColID {
+			names = append(names, &types.FieldName{
+				DBName:      ds.DBName,
+				TblName:     ds.tableInfo.Name,
+				ColName:     model.ExtraPartitionIdName,
+				OrigColName: model.ExtraPartitionIdName,
+			})
+			continue
+		}
 		if colInfo, found := colsInfoMap[colExpr.ID]; found {
 			names = append(names, &types.FieldName{
 				DBName:      ds.DBName,
@@ -242,7 +251,11 @@ func (s *partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.
 			})
 			continue
 		}
+<<<<<<< HEAD
 		return nil, errors.New(fmt.Sprintf("information of column %v is not found", colExpr.String()))
+=======
+		return nil, errors.Trace(fmt.Errorf("information of column %v is not found", colExpr.String()))
+>>>>>>> 0490590b0... planner,executor: fix 'select ...(join on partition table) for update' panic (#21148)
 	}
 	return names, nil
 }

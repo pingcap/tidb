@@ -353,6 +353,9 @@ type IndexLookUpExecutor struct {
 	PushedLimit *plannercore.PushedDownLimit
 
 	stats *IndexLookUpRunTimeStats
+
+	// extraPIDColumnIndex is used for partition reader to add an extra partition ID column, default -1
+	extraPIDColumnIndex offsetOptional
 }
 
 type getHandleType int8
@@ -555,6 +558,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []kv.Handle) (Executor, error) {
 	tableReaderExec := &TableReaderExecutor{
+<<<<<<< HEAD
 		baseExecutor:   newBaseExecutor(e.ctx, e.schema, e.getTableRootPlanID()),
 		table:          e.table,
 		dagPB:          e.tableRequest,
@@ -564,6 +568,18 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []kv
 		feedback:       statistics.NewQueryFeedback(0, nil, 0, false),
 		corColInFilter: e.corColInTblSide,
 		plans:          e.tblPlans,
+=======
+		baseExecutor:        newBaseExecutor(e.ctx, e.schema, e.getTableRootPlanID()),
+		table:               table,
+		dagPB:               e.tableRequest,
+		startTS:             e.startTS,
+		columns:             e.columns,
+		streaming:           e.tableStreaming,
+		feedback:            statistics.NewQueryFeedback(0, nil, 0, false),
+		corColInFilter:      e.corColInTblSide,
+		plans:               e.tblPlans,
+		extraPIDColumnIndex: e.extraPIDColumnIndex,
+>>>>>>> 0490590b0... planner,executor: fix 'select ...(join on partition table) for update' panic (#21148)
 	}
 	tableReaderExec.buildVirtualColumnInfo()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, true)
