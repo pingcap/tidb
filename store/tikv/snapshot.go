@@ -21,7 +21,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -151,6 +150,7 @@ func (s *KVSnapshot) SetSnapshotTS(ts uint64) {
 
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
+// NOTE: Don't modify keys. Some codes rely on the order of keys.
 func (s *KVSnapshot) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
 	// Check the cached value first.
 	m := make(map[string][]byte)
@@ -175,14 +175,12 @@ func (s *KVSnapshot) BatchGet(ctx context.Context, keys [][]byte) (map[string][]
 		return m, nil
 	}
 
-	// We want [][]byte instead of []kv.Key, use some magic to save memory.
-	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
 	ctx = context.WithValue(ctx, retry.TxnStartKey, s.version)
 	bo := retry.NewBackofferWithVars(ctx, batchGetMaxBackoff, s.vars)
 
 	// Create a map to collect key-values from region servers.
 	var mu sync.Mutex
-	err := s.batchGetKeysByRegions(bo, bytesKeys, func(k, v []byte) {
+	err := s.batchGetKeysByRegions(bo, keys, func(k, v []byte) {
 		if len(v) == 0 {
 			return
 		}
@@ -236,13 +234,15 @@ type batchKeys struct {
 }
 
 func (b *batchKeys) relocate(bo *Backoffer, c *RegionCache) (bool, error) {
-	begin, end := b.keys[0], b.keys[len(b.keys)-1]
-	loc, err := c.LocateKey(bo, begin)
+	loc, err := c.LocateKey(bo, b.keys[0])
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if !loc.Contains(end) {
-		return false, nil
+	// keys is not in order, so we have to iterate all keys.
+	for i := 1; i < len(b.keys); i++ {
+		if !loc.Contains(b.keys[i]) {
+			return false, nil
+		}
 	}
 	b.region = loc.Region
 	return true, nil
