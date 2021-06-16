@@ -15,9 +15,9 @@ var _pool = buffer.NewPool()
 
 func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, error) {
 
-	// reuse global config and override slow query log file
+	// copy global config and override slow query log file
 	// if slow query log filename is empty, slow query log will behave the same as global log
-	sqConfig := deepcopyLogConfig(&cfg.Config)
+	sqConfig := cfg.Config
 	if len(cfg.SlowQueryFile) != 0 {
 		sqConfig.File = log.FileLogConfig{
 			MaxSize:  cfg.File.MaxSize,
@@ -26,7 +26,7 @@ func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, error) {
 	}
 
 	// create the slow query logger
-	sqLogger, prop, err := log.InitLogger(sqConfig)
+	sqLogger, prop, err := log.InitLogger(&sqConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

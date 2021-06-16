@@ -118,8 +118,8 @@ func InitLogger(cfg *LogConfig) error {
 }
 
 func initGRPCLogger(cfg *LogConfig) error {
-
-	config := deepcopyLogConfig(&cfg.Config)
+	// copy Config struct by assignment
+	config := cfg.Config
 	// hack: force stdout
 	config.File.Filename = ""
 	if len(os.Getenv("GRPC_DEBUG")) > 0 {
@@ -139,32 +139,6 @@ func initGRPCLogger(cfg *LogConfig) error {
 	}
 
 	return nil
-}
-
-func deepcopyLogConfig(o *log.Config) *log.Config {
-	c := &log.Config{
-		Level:            o.Level,
-		Format:           o.Format,
-		DisableTimestamp: o.DisableTimestamp,
-		File: log.FileLogConfig{
-			Filename:   o.File.Filename,
-			MaxSize:    o.File.MaxSize,
-			MaxDays:    o.File.MaxDays,
-			MaxBackups: o.File.MaxBackups,
-		},
-		Development:         o.Development,
-		DisableCaller:       o.DisableCaller,
-		DisableStacktrace:   o.DisableStacktrace,
-		DisableErrorVerbose: o.DisableErrorVerbose,
-	}
-	if o.Sampling != nil {
-		c.Sampling = &zap.SamplingConfig{
-			Initial:    o.Sampling.Initial,
-			Thereafter: o.Sampling.Thereafter,
-			Hook:       o.Sampling.Hook,
-		}
-	}
-	return c
 }
 
 // InitZapLogger is delegated to InitLogger.
