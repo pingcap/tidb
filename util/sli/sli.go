@@ -117,10 +117,3 @@ func (t *TxnWriteThroughputSLI) String() string {
 	return fmt.Sprintf("invalid: %v, affectRow: %v, writeSize: %v, readKeys: %v, writeKeys: %v, writeTime: %v",
 		t.invalid, t.affectRow, t.writeSize, t.readKeys, t.writeKeys, t.writeTime.String())
 }
-
-// ObserveReadSLI observes the read SLI metric.
-func ObserveReadSLI(readKeys uint64, readTime float64) {
-	if readKeys <= smallTxnAffectRow && readKeys != 0 && readTime != 0 {
-		metrics.TiKVSmallReadDuration.Observe(readTime)
-	}
-}

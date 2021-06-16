@@ -21,9 +21,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/placement"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
@@ -268,16 +268,16 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 		c.Log(testcase.name)
 		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
 		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", fmt.Sprintf(`return("%v")`, testcase.zone))
-		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStoreLabels", fmt.Sprintf(`return("%v_%v")`, placement.DCLabelKey, testcase.txnScope))
-		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag", `return(true)`)
+		failpoint.Enable("tikvclient/assertStoreLabels", fmt.Sprintf(`return("%v_%v")`, placement.DCLabelKey, testcase.txnScope))
+		failpoint.Enable("tikvclient/assertStaleReadFlag", `return(true)`)
 		// Using NOW() will cause the loss of fsp precision, so we use NOW(3) to be accurate to the millisecond.
 		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
 		tk.MustQuery(testcase.sql)
 		tk.MustExec(`commit`)
 	}
 	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStoreLabels")
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag")
+	failpoint.Disable("tikvclient/assertStoreLabels")
+	failpoint.Disable("tikvclient/assertStaleReadFlag")
 }
 
 func (s *testStaleTxnSuite) TestStalenessAndHistoryRead(c *C) {
@@ -364,7 +364,7 @@ func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 	}
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/injectSafeTS",
+		c.Assert(failpoint.Enable("tikvclient/injectSafeTS",
 			fmt.Sprintf("return(%v)", testcase.injectSafeTS)), IsNil)
 		c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
 			fmt.Sprintf("return(%v)", testcase.injectSafeTS)), IsNil)
@@ -379,7 +379,7 @@ func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
 		tk.MustExec("commit")
 	}
 	failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS")
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/injectSafeTS")
+	failpoint.Disable("tikvclient/injectSafeTS")
 }
 
 func (s *testStaleTxnSerialSuite) TestStalenessTransactionSchemaVer(c *C) {
@@ -695,6 +695,7 @@ func (s *testStaleTxnSuite) TestAsOfTimestampCompatibility(c *C) {
 	tk.MustExec(updateSafePoint)
 	tk.MustExec("use test")
 	tk.MustExec("create table t5(id int);")
+	defer tk.MustExec("drop table if exists t5;")
 	time1 := time.Now()
 	testcases := []struct {
 		beginSQL string
@@ -732,6 +733,10 @@ func (s *testStaleTxnSuite) TestAsOfTimestampCompatibility(c *C) {
 		c.Assert(err.Error(), Matches, ".*as of timestamp can't be set in transaction.*")
 		tk.MustExec("commit")
 	}
+	tk.MustExec(`create table test.table1 (id int primary key, a int);`)
+	defer tk.MustExec("drop table if exists test.table1;")
+	time1 = time.Now()
+	tk.MustExec(fmt.Sprintf("explain analyze select * from test.table1 as of timestamp '%s' where id = 1;", time1.Format("2006-1-2 15:04:05.000")))
 }
 
 func (s *testStaleTxnSuite) TestSetTransactionInfoSchema(c *C) {
@@ -771,4 +776,81 @@ func (s *testStaleTxnSuite) TestSetTransactionInfoSchema(c *C) {
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer2)
 	tk.MustExec("commit")
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer3)
+}
+
+func (s *testStaleTxnSuite) TestStaleSelect(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+
+	tolerance := 50 * time.Millisecond
+
+	tk.MustExec("insert into t values (1)")
+	time.Sleep(tolerance)
+	time1 := time.Now()
+
+	tk.MustExec("insert into t values (2)")
+	time.Sleep(tolerance)
+	time2 := time.Now()
+
+	tk.MustExec("insert into t values (3)")
+	time.Sleep(tolerance)
+
+	staleRows := testkit.Rows("1")
+	staleSQL := fmt.Sprintf(`select * from t as of timestamp '%s'`, time1.Format("2006-1-2 15:04:05.000"))
+
+	// test normal stale select
+	tk.MustQuery(staleSQL).Check(staleRows)
+
+	// test stale select in txn
+	tk.MustExec("begin")
+	c.Assert(tk.ExecToErr(staleSQL), NotNil)
+	tk.MustExec("commit")
+
+	// test prepared stale select
+	tk.MustExec(fmt.Sprintf(`prepare s from "%s"`, staleSQL))
+	tk.MustQuery("execute s")
+
+	// test prepared stale select in txn
+	tk.MustExec("begin")
+	c.Assert(tk.ExecToErr(staleSQL), NotNil)
+	tk.MustExec("commit")
+
+	// test stale select in stale txn
+	tk.MustExec(fmt.Sprintf(`start transaction read only as of timestamp '%s'`, time2.Format("2006-1-2 15:04:05.000")))
+	c.Assert(tk.ExecToErr(staleSQL), NotNil)
+	tk.MustExec("commit")
+
+	// test prepared stale select in stale txn
+	tk.MustExec(fmt.Sprintf(`start transaction read only as of timestamp '%s'`, time2.Format("2006-1-2 15:04:05.000")))
+	c.Assert(tk.ExecToErr(staleSQL), NotNil)
+	tk.MustExec("commit")
+
+	// test prepared stale select with schema change
+	tk.MustExec("alter table t add column c int")
+	tk.MustExec("insert into t values (4, 5)")
+	time.Sleep(10 * time.Millisecond)
+	tk.MustQuery("execute s").Check(staleRows)
+
+	// test dynamic timestamp stale select
+	time3 := time.Now()
+	tk.MustExec("alter table t add column d int")
+	tk.MustExec("insert into t values (4, 4, 4)")
+	time.Sleep(tolerance)
+	time4 := time.Now()
+	staleRows = testkit.Rows("1 <nil>", "2 <nil>", "3 <nil>", "4 5")
+	tk.MustQuery(fmt.Sprintf("select * from t as of timestamp CURRENT_TIMESTAMP(3) - INTERVAL %d MICROSECOND", time4.Sub(time3).Microseconds())).Check(staleRows)
+
+	// test prepared dynamic timestamp stale select
+	time5 := time.Now()
+	tk.MustExec(fmt.Sprintf(`prepare v from "select * from t as of timestamp CURRENT_TIMESTAMP(3) - INTERVAL %d MICROSECOND"`, time5.Sub(time3).Microseconds()))
+	tk.MustQuery("execute v").Check(staleRows)
+
+	// test point get
+	time6 := time.Now()
+	tk.MustExec("insert into t values (5, 5, 5)")
+	time.Sleep(tolerance)
+	tk.MustQuery(fmt.Sprintf("select * from t as of timestamp '%s' where c=5", time6.Format("2006-1-2 15:04:05.000"))).Check(testkit.Rows("4 5 <nil>"))
 }
