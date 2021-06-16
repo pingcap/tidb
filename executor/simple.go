@@ -589,7 +589,11 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 		// With START TRANSACTION, autocommit remains disabled until you end
 		// the transaction with COMMIT or ROLLBACK. The autocommit mode then
 		// reverts to its previous state.
-		e.ctx.GetSessionVars().SetInTxn(true)
+		vars := e.ctx.GetSessionVars()
+		if err := vars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
+			return errors.Trace(err)
+		}
+		vars.SetInTxn(true)
 		return nil
 	}
 	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
