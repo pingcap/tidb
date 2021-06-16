@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -849,9 +850,14 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 
 	failedUsers := make([]string, 0, len(s.Specs))
 	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker == nil {
+		return errors.New("could not load privilege checker")
+	}
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
-	hasCreateUserPriv := checker != nil && checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv)
-	hasSystemUserPriv := checker != nil && checker.RequestDynamicVerification(activeRoles, "SYSTEM_USER", false)
+	hasCreateUserPriv := checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv)
+	hasSystemUserPriv := checker.RequestDynamicVerification(activeRoles, "SYSTEM_USER", false)
+	hasRestrictedUserPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_USER_ADMIN", false)
+	hasSystemSchemaPriv := checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.UpdatePriv)
 
 	for _, spec := range s.Specs {
 		user := e.ctx.GetSessionVars().User
@@ -873,12 +879,17 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 
 			// Thus, any user with SUPER can effectively ALTER/DROP a SYSTEM_USER, and
 			// any user with only CREATE USER can not modify the properties of users with SUPER privilege.
+			// We extend this in TiDB with SEM, where SUPER users can not modify users with RESTRICTED_USER_ADMIN.
+			// For simplicity: RESTRICTED_USER_ADMIN also counts for SYSTEM_USER here.
 
-			if !hasCreateUserPriv {
+			if !(hasCreateUserPriv || hasSystemSchemaPriv) {
 				return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			}
-			if checker != nil && checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, spec.User) && !hasSystemUserPriv {
+			if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, spec.User) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
 				return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
+			}
+			if sem.IsEnabled() && checker.RequestDynamicVerificationWithUser("RESTRICTED_USER_ADMIN", false, spec.User) && !hasRestrictedUserPriv {
+				return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_USER_ADMIN")
 			}
 		}
 
@@ -1139,6 +1150,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		}
 	}
 	hasSystemUserPriv := checker.RequestDynamicVerification(activeRoles, "SYSTEM_USER", false)
+	hasRestrictedUserPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_USER_ADMIN", false)
 	failedUsers := make([]string, 0, len(s.UserList))
 	sysSession, err := e.getSysSession()
 	defer e.releaseSysSession(sysSession)
@@ -1170,7 +1182,8 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		// If this is the case, we need to rollback all changes and return a privilege error.
 		// Because in TiDB SUPER can be used as a substitute for any dynamic privilege, this effectively means that
 		// any user with SUPER requires a user with SUPER to be able to DROP the user.
-		if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, user) && !hasSystemUserPriv {
+		// We also allow RESTRICTED_USER_ADMIN to count for simplicity.
+		if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, user) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
 			if _, err := sqlExecutor.ExecuteInternal(context.TODO(), "rollback"); err != nil {
 				return err
 			}
