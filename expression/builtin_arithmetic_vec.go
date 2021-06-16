@@ -903,12 +903,12 @@ func (b *builtinArithmeticPlusIntSig) vecEvalInt(input *chunk.Chunk, result *chu
 }
 func (b *builtinArithmeticPlusIntSig) plusUU(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		lh, rh := lhi64s[i], rhi64s[i]
 
 		if uint64(lh) > math.MaxUint64-uint64(rh) {
+			if result.IsNull(i) {
+				continue
+			}
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
 
@@ -919,15 +919,18 @@ func (b *builtinArithmeticPlusIntSig) plusUU(result *chunk.Column, lhi64s, rhi64
 
 func (b *builtinArithmeticPlusIntSig) plusUS(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		lh, rh := lhi64s[i], rhi64s[i]
 
 		if rh < 0 && uint64(-rh) > uint64(lh) {
+			if result.IsNull(i) {
+				continue
+			}
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
 		if rh > 0 && uint64(lh) > math.MaxUint64-uint64(lh) {
+			if result.IsNull(i) {
+				continue
+			}
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
 
@@ -938,15 +941,18 @@ func (b *builtinArithmeticPlusIntSig) plusUS(result *chunk.Column, lhi64s, rhi64
 
 func (b *builtinArithmeticPlusIntSig) plusSU(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		lh, rh := lhi64s[i], rhi64s[i]
 
 		if lh < 0 && uint64(-lh) > uint64(rh) {
+			if result.IsNull(i) {
+				continue
+			}
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
 		if lh > 0 && uint64(rh) > math.MaxUint64-uint64(lh) {
+			if result.IsNull(i) {
+				continue
+			}
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
 
@@ -956,12 +962,12 @@ func (b *builtinArithmeticPlusIntSig) plusSU(result *chunk.Column, lhi64s, rhi64
 }
 func (b *builtinArithmeticPlusIntSig) plusSS(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		lh, rh := lhi64s[i], rhi64s[i]
 
 		if (lh > 0 && rh > math.MaxInt64-lh) || (lh < 0 && rh < math.MinInt64-lh) {
+			if result.IsNull(i) {
+				continue
+			}
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
 
