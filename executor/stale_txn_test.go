@@ -753,8 +753,7 @@ func (s *testStaleTxnSuite) TestAsOfTimestampCompatibility(c *C) {
 	for _, testcase := range testcases {
 		tk.MustExec(testcase.beginSQL)
 		err := tk.ExecToErr(testcase.sql)
-		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Matches, ".*as of timestamp can't be set in transaction.*")
+		c.Assert(err, ErrorMatches, ".*as of timestamp can't be set in transaction.*|.*Transaction characteristics can't be changed while a transaction is in progress")
 		tk.MustExec("commit")
 	}
 	tk.MustExec(`create table test.table1 (id int primary key, a int);`)
