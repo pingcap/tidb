@@ -41,15 +41,14 @@ type Fragment struct {
 }
 
 type mppTaskGenerator struct {
-	ctx         sessionctx.Context
-	startTS     uint64
-	allocTaskID *int64
-	is          infoschema.InfoSchema
+	ctx     sessionctx.Context
+	startTS uint64
+	is      infoschema.InfoSchema
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
-func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, allocTaskID *int64, is infoschema.InfoSchema) ([]*kv.MPPTask, error) {
-	g := &mppTaskGenerator{ctx: ctx, startTS: startTs, allocTaskID: allocTaskID, is: is}
+func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*kv.MPPTask, error) {
+	g := &mppTaskGenerator{ctx: ctx, startTS: startTs, is: is}
 	return g.generateMPPTasks(sender)
 }
 
@@ -84,10 +83,9 @@ func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask)
 		addr := task.Meta.GetAddress()
 		_, ok := addressMap[addr]
 		if !ok {
-			*e.allocTaskID++
 			mppTask := &kv.MPPTask{
 				Meta:    &mppAddr{addr: addr},
-				ID:      *e.allocTaskID,
+				ID:      e.ctx.GetSessionVars().AllocMPPTaskID(e.startTS),
 				StartTs: e.startTS,
 				TableID: -1,
 			}
@@ -240,8 +238,7 @@ func (e *mppTaskGenerator) constructMPPTasksForSinglePartitionTable(ctx context.
 	}
 	tasks := make([]*kv.MPPTask, 0, len(metas))
 	for _, meta := range metas {
-		*e.allocTaskID++
-		tasks = append(tasks, &kv.MPPTask{Meta: meta, ID: *e.allocTaskID, StartTs: e.startTS, TableID: tableID})
+		tasks = append(tasks, &kv.MPPTask{Meta: meta, ID: e.ctx.GetSessionVars().AllocMPPTaskID(e.startTS), StartTs: e.startTS, TableID: tableID})
 	}
 	return tasks, nil
 }
