@@ -82,5 +82,8 @@ require (
 
 go 1.16
 
-// Fix panic in unit test with go >= 1.14, ref: etcd-io/bbolt#201 https://github.com/etcd-io/bbolt/pull/201
-replace go.etcd.io/bbolt => go.etcd.io/bbolt v1.3.5
+replace (
+	github.com/tikv/client-go/v2 v2.0.0-20210611041035-d9b5c73d4ef8 => github.com/JmPotato/client-go/v2 v2.0.0-20210616045149-317e5de33da4
+	// Fix panic in unit test with go >= 1.14, ref: etcd-io/bbolt#201 https://github.com/etcd-io/bbolt/pull/201
+	go.etcd.io/bbolt => go.etcd.io/bbolt v1.3.5
+)
