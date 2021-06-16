@@ -465,6 +465,13 @@ func (s *testStaleTxnSerialSuite) TestSetTransactionReadOnlyAsOf(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "start transaction read only as of is forbidden after set transaction read only as of")
 	tk.MustExec(`SET TRANSACTION READ ONLY as of timestamp '2021-04-21 00:42:12'`)
+	err = tk.ExecToErr(`START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00'`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "start transaction read only as of is forbidden after set transaction read only as of")
+
+	tk.MustExec("begin")
+	tk.MustExec("commit")
+	tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00'`)
 }
 
 func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
