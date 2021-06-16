@@ -2284,6 +2284,32 @@
     ]
   },
   {
+    "Name": "TestIssue23887",
+    "Cases": [
+      {
+        "SQL": "select (2) in (select b from t) from (select t.a < (select t.a from t t1 limit 1) from t) t",
+        "Plan": [
+          "HashJoin 10000.00 root  CARTESIAN left outer semi join, other cond:eq(2, test.t.b)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─Projection(Probe) 10000.00 root  1->Column#27",
+          "  └─Apply 10000.00 root  CARTESIAN left outer join",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "    └─Projection(Probe) 1.00 root  1->Column#25",
+          "      └─Limit 1.00 root  offset:0, count:1",
+          "        └─TableReader 1.00 root  data:Limit",
+          "          └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "            └─TableFullScan 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1",
+          "1"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestMergeContinuousSelections",
     "Cases": [
       {
