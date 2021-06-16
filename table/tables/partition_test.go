@@ -461,32 +461,27 @@ func (ts *testSuite) TestRangePartitionUnderNoUnsignedSub(c *C) {
 				PARTITION p4 VALUES LESS THAN (MAXVALUE)
 				);`)
 	// currently not support insert records whose partition value is negative
-	_, err := tk.Exec(("insert into tu values (0);"))
-	c.Assert(err, NotNil)
-	_, err = tk.Exec(("insert into tu values (cast(1 as unsigned));"))
-	c.Assert(err, NotNil)
-	_, err = tk.Exec(("insert into tu values (cast(9223372036854775807 as unsigned));"))
-	c.Assert(err, IsNil)
+	ErrMsg1 := "[types:1690]BIGINT UNSIGNED value is out of range in '(tu.c1 - 10)'"
+	tk.MustGetErrMsg("insert into tu values (0);", ErrMsg1)
+	tk.MustGetErrMsg("insert into tu values (cast(1 as unsigned));", ErrMsg1)
+	tk.MustExec(("insert into tu values (cast(9223372036854775807 as unsigned));"))
 	// MySQL will not support c1 value bigger than 9223372036854775817 in this case
-	_, err = tk.Exec(("insert into tu values (cast(18446744073709551615 as unsigned));"))
-	c.Assert(err, IsNil)
-	_, err = tk.Exec(("insert into tu values (cast(18446744073709551616 as unsigned));"))
-	c.Assert(err, NotNil)
+	tk.MustExec(("insert into tu values (cast(18446744073709551615 as unsigned));"))
 
 	// test `create table like`
+	ErrMsg2 := "[types:1690]BIGINT UNSIGNED value is out of range in '(tu2.c1 - 10)'"
 	tk.MustExec(`CREATE TABLE tu2 like tu;`)
 	// currently not support insert records whose partition value is negative
-	_, err = tk.Exec(("insert into tu2 values (0);"))
-	c.Assert(err, NotNil)
-	_, err = tk.Exec(("insert into tu2 values (cast(1 as unsigned));"))
-	c.Assert(err, NotNil)
-	_, err = tk.Exec(("insert into tu2 values (cast(9223372036854775807 as unsigned));"))
-	c.Assert(err, IsNil)
+	tk.MustGetErrMsg("insert into tu2 values (0);", ErrMsg2)
+	tk.MustGetErrMsg("insert into tu2 values (cast(1 as unsigned));", ErrMsg2)
+	tk.MustExec(("insert into tu2 values (cast(9223372036854775807 as unsigned));"))
 	// MySQL will not support c1 value bigger than 9223372036854775817 in this case
-	_, err = tk.Exec(("insert into tu2 values (cast(18446744073709551615 as unsigned));"))
-	c.Assert(err, IsNil)
-	_, err = tk.Exec(("insert into tu2 values (cast(18446744073709551616 as unsigned));"))
-	c.Assert(err, NotNil)
+	tk.MustExec(("insert into tu2 values (cast(18446744073709551615 as unsigned));"))
+
+	// this behavior is currently not compatible with MySQL
+	tk.MustExec("SET @@sql_mode='';")
+	tk.MustExec(`CREATE TABLE tu3 like tu;`)
+
 }
 
 func (ts *testSuite) TestIntUint(c *C) {
