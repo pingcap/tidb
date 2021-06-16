@@ -359,6 +359,7 @@ func parseTimeZone(s string) (*time.Location, error) {
 func setSnapshotTS(s *SessionVars, sVal string) error {
 	if sVal == "" {
 		s.SnapshotTS = 0
+		s.SnapshotInfoschema = nil
 		return nil
 	}
 
@@ -384,6 +385,7 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 		s.TxnReadTS = NewTxnReadTS(0)
 		return nil
 	}
+
 	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
 		return err
@@ -395,6 +397,7 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 	s.TxnReadTS = NewTxnReadTS(oracle.GoTimeToTS(t1))
 	// tx_read_ts should be mutual exclusive with tidb_snapshot
 	s.SnapshotTS = 0
+	s.SnapshotInfoschema = nil
 	return err
 }
 
