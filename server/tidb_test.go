@@ -1512,19 +1512,20 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	checkFn(0)
 	// set correct address, should collect records
 	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
-	agentServer.WaitCollectCnt(1, time.Second*4)
+	agentServer.WaitCollectCnt(1, time.Second*8)
 	checkFn(5)
-	// agent server shutdown
-	agentServer.Stop()
 	// run another set of SQL queries
 	cancel()
+
 	cancel = runWorkload(11, 20)
+	// agent server shutdown
+	agentServer.Stop()
 	// agent server restart
 	agentServer, err = mockTopSQLReporter.StartMockAgentServer()
 	c.Assert(err, IsNil)
 	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
 	// check result
-	agentServer.WaitCollectCnt(1, time.Second*4)
+	agentServer.WaitCollectCnt(2, time.Second*8)
 	checkFn(5)
 }
 
