@@ -2005,7 +2005,7 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	}
 	newProps := []*property.PhysicalProperty{newProp}
 	// generate a mpp task candidate if enforced mpp
-	if p.SCtx().GetSessionVars().IsMPPEnforced() {
+	if newProp.TaskTp != property.MppTaskType && p.SCtx().GetSessionVars().IsMPPEnforced() {
 		mppProp := newProp.CloneEssentialFields()
 		mppProp.TaskTp = property.MppTaskType
 		newProps = append(newProps, mppProp)
