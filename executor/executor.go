@@ -866,32 +866,31 @@ type SelectLockExec struct {
 	Lock ast.SelectLockType
 	keys []kv.Key
 
+<<<<<<< HEAD
 	tblID2Handle     map[int64][]*expression.Column
 	partitionedTable []table.PartitionedTable
 
 	// tblID2Table is cached to reduce cost.
 	tblID2Table map[int64]table.PartitionedTable
 	inited      bool
+=======
+	tblID2Handle map[int64][]plannercore.HandleCols
+
+	// All the partition tables in the children of this executor.
+	partitionedTable []table.PartitionedTable
+
+	// When SelectLock work on the partition table, we need the partition ID
+	// instead of table ID to calculate the lock KV. In that case, partition ID is store as an
+	// extra column in the chunk row.
+	// tblID2PIDColumnIndex stores the column index in the chunk row. The children may be join
+	// of multiple tables, so the map struct is used.
+	tblID2PIDColumnIndex map[int64]int
+>>>>>>> 0490590b0... planner,executor: fix 'select ...(join on partition table) for update' panic (#21148)
 }
 
 // Open implements the Executor Open interface.
 func (e *SelectLockExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
-
-	if len(e.tblID2Handle) > 0 && len(e.partitionedTable) > 0 {
-		e.tblID2Table = make(map[int64]table.PartitionedTable, len(e.partitionedTable))
-		for id := range e.tblID2Handle {
-			for _, p := range e.partitionedTable {
-				if id == p.Meta().ID {
-					e.tblID2Table[id] = p
-				}
-			}
-		}
-	}
-
-	return nil
+	return e.baseExecutor.Open(ctx)
 }
 
 // Next implements the Executor Next interface.
@@ -909,15 +908,14 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if req.NumRows() > 0 {
 		iter := chunk.NewIterator4Chunk(req)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+
 			for id, cols := range e.tblID2Handle {
 				physicalID := id
-				if pt, ok := e.tblID2Table[id]; ok {
-					// On a partitioned table, we have to use physical ID to encode the lock key!
-					p, err := pt.GetPartitionByRow(e.ctx, row.GetDatumRow(e.base().retFieldTypes))
-					if err != nil {
-						return err
-					}
-					physicalID = p.GetPhysicalID()
+				if len(e.partitionedTable) > 0 {
+					// Replace the table ID with partition ID.
+					// The partition ID is returned as an extra column from the table reader.
+					offset := e.tblID2PIDColumnIndex[id]
+					physicalID = row.GetInt64(offset)
 				}
 
 				for _, col := range cols {

@@ -3088,7 +3088,14 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
 			return nil, err
 		}
+<<<<<<< HEAD
 		p = b.buildSelectLock(p, sel.LockTp)
+=======
+		p, err = b.buildSelectLock(p, sel.LockInfo)
+		if err != nil {
+			return nil, err
+		}
+>>>>>>> 0490590b0... planner,executor: fix 'select ...(join on partition table) for update' panic (#21148)
 	}
 	b.handleHelper.popMap()
 	b.handleHelper.pushMap(nil)
@@ -3213,6 +3220,41 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 	}
 }
 
+<<<<<<< HEAD
+=======
+// addExtraPIDColumn add an extra PID column for partition table.
+// 'select ... for update' on a partition table need to know the partition ID
+// to construct the lock key, so this column is added to the chunk row.
+func (ds *DataSource) addExtraPIDColumn(info *extraPIDInfo) {
+	pidCol := &expression.Column{
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
+		ID:       model.ExtraPidColID,
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraPartitionIdName),
+	}
+
+	ds.Columns = append(ds.Columns, model.NewExtraPartitionIDColInfo())
+	schema := ds.Schema()
+	schema.Append(pidCol)
+	ds.names = append(ds.names, &types.FieldName{
+		DBName:      ds.DBName,
+		TblName:     ds.TableInfo().Name,
+		ColName:     model.ExtraPartitionIdName,
+		OrigColName: model.ExtraPartitionIdName,
+	})
+	ds.TblCols = append(ds.TblCols, pidCol)
+
+	info.Columns = append(info.Columns, pidCol)
+	info.TblIDs = append(info.TblIDs, ds.TableInfo().ID)
+	return
+}
+
+var (
+	pseudoEstimationNotAvailable = metrics.PseudoEstimation.WithLabelValues("nodata")
+	pseudoEstimationOutdate      = metrics.PseudoEstimation.WithLabelValues("outdate")
+)
+
+>>>>>>> 0490590b0... planner,executor: fix 'select ...(join on partition table) for update' panic (#21148)
 // getStatsTable gets statistics information for a table specified by "tableID".
 // A pseudo statistics table is returned in any of the following scenario:
 // 1. tidb-server started and statistics handle has not been initialized.
@@ -3945,7 +3987,16 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 			// buildSelectLock is an optimization that can reduce RPC call.
 			// We only need do this optimization for single table update which is the most common case.
 			// When TableRefs.Right is nil, it is single table update.
+<<<<<<< HEAD
 			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
+=======
+			p, err = b.buildSelectLock(p, &ast.SelectLockInfo{
+				LockType: ast.SelectLockForUpdate,
+			})
+			if err != nil {
+				return nil, err
+			}
+>>>>>>> 0490590b0... planner,executor: fix 'select ...(join on partition table) for update' panic (#21148)
 		}
 	}
 
@@ -4238,7 +4289,16 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}
 	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		if !delete.IsMultiTable {
+<<<<<<< HEAD
 			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
+=======
+			p, err = b.buildSelectLock(p, &ast.SelectLockInfo{
+				LockType: ast.SelectLockForUpdate,
+			})
+			if err != nil {
+				return nil, err
+			}
+>>>>>>> 0490590b0... planner,executor: fix 'select ...(join on partition table) for update' panic (#21148)
 		}
 	}
 

@@ -564,6 +564,16 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		tblID2Handle:     v.TblID2Handle,
 		partitionedTable: v.PartitionedTable,
 	}
+	if len(e.partitionedTable) > 0 {
+		schema := v.Schema()
+		e.tblID2PIDColumnIndex = make(map[int64]int)
+		for i := 0; i < len(v.ExtraPIDInfo.Columns); i++ {
+			col := v.ExtraPIDInfo.Columns[i]
+			tblID := v.ExtraPIDInfo.TblIDs[i]
+			offset := schema.ColumnIndex(col)
+			e.tblID2PIDColumnIndex[tblID] = offset
+		}
+	}
 	return e
 }
 
@@ -2342,6 +2352,9 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		storeType:      v.StoreType,
 		batchCop:       v.BatchCop,
 	}
+	if tbl.Meta().Partition != nil {
+		e.extraPIDColumnIndex = extraPIDColumnIndex(v.Schema())
+	}
 	e.buildVirtualColumnInfo()
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
@@ -2368,6 +2381,33 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	return e, nil
 }
 
+<<<<<<< HEAD
+=======
+func extraPIDColumnIndex(schema *expression.Schema) offsetOptional {
+	for idx, col := range schema.Columns {
+		if col.ID == model.ExtraPidColID {
+			return newOffset(idx)
+		}
+	}
+	return 0
+}
+
+func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Executor {
+	startTs, err := b.getSnapshotTS()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	gather := &MPPGather{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		is:           b.is,
+		originalPlan: v.GetTablePlan(),
+		startTS:      startTs,
+	}
+	return gather
+}
+
+>>>>>>> 0490590b0... planner,executor: fix 'select ...(join on partition table) for update' panic (#21148)
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) *TableReaderExecutor {
@@ -2381,6 +2421,42 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) *
 	ret.ranges = ts.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
+<<<<<<< HEAD
+=======
+
+	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+		return ret
+	}
+	// When isPartition is set, it means the union rewriting is done, so a partition reader is prefered.
+	if ok, _ := ts.IsPartition(); ok {
+		return ret
+	}
+
+	pi := ts.Table.GetPartitionInfo()
+	if pi == nil {
+		return ret
+	}
+
+	tmp, _ := b.is.TableByID(ts.Table.ID)
+	tbl := tmp.(table.PartitionedTable)
+	partitions, err := partitionPruning(b.ctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	if v.StoreType == kv.TiFlash {
+		sctx.IsTiFlash.Store(true)
+	}
+
+	if len(partitions) == 0 {
+		return &TableDualExec{baseExecutor: *ret.base()}
+	}
+	ret.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
+		sctx:       b.ctx,
+		partitions: partitions,
+	}
+
+>>>>>>> 0490590b0... planner,executor: fix 'select ...(join on partition table) for update' panic (#21148)
 	return ret
 }
 
@@ -2449,6 +2525,35 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) *
 	ret.ranges = is.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
+<<<<<<< HEAD
+=======
+
+	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+		return ret
+	}
+	// When isPartition is set, it means the union rewriting is done, so a partition reader is prefered.
+	if ok, _ := is.IsPartition(); ok {
+		return ret
+	}
+
+	pi := is.Table.GetPartitionInfo()
+	if pi == nil {
+		return ret
+	}
+
+	if is.Index.Global {
+		return ret
+	}
+
+	tmp, _ := b.is.TableByID(is.Table.ID)
+	tbl := tmp.(table.PartitionedTable)
+	partitions, err := partitionPruning(b.ctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	ret.partitions = partitions
+>>>>>>> 0490590b0... planner,executor: fix 'select ...(join on partition table) for update' panic (#21148)
 	return ret
 }
 
@@ -2516,6 +2621,9 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		tblPlans:          v.TablePlans,
 		PushedLimit:       v.PushedLimit,
 	}
+	if ok, _ := ts.IsPartition(); ok {
+		e.extraPIDColumnIndex = extraPIDColumnIndex(v.Schema())
+	}
 
 	if containsLimit(indexReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
@@ -2552,6 +2660,35 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
+<<<<<<< HEAD
+=======
+
+	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+		return ret
+	}
+
+	if pi := is.Table.GetPartitionInfo(); pi == nil {
+		return ret
+	}
+
+	if is.Index.Global {
+		return ret
+	}
+	if ok, _ := is.IsPartition(); ok {
+		// Already pruned when translated to logical union.
+		return ret
+	}
+
+	tmp, _ := b.is.TableByID(is.Table.ID)
+	tbl := tmp.(table.PartitionedTable)
+	partitions, err := partitionPruning(b.ctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	ret.partitionTableMode = true
+	ret.prunedPartitions = partitions
+>>>>>>> 0490590b0... planner,executor: fix 'select ...(join on partition table) for update' panic (#21148)
 	return ret
 }
 
