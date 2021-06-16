@@ -465,6 +465,11 @@ func (ts *testSuite) TestRangePartitionUnderNoUnsignedSub(c *C) {
 	c.Assert(err, NotNil)
 	_, err = tk.Exec(("insert into tu values (cast(1 as unsigned));"))
 	c.Assert(err, NotNil)
+	_, err = tk.Exec(("insert into tu values (cast(9223372036854775807 as unsigned));"))
+	c.Assert(err, IsNil)
+	// MySQL will not support c1 value bigger than 9223372036854775817 in this case
+	_, err = tk.Exec(("insert into tu values (cast(18446744073709551615 as unsigned));"))
+	c.Assert(err, IsNil)
 }
 
 func (ts *testSuite) TestIntUint(c *C) {
