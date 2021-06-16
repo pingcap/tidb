@@ -13,7 +13,7 @@ import (
 
 var _pool = buffer.NewPool()
 
-func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, error) {
+func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error) {
 
 	// copy global config and override slow query log file
 	// if slow query log filename is empty, slow query log will behave the same as global log
@@ -28,15 +28,17 @@ func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, error) {
 	// create the slow query logger
 	sqLogger, prop, err := log.InitLogger(&sqConfig)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 
 	// replace 2018-12-19-unified-log-format text encoder with slow log encoder
+	newCore := log.NewTextCore(&slowLogEncoder{}, prop.Syncer, prop.Level)
 	sqLogger = sqLogger.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
-		return log.NewTextCore(&slowLogEncoder{}, prop.Syncer, prop.Level)
+		return newCore
 	}))
+	prop.Core = newCore
 
-	return sqLogger, nil
+	return sqLogger, prop, nil
 }
 
 type slowLogEncoder struct{}

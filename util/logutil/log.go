@@ -104,12 +104,12 @@ func InitLogger(cfg *LogConfig) error {
 	log.ReplaceGlobals(gl, props)
 
 	// init dedicated logger for slow query log
-	SlowQueryLogger, err = newSlowQueryLogger(cfg)
+	SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = initGRPCLogger(cfg)
+	_, _, err = initGRPCLogger(cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -117,28 +117,31 @@ func InitLogger(cfg *LogConfig) error {
 	return nil
 }
 
-func initGRPCLogger(cfg *LogConfig) error {
+func initGRPCLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error) {
 	// copy Config struct by assignment
 	config := cfg.Config
 	// hack: force stdout
 	config.File.Filename = ""
+	var l *zap.Logger
+	var err error
+	var prop *log.ZapProperties
 	if len(os.Getenv("GRPC_DEBUG")) > 0 {
 		config.Level = "debug"
-		l, _, err := log.InitLogger(&cfg.Config, zap.AddStacktrace(zapcore.DebugLevel))
+		l, prop, err = log.InitLogger(&config, zap.AddStacktrace(zapcore.FatalLevel))
 		if err != nil {
-			return errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 		gzap.ReplaceGrpcLoggerV2WithVerbosity(l, 999)
 	} else {
 		config.Level = "error"
-		l, _, err := log.InitLogger(&cfg.Config, zap.AddStacktrace(zapcore.FatalLevel))
+		l, prop, err = log.InitLogger(&config, zap.AddStacktrace(zapcore.FatalLevel))
 		if err != nil {
-			return errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 		gzap.ReplaceGrpcLoggerV2(l)
 	}
 
-	return nil
+	return l, prop, nil
 }
 
 // InitZapLogger is delegated to InitLogger.
