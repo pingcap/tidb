@@ -453,16 +453,17 @@ func (ts *testSuite) TestRangePartitionUnderNoUnsignedSub(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tu;")
 	tk.MustExec("SET @@sql_mode='NO_UNSIGNED_SUBTRACTION';")
-	_, err := tk.Exec(`CREATE TABLE tu (c1 BIGINT UNSIGNED) PARTITION BY RANGE(c1 - 10) (
-						PARTITION p0 VALUES LESS THAN (-5),
-						PARTITION p1 VALUES LESS THAN (0),
-						PARTITION p2 VALUES LESS THAN (5),
-						PARTITION p3 VALUES LESS THAN (10),
-						PARTITION p4 VALUES LESS THAN (MAXVALUE)
-						);`)
-	c.Assert(err, IsNil)
+	tk.MustExec(`CREATE TABLE tu (c1 BIGINT UNSIGNED) PARTITION BY RANGE(c1 - 10) (
+				PARTITION p0 VALUES LESS THAN (-5),
+				PARTITION p1 VALUES LESS THAN (0),
+				PARTITION p2 VALUES LESS THAN (5),
+				PARTITION p3 VALUES LESS THAN (10),
+				PARTITION p4 VALUES LESS THAN (MAXVALUE)
+				);`)
 	// currently not support insert records whose partition value is negative
-	_, err = tk.Exec(("insert into tu values (0);"))
+	_, err := tk.Exec(("insert into tu values (0);"))
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(("insert into tu values (cast(1 as unsigned));"))
 	c.Assert(err, NotNil)
 }
 
