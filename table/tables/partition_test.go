@@ -470,6 +470,23 @@ func (ts *testSuite) TestRangePartitionUnderNoUnsignedSub(c *C) {
 	// MySQL will not support c1 value bigger than 9223372036854775817 in this case
 	_, err = tk.Exec(("insert into tu values (cast(18446744073709551615 as unsigned));"))
 	c.Assert(err, IsNil)
+	_, err = tk.Exec(("insert into tu values (cast(18446744073709551616 as unsigned));"))
+	c.Assert(err, NotNil)
+
+	// test `create table like`
+	tk.MustExec(`CREATE TABLE tu2 like tu;`)
+	// currently not support insert records whose partition value is negative
+	_, err = tk.Exec(("insert into tu2 values (0);"))
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(("insert into tu2 values (cast(1 as unsigned));"))
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(("insert into tu2 values (cast(9223372036854775807 as unsigned));"))
+	c.Assert(err, IsNil)
+	// MySQL will not support c1 value bigger than 9223372036854775817 in this case
+	_, err = tk.Exec(("insert into tu2 values (cast(18446744073709551615 as unsigned));"))
+	c.Assert(err, IsNil)
+	_, err = tk.Exec(("insert into tu2 values (cast(18446744073709551616 as unsigned));"))
+	c.Assert(err, NotNil)
 }
 
 func (ts *testSuite) TestIntUint(c *C) {
