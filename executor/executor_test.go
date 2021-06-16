@@ -7589,6 +7589,11 @@ func issue20975PreparePartitionTable(c *C, store kv.Storage) (*testkit.TestKit, 
 
 func (s *testSuite) TestIssue20975UpdateNoChangeWithPartitionTable(c *C) {
 	tk1, tk2 := issue20975PreparePartitionTable(c, s.store)
+
+	// Set projection concurrency to avoid data race here.
+	// TODO: remove this line after fixing https://github.com/pingcap/tidb/issues/25496
+	tk1.Se.GetSessionVars().Concurrency.SetProjectionConcurrency(0)
+
 	tk1.MustExec("begin pessimistic")
 	tk1.MustExec("update t1 set c=c")
 	tk2.MustExec("create table t2(a int)")
