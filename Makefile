@@ -153,10 +153,6 @@ leak: failpoint-enable
 	$(GOTEST) -tags leak $(PACKAGES) || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
 
-tikv_integration_test: failpoint-enable
-	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(FAILPOINT_DISABLE); exit 1; }
-	@$(FAILPOINT_DISABLE)
-
 server:
 ifeq ($(TARGET), "")
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server tidb-server/main.go
