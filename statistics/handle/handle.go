@@ -1112,17 +1112,19 @@ func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID 
 }
 
 func (h *Handle) columnCountFromStorage(reader *statsReader, tableID, colID, statsVer int64) (int64, error) {
+	count := int64(0)
 	rows, _, err := reader.read("select sum(count) from mysql.stats_buckets where table_id = %? and is_index = 0 and hist_id = %?", tableID, colID)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if rows[0].IsNull(0) {
-		return 0, nil
+	// If there doesn't exist any buckets, the SQL will return NULL. So we only use the result if it's not NULL.
+	if !rows[0].IsNull(0) {
+		count, err = rows[0].GetMyDecimal(0).ToInt()
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
 	}
-	count, err := rows[0].GetMyDecimal(0).ToInt()
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
+
 	if statsVer >= statistics.Version2 {
 		// Before stats ver 2, histogram represents all data in this column.
 		// In stats ver 2, histogram + TopN represent all data in this column.
