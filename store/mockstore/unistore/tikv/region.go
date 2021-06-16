@@ -191,16 +191,8 @@ func (ri *regionCtx) decodeRawEndKey() []byte {
 	return rawKey
 }
 
-func (ri *regionCtx) lessThanStartKey(key []byte) bool {
-	return bytes.Compare(key, ri.rawStartKey) < 0
-}
-
 func (ri *regionCtx) greaterEqualEndKey(key []byte) bool {
 	return len(ri.rawEndKey) > 0 && bytes.Compare(key, ri.rawEndKey) >= 0
-}
-
-func (ri *regionCtx) greaterThanEndKey(key []byte) bool {
-	return len(ri.rawEndKey) > 0 && bytes.Compare(key, ri.rawEndKey) > 0
 }
 
 func newPeerMeta(peerID, storeID uint64) *metapb.Peer {

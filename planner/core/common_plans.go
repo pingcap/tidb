@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -182,6 +183,7 @@ type Execute struct {
 	UsingVars     []expression.Expression
 	PrepareParams []types.Datum
 	ExecID        uint32
+	SnapshotTS    uint64
 	Stmt          ast.StmtNode
 	StmtType      string
 	Plan          Plan
@@ -256,6 +258,23 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 	}
 
+	var snapshotTS uint64
+	if preparedObj.SnapshotTSEvaluator != nil {
+		if vars.InTxn() {
+			return ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
+		}
+		// if preparedObj.SnapshotTSEvaluator != nil, it is a stale read SQL:
+		// which means its infoschema is specified by the SQL, not the current/latest infoschema
+		var err error
+		snapshotTS, err = preparedObj.SnapshotTSEvaluator(sctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
 		// cached plan once the schema version is changed.
@@ -265,7 +284,8 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		preparedObj.Executor = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
-		err := Preprocess(sctx, prepared.Stmt, is, InPrepare)
+		ret := &PreprocessorReturn{InfoSchema: is}
+		err := Preprocess(sctx, prepared.Stmt, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
 			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
@@ -275,6 +295,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	if err != nil {
 		return err
 	}
+	e.SnapshotTS = snapshotTS
 	e.Stmt = prepared.Stmt
 	return nil
 }
@@ -448,18 +469,6 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 		if err != nil {
 			return err
 		}
-	case *Update:
-		// Temporarily turn off the cache for UPDATE to solve #21884.
-
-		//ok, err = IsPointUpdateByAutoCommit(sctx, p)
-		//if err != nil {
-		//	return err
-		//}
-		//if ok {
-		//	// make constant expression store paramMarker
-		//	sctx.GetSessionVars().StmtCtx.PointExec = true
-		//	p, names, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
-		//}
 	}
 	if ok {
 		// just cache point plan now
@@ -555,6 +564,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		// The code should never run here as long as we're not using point get for partition table.
 		// And if we change the logic one day, here work as defensive programming to cache the error.
 		if x.PartitionInfo != nil {
+			// TODO: relocate the partition after rebuilding range to make PlanCache support PointGet
 			return errors.New("point get for partition table can not use plan cache")
 		}
 		if x.HandleParam != nil {
@@ -723,6 +733,9 @@ type Simple struct {
 	//   and executing in co-processor.
 	//   Used for `global kill`. See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
 	IsFromRemote bool
+
+	// StaleTxnStartTS is the StartTS that is used to build a staleness transaction by 'START TRANSACTION READ ONLY' statement.
+	StaleTxnStartTS uint64
 }
 
 // PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.
@@ -840,8 +853,8 @@ func (h *AnalyzeTableID) Equals(t *AnalyzeTableID) bool {
 	return h.TableID == t.TableID && h.PartitionID == t.PartitionID
 }
 
-// analyzeInfo is used to store the database name, table name and partition name of analyze task.
-type analyzeInfo struct {
+// AnalyzeInfo is used to store the database name, table name and partition name of analyze task.
+type AnalyzeInfo struct {
 	DBName        string
 	TableName     string
 	PartitionName string
@@ -856,14 +869,15 @@ type AnalyzeColumnsTask struct {
 	CommonHandleInfo *model.IndexInfo
 	ColsInfo         []*model.ColumnInfo
 	TblInfo          *model.TableInfo
-	analyzeInfo
+	Indexes          []*model.IndexInfo
+	AnalyzeInfo
 }
 
 // AnalyzeIndexTask is used for analyze index.
 type AnalyzeIndexTask struct {
 	IndexInfo *model.IndexInfo
 	TblInfo   *model.TableInfo
-	analyzeInfo
+	AnalyzeInfo
 }
 
 // Analyze represents an analyze plan
@@ -961,6 +975,8 @@ type Explain struct {
 	Rows           [][]string
 	ExplainRows    [][]string
 	explainedPlans map[int]bool
+
+	ctes []*PhysicalCTE
 }
 
 // GetExplainRowsForPlan get explain rows for plan.
@@ -1022,6 +1038,10 @@ func (e *Explain) RenderResult() error {
 			if err != nil {
 				return err
 			}
+			err = e.explainPlanInRowFormatCTE()
+			if err != nil {
+				return err
+			}
 		}
 	case ast.ExplainFormatDOT:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
@@ -1035,6 +1055,26 @@ func (e *Explain) RenderResult() error {
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
 	return nil
+}
+
+func (e *Explain) explainPlanInRowFormatCTE() (err error) {
+	explainedCTEPlan := make(map[int]struct{})
+	for i := 0; i < len(e.ctes); i++ {
+		x := (*CTEDefinition)(e.ctes[i])
+		// skip if the CTE has been explained, the same CTE has same IDForStorage
+		if _, ok := explainedCTEPlan[x.CTE.IDForStorage]; ok {
+			continue
+		}
+		e.prepareOperatorInfo(x, "root", "", "", true)
+		childIndent := texttree.Indent4Child("", true)
+		err = e.explainPlanInRowFormat(x.SeedPlan, "root", "(Seed Part)", childIndent, x.RecurPlan == nil)
+		if x.RecurPlan != nil {
+			err = e.explainPlanInRowFormat(x.RecurPlan, "root", "(Recursive Part)", childIndent, true)
+		}
+		explainedCTEPlan[x.CTE.IDForStorage] = struct{}{}
+	}
+
+	return
 }
 
 // explainPlanInRowFormat generates explain information for root-tasks.
@@ -1140,6 +1180,8 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 		if x.Plan != nil {
 			err = e.explainPlanInRowFormat(x.Plan, "root", "", indent, true)
 		}
+	case *PhysicalCTE:
+		e.ctes = append(e.ctes, x)
 	}
 	return
 }
@@ -1353,22 +1395,4 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 // used for fast plan like point get
 func IsAutoCommitTxn(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().IsAutocommit() && !ctx.GetSessionVars().InTxn()
-}
-
-// IsPointUpdateByAutoCommit checks if plan p is point update and is in autocommit context
-func IsPointUpdateByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
-	if !IsAutoCommitTxn(ctx) {
-		return false, nil
-	}
-
-	// check plan
-	updPlan, ok := p.(*Update)
-	if !ok {
-		return false, nil
-	}
-	if _, isFastSel := updPlan.SelectPlan.(*PointGetPlan); isFastSel {
-		return true, nil
-	}
-
-	return false, nil
 }

@@ -71,18 +71,6 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) er
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
 		}
 	}
-	// Here we add a constant 1 to avoid Projection operator is eliminated. (#23887)
-	if len(p.Exprs) == 0 {
-		constOne := expression.NewOne()
-		p.schema.Append(&expression.Column{
-			UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-			RetType:  constOne.GetType(),
-		})
-		p.Exprs = append(p.Exprs, &expression.Constant{
-			Value:   constOne.Value,
-			RetType: constOne.GetType(),
-		})
-	}
 	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
 	selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, p.Exprs, nil)
 	return child.PruneColumns(selfUsedCols)
@@ -100,10 +88,17 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 	child := la.children[0]
 	used := expression.GetUsedList(parentUsedCols, la.Schema())
 
+	allFirstRow := true
+	allRemainFirstRow := true
 	for i := len(used) - 1; i >= 0; i-- {
+		if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
+			allFirstRow = false
+		}
 		if !used[i] {
 			la.schema.Columns = append(la.schema.Columns[:i], la.schema.Columns[i+1:]...)
 			la.AggFuncs = append(la.AggFuncs[:i], la.AggFuncs[i+1:]...)
+		} else if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
+			allRemainFirstRow = false
 		}
 	}
 	var selfUsedCols []*expression.Column
@@ -114,18 +109,27 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 		aggrFunc.OrderByItems, cols = pruneByItems(aggrFunc.OrderByItems)
 		selfUsedCols = append(selfUsedCols, cols...)
 	}
-	if len(la.AggFuncs) == 0 {
-		// If all the aggregate functions are pruned, we should add an aggregate function to keep the correctness.
-		one, err := aggregation.NewAggFuncDesc(la.ctx, ast.AggFuncFirstRow, []expression.Expression{expression.NewOne()}, false)
+	if len(la.AggFuncs) == 0 || (!allFirstRow && allRemainFirstRow) {
+		// If all the aggregate functions are pruned, we should add an aggregate function to maintain the info of row numbers.
+		// For all the aggregate functions except `first_row`, if we have an empty table defined as t(a,b),
+		// `select agg(a) from t` would always return one row, while `select agg(a) from t group by b` would return empty.
+		// For `first_row` which is only used internally by tidb, `first_row(a)` would always return empty for empty input now.
+		var err error
+		var newAgg *aggregation.AggFuncDesc
+		if allFirstRow {
+			newAgg, err = aggregation.NewAggFuncDesc(la.ctx, ast.AggFuncFirstRow, []expression.Expression{expression.NewOne()}, false)
+		} else {
+			newAgg, err = aggregation.NewAggFuncDesc(la.ctx, ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
+		}
 		if err != nil {
 			return err
 		}
-		la.AggFuncs = []*aggregation.AggFuncDesc{one}
+		la.AggFuncs = append(la.AggFuncs, newAgg)
 		col := &expression.Column{
 			UniqueID: la.ctx.GetSessionVars().AllocPlanColumnID(),
-			RetType:  one.RetTp,
+			RetType:  newAgg.RetTp,
 		}
-		la.schema.Columns = []*expression.Column{col}
+		la.schema.Columns = append(la.schema.Columns, col)
 	}
 
 	if len(la.GroupByItems) > 0 {
@@ -326,11 +330,13 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column) error {
 	if err != nil {
 		return err
 	}
+	addConstOneForEmptyProjection(p.children[0])
 
 	err = p.children[1].PruneColumns(rightCols)
 	if err != nil {
 		return err
 	}
+	addConstOneForEmptyProjection(p.children[1])
 
 	p.mergeSchema()
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
@@ -349,6 +355,7 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 	if err != nil {
 		return err
 	}
+	addConstOneForEmptyProjection(la.children[1])
 
 	la.CorCols = extractCorColumnsBySchema4LogicalPlan(la.children[1], la.children[0].Schema())
 	for _, col := range la.CorCols {
@@ -359,6 +366,7 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 	if err != nil {
 		return err
 	}
+	addConstOneForEmptyProjection(la.children[0])
 
 	la.mergeSchema()
 	return nil
@@ -389,7 +397,7 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column) error {
 	windowColumns := p.GetWindowResultColumns()
-	len := 0
+	cnt := 0
 	for _, col := range parentUsedCols {
 		used := false
 		for _, windowColumn := range windowColumns {
@@ -399,11 +407,11 @@ func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column) error 
 			}
 		}
 		if !used {
-			parentUsedCols[len] = col
-			len++
+			parentUsedCols[cnt] = col
+			cnt++
 		}
 	}
-	parentUsedCols = parentUsedCols[:len]
+	parentUsedCols = parentUsedCols[:cnt]
 	parentUsedCols = p.extractUsedCols(parentUsedCols)
 	err := p.children[0].PruneColumns(parentUsedCols)
 	if err != nil {
@@ -442,4 +450,26 @@ func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column) error {
 
 func (*columnPruner) name() string {
 	return "column_prune"
+}
+
+// By add const one, we can avoid empty Projection is eliminated.
+// Because in some cases, Projectoin cannot be eliminated even its output is empty.
+func addConstOneForEmptyProjection(p LogicalPlan) {
+	proj, ok := p.(*LogicalProjection)
+	if !ok {
+		return
+	}
+	if proj.Schema().Len() != 0 {
+		return
+	}
+
+	constOne := expression.NewOne()
+	proj.schema.Append(&expression.Column{
+		UniqueID: proj.ctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  constOne.GetType(),
+	})
+	proj.Exprs = append(proj.Exprs, &expression.Constant{
+		Value:   constOne.Value,
+		RetType: constOne.GetType(),
+	})
 }

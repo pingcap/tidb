@@ -23,7 +23,13 @@
       "explain format = 'brief' select * from t7 where (a, b) in ((3, 4), (5, 6))",
       "explain format = 'brief' select * from t7 where (a = 1 and b = 2) or (a = 3 and b = 4)",
       "explain format = 'brief' select * from t7 where (a = 1 and b = 2) or (a = 1 and b = 2)",
-      "explain format = 'brief' select * from t7 partition(p0) where (a = 1 and b = 2) or (a = 3 and b = 4)"
+      "explain format = 'brief' select * from t7 partition(p0) where (a = 1 and b = 2) or (a = 3 and b = 4)",
+      "explain format = 'brief' select * from t8 where a between 10 and 11",
+      "explain format = 'brief' select * from t8 where (a is null) or (a between 5 and 8)",
+      "explain format = 'brief' select * from t8 where a between 5 and 12",
+      "explain format = 'brief' select * from t8 where (a <= 10 and a >= 8) or (a <= 13 and a >= 11) or (a <= 16 and a >= 14)",
+      "explain format = 'brief' select * from t8 where a < 12 and a > 9",
+      "explain format = 'brief' select * from t9"
     ]
   },
   {
@@ -495,6 +501,18 @@
         "SQL": "select /*+ INL_JOIN(t2,t1) */      count(*) from t2 join t1 on t2.b = t1.b where t2.a BETWEEN 1 AND 2 and t1.a BETWEEN 1 AND 6 and t1.b BETWEEN 1 AND 6",
         "Pruner": "t1: p0,p1; t2: p0"
       }
+    ]
+  },
+  {
+    "name": "TestRangePartitionPredicatePruner",
+    "cases": [
+      "explain format = 'brief' select * from t where a = 1",
+      "explain format = 'brief' select * from t where a = 2",
+      "explain format = 'brief' select * from t where a = 10",
+      "explain format = 'brief' select * from t where a = -1",
+      "explain format = 'brief' select * from t where a is NULL",
+      "explain format = 'brief' select * from t where a = 1.5",
+      "explain format = 'brief' select * from t where a in (2)"
     ]
   }
 ]

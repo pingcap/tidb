@@ -14,11 +14,12 @@
       {
         "SQL": "explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 order by b desc limit 2,1",
         "Plan": [
-          "Projection 1.00 root  test.tbl.a, test.tbl.b, test.tbl.c",
-          "└─IndexLookUp 1.00 root  limit embedded(offset:2, count:1)",
-          "  ├─Limit(Build) 3.00 cop[tikv]  offset:0, count:3",
-          "  │ └─IndexRangeScan 3.00 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:true, desc",
-          "  └─TableRowIDScan(Probe) 1.00 cop[tikv] table:tbl keep order:false, stats:pseudo"
+          "Limit 1.00 root  offset:2, count:1",
+          "└─Projection 3.00 root  test.tbl.a, test.tbl.b, test.tbl.c",
+          "  └─IndexLookUp 3.00 root  ",
+          "    ├─Limit(Build) 3.00 cop[tikv]  offset:0, count:3",
+          "    │ └─IndexRangeScan 3.00 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:true, desc",
+          "    └─TableRowIDScan(Probe) 3.00 cop[tikv] table:tbl keep order:false, stats:pseudo"
         ]
       },
       {
@@ -59,6 +60,77 @@
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestAggColumnPrune",
+    "Cases": [
+      {
+        "SQL": "select count(1) from t join (select count(1) from t where false) as tmp",
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select max(a) from t where false) as tmp",
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select min(a) from t where false) as tmp",
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select sum(a) from t where false) as tmp",
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select avg(a) from t where false) as tmp",
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select count(1) from t where false group by a) as tmp",
+        "Res": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select max(a) from t where false group by a) as tmp",
+        "Res": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select min(a) from t where false group by a) as tmp",
+        "Res": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select sum(a) from t where false group by a) as tmp",
+        "Res": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select avg(a) from t where false group by a) as tmp",
+        "Res": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "SELECT avg(2) FROM(SELECT min(c) FROM t JOIN(SELECT 1 c) d ORDER BY a) e",
+        "Res": [
+          "2.0000"
         ]
       }
     ]
@@ -879,19 +951,6 @@
           "  └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p1 keep order:false, stats:pseudo"
         ],
         "Warn": null
-      },
-      {
-        "SQL": "select /*+ read_from_storage(tikv[t partition(p0)], tiflash[t partition(p1, p2)]) */ * from t",
-        "Plan": [
-          "PartitionUnion 30000.00 root  ",
-          "├─TableReader 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "├─TableReader 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
-        ],
-        "Warn": null
       }
     ]
   },
@@ -925,8 +984,8 @@
       {
         "SQL": "select * from t1 where t1.a = 1 and t1.b < \"333\"",
         "Plan": [
-          "TableReader 0.67 root  data:TableRangeScan",
-          "└─TableRangeScan 0.67 cop[tikv] table:t1 range:[1 -inf,1 \"333\"), keep order:false"
+          "TableReader 0.82 root  data:TableRangeScan",
+          "└─TableRangeScan 0.82 cop[tikv] table:t1 range:[1 -inf,1 \"333\"), keep order:false"
         ],
         "Res": [
           "1 111 1.1000000000 11"
@@ -1517,20 +1576,63 @@
         "SQL": "select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;",
         "Plan": [
           "StreamAgg 1.00 root  funcs:count(1)->Column#10",
-          "└─Projection 1.00 root  1->Column#11",
-          "  └─HashJoin 1.00 root  inner join, equal:[eq(test.t.id, test.t.id) eq(test.t.value, test.t.value)]",
-          "    ├─Selection(Build) 0.80 root  not(isnull(test.t.id)), not(isnull(test.t.value))",
-          "    │ └─TopN 1.00 root  test.t.value, offset:0, count:1",
-          "    │   └─HashJoin 12487.50 root  inner join, equal:[eq(test.t.id, test.t.id)]",
-          "    │     ├─TableReader(Build) 9990.00 root  data:Selection",
-          "    │     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.id))",
-          "    │     │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "    │     └─TableReader(Probe) 9990.00 root  data:Selection",
-          "    │       └─Selection 9990.00 cop[tikv]  not(isnull(test.t.id))",
-          "    │         └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-          "    └─TableReader(Probe) 9980.01 root  data:Selection",
-          "      └─Selection 9980.01 cop[tikv]  not(isnull(test.t.id)), not(isnull(test.t.value))",
-          "        └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─HashJoin 1.00 root  inner join, equal:[eq(test.t.id, test.t.id) eq(test.t.value, test.t.value)]",
+          "  ├─Selection(Build) 0.80 root  not(isnull(test.t.id)), not(isnull(test.t.value))",
+          "  │ └─TopN 1.00 root  test.t.value, offset:0, count:1",
+          "  │   └─HashJoin 12487.50 root  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "  │     ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │     │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.id))",
+          "  │     │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  │     └─TableReader(Probe) 9990.00 root  data:Selection",
+          "  │       └─Selection 9990.00 cop[tikv]  not(isnull(test.t.id))",
+          "  │         └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9980.01 root  data:Selection",
+          "    └─Selection 9980.01 cop[tikv]  not(isnull(test.t.id)), not(isnull(test.t.value))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestSequenceAsDataSource",
+    "Cases": [
+      {
+        "SQL": "select 1 from s1",
+        "Plan": [
+          "Projection 1.00 root  1->Column#1",
+          "└─TableDual 1.00 root  rows:1"
+        ]
+      },
+      {
+        "SQL": "select count(1) from s1",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#1",
+          "└─TableDual 1.00 root  rows:1"
+        ]
+      },
+      {
+        "SQL": "select count(*) from s1",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#1",
+          "└─TableDual 1.00 root  rows:1"
+        ]
+      },
+      {
+        "SQL": "select sum(1) from s1",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:sum(1)->Column#1",
+          "└─TableDual 1.00 root  rows:1"
+        ]
+      },
+      {
+        "SQL": "select count(1) as cnt from s1 union select count(1) as cnt from s2",
+        "Plan": [
+          "HashAgg 2.00 root  group by:Column#3, funcs:firstrow(Column#3)->Column#3",
+          "└─Union 2.00 root  ",
+          "  ├─StreamAgg 1.00 root  funcs:count(1)->Column#1",
+          "  │ └─TableDual 1.00 root  rows:1",
+          "  └─StreamAgg 1.00 root  funcs:count(1)->Column#2",
+          "    └─TableDual 1.00 root  rows:1"
         ]
       }
     ]

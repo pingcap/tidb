@@ -26,11 +26,11 @@ type Option func(*Options)
 
 // Options represents all the options of the DDL module needs
 type Options struct {
-	EtcdCli    *clientv3.Client
-	Store      kv.Storage
-	InfoHandle *infoschema.Handle
-	Hook       Callback
-	Lease      time.Duration
+	EtcdCli   *clientv3.Client
+	Store     kv.Storage
+	InfoCache *infoschema.InfoCache
+	Hook      Callback
+	Lease     time.Duration
 }
 
 // WithEtcdClient specifies the `clientv3.Client` of DDL used to request the etcd service
@@ -47,10 +47,10 @@ func WithStore(store kv.Storage) Option {
 	}
 }
 
-// WithInfoHandle specifies the `infoschema.Handle`
-func WithInfoHandle(ih *infoschema.Handle) Option {
+// WithInfoCache specifies the `infoschema.InfoCache`
+func WithInfoCache(ic *infoschema.InfoCache) Option {
 	return func(options *Options) {
-		options.InfoHandle = ih
+		options.InfoCache = ic
 	}
 }
 

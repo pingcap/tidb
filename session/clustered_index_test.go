@@ -14,11 +14,16 @@
 package session_test
 
 import (
+	"fmt"
+	"math/rand"
+	"strings"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -578,6 +583,50 @@ func (s *testClusteredSerialSuite) TestPrefixClusteredIndexAddIndexAndRecover(c 
 	tk1.MustExec("admin check table t")
 }
 
+func (s *testClusteredSerialSuite) TestPartitionTable(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_view")
+	tk.MustExec("use test_view")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	tk.MustExec(`create table thash (a int, b int, c varchar(32), primary key(a, b) clustered) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table trange (a int, b int, c varchar(32), primary key(a, b) clustered) partition by range columns(a) (
+						partition p0 values less than (3000),
+						partition p1 values less than (6000),
+						partition p2 values less than (9000),
+						partition p3 values less than (10000))`)
+	tk.MustExec(`create table tnormal (a int, b int, c varchar(32), primary key(a, b))`)
+
+	vals := make([]string, 0, 4000)
+	existedPK := make(map[string]struct{}, 4000)
+	for i := 0; i < 4000; {
+		a := rand.Intn(10000)
+		b := rand.Intn(10000)
+		pk := fmt.Sprintf("%v, %v", a, b)
+		if _, ok := existedPK[pk]; ok {
+			continue
+		}
+		existedPK[pk] = struct{}{}
+		i++
+		vals = append(vals, fmt.Sprintf(`(%v, %v, '%v')`, a, b, rand.Intn(10000)))
+	}
+
+	tk.MustExec("insert into thash values " + strings.Join(vals, ", "))
+	tk.MustExec("insert into trange values " + strings.Join(vals, ", "))
+	tk.MustExec("insert into tnormal values " + strings.Join(vals, ", "))
+
+	for i := 0; i < 200; i++ {
+		cond := fmt.Sprintf("where a in (%v, %v, %v) and b < %v", rand.Intn(10000), rand.Intn(10000), rand.Intn(10000), rand.Intn(10000))
+		result := tk.MustQuery("select * from tnormal " + cond).Sort().Rows()
+		tk.MustQuery("select * from thash use index(primary) " + cond).Sort().Check(result)
+		tk.MustQuery("select * from trange use index(primary) " + cond).Sort().Check(result)
+	}
+}
+
 // https://github.com/pingcap/tidb/issues/23106
 func (s *testClusteredSerialSuite) TestClusteredIndexDecodeRestoredDataV5(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -615,4 +664,19 @@ func (s *testClusteredSerialSuite) TestPrefixedClusteredIndexUniqueKeyWithNewCol
 	// index record:   sk(p(aa)), {sk(aaa), 2} -> restore data(aaa)
 	tk.MustExec("admin check table t;")
 	tk.MustExec("drop table t;")
+}
+
+func (s *testClusteredSerialSuite) TestClusteredIndexNewCollationWithOldRowFormat(c *C) {
+	// This case maybe not useful, because newCollation isn't convenience to run on TiKV(it's required serialSuit)
+	// but unistore doesn't support old row format.
+	defer collate.SetNewCollationEnabledForTest(false)
+	collate.SetNewCollationEnabledForTest(true)
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Se.GetSessionVars().RowEncoder.Enable = false
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(col_1 varchar(132) CHARACTER SET utf8 COLLATE utf8_unicode_ci, primary key(col_1) clustered)")
+	tk.MustExec("insert into t2 select 'aBc'")
+	tk.MustQuery("select col_1 from t2 where col_1 = 'aBc'").Check(testkit.Rows("aBc"))
 }

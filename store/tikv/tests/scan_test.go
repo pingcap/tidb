@@ -19,11 +19,11 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/logutil"
-	"github.com/pingcap/tidb/store/tikv/unionstore"
-	"github.com/pingcap/tidb/store/tikv/util"
+	"github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/logutil"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/unionstore"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -146,7 +146,7 @@ func (s *testScanSuite) TestScan(c *C) {
 		check(c, scan, upperBound, false)
 
 		txn3 := s.beginTxn(c)
-		txn3.SetOption(kv.KeyOnly, true)
+		txn3.GetSnapshot().SetKeyOnly(true)
 		// Test scan without upper bound
 		scan, err = txn3.Iter(s.recordPrefix, nil)
 		c.Assert(err, IsNil)
@@ -157,7 +157,7 @@ func (s *testScanSuite) TestScan(c *C) {
 		check(c, scan, upperBound, true)
 
 		// Restore KeyOnly to false
-		txn3.SetOption(kv.KeyOnly, false)
+		txn3.GetSnapshot().SetKeyOnly(false)
 		scan, err = txn3.Iter(s.recordPrefix, nil)
 		c.Assert(err, IsNil)
 		check(c, scan, rowNum, true)
