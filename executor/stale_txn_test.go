@@ -470,6 +470,7 @@ func (s *testStaleTxnSerialSuite) TestSetTransactionReadOnlyAsOf(c *C) {
 	c.Assert(err.Error(), Equals, "start transaction read only as of is forbidden after set transaction read only as of")
 
 	tk.MustExec("begin")
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(424394603102208000))
 	tk.MustExec("commit")
 	tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00'`)
 }
