@@ -96,15 +96,22 @@ type CTEStorages struct {
 	IterInTbl cteutil.Storage
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, explicitStaleness bool, txnScope string) *executorBuilder {
-	return &executorBuilder{
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, explicitStaleness bool,
+	configTxnScope string) *executorBuilder {
+	e := &executorBuilder{
 		ctx:               ctx,
 		is:                is,
 		Ti:                ti,
 		snapshotTS:        snapshotTS,
-		txnScope:          txnScope,
 		explicitStaleness: explicitStaleness,
 	}
+	// If it is stale read, we will directly use the scope in zone label, otherwise we will use the scope according to `txn_scope`
+	if explicitStaleness {
+		e.txnScope = configTxnScope
+	} else {
+		e.txnScope = ctx.GetSessionVars().TxnScope.GetTxnScope()
+	}
+	return e
 }
 
 // MockPhysicalPlan is used to return a specified executor in when build.
