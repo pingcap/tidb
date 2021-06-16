@@ -24,12 +24,12 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 var _ Executor = &TableSampleExecutor{}
@@ -218,7 +218,7 @@ func splitIntoMultiRanges(store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRa
 		if kv.Key(start).Cmp(startKey) < 0 {
 			start = startKey
 		}
-		if kv.Key(end).Cmp(endKey) > 0 {
+		if end == nil || kv.Key(end).Cmp(endKey) > 0 {
 			end = endKey
 		}
 		ranges = append(ranges, kv.KeyRange{StartKey: start, EndKey: end})
