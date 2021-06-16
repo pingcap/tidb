@@ -36,9 +36,9 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/israce"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
