@@ -29,12 +29,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 type testPointGetSuite struct {
@@ -943,4 +943,17 @@ func (s *testPointGetSuite) TestWithTiDBSnapshot(c *C) {
 	tk.MustQuery("select * from xx where id = 8").Check(testkit.Rows())
 
 	tk.MustQuery("select * from xx").Check(testkit.Rows("1", "7"))
+}
+
+func (s *testPointGetSuite) TestPointGetIssue25167(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key)")
+	defer func() {
+		tk.MustExec("drop table if exists t")
+	}()
+	tk.MustExec("set @a=(select current_timestamp(6))")
+	tk.MustExec("insert into t values (1)")
+	tk.MustQuery("select * from t as of timestamp @a where a = 1").Check(testkit.Rows())
 }
