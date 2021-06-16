@@ -468,6 +468,28 @@ func (s *testPrivilegeSuite) TestSetPasswdStmt(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testPrivilegeSuite) TestAlterUserStmt(c *C) {
+	se := newSession(c, s.store, s.dbName)
+
+	// high privileged user setting password for other user (passes)
+	mustExec(c, se, "CREATE USER 'superuser2'")
+	mustExec(c, se, "CREATE USER 'nobodyuser2'")
+	mustExec(c, se, "CREATE USER 'nobodyuser3'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'superuser2'")
+	mustExec(c, se, "GRANT CREATE USER ON *.* TO 'nobodyuser2'")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "superuser2", Hostname: "localhost", AuthUsername: "superuser2", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+
+	// low privileged user trying to set password for other user (fails)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser2", Hostname: "localhost", AuthUsername: "nobodyuser2", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+	_, err := se.ExecuteInternal(context.Background(), "ALTER USER 'superuser2' IDENTIFIED BY 'newpassword'")
+	c.Assert(err, NotNil)
+}
+
 func (s *testPrivilegeSuite) TestSelectViewSecurity(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	ctx, _ := se.(sessionctx.Context)
@@ -902,9 +924,12 @@ func (s *testPrivilegeSuite) TestConfigPrivilege(c *C) {
 	mustExec(c, se, `REVOKE CONFIG ON *.* FROM tcd2`)
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthHostname: "tcd1", AuthUsername: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, `SHOW CONFIG`)
 	mustExec(c, se, `SET CONFIG TIKV testkey="testval"`)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd2", Hostname: "localhost", AuthHostname: "tcd2", AuthUsername: "%"}, nil, nil), IsTrue)
-	_, err := se.ExecuteInternal(context.Background(), `SET CONFIG TIKV testkey="testval"`)
+	_, err := se.ExecuteInternal(context.Background(), `SHOW CONFIG`)
+	c.Assert(err, ErrorMatches, ".*you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), `SET CONFIG TIKV testkey="testval"`)
 	c.Assert(err, ErrorMatches, ".*you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation")
 	mustExec(c, se, `DROP USER tcd1, tcd2`)
 }
@@ -1390,6 +1415,35 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeStatusVars(c *C) {
 		AuthUsername: "uroot",
 		AuthHostname: "%",
 	}, nil, nil)
+
+}
+
+func (s *testPrivilegeSuite) TestSecurityEnhancedLocalBackupRestore(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER backuprestore")
+	tk.MustExec("GRANT BACKUP_ADMIN,RESTORE_ADMIN ON *.* to backuprestore")
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "backuprestore",
+		Hostname: "localhost",
+	}, nil, nil)
+
+	// Prior to SEM nolocal has permission, the error should be because backup requires tikv
+	_, err := tk.Se.ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'Local:///tmp/test';")
+	c.Assert(err.Error(), Equals, "BACKUP requires tikv store, not unistore")
+
+	_, err = tk.Se.ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
+	c.Assert(err.Error(), Equals, "RESTORE requires tikv store, not unistore")
+
+	sem.Enable()
+	defer sem.Disable()
+
+	// With SEM enabled nolocal does not have permission, but yeslocal does.
+	_, err = tk.Se.ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'Local:///tmp/test';")
+	c.Assert(err.Error(), Equals, "[planner:8132]Feature 'local://' is not supported when security enhanced mode is enabled")
+
+	_, err = tk.Se.ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
+	c.Assert(err.Error(), Equals, "[planner:8132]Feature 'local://' is not supported when security enhanced mode is enabled")
+
 }
 
 func (s *testPrivilegeSuite) TestRenameUser(c *C) {
