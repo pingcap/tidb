@@ -25,13 +25,13 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	deadlockPB "github.com/pingcap/kvproto/pkg/deadlock"
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/store/tikv"
-	tikverr "github.com/pingcap/tidb/store/tikv/error"
-	"github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	tikverr "github.com/tikv/client-go/v2/error"
+	"github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 var getMaxBackoff = tikv.ConfigProbe{}.GetGetMaxBackoff()
@@ -538,9 +538,9 @@ func (s *testLockSuite) TestZeroMinCommitTS(c *C) {
 	bo := tikv.NewBackofferWithVars(context.Background(), tikv.PrewriteMaxBackoff, nil)
 
 	mockValue := fmt.Sprintf(`return(%d)`, txn.StartTS())
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockZeroCommitTS", mockValue), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/mockZeroCommitTS", mockValue), IsNil)
 	s.prewriteTxnWithTTL(c, txn, 1000)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockZeroCommitTS"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/mockZeroCommitTS"), IsNil)
 
 	lock := s.mustGetLock(c, []byte("key"))
 	expire, pushed, err := s.store.NewLockResolver().ResolveLocks(bo, 0, []*tikv.Lock{lock})
@@ -714,7 +714,7 @@ func (s *testLockSuite) TestDeadlockReportWaitChain(c *C) {
 	}
 
 	// Check the given WaitForEntry is caused by txn[i] waiting for txn[j].
-	checkWaitChainEntry := func(txns []*txnWrapper, entry *deadlockPB.WaitForEntry, i, j int) {
+	checkWaitChainEntry := func(txns []*txnWrapper, entry *deadlockpb.WaitForEntry, i, j int) {
 		c.Assert(entry.Txn, Equals, txns[i].StartTS())
 		c.Assert(entry.WaitForTxn, Equals, txns[j].StartTS())
 		c.Assert(entry.Key, BytesEquals, []byte{'k', byte(j)})

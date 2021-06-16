@@ -97,4 +97,8 @@ var (
 	ErrAccessDenied        = dbterror.ClassOptimizer.NewStdErr(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDeniedNoPassword])
 	ErrBadNull             = dbterror.ClassOptimizer.NewStd(mysql.ErrBadNull)
 	ErrNotSupportedWithSem = dbterror.ClassOptimizer.NewStd(mysql.ErrNotSupportedWithSem)
+	ErrAsOf                = dbterror.ClassOptimizer.NewStd(mysql.ErrAsOf)
+	ErrOptOnTemporaryTable = dbterror.ClassOptimizer.NewStd(mysql.ErrOptOnTemporaryTable)
+	// ErrPartitionNoTemporary returns when partition at temporary mode
+	ErrPartitionNoTemporary = dbterror.ClassOptimizer.NewStd(mysql.ErrPartitionNoTemporary)
 )

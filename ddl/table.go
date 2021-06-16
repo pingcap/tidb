@@ -33,11 +33,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	tidb_util "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gcutil"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 const tiflashCheckTiDBHTTPAPIHalfInterval = 2500 * time.Millisecond
@@ -491,7 +492,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 
 	bundles := make([]*placement.Bundle, 0, len(oldPartitionIDs)+1)
 	if oldBundle, ok := is.BundleByName(placement.GroupID(tableID)); ok {
-		bundles = append(bundles, placement.BuildPlacementCopyBundle(oldBundle, newTableID))
+		bundles = append(bundles, oldBundle.Clone().Reset(newTableID))
 	}
 
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
@@ -503,7 +504,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 			if oldBundle, ok := is.BundleByName(placement.GroupID(oldPartitionIDs[i])); ok && !oldBundle.IsEmpty() {
 				oldIDs = append(oldIDs, oldPartitionIDs[i])
 				newIDs = append(newIDs, newID)
-				bundles = append(bundles, placement.BuildPlacementCopyBundle(oldBundle, newID))
+				bundles = append(bundles, oldBundle.Clone().Reset(newID))
 			}
 		}
 		job.CtxVars = []interface{}{oldIDs, newIDs}
@@ -873,6 +874,11 @@ func (w *worker) onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+
+	// Ban setting replica count for tables in system database.
+	if tidb_util.IsMemOrSysDB(job.SchemaName) {
+		return ver, errors.Trace(errUnsupportedAlterReplicaForSysTable)
 	}
 
 	err = w.checkTiFlashReplicaCount(replicaInfo.Count)

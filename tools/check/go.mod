@@ -18,8 +18,7 @@ require (
 	gopkg.in/alecthomas/gometalinter.v3 v3.0.0 // indirect
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6 // indirect
 	gopkg.in/alecthomas/kingpin.v3-unstable v3.0.0-20170321130658-9670b87a702e // indirect
-	gopkg.in/yaml.v2 v2.2.2 // indirect
 	honnef.co/go/tools v0.0.0-20180920025451-e3ad64cb4ed3
 )
 
-go 1.13
+go 1.16

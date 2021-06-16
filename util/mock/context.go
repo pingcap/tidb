@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 var _ sessionctx.Context = (*Context)(nil)
@@ -202,6 +202,11 @@ func (c *Context) NewTxn(context.Context) error {
 	return nil
 }
 
+// NewStaleTxnWithStartTS implements the sessionctx.Context interface.
+func (c *Context) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) error {
+	return c.NewTxn(ctx)
+}
+
 // RefreshTxnCtx implements the sessionctx.Context interface.
 func (c *Context) RefreshTxnCtx(ctx context.Context) error {
 	return errors.Trace(c.NewTxn(ctx))
@@ -218,18 +223,13 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		return nil
 	}
 	if c.Store != nil {
-		txn, err := c.Store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(kv.GlobalTxnScope).SetStartTs(startTS))
+		txn, err := c.Store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(kv.GlobalTxnScope).SetStartTS(startTS))
 		if err != nil {
 			return errors.Trace(err)
 		}
 		c.txn.Transaction = txn
 	}
 	return nil
-}
-
-// NewTxnWithStalenessOption implements the sessionctx.Context interface.
-func (c *Context) NewTxnWithStalenessOption(ctx context.Context, option sessionctx.StalenessTxnOption) error {
-	return c.NewTxn(ctx)
 }
 
 // GetStore gets the store of session.
