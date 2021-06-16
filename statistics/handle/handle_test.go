@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -882,7 +883,9 @@ func (s *testStatsSuite) checkForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, 
 }
 
 func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
-	c.Skip("unstable, skip race test")
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	s.prepareForGlobalStatsWithOpts(c, tk, "test_gstats_opt", "test_gstats_opt")
@@ -918,7 +921,9 @@ func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
 }
 
 func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts2(c *C) {
-	c.Skip("unstable, skip race test")
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	s.prepareForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2")
