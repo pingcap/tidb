@@ -89,6 +89,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 	used := expression.GetUsedList(parentUsedCols, la.Schema())
 
 	allFirstRow := true
+	allRemainFirstRow := true
 	for i := len(used) - 1; i >= 0; i-- {
 		if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
 			allFirstRow = false
@@ -96,6 +97,8 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 		if !used[i] {
 			la.schema.Columns = append(la.schema.Columns[:i], la.schema.Columns[i+1:]...)
 			la.AggFuncs = append(la.AggFuncs[:i], la.AggFuncs[i+1:]...)
+		} else if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
+			allRemainFirstRow = false
 		}
 	}
 	var selfUsedCols []*expression.Column
@@ -106,7 +109,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 		aggrFunc.OrderByItems, cols = pruneByItems(aggrFunc.OrderByItems)
 		selfUsedCols = append(selfUsedCols, cols...)
 	}
-	if len(la.AggFuncs) == 0 {
+	if len(la.AggFuncs) == 0 || (!allFirstRow && allRemainFirstRow) {
 		// If all the aggregate functions are pruned, we should add an aggregate function to maintain the info of row numbers.
 		// For all the aggregate functions except `first_row`, if we have an empty table defined as t(a,b),
 		// `select agg(a) from t` would always return one row, while `select agg(a) from t group by b` would return empty.
@@ -121,12 +124,12 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 		if err != nil {
 			return err
 		}
-		la.AggFuncs = []*aggregation.AggFuncDesc{newAgg}
+		la.AggFuncs = append(la.AggFuncs, newAgg)
 		col := &expression.Column{
 			UniqueID: la.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  newAgg.RetTp,
 		}
-		la.schema.Columns = []*expression.Column{col}
+		la.schema.Columns = append(la.schema.Columns, col)
 	}
 
 	if len(la.GroupByItems) > 0 {
