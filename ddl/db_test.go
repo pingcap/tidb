@@ -6918,9 +6918,6 @@ func (s *testDBSuite8) TestDdlMaxLimitOfIdentifier(c *C) {
 func (s *testDBSuite8) TestIssue24580(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	// Enable column change variable.
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
-
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(250) default null);")
 	tk.MustExec("insert into t values();")
