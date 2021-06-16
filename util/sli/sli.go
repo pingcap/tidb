@@ -94,12 +94,12 @@ func (t *TxnWriteThroughputSLI) IsInvalid() bool {
 
 const (
 	smallTxnAffectRow = 20
-	smallTxnWriteSize = 1 * 1024 * 1024 // 1MB
+	smallTxnSize      = 1 * 1024 * 1024 // 1MB
 )
 
 // IsSmallTxn exports for testing.
 func (t *TxnWriteThroughputSLI) IsSmallTxn() bool {
-	return t.affectRow <= smallTxnAffectRow && t.writeSize <= smallTxnWriteSize
+	return t.affectRow <= smallTxnAffectRow && t.writeSize <= smallTxnSize
 }
 
 // Reset exports for testing.
