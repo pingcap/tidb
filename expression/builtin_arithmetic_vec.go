@@ -858,11 +858,11 @@ func (b *builtinArithmeticIntDivideIntSig) divideSS(result *chunk.Column, lhsI64
 	return nil
 }
 
-func (b *builtinArithmeticPlusIntSig) vectorized() bool {
+func (b *builtinArithmeticPlusIntUnsignedUnsignedSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinArithmeticPlusIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinArithmeticPlusIntUnsignedUnsignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	lh, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
@@ -886,22 +886,10 @@ func (b *builtinArithmeticPlusIntSig) vecEvalInt(input *chunk.Chunk, result *chu
 	rhi64s := rh.Int64s()
 	resulti64s := result.Int64s()
 
-	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
-	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
-
-	switch {
-	case isLHSUnsigned && isRHSUnsigned:
-		err = b.plusUU(result, lhi64s, rhi64s, resulti64s)
-	case isLHSUnsigned && !isRHSUnsigned:
-		err = b.plusUS(result, lhi64s, rhi64s, resulti64s)
-	case !isLHSUnsigned && isRHSUnsigned:
-		err = b.plusSU(result, lhi64s, rhi64s, resulti64s)
-	case !isLHSUnsigned && !isRHSUnsigned:
-		err = b.plusSS(result, lhi64s, rhi64s, resulti64s)
-	}
-	return err
+	return b.plusUU(result, lhi64s, rhi64s, resulti64s)
 }
-func (b *builtinArithmeticPlusIntSig) plusUU(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
+
+func (b *builtinArithmeticPlusIntUnsignedUnsignedSig) plusUU(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
 		if result.IsNull(i) {
 			continue
@@ -917,26 +905,38 @@ func (b *builtinArithmeticPlusIntSig) plusUU(result *chunk.Column, lhi64s, rhi64
 	return nil
 }
 
-func (b *builtinArithmeticPlusIntSig) plusUS(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		lh, rh := lhi64s[i], rhi64s[i]
-
-		if rh < 0 && uint64(-rh) > uint64(lh) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
-		}
-		if rh > 0 && uint64(lh) > math.MaxUint64-uint64(lh) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
-		}
-
-		resulti64s[i] = lh + rh
-	}
-	return nil
+func (b *builtinArithmeticPlusIntSignedUnsignedSig) vectorized() bool {
+	return true
 }
 
-func (b *builtinArithmeticPlusIntSig) plusSU(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
+func (b *builtinArithmeticPlusIntSignedUnsignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	lh, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(lh)
+
+	if err := b.args[0].VecEvalInt(b.ctx, input, lh); err != nil {
+		return err
+	}
+
+	// reuse result as rh to avoid buf allocate
+	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	result.MergeNulls(lh)
+
+	rh := result
+	lhi64s := lh.Int64s()
+	rhi64s := rh.Int64s()
+	resulti64s := result.Int64s()
+
+	return b.plusSU(result, lhi64s, rhi64s, resulti64s)
+}
+
+func (b *builtinArithmeticPlusIntSignedUnsignedSig) plusSU(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
 		if result.IsNull(i) {
 			continue
@@ -954,7 +954,89 @@ func (b *builtinArithmeticPlusIntSig) plusSU(result *chunk.Column, lhi64s, rhi64
 	}
 	return nil
 }
-func (b *builtinArithmeticPlusIntSig) plusSS(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
+
+func (b *builtinArithmeticPlusIntUnsignedSignedSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinArithmeticPlusIntUnsignedSignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	lh, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(lh)
+
+	if err := b.args[0].VecEvalInt(b.ctx, input, lh); err != nil {
+		return err
+	}
+
+	// reuse result as rh to avoid buf allocate
+	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	result.MergeNulls(lh)
+
+	rh := result
+	lhi64s := lh.Int64s()
+	rhi64s := rh.Int64s()
+	resulti64s := result.Int64s()
+
+	return b.plusUS(result, lhi64s, rhi64s, resulti64s)
+}
+
+func (b *builtinArithmeticPlusIntUnsignedSignedSig) plusUS(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
+	for i := 0; i < len(lhi64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		lh, rh := lhi64s[i], rhi64s[i]
+
+		if rh < 0 && uint64(-rh) > uint64(lh) {
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+		}
+		if rh > 0 && uint64(lh) > math.MaxUint64-uint64(rh) {
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+		}
+
+		resulti64s[i] = lh + rh
+	}
+	return nil
+}
+
+func (b *builtinArithmeticPlusIntSignedSignedSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinArithmeticPlusIntSignedSignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	lh, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(lh)
+
+	if err := b.args[0].VecEvalInt(b.ctx, input, lh); err != nil {
+		return err
+	}
+
+	// reuse result as rh to avoid buf allocate
+	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	result.MergeNulls(lh)
+
+	rh := result
+	lhi64s := lh.Int64s()
+	rhi64s := rh.Int64s()
+	resulti64s := result.Int64s()
+
+	return b.plusSS(result, lhi64s, rhi64s, resulti64s)
+}
+
+func (b *builtinArithmeticPlusIntSignedSignedSig) plusSS(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
 		if result.IsNull(i) {
 			continue
