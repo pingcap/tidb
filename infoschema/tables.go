@@ -233,6 +233,16 @@ var tableIDMap = map[string]int64{
 	TableClientErrorsSummaryGlobal:          autoid.InformationSchemaDBID + 67,
 	TableClientErrorsSummaryByUser:          autoid.InformationSchemaDBID + 68,
 	TableClientErrorsSummaryByHost:          autoid.InformationSchemaDBID + 69,
+<<<<<<< HEAD
+=======
+	TableTiDBTrx:                            autoid.InformationSchemaDBID + 70,
+	ClusterTableTiDBTrx:                     autoid.InformationSchemaDBID + 71,
+	TableDeadlocks:                          autoid.InformationSchemaDBID + 72,
+	ClusterTableDeadlocks:                   autoid.InformationSchemaDBID + 73,
+	TableDataLockWaits:                      autoid.InformationSchemaDBID + 74,
+	TableStatementsSummaryEvicted:           autoid.InformationSchemaDBID + 75,
+	ClusterTableStatementsSummaryEvicted:    autoid.InformationSchemaDBID + 76,
+>>>>>>> 03847a8de... executor, infoschema: Add cluster_statements_summary_evicted table to TiDB (#25418)
 }
 
 type columnInfo struct {

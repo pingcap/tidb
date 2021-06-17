@@ -138,8 +138,10 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.dataForTiKVStoreStatus(sctx)
 		case infoschema.TableStatementsSummary,
 			infoschema.TableStatementsSummaryHistory,
+			infoschema.TableStatementsSummaryEvicted,
 			infoschema.ClusterTableStatementsSummary,
-			infoschema.ClusterTableStatementsSummaryHistory:
+			infoschema.ClusterTableStatementsSummaryHistory,
+			infoschema.ClusterTableStatementsSummaryEvicted:
 			err = e.setDataForStatementsSummary(sctx, e.table.Name.O)
 		case infoschema.TablePlacementPolicy:
 			err = e.setDataForPlacementPolicy(sctx)
@@ -1833,11 +1835,20 @@ func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, 
 	case infoschema.TableStatementsSummaryHistory,
 		infoschema.ClusterTableStatementsSummaryHistory:
 		e.rows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum(user, isSuper)
+	case infoschema.TableStatementsSummaryEvicted,
+		infoschema.ClusterTableStatementsSummaryEvicted:
+		e.rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
 	}
 	switch tableName {
 	case infoschema.ClusterTableStatementsSummary,
+<<<<<<< HEAD
 		infoschema.ClusterTableStatementsSummaryHistory:
 		rows, err := infoschema.AppendHostInfoToRows(e.rows)
+=======
+		infoschema.ClusterTableStatementsSummaryHistory,
+		infoschema.ClusterTableStatementsSummaryEvicted:
+		rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
+>>>>>>> 03847a8de... executor, infoschema: Add cluster_statements_summary_evicted table to TiDB (#25418)
 		if err != nil {
 			return err
 		}
@@ -1966,6 +1977,60 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 	return nil
 }
 
+<<<<<<< HEAD
+=======
+func (e *memtableRetriever) setDataForTiDBTrx(ctx sessionctx.Context) {
+	sm := ctx.GetSessionManager()
+	if sm == nil {
+		return
+	}
+
+	loginUser := ctx.GetSessionVars().User
+	hasProcessPriv := hasPriv(ctx, mysql.ProcessPriv)
+	infoList := sm.ShowTxnList()
+	for _, info := range infoList {
+		// If you have the PROCESS privilege, you can see all running transactions.
+		// Otherwise, you can see only your own transactions.
+		if !hasProcessPriv && loginUser != nil && info.Username != loginUser.Username {
+			continue
+		}
+		e.rows = append(e.rows, info.ToDatum())
+	}
+}
+
+func (e *memtableRetriever) setDataForClusterTiDBTrx(ctx sessionctx.Context) error {
+	e.setDataForTiDBTrx(ctx)
+	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
+	if err != nil {
+		return err
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForDeadlock(ctx sessionctx.Context) error {
+	if !hasPriv(ctx, mysql.ProcessPriv) {
+		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
+
+	e.rows = deadlockhistory.GlobalDeadlockHistory.GetAllDatum()
+	return nil
+}
+
+func (e *memtableRetriever) setDataForClusterDeadlock(ctx sessionctx.Context) error {
+	err := e.setDataForDeadlock(ctx)
+	if err != nil {
+		return err
+	}
+	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
+	if err != nil {
+		return err
+	}
+	e.rows = rows
+	return nil
+}
+
+>>>>>>> 03847a8de... executor, infoschema: Add cluster_statements_summary_evicted table to TiDB (#25418)
 type hugeMemTableRetriever struct {
 	dummyCloser
 	table       *model.TableInfo

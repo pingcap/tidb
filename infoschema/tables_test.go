@@ -1361,6 +1361,131 @@ func (s *testTableSuite) TestStmtSummarySensitiveQuery(c *C) {
 		))
 }
 
+<<<<<<< HEAD
+=======
+// test stmtSummaryEvictedCount
+func (s *testTableSuite) TestSimpleStmtSummaryEvictedCount(c *C) {
+	now := time.Now().Unix()
+	interval := int64(1800)
+	beginTimeForCurInterval := now - now%interval
+	tk := s.newTestKitWithPlanCache(c)
+	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval = %v", interval))
+
+	// clean up side effects
+	defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
+	defer tk.MustExec("set global tidb_stmt_summary_refresh_interval = 1800")
+
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	// first sql
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
+	// second sql
+	tk.MustQuery("show databases;")
+	// query `evicted table` is also a SQL, passing it leads to the eviction of the previous SQLs.
+	tk.MustQuery("select * from `information_schema`.`STATEMENTS_SUMMARY_EVICTED`;").
+		Check(testkit.Rows(
+			fmt.Sprintf("%s %s %v",
+				time.Unix(beginTimeForCurInterval, 0).Format("2006-01-02 15:04:05"),
+				time.Unix(beginTimeForCurInterval+interval, 0).Format("2006-01-02 15:04:05"),
+				int64(2)),
+		))
+	// TODO: Add more tests.
+}
+
+// test stmtSummaryEvictedCount cluster table
+func (s *testClusterTableSuite) TestStmtSummaryEvictedCountTable(c *C) {
+	tk := s.newTestKitWithRoot(c)
+	// disable refreshing
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval=9999")
+	// set information_schema.statements_summary's size to 1
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
+	// clean up side effects
+	defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
+	defer tk.MustExec("set global tidb_stmt_summary_refresh_interval = 1800")
+	// clear information_schema.statements_summary
+	tk.MustExec("set global tidb_enable_stmt_summary=0")
+	tk.MustExec("set global tidb_enable_stmt_summary=1")
+
+	// make a new session for test...
+	tk = s.newTestKitWithRoot(c)
+	// first sql
+	tk.MustExec("show databases;")
+	// second sql, evict former sql from stmt_summary
+	tk.MustQuery("select evicted_count from information_schema.cluster_statements_summary_evicted;").
+		Check(testkit.Rows("1"))
+	// after executed the sql above
+	tk.MustQuery("select evicted_count from information_schema.cluster_statements_summary_evicted;").
+		Check(testkit.Rows("2"))
+	// TODO: Add more tests.
+
+}
+
+func (s *testTableSuite) TestStmtSummaryTableOther(c *C) {
+	interval := int64(1800)
+	tk := s.newTestKitWithRoot(c)
+	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval=%v", interval))
+	tk.MustExec("set global tidb_enable_stmt_summary=0")
+	tk.MustExec("set global tidb_enable_stmt_summary=1")
+	// set stmt size to 1
+	// first sql
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count=1")
+	defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count=100")
+	// second sql, evict first sql from stmt_summary
+	tk.MustExec("show databases;")
+	// third sql, evict second sql from stmt_summary
+	tk.MustQuery("SELECT DIGEST_TEXT, DIGEST FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY`;").
+		Check(testkit.Rows(
+			// digest in cache
+			// "show databases ;"
+			"show databases ; dcd020298c5f79e8dc9d63b3098083601614a04a52db458738347d15ea5712a1",
+			// digest evicted
+			" <nil>",
+		))
+	// forth sql, evict third sql from stmt_summary
+	tk.MustQuery("SELECT SCHEMA_NAME FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY`;").
+		Check(testkit.Rows(
+			// digest in cache
+			"test", // select xx from yy;
+			// digest evicted
+			"<nil>",
+		))
+}
+
+func (s *testTableSuite) TestStmtSummaryHistoryTableOther(c *C) {
+	tk := s.newTestKitWithRoot(c)
+	// disable refreshing summary
+	interval := int64(9999)
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
+	defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
+	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval = %v", interval))
+	defer tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval = %v", 1800))
+
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	// first sql
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count=1")
+	// second sql, evict first sql from stmt_summary
+	tk.MustExec("show databases;")
+	// third sql, evict second sql from stmt_summary
+	tk.MustQuery("SELECT DIGEST_TEXT, DIGEST FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY_HISTORY`;").
+		Check(testkit.Rows(
+			// digest in cache
+			// "show databases ;"
+			"show databases ; dcd020298c5f79e8dc9d63b3098083601614a04a52db458738347d15ea5712a1",
+			// digest evicted
+			" <nil>",
+		))
+	// forth sql, evict third sql from stmt_summary
+	tk.MustQuery("SELECT SCHEMA_NAME FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY_HISTORY`;").
+		Check(testkit.Rows(
+			// digest in cache
+			"test", // select xx from yy;
+			// digest evicted
+			"<nil>",
+		))
+}
+
+>>>>>>> 03847a8de... executor, infoschema: Add cluster_statements_summary_evicted table to TiDB (#25418)
 func (s *testTableSuite) TestPerformanceSchemaforPlanCache(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
