@@ -478,10 +478,10 @@ func (ts *testSuite) TestRangePartitionUnderNoUnsignedSub(c *C) {
 	// MySQL will not support c1 value bigger than 9223372036854775817 in this case
 	tk.MustExec(("insert into tu2 values (cast(18446744073709551615 as unsigned));"))
 
-	// this behavior is currently not compatible with MySQL
+	// compatible with MySQL
+	ErrMsg3 := "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition"
 	tk.MustExec("SET @@sql_mode='';")
-	tk.MustExec(`CREATE TABLE tu3 like tu;`)
-
+	tk.MustGetErrMsg(`CREATE TABLE tu3 like tu;`, ErrMsg3)
 }
 
 func (ts *testSuite) TestIntUint(c *C) {
