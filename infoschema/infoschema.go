@@ -403,3 +403,119 @@ func GetBundle(h InfoSchema, ids []int64) *placement.Bundle {
 	}
 	return &placement.Bundle{ID: placement.GroupID(id), Rules: newRules}
 }
+
+type LocalTemporaryTableInfoSchema interface {
+	TableByName(schema, table model.CIStr) (*LocalTemporaryTable, error)
+	TableExists(schema, table model.CIStr) bool
+	TableByID(id int64) (*LocalTemporaryTable, bool)
+	SchemaTables(schema model.CIStr) []*LocalTemporaryTable
+	AddTable(schema *model.DBInfo, table *LocalTemporaryTable) error
+	RemoveTable(schema, table model.CIStr) bool
+}
+
+type LocalTemporaryTable struct {
+	table.Table
+	Schema *model.DBInfo
+}
+
+type localTempSchemaTables struct {
+	tables map[string]*LocalTemporaryTable
+}
+
+type localTemporaryTableInfoSchema struct {
+	schemaMap map[string]*localTempSchemaTables
+	idx2table map[int64]*LocalTemporaryTable
+}
+
+func NewLocalTemporaryTableInfoSchema() LocalTemporaryTableInfoSchema {
+	return &localTemporaryTableInfoSchema{
+		schemaMap: make(map[string]*localTempSchemaTables),
+		idx2table: make(map[int64]*LocalTemporaryTable),
+	}
+}
+
+func (is *localTemporaryTableInfoSchema) TableByName(schema, table model.CIStr) (t *LocalTemporaryTable, err error) {
+	if tbNames, ok := is.schemaMap[schema.L]; ok {
+		if t, ok = tbNames.tables[table.L]; ok {
+			return
+		}
+	}
+	return nil, ErrTableNotExists.GenWithStackByArgs(schema, table)
+}
+
+func (is *localTemporaryTableInfoSchema) TableExists(schema, table model.CIStr) bool {
+	if tbNames, ok := is.schemaMap[schema.L]; ok {
+		if _, ok = tbNames.tables[table.L]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (is *localTemporaryTableInfoSchema) TableByID(id int64) (tbl *LocalTemporaryTable, ok bool) {
+	tbl, ok = is.idx2table[id]
+	return
+}
+
+func (is *localTemporaryTableInfoSchema) SchemaTables(schema model.CIStr) (tables []*LocalTemporaryTable) {
+	schemaTables, ok := is.schemaMap[schema.L]
+	if !ok {
+		return
+	}
+	for _, tbl := range schemaTables.tables {
+		tables = append(tables, tbl)
+	}
+	return
+}
+
+func (is *localTemporaryTableInfoSchema) AddTable(schema *model.DBInfo, tbl *LocalTemporaryTable) error {
+	schemaTables := is.ensureSchema(schema.Name)
+
+	tblMeta := tbl.Meta()
+	if _, ok := schemaTables.tables[tblMeta.Name.L]; ok {
+		return ErrTableExists.GenWithStackByArgs(tblMeta.Name)
+	}
+
+	if _, ok := is.idx2table[tblMeta.ID]; ok {
+		return ErrTableExists.GenWithStackByArgs(tblMeta.Name)
+	}
+
+	schemaTables.tables[tblMeta.Name.L] = tbl
+	is.idx2table[tblMeta.ID] = tbl
+
+	return nil
+}
+
+func (is *localTemporaryTableInfoSchema) RemoveTable(schema, table model.CIStr) (exist bool) {
+	tbls := is.schemaTables(schema)
+	if tbls == nil {
+		return false
+	}
+
+	oldTable, exist := tbls.tables[table.L]
+	delete(tbls.tables, table.L)
+	delete(is.idx2table, oldTable.Meta().ID)
+	return
+}
+
+func (is *localTemporaryTableInfoSchema) ensureSchema(schema model.CIStr) *localTempSchemaTables {
+	if tbls, ok := is.schemaMap[schema.L]; ok {
+		return tbls
+	}
+
+	tbls := &localTempSchemaTables{tables: make(map[string]*LocalTemporaryTable)}
+	is.schemaMap[schema.L] = tbls
+	return tbls
+}
+
+func (is *localTemporaryTableInfoSchema) schemaTables(schema model.CIStr) *localTempSchemaTables {
+	if is.schemaMap == nil {
+		return nil
+	}
+
+	if tbls, ok := is.schemaMap[schema.L]; ok {
+		return tbls
+	}
+
+	return nil
+}

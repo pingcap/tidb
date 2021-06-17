@@ -1740,9 +1740,7 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 			return nil, errors.Trace(errUnsupportedOnCommitPreserve)
 		}
 	case ast.TemporaryLocal:
-		// TODO: set "tbInfo.TempTableType = model.TempTableLocal" after local temporary table is supported.
-		tbInfo.TempTableType = model.TempTableNone
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("local TEMPORARY TABLE is not supported yet, TEMPORARY will be parsed but ignored"))
+		tbInfo.TempTableType = model.TempTableLocal
 	case ast.TemporaryNone:
 		tbInfo.TempTableType = model.TempTableNone
 	}
@@ -1839,8 +1837,21 @@ func (d *ddl) CreateTableWithInfo(
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
 	}
 
+	var oldTable table.Table
+	if tbInfo.TempTableType == model.TempTableLocal {
+		// Only check exist local temporary table in session.
+		// Users are allowed to create local temporary table event if a table with a same name exists in tikv.
+		var oldTempTable *infoschema.LocalTemporaryTable
+		oldTempTable, err = d.getLocalTemporaryTableByIdent(ctx, ast.Ident{Schema: schema.Name, Name: tbInfo.Name})
+		if oldTempTable != nil {
+			oldTable = oldTempTable.Table
+		}
+	} else {
+		oldTable, err = is.TableByName(schema.Name, tbInfo.Name)
+	}
+
 	var oldViewTblID int64
-	if oldTable, err := is.TableByName(schema.Name, tbInfo.Name); err == nil {
+	if err == nil {
 		err = infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schema.Name, Name: tbInfo.Name})
 		switch onExist {
 		case OnExistIgnore:
@@ -1875,6 +1886,27 @@ func (d *ddl) CreateTableWithInfo(
 
 	if err := checkTableInfoValidExtra(tbInfo); err != nil {
 		return err
+	}
+
+	if tbInfo.TempTableType == model.TempTableLocal {
+		localSchema, ok := ctx.GetSessionVars().LocalTemporaryTableInfoSchema.(infoschema.LocalTemporaryTableInfoSchema)
+		if !ok {
+			localSchema = infoschema.NewLocalTemporaryTableInfoSchema()
+			ctx.GetSessionVars().LocalTemporaryTableInfoSchema = localSchema
+		}
+
+		tbInfo.State = model.StatePublic
+		tbl, err := getTable(d.store, schema.ID, tbInfo)
+		if err != nil {
+			return err
+		}
+
+		err = localSchema.AddTable(schema, &infoschema.LocalTemporaryTable{Table: tbl, Schema: schema})
+		if err != nil {
+			return err
+		}
+
+		return nil
 	}
 
 	var actionType model.ActionType
@@ -2684,6 +2716,20 @@ func (d *ddl) getSchemaAndTableByIdent(ctx sessionctx.Context, tableIdent ast.Id
 		return nil, nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tableIdent.Schema, tableIdent.Name)
 	}
 	return schema, t, nil
+}
+
+func (d *ddl) getLocalTemporaryTableByIdent(ctx sessionctx.Context, tableIdent ast.Ident) (*infoschema.LocalTemporaryTable, error) {
+	localSchema, ok := ctx.GetSessionVars().LocalTemporaryTableInfoSchema.(infoschema.LocalTemporaryTableInfoSchema)
+	if !ok {
+		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tableIdent.Schema)
+	}
+
+	tbl, err := localSchema.TableByName(tableIdent.Schema, tableIdent.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	return tbl, nil
 }
 
 func checkUnsupportedColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
@@ -4639,6 +4685,12 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 
 // DropTable will proceed even if some table in the list does not exists.
 func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
+	if tb, err := d.getLocalTemporaryTableByIdent(ctx, ti); err == nil {
+		localSchema := ctx.GetSessionVars().LocalTemporaryTableInfoSchema.(infoschema.LocalTemporaryTableInfoSchema)
+		localSchema.RemoveTable(ti.Schema, tb.Meta().Name)
+		return nil
+	}
+
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ti)
 	if err != nil {
 		return errors.Trace(err)
@@ -4697,7 +4749,40 @@ func (d *ddl) DropView(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	return errors.Trace(err)
 }
 
+func (d *ddl) truncateLocalTemporaryTable(ctx sessionctx.Context, tb *infoschema.LocalTemporaryTable) error {
+	localSchema := ctx.GetSessionVars().LocalTemporaryTableInfoSchema.(infoschema.LocalTemporaryTableInfoSchema)
+	genIDs, err := d.genGlobalIDs(1)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	tbInfo := tb.Meta()
+	newTbInfo := tbInfo.Clone()
+	newTbInfo.ID = genIDs[0]
+
+	newTable, err := getTable(d.store, tb.Schema.ID, newTbInfo)
+	if err != nil {
+		return err
+	}
+
+	newTempTable := &infoschema.LocalTemporaryTable{Table: newTable, Schema: tb.Schema}
+
+	localSchema.RemoveTable(tb.Schema.Name, tbInfo.Name)
+	if err = localSchema.AddTable(tb.Schema, newTempTable); err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
+}
+
 func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
+	if tb, err := d.getLocalTemporaryTableByIdent(ctx, ti); err == nil {
+		err = d.truncateLocalTemporaryTable(ctx, tb)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ti)
 	if err != nil {
 		return errors.Trace(err)
