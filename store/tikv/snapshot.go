@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/tablecodec"
@@ -420,14 +419,6 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 
 	cli := NewClientHelper(s.store, s.resolvedLocks)
 
-	// Secondary locks or async commit locks cannot be ignored when getting using the max version.
-	// So we concurrently get a TS from PD and use it in retries to avoid unnecessary blocking.
-	var tsFuture oracle.Future
-	if s.version == maxTimestamp {
-		tsFuture = s.store.oracle.GetTimestampAsync(ctx, &oracle.Option{TxnScope: s.txnScope})
-	}
-	failpoint.Inject("snapshotGetTSAsync", nil)
-
 	isStaleness := false
 	var matchStoreLabels []*metapb.StoreLabel
 	s.mu.RLock()
@@ -456,7 +447,10 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 	if len(matchStoreLabels) > 0 {
 		ops = append(ops, WithMatchLabels(matchStoreLabels))
 	}
+
+	var firstLock *Lock
 	for {
+		failpoint.Inject("beforeSendPointGet", nil)
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -489,25 +483,17 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-
-			snapVer := s.version
-			if s.version == maxTimestamp {
-				newTS, err := tsFuture.Wait()
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				s.version = newTS
-				req.Req.(*pb.GetRequest).Version = newTS
-				// skip lock resolving and backoff if the lock does not block the read
-				if newTS < lock.TxnID || newTS < lock.MinCommitTS {
-					continue
-				}
+			if firstLock == nil {
+				firstLock = lock
+			} else if s.version == maxTimestamp && firstLock.TxnID != lock.TxnID {
+				// If it is an autocommit point get, it needs to be blocked only
+				// by the first lock it meets. During retries, if the encountered
+				// lock is different from the first one, we can omit it.
+				cli.resolvedLocks.Put(lock.TxnID)
+				continue
 			}
 
-			// Use the original snapshot version to resolve locks so we can use MaxUint64
-			// as the callerStartTS if it's an auto-commit point get. This could save us
-			// one write at TiKV by not pushing forward the minCommitTS.
-			msBeforeExpired, err := cli.ResolveLocks(bo, snapVer, []*Lock{lock})
+			msBeforeExpired, err := cli.ResolveLocks(bo, s.version, []*Lock{lock})
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
