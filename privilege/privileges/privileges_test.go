@@ -472,22 +472,99 @@ func (s *testPrivilegeSuite) TestAlterUserStmt(c *C) {
 	se := newSession(c, s.store, s.dbName)
 
 	// high privileged user setting password for other user (passes)
-	mustExec(c, se, "CREATE USER 'superuser2'")
-	mustExec(c, se, "CREATE USER 'nobodyuser2'")
-	mustExec(c, se, "CREATE USER 'nobodyuser3'")
-	mustExec(c, se, "GRANT ALL ON *.* TO 'superuser2'")
-	mustExec(c, se, "GRANT CREATE USER ON *.* TO 'nobodyuser2'")
+	mustExec(c, se, "CREATE USER superuser2, nobodyuser2, nobodyuser3, nobodyuser4, nobodyuser5, semuser1, semuser2, semuser3, semuser4")
+	mustExec(c, se, "GRANT ALL ON *.* TO superuser2")
+	mustExec(c, se, "GRANT CREATE USER ON *.* TO nobodyuser2")
+	mustExec(c, se, "GRANT SYSTEM_USER ON *.* TO nobodyuser4")
+	mustExec(c, se, "GRANT UPDATE ON mysql.user TO nobodyuser5, semuser1")
+	mustExec(c, se, "GRANT RESTRICTED_TABLES_ADMIN ON *.* TO semuser1")
+	mustExec(c, se, "GRANT RESTRICTED_USER_ADMIN ON *.* TO semuser1, semuser2, semuser3")
+	mustExec(c, se, "GRANT SYSTEM_USER ON *.* to semuser3") // user is both restricted + has SYSTEM_USER (or super)
 
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "superuser2", Hostname: "localhost", AuthUsername: "superuser2", AuthHostname: "%"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "superuser2", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
 	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
 
-	// low privileged user trying to set password for other user (fails)
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser2", Hostname: "localhost", AuthUsername: "nobodyuser2", AuthHostname: "%"}, nil, nil), IsTrue)
+	// low privileged user trying to set password for others
+	// nobodyuser3 = SUCCESS (not a SYSTEM_USER)
+	// nobodyuser4 = FAIL (has SYSTEM_USER)
+	// superuser2  = FAIL (has SYSTEM_USER privilege implied by SUPER)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser2", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
 	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
-	_, err := se.ExecuteInternal(context.Background(), "ALTER USER 'superuser2' IDENTIFIED BY 'newpassword'")
-	c.Assert(err, NotNil)
+	mustExec(c, se, "ALTER USER 'nobodyuser3' IDENTIFIED BY ''")
+	_, err := se.ExecuteInternal(context.Background(), "ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'superuser2' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation")
+
+	// Nobody3 has no privileges at all, but they can still alter their own password.
+	// Any other user fails.
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser3", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser3' IDENTIFIED BY ''")
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'superuser2' IDENTIFIED BY 'newpassword'") // it checks create user before SYSTEM_USER
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+
+	// Nobody5 doesn't explicitly have CREATE USER, but mysql also accepts UDPATE on mysql.user
+	// as a substitute so it can modify nobody2 and nobody3 but not nobody4
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser5", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'nobodyuser3' IDENTIFIED BY ''")
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "semuser1", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'semuser1' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'semuser2' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'semuser3' IDENTIFIED BY ''")
+
+	sem.Enable()
+	defer sem.Disable()
+
+	// When SEM is enabled, even though we have UPDATE privilege on mysql.user, it explicitly
+	// denies writeable privileges to system schemas unless RESTRICTED_TABLES_ADMIN is granted.
+	// so the previous method of granting to the table instead of CREATE USER will fail now.
+	// This is intentional because SEM plugs directly into the privilege manager to DENY
+	// any request for UpdatePriv on mysql.user even if the privilege exists in the internal mysql.user table.
+
+	// UpdatePriv on mysql.user
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser5", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+
+	// actual CreateUserPriv
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser2", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'nobodyuser3' IDENTIFIED BY ''")
+
+	// UpdatePriv on mysql.user but also has RESTRICTED_TABLES_ADMIN
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "semuser1", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'nobodyuser3' IDENTIFIED BY ''")
+
+	// As it has (RESTRICTED_TABLES_ADMIN + UpdatePriv on mysql.user) + RESTRICTED_USER_ADMIN it can modify other restricted_user_admins like semuser2
+	// and it can modify semuser3 because RESTRICTED_USER_ADMIN does not also need SYSTEM_USER
+	mustExec(c, se, "ALTER USER 'semuser1' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'semuser2' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'semuser3' IDENTIFIED BY ''")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "superuser2", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'semuser1' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "semuser4", Hostname: "localhost"}, nil, nil), IsTrue)
+	// has restricted_user_admin but not CREATE USER or (update on mysql.user + RESTRICTED_TABLES_ADMIN)
+	mustExec(c, se, "ALTER USER 'semuser4' IDENTIFIED BY ''") // can modify self
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'nobodyuser3' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'semuser1' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'semuser3' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
 }
 
 func (s *testPrivilegeSuite) TestSelectViewSecurity(c *C) {
