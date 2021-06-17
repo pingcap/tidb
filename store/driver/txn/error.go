@@ -27,11 +27,11 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	derr "github.com/pingcap/tidb/store/driver/error"
-	tikverr "github.com/pingcap/tidb/store/tikv/error"
-	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	tikverr "github.com/tikv/client-go/v2/error"
+	"github.com/tikv/client-go/v2/logutil"
 	"go.uber.org/zap"
 )
 
@@ -93,6 +93,9 @@ func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.Tabl
 		str, err := d.ToString()
 		if err != nil {
 			return genKeyExistsError(name, key.String(), err)
+		}
+		if col.Length > 0 && len(str) > col.Length {
+			str = str[:col.Length]
 		}
 		valueStr = append(valueStr, str)
 	}

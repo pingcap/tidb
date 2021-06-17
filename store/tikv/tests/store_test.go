@@ -19,11 +19,11 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/oracle/oracles"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 type testStoreSuite struct {
@@ -95,15 +95,15 @@ func (s *testStoreSuite) TestOracle(c *C) {
 
 type checkRequestClient struct {
 	tikv.Client
-	priority pb.CommandPri
+	priority kvrpcpb.CommandPri
 }
 
 func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
 	if c.priority != req.Priority {
 		if resp.Resp != nil {
-			if getResp, ok := resp.Resp.(*pb.GetResponse); ok {
-				getResp.Error = &pb.KeyError{
+			if getResp, ok := resp.Resp.(*kvrpcpb.GetResponse); ok {
+				getResp.Error = &kvrpcpb.KeyError{
 					Abort: "request check error",
 				}
 			}
@@ -121,7 +121,7 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 	// Cover 2PC commit.
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	client.priority = pb.CommandPri_High
+	client.priority = kvrpcpb.CommandPri_High
 	txn.SetPriority(tikv.PriorityHigh)
 	err = txn.Set([]byte("key"), []byte("value"))
 	c.Assert(err, IsNil)
@@ -131,20 +131,20 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 	// Cover the basic Get request.
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	client.priority = pb.CommandPri_Low
+	client.priority = kvrpcpb.CommandPri_Low
 	txn.SetPriority(tikv.PriorityLow)
 	_, err = txn.Get(context.TODO(), []byte("key"))
 	c.Assert(err, IsNil)
 
 	// A counter example.
-	client.priority = pb.CommandPri_Low
+	client.priority = kvrpcpb.CommandPri_Low
 	txn.SetPriority(tikv.PriorityNormal)
 	_, err = txn.Get(context.TODO(), []byte("key"))
 	// err is translated to "try again later" by backoffer, so doesn't check error value here.
 	c.Assert(err, NotNil)
 
 	// Cover Seek request.
-	client.priority = pb.CommandPri_High
+	client.priority = kvrpcpb.CommandPri_High
 	txn.SetPriority(tikv.PriorityHigh)
 	iter, err := txn.Iter([]byte("key"), nil)
 	c.Assert(err, IsNil)

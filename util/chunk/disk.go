@@ -14,9 +14,7 @@
 package chunk
 
 import (
-	"errors"
 	"io"
-	"io/ioutil"
 	"os"
 	"strconv"
 	"sync"
@@ -70,7 +68,7 @@ func (l *ListInDisk) initDiskFile() (err error) {
 	if err != nil {
 		return
 	}
-	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, defaultChunkListInDiskPath+strconv.Itoa(l.diskTracker.Label()))
+	l.disk, err = os.CreateTemp(config.GetGlobalConfig().TempStoragePath, defaultChunkListInDiskPath+strconv.Itoa(l.diskTracker.Label()))
 	if err != nil {
 		return errors2.Trace(err)
 	}
@@ -133,7 +131,7 @@ func (l *ListInDisk) flush() (err error) {
 // Warning: do not mix Add and GetRow (always use GetRow after you have added all the chunks), and do not use Add concurrently.
 func (l *ListInDisk) Add(chk *Chunk) (err error) {
 	if chk.NumRows() == 0 {
-		return errors.New("chunk appended to List should have at least 1 row")
+		return errors2.New("chunk appended to List should have at least 1 row")
 	}
 	if l.disk == nil {
 		err = l.initDiskFile()

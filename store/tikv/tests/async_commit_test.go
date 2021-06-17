@@ -26,12 +26,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv"
-	tikverr "github.com/pingcap/tidb/store/tikv/error"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/store/tikv/util"
+	tikverr "github.com/tikv/client-go/v2/error"
+	"github.com/tikv/client-go/v2/mockstore"
+	"github.com/tikv/client-go/v2/mockstore/cluster"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func TestT(t *testing.T) {
@@ -47,7 +48,7 @@ type testAsyncCommitCommon struct {
 }
 
 func (s *testAsyncCommitCommon) setUpTest(c *C) {
-	if *WithTiKV {
+	if *mockstore.WithTiKV {
 		s.store = NewTestStore(c)
 		return
 	}
@@ -56,7 +57,7 @@ func (s *testAsyncCommitCommon) setUpTest(c *C) {
 	c.Assert(err, IsNil)
 	unistore.BootstrapWithSingleStore(cluster)
 	s.cluster = cluster
-	store, err := tikv.NewTestTiKVStore(client, pdClient, nil, nil, 0)
+	store, err := tikv.NewTestTiKVStore(fpClient{Client: client}, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
 
 	s.store = store
@@ -195,7 +196,7 @@ func (s *testAsyncCommitSuite) lockKeysWithAsyncCommit(c *C, keys, values [][]by
 
 func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 	// This test doesn't support tikv mode.
-	if *WithTiKV {
+	if *mockstore.WithTiKV {
 		return
 	}
 
@@ -402,7 +403,7 @@ func (s *testAsyncCommitSuite) TestAsyncCommitLinearizability(c *C) {
 // TestAsyncCommitWithMultiDC tests that async commit can only be enabled in global transactions
 func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
 	// It requires setting placement rules to run with TiKV
-	if *WithTiKV {
+	if *mockstore.WithTiKV {
 		return
 	}
 

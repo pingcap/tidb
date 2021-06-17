@@ -33,13 +33,13 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -504,7 +504,8 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 		hg, ok := stats.Indices[tableInfo.Indices[0].ID]
 		c.Assert(ok, IsTrue)
 		c.Assert(hg.NDV, Equals, int64(3))
-		c.Assert(hg.Len(), Equals, 3)
+		c.Assert(hg.Len(), Equals, 0)
+		c.Assert(hg.TopN.Num(), Equals, 3)
 	})
 }
 
@@ -1758,6 +1759,7 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i/5, i))
 	}
+	testKit.MustExec("set @@session.tidb_analyze_version = 1")
 	testKit.MustExec("analyze table t with 3 buckets, 0 topn")
 	testKit.MustExec("delete from t where a = 1")
 	testKit.MustExec("delete from t where b > 10")
@@ -1836,6 +1838,7 @@ func (s *testStatsSuite) TestFeedbackRanges(c *C) {
 	err := h.HandleDDLEvent(<-h.DDLEventCh())
 	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	testKit.MustExec("set @@session.tidb_analyze_version=1")
 	testKit.MustExec("analyze table t with 3 buckets")
 	for i := 30; i < 40; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))

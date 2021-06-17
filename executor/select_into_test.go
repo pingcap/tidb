@@ -15,7 +15,6 @@ package executor_test
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,7 +28,7 @@ import (
 )
 
 func cmpAndRm(expected, outfile string, c *C) {
-	content, err := ioutil.ReadFile(outfile)
+	content, err := os.ReadFile(outfile)
 	c.Assert(err, IsNil)
 	c.Assert(string(content), Equals, expected)
 	c.Assert(os.Remove(outfile), IsNil)

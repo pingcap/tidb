@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -197,6 +196,10 @@ type IndexReaderExecutor struct {
 
 // Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() error {
+	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
+		return nil
+	}
+
 	err := e.result.Close()
 	e.result = nil
 	e.ctx.StoreQueryFeedback(e.feedback)
@@ -205,6 +208,11 @@ func (e *IndexReaderExecutor) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *IndexReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
+	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
+		req.Reset()
+		return nil
+	}
+
 	err := e.result.Next(ctx, req)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -267,6 +275,11 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
 	e.kvRanges = kvRanges
+	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
+	// In a test case IndexReaderExecutor is mocked and e.table is nil.
+	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
+		return nil
+	}
 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
@@ -278,11 +291,8 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		SetMemTracker(e.memTracker)
-	// for tests, infoschema may be null
-	if is, ok := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema); ok {
-		builder.SetFromInfoSchema(is)
-	}
 	kvReq, err := builder.Build()
 	if err != nil {
 		e.feedback.Invalidate()
@@ -356,6 +366,9 @@ type IndexLookUpExecutor struct {
 	PushedLimit *plannercore.PushedDownLimit
 
 	stats *IndexLookUpRunTimeStats
+
+	// extraPIDColumnIndex is used for partition reader to add an extra partition ID column, default -1
+	extraPIDColumnIndex offsetOptional
 }
 
 type getHandleType int8
@@ -385,6 +398,12 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return err
 	}
+
+	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
+	if e.table.Meta().TempTableType == model.TempTableGlobal {
+		return nil
+	}
+
 	err = e.open(ctx)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -530,11 +549,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetKeepOrder(e.keepOrder).
 			SetStreaming(e.indexStreaming).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
+			SetFromInfoSchema(e.ctx.GetInfoSchema()).
 			SetMemTracker(tracker)
-		// for tests, infoschema may be null
-		if is, ok := e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema); ok {
-			builder.SetFromInfoSchema(is)
-		}
 
 		for partTblIdx, kvRange := range kvRanges {
 			// check if executor is closed
@@ -625,15 +641,16 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		table = task.partitionTable
 	}
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor:   newBaseExecutor(e.ctx, e.schema, e.getTableRootPlanID()),
-		table:          table,
-		dagPB:          e.tableRequest,
-		startTS:        e.startTS,
-		columns:        e.columns,
-		streaming:      e.tableStreaming,
-		feedback:       statistics.NewQueryFeedback(0, nil, 0, false),
-		corColInFilter: e.corColInTblSide,
-		plans:          e.tblPlans,
+		baseExecutor:        newBaseExecutor(e.ctx, e.schema, e.getTableRootPlanID()),
+		table:               table,
+		dagPB:               e.tableRequest,
+		startTS:             e.startTS,
+		columns:             e.columns,
+		streaming:           e.tableStreaming,
+		feedback:            statistics.NewQueryFeedback(0, nil, 0, false),
+		corColInFilter:      e.corColInTblSide,
+		plans:               e.tblPlans,
+		extraPIDColumnIndex: e.extraPIDColumnIndex,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, task.handles, true)
@@ -646,6 +663,10 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
+	if e.table.Meta().TempTableType != model.TempTableNone {
+		return nil
+	}
+
 	if !e.workerStarted || e.finished == nil {
 		return nil
 	}
@@ -666,6 +687,11 @@ func (e *IndexLookUpExecutor) Close() error {
 
 // Next implements Exec Next interface.
 func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
+	if e.table.Meta().TempTableType == model.TempTableGlobal {
+		req.Reset()
+		return nil
+	}
+
 	if !e.workerStarted {
 		if err := e.startWorkers(ctx, req.RequiredRows()); err != nil {
 			return err
@@ -1094,7 +1120,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 		if chk.NumRows() == 0 {
 			task.indexOrder.Range(func(h kv.Handle, val interface{}) bool {
 				idxRow := task.idxRows.GetRow(val.(int))
-				err = errors.Errorf("handle %#v, index:%#v != record:%#v", h, idxRow.GetDatum(0, w.idxColTps[0]), nil)
+				err = ErrDataInConsistentExtraIndex.GenWithStackByArgs(h, idxRow.GetDatum(0, w.idxColTps[0]), nil)
 				return false
 			})
 			if err != nil {
@@ -1129,12 +1155,12 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
 				cmpRes, err := idxVal.CompareDatum(sctx, &val)
 				if err != nil {
-					return errors.Errorf("col %s, handle %#v, index:%#v != record:%#v, compare err:%#v", col.Name,
+					return ErrDataInConsistentMisMatchIndex.GenWithStackByArgs(col.Name,
 						handle, idxRow.GetDatum(i, tp), val, err)
 				}
 				if cmpRes != 0 {
-					return errors.Errorf("col %s, handle %#v, index:%#v != record:%#v", col.Name,
-						handle, idxRow.GetDatum(i, tp), val)
+					return ErrDataInConsistentMisMatchIndex.GenWithStackByArgs(col.Name,
+						handle, idxRow.GetDatum(i, tp), val, err)
 				}
 			}
 		}
@@ -1212,12 +1238,20 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				obtainedHandlesMap.Set(handle, true)
 			}
 
-			logutil.Logger(ctx).Error("inconsistent index handles",
-				zap.String("table_name", w.idxLookup.index.Table.O),
-				zap.String("index", w.idxLookup.index.Name.O),
-				zap.Int("index_cnt", handleCnt), zap.Int("table_cnt", len(task.rows)),
-				zap.String("missing_handles", fmt.Sprint(GetLackHandles(task.handles, obtainedHandlesMap))),
-				zap.String("total_handles", fmt.Sprint(task.handles)))
+			if w.idxLookup.ctx.GetSessionVars().EnableRedactLog {
+				logutil.Logger(ctx).Error("inconsistent index handles",
+					zap.String("table_name", w.idxLookup.index.Table.O),
+					zap.String("index", w.idxLookup.index.Name.O),
+					zap.Int("index_cnt", handleCnt),
+					zap.Int("table_cnt", len(task.rows)))
+			} else {
+				logutil.Logger(ctx).Error("inconsistent index handles",
+					zap.String("table_name", w.idxLookup.index.Table.O),
+					zap.String("index", w.idxLookup.index.Name.O),
+					zap.Int("index_cnt", handleCnt), zap.Int("table_cnt", len(task.rows)),
+					zap.String("missing_handles", fmt.Sprint(GetLackHandles(task.handles, obtainedHandlesMap))),
+					zap.String("total_handles", fmt.Sprint(task.handles)))
+			}
 
 			// table scan in double read can never has conditions according to convertToIndexScan.
 			// if this table scan has no condition, the number of rows it returns must equal to the length of handles.

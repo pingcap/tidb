@@ -16,11 +16,11 @@ package core
 import (
 	"bytes"
 	"crypto/sha256"
-	"fmt"
 	"hash"
 	"sync"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/plancodec"
 )
@@ -34,6 +34,8 @@ var encoderPool = sync.Pool{
 type planEncoder struct {
 	buf          bytes.Buffer
 	encodedPlans map[int]bool
+
+	ctes []*PhysicalCTE
 }
 
 // EncodePlan is used to encodePlan the plan to the plan tree with compressing.
@@ -58,8 +60,33 @@ func EncodePlan(p Plan) string {
 func (pn *planEncoder) encodePlanTree(p Plan) string {
 	pn.encodedPlans = make(map[int]bool)
 	pn.buf.Reset()
+	pn.ctes = pn.ctes[:0]
 	pn.encodePlan(p, true, kv.TiKV, 0)
+	pn.encodeCTEPlan()
 	return plancodec.Compress(pn.buf.Bytes())
+}
+
+func (pn *planEncoder) encodeCTEPlan() {
+	explainedCTEPlan := make(map[int]struct{})
+	for i := 0; i < len(pn.ctes); i++ {
+		x := (*CTEDefinition)(pn.ctes[i])
+		// skip if the CTE has been explained, the same CTE has same IDForStorage
+		if _, ok := explainedCTEPlan[x.CTE.IDForStorage]; ok {
+			continue
+		}
+		taskTypeInfo := plancodec.EncodeTaskType(true, kv.TiKV)
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(x.SCtx(), x, nil)
+		rowCount := 0.0
+		if statsInfo := x.statsInfo(); statsInfo != nil {
+			rowCount = x.statsInfo().RowCount
+		}
+		plancodec.EncodePlanNode(0, x.CTE.IDForStorage, plancodec.TypeCTEDefinition, rowCount, taskTypeInfo, x.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
+		pn.encodePlan(x.SeedPlan, true, kv.TiKV, 1)
+		if x.RecurPlan != nil {
+			pn.encodePlan(x.RecurPlan, true, kv.TiKV, 1)
+		}
+		explainedCTEPlan[x.CTE.IDForStorage] = struct{}{}
+	}
 }
 
 func (pn *planEncoder) encodePlan(p Plan, isRoot bool, store kv.StoreType, depth int) {
@@ -102,6 +129,8 @@ func (pn *planEncoder) encodePlan(p Plan, isRoot bool, store kv.StoreType, depth
 		if copPlan.tablePlan != nil {
 			pn.encodePlan(copPlan.tablePlan, false, store, depth)
 		}
+	case *PhysicalCTE:
+		pn.ctes = append(pn.ctes, copPlan)
 	}
 }
 
@@ -120,10 +149,10 @@ type planDigester struct {
 }
 
 // NormalizePlan is used to normalize the plan and generate plan digest.
-func NormalizePlan(p Plan) (normalized, digest string) {
+func NormalizePlan(p Plan) (normalized string, digest *parser.Digest) {
 	selectPlan := getSelectPlan(p)
 	if selectPlan == nil {
-		return "", ""
+		return "", parser.NewDigest(nil)
 	}
 	d := digesterPool.Get().(*planDigester)
 	defer digesterPool.Put(d)
@@ -134,7 +163,7 @@ func NormalizePlan(p Plan) (normalized, digest string) {
 		panic(err)
 	}
 	d.buf.Reset()
-	digest = fmt.Sprintf("%x", d.hasher.Sum(nil))
+	digest = parser.NewDigest(d.hasher.Sum(nil))
 	d.hasher.Reset()
 	return
 }
