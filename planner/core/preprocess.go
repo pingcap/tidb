@@ -134,6 +134,7 @@ type PreprocessorReturn struct {
 	// LastSnapshotTS is the last evaluated snapshotTS if any
 	// otherwise it defaults to zero
 	LastSnapshotTS uint64
+	TxnScope       string
 	InfoSchema     infoschema.InfoSchema
 }
 
@@ -1471,8 +1472,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 				return ts, nil
 			}
 			p.LastSnapshotTS = ts
-			p.ExplicitStaleness = true
-			p.enableTxnCtxStaleness()
+			p.setStalenessReturn()
 		}
 	}
 	if node != nil {
@@ -1489,8 +1489,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 				return calculateTsExpr(ctx, node)
 			}
 			p.LastSnapshotTS = ts
-			p.ExplicitStaleness = true
-			p.enableTxnCtxStaleness()
+			p.setStalenessReturn()
 		}
 	}
 	if p.LastSnapshotTS != ts {
@@ -1519,8 +1518,8 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 	return p.InfoSchema
 }
 
-func (p *preprocessor) enableTxnCtxStaleness() {
+func (p *preprocessor) setStalenessReturn() {
 	_, txnScope := config.GetTxnScopeFromConfig()
-	p.ctx.GetSessionVars().TxnCtx.TxnScope = txnScope
-	p.ctx.GetSessionVars().TxnCtx.IsStaleness = true
+	p.ExplicitStaleness = true
+	p.TxnScope = txnScope
 }

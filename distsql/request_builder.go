@@ -47,6 +47,7 @@ type RequestBuilder struct {
 
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
+	builder.setMatchStoreLabels()
 	err := builder.verifyTxnScope()
 	if err != nil {
 		builder.err = err
@@ -173,6 +174,16 @@ func (builder *RequestBuilder) SetStartTS(startTS uint64) *RequestBuilder {
 	return builder
 }
 
+// SetTxnScope sets txnScope from giving txnScope or TxnCtx
+func (builder *RequestBuilder) SetTxnScope(txnScope string, sv *variable.SessionVars) *RequestBuilder {
+	if sv.InTxn() {
+		builder.txnScope = sv.TxnCtx.TxnScope
+	} else {
+		builder.txnScope = txnScope
+	}
+	return builder
+}
+
 // SetDesc sets "Desc" for "kv.Request".
 func (builder *RequestBuilder) SetDesc(desc bool) *RequestBuilder {
 	builder.Request.Desc = desc
@@ -229,17 +240,17 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.TaskID = sv.StmtCtx.TaskID
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.GetReplicaRead()
-	builder.txnScope = sv.TxnCtx.TxnScope
-	builder.IsStaleness = sv.TxnCtx.IsStaleness
-	if builder.IsStaleness && builder.txnScope != kv.GlobalTxnScope {
-		builder.MatchStoreLabels = []*metapb.StoreLabel{
-			{
-				Key:   placement.DCLabelKey,
-				Value: builder.txnScope,
-			},
-		}
-	}
 	builder.SetResourceGroupTag(sv.StmtCtx)
+	return builder
+}
+
+// SetIsStaleness sets IsStaleness by giving isStaleness or txnCtx
+func (builder *RequestBuilder) SetIsStaleness(isStaleness bool, sv *variable.SessionVars) *RequestBuilder {
+	if sv.InTxn() {
+		builder.IsStaleness = sv.TxnCtx.IsStaleness
+	} else {
+		builder.IsStaleness = isStaleness
+	}
 	return builder
 }
 
@@ -281,6 +292,17 @@ func (builder *RequestBuilder) SetResourceGroupTag(sc *stmtctx.StatementContext)
 		builder.Request.ResourceGroupTag = sc.GetResourceGroupTag()
 	}
 	return builder
+}
+
+func (builder *RequestBuilder) setMatchStoreLabels() {
+	if builder.IsStaleness && builder.txnScope != kv.GlobalTxnScope {
+		builder.MatchStoreLabels = []*metapb.StoreLabel{
+			{
+				Key:   placement.DCLabelKey,
+				Value: builder.txnScope,
+			},
+		}
+	}
 }
 
 func (builder *RequestBuilder) verifyTxnScope() error {
