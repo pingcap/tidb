@@ -746,6 +746,7 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	function, err = NewFunction(mock.NewContext(), ast.StrToDate, types.NewFieldType(mysql.TypeDatetime), stringColumn, stringColumn)
 	c.Assert(err, IsNil)
 	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_StrToDateDatetime)
+	exprs = append(exprs, function)
 
 	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeDouble), realColumn)
 	c.Assert(err, IsNil)
@@ -753,7 +754,6 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 
 	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeLonglong), intColumn)
 	c.Assert(err, IsNil)
-
 	exprs = append(exprs, function)
 
 	canPush := CanExprsPushDown(sc, exprs, client, kv.TiFlash)
