@@ -60,7 +60,7 @@ var (
 	TiKVForwardRequestCounter              *prometheus.CounterVec
 	TiKVTSFutureWaitDuration               prometheus.Histogram
 	TiKVSafeTSUpdateCounter                *prometheus.CounterVec
-	TiKVSafeTSUpdateStats                  *prometheus.GaugeVec
+	TiKVSafeTSGapHistogram                 *prometheus.HistogramVec
 	TiKVReplicaSelectorFailureCounter      *prometheus.CounterVec
 	TiKVRequestRetryTimesHistogram         prometheus.Histogram
 	TiKVTxnCommitBackoffSeconds            prometheus.Histogram
@@ -428,13 +428,15 @@ func initMetrics(namespace, subsystem string) {
 			Help:      "Counter of tikv safe_ts being updated.",
 		}, []string{LblResult, LblStore})
 
-	TiKVSafeTSUpdateStats = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
+	TiKVSafeTSGapHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
-			Name:      "safets_update_stats",
-			Help:      "stat of tikv updating safe_ts stats",
+			Name:      "safets_gap_seconds",
+			Help:      "Histogram of the gap between SafeTS and current time.",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2.0, 24),
 		}, []string{LblStore})
+
 	TiKVReplicaSelectorFailureCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: namespace,
@@ -522,7 +524,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVForwardRequestCounter)
 	prometheus.MustRegister(TiKVTSFutureWaitDuration)
 	prometheus.MustRegister(TiKVSafeTSUpdateCounter)
-	prometheus.MustRegister(TiKVSafeTSUpdateStats)
+	prometheus.MustRegister(TiKVSafeTSGapHistogram)
 	prometheus.MustRegister(TiKVReplicaSelectorFailureCounter)
 	prometheus.MustRegister(TiKVRequestRetryTimesHistogram)
 	prometheus.MustRegister(TiKVTxnCommitBackoffSeconds)
