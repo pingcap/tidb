@@ -2252,6 +2252,9 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			isView = table.Meta().IsView()
 			isSequence = table.Meta().IsSequence()
 		}
+	case ast.ShowConfig:
+		privErr := ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ConfigPriv, "", "", "", privErr)
 	case ast.ShowCreateView:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
