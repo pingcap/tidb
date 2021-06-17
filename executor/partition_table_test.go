@@ -684,6 +684,27 @@ func (s *partitionTableSuite) TestDynamicPruningUnderIndexJoin(c *C) {
 		tk.MustQuery(`select /*+ INL_JOIN(touter, tnormal) */ tnormal.* from touter join tnormal use index(idx_b) on touter.b = tnormal.b`).Sort().Rows())
 }
 
+func (s *partitionTableSuite) TestIssue25527(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_issue_25527")
+	tk.MustExec("use test_issue_25527")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+
+	tk.MustExec(`CREATE TABLE t (
+		  col1 tinyint(4) primary key
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH( COL1 DIV 80 )
+		PARTITIONS 6`)
+	tk.MustExec(`insert into t values(-128), (107)`)
+	tk.MustExec(`prepare stmt from 'select col1 from t where col1 in (?, ?, ?)'`)
+	tk.MustExec(`set @a=-128, @b=107, @c=-128`)
+	tk.MustQuery(`execute stmt using @a,@b,@c`).Sort().Check(testkit.Rows("-128", "107"))
+}
+
 func (s *partitionTableSuite) TestBatchGetforRangeandListPartitionTable(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
