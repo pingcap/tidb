@@ -200,7 +200,12 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 	}
 	for _, kv := range sessionVars {
 		s.ctx.GetSessionVars().Users[kv.key] = types.NewDatum(kv.val)
-		tp := types.NewFieldType(mysql.TypeVarString)
+		var tp *types.FieldType
+		if _, ok := kv.val.(*types.MyDecimal); ok {
+			tp = types.NewFieldType(mysql.TypeDatetime)
+		} else {
+			tp = types.NewFieldType(mysql.TypeVarString)
+		}
 		types.DefaultParamTypeForValue(kv.val, tp)
 		s.ctx.GetSessionVars().UserVarTypes[kv.key] = tp
 	}
