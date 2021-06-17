@@ -1008,9 +1008,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like,
 		ast.Plus, ast.Minus, ast.Div, ast.Mul, /*ast.Mod,*/
 		ast.If, ast.Ifnull, ast.Case,
-		ast.Concat, ast.ConcatWS,
-		ast.Year, ast.Month, ast.Day,
-		ast.DateDiff, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
+		ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
 		ast.Sqrt,
 		ast.JSONLength:
 		return true
