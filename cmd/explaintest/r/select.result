@@ -219,7 +219,7 @@ a
 1
 1
 select count(*), 1 from t;
-count(1)	1
+count(*)	1
 3	1
 select *, 1 from t;
 c1	c2	1

@@ -3535,6 +3535,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		defer func() {
 			b.capFlag &= ^canExpandAST
 			b.capFlag &= ^renameView
+			b.capFlag &= ^resotreField
 		}()
 		plan, err := b.Build(ctx, v.Select)
 		if err != nil {
