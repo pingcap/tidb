@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 // SchemaChecker is used for checking schema-validity.
