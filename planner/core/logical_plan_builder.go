@@ -1032,7 +1032,9 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(ctx context.Contex
 		// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
 		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name, nil
 	}
-	if _, ok := field.Expr.(*ast.AggregateFuncExpr); ok {
+	// When the query is `create view as (select * from (select some_agg_func() ...))`,
+	// the column name should be restored. Otherwise the unfolded wildcard will use wrong column name.
+	if b.capFlag&resotreField != 0 {
 		var restoreFlag format.RestoreFlags
 		var sb strings.Builder
 		if err := field.Expr.Restore(format.NewRestoreCtx(restoreFlag, &sb)); err != nil {
