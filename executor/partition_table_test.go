@@ -2979,3 +2979,13 @@ PARTITION BY RANGE (a) (
 	s.testData.GetTestCases(c, &input, &output)
 	s.verifyPartitionResult(tk, input, output)
 }
+
+func (s *partitionTableSuite) TestIssue25528(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id int primary key, balance DECIMAL(10, 2), balance2 DECIMAL(10, 2) GENERATED ALWAYS AS (-balance) VIRTUAL, created_at TIMESTAMP) PARTITION BY HASH(id) PARTITIONS 8")
+	tk.MustExec("insert into t1(id, balance, created_at) values(1, 100, '2021-06-17 22:35:20')")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t1 where id = 1 for update").Check(testkit.Rows("1 100.00 -100.00 2021-06-17 22:35:20"))
+}
