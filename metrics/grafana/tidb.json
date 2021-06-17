@@ -5426,10 +5426,10 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(tidb_tikvclient_safets_gap_seconds{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (instance)",
+              "expr": "sum(tidb_tikvclient_safets_gap_seconds{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (instance, store)",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "{{instance}}",
+              "legendFormat": "{{instance}}-store-{{store}}",
               "refId": "A",
               "step": 60
             }
