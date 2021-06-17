@@ -97,16 +97,14 @@ type CTEStorages struct {
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, explicitStaleness bool, txnScope string) *executorBuilder {
-	e := &executorBuilder{
+	return &executorBuilder{
 		ctx:               ctx,
 		is:                is,
 		Ti:                ti,
 		snapshotTS:        snapshotTS,
 		explicitStaleness: explicitStaleness,
+		txnScope:          txnScope,
 	}
-	e.txnScope = txnScope
-	return e
-
 }
 
 // MockPhysicalPlan is used to return a specified executor in when build.

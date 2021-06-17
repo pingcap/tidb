@@ -1467,9 +1467,6 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
 			return
 		}
-		if p.initedLastSnapshotTS {
-			return
-		}
 		txnCtx := p.ctx.GetSessionVars().TxnCtx
 		p.SnapshotTSEvaluator = func(sessionctx.Context) (uint64, error) {
 			return txnCtx.StartTS, nil
