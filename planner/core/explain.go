@@ -842,16 +842,16 @@ func (p *LogicalTableDual) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *DataSource) ExplainInfo() string {
+func (ds *DataSource) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	tblName := p.tableInfo.Name.O
-	if p.TableAsName != nil && p.TableAsName.O != "" {
-		tblName = p.TableAsName.O
+	tblName := ds.tableInfo.Name.O
+	if ds.TableAsName != nil && ds.TableAsName.O != "" {
+		tblName = ds.TableAsName.O
 	}
 	fmt.Fprintf(buffer, "table:%s", tblName)
-	if p.isPartition {
-		if pi := p.tableInfo.GetPartitionInfo(); pi != nil {
-			partitionName := pi.GetNameByID(p.physicalTableID)
+	if ds.isPartition {
+		if pi := ds.tableInfo.GetPartitionInfo(); pi != nil {
+			partitionName := pi.GetNameByID(ds.physicalTableID)
 			fmt.Fprintf(buffer, ", partition:%s", partitionName)
 		}
 	}

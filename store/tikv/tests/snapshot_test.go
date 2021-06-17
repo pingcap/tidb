@@ -23,11 +23,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/store/tikv"
-	tikverr "github.com/pingcap/tidb/store/tikv/error"
-	"github.com/pingcap/tidb/store/tikv/logutil"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	tikverr "github.com/tikv/client-go/v2/error"
+	"github.com/tikv/client-go/v2/logutil"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
 )
 
@@ -136,7 +136,7 @@ func (s *testSnapshotSuite) TestSnapshotCache(c *C) {
 	_, err := snapshot.BatchGet(context.Background(), [][]byte{[]byte("x"), []byte("y")})
 	c.Assert(err, IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/snapshot-get-cache-fail", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/snapshot-get-cache-fail", `return(true)`), IsNil)
 	ctx := context.WithValue(context.Background(), contextKey("TestSnapshotCache"), true)
 	_, err = snapshot.Get(ctx, []byte("x"))
 	c.Assert(err, IsNil)
@@ -144,7 +144,7 @@ func (s *testSnapshotSuite) TestSnapshotCache(c *C) {
 	_, err = snapshot.Get(ctx, []byte("y"))
 	c.Assert(tikverr.IsErrNotFound(err), IsTrue)
 
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/snapshot-get-cache-fail"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/snapshot-get-cache-fail"), IsNil)
 }
 
 func (s *testSnapshotSuite) TestBatchGetNotExist(c *C) {
@@ -279,12 +279,12 @@ func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
 	snapshot.RecordBackoffInfo(bo)
 	expect := "Get:{num_rpc:4, total_time:2s},txnLockFast_backoff:{num:2, total_time:60ms}"
 	c.Assert(snapshot.FormatStats(), Equals, expect)
-	detail := &pb.ExecDetailsV2{
-		TimeDetail: &pb.TimeDetail{
+	detail := &kvrpcpb.ExecDetailsV2{
+		TimeDetail: &kvrpcpb.TimeDetail{
 			WaitWallTimeMs:    100,
 			ProcessWallTimeMs: 100,
 		},
-		ScanDetailV2: &pb.ScanDetailV2{
+		ScanDetailV2: &kvrpcpb.ScanDetailV2{
 			ProcessedVersions:         10,
 			TotalVersions:             15,
 			RocksdbBlockReadCount:     20,

@@ -146,4 +146,5 @@ const (
 	LblInTxn       = "in_txn"
 	LblVersion     = "version"
 	LblHash        = "hash"
+	LblCTEType     = "cte_type"
 )

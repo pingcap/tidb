@@ -249,7 +249,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = core.Preprocess(se, stmt, s.is)
+		err = core.Preprocess(se, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
 		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
@@ -1427,7 +1427,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSplitAvg(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = core.Preprocess(se, stmt, s.is)
+		err = core.Preprocess(se, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
 		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil, comment)
@@ -1720,8 +1720,8 @@ func (s *testPlanSuite) TestEnumIndex(c *C) {
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(e enum('c','b','a'), index idx(e))")
-	tk.MustExec("insert into t values(1),(2),(3);")
+	tk.MustExec("create table t(e enum('c','b','a',''), index idx(e))")
+	tk.MustExec("insert ignore into t values(0),(1),(2),(3),(4);")
 
 	for i, ts := range input {
 		s.testData.OnRecord(func() {

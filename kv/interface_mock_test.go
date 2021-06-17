@@ -16,9 +16,10 @@ package kv
 import (
 	"context"
 
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 // mockTxn is a txn that returns a retryAble error when called Commit.
@@ -210,6 +211,10 @@ func (s *mockStorage) GetMemCache() MemManager {
 	return nil
 }
 
+func (s *mockStorage) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
+	return nil, nil
+}
+
 func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
 	return 0
 }
@@ -255,3 +260,7 @@ func (s *mockSnapshot) IterReverse(k Key) (Iterator, error) {
 }
 
 func (s *mockSnapshot) SetOption(opt int, val interface{}) {}
+
+func (s *mockSnapshot) GetLockWaits() []deadlockpb.WaitForEntry {
+	return nil
+}

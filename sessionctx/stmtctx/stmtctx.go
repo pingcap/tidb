@@ -24,11 +24,11 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -168,6 +168,9 @@ type StatementContext struct {
 	stmtCache map[StmtCacheKey]interface{}
 	// resourceGroupTag cache for the current statement resource group tag.
 	resourceGroupTag atomic.Value
+	// Map to store all CTE storages of current SQL.
+	// Will clean up at the end of the execution.
+	CTEStorageMap interface{}
 }
 
 // StmtHints are SessionVars related sql hints.
