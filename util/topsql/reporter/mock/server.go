@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/util/logutil"
@@ -19,7 +20,11 @@ type mockAgentServer struct {
 	grpcServer *grpc.Server
 	sqlMetas   map[string]string
 	planMetas  map[string]string
-	records    []*tipb.CPUTimeRecord
+	records    [][]*tipb.CPUTimeRecord
+	hang       struct {
+		beginTime atomic.Value // time.Time
+		endTime   atomic.Value // time.Time
+	}
 }
 
 // StartMockAgentServer starts the mock agent server.
@@ -36,6 +41,8 @@ func StartMockAgentServer() (*mockAgentServer, error) {
 		sqlMetas:   make(map[string]string, 5000),
 		planMetas:  make(map[string]string, 5000),
 	}
+	agentServer.hang.beginTime.Store(time.Now())
+	agentServer.hang.endTime.Store(time.Now())
 	tipb.RegisterTopSQLAgentServer(server, agentServer)
 
 	go func() {
@@ -48,23 +55,43 @@ func StartMockAgentServer() (*mockAgentServer, error) {
 	return agentServer, nil
 }
 
+func (svr *mockAgentServer) HangFromNow(duration time.Duration) {
+	now := time.Now()
+	svr.hang.beginTime.Store(now)
+	svr.hang.endTime.Store(now.Add(duration))
+}
+
+// mayHang will check the hanging period, and ensure to sleep through it
+func (svr *mockAgentServer) mayHang() {
+	now := time.Now()
+	beginTime := svr.hang.beginTime.Load().(time.Time)
+	endTime := svr.hang.endTime.Load().(time.Time)
+	if now.Before(endTime) && now.After(beginTime) {
+		time.Sleep(endTime.Sub(now))
+	}
+}
+
 func (svr *mockAgentServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportCPUTimeRecordsServer) error {
+	records := make([]*tipb.CPUTimeRecord, 0, 10)
 	for {
+		svr.mayHang()
 		req, err := stream.Recv()
 		if err == io.EOF {
 			break
 		} else if err != nil {
 			return err
 		}
-		svr.Lock()
-		svr.records = append(svr.records, req)
-		svr.Unlock()
+		records = append(records, req)
 	}
+	svr.Lock()
+	svr.records = append(svr.records, records)
+	svr.Unlock()
 	return stream.SendAndClose(&tipb.EmptyResponse{})
 }
 
 func (svr *mockAgentServer) ReportSQLMeta(stream tipb.TopSQLAgent_ReportSQLMetaServer) error {
 	for {
+		svr.mayHang()
 		req, err := stream.Recv()
 		if err == io.EOF {
 			break
@@ -80,6 +107,7 @@ func (svr *mockAgentServer) ReportSQLMeta(stream tipb.TopSQLAgent_ReportSQLMetaS
 
 func (svr *mockAgentServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMetaServer) error {
 	for {
+		svr.mayHang()
 		req, err := stream.Recv()
 		if err == io.EOF {
 			break
@@ -93,11 +121,14 @@ func (svr *mockAgentServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMet
 	return stream.SendAndClose(&tipb.EmptyResponse{})
 }
 
-func (svr *mockAgentServer) WaitServerCollect(recordCount int, timeout time.Duration) {
+func (svr *mockAgentServer) WaitCollectCnt(cnt int, timeout time.Duration) {
 	start := time.Now()
+	svr.Lock()
+	old := len(svr.records)
+	svr.Unlock()
 	for {
 		svr.Lock()
-		if len(svr.records) >= recordCount {
+		if len(svr.records)-old >= cnt {
 			svr.Unlock()
 			return
 		}
@@ -109,28 +140,42 @@ func (svr *mockAgentServer) WaitServerCollect(recordCount int, timeout time.Dura
 	}
 }
 
-func (svr *mockAgentServer) GetSQLMetas() map[string]string {
-	svr.Lock()
-	m := svr.sqlMetas
-	svr.sqlMetas = make(map[string]string)
-	svr.Unlock()
-	return m
+func (svr *mockAgentServer) GetSQLMetaByDigestBlocking(digest []byte, timeout time.Duration) (normalizedSQL string, exist bool) {
+	start := time.Now()
+	for {
+		svr.Lock()
+		normalizedSQL, exist = svr.sqlMetas[string(digest)]
+		svr.Unlock()
+		if exist || time.Since(start) > timeout {
+			return normalizedSQL, exist
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
-func (svr *mockAgentServer) GetPlanMetas() map[string]string {
-	svr.Lock()
-	m := svr.planMetas
-	svr.planMetas = make(map[string]string)
-	svr.Unlock()
-	return m
+func (svr *mockAgentServer) GetPlanMetaByDigestBlocking(digest []byte, timeout time.Duration) (normalizedPlan string, exist bool) {
+	start := time.Now()
+	for {
+		svr.Lock()
+		normalizedPlan, exist = svr.planMetas[string(digest)]
+		svr.Unlock()
+		if exist || time.Since(start) > timeout {
+			return normalizedPlan, exist
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
-func (svr *mockAgentServer) GetRecords() []*tipb.CPUTimeRecord {
+func (svr *mockAgentServer) GetLatestRecords() []*tipb.CPUTimeRecord {
 	svr.Lock()
 	records := svr.records
-	svr.records = []*tipb.CPUTimeRecord{}
+	svr.records = [][]*tipb.CPUTimeRecord{}
 	svr.Unlock()
-	return records
+
+	if len(records) == 0 {
+		return nil
+	}
+	return records[len(records)-1]
 }
 
 func (svr *mockAgentServer) Address() string {
