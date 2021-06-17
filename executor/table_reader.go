@@ -328,7 +328,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetStreaming(e.streaming).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
 			SetFromInfoSchema(e.ctx.GetInfoSchema()).
-			SetTxnScope(e.txnScope, e.ctx.GetSessionVars()).
+			SetStoreSelectScope(e.txnScope, e.ctx.GetSessionVars()).
 			SetIsStaleness(e.isStaleness, e.ctx.GetSessionVars()).
 			SetMemTracker(e.memTracker).
 			SetStoreType(e.storeType).
