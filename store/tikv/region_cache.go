@@ -711,7 +711,7 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *Store, regionInfos []RegionInfo, scheduleReload bool, err error) {
 	metrics.RegionCacheCounterWithSendFail.Add(float64(len(regionInfos)))
 	if store.storeType != TiFlash {
-		logutil.Logger(bo.GetCtx()).Info("Should not reach here, OnSendFailForBatchRegions only support TiFlash")
+		logutil.Logger(bo.GetCtx()).Warn("Should not reach here, OnSendFailForBatchRegions only support TiFlash")
 		return
 	}
 	for _, ri := range regionInfos {
