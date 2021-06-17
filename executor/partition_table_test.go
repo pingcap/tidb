@@ -2554,6 +2554,42 @@ func (s *partitionTableSuite) TestIdexMerge(c *C) {
 	}
 }
 
+func (s *partitionTableSuite) TestIssue25309(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_issue_25309")
+	tk.MustExec("use test_issue_25309")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	tk.MustExec(`CREATE TABLE tbl_500 (
+      col_20 tinyint(4) NOT NULL,
+      col_21 varchar(399) CHARACTER SET utf8 COLLATE utf8_unicode_ci DEFAULT NULL,
+      col_22 json DEFAULT NULL,
+      col_23 blob DEFAULT NULL,
+      col_24 mediumint(9) NOT NULL,
+      col_25 float NOT NULL DEFAULT '7306.384497585912',
+      col_26 binary(196) NOT NULL,
+      col_27 timestamp DEFAULT '1976-12-08 00:00:00',
+      col_28 bigint(20) NOT NULL,
+      col_29 tinyint(1) NOT NULL DEFAULT '1',
+      PRIMARY KEY (col_29,col_20) /*T![clustered_index] NONCLUSTERED */,
+      KEY idx_7 (col_28,col_20,col_26,col_27,col_21,col_24),
+      KEY idx_8 (col_25,col_29,col_24)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+
+	tk.MustExec(`CREATE TABLE tbl_600 (
+      col_60 int(11) NOT NULL DEFAULT '-776833487',
+      col_61 tinyint(1) NOT NULL DEFAULT '1',
+      col_62 tinyint(4) NOT NULL DEFAULT '-125',
+      PRIMARY KEY (col_62,col_60,col_61) /*T![clustered_index] NONCLUSTERED */,
+      KEY idx_19 (col_60)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci
+    PARTITION BY HASH( col_60 )
+    PARTITIONS 1`)
+
+	tk.MustExec(`insert into tbl_500 select -34, 'lrfGPPPUuZjtT', '{"obj1": {"sub_obj0": 100}}', 0x6C47636D, 1325624, 7306.3843, 'abc', '1976-12-08', 4757891479624162031, 0`)
+	tk.MustQuery(`select tbl_5.* from tbl_500 tbl_5 where col_24 in ( select col_62 from tbl_600 where tbl_5.col_26 < 'hSvHLdQeGBNIyOFXStV' )`).Check(testkit.Rows())
+}
+
 func (s *globalIndexSuite) TestGlobalIndexScan(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists p")
