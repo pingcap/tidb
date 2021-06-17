@@ -5392,12 +5392,12 @@
           "fill": 1,
           "grid": {},
           "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 0,
-            "y": 36
+            "h": 7,
+            "w": 8,
+            "x": 8,
+            "y": 53
           },
-          "id": 8387,
+          "id": 225,
           "legend": {
             "alignAsTable": true,
             "avg": false,
