@@ -129,9 +129,16 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.dataForTableTiFlashReplica(sctx, dbs)
 		case infoschema.TableStatementsSummary,
 			infoschema.TableStatementsSummaryHistory,
+			infoschema.TableStatementsSummaryEvicted,
 			infoschema.ClusterTableStatementsSummary,
-			infoschema.ClusterTableStatementsSummaryHistory:
+			infoschema.ClusterTableStatementsSummaryHistory,
+			infoschema.ClusterTableStatementsSummaryEvicted:
 			err = e.setDataForStatementsSummary(sctx, e.table.Name.O)
+<<<<<<< HEAD
+=======
+		case infoschema.TablePlacementPolicy:
+			err = e.setDataForPlacementPolicy(sctx)
+>>>>>>> 03847a8de... executor, infoschema: Add cluster_statements_summary_evicted table to TiDB (#25418)
 		case infoschema.TableClientErrorsSummaryGlobal,
 			infoschema.TableClientErrorsSummaryByUser,
 			infoschema.TableClientErrorsSummaryByHost:
@@ -1653,11 +1660,20 @@ func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, 
 	case infoschema.TableStatementsSummaryHistory,
 		infoschema.ClusterTableStatementsSummaryHistory:
 		e.rows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum(user, isSuper)
+	case infoschema.TableStatementsSummaryEvicted,
+		infoschema.ClusterTableStatementsSummaryEvicted:
+		e.rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
 	}
 	switch tableName {
 	case infoschema.ClusterTableStatementsSummary,
+<<<<<<< HEAD
 		infoschema.ClusterTableStatementsSummaryHistory:
 		rows, err := infoschema.AppendHostInfoToRows(e.rows)
+=======
+		infoschema.ClusterTableStatementsSummaryHistory,
+		infoschema.ClusterTableStatementsSummaryEvicted:
+		rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
+>>>>>>> 03847a8de... executor, infoschema: Add cluster_statements_summary_evicted table to TiDB (#25418)
 		if err != nil {
 			return err
 		}
@@ -1742,6 +1758,115 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 	return nil
 }
 
+<<<<<<< HEAD
+=======
+func (e *memtableRetriever) setDataForTiDBTrx(ctx sessionctx.Context) {
+	sm := ctx.GetSessionManager()
+	if sm == nil {
+		return
+	}
+
+	loginUser := ctx.GetSessionVars().User
+	hasProcessPriv := hasPriv(ctx, mysql.ProcessPriv)
+	infoList := sm.ShowTxnList()
+	for _, info := range infoList {
+		// If you have the PROCESS privilege, you can see all running transactions.
+		// Otherwise, you can see only your own transactions.
+		if !hasProcessPriv && loginUser != nil && info.Username != loginUser.Username {
+			continue
+		}
+		e.rows = append(e.rows, info.ToDatum())
+	}
+}
+
+func (e *memtableRetriever) setDataForClusterTiDBTrx(ctx sessionctx.Context) error {
+	e.setDataForTiDBTrx(ctx)
+	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
+	if err != nil {
+		return err
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForDeadlock(ctx sessionctx.Context) error {
+	if !hasPriv(ctx, mysql.ProcessPriv) {
+		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
+
+	e.rows = deadlockhistory.GlobalDeadlockHistory.GetAllDatum()
+	return nil
+}
+
+func (e *memtableRetriever) setDataForClusterDeadlock(ctx sessionctx.Context) error {
+	err := e.setDataForDeadlock(ctx)
+	if err != nil {
+		return err
+	}
+	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
+	if err != nil {
+		return err
+	}
+	e.rows = rows
+	return nil
+}
+
+type hugeMemTableRetriever struct {
+	dummyCloser
+	table       *model.TableInfo
+	columns     []*model.ColumnInfo
+	retrieved   bool
+	initialized bool
+	rows        [][]types.Datum
+	dbs         []*model.DBInfo
+	dbsIdx      int
+	tblIdx      int
+}
+
+// retrieve implements the infoschemaRetriever interface
+func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.retrieved {
+		return nil, nil
+	}
+
+	if !e.initialized {
+		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
+		dbs := is.AllSchemas()
+		sort.Sort(infoschema.SchemasSorter(dbs))
+		e.dbs = dbs
+		e.initialized = true
+		e.rows = make([][]types.Datum, 0, 1024)
+	}
+
+	var err error
+	switch e.table.Name.O {
+	case infoschema.TableColumns:
+		err = e.setDataForColumns(ctx, sctx)
+	}
+	if err != nil {
+		return nil, err
+	}
+	e.retrieved = len(e.rows) == 0
+
+	return adjustColumns(e.rows, e.columns, e.table), nil
+}
+
+func adjustColumns(input [][]types.Datum, outColumns []*model.ColumnInfo, table *model.TableInfo) [][]types.Datum {
+	if len(outColumns) == len(table.Columns) {
+		return input
+	}
+	rows := make([][]types.Datum, len(input))
+	for i, fullRow := range input {
+		row := make([]types.Datum, len(outColumns))
+		for j, col := range outColumns {
+			row[j] = fullRow[col.Offset]
+		}
+		rows[i] = row
+	}
+	return rows
+}
+
+>>>>>>> 03847a8de... executor, infoschema: Add cluster_statements_summary_evicted table to TiDB (#25418)
 // TiFlashSystemTableRetriever is used to read system table from tiflash.
 type TiFlashSystemTableRetriever struct {
 	dummyCloser

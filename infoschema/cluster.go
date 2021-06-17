@@ -34,6 +34,15 @@ const (
 	ClusterTableStatementsSummary = "CLUSTER_STATEMENTS_SUMMARY"
 	// ClusterTableStatementsSummaryHistory is the string constant of cluster statement summary history table.
 	ClusterTableStatementsSummaryHistory = "CLUSTER_STATEMENTS_SUMMARY_HISTORY"
+<<<<<<< HEAD
+=======
+	// ClusterTableStatementsSummaryEvicted is the string constant of cluster statement summary evict table.
+	ClusterTableStatementsSummaryEvicted = "CLUSTER_STATEMENTS_SUMMARY_EVICTED"
+	// ClusterTableTiDBTrx is the string constant of cluster transaction running table.
+	ClusterTableTiDBTrx = "CLUSTER_TIDB_TRX"
+	// ClusterTableDeadlocks is the string constant of cluster dead lock table.
+	ClusterTableDeadlocks = "CLUSTER_DEADLOCKS"
+>>>>>>> 03847a8de... executor, infoschema: Add cluster_statements_summary_evicted table to TiDB (#25418)
 )
 
 // memTableToClusterTables means add memory table to cluster table.
@@ -42,6 +51,12 @@ var memTableToClusterTables = map[string]string{
 	TableProcesslist:              ClusterTableProcesslist,
 	TableStatementsSummary:        ClusterTableStatementsSummary,
 	TableStatementsSummaryHistory: ClusterTableStatementsSummaryHistory,
+<<<<<<< HEAD
+=======
+	TableStatementsSummaryEvicted: ClusterTableStatementsSummaryEvicted,
+	TableTiDBTrx:                  ClusterTableTiDBTrx,
+	TableDeadlocks:                ClusterTableDeadlocks,
+>>>>>>> 03847a8de... executor, infoschema: Add cluster_statements_summary_evicted table to TiDB (#25418)
 }
 
 func init() {
