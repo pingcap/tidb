@@ -333,11 +333,13 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 	return nil
 }
 
+// SetTxnScope sets request TxnScope
 func (builder *RequestBuilder) SetTxnScope(scope string) *RequestBuilder {
 	builder.TxnScope = scope
 	return builder
 }
 
+// SetIsStaleness sets request IsStaleness
 func (builder *RequestBuilder) SetIsStaleness(is bool) *RequestBuilder {
 	builder.IsStaleness = is
 	return builder

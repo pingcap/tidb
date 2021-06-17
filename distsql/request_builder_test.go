@@ -14,6 +14,7 @@
 package distsql
 
 import (
+	"github.com/tikv/client-go/v2/oracle"
 	"os"
 	"testing"
 
@@ -323,6 +324,7 @@ func (s *testSuite) TestRequestBuilder1(c *C) {
 		SyncLog:        false,
 		Streaming:      false,
 		ReplicaRead:    kv.ReplicaReadLeader,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
