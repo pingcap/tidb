@@ -65,8 +65,17 @@ func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 		plan = TurnNominalSortIntoProj(p, p.OnlyColumn, p.ByItems)
 	case *PhysicalUnionAll:
 		plan = injectProjBelowUnion(p)
+	case *PhysicalShuffle:
+		plan = rebuildShuffle(p)
 	}
 	return plan
+}
+
+func rebuildShuffle(p *PhysicalShuffle) *PhysicalShuffle {
+	if _, ok := p.children[0].(*PhysicalHashAgg); ok {
+		return optimizeByShuffle4HashAgg(p.children[0].(*PhysicalHashAgg), p.ctx)
+	}
+	return p
 }
 
 func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {

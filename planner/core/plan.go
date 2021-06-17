@@ -104,6 +104,10 @@ func optimizeByShuffle(tsk task, ctx sessionctx.Context) task {
 		if shuffle := optimizeByShuffle4StreamAgg(p, ctx); shuffle != nil {
 			return shuffle.attach2Task(tsk)
 		}
+	case *PhysicalHashAgg:
+		if shuffle := optimizeByShuffle4HashAgg(p, ctx); shuffle != nil {
+			return shuffle.attach2Task(tsk)
+		}
 	}
 	return tsk
 }
@@ -182,6 +186,32 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		ByItemArrays: [][]expression.Expression{cloneExprs(pp.GroupByItems)},
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle
+}
+
+func optimizeByShuffle4HashAgg(pp *PhysicalHashAgg, ctx sessionctx.Context) *PhysicalShuffle {
+	concurrency := ctx.GetSessionVars().HashAggFinalConcurrency()
+	if concurrency <= 1 {
+		return nil
+	}
+	if len(pp.GroupByItems) == 0 {
+		return nil
+	}
+	partitionBy := make([]*expression.Column, 0, len(pp.GroupByItems))
+	for _, item := range pp.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			partitionBy = append(partitionBy, col)
+		}
+	}
+	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+	Shuffle := PhysicalShuffle{
+		Concurrency:  concurrency,
+		Tails:        nil,
+		DataSources:  []PhysicalPlan{pp.Children()[0]},
+		SplitterType: PartitionHashSplitterType,
+		ByItemArrays: [][]expression.Expression{cloneExprs(pp.GroupByItems)},
+	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
+	Shuffle.SetChildren(pp)
+	return Shuffle
 }
 
 func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx sessionctx.Context) *PhysicalShuffle {

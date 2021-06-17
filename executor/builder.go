@@ -3937,7 +3937,11 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 				Receiver: (unsafe.Pointer)(receivers[j]),
 			}.Init(b.ctx, dataSource.Stats(), dataSource.SelectBlockOffset(), nil)
 			stub.SetSchema(dataSource.Schema())
-			v.Tails[j].SetChildren(stub)
+			if v.Tails != nil {
+				v.Tails[j].SetChildren(stub)
+			} else {
+				head.SetChildren(stub)
+			}
 		}
 
 		w.childExec = b.build(head)
