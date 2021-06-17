@@ -124,11 +124,14 @@ func (s *testLogSuite) TestSetLevel(c *C) {
 }
 
 func (s *testLogSuite) TestGrpcLoggerCreation(c *C) {
-	conf := NewLogConfig("info", DefaultLogFormat, "", EmptyFileLogConfig, false)
+	level := "info"
+	conf := NewLogConfig(level, DefaultLogFormat, "", EmptyFileLogConfig, false)
 	copiedConfig := *conf
 	// assert that the new conf's address not same as the old one
 	c.Assert(&copiedConfig != conf, Equals, true)
 	_, p, err := initGRPCLogger(conf)
+	// assert after init grpc logger, the original conf is not changed
+	c.Assert(conf.Level, Equals, level)
 	c.Assert(err, IsNil)
 	c.Assert(p.Level.Level(), Equals, zap.ErrorLevel)
 	os.Setenv("GRPC_DEBUG", "1")
@@ -139,11 +142,14 @@ func (s *testLogSuite) TestGrpcLoggerCreation(c *C) {
 }
 
 func (s *testLogSuite) TestSlowQueryLoggerCreation(c *C) {
-	conf := NewLogConfig("warn", DefaultLogFormat, "", EmptyFileLogConfig, false)
+	level := "warn"
+	conf := NewLogConfig(level, DefaultLogFormat, "", EmptyFileLogConfig, false)
 	copiedConfig := *conf
 	// assert that the new conf's address not same as the old one
 	c.Assert(&copiedConfig != conf, Equals, true)
 	_, prop, err := newSlowQueryLogger(conf)
+	// assert after init slow query logger, the original conf is not changed
+	c.Assert(conf.Level, Equals, level)
 	c.Assert(err, IsNil)
 	c.Assert(prop.Level.String(), Equals, conf.Level)
 }
