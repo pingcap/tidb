@@ -1,5 +1,7 @@
 module github.com/pingcap/tidb
 
+replace github.com/tikv/client-go/v2 v2.0.0-20210616060203-94f269a0f96a => github.com/JmPotato/client-go/v2 v2.0.0-20210617101743-21ab26e8f2e7
+
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/DATA-DOG/go-sqlmock v1.5.0 // indirect
