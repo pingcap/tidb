@@ -74,9 +74,11 @@ type TableReaderExecutor struct {
 	ranges []*ranger.Range
 
 	// kvRanges are only use for union scan.
-	kvRanges []kv.KeyRange
-	dagPB    *tipb.DAGRequest
-	startTS  uint64
+	kvRanges    []kv.KeyRange
+	dagPB       *tipb.DAGRequest
+	startTS     uint64
+	txnScope    string
+	isStaleness bool
 	// columns are only required by union scan and virtual column.
 	columns []*model.ColumnInfo
 
@@ -326,6 +328,8 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetStreaming(e.streaming).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
 			SetFromInfoSchema(e.ctx.GetInfoSchema()).
+			SetTxnScope(e.txnScope, e.ctx.GetSessionVars()).
+			SetIsStaleness(e.isStaleness, e.ctx.GetSessionVars()).
 			SetMemTracker(e.memTracker).
 			SetStoreType(e.storeType).
 			SetAllowBatchCop(e.batchCop).Build()
@@ -355,6 +359,8 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
+		SetTxnScope(e.txnScope, e.ctx.GetSessionVars()).
+		SetIsStaleness(e.isStaleness, e.ctx.GetSessionVars()).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		SetMemTracker(e.memTracker).

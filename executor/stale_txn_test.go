@@ -236,10 +236,21 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 
 func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`drop table if exists t2`)
 	tk.MustExec("create table t (id int primary key);")
+	tk.MustExec(`create table t1 (c int primary key, d int,e int,index idx_d(d),index idx_e(e))`)
 	defer tk.MustExec(`drop table if exists t`)
+	defer tk.MustExec(`drop table if exists t1`)
 	conf := *config.GetGlobalConfig()
 	oldConf := conf
 	defer config.StoreGlobalConfig(&oldConf)
@@ -250,35 +261,64 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 	testcases := []struct {
 		name string
 		sql  string
-		zone string
 	}{
 		{
 			name: "coprocessor read",
 			sql:  "select * from t",
-			zone: "sh",
 		},
-		//{
-		//	name:     "point get read",
-		//	sql:      "select * from t where id = 1",
-		//	txnScope: "local",
-		//	zone:     "bj",
-		//},
-		//{
-		//	name:     "batch point get read",
-		//	sql:      "select * from t where id in (1,2,3)",
-		//	txnScope: "local",
-		//	zone:     "hz",
-		//},
+		{
+			name: "point get read",
+			sql:  "select * from t where id = 1",
+		},
+		{
+			name: "batch point get read",
+			sql:  "select * from t where id in (1,2,3)",
+		},
 	}
+	failpoint.Enable("tikvclient/assertStoreLabels", fmt.Sprintf(`return("%v_%v")`, placement.DCLabelKey, "sh"))
+	failpoint.Enable("tikvclient/assertStaleReadFlag", `return(true)`)
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		failpoint.Enable("tikvclient/assertStoreLabels", fmt.Sprintf(`return("%v_%v")`, placement.DCLabelKey, "sh"))
-		failpoint.Enable("tikvclient/assertStaleReadFlag", `return(true)`)
 		// Using NOW() will cause the loss of fsp precision, so we use NOW(3) to be accurate to the millisecond.
 		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
 		tk.MustQuery(testcase.sql)
 		tk.MustExec(`commit`)
 	}
+	// assert set transaction as of timestamp with begin
+	tk.MustExec("set transaction read only AS OF TIMESTAMP NOW(3);")
+	tk.MustExec("begin")
+	tk.MustExec("select * from t")
+	tk.MustExec("commit")
+	// assert transaction as of timestamp with select statement
+	tk.MustExec("set transaction read only AS OF TIMESTAMP NOW(3);")
+	tk.MustExec("select * from t")
+	// assert select as of statement
+	tk.MustExec("select * from t AS OF TIMESTAMP NOW(3);")
+
+	tk.MustExec(`insert into t1 (c,d,e) values (1,1,1);`)
+	tk.MustExec(`insert into t1 (c,d,e) values (2,3,5);`)
+	time1 := time.Now()
+	tsv := time1.Format("2006-1-2 15:04:05.000")
+	tk.MustExec(`insert into t1 (c,d,e) values (3,3,7);`)
+	tk.MustExec(`insert into t1 (c,d,e) values (4,0,5);`)
+	tk.MustExec(`insert into t1 (c,d,e) values (5,0,5);`)
+	// IndexLookUp Reader Executor
+	rows1 := tk.MustQuery(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%v' use index (idx_d) where c < 5 and d < 5", tsv)).Rows()
+	c.Assert(rows1, HasLen, 2)
+	// IndexMerge Reader Executor
+	rows2 := tk.MustQuery(fmt.Sprintf("select /*+ USE_INDEX_MERGE(t1, idx_d, idx_e) */ * from t1 AS OF TIMESTAMP '%v' where c <5 and (d =5 or e=5)", tsv)).Rows()
+	c.Assert(rows2, HasLen, 1)
+	// TableReader Executor
+	rows3 := tk.MustQuery(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%v' where c < 6", tsv)).Rows()
+	c.Assert(rows3, HasLen, 2)
+	// IndexReader Executor
+	rows4 := tk.MustQuery(fmt.Sprintf("select /*+ USE_INDEX(t1, idx_d) */ d from t1 AS OF TIMESTAMP '%v' where c < 5 and d < 1;", tsv)).Rows()
+	c.Assert(rows4, HasLen, 0)
+	// point get executor
+	rows5 := tk.MustQuery(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%v' where c = 3;", tsv)).Rows()
+	c.Assert(rows5, HasLen, 0)
+	rows6 := tk.MustQuery(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%v' where c in (3,4,5);", tsv)).Rows()
+	c.Assert(rows6, HasLen, 0)
 	failpoint.Disable("tikvclient/assertStoreLabels")
 	failpoint.Disable("tikvclient/assertStaleReadFlag")
 }

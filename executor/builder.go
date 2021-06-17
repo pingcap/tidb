@@ -79,6 +79,7 @@ type executorBuilder struct {
 	ctx              sessionctx.Context
 	is               infoschema.InfoSchema
 	snapshotTS       uint64 // The consistent snapshot timestamp for the executor to read data.
+	txnScope         string
 	snapshotTSCached bool
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
@@ -95,12 +96,13 @@ type CTEStorages struct {
 	IterInTbl cteutil.Storage
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, explicitStaleness bool) *executorBuilder {
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, explicitStaleness bool, txnScope string) *executorBuilder {
 	return &executorBuilder{
 		ctx:               ctx,
 		is:                is,
 		Ti:                ti,
 		snapshotTS:        snapshotTS,
+		txnScope:          txnScope,
 		explicitStaleness: explicitStaleness,
 	}
 }
@@ -2678,6 +2680,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPB:          dagReq,
 		startTS:        startTS,
+		txnScope:       b.txnScope,
+		isStaleness:    b.explicitStaleness,
 		table:          tbl,
 		keepOrder:      ts.KeepOrder,
 		desc:           ts.Desc,
@@ -2949,6 +2953,8 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPB:           dagReq,
 		startTS:         startTS,
+		txnScope:        b.txnScope,
+		isStaleness:     b.explicitStaleness,
 		physicalTableID: physicalTableID,
 		table:           tbl,
 		index:           is.Index,
@@ -3096,6 +3102,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPB:             indexReq,
 		startTS:           startTS,
+		txnScope:          b.txnScope,
+		isStaleness:       b.explicitStaleness,
 		table:             tbl,
 		index:             is.Index,
 		keepOrder:         is.KeepOrder,
@@ -3245,6 +3253,8 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPBs:            partialReqs,
 		startTS:           startTS,
+		txnScope:          b.txnScope,
+		isStaleness:       b.explicitStaleness,
 		table:             tblInfo,
 		indexes:           indexes,
 		descs:             descs,
@@ -3565,6 +3575,8 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
+		SetTxnScope(e.txnScope, e.ctx.GetSessionVars()).
+		SetIsStaleness(e.isStaleness, e.ctx.GetSessionVars()).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		Build()

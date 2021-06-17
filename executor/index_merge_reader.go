@@ -72,6 +72,8 @@ type IndexMergeReaderExecutor struct {
 	ranges       [][]*ranger.Range
 	dagPBs       []*tipb.DAGRequest
 	startTS      uint64
+	txnScope     string
+	isStaleness  bool
 	tableRequest *tipb.DAGRequest
 	// columns are only required by union scan.
 	columns           []*model.ColumnInfo
@@ -242,6 +244,8 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetDesc(e.descs[workID]).
 					SetKeepOrder(false).
 					SetStreaming(e.partialStreamings[workID]).
+					SetTxnScope(e.txnScope, e.ctx.GetSessionVars()).
+					SetIsStaleness(e.isStaleness, e.ctx.GetSessionVars()).
 					SetFromSessionVars(e.ctx.GetSessionVars()).
 					SetMemTracker(e.memTracker).
 					SetFromInfoSchema(e.ctx.GetInfoSchema())
@@ -326,6 +330,8 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					baseExecutor: newBaseExecutor(e.ctx, ts.Schema(), e.getPartitalPlanID(workID)),
 					dagPB:        e.dagPBs[workID],
 					startTS:      e.startTS,
+					txnScope:     e.txnScope,
+					isStaleness:  e.explicitStaleness,
 					streaming:    e.partialStreamings[workID],
 					feedback:     statistics.NewQueryFeedback(0, nil, 0, false),
 					plans:        e.partialPlans[workID],
@@ -537,6 +543,8 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		table:        tbl,
 		dagPB:        e.tableRequest,
 		startTS:      e.startTS,
+		txnScope:     e.txnScope,
+		isStaleness:  e.explicitStaleness,
 		streaming:    e.tableStreaming,
 		columns:      e.columns,
 		feedback:     statistics.NewQueryFeedback(0, nil, 0, false),

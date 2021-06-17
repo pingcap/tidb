@@ -166,9 +166,11 @@ type IndexReaderExecutor struct {
 	partRangeMap    map[int64][]*ranger.Range // each partition may have different ranges
 
 	// kvRanges are only used for union scan.
-	kvRanges []kv.KeyRange
-	dagPB    *tipb.DAGRequest
-	startTS  uint64
+	kvRanges    []kv.KeyRange
+	dagPB       *tipb.DAGRequest
+	startTS     uint64
+	txnScope    string
+	isStaleness bool
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result distsql.SelectResult
@@ -290,6 +292,8 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
+		SetTxnScope(e.txnScope, e.ctx.GetSessionVars()).
+		SetIsStaleness(e.isStaleness, e.ctx.GetSessionVars()).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		SetMemTracker(e.memTracker)
@@ -310,11 +314,13 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 type IndexLookUpExecutor struct {
 	baseExecutor
 
-	table   table.Table
-	index   *model.IndexInfo
-	ranges  []*ranger.Range
-	dagPB   *tipb.DAGRequest
-	startTS uint64
+	table       table.Table
+	index       *model.IndexInfo
+	ranges      []*ranger.Range
+	dagPB       *tipb.DAGRequest
+	startTS     uint64
+	txnScope    string
+	isStaleness bool
 	// handleIdx is the index of handle, which is only used for case of keeping order.
 	handleIdx       []int
 	handleCols      []*expression.Column
@@ -548,6 +554,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
 			SetStreaming(e.indexStreaming).
+			SetTxnScope(e.txnScope, e.ctx.GetSessionVars()).
+			SetIsStaleness(e.isStaleness, e.ctx.GetSessionVars()).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
 			SetFromInfoSchema(e.ctx.GetInfoSchema()).
 			SetMemTracker(tracker)
@@ -645,6 +653,8 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		table:               table,
 		dagPB:               e.tableRequest,
 		startTS:             e.startTS,
+		txnScope:            e.txnScope,
+		isStaleness:         e.isStaleness,
 		columns:             e.columns,
 		streaming:           e.tableStreaming,
 		feedback:            statistics.NewQueryFeedback(0, nil, 0, false),

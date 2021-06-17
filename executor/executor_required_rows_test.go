@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -843,7 +844,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, i
 		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(nil, j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
-	b := newExecutorBuilder(ctx, nil, nil, 0, false)
+	b := newExecutorBuilder(ctx, nil, nil, 0, false, oracle.GlobalTxnScope)
 	return b.build(j)
 }
 
