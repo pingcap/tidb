@@ -914,7 +914,7 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 	for _, t := range tbl {
 		v, err := types.ParseDuration(sc, t.Input, types.MaxFsp)
 		c.Assert(err, IsNil)
-		nv, err := v.RoundFrac(t.Fsp)
+		nv, err := v.RoundFrac(t.Fsp, sc.TimeZone)
 		c.Assert(err, IsNil)
 		c.Assert(nv.String(), Equals, t.Except)
 	}
