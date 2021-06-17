@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -1680,6 +1681,37 @@ func (s *partitionTableSuite) PartitionPruningInTransaction(c *C) {
 	tk.MustExec(`rollback`)
 }
 
+func (s *partitionTableSuite) TestIssue25253(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database issue25253")
+	defer tk.MustExec("drop database issue25253")
+	tk.MustExec("use issue25253")
+
+	tk.MustExec(`CREATE TABLE IDT_HP23902 (
+	  COL1 smallint DEFAULT NULL,
+	  COL2 varchar(20) DEFAULT NULL,
+	  COL4 datetime DEFAULT NULL,
+	  COL3 bigint DEFAULT NULL,
+	  COL5 float DEFAULT NULL,
+	  KEY UK_COL1 (COL1)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+	PARTITION BY HASH( COL1+30 )
+	PARTITIONS 6`)
+	tk.MustExec(`insert ignore into IDT_HP23902 partition(p0, p1)(col1, col3) values(-10355, 1930590137900568573), (13810, -1332233145730692137)`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1748 Found a row not matching the given partition set",
+		"Warning 1748 Found a row not matching the given partition set"))
+	tk.MustQuery(`select * from IDT_HP23902`).Check(testkit.Rows())
+
+	tk.MustExec(`create table t (
+	  a int
+	) partition by range(a) (
+	  partition p0 values less than (10),
+	  partition p1 values less than (20))`)
+	tk.MustExec(`insert ignore into t partition(p0)(a) values(12)`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1748 Found a row not matching the given partition set"))
+	tk.MustQuery(`select * from t`).Check(testkit.Rows())
+}
+
 func (s *partitionTableSuite) TestDML(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
@@ -2612,6 +2644,164 @@ partition p2 values less than (10))`)
 	tk.MustExec("alter table p add unique idx(id)")
 	tk.MustExec("insert into p values (1,3), (3,4), (5,6), (7,9)")
 	tk.MustQuery("select * from p use index (idx)").Check(testkit.Rows("1 3", "3 4", "5 6", "7 9"))
+}
+
+func (s *partitionTableSuite) TestIssue20028(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("set @@tidb_partition_prune_mode='static-only'")
+	tk.MustExec(`create table t1 (c_datetime datetime, primary key (c_datetime))
+partition by range (to_days(c_datetime)) ( partition p0 values less than (to_days('2020-02-01')),
+partition p1 values less than (to_days('2020-04-01')),
+partition p2 values less than (to_days('2020-06-01')),
+partition p3 values less than maxvalue)`)
+	tk.MustExec("create table t2 (c_datetime datetime, unique key(c_datetime))")
+	tk.MustExec("insert into t1 values ('2020-06-26 03:24:00'), ('2020-02-21 07:15:33'), ('2020-04-27 13:50:58')")
+	tk.MustExec("insert into t2 values ('2020-01-10 09:36:00'), ('2020-02-04 06:00:00'), ('2020-06-12 03:45:18')")
+	tk.MustExec("begin")
+	tk.MustQuery("select * from t1 join t2 on t1.c_datetime >= t2.c_datetime for update").
+		Sort().
+		Check(testkit.Rows(
+			"2020-02-21 07:15:33 2020-01-10 09:36:00",
+			"2020-02-21 07:15:33 2020-02-04 06:00:00",
+			"2020-04-27 13:50:58 2020-01-10 09:36:00",
+			"2020-04-27 13:50:58 2020-02-04 06:00:00",
+			"2020-06-26 03:24:00 2020-01-10 09:36:00",
+			"2020-06-26 03:24:00 2020-02-04 06:00:00",
+			"2020-06-26 03:24:00 2020-06-12 03:45:18"))
+	tk.MustExec("rollback")
+}
+
+func (s *partitionTableSuite) TestSelectLockOnPartitionTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists pt")
+	tk.MustExec(`create table pt (id int primary key, k int, c int, index(k))
+partition by range (id) (
+partition p0 values less than (4),
+partition p1 values less than (7),
+partition p2 values less than (11))`)
+
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+
+	optimisticTableReader := func() {
+		tk.MustExec("set @@tidb_txn_mode = 'optimistic'")
+		tk2.MustExec("set @@tidb_txn_mode = 'optimistic'")
+		tk.MustExec("begin")
+		tk.MustQuery("select id, k from pt ignore index (k) where k = 5 for update").Check(testkit.Rows("5 5"))
+		tk2.MustExec("update pt set c = c + 1 where k = 5")
+		_, err := tk.Exec("commit")
+		c.Assert(err, NotNil) // Write conflict
+	}
+
+	optimisticIndexReader := func() {
+		tk.MustExec("set @@tidb_txn_mode = 'optimistic'")
+		tk2.MustExec("set @@tidb_txn_mode = 'optimistic'")
+		tk.MustExec("begin")
+		// This is not index reader actually.
+		tk.MustQuery("select k from pt where k = 5 for update").Check(testkit.Rows("5"))
+		tk2.MustExec("update pt set c = c + 1 where k = 5")
+		_, err := tk.Exec("commit")
+		c.Assert(err, NotNil)
+	}
+
+	optimisticIndexLookUp := func() {
+		tk.MustExec("set @@tidb_txn_mode = 'optimistic'")
+		tk2.MustExec("set @@tidb_txn_mode = 'optimistic'")
+		tk.MustExec("begin")
+		tk.MustQuery("select c, k from pt use index (k) where k = 5 for update").Check(testkit.Rows("5 5"))
+		tk2.MustExec("update pt set c = c + 1 where k = 5")
+		_, err := tk.Exec("commit")
+		c.Assert(err, NotNil)
+	}
+
+	pessimisticTableReader := func() {
+		tk.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+		tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+		tk.MustExec("begin")
+		tk.MustQuery("select id, k from pt ignore index (k) where k = 5 for update").Check(testkit.Rows("5 5"))
+		ch := make(chan int, 2)
+		go func() {
+			tk2.MustExec("update pt set c = c + 1 where k = 5")
+			ch <- 1
+		}()
+		time.Sleep(100 * time.Millisecond)
+		ch <- 2
+
+		// Check the operation in the goroutine is blocked, if not the first result in
+		// the channel should be 1.
+		c.Assert(<-ch, Equals, 2)
+
+		tk.MustExec("commit")
+		<-ch
+		tk.MustQuery("select c from pt where k = 5").Check(testkit.Rows("6"))
+	}
+
+	pessimisticIndexReader := func() {
+		tk.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+		tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+		tk.MustExec("begin")
+		// This is not index reader actually.
+		tk.MustQuery("select k from pt where k = 5 for update").Check(testkit.Rows("5"))
+		ch := make(chan int, 2)
+		go func() {
+			tk2.MustExec("update pt set c = c + 1 where k = 5")
+			ch <- 1
+		}()
+		time.Sleep(100 * time.Millisecond)
+		ch <- 2
+
+		// Check the operation in the goroutine is blocked,
+		c.Assert(<-ch, Equals, 2)
+
+		tk.MustExec("commit")
+		<-ch
+		tk.MustQuery("select c from pt where k = 5").Check(testkit.Rows("6"))
+	}
+
+	pessimisticIndexLookUp := func() {
+		tk.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+		tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+		tk.MustExec("begin")
+		tk.MustQuery("select c, k from pt use index (k) where k = 5 for update").Check(testkit.Rows("5 5"))
+		ch := make(chan int, 2)
+		go func() {
+			tk2.MustExec("update pt set c = c + 1 where k = 5")
+			ch <- 1
+		}()
+		time.Sleep(100 * time.Millisecond)
+		ch <- 2
+
+		// Check the operation in the goroutine is blocked,
+		c.Assert(<-ch, Equals, 2)
+
+		tk.MustExec("commit")
+		<-ch
+		tk.MustQuery("select c from pt where k = 5").Check(testkit.Rows("6"))
+	}
+
+	partitionModes := []string{
+		"'dynamic-only'",
+		"'static-only'",
+	}
+	testCases := []func(){
+		optimisticTableReader,
+		optimisticIndexLookUp,
+		optimisticIndexReader,
+		pessimisticTableReader,
+		pessimisticIndexReader,
+		pessimisticIndexLookUp,
+	}
+
+	for _, mode := range partitionModes {
+		tk.MustExec("set @@tidb_partition_prune_mode=" + mode)
+		for _, c := range testCases {
+			tk.MustExec("replace into pt values (5, 5, 5)")
+			c()
+		}
+	}
 }
 
 func (s *globalIndexSuite) TestIssue21731(c *C) {
