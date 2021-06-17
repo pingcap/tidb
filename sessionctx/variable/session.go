@@ -1449,6 +1449,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.BroadcastJoinThresholdSize = tidbOptInt64(val, DefBroadcastJoinThresholdSize)
 	case TiDBBCJThresholdCount:
 		s.BroadcastJoinThresholdCount = tidbOptInt64(val, DefBroadcastJoinThresholdCount)
+	case TiDBOptCartesianBCJ:
+		s.AllowCartesianBCJ = int(tidbOptInt64(val, DefOptCartesianBCJ))
 	case TiDBOptDistinctAggPushDown:
 		s.AllowDistinctAggPushDown = TiDBOptOn(val)
 	case TiDBOptWriteRowID:
