@@ -22,6 +22,7 @@ import (
 	"time"
 
 	pingcapErrors "github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
@@ -141,7 +142,9 @@ func init() {
 	lastSQBInfo["+Inf"] = 0
 	currentSQBInfo["+Inf"] = 0
 
-	logutil.BgLogger().Info("Telemetry slow query stats initialized", zap.String("currentSQBInfo", currentSQBInfo.String()), zap.String("lastSQBInfo", lastSQBInfo.String()))
+	if mysql.TiDBReleaseVersion != "None" {
+		logutil.BgLogger().Info("Telemetry slow query stats initialized", zap.String("currentSQBInfo", currentSQBInfo.String()), zap.String("lastSQBInfo", lastSQBInfo.String()))
+	}
 }
 
 // postReportSlowQueryStats copy currentSQBInfo to lastSQBInfo to be ready for next report
