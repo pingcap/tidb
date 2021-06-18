@@ -8925,7 +8925,7 @@ PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
 	PARTITION p1 VALUES LESS THAN (11)
 );`)
-	tk.MustExec("drop table if exists t1")
+	defer tk.MustExec("drop table if exists t1")
 
 	tk.MustExec(`insert into t1 (c,d,e) values (1,1,1);`)
 	tk.MustExec(`insert into t1 (c,d,e) values (2,3,5);`)

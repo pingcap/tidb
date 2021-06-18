@@ -1462,15 +1462,16 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	// When statement is during the Txn, we check whether there exists AsOfClause. If exists, we will return error,
 	// otherwise we should directly set the return param from TxnCtx.
+	p.TxnScope = oracle.GlobalTxnScope
 	if p.ctx.GetSessionVars().InTxn() {
 		if node != nil {
 			p.err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
 			return
 		}
 		txnCtx := p.ctx.GetSessionVars().TxnCtx
+		p.TxnScope = txnCtx.TxnScope
 		if txnCtx.IsStaleness {
 			p.LastSnapshotTS = txnCtx.StartTS
-			p.TxnScope = txnCtx.TxnScope
 			p.ExplicitStaleness = txnCtx.IsStaleness
 			p.initedLastSnapshotTS = true
 			return
@@ -1479,7 +1480,6 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	// If the statement is in auto-commit mode, we will check whether there exists read_ts, if exists,
 	// we will directly use it. The txnScope will be defined by the zone label, if it is not set, we will use
 	// global txnScope directly.
-	p.TxnScope = oracle.GlobalTxnScope
 	ts := p.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
 	if ts > 0 {
 		if node != nil {
