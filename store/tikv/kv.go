@@ -425,7 +425,7 @@ func (s *KVStore) updateSafeTS(ctx context.Context) {
 			s.setSafeTS(storeID, safeTS)
 			metrics.TiKVSafeTSUpdateCounter.WithLabelValues("success", storeIDStr).Inc()
 			safeTSTime := oracle.GetTimeFromTS(safeTS)
-			metrics.TiKVSafeTSGapHistogram.WithLabelValues(storeIDStr).Observe(time.Since(safeTSTime).Seconds())
+			metrics.TiKVMinSafeTSGapSeconds.WithLabelValues(storeIDStr).Set(time.Since(safeTSTime).Seconds())
 		}(ctx, wg, storeID, storeAddr)
 	}
 	wg.Wait()
