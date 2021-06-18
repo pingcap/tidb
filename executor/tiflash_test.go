@@ -462,6 +462,8 @@ func (s *tiflashTestSuite) TestMppUnionAll(c *C) {
 	tb = testGetTableByName(c, tk.Se, "test", "x2")
 	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
 	c.Assert(err, IsNil)
+	
+	tk.MustExec("set @@session.tidb_opt_mpp_outer_join_fixed_build_side=1")
 
 	tk.MustExec("insert into x1 values (1, 1), (2, 2), (3, 3), (4, 4)")
 	tk.MustExec("insert into x2 values (5, 1), (2, 2), (3, 3), (4, 4)")
