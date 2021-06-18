@@ -304,7 +304,6 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DMLNode); ok {
 		defer func() {
 			sessVars.LastQueryInfo = variable.QueryInfo{
-				TxnScope:    sessVars.TxnScope,
 				StartTS:     sessVars.TxnCtx.StartTS,
 				ForUpdateTS: sessVars.TxnCtx.GetForUpdateTS(),
 			}
