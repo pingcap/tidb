@@ -126,6 +126,12 @@
         "Res": [
           "0"
         ]
+      },
+      {
+        "SQL": "SELECT avg(2) FROM(SELECT min(c) FROM t JOIN(SELECT 1 c) d ORDER BY a) e",
+        "Res": [
+          "2.0000"
+        ]
       }
     ]
   },

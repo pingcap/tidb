@@ -539,6 +539,13 @@ func newBatchPointGetPlan(
 		if partitionExpr == nil {
 			return nil
 		}
+
+		if partitionExpr.Expr == nil {
+			return nil
+		}
+		if _, ok := partitionExpr.Expr.(*expression.Column); !ok {
+			return nil
+		}
 	}
 	if handleCol != nil {
 		var handles = make([]kv.Handle, len(patternInExpr.List))
