@@ -866,7 +866,7 @@ func (b *builtinSetTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error)
 	}
 	datum, err := b.args[1].Eval(row)
 	if err != nil || datum.IsNull() {
-		return types.ZeroTime, isNull, handleInvalidTimeError(b.ctx, err)
+		return types.ZeroTime, datum.IsNull(), handleInvalidTimeError(b.ctx, err)
 	}
 	res := datum.GetMysqlTime()
 	varName = strings.ToLower(varName)
