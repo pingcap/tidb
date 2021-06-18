@@ -488,6 +488,9 @@ type SessionVars struct {
 	// size exceeds the broadcast threshold
 	AllowCartesianBCJ int
 
+	// MPPOuterJoinFixedBuildSide means in MPP plan, always use inner table as build side for out join
+	MPPOuterJoinFixedBuildSide bool
+
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
@@ -960,6 +963,7 @@ func NewSessionVars() *SessionVars {
 		AllowAggPushDown:            false,
 		AllowBCJ:                    false,
 		AllowCartesianBCJ:           DefOptCartesianBCJ,
+		MPPOuterJoinFixedBuildSide:  DefOptMPPOuterJoinFixedBuildSide,
 		BroadcastJoinThresholdSize:  DefBroadcastJoinThresholdSize,
 		BroadcastJoinThresholdCount: DefBroadcastJoinThresholdSize,
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
@@ -1451,6 +1455,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.BroadcastJoinThresholdCount = tidbOptInt64(val, DefBroadcastJoinThresholdCount)
 	case TiDBOptCartesianBCJ:
 		s.AllowCartesianBCJ = int(tidbOptInt64(val, DefOptCartesianBCJ))
+	case TiDBOptMPPOuterJoinFixedBuildSide:
+		s.MPPOuterJoinFixedBuildSide = TiDBOptOn(val)
 	case TiDBOptDistinctAggPushDown:
 		s.AllowDistinctAggPushDown = TiDBOptOn(val)
 	case TiDBOptWriteRowID:
