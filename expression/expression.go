@@ -1101,23 +1101,9 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 			ret = true
 		}
 	case
-<<<<<<< HEAD
 		ast.Substring,
 		ast.Substr:
 		switch sf.Function.PbCode() {
-=======
-		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or,
-		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like,
-		ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.Abs, /*ast.Mod,*/
-		ast.If, ast.Ifnull, ast.Case,
-		ast.Concat, ast.ConcatWS,
-		ast.Year, ast.Month, ast.Day,
-		ast.DateDiff, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
-		ast.JSONLength:
-		return true
-	case ast.Substr, ast.Substring, ast.Left, ast.Right, ast.CharLength:
-		switch function.Function.PbCode() {
->>>>>>> 99b1fa56b... expression: push down left/right/abs to tiflash (#25018)
 		case
 			tipb.ScalarFuncSig_LeftUTF8,
 			tipb.ScalarFuncSig_RightUTF8,
@@ -1283,10 +1269,20 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	case ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.GE, ast.LE,
 		ast.EQ, ast.NE, ast.LT, ast.GT, ast.Ifnull, ast.IsNull,
 		ast.Or, ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
-		ast.Like, ast.UnaryNot, ast.Case, ast.Month, ast.Substr,
-		ast.Substring, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
+		ast.Like, ast.UnaryNot, ast.Case, ast.Month, ast.Abs,
+		ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
 		ast.JSONLength, ast.If, ast.BitNeg, ast.Xor:
 		return true
+	case ast.Substr, ast.Substring, ast.Left, ast.Right, ast.CharLength:
+		switch function.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_LeftUTF8,
+			tipb.ScalarFuncSig_RightUTF8,
+			tipb.ScalarFuncSig_CharLengthUTF8,
+			tipb.ScalarFuncSig_Substring2ArgsUTF8,
+			tipb.ScalarFuncSig_Substring3ArgsUTF8:
+			return true
+		}
 	case ast.Cast:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastIntAsTime,
