@@ -1350,14 +1350,17 @@ func (s *testParserSuite) TestExpression(c *C) {
 
 		// The ODBC syntax for time/date/timestamp literal.
 		// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html
-		{"select {ts '1989-09-10 11:11:11'}", true, "SELECT _UTF8MB4'1989-09-10 11:11:11'"},
-		{"select {d '1989-09-10'}", true, "SELECT _UTF8MB4'1989-09-10'"},
-		{"select {t '00:00:00.111'}", true, "SELECT _UTF8MB4'00:00:00.111'"},
+		{"select {ts '1989-09-10 11:11:11'}", true, "SELECT TIMESTAMP '1989-09-10 11:11:11'"},
+		{"select {d '1989-09-10'}", true, "SELECT DATE '1989-09-10'"},
+		{"select {t '00:00:00.111'}", true, "SELECT TIME '00:00:00.111'"},
+		{"select * from t where a > {ts '1989-09-10 11:11:11'}", true, "SELECT * FROM `t` WHERE `a`>TIMESTAMP '1989-09-10 11:11:11'"},
+		{"select * from t where a > {ts {abc '1989-09-10 11:11:11'}}", true, "SELECT * FROM `t` WHERE `a`>TIMESTAMP '1989-09-10 11:11:11'"},
 		// If the identifier is not in (t, d, ts), we just ignore it and consider the following expression as the value.
 		// See: https://dev.mysql.com/doc/refman/5.7/en/expressions.html
 		{"select {ts123 '1989-09-10 11:11:11'}", true, "SELECT _UTF8MB4'1989-09-10 11:11:11'"},
 		{"select {ts123 123}", true, "SELECT 123"},
 		{"select {ts123 1 xor 1}", true, "SELECT 1 XOR 1"},
+		{"select * from t where a > {ts123 '1989-09-10 11:11:11'}", true, "SELECT * FROM `t` WHERE `a`>_UTF8MB4'1989-09-10 11:11:11'"},
 		{"select .t.a from t", false, ""},
 	}
 	s.RunTest(c, table)
