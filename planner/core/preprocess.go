@@ -1468,9 +1468,6 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			return
 		}
 		txnCtx := p.ctx.GetSessionVars().TxnCtx
-		p.SnapshotTSEvaluator = func(sessionctx.Context) (uint64, error) {
-			return txnCtx.StartTS, nil
-		}
 		p.LastSnapshotTS = txnCtx.StartTS
 		p.TxnScope = txnCtx.TxnScope
 		p.ExplicitStaleness = txnCtx.IsStaleness
