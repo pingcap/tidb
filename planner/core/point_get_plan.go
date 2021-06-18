@@ -1589,22 +1589,17 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.Partition
 		}
 	case model.PartitionTypeRange:
 		// left range columns partition for future development
-		if len(pi.Columns) == 0 {
-			if col, ok := partitionExpr.Expr.(*expression.Column); ok {
-				colInfo := findColNameByColID(tbl.Columns, col)
-				partitionName = colInfo.Name
-			}
+		if col, ok := partitionExpr.Expr.(*expression.Column); ok && len(pi.Columns) == 0 {
+			colInfo := findColNameByColID(tbl.Columns, col)
+			partitionName = colInfo.Name
 		} else {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
 	case model.PartitionTypeList:
 		// left list columns partition for future development
-		if partitionExpr.ForListPruning.ColPrunes == nil {
-			locateExpr := partitionExpr.ForListPruning.LocateExpr
-			if locateExpr, ok := locateExpr.(*expression.Column); ok {
-				colInfo := findColNameByColID(tbl.Columns, locateExpr)
-				partitionName = colInfo.Name
-			}
+		if locateExpr, ok := partitionExpr.ForListPruning.LocateExpr.(*expression.Column); ok && partitionExpr.ForListPruning.ColPrunes == nil {
+			colInfo := findColNameByColID(tbl.Columns, locateExpr)
+			partitionName = colInfo.Name
 		} else {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
