@@ -9035,6 +9035,7 @@ PARTITION BY RANGE (c) (
 		failpoint.Enable("tikvclient/injectTxnScope",
 			fmt.Sprintf(`return("%v")`, testcase.zone))
 		tk.MustExec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
+		tk.Exec("begin")
 		res, err := tk.Exec(testcase.sql)
 		_, resErr := session.GetRows4Test(context.Background(), tk.Se, res)
 		var checkErr error
@@ -9052,8 +9053,9 @@ PARTITION BY RANGE (c) (
 		if res != nil {
 			res.Close()
 		}
-		failpoint.Disable("tikvclient/injectTxnScope")
+		tk.Exec("commit")
 	}
+	failpoint.Disable("tikvclient/injectTxnScope")
 }
 
 func (s *testIntegrationSerialSuite) TestCollationUnion(c *C) {
