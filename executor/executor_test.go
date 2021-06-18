@@ -8598,7 +8598,12 @@ func (s *testSerialSuite2) TestIssue24933(c *C) {
 	rows = tk.MustQuery("select * from v;")
 	rows.Check(testkit.Rows("111 1", "222 2", "333 3"))
 
+	// Test simple expr.
 	tk.MustExec("drop view v;")
+	tk.MustExec("drop view if exists v;")
+	tk.MustExec("create view v as (select * from (select c1 or 0 from t) s)")
+	rows = tk.MustQuery("select * from v;")
+	rows.Check(testkit.Rows("1", "1", "1"))
 }
 
 func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {

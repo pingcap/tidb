@@ -409,10 +409,6 @@ const (
 	// renameView indicates a view is being renamed, so we cannot use the origin
 	// definition of that view.
 	renameView
-	// resotreField indicates we should get output name of a field by restoring its ast node
-	// instead of using other method, such as using plain SQL text.
-	// Only used for `CreateViewStmt` now.
-	resotreField
 )
 
 type cteInfo struct {
@@ -3530,12 +3526,11 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				v.ReferTable.Name.L, "", authErr)
 		}
 	case *ast.CreateViewStmt:
-		b.capFlag |= canExpandAST | renameView | resotreField
+		b.capFlag |= canExpandAST | renameView
 		b.renamingViewName = v.ViewName.Schema.L + "." + v.ViewName.Name.L
 		defer func() {
 			b.capFlag &= ^canExpandAST
 			b.capFlag &= ^renameView
-			b.capFlag &= ^resotreField
 		}()
 		plan, err := b.Build(ctx, v.Select)
 		if err != nil {

@@ -1027,20 +1027,11 @@ func (b *PlanBuilder) buildProjectionFieldNameFromColumns(origField *ast.SelectF
 }
 
 // buildProjectionFieldNameFromExpressions builds the field name when field expression is a normal expression.
-func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(ctx context.Context, field *ast.SelectField) (model.CIStr, error) {
+func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(ctx context.Context, field *ast.SelectField) (model.CIStr, bool, error) {
+
 	if agg, ok := field.Expr.(*ast.AggregateFuncExpr); ok && agg.F == ast.AggFuncFirstRow {
 		// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
-		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name, nil
-	}
-	// When the query is `create view as (select * from (select some_agg_func() ...))`,
-	// the column name should be restored. Otherwise the unfolded wildcard will use wrong column name.
-	if b.capFlag&resotreField != 0 {
-		var restoreFlag format.RestoreFlags
-		var sb strings.Builder
-		if err := field.Expr.Restore(format.NewRestoreCtx(restoreFlag, &sb)); err != nil {
-			return model.NewCIStr(""), err
-		}
-		return model.NewCIStr(sb.String()), nil
+		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name, false, nil
 	}
 
 	innerExpr := getInnerFromParenthesesAndUnaryPlus(field.Expr)
@@ -1050,16 +1041,19 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(ctx context.Contex
 	if isFuncCall && funcCall.FnName.L == ast.NameConst {
 		if v, err := evalAstExpr(b.ctx, funcCall.Args[0]); err == nil {
 			if s, err := v.ToString(); err == nil {
-				return model.NewCIStr(s), nil
+				return model.NewCIStr(s), false, nil
 			}
 		}
-		return model.NewCIStr(""), ErrWrongArguments.GenWithStackByArgs("NAME_CONST")
+		return model.NewCIStr(""), false, ErrWrongArguments.GenWithStackByArgs("NAME_CONST")
 	}
 	valueExpr, isValueExpr := innerExpr.(*driver.ValueExpr)
 
 	// Non-literal: Output as inputed, except that comments need to be removed.
 	if !isValueExpr {
-		return model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment)), nil
+		// When the query is `create view as (select * from (select some_expr() ...))`,
+		// We should add alias name for `some_expr` when unfold wildcard.
+		// Otherwise unfolded name will be wrong when select this view.
+		return model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment)), true, nil
 	}
 
 	// Literal: Need special processing
@@ -1075,21 +1069,21 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(ctx context.Contex
 		fieldName := strings.TrimLeftFunc(projName, func(r rune) bool {
 			return !unicode.IsOneOf(mysql.RangeGraph, r)
 		})
-		return model.NewCIStr(fieldName), nil
+		return model.NewCIStr(fieldName), false, nil
 	case types.KindNull:
 		// See #4053, #3685
-		return model.NewCIStr("NULL"), nil
+		return model.NewCIStr("NULL"), false, nil
 	case types.KindBinaryLiteral:
 		// Don't rewrite BIT literal or HEX literals
-		return model.NewCIStr(field.Text()), nil
+		return model.NewCIStr(field.Text()), false, nil
 	case types.KindInt64:
 		// See #9683
 		// TRUE or FALSE can be a int64
 		if mysql.HasIsBooleanFlag(valueExpr.Type.Flag) {
 			if i := valueExpr.GetValue().(int64); i == 0 {
-				return model.NewCIStr("FALSE"), nil
+				return model.NewCIStr("FALSE"), false, nil
 			}
-			return model.NewCIStr("TRUE"), nil
+			return model.NewCIStr("TRUE"), false, nil
 		}
 		fallthrough
 
@@ -1097,7 +1091,7 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(ctx context.Contex
 		fieldName := field.Text()
 		fieldName = strings.TrimLeft(fieldName, "\t\n +(")
 		fieldName = strings.TrimRight(fieldName, "\t\n )")
-		return model.NewCIStr(fieldName), nil
+		return model.NewCIStr(fieldName), false, nil
 	}
 }
 
@@ -1106,6 +1100,7 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 	var origTblName, tblName, origColName, colName, dbName model.CIStr
 	innerNode := getInnerFromParenthesesAndUnaryPlus(field.Expr)
 	col, isCol := expr.(*expression.Column)
+	var recordField bool
 	// Correlated column won't affect the final output names. So we can put it in any of the three logic block.
 	// Don't put it into the first block just for simplifying the codes.
 	if colNameField, ok := innerNode.(*ast.ColumnNameExpr); ok && isCol {
@@ -1125,7 +1120,7 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 	} else {
 		// Other: field is an expression.
 		var err error
-		if colName, err = b.buildProjectionFieldNameFromExpressions(ctx, field); err != nil {
+		if colName, recordField, err = b.buildProjectionFieldNameFromExpressions(ctx, field); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -1135,6 +1130,9 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 		ColName:     colName,
 		OrigColName: origColName,
 		DBName:      dbName,
+	}
+	if recordField {
+		name.SelectField = field
 	}
 	if isCol {
 		return col, name, nil
@@ -3134,6 +3132,9 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 				}}
 			colName.SetType(col.GetType())
 			field := &ast.SelectField{Expr: colName}
+			if name.SelectField != nil {
+				name.SelectField.AsName = colName.Name.Name
+			}
 			field.SetText(name.ColName.O)
 			resultList = append(resultList, field)
 		}

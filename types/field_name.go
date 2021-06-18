@@ -27,6 +27,7 @@ type FieldName struct {
 	DBName      model.CIStr
 	TblName     model.CIStr
 	ColName     model.CIStr
+	SelectField *ast.SelectField
 
 	Hidden bool
 
