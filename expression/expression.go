@@ -1105,9 +1105,6 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.Substr:
 		switch sf.Function.PbCode() {
 		case
-			tipb.ScalarFuncSig_LeftUTF8,
-			tipb.ScalarFuncSig_RightUTF8,
-			tipb.ScalarFuncSig_CharLengthUTF8,
 			tipb.ScalarFuncSig_Substring2ArgsUTF8,
 			tipb.ScalarFuncSig_Substring3ArgsUTF8:
 			ret = true
