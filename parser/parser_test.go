@@ -5977,6 +5977,15 @@ func (s *testParserSuite) TestPartitionKeyAlgorithm(c *C) {
 	s.RunTest(c, table)
 }
 
+// server side help syntax
+func (s *testParserSuite) TestHelp(c *C) {
+	table := []testCase{
+		{"HELP 'select'", true, "HELP 'select'"},
+	}
+
+	s.RunTest(c, table)
+}
+
 // For CTE bindings.
 func (s *testParserSuite) TestCTEBindings(c *C) {
 	table := []testCase{
