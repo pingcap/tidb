@@ -189,13 +189,10 @@ type ExecStmt struct {
 	// SnapshotTS stores the timestamp for stale read.
 	// It is not equivalent to session variables's snapshot ts, it only use to build the executor.
 	SnapshotTS uint64
-<<<<<<< HEAD
-=======
 	// ExplicitStaleness means whether the 'SELECT' clause are using 'AS OF TIMESTAMP' to perform stale read explicitly.
 	ExplicitStaleness bool
 	// TxnScope indicates the scope the store selector scope the request visited
 	TxnScope string
->>>>>>> 799591a06... session: read local dc replicas automatically for stale read (#25525)
 	// InfoSchema stores a reference to the schema information.
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
@@ -250,11 +247,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		}
 	}
 	if a.PsStmt.Executor == nil {
-<<<<<<< HEAD
-		b := newExecutorBuilder(a.Ctx, is, a.Ti, a.SnapshotTS)
-=======
 		b := newExecutorBuilder(a.Ctx, is, a.Ti, a.SnapshotTS, a.ExplicitStaleness, a.TxnScope)
->>>>>>> 799591a06... session: read local dc replicas automatically for stale read (#25525)
 		newExecutor := b.build(a.Plan)
 		if b.err != nil {
 			return nil, b.err
@@ -299,11 +292,8 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	}
 	a.InfoSchema = ret.InfoSchema
 	a.SnapshotTS = ret.LastSnapshotTS
-<<<<<<< HEAD
-=======
 	a.ExplicitStaleness = ret.ExplicitStaleness
 	a.TxnScope = ret.TxnScope
->>>>>>> 799591a06... session: read local dc replicas automatically for stale read (#25525)
 	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, a.InfoSchema)
 	if err != nil {
 		return 0, err
@@ -805,11 +795,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
-<<<<<<< HEAD
-	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti, a.SnapshotTS)
-=======
 	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti, a.SnapshotTS, a.ExplicitStaleness, a.TxnScope)
->>>>>>> 799591a06... session: read local dc replicas automatically for stale read (#25525)
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)

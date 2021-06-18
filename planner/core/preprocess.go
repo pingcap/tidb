@@ -24,11 +24,7 @@ import (
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
->>>>>>> 799591a06... session: read local dc replicas automatically for stale read (#25525)
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -132,6 +128,7 @@ const (
 // PreprocessorReturn is used to retain information obtained in the preprocessor.
 type PreprocessorReturn struct {
 	initedLastSnapshotTS bool
+	ExplicitStaleness    bool
 	SnapshotTSEvaluator  func(sessionctx.Context) (uint64, error)
 	// LastSnapshotTS is the last evaluated snapshotTS if any
 	// otherwise it defaults to zero
@@ -1427,10 +1424,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 				return ts, nil
 			}
 			p.LastSnapshotTS = ts
-<<<<<<< HEAD
-=======
 			p.setStalenessReturn()
->>>>>>> 799591a06... session: read local dc replicas automatically for stale read (#25525)
 		}
 	}
 	if node != nil {
@@ -1443,10 +1437,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 				return calculateTsExpr(ctx, node)
 			}
 			p.LastSnapshotTS = ts
-<<<<<<< HEAD
-=======
 			p.setStalenessReturn()
->>>>>>> 799591a06... session: read local dc replicas automatically for stale read (#25525)
 		}
 	}
 	if p.LastSnapshotTS != ts {

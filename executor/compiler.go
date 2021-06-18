@@ -69,18 +69,6 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		lowerPriority = needLowerPriority(finalPlan)
 	}
 	return &ExecStmt{
-<<<<<<< HEAD
-		GoCtx:         ctx,
-		SnapshotTS:    ret.LastSnapshotTS,
-		InfoSchema:    ret.InfoSchema,
-		Plan:          finalPlan,
-		LowerPriority: lowerPriority,
-		Text:          stmtNode.Text(),
-		StmtNode:      stmtNode,
-		Ctx:           c.Ctx,
-		OutputNames:   names,
-		Ti:            &TelemetryInfo{},
-=======
 		GoCtx:             ctx,
 		SnapshotTS:        ret.LastSnapshotTS,
 		ExplicitStaleness: ret.ExplicitStaleness,
@@ -93,7 +81,6 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		Ctx:               c.Ctx,
 		OutputNames:       names,
 		Ti:                &TelemetryInfo{},
->>>>>>> 799591a06... session: read local dc replicas automatically for stale read (#25525)
 	}, nil
 }
 

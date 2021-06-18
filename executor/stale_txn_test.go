@@ -280,26 +280,12 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 		},
 	}
 	for _, testcase := range testcases {
-<<<<<<< HEAD
-		c.Log(testcase.name)
-		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
-		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", fmt.Sprintf(`return("%v")`, testcase.zone))
-		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStoreLabels", fmt.Sprintf(`return("%v_%v")`, placement.DCLabelKey, testcase.txnScope))
-		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag", `return(true)`)
-		// Using NOW() will cause the loss of fsp precision, so we use NOW(3) to be accurate to the millisecond.
-=======
 		failpoint.Enable(testcase.assert, `return("sh")`)
->>>>>>> 799591a06... session: read local dc replicas automatically for stale read (#25525)
 		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
 		tk.MustQuery(testcase.sql)
 		tk.MustExec(`commit`)
 		failpoint.Disable(testcase.assert)
 	}
-<<<<<<< HEAD
-	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStoreLabels")
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag")
-=======
 	for _, testcase := range testcases {
 		failpoint.Enable(testcase.assert, `return("sh")`)
 		tk.MustExec(`SET TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3)`)
@@ -332,7 +318,6 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 	c.Assert(rows5, HasLen, 0)
 	rows6 := tk.MustQuery(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%v' where c in (3,4,5);", tsv)).Rows()
 	c.Assert(rows6, HasLen, 0)
->>>>>>> 799591a06... session: read local dc replicas automatically for stale read (#25525)
 }
 
 func (s *testStaleTxnSuite) TestStalenessAndHistoryRead(c *C) {

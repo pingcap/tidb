@@ -9045,11 +9045,7 @@ PARTITION BY RANGE (c) (
 		if res != nil {
 			res.Close()
 		}
-<<<<<<< HEAD
-		failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
-=======
 		tk.Exec("commit")
->>>>>>> 799591a06... session: read local dc replicas automatically for stale read (#25525)
 	}
 	failpoint.Disable("tikvclient/injectTxnScope")
 }

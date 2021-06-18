@@ -169,11 +169,7 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Exec
 	}
 	plan = core.InjectExtraProjection(plan)
 	// Build executor.
-<<<<<<< HEAD
-	b := newExecutorBuilder(h.sctx, is, nil, 0)
-=======
 	b := newExecutorBuilder(h.sctx, is, nil, 0, false, oracle.GlobalTxnScope)
->>>>>>> 799591a06... session: read local dc replicas automatically for stale read (#25525)
 	return b.build(plan), nil
 }
 
