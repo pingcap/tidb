@@ -1720,6 +1720,37 @@ func (s *partitionTableSuite) PartitionPruningInTransaction(c *C) {
 	tk.MustExec(`rollback`)
 }
 
+func (s *partitionTableSuite) TestIssue25253(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database issue25253")
+	defer tk.MustExec("drop database issue25253")
+	tk.MustExec("use issue25253")
+
+	tk.MustExec(`CREATE TABLE IDT_HP23902 (
+	  COL1 smallint DEFAULT NULL,
+	  COL2 varchar(20) DEFAULT NULL,
+	  COL4 datetime DEFAULT NULL,
+	  COL3 bigint DEFAULT NULL,
+	  COL5 float DEFAULT NULL,
+	  KEY UK_COL1 (COL1)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+	PARTITION BY HASH( COL1+30 )
+	PARTITIONS 6`)
+	tk.MustExec(`insert ignore into IDT_HP23902 partition(p0, p1)(col1, col3) values(-10355, 1930590137900568573), (13810, -1332233145730692137)`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1748 Found a row not matching the given partition set",
+		"Warning 1748 Found a row not matching the given partition set"))
+	tk.MustQuery(`select * from IDT_HP23902`).Check(testkit.Rows())
+
+	tk.MustExec(`create table t (
+	  a int
+	) partition by range(a) (
+	  partition p0 values less than (10),
+	  partition p1 values less than (20))`)
+	tk.MustExec(`insert ignore into t partition(p0)(a) values(12)`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1748 Found a row not matching the given partition set"))
+	tk.MustQuery(`select * from t`).Check(testkit.Rows())
+}
+
 func (s *partitionTableSuite) TestDML(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
