@@ -3512,9 +3512,13 @@ PARTITION BY RANGE (c) (
 
 	// test wrong scope local txn auto commit
 	_, err = tk.Exec("insert into t1 (c) values (101)") // write dc-2 with dc-1 scope
+	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, ".*out of txn_scope.*")
+	tk.MustExec("begin")
 	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
+	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, ".*can not be read by.*")
+	tk.MustExec("commit")
 
 	// begin and commit reading & writing the data in dc-2 with dc-1 txn scope
 	tk.MustExec("begin")
@@ -3524,12 +3528,14 @@ PARTITION BY RANGE (c) (
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert into t1 (c) values (101)")       // write dc-2 with dc-1 scope
 	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
+	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, ".*can not be read by.*")
 	tk.MustExec("insert into t1 (c) values (99)")           // write dc-1 with dc-1 scope
 	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
 	c.Assert(len(result.Rows()), Equals, 5)
 	c.Assert(txn.Valid(), IsTrue)
 	_, err = tk.Exec("commit")
+	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, ".*out of txn_scope.*")
 	// Won't read the value 99 because the previous commit failed
 	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope

@@ -42,7 +42,11 @@ func (t TxnScopeVar) GetVarValue() string {
 }
 
 // GetTxnScope returns the value of the tidb-server holds to request tso to pd.
+// When varValue is 'global`, directly return global here
 func (t TxnScopeVar) GetTxnScope() string {
+	if t.varValue == GlobalTxnScope {
+		return GlobalTxnScope
+	}
 	return t.txnScope
 }
 
