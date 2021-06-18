@@ -52,7 +52,7 @@ import (
 
 // MaxRecvMsgSize set max gRPC receive message size received from server. If any message size is larger than
 // current value, an error will be reported from gRPC.
-var MaxRecvMsgSize = math.MaxInt64
+var MaxRecvMsgSize = math.MaxInt64 - 1
 
 // Timeout durations.
 var (
