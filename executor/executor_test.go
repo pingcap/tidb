@@ -8521,7 +8521,7 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 	}
 }
 
-func (s *testSerialSuite2) TestIssue24933(c *C) {
+func (s *testSuite) TestIssue24933(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -8579,31 +8579,35 @@ func (s *testSerialSuite2) TestIssue24933(c *C) {
 
 	// Test direct select.
 	err := tk.ExecToErr("SELECT `s`.`count(a)` FROM (SELECT COUNT(`a`) FROM `test`.`t`) AS `s`")
-	c.Assert(err.Error(), Equals, "ERROR 1054 (42S22): Unknown column 'a' in ''")
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 's.count(a)' in 'field list'")
 
 	tk.MustExec("drop view v;")
 	tk.MustExec("create definer='root'@'localhost' view v as select * from (select count(a) from t) s;")
 	rows = tk.MustQuery("select * from v")
-	rows.Check(testkit.Rows("1", "2", "3"))
+	rows.Check(testkit.Rows("3"))
 
 	// Test window function.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(c1 int);")
 	tk.MustExec("insert into t values(111), (222), (333);")
 	tk.MustExec("drop view if exists v;")
-	tk.MustExec("create view v as (select * from (select row_number() over (order by c1) from t) s);")
+	tk.MustExec("create definer='root'@'localhost' view v as (select * from (select row_number() over (order by c1) from t) s);")
 	rows = tk.MustQuery("select * from v;")
 	rows.Check(testkit.Rows("1", "2", "3"))
-	tk.MustExec("create view v as (select * from (select c1, row_number() over (order by c1) from t) s);")
+	tk.MustExec("drop view if exists v;")
+	tk.MustExec("create definer='root'@'localhost' view v as (select * from (select c1, row_number() over (order by c1) from t) s);")
 	rows = tk.MustQuery("select * from v;")
 	rows.Check(testkit.Rows("111 1", "222 2", "333 3"))
 
 	// Test simple expr.
-	tk.MustExec("drop view v;")
 	tk.MustExec("drop view if exists v;")
-	tk.MustExec("create view v as (select * from (select c1 or 0 from t) s)")
+	tk.MustExec("create definer='root'@'localhost' view v as (select * from (select c1 or 0 from t) s)")
 	rows = tk.MustQuery("select * from v;")
 	rows.Check(testkit.Rows("1", "1", "1"))
+	rows = tk.MustQuery("select `c1 or 0` from v;")
+	rows.Check(testkit.Rows("1", "1", "1"))
+
+	tk.MustExec("drop view v;")
 }
 
 func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
