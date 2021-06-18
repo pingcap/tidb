@@ -3414,7 +3414,6 @@ func (s *testSessionSerialSuite) TestGlobalAndLocalTxn(c *C) {
 	}
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set @@tidb_enable_local_txn = on")
-	defer tk.MustExec("set @@tidb_enable_local_txn = off")
 	tk.MustExec("drop table if exists t1;")
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec(`create table t1 (c int)
@@ -3568,6 +3567,7 @@ PARTITION BY RANGE (c) (
 	// Won't read the value 99 because the previous commit failed
 	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
 	c.Assert(len(result.Rows()), Equals, 4)
+	tk.MustExec("set @@tidb_enable_local_txn = off")
 }
 
 func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
