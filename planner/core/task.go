@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
@@ -150,19 +151,24 @@ func (t *copTask) finishIndexPlan() {
 	cnt := t.count()
 	t.indexPlanFinished = true
 	sessVars := t.indexPlan.SCtx().GetSessionVars()
+	var tableInfo *model.TableInfo
+	if t.tablePlan != nil {
+		ts := t.tablePlan.(*PhysicalTableScan)
+		ts.stats = t.indexPlan.statsInfo()
+		tableInfo = ts.Table
+	}
 	// Network cost of transferring rows of index scan to TiDB.
-	t.cst += cnt * sessVars.NetworkFactor * t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true, false)
-
+	t.cst += cnt * sessVars.GetNetworkFactor(tableInfo) * t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true, false)
 	if t.tablePlan == nil {
 		return
 	}
+
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
-	t.tablePlan.(*PhysicalTableScan).stats = t.indexPlan.statsInfo()
 	var p PhysicalPlan
 	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
 	}
 	rowSize := t.tblColHists.GetIndexAvgRowSize(t.indexPlan.SCtx(), t.tblCols, p.(*PhysicalIndexScan).Index.Unique)
-	t.cst += cnt * rowSize * sessVars.ScanFactor
+	t.cst += cnt * rowSize * sessVars.GetScanFactor(tableInfo)
 }
 
 func (t *copTask) getStoreType() kv.StoreType {
@@ -184,10 +190,12 @@ func (t *copTask) getStoreType() kv.StoreType {
 
 func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
 	t := tasks[0].convertToRootTask(p.ctx)
+	p.cost = t.cost()
 	return attachPlan2Task(p.self, t)
 }
 
 func (p *PhysicalUnionScan) attach2Task(tasks ...task) task {
+	p.cost = tasks[0].cost()
 	if pj, ok := tasks[0].plan().(*PhysicalProjection); ok {
 		// Convert unionScan->projection to projection->unionScan, because unionScan can't handle projection as its children.
 		p.SetChildren(pj.children...)
@@ -206,10 +214,12 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 	rTask := tasks[1].convertToRootTask(p.ctx)
 	p.SetChildren(lTask.plan(), rTask.plan())
 	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
-	return &rootTask{
+	t := &rootTask{
 		p:   p,
 		cst: p.GetCost(lTask.count(), rTask.count(), lTask.cost(), rTask.cost()),
 	}
+	p.cost = t.cost()
+	return t
 }
 
 // GetCost computes the cost of apply operator.
@@ -247,10 +257,12 @@ func (p *PhysicalIndexMergeJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(innerTask.plan(), outerTask.plan())
 	}
-	return &rootTask{
+	t := &rootTask{
 		p:   p,
 		cst: p.GetCost(outerTask, innerTask),
 	}
+	p.cost = t.cost()
+	return t
 }
 
 // GetCost computes the cost of index merge join operator and its children.
@@ -324,10 +336,12 @@ func (p *PhysicalIndexHashJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(innerTask.plan(), outerTask.plan())
 	}
-	return &rootTask{
+	t := &rootTask{
 		p:   p,
 		cst: p.GetCost(outerTask, innerTask),
 	}
+	p.cost = t.cost()
+	return t
 }
 
 // GetCost computes the cost of index merge join operator and its children.
@@ -399,10 +413,12 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(innerTask.plan(), outerTask.plan())
 	}
-	return &rootTask{
+	t := &rootTask{
 		p:   p,
 		cst: p.GetCost(outerTask, innerTask),
 	}
+	p.cost = t.cost()
+	return t
 }
 
 // GetCost computes the cost of index join operator and its children.
@@ -558,6 +574,7 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 		p:   p,
 		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count()),
 	}
+	p.cost = task.cost()
 	return task
 }
 
@@ -641,9 +658,9 @@ func appendExpr(p *PhysicalProjection, expr expression.Expression) *expression.C
 	return col
 }
 
-// TiFlash join require that join key has exactly the same type, while TiDB only guarantee the join key is the same catalog,
-// so if the join key type is not exactly the same, we need add a projection below the join or exchanger if exists.
-func (p *PhysicalHashJoin) convertJoinKeyForTiFlashIfNeed(lTask, rTask *mppTask) (*mppTask, *mppTask) {
+// TiFlash join require that partition key has exactly the same type, while TiDB only guarantee the partition key is the same catalog,
+// so if the partition key type is not exactly the same, we need add a projection below the join or exchanger if exists.
+func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *mppTask) (*mppTask, *mppTask) {
 	lp := lTask.p
 	if _, ok := lp.(*PhysicalExchangeReceiver); ok {
 		lp = lp.Children()[0].Children()[0]
@@ -652,15 +669,15 @@ func (p *PhysicalHashJoin) convertJoinKeyForTiFlashIfNeed(lTask, rTask *mppTask)
 	if _, ok := rp.(*PhysicalExchangeReceiver); ok {
 		rp = rp.Children()[0].Children()[0]
 	}
-	// to mark if any equal cond needs to convert
-	lMask := make([]bool, len(p.EqualConditions))
-	rMask := make([]bool, len(p.EqualConditions))
-	cTypes := make([]*types.FieldType, len(p.EqualConditions))
+	// to mark if any partition key needs to convert
+	lMask := make([]bool, len(lTask.hashCols))
+	rMask := make([]bool, len(rTask.hashCols))
+	cTypes := make([]*types.FieldType, len(lTask.hashCols))
 	lChanged := false
 	rChanged := false
-	for i, eqFunc := range p.EqualConditions {
-		lKey := eqFunc.GetArgs()[0].(*expression.Column)
-		rKey := eqFunc.GetArgs()[1].(*expression.Column)
+	for i := range lTask.hashCols {
+		lKey := lTask.hashCols[i]
+		rKey := rTask.hashCols[i]
 		cType, lConvert, rConvert := negotiateCommonType(lKey.RetType, rKey.RetType)
 		if lConvert {
 			lMask[i] = true
@@ -685,14 +702,12 @@ func (p *PhysicalHashJoin) convertJoinKeyForTiFlashIfNeed(lTask, rTask *mppTask)
 		rProj = getProj(p.ctx, rp)
 		rp = rProj
 	}
-	newEqCondition := make([]*expression.ScalarFunction, 0, len(p.EqualConditions))
-	newEqCondition = append(newEqCondition, p.EqualConditions...)
-	p.EqualConditions = newEqCondition
-	lKeys := make([]*expression.Column, 0, len(p.EqualConditions))
-	rKeys := make([]*expression.Column, 0, len(p.EqualConditions))
-	for i, eqFunc := range p.EqualConditions {
-		lKey := eqFunc.GetArgs()[0].(*expression.Column)
-		rKey := eqFunc.GetArgs()[1].(*expression.Column)
+
+	lPartKeys := make([]*expression.Column, 0, len(rTask.hashCols))
+	rPartKeys := make([]*expression.Column, 0, len(lTask.hashCols))
+	for i := range lTask.hashCols {
+		lKey := lTask.hashCols[i]
+		rKey := rTask.hashCols[i]
 		if lMask[i] {
 			cType := cTypes[i].Clone()
 			cType.Flag = lKey.RetType.Flag
@@ -705,34 +720,32 @@ func (p *PhysicalHashJoin) convertJoinKeyForTiFlashIfNeed(lTask, rTask *mppTask)
 			rCast := expression.BuildCastFunction(p.ctx, rKey, cType)
 			rKey = appendExpr(rProj, rCast)
 		}
-		if lMask[i] || rMask[i] {
-			eqCond := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
-			p.EqualConditions[i] = eqCond.(*expression.ScalarFunction)
-		}
-		lKeys = append(lKeys, lKey)
-		rKeys = append(rKeys, rKey)
+		lPartKeys = append(lPartKeys, lKey)
+		rPartKeys = append(rPartKeys, rKey)
 	}
 	// if left or right child changes, we need to add enforcer.
 	if lChanged {
 		nlTask := lTask.copy().(*mppTask)
 		nlTask.p = lProj
 		nlTask = nlTask.enforceExchangerImpl(&property.PhysicalProperty{
-			TaskTp:        property.MppTaskType,
-			PartitionTp:   property.HashType,
-			PartitionCols: lKeys,
+			TaskTp:           property.MppTaskType,
+			MPPPartitionTp:   property.HashType,
+			MPPPartitionCols: lPartKeys,
 		})
 		nlTask.cst = lTask.cst
+		lProj.cost = nlTask.cst
 		lTask = nlTask
 	}
 	if rChanged {
 		nrTask := rTask.copy().(*mppTask)
 		nrTask.p = rProj
 		nrTask = nrTask.enforceExchangerImpl(&property.PhysicalProperty{
-			TaskTp:        property.MppTaskType,
-			PartitionTp:   property.HashType,
-			PartitionCols: rKeys,
+			TaskTp:           property.MppTaskType,
+			MPPPartitionTp:   property.HashType,
+			MPPPartitionCols: rPartKeys,
 		})
 		nrTask.cst = rTask.cst
+		rProj.cost = nrTask.cst
 		rTask = nrTask
 	}
 	return lTask, rTask
@@ -745,7 +758,11 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 		return invalidTask
 	}
 	if p.mppShuffleJoin {
-		lTask, rTask = p.convertJoinKeyForTiFlashIfNeed(lTask, rTask)
+		// protection check is case of some bugs
+		if len(lTask.hashCols) != len(rTask.hashCols) || len(lTask.hashCols) == 0 {
+			return invalidTask
+		}
+		lTask, rTask = p.convertPartitionKeysIfNeed(lTask, rTask)
 	}
 	p.SetChildren(lTask.plan(), rTask.plan())
 	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
@@ -759,6 +776,7 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 		partTp:   outerTask.partTp,
 		hashCols: outerTask.hashCols,
 	}
+	p.cost = task.cst
 	return task
 }
 
@@ -786,6 +804,7 @@ func (p *PhysicalHashJoin) attach2TaskForTiFlash(tasks ...task) task {
 		tablePlan:         p,
 		cst:               lCost + rCost + p.GetCost(lTask.count(), rTask.count()),
 	}
+	p.cost = task.cst
 	return task
 }
 
@@ -839,10 +858,12 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 	lTask := tasks[0].convertToRootTask(p.ctx)
 	rTask := tasks[1].convertToRootTask(p.ctx)
 	p.SetChildren(lTask.plan(), rTask.plan())
-	return &rootTask{
+	t := &rootTask{
 		p:   p,
 		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count()),
 	}
+	p.cost = t.cost()
+	return t
 }
 
 func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
@@ -885,11 +906,13 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		sortCPUCost := (tableRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
 		newTask.cst += sortCPUCost
 	}
+	p.cost = newTask.cst
 	if t.needExtraProj {
 		schema := t.originSchema
 		proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.tablePlan.SelectBlockOffset(), nil)
 		proj.SetSchema(schema)
 		proj.SetChildren(p)
+		proj.cost = newTask.cst
 		newTask.p = proj
 	} else {
 		newTask.p = p
@@ -918,7 +941,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	var prevSchema *expression.Schema
 	// Network cost of transferring rows of table scan to TiDB.
 	if t.tablePlan != nil {
-		t.cst += t.count() * sessVars.NetworkFactor * t.tblColHists.GetAvgRowSize(ctx, t.tablePlan.Schema().Columns, false, false)
+		t.cst += t.count() * sessVars.GetNetworkFactor(nil) * t.tblColHists.GetAvgRowSize(ctx, t.tablePlan.Schema().Columns, false, false)
 
 		tp := t.tablePlan
 		for len(tp.Children()) > 0 {
@@ -950,11 +973,13 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		p.PartitionInfo = t.partitionInfo
 		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.p = p
+		p.cost = newTask.cost()
 		if t.needExtraProj {
 			schema := t.originSchema
 			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.idxMergePartPlans[0].SelectBlockOffset(), nil)
 			proj.SetSchema(schema)
 			proj.SetChildren(p)
+			proj.SetCost(newTask.cost())
 			newTask.p = proj
 		}
 		return newTask
@@ -965,6 +990,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx, t.indexPlan.SelectBlockOffset())
 		p.PartitionInfo = t.partitionInfo
 		p.stats = t.indexPlan.statsInfo()
+		p.cost = newTask.cost()
 		newTask.p = p
 	} else {
 		tp := t.tablePlan
@@ -984,6 +1010,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.PartitionInfo = t.partitionInfo
 		p.stats = t.tablePlan.statsInfo()
+		p.cost = t.cost()
 
 		// If agg was pushed down in attach2Task(), the partial agg was placed on the top of tablePlan, the final agg was
 		// placed above the PhysicalTableReader, and the schema should have been set correctly for them, the schema of
@@ -1001,6 +1028,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 			proj := PhysicalProjection{Exprs: expression.Column2Exprs(prevSchema.Columns)}.Init(ts.ctx, ts.stats, ts.SelectBlockOffset(), nil)
 			proj.SetSchema(prevSchema)
 			proj.SetChildren(p)
+			proj.cost = t.cost()
 			newTask.p = proj
 		} else {
 			newTask.p = p
@@ -1011,6 +1039,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.p.statsInfo(), newTask.p.SelectBlockOffset())
 		sel.SetChildren(newTask.p)
 		newTask.p = sel
+		sel.cost = newTask.cost()
 	}
 
 	return newTask
@@ -1029,8 +1058,10 @@ func setTableScanToTableRowIDScan(p PhysicalPlan) {
 
 // rootTask is the final sink node of a plan graph. It should be a single goroutine on tidb.
 type rootTask struct {
-	p   PhysicalPlan
-	cst float64
+	p       PhysicalPlan
+	cst     float64
+	isEmpty bool // isEmpty indicates if this task contains a dual table and returns empty data.
+	// TODO: The flag 'isEmpty' is only checked by Projection and UnionAll. We should support more cases in the future.
 }
 
 func (t *rootTask) copy() task {
@@ -1073,10 +1104,21 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 			cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 			// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
 			pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
+			pushedDownLimit.cost = cop.cost()
 		}
 		t = cop.convertToRootTask(p.ctx)
 		sunk = p.sinkIntoIndexLookUp(t)
+	} else if mpp, ok := t.(*mppTask); ok {
+		newCount := p.Offset + p.Count
+		childProfile := mpp.plan().statsInfo()
+		stats := deriveLimitStats(childProfile, float64(newCount))
+		pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
+		mpp = attachPlan2Task(pushedDownLimit, mpp).(*mppTask)
+		pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
+		pushedDownLimit.cost = mpp.cost()
+		t = mpp.convertToRootTask(p.ctx)
 	}
+	p.cost = t.cost()
 	if sunk {
 		return t
 	}
@@ -1096,6 +1138,16 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 			return false
 		}
 	}
+
+	// If this happens, some Projection Operator must be inlined into this Limit. (issues/14428)
+	// For example, if the original plan is `IndexLookUp(col1, col2) -> Limit(col1, col2) -> Project(col1)`,
+	//  then after inlining the Project, it will be `IndexLookUp(col1, col2) -> Limit(col1)` here.
+	// If the Limit is sunk into the IndexLookUp, the IndexLookUp's schema needs to be updated as well,
+	//  but updating it here is not safe, so do not sink Limit into this IndexLookUp in this case now.
+	if p.Schema().Len() != reader.Schema().Len() {
+		return false
+	}
+
 	// We can sink Limit into IndexLookUpReader only if tablePlan contains no Selection.
 	ts, isTableScan := reader.tablePlan.(*PhysicalTableScan)
 	if !isTableScan {
@@ -1137,12 +1189,12 @@ func (p *PhysicalTopN) GetCost(count float64, isRoot bool) float64 {
 }
 
 // canPushDown checks if this topN can be pushed down. If each of the expression can be converted to pb, it can be pushed.
-func (p *PhysicalTopN) canPushDown(cop *copTask) bool {
+func (p *PhysicalTopN) canPushDown(storeTp kv.StoreType) bool {
 	exprs := make([]expression.Expression, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		exprs = append(exprs, item.Expr)
 	}
-	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), cop.getStoreType())
+	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeTp)
 }
 
 func (p *PhysicalTopN) allColsFromSchema(schema *expression.Schema) bool {
@@ -1179,6 +1231,7 @@ func (p *PhysicalSort) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	t = attachPlan2Task(p, t)
 	t.addCost(p.GetCost(t.count(), p.Schema()))
+	p.cost = t.cost()
 	return t
 }
 
@@ -1212,7 +1265,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputCount := t.count()
-	if copTask, ok := t.(*copTask); ok && p.canPushDown(copTask) && len(copTask.rootTaskConds) == 0 {
+	if copTask, ok := t.(*copTask); ok && p.canPushDown(copTask.getStoreType()) && len(copTask.rootTaskConds) == 0 {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
@@ -1225,9 +1278,13 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 			copTask.tablePlan = pushedDownTopN
 		}
 		copTask.addCost(pushedDownTopN.GetCost(inputCount, false))
+	} else if mppTask, ok := t.(*mppTask); ok && p.canPushDown(kv.TiFlash) {
+		pushedDownTopN := p.getPushedDownTopN(mppTask.p)
+		mppTask.p = pushedDownTopN
 	}
 	rootTask := t.convertToRootTask(p.ctx)
 	rootTask.addCost(p.GetCost(rootTask.count(), true))
+	p.cost = rootTask.cost()
 	return attachPlan2Task(p, rootTask)
 }
 
@@ -1250,6 +1307,7 @@ func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 		if len(cop.rootTaskConds) == 0 && cop.getStoreType() == kv.TiFlash && expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.Exprs, p.ctx.GetClient(), cop.getStoreType()) {
 			copTask := attachPlan2Task(p, cop)
 			copTask.addCost(p.GetCost(t.count()))
+			p.cost = copTask.cost()
 			return copTask
 		}
 	} else if mpp, ok := t.(*mppTask); ok {
@@ -1257,6 +1315,7 @@ func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 			p.SetChildren(mpp.p)
 			mpp.p = p
 			mpp.addCost(p.GetCost(t.count()))
+			p.cost = mpp.cost()
 			return mpp
 		}
 	}
@@ -1264,10 +1323,45 @@ func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	t = t.convertToRootTask(p.ctx)
 	t = attachPlan2Task(p, t)
 	t.addCost(p.GetCost(t.count()))
+	p.cost = t.cost()
+	if root, ok := tasks[0].(*rootTask); ok && root.isEmpty {
+		t.(*rootTask).isEmpty = true
+	}
+	return t
+}
+
+func (p *PhysicalUnionAll) attach2MppTasks(tasks ...task) task {
+	t := &mppTask{p: p}
+	childPlans := make([]PhysicalPlan, 0, len(tasks))
+	var childMaxCost float64
+	for _, tk := range tasks {
+		if mpp, ok := tk.(*mppTask); ok && !tk.invalid() {
+			childCost := mpp.cost()
+			if childCost > childMaxCost {
+				childMaxCost = childCost
+			}
+			childPlans = append(childPlans, mpp.plan())
+		} else if root, ok := tk.(*rootTask); ok && root.isEmpty {
+			continue
+		} else {
+			return invalidTask
+		}
+	}
+	if len(childPlans) == 0 {
+		return invalidTask
+	}
+	p.SetChildren(childPlans...)
+	t.cst = childMaxCost
+	p.cost = t.cost()
 	return t
 }
 
 func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
+	for _, t := range tasks {
+		if _, ok := t.(*mppTask); ok {
+			return p.attach2MppTasks(tasks...)
+		}
+	}
 	t := &rootTask{p: p}
 	childPlans := make([]PhysicalPlan, 0, len(tasks))
 	var childMaxCost float64
@@ -1283,6 +1377,7 @@ func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 	sessVars := p.ctx.GetSessionVars()
 	// Children of UnionExec are executed in parallel.
 	t.cst = childMaxCost + float64(1+len(tasks))*sessVars.ConcurrencyFactor
+	p.cost = t.cost()
 	return t
 }
 
@@ -1291,11 +1386,13 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	if mppTask, _ := tasks[0].(*mppTask); mppTask != nil { // always push to mpp task.
 		sc := sel.ctx.GetSessionVars().StmtCtx
 		if expression.CanExprsPushDown(sc, sel.Conditions, sel.ctx.GetClient(), kv.TiFlash) {
+			sel.cost = mppTask.cost()
 			return attachPlan2Task(sel, mppTask.copy())
 		}
 	}
 	t := tasks[0].convertToRootTask(sel.ctx)
 	t.addCost(t.count() * sessVars.CPUFactor)
+	sel.cost = t.cost()
 	return attachPlan2Task(sel, t)
 }
 
@@ -1307,10 +1404,13 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 	for _, aggFunc := range aggFuncs {
 		// if the aggFunc contain VirtualColumn or CorrelatedColumn, it can not be pushed down.
 		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args) {
+			sctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
+				"MPP mode may be blocked because expressions of AggFunc `" + aggFunc.Name + "` contain virtual column or correlated column, which is not supported now.")
 			return false
 		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
+			sctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because AggFunc `" + aggFunc.Name + "` is not supported now.")
 			return false
 		}
 		if !aggregation.CheckAggPushDown(aggFunc, storeType) {
@@ -1328,6 +1428,7 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 		}
 	}
 	if expression.ContainVirtualColumn(groupByItems) {
+		sctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because groupByItems contain virtual column, which is not supported now.")
 		return false
 	}
 	return expression.CanExprsPushDown(sc, groupByItems, client, storeType)
@@ -1727,21 +1828,24 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 					cop.indexPlan = partialAgg
 				}
 				cop.addCost(p.GetCost(inputRows, false))
+				partialAgg.SetCost(cop.cost())
 			}
 			t = cop.convertToRootTask(p.ctx)
 			inputRows = t.count()
 			attachPlan2Task(finalAgg, t)
+			finalAgg.SetCost(cop.cost())
 		}
 	} else {
 		attachPlan2Task(p, t)
 	}
 	t.addCost(p.GetCost(inputRows, true))
+	p.SetCost(t.cost())
 	return t
 }
 
 // GetCost computes cost of stream aggregation considering CPU/memory.
 func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot bool) float64 {
-	aggFuncFactor := p.getAggFuncCostFactor()
+	aggFuncFactor := p.getAggFuncCostFactor(false)
 	var cpuCost float64
 	sessVars := p.ctx.GetSessionVars()
 	if isRoot {
@@ -1788,7 +1892,8 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		if proj != nil {
 			attachPlan2Task(proj, mpp)
 		}
-		mpp.addCost(p.GetCost(inputRows, false))
+		mpp.addCost(p.GetCost(inputRows, false, true))
+		p.cost = mpp.cost()
 		return mpp
 	case Mpp2Phase:
 		proj := p.convertAvgForMPP()
@@ -1809,7 +1914,8 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 				partitionCols = append(partitionCols, col)
 			}
 		}
-		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols}
+		partialAgg.SetCost(mpp.cost())
+		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols}
 		newMpp := mpp.enforceExchangerImpl(prop)
 		if newMpp.invalid() {
 			return newMpp
@@ -1819,18 +1925,26 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 			attachPlan2Task(proj, newMpp)
 		}
 		// TODO: how to set 2-phase cost?
-		newMpp.addCost(p.GetCost(inputRows, false))
+		newMpp.addCost(p.GetCost(inputRows, false, true))
+		finalAgg.SetCost(mpp.cost())
+		if proj != nil {
+			proj.SetCost(mpp.cost())
+		}
 		return newMpp
 	case MppTiDB:
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, false)
 		if partialAgg != nil {
 			attachPlan2Task(partialAgg, mpp)
 		}
-		mpp.addCost(p.GetCost(inputRows, false))
+		mpp.addCost(p.GetCost(inputRows, false, true))
+		if partialAgg != nil {
+			partialAgg.SetCost(mpp.cost())
+		}
 		t = mpp.convertToRootTask(p.ctx)
 		inputRows = t.count()
 		attachPlan2Task(finalAgg, t)
-		t.addCost(p.GetCost(inputRows, true))
+		t.addCost(p.GetCost(inputRows, true, false))
+		finalAgg.SetCost(t.cost())
 		return t
 	default:
 		return invalidTask
@@ -1860,7 +1974,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 					partialAgg.SetChildren(cop.indexPlan)
 					cop.indexPlan = partialAgg
 				}
-				cop.addCost(p.GetCost(inputRows, false))
+				cop.addCost(p.GetCost(inputRows, false, false))
 			}
 			// In `newPartialAggregate`, we are using stats of final aggregation as stats
 			// of `partialAgg`, so the network cost of transferring result rows of `partialAgg`
@@ -1893,15 +2007,16 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	// hash aggregation, it would cause under-estimation as the reason mentioned in comment above.
 	// To make it simple, we also treat 2-phase parallel hash aggregation in TiDB layer as
 	// 1-phase when computing cost.
-	t.addCost(p.GetCost(inputRows, true))
+	t.addCost(p.GetCost(inputRows, true, false))
+	p.cost = t.cost()
 	return t
 }
 
 // GetCost computes the cost of hash aggregation considering CPU/memory.
-func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool) float64 {
+func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool, isMPP bool) float64 {
 	cardinality := p.statsInfo().RowCount
 	numDistinctFunc := p.numDistinctFunc()
-	aggFuncFactor := p.getAggFuncCostFactor()
+	aggFuncFactor := p.getAggFuncCostFactor(isMPP)
 	var cpuCost float64
 	sessVars := p.ctx.GetSessionVars()
 	if isRoot {
@@ -1931,7 +2046,7 @@ type mppTask struct {
 	p   PhysicalPlan
 	cst float64
 
-	partTp   property.PartitionType
+	partTp   property.MPPPartitionType
 	hashCols []*expression.Column
 }
 
@@ -1969,20 +2084,28 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		ExchangeType: tipb.ExchangeType_PassThrough,
 	}.Init(ctx, t.p.statsInfo())
 	sender.SetChildren(t.p)
+	sender.cost = t.cost()
 
 	p := PhysicalTableReader{
 		tablePlan: sender,
 		StoreType: kv.TiFlash,
 	}.Init(ctx, t.p.SelectBlockOffset())
 	p.stats = t.p.statsInfo()
-	return &rootTask{
-		p:   p,
-		cst: t.cst / 20, // TODO: This is tricky because mpp doesn't run in a coprocessor way.
+
+	cst := t.cst + t.count()*ctx.GetSessionVars().GetNetworkFactor(nil)
+	p.cost = cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
+	if p.ctx.GetSessionVars().IsMPPEnforced() {
+		p.cost = cst / 1000000000
 	}
+	rt := &rootTask{
+		p:   p,
+		cst: p.cost,
+	}
+	return rt
 }
 
 func (t *mppTask) needEnforce(prop *property.PhysicalProperty) bool {
-	switch prop.PartitionTp {
+	switch prop.MPPPartitionTp {
 	case property.AnyType:
 		return false
 	case property.BroadcastType:
@@ -1992,10 +2115,10 @@ func (t *mppTask) needEnforce(prop *property.PhysicalProperty) bool {
 			return true
 		}
 		// TODO: consider equalivant class
-		if len(prop.PartitionCols) != len(t.hashCols) {
+		if len(prop.MPPPartitionCols) != len(t.hashCols) {
 			return true
 		}
-		for i, col := range prop.PartitionCols {
+		for i, col := range prop.MPPPartitionCols {
 			if !col.Equal(nil, t.hashCols[i]) {
 				return true
 			}
@@ -2006,6 +2129,7 @@ func (t *mppTask) needEnforce(prop *property.PhysicalProperty) bool {
 
 func (t *mppTask) enforceExchanger(prop *property.PhysicalProperty) *mppTask {
 	if len(prop.SortItems) != 0 {
+		t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
 		return &mppTask{}
 	}
 	if !t.needEnforce(prop) {
@@ -2015,26 +2139,29 @@ func (t *mppTask) enforceExchanger(prop *property.PhysicalProperty) *mppTask {
 }
 
 func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask {
-	if collate.NewCollationEnabled() && prop.PartitionTp == property.HashType {
-		for _, col := range prop.PartitionCols {
+	if collate.NewCollationEnabled() && prop.MPPPartitionTp == property.HashType {
+		for _, col := range prop.MPPPartitionCols {
 			if types.IsString(col.RetType.Tp) {
+				t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because when `new_collation_enabled` is true, HashJoin or HashAgg with string key is not supported now.")
 				return &mppTask{cst: math.MaxFloat64}
 			}
 		}
 	}
 	ctx := t.p.SCtx()
 	sender := PhysicalExchangeSender{
-		ExchangeType: tipb.ExchangeType(prop.PartitionTp),
-		HashCols:     prop.PartitionCols,
+		ExchangeType: tipb.ExchangeType(prop.MPPPartitionTp),
+		HashCols:     prop.MPPPartitionCols,
 	}.Init(ctx, t.p.statsInfo())
 	sender.SetChildren(t.p)
 	receiver := PhysicalExchangeReceiver{}.Init(ctx, t.p.statsInfo())
 	receiver.SetChildren(sender)
-	cst := t.cst + t.count()*ctx.GetSessionVars().NetworkFactor
+	cst := t.cst + t.count()*ctx.GetSessionVars().GetNetworkFactor(nil)
+	sender.cost = cst
+	receiver.cost = cst
 	return &mppTask{
 		p:        receiver,
 		cst:      cst,
-		partTp:   prop.PartitionTp,
-		hashCols: prop.PartitionCols,
+		partTp:   prop.MPPPartitionTp,
+		hashCols: prop.MPPPartitionCols,
 	}
 }

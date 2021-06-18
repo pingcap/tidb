@@ -54,8 +54,10 @@ check-static: tools/bin/golangci-lint
 	  --enable=ineffassign \
 	  --enable=typecheck \
 	  --enable=varcheck \
+	  --enable=unused \
 	  --enable=structcheck \
 	  --enable=deadcode \
+	  --enable=gosimple \
 	  $$($(PACKAGE_DIRECTORIES))
 
 check-slow:tools/bin/gometalinter tools/bin/gosec
@@ -108,7 +110,7 @@ test: test_part_1 test_part_2
 
 test_part_1: checklist explaintest
 
-test_part_2: checkdep gotest gogenerate
+test_part_2: gotest gogenerate
 
 explaintest: server_check
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
@@ -149,10 +151,6 @@ race: failpoint-enable
 leak: failpoint-enable
 	@export log_level=debug; \
 	$(GOTEST) -tags leak $(PACKAGES) || { $(FAILPOINT_DISABLE); exit 1; }
-	@$(FAILPOINT_DISABLE)
-
-tikv_integration_test: failpoint-enable
-	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
 
 server:
@@ -206,9 +204,6 @@ failpoint-disable: tools/bin/failpoint-ctl
 # Restoring gofail failpoints...
 	@$(FAILPOINT_DISABLE)
 
-checkdep:
-	$(GO) list -f '{{ join .Imports "\n" }}' github.com/pingcap/tidb/store/tikv | grep ^github.com/pingcap/parser$$ || exit 0; exit 1
-
 tools/bin/megacheck: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/megacheck honnef.co/go/tools/cmd/megacheck
@@ -237,11 +232,13 @@ tools/bin/unconvert: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/unconvert github.com/mdempsky/unconvert
 
-tools/bin/failpoint-ctl: go.mod
-	$(GO) build -o $@ github.com/pingcap/failpoint/failpoint-ctl
+tools/bin/failpoint-ctl: tools/check/go.mod
+	cd tools/check; \
+	$(GO) build -o ../bin/failpoint-ctl github.com/pingcap/failpoint/failpoint-ctl
 
-tools/bin/errdoc-gen: go.mod
-	$(GO) build -o $@ github.com/pingcap/errors/errdoc-gen
+tools/bin/errdoc-gen: tools/check/go.mod
+	cd tools/check; \
+	$(GO) build -o ../bin/errdoc-gen github.com/pingcap/errors/errdoc-gen
 
 tools/bin/golangci-lint:
 	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.29.0

@@ -135,9 +135,15 @@ func InferType4ControlFuncs(lexp, rexp Expression) *types.FieldType {
 	resultEvalType := resultFieldType.EvalType()
 	if resultEvalType == types.ETInt {
 		resultFieldType.Decimal = 0
+		if resultFieldType.Tp == mysql.TypeEnum || resultFieldType.Tp == mysql.TypeSet {
+			resultFieldType.Tp = mysql.TypeLonglong
+		}
 	} else if resultEvalType == types.ETString {
 		if lhs.Tp != mysql.TypeNull || rhs.Tp != mysql.TypeNull {
 			resultFieldType.Decimal = types.UnspecifiedLength
+		}
+		if resultFieldType.Tp == mysql.TypeEnum || resultFieldType.Tp == mysql.TypeSet {
+			resultFieldType.Tp = mysql.TypeVarchar
 		}
 	}
 	return resultFieldType

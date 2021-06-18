@@ -33,8 +33,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/parser/terror"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/metadata"
 )
@@ -59,11 +59,20 @@ type RPCClient struct {
 	rpcCli Client
 }
 
+// UnistoreRPCClientSendHook exports for test.
+var UnistoreRPCClientSendHook func(*tikvrpc.Request)
+
 // SendRequest sends a request to mock cluster.
 func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	failpoint.Inject("rpcServerBusy", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}))
+		}
+	})
+
+	failpoint.Inject("unistoreRPCClientSendHook", func(val failpoint.Value) {
+		if val.(bool) && UnistoreRPCClientSendHook != nil {
+			UnistoreRPCClientSendHook(req)
 		}
 	})
 
@@ -116,6 +125,8 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		failpoint.Inject("rpcPrewriteResult", func(val failpoint.Value) {
 			if val != nil {
 				switch val.(string) {
+				case "timeout":
+					failpoint.Return(nil, errors.New("timeout"))
 				case "notLeader":
 					failpoint.Return(&tikvrpc.Response{
 						Resp: &kvrpcpb.PrewriteResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
@@ -256,6 +267,9 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp, err = c.usSvr.SplitRegion(ctx, req.SplitRegion())
 	case tikvrpc.CmdDebugGetRegionProperties:
 		resp.Resp, err = c.handleDebugGetRegionProperties(ctx, req.DebugGetRegionProperties())
+		return resp, err
+	case tikvrpc.CmdStoreSafeTS:
+		resp.Resp, err = c.usSvr.GetStoreSafeTS(ctx, req.StoreSafeTS())
 		return resp, err
 	default:
 		err = errors.Errorf("not support this request type %v", req.Type)

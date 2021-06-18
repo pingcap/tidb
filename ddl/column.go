@@ -37,12 +37,11 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -714,6 +713,10 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		return needTruncationOrToggleSign()
 	}
 
+	if convertBetweenCharAndVarchar(oldCol.Tp, newCol.Tp) {
+		return true
+	}
+
 	// Deal with the different type.
 	switch oldCol.Tp {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
@@ -734,6 +737,15 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	}
 
 	return true
+}
+
+// Column type conversion between varchar to char need reorganization because
+// 1. varchar -> char: char type is stored with the padding removed. All the indexes need to be rewritten.
+// 2. char -> varchar: the index value encoding of secondary index on clustered primary key tables is different.
+// These secondary indexes need to be rewritten.
+func convertBetweenCharAndVarchar(oldCol, newCol byte) bool {
+	return (types.IsTypeVarchar(oldCol) && newCol == mysql.TypeString) ||
+		(oldCol == mysql.TypeString && types.IsTypeVarchar(newCol) && collate.NewCollationEnabled())
 }
 
 func isElemsChangedToModifyColumn(oldElems, newElems []string) bool {
@@ -786,6 +798,39 @@ func getModifyColumnInfo(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.Ta
 	return dbInfo, tblInfo, oldCol, jobParam, errors.Trace(err)
 }
 
+// getOriginDefaultValueForModifyColumn gets the original default value for modifying column.
+// Since column type change is implemented as adding a new column then substituting the old one.
+// Case exists when update-where statement fetch a NULL for not-null column without any default data,
+// it will errors.
+// So we set original default value here to prevent this error. If the oldCol has the original default value, we use it.
+// Otherwise we set the zero value as original default value.
+// Besides, in insert & update records, we have already implement using the casted value of relative column to insert
+// rather than the original default value.
+func getOriginDefaultValueForModifyColumn(d *ddlCtx, changingCol, oldCol *model.ColumnInfo) (interface{}, error) {
+	var err error
+	originDefVal := oldCol.GetOriginDefaultValue()
+	if originDefVal != nil {
+		sessCtx := newContext(d.store)
+		odv, err := table.CastValue(sessCtx, types.NewDatum(originDefVal), changingCol, false, false)
+		if err != nil {
+			logutil.BgLogger().Info("[ddl] cast origin default value failed", zap.Error(err))
+		}
+		if !odv.IsNull() {
+			if originDefVal, err = odv.ToString(); err != nil {
+				originDefVal = nil
+				logutil.BgLogger().Info("[ddl] convert default value to string failed", zap.Error(err))
+			}
+		}
+	}
+	if originDefVal == nil {
+		originDefVal, err = generateOriginDefaultValue(changingCol)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return originDefVal, nil
+}
+
 func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	dbInfo, tblInfo, oldCol, jobParam, err := getModifyColumnInfo(t, job)
 	if err != nil {
@@ -828,26 +873,24 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		return w.doModifyColumn(d, t, job, dbInfo, tblInfo, jobParam.newCol, oldCol, jobParam.pos)
 	}
 
+	if err = isGeneratedRelatedColumn(tblInfo, jobParam.newCol, oldCol); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
 	if jobParam.changingCol == nil {
 		changingColPos := &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
 		newColName := model.NewCIStr(genChangingColumnUniqueName(tblInfo, oldCol))
 		if mysql.HasPriKeyFlag(oldCol.Flag) {
 			job.State = model.JobStateCancelled
-			msg := "tidb_enable_change_column_type is true and this column has primary key flag"
+			msg := "this column has primary key flag"
 			return ver, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 
 		jobParam.changingCol = jobParam.newCol.Clone()
 		jobParam.changingCol.Name = newColName
 		jobParam.changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
-
-		// Since column type change is implemented as adding a new column then substituting the old one.
-		// Case exists when update-where statement fetch a NULL for not-null column without any default data,
-		// it will errors.
-		// So we set zero original default value here to prevent this error. besides, in insert & update records,
-		// we have already implement using the casted value of relative column to insert rather than the origin
-		// default value.
-		originDefVal, err := generateOriginDefaultValue(jobParam.newCol)
+		originDefVal, err := getOriginDefaultValueForModifyColumn(d, jobParam.changingCol, oldCol)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -867,8 +910,13 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			newIdxInfo := idxInfo.Clone()
 			newIdxInfo.Name = model.NewCIStr(genChangingIndexUniqueName(tblInfo, idxInfo))
 			newIdxInfo.ID = allocateIndexID(tblInfo)
-			newIdxInfo.Columns[offsets[i]].Name = newColName
-			newIdxInfo.Columns[offsets[i]].Offset = jobParam.changingCol.Offset
+			newIdxChangingCol := newIdxInfo.Columns[offsets[i]]
+			newIdxChangingCol.Name = newColName
+			newIdxChangingCol.Offset = jobParam.changingCol.Offset
+			canPrefix := types.IsTypePrefixable(jobParam.changingCol.Tp)
+			if !canPrefix || (canPrefix && jobParam.changingCol.Flen < newIdxChangingCol.Length) {
+				newIdxChangingCol.Length = types.UnspecifiedLength
+			}
 			jobParam.changingIdxs = append(jobParam.changingIdxs, newIdxInfo)
 		}
 		tblInfo.Indices = append(tblInfo.Indices, jobParam.changingIdxs...)
@@ -1019,17 +1067,17 @@ func (w *worker) doModifyColumnTypeWithData(
 				// If timeout, we should return, check for the owner and re-wait job done.
 				return ver, nil
 			}
-			if needRollbackData(err) {
-				if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
-					logutil.BgLogger().Warn("[ddl] run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
-						zap.String("job", job.String()), zap.Error(err1))
-					return ver, errors.Trace(err)
-				}
-				logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
-				// When encounter these error above, we change the job to rolling back job directly.
-				job.State = model.JobStateRollingback
+			if kv.IsTxnRetryableError(err) {
+				// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
+				w.reorgCtx.cleanNotifyReorgCancel()
 				return ver, errors.Trace(err)
 			}
+			if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+				logutil.BgLogger().Warn("[ddl] run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
+					zap.String("job", job.String()), zap.Error(err1))
+			}
+			logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+			job.State = model.JobStateRollingback
 			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
 			w.reorgCtx.cleanNotifyReorgCancel()
 			return ver, errors.Trace(err)
@@ -1054,6 +1102,13 @@ func (w *worker) doModifyColumnTypeWithData(
 		changingColumnUniqueName := changingCol.Name
 		changingCol.Name = colName
 		changingCol.ChangeStateInfo = nil
+		// After changing the column, the column's type is change, so it needs to set OriginDefaultValue back
+		// so that there is no error in getting the default value from OriginDefaultValue.
+		// Besides, nil data that was not backfilled in the "add column" is backfilled after the column is changed.
+		// So it can set OriginDefaultValue to nil.
+		if err = changingCol.SetOriginDefaultValue(nil); err != nil {
+			return ver, errors.Trace(err)
+		}
 		tblInfo.Indices = tblInfo.Indices[:len(tblInfo.Indices)-len(changingIdxs)]
 		// Adjust table column offset.
 		if err = adjustColumnInfoInModifyColumn(job, tblInfo, changingCol, oldCol, pos, changingColumnUniqueName.L); err != nil {
@@ -1078,14 +1133,6 @@ func (w *worker) doModifyColumnTypeWithData(
 	return ver, errors.Trace(err)
 }
 
-// needRollbackData indicates whether it needs to rollback data when specific error occurs.
-func needRollbackData(err error) bool {
-	return kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) ||
-		types.ErrOverflow.Equal(err) || types.ErrDataTooLong.Equal(err) || types.ErrTruncated.Equal(err) ||
-		json.ErrInvalidJSONText.Equal(err) || types.ErrBadNumber.Equal(err) || types.ErrInvalidYear.Equal(err) ||
-		types.ErrWrongValue.Equal(err)
-}
-
 // BuildElements is exported for testing.
 func BuildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) []*meta.Element {
 	elements := make([]*meta.Element, 0, len(changingIdxs)+1)
@@ -1101,8 +1148,24 @@ func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, oldColInfo, colIn
 	return w.writePhysicalTableRecord(t.(table.PhysicalTable), typeUpdateColumnWorker, nil, oldColInfo, colInfo, reorgInfo)
 }
 
+// TestReorgGoroutineRunning is only used in test to indicate the reorg goroutine has been started.
+var TestReorgGoroutineRunning = make(chan interface{})
+
 // updateColumnAndIndexes handles the modify column reorganization state for a table.
 func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.ColumnInfo, idxes []*model.IndexInfo, reorgInfo *reorgInfo) error {
+	failpoint.Inject("mockInfiniteReorgLogic", func(val failpoint.Value) {
+		if val.(bool) {
+			a := new(interface{})
+			TestReorgGoroutineRunning <- a
+			for {
+				time.Sleep(30 * time.Millisecond)
+				if w.reorgCtx.isReorgCanceled() {
+					// Job is cancelled. So it can't be done.
+					failpoint.Return(errCancelledDDLJob)
+				}
+			}
+		}
+	})
 	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		err := w.updatePhysicalTableRow(t.(table.PhysicalTable), oldCol, col, reorgInfo)
@@ -1256,7 +1319,7 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 }
 
 func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, rawRow []byte) error {
-	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, handle, rawRow, time.UTC, timeutil.SystemLocation(), w.rowMap)
+	_, err := w.rowDecoder.DecodeTheExistedColumnMap(w.sessCtx, handle, rawRow, time.UTC, w.rowMap)
 	if err != nil {
 		return errors.Trace(errCantDecodeRecord.GenWithStackByArgs("column", err))
 	}
@@ -1294,6 +1357,11 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	})
 
 	w.rowMap[w.newColInfo.ID] = newColVal
+	_, err = w.rowDecoder.EvalRemainedExprColumnMap(w.sessCtx, timeutil.SystemLocation(), w.rowMap)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	newColumnIDs := make([]int64, 0, len(w.rowMap))
 	newRow := make([]types.Datum, 0, len(w.rowMap))
 	for colID, val := range w.rowMap {
@@ -1336,7 +1404,7 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
-		txn.SetOption(tikvstore.Priority, w.priority)
+		txn.SetOption(kv.Priority, w.priority)
 
 		rowRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
@@ -1715,7 +1783,7 @@ func rollbackModifyColumnJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.
 // modifyColsFromNull2NotNull modifies the type definitions of 'null' to 'not null'.
 // Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
 func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.TableInfo, cols []*model.ColumnInfo,
-	newColName model.CIStr, isModifiedType bool) error {
+	newColName model.CIStr, isDataTruncated bool) error {
 	// Get sessionctx from context resource pool.
 	var ctx sessionctx.Context
 	ctx, err := w.sessPool.get()
@@ -1732,7 +1800,7 @@ func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.
 	})
 	if !skipCheck {
 		// If there is a null value inserted, it cannot be modified and needs to be rollback.
-		err = checkForNullValue(ctx, isModifiedType, dbInfo.Name, tblInfo.Name, newColName, cols...)
+		err = checkForNullValue(ctx, isDataTruncated, dbInfo.Name, tblInfo.Name, newColName, cols...)
 		if err != nil {
 			return errors.Trace(err)
 		}

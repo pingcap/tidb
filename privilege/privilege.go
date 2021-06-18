@@ -50,6 +50,9 @@ type Manager interface {
 	// Dynamic privileges are only assignable globally, and have their own grantable attribute.
 	RequestDynamicVerification(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool
 
+	// RequestDynamicVerification verifies a DYNAMIC privilege for a specific user.
+	RequestDynamicVerificationWithUser(privName string, grantable bool, user *auth.UserIdentity) bool
+
 	// ConnectionVerification verifies user privilege for connection.
 	ConnectionVerification(user, host string, auth, salt []byte, tlsState *tls.ConnectionState) (string, string, bool)
 

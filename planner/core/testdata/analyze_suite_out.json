@@ -43,7 +43,7 @@
     "Name": "TestEstimation",
     "Cases": [
       {
-        "SQL": "explain select count(*) from t group by a",
+        "SQL": "explain format = 'brief' select count(*) from t group by a",
         "Plan": [
           "HashAgg 2.00 root  group by:test.t.a, funcs:count(Column#4)->Column#3",
           "└─TableReader 2.00 root  data:HashAgg",
@@ -435,14 +435,14 @@
   {
     "Name": "TestAnalyze",
     "Cases": [
-      "Analyze{Index(a),Table(a, b)}",
+      "Analyze{Table(_tidb_rowid, a, b, _tidb_rowid)}",
       "TableReader(Table(t)->Sel([le(test.t.a, 2)]))",
       "IndexReader(Index(t.b)[[-inf,2)])",
       "TableReader(Table(t)->Sel([eq(test.t.a, 1) le(test.t.b, 2)]))",
       "TableReader(Table(t1)->Sel([le(test.t1.a, 2)]))",
       "IndexLookUp(Index(t1.a)[[1,1]], Table(t1)->Sel([le(test.t1.b, 2)]))",
       "TableReader(Table(t2)->Sel([le(test.t2.a, 2)]))",
-      "Analyze{Index(a),Index(b)}",
+      "Analyze{Table(_tidb_rowid, a, b, _tidb_rowid)}",
       "PartitionUnionAll{TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))->TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))}",
       "PartitionUnionAll{IndexReader(Index(t4.b)[[-inf,2)])->IndexReader(Index(t4.b)[[-inf,2)])}",
       "TableReader(Table(t4)->Sel([eq(test.t4.a, 1) le(test.t4.b, 2)]))"
