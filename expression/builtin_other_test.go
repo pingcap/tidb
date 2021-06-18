@@ -152,7 +152,7 @@ func (s *testEvaluatorSuite) TestRowFunc(c *C) {
 func (s *testEvaluatorSuite) TestSetVar(c *C) {
 	fc := funcs[ast.SetVar]
 	dec := types.NewDecFromInt(5)
-	timeDec := types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0))
+	timeDec := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	testCases := []struct {
 		args []interface{}
 		res  interface{}
@@ -185,7 +185,7 @@ func (s *testEvaluatorSuite) TestSetVar(c *C) {
 
 func (s *testEvaluatorSuite) TestGetVar(c *C) {
 	dec := types.NewDecFromInt(5)
-	timeDec := types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0))
+	timeDec := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	sessionVars := []struct {
 		key string
 		val interface{}
@@ -201,7 +201,7 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 	for _, kv := range sessionVars {
 		s.ctx.GetSessionVars().Users[kv.key] = types.NewDatum(kv.val)
 		var tp *types.FieldType
-		if _, ok := kv.val.(*types.MyDecimal); ok {
+		if _, ok := kv.val.(types.Time); ok {
 			tp = types.NewFieldType(mysql.TypeDatetime)
 		} else {
 			tp = types.NewFieldType(mysql.TypeVarString)
@@ -221,7 +221,7 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 		{[]interface{}{"e"}, int64(3)},
 		{[]interface{}{"f"}, float64(2.5)},
 		{[]interface{}{"g"}, dec},
-		{[]interface{}{"h"}, timeDec},
+		{[]interface{}{"h"}, timeDec.String()},
 	}
 	for _, tc := range testCases {
 		tp, ok := s.ctx.GetSessionVars().UserVarTypes[tc.args[0].(string)]
