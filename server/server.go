@@ -310,7 +310,7 @@ func setSSLVariable(ca, key, cert string) {
 
 func setTxnScope() {
 	variable.SetSysVar("txn_scope", func() string {
-		if isGlobal, _ := config.GetTxnScopeFromConfig(); isGlobal {
+		if txnScope := config.GetTxnScopeFromConfig(); txnScope == kv.GlobalTxnScope {
 			return kv.GlobalTxnScope
 		}
 		return kv.LocalTxnScope

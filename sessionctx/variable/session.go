@@ -852,6 +852,9 @@ type SessionVars struct {
 
 	// EnableGlobalTemporaryTable indicates whether to enable global temporary table
 	EnableGlobalTemporaryTable bool
+
+	// EnableLocalTxn indicates whether to enable Local Txn.
+	EnableLocalTxn bool
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
@@ -1055,7 +1058,8 @@ func NewSessionVars() *SessionVars {
 		EnableAlterPlacement:        DefTiDBEnableAlterPlacement,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
-		TxnScope:                    kv.GetTxnScopeVar(),
+		EnableLocalTxn:              DefTiDBEnableLocalTxn,
+		TxnScope:                    kv.GetTxnScopeVar(DefTiDBEnableLocalTxn),
 		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
 		EnableAsyncCommit:           DefTiDBEnableAsyncCommit,
 		Enable1PC:                   DefTiDBEnable1PC,

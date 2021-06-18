@@ -281,7 +281,6 @@ deadlock-history-capacity = 123
 	c.Assert(conf.Labels["foo"], Equals, "bar")
 	c.Assert(conf.Labels["group"], Equals, "abc")
 	c.Assert(conf.Labels["zone"], Equals, "dc-1")
-	c.Assert(conf.EnableLocalTxn, Equals, false)
 	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodPlaintext)
 	c.Assert(conf.DeprecateIntegerDisplayWidth, Equals, true)
 	c.Assert(conf.EnableEnumLengthLimit, Equals, false)

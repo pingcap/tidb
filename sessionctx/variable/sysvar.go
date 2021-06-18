@@ -810,25 +810,27 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: InitConnect, Value: ""},
 
 	/* TiDB specific variables */
-	// TODO: TiDBTxnScope is hidden because local txn feature is not done.
-	{Scope: ScopeSession, Name: TiDBTxnScope, skipInit: true, Hidden: true, Value: func() string {
-		if isGlobal, _ := config.GetTxnScopeFromConfig(); isGlobal {
-			return kv.GlobalTxnScope
-		}
-		return kv.LocalTxnScope
-	}(), SetSession: func(s *SessionVars, val string) error {
-		switch val {
-		case kv.GlobalTxnScope:
-			s.TxnScope = kv.NewTxnScopeVar(kv.GlobalTxnScope, s.TxnScope.GetTxnScope())
-		case kv.LocalTxnScope:
-			s.TxnScope = kv.GetTxnScopeVar()
-		default:
-			return ErrWrongValueForVar.GenWithStack("@@txn_scope value should be global or local")
-		}
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableLocalTxn, Value: BoolToOnOff(DefTiDBEnableLocalTxn), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableLocalTxn = TiDBOptOn(val)
+		s.TxnScope = kv.GetTxnScopeVar(s.EnableLocalTxn)
 		return nil
-	}, GetSession: func(s *SessionVars) (string, error) {
-		return s.TxnScope.GetVarValue(), nil
 	}},
+	// TODO: TiDBTxnScope is hidden because local txn feature is not done.
+	{Scope: ScopeSession, Name: TiDBTxnScope, skipInit: true, Hidden: true, Value: kv.GlobalTxnScope,
+		SetSession: func(s *SessionVars, val string) error {
+			switch val {
+			case kv.GlobalTxnScope:
+				s.TxnScope = kv.NewGlobalTxnScopeVar()
+			case kv.LocalTxnScope:
+				s.TxnScope = kv.GetTxnScopeVar(s.EnableLocalTxn)
+			default:
+				return ErrWrongValueForVar.GenWithStack("@@txn_scope value should be global or local")
+			}
+			return nil
+		},
+		GetSession: func(s *SessionVars) (string, error) {
+			return s.TxnScope.GetVarValue(), nil
+		}},
 	{Scope: ScopeSession, Name: TiDBTxnReadTS, Value: "", Hidden: true, SetSession: func(s *SessionVars, val string) error {
 		return setTxnReadTS(s, val)
 	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {

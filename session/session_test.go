@@ -3346,9 +3346,8 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 
 func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	// With EnableLocalTxn is true.
-	c.Assert(failpoint.Enable("tikvclient/injectEnableLocalTxn", `return(true)`), IsNil)
-	failpoint.Enable("tikvclient/injectTxnScope", `return("")`)
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@tidb_enable_local_txn = on")
 	// assert default value
 	result := tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(kv.GlobalTxnScope))
@@ -3359,8 +3358,8 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	result.Check(testkit.Rows(kv.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
 	failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`)
-	defer failpoint.Disable("tikvclient/injectTxnScope")
 	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@tidb_enable_local_txn = on")
 	// assert default value
 	result = tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(kv.LocalTxnScope))
@@ -3374,10 +3373,11 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	err := tk.ExecToErr("set @@txn_scope='foo'")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, `.*txn_scope value should be global or local.*`)
+	failpoint.Disable("tikvclient/injectTxnScope")
 
 	// With EnableLocalTxn is false.
-	c.Assert(failpoint.Enable("tikvclient/injectEnableLocalTxn", `return(false)`), IsNil)
 	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@tidb_enable_local_txn = off")
 	// assert default value
 	result = tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(kv.GlobalTxnScope))
@@ -3389,6 +3389,7 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
 	failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`)
 	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@tidb_enable_local_txn = off")
 	// assert default value
 	result = tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(kv.GlobalTxnScope))
@@ -3402,9 +3403,7 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	err = tk.ExecToErr("set @@txn_scope='foo'")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, `.*txn_scope value should be global or local.*`)
-
 	failpoint.Disable("tikvclient/injectTxnScope")
-	failpoint.Disable("tikvclient/injectEnableLocalTxn")
 }
 
 func (s *testSessionSerialSuite) TestGlobalAndLocalTxn(c *C) {
@@ -3413,9 +3412,9 @@ func (s *testSessionSerialSuite) TestGlobalAndLocalTxn(c *C) {
 	if *tikvmockstore.WithTiKV {
 		return
 	}
-	c.Assert(failpoint.Enable("tikvclient/injectEnableLocalTxn", `return(true)`), IsNil)
-	defer failpoint.Disable("tikvclient/injectEnableLocalTxn")
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@tidb_enable_local_txn = on")
+	defer tk.MustExec("set @@tidb_enable_local_txn = off")
 	tk.MustExec("drop table if exists t1;")
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec(`create table t1 (c int)

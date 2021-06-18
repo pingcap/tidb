@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-replace github.com/tikv/client-go/v2 v2.0.0-20210617115813-8d4847a86878 => github.com/JmPotato/client-go/v2 v2.0.0-20210618082734-22e780bd3058
+replace github.com/tikv/client-go/v2 v2.0.0-20210617115813-8d4847a86878 => github.com/JmPotato/client-go/v2 v2.0.0-20210618112714-9465af00f57c
 
 require (
 	github.com/BurntSushi/toml v0.3.1

@@ -182,10 +182,6 @@ type Config struct {
 	// 1. there is a network partition problem between TiDB and PD leader.
 	// 2. there is a network partition problem between TiDB and TiKV leader.
 	EnableForwarding bool `toml:"enable-forwarding" json:"enable-forwarding"`
-	// EnableLocalTxn determines whether the @@txn_scope will be set to "local" by default if labels.zone is configured.
-	// This is used to decouple Stale Read and Local Txn, make sure they can be used independently.
-	// NOTICE: This filed may be removed when Local Txn is released.
-	EnableLocalTxn bool `toml:"enable-local-txn" json:"enable-local-txn"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -212,7 +208,6 @@ func (c *Config) getTiKVConfig() *tikvcfg.Config {
 		Path:                  c.Path,
 		EnableForwarding:      c.EnableForwarding,
 		TxnScope:              c.Labels["zone"],
-		EnableLocalTxn:        c.EnableLocalTxn,
 	}
 }
 

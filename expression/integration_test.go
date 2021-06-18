@@ -9031,8 +9031,8 @@ PARTITION BY RANGE (c) (
 			expectErr: nil,
 		},
 	}
-	c.Assert(failpoint.Enable("tikvclient/injectEnableLocalTxn", `return(true)`), IsNil)
-	defer failpoint.Disable("tikvclient/injectEnableLocalTxn")
+	tk.MustExec("set @@tidb_enable_local_txn = on")
+	defer tk.MustExec("set @@tidb_enable_local_txn = off")
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		failpoint.Enable("tikvclient/injectTxnScope",
