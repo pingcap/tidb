@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 type requiredRowsDataSource struct {
@@ -843,7 +844,11 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, i
 		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(nil, j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
+<<<<<<< HEAD
 	b := newExecutorBuilder(ctx, nil, nil, 0)
+=======
+	b := newExecutorBuilder(ctx, nil, nil, 0, false, oracle.GlobalTxnScope)
+>>>>>>> 799591a06... session: read local dc replicas automatically for stale read (#25525)
 	return b.build(j)
 }
 

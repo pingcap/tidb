@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
@@ -235,49 +236,103 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 
 func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`drop table if exists t2`)
 	tk.MustExec("create table t (id int primary key);")
+	tk.MustExec(`create table t1 (c int primary key, d int,e int,index idx_d(d),index idx_e(e))`)
 	defer tk.MustExec(`drop table if exists t`)
+	defer tk.MustExec(`drop table if exists t1`)
+	conf := *config.GetGlobalConfig()
+	oldConf := conf
+	defer config.StoreGlobalConfig(&oldConf)
+	conf.Labels = map[string]string{
+		placement.DCLabelKey: "sh",
+	}
+	config.StoreGlobalConfig(&conf)
 	testcases := []struct {
-		name     string
-		sql      string
-		txnScope string
-		zone     string
+		name   string
+		sql    string
+		assert string
 	}{
 		{
-			name:     "coprocessor read",
-			sql:      "select * from t",
-			txnScope: "local",
-			zone:     "sh",
+			name:   "coprocessor read",
+			sql:    "select * from t",
+			assert: "github.com/pingcap/distsql/assertRequestBuilderStalenessOption",
 		},
 		{
-			name:     "point get read",
-			sql:      "select * from t where id = 1",
-			txnScope: "local",
-			zone:     "bj",
+			name:   "point get read",
+			sql:    "select * from t where id = 1",
+			assert: "github.com/pingcap/tidb/executor/assertPointStalenessOption",
 		},
 		{
-			name:     "batch point get read",
-			sql:      "select * from t where id in (1,2,3)",
-			txnScope: "local",
-			zone:     "hz",
+			name:   "batch point get read",
+			sql:    "select * from t where id in (1,2,3)",
+			assert: "github.com/pingcap/tidb/executor/assertBatchPointStalenessOption",
 		},
 	}
 	for _, testcase := range testcases {
+<<<<<<< HEAD
 		c.Log(testcase.name)
 		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
 		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", fmt.Sprintf(`return("%v")`, testcase.zone))
 		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStoreLabels", fmt.Sprintf(`return("%v_%v")`, placement.DCLabelKey, testcase.txnScope))
 		failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag", `return(true)`)
 		// Using NOW() will cause the loss of fsp precision, so we use NOW(3) to be accurate to the millisecond.
+=======
+		failpoint.Enable(testcase.assert, `return("sh")`)
+>>>>>>> 799591a06... session: read local dc replicas automatically for stale read (#25525)
 		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
 		tk.MustQuery(testcase.sql)
 		tk.MustExec(`commit`)
+		failpoint.Disable(testcase.assert)
 	}
+<<<<<<< HEAD
 	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
 	failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStoreLabels")
 	failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStaleReadFlag")
+=======
+	for _, testcase := range testcases {
+		failpoint.Enable(testcase.assert, `return("sh")`)
+		tk.MustExec(`SET TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3)`)
+		tk.MustExec(`begin;`)
+		tk.MustQuery(testcase.sql)
+		tk.MustExec(`commit`)
+		failpoint.Disable(testcase.assert)
+	}
+	tk.MustExec(`insert into t1 (c,d,e) values (1,1,1);`)
+	tk.MustExec(`insert into t1 (c,d,e) values (2,3,5);`)
+	time.Sleep(2 * time.Second)
+	tsv := time.Now().Format("2006-1-2 15:04:05.000")
+	tk.MustExec(`insert into t1 (c,d,e) values (3,3,7);`)
+	tk.MustExec(`insert into t1 (c,d,e) values (4,0,5);`)
+	tk.MustExec(`insert into t1 (c,d,e) values (5,0,5);`)
+	// IndexLookUp Reader Executor
+	rows1 := tk.MustQuery(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%v' use index (idx_d) where c < 5 and d < 5", tsv)).Rows()
+	c.Assert(rows1, HasLen, 2)
+	// IndexMerge Reader Executor
+	rows2 := tk.MustQuery(fmt.Sprintf("select /*+ USE_INDEX_MERGE(t1, idx_d, idx_e) */ * from t1 AS OF TIMESTAMP '%v' where c <5 and (d =5 or e=5)", tsv)).Rows()
+	c.Assert(rows2, HasLen, 1)
+	// TableReader Executor
+	rows3 := tk.MustQuery(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%v' where c < 6", tsv)).Rows()
+	c.Assert(rows3, HasLen, 2)
+	// IndexReader Executor
+	rows4 := tk.MustQuery(fmt.Sprintf("select /*+ USE_INDEX(t1, idx_d) */ d from t1 AS OF TIMESTAMP '%v' where c < 5 and d < 1;", tsv)).Rows()
+	c.Assert(rows4, HasLen, 0)
+	// point get executor
+	rows5 := tk.MustQuery(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%v' where c = 3;", tsv)).Rows()
+	c.Assert(rows5, HasLen, 0)
+	rows6 := tk.MustQuery(fmt.Sprintf("select * from t1 AS OF TIMESTAMP '%v' where c in (3,4,5);", tsv)).Rows()
+	c.Assert(rows6, HasLen, 0)
+>>>>>>> 799591a06... session: read local dc replicas automatically for stale read (#25525)
 }
 
 func (s *testStaleTxnSuite) TestStalenessAndHistoryRead(c *C) {

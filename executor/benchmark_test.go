@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -290,7 +291,11 @@ func buildHashAggExecutor(ctx sessionctx.Context, src Executor, schema *expressi
 	plan.SetSchema(schema)
 	plan.Init(ctx, nil, 0)
 	plan.SetChildren(nil)
+<<<<<<< HEAD
 	b := newExecutorBuilder(ctx, nil, nil, 0)
+=======
+	b := newExecutorBuilder(ctx, nil, nil, 0, false, oracle.GlobalTxnScope)
+>>>>>>> 799591a06... session: read local dc replicas automatically for stale read (#25525)
 	exec := b.build(plan)
 	hashAgg := exec.(*HashAggExec)
 	hashAgg.children[0] = src
@@ -342,7 +347,11 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec Executor, schema *ex
 		plan = sg
 	}
 
+<<<<<<< HEAD
 	b := newExecutorBuilder(ctx, nil, nil, 0)
+=======
+	b := newExecutorBuilder(ctx, nil, nil, 0, false, oracle.GlobalTxnScope)
+>>>>>>> 799591a06... session: read local dc replicas automatically for stale read (#25525)
 	return b.build(plan)
 }
 
@@ -575,7 +584,11 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		plan = win
 	}
 
+<<<<<<< HEAD
 	b := newExecutorBuilder(ctx, nil, nil, 0)
+=======
+	b := newExecutorBuilder(ctx, nil, nil, 0, false, oracle.GlobalTxnScope)
+>>>>>>> 799591a06... session: read local dc replicas automatically for stale read (#25525)
 	exec := b.build(plan)
 	return exec
 }
@@ -1322,7 +1335,11 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 			hashCols: tc.outerHashKeyIdx,
 		},
 		innerCtx: innerCtx{
+<<<<<<< HEAD
 			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil, nil, 0)},
+=======
+			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil, nil, 0, false, oracle.GlobalTxnScope)},
+>>>>>>> 799591a06... session: read local dc replicas automatically for stale read (#25525)
 			rowTypes:      rightTypes,
 			colLens:       colLens,
 			keyCols:       tc.innerJoinKeyIdx,
@@ -1388,7 +1405,11 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 			compareFuncs:  outerCompareFuncs,
 		},
 		innerMergeCtx: innerMergeCtx{
+<<<<<<< HEAD
 			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil, nil, 0)},
+=======
+			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil, nil, 0, false, oracle.GlobalTxnScope)},
+>>>>>>> 799591a06... session: read local dc replicas automatically for stale read (#25525)
 			rowTypes:      rightTypes,
 			joinKeys:      innerJoinKeys,
 			colLens:       colLens,
