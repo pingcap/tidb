@@ -41,6 +41,7 @@ var _ privilege.Manager = (*UserPrivileges)(nil)
 var dynamicPrivs = []string{
 	"BACKUP_ADMIN",
 	"RESTORE_ADMIN",
+	"SYSTEM_USER",
 	"SYSTEM_VARIABLES_ADMIN",
 	"ROLE_ADMIN",
 	"CONNECTION_ADMIN",
