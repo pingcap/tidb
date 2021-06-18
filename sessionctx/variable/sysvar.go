@@ -811,7 +811,8 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: InitConnect, Value: ""},
 
 	/* TiDB specific variables */
-	{Scope: ScopeSession, Name: TiDBTxnScope, skipInit: true, Value: func() string {
+	// TODO: TiDBTxnScope is hidden because local txn feature is not done.
+	{Scope: ScopeSession, Name: TiDBTxnScope, skipInit: true, Hidden: true, Value: func() string {
 		if isGlobal, _ := config.GetTxnScopeFromConfig(); isGlobal {
 			return kv.GlobalTxnScope
 		}
