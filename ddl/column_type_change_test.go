@@ -2116,13 +2116,16 @@ func (s *testColumnTypeChangeSuite) TestCastToTimeStampDecodeError(c *C) {
 		"  `a` datetime DEFAULT '1764-06-11 02:46:14'" +
 		") ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='7b84832e-f857-4116-8872-82fc9dcc4ab3'")
 	tk.MustExec("insert into `t` values();")
-	tk.MustGetErrCode("alter table `t` change column `a` `b` TIMESTAMP NULL DEFAULT '2015-11-14 07:12:24' FIRST;", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table `t` change column `a` `b` TIMESTAMP NULL DEFAULT '2015-11-14 07:12:24';", mysql.ErrTruncatedWrongValue)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `t` (" +
 		"  `a` date DEFAULT '1764-06-11 02:46:14'" +
 		") ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='7b84832e-f857-4116-8872-82fc9dcc4ab3'")
 	tk.MustExec("insert into `t` values();")
-	tk.MustGetErrCode("alter table `t` change column `a` `b` TIMESTAMP NULL DEFAULT '2015-11-14 07:12:24' FIRST;", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table `t` change column `a` `b` TIMESTAMP NULL DEFAULT '2015-11-14 07:12:24';", mysql.ErrTruncatedWrongValue)
 	tk.MustExec("drop table if exists t")
+
+	// Normal cast datetime to timestamp can succeed.
+	tk.MustQuery("select timestamp(cast('1000-11-11 12-3-1' as date));").Check(testkit.Rows("1000-11-11 00:00:00"))
 }
