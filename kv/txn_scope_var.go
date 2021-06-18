@@ -29,20 +29,11 @@ type TxnScopeVar struct {
 // GetTxnScopeVar gets TxnScopeVar from config
 func GetTxnScopeVar() TxnScopeVar {
 	isGlobal, location := config.GetTxnScopeFromConfig()
-	if isGlobal {
-		return NewGlobalTxnScopeVar()
+	varValue := GlobalTxnScope
+	if !isGlobal {
+		varValue = LocalTxnScope
 	}
-	return NewLocalTxnScopeVar(location)
-}
-
-// NewGlobalTxnScopeVar creates a Global TxnScopeVar
-func NewGlobalTxnScopeVar() TxnScopeVar {
-	return newTxnScopeVar(GlobalTxnScope, GlobalTxnScope)
-}
-
-// NewLocalTxnScopeVar creates a Local TxnScopeVar with given real txnScope value.
-func NewLocalTxnScopeVar(txnScope string) TxnScopeVar {
-	return newTxnScopeVar(LocalTxnScope, txnScope)
+	return NewTxnScopeVar(varValue, location)
 }
 
 // GetVarValue returns the value of @@txn_scope which can only be `global` or `local`
@@ -55,7 +46,7 @@ func (t TxnScopeVar) GetTxnScope() string {
 	return t.txnScope
 }
 
-func newTxnScopeVar(varValue string, txnScope string) TxnScopeVar {
+func NewTxnScopeVar(varValue string, txnScope string) TxnScopeVar {
 	return TxnScopeVar{
 		varValue: varValue,
 		txnScope: txnScope,

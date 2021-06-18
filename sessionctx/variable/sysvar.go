@@ -819,9 +819,9 @@ var defaultSysVars = []*SysVar{
 	}(), SetSession: func(s *SessionVars, val string) error {
 		switch val {
 		case kv.GlobalTxnScope:
-			s.TxnScope = kv.NewGlobalTxnScopeVar()
+			fallthrough
 		case kv.LocalTxnScope:
-			s.TxnScope = kv.GetTxnScopeVar()
+			s.TxnScope = kv.NewTxnScopeVar(val, s.TxnScope.GetTxnScope())
 		default:
 			return ErrWrongValueForVar.GenWithStack("@@txn_scope value should be global or local")
 		}

@@ -501,6 +501,8 @@ PARTITION BY RANGE (c) (
 		},
 	}
 
+	c.Assert(failpoint.Enable("tikvclient/injectEnableLocalTxn", `return(true)`), IsNil)
+	defer failpoint.Disable("tikvclient/injectEnableLocalTxn")
 	for _, testcase := range testCases {
 		c.Log(testcase.name)
 		failpoint.Enable("tikvclient/injectTxnScope",
@@ -635,6 +637,8 @@ PARTITION BY RANGE (c) (
 			},
 		},
 	}
+	c.Assert(failpoint.Enable("tikvclient/injectEnableLocalTxn", `return(true)`), IsNil)
+	defer failpoint.Disable("tikvclient/injectEnableLocalTxn")
 	failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`)
 	defer failpoint.Disable("tikvclient/injectTxnScope")
 	dbInfo := testGetSchemaByName(c, tk.Se, "test")

@@ -3345,6 +3345,8 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
+	c.Assert(failpoint.Enable("tikvclient/injectEnableLocalTxn", `return(true)`), IsNil)
+	defer failpoint.Disable("tikvclient/injectEnableLocalTxn")
 	failpoint.Enable("tikvclient/injectTxnScope", `return("")`)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
@@ -3466,6 +3468,8 @@ PARTITION BY RANGE (c) (
 	result = tk.MustQuery("select * from t1")      // read dc-1 and dc-2 with global scope
 	c.Assert(len(result.Rows()), Equals, 3)
 
+	c.Assert(failpoint.Enable("tikvclient/injectEnableLocalTxn", `return(true)`), IsNil)
+	defer failpoint.Disable("tikvclient/injectEnableLocalTxn")
 	failpoint.Enable("tikvclient/injectTxnScope", `return("dc-1")`)
 	defer failpoint.Disable("tikvclient/injectTxnScope")
 	// set txn_scope to local
