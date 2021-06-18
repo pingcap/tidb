@@ -1462,12 +1462,12 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	// When statement is during the Txn, we check whether there exists AsOfClause. If exists, we will return error,
 	// otherwise we should directly set the return param from TxnCtx.
-	if p.ctx.GetSessionVars().InTxn() {
+	txnCtx := p.ctx.GetSessionVars().TxnCtx
+	if p.ctx.GetSessionVars().InTxn() && txnCtx.IsStaleness {
 		if node != nil {
 			p.err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
 			return
 		}
-		txnCtx := p.ctx.GetSessionVars().TxnCtx
 		p.LastSnapshotTS = txnCtx.StartTS
 		p.TxnScope = txnCtx.TxnScope
 		p.ExplicitStaleness = txnCtx.IsStaleness
