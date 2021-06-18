@@ -1038,7 +1038,7 @@ func (s *testSuite1) TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColu
 	tk.MustQuery("show stats_topn where table_name = 'sampling_index_prefix_col' and column_name = 'idx'").Check(testkit.Rows("test sampling_index_prefix_col  idx 1 a 3"))
 }
 
-func (s *testSuite2) TestAnalyzeSamplingWorkPanic(c *C) {
+func (s *testSerialSuite2) TestAnalyzeSamplingWorkPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
