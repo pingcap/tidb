@@ -57,10 +57,6 @@ require (
 	github.com/sirupsen/logrus v1.6.0 // indirect
 	github.com/soheilhy/cmux v0.1.4
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-<<<<<<< HEAD
-=======
-	github.com/tikv/client-go/v2 v2.0.0-20210617115813-8d4847a86878
->>>>>>> fce508702... metrics: refine the SafeTS gap metric and panel (#25530)
 	github.com/tikv/pd v1.1.0-beta.0.20210323121136-78679e5e209d
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber-go/atomic v1.4.0
