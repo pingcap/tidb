@@ -473,7 +473,6 @@ func (s *tiflashTestSuite) TestMppUnionAll(c *C) {
 	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
 	c.Assert(err, IsNil)
 
-	tk.MustExec("set @@tidb_enforce_mpp=1")
 	tk.MustExec("insert into x4 values (2, 2), (2, 3)")
 	tk.MustQuery("(select * from x1 union all select * from x4) order by a, b").Check(testkit.Rows("1 1", "2 2", "2 2", "2 3", "3 3", "4 4"))
 
