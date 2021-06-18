@@ -366,6 +366,9 @@ type IndexLookUpExecutor struct {
 	PushedLimit *plannercore.PushedDownLimit
 
 	stats *IndexLookUpRunTimeStats
+
+	// extraPIDColumnIndex is used for partition reader to add an extra partition ID column, default -1
+	extraPIDColumnIndex offsetOptional
 }
 
 type getHandleType int8
@@ -638,15 +641,16 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		table = task.partitionTable
 	}
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor:   newBaseExecutor(e.ctx, e.schema, e.getTableRootPlanID()),
-		table:          table,
-		dagPB:          e.tableRequest,
-		startTS:        e.startTS,
-		columns:        e.columns,
-		streaming:      e.tableStreaming,
-		feedback:       statistics.NewQueryFeedback(0, nil, 0, false),
-		corColInFilter: e.corColInTblSide,
-		plans:          e.tblPlans,
+		baseExecutor:        newBaseExecutor(e.ctx, e.schema, e.getTableRootPlanID()),
+		table:               table,
+		dagPB:               e.tableRequest,
+		startTS:             e.startTS,
+		columns:             e.columns,
+		streaming:           e.tableStreaming,
+		feedback:            statistics.NewQueryFeedback(0, nil, 0, false),
+		corColInFilter:      e.corColInTblSide,
+		plans:               e.tblPlans,
+		extraPIDColumnIndex: e.extraPIDColumnIndex,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, task.handles, true)
