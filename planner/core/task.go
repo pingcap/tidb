@@ -1406,45 +1406,43 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 	for _, aggFunc := range aggFuncs {
 		// if the aggFunc contain VirtualColumn or CorrelatedColumn, it can not be pushed down.
 		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args) {
-			reason = "agg function '" + aggFunc.Name + "' contains virtual column or correlated column"
+			reason = "expressions of AggFunc `" + aggFunc.Name + "` contain virtual column or correlated column, which is not supported now"
 			ret = false
 			break
 		}
 		if !aggregation.CheckAggPushDown(aggFunc, storeType) {
-			reason = "agg function '" + aggFunc.Name + "' is not supported"
+			reason = "AggFunc `" + aggFunc.Name + "` is not supported now"
 			ret = false
 			break
 		}
 		if !expression.CanExprsPushDown(sc, aggFunc.Args, client, storeType) {
-			reason = "argument of agg function '" + aggFunc.Name + "' contains unsupported expr"
+			reason = "arguments of AggFunc `" + aggFunc.Name + "` contains unsupported exprs"
 			ret = false
 			break
 		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
-			reason = "agg function '" + aggFunc.Name + "' can not be converted to pb expr"
+			reason = "AggFunc `" + aggFunc.Name + "` can not be converted to pb expr"
 			ret = false
 			break
 		}
 	}
 	if ret && expression.ContainVirtualColumn(groupByItems) {
-		reason = "group by items contain virtual columns"
+		reason = "groupByItems contain virtual columns, which is not supported now"
 		ret = false
 	}
 	if ret && !expression.CanExprsPushDown(sc, groupByItems, client, storeType) {
-		reason = "group by items contain unsupported expr"
+		reason = "groupByItems contain unsupported exprs"
 		ret = false
 	}
 
 	if !ret && sc.InExplainStmt {
+		sctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because " + reason)
 		storageName := storeType.Name()
 		if storeType == kv.UnSpecified {
 			storageName = "storage layer"
 		}
 		sc.AppendWarning(errors.New("Aggregation can not be pushed to " + storageName + " because " + reason))
-	}
-	if !ret {
-		sctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because " + reason)
 	}
 	return ret
 }
