@@ -50,6 +50,7 @@ func (t TxnScopeVar) GetTxnScope() string {
 	return t.txnScope
 }
 
+// NewTxnScopeVar is used to create a new TxnScopeVar.
 func NewTxnScopeVar(varValue string, txnScope string) TxnScopeVar {
 	return TxnScopeVar{
 		varValue: varValue,
