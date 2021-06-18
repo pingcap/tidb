@@ -14,7 +14,7 @@
 package memory
 
 import (
-	"io/ioutil"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -138,7 +138,7 @@ func init() {
 }
 
 func inContainer() bool {
-	v, err := ioutil.ReadFile(selfCGroupPath)
+	v, err := os.ReadFile(selfCGroupPath)
 	if err != nil {
 		return false
 	}
@@ -171,7 +171,7 @@ func parseUint(s string, base, bitSize int) (uint64, error) {
 
 // refer to https://github.com/containerd/cgroups/blob/318312a373405e5e91134d8063d04d59768a1bff/utils.go#L243
 func readUint(path string) (uint64, error) {
-	v, err := ioutil.ReadFile(path)
+	v, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err
 	}

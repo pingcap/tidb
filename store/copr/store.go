@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/config"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/tikv/client-go/v2/config"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 type kvStore struct {
@@ -33,8 +33,8 @@ type kvStore struct {
 }
 
 // GetRegionCache returns the region cache instance.
-func (s *kvStore) GetRegionCache() *tikv.RegionCache {
-	return s.store.GetRegionCache()
+func (s *kvStore) GetRegionCache() *RegionCache {
+	return &RegionCache{s.store.GetRegionCache()}
 }
 
 // CheckVisibility checks if it is safe to read using given ts.
