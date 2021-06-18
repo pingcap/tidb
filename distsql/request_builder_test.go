@@ -14,7 +14,6 @@
 package distsql
 
 import (
-	"github.com/tikv/client-go/v2/oracle"
 	"os"
 	"testing"
 
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 var _ = Suite(&testSuite{})
