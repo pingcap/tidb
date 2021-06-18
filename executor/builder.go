@@ -85,6 +85,7 @@ type executorBuilder struct {
 	Ti               *TelemetryInfo
 	// ExplicitStaleness means whether the 'SELECT' clause are using 'AS OF TIMESTAMP' to perform stale read explicitly.
 	explicitStaleness bool
+	txnScope          string
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -95,13 +96,14 @@ type CTEStorages struct {
 	IterInTbl cteutil.Storage
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, explicitStaleness bool) *executorBuilder {
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, explicitStaleness bool, txnScope string) *executorBuilder {
 	return &executorBuilder{
 		ctx:               ctx,
 		is:                is,
 		Ti:                ti,
 		snapshotTS:        snapshotTS,
 		explicitStaleness: explicitStaleness,
+		txnScope:          txnScope,
 	}
 }
 
@@ -2679,6 +2681,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPB:          dagReq,
 		startTS:        startTS,
+		txnScope:       b.txnScope,
+		isStaleness:    b.explicitStaleness,
 		table:          tbl,
 		keepOrder:      ts.KeepOrder,
 		desc:           ts.Desc,
@@ -2954,6 +2958,8 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPB:           dagReq,
 		startTS:         startTS,
+		txnScope:        b.txnScope,
+		isStaleness:     b.explicitStaleness,
 		physicalTableID: physicalTableID,
 		table:           tbl,
 		index:           is.Index,
@@ -3570,6 +3576,8 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
+		SetTxnScope(e.txnScope).
+		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		Build()
@@ -4082,6 +4090,8 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		idxInfo:      plan.IndexInfo,
 		rowDecoder:   decoder,
 		startTS:      startTS,
+		txnScope:     b.txnScope,
+		isStaleness:  b.explicitStaleness,
 		keepOrder:    plan.KeepOrder,
 		desc:         plan.Desc,
 		lock:         plan.Lock,
