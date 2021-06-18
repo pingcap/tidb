@@ -95,11 +95,13 @@ type CTEStorages struct {
 	IterInTbl cteutil.Storage
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *executorBuilder {
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, explicitStaleness bool) *executorBuilder {
 	return &executorBuilder{
-		ctx: ctx,
-		is:  is,
-		Ti:  ti,
+		ctx:               ctx,
+		is:                is,
+		Ti:                ti,
+		snapshotTS:        snapshotTS,
+		explicitStaleness: explicitStaleness,
 	}
 }
 
@@ -622,6 +624,16 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		tblID2Handle:     v.TblID2Handle,
 		partitionedTable: v.PartitionedTable,
 	}
+	if len(e.partitionedTable) > 0 {
+		schema := v.Schema()
+		e.tblID2PIDColumnIndex = make(map[int64]int)
+		for i := 0; i < len(v.ExtraPIDInfo.Columns); i++ {
+			col := v.ExtraPIDInfo.Columns[i]
+			tblID := v.ExtraPIDInfo.TblIDs[i]
+			offset := schema.ColumnIndex(col)
+			e.tblID2PIDColumnIndex[tblID] = offset
+		}
+	}
 	return e
 }
 
@@ -663,6 +675,10 @@ func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
 }
 
 func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
+	b.snapshotTS = v.SnapshotTS
+	if b.snapshotTS != 0 {
+		b.is, b.err = domain.GetDomain(b.ctx).GetSnapshotInfoSchema(b.snapshotTS)
+	}
 	e := &ExecuteExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		is:           b.is,
@@ -1547,6 +1563,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableStatementsSummaryEvicted),
 			strings.ToLower(infoschema.ClusterTableStatementsSummary),
 			strings.ToLower(infoschema.ClusterTableStatementsSummaryHistory),
+			strings.ToLower(infoschema.ClusterTableStatementsSummaryEvicted),
 			strings.ToLower(infoschema.TablePlacementPolicy),
 			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
@@ -2674,6 +2691,9 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		storeType:      v.StoreType,
 		batchCop:       v.BatchCop,
 	}
+	if tbl.Meta().Partition != nil {
+		e.extraPIDColumnIndex = extraPIDColumnIndex(v.Schema())
+	}
 	e.buildVirtualColumnInfo()
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
@@ -2702,6 +2722,15 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	}
 
 	return e, nil
+}
+
+func extraPIDColumnIndex(schema *expression.Schema) offsetOptional {
+	for idx, col := range schema.Columns {
+		if col.ID == model.ExtraPidColID {
+			return newOffset(idx)
+		}
+	}
+	return 0
 }
 
 func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Executor {
@@ -2752,6 +2781,10 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 
 	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+		return ret
+	}
+	// When isPartition is set, it means the union rewriting is done, so a partition reader is prefered.
+	if ok, _ := ts.IsPartition(); ok {
 		return ret
 	}
 
@@ -2836,6 +2869,9 @@ func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, sch
 	}
 
 	// recalculate key column offsets
+	if len(lookUpContent) == 0 {
+		return nil, false, nil, nil
+	}
 	if lookUpContent[0].keyColIDs == nil {
 		return nil, false, nil,
 			dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("cannot get column IDs when dynamic pruning")
@@ -2974,6 +3010,10 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ret
 	}
+	// When isPartition is set, it means the union rewriting is done, so a partition reader is prefered.
+	if ok, _ := is.IsPartition(); ok {
+		return ret
+	}
 
 	pi := is.Table.GetPartitionInfo()
 	if pi == nil {
@@ -3075,6 +3115,9 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		tblPlans:          v.TablePlans,
 		PushedLimit:       v.PushedLimit,
 	}
+	if ok, _ := ts.IsPartition(); ok {
+		e.extraPIDColumnIndex = extraPIDColumnIndex(v.Schema())
+	}
 
 	if containsLimit(indexReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
@@ -3137,6 +3180,10 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	}
 
 	if is.Index.Global {
+		return ret
+	}
+	if ok, _ := is.IsPartition(); ok {
+		// Already pruned when translated to logical union.
 		return ret
 	}
 
