@@ -291,31 +291,73 @@ func (s *testStaleTxnSuite) TestStalenessAndHistoryRead(c *C) {
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
-	// set @@tidb_snapshot before staleness txn
-	tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00';`)
-	// 1599321600000 == 2020-09-06 00:00:00
-	c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, int64(1599321600000))
-	tk.MustExec("commit")
-	// set @@tidb_snapshot during staleness txn
-	tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00';`)
-	tk.MustExec(`set @@tidb_snapshot="2016-10-08 16:45:26";`)
-	c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, int64(1599321600000))
-	tk.MustExec("commit")
 
-	// test mutex
-	tk.MustExec(`set @@tidb_snapshot="2020-10-08 16:45:26";`)
-	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(419993151340544000))
+	time1 := time.Now()
+	time1TS := oracle.GoTimeToTS(time1)
+	schemaVer1 := tk.Se.GetInfoSchema().SchemaMetaVersion()
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key);")
+	tk.MustExec(`drop table if exists t`)
+	time.Sleep(50 * time.Millisecond)
+	time2 := time.Now()
+	time2TS := oracle.GoTimeToTS(time2)
+	schemaVer2 := tk.Se.GetInfoSchema().SchemaMetaVersion()
+
+	// test set txn as of will flush/mutex tidb_snapshot
+	tk.MustExec(fmt.Sprintf(`set @@tidb_snapshot="%s"`, time1.Format("2006-1-2 15:04:05.000")))
+	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, time1TS)
 	c.Assert(tk.Se.GetSessionVars().SnapshotInfoschema, NotNil)
-	tk.MustExec("SET TRANSACTION READ ONLY AS OF TIMESTAMP '2020-10-08 16:46:26'")
+	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer1)
+	tk.MustExec(fmt.Sprintf(`SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time2.Format("2006-1-2 15:04:05.000")))
 	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
-	c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(419993167069184000))
-
-	tk.MustExec("SET TRANSACTION READ ONLY AS OF TIMESTAMP '2020-10-08 16:46:26'")
-	c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(419993167069184000))
-	tk.MustExec(`set @@tidb_snapshot="2020-10-08 16:45:26";`)
-	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(419993151340544000))
-	c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(0))
 	c.Assert(tk.Se.GetSessionVars().SnapshotInfoschema, NotNil)
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, time2TS)
+	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer2)
+
+	// test tidb_snapshot will flush/mutex set txn as of
+	tk.MustExec(fmt.Sprintf(`SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time1.Format("2006-1-2 15:04:05.000")))
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, time1TS)
+	c.Assert(tk.Se.GetSessionVars().SnapshotInfoschema, NotNil)
+	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer1)
+	tk.MustExec(fmt.Sprintf(`set @@tidb_snapshot="%s"`, time2.Format("2006-1-2 15:04:05.000")))
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(0))
+	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, time2TS)
+	c.Assert(tk.Se.GetSessionVars().SnapshotInfoschema, NotNil)
+	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer2)
+
+	// test start txn will flush/mutex tidb_snapshot
+	tk.MustExec(fmt.Sprintf(`set @@tidb_snapshot="%s"`, time1.Format("2006-1-2 15:04:05.000")))
+	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, time1TS)
+	c.Assert(tk.Se.GetSessionVars().SnapshotInfoschema, NotNil)
+	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer1)
+
+	tk.MustExec(fmt.Sprintf(`START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time2.Format("2006-1-2 15:04:05.000")))
+	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Equals, time2TS)
+	c.Assert(tk.Se.GetSessionVars().SnapshotInfoschema, IsNil)
+	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer2)
+	tk.MustExec("commit")
+	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
+	c.Assert(tk.Se.GetSessionVars().SnapshotInfoschema, IsNil)
+	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer2)
+
+	// test snapshot mutex with txn
+	tk.MustExec("START TRANSACTION")
+	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
+	c.Assert(tk.Se.GetSessionVars().SnapshotInfoschema, IsNil)
+	err := tk.ExecToErr(`set @@tidb_snapshot="2020-10-08 16:45:26";`)
+	c.Assert(err, ErrorMatches, ".*Transaction characteristics can't be changed while a transaction is in progress")
+	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
+	c.Assert(tk.Se.GetSessionVars().SnapshotInfoschema, IsNil)
+	tk.MustExec("commit")
+
+	// test set txn as of txn mutex with txn
+	tk.MustExec("START TRANSACTION")
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(0))
+	err = tk.ExecToErr("SET TRANSACTION READ ONLY AS OF TIMESTAMP '2020-10-08 16:46:26'")
+	c.Assert(err, ErrorMatches, ".*Transaction characteristics can't be changed while a transaction is in progress")
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(0))
+	tk.MustExec("commit")
 }
 
 func (s *testStaleTxnSerialSuite) TestTimeBoundedStalenessTxn(c *C) {
@@ -465,6 +507,14 @@ func (s *testStaleTxnSerialSuite) TestSetTransactionReadOnlyAsOf(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "start transaction read only as of is forbidden after set transaction read only as of")
 	tk.MustExec(`SET TRANSACTION READ ONLY as of timestamp '2021-04-21 00:42:12'`)
+	err = tk.ExecToErr(`START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00'`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "start transaction read only as of is forbidden after set transaction read only as of")
+
+	tk.MustExec("begin")
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(424394603102208000))
+	tk.MustExec("commit")
+	tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00'`)
 }
 
 func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
@@ -729,8 +779,7 @@ func (s *testStaleTxnSuite) TestAsOfTimestampCompatibility(c *C) {
 	for _, testcase := range testcases {
 		tk.MustExec(testcase.beginSQL)
 		err := tk.ExecToErr(testcase.sql)
-		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Matches, ".*as of timestamp can't be set in transaction.*")
+		c.Assert(err, ErrorMatches, ".*as of timestamp can't be set in transaction.*|.*Transaction characteristics can't be changed while a transaction is in progress")
 		tk.MustExec("commit")
 	}
 	tk.MustExec(`create table test.table1 (id int primary key, a int);`)
