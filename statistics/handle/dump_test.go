@@ -287,10 +287,10 @@ func (s *testStatsSuite) TestDumpExtendedStats(c *C) {
 	assertTableEqual(c, loadTblInStorage, tbl)
 }
 
-func (s *testStatsSuite) TestDumpVer3Stats(c *C) {
+func (s *testStatsSuite) TestDumpVer2Stats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_analyze_version = 3")
+	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10))")

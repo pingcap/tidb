@@ -14,7 +14,6 @@
 package chunk
 
 import (
-	"errors"
 	"io"
 	"os"
 	"strconv"
@@ -132,7 +131,7 @@ func (l *ListInDisk) flush() (err error) {
 // Warning: do not mix Add and GetRow (always use GetRow after you have added all the chunks), and do not use Add concurrently.
 func (l *ListInDisk) Add(chk *Chunk) (err error) {
 	if chk.NumRows() == 0 {
-		return errors.New("chunk appended to List should have at least 1 row")
+		return errors2.New("chunk appended to List should have at least 1 row")
 	}
 	if l.disk == nil {
 		err = l.initDiskFile()

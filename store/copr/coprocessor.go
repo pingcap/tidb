@@ -38,14 +38,14 @@ import (
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/options"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/logutil"
-	"github.com/pingcap/tidb/store/tikv/metrics"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/logutil"
+	"github.com/tikv/client-go/v2/metrics"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -76,7 +76,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	}
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
-	ranges := toTiKVKeyRanges(req.KeyRanges)
+	ranges := NewKeyRanges(req.KeyRanges)
 	tasks, err := buildCopTasks(bo, c.store.GetRegionCache(), ranges, req)
 	if err != nil {
 		return copErrorResponse{err}
@@ -130,7 +130,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 // copTask contains a related Region and KeyRange for a kv.Request.
 type copTask struct {
 	region tikv.RegionVerID
-	ranges *tikv.KeyRanges
+	ranges *KeyRanges
 
 	respChan  chan *copResponse
 	storeAddr string
@@ -146,7 +146,7 @@ func (r *copTask) String() string {
 // rangesPerTask limits the length of the ranges slice sent in one copTask.
 const rangesPerTask = 25000
 
-func buildCopTasks(bo *Backoffer, cache *tikv.RegionCache, ranges *tikv.KeyRanges, req *kv.Request) ([]*copTask, error) {
+func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv.Request) ([]*copTask, error) {
 	start := time.Now()
 	cmdType := tikvrpc.CmdCop
 	if req.Streaming {
@@ -159,7 +159,7 @@ func buildCopTasks(bo *Backoffer, cache *tikv.RegionCache, ranges *tikv.KeyRange
 
 	rangesLen := ranges.Len()
 
-	locs, err := cache.SplitKeyRangesByLocations(bo.TiKVBackoffer(), ranges)
+	locs, err := cache.SplitKeyRangesByLocations(bo, ranges)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -197,7 +197,7 @@ func buildCopTasks(bo *Backoffer, cache *tikv.RegionCache, ranges *tikv.KeyRange
 	return tasks, nil
 }
 
-func buildTiDBMemCopTasks(ranges *tikv.KeyRanges, req *kv.Request) ([]*copTask, error) {
+func buildTiDBMemCopTasks(ranges *KeyRanges, req *kv.Request) ([]*copTask, error) {
 	servers, err := infosync.GetAllServerInfo(context.Background())
 	if err != nil {
 		return nil, err
@@ -713,10 +713,11 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if worker.kvclient.Stats == nil {
 		worker.kvclient.Stats = make(map[tikvrpc.CmdType]*tikv.RPCRuntimeStats)
 	}
+	req.TxnScope = worker.req.TxnScope
 	if worker.req.IsStaleness {
 		req.EnableStaleRead()
 	}
-	var ops []tikv.StoreSelectorOption
+	ops := make([]tikv.StoreSelectorOption, 0, 2)
 	if len(worker.req.MatchStoreLabels) > 0 {
 		ops = append(ops, tikv.WithMatchLabels(worker.req.MatchStoreLabels))
 	}
@@ -784,6 +785,7 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 	if timeDetail != nil {
 		logStr += fmt.Sprintf(" kv_process_ms:%d", timeDetail.ProcessWallTimeMs)
 		logStr += fmt.Sprintf(" kv_wait_ms:%d", timeDetail.WaitWallTimeMs)
+		logStr += fmt.Sprintf(" kv_read_ms:%d", timeDetail.KvReadWallTimeMs)
 		if timeDetail.ProcessWallTimeMs <= minLogKVProcessTime {
 			logStr = strings.Replace(logStr, "TIME_COP_PROCESS", "TIME_COP_WAIT", 1)
 		}
@@ -905,7 +907,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	if resp.pbResp.Range != nil {
 		resp.startKey = resp.pbResp.Range.Start
 	} else if task.ranges != nil && task.ranges.Len() > 0 {
-		resp.startKey = kv.Key(task.ranges.At(0).StartKey)
+		resp.startKey = task.ranges.At(0).StartKey
 	}
 	if resp.detail == nil {
 		resp.detail = new(CopRuntimeStats)
@@ -1033,7 +1035,7 @@ func (worker *copIteratorWorker) buildCopTasksFromRemain(bo *Backoffer, lastRang
 // split:      [s1   -->   s2)
 // In normal scan order, all data before s1 is consumed, so the remain ranges should be [s1 --> r2) [r3 --> r4)
 // In reverse scan order, all data after s2 is consumed, so the remain ranges should be [r1 --> r2) [r3 --> s2)
-func (worker *copIteratorWorker) calculateRemain(ranges *tikv.KeyRanges, split *coprocessor.KeyRange, desc bool) *tikv.KeyRanges {
+func (worker *copIteratorWorker) calculateRemain(ranges *KeyRanges, split *coprocessor.KeyRange, desc bool) *KeyRanges {
 	if desc {
 		left, _ := ranges.Split(split.End)
 		return left
