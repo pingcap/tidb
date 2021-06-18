@@ -421,10 +421,11 @@ func (s *KVStore) updateSafeTS(ctx context.Context) {
 				logutil.BgLogger().Debug("update safeTS failed", zap.Error(err), zap.Uint64("store-id", storeID))
 				return
 			}
-			safeTSResp := resp.Resp.(*kvrpcpb.StoreSafeTSResponse)
-			s.setSafeTS(storeID, safeTSResp.GetSafeTs())
+			safeTS := resp.Resp.(*kvrpcpb.StoreSafeTSResponse).GetSafeTs()
+			s.setSafeTS(storeID, safeTS)
 			metrics.TiKVSafeTSUpdateCounter.WithLabelValues("success", storeIDStr).Inc()
-			metrics.TiKVSafeTSUpdateStats.WithLabelValues(storeIDStr).Set(float64(safeTSResp.GetSafeTs()))
+			safeTSTime := oracle.GetTimeFromTS(safeTS)
+			metrics.TiKVSafeTSGapHistogram.WithLabelValues(storeIDStr).Observe(time.Since(safeTSTime).Seconds())
 		}(ctx, wg, storeID, storeAddr)
 	}
 	wg.Wait()
