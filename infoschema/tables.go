@@ -1663,14 +1663,11 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			tp = tikv.GetStoreTypeByMeta(store).Name()
 		}
 
-		version := store.Version
-		version = FormatTiflashVersion(version)
-
 		servers = append(servers, ServerInfo{
 			ServerType:     tp,
 			Address:        store.Address,
 			StatusAddr:     store.StatusAddress,
-			Version:        version,
+			Version:        FormatTiflashVersion(store.Version),
 			GitHash:        store.GitHash,
 			StartTimestamp: store.StartTimestamp,
 		})
