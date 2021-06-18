@@ -159,6 +159,55 @@ func (s *testPointGetSuite) TestPointGetDataTooLong(c *C) {
 	tk.MustExec("drop table if exists PK_1389;")
 }
 
+// issue #25489
+func (s *testPointGetSuite) TestIssue25489(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists UK_RP16939;")
+	// range partition
+	tk.MustExec(`CREATE TABLE UK_RP16939 (
+		COL1 tinyint(16) DEFAULT '108' COMMENT 'NUMERIC UNIQUE INDEX',
+		COL2 varchar(20) DEFAULT NULL,
+		COL4 datetime DEFAULT NULL,
+		COL3 bigint(20) DEFAULT NULL,
+		COL5 float DEFAULT NULL,
+		UNIQUE KEY UK_COL1 (COL1)
+	  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+	  PARTITION BY RANGE ( COL1+13 ) (
+		PARTITION P0 VALUES LESS THAN (-44),
+		PARTITION P1 VALUES LESS THAN (-23),
+		PARTITION P2 VALUES LESS THAN (-22),
+		PARTITION P3 VALUES LESS THAN (63),
+		PARTITION P4 VALUES LESS THAN (75),
+		PARTITION P5 VALUES LESS THAN (90),
+		PARTITION PMX VALUES LESS THAN (MAXVALUE)
+	  ) ;`)
+	query := "select col1, col2 from UK_RP16939 where col1 in (116, 48, -30);"
+	c.Assert(tk.HasPlan(query, "Batch_Point_Get"), IsFalse)
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustExec("drop table if exists UK_RP16939;")
+
+	// list parition
+	tk.MustExec(`CREATE TABLE UK_RP16939 (
+		COL1 tinyint(16) DEFAULT '108' COMMENT 'NUMERIC UNIQUE INDEX',
+		COL2 varchar(20) DEFAULT NULL,
+		COL4 datetime DEFAULT NULL,
+		COL3 bigint(20) DEFAULT NULL,
+		COL5 float DEFAULT NULL,
+		UNIQUE KEY UK_COL1 (COL1)
+	  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+	  PARTITION BY LIST ( COL1+13 ) (
+		PARTITION P0 VALUES IN (-44, -23),
+		PARTITION P1 VALUES IN (-22, 63),
+		PARTITION P2 VALUES IN (75, 90)
+	  ) ;`)
+	c.Assert(tk.HasPlan(query, "Batch_Point_Get"), IsFalse)
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustExec("drop table if exists UK_RP16939;")
+}
+
 // issue #25320
 func (s *testPointGetSuite) TestDistinctPlan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)

@@ -1026,7 +1026,7 @@ func filterTemporaryTableKeys(vars *variable.SessionVars, keys []kv.Key) []kv.Ke
 		return keys
 	}
 
-	newKeys := keys[:]
+	newKeys := keys[:0:len(keys)]
 	for _, key := range keys {
 		tblID := tablecodec.DecodeTableID(key)
 		if _, ok := txnCtx.GlobalTemporaryTables[tblID]; !ok {
