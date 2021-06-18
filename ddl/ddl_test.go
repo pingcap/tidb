@@ -89,7 +89,7 @@ func TestT(t *testing.T) {
 func testNewDDLAndStart(ctx context.Context, c *C, options ...Option) *ddl {
 	// init infoCache and a stub infoSchema
 	ic := infoschema.NewCache(2)
-	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0))
+	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	options = append(options, WithInfoCache(ic))
 	d := newDDL(ctx, options...)
 	err := d.Start(nil)

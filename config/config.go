@@ -424,6 +424,7 @@ type Performance struct {
 	MemProfileInterval    string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
 	IndexUsageSyncLease   string  `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
 	GOGC                  int     `toml:"gogc" json:"gogc"`
+	EnforceMPP            bool    `toml:"enforce-mpp" json:"enforce-mpp"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -493,7 +494,8 @@ type Binlog struct {
 // PessimisticTxn is the config for pessimistic transaction.
 type PessimisticTxn struct {
 	// The max count of retry for a single statement in a pessimistic transaction.
-	MaxRetryCount           uint `toml:"max-retry-count" json:"max-retry-count"`
+	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
+	// The max count of deadlock events that will be recorded in the information_schema.deadlocks table.
 	DeadlockHistoryCapacity uint `toml:"deadlock-history-capacity" json:"deadlock-history-capacity"`
 }
 
@@ -623,6 +625,7 @@ var defaultConf = Config{
 		// TODO: set indexUsageSyncLease to 60s.
 		IndexUsageSyncLease: "0s",
 		GOGC:                100,
+		EnforceMPP:          false,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
