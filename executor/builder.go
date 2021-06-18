@@ -2751,7 +2751,7 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) Executor {
 	if v.StoreType != kv.TiKV && b.explicitStaleness {
-		b.err = errors.New("staleness requests requires tikv backend")
+		b.err = errors.New("stale requests require tikv backend")
 		return nil
 	}
 	failpoint.Inject("checkUseMPP", func(val failpoint.Value) {
