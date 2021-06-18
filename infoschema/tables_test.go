@@ -945,7 +945,7 @@ func (s *testTableSuite) TestFormatVersion(c *C) {
 	defaultVersions := []string{"5.7.25-TiDB-None", "5.7.25-TiDB-8.0.18", "5.7.25-TiDB-8.0.18-beta.1", "5.7.25-TiDB-v4.0.0-beta-446-g5268094af"}
 	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta"}
 	for i, v := range defaultVersions {
-		version := infoschema.FormatVersion(v, true)
+		version := infoschema.FormatTiDBVersion(v, true)
 		c.Assert(version, Equals, defaultRes[i])
 	}
 
@@ -953,23 +953,15 @@ func (s *testTableSuite) TestFormatVersion(c *C) {
 	versions := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
 	res := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
 	for i, v := range versions {
-		version := infoschema.FormatVersion(v, false)
+		version := infoschema.FormatTiDBVersion(v, false)
 		c.Assert(version, Equals, res[i])
 	}
 
 	versions = []string{"v4.0.12", "4.0.12", "v5.0.1"}
 	resultVersion := []string{"4.0.12", "4.0.12", "5.0.1"}
 
-	f := func(v string) string {
-		if len(v) >= 1 && v[0] == 'v' {
-			v = v[1:]
-		}
-
-		return v
-	}
-
 	for i, versionString := range versions {
-		c.Assert(resultVersion[i], Equals, f(versionString))
+		c.Assert(resultVersion[i], Equals, infoschema.FormatTiflashVersion(versionString))
 	}
 
 }

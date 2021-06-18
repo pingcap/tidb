@@ -1521,7 +1521,7 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			ServerType:     "tidb",
 			Address:        fmt.Sprintf("%s:%d", node.IP, node.Port),
 			StatusAddr:     fmt.Sprintf("%s:%d", node.IP, node.StatusPort),
-			Version:        FormatVersion(node.Version, isDefaultVersion),
+			Version:        FormatTiDBVersion(node.Version, isDefaultVersion),
 			GitHash:        node.GitHash,
 			StartTimestamp: node.StartTimestamp,
 			ServerID:       node.ServerIDGetter(),
@@ -1530,9 +1530,9 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
-// FormatVersion make TiDBVersion consistent to TiKV and PD.
+// FormatTiDBVersion make TiDBVersion consistent to TiKV and PD.
 // The default TiDBVersion is 5.7.25-TiDB-${TiDBReleaseVersion}.
-func FormatVersion(TiDBVersion string, isDefaultVersion bool) string {
+func FormatTiDBVersion(TiDBVersion string, isDefaultVersion bool) string {
 	var version, nodeVersion string
 
 	// The user hasn't set the config 'ServerVersion'.
@@ -1664,9 +1664,7 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		}
 
 		version := store.Version
-		if len(version) >= 1 && version[0] == 'v' {
-			version = version[1:]
-		}
+		version = FormatTiflashVersion(version)
 
 		servers = append(servers, ServerInfo{
 			ServerType:     tp,
@@ -1678,6 +1676,13 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		})
 	}
 	return servers, nil
+}
+
+func FormatTiflashVersion(version string) string {
+	if len(version) >= 1 && version[0] == 'v' {
+		version = version[1:]
+	}
+	return version
 }
 
 // GetTiFlashStoreCount returns the count of tiflash server.
