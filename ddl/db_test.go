@@ -5110,8 +5110,8 @@ func (s *testDBSuite1) TestModifyColumnTime_DatetimeToTimestamp(c *C) {
 		{"datetime", `20060102150405`, "timestamp", "2006-01-02 15:04:05", 0},
 		{"datetime", `060102150405`, "timestamp", "2006-01-02 15:04:05", 0},
 		{"datetime", `"2006-01-02 23:59:59.506"`, "timestamp", "2006-01-03 00:00:00", 0},
-		{"datetime", `"1000-01-02 23:59:59"`, "timestamp", "1000-01-02 23:59:59", 0},
-		{"datetime", `"9999-01-02 23:59:59"`, "timestamp", "9999-01-02 23:59:59", 0},
+		{"datetime", `"1971-01-02 23:59:59"`, "timestamp", "1971-01-02 23:59:59", 0},
+		{"datetime", `"2009-01-02 23:59:59"`, "timestamp", "2009-01-02 23:59:59", 0},
 	}
 	testModifyColumnTime(c, s.store, tests)
 }
