@@ -2112,7 +2112,17 @@ func (s *testColumnTypeChangeSuite) TestCastToTimeStampDecodeError(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 
-	tk.MustExec("CREATE TABLE `t` (\n  `a` datetime DEFAULT '1764-06-11 02:46:14'\n) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='7b84832e-f857-4116-8872-82fc9dcc4ab3';")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"  `a` datetime DEFAULT '1764-06-11 02:46:14'" +
+		") ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='7b84832e-f857-4116-8872-82fc9dcc4ab3'")
 	tk.MustExec("insert into `t` values();")
 	tk.MustGetErrCode("alter table `t` change column `a` `b` TIMESTAMP NULL DEFAULT '2015-11-14 07:12:24' FIRST;", mysql.ErrTruncatedWrongValue)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"  `a` date DEFAULT '1764-06-11 02:46:14'" +
+		") ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='7b84832e-f857-4116-8872-82fc9dcc4ab3'")
+	tk.MustExec("insert into `t` values();")
+	tk.MustGetErrCode("alter table `t` change column `a` `b` TIMESTAMP NULL DEFAULT '2015-11-14 07:12:24' FIRST;", mysql.ErrTruncatedWrongValue)
+	tk.MustExec("drop table if exists t")
 }
