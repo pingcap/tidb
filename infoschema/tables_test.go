@@ -961,7 +961,7 @@ func (s *testTableSuite) TestFormatVersion(c *C) {
 	resultVersion := []string{"4.0.12", "4.0.12", "5.0.1"}
 
 	for i, versionString := range versions {
-		c.Assert(resultVersion[i], Equals, infoschema.FormatTiflashVersion(versionString))
+		c.Assert(resultVersion[i], Equals, infoschema.FormatStoreServerVersion(versionString))
 	}
 
 }

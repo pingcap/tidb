@@ -1667,7 +1667,7 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			ServerType:     tp,
 			Address:        store.Address,
 			StatusAddr:     store.StatusAddress,
-			Version:        FormatTiflashVersion(store.Version),
+			Version:        FormatStoreServerVersion(store.Version),
 			GitHash:        store.GitHash,
 			StartTimestamp: store.StartTimestamp,
 		})
@@ -1675,7 +1675,8 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
-func FormatTiflashVersion(version string) string {
+// FormatStoreServerVersion format version of store servers(Tikv or TiFlash)
+func FormatStoreServerVersion(version string) string {
 	if len(version) >= 1 && version[0] == 'v' {
 		version = version[1:]
 	}
