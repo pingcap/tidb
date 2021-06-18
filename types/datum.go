@@ -1128,6 +1128,8 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 	}
 	switch d.k {
 	case KindMysqlTime:
+		// select timestamp("1000-01-02 23:59:59"); cast usage will succeed.
+		// alter datetime("1000-01-02 23:59:59") to timestamp will error.
 		if sc.IsDDLJobInQueue {
 			t, err = d.GetMysqlTime().Convert(sc, target.Tp)
 			if err != nil {
