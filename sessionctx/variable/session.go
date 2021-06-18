@@ -809,7 +809,7 @@ type SessionVars struct {
 	// PartitionPruneMode indicates how and when to prune partitions.
 	PartitionPruneMode atomic2.String
 
-	// TxnScope indicates the scope of the transactions. It should be `global` or equal to `dc-location` in configuration.
+	// TxnScope indicates the scope of the transactions. It should be `global` or equal to the value of key `zone` in config.Labels.
 	TxnScope kv.TxnScopeVar
 
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
