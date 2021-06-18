@@ -296,8 +296,8 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 	}
 	tk.MustExec(`insert into t1 (c,d,e) values (1,1,1);`)
 	tk.MustExec(`insert into t1 (c,d,e) values (2,3,5);`)
-	time1 := time.Now()
-	tsv := time1.Format("2006-1-2 15:04:05.000")
+	time.Sleep(2 * time.Second)
+	tsv := time.Now().Format("2006-1-2 15:04:05.000")
 	tk.MustExec(`insert into t1 (c,d,e) values (3,3,7);`)
 	tk.MustExec(`insert into t1 (c,d,e) values (4,0,5);`)
 	tk.MustExec(`insert into t1 (c,d,e) values (5,0,5);`)
