@@ -429,6 +429,7 @@ func NewLocalTemporaryTableInfoSchema() *LocalTemporaryTables {
 	}
 }
 
+// TableByName get table by name
 func (is *LocalTemporaryTables) TableByName(schema, table model.CIStr) (*LocalTemporaryTable, bool) {
 	if tbNames, ok := is.schemaMap[schema.L]; ok {
 		if t, ok := tbNames.tables[table.L]; ok {
@@ -438,16 +439,19 @@ func (is *LocalTemporaryTables) TableByName(schema, table model.CIStr) (*LocalTe
 	return nil, false
 }
 
+// TableExists check if table with the name exists
 func (is *LocalTemporaryTables) TableExists(schema, table model.CIStr) (ok bool) {
 	_, ok = is.TableByName(schema, table)
 	return
 }
 
+// TableByID get table by table id
 func (is *LocalTemporaryTables) TableByID(id int64) (tbl *LocalTemporaryTable, ok bool) {
 	tbl, ok = is.idx2table[id]
 	return
 }
 
+// SchemaTables list tables under schema
 func (is *LocalTemporaryTables) SchemaTables(schema model.CIStr) (tables []*LocalTemporaryTable) {
 	schemaTables, ok := is.schemaMap[schema.L]
 	if !ok {
@@ -459,6 +463,7 @@ func (is *LocalTemporaryTables) SchemaTables(schema model.CIStr) (tables []*Loca
 	return
 }
 
+// AddTable add a table
 func (is *LocalTemporaryTables) AddTable(schema *model.DBInfo, tbl table.Table) error {
 	schemaTables := is.ensureSchema(schema.Name)
 
@@ -479,6 +484,7 @@ func (is *LocalTemporaryTables) AddTable(schema *model.DBInfo, tbl table.Table) 
 	return nil
 }
 
+// RemoveTable remove a table
 func (is *LocalTemporaryTables) RemoveTable(schema, table model.CIStr) (exist bool) {
 	tbls := is.schemaTables(schema)
 	if tbls == nil {
@@ -517,12 +523,13 @@ func (is *LocalTemporaryTables) schemaTables(schema model.CIStr) *schemaLocalTem
 	return nil
 }
 
-// TemporaryTableAttachedInfoSchema stores infoschema with temporary tables
+// TemporaryTableAttachedInfoSchema implements InfoSchema
 type TemporaryTableAttachedInfoSchema struct {
 	InfoSchema
 	LocalTemporaryTables *LocalTemporaryTables
 }
 
+// TableByName implements InfoSchema.TableByName
 func (ts *TemporaryTableAttachedInfoSchema) TableByName(schema, table model.CIStr) (table.Table, error) {
 	if tbl, ok := ts.LocalTemporaryTables.TableByName(schema, table); ok {
 		return tbl, nil
@@ -531,6 +538,7 @@ func (ts *TemporaryTableAttachedInfoSchema) TableByName(schema, table model.CISt
 	return ts.InfoSchema.TableByName(schema, table)
 }
 
+// TableByID implements InfoSchema.TableByID
 func (ts *TemporaryTableAttachedInfoSchema) TableByID(id int64) (table.Table, bool) {
 	if tbl, ok := ts.LocalTemporaryTables.TableByID(id); ok {
 		return tbl, true
@@ -539,6 +547,7 @@ func (ts *TemporaryTableAttachedInfoSchema) TableByID(id int64) (table.Table, bo
 	return ts.InfoSchema.TableByID(id)
 }
 
+// SchemaByTable implements InfoSchema.SchemaByTable
 func (ts *TemporaryTableAttachedInfoSchema) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
 	if tableInfo == nil {
 		return nil, false
