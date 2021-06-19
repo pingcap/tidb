@@ -428,7 +428,7 @@ func vectorizedDumpTextColumn(target [][]byte, colInfo *ColumnInfo, column *chun
 				continue
 			}
 			tmp = strconv.AppendInt(tmp[:0], v, 10)
-			target[i] = append(target[i], byte(v))
+			target[i] = dumpLengthEncodedString(target[i], tmp)
 		}
 	case mysql.TypeYear:
 		for i, year := range column.Int64s() {
