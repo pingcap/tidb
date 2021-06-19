@@ -1850,7 +1850,6 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 // serverStatus, a flag bit represents server information
 // The first return value indicates whether error occurs at the first call of ResultSet.Next.
 func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16) (bool, error) {
-	data := cc.alloc.AllocWithLen(4, 1024)
 	req := rs.NewChunk()
 	gotColumnInfo := false
 	firstNext := true
@@ -1859,7 +1858,6 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	if stmtDetailRaw != nil {
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
-
 	for {
 		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
 			switch value.(string) {
@@ -1887,24 +1885,37 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			}
 			gotColumnInfo = true
 		}
-		rowCount := req.NumRows()
+		rowCount, colCount := req.NumRows(), req.NumCols()
 		if rowCount == 0 {
 			break
 		}
+
 		reg := trace.StartRegion(ctx, "WriteClientConn")
 		start := time.Now()
+		sendRows := make([][]byte, rowCount)
+		numBytes4Null := (colCount + 7 + 2) / 8
 		for i := 0; i < rowCount; i++ {
-			data = data[0:4]
+			sendRows[i] = cc.alloc.AllocWithLen(4, 1024)
 			if binary {
-				data, err = dumpBinaryRow(data, rs.Columns(), req.GetRow(i))
+				sendRows[i] = append(sendRows[i], mysql.OKHeader)
+				sendRows[i] = append(sendRows[i], cc.alloc.AllocWithLen(numBytes4Null, numBytes4Null)...)
+			}
+		}
+		nullBitmapOff := len(sendRows[0])
+		columns := rs.Columns()
+		for i := 0; i < colCount; i++ {
+			if binary {
+				err = vectorizedDumpBinaryColumn(sendRows, columns[i], req.Column(i), rowCount, colCount, nullBitmapOff)
 			} else {
-				data, err = dumpTextRow(data, rs.Columns(), req.GetRow(i))
+				err = vectorizedDumpTextColumn(sendRows, columns[i], req.Column(i), rowCount)
 			}
 			if err != nil {
 				reg.End()
 				return false, err
 			}
-			if err = cc.writePacket(data); err != nil {
+		}
+		for i := 0; i < rowCount; i++ {
+			if err = cc.writePacket(sendRows[i]); err != nil {
 				reg.End()
 				return false, err
 			}

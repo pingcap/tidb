@@ -230,6 +230,145 @@ func dumpBinaryDateTime(data []byte, t types.Time) []byte {
 	return data
 }
 
+func vectorizedDumpBinaryColumn(target [][]byte, colInfo *ColumnInfo, column *chunk.Column, rowsNum int, colCount int, nullBitmapOff int) error {
+	switch colInfo.Type {
+	case mysql.TypeTiny:
+		for i, v := range column.Int64s() {
+			if column.IsNull(i) {
+				bytePos := (i + 2) / 8
+				bitPos := byte((i + 2) % 8)
+				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				continue
+			}
+			target[i] = append(target[i], byte(v))
+		}
+	case mysql.TypeShort, mysql.TypeYear:
+		for i, v := range column.Int64s() {
+			if column.IsNull(i) {
+				bytePos := (i + 2) / 8
+				bitPos := byte((i + 2) % 8)
+				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				continue
+			}
+			target[i] = dumpUint16(target[i], uint16(v))
+		}
+	case mysql.TypeInt24, mysql.TypeLong:
+		for i, v := range column.Int64s() {
+			if column.IsNull(i) {
+				bytePos := (i + 2) / 8
+				bitPos := byte((i + 2) % 8)
+				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				continue
+			}
+			target[i] = dumpUint32(target[i], uint32(v))
+		}
+	case mysql.TypeLonglong:
+		for i, v := range column.Uint64s() {
+			if column.IsNull(i) {
+				bytePos := (i + 2) / 8
+				bitPos := byte((i + 2) % 8)
+				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				continue
+			}
+			target[i] = dumpUint64(target[i], v)
+		}
+	case mysql.TypeFloat:
+		for i, v := range column.Float32s() {
+			if column.IsNull(i) {
+				bytePos := (i + 2) / 8
+				bitPos := byte((i + 2) % 8)
+				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				continue
+			}
+			target[i] = dumpUint32(target[i], math.Float32bits(v))
+		}
+	case mysql.TypeDouble:
+		for i, v := range column.Float64s() {
+			if column.IsNull(i) {
+				bytePos := (i + 2) / 8
+				bitPos := byte((i + 2) % 8)
+				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				continue
+			}
+			target[i] = dumpUint64(target[i], math.Float64bits(v))
+		}
+	case mysql.TypeNewDecimal:
+		for i, v := range column.Decimals() {
+			if column.IsNull(i) {
+				bytePos := (i + 2) / 8
+				bitPos := byte((i + 2) % 8)
+				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				continue
+			}
+			target[i] = dumpLengthEncodedString(target[i], hack.Slice(v.String()))
+		}
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
+		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+		for i := 0; i < rowsNum; i++ {
+			if column.IsNull(i) {
+				bytePos := (i + 2) / 8
+				bitPos := byte((i + 2) % 8)
+				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				continue
+			}
+			target[i] = dumpLengthEncodedString(target[i], column.GetBytes(i))
+		}
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		for i, v := range column.Times() {
+			if column.IsNull(i) {
+				bytePos := (i + 2) / 8
+				bitPos := byte((i + 2) % 8)
+				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				continue
+			}
+			target[i] = dumpBinaryDateTime(target[i], v)
+		}
+	case mysql.TypeDuration:
+		for i := 0; i < rowsNum; i++ {
+			if column.IsNull(i) {
+				bytePos := (i + 2) / 8
+				bitPos := byte((i + 2) % 8)
+				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				continue
+			}
+			target[i] = append(target[i], dumpBinaryTime(column.GetDuration(i, 0).Duration)...)
+		}
+	case mysql.TypeEnum:
+		for i := 0; i < rowsNum; i++ {
+			if column.IsNull(i) {
+				bytePos := (i + 2) / 8
+				bitPos := byte((i + 2) % 8)
+				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				continue
+			}
+			target[i] = dumpLengthEncodedString(target[i], hack.Slice(column.GetEnum(i).String()))
+		}
+	case mysql.TypeSet:
+		for i := 0; i < rowsNum; i++ {
+			if column.IsNull(i) {
+				bytePos := (i + 2) / 8
+				bitPos := byte((i + 2) % 8)
+				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				continue
+			}
+			target[i] = dumpLengthEncodedString(target[i], hack.Slice(column.GetSet(i).String()))
+		}
+	case mysql.TypeJSON:
+		for i := 0; i < rowsNum; i++ {
+			if column.IsNull(i) {
+				bytePos := (i + 2) / 8
+				bitPos := byte((i + 2) % 8)
+				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				continue
+			}
+			target[i] = dumpLengthEncodedString(target[i], hack.Slice(column.GetJSON(i).String()))
+		}
+	default:
+		return errInvalidType.GenWithStack("invalid type %v", colInfo.Type)
+	}
+	return nil
+}
+
 func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, error) {
 	buffer = append(buffer, mysql.OKHeader)
 	nullBitmapOff := len(buffer)
@@ -277,6 +416,136 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte,
 		}
 	}
 	return buffer, nil
+}
+
+func vectorizedDumpTextColumn(target [][]byte, colInfo *ColumnInfo, column *chunk.Column, rowsNum int) error {
+	tmp := make([]byte, 0, 20)
+	switch colInfo.Type {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong:
+		for i, v := range column.Int64s() {
+			if column.IsNull(i) {
+				target[i] = append(target[i], 0xfb)
+				continue
+			}
+			tmp = strconv.AppendInt(tmp[:0], v, 10)
+			target[i] = append(target[i], byte(v))
+		}
+	case mysql.TypeYear:
+		for i, year := range column.Int64s() {
+			if column.IsNull(i) {
+				target[i] = append(target[i], 0xfb)
+				continue
+			}
+			tmp = tmp[:0]
+			if year == 0 {
+				tmp = append(tmp, '0', '0', '0', '0')
+			} else {
+				tmp = strconv.AppendInt(tmp, year, 10)
+			}
+			target[i] = dumpLengthEncodedString(target[i], tmp)
+		}
+	case mysql.TypeLonglong:
+		hasUnsignedFlag := mysql.HasUnsignedFlag(uint(colInfo.Flag))
+		for i := 0; i < rowsNum; i++ {
+			if column.IsNull(i) {
+				target[i] = append(target[i], 0xfb)
+				continue
+			}
+			if hasUnsignedFlag {
+				tmp = strconv.AppendUint(tmp[:0], column.GetUint64(i), 10)
+			} else {
+				tmp = strconv.AppendInt(tmp[:0], column.GetInt64(i), 10)
+			}
+			target[i] = dumpLengthEncodedString(target[i], tmp)
+		}
+	case mysql.TypeFloat:
+		precision := -1
+		if colInfo.Decimal > 0 && int(colInfo.Decimal) != mysql.NotFixedDec && colInfo.Table == "" {
+			precision = int(colInfo.Decimal)
+		}
+		for i, v := range column.Float32s() {
+			if column.IsNull(i) {
+				target[i] = append(target[i], 0xfb)
+				continue
+			}
+			tmp = appendFormatFloat(tmp[:0], float64(v), precision, 32)
+			target[i] = dumpLengthEncodedString(target[i], tmp)
+		}
+	case mysql.TypeDouble:
+		precision := types.UnspecifiedLength
+		if colInfo.Decimal > 0 && int(colInfo.Decimal) != mysql.NotFixedDec && colInfo.Table == "" {
+			precision = int(colInfo.Decimal)
+		}
+		for i, v := range column.Float64s() {
+			if column.IsNull(i) {
+				target[i] = append(target[i], 0xfb)
+				continue
+			}
+			tmp = appendFormatFloat(tmp[:0], v, precision, 64)
+			target[i] = dumpLengthEncodedString(target[i], tmp)
+		}
+	case mysql.TypeNewDecimal:
+		for i, decimal := range column.Decimals() {
+			if column.IsNull(i) {
+				target[i] = append(target[i], 0xfb)
+				continue
+			}
+			target[i] = dumpLengthEncodedString(target[i], hack.Slice(decimal.String()))
+		}
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
+		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+		for i := 0; i < rowsNum; i++ {
+			if column.IsNull(i) {
+				target[i] = append(target[i], 0xfb)
+				continue
+			}
+			target[i] = dumpLengthEncodedString(target[i], column.GetBytes(i))
+		}
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		for i, v := range column.Times() {
+			if column.IsNull(i) {
+				target[i] = append(target[i], 0xfb)
+				continue
+			}
+			target[i] = dumpLengthEncodedString(target[i], hack.Slice(v.String()))
+		}
+	case mysql.TypeDuration:
+		for i := 0; i < rowsNum; i++ {
+			if column.IsNull(i) {
+				target[i] = append(target[i], 0xfb)
+				continue
+			}
+			dur := column.GetDuration(i, int(colInfo.Decimal))
+			target[i] = dumpLengthEncodedString(target[i], hack.Slice(dur.String()))
+		}
+	case mysql.TypeEnum:
+		for i := 0; i < rowsNum; i++ {
+			if column.IsNull(i) {
+				target[i] = append(target[i], 0xfb)
+				continue
+			}
+			target[i] = dumpLengthEncodedString(target[i], hack.Slice(column.GetEnum(i).String()))
+		}
+	case mysql.TypeSet:
+		for i := 0; i < rowsNum; i++ {
+			if column.IsNull(i) {
+				target[i] = append(target[i], 0xfb)
+				continue
+			}
+			target[i] = dumpLengthEncodedString(target[i], hack.Slice(column.GetSet(i).String()))
+		}
+	case mysql.TypeJSON:
+		for i := 0; i < rowsNum; i++ {
+			if column.IsNull(i) {
+				target[i] = append(target[i], 0xfb)
+				continue
+			}
+			target[i] = dumpLengthEncodedString(target[i], hack.Slice(column.GetJSON(i).String()))
+		}
+	default:
+		return errInvalidType.GenWithStack("invalid type %v", colInfo.Type)
+	}
+	return nil
 }
 
 func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, error) {
