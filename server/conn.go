@@ -1893,13 +1893,13 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		reg := trace.StartRegion(ctx, "WriteClientConn")
 		start := time.Now()
 		sendRows := make([][]byte, rowCount)
-		nullBitmapOff := 5
-		numBytes4Null := (colCount + 7 + 2) / 8
+		nullBitmapOff, numBytes4Null := 5, (colCount+7+2)/8
 		for i := 0; i < rowCount; i++ {
-			sendRows[i] = cc.alloc.AllocWithLen(4, 1024)
 			if binary {
-				sendRows[i] = append(sendRows[i], mysql.OKHeader)
-				sendRows[i] = append(sendRows[i], cc.alloc.AllocWithLen(numBytes4Null, numBytes4Null)...)
+				sendRows[i] = cc.alloc.AllocWithLen(4+1+numBytes4Null, 1024+1+numBytes4Null)
+				sendRows[i][4] = mysql.OKHeader
+			} else {
+				sendRows[i] = cc.alloc.AllocWithLen(4, 1024)
 			}
 		}
 		columns := rs.Columns()
