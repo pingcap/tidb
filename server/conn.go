@@ -1858,6 +1858,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	if stmtDetailRaw != nil {
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
+
 	for {
 		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
 			switch value.(string) {
@@ -1905,7 +1906,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		columns := rs.Columns()
 		for i := 0; i < colCount; i++ {
 			if binary {
-				err = vectorizedDumpBinaryColumn(sendRows, columns[i], req.Column(i), rowCount, colCount, nullBitmapOff)
+				err = vectorizedDumpBinaryColumn(sendRows, columns[i], req.Column(i), i, rowCount, nullBitmapOff)
 			} else {
 				err = vectorizedDumpTextColumn(sendRows, columns[i], req.Column(i), rowCount)
 			}
