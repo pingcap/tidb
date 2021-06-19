@@ -125,11 +125,12 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 			i64s := result.Int64s()
 			buf := chunk.NewColumn(ft, input.NumRows())
 			buf.ReserveBytes(input.NumRows())
-			for i := range i64s {
+			for i := 0; i < input.NumRows(); i++ {
 				if result.IsNull(i) {
 					buf.AppendNull()
 				} else {
-					buf.AppendBytes(types.NewBinaryLiteralFromUint(uint64(i64s[i]), -1))
+					byteSize := (ft.Flen + 7) >> 3
+					buf.AppendBytes(types.NewBinaryLiteralFromUint(uint64(i64s[i]), byteSize))
 				}
 			}
 			// TODO: recycle all old Columns returned here.
