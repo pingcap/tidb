@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/sessionctx"
 )
 
 var _ = Suite(&testUtilSuite{})
@@ -62,3 +63,6 @@ func (s *testUtilSuite) TestParseAddress(c *C) {
 		c.Assert(port, Equals, tt.expectedPort)
 	}
 }
+
+// GetFeatureUsage exports getFeatureUsage for testing.
+var GetFeatureUsage func(ctx sessionctx.Context) (*featureUsage, error) = getFeatureUsage

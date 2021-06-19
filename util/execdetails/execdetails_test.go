@@ -14,16 +14,14 @@
 package execdetails
 
 import (
-	"fmt"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/tikv/util"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func TestT(t *testing.T) {
@@ -36,22 +34,22 @@ func TestString(t *testing.T) {
 		BackoffTime:  time.Second,
 		RequestCount: 1,
 		CommitDetail: &util.CommitDetails{
-			GetCommitTsTime:   time.Second,
-			PrewriteTime:      time.Second,
-			CommitTime:        time.Second,
-			LocalLatchTime:    time.Second,
-			CommitBackoffTime: int64(time.Second),
+			GetCommitTsTime: time.Second,
+			PrewriteTime:    time.Second,
+			CommitTime:      time.Second,
+			LocalLatchTime:  time.Second,
+
 			Mu: struct {
 				sync.Mutex
-				BackoffTypes []fmt.Stringer
-			}{BackoffTypes: []fmt.Stringer{
-				stringutil.MemoizeStr(func() string {
-					return "backoff1"
-				}),
-				stringutil.MemoizeStr(func() string {
-					return "backoff2"
-				}),
-			}},
+				CommitBackoffTime int64
+				BackoffTypes      []string
+			}{
+				CommitBackoffTime: int64(time.Second),
+				BackoffTypes: []string{
+					"backoff1",
+					"backoff2",
+				},
+			},
 			ResolveLockTime:   1000000000, // 10^9 ns = 1s
 			WriteKeys:         1,
 			WriteSize:         1,
@@ -206,24 +204,17 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 }
 func TestRuntimeStatsWithCommit(t *testing.T) {
 	commitDetail := &util.CommitDetails{
-		GetCommitTsTime:   time.Second,
-		PrewriteTime:      time.Second,
-		CommitTime:        time.Second,
-		CommitBackoffTime: int64(time.Second),
+		GetCommitTsTime: time.Second,
+		PrewriteTime:    time.Second,
+		CommitTime:      time.Second,
 		Mu: struct {
 			sync.Mutex
-			BackoffTypes []fmt.Stringer
-		}{BackoffTypes: []fmt.Stringer{
-			stringutil.MemoizeStr(func() string {
-				return "backoff1"
-			}),
-			stringutil.MemoizeStr(func() string {
-				return "backoff2"
-			}),
-			stringutil.MemoizeStr(func() string {
-				return "backoff1"
-			}),
-		}},
+			CommitBackoffTime int64
+			BackoffTypes      []string
+		}{
+			CommitBackoffTime: int64(time.Second),
+			BackoffTypes:      []string{"backoff1", "backoff2", "backoff1"},
+		},
 		ResolveLockTime:   int64(time.Second),
 		WriteKeys:         3,
 		WriteSize:         66,
@@ -245,17 +236,11 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		BackoffTime:     int64(time.Second * 3),
 		Mu: struct {
 			sync.Mutex
-			BackoffTypes []fmt.Stringer
-		}{BackoffTypes: []fmt.Stringer{
-			stringutil.MemoizeStr(func() string {
-				return "backoff4"
-			}),
-			stringutil.MemoizeStr(func() string {
-				return "backoff5"
-			}),
-			stringutil.MemoizeStr(func() string {
-				return "backoff5"
-			}),
+			BackoffTypes []string
+		}{BackoffTypes: []string{
+			"backoff4",
+			"backoff5",
+			"backoff5",
 		}},
 		LockRPCTime:  int64(time.Second * 5),
 		LockRPCCount: 50,
@@ -294,11 +279,8 @@ func TestRootRuntimeStats(t *testing.T) {
 	stmtStats.RegisterStats(pid, &RuntimeStatsWithCommit{
 		Commit: commitDetail,
 	})
-	concurrency = &RuntimeStatsWithConcurrencyInfo{}
-	concurrency.SetConcurrencyInfo(NewConcurrencyInfo("concurrent", 0))
-	stmtStats.RegisterStats(pid, concurrency)
 	stats := stmtStats.GetRootStats(1)
-	expect := "time:3s, loops:2, worker:15, concurrent:OFF, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
+	expect := "time:3s, loops:2, worker:15, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
 	if stats.String() != expect {
 		t.Fatalf("%v != %v", stats.String(), expect)
 	}

@@ -14,7 +14,6 @@
 package unistore
 
 import (
-	"io/ioutil"
 	"os"
 
 	"github.com/pingcap/errors"
@@ -28,7 +27,7 @@ func New(path string) (*RPCClient, pd.Client, *Cluster, error) {
 	persistent := true
 	if path == "" {
 		var err error
-		if path, err = ioutil.TempDir("", "tidb-unistore-temp"); err != nil {
+		if path, err = os.MkdirTemp("", "tidb-unistore-temp"); err != nil {
 			return nil, nil, nil, err
 		}
 		persistent = false

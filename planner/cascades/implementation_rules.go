@@ -95,10 +95,7 @@ type ImplTableDual struct {
 
 // Match implements ImplementationRule Match interface.
 func (r *ImplTableDual) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	if !prop.IsEmpty() {
-		return false
-	}
-	return true
+	return prop.IsEmpty()
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
@@ -116,10 +113,7 @@ type ImplMemTableScan struct {
 
 // Match implements ImplementationRule Match interface.
 func (r *ImplMemTableScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	if !prop.IsEmpty() {
-		return false
-	}
-	return true
+	return prop.IsEmpty()
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.

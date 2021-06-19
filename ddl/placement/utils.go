@@ -61,7 +61,7 @@ func BuildPlacementCopyBundle(oldBundle *Bundle, newID int64) *Bundle {
 func GetLeaderDCByBundle(bundle *Bundle, dcLabelKey string) (string, bool) {
 	for _, rule := range bundle.Rules {
 		if isValidLeaderRule(rule, dcLabelKey) {
-			return rule.LabelConstraints[0].Values[0], true
+			return rule.Constraints[0].Values[0], true
 		}
 	}
 	return "", false
@@ -69,7 +69,7 @@ func GetLeaderDCByBundle(bundle *Bundle, dcLabelKey string) (string, bool) {
 
 func isValidLeaderRule(rule *Rule, dcLabelKey string) bool {
 	if rule.Role == Leader && rule.Count == 1 {
-		for _, con := range rule.LabelConstraints {
+		for _, con := range rule.Constraints {
 			if con.Op == In && con.Key == dcLabelKey && len(con.Values) == 1 {
 				return true
 			}
