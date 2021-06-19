@@ -47,11 +47,18 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20201126102027-b0a155152ca3
 	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
+<<<<<<< HEAD
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20210526125828-7790f94ac2ad
 	github.com/pingcap/log v0.0.0-20201112100606-8f1e84a3abc8
 	github.com/pingcap/parser v0.0.0-20210601031019-389d0cf6c5bd
 	github.com/pingcap/sysutil v0.0.0-20210221112134-a07bda3bde99
+=======
+	github.com/pingcap/kvproto v0.0.0-20210611081648-a215b4e61d2f
+	github.com/pingcap/log v0.0.0-20210317133921-96f4fcab92a4
+	github.com/pingcap/parser v0.0.0-20210618053735-57843e8185c4
+	github.com/pingcap/sysutil v0.0.0-20210315073920-cc0985d983a3
+>>>>>>> 712fb1c55... *: update parser to fix ODBC-styled literal (#25570)
 	github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible
 	github.com/pingcap/tipb v0.0.0-20210601083426-79a378b6d1c4
 	github.com/prometheus/client_golang v1.5.1
