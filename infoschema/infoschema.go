@@ -404,15 +404,6 @@ func GetBundle(h InfoSchema, ids []int64) *placement.Bundle {
 	return &placement.Bundle{ID: placement.GroupID(id), Rules: newRules}
 }
 
-// LocalTemporaryTableInfoSchema is the interface used to retrieve the local temporary table schema.
-type LocalTemporaryTableInfoSchema interface {
-	TableByName(schema, table model.CIStr) (*LocalTemporaryTable, error)
-	TableExists(schema, table model.CIStr) bool
-	TableByID(id int64) (*LocalTemporaryTable, bool)
-	AddTable(schema *model.DBInfo, table table.Table) error
-	RemoveTable(schema, table model.CIStr) bool
-}
-
 // LocalTemporaryTable stores table and schema info for local temporary table.
 // Because drop database doesn't drop its local temporary table. So each table's database may be different event it has the same name.
 type LocalTemporaryTable struct {
@@ -420,48 +411,44 @@ type LocalTemporaryTable struct {
 	Schema *model.DBInfo
 }
 
-type localTempSchemaTables struct {
+type schemaLocalTempSchemaTables struct {
 	tables map[string]*LocalTemporaryTable
 }
 
-// localTemporaryTableInfoSchema implements LocalTemporaryTableInfoSchema
-type localTemporaryTableInfoSchema struct {
-	schemaMap map[string]*localTempSchemaTables
+// LocalTemporaryTables store local temporary tables
+type LocalTemporaryTables struct {
+	schemaMap map[string]*schemaLocalTempSchemaTables
 	idx2table map[int64]*LocalTemporaryTable
 }
 
 // NewLocalTemporaryTableInfoSchema creates a new LocalTemporaryTableInfoSchema object
-func NewLocalTemporaryTableInfoSchema() LocalTemporaryTableInfoSchema {
-	return &localTemporaryTableInfoSchema{
-		schemaMap: make(map[string]*localTempSchemaTables),
+func NewLocalTemporaryTableInfoSchema() *LocalTemporaryTables {
+	return &LocalTemporaryTables{
+		schemaMap: make(map[string]*schemaLocalTempSchemaTables),
 		idx2table: make(map[int64]*LocalTemporaryTable),
 	}
 }
 
-func (is *localTemporaryTableInfoSchema) TableByName(schema, table model.CIStr) (t *LocalTemporaryTable, err error) {
+func (is *LocalTemporaryTables) TableByName(schema, table model.CIStr) (*LocalTemporaryTable, bool) {
 	if tbNames, ok := is.schemaMap[schema.L]; ok {
-		if t, ok = tbNames.tables[table.L]; ok {
-			return
+		if t, ok := tbNames.tables[table.L]; ok {
+			return t, true
 		}
 	}
-	return nil, ErrTableNotExists.GenWithStackByArgs(schema, table)
+	return nil, false
 }
 
-func (is *localTemporaryTableInfoSchema) TableExists(schema, table model.CIStr) bool {
-	if tbNames, ok := is.schemaMap[schema.L]; ok {
-		if _, ok = tbNames.tables[table.L]; ok {
-			return true
-		}
-	}
-	return false
+func (is *LocalTemporaryTables) TableExists(schema, table model.CIStr) (ok bool) {
+	_, ok = is.TableByName(schema, table)
+	return
 }
 
-func (is *localTemporaryTableInfoSchema) TableByID(id int64) (tbl *LocalTemporaryTable, ok bool) {
+func (is *LocalTemporaryTables) TableByID(id int64) (tbl *LocalTemporaryTable, ok bool) {
 	tbl, ok = is.idx2table[id]
 	return
 }
 
-func (is *localTemporaryTableInfoSchema) SchemaTables(schema model.CIStr) (tables []*LocalTemporaryTable) {
+func (is *LocalTemporaryTables) SchemaTables(schema model.CIStr) (tables []*LocalTemporaryTable) {
 	schemaTables, ok := is.schemaMap[schema.L]
 	if !ok {
 		return
@@ -472,7 +459,7 @@ func (is *localTemporaryTableInfoSchema) SchemaTables(schema model.CIStr) (table
 	return
 }
 
-func (is *localTemporaryTableInfoSchema) AddTable(schema *model.DBInfo, tbl table.Table) error {
+func (is *LocalTemporaryTables) AddTable(schema *model.DBInfo, tbl table.Table) error {
 	schemaTables := is.ensureSchema(schema.Name)
 
 	tblMeta := tbl.Meta()
@@ -492,7 +479,7 @@ func (is *localTemporaryTableInfoSchema) AddTable(schema *model.DBInfo, tbl tabl
 	return nil
 }
 
-func (is *localTemporaryTableInfoSchema) RemoveTable(schema, table model.CIStr) (exist bool) {
+func (is *LocalTemporaryTables) RemoveTable(schema, table model.CIStr) (exist bool) {
 	tbls := is.schemaTables(schema)
 	if tbls == nil {
 		return false
@@ -508,17 +495,17 @@ func (is *localTemporaryTableInfoSchema) RemoveTable(schema, table model.CIStr) 
 	return true
 }
 
-func (is *localTemporaryTableInfoSchema) ensureSchema(schema model.CIStr) *localTempSchemaTables {
+func (is *LocalTemporaryTables) ensureSchema(schema model.CIStr) *schemaLocalTempSchemaTables {
 	if tbls, ok := is.schemaMap[schema.L]; ok {
 		return tbls
 	}
 
-	tbls := &localTempSchemaTables{tables: make(map[string]*LocalTemporaryTable)}
+	tbls := &schemaLocalTempSchemaTables{tables: make(map[string]*LocalTemporaryTable)}
 	is.schemaMap[schema.L] = tbls
 	return tbls
 }
 
-func (is *localTemporaryTableInfoSchema) schemaTables(schema model.CIStr) *localTempSchemaTables {
+func (is *LocalTemporaryTables) schemaTables(schema model.CIStr) *schemaLocalTempSchemaTables {
 	if is.schemaMap == nil {
 		return nil
 	}
@@ -528,4 +515,38 @@ func (is *localTemporaryTableInfoSchema) schemaTables(schema model.CIStr) *local
 	}
 
 	return nil
+}
+
+// TemporaryTableAttachedInfoSchema stores infoschema with temporary tables
+type TemporaryTableAttachedInfoSchema struct {
+	InfoSchema
+	LocalTemporaryTables *LocalTemporaryTables
+}
+
+func (ts *TemporaryTableAttachedInfoSchema) TableByName(schema, table model.CIStr) (table.Table, error) {
+	if tbl, ok := ts.LocalTemporaryTables.TableByName(schema, table); ok {
+		return tbl, nil
+	}
+
+	return ts.InfoSchema.TableByName(schema, table)
+}
+
+func (ts *TemporaryTableAttachedInfoSchema) TableByID(id int64) (table.Table, bool) {
+	if tbl, ok := ts.LocalTemporaryTables.TableByID(id); ok {
+		return tbl, true
+	}
+
+	return ts.InfoSchema.TableByID(id)
+}
+
+func (ts *TemporaryTableAttachedInfoSchema) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
+	if tableInfo == nil {
+		return nil, false
+	}
+
+	if tbl, ok := ts.LocalTemporaryTables.TableByID(tableInfo.ID); ok {
+		return tbl.Schema, true
+	}
+
+	return ts.InfoSchema.SchemaByTable(tableInfo)
 }

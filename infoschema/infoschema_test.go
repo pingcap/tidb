@@ -397,7 +397,7 @@ func (*testSuite) TestGetBundle(c *C) {
 	c.Assert(bundle.ID, Equals, ptID)
 }
 
-func (*testSuite) TestLocalTemporaryTableInfoSchema(c *C) {
+func (*testSuite) TestLocalTemporaryTables(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 
@@ -411,7 +411,7 @@ func (*testSuite) TestLocalTemporaryTableInfoSchema(c *C) {
 		}
 	}
 
-	createNewTable := func(schemaID int64, tbName string) table.Table {
+	createNewTable := func(schemaID int64, tbName string, tempType model.TempTableType) table.Table {
 		colID, err := genGlobalID(store)
 		c.Assert(err, IsNil)
 
@@ -441,26 +441,26 @@ func (*testSuite) TestLocalTemporaryTableInfoSchema(c *C) {
 		return tbl
 	}
 
-	assertTableByName := func(sc infoschema.LocalTemporaryTableInfoSchema, schemaName, tableName string, schema *model.DBInfo, tb table.Table) {
-		got, err := sc.TableByName(model.NewCIStr(schemaName), model.NewCIStr(tableName))
+	assertTableByName := func(sc *infoschema.LocalTemporaryTables, schemaName, tableName string, schema *model.DBInfo, tb table.Table) {
+		got, ok := sc.TableByName(model.NewCIStr(schemaName), model.NewCIStr(tableName))
 		if tb == nil {
 			c.Assert(schema, IsNil)
-			c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
+			c.Assert(ok, IsFalse)
 			c.Assert(got, IsNil)
 		} else {
 			c.Assert(schema, NotNil)
-			c.Assert(err, IsNil)
+			c.Assert(ok, IsTrue)
 			c.Assert(got.Schema, Equals, schema)
 			c.Assert(got.Table, Equals, tb)
 		}
 	}
 
-	assertTableExists := func(sc infoschema.LocalTemporaryTableInfoSchema, schemaName, tableName string, exists bool) {
+	assertTableExists := func(sc *infoschema.LocalTemporaryTables, schemaName, tableName string, exists bool) {
 		got := sc.TableExists(model.NewCIStr(schemaName), model.NewCIStr(tableName))
 		c.Assert(got, Equals, exists)
 	}
 
-	assertTableByID := func(sc infoschema.LocalTemporaryTableInfoSchema, tbID int64, schema *model.DBInfo, tb table.Table) {
+	assertTableByID := func(sc *infoschema.LocalTemporaryTables, tbID int64, schema *model.DBInfo, tb table.Table) {
 		got, ok := sc.TableByID(tbID)
 		if tb == nil {
 			c.Assert(schema, IsNil)
@@ -476,20 +476,20 @@ func (*testSuite) TestLocalTemporaryTableInfoSchema(c *C) {
 
 	sc := infoschema.NewLocalTemporaryTableInfoSchema()
 	db1 := createNewSchemaInfo("db1")
-	tb11 := createNewTable(db1.ID, "tb1")
-	tb12 := createNewTable(db1.ID, "Tb2")
-	tb13 := createNewTable(db1.ID, "tb3")
+	tb11 := createNewTable(db1.ID, "tb1", model.TempTableLocal)
+	tb12 := createNewTable(db1.ID, "Tb2", model.TempTableLocal)
+	tb13 := createNewTable(db1.ID, "tb3", model.TempTableLocal)
 
 	// db1b has the same name with db1
 	db1b := createNewSchemaInfo("db1")
-	tb15 := createNewTable(db1b.ID, "tb5")
-	tb16 := createNewTable(db1b.ID, "tb6")
-	tb17 := createNewTable(db1b.ID, "tb7")
+	tb15 := createNewTable(db1b.ID, "tb5", model.TempTableLocal)
+	tb16 := createNewTable(db1b.ID, "tb6", model.TempTableLocal)
+	tb17 := createNewTable(db1b.ID, "tb7", model.TempTableLocal)
 
 	db2 := createNewSchemaInfo("db2")
-	tb21 := createNewTable(db2.ID, "tb1")
-	tb22 := createNewTable(db2.ID, "TB2")
-	tb24 := createNewTable(db2.ID, "tb4")
+	tb21 := createNewTable(db2.ID, "tb1", model.TempTableLocal)
+	tb22 := createNewTable(db2.ID, "TB2", model.TempTableLocal)
+	tb24 := createNewTable(db2.ID, "tb4", model.TempTableLocal)
 
 	prepareTables := []struct {
 		db *model.DBInfo
@@ -539,8 +539,10 @@ func (*testSuite) TestLocalTemporaryTableInfoSchema(c *C) {
 	err = sc.AddTable(db1b, tb11)
 	c.Assert(infoschema.ErrTableExists.Equal(err), IsTrue)
 	db1c := createNewSchemaInfo("db1")
-	err = sc.AddTable(db1c, createNewTable(db1c.ID, "tb1"))
+	err = sc.AddTable(db1c, createNewTable(db1c.ID, "tb1", model.TempTableLocal))
+	c.Assert(infoschema.ErrTableExists.Equal(err), IsTrue)
 	err = sc.AddTable(db1b, tb11)
+	c.Assert(infoschema.ErrTableExists.Equal(err), IsTrue)
 
 	// failed add has no effect
 	assertTableByName(sc, db1.Name.L, tb11.Meta().Name.L, db1, tb11)
