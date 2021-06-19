@@ -14,7 +14,8 @@
 package expression
 
 import (
-	json2 "encoding/json"
+	"bytes"
+	goJSON "encoding/json"
 	"strconv"
 	"strings"
 
@@ -841,7 +842,7 @@ func (b *builtinJSONValidStringSig) evalInt(row chunk.Row) (res int64, isNull bo
 	}
 
 	data := hack.Slice(val)
-	if json2.Valid(data) {
+	if goJSON.Valid(data) {
 		res = 1
 	} else {
 		res = 0
@@ -1072,8 +1073,45 @@ type jsonPrettyFunctionClass struct {
 	baseFunctionClass
 }
 
+type builtinJSONSPrettySig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONSPrettySig) Clone() builtinFunc {
+	newSig := &builtinJSONSPrettySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (c *jsonPrettyFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_PRETTY")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETJson)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinJSONSPrettySig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonPrettySig)
+	return sig, nil
+}
+
+func (b *builtinJSONSPrettySig) evalString(row chunk.Row) (res string, isNull bool, err error) {
+	obj, isNull, err := b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+
+	buf, err := obj.MarshalJSON()
+	if err != nil {
+		return res, isNull, err
+	}
+	var resBuf bytes.Buffer
+	if err = goJSON.Indent(&resBuf, buf, "", "  "); err != nil {
+		return res, isNull, err
+	}
+	return resBuf.String(), false, nil
 }
 
 type jsonQuoteFunctionClass struct {

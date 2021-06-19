@@ -67,7 +67,7 @@ func (s *testValidatorSuite) runSQL(c *C, sql string, inPrepare bool, terr error
 	if inPrepare {
 		opts = append(opts, core.InPrepare)
 	}
-	err := core.Preprocess(s.ctx, stmt, s.is, opts...)
+	err := core.Preprocess(s.ctx, stmt, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: s.is}))...)
 	c.Assert(terror.ErrorEqual(err, terr), IsTrue, Commentf("sql: %s, err:%v", sql, err))
 }
 

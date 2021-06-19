@@ -124,9 +124,7 @@ func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.
 			outputFieldTypes = append(outputFieldTypes, originalOutputFieldTypes[idx])
 		}
 	} else {
-		for _, tp := range originalOutputFieldTypes {
-			outputFieldTypes = append(outputFieldTypes, tp)
-		}
+		outputFieldTypes = append(outputFieldTypes, originalOutputFieldTypes...)
 	}
 	if len(executors) == 1 {
 		ce.resultFieldType = outputFieldTypes

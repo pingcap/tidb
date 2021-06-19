@@ -17,19 +17,13 @@ import (
 	"fmt"
 	"sort"
 	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/placement"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -316,40 +310,6 @@ func (is *infoSchema) SequenceByName(schema, sequence model.CIStr) (util.Sequenc
 	return tbl.(util.SequenceTable), nil
 }
 
-// Handle handles information schema, including getting and setting.
-type Handle struct {
-	value atomic.Value
-	store kv.Storage
-}
-
-// NewHandle creates a new Handle.
-func NewHandle(store kv.Storage) *Handle {
-	h := &Handle{
-		store: store,
-	}
-	return h
-}
-
-// Get gets information schema from Handle.
-func (h *Handle) Get() InfoSchema {
-	v := h.value.Load()
-	schema, _ := v.(InfoSchema)
-	return schema
-}
-
-// IsValid uses to check whether handle value is valid.
-func (h *Handle) IsValid() bool {
-	return h.value.Load() != nil
-}
-
-// EmptyClone creates a new Handle with the same store and memSchema, but the value is not set.
-func (h *Handle) EmptyClone() *Handle {
-	newHandle := &Handle{
-		store: h.store,
-	}
-	return newHandle
-}
-
 func init() {
 	// Initialize the information shema database and register the driver to `drivers`
 	dbID := autoid.InformationSchemaDBID
@@ -384,28 +344,6 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 		}
 	}
 	return false, ""
-}
-
-// GetInfoSchema gets TxnCtx InfoSchema if snapshot schema is not set,
-// Otherwise, snapshot schema is returned.
-func GetInfoSchema(ctx sessionctx.Context) InfoSchema {
-	return GetInfoSchemaBySessionVars(ctx.GetSessionVars())
-}
-
-// GetInfoSchemaBySessionVars gets TxnCtx InfoSchema if snapshot schema is not set,
-// Otherwise, snapshot schema is returned.
-func GetInfoSchemaBySessionVars(sessVar *variable.SessionVars) InfoSchema {
-	var is InfoSchema
-	if snap := sessVar.SnapshotInfoschema; snap != nil {
-		is = snap.(InfoSchema)
-		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", sessVar.ConnectionID), zap.Int64("schemaVersion", is.SchemaMetaVersion()))
-	} else {
-		if sessVar.TxnCtx == nil || sessVar.TxnCtx.InfoSchema == nil {
-			return nil
-		}
-		is = sessVar.TxnCtx.InfoSchema.(InfoSchema)
-	}
-	return is
 }
 
 func (is *infoSchema) BundleByName(name string) (*placement.Bundle, bool) {

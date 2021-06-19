@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-	"github.com/pingcap/kvproto/pkg/coprocessor_v2"
 	deadlockPb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -217,6 +216,7 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 			LockKey:         errLocked.Key,
 			LockTS:          errLocked.Lock.StartTS,
 			DeadlockKeyHash: result.DeadlockResp.DeadlockKeyHash,
+			WaitChain:       result.DeadlockResp.WaitChain,
 		}
 		resp.Errors, resp.RegionError = convertToPBErrors(deadlockErr)
 		return resp, nil
@@ -617,6 +617,11 @@ func (svr *Server) BatchCoprocessor(req *coprocessor.BatchRequest, batchCopServe
 	return nil
 }
 
+// RawCoprocessor implements implements the tikvpb.TikvServer interface.
+func (svr *Server) RawCoprocessor(context.Context, *kvrpcpb.RawCoprocessorRequest) (*kvrpcpb.RawCoprocessorResponse, error) {
+	panic("unimplemented")
+}
+
 func (mrm *MockRegionManager) removeMPPTaskHandler(taskID int64, storeID uint64) error {
 	set := mrm.getMPPTaskSet(storeID)
 	if set == nil {
@@ -961,14 +966,14 @@ func (svr *Server) RawCompareAndSwap(context.Context, *kvrpcpb.RawCASRequest) (*
 	panic("implement me")
 }
 
-// CoprocessorV2 implements the tikvpb.TikvServer interface.
-func (svr *Server) CoprocessorV2(context.Context, *coprocessor_v2.RawCoprocessorRequest) (*coprocessor_v2.RawCoprocessorResponse, error) {
-	panic("implement me")
-}
-
 // GetStoreSafeTS implements the tikvpb.TikvServer interface.
 func (svr *Server) GetStoreSafeTS(context.Context, *kvrpcpb.StoreSafeTSRequest) (*kvrpcpb.StoreSafeTSResponse, error) {
 	return &kvrpcpb.StoreSafeTSResponse{}, nil
+}
+
+// GetLockWaitInfo implements the tikvpb.TikvServer interface.
+func (svr *Server) GetLockWaitInfo(context.Context, *kvrpcpb.GetLockWaitInfoRequest) (*kvrpcpb.GetLockWaitInfoResponse, error) {
+	panic("unimplemented")
 }
 
 func convertToKeyError(err error) *kvrpcpb.KeyError {
@@ -1006,6 +1011,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				LockKey:         x.LockKey,
 				LockTs:          x.LockTS,
 				DeadlockKeyHash: x.DeadlockKeyHash,
+				WaitChain:       x.WaitChain,
 			},
 		}
 	case *ErrCommitExpire:

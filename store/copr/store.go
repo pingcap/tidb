@@ -21,10 +21,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
-	txndriver "github.com/pingcap/tidb/store/driver/txn"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/config"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/driver/backoff"
+	derr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/tikv/client-go/v2/config"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 type kvStore struct {
@@ -32,14 +33,14 @@ type kvStore struct {
 }
 
 // GetRegionCache returns the region cache instance.
-func (s *kvStore) GetRegionCache() *tikv.RegionCache {
-	return s.store.GetRegionCache()
+func (s *kvStore) GetRegionCache() *RegionCache {
+	return &RegionCache{s.store.GetRegionCache()}
 }
 
 // CheckVisibility checks if it is safe to read using given ts.
 func (s *kvStore) CheckVisibility(startTime uint64) error {
 	err := s.store.CheckVisibility(startTime)
-	return txndriver.ToTiDBErr(err)
+	return derr.ToTiDBErr(err)
 }
 
 // GetTiKVClient gets the client instance.
@@ -54,13 +55,13 @@ type tikvClient struct {
 
 func (c *tikvClient) Close() error {
 	err := c.c.Close()
-	return txndriver.ToTiDBErr(err)
+	return derr.ToTiDBErr(err)
 }
 
 // SendRequest sends Request.
 func (c *tikvClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	res, err := c.c.SendRequest(ctx, addr, req, timeout)
-	return res, txndriver.ToTiDBErr(err)
+	return res, derr.ToTiDBErr(err)
 }
 
 // Store wraps tikv.KVStore and provides coprocessor utilities.
@@ -121,3 +122,6 @@ func getEndPointType(t kv.StoreType) tikvrpc.EndpointType {
 		return tikvrpc.TiKV
 	}
 }
+
+// Backoffer wraps tikv.Backoffer and converts the error which returns by the functions of tikv.Backoffer to tidb error.
+type Backoffer = backoff.Backoffer

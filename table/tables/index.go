@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -184,9 +183,8 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		return nil, err
 	}
 
-	us := txn.GetUnionStore()
 	if !distinct || skipCheck || opt.Untouched {
-		err = us.GetMemBuffer().Set(key, idxVal)
+		err = txn.GetMemBuffer().Set(key, idxVal)
 		return nil, err
 	}
 
@@ -202,18 +200,18 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 
 	var value []byte
 	if sctx.GetSessionVars().LazyCheckKeyNotExists() {
-		value, err = us.GetMemBuffer().Get(ctx, key)
+		value, err = txn.GetMemBuffer().Get(ctx, key)
 	} else {
-		value, err = us.Get(ctx, key)
+		value, err = txn.Get(ctx, key)
 	}
 	if err != nil && !kv.IsErrNotFound(err) {
 		return nil, err
 	}
 	if err != nil || len(value) == 0 {
 		if sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil {
-			err = us.GetMemBuffer().SetWithFlags(key, idxVal, tikvstore.SetPresumeKeyNotExists)
+			err = txn.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
 		} else {
-			err = us.GetMemBuffer().Set(key, idxVal)
+			err = txn.GetMemBuffer().Set(key, idxVal)
 		}
 		return nil, err
 	}
@@ -226,22 +224,22 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 }
 
 // Delete removes the entry for handle h and indexedValues from KV index.
-func (c *index) Delete(sc *stmtctx.StatementContext, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle) error {
+func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error {
 	key, distinct, err := c.GenIndexKey(sc, indexedValues, h, nil)
 	if err != nil {
 		return err
 	}
 	if distinct {
-		err = us.GetMemBuffer().DeleteWithFlags(key, tikvstore.SetNeedLocked)
+		err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
 	} else {
-		err = us.GetMemBuffer().Delete(key)
+		err = txn.GetMemBuffer().Delete(key)
 	}
 	return err
 }
 
 // Drop removes the KV index from store.
-func (c *index) Drop(us kv.UnionStore) error {
-	it, err := us.Iter(c.prefix, c.prefix.PrefixNext())
+func (c *index) Drop(txn kv.Transaction) error {
+	it, err := txn.Iter(c.prefix, c.prefix.PrefixNext())
 	if err != nil {
 		return err
 	}
@@ -252,7 +250,7 @@ func (c *index) Drop(us kv.UnionStore) error {
 		if !it.Key().HasPrefix(c.prefix) {
 			break
 		}
-		err := us.GetMemBuffer().Delete(it.Key())
+		err := txn.GetMemBuffer().Delete(it.Key())
 		if err != nil {
 			return err
 		}
@@ -298,13 +296,13 @@ func (c *index) SeekFirst(r kv.Retriever) (iter table.IndexIterator, err error) 
 	return &indexIter{it: it, idx: c, prefix: c.prefix, colInfos: colInfos, tps: tps}, nil
 }
 
-func (c *index) Exist(sc *stmtctx.StatementContext, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error) {
+func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error) {
 	key, distinct, err := c.GenIndexKey(sc, indexedValues, h, nil)
 	if err != nil {
 		return false, nil, err
 	}
 
-	value, err := us.Get(context.TODO(), key)
+	value, err := txn.Get(context.TODO(), key)
 	if kv.IsErrNotFound(err) {
 		return false, nil, nil
 	}

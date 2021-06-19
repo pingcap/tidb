@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -322,8 +323,13 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
-	if meta := t.Meta(); meta.TempTableType == model.TempTableGlobal {
-		addTemporaryTableID(sctx, meta.ID)
+	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
+		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
+			if tmpTable.GetSize() > sctx.GetSessionVars().TMPTableSize {
+				return table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
+			}
+			defer handleTempTableSize(tmpTable, txn.Size(), txn)
+		}
 	}
 
 	var colIDs, binlogColIDs []int64
@@ -346,6 +352,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 				if err != nil {
 					logutil.BgLogger().Info("update record cast value failed", zap.Any("col", col), zap.Uint64("txnStartTS", txn.StartTS()),
 						zap.String("handle", h.String()), zap.Any("val", oldData[col.DependencyColumnOffset]), zap.Error(err))
+					return err
 				}
 				oldData = append(oldData, value)
 				touched = append(touched, touched[col.DependencyColumnOffset])
@@ -588,12 +595,20 @@ func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
 	return pkCols
 }
 
-func addTemporaryTableID(sctx sessionctx.Context, id int64) {
-	txnCtx := sctx.GetSessionVars().TxnCtx
-	if txnCtx.GlobalTemporaryTables == nil {
-		txnCtx.GlobalTemporaryTables = make(map[int64]struct{})
-	}
-	txnCtx.GlobalTemporaryTables[id] = struct{}{}
+func addTemporaryTable(sctx sessionctx.Context, tblInfo *model.TableInfo) tableutil.TempTable {
+	tempTable := sctx.GetSessionVars().GetTemporaryTable(tblInfo)
+	tempTable.SetModified(true)
+	return tempTable
+}
+
+// The size of a temporary table is calculated by accumulating the transaction size delta.
+func handleTempTableSize(t tableutil.TempTable, txnSizeBefore int, txn kv.Transaction) {
+	txnSizeNow := txn.Size()
+	delta := txnSizeNow - txnSizeBefore
+
+	oldSize := t.GetSize()
+	newSize := oldSize + int64(delta)
+	t.SetSize(newSize)
 }
 
 // AddRecord implements table.Table AddRecord interface.
@@ -608,8 +623,13 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		fn.ApplyOn(&opt)
 	}
 
-	if meta := t.Meta(); meta.TempTableType == model.TempTableGlobal {
-		addTemporaryTableID(sctx, meta.ID)
+	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
+		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
+			if tmpTable.GetSize() > sctx.GetSessionVars().TMPTableSize {
+				return nil, table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
+			}
+			defer handleTempTableSize(tmpTable, txn.Size(), txn)
+		}
 	}
 
 	var ctx context.Context
@@ -771,7 +791,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	}
 
 	if setPresume {
-		err = memBuffer.SetWithFlags(key, value, tikvstore.SetPresumeKeyNotExists)
+		err = memBuffer.SetWithFlags(key, value, kv.SetPresumeKeyNotExists)
 	} else {
 		err = memBuffer.Set(key, value)
 	}
@@ -1010,13 +1030,31 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		return err
 	}
 
-	if meta := t.Meta(); meta.TempTableType == model.TempTableGlobal {
-		addTemporaryTableID(ctx, meta.ID)
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
+		if tmpTable := addTemporaryTable(ctx, m); tmpTable != nil {
+			if tmpTable.GetSize() > ctx.GetSessionVars().TMPTableSize {
+				return table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
+			}
+			defer handleTempTableSize(tmpTable, txn.Size(), txn)
+		}
 	}
 
 	// The table has non-public column and this column is doing the operation of "modify/change column".
 	if len(t.Columns) > len(r) && t.Columns[len(r)].ChangeStateInfo != nil {
-		r = append(r, r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset])
+		// The changing column datum derived from related column should be casted here.
+		// Otherwise, the existed changing indexes will not be deleted.
+		relatedColDatum := r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset]
+		value, err := table.CastValue(ctx, relatedColDatum, t.Columns[len(r)].ColumnInfo, false, false)
+		if err != nil {
+			logutil.BgLogger().Info("remove record cast value failed", zap.Any("col", t.Columns[len(r)]),
+				zap.String("handle", h.String()), zap.Any("val", relatedColDatum), zap.Error(err))
+			return err
+		}
+		r = append(r, value)
 	}
 	err = t.removeRowIndices(ctx, h, r)
 	if err != nil {
@@ -1153,7 +1191,7 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h kv.Handle, rec 
 			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))
 			return err
 		}
-		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn.GetUnionStore(), vals, h); err != nil {
+		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
@@ -1168,7 +1206,7 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h kv.Handle, rec 
 
 // removeRowIndex implements table.Table RemoveRowIndex interface.
 func (t *TableCommon) removeRowIndex(sc *stmtctx.StatementContext, h kv.Handle, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
-	return idx.Delete(sc, txn.GetUnionStore(), vals, h)
+	return idx.Delete(sc, txn, vals, h)
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
@@ -1370,7 +1408,17 @@ func OverflowShardBits(recordID int64, shardRowIDBits uint64, typeBitsLength uin
 
 // Allocators implements table.Table Allocators interface.
 func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
-	if ctx == nil || ctx.GetSessionVars().IDAllocator == nil {
+	if ctx == nil {
+		return t.allocs
+	} else if ctx.GetSessionVars().IDAllocator == nil {
+		// Use an independent allocator for global temporary tables.
+		if t.meta.TempTableType == model.TempTableGlobal {
+			if alloc := ctx.GetSessionVars().GetTemporaryTable(t.meta).GetAutoIDAllocator(); alloc != nil {
+				return autoid.Allocators{alloc}
+			}
+			// If the session is not in a txn, for example, in "show create table", use the original allocator.
+			// Otherwise the would be a nil pointer dereference.
+		}
 		return t.allocs
 	}
 
@@ -1406,6 +1454,9 @@ func (t *TableCommon) Type() table.Type {
 
 func shouldWriteBinlog(ctx sessionctx.Context, tblInfo *model.TableInfo) bool {
 	if ctx.GetSessionVars().BinlogClient == nil {
+		return false
+	}
+	if tblInfo.TempTableType != model.TempTableNone {
 		return false
 	}
 	return !ctx.GetSessionVars().InRestrictedSQL
@@ -1498,6 +1549,7 @@ func getDuplicateErrorHandleString(t table.Table, handle kv.Handle, row []types.
 func init() {
 	table.TableFromMeta = TableFromMeta
 	table.MockTableFromMeta = MockTableFromMeta
+	tableutil.TempTableFromMeta = TempTableFromMeta
 }
 
 // sequenceCommon cache the sequence value.
@@ -1762,4 +1814,56 @@ func BuildTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.Co
 		tsExec.PrimaryPrefixColumnIds = PrimaryPrefixColumnIDs(tableInfo)
 	}
 	return tsExec
+}
+
+// TemporaryTable is used to store transaction-specific or session-specific information for global / local temporary tables.
+// For example, stats and autoID should have their own copies of data, instead of being shared by all sessions.
+type TemporaryTable struct {
+	// Whether it's modified in this transaction.
+	modified bool
+	// The stats of this table. So far it's always pseudo stats.
+	stats *statistics.Table
+	// The autoID allocator of this table.
+	autoIDAllocator autoid.Allocator
+	// Table size.
+	size int64
+}
+
+// TempTableFromMeta builds a TempTable from model.TableInfo.
+func TempTableFromMeta(tblInfo *model.TableInfo) tableutil.TempTable {
+	return &TemporaryTable{
+		modified:        false,
+		stats:           statistics.PseudoTable(tblInfo),
+		autoIDAllocator: autoid.NewAllocatorFromTempTblInfo(tblInfo),
+	}
+}
+
+// GetAutoIDAllocator is implemented from TempTable.GetAutoIDAllocator.
+func (t *TemporaryTable) GetAutoIDAllocator() autoid.Allocator {
+	return t.autoIDAllocator
+}
+
+// SetModified is implemented from TempTable.SetModified.
+func (t *TemporaryTable) SetModified(modified bool) {
+	t.modified = modified
+}
+
+// GetModified is implemented from TempTable.GetModified.
+func (t *TemporaryTable) GetModified() bool {
+	return t.modified
+}
+
+// GetStats is implemented from TempTable.GetStats.
+func (t *TemporaryTable) GetStats() interface{} {
+	return t.stats
+}
+
+// GetSize gets the table size.
+func (t *TemporaryTable) GetSize() int64 {
+	return t.size
+}
+
+// SetSize sets the table size.
+func (t *TemporaryTable) SetSize(v int64) {
+	t.size = v
 }
