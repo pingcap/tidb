@@ -231,13 +231,14 @@ func dumpBinaryDateTime(data []byte, t types.Time) []byte {
 }
 
 func vectorizedDumpBinaryColumn(target [][]byte, colInfo *ColumnInfo, column *chunk.Column, colIdx int, rowsNum int, nullBitmapOff int) error {
+	bytePos := (colIdx + 2) / 8
+	bitPos := byte((colIdx + 2) % 8)
+	nullIndex, setNullByte := nullBitmapOff+bytePos, byte(1)<<bitPos
 	switch colInfo.Type {
 	case mysql.TypeTiny:
 		for i, v := range column.Int64s() {
 			if column.IsNull(i) {
-				bytePos := (colIdx + 2) / 8
-				bitPos := byte((colIdx + 2) % 8)
-				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				target[i][nullIndex] |= setNullByte
 				continue
 			}
 			target[i] = append(target[i], byte(v))
@@ -245,9 +246,7 @@ func vectorizedDumpBinaryColumn(target [][]byte, colInfo *ColumnInfo, column *ch
 	case mysql.TypeShort, mysql.TypeYear:
 		for i, v := range column.Int64s() {
 			if column.IsNull(i) {
-				bytePos := (colIdx + 2) / 8
-				bitPos := byte((colIdx + 2) % 8)
-				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				target[i][nullIndex] |= setNullByte
 				continue
 			}
 			target[i] = dumpUint16(target[i], uint16(v))
@@ -255,9 +254,7 @@ func vectorizedDumpBinaryColumn(target [][]byte, colInfo *ColumnInfo, column *ch
 	case mysql.TypeInt24, mysql.TypeLong:
 		for i, v := range column.Int64s() {
 			if column.IsNull(i) {
-				bytePos := (colIdx + 2) / 8
-				bitPos := byte((colIdx + 2) % 8)
-				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				target[i][nullIndex] |= setNullByte
 				continue
 			}
 			target[i] = dumpUint32(target[i], uint32(v))
@@ -265,9 +262,7 @@ func vectorizedDumpBinaryColumn(target [][]byte, colInfo *ColumnInfo, column *ch
 	case mysql.TypeLonglong:
 		for i, v := range column.Uint64s() {
 			if column.IsNull(i) {
-				bytePos := (colIdx + 2) / 8
-				bitPos := byte((colIdx + 2) % 8)
-				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				target[i][nullIndex] |= setNullByte
 				continue
 			}
 			target[i] = dumpUint64(target[i], v)
@@ -275,9 +270,7 @@ func vectorizedDumpBinaryColumn(target [][]byte, colInfo *ColumnInfo, column *ch
 	case mysql.TypeFloat:
 		for i, v := range column.Float32s() {
 			if column.IsNull(i) {
-				bytePos := (colIdx + 2) / 8
-				bitPos := byte((colIdx + 2) % 8)
-				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				target[i][nullIndex] |= setNullByte
 				continue
 			}
 			target[i] = dumpUint32(target[i], math.Float32bits(v))
@@ -285,9 +278,7 @@ func vectorizedDumpBinaryColumn(target [][]byte, colInfo *ColumnInfo, column *ch
 	case mysql.TypeDouble:
 		for i, v := range column.Float64s() {
 			if column.IsNull(i) {
-				bytePos := (colIdx + 2) / 8
-				bitPos := byte((colIdx + 2) % 8)
-				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				target[i][nullIndex] |= setNullByte
 				continue
 			}
 			target[i] = dumpUint64(target[i], math.Float64bits(v))
@@ -295,9 +286,7 @@ func vectorizedDumpBinaryColumn(target [][]byte, colInfo *ColumnInfo, column *ch
 	case mysql.TypeNewDecimal:
 		for i, v := range column.Decimals() {
 			if column.IsNull(i) {
-				bytePos := (colIdx + 2) / 8
-				bitPos := byte((colIdx + 2) % 8)
-				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				target[i][nullIndex] |= setNullByte
 				continue
 			}
 			target[i] = dumpLengthEncodedString(target[i], hack.Slice(v.String()))
@@ -306,9 +295,7 @@ func vectorizedDumpBinaryColumn(target [][]byte, colInfo *ColumnInfo, column *ch
 		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
 		for i := 0; i < rowsNum; i++ {
 			if column.IsNull(i) {
-				bytePos := (colIdx + 2) / 8
-				bitPos := byte((colIdx + 2) % 8)
-				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				target[i][nullIndex] |= setNullByte
 				continue
 			}
 			target[i] = dumpLengthEncodedString(target[i], column.GetBytes(i))
@@ -316,9 +303,7 @@ func vectorizedDumpBinaryColumn(target [][]byte, colInfo *ColumnInfo, column *ch
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		for i, v := range column.Times() {
 			if column.IsNull(i) {
-				bytePos := (colIdx + 2) / 8
-				bitPos := byte((colIdx + 2) % 8)
-				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				target[i][nullIndex] |= setNullByte
 				continue
 			}
 			target[i] = dumpBinaryDateTime(target[i], v)
@@ -326,9 +311,7 @@ func vectorizedDumpBinaryColumn(target [][]byte, colInfo *ColumnInfo, column *ch
 	case mysql.TypeDuration:
 		for i := 0; i < rowsNum; i++ {
 			if column.IsNull(i) {
-				bytePos := (colIdx + 2) / 8
-				bitPos := byte((colIdx + 2) % 8)
-				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				target[i][nullIndex] |= setNullByte
 				continue
 			}
 			target[i] = append(target[i], dumpBinaryTime(column.GetDuration(i, 0).Duration)...)
@@ -336,9 +319,7 @@ func vectorizedDumpBinaryColumn(target [][]byte, colInfo *ColumnInfo, column *ch
 	case mysql.TypeEnum:
 		for i := 0; i < rowsNum; i++ {
 			if column.IsNull(i) {
-				bytePos := (colIdx + 2) / 8
-				bitPos := byte((colIdx + 2) % 8)
-				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				target[i][nullIndex] |= setNullByte
 				continue
 			}
 			target[i] = dumpLengthEncodedString(target[i], hack.Slice(column.GetEnum(i).String()))
@@ -346,9 +327,7 @@ func vectorizedDumpBinaryColumn(target [][]byte, colInfo *ColumnInfo, column *ch
 	case mysql.TypeSet:
 		for i := 0; i < rowsNum; i++ {
 			if column.IsNull(i) {
-				bytePos := (colIdx + 2) / 8
-				bitPos := byte((colIdx + 2) % 8)
-				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				target[i][nullIndex] |= setNullByte
 				continue
 			}
 			target[i] = dumpLengthEncodedString(target[i], hack.Slice(column.GetSet(i).String()))
@@ -356,9 +335,7 @@ func vectorizedDumpBinaryColumn(target [][]byte, colInfo *ColumnInfo, column *ch
 	case mysql.TypeJSON:
 		for i := 0; i < rowsNum; i++ {
 			if column.IsNull(i) {
-				bytePos := (colIdx + 2) / 8
-				bitPos := byte((colIdx + 2) % 8)
-				target[i][nullBitmapOff+bytePos] |= 1 << bitPos
+				target[i][nullIndex] |= setNullByte
 				continue
 			}
 			target[i] = dumpLengthEncodedString(target[i], hack.Slice(column.GetJSON(i).String()))
@@ -446,17 +423,16 @@ func vectorizedDumpTextColumn(target [][]byte, colInfo *ColumnInfo, column *chun
 		}
 	case mysql.TypeLonglong:
 		hasUnsignedFlag := mysql.HasUnsignedFlag(uint(colInfo.Flag))
-		for i := 0; i < rowsNum; i++ {
-			if column.IsNull(i) {
-				target[i] = append(target[i], 0xfb)
-				continue
+		if hasUnsignedFlag {
+			for i, v := range column.Uint64s() {
+				tmp = strconv.AppendUint(tmp[:0], v, 10)
+				target[i] = dumpLengthEncodedString(target[i], tmp)
 			}
-			if hasUnsignedFlag {
-				tmp = strconv.AppendUint(tmp[:0], column.GetUint64(i), 10)
-			} else {
-				tmp = strconv.AppendInt(tmp[:0], column.GetInt64(i), 10)
+		} else {
+			for i, v := range column.Int64s() {
+				tmp = strconv.AppendInt(tmp[:0], v, 10)
+				target[i] = dumpLengthEncodedString(target[i], tmp)
 			}
-			target[i] = dumpLengthEncodedString(target[i], tmp)
 		}
 	case mysql.TypeFloat:
 		precision := -1
@@ -510,12 +486,13 @@ func vectorizedDumpTextColumn(target [][]byte, colInfo *ColumnInfo, column *chun
 			target[i] = dumpLengthEncodedString(target[i], hack.Slice(v.String()))
 		}
 	case mysql.TypeDuration:
+		decimal := int(colInfo.Decimal)
 		for i := 0; i < rowsNum; i++ {
 			if column.IsNull(i) {
 				target[i] = append(target[i], 0xfb)
 				continue
 			}
-			dur := column.GetDuration(i, int(colInfo.Decimal))
+			dur := column.GetDuration(i, decimal)
 			target[i] = dumpLengthEncodedString(target[i], hack.Slice(dur.String()))
 		}
 	case mysql.TypeEnum:
