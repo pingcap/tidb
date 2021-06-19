@@ -3095,12 +3095,12 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 		if field.WildCard.Table.L == "" && i > 0 {
 			return nil, ErrInvalidWildCard
 		}
-		list := unfoldWildStar(field, p.OutputNames(), p.Schema().Columns)
+		list := unfoldWildStar(field, p.OutputNames(), p.Schema().Columns, b.capFlag)
 		// For sql like `select t1.*, t2.* from t1 join t2 using(a)`, we should
 		// not coalesce the `t2.a` in the output result. Thus we need to unfold
 		// the wildstar from the underlying join.redundantSchema.
 		if isJoin && join.redundantSchema != nil && field.WildCard.Table.L != "" {
-			redundantList := unfoldWildStar(field, join.redundantNames, join.redundantSchema.Columns)
+			redundantList := unfoldWildStar(field, join.redundantNames, join.redundantSchema.Columns, b.capFlag)
 			if len(redundantList) > len(list) {
 				list = redundantList
 			}
@@ -3113,7 +3113,7 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 	return resultList, nil
 }
 
-func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column []*expression.Column) (resultList []*ast.SelectField) {
+func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column []*expression.Column, capFlag capFlagType) (resultList []*ast.SelectField) {
 	dbName := field.WildCard.Schema
 	tblName := field.WildCard.Table
 	for i, name := range outputName {
@@ -3132,7 +3132,8 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 				}}
 			colName.SetType(col.GetType())
 			field := &ast.SelectField{Expr: colName}
-			if name.SelectField != nil {
+			// Alias name is only to ensure the view definition is correct.
+			if capFlag&canExpandAST != 0 && name.SelectField != nil {
 				name.SelectField.AsName = colName.Name.Name
 			}
 			field.SetText(name.ColName.O)
