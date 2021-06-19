@@ -1893,6 +1893,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		reg := trace.StartRegion(ctx, "WriteClientConn")
 		start := time.Now()
 		sendRows := make([][]byte, rowCount)
+		nullBitmapOff := 5
 		numBytes4Null := (colCount + 7 + 2) / 8
 		for i := 0; i < rowCount; i++ {
 			sendRows[i] = cc.alloc.AllocWithLen(4, 1024)
@@ -1901,7 +1902,6 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 				sendRows[i] = append(sendRows[i], cc.alloc.AllocWithLen(numBytes4Null, numBytes4Null)...)
 			}
 		}
-		nullBitmapOff := len(sendRows[0])
 		columns := rs.Columns()
 		for i := 0; i < colCount; i++ {
 			if binary {
