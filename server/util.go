@@ -436,29 +436,29 @@ func vectorizedDumpTextColumn(target [][]byte, colInfo *ColumnInfo, column *chun
 			}
 		}
 	case mysql.TypeFloat:
-		precision := -1
+		prec := types.UnspecifiedLength
 		if colInfo.Decimal > 0 && int(colInfo.Decimal) != mysql.NotFixedDec && colInfo.Table == "" {
-			precision = int(colInfo.Decimal)
+			prec = int(colInfo.Decimal)
 		}
 		for i := 0; i < rowsNum; i++ {
 			if column.IsNull(i) {
 				target[i] = append(target[i], 0xfb)
 				continue
 			}
-			tmp = appendFormatFloat(tmp[:0], float64(column.GetFloat32(i)), precision, 32)
+			tmp = appendFormatFloat(tmp[:0], float64(column.GetFloat32(i)), prec, 32)
 			target[i] = dumpLengthEncodedString(target[i], tmp)
 		}
 	case mysql.TypeDouble:
-		precision := types.UnspecifiedLength
+		prec := types.UnspecifiedLength
 		if colInfo.Decimal > 0 && int(colInfo.Decimal) != mysql.NotFixedDec && colInfo.Table == "" {
-			precision = int(colInfo.Decimal)
+			prec = int(colInfo.Decimal)
 		}
 		for i := 0; i < rowsNum; i++ {
 			if column.IsNull(i) {
 				target[i] = append(target[i], 0xfb)
 				continue
 			}
-			tmp = appendFormatFloat(tmp[:0], column.GetFloat64(i), precision, 64)
+			tmp = appendFormatFloat(tmp[:0], column.GetFloat64(i), prec, 64)
 			target[i] = dumpLengthEncodedString(target[i], tmp)
 		}
 	case mysql.TypeNewDecimal:
