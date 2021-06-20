@@ -8656,7 +8656,7 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 	}
 }
 
-func (s *testSuite) Test25506(c *C) {
+func (s *testSuite) TestIssue25506(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tbl_3, tbl_23")
