@@ -2114,3 +2114,32 @@ func (s *testSuite) TestTemporaryTable(c *C) {
 	tk.MustGetErrCode("create binding for update t set a = 1 where b = 1 and c > 1 using update /*+ use_index(t, c) */ t set a = 1 where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
 	tk.MustGetErrCode("create binding for delete from t where b = 1 and c > 1 using delete /*+ use_index(t, c) */ from t where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
 }
+
+func (s *testSuite) TestIssue25505(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set tidb_slow_log_threshold = 0")
+	tk.MustExec("set @@tidb_capture_plan_baselines='on'")
+	tk.MustExec("create table t (a int(11) default null,b int(11) default null,key b (b),key ba (b))")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	defer func() {
+		tk.MustExec("set @@tidb_capture_plan_baselines = off")
+	}()
+	tk.MustExec("with cte as (select * from t where b=4) select * from t")
+	tk.MustExec("with cte as (select * from t where b=6) select * from t")
+	tk.MustExec("with cte as (select * from t where b=7) select * from t")
+	tk.MustExec("with cte as (select * from t where b=8) select * from t")
+	tk.MustExec("admin capture bindings")
+	originSQL := "with `cte` as ( select * from `test` . `t` where `b` = ? ) select * from `test` . `t`"
+	bindSQL := "WITH `cte` AS (SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `b` = 4) SELECT * FROM `test`.`t`"
+	status := "using"
+	rows := tk.MustQuery("show global bindings").Rows()
+	tk.MustExec("set tidb_slow_log_threshold = 300")
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, originSQL)
+	c.Assert(rows[0][1], Equals, bindSQL)
+	c.Assert(rows[0][3], Equals, status)
+}
