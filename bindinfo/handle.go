@@ -704,7 +704,11 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 		bindSQL = bindSQL[updateIdx:]
 		return strings.Replace(bindSQL, "UPDATE", fmt.Sprintf("UPDATE /*+ %s*/", planHint), 1)
 	case *ast.SelectStmt:
+		withIdx := strings.Index(bindSQL, "WITH")
 		selectIdx := strings.Index(bindSQL, "SELECT")
+		if withIdx != -1 && withIdx < selectIdx {
+			selectIdx = withIdx
+		}
 		// Remove possible `explain` prefix.
 		bindSQL = bindSQL[selectIdx:]
 		return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
