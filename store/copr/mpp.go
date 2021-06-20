@@ -16,6 +16,7 @@ package copr
 import (
 	"context"
 	"io"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -221,7 +222,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 		// TODO: If we want to retry, we must redo the plan fragment cutting and task scheduling.
 		// That's a hard job but we can try it in the future.
 		if sender.GetRPCError() != nil {
-			logutil.BgLogger().Error("mpp dispatch meet io error", zap.String("error", sender.GetRPCError().Error()))
+			logutil.BgLogger().Error("mpp dispatch meet io error", zap.String("error", sender.GetRPCError().Error()), zap.String("task ", strconv.FormatInt(taskMeta.TaskId, 10)))
 			// we return timeout to trigger tikv's fallback
 			m.sendError(tikv.ErrTiFlashServerTimeout)
 			return
@@ -231,7 +232,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 	}
 
 	if err != nil {
-		logutil.BgLogger().Error("mpp dispatch meet error", zap.String("error", err.Error()))
+		logutil.BgLogger().Error("mpp dispatch meet error", zap.String("error", err.Error()), zap.String("task ", strconv.FormatInt(taskMeta.TaskId, 10)))
 		// we return timeout to trigger tikv's fallback
 		m.sendError(tikv.ErrTiFlashServerTimeout)
 		return
@@ -314,7 +315,7 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 	rpcResp, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutUltraLong)
 
 	if err != nil {
-		logutil.BgLogger().Error("establish mpp connection meet error", zap.String("error", err.Error()))
+		logutil.BgLogger().Error("establish mpp connection meet error", zap.String("error", err.Error()), zap.String("task ", strconv.FormatInt(taskMeta.TaskId, 10)))
 		// we return timeout to trigger tikv's fallback
 		m.sendError(tikv.ErrTiFlashServerTimeout)
 		return
@@ -343,9 +344,9 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 
 			if err1 := bo.Backoff(tikv.BoTiKVRPC, errors.Errorf("recv stream response error: %v", err)); err1 != nil {
 				if errors.Cause(err) == context.Canceled {
-					logutil.BgLogger().Info("stream recv timeout", zap.Error(err))
+					logutil.BgLogger().Info("stream recv timeout", zap.Error(err), zap.String("task ", strconv.FormatInt(taskMeta.TaskId, 10)))
 				} else {
-					logutil.BgLogger().Info("stream unknown error", zap.Error(err))
+					logutil.BgLogger().Info("stream unknown error", zap.Error(err), zap.String("task ", strconv.FormatInt(taskMeta.TaskId, 10)))
 				}
 			}
 			m.sendError(tikv.ErrTiFlashServerTimeout)
