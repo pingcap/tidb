@@ -981,6 +981,11 @@ error = '''
 `%-.192s`.`%-.192s` contains view recursion
 '''
 
+["planner:1562"]
+error = '''
+Cannot create temporary table with partitions
+'''
+
 ["planner:1706"]
 error = '''
 Primary key/partition key update is not allowed since the table is updated both as '%-.192s' and '%-.192s'.
@@ -1206,6 +1211,11 @@ error = '''
 Feature '%s' is not supported when security enhanced mode is enabled
 '''
 
+["planner:8135"]
+error = '''
+invalid as of timestamp: %s
+'''
+
 ["privilege:1141"]
 error = '''
 There is no such grant defined for user '%-.48s' on host '%-.64s'
@@ -1379,6 +1389,11 @@ Column '%-.192s' cannot be null
 ["table:1054"]
 error = '''
 Unknown column '%-.192s' in '%-.192s'
+'''
+
+["table:1114"]
+error = '''
+The table '%-.192s' is full
 '''
 
 ["table:1192"]

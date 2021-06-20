@@ -146,8 +146,12 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			sessionVars.TxnReadTS.SetTxnReadTS(oldSnapshotTS)
 		}
 	}
-	if name == variable.TxnIsolationOneShot && sessionVars.InTxn() {
-		return errors.Trace(ErrCantChangeTxCharacteristics)
+	if sessionVars.InTxn() {
+		if name == variable.TxnIsolationOneShot ||
+			name == variable.TiDBTxnReadTS ||
+			name == variable.TiDBSnapshot {
+			return errors.Trace(ErrCantChangeTxCharacteristics)
+		}
 	}
 	err = variable.SetSessionSystemVar(sessionVars, name, valStr)
 	if err != nil {

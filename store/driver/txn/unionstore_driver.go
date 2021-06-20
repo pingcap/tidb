@@ -18,8 +18,8 @@ import (
 
 	"github.com/pingcap/tidb/kv"
 	derr "github.com/pingcap/tidb/store/driver/error"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/unionstore"
+	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/unionstore"
 )
 
 // memBuffer wraps unionstore.MemDB as kv.MemBuffer.

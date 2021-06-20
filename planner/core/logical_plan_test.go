@@ -1257,7 +1257,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: "RESTORE DATABASE test FROM 'local:///tmp/a'",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "BACKUP_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "RESTORE_ADMIN", false},
 			},
 		},
 		{
@@ -1269,7 +1269,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: "SHOW RESTORES",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "BACKUP_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "RESTORE_ADMIN", false},
 			},
 		},
 		{
@@ -1300,6 +1300,12 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			sql: "RENAME USER user1 to user1_tmp",
 			ans: []visitInfo{
 				{mysql.CreateUserPriv, "", "", "", ErrSpecificAccessDenied, false, "", false},
+			},
+		},
+		{
+			sql: "SHOW CONFIG",
+			ans: []visitInfo{
+				{mysql.ConfigPriv, "", "", "", ErrSpecificAccessDenied, false, "", false},
 			},
 		},
 	}
