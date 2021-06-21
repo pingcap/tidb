@@ -1290,12 +1290,14 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	for {
 		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
-			if !e.selected[e.inputRow.Idx()] {
-				continue
-			}
 			if req.IsFull() {
 				return nil
 			}
+
+			if !e.selected[e.inputRow.Idx()] {
+				continue
+			}
+
 			req.AppendRow(e.inputRow)
 		}
 		mSize := e.childResult.MemoryUsage()
