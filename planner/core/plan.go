@@ -189,6 +189,9 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 }
 
 func optimizeByShuffle4HashAgg(pp *PhysicalHashAgg, ctx sessionctx.Context) *PhysicalShuffle {
+	if !ctx.GetSessionVars().EnableSpilledAggregate {
+		return nil
+	}
 	concurrency := ctx.GetSessionVars().HashAggFinalConcurrency()
 	if concurrency <= 1 {
 		return nil

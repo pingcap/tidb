@@ -28,14 +28,14 @@ type SpilledHashAggExec struct {
 	*HashAggExec
 	childDrained bool
 	drained      bool
-	spillMode    uint32
+	haveData     bool
 
 	// spill
-	list         *chunk.ListInDisk
+	listInDisk   *chunk.ListInDisk
 	lastChunkNum int
 	idx          int
-	tmpChk       *chunk.Chunk
-	haveData     bool
+	spillMode    uint32
+	spillDataChk *chunk.Chunk
 	spillAction  *AggSpillDiskAction
 	spillTimes   uint32
 }
@@ -46,12 +46,12 @@ func (e *SpilledHashAggExec) Close() error {
 	if err := e.HashAggExec.Close(); err != nil {
 		return err
 	}
-	if e.list != nil {
-		if err := e.list.Close(); err != nil {
+	if e.listInDisk != nil {
+		if err := e.listInDisk.Close(); err != nil {
 			return err
 		}
 	}
-	e.tmpChk = nil
+	e.spillDataChk = nil
 	return nil
 }
 
@@ -68,8 +68,8 @@ func (e *SpilledHashAggExec) initForExec() {
 	e.partialResultMap = make(aggPartialResultMapper)
 	e.groupKeyBuffer = make([][]byte, 0, 8)
 	e.childResult = newFirstChunk(e.children[0])
-	e.tmpChk = newFirstChunk(e.children[0])
-	e.list = chunk.NewListInDisk(retTypes(e.children[0]))
+	e.spillDataChk = newFirstChunk(e.children[0])
+	e.listInDisk = chunk.NewListInDisk(retTypes(e.children[0]))
 	e.idx, e.lastChunkNum = 0, 0
 	e.haveData = false
 	e.drained, e.childDrained = false, false
@@ -78,7 +78,6 @@ func (e *SpilledHashAggExec) initForExec() {
 }
 
 func (e *SpilledHashAggExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.Reset()
 	return e.spilledExec(ctx, req)
 }
 
@@ -101,14 +100,7 @@ func (e *SpilledHashAggExec) spilledExec(ctx context.Context, chk *chunk.Chunk) 
 					return nil
 				}
 			}
-			e.cursor4GroupKey, e.groupKeys = 0, e.groupKeys[:0]
-			e.partialResultMap = make(aggPartialResultMapper)
-			e.prepared = false
-			atomic.StoreUint32(&e.spillMode, 0)
-			e.drained = e.lastChunkNum == e.list.NumChunks()
-			e.lastChunkNum = e.list.NumChunks()
-			e.memTracker.ReplaceBytesUsed(0)
-			atomic.AddUint32(&e.spillTimes, 1)
+			e.resetSpillMode()
 		}
 		if e.drained {
 			return nil
@@ -130,11 +122,22 @@ func (e *SpilledHashAggExec) spilledExec(ctx context.Context, chk *chunk.Chunk) 
 	}
 }
 
+func (e *SpilledHashAggExec) resetSpillMode() {
+	e.cursor4GroupKey, e.groupKeys = 0, e.groupKeys[:0]
+	e.partialResultMap = make(aggPartialResultMapper)
+	e.prepared = false
+	e.drained = e.lastChunkNum == e.listInDisk.NumChunks()
+	e.lastChunkNum = e.listInDisk.NumChunks()
+	e.memTracker.ReplaceBytesUsed(0)
+	atomic.AddUint32(&e.spillTimes, 1)
+	atomic.StoreUint32(&e.spillMode, 0)
+}
+
 func (e *SpilledHashAggExec) prepare(ctx context.Context) (err error) {
 	defer func() {
-		if e.tmpChk.NumRows() > 0 && err == nil {
-			err = e.list.Add(e.tmpChk)
-			e.tmpChk.Reset()
+		if e.spillDataChk.NumRows() > 0 && err == nil {
+			err = e.listInDisk.Add(e.spillDataChk)
+			e.spillDataChk.Reset()
 		}
 	}()
 	for {
@@ -155,13 +158,13 @@ func (e *SpilledHashAggExec) prepare(ctx context.Context) (err error) {
 			groupKey := string(e.groupKeyBuffer[j])
 			if !e.groupSet.Exist(groupKey) {
 				if atomic.LoadUint32(&e.spillMode) == 1 && e.groupSet.Count() > 0 && atomic.LoadUint32(&e.spillTimes) < maxSpillTimes {
-					e.tmpChk.Append(e.childResult, j, j+1)
-					if e.tmpChk.IsFull() {
-						err = e.list.Add(e.tmpChk)
+					e.spillDataChk.Append(e.childResult, j, j+1)
+					if e.spillDataChk.IsFull() {
+						err = e.listInDisk.Add(e.spillDataChk)
 						if err != nil {
 							return err
 						}
-						e.tmpChk.Reset()
+						e.spillDataChk.Reset()
 					}
 					continue
 				} else {
@@ -195,11 +198,12 @@ func (e *SpilledHashAggExec) getNextChunk(ctx context.Context) (err error) {
 		}
 	}
 	if e.idx < e.lastChunkNum {
-		e.childResult, err = e.list.GetChunk(e.idx)
+		e.childResult, err = e.listInDisk.GetChunk(e.idx)
 		if err != nil {
 			return err
 		}
 		e.idx++
+		return nil
 	}
 	e.drained = true
 	return nil
