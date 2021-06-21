@@ -8404,14 +8404,14 @@ func (s testSerialSuite) TestTemporaryTableNoNetwork(c *C) {
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table tmp_t (id int, a int, index(a)) on commit delete rows")
 
-	tk.MustExec("begin")
-	tk.MustExec("insert into tmp_t values (1, 1)")
-	tk.MustExec("insert into tmp_t values (2, 2)")
-
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy", "return(true)"), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy"), IsNil)
 	}()
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into tmp_t values (1, 1)")
+	tk.MustExec("insert into tmp_t values (2, 2)")
 
 	// Make sure the fail point works.
 	// With that failpoint, all requests to the TiKV is discard.
