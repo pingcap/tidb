@@ -544,7 +544,7 @@ func (s *testSuite6) TestAlterTableModifyColumn(c *C) {
 	c.Assert(err, NotNil)
 
 	_, err = tk.Exec("alter table mc modify column c2 varchar(8)")
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 	tk.MustExec("alter table mc modify column c2 varchar(11)")
 	tk.MustExec("alter table mc modify column c2 text(13)")
 	tk.MustExec("alter table mc modify column c2 text")

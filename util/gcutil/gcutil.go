@@ -20,9 +20,9 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/util"
 )
 
 const (
@@ -40,12 +40,12 @@ func CheckGCEnable(ctx sessionctx.Context) (enable bool, err error) {
 
 // DisableGC will disable GC enable variable.
 func DisableGC(ctx sessionctx.Context) error {
-	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBGCEnable, variable.BoolOff)
+	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBGCEnable, variable.Off)
 }
 
 // EnableGC will enable GC enable variable.
 func EnableGC(ctx sessionctx.Context) error {
-	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBGCEnable, variable.BoolOn)
+	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBGCEnable, variable.On)
 }
 
 // ValidateSnapshot checks that the newly set snapshot time is after GC safe point time.

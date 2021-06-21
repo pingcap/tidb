@@ -16,7 +16,7 @@ package server
 import (
 	"database/sql"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"time"
 
@@ -106,7 +106,7 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 		c.Assert(os.Remove(path), IsNil)
 	}()
 
-	js, err := ioutil.ReadAll(resp.Body)
+	js, err := io.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
 	_, err = fp.Write(js)
 	c.Assert(err, IsNil)
@@ -123,7 +123,7 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	resp1, err := ds.fetchStatus("/stats/dump/tidb/test")
 	c.Assert(err, IsNil)
 	defer resp1.Body.Close()
-	js, err = ioutil.ReadAll(resp1.Body)
+	js, err = io.ReadAll(resp1.Body)
 	c.Assert(err, IsNil)
 	c.Assert(string(js), Equals, "null")
 
@@ -139,7 +139,7 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	resp1, err = ds.fetchStatus("/stats/dump/tidb/test/" + snapshot)
 	c.Assert(err, IsNil)
 
-	js, err = ioutil.ReadAll(resp1.Body)
+	js, err = io.ReadAll(resp1.Body)
 	c.Assert(err, IsNil)
 	_, err = fp1.Write(js)
 	c.Assert(err, IsNil)
@@ -254,19 +254,4 @@ func (ds *testDumpStatsSuite) checkData(c *C, path string) {
 	dbt.Check(tableName, Equals, "test")
 	dbt.Check(modifyCount, Equals, int64(3))
 	dbt.Check(count, Equals, int64(4))
-}
-
-func (ds *testDumpStatsSuite) clearData(c *C, path string) {
-	db, err := sql.Open("mysql", ds.getDSN())
-	c.Assert(err, IsNil, Commentf("Error connecting"))
-	defer func() {
-		err := db.Close()
-		c.Assert(err, IsNil)
-	}()
-
-	dbt := &DBTest{c, db}
-	dbt.mustExec("drop database tidb")
-	dbt.mustExec("truncate table mysql.stats_meta")
-	dbt.mustExec("truncate table mysql.stats_histograms")
-	dbt.mustExec("truncate table mysql.stats_buckets")
 }

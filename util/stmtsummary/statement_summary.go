@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -72,6 +73,9 @@ type stmtSummaryByDigestMap struct {
 
 	// sysVars encapsulates system variables needed to control statement summary.
 	sysVars *systemVars
+
+	// other stores summary of evicted data.
+	other *stmtSummaryByDigestEvicted
 }
 
 // StmtSummaryByDigestMap is a global map containing all statement summaries.
@@ -171,7 +175,7 @@ type stmtSummaryByDigestElement struct {
 	sumTxnRetry          int64
 	maxTxnRetry          int
 	sumBackoffTimes      int64
-	backoffTypes         map[fmt.Stringer]int
+	backoffTypes         map[string]int
 	authUsers            map[string]struct{}
 	// other
 	sumMem               int64
@@ -227,17 +231,27 @@ type StmtExecInfo struct {
 	ExecRetryCount uint
 	ExecRetryTime  time.Duration
 	execdetails.StmtExecDetails
-	Prepared bool
+	TiKVExecDetails util.ExecDetails
+	Prepared        bool
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
 func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	sysVars := newSysVars()
+
+	ssbde := newStmtSummaryByDigestEvicted()
+
 	maxStmtCount := uint(sysVars.getVariable(typeMaxStmtCount))
-	return &stmtSummaryByDigestMap{
+	newSsMap := &stmtSummaryByDigestMap{
 		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
 		sysVars:    sysVars,
+		other:      ssbde,
 	}
+	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
+		historySize := newSsMap.historySize()
+		newSsMap.other.AddEvicted(k.(*stmtSummaryByDigestKey), v.(*stmtSummaryByDigest), historySize)
+	})
+	return newSsMap
 }
 
 // AddStatement adds a statement to StmtSummaryByDigestMap.
@@ -289,7 +303,6 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		summary.isInternal = summary.isInternal && sei.IsInternal
 		return summary, beginTime
 	}()
-
 	// Lock a single entry, not the whole cache.
 	if summary != nil {
 		summary.add(sei, beginTime, intervalSeconds, historySize)
@@ -302,6 +315,7 @@ func (ssMap *stmtSummaryByDigestMap) Clear() {
 	defer ssMap.Unlock()
 
 	ssMap.summaryMap.DeleteAll()
+	ssMap.other.Clear()
 	ssMap.beginTimeForCurInterval = 0
 }
 
@@ -326,6 +340,7 @@ func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum(user *auth.UserIdentity, isS
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
 	beginTime := ssMap.beginTimeForCurInterval
+	other := ssMap.other
 	ssMap.Unlock()
 
 	rows := make([][]types.Datum, 0, len(values))
@@ -335,21 +350,29 @@ func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum(user *auth.UserIdentity, isS
 			rows = append(rows, record)
 		}
 	}
+	if otherDatum := other.toCurrentDatum(); otherDatum != nil {
+		rows = append(rows, otherDatum)
+	}
 	return rows
 }
 
 // ToHistoryDatum converts history statements summaries to datum.
 func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum(user *auth.UserIdentity, isSuper bool) [][]types.Datum {
+	historySize := ssMap.historySize()
+
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
+	other := ssMap.other
 	ssMap.Unlock()
 
-	historySize := ssMap.historySize()
 	rows := make([][]types.Datum, 0, len(values)*historySize)
 	for _, value := range values {
 		records := value.(*stmtSummaryByDigest).toHistoryDatum(historySize, user, isSuper)
 		rows = append(rows, records...)
 	}
+
+	otherDatum := other.toHistoryDatum(historySize)
+	rows = append(rows, otherDatum...)
 	return rows
 }
 
@@ -633,7 +656,7 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		minLatency:    sei.TotalLatency,
 		firstSeen:     sei.StartTime,
 		lastSeen:      sei.StartTime,
-		backoffTypes:  make(map[fmt.Stringer]int),
+		backoffTypes:  make(map[string]int),
 		authUsers:     make(map[string]struct{}),
 		planInCache:   false,
 		planCacheHits: 0,
@@ -769,11 +792,6 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		if commitDetails.GetCommitTsTime > ssElement.maxGetCommitTsTime {
 			ssElement.maxGetCommitTsTime = commitDetails.GetCommitTsTime
 		}
-		commitBackoffTime := atomic.LoadInt64(&commitDetails.CommitBackoffTime)
-		ssElement.sumCommitBackoffTime += commitBackoffTime
-		if commitBackoffTime > ssElement.maxCommitBackoffTime {
-			ssElement.maxCommitBackoffTime = commitBackoffTime
-		}
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
 		ssElement.sumResolveLockTime += resolveLockTime
 		if resolveLockTime > ssElement.maxResolveLockTime {
@@ -801,6 +819,11 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 			ssElement.maxTxnRetry = commitDetails.TxnRetry
 		}
 		commitDetails.Mu.Lock()
+		commitBackoffTime := commitDetails.Mu.CommitBackoffTime
+		ssElement.sumCommitBackoffTime += commitBackoffTime
+		if commitBackoffTime > ssElement.maxCommitBackoffTime {
+			ssElement.maxCommitBackoffTime = commitBackoffTime
+		}
 		ssElement.sumBackoffTimes += int64(len(commitDetails.Mu.BackoffTypes))
 		for _, backoffType := range commitDetails.Mu.BackoffTypes {
 			ssElement.backoffTypes[backoffType] += 1
@@ -843,9 +866,9 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		ssElement.execRetryCount += sei.ExecRetryCount
 		ssElement.execRetryTime += sei.ExecRetryTime
 	}
-	ssElement.sumKVTotal += time.Duration(atomic.LoadInt64(&sei.StmtExecDetails.WaitKVRespDuration))
-	ssElement.sumPDTotal += time.Duration(atomic.LoadInt64(&sei.StmtExecDetails.WaitPDRespDuration))
-	ssElement.sumBackoffTotal += time.Duration(atomic.LoadInt64(&sei.StmtExecDetails.BackoffDuration))
+	ssElement.sumKVTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitKVRespDuration))
+	ssElement.sumPDTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitPDRespDuration))
+	ssElement.sumBackoffTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.BackoffDuration))
 	ssElement.sumWriteSQLRespTotal += sei.StmtExecDetails.WriteSQLRespDuration
 }
 
@@ -870,8 +893,9 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		types.NewTime(types.FromGoTime(time.Unix(ssElement.beginTime, 0)), mysql.TypeTimestamp, 0),
 		types.NewTime(types.FromGoTime(time.Unix(ssElement.endTime, 0)), mysql.TypeTimestamp, 0),
 		ssbd.stmtType,
-		ssbd.schemaName,
-		ssbd.digest,
+		// This behaviour follow MySQL. see more in https://dev.mysql.com/doc/refman/5.7/en/performance-schema-statement-digests.html
+		convertEmptyToNil(ssbd.schemaName),
+		convertEmptyToNil(ssbd.digest),
 		ssbd.normalizedSQL,
 		convertEmptyToNil(ssbd.tableNames),
 		convertEmptyToNil(strings.Join(ssElement.indexNames, ",")),
@@ -969,9 +993,9 @@ func formatSQL(sql string) string {
 }
 
 // Format the backoffType map to a string or nil.
-func formatBackoffTypes(backoffMap map[fmt.Stringer]int) interface{} {
+func formatBackoffTypes(backoffMap map[string]int) interface{} {
 	type backoffStat struct {
-		backoffType fmt.Stringer
+		backoffType string
 		count       int
 	}
 

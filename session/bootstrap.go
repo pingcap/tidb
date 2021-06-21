@@ -55,6 +55,7 @@ const (
 		Host					CHAR(64),
 		User					CHAR(32),
 		authentication_string	TEXT,
+		plugin					CHAR(64),
 		Select_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Insert_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Update_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -329,6 +330,14 @@ const (
 		LAST_USED_AT timestamp,
 		PRIMARY KEY(TABLE_ID, INDEX_ID)
 	);`
+	// CreateGlobalGrantsTable stores dynamic privs
+	CreateGlobalGrantsTable = `CREATE TABLE IF NOT EXISTS mysql.global_grants (
+		USER char(32) NOT NULL DEFAULT '',
+		HOST char(255) NOT NULL DEFAULT '',
+		PRIV char(32) NOT NULL DEFAULT '',
+		WITH_GRANT_OPTION enum('N','Y') NOT NULL DEFAULT 'N',
+		PRIMARY KEY (USER,HOST,PRIV)
+	  );`
 )
 
 // bootstrap initiates system DB for a store.
@@ -479,11 +488,15 @@ const (
 	version67 = 67
 	// version68 update the global variable 'tidb_enable_clustered_index' from 'off' to 'int_only'.
 	version68 = 68
+	// version69 adds mysql.global_grants for DYNAMIC privileges
+	version69 = 69
+	// version70 adds mysql.user.plugin to allow multiple authentication plugins
+	version70 = 70
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version68
+var currentBootstrapVersion int64 = version70
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -555,6 +568,8 @@ var (
 		upgradeToVer66,
 		upgradeToVer67,
 		upgradeToVer68,
+		upgradeToVer69,
+		upgradeToVer70,
 	}
 )
 
@@ -1392,6 +1407,12 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		bind := row.GetString(0)
 		db := row.GetString(1)
+		status := row.GetString(2)
+
+		if status != "using" && status != "builtin" {
+			continue
+		}
+
 		charset := row.GetString(4)
 		collation := row.GetString(5)
 		stmt, err := p.ParseOneStmt(bind, charset, collation)
@@ -1410,7 +1431,7 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 		}
 		bindMap[originWithDB] = bindInfo{
 			bindSQL:    utilparser.RestoreWithDefaultDB(stmt, db, bind),
-			status:     row.GetString(2),
+			status:     status,
 			createTime: row.GetTime(3),
 			charset:    charset,
 			collation:  collation,
@@ -1469,6 +1490,21 @@ func upgradeToVer68(s Session, ver int64) {
 		return
 	}
 	mustExecute(s, "DELETE FROM mysql.global_variables where VARIABLE_NAME = 'tidb_enable_clustered_index' and VARIABLE_VALUE = 'OFF'")
+}
+
+func upgradeToVer69(s Session, ver int64) {
+	if ver >= version69 {
+		return
+	}
+	doReentrantDDL(s, CreateGlobalGrantsTable)
+}
+
+func upgradeToVer70(s Session, ver int64) {
+	if ver >= version70 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN plugin CHAR(64) AFTER authentication_string", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET plugin='mysql_native_password'")
 }
 
 func writeOOMAction(s Session) {
@@ -1547,6 +1583,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateSchemaIndexUsageTable)
 	// Create stats_fm_sketch table.
 	mustExecute(s, CreateStatsFMSketchTable)
+	// Create global_grants
+	mustExecute(s, CreateGlobalGrantsTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
@@ -1557,7 +1595,7 @@ func doDMLWorks(s Session) {
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.GetSysVars()))
@@ -1572,24 +1610,24 @@ func doDMLWorks(s Session) {
 				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
 			}
 			if v.Name == variable.TiDBPartitionPruneMode {
-				vVal = string(variable.Static)
+				vVal = variable.DefTiDBPartitionPruneMode
 				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil || config.CheckTableBeforeDrop {
 					// enable Dynamic Prune by default in test case.
 					vVal = string(variable.Dynamic)
 				}
 			}
 			if v.Name == variable.TiDBEnableChangeMultiSchema {
-				vVal = variable.BoolOff
+				vVal = variable.Off
 				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
 					// enable change multi schema in test case for compatibility with old cases.
-					vVal = variable.BoolOn
+					vVal = variable.On
 				}
 			}
 			if v.Name == variable.TiDBEnableAsyncCommit && config.GetGlobalConfig().Store == "tikv" {
-				vVal = variable.BoolOn
+				vVal = variable.On
 			}
 			if v.Name == variable.TiDBEnable1PC && config.GetGlobalConfig().Store == "tikv" {
-				vVal = variable.BoolOn
+				vVal = variable.On
 			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)

@@ -131,7 +131,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 			var topnCount int64
 			// If this is stats of the Version2, we need to consider the topn's count as well.
 			// See the comments of Version2 for more details.
-			if statsVer == statistics.Version2 {
+			if statsVer >= statistics.Version2 {
 				var err error
 				topnCount, err = h.initTopNCountSum(tblID, id)
 				if err != nil {
@@ -185,7 +185,7 @@ func (h *Handle) initStatsTopN4Chunk(cache *statsCache, iter *chunk.Iterator4Chu
 			continue
 		}
 		idx, ok := table.Indices[row.GetInt64(1)]
-		if !ok || idx.CMSketch == nil {
+		if !ok || (idx.CMSketch == nil && idx.StatsVer <= statistics.Version1) {
 			continue
 		}
 		if idx.TopN == nil {
@@ -229,21 +229,28 @@ func (h *Handle) initStatsFMSketch4Chunk(cache *statsCache, iter *chunk.Iterator
 		if !ok {
 			continue
 		}
-		colStats, ok := table.Columns[row.GetInt64(1)]
-		if !ok {
-			continue
-		}
-		fms, err := statistics.DecodeFMSketch(row.GetBytes(2))
+		fms, err := statistics.DecodeFMSketch(row.GetBytes(3))
 		if err != nil {
 			fms = nil
 			terror.Log(errors.Trace(err))
 		}
-		colStats.FMSketch = fms
+
+		isIndex := row.GetInt64(1)
+		id := row.GetInt64(2)
+		if isIndex == 1 {
+			if idxStats, ok := table.Indices[id]; ok {
+				idxStats.FMSketch = fms
+			}
+		} else {
+			if colStats, ok := table.Columns[id]; ok {
+				colStats.FMSketch = fms
+			}
+		}
 	}
 }
 
 func (h *Handle) initStatsFMSketch(cache *statsCache) error {
-	sql := "select HIGH_PRIORITY table_id, hist_id, value from mysql.stats_fm_sketch where is_index = 0"
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, value from mysql.stats_fm_sketch"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
 	if err != nil {
 		return errors.Trace(err)

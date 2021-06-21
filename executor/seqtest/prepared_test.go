@@ -22,9 +22,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -142,7 +144,8 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows())
 
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
-		stmt, _, _, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Se, stmtID, []types.Datum{types.NewDatum(1)})
+		stmt, _, _, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Se, stmtID,
+			tk.Se.GetInfoSchema().(infoschema.InfoSchema), 0, []types.Datum{types.NewDatum(1)})
 		c.Assert(err, IsNil)
 		c.Assert(stmt.OriginText(), Equals, query)
 
@@ -794,6 +797,10 @@ func (s *seqTestSuite) TestPreparedIssue8644(c *C) {
 // mockSessionManager is a mocked session manager which is used for test.
 type mockSessionManager1 struct {
 	Se session.Session
+}
+
+func (msm *mockSessionManager1) ShowTxnList() []*txninfo.TxnInfo {
+	panic("unimplemented!")
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
