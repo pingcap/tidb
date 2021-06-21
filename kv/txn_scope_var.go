@@ -26,8 +26,10 @@ type TxnScopeVar struct {
 	txnScope string
 }
 
-// GetTxnScopeVar gets TxnScopeVar from config
-func GetTxnScopeVar() TxnScopeVar {
+// NewDefaultTxnScopeVar creates a default TxnScopeVar according to the config.
+// If zone label is set, we will check whether it's not the GlobalTxnScope and create a new Local TxnScopeVar.
+// If zone label is not set, we will create a new Global TxnScopeVar.
+func NewDefaultTxnScopeVar() TxnScopeVar {
 	if location := config.GetTxnScopeFromConfig(); location != GlobalTxnScope {
 		return NewLocalTxnScopeVar(location)
 	}
@@ -40,8 +42,8 @@ func NewGlobalTxnScopeVar() TxnScopeVar {
 }
 
 // NewLocalTxnScopeVar creates a Local TxnScopeVar with given real txnScope value.
-func NewLocalTxnScopeVar(txnScope string) TxnScopeVar {
-	return newTxnScopeVar(LocalTxnScope, txnScope)
+func NewLocalTxnScopeVar(location string) TxnScopeVar {
+	return newTxnScopeVar(LocalTxnScope, location)
 }
 
 // GetVarValue returns the value of @@txn_scope which can only be `global` or `local`
@@ -52,9 +54,6 @@ func (t TxnScopeVar) GetVarValue() string {
 // GetTxnScope returns the value of the tidb-server holds to request tso to pd.
 // When varValue is 'global`, directly return global here
 func (t TxnScopeVar) GetTxnScope() string {
-	if t.varValue == GlobalTxnScope {
-		return GlobalTxnScope
-	}
 	return t.txnScope
 }
 

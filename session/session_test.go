@@ -3352,11 +3352,11 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	result := tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(kv.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
-	// Try to set @@txn_scope to local.
+	// Set @@txn_scope to local.
 	tk.MustExec("set @@session.txn_scope = 'local';")
 	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows(kv.GlobalTxnScope))
-	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+	result.Check(testkit.Rows(kv.LocalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, "global")
 
 	// @@tidb_enable_local_txn is on with configuring the zone label
 	failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`)
@@ -3385,10 +3385,10 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	result = tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(kv.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
-	// Try to set @@txn_scope to local.
+	// Set @@txn_scope to local.
 	tk.MustExec("set @@session.txn_scope = 'local';")
 	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows(kv.GlobalTxnScope))
+	result.Check(testkit.Rows(kv.LocalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
 
 	// @@tidb_enable_local_txn is off with configuring the zone label

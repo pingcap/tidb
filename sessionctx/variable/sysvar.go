@@ -819,13 +819,14 @@ var defaultSysVars = []*SysVar{
 		if txnScope := config.GetTxnScopeFromConfig(); txnScope == kv.GlobalTxnScope {
 			return kv.GlobalTxnScope
 		}
+		// If the zone label is configured, we set @@txn_scope as LocalTxnScope by default.
 		return kv.LocalTxnScope
 	}(), SetSession: func(s *SessionVars, val string) error {
 		switch val {
 		case kv.GlobalTxnScope:
 			s.TxnScope = kv.NewGlobalTxnScopeVar()
 		case kv.LocalTxnScope:
-			s.TxnScope = kv.GetTxnScopeVar()
+			s.TxnScope = kv.NewLocalTxnScopeVar(config.GetTxnScopeFromConfig())
 		default:
 			return ErrWrongValueForVar.GenWithStack("@@txn_scope value should be global or local")
 		}
