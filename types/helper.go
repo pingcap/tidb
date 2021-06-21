@@ -15,6 +15,7 @@ package types
 
 import (
 	"math"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -91,6 +92,12 @@ func TruncateFloat(f float64, flen int, decimal int) (float64, error) {
 	}
 
 	return f, errors.Trace(err)
+}
+
+// TruncateFloatToString is used to truncate float to string where dec is the number of digits after the decimal point.
+func TruncateFloatToString(f float64, dec int) string {
+	f = Truncate(f, dec)
+	return strconv.FormatFloat(f, 'f', -1, 64)
 }
 
 func isSpace(c byte) bool {

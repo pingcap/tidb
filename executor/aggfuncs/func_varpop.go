@@ -126,7 +126,7 @@ type partialResult4VarPopDistinctFloat64 struct {
 	count    int64
 	sum      float64
 	variance float64
-	valSet   set.Float64Set
+	valSet   set.Float64SetWithMemoryUsage
 }
 
 func (e *varPop4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
@@ -134,8 +134,9 @@ func (e *varPop4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelt
 	p.count = 0
 	p.sum = 0
 	p.variance = 0
-	p.valSet = set.NewFloat64Set()
-	return PartialResult(p), DefPartialResult4VarPopDistinctFloat64Size
+	setSize := int64(0)
+	p.valSet, setSize = set.NewFloat64SetWithMemoryUsage()
+	return PartialResult(p), DefPartialResult4VarPopDistinctFloat64Size + setSize
 }
 
 func (e *varPop4DistinctFloat64) ResetPartialResult(pr PartialResult) {
@@ -143,7 +144,7 @@ func (e *varPop4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p.count = 0
 	p.sum = 0
 	p.variance = 0
-	p.valSet = set.NewFloat64Set()
+	p.valSet, _ = set.NewFloat64SetWithMemoryUsage()
 }
 
 func (e *varPop4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -167,11 +168,10 @@ func (e *varPop4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, ro
 		if isNull || p.valSet.Exist(input) {
 			continue
 		}
-		p.valSet.Insert(input)
+		memDelta += p.valSet.Insert(input)
 		p.count++
 		p.sum += input
 
-		memDelta += DefFloat64Size
 		if p.count > 1 {
 			p.variance = calculateIntermediate(p.count, p.sum, input, p.variance)
 		}

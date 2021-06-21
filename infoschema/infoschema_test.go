@@ -15,7 +15,6 @@ package infoschema_test
 
 import (
 	"context"
-	"sync"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -48,13 +47,15 @@ func (*testSuite) TestT(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 	// Make sure it calls perfschema.Init().
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	defer dom.Close()
 
-	handle := infoschema.NewHandle(store)
 	dbName := model.NewCIStr("Test")
 	tbName := model.NewCIStr("T")
 	colName := model.NewCIStr("A")
@@ -107,22 +108,23 @@ func (*testSuite) TestT(c *C) {
 
 	dbInfos := []*model.DBInfo{dbInfo}
 	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
-		meta.NewMeta(txn).CreateDatabase(dbInfo)
+		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
+		c.Assert(err, IsNil)
 		return errors.Trace(err)
 	})
 	c.Assert(err, IsNil)
 
-	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(dbInfos, nil, 1)
+	builder, err := infoschema.NewBuilder(dom.Store()).InitWithDBInfos(dbInfos, nil, 1)
 	c.Assert(err, IsNil)
 
 	txn, err := store.Begin()
 	c.Assert(err, IsNil)
 	checkApplyCreateNonExistsSchemaDoesNotPanic(c, txn, builder)
 	checkApplyCreateNonExistsTableDoesNotPanic(c, txn, builder, dbID)
-	txn.Rollback()
+	err = txn.Rollback()
+	c.Assert(err, IsNil)
 
-	builder.Build()
-	is := handle.Get()
+	is := builder.Build()
 
 	schemaNames := is.AllSchemaNames()
 	c.Assert(schemaNames, HasLen, 4)
@@ -197,7 +199,8 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(tb, NotNil)
 
 	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
-		meta.NewMeta(txn).CreateTableOrView(dbID, tblInfo)
+		err := meta.NewMeta(txn).CreateTableOrView(dbID, tblInfo)
+		c.Assert(err, IsNil)
 		return errors.Trace(err)
 	})
 	c.Assert(err, IsNil)
@@ -205,15 +208,12 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionRenameTable, SchemaID: dbID, TableID: tbID, OldSchemaID: dbID})
 	c.Assert(err, IsNil)
-	txn.Rollback()
-	builder.Build()
-	is = handle.Get()
+	err = txn.Rollback()
+	c.Assert(err, IsNil)
+	is = builder.Build()
 	schema, ok = is.SchemaByID(dbID)
 	c.Assert(ok, IsTrue)
 	c.Assert(len(schema.Tables), Equals, 1)
-
-	emptyHandle := handle.EmptyClone()
-	c.Assert(emptyHandle.Get(), IsNil)
 }
 
 func (testSuite) TestMockInfoSchema(c *C) {
@@ -251,44 +251,19 @@ func checkApplyCreateNonExistsTableDoesNotPanic(c *C, txn kv.Transaction, builde
 	c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
 }
 
-// TestConcurrent makes sure it is safe to concurrently create handle on multiple stores.
-func (testSuite) TestConcurrent(c *C) {
-	defer testleak.AfterTest(c)()
-	storeCount := 5
-	stores := make([]kv.Storage, storeCount)
-	for i := 0; i < storeCount; i++ {
-		store, err := mockstore.NewMockStore()
-		c.Assert(err, IsNil)
-		stores[i] = store
-	}
-	defer func() {
-		for _, store := range stores {
-			store.Close()
-		}
-	}()
-	var wg sync.WaitGroup
-	wg.Add(storeCount)
-	for _, store := range stores {
-		go func(s kv.Storage) {
-			defer wg.Done()
-			_ = infoschema.NewHandle(s)
-		}(store)
-	}
-	wg.Wait()
-}
-
 // TestInfoTables makes sure that all tables of information_schema could be found in infoschema handle.
 func (*testSuite) TestInfoTables(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
-	handle := infoschema.NewHandle(store)
-	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(nil, nil, 0)
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
+
+	builder, err := infoschema.NewBuilder(store).InitWithDBInfos(nil, nil, 0)
 	c.Assert(err, IsNil)
-	builder.Build()
-	is := handle.Get()
-	c.Assert(is, NotNil)
+	is := builder.Build()
 
 	infoTables := []string{
 		"SCHEMATA",
@@ -322,6 +297,8 @@ func (*testSuite) TestInfoTables(c *C) {
 		"TABLESPACES",
 		"COLLATION_CHARACTER_SET_APPLICABILITY",
 		"PROCESSLIST",
+		"TIDB_TRX",
+		"DEADLOCKS",
 	}
 	for _, t := range infoTables {
 		tb, err1 := is.TableByName(util.InformationSchemaName, model.NewCIStr(t))
@@ -344,14 +321,14 @@ func (*testSuite) TestGetBundle(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
-	handle := infoschema.NewHandle(store)
-	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(nil, nil, 0)
+	builder, err := infoschema.NewBuilder(store).InitWithDBInfos(nil, nil, 0)
 	c.Assert(err, IsNil)
-	builder.Build()
-
-	is := handle.Get()
+	is := builder.Build()
 
 	bundle := &placement.Bundle{
 		ID: placement.PDBundleID,

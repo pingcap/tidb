@@ -1,93 +1,83 @@
-<!--
-This is a template for TiDB's change proposal process, documented [here](./README.md).
--->
+# TiDB Design Documents
 
-# Proposal: <!-- Title -->
+- Author(s): [Author Name](http://github.com/your-github-id), [Co-Author Name](http://github.com/your-github-id), ...
+- Discussion PR: https://github.com/pingcap/tidb/pull/XXX
+- Tracking Issue: https://github.com/pingcap/tidb/issues/XXX
 
-- Author(s):     <!-- Author Name, Co-Author Name, with the link(s) of the GitHub profile page -->
-- Last updated:  <!-- Date -->
-- Discussion at: <!-- https://github.com/pingcap/tidb/issues/XXX -->
+## Table of Contents
 
-## Abstract
+* [Introduction](#introduction)
+* [Motivation or Background](#motivation-or-background)
+* [Detailed Design](#detailed-design)
+* [Test Design](#test-design)
+    * [Functional Tests](#functional-tests)
+    * [Scenario Tests](#scenario-tests)
+    * [Compatibility Tests](#compatibility-tests)
+    * [Benchmark Tests](#benchmark-tests)
+* [Impacts & Risks](#impacts--risks)
+* [Investigation & Alternatives](#investigation--alternatives)
+* [Unresolved Questions](#unresolved-questions)
 
-<!--
-A short summary of the proposal:
-- What is the issue that the proposal aims to solve?
-- What needs to be done in this proposal?
-- What is the impact of this proposal?
--->
+## Introduction
 
-## Background
+One para explanation of the proposal that helps others get the brief info of this design doc.
 
-<!--
-An introduction of the necessary background and the problem being solved by the proposed change:
-- The drawback of the current feature and the corresponding use case
-- The expected outcome of this proposal.
--->
+## Motivation or Background
 
-## Proposal
+What's the background and the problem being solved by this design doc? What use cases does it support?
 
-<!--
-A precise statement of the proposed change:
-- The new named concepts and a set of metrics to be collected in this proposal (if applicable)
-- The overview of the design.
-- How it works?
-- What needs to be changed to implement this design?
-- What may be positively influenced by the proposed change?
-- What may be negatively impacted by the proposed change?
--->
+Please pay attention to this section. When a design is under review, the reviewers usually do not rush into details, but try to figure out the motivation or background of it. In other words, who wants the feature or what problem the feature solves.
 
-## Rationale
+## Detailed Design
 
-<!--
-A discussion of alternate approaches and the trade-offs, advantages, and disadvantages of the specified approach:
-- How other systems solve the same issue?
-- What other designs have been considered and what are their disadvantages?
-- What is the advantage of this design compared with other designs?
-- What is the disadvantage of this design?
-- What is the impact of not doing this?
--->
+Explain the design in enough detail that: it is reasonably clear how the feature would be implemented, corner cases are dissected by example, how the feature is used, etc.
 
-## Compatibility and Migration Plan
+It's better to describe the pseudo-code of the key algorithm, API interfaces, the UML graph, what components are needed to be changed in this section.
 
-<!--
-A discussion of the change with regard to the compatibility issues:
-- Does this proposal make TiDB not compatible with the old versions?
-- Does this proposal make TiDB not compatible with TiDB tools?
-    + [BR](https://github.com/pingcap/br)
-    + [DM](https://github.com/pingcap/dm)
-    + [Dumpling](https://github.com/pingcap/dumpling)
-    + [TiCDC](https://github.com/pingcap/ticdc)
-    + [TiDB Binlog](https://github.com/pingcap/tidb-binlog)
-    + [TiDB Lightning](https://github.com/pingcap/tidb-lightning)
-- If the existing behavior will be changed, how will we phase out the older behavior?
-- Does this proposal make TiDB more compatible with MySQL?
-- What is the impact(if any) on the data migration:
-    + from MySQL to TiDB
-    + from TiDB to MySQL
-    + from old TiDB cluster to new TiDB cluster
--->
+Compatibility is important, please also take into consideration, a checklist:
+- Compatibility with other features, like partition table, security&privilege, collation&charset, clustered index, async commit, etc.
+- Compatibility with other internal components, like parser, DDL, planner, statistics, executor, etc.
+- Compatibility with other external components, like PD, TiKV, TiFlash, BR, TiCDC, Dumpling, TiUP, K8s, etc.
+- Upgrade compatibility
+- Downgrade compatibility
 
-## Implementation
+## Test Design
 
-<!--
-A detailed description for each step in the implementation:
-- Does any former steps block this step?
-- Who will do it?
-- When to do it?
-- How long it takes to accomplish it?
--->
+A brief description of how the implementation will be tested. Both the integration test and the unit test should be considered.
 
-## Testing Plan
+### Functional Tests
 
-<!--
-A brief description on how the implementation will be tested. Both integration test and unit test should consider the following things:
-- How to ensure that the implementation works as expected?
-- How will we know nothing broke?
--->
+It's used to ensure the basic feature function works as expected. Both the integration test and the unit test should be considered.
 
-## Open issues (if applicable)
+### Scenario Tests
 
-<!--
-A discussion of issues relating to this proposal for which the author does not know the solution. This section may be omitted if there are none.
--->
+It's used to ensure this feature works as expected in some common scenarios.
+
+### Compatibility Tests
+
+A checklist to test compatibility:
+- Compatibility with other features, like partition table, security & privilege, charset & collation, clustered index, async commit, etc.
+- Compatibility with other internal components, like parser, DDL, planner, statistics, executor, etc.
+- Compatibility with other external components, like PD, TiKV, TiFlash, BR, TiCDC, Dumpling, TiUP, K8s, etc.
+- Upgrade compatibility
+- Downgrade compatibility
+
+### Benchmark Tests
+
+The following two parts need to be measured:
+- The performance of this feature under different parameters
+- The performance influence on the online workload
+
+## Impacts & Risks
+
+Describe the potential impacts & risks of the design on overall performance, security, k8s, and other aspects. List all the risks or unknowns by far.
+
+Please describe impacts and risks in two sections: Impacts could be positive or negative, and intentional. Risks are usually negative, unintentional, and may or may not happen. E.g., for performance, we might expect a new feature to improve latency by 10% (expected impact), there is a risk that latency in scenarios X and Y could degrade by 50%.
+
+## Investigation & Alternatives
+
+How do other systems solve this issue? What other designs have been considered and what is the rationale for not choosing them?
+
+## Unresolved Questions
+
+What parts of the design are still to be determined?

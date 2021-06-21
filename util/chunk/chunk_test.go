@@ -16,7 +16,6 @@ package chunk
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"os"
 	"strconv"
@@ -36,7 +35,7 @@ import (
 )
 
 func TestT(t *testing.T) {
-	path, _ := ioutil.TempDir("", "oom-use-tmp-storage")
+	path, _ := os.MkdirTemp("", "oom-use-tmp-storage")
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempStoragePath = path
 	})
@@ -631,22 +630,28 @@ func (s *testChunkSuite) TestSwapColumn(c *check.C) {
 		c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
 	}
 
-	chk1.SwapColumn(0, chk2, 0)
+	err := chk1.SwapColumn(0, chk2, 0)
+	c.Assert(err, check.IsNil)
 	checkRef()
 
-	chk1.SwapColumn(0, chk2, 1)
+	err = chk1.SwapColumn(0, chk2, 1)
+	c.Assert(err, check.IsNil)
 	checkRef()
 
-	chk2.SwapColumn(1, chk2, 0)
+	err = chk2.SwapColumn(1, chk2, 0)
+	c.Assert(err, check.IsNil)
 	checkRef()
 
-	chk2.SwapColumn(1, chk2, 1)
+	err = chk2.SwapColumn(1, chk2, 1)
+	c.Assert(err, check.IsNil)
 	checkRef()
 
-	chk2.SwapColumn(1, chk2, 2)
+	err = chk2.SwapColumn(1, chk2, 2)
+	c.Assert(err, check.IsNil)
 	checkRef()
 
-	chk2.SwapColumn(2, chk2, 0)
+	err = chk2.SwapColumn(2, chk2, 0)
+	c.Assert(err, check.IsNil)
 	checkRef()
 }
 
@@ -779,8 +784,10 @@ func (s *testChunkSuite) TestMakeRefTo(c *check.C) {
 	chk1.AppendFloat32(1, 3)
 
 	chk2 := NewChunkWithCapacity(fieldTypes, 1)
-	chk2.MakeRefTo(0, chk1, 1)
-	chk2.MakeRefTo(1, chk1, 0)
+	err := chk2.MakeRefTo(0, chk1, 1)
+	c.Assert(err, check.IsNil)
+	err = chk2.MakeRefTo(1, chk1, 0)
+	c.Assert(err, check.IsNil)
 
 	c.Assert(chk2.columns[0] == chk1.columns[1], check.IsTrue)
 	c.Assert(chk2.columns[1] == chk1.columns[0], check.IsTrue)
@@ -1167,6 +1174,83 @@ func BenchmarkBatchAppendRows(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				chk.Reset()
 				chk.AppendRows(rows)
+			}
+		})
+	}
+}
+
+func BenchmarkAppendRows(b *testing.B) {
+	b.ReportAllocs()
+	rowChk := newChunk(8, 8, 0, 0)
+
+	for i := 0; i < 4096; i++ {
+		rowChk.AppendNull(0)
+		rowChk.AppendInt64(1, 1)
+		rowChk.AppendString(2, "abcd")
+		rowChk.AppendBytes(3, []byte("abcd"))
+	}
+
+	type testCaseConf struct {
+		batchSize int
+	}
+	testCaseConfs := []testCaseConf{
+		{batchSize: 2},
+		{batchSize: 8},
+		{batchSize: 16},
+		{batchSize: 100},
+		{batchSize: 1000},
+		{batchSize: 4000},
+	}
+
+	chk := newChunk(8, 8, 0, 0)
+	for _, conf := range testCaseConfs {
+		b.ResetTimer()
+		b.Run(fmt.Sprintf("row-%d", conf.batchSize), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				chk.Reset()
+				for j := 0; j < conf.batchSize; j++ {
+					chk.AppendRow(rowChk.GetRow(j))
+				}
+			}
+		})
+		b.ResetTimer()
+		b.Run(fmt.Sprintf("column-%d", conf.batchSize), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				chk.Reset()
+				chk.Append(rowChk, 0, conf.batchSize)
+			}
+		})
+	}
+}
+
+func BenchmarkAppend(b *testing.B) {
+	b.ReportAllocs()
+	rowChk := newChunk(0, 0)
+
+	for i := 0; i < 4096; i++ {
+		rowChk.AppendString(0, "abcd")
+		rowChk.AppendBytes(1, []byte("abcd"))
+	}
+
+	type testCaseConf struct {
+		batchSize int
+	}
+	testCaseConfs := []testCaseConf{
+		{batchSize: 2},
+		{batchSize: 8},
+		{batchSize: 16},
+		{batchSize: 100},
+		{batchSize: 1000},
+		{batchSize: 4000},
+	}
+
+	chk := newChunk(0, 0)
+	for _, conf := range testCaseConfs {
+		b.ResetTimer()
+		b.Run(fmt.Sprintf("column-%d", conf.batchSize), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				chk.Reset()
+				chk.Append(rowChk, 0, conf.batchSize)
 			}
 		})
 	}

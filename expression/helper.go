@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -139,7 +140,7 @@ func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 	}
 
 	sessionVars := ctx.GetSessionVars()
-	timestampStr, err := variable.GetSessionSystemVar(sessionVars, "timestamp")
+	timestampStr, err := variable.GetSessionOrGlobalSystemVar(sessionVars, "timestamp")
 	if err != nil {
 		return now, err
 	}
@@ -155,5 +156,5 @@ func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 		return time.Unix(timestamp, 0), nil
 	}
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	return stmtCtx.GetNowTsCached(), nil
+	return stmtCtx.GetOrStoreStmtCache(stmtctx.StmtNowTsCacheKey, time.Now()).(time.Time), nil
 }

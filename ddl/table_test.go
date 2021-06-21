@@ -355,14 +355,16 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 		WithLease(testLease),
 	)
 
-	s.dbInfo = testSchemaInfo(c, s.d, "test")
+	s.dbInfo = testSchemaInfo(c, s.d, "test_table")
 	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 }
 
 func (s *testTableSuite) TearDownSuite(c *C) {
 	testDropSchema(c, testNewContext(s.d), s.d, s.dbInfo)
-	s.d.Stop()
-	s.store.Close()
+	err := s.d.Stop()
+	c.Assert(err, IsNil)
+	err = s.store.Close()
+	c.Assert(err, IsNil)
 }
 
 func (s *testTableSuite) TestTable(c *C) {

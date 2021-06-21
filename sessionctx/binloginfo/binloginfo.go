@@ -44,9 +44,8 @@ func init() {
 // shared by all sessions.
 var pumpsClient *pumpcli.PumpsClient
 var pumpsClientLock sync.RWMutex
-var shardPat = regexp.MustCompile(`SHARD_ROW_ID_BITS\s*=\s*\d+\s*`)
-var preSplitPat = regexp.MustCompile(`PRE_SPLIT_REGIONS\s*=\s*\d+\s*`)
-var autoRandomPat = regexp.MustCompile(`AUTO_RANDOM\s*\(\s*\d+\s*\)\s*`)
+var shardPat = regexp.MustCompile(`(?P<REPLACE>SHARD_ROW_ID_BITS\s*=\s*\d+\s*)`)
+var preSplitPat = regexp.MustCompile(`(?P<REPLACE>PRE_SPLIT_REGIONS\s*=\s*\d+\s*)`)
 
 // BinlogInfo contains binlog data and binlog client.
 type BinlogInfo struct {
@@ -101,7 +100,7 @@ func GetPrewriteValue(ctx sessionctx.Context, createIfNotExists bool) *binlog.Pr
 	vars := ctx.GetSessionVars()
 	v, ok := vars.TxnCtx.Binlog.(*binlog.PrewriteValue)
 	if !ok && createIfNotExists {
-		schemaVer := ctx.GetSessionVars().TxnCtx.SchemaVersion
+		schemaVer := ctx.GetInfoSchema().SchemaMetaVersion()
 		v = &binlog.PrewriteValue{SchemaVersion: schemaVer}
 		vars.TxnCtx.Binlog = v
 	}
@@ -155,17 +154,15 @@ func WaitBinlogRecover(timeout time.Duration) error {
 	defer ticker.Stop()
 	start := time.Now()
 	for {
-		select {
-		case <-ticker.C:
-			if atomic.LoadInt32(&skippedCommitterCounter) == 0 {
-				logutil.BgLogger().Warn("[binloginfo] binlog recovered")
-				return nil
-			}
-			if time.Since(start) > timeout {
-				logutil.BgLogger().Warn("[binloginfo] waiting for binlog recovering timed out",
-					zap.Duration("duration", timeout))
-				return errors.New("timeout")
-			}
+		<-ticker.C
+		if atomic.LoadInt32(&skippedCommitterCounter) == 0 {
+			logutil.BgLogger().Warn("[binloginfo] binlog recovered")
+			return nil
+		}
+		if time.Since(start) > timeout {
+			logutil.BgLogger().Warn("[binloginfo] waiting for binlog recovering timed out",
+				zap.Duration("duration", timeout))
+			return errors.New("timeout")
 		}
 	}
 }
@@ -301,7 +298,7 @@ func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, 
 const specialPrefix = `/*T! `
 
 // AddSpecialComment uses to add comment for table option in DDL query.
-// Export for testing.
+// Used by pingcap/ticdc.
 func AddSpecialComment(ddlQuery string) string {
 	if strings.Contains(ddlQuery, specialPrefix) || strings.Contains(ddlQuery, driver.SpecialCommentVersionPrefix) {
 		return ddlQuery
@@ -321,7 +318,17 @@ func addSpecialCommentByRegexps(ddlQuery string, prefix string, regs ...*regexp.
 	minIdx := math.MaxInt64
 	for i := 0; i < len(regs); {
 		reg := regs[i]
-		loc := reg.FindStringIndex(upperQuery)
+		locs := reg.FindStringSubmatchIndex(upperQuery)
+		ns := reg.SubexpNames()
+		var loc []int
+		if len(locs) > 0 {
+			for i, n := range ns {
+				if n == "REPLACE" {
+					loc = locs[i*2 : (i+1)*2]
+					break
+				}
+			}
+		}
 		if len(loc) < 2 {
 			i++
 			continue
