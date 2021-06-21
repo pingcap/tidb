@@ -3056,9 +3056,10 @@ func (s *testSerialSuite) TestTiDBLastTxnInfoCommitMode(c *C) {
 	c.Assert(rows[0][1], Equals, "false")
 	c.Assert(rows[0][2], Equals, "false")
 
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.SafeWindow = 0
-	})
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/invalidMaxCommitTS", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/invalidMaxCommitTS"), IsNil)
+	}()
 
 	tk.MustExec("set @@tidb_enable_async_commit = 1")
 	tk.MustExec("set @@tidb_enable_1pc = 0")
@@ -6898,12 +6899,12 @@ func (s *testSuiteP2) TestApplyCache(c *C) {
 	tk.MustExec("insert into t values (1),(1),(1),(1),(1),(1),(1),(1),(1);")
 	tk.MustExec("analyze table t;")
 	result := tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
-	c.Assert(result.Rows()[2][0], Equals, "  └─Apply_41")
+	c.Assert(result.Rows()[1][0], Equals, "└─Apply_39")
 	var (
 		ind  int
 		flag bool
 	)
-	value := (result.Rows()[2][5]).(string)
+	value := (result.Rows()[1][5]).(string)
 	for ind = 0; ind < len(value)-5; ind++ {
 		if value[ind:ind+5] == "cache" {
 			flag = true
@@ -6918,9 +6919,9 @@ func (s *testSuiteP2) TestApplyCache(c *C) {
 	tk.MustExec("insert into t values (1),(2),(3),(4),(5),(6),(7),(8),(9);")
 	tk.MustExec("analyze table t;")
 	result = tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
-	c.Assert(result.Rows()[2][0], Equals, "  └─Apply_41")
+	c.Assert(result.Rows()[1][0], Equals, "└─Apply_39")
 	flag = false
-	value = (result.Rows()[2][5]).(string)
+	value = (result.Rows()[1][5]).(string)
 	for ind = 0; ind < len(value)-5; ind++ {
 		if value[ind:ind+5] == "cache" {
 			flag = true
@@ -8175,4 +8176,41 @@ func (s *testSuite) TestIssue23609(c *C) {
 	tk.MustQuery("select * from t1 where a = b").Check(testkit.Rows())
 	tk.MustQuery("select * from t1 where a < b").Check(testkit.Rows())
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+}
+
+func (s *testSerialSuite) TestIssue24210(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// for ProjectionExec
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockProjectionExecBaseExecutorOpenReturnedError", `return(true)`), IsNil)
+	_, err := tk.Exec("select a from (select 1 as a, 2 as b) t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "mock ProjectionExec.baseExecutor.Open returned error")
+	err = failpoint.Disable("github.com/pingcap/tidb/executor/mockProjectionExecBaseExecutorOpenReturnedError")
+	c.Assert(err, IsNil)
+
+	// for HashAggExec
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockHashAggExecBaseExecutorOpenReturnedError", `return(true)`), IsNil)
+	_, err = tk.Exec("select sum(a) from (select 1 as a, 2 as b) t group by b")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "mock HashAggExec.baseExecutor.Open returned error")
+	err = failpoint.Disable("github.com/pingcap/tidb/executor/mockHashAggExecBaseExecutorOpenReturnedError")
+	c.Assert(err, IsNil)
+
+	// for StreamAggExec
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStreamAggExecBaseExecutorOpenReturnedError", `return(true)`), IsNil)
+	_, err = tk.Exec("select sum(a) from (select 1 as a, 2 as b) t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "mock StreamAggExec.baseExecutor.Open returned error")
+	err = failpoint.Disable("github.com/pingcap/tidb/executor/mockStreamAggExecBaseExecutorOpenReturnedError")
+	c.Assert(err, IsNil)
+
+	// for SelectionExec
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockSelectionExecBaseExecutorOpenReturnedError", `return(true)`), IsNil)
+	_, err = tk.Exec("select * from (select rand() as a) t where a > 0")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "mock SelectionExec.baseExecutor.Open returned error")
+	err = failpoint.Disable("github.com/pingcap/tidb/executor/mockSelectionExecBaseExecutorOpenReturnedError")
+	c.Assert(err, IsNil)
+
 }
