@@ -33,12 +33,12 @@ import (
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -200,6 +200,18 @@ func (txn *LazyTxn) GoString() string {
 
 	s.WriteString("}")
 	return s.String()
+}
+
+// GetOption implements the GetOption
+func (txn *LazyTxn) GetOption(opt int) interface{} {
+	if txn.Transaction == nil {
+		switch opt {
+		case kv.TxnScope:
+			return ""
+		}
+		return nil
+	}
+	return txn.Transaction.GetOption(opt)
 }
 
 func (txn *LazyTxn) changeInvalidToValid(kvTxn kv.Transaction) {

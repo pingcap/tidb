@@ -21,9 +21,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
-	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
+	tikverr "github.com/tikv/client-go/v2/error"
 )
 
 type testDeadlockHistorySuite struct{}

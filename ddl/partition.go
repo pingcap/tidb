@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -49,8 +48,9 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/slice"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/tikv/pd/pkg/slice"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -524,7 +524,7 @@ func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinit
 		switch val.Kind() {
 		case types.KindUint64, types.KindNull:
 		case types.KindInt64:
-			if mysql.HasUnsignedFlag(tp.Flag) && val.GetInt64() < 0 {
+			if !ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode() && mysql.HasUnsignedFlag(tp.Flag) && val.GetInt64() < 0 {
 				return ErrPartitionConstDomain.GenWithStackByArgs()
 			}
 		default:
@@ -666,7 +666,8 @@ func checkRangePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 	if strings.EqualFold(defs[len(defs)-1].LessThan[0], partitionMaxValue) {
 		defs = defs[:len(defs)-1]
 	}
-	isUnsigned := isColUnsigned(cols, pi)
+	// treat partition value under NoUnsignedSubtractionMode as signed
+	isUnsigned := isColUnsigned(cols, pi) && !ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
 	var prevRangeValue interface{}
 	for i := 0; i < len(defs); i++ {
 		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {

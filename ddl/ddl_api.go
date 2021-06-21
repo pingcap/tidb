@@ -38,7 +38,6 @@ import (
 	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -52,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -1391,8 +1389,7 @@ func buildTableInfo(
 		// Check clustered on non-primary key.
 		if constr.Option != nil && constr.Option.PrimaryKeyTp != model.PrimaryKeyTypeDefault &&
 			constr.Tp != ast.ConstraintPrimaryKey {
-			msg := mysql.Message("CLUSTERED/NONCLUSTERED keyword is only supported for primary key", nil)
-			return nil, dbterror.ClassDDL.NewStdErr(errno.ErrUnsupportedDDLOperation, msg)
+			return nil, errUnsupportedClusteredSecondaryKey
 		}
 		if constr.Tp == ast.ConstraintForeignKey {
 			for _, fk := range tbInfo.ForeignKeys {
@@ -1593,15 +1590,17 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 	if err := checkGeneratedColumn(s.Cols); err != nil {
 		return errors.Trace(err)
 	}
-	if tbInfo.Partition != nil && s.Partition != nil {
+	if tbInfo.Partition != nil {
 		if err := checkPartitionDefinitionConstraints(ctx, tbInfo); err != nil {
 			return errors.Trace(err)
 		}
-		if err := checkPartitionFuncType(ctx, s.Partition.Expr, tbInfo); err != nil {
-			return errors.Trace(err)
-		}
-		if err := checkPartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
-			return errors.Trace(err)
+		if s.Partition != nil {
+			if err := checkPartitionFuncType(ctx, s.Partition.Expr, tbInfo); err != nil {
+				return errors.Trace(err)
+			}
+			if err := checkPartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
@@ -3908,7 +3907,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	// We support modifying the type definitions of 'null' to 'not null' now.
 	var modifyColumnTp byte
 	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		if err = checkForNullValue(ctx, col.Tp != newCol.Tp, ident.Schema, ident.Name, newCol.Name, col.ColumnInfo); err != nil {
+		if err = checkForNullValue(ctx, true, ident.Schema, ident.Name, newCol.Name, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
 		// `modifyColumnTp` indicates that there is a type modification.

@@ -33,10 +33,10 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/tikv/client-go/v2/mockstore/cluster"
 )
 
 type tiflashTestSuite struct {
@@ -632,6 +632,17 @@ func (s *tiflashTestSuite) TestMppUnionAll(c *C) {
 	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(6)`)
 	tk.MustQuery("select count(*) from (select * from x1 union all select * from x2 union all select * from x3) x join (select * from x1 union all select * from x2 union all select * from x3) y on x.a = y.b").Check(testkit.Rows("29"))
 	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
+
+	tk.MustExec("drop table if exists x4")
+	tk.MustExec("create table x4(a int not null, b int not null);")
+	tk.MustExec("alter table x4 set tiflash replica 1")
+	tb = testGetTableByName(c, tk.Se, "test", "x4")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("set @@tidb_enforce_mpp=1")
+	tk.MustExec("insert into x4 values (2, 2), (2, 3)")
+	tk.MustQuery("(select * from x1 union all select * from x4) order by a, b").Check(testkit.Rows("1 1", "2 2", "2 2", "2 3", "3 3", "4 4"))
 
 }
 

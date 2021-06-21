@@ -31,8 +31,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/copr"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -41,8 +39,10 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tipb/go-tipb"
+	tikvmetrics "github.com/tikv/client-go/v2/metrics"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
 )
 
@@ -346,7 +346,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	if copStats.ScanDetail != nil {
 		readKeys := copStats.ScanDetail.ProcessedKeys
 		readTime := copStats.TimeDetail.KvReadWallTimeMs.Seconds()
-		sli.ObserveReadSLI(uint64(readKeys), readTime)
+		tikvmetrics.ObserveReadSLI(uint64(readKeys), readTime)
 	}
 
 	if r.stats == nil {

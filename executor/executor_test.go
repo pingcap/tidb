@@ -59,10 +59,6 @@ import (
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -81,6 +77,10 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/mockstore/cluster"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"google.golang.org/grpc"
 )
 
@@ -348,6 +348,7 @@ func (s *testSuiteP1) TestShow(c *C) {
 		"Usage Server Admin No privileges - allow connect only",
 		"BACKUP_ADMIN Server Admin ",
 		"RESTORE_ADMIN Server Admin ",
+		"SYSTEM_USER Server Admin ",
 		"SYSTEM_VARIABLES_ADMIN Server Admin ",
 		"ROLE_ADMIN Server Admin ",
 		"CONNECTION_ADMIN Server Admin ",
@@ -355,6 +356,7 @@ func (s *testSuiteP1) TestShow(c *C) {
 		"RESTRICTED_STATUS_ADMIN Server Admin ",
 		"RESTRICTED_VARIABLES_ADMIN Server Admin ",
 		"RESTRICTED_USER_ADMIN Server Admin ",
+		"RESTRICTED_CONNECTION_ADMIN Server Admin ",
 	))
 	c.Assert(len(tk.MustQuery("show table status").Rows()), Equals, 1)
 }
@@ -7138,7 +7140,7 @@ select * from t;
 }
 
 func (s *testSerialSuite) TestKillTableReader(c *C) {
-	var retry = "github.com/pingcap/tidb/store/tikv/locate/mockRetrySendReqToRegion"
+	var retry = "github.com/tikv/client-go/v2/locate/mockRetrySendReqToRegion"
 	defer func() {
 		c.Assert(failpoint.Disable(retry), IsNil)
 	}()
@@ -7588,6 +7590,11 @@ func issue20975PreparePartitionTable(c *C, store kv.Storage) (*testkit.TestKit, 
 
 func (s *testSuite) TestIssue20975UpdateNoChangeWithPartitionTable(c *C) {
 	tk1, tk2 := issue20975PreparePartitionTable(c, s.store)
+
+	// Set projection concurrency to avoid data race here.
+	// TODO: remove this line after fixing https://github.com/pingcap/tidb/issues/25496
+	tk1.Se.GetSessionVars().Concurrency.SetProjectionConcurrency(0)
+
 	tk1.MustExec("begin pessimistic")
 	tk1.MustExec("update t1 set c=c")
 	tk2.MustExec("create table t2(a int)")
