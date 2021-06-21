@@ -9769,3 +9769,14 @@ OR Variable_name = 'sql_mode' OR Variable_name = 'query_cache_type'  OR Variable
 OR Variable_name = 'license' OR Variable_name = 'init_connect'`).Rows(), HasLen, 19)
 
 }
+
+func (s *testIntegrationSuite) TestCharsetErr(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table charset_test(id int auto_increment primary key, c1 varchar(255) character set ascii)")
+	err := tk.ExecToErr("insert into charset_test(c1) values ('aaa\xEF\xBF\xBDabcdef')")
+	c.Assert(err.Error(), Equals, "[table:1366]Incorrect string value '\\xEF\\xBF\\xBDabc...' for column 'c1'")
+
+	err = tk.ExecToErr("insert into charset_test(c1) values ('aaa\xEF\xBF\xBD')")
+	c.Assert(err.Error(), Equals, "[table:1366]Incorrect string value '\\xEF\\xBF\\xBD' for column 'c1'")
+}
