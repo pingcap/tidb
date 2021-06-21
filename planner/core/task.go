@@ -1762,7 +1762,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 
 // GetCost computes cost of stream aggregation considering CPU/memory.
 func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot bool) float64 {
-	aggFuncFactor := p.getAggFuncCostFactor()
+	aggFuncFactor := p.getAggFuncCostFactor(false)
 	var cpuCost float64
 	sessVars := p.ctx.GetSessionVars()
 	if isRoot {
@@ -1809,7 +1809,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		if proj != nil {
 			attachPlan2Task(proj, mpp)
 		}
-		mpp.addCost(p.GetCost(inputRows, false))
+		mpp.addCost(p.GetCost(inputRows, false, true))
 		return mpp
 	case Mpp2Phase:
 		proj := p.convertAvgForMPP()
@@ -1840,18 +1840,18 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 			attachPlan2Task(proj, newMpp)
 		}
 		// TODO: how to set 2-phase cost?
-		newMpp.addCost(p.GetCost(inputRows, false))
+		newMpp.addCost(p.GetCost(inputRows, false, true))
 		return newMpp
 	case MppTiDB:
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, false)
 		if partialAgg != nil {
 			attachPlan2Task(partialAgg, mpp)
 		}
-		mpp.addCost(p.GetCost(inputRows, false))
+		mpp.addCost(p.GetCost(inputRows, false, true))
 		t = mpp.convertToRootTask(p.ctx)
 		inputRows = t.count()
 		attachPlan2Task(finalAgg, t)
-		t.addCost(p.GetCost(inputRows, true))
+		t.addCost(p.GetCost(inputRows, true, false))
 		return t
 	default:
 		return invalidTask
@@ -1881,7 +1881,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 					partialAgg.SetChildren(cop.indexPlan)
 					cop.indexPlan = partialAgg
 				}
-				cop.addCost(p.GetCost(inputRows, false))
+				cop.addCost(p.GetCost(inputRows, false, false))
 			}
 			// In `newPartialAggregate`, we are using stats of final aggregation as stats
 			// of `partialAgg`, so the network cost of transferring result rows of `partialAgg`
@@ -1914,15 +1914,15 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	// hash aggregation, it would cause under-estimation as the reason mentioned in comment above.
 	// To make it simple, we also treat 2-phase parallel hash aggregation in TiDB layer as
 	// 1-phase when computing cost.
-	t.addCost(p.GetCost(inputRows, true))
+	t.addCost(p.GetCost(inputRows, true, false))
 	return t
 }
 
 // GetCost computes the cost of hash aggregation considering CPU/memory.
-func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool) float64 {
+func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool, isMPP bool) float64 {
 	cardinality := p.statsInfo().RowCount
 	numDistinctFunc := p.numDistinctFunc()
-	aggFuncFactor := p.getAggFuncCostFactor()
+	aggFuncFactor := p.getAggFuncCostFactor(isMPP)
 	var cpuCost float64
 	sessVars := p.ctx.GetSessionVars()
 	if isRoot {
