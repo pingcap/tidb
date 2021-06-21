@@ -30,8 +30,8 @@ type TxnScopeVar struct {
 // If zone label is set, we will check whether it's not the GlobalTxnScope and create a new Local TxnScopeVar.
 // If zone label is not set, we will create a new Global TxnScopeVar.
 func NewDefaultTxnScopeVar() TxnScopeVar {
-	if location := config.GetTxnScopeFromConfig(); location != GlobalTxnScope {
-		return NewLocalTxnScopeVar(location)
+	if txnScope := config.GetTxnScopeFromConfig(); txnScope != GlobalTxnScope {
+		return NewLocalTxnScopeVar(txnScope)
 	}
 	return NewGlobalTxnScopeVar()
 }
@@ -42,8 +42,8 @@ func NewGlobalTxnScopeVar() TxnScopeVar {
 }
 
 // NewLocalTxnScopeVar creates a Local TxnScopeVar with given real txnScope value.
-func NewLocalTxnScopeVar(location string) TxnScopeVar {
-	return newTxnScopeVar(LocalTxnScope, location)
+func NewLocalTxnScopeVar(txnScope string) TxnScopeVar {
+	return newTxnScopeVar(LocalTxnScope, txnScope)
 }
 
 // GetVarValue returns the value of @@txn_scope which can only be `global` or `local`
