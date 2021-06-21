@@ -1024,6 +1024,7 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.JSONType,
 		ast.JSONExtract,
 		// FIXME: JSONUnquote is incompatible with Coprocessor
+<<<<<<< HEAD
 		// ast.JSONUnquote,
 		ast.JSONObject,
 		ast.JSONArray,
@@ -1033,6 +1034,9 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		// ast.JSONReplace,
 		ast.JSONRemove,
 		ast.JSONLength,
+=======
+		ast.JSONUnquote,
+>>>>>>> bd8d3b1a8... expression: uncomment pushdown for JSONUnquote expression (#24504)
 
 		// date functions.
 		ast.DateFormat,
