@@ -1051,6 +1051,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInvalidPlacementSpec:   mysql.Message("Invalid placement policy '%s': %s", nil),
 	ErrPlacementPolicyCheck:   mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
 	ErrMultiStatementDisabled: mysql.Message("client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk", nil),
+	ErrAsOf:                   mysql.Message("invalid as of timestamp: %s", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout", nil),
