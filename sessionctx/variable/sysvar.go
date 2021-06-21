@@ -810,7 +810,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: InitConnect, Value: ""},
 
 	/* TiDB specific variables */
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableLocalTxn, Value: BoolToOnOff(DefTiDBEnableLocalTxn), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal, Name: TiDBEnableLocalTxn, Value: BoolToOnOff(DefTiDBEnableLocalTxn), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableLocalTxn = TiDBOptOn(val)
 		return nil
 	}},
@@ -827,7 +827,7 @@ var defaultSysVars = []*SysVar{
 			s.TxnScope = kv.NewGlobalTxnScopeVar()
 		case kv.LocalTxnScope:
 			if !s.EnableLocalTxn {
-				return ErrWrongValueForVar.GenWithStack("@@txn_scope can not be set when @@tidb_enable_local_txn is off")
+				return ErrWrongValueForVar.GenWithStack("@@txn_scope can not be set when tidb_enable_local_txn is off")
 			}
 			s.TxnScope = kv.NewLocalTxnScopeVar(config.GetTxnScopeFromConfig())
 		default:
@@ -835,9 +835,9 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}, GetSession: func(s *SessionVars) (string, error) {
-		// Always return the Global TxnScope if not enable Local Txn.
-		if !s.EnableLocalTxn {
-			return kv.GlobalTxnScope, nil
+		// Make sure the TxnScope is always Global when disable the Local Txn.
+		if !s.EnableLocalTxn && s.TxnScope.GetVarValue() == kv.LocalTxnScope {
+			s.TxnScope = kv.NewGlobalTxnScopeVar()
 		}
 		return s.TxnScope.GetVarValue(), nil
 	}},

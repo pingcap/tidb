@@ -509,7 +509,7 @@ PARTITION BY RANGE (c) (
 		c.Check(err, IsNil)
 		tk.Se = se
 		tk.MustExec("use test")
-		tk.MustExec("set @@tidb_enable_local_txn = on")
+		tk.Se.GetSessionVars().EnableLocalTxn = true
 		tk.MustExec(fmt.Sprintf("set @@txn_scope = %v", testcase.txnScope))
 		if testcase.disableAutoCommit {
 			tk.MustExec("set @@autocommit = 0")
@@ -525,7 +525,7 @@ PARTITION BY RANGE (c) (
 			c.Assert(err, NotNil)
 			c.Assert(err.Error(), Matches, testcase.err.Error())
 		}
-		tk.MustExec("set @@tidb_enable_local_txn = off")
+		tk.Se.GetSessionVars().EnableLocalTxn = false
 		failpoint.Disable("tikvclient/injectTxnScope")
 	}
 }
@@ -658,10 +658,10 @@ PARTITION BY RANGE (c) (
 						s.dom.InfoSchema().SetBundle(bundle)
 						done = true
 						tk2.MustExec("use test")
-						tk2.MustExec("set @@tidb_enable_local_txn = on")
+						tk2.Se.GetSessionVars().EnableLocalTxn = true
 						tk2.MustExec("set @@txn_scope=local")
 						_, chkErr = tk2.Exec("insert into t1 (c) values (1);")
-						tk2.MustExec("set @@tidb_enable_local_txn = off")
+						tk2.Se.GetSessionVars().EnableLocalTxn = false
 					}
 				}
 				return hook
