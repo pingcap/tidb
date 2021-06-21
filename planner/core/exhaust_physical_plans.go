@@ -1027,13 +1027,18 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 				if ts.schema.ColumnIndex(col) == -1 {
 					ts.Schema().Append(col)
 					ts.Columns = append(ts.Columns, col.ToInfo())
-					cop.doubleReadNeedProj = true
+					cop.needExtraProj = true
 				}
 			}
 		}
 		// If inner cop task need keep order, the extraHandleCol should be set.
 		if cop.keepOrder && !ds.tableInfo.IsCommonHandle {
-			cop.extraHandleCol, cop.doubleReadNeedProj = ts.appendExtraHandleCol(ds)
+			var needExtraProj bool
+			cop.extraHandleCol, needExtraProj = ts.appendExtraHandleCol(ds)
+			cop.needExtraProj = cop.needExtraProj || needExtraProj
+		}
+		if cop.needExtraProj {
+			cop.originSchema = ds.schema
 		}
 		cop.tablePlan = ts
 	}
@@ -1631,6 +1636,9 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 	if p.ctx.GetSessionVars().BroadcastJoinThresholdSize == 0 || p.ctx.GetSessionVars().BroadcastJoinThresholdCount == 0 {
 		return p.ctx.GetSessionVars().AllowBCJ
 	}
+	if len(p.EqualConditions) == 0 && p.ctx.GetSessionVars().AllowCartesianBCJ == 2 {
+		return true
+	}
 	if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		return checkChildFitBC(p.children[1])
 	} else if p.JoinType == RightOuterJoin {
@@ -1739,9 +1747,19 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		return nil
 	}
 
-	if (p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != SemiJoin && p.JoinType != AntiSemiJoin) || len(p.EqualConditions) == 0 {
+	if p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != SemiJoin && p.JoinType != AntiSemiJoin {
 		return nil
 	}
+
+	if len(p.EqualConditions) == 0 {
+		if p.ctx.GetSessionVars().AllowCartesianBCJ == 0 || !useBCJ {
+			return nil
+		}
+	}
+	if (len(p.LeftConditions) != 0 && p.JoinType != LeftOuterJoin) || (len(p.RightConditions) != 0 && p.JoinType != RightOuterJoin) {
+		return nil
+	}
+
 	if prop.PartitionTp == property.BroadcastType {
 		return nil
 	}
@@ -1765,8 +1783,22 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		if p.children[0].statsInfo().Count() > p.children[1].statsInfo().Count() {
 			preferredBuildIndex = 1
 		}
-	} else if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin || p.JoinType == LeftOuterJoin {
+	} else if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		preferredBuildIndex = 1
+	}
+	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
+		// TiFlash does not requires that the build side must be the inner table for outer join
+		// so we can choose the build side based on the row count, except that
+		// 1. it is a broadcast join(for broadcast join, it make sense to use the broadcast side as the build side)
+		// 2. or session variable MPPOuterJoinFixedBuildSide is set to true
+		// 3. or there are otherConditions for this join
+		if useBCJ || p.ctx.GetSessionVars().MPPOuterJoinFixedBuildSide || len(p.OtherConditions) > 0 {
+			if p.JoinType == LeftOuterJoin {
+				preferredBuildIndex = 1
+			}
+		} else if p.children[0].statsInfo().Count() > p.children[1].statsInfo().Count() {
+			preferredBuildIndex = 1
+		}
 	}
 	baseJoin.InnerChildIdx = preferredBuildIndex
 	childrenProps := make([]*property.PhysicalProperty, 2)
@@ -2119,7 +2151,7 @@ func (p *baseLogicalPlan) canPushToCop(storeTp kv.StoreType) bool {
 				}
 			}
 			ret = ret && validDs
-		case *LogicalAggregation, *LogicalProjection, *LogicalSelection, *LogicalJoin:
+		case *LogicalAggregation, *LogicalProjection, *LogicalSelection, *LogicalJoin, *LogicalUnionAll:
 			if storeTp == kv.TiFlash {
 				ret = ret && c.canPushToCop(storeTp)
 			} else {
@@ -2487,15 +2519,41 @@ func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 
 func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	// TODO: UnionAll can not pass any order, but we can change it to sort merge to keep order.
-	if !prop.IsEmpty() || prop.IsFlashProp() {
+	if !prop.IsEmpty() || (prop.IsFlashProp() && prop.TaskTp != property.MppTaskType) {
 		return nil, true
 	}
+	// TODO: UnionAll can pass partition info, but for briefness, we prevent it from pushing down.
+	if prop.TaskTp == property.MppTaskType && prop.PartitionTp != property.AnyType {
+		return nil, true
+	}
+	canUseMpp := p.ctx.GetSessionVars().AllowMPPExecution && p.canPushToCop(kv.TiFlash)
 	chReqProps := make([]*property.PhysicalProperty, 0, len(p.children))
 	for range p.children {
-		chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt})
+		if canUseMpp && prop.TaskTp == property.MppTaskType {
+			chReqProps = append(chReqProps, &property.PhysicalProperty{
+				ExpectedCnt: prop.ExpectedCnt,
+				TaskTp:      property.MppTaskType,
+			})
+		} else {
+			chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt})
+		}
 	}
-	ua := PhysicalUnionAll{}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
+	ua := PhysicalUnionAll{
+		mpp: canUseMpp && prop.TaskTp == property.MppTaskType,
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
 	ua.SetSchema(p.Schema())
+	if canUseMpp && prop.TaskTp == property.RootTaskType {
+		chReqProps = make([]*property.PhysicalProperty, 0, len(p.children))
+		for range p.children {
+			chReqProps = append(chReqProps, &property.PhysicalProperty{
+				ExpectedCnt: prop.ExpectedCnt,
+				TaskTp:      property.MppTaskType,
+			})
+		}
+		mppUA := PhysicalUnionAll{mpp: true}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
+		mppUA.SetSchema(p.Schema())
+		return []PhysicalPlan{ua, mppUA}, true
+	}
 	return []PhysicalPlan{ua}, true
 }
 

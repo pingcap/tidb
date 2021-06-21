@@ -412,6 +412,12 @@ type SessionVars struct {
 		value string
 	}
 
+	// mppTaskIDAllocator is used to allocate mpp task id for a session.
+	mppTaskIDAllocator struct {
+		lastTS uint64
+		taskID int64
+	}
+
 	// Status stands for the session status. e.g. in transaction or not, auto commit is on or off, and so on.
 	Status uint16
 
@@ -476,6 +482,15 @@ type SessionVars struct {
 
 	// AllowBCJ means allow broadcast join.
 	AllowBCJ bool
+
+	// AllowCartesianBCJ means allow broadcast CARTESIAN join, 0 means not allow, 1 means allow broadcast CARTESIAN join
+	// but the table size should under the broadcast threshold, 2 means allow broadcast CARTESIAN join even if the table
+	// size exceeds the broadcast threshold
+	AllowCartesianBCJ int
+
+	// MPPOuterJoinFixedBuildSide means in MPP plan, always use inner table as build side for out join
+	MPPOuterJoinFixedBuildSide bool
+
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
@@ -820,6 +835,18 @@ type SessionVars struct {
 	AllowFallbackToTiKV map[kv.StoreType]struct{}
 }
 
+// AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
+// startTs is different.
+func (s *SessionVars) AllocMPPTaskID(startTS uint64) int64 {
+	if s.mppTaskIDAllocator.lastTS == startTS {
+		s.mppTaskIDAllocator.taskID++
+		return s.mppTaskIDAllocator.taskID
+	}
+	s.mppTaskIDAllocator.lastTS = startTS
+	s.mppTaskIDAllocator.taskID = 1
+	return 1
+}
+
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
 func (s *SessionVars) CheckAndGetTxnScope() string {
 	if s.InRestrictedSQL {
@@ -935,6 +962,8 @@ func NewSessionVars() *SessionVars {
 		StmtCtx:                     new(stmtctx.StatementContext),
 		AllowAggPushDown:            false,
 		AllowBCJ:                    false,
+		AllowCartesianBCJ:           DefOptCartesianBCJ,
+		MPPOuterJoinFixedBuildSide:  DefOptMPPOuterJoinFixedBuildSide,
 		BroadcastJoinThresholdSize:  DefBroadcastJoinThresholdSize,
 		BroadcastJoinThresholdCount: DefBroadcastJoinThresholdSize,
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
@@ -1424,6 +1453,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.BroadcastJoinThresholdSize = tidbOptInt64(val, DefBroadcastJoinThresholdSize)
 	case TiDBBCJThresholdCount:
 		s.BroadcastJoinThresholdCount = tidbOptInt64(val, DefBroadcastJoinThresholdCount)
+	case TiDBOptCartesianBCJ:
+		s.AllowCartesianBCJ = int(tidbOptInt64(val, DefOptCartesianBCJ))
+	case TiDBOptMPPOuterJoinFixedBuildSide:
+		s.MPPOuterJoinFixedBuildSide = TiDBOptOn(val)
 	case TiDBOptDistinctAggPushDown:
 		s.AllowDistinctAggPushDown = TiDBOptOn(val)
 	case TiDBOptWriteRowID:

@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -492,12 +491,13 @@ func (s *testSuite5) TestShowTableStatus(c *C) {
 	// It's not easy to test the result contents because every time the test runs, "Create_time" changed.
 	tk.MustExec("show table status;")
 	rs, err := tk.Exec("show table status;")
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	c.Assert(rs, NotNil)
 	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	err = rs.Close()
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Equals, 1)
 
 	for i := range rows {
 		row := rows[i]
@@ -514,10 +514,34 @@ func (s *testSuite5) TestShowTableStatus(c *C) {
 		  partition p2 values less than (maxvalue)
   		);`)
 	rs, err = tk.Exec("show table status from test like 'tp';")
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	c.Assert(rows[0].GetString(16), Equals, "partitioned")
+
+	tk.MustExec("create database UPPER_CASE")
+	tk.MustExec("use UPPER_CASE")
+	tk.MustExec("create table t (i int)")
+	rs, err = tk.Exec("show table status")
+	c.Assert(err, IsNil)
+	c.Assert(rs, NotNil)
+	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(err, IsNil)
+	err = rs.Close()
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Equals, 1)
+
+	tk.MustExec("use upper_case")
+	rs, err = tk.Exec("show table status")
+	c.Assert(err, IsNil)
+	c.Assert(rs, NotNil)
+	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(err, IsNil)
+	err = rs.Close()
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Equals, 1)
+
+	tk.MustExec("drop database UPPER_CASE")
 }
 
 func (s *testSuite5) TestShowSlow(c *C) {
@@ -1209,27 +1233,37 @@ func (s *testSerialSuite1) TestShowCreateTableWithIntegerDisplayLengthWarnings(c
 func (s *testSuite5) TestShowVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	var showSQL string
+	sessionVars := make([]string, 0, len(variable.GetSysVars()))
+	globalVars := make([]string, 0, len(variable.GetSysVars()))
 	for _, v := range variable.GetSysVars() {
 		if variable.FilterImplicitFeatureSwitch(v) {
 			continue
 		}
-		// When ScopeSession only. `show global variables` must return empty.
+
 		if v.Scope == variable.ScopeSession {
-			showSQL = "show variables like '" + v.Name + "'"
-			res := tk.MustQuery(showSQL)
-			c.Check(res.Rows(), HasLen, 1)
-			showSQL = "show global variables like '" + v.Name + "'"
-			res = tk.MustQuery(showSQL)
-			c.Check(res.Rows(), HasLen, 0)
+			sessionVars = append(sessionVars, v.Name)
 		} else {
-			showSQL = "show global variables like '" + v.Name + "'"
-			res := tk.MustQuery(showSQL)
-			c.Check(res.Rows(), HasLen, 1)
-			showSQL = "show variables like '" + v.Name + "'"
-			res = tk.MustQuery(showSQL)
-			c.Check(res.Rows(), HasLen, 1)
+			globalVars = append(globalVars, v.Name)
 		}
 	}
+
+	// When ScopeSession only. `show global variables` must return empty.
+	sessionVarsStr := strings.Join(sessionVars, "','")
+	showSQL = "show variables where variable_name in('" + sessionVarsStr + "')"
+	res := tk.MustQuery(showSQL)
+	c.Check(res.Rows(), HasLen, len(sessionVars))
+	showSQL = "show global variables where variable_name in('" + sessionVarsStr + "')"
+	res = tk.MustQuery(showSQL)
+	c.Check(res.Rows(), HasLen, 0)
+
+	globalVarsStr := strings.Join(globalVars, "','")
+	showSQL = "show variables where variable_name in('" + globalVarsStr + "')"
+	res = tk.MustQuery(showSQL)
+	c.Check(res.Rows(), HasLen, len(globalVars))
+	showSQL = "show global variables where variable_name in('" + globalVarsStr + "')"
+	res = tk.MustQuery(showSQL)
+	c.Check(res.Rows(), HasLen, len(globalVars))
+
 	// Test for switch variable which shouldn't seen by users.
 	for _, one := range variable.FeatureSwitchVariables {
 		res := tk.MustQuery("show variables like '" + one + "'")

@@ -231,13 +231,9 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []*point {
 	// refineValueAndOp refines the constant datum and operator:
 	// 1. for string type since we may eval the constant to another collation instead of its own collation.
 	// 2. for year type since 2-digit year value need adjustment, see https://dev.mysql.com/doc/refman/5.6/en/year.html
-<<<<<<< HEAD
-	refineValue := func(col *expression.Column, value *types.Datum) (err error) {
-		if col.RetType.EvalType() == types.ETString && value.Kind() == types.KindString {
-=======
+
 	refineValueAndOp := func(col *expression.Column, value *types.Datum, op *string) (err error) {
 		if col.RetType.EvalType() == types.ETString && (value.Kind() == types.KindString || value.Kind() == types.KindBinaryLiteral) {
->>>>>>> 670b5fbcf... ranger: fix the range construction behavior when the column's type is `YEAR` (#23559)
 			value.SetString(value.GetString(), col.RetType.Collate)
 		}
 		if col.GetType().Tp == mysql.TypeYear {
@@ -506,7 +502,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 			hasNull = true
 			continue
 		}
-		if dt.Kind() == types.KindString {
+		if dt.Kind() == types.KindString || dt.Kind() == types.KindBinaryLiteral {
 			dt.SetString(dt.GetString(), colCollate)
 		}
 		if expr.GetArgs()[0].GetType().Tp == mysql.TypeYear {
