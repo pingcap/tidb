@@ -2063,7 +2063,7 @@ func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 	if err := s.checkBeforeNewTxn(ctx); err != nil {
 		return err
 	}
-	txnScope := s.GetSessionVars().CheckAndGetTxnScope()
+	_, txnScope := config.GetTxnScopeFromConfig()
 	txn, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetStartTS(startTS))
 	if err != nil {
 		return err
