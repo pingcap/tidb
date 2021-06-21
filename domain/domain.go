@@ -953,8 +953,6 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 				}
 				continue
 			}
-
-			logutil.BgLogger().Info("domain LoadSysVarCacheLoop--")
 			count = 0
 			logutil.BgLogger().Debug("Rebuilding sysvar cache from etcd watch event.")
 			err := do.sysVarCache.RebuildSysVarCache(ctx)

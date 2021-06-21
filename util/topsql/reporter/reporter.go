@@ -189,7 +189,6 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 	currentReportInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load()
 	reportTicker := time.NewTicker(time.Second * time.Duration(currentReportInterval))
 
-	logutil.BgLogger().Info("RemoteTopSQLReporter collect worker", zap.Int64("report-interval", currentReportInterval))
 	for {
 		select {
 		case data := <-tsr.collectCPUDataChan:
@@ -201,7 +200,6 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 			// Update `reportTicker` if report interval changed.
 			if newInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load(); newInterval != currentReportInterval {
 				currentReportInterval = newInterval
-				logutil.BgLogger().Info("RemoteTopSQLReporter collect worker", zap.Int64("report-interval", currentReportInterval))
 				reportTicker.Reset(time.Second * time.Duration(currentReportInterval))
 			}
 		case <-tsr.ctx.Done():
@@ -359,7 +357,6 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 	defer util.Recover("top-sql", "doReport", nil, false)
 
-	logutil.BgLogger().Warn("[top-sql] RemoteTopSQLReporter doReport", zap.Int("size", len(data.collectedData)))
 	if !data.hasData() {
 		return
 	}
@@ -382,5 +379,4 @@ func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 		logutil.BgLogger().Warn("[top-sql] client failed to send data", zap.Error(err))
 	}
 	cancel()
-	logutil.BgLogger().Warn("[top-sql] RemoteTopSQLReporter doReport finish", zap.Error(err))
 }
