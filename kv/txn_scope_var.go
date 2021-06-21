@@ -27,8 +27,8 @@ type TxnScopeVar struct {
 }
 
 // GetTxnScopeVar gets TxnScopeVar from config
-func GetTxnScopeVar(enableLocalTxn bool) TxnScopeVar {
-	if location := config.GetTxnScopeFromConfig(); enableLocalTxn && location != GlobalTxnScope {
+func GetTxnScopeVar() TxnScopeVar {
+	if location := config.GetTxnScopeFromConfig(); location != GlobalTxnScope {
 		return NewLocalTxnScopeVar(location)
 	}
 	return NewGlobalTxnScopeVar()

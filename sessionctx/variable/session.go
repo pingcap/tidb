@@ -1059,7 +1059,7 @@ func NewSessionVars() *SessionVars {
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
 		EnableLocalTxn:              DefTiDBEnableLocalTxn,
-		TxnScope:                    kv.GetTxnScopeVar(DefTiDBEnableLocalTxn),
+		TxnScope:                    kv.GetTxnScopeVar(),
 		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
 		EnableAsyncCommit:           DefTiDBEnableAsyncCommit,
 		Enable1PC:                   DefTiDBEnable1PC,
