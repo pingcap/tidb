@@ -176,8 +176,12 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 	for idxID, idx := range tbl.Indices {
 		colsLen := len(tbl.Idx2ColumnIDs[idxID])
 		// tbl.Idx2ColumnIDs may only contain the prefix of index columns.
-		if colsLen != len(idx.Info.Columns) {
+		// But it may exceeds the total index since the index would contain the handle column if it's not a unique index.
+		// We append the handle at fillIndexPath.
+		if colsLen < len(idx.Info.Columns) {
 			continue
+		} else if colsLen > len(idx.Info.Columns) {
+			colsLen--
 		}
 		idxCols := make([]int64, colsLen)
 		copy(idxCols, tbl.Idx2ColumnIDs[idxID])
