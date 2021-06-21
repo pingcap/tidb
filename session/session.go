@@ -81,7 +81,9 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	tikvutil "github.com/tikv/client-go/v2/util"
 )
@@ -474,10 +476,6 @@ func (s *session) doCommit(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err = s.removeTempTableFromBuffer(); err != nil {
-		return err
-	}
-
 	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
 	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
 		if val.(bool) && tikv.IsMockCommitErrorEnable() {
@@ -535,41 +533,23 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.SetOption(kv.GuaranteeLinearizability,
 			s.GetSessionVars().TxnCtx.IsExplicit && s.GetSessionVars().GuaranteeLinearizability)
 	}
+	if tables := s.GetSessionVars().TxnCtx.GlobalTemporaryTables; len(tables) > 0 {
+		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
+	}
 
 	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
 }
 
-// removeTempTableFromBuffer filters out the temporary table key-values.
-func (s *session) removeTempTableFromBuffer() error {
-	tables := s.GetSessionVars().TxnCtx.GlobalTemporaryTables
-	if len(tables) == 0 {
-		return nil
+type temporaryTableKVFilter map[int64]tableutil.TempTable
+
+func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) bool {
+	tid := tablecodec.DecodeTableID(key)
+	if _, ok := m[tid]; ok {
+		return true
 	}
-	memBuffer := s.txn.GetMemBuffer()
-	// Reset and new an empty stage buffer.
-	defer func() {
-		s.txn.cleanup()
-	}()
-	for tid := range tables {
-		seekKey := tablecodec.EncodeTablePrefix(tid)
-		endKey := tablecodec.EncodeTablePrefix(tid + 1)
-		iter, err := memBuffer.Iter(seekKey, endKey)
-		if err != nil {
-			return err
-		}
-		for iter.Valid() && iter.Key().HasPrefix(seekKey) {
-			if err = memBuffer.Delete(iter.Key()); err != nil {
-				return err
-			}
-			s.txn.UpdateEntriesCountAndSize()
-			if err = iter.Next(); err != nil {
-				return err
-			}
-		}
-	}
-	// Flush to the root membuffer.
-	s.txn.flushStmtBuf()
-	return nil
+
+	// This is the default filter for all tables.
+	return tablecodec.IsUntouchedIndexKValue(key, value)
 }
 
 // errIsNoisy is used to filter DUPLCATE KEY errors.
