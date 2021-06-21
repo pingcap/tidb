@@ -85,6 +85,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "set tidb_enable_spilled_aggregate=off;")
+	c.Assert(err, IsNil)
 	var input []string
 	var output []struct {
 		SQL  string
@@ -429,6 +431,8 @@ func (s *testPlanSuite) TestAggEliminator(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'")
 	c.Assert(err, IsNil) // disable only full group by
+	_, err = se.Execute(context.Background(), "set tidb_enable_spilled_aggregate=off")
+	c.Assert(err, IsNil) // disable only full group by
 	var input []string
 	var output []struct {
 		SQL  string
@@ -674,6 +678,8 @@ func (s *testPlanSuite) TestSemiJoinToInner(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "set tidb_enable_spilled_aggregate=off;")
+	c.Assert(err, IsNil)
 	var input []string
 	var output []struct {
 		SQL  string
@@ -745,6 +751,8 @@ func (s *testPlanSuite) TestHintScope(c *C) {
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "set tidb_enable_spilled_aggregate=off;")
 	c.Assert(err, IsNil)
 
 	var input []string
@@ -913,6 +921,7 @@ func (s *testPlanSuite) TestAggToCopHint(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ta")
 	tk.MustExec("create table ta(a int, b int, index(a))")
+	tk.MustExec("set tidb_enable_spilled_aggregate=off;")
 
 	var (
 		input  []string

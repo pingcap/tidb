@@ -109,6 +109,7 @@ func (s *testPlanNormalize) TestPreferRangeScan(c *C) {
 func (s *testPlanNormalize) TestNormalizedPlan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_spilled_aggregate=off;")
 	tk.MustExec("set @@tidb_partition_prune_mode='static';")
 	tk.MustExec("drop table if exists t1,t2,t3,t4")
 	tk.MustExec("create table t1 (a int key,b int,c int, index (b));")

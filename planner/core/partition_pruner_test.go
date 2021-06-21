@@ -86,6 +86,7 @@ func (s *testPartitionPruneSuit) TestHashPartitionPruner(c *C) {
 
 func (s *testPartitionPruneSuit) TestListPartitionPruner(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set tidb_enable_spilled_aggregate=off;")
 	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")
 	tk.MustExec("use test_partition")
@@ -154,6 +155,7 @@ func (s *testPartitionPruneSuit) TestListPartitionPruner(c *C) {
 
 func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set tidb_enable_spilled_aggregate=off;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")
@@ -166,6 +168,7 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 
 	// tk1 use to test partition table with index.
 	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("set tidb_enable_spilled_aggregate=off;")
 	tk1.MustExec("drop database if exists test_partition_1;")
 	tk1.MustExec("create database test_partition_1")
 	tk1.MustExec("use test_partition_1")
@@ -177,6 +180,7 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 
 	// tk2 use to compare the result with normal table.
 	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("set tidb_enable_spilled_aggregate=off;")
 	tk2.MustExec("drop database if exists test_partition_2;")
 	tk2.MustExec("create database test_partition_2")
 	tk2.MustExec("use test_partition_2")

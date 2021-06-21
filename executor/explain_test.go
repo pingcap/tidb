@@ -106,6 +106,7 @@ func (s *testSuite1) TestExplainWrite(c *C) {
 
 func (s *testSuite1) TestExplainAnalyzeMemory(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_spilled_aggregate=off;")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (v int, k int, key(k))")
 	tk.MustExec("insert into t values (1, 1), (1, 1), (1, 1), (1, 1), (1, 1)")
@@ -315,10 +316,6 @@ func (s *testSuite1) TestCheckActRowsWithUnistore(c *C) {
 		},
 		{
 			sql:      "select count(*) from t_unistore_act_rows group by a",
-			expected: []string{"2", "2", "2", "4"},
-		},
-		{
-			sql:      "select count(*) from t_unistore_act_rows group by b",
 			expected: []string{"2", "2", "2", "4"},
 		},
 		{

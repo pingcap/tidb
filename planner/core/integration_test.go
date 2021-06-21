@@ -416,6 +416,7 @@ func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
 func (s *testIntegrationSerialSuite) TestVerboseExplain(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_spilled_aggregate=off;")
 	tk.MustExec("drop table if exists t1, t2, t3")
 	tk.MustExec("create table t1(a int, b int)")
 	tk.MustExec("create table t2(a int, b int)")
@@ -822,6 +823,7 @@ func (s *testIntegrationSerialSuite) TestMPPWithHashExchangeUnderNewCollation(c 
 	tk.MustExec("create table table_1(id int not null, value char(10))")
 	tk.MustExec("insert into table_1 values(1,'1'),(2,'2')")
 	tk.MustExec("analyze table table_1")
+	tk.MustExec("set tidb_enable_spilled_aggregate=off;")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Se)
@@ -1333,6 +1335,7 @@ func (s *testIntegrationSuite) TestMaxMinEliminate(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key)")
+	tk.MustExec("set tidb_enable_spilled_aggregate=off;")
 	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table cluster_index_t(a int, b int, c int, primary key (a, b));")
 
@@ -1570,6 +1573,7 @@ func (s *testIntegrationSuite) TestApproxCountDistinctInPartitionTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_spilled_aggregate=off;")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int(11), b int) partition by range (a) (partition p0 values less than (3), partition p1 values less than maxvalue);")
 	tk.MustExec("insert into t values(1, 1), (2, 1), (3, 1), (4, 2), (4, 2)")
@@ -1590,6 +1594,7 @@ func (s *testIntegrationSuite) TestApproxCountDistinctInPartitionTable(c *C) {
 func (s *testIntegrationSuite) TestApproxPercentile(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
+	tk.MustExec("set tidb_enable_spilled_aggregate=off;")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")
@@ -1626,6 +1631,7 @@ func (s *testIntegrationSuite) TestIssue17813(c *C) {
 
 func (s *testIntegrationSuite) TestHintWithRequiredProperty(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set tidb_enable_spilled_aggregate=off;")
 	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
 	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
@@ -3314,6 +3320,7 @@ func (s *testIntegrationSerialSuite) TestPushDownAggForMPP(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int, value decimal(6,3))")
 	tk.MustExec("analyze table t")
+	tk.MustExec("set tidb_enable_spilled_aggregate=off;")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Se)
@@ -3436,6 +3443,7 @@ func (s *testIntegrationSerialSuite) TestMppAggTopNWithJoin(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int, value decimal(6,3))")
 	tk.MustExec("analyze table t")
+	tk.MustExec("set tidb_enable_spilled_aggregate=off;")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Se)
@@ -3845,6 +3853,7 @@ func (s *testIntegrationSuite) TestSequenceAsDataSource(c *C) {
 	tk.MustExec("drop sequence if exists s1, s2")
 	tk.MustExec("create sequence s1")
 	tk.MustExec("create sequence s2")
+	tk.MustExec("set tidb_enable_spilled_aggregate=off;")
 
 	var input []string
 	var output []struct {
@@ -3866,7 +3875,7 @@ func (s *testIntegrationSerialSuite) TestMergeContinuousSelections(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ts")
 	tk.MustExec("create table ts (col_char_64 char(64), col_varchar_64_not_null varchar(64) not null, col_varchar_key varchar(1), id int primary key, col_varchar_64 varchar(64),col_char_64_not_null char(64) not null);")
-
+	tk.MustExec("set tidb_enable_spilled_aggregate=off;")
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Se)
 	is := dom.InfoSchema()

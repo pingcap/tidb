@@ -133,6 +133,7 @@ func (s *testEnforceMPPSuite) TestEnforceMPPWarning1(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int as (a+1), c time)")
 	tk.MustExec("create index idx on t(a)")
+	tk.MustExec("set tidb_enable_spilled_aggregate=off;")
 
 	var input []string
 	var output []struct {
@@ -249,6 +250,7 @@ func (s *testEnforceMPPSuite) TestEnforceMPPWarning3(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (a int, b char(20))")
+	tk.MustExec("set tidb_enable_spilled_aggregate=off;")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Se)

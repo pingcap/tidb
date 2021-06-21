@@ -214,6 +214,7 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	}()
 	statistics.RatioOfPseudoEstimate.Store(10.0)
 	testKit.MustExec("use test")
+	testKit.MustExec("set tidb_enable_spilled_aggregate=off;")
 	testKit.MustExec("create table t (a int)")
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
 	testKit.MustExec("insert into t select * from t")
@@ -267,6 +268,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 	testKit.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	testKit.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
 	testKit.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
+	testKit.MustExec("set tidb_enable_spilled_aggregate=off;")
 
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1")
@@ -322,6 +324,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 	testKit.MustExec("create table t (c1 int)")
 	testKit.MustExec("create table t1 (c1 int)")
 	testKit.MustExec("analyze table t, t1")
+	testKit.MustExec("set tidb_enable_spilled_aggregate=off;")
 	var input, output []string
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
