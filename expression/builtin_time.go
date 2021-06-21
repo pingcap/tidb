@@ -326,7 +326,7 @@ func (c *dateLiteralFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	}
 	str := dt.GetString()
 	if !datePattern.MatchString(str) {
-		return nil, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, str)
+		return nil, types.ErrWrongValue.GenWithStackByArgs(strings.ToUpper(types.DateStr), str)
 	}
 	tm, err := types.ParseDate(ctx.GetSessionVars().StmtCtx, str)
 	if err != nil {
