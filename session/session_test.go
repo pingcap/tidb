@@ -3371,6 +3371,17 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	result = tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(kv.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+	// Set @@txn_scope back to local.
+	tk.MustExec("set @@session.txn_scope = 'local';")
+	result = tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows(kv.LocalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, "bj")
+	// Change @@tidb_enable_local_txn from on to off.
+	tk.MustExec("set @@tidb_enable_local_txn = off")
+	// Check whether the value of @@txn_scope is not the same as before.
+	result = tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
 
 	// Try to set @@txn_scope to an invalid value.
 	err := tk.ExecToErr("set @@txn_scope='foo'")
@@ -3406,8 +3417,20 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	result = tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(kv.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+	// Change @@tidb_enable_local_txn from off to on.
+	tk.MustExec("set @@tidb_enable_local_txn = on")
+	// Check whether the value of @@txn_scope is the same as before.
+	result = tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+	// Set @@txn_scope to local.
+	tk.MustExec("set @@session.txn_scope = 'local';")
+	result = tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows(kv.LocalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, "bj")
 
 	// Try to set @@txn_scope to an invalid value.
+	tk.MustExec("set @@tidb_enable_local_txn = off")
 	err = tk.ExecToErr("set @@txn_scope='foo'")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, `.*txn_scope value should be global or local.*`)
