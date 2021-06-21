@@ -533,13 +533,13 @@ func (s *session) doCommit(ctx context.Context) error {
 		// An auto-commit transaction fetches its startTS from the TSO so its commitTS > its startTS > the commitTS
 		// of any previously committed transactions.
 		s.txn.SetOption(kv.GuaranteeLinearizability,
-			s.GetSessionVars().TxnCtx.IsExplicit && s.GetSessionVars().GuaranteeLinearizability)
+			sessVars.TxnCtx.IsExplicit && sessVars.GuaranteeLinearizability)
 	}
-	if tables := s.GetSessionVars().TxnCtx.GlobalTemporaryTables; len(tables) > 0 {
+	if tables := sessVars.TxnCtx.GlobalTemporaryTables; len(tables) > 0 {
 		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
 	}
 
-	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
+	return s.txn.Commit(tikvutil.SetSessionID(ctx, sessVars.ConnectionID))
 }
 
 type temporaryTableKVFilter map[int64]tableutil.TempTable
