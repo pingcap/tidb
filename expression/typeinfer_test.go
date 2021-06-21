@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/domain"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -139,10 +138,10 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 		err = se.NewTxn(context.Background())
 		c.Assert(err, IsNil)
 
-		is := domain.GetDomain(sctx).InfoSchema()
-		err = plannercore.Preprocess(sctx, stmt, is)
+		ret := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(sctx, stmt, plannercore.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil, comment)
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmt, is)
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmt, ret.InfoSchema)
 		c.Assert(err, IsNil, comment)
 		tp := p.Schema().Columns[0].RetType
 
@@ -1698,9 +1697,10 @@ func (s *testInferTypeSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 		{"utc_time(6) ", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 15, 6},
 		{"utc_time(7) ", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 15, 6},
 
-		{"utc_date()  ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 10, 0},
-		{"curdate()", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 10, 0},
-		{"sysdate(4)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
+		{"curdate()      ", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 10, 0},
+		{"current_date() ", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 10, 0},
+		{"utc_date()     ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 10, 0},
+		{"sysdate(4)     ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
 
 		{"date(c_int_d      )", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 		{"date(c_bigint_d   )", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, 10, 0},

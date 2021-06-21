@@ -15,7 +15,7 @@ package txn
 
 import (
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 type tikvScanner struct {

@@ -33,8 +33,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/parser/terror"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/metadata"
 )
@@ -125,6 +125,8 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		failpoint.Inject("rpcPrewriteResult", func(val failpoint.Value) {
 			if val != nil {
 				switch val.(string) {
+				case "timeout":
+					failpoint.Return(nil, errors.New("timeout"))
 				case "notLeader":
 					failpoint.Return(&tikvrpc.Response{
 						Resp: &kvrpcpb.PrewriteResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
