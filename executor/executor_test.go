@@ -8655,3 +8655,15 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 		tk.MustGetErrMsg(query.sql, "can not read temporary table when 'tidb_snapshot' is set")
 	}
 }
+
+func (s *testSuite) TestIssue25506(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tbl_3, tbl_23")
+	tk.MustExec("create table tbl_3 (col_15 bit(20))")
+	tk.MustExec("insert into tbl_3 values (0xFFFF)")
+	tk.MustExec("insert into tbl_3 values (0xFF)")
+	tk.MustExec("create table tbl_23 (col_15 bit(15))")
+	tk.MustExec("insert into tbl_23 values (0xF)")
+	tk.MustQuery("(select col_15 from tbl_23) union all (select col_15 from tbl_3 for update)").Check(testkit.Rows("\x00\x00\x0F", "\x00\xFF\xFF", "\x00\x00\xFF"))
+}
