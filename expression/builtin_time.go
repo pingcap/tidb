@@ -326,7 +326,7 @@ func (c *dateLiteralFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	}
 	str := dt.GetString()
 	if !datePattern.MatchString(str) {
-		return nil, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, str)
+		return nil, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, str)
 	}
 	tm, err := types.ParseDate(ctx.GetSessionVars().StmtCtx, str)
 	if err != nil {
@@ -357,10 +357,12 @@ func (b *builtinDateLiteralSig) Clone() builtinFunc {
 func (b *builtinDateLiteralSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	mode := b.ctx.GetSessionVars().SQLMode
 	if mode.HasNoZeroDateMode() && b.literal.IsZero() {
-		return b.literal, true, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, b.literal.String())
+		return b.literal, true, types.ErrWrongValue.GenWithStackByArgs(
+			strings.ToUpper(types.DateStr), b.literal.String())
 	}
 	if mode.HasNoZeroInDateMode() && (b.literal.InvalidZero() && !b.literal.IsZero()) {
-		return b.literal, true, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, b.literal.String())
+		return b.literal, true, types.ErrWrongValue.GenWithStackByArgs(
+			strings.ToUpper(types.DateStr), b.literal.String())
 	}
 	return b.literal, false, nil
 }
@@ -2309,7 +2311,7 @@ func (c *timeLiteralFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	}
 	str := dt.GetString()
 	if !isDuration(str) {
-		return nil, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, str)
+		return nil, types.ErrWrongValue.GenWithStackByArgs(strings.ToUpper(types.TimeStr), str)
 	}
 	duration, err := types.ParseDuration(ctx.GetSessionVars().StmtCtx, str, types.GetFsp(str))
 	if err != nil {
