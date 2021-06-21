@@ -21,7 +21,7 @@ GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/domain.ldflagServ
 GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/domain.ldflagServerIDTimeToKeepAlive=1"
 GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/domain.ldflagServerIDTimeToCheckPDConnectionRestored=1"
 GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/domain.ldflagLostConnectionToPDTimeout=5"
-GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/store/tikv.ldflagGetEtcdAddrsFromConfig=1"
+GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/store.ldflagGetEtcdAddrsFromConfig=1"
 
 .PHONY: server buildsucc
 
@@ -29,6 +29,10 @@ default: server buildsucc
 
 buildsucc:
 	@echo "Build TiDB Server (Global Kill Test) successfully! Setup a cluster with PD & TiKV, then Run ./run-tests.sh --pd=<pd client path>."
+
+clean:
+	rm *.log*
+	rm tikv-*/ pd-*/ -rf
 
 server:
 ifeq ($(TARGET), "")

@@ -61,7 +61,10 @@ func TestCopySelectedJoinRows(t *testing.T) {
 	}
 	// batch copy
 	dstChk2 := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
-	CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 3, 3, 3, selected, dstChk2)
+	_, err := CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 3, 3, 3, selected, dstChk2)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if !reflect.DeepEqual(dstChk, dstChk2) {
 		t.Fatal()
@@ -88,7 +91,10 @@ func TestCopySelectedJoinRowsWithoutSameOuters(t *testing.T) {
 	}
 	// batch copy
 	dstChk2 := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
-	CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 6, 0, 0, selected, dstChk2)
+	_, err := CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 6, 0, 0, selected, dstChk2)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if !reflect.DeepEqual(dstChk, dstChk2) {
 		t.Fatal()
@@ -115,7 +121,10 @@ func TestCopySelectedJoinRowsDirect(t *testing.T) {
 	}
 	// batch copy
 	dstChk2 := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
-	CopySelectedJoinRowsDirect(srcChk, selected, dstChk2)
+	_, err := CopySelectedJoinRowsDirect(srcChk, selected, dstChk2)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if !reflect.DeepEqual(dstChk, dstChk2) {
 		t.Fatal()
@@ -195,7 +204,10 @@ func BenchmarkCopySelectedJoinRows(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		dstChk.Reset()
-		CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 3, 3, 3, selected, dstChk)
+		_, err := CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 3, 3, 3, selected, dstChk)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 func BenchmarkCopySelectedJoinRowsDirect(b *testing.B) {
@@ -204,7 +216,10 @@ func BenchmarkCopySelectedJoinRowsDirect(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		dstChk.Reset()
-		CopySelectedJoinRowsDirect(srcChk, selected, dstChk)
+		_, err := CopySelectedJoinRowsDirect(srcChk, selected, dstChk)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 func BenchmarkAppendSelectedRow(b *testing.B) {

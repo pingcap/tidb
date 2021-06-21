@@ -19,8 +19,8 @@ import (
 	"bytes"
 	"flag"
 	"go/format"
-	"io/ioutil"
 	"log"
+	"os"
 	"path/filepath"
 	"text/template"
 
@@ -168,7 +168,7 @@ func generateDotGo(fileName string, types []TypeContext) (err error) {
 		log.Println("[Warn]", fileName+": gofmt failed", err)
 		data = w.Bytes() // write original data for debugging
 	}
-	return ioutil.WriteFile(fileName, data, 0644)
+	return os.WriteFile(fileName, data, 0644)
 }
 
 func generateTestDotGo(fileName string, types []TypeContext) error {
@@ -186,7 +186,7 @@ func generateTestDotGo(fileName string, types []TypeContext) error {
 		log.Println("[Warn]", fileName+": gofmt failed", err)
 		data = w.Bytes() // write original data for debugging
 	}
-	return ioutil.WriteFile(fileName, data, 0644)
+	return os.WriteFile(fileName, data, 0644)
 }
 
 // generateOneFile generate one xxx.go file and the associated xxx_test.go file.

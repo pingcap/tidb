@@ -28,12 +28,12 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/tikv/client-go/v2/mockstore/mocktikv"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/peer"
@@ -56,10 +56,10 @@ func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionMana
 	}
 	// For redirection the cop task.
 	mocktikv.GRPCClientFactory = func() mocktikv.Client {
-		return tikv.NewTestRPCClient(config.Security)
+		return tikv.NewTestRPCClient(config.Security.ClusterSecurity())
 	}
 	unistore.GRPCClientFactory = func() unistore.Client {
-		return tikv.NewTestRPCClient(config.Security)
+		return tikv.NewTestRPCClient(config.Security.ClusterSecurity())
 	}
 	diagnosticspb.RegisterDiagnosticsServer(s, rpcSrv)
 	tikvpb.RegisterTikvServer(s, rpcSrv)

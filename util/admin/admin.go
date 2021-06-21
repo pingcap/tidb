@@ -16,12 +16,12 @@ package admin
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"math"
 	"sort"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/errno"
@@ -290,13 +290,13 @@ type RecordData struct {
 	Values []types.Datum
 }
 
-func getCount(ctx sessionctx.Context, sql string) (int64, error) {
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithSnapshot(sql)
+func getCount(exec sqlexec.RestrictedSQLExecutor, stmt ast.StmtNode, snapshot uint64) (int64, error) {
+	rows, _, err := exec.ExecRestrictedStmt(context.Background(), stmt, sqlexec.ExecOptionWithSnapshot(snapshot))
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	if len(rows) != 1 {
-		return 0, errors.Errorf("can not get count, sql %s result rows %d", sql, len(rows))
+		return 0, errors.Errorf("can not get count, rows count = %d", len(rows))
 	}
 	return rows[0].GetInt64(0), nil
 }
@@ -317,14 +317,34 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 	// Here we need check all indexes, includes invisible index
 	ctx.GetSessionVars().OptimizerUseInvisibleIndexes = true
 	// Add `` for some names like `table name`.
-	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX()", dbName, tableName)
-	tblCnt, err := getCount(ctx, sql)
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.Background(), "SELECT COUNT(*) FROM %n.%n USE INDEX()", dbName, tableName)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+
+	var snapshot uint64
+	txn, err := ctx.Txn(false)
+	if err != nil {
+		return 0, 0, err
+	}
+	if txn.Valid() {
+		snapshot = txn.StartTS()
+	}
+	if ctx.GetSessionVars().SnapshotTS != 0 {
+		snapshot = ctx.GetSessionVars().SnapshotTS
+	}
+
+	tblCnt, err := getCount(exec, stmt, snapshot)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 	for i, idx := range indices {
-		sql = fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX(`%s`)", dbName, tableName, idx)
-		idxCnt, err := getCount(ctx, sql)
+		stmt, err := exec.ParseWithParams(context.Background(), "SELECT COUNT(*) FROM %n.%n USE INDEX(%n)", dbName, tableName, idx)
+		if err != nil {
+			return 0, i, errors.Trace(err)
+		}
+		idxCnt, err := getCount(exec, stmt, snapshot)
 		if err != nil {
 			return 0, i, errors.Trace(err)
 		}
@@ -353,7 +373,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		cols[i] = t.Cols()[col.Offset]
 	}
 
-	startKey := t.RecordKey(kv.IntHandle(math.MinInt64))
+	startKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), kv.IntHandle(math.MinInt64))
 	filterFunc := func(h1 kv.Handle, vals1 []types.Datum, cols []*table.Column) (bool, error) {
 		for i, val := range vals1 {
 			col := cols[i]
@@ -369,18 +389,18 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 				vals1[i] = colDefVal
 			}
 		}
-		isExist, h2, err := idx.Exist(sc, txn.GetUnionStore(), vals1, h1)
+		isExist, h2, err := idx.Exist(sc, txn, vals1, h1)
 		if kv.ErrKeyExists.Equal(err) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
 			record2 := &RecordData{Handle: h2, Values: vals1}
-			return false, ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", record2, record1)
+			return false, ErrDataInConsistent.GenWithStackByArgs(record2, record1)
 		}
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		if !isExist {
 			record := &RecordData{Handle: h1, Values: vals1}
-			return false, ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", nil, record)
+			return false, ErrDataInConsistent.GenWithStackByArgs(nil, record)
 		}
 
 		return true, nil
@@ -449,7 +469,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 			return errors.Trace(err)
 		}
 
-		rk := t.RecordKey(handle)
+		rk := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
 			return errors.Trace(err)

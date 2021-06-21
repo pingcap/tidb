@@ -651,3 +651,75 @@ func (s *testChecksumSuite) testTiCase3651and3652(c *check.C, encrypt bool) {
 	assertReadAt(0, make([]byte, 10200), nil, 10200, strings.Repeat("0123456789", 1020), f1)
 	assertReadAt(0, make([]byte, 10200), nil, 10200, strings.Repeat("0123456789", 1020), f2)
 }
+
+var checkFlushedData = func(c *check.C, f io.ReaderAt, off int64, readBufLen int, assertN int, assertErr interface{}, assertRes []byte) {
+	readBuf := make([]byte, readBufLen)
+	r := NewReader(f)
+	n, err := r.ReadAt(readBuf, off)
+	c.Assert(err, check.Equals, assertErr)
+	c.Assert(n, check.Equals, assertN)
+	c.Assert(bytes.Compare(readBuf, assertRes), check.Equals, 0)
+}
+
+func (s *testChecksumSuite) TestChecksumWriter(c *check.C) {
+	path := "checksum_TestChecksumWriter"
+	f, err := os.Create(path)
+	c.Assert(err, check.IsNil)
+	defer func() {
+		err = f.Close()
+		c.Assert(err, check.IsNil)
+		err = os.Remove(path)
+		c.Assert(err, check.IsNil)
+	}()
+
+	buf := bytes.NewBuffer(nil)
+	testData := "0123456789"
+	for i := 0; i < 100; i++ {
+		buf.WriteString(testData)
+	}
+
+	// Write 1000 bytes and flush.
+	w := NewWriter(f)
+	n, err := w.Write(buf.Bytes())
+	c.Assert(err, check.IsNil)
+	c.Assert(n, check.Equals, 1000)
+
+	err = w.Flush()
+	c.Assert(err, check.IsNil)
+	checkFlushedData(c, f, 0, 1000, 1000, nil, buf.Bytes())
+
+	// All data flushed, so no data in cache.
+	cacheOff := w.GetCacheDataOffset()
+	c.Assert(cacheOff, check.Equals, int64(1000))
+}
+
+func (s *testChecksumSuite) TestChecksumWriterAutoFlush(c *check.C) {
+	path := "checksum_TestChecksumWriterAutoFlush"
+	f, err := os.Create(path)
+	c.Assert(err, check.IsNil)
+	defer func() {
+		err = f.Close()
+		c.Assert(err, check.IsNil)
+		err = os.Remove(path)
+		c.Assert(err, check.IsNil)
+	}()
+
+	w := NewWriter(f)
+
+	buf := bytes.NewBuffer(nil)
+	testData := "0123456789"
+	for i := 0; i < 102; i++ {
+		buf.WriteString(testData)
+	}
+	n, err := w.Write(buf.Bytes())
+	c.Assert(err, check.IsNil)
+	c.Assert(n, check.Equals, len(buf.Bytes()))
+
+	// This write will trigger flush.
+	n, err = w.Write([]byte("0"))
+	c.Assert(err, check.IsNil)
+	c.Assert(n, check.Equals, 1)
+	checkFlushedData(c, f, 0, 1020, 1020, nil, buf.Bytes())
+	cacheOff := w.GetCacheDataOffset()
+	c.Assert(cacheOff, check.Equals, int64(len(buf.Bytes())))
+}

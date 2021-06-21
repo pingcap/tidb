@@ -565,7 +565,8 @@ func (s *testCodecSuite) TestTime(c *C) {
 		c.Assert(err, IsNil)
 		var t types.Time
 		t.SetType(mysql.TypeDatetime)
-		t.FromPackedUint(v[0].GetUint64())
+		err = t.FromPackedUint(v[0].GetUint64())
+		c.Assert(err, IsNil)
 		c.Assert(types.NewDatum(t), DeepEquals, m)
 	}
 
@@ -925,6 +926,15 @@ func (s *testCodecSuite) TestCut(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(rem, HasLen, 0)
 	c.Assert(n, Equals, int64(42))
+}
+
+func (s *testCodecSuite) TestCutOneError(c *C) {
+	var b []byte
+	_, _, err := CutOne(b)
+	c.Assert(err, ErrorMatches, "invalid encoded key")
+	b = []byte{4 /* codec.uintFlag */, 0, 0, 0}
+	_, _, err = CutOne(b)
+	c.Assert(err, ErrorMatches, "invalid encoded key.*")
 }
 
 func (s *testCodecSuite) TestSetRawValues(c *C) {
