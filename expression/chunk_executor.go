@@ -263,8 +263,7 @@ func executeToInt(ctx sessionctx.Context, expr Expression, fieldType *types.Fiel
 		return nil
 	}
 	if fieldType.Tp == mysql.TypeBit {
-		ft := expr.GetType()
-		byteSize := (ft.Flen + 7) >> 3
+		byteSize := (fieldType.Flen + 7) >> 3
 		output.AppendBytes(colID, types.NewBinaryLiteralFromUint(uint64(res), byteSize))
 		return nil
 	}
