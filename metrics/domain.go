@@ -45,7 +45,7 @@ var (
 			Subsystem: "domain",
 			Name:      "infocache_counters",
 			Help:      "Counters of infoCache: get/hit.",
-		}, []string{LblType})
+		}, []string{LblAction, LblType})
 	// InfoCacheCounterGet is the total number of getting entry.
 	InfoCacheCounterGet = "get"
 	// InfoCacheCounterHit is the cache hit numbers for get.

@@ -544,7 +544,7 @@ func (s *testSuite6) TestAlterTableModifyColumn(c *C) {
 	c.Assert(err, NotNil)
 
 	_, err = tk.Exec("alter table mc modify column c2 varchar(8)")
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 	tk.MustExec("alter table mc modify column c2 varchar(11)")
 	tk.MustExec("alter table mc modify column c2 text(13)")
 	tk.MustExec("alter table mc modify column c2 text")
@@ -1525,15 +1525,4 @@ func (s *testRecoverTable) TestRenameMultiTables(c *C) {
 	tk.MustExec("drop database rename1")
 	tk.MustExec("drop database rename2")
 	tk.MustExec("drop database rename3")
-}
-
-// See https://github.com/pingcap/tidb/issues/24582
-func (s *testSuite6) TestDuplicatedEntryErr(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1(a int, b varchar(20), primary key(a,b(3)) clustered);")
-	tk.MustExec("insert into t1 values(1,'aaaaa');")
-	_, err := tk.Exec("insert into t1 values(1,'aaaaa');")
-	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-aaa' for key 'PRIMARY'")
 }

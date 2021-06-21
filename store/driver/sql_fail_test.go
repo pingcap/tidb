@@ -27,9 +27,10 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/tikv/client-go/v2/mockstore"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 var _ = Suite(&testSQLSuite{})
@@ -54,7 +55,7 @@ func (s *testSQLSuiteBase) SetUpSuite(c *C) {
 	var err error
 	s.store = NewTestStore(c)
 	// actual this is better done in `OneByOneSuite.SetUpSuite`, but this would cause circle dependency
-	if *WithTiKV {
+	if *mockstore.WithTiKV {
 		session.ResetStoreForWithTiKVTest(s.store)
 	}
 
@@ -75,11 +76,11 @@ func (s *testSQLSerialSuite) TestFailBusyServerCop(c *C) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockstore/mocktikv/rpcServerBusy", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/rpcServerBusy", `return(true)`), IsNil)
 	go func() {
 		defer wg.Done()
 		time.Sleep(time.Millisecond * 100)
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockstore/mocktikv/rpcServerBusy"), IsNil)
+		c.Assert(failpoint.Disable("tikvclient/rpcServerBusy"), IsNil)
 	}()
 
 	go func() {
