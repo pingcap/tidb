@@ -183,7 +183,7 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 				if r.HighExclude {
 					posHigh--
 				}
-				rangeScalar := float64(posHigh) - float64(posLow)
+				rangeScalar := float64(posHigh) - float64(posLow) // use float64 to avoid integer overflow
 
 				// if range is less than the number of partitions, there will be unused partitions we can prune out.
 				if rangeScalar < float64(numPartitions) && !highIsNull && !lowIsNull {
