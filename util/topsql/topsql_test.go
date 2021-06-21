@@ -116,6 +116,10 @@ func (s *testSuite) TestIsEnabled(c *C) {
 	c.Assert(tracecpu.GlobalSQLCPUProfiler.IsEnabled(), IsTrue)
 }
 
+func mockPlanBinaryDecoderFunc(plan string) (string, error) {
+	return plan, nil
+}
+
 func (s *testSuite) TestTopSQLReporter(c *C) {
 	server, err := mockServer.StartMockAgentServer()
 	c.Assert(err, IsNil)
@@ -123,10 +127,8 @@ func (s *testSuite) TestTopSQLReporter(c *C) {
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
 	variable.TopSQLVariable.AgentAddress.Store(server.Address())
 
-	client := reporter.NewGRPCReportClient()
-	report := reporter.NewRemoteTopSQLReporter(client, func(s string) (string, error) {
-		return s, nil
-	})
+	client := reporter.NewGRPCReportClient(mockPlanBinaryDecoderFunc)
+	report := reporter.NewRemoteTopSQLReporter(client)
 	defer report.Close()
 
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{report})
@@ -161,18 +163,14 @@ func (s *testSuite) TestTopSQLReporter(c *C) {
 		}(req.sql, req.plan)
 	}
 
-	server.WaitServerCollect(6, time.Second*5)
-
-	records := server.GetRecords()
-	sqlMetas := server.GetSQLMetas()
-	planMetas := server.GetPlanMetas()
-
+	server.WaitCollectCnt(1, time.Second*5)
+	records := server.GetLatestRecords()
 	checkSQLPlanMap := map[string]struct{}{}
 	for _, req := range records {
 		c.Assert(len(req.CpuTimeMsList) > 0, IsTrue)
 		c.Assert(req.CpuTimeMsList[0] > 0, IsTrue)
 		c.Assert(req.TimestampList[0] > 0, IsTrue)
-		normalizedSQL, exist := sqlMetas[string(req.SqlDigest)]
+		normalizedSQL, exist := server.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		expectedNormalizedSQL, exist := sqlMap[string(req.SqlDigest)]
 		c.Assert(exist, IsTrue)
@@ -183,12 +181,45 @@ func (s *testSuite) TestTopSQLReporter(c *C) {
 			c.Assert(len(req.PlanDigest), Equals, 0)
 			continue
 		}
-		normalizedPlan, exist := planMetas[string(req.PlanDigest)]
+		normalizedPlan, exist := server.GetPlanMetaByDigestBlocking(req.PlanDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedPlan, Equals, expectedNormalizedPlan)
 		checkSQLPlanMap[expectedNormalizedSQL] = struct{}{}
 	}
 	c.Assert(len(checkSQLPlanMap) == 2, IsTrue)
+}
+
+func (s *testSuite) TestMaxSQLAndPlanTest(c *C) {
+	collector := mock.NewTopSQLCollector()
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{collector})
+
+	ctx := context.Background()
+
+	// Test for normal sql and plan
+	sql := "select * from t"
+	sqlDigest := mock.GenSQLDigest(sql)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil)
+	plan := "TableReader table:t"
+	planDigest := genDigest(plan)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest)
+
+	cSQL := collector.GetSQL(sqlDigest.Bytes())
+	c.Assert(cSQL, Equals, sql)
+	cPlan := collector.GetPlan(planDigest.Bytes())
+	c.Assert(cPlan, Equals, plan)
+
+	// Test for huge sql and plan
+	sql = genStr(topsql.MaxSQLTextSize + 10)
+	sqlDigest = mock.GenSQLDigest(sql)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil)
+	plan = genStr(topsql.MaxPlanTextSize + 10)
+	planDigest = genDigest(plan)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest)
+
+	cSQL = collector.GetSQL(sqlDigest.Bytes())
+	c.Assert(cSQL, Equals, sql[:topsql.MaxSQLTextSize])
+	cPlan = collector.GetPlan(planDigest.Bytes())
+	c.Assert(cPlan, Equals, "")
 }
 
 func (s *testSuite) setTopSQLEnable(enabled bool) {
@@ -205,13 +236,6 @@ func (s *testSuite) mockExecuteSQL(sql, plan string) {
 	s.mockExecute(time.Millisecond * 300)
 }
 
-func genDigest(str string) *parser.Digest {
-	if str == "" {
-		return parser.NewDigest(nil)
-	}
-	return parser.DigestNormalized(str)
-}
-
 func (s *testSuite) mockExecute(d time.Duration) {
 	start := time.Now()
 	for {
@@ -221,4 +245,19 @@ func (s *testSuite) mockExecute(d time.Duration) {
 			return
 		}
 	}
+}
+
+func genDigest(str string) *parser.Digest {
+	if str == "" {
+		return parser.NewDigest(nil)
+	}
+	return parser.DigestNormalized(str)
+}
+
+func genStr(n int) string {
+	buf := make([]byte, n)
+	for i := range buf {
+		buf[i] = 'a' + byte(i%25)
+	}
+	return string(buf)
 }
