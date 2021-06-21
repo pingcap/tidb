@@ -16,7 +16,7 @@ package server
 import (
 	"database/sql"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"time"
 
@@ -62,7 +62,10 @@ func (ds *testDumpStatsSuite) startServer(c *C) {
 	ds.port = getPortFromTCPAddr(server.listener.Addr())
 	ds.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ds.server = server
-	go server.Run()
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
 	ds.waitUntilServerOnline()
 
 	do, err := session.GetDomain(ds.store)
@@ -103,9 +106,10 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 		c.Assert(os.Remove(path), IsNil)
 	}()
 
-	js, err := ioutil.ReadAll(resp.Body)
+	js, err := io.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
-	fp.Write(js)
+	_, err = fp.Write(js)
+	c.Assert(err, IsNil)
 	ds.checkData(c, path)
 	ds.checkCorrelation(c)
 
@@ -119,7 +123,7 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	resp1, err := ds.fetchStatus("/stats/dump/tidb/test")
 	c.Assert(err, IsNil)
 	defer resp1.Body.Close()
-	js, err = ioutil.ReadAll(resp1.Body)
+	js, err = io.ReadAll(resp1.Body)
 	c.Assert(err, IsNil)
 	c.Assert(string(js), Equals, "null")
 
@@ -135,23 +139,28 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	resp1, err = ds.fetchStatus("/stats/dump/tidb/test/" + snapshot)
 	c.Assert(err, IsNil)
 
-	js, err = ioutil.ReadAll(resp1.Body)
+	js, err = io.ReadAll(resp1.Body)
 	c.Assert(err, IsNil)
-	fp1.Write(js)
+	_, err = fp1.Write(js)
+	c.Assert(err, IsNil)
 	ds.checkData(c, path1)
 }
 
 func (ds *testDumpStatsSuite) prepareData(c *C) {
 	db, err := sql.Open("mysql", ds.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
-	defer db.Close()
+	defer func() {
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
 	dbt := &DBTest{c, db}
 
 	h := ds.sh.do.StatsHandle()
 	dbt.mustExec("create database tidb")
 	dbt.mustExec("use tidb")
 	dbt.mustExec("create table test (a int, b varchar(20))")
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	dbt.mustExec("create index c on test (a, b)")
 	dbt.mustExec("insert test values (1, 's')")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
@@ -165,7 +174,10 @@ func (ds *testDumpStatsSuite) prepareData(c *C) {
 func (ds *testDumpStatsSuite) prepare4DumpHistoryStats(c *C) {
 	db, err := sql.Open("mysql", ds.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
-	defer db.Close()
+	defer func() {
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	dbt := &DBTest{c, db}
 
@@ -185,13 +197,17 @@ func (ds *testDumpStatsSuite) checkCorrelation(c *C) {
 	db, err := sql.Open("mysql", ds.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	dbt := &DBTest{c, db}
-	defer db.Close()
+	defer func() {
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	dbt.mustExec("use tidb")
 	rows := dbt.mustQuery("SELECT tidb_table_id FROM information_schema.tables WHERE table_name = 'test' AND table_schema = 'tidb'")
 	var tableID int64
 	if rows.Next() {
-		rows.Scan(&tableID)
+		err = rows.Scan(&tableID)
+		c.Assert(err, IsNil)
 		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
 	} else {
 		dbt.Error("no data")
@@ -200,7 +216,8 @@ func (ds *testDumpStatsSuite) checkCorrelation(c *C) {
 	rows = dbt.mustQuery("select correlation from mysql.stats_histograms where table_id = ? and hist_id = 1 and is_index = 0", tableID)
 	if rows.Next() {
 		var corr float64
-		rows.Scan(&corr)
+		err = rows.Scan(&corr)
+		c.Assert(err, IsNil)
 		dbt.Check(corr, Equals, float64(1))
 		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
 	} else {
@@ -212,11 +229,14 @@ func (ds *testDumpStatsSuite) checkCorrelation(c *C) {
 func (ds *testDumpStatsSuite) checkData(c *C, path string) {
 	db, err := sql.Open("mysql", ds.getDSN(func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Params = map[string]string{"sql_mode": "''"}
+		config.Params["sql_mode"] = "''"
 	}))
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	dbt := &DBTest{c, db}
-	defer db.Close()
+	defer func() {
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	dbt.mustExec("use tidb")
 	dbt.mustExec("drop stats test")
@@ -234,16 +254,4 @@ func (ds *testDumpStatsSuite) checkData(c *C, path string) {
 	dbt.Check(tableName, Equals, "test")
 	dbt.Check(modifyCount, Equals, int64(3))
 	dbt.Check(count, Equals, int64(4))
-}
-
-func (ds *testDumpStatsSuite) clearData(c *C, path string) {
-	db, err := sql.Open("mysql", ds.getDSN())
-	c.Assert(err, IsNil, Commentf("Error connecting"))
-	defer db.Close()
-
-	dbt := &DBTest{c, db}
-	dbt.mustExec("drop database tidb")
-	dbt.mustExec("truncate table mysql.stats_meta")
-	dbt.mustExec("truncate table mysql.stats_histograms")
-	dbt.mustExec("truncate table mysql.stats_buckets")
 }

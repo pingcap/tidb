@@ -65,9 +65,8 @@ func (s *testSuite) TestEncodeLargeSmallReuseBug(c *C) {
 			IsPKHandle: false,
 		},
 	}, nil)
-	m, err := bDecoder.DecodeToDatumMap(b, nil)
+	_, err = bDecoder.DecodeToDatumMap(b, nil)
 	c.Assert(err, IsNil)
-	v := m[largeColID]
 
 	colFt = types.NewFieldType(mysql.TypeLonglong)
 	smallColID := int64(1)
@@ -81,9 +80,9 @@ func (s *testSuite) TestEncodeLargeSmallReuseBug(c *C) {
 			IsPKHandle: false,
 		},
 	}, nil)
-	m, err = bDecoder.DecodeToDatumMap(b, nil)
+	m, err := bDecoder.DecodeToDatumMap(b, nil)
 	c.Assert(err, IsNil)
-	v = m[smallColID]
+	v := m[smallColID]
 	c.Assert(v.GetInt64(), Equals, int64(2))
 }
 
@@ -364,6 +363,8 @@ func (s *testSuite) TestTypesNewRowCodec(c *C) {
 			c.Assert(len(remain), Equals, 0)
 			if d.Kind() == types.KindMysqlDecimal {
 				c.Assert(d.GetMysqlDecimal(), DeepEquals, t.bt.GetMysqlDecimal())
+			} else if d.Kind() == types.KindBytes {
+				c.Assert(d.GetBytes(), DeepEquals, t.bt.GetBytes())
 			} else {
 				c.Assert(d, DeepEquals, t.bt)
 			}
@@ -397,9 +398,9 @@ func (s *testSuite) TestTypesNewRowCodec(c *C) {
 		},
 		{
 			24,
-			types.NewFieldType(mysql.TypeBlob),
-			types.NewBytesDatum([]byte("abc")),
-			types.NewBytesDatum([]byte("abc")),
+			types.NewFieldTypeWithCollation(mysql.TypeBlob, mysql.DefaultCollationName, types.UnspecifiedLength),
+			types.NewStringDatum("abc"),
+			types.NewStringDatum("abc"),
 			nil,
 			false,
 		},
@@ -526,8 +527,8 @@ func (s *testSuite) TestTypesNewRowCodec(c *C) {
 	testData[0].id = 1
 
 	// test large data
-	testData[3].dt = types.NewBytesDatum([]byte(strings.Repeat("a", math.MaxUint16+1)))
-	testData[3].bt = types.NewBytesDatum([]byte(strings.Repeat("a", math.MaxUint16+1)))
+	testData[3].dt = types.NewStringDatum(strings.Repeat("a", math.MaxUint16+1))
+	testData[3].bt = types.NewStringDatum(strings.Repeat("a", math.MaxUint16+1))
 	encodeAndDecode(c, testData)
 }
 
@@ -738,7 +739,7 @@ func (s *testSuite) TestCodecUtil(c *C) {
 	c.Assert(rowcodec.IsNewFormat(oldRow), IsFalse)
 
 	// test stringer for decoder.
-	var cols []rowcodec.ColInfo
+	var cols = make([]rowcodec.ColInfo, 0, len(tps))
 	for i, ft := range tps {
 		cols = append(cols, rowcodec.ColInfo{
 			ID:         colIDs[i],

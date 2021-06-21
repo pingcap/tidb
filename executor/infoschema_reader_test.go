@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
+	txninfo "github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -109,6 +110,7 @@ func (s *inspectionSuite) TearDownSuite(c *C) {
 }
 
 func (s *inspectionSuite) TestInspectionTables(c *C) {
+	c.Skip("unstable, skip it and fix it before 20210624")
 	tk := testkit.NewTestKit(c, s.store)
 	instances := []string{
 		"pd,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash,0",
@@ -357,6 +359,22 @@ func (s *testInfoschemaTableSuite) TestUserPrivileges(c *C) {
 	c.Assert(len(result.Rows()), Greater, 0)
 }
 
+func (s *testInfoschemaTableSuite) TestUserPrivilegesTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// test the privilege of new user for information_schema.user_privileges
+	tk.MustExec("create user usageuser")
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def USAGE NO"))
+	// the usage row disappears when there is a non-dynamic privilege added
+	tk.MustExec("GRANT SELECT ON *.* to usageuser")
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def Select NO"))
+	// test grant privilege
+	tk.MustExec("GRANT SELECT ON *.* to usageuser WITH GRANT OPTION")
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def Select YES"))
+	// test DYNAMIC privs
+	tk.MustExec("GRANT BACKUP_ADMIN ON *.* to usageuser")
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'" ORDER BY privilege_type`).Check(testkit.Rows("'usageuser'@'%' def BACKUP_ADMIN NO", "'usageuser'@'%' def Select YES"))
+}
+
 func (s *testInfoschemaTableSerialSuite) TestDataForTableStatsField(c *C) {
 	s.dom.SetStatsUpdating(true)
 	oldExpiryTime := executor.TableStatsCacheExpiry
@@ -371,7 +389,8 @@ func (s *testInfoschemaTableSerialSuite) TestDataForTableStatsField(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int, e char(5), index idx(e))")
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("0 0 0 0"))
 	tk.MustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
@@ -398,7 +417,8 @@ func (s *testInfoschemaTableSerialSuite) TestDataForTableStatsField(c *C) {
 	// Test partition table.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`CREATE TABLE t (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16))`)
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	tk.MustExec(`insert into t(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e")`)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
@@ -531,6 +551,10 @@ func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
 	analyzeTester.MustExec("set role r_t1")
 	resultT1 := tk.MustQuery("select * from information_schema.analyze_status where TABLE_NAME='t1'").Sort()
 	c.Assert(len(resultT1.Rows()), Greater, 0)
+	for _, row := range resultT1.Rows() {
+		c.Assert(len(row), Equals, 8) // test length of row
+		c.Assert(row[6], NotNil)      // test `End_time` field
+	}
 }
 
 func (s *testInfoschemaTableSerialSuite) TestForServersInfo(c *C) {
@@ -554,7 +578,10 @@ func (s *testInfoschemaTableSerialSuite) TestForServersInfo(c *C) {
 
 func (s *testInfoschemaTableSerialSuite) TestForTableTiFlashReplica(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+		c.Assert(err, IsNil)
+	}()
 
 	tk := testkit.NewTestKit(c, s.store)
 	statistics.ClearHistoryJobs()
@@ -702,6 +729,10 @@ type mockSessionManager struct {
 	serverID       uint64
 }
 
+func (sm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
+	panic("unimplemented!")
+}
+
 func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
 	return sm.processInfoMap
 }
@@ -842,7 +873,7 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	tk.MustQuery("select TABLE_SCHEMA, sum(TABLE_SIZE) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' group by TABLE_SCHEMA;").Check(testkit.Rows(
 		"test 2",
 	))
-	c.Assert(len(tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()), Equals, 23)
+	c.Assert(len(tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()), Equals, 24)
 }
 
 func (s *testInfoschemaTableSuite) TestSequences(c *C) {
@@ -868,11 +899,11 @@ func (s *testInfoschemaTableSuite) TestTablesPKType(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t_int (a int primary key, b int)")
 	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_int'").Check(testkit.Rows("CLUSTERED"))
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table t_implicit (a varchar(64) primary key, b int)")
-	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_implicit'").Check(testkit.Rows("NON-CLUSTERED"))
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_implicit'").Check(testkit.Rows("NONCLUSTERED"))
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table t_common (a varchar(64) primary key, b int)")
 	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_common'").Check(testkit.Rows("CLUSTERED"))
-	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'INFORMATION_SCHEMA' and table_name = 'TABLES'").Check(testkit.Rows("NON-CLUSTERED"))
+	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'INFORMATION_SCHEMA' and table_name = 'TABLES'").Check(testkit.Rows("NONCLUSTERED"))
 }

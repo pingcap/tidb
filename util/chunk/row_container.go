@@ -28,6 +28,7 @@ import (
 )
 
 // RowContainer provides a place for many rows, so many that we might want to spill them into disk.
+// nolint:structcheck
 type RowContainer struct {
 	m struct {
 		// RWMutex guarantees spill and get operator for rowContainer is mutually exclusive.
@@ -89,7 +90,6 @@ func (c *RowContainer) SpillToDisk() {
 		}
 	}
 	c.m.records.Clear()
-	return
 }
 
 // Reset resets RowContainer.
@@ -446,7 +446,6 @@ func (c *SortedRowContainer) Sort() {
 func (c *SortedRowContainer) sortAndSpillToDisk() {
 	c.Sort()
 	c.RowContainer.SpillToDisk()
-	return
 }
 
 // Add appends a chunk into the SortedRowContainer.

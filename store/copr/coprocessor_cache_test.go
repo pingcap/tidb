@@ -19,7 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/tikv/client-go/v2/config"
 )
 
 type testCoprocessorCacheSuite struct {
@@ -72,7 +72,7 @@ func (s *testCoprocessorSuite) TestBuildCacheKey(c *C) {
 }
 
 func (s *testCoprocessorSuite) TestDisable(c *C) {
-	cache, err := newCoprCache(&config.CoprocessorCache{Enable: false})
+	cache, err := newCoprCache(&config.CoprocessorCache{CapacityMB: 0})
 	c.Assert(err, IsNil)
 	c.Assert(cache, IsNil)
 
@@ -85,21 +85,17 @@ func (s *testCoprocessorSuite) TestDisable(c *C) {
 	v = cache.CheckResponseAdmission(1024, time.Second*5)
 	c.Assert(v, Equals, false)
 
-	cache, err = newCoprCache(&config.CoprocessorCache{Enable: true, CapacityMB: 0, AdmissionMaxResultMB: 1})
+	cache, err = newCoprCache(&config.CoprocessorCache{CapacityMB: 0.001})
 	c.Assert(err, NotNil)
 	c.Assert(cache, IsNil)
 
-	cache, err = newCoprCache(&config.CoprocessorCache{Enable: true, CapacityMB: 0.001})
-	c.Assert(err, NotNil)
-	c.Assert(cache, IsNil)
-
-	cache, err = newCoprCache(&config.CoprocessorCache{Enable: true, CapacityMB: 0.001, AdmissionMaxResultMB: 1})
+	cache, err = newCoprCache(&config.CoprocessorCache{CapacityMB: 0.001, AdmissionMaxResultMB: 1})
 	c.Assert(err, IsNil)
 	c.Assert(cache, NotNil)
 }
 
 func (s *testCoprocessorSuite) TestAdmission(c *C) {
-	cache, err := newCoprCache(&config.CoprocessorCache{Enable: true, AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: 1})
+	cache, err := newCoprCache(&config.CoprocessorCache{AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: 1})
 	c.Assert(err, IsNil)
 	c.Assert(cache, NotNil)
 
@@ -139,7 +135,7 @@ func (s *testCoprocessorSuite) TestAdmission(c *C) {
 	v = cache.CheckResponseAdmission(1024*1024+1, 4*time.Millisecond)
 	c.Assert(v, Equals, false)
 
-	cache, err = newCoprCache(&config.CoprocessorCache{Enable: true, AdmissionMaxRanges: 5, AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: 1})
+	cache, err = newCoprCache(&config.CoprocessorCache{AdmissionMaxRanges: 5, AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: 1})
 	c.Assert(err, IsNil)
 	c.Assert(cache, NotNil)
 
@@ -173,7 +169,7 @@ func (s *testCoprocessorSuite) TestCacheValueLen(c *C) {
 }
 
 func (s *testCoprocessorSuite) TestGetSet(c *C) {
-	cache, err := newCoprCache(&config.CoprocessorCache{Enable: true, AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: 1})
+	cache, err := newCoprCache(&config.CoprocessorCache{AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: 1})
 	c.Assert(err, IsNil)
 	c.Assert(cache, NotNil)
 
@@ -195,4 +191,9 @@ func (s *testCoprocessorSuite) TestGetSet(c *C) {
 	v = cache.Get([]byte("foo"))
 	c.Assert(v, NotNil)
 	c.Assert(v.Data, DeepEquals, []byte("bar"))
+}
+
+func (s *testCoprocessorSuite) TestIssue24118(c *C) {
+	_, err := newCoprCache(&config.CoprocessorCache{AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: -1})
+	c.Assert(err.Error(), Equals, "Capacity must be > 0 to enable the cache")
 }

@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
+	txninfo "github.com/pingcap/tidb/session/txninfo"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -35,6 +37,10 @@ import (
 // mockSessionManager is a mocked session manager which is used for test.
 type mockSessionManager1 struct {
 	PS []*util.ProcessInfo
+}
+
+func (msm *mockSessionManager1) ShowTxnList() []*txninfo.TxnInfo {
+	return nil
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
@@ -112,7 +118,7 @@ func (s *testSerialSuite) TestExplainFor(c *C) {
 		}
 		c.Assert(buf.String(), Matches, ""+
 			"TableReader_5 10000.00 0 root  time:.*, loops:1, cop_task: {num:.*, max:.*, proc_keys: 0, rpc_num: 1, rpc_time:.*} data:TableFullScan_4 N/A N/A\n"+
-			"└─TableFullScan_4 10000.00 0 cop.* table:t1 tikv_task:{time:.*, loops:0}, scan_detail:.* keep order:false, stats:pseudo N/A N/A")
+			"└─TableFullScan_4 10000.00 0 cop.* table:t1 tikv_task:{time:.*, loops:0} keep order:false, stats:pseudo N/A N/A")
 	}
 	tkRoot.MustQuery("select * from t1;")
 	check()
@@ -175,11 +181,11 @@ func (s *testSuite) TestExplainMemTablePredicate(c *C) {
 
 func (s *testSuite) TestExplainClusterTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.cluster_config where type in ('tikv', 'tidb')")).Check(testkit.Rows(
+	tk.MustQuery("desc select * from information_schema.cluster_config where type in ('tikv', 'tidb')").Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:CLUSTER_CONFIG node_types:["tidb","tikv"]`))
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.cluster_config where instance='192.168.1.7:2379'")).Check(testkit.Rows(
+	tk.MustQuery("desc select * from information_schema.cluster_config where instance='192.168.1.7:2379'").Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:CLUSTER_CONFIG instances:["192.168.1.7:2379"]`))
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.cluster_config where type='tidb' and instance='192.168.1.7:2379'")).Check(testkit.Rows(
+	tk.MustQuery("desc select * from information_schema.cluster_config where type='tidb' and instance='192.168.1.7:2379'").Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:CLUSTER_CONFIG node_types:["tidb"], instances:["192.168.1.7:2379"]`))
 }
 
@@ -197,11 +203,11 @@ func (s *testSuite) TestInspectionResultTable(c *C) {
 
 func (s *testSuite) TestInspectionRuleTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.inspection_rules where type='inspection'")).Check(testkit.Rows(
+	tk.MustQuery("desc select * from information_schema.inspection_rules where type='inspection'").Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:INSPECTION_RULES node_types:["inspection"]`))
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.inspection_rules where type='inspection' or type='summary'")).Check(testkit.Rows(
+	tk.MustQuery("desc select * from information_schema.inspection_rules where type='inspection' or type='summary'").Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:INSPECTION_RULES node_types:["inspection","summary"]`))
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.inspection_rules where type='inspection' and type='summary'")).Check(testkit.Rows(
+	tk.MustQuery("desc select * from information_schema.inspection_rules where type='inspection' and type='summary'").Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:INSPECTION_RULES skip_request: true`))
 }
 
@@ -238,7 +244,7 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	explainQuery := "explain for connection " + strconv.FormatUint(tk1.Se.ShowProcess().ID, 10)
 	explainResult := testkit.Rows(
 		"TableReader_7 8000.00 root  data:Selection_6",
-		"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a), 1)",
+		"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a, double BINARY), 1)",
 		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	)
 
@@ -349,12 +355,12 @@ func (s *testPrepareSerialSuite) TestExplainDotForQuery(c *C) {
 
 func (s *testSuite) TestExplainTableStorage(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema'")).Check(testkit.Rows(
-		fmt.Sprintf("MemTableScan_5 10000.00 root table:TABLE_STORAGE_STATS schema:[\"information_schema\"]")))
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TABLE_STORAGE_STATS where TABLE_NAME = 'schemata'")).Check(testkit.Rows(
-		fmt.Sprintf("MemTableScan_5 10000.00 root table:TABLE_STORAGE_STATS table:[\"schemata\"]")))
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME = 'schemata'")).Check(testkit.Rows(
-		fmt.Sprintf("MemTableScan_5 10000.00 root table:TABLE_STORAGE_STATS schema:[\"information_schema\"], table:[\"schemata\"]")))
+	tk.MustQuery("desc select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema'").Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root table:TABLE_STORAGE_STATS schema:[\"information_schema\"]"))
+	tk.MustQuery("desc select * from information_schema.TABLE_STORAGE_STATS where TABLE_NAME = 'schemata'").Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root table:TABLE_STORAGE_STATS table:[\"schemata\"]"))
+	tk.MustQuery("desc select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME = 'schemata'").Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root table:TABLE_STORAGE_STATS schema:[\"information_schema\"], table:[\"schemata\"]"))
 }
 
 func (s *testSuite) TestInspectionSummaryTable(c *C) {
@@ -445,7 +451,7 @@ func (s *testPrepareSerialSuite) TestPointGetUserVarPlanCache(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("CREATE TABLE t1 (a BIGINT, b VARCHAR(40), PRIMARY KEY (a, b))")
 	tk.MustExec("INSERT INTO t1 VALUES (1,'3'),(2,'4')")
@@ -478,8 +484,5 @@ func (s *testPrepareSerialSuite) TestPointGetUserVarPlanCache(c *C) {
 	c.Assert(strings.Contains(fmt.Sprintf("%v", rows[3][3]), "table:t2"), IsTrue)
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
-	))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(
-		"1",
 	))
 }

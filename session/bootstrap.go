@@ -55,6 +55,7 @@ const (
 		Host					CHAR(64),
 		User					CHAR(32),
 		authentication_string	TEXT,
+		plugin					CHAR(64),
 		Select_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Insert_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Update_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -166,7 +167,7 @@ const (
   		description 		TEXT NOT NULL,
   		example 			TEXT NOT NULL,
   		url 				TEXT NOT NULL,
-  		PRIMARY KEY (help_topic_id),
+  		PRIMARY KEY (help_topic_id) clustered,
   		UNIQUE KEY name (name)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8 STATS_PERSISTENT=0 COMMENT='help topics';`
 
@@ -329,6 +330,14 @@ const (
 		LAST_USED_AT timestamp,
 		PRIMARY KEY(TABLE_ID, INDEX_ID)
 	);`
+	// CreateGlobalGrantsTable stores dynamic privs
+	CreateGlobalGrantsTable = `CREATE TABLE IF NOT EXISTS mysql.global_grants (
+		USER char(32) NOT NULL DEFAULT '',
+		HOST char(255) NOT NULL DEFAULT '',
+		PRIV char(32) NOT NULL DEFAULT '',
+		WITH_GRANT_OPTION enum('N','Y') NOT NULL DEFAULT 'N',
+		PRIMARY KEY (USER,HOST,PRIV)
+	  );`
 )
 
 // bootstrap initiates system DB for a store.
@@ -464,8 +473,7 @@ const (
 	version59 = 59
 	// version60 redesigns `mysql.stats_extended`
 	version60 = 60
-	// version61 restore all SQL bindings.
-	version61 = 61
+	// version61 will be redone in version67
 	// version62 add column ndv for mysql.stats_buckets.
 	version62 = 62
 	// version63 fixes the bug that upgradeToVer51 would be missed when upgrading from v4.0 to a new version
@@ -474,10 +482,21 @@ const (
 	version64 = 64
 	// version65 add mysql.stats_fm_sketch table.
 	version65 = 65
-
-	// please make sure this is the largest version
-	currentBootstrapVersion = version65
+	// version66 enables the feature `track_aggregate_memory_usage` by default.
+	version66 = 66
+	// version67 restore all SQL bindings.
+	version67 = 67
+	// version68 update the global variable 'tidb_enable_clustered_index' from 'off' to 'int_only'.
+	version68 = 68
+	// version69 adds mysql.global_grants for DYNAMIC privileges
+	version69 = 69
+	// version70 adds mysql.user.plugin to allow multiple authentication plugins
+	version70 = 70
 )
+
+// currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
+// please make sure this is the largest version
+var currentBootstrapVersion int64 = version70
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -541,11 +560,16 @@ var (
 		// We will redo upgradeToVer58 in upgradeToVer64, it is skipped here.
 		upgradeToVer59,
 		upgradeToVer60,
-		upgradeToVer61,
+		// We will redo upgradeToVer61 in upgradeToVer67, it is skipped here.
 		upgradeToVer62,
 		upgradeToVer63,
 		upgradeToVer64,
 		upgradeToVer65,
+		upgradeToVer66,
+		upgradeToVer67,
+		upgradeToVer68,
+		upgradeToVer69,
+		upgradeToVer70,
 	}
 )
 
@@ -635,7 +659,7 @@ func upgrade(s Session) {
 		}
 		logutil.BgLogger().Fatal("[Upgrade] upgrade failed",
 			zap.Int64("from", ver),
-			zap.Int("to", currentBootstrapVersion),
+			zap.Int64("to", currentBootstrapVersion),
 			zap.Error(err))
 	}
 }
@@ -1319,8 +1343,8 @@ type bindInfo struct {
 	source     string
 }
 
-func upgradeToVer61(s Session, ver int64) {
-	if ver >= version61 {
+func upgradeToVer67(s Session, ver int64) {
+	if ver >= version67 {
 		return
 	}
 	bindMap := make(map[string]bindInfo)
@@ -1344,7 +1368,7 @@ func upgradeToVer61(s Session, ver int64) {
 			WHERE source != 'builtin'
 			ORDER BY update_time DESC`)
 	if err != nil {
-		logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
+		logutil.BgLogger().Fatal("upgradeToVer67 error", zap.Error(err))
 	}
 	if rs != nil {
 		defer terror.Call(rs.Close)
@@ -1356,7 +1380,7 @@ func upgradeToVer61(s Session, ver int64) {
 	for {
 		err = rs.Next(context.TODO(), req)
 		if err != nil {
-			logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
+			logutil.BgLogger().Fatal("upgradeToVer67 error", zap.Error(err))
 		}
 		if req.NumRows() == 0 {
 			break
@@ -1383,13 +1407,19 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		bind := row.GetString(0)
 		db := row.GetString(1)
+		status := row.GetString(2)
+
+		if status != "using" && status != "builtin" {
+			continue
+		}
+
 		charset := row.GetString(4)
 		collation := row.GetString(5)
 		stmt, err := p.ParseOneStmt(bind, charset, collation)
 		if err != nil {
 			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
 		}
-		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(stmt, db))
+		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(stmt, db, bind))
 		if _, ok := bindMap[originWithDB]; ok {
 			// The results are sorted in descending order of time.
 			// And in the following cases, duplicate originWithDB may occur
@@ -1400,8 +1430,8 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 			continue
 		}
 		bindMap[originWithDB] = bindInfo{
-			bindSQL:    utilparser.RestoreWithDefaultDB(stmt, db),
-			status:     row.GetString(2),
+			bindSQL:    utilparser.RestoreWithDefaultDB(stmt, db, bind),
+			status:     status,
 			createTime: row.GetTime(3),
 			charset:    charset,
 			collation:  collation,
@@ -1438,7 +1468,7 @@ func upgradeToVer64(s Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`", infoschema.ErrColumnExists)
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y' where Super_priv='Y'")
 }
 
 func upgradeToVer65(s Session, ver int64) {
@@ -1446,6 +1476,35 @@ func upgradeToVer65(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateStatsFMSketchTable)
+}
+
+func upgradeToVer66(s Session, ver int64) {
+	if ver >= version66 {
+		return
+	}
+	mustExecute(s, "set @@global.tidb_track_aggregate_memory_usage = 1")
+}
+
+func upgradeToVer68(s Session, ver int64) {
+	if ver >= version68 {
+		return
+	}
+	mustExecute(s, "DELETE FROM mysql.global_variables where VARIABLE_NAME = 'tidb_enable_clustered_index' and VARIABLE_VALUE = 'OFF'")
+}
+
+func upgradeToVer69(s Session, ver int64) {
+	if ver >= version69 {
+		return
+	}
+	doReentrantDDL(s, CreateGlobalGrantsTable)
+}
+
+func upgradeToVer70(s Session, ver int64) {
+	if ver >= version70 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN plugin CHAR(64) AFTER authentication_string", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET plugin='mysql_native_password'")
 }
 
 func writeOOMAction(s Session) {
@@ -1524,6 +1583,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateSchemaIndexUsageTable)
 	// Create stats_fm_sketch table.
 	mustExecute(s, CreateStatsFMSketchTable)
+	// Create global_grants
+	mustExecute(s, CreateGlobalGrantsTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
@@ -1534,7 +1595,7 @@ func doDMLWorks(s Session) {
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.GetSysVars()))
@@ -1549,18 +1610,24 @@ func doDMLWorks(s Session) {
 				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
 			}
 			if v.Name == variable.TiDBPartitionPruneMode {
-				vVal = string(variable.Static)
+				vVal = variable.DefTiDBPartitionPruneMode
 				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil || config.CheckTableBeforeDrop {
 					// enable Dynamic Prune by default in test case.
 					vVal = string(variable.Dynamic)
 				}
 			}
 			if v.Name == variable.TiDBEnableChangeMultiSchema {
-				vVal = variable.BoolOff
+				vVal = variable.Off
 				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
 					// enable change multi schema in test case for compatibility with old cases.
-					vVal = variable.BoolOn
+					vVal = variable.On
 				}
+			}
+			if v.Name == variable.TiDBEnableAsyncCommit && config.GetGlobalConfig().Store == "tikv" {
+				vVal = variable.On
+			}
+			if v.Name == variable.TiDBEnable1PC && config.GetGlobalConfig().Store == "tikv" {
+				vVal = variable.On
 			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)

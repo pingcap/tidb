@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -236,7 +237,6 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	statsTbl := s.prepareSelectivity(testKit, c)
-	is := s.do.InfoSchema()
 
 	longExpr := "0 < a and a = 1 "
 	for i := 1; i < 64; i++ {
@@ -293,9 +293,10 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprs))
 		c.Assert(stmts, HasLen, 1)
 
-		err = plannercore.Preprocess(sctx, stmts[0], is)
+		ret := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil, comment)
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, tt.exprs))
 
 		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
@@ -405,6 +406,7 @@ func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, key idx(a, b))")
+	testKit.MustExec("set @@tidb_analyze_version=1")
 	testKit.MustExec("analyze table t")
 	for i := 0; i < 10; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
@@ -512,7 +514,7 @@ func (s *testStatsSuite) TestPrimaryKeySelectivity(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.Se.GetSessionVars().EnableClusteredIndex = false
+	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	testKit.MustExec("create table t(a char(10) primary key, b int)")
 	var input, output [][]string
 	s.testData.GetTestCases(c, &input, &output)
@@ -541,7 +543,6 @@ func BenchmarkSelectivity(b *testing.B) {
 
 	testKit := testkit.NewTestKit(c, s.store)
 	statsTbl := s.prepareSelectivity(testKit, c)
-	is := s.do.InfoSchema()
 	exprs := "a > 1 and b < 2 and c > 3 and d < 4 and e > 5"
 	sql := "select * from t where " + exprs
 	comment := Commentf("for %s", exprs)
@@ -549,15 +550,20 @@ func BenchmarkSelectivity(b *testing.B) {
 	stmts, err := session.Parse(sctx, sql)
 	c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, exprs))
 	c.Assert(stmts, HasLen, 1)
-	err = plannercore.Preprocess(sctx, stmts[0], is)
+	ret := &plannercore.PreprocessorReturn{}
+	err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 	c.Assert(err, IsNil, comment)
-	p, _, err := plannercore.BuildLogicalPlan(context.Background(), sctx, stmts[0], is)
+	p, _, err := plannercore.BuildLogicalPlan(context.Background(), sctx, stmts[0], ret.InfoSchema)
 	c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, exprs))
 
 	file, err := os.Create("cpu.profile")
 	c.Assert(err, IsNil)
-	defer file.Close()
-	pprof.StartCPUProfile(file)
+	defer func() {
+		err := file.Close()
+		c.Assert(err, IsNil)
+	}()
+	err = pprof.StartCPUProfile(file)
+	c.Assert(err, IsNil)
 
 	b.Run("Selectivity", func(b *testing.B) {
 		b.ResetTimer()
@@ -607,14 +613,13 @@ func (s *testStatsSuite) TestStatsVer2(c *C) {
 	testKit.MustExec("analyze table tprefix with 2 topn, 3 buckets")
 
 	// test with clustered index
-	testKit.MustExec("set @@tidb_enable_clustered_index = 1")
 	testKit.MustExec("drop table if exists ct1")
-	testKit.MustExec("create table ct1 (a int, pk varchar(10), primary key(pk))")
+	testKit.MustExec("create table ct1 (a int, pk varchar(10), primary key(pk) clustered)")
 	testKit.MustExec("insert into ct1 values (1, '1'), (2, '2'), (3, '3'), (4, '4'), (5, '5'), (6, '6'), (7, '7'), (8, '8')")
 	testKit.MustExec("analyze table ct1 with 2 topn, 3 buckets")
 
 	testKit.MustExec("drop table if exists ct2")
-	testKit.MustExec("create table ct2 (a int, b int, c int, primary key(a, b))")
+	testKit.MustExec("create table ct2 (a int, b int, c int, primary key(a, b) clustered)")
 	testKit.MustExec("insert into ct2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
 	testKit.MustExec("analyze table ct2 with 2 topn, 3 buckets")
 
@@ -623,6 +628,42 @@ func (s *testStatsSuite) TestStatsVer2(c *C) {
 		// ensure statsVer = 2
 		c.Assert(fmt.Sprintf("%v", r[0]), Equals, "2")
 	}
+
+	var (
+		input  []string
+		output [][]string
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	for i := range input {
+		s.testData.OnRecord(func() {
+			output[i] = s.testData.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
+	}
+}
+
+func (s *testStatsSuite) TestTopNOutOfHist(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set tidb_analyze_version=2")
+
+	testKit.MustExec("drop table if exists topn_before_hist")
+	testKit.MustExec("create table topn_before_hist(a int, index idx(a))")
+	testKit.MustExec("insert into topn_before_hist values(1), (1), (1), (1), (3), (3), (4), (5), (6)")
+	testKit.MustExec("analyze table topn_before_hist with 2 topn, 3 buckets")
+
+	testKit.MustExec("create table topn_after_hist(a int, index idx(a))")
+	testKit.MustExec("insert into topn_after_hist values(2), (2), (3), (4), (5), (7), (7), (7), (7)")
+	testKit.MustExec("analyze table topn_after_hist with 2 topn, 3 buckets")
+
+	testKit.MustExec("create table topn_before_hist_no_index(a int)")
+	testKit.MustExec("insert into topn_before_hist_no_index values(1), (1), (1), (1), (3), (3), (4), (5), (6)")
+	testKit.MustExec("analyze table topn_before_hist_no_index with 2 topn, 3 buckets")
+
+	testKit.MustExec("create table topn_after_hist_no_index(a int)")
+	testKit.MustExec("insert into topn_after_hist_no_index values(2), (2), (3), (4), (5), (7), (7), (7), (7)")
+	testKit.MustExec("analyze table topn_after_hist_no_index with 2 topn, 3 buckets")
 
 	var (
 		input  []string
@@ -673,7 +714,7 @@ func (s *testStatsSuite) TestUniqCompEqualEst(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.Se.GetSessionVars().EnableClusteredIndex = true
+	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, primary key(a, b))")
 	testKit.MustExec("insert into t values(1,1),(1,2),(1,3),(1,4),(1,5),(1,6),(1,7),(1,8),(1,9),(1,10)")
@@ -720,6 +761,7 @@ func (s *testStatsSuite) TestCollationColumnEstimate(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a varchar(20) collate utf8mb4_general_ci)")
 	tk.MustExec("insert into t values('aaa'), ('bbb'), ('AAA'), ('BBB')")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
 	h := s.do.StatsHandle()
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	tk.MustExec("analyze table t")
@@ -752,9 +794,8 @@ func (s *testStatsSuite) TestDNFCondSelectivity(c *C) {
 	testKit.MustExec(`analyze table t`)
 
 	ctx := context.Background()
-	is := s.do.InfoSchema()
 	h := s.do.StatsHandle()
-	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tblInfo := tb.Meta()
 	statsTbl := h.GetTableStats(tblInfo)
@@ -773,9 +814,10 @@ func (s *testStatsSuite) TestDNFCondSelectivity(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for sql %s", err, tt))
 		c.Assert(stmts, HasLen, 1)
 
-		err = plannercore.Preprocess(sctx, stmts[0], is)
+		ret := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil, Commentf("error %v, for sql %s", err, tt))
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, sql %s", err, tt))
 
 		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
@@ -829,4 +871,21 @@ func (s *testStatsSuite) TestIndexEstimationCrossValidate(c *C) {
 		"TableReader_7 1.00 root  data:Selection_6",
 		"└─Selection_6 1.00 cop[tikv]  eq(test.t2.b, 2)",
 		"  └─TableFullScan_5 5.00 cop[tikv] table:t2 keep order:false"))
+}
+
+func (s *testStatsSuite) TestRangeStepOverflow(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (col datetime)")
+	tk.MustExec("insert into t values('3580-05-26 07:16:48'),('4055-03-06 22:27:16'),('4862-01-26 07:16:54')")
+	h := s.do.StatsHandle()
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	tk.MustExec("analyze table t")
+	// Trigger the loading of column stats.
+	tk.MustQuery("select * from t where col between '8499-1-23 2:14:38' and '9961-7-23 18:35:26'").Check(testkit.Rows())
+	c.Assert(h.LoadNeededHistograms(), IsNil)
+	// Must execute successfully after loading the column stats.
+	tk.MustQuery("select * from t where col between '8499-1-23 2:14:38' and '9961-7-23 18:35:26'").Check(testkit.Rows())
 }

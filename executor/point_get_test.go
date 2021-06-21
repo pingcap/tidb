@@ -26,13 +26,15 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 type testPointGetSuite struct {
@@ -91,7 +93,7 @@ func (s *testPointGetSuite) TestPointGet(c *C) {
 	c.Assert(err, IsNil)
 	fields := result.Fields()
 	c.Assert(fields[0].ColumnAsName.O, Equals, "ident")
-	result.Close()
+	c.Assert(result.Close(), IsNil)
 
 	tk.MustExec("CREATE TABLE tab3(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col2 TEXT, col3 INTEGER, col4 FLOAT, col5 TEXT);")
 	tk.MustExec("CREATE UNIQUE INDEX idx_tab3_0 ON tab3 (col4);")
@@ -131,6 +133,93 @@ func (s *testPointGetSuite) TestPointGetOverflow(c *C) {
 	tk.MustQuery("SELECT t0.c1 FROM t0 WHERE t0.c1=-128").Check(testkit.Rows("-128"))
 	tk.MustQuery("SELECT t0.c1 FROM t0 WHERE t0.c1=128").Check(testkit.Rows())
 	tk.MustQuery("SELECT t0.c1 FROM t0 WHERE t0.c1=127").Check(testkit.Rows("127"))
+
+	tk.MustExec("CREATE TABLE `PK_S_MULTI_31_1` (`COL1` tinyint(11) NOT NULL, `COL2` tinyint(11) NOT NULL, `COL3` tinyint(11) DEFAULT NULL, PRIMARY KEY (`COL1`,`COL2`) CLUSTERED)")
+	tk.MustQuery("select * from PK_S_MULTI_31_1 where col2 = -129 and col1 = 1").Check(testkit.Rows())
+	tk.MustExec("insert into PK_S_MULTI_31_1 select 1, 1, 1")
+	tk.MustQuery("select * from PK_S_MULTI_31_1 where (col1, col2) in ((1, -129),(1, 1))").Check(testkit.Rows("1 1 1"))
+}
+
+// Close issue #22839
+func (s *testPointGetSuite) TestPointGetDataTooLong(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists PK_1389;")
+	tk.MustExec("CREATE TABLE `PK_1389` ( " +
+		"  `COL1` bit(1) NOT NULL," +
+		"  `COL2` varchar(20) DEFAULT NULL," +
+		"  `COL3` datetime DEFAULT NULL," +
+		"  `COL4` bigint(20) DEFAULT NULL," +
+		"  `COL5` float DEFAULT NULL," +
+		"  PRIMARY KEY (`COL1`)" +
+		");")
+	tk.MustExec("insert into PK_1389 values(0, \"皟钹糁泅埞礰喾皑杏灚暋蛨歜檈瓗跾咸滐梀揉\", \"7701-12-27 23:58:43\", 4806951672419474695, -1.55652e38);")
+	tk.MustQuery("select count(1) from PK_1389 where col1 = 0x30;").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(1) from PK_1389 where col1 in ( 0x30);").Check(testkit.Rows("0"))
+	tk.MustExec("drop table if exists PK_1389;")
+}
+
+// issue #25489
+func (s *testPointGetSuite) TestIssue25489(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists UK_RP16939;")
+	// range partition
+	tk.MustExec(`CREATE TABLE UK_RP16939 (
+		COL1 tinyint(16) DEFAULT '108' COMMENT 'NUMERIC UNIQUE INDEX',
+		COL2 varchar(20) DEFAULT NULL,
+		COL4 datetime DEFAULT NULL,
+		COL3 bigint(20) DEFAULT NULL,
+		COL5 float DEFAULT NULL,
+		UNIQUE KEY UK_COL1 (COL1)
+	  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+	  PARTITION BY RANGE ( COL1+13 ) (
+		PARTITION P0 VALUES LESS THAN (-44),
+		PARTITION P1 VALUES LESS THAN (-23),
+		PARTITION P2 VALUES LESS THAN (-22),
+		PARTITION P3 VALUES LESS THAN (63),
+		PARTITION P4 VALUES LESS THAN (75),
+		PARTITION P5 VALUES LESS THAN (90),
+		PARTITION PMX VALUES LESS THAN (MAXVALUE)
+	  ) ;`)
+	query := "select col1, col2 from UK_RP16939 where col1 in (116, 48, -30);"
+	c.Assert(tk.HasPlan(query, "Batch_Point_Get"), IsFalse)
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustExec("drop table if exists UK_RP16939;")
+
+	// list parition
+	tk.MustExec(`CREATE TABLE UK_RP16939 (
+		COL1 tinyint(16) DEFAULT '108' COMMENT 'NUMERIC UNIQUE INDEX',
+		COL2 varchar(20) DEFAULT NULL,
+		COL4 datetime DEFAULT NULL,
+		COL3 bigint(20) DEFAULT NULL,
+		COL5 float DEFAULT NULL,
+		UNIQUE KEY UK_COL1 (COL1)
+	  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+	  PARTITION BY LIST ( COL1+13 ) (
+		PARTITION P0 VALUES IN (-44, -23),
+		PARTITION P1 VALUES IN (-22, 63),
+		PARTITION P2 VALUES IN (75, 90)
+	  ) ;`)
+	c.Assert(tk.HasPlan(query, "Batch_Point_Get"), IsFalse)
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustExec("drop table if exists UK_RP16939;")
+}
+
+// issue #25320
+func (s *testPointGetSuite) TestDistinctPlan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_distinct;")
+	tk.MustExec(`CREATE TABLE test_distinct (
+		id bigint(18) NOT NULL COMMENT '主键',
+		b bigint(18) NOT NULL COMMENT '用户ID',
+		PRIMARY KEY (id)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;`)
+	tk.MustExec("insert into test_distinct values (123456789101112131,223456789101112131),(123456789101112132,223456789101112131);")
+	tk.MustQuery("select distinct b from test_distinct where id in (123456789101112131,123456789101112132);").Check(testkit.Rows("223456789101112131"))
 }
 
 func (s *testPointGetSuite) TestPointGetCharPK(c *C) {
@@ -464,7 +553,8 @@ func (s *testPointGetSuite) TestIssue10677(c *C) {
 
 func (s *testPointGetSuite) TestForUpdateRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Exec("drop table if exists t")
+	_, err := tk.Exec("drop table if exists t")
+	c.Assert(err, IsNil)
 	tk.MustExec("create table t(pk int primary key, c int)")
 	tk.MustExec("insert into t values (1, 1), (2, 2)")
 	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
@@ -473,7 +563,7 @@ func (s *testPointGetSuite) TestForUpdateRetry(c *C) {
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk2.MustExec("update t set c = c + 1 where pk = 1")
 	tk.MustExec("update t set c = c + 1 where pk = 2")
-	_, err := tk.Exec("commit")
+	_, err = tk.Exec("commit")
 	c.Assert(session.ErrForUpdateCantRetry.Equal(err), IsTrue)
 }
 
@@ -509,22 +599,22 @@ func (s *testPointGetSuite) TestSelectCheckVisibility(c *C) {
 		c.Assert(expectErr.Equal(err), IsTrue)
 	}
 	// Test point get.
-	checkSelectResultError("select * from t where a='1'", tikv.ErrGCTooEarly)
+	checkSelectResultError("select * from t where a='1'", storeerr.ErrGCTooEarly)
 	// Test batch point get.
-	checkSelectResultError("select * from t where a in ('1','2')", tikv.ErrGCTooEarly)
+	checkSelectResultError("select * from t where a in ('1','2')", storeerr.ErrGCTooEarly)
 	// Test Index look up read.
-	checkSelectResultError("select * from t where b > 0 ", tikv.ErrGCTooEarly)
+	checkSelectResultError("select * from t where b > 0 ", storeerr.ErrGCTooEarly)
 	// Test Index read.
-	checkSelectResultError("select b from t where b > 0 ", tikv.ErrGCTooEarly)
+	checkSelectResultError("select b from t where b > 0 ", storeerr.ErrGCTooEarly)
 	// Test table read.
-	checkSelectResultError("select * from t", tikv.ErrGCTooEarly)
+	checkSelectResultError("select * from t", storeerr.ErrGCTooEarly)
 }
 
 func (s *testPointGetSuite) TestReturnValues(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table t (a varchar(64) primary key, b int)")
 	tk.MustExec("insert t values ('a', 1), ('b', 2), ('c', 3)")
 	tk.MustExec("begin pessimistic")
@@ -547,7 +637,7 @@ func (s *testPointGetSuite) TestReturnValues(c *C) {
 func (s *testPointGetSuite) TestClusterIndexPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists pgt")
 	tk.MustExec("create table pgt (a varchar(64), b varchar(64), uk int, v int, primary key(a, b), unique key uuk(uk))")
 	tk.MustExec("insert pgt values ('a', 'a1', 1, 11), ('b', 'b1', 2, 22), ('c', 'c1', 3, 33)")
@@ -570,7 +660,7 @@ func (s *testPointGetSuite) TestClusterIndexPointGet(c *C) {
 func (s *testPointGetSuite) TestClusterIndexCBOPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec(`create table t1 (a int, b decimal(10,0), c int, primary key(a,b))`)
 	tk.MustExec(`create table t2 (a varchar(20), b int, primary key(a), unique key(b))`)
@@ -770,7 +860,7 @@ func (s *testPointGetSuite) TestPointGetLockExistKey(c *C) {
 
 		errCh <- tk1.ExecToErr("use test")
 		errCh <- tk2.ExecToErr("use test")
-		tk1.Se.GetSessionVars().EnableClusteredIndex = false
+		tk1.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
 		errCh <- tk1.ExecToErr(fmt.Sprintf("drop table if exists %s", tableName))
 		errCh <- tk1.ExecToErr(fmt.Sprintf("create table %s(id int, v int, k int, %s key0(id, v))", tableName, key))
@@ -916,4 +1006,18 @@ func (s *testPointGetSuite) TestWithTiDBSnapshot(c *C) {
 	tk.MustQuery("select * from xx where id = 8").Check(testkit.Rows())
 
 	tk.MustQuery("select * from xx").Check(testkit.Rows("1", "7"))
+}
+
+func (s *testPointGetSuite) TestPointGetIssue25167(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key)")
+	defer func() {
+		tk.MustExec("drop table if exists t")
+	}()
+	time.Sleep(50 * time.Millisecond)
+	tk.MustExec("set @a=(select current_timestamp(3))")
+	tk.MustExec("insert into t values (1)")
+	tk.MustQuery("select * from t as of timestamp @a where a = 1").Check(testkit.Rows())
 }

@@ -25,7 +25,6 @@ import (
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/metrics"
@@ -211,7 +210,7 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 		}
 
 		sqlDigest := parser.DigestNormalized(record.OriginalSQL)
-		h.setBindRecord(sqlDigest, record)
+		h.setBindRecord(sqlDigest.String(), record)
 	}()
 
 	// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
@@ -257,7 +256,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 	}
 
 	record.Db = strings.ToLower(record.Db)
-	oldRecord := h.GetBindRecord(parser.DigestNormalized(record.OriginalSQL), record.OriginalSQL, record.Db)
+	oldRecord := h.GetBindRecord(parser.DigestNormalized(record.OriginalSQL).String(), record.OriginalSQL, record.Db)
 	var duplicateBinding *Binding
 	if oldRecord != nil {
 		binding := oldRecord.FindBinding(record.Bindings[0].ID)
@@ -295,7 +294,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 			return
 		}
 
-		h.appendBindRecord(parser.DigestNormalized(record.OriginalSQL), record)
+		h.appendBindRecord(parser.DigestNormalized(record.OriginalSQL).String(), record)
 	}()
 
 	// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
@@ -368,7 +367,7 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 		if binding != nil {
 			record.Bindings = append(record.Bindings, *binding)
 		}
-		h.removeBindRecord(parser.DigestNormalized(originalSQL), record)
+		h.removeBindRecord(parser.DigestNormalized(originalSQL).String(), record)
 	}()
 
 	// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
@@ -516,7 +515,7 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 	defer h.sctx.Unlock()
 	h.sctx.GetSessionVars().CurrentDB = bindRecord.Db
 	err := bindRecord.prepareHints(h.sctx.Context)
-	return hash, bindRecord, err
+	return hash.String(), bindRecord, err
 }
 
 // setBindRecord sets the BindRecord to the cache, if there already exists a BindRecord,
@@ -624,8 +623,8 @@ func (h *BindHandle) CaptureBaselines() {
 			continue
 		}
 		dbName := utilparser.GetDefaultDB(stmt, bindableStmt.Schema)
-		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName))
-		if r := h.GetBindRecord(digest, normalizedSQL, dbName); r != nil && r.HasUsingBinding() {
+		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName, bindableStmt.Query))
+		if r := h.GetBindRecord(digest.String(), normalizedSQL, dbName); r != nil && r.HasUsingBinding() {
 			continue
 		}
 		bindSQL := GenerateBindSQL(context.TODO(), stmt, bindableStmt.PlanHint, true, dbName)
@@ -689,14 +688,10 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 	// We need to evolve plan based on the current sql, not the original sql which may have different parameters.
 	// So here we would remove the hint and inject the current best plan hint.
 	hint.BindHint(stmtNode, &hint.HintsSet{})
-	var sb strings.Builder
-	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
-	restoreCtx.DefaultDB = defaultDB
-	err := stmtNode.Restore(restoreCtx)
-	if err != nil {
-		logutil.Logger(ctx).Debug("[sql-bind] restore SQL failed when generating bind SQL", zap.Error(err))
+	bindSQL := utilparser.RestoreWithDefaultDB(stmtNode, defaultDB, "")
+	if bindSQL == "" {
+		return ""
 	}
-	bindSQL := sb.String()
 	switch n := stmtNode.(type) {
 	case *ast.DeleteStmt:
 		deleteIdx := strings.Index(bindSQL, "DELETE")

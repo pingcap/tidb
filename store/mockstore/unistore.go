@@ -14,15 +14,12 @@
 package mockstore
 
 import (
-	"crypto/tls"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/copr"
+	"github.com/pingcap/tidb/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/config"
-	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func newUnistore(opts *mockOptions) (kv.Storage, error) {
@@ -31,7 +28,7 @@ func newUnistore(opts *mockOptions) (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 	opts.clusterInspector(cluster)
-	pdClient = execdetails.InterceptedPDClient{
+	pdClient = util.InterceptedPDClient{
 		Client: pdClient,
 	}
 
@@ -39,56 +36,5 @@ func newUnistore(opts *mockOptions) (kv.Storage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewMockStorage(kvstore), nil
-}
-
-// Wraps tikv.KVStore and make it compatible with kv.Storage.
-type mockStorage struct {
-	*tikv.KVStore
-	*copr.Store
-	memCache kv.MemManager
-}
-
-// NewMockStorage wraps tikv.KVStore as kv.Storage.
-func NewMockStorage(tikvStore *tikv.KVStore) kv.Storage {
-	coprConfig := config.DefaultConfig().TiKVClient.CoprCache
-	coprStore, err := copr.NewStore(tikvStore, &coprConfig)
-	if err != nil {
-		panic(err)
-	}
-	return &mockStorage{
-		KVStore:  tikvStore,
-		Store:    coprStore,
-		memCache: kv.NewCacheDB(),
-	}
-}
-
-func (s *mockStorage) EtcdAddrs() ([]string, error) {
-	return nil, nil
-}
-
-func (s *mockStorage) TLSConfig() *tls.Config {
-	return nil
-}
-
-// GetMemCache return memory mamager of the storage
-func (s *mockStorage) GetMemCache() kv.MemManager {
-	return s.memCache
-}
-
-func (s *mockStorage) StartGCWorker() error {
-	return nil
-}
-
-func (s *mockStorage) Name() string {
-	return "mock-storage"
-}
-
-func (s *mockStorage) Describe() string {
-	return ""
-}
-
-func (s *mockStorage) Close() error {
-	s.Store.Close()
-	return s.KVStore.Close()
+	return mockstorage.NewMockStorage(kvstore)
 }

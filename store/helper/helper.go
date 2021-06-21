@@ -29,18 +29,19 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
-	log "github.com/sirupsen/logrus"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
 )
 
@@ -48,15 +49,14 @@ import (
 // Methods copied from kv.Storage and tikv.Storage due to limitation of go1.13.
 type Storage interface {
 	Begin() (kv.Transaction, error)
-	BeginWithTxnScope(txnScope string) (kv.Transaction, error)
-	BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error)
-	BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error)
+	BeginWithOption(option tikv.StartTSOption) (kv.Transaction, error)
 	GetSnapshot(ver kv.Version) kv.Snapshot
 	GetClient() kv.Client
 	GetMPPClient() kv.MPPClient
 	Close() error
 	UUID() string
 	CurrentVersion(txnScope string) (kv.Version, error)
+	CurrentTimestamp(txnScop string) (uint64, error)
 	GetOracle() oracle.Oracle
 	SupportDeleteRange() (supported bool)
 	Name() string
@@ -72,6 +72,8 @@ type Storage interface {
 	SetTiKVClient(client tikv.Client)
 	GetTiKVClient() tikv.Client
 	Closed() <-chan struct{}
+	GetMinSafeTS(txnScope string) uint64
+	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
 }
 
 // Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.
@@ -101,13 +103,84 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 		logutil.BgLogger().Info("get MVCC by encoded key failed",
 			zap.Stringer("encodeKey", encodedKey),
 			zap.Reflect("region", keyLocation.Region),
-			zap.Stringer("startKey", keyLocation.StartKey),
-			zap.Stringer("endKey", keyLocation.EndKey),
+			zap.Stringer("keyLocation", keyLocation),
 			zap.Reflect("kvResp", kvResp),
 			zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	return kvResp.Resp.(*kvrpcpb.MvccGetByKeyResponse), nil
+}
+
+// MvccKV wraps the key's mvcc info in tikv.
+type MvccKV struct {
+	Key      string                        `json:"key"`
+	RegionID uint64                        `json:"region_id"`
+	Value    *kvrpcpb.MvccGetByKeyResponse `json:"value"`
+}
+
+// GetMvccByStartTs gets Mvcc info by startTS from tikv.
+func (h *Helper) GetMvccByStartTs(startTS uint64, startKey, endKey kv.Key) (*MvccKV, error) {
+	bo := tikv.NewBackofferWithVars(context.Background(), 5000, nil)
+	for {
+		curRegion, err := h.RegionCache.LocateKey(bo, startKey)
+		if err != nil {
+			logutil.BgLogger().Error("get MVCC by startTS failed", zap.Uint64("txnStartTS", startTS),
+				zap.Stringer("startKey", startKey), zap.Error(err))
+			return nil, errors.Trace(err)
+		}
+
+		tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByStartTs, &kvrpcpb.MvccGetByStartTsRequest{
+			StartTs: startTS,
+		})
+		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
+		kvResp, err := h.Store.SendReq(bo, tikvReq, curRegion.Region, time.Hour)
+		if err != nil {
+			logutil.BgLogger().Error("get MVCC by startTS failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.Stringer("startKey", startKey),
+				zap.Reflect("region", curRegion.Region),
+				zap.Stringer("curRegion", curRegion),
+				zap.Reflect("kvResp", kvResp),
+				zap.Error(err))
+			return nil, errors.Trace(err)
+		}
+		data := kvResp.Resp.(*kvrpcpb.MvccGetByStartTsResponse)
+		if err := data.GetRegionError(); err != nil {
+			logutil.BgLogger().Warn("get MVCC by startTS failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.Stringer("startKey", startKey),
+				zap.Reflect("region", curRegion.Region),
+				zap.Stringer("curRegion", curRegion),
+				zap.Reflect("kvResp", kvResp),
+				zap.Stringer("error", err))
+			continue
+		}
+
+		if len(data.GetError()) > 0 {
+			logutil.BgLogger().Error("get MVCC by startTS failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.Stringer("startKey", startKey),
+				zap.Reflect("region", curRegion.Region),
+				zap.Stringer("curRegion", curRegion),
+				zap.Reflect("kvResp", kvResp),
+				zap.String("error", data.GetError()))
+			return nil, errors.New(data.GetError())
+		}
+
+		key := data.GetKey()
+		if len(key) > 0 {
+			resp := &kvrpcpb.MvccGetByKeyResponse{Info: data.Info, RegionError: data.RegionError, Error: data.Error}
+			return &MvccKV{Key: strings.ToUpper(hex.EncodeToString(key)), Value: resp, RegionID: curRegion.Region.GetID()}, nil
+		}
+
+		if len(endKey) > 0 && curRegion.Contains(endKey) {
+			return nil, nil
+		}
+		if len(curRegion.EndKey) == 0 {
+			return nil, nil
+		}
+		startKey = kv.Key(curRegion.EndKey)
+	}
 }
 
 // StoreHotRegionInfos records all hog region stores.
@@ -468,8 +541,8 @@ type RegionEpoch struct {
 
 // RegionPeerStat stores one field `DownSec` which indicates how long it's down than `RegionPeer`.
 type RegionPeerStat struct {
-	RegionPeer
-	DownSec int64 `json:"down_seconds"`
+	Peer    RegionPeer `json:"peer"`
+	DownSec int64      `json:"down_seconds"`
 }
 
 // RegionInfo stores the information of one region.
@@ -603,6 +676,22 @@ func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model
 	}
 }
 
+func newPartitionTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitionID int64) tableInfoWithKeyRange {
+	sk, ek := tablecodec.GetTableHandleKeyRange(partitionID)
+	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
+	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
+	return tableInfoWithKeyRange{
+		&TableInfo{
+			DB:      db,
+			Table:   table,
+			IsIndex: false,
+			Index:   nil,
+		},
+		startKey,
+		endKey,
+	}
+}
+
 // GetRegionsTableInfo returns a map maps region id to its tables or indices.
 // Assuming tables or indices key ranges never intersect.
 // Regions key ranges can intersect.
@@ -618,7 +707,13 @@ func (h *Helper) GetRegionsTableInfo(regionsInfo *RegionsInfo, schemas []*model.
 	tables := []tableInfoWithKeyRange{}
 	for _, db := range schemas {
 		for _, table := range db.Tables {
-			tables = append(tables, newTableWithKeyRange(db, table))
+			if table.Partition != nil {
+				for _, partition := range table.Partition.Definitions {
+					tables = append(tables, newPartitionTableWithKeyRange(db, table, partition.ID))
+				}
+			} else {
+				tables = append(tables, newTableWithKeyRange(db, table))
+			}
 			for _, index := range table.Indices {
 				tables = append(tables, newIndexWithKeyRange(db, table, index))
 			}
@@ -840,7 +935,7 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
 
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
-			log.Error(err)
+			log.Error("err", zap.Error(err))
 		}
 	}()
 

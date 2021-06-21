@@ -176,8 +176,12 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 	for idxID, idx := range tbl.Indices {
 		colsLen := len(tbl.Idx2ColumnIDs[idxID])
 		// tbl.Idx2ColumnIDs may only contain the prefix of index columns.
-		if colsLen != len(idx.Info.Columns) {
+		// But it may exceeds the total index since the index would contain the handle column if it's not a unique index.
+		// We append the handle at fillIndexPath.
+		if colsLen < len(idx.Info.Columns) {
 			continue
+		} else if colsLen > len(idx.Info.Columns) {
+			colsLen--
 		}
 		idxCols := make([]int64, colsLen)
 		copy(idxCols, tbl.Idx2ColumnIDs[idxID])
@@ -285,6 +289,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			if noIntervalRanges || len(path.Ranges) == 0 {
 				ds.possibleAccessPaths[0] = path
 				ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
+				ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
 				break
 			}
 			continue
@@ -294,6 +299,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		if (noIntervalRanges && path.Index.Unique) || len(path.Ranges) == 0 {
 			ds.possibleAccessPaths[0] = path
 			ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
+			ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
 			break
 		}
 	}
@@ -453,7 +459,11 @@ func (ds *DataSource) generateIndexMergeOrPaths() error {
 
 			accessConds := make([]expression.Expression, 0, len(partialPaths))
 			for _, p := range partialPaths {
-				accessConds = append(accessConds, p.AccessConds...)
+				indexCondsForP := p.AccessConds[:]
+				indexCondsForP = append(indexCondsForP, p.IndexFilters...)
+				if len(indexCondsForP) > 0 {
+					accessConds = append(accessConds, expression.ComposeCNFCondition(ds.ctx, indexCondsForP...))
+				}
 			}
 			accessDNF := expression.ComposeDNFCondition(ds.ctx, accessConds...)
 			sel, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, []expression.Expression{accessDNF}, nil)
@@ -506,8 +516,8 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
 			}
-			if len(path.AccessConds) == 0 {
-				// If AccessConds is empty, we ignore the access path.
+			// If the path contains a full range, ignore it.
+			if ranger.HasFullRange(path.Ranges) {
 				continue
 			}
 			// If we have point or empty range, just remove other possible paths.
@@ -518,6 +528,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 					results[0] = path
 					results = results[:1]
 				}
+				ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
 				break
 			}
 		} else {
@@ -531,8 +542,8 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				continue
 			}
 			noIntervalRanges := ds.deriveIndexPathStats(path, conditions, true)
-			if len(path.AccessConds) == 0 {
-				// If AccessConds is empty, we ignore the access path.
+			// If the path contains a full range, ignore it.
+			if ranger.HasFullRange(path.Ranges) {
 				continue
 			}
 			// If we have empty range, or point range on unique index, just remove other possible paths.
@@ -543,6 +554,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 					results[0] = path
 					results = results[:1]
 				}
+				ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
 				break
 			}
 		}
@@ -561,9 +573,9 @@ func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.Access
 	minEstRowIndex := 0
 	minEstRow := math.MaxFloat64
 	for i := 0; i < len(indexAccessPaths); i++ {
-		rc, err := ds.stats.HistColl.GetRowCountByIndexRanges(ds.ctx.GetSessionVars().StmtCtx, indexAccessPaths[i].Index.ID, indexAccessPaths[i].Ranges)
-		if err != nil {
-			return nil, err
+		rc := indexAccessPaths[i].CountAfterAccess
+		if len(indexAccessPaths[i].IndexFilters) > 0 {
+			rc = indexAccessPaths[i].CountAfterIndex
 		}
 		if rc < minEstRow {
 			minEstRowIndex = i
@@ -578,16 +590,11 @@ func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*util.AccessPath, cur
 	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths}
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[:current]...)
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[current+1:]...)
-	tableFilterCnt := 0
 	for _, path := range partialPaths {
-		// IndexMerge should not be used when the SQL is like 'select x from t WHERE (key1=1 AND key2=2) OR (key1=4 AND key3=6);'.
-		// Check issue https://github.com/pingcap/tidb/issues/22105 for details.
+		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
 		if len(path.TableFilters) > 0 {
-			tableFilterCnt++
-			if tableFilterCnt > 1 {
-				return nil
-			}
-			indexMergePath.TableFilters = append(indexMergePath.TableFilters, path.TableFilters...)
+			indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[current])
+			break
 		}
 	}
 	return indexMergePath

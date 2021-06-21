@@ -374,20 +374,20 @@ drop table if exists t;
 create table t(a int, b int);
 explain format = 'brief' select a != any (select a from t t2) from t t1;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		and(or(or(gt(Column#8, 1), ne(test.t.a, Column#7)), if(ne(Column#9, 0), <nil>, 0)), and(ne(Column#10, 0), if(isnull(test.t.a), <nil>, 1)))->Column#11
+Projection	10000.00	root		and(or(or(gt(Column#11, 1), ne(test.t.a, Column#10)), if(ne(Column#12, 0), <nil>, 0)), and(ne(Column#13, 0), if(isnull(test.t.a), <nil>, 1)))->Column#14
 └─HashJoin	10000.00	root		CARTESIAN inner join
-  ├─StreamAgg(Build)	1.00	root		funcs:max(Column#13)->Column#7, funcs:count(distinct Column#14)->Column#8, funcs:sum(Column#15)->Column#9, funcs:count(1)->Column#10
-  │ └─Projection	10000.00	root		test.t.a, test.t.a, cast(isnull(test.t.a), decimal(22,0) BINARY)->Column#15
+  ├─StreamAgg(Build)	1.00	root		funcs:max(Column#16)->Column#10, funcs:count(distinct Column#17)->Column#11, funcs:sum(Column#18)->Column#12, funcs:count(1)->Column#13
+  │ └─Projection	10000.00	root		test.t.a, test.t.a, cast(isnull(test.t.a), decimal(22,0) BINARY)->Column#18
   │   └─TableReader	10000.00	root		data:TableFullScan
   │     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─TableReader(Probe)	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select a = all (select a from t t2) from t t1;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		or(and(and(le(Column#8, 1), eq(test.t.a, Column#7)), if(ne(Column#9, 0), <nil>, 1)), or(eq(Column#10, 0), if(isnull(test.t.a), <nil>, 0)))->Column#11
+Projection	10000.00	root		or(and(and(le(Column#11, 1), eq(test.t.a, Column#10)), if(ne(Column#12, 0), <nil>, 1)), or(eq(Column#13, 0), if(isnull(test.t.a), <nil>, 0)))->Column#14
 └─HashJoin	10000.00	root		CARTESIAN inner join
-  ├─StreamAgg(Build)	1.00	root		funcs:firstrow(Column#13)->Column#7, funcs:count(distinct Column#14)->Column#8, funcs:sum(Column#15)->Column#9, funcs:count(1)->Column#10
-  │ └─Projection	10000.00	root		test.t.a, test.t.a, cast(isnull(test.t.a), decimal(22,0) BINARY)->Column#15
+  ├─StreamAgg(Build)	1.00	root		funcs:firstrow(Column#16)->Column#10, funcs:count(distinct Column#17)->Column#11, funcs:sum(Column#18)->Column#12, funcs:count(1)->Column#13
+  │ └─Projection	10000.00	root		test.t.a, test.t.a, cast(isnull(test.t.a), decimal(22,0) BINARY)->Column#18
   │   └─TableReader	10000.00	root		data:TableFullScan
   │     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -398,11 +398,11 @@ drop table if exists s;
 create table s(a varchar(20), b varchar(20));
 explain format = 'brief' select a in (select a from s where s.b = t.b) from t;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		left outer semi join, equal:[eq(Column#8, Column#9)], other cond:eq(cast(test.t.a), cast(test.s.a))
-├─Projection(Build)	10000.00	root		test.s.a, cast(test.s.b, double BINARY)->Column#9
+HashJoin	10000.00	root		left outer semi join, equal:[eq(Column#11, Column#12)], other cond:eq(cast(test.t.a, double BINARY), cast(test.s.a, double BINARY))
+├─Projection(Build)	10000.00	root		test.s.a, cast(test.s.b, double BINARY)->Column#12
 │ └─TableReader	10000.00	root		data:TableFullScan
 │   └─TableFullScan	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-└─Projection(Probe)	10000.00	root		test.t.a, cast(test.t.b, double BINARY)->Column#8
+└─Projection(Probe)	10000.00	root		test.t.a, cast(test.t.b, double BINARY)->Column#11
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select a in (select a+b from t t2 where t2.b = t1.b) from t t1;
@@ -468,7 +468,7 @@ PRIMARY KEY (`id`)
 explain format = 'brief' select row_number() over( partition by i ) - x as rnk from t;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		minus(Column#5, test.t.x)->Column#7
-└─Window	10000.00	root		row_number()->Column#5 over(partition by test.t.i)
+└─Window	10000.00	root		row_number()->Column#5 over(partition by test.t.i rows between current row and current row)
   └─Sort	10000.00	root		test.t.i
     └─TableReader	10000.00	root		data:TableRangeScan
       └─TableRangeScan	10000.00	cop[tikv]	table:t	range:[0,+inf], keep order:false, stats:pseudo

@@ -68,6 +68,8 @@ func InferType4ControlFuncs(lexp, rexp Expression) *types.FieldType {
 	resultFieldType := &types.FieldType{}
 	if lhs.Tp == mysql.TypeNull {
 		*resultFieldType = *rhs
+		// If any of arg is NULL, result type need unset NotNullFlag.
+		types.SetTypeFlag(&resultFieldType.Flag, mysql.NotNullFlag, false)
 		// If both arguments are NULL, make resulting type BINARY(0).
 		if rhs.Tp == mysql.TypeNull {
 			resultFieldType.Tp = mysql.TypeString
@@ -76,6 +78,7 @@ func InferType4ControlFuncs(lexp, rexp Expression) *types.FieldType {
 		}
 	} else if rhs.Tp == mysql.TypeNull {
 		*resultFieldType = *lhs
+		types.SetTypeFlag(&resultFieldType.Flag, mysql.NotNullFlag, false)
 	} else {
 		resultFieldType = types.AggFieldType([]*types.FieldType{lhs, rhs})
 		evalType := types.AggregateEvalType([]*types.FieldType{lhs, rhs}, &resultFieldType.Flag)
@@ -132,9 +135,15 @@ func InferType4ControlFuncs(lexp, rexp Expression) *types.FieldType {
 	resultEvalType := resultFieldType.EvalType()
 	if resultEvalType == types.ETInt {
 		resultFieldType.Decimal = 0
+		if resultFieldType.Tp == mysql.TypeEnum || resultFieldType.Tp == mysql.TypeSet {
+			resultFieldType.Tp = mysql.TypeLonglong
+		}
 	} else if resultEvalType == types.ETString {
 		if lhs.Tp != mysql.TypeNull || rhs.Tp != mysql.TypeNull {
 			resultFieldType.Decimal = types.UnspecifiedLength
+		}
+		if resultFieldType.Tp == mysql.TypeEnum || resultFieldType.Tp == mysql.TypeSet {
+			resultFieldType.Tp = mysql.TypeVarchar
 		}
 	}
 	return resultFieldType
@@ -176,6 +185,9 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 
 	fieldTp := types.AggFieldType(fieldTps)
+	// Here we turn off NotNullFlag. Because if all when-clauses are false,
+	// the result of case-when expr is NULL.
+	types.SetTypeFlag(&fieldTp.Flag, mysql.NotNullFlag, false)
 	tp := fieldTp.EvalType()
 
 	if tp == types.ETInt {
