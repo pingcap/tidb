@@ -890,7 +890,7 @@ func (s *SessionVars) RaiseWarningWhenMPPEnforced(warning string) {
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
 func (s *SessionVars) CheckAndGetTxnScope() string {
-	if s.InRestrictedSQL {
+	if s.InRestrictedSQL || !s.EnableLocalTxn {
 		return kv.GlobalTxnScope
 	}
 	if s.TxnScope.GetVarValue() == kv.LocalTxnScope {
