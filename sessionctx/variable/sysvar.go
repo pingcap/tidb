@@ -816,7 +816,12 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	// TODO: TiDBTxnScope is hidden because local txn feature is not done.
-	{Scope: ScopeSession, Name: TiDBTxnScope, skipInit: true, Hidden: true, Value: kv.GlobalTxnScope,
+	{Scope: ScopeSession, Name: TiDBTxnScope, skipInit: true, Hidden: true, Value: func() string {
+		if txnScope := config.GetTxnScopeFromConfig(); txnScope == kv.GlobalTxnScope {
+			return kv.GlobalTxnScope
+		}
+		return kv.LocalTxnScope
+	}(),
 		SetSession: func(s *SessionVars, val string) error {
 			switch val {
 			case kv.GlobalTxnScope:
@@ -829,7 +834,11 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 		GetSession: func(s *SessionVars) (string, error) {
-			return s.TxnScope.GetVarValue(), nil
+			if s.EnableLocalTxn {
+				return s.TxnScope.GetVarValue(), nil
+			}
+			// Always return GlobalTxnScope when EnableLocalTxn if off.
+			return kv.GlobalTxnScope, nil
 		}},
 	{Scope: ScopeSession, Name: TiDBTxnReadTS, Value: "", Hidden: true, SetSession: func(s *SessionVars, val string) error {
 		return setTxnReadTS(s, val)
