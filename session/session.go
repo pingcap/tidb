@@ -78,9 +78,16 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
+<<<<<<< HEAD
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
+=======
+	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/tikv"
+	tikvutil "github.com/tikv/client-go/v2/util"
+>>>>>>> 9f18723e6... *: fix bug that write on temporary table send request to TiKV (#25535)
 )
 
 var (
@@ -452,7 +459,10 @@ func (s *session) doCommit(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+<<<<<<< HEAD
 
+=======
+>>>>>>> 9f18723e6... *: fix bug that write on temporary table send request to TiKV (#25535)
 	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
 	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
 		if val.(bool) && kv.IsMockCommitErrorEnable() {
@@ -504,10 +514,38 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.SetOption(kv.GuaranteeLinearizability,
 			s.GetSessionVars().TxnCtx.IsExplicit && s.GetSessionVars().GuaranteeLinearizability)
 	}
+	if tables := s.GetSessionVars().TxnCtx.GlobalTemporaryTables; len(tables) > 0 {
+		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
+	}
 
 	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
 }
 
+<<<<<<< HEAD
+=======
+type temporaryTableKVFilter map[int64]tableutil.TempTable
+
+func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) bool {
+	tid := tablecodec.DecodeTableID(key)
+	if _, ok := m[tid]; ok {
+		return true
+	}
+
+	// This is the default filter for all tables.
+	return tablecodec.IsUntouchedIndexKValue(key, value)
+}
+
+// errIsNoisy is used to filter DUPLCATE KEY errors.
+// These can observed by users in INFORMATION_SCHEMA.CLIENT_ERRORS_SUMMARY_GLOBAL instead.
+//
+// The rationale for filtering these errors is because they are "client generated errors". i.e.
+// of the errors defined in kv/error.go, these look to be clearly related to a client-inflicted issue,
+// and the server is only responsible for handling the error correctly. It does not need to log.
+func errIsNoisy(err error) bool {
+	return kv.ErrKeyExists.Equal(err)
+}
+
+>>>>>>> 9f18723e6... *: fix bug that write on temporary table send request to TiKV (#25535)
 func (s *session) doCommitWithRetry(ctx context.Context) error {
 	defer func() {
 		s.GetSessionVars().SetTxnIsolationLevelOneShotStateForNextTxn()

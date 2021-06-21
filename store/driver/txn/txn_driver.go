@@ -110,7 +110,32 @@ func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.Tabl
 				return genKeyExistsError(name, handleStr, nil)
 			}
 		}
+<<<<<<< HEAD
 		return genKeyExistsError(name, handle.String(), nil)
+=======
+	case kv.SchemaAmender:
+		txn.SetSchemaAmender(val.(tikv.SchemaAmender))
+	case kv.SampleStep:
+		txn.KVTxn.GetSnapshot().SetSampleStep(val.(uint32))
+	case kv.CommitHook:
+		txn.SetCommitCallback(val.(func(string, error)))
+	case kv.EnableAsyncCommit:
+		txn.SetEnableAsyncCommit(val.(bool))
+	case kv.Enable1PC:
+		txn.SetEnable1PC(val.(bool))
+	case kv.GuaranteeLinearizability:
+		txn.SetCausalConsistency(!val.(bool))
+	case kv.TxnScope:
+		txn.SetScope(val.(string))
+	case kv.IsStalenessReadOnly:
+		txn.KVTxn.GetSnapshot().SetIsStatenessReadOnly(val.(bool))
+	case kv.MatchStoreLabels:
+		txn.KVTxn.GetSnapshot().SetMatchStoreLabels(val.([]*metapb.StoreLabel))
+	case kv.ResourceGroupTag:
+		txn.KVTxn.SetResourceGroupTag(val.([]byte))
+	case kv.KVFilter:
+		txn.KVTxn.SetKVFilter(val.(tikv.KVFilter))
+>>>>>>> 9f18723e6... *: fix bug that write on temporary table send request to TiKV (#25535)
 	}
 
 	if len(value) == 0 {
