@@ -3898,3 +3898,15 @@ func (s *testIntegrationSerialSuite) TestMergeContinuousSelections(c *C) {
 		res.Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+
+func (s *testIntegrationSuite) TestTimestampIssue25093(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(col decimal(45,8) default 13.654 not null);")
+	tk.MustExec("insert  into t set col = 0.4352;")
+	tk.MustQuery("select timestamp(0.123)").Check(testkit.Rows("0000-00-00 00:00:00.123"))
+	tk.MustQuery("select timestamp(col) from t;").Check(testkit.Rows("0000-00-00 00:00:00.435200"))
+}
+
