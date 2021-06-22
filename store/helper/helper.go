@@ -29,18 +29,19 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
 )
 
@@ -72,6 +73,7 @@ type Storage interface {
 	GetTiKVClient() tikv.Client
 	Closed() <-chan struct{}
 	GetMinSafeTS(txnScope string) uint64
+	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
 }
 
 // Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.
@@ -539,8 +541,8 @@ type RegionEpoch struct {
 
 // RegionPeerStat stores one field `DownSec` which indicates how long it's down than `RegionPeer`.
 type RegionPeerStat struct {
-	RegionPeer
-	DownSec int64 `json:"down_seconds"`
+	Peer    RegionPeer `json:"peer"`
+	DownSec int64      `json:"down_seconds"`
 }
 
 // RegionInfo stores the information of one region.

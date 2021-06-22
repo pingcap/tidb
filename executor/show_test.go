@@ -104,9 +104,9 @@ func (s *testSuite5) TestShowWarnings(c *C) {
 	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec("insert show_warnings values ('a')")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect FLOAT value: 'a'"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DOUBLE value: 'a'"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect FLOAT value: 'a'"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DOUBLE value: 'a'"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 
 	// Test Warning level 'Error'
@@ -433,6 +433,15 @@ func (s *testSuite5) TestShowCreateUser(c *C) {
 	// "show create user" for current user doesn't check privileges.
 	rows = tk1.MustQuery("show create user current_user")
 	rows.Check(testkit.Rows("CREATE USER 'check_priv'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+
+	// Creating users with `IDENTIFIED WITH 'caching_sha2_password'` is not supported yet. So manually creating an entry for now.
+	// later this can be changed to test the full path once 'caching_sha2_password' support is completed.
+	tk.MustExec("CREATE USER 'sha_test'@'%' IDENTIFIED BY 'temp_passwd'")
+	tk.MustExec("UPDATE mysql.user SET plugin='caching_sha2_password', authentication_string=0x24412430303524532C06366D1D1E2B2F4437681A057B6807193D1C4B6E772F667A764663534E6C3978716C3057644D73427A787747674679687632644A384F337941704A542F WHERE user='sha_test' AND host='%'")
+	tk.MustExec("FLUSH PRIVILEGES")
+
+	rows = tk.MustQuery("SHOW CREATE USER 'sha_test'@'%'")
+	rows.Check(testkit.Rows("CREATE USER 'sha_test'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$S,\x066m\x1d\x1e+/D7h\x1a\x05{h\a\x19=\x1cKnw/fzvFcSNl9xql0WdMsBzxwGgFyhv2dJ8O3yApJT/' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
 }
 
 func (s *testSuite5) TestUnprivilegedShow(c *C) {
@@ -1270,6 +1279,9 @@ func (s *testSuite5) TestShowVar(c *C) {
 	c.Check(res.Rows(), HasLen, 0)
 	res = tk.MustQuery("show global variables like '" + variable.TiDBPartitionPruneMode + "'")
 	c.Check(res.Rows(), HasLen, 0)
+	// Test Hidden tx_read_ts
+	res = tk.MustQuery("show variables like '%tx_read_ts'")
+	c.Check(res.Rows(), HasLen, 0)
 }
 
 func (s *testSuite5) TestIssue19507(c *C) {
@@ -1307,6 +1319,7 @@ func (s *testSuite5) TestShowPerformanceSchema(c *C) {
 func (s *testSuite5) TestShowTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table t1 (id int) on commit delete rows")
 	tk.MustExec("create global temporary table t3 (i int primary key, j int) on commit delete rows")
 	// For issue https://github.com/pingcap/tidb/issues/24752
@@ -1324,4 +1337,20 @@ func (s *testSuite5) TestShowTemporaryTable(c *C) {
 	// Verify that the `show create table` result can be used to build the table.
 	createTable := strings.ReplaceAll(expect, "t3", "t4")
 	tk.MustExec(createTable)
+
+	// Cover auto increment column.
+	tk.MustExec(`CREATE GLOBAL TEMPORARY TABLE t5 (
+	id int(11) NOT NULL AUTO_INCREMENT,
+	b int(11) NOT NULL,
+	pad varbinary(255) DEFAULT NULL,
+	PRIMARY KEY (id),
+	KEY b (b)) ON COMMIT DELETE ROWS`)
+	expect = "CREATE GLOBAL TEMPORARY TABLE `t5` (\n" +
+		"  `id` int(11) NOT NULL AUTO_INCREMENT,\n" +
+		"  `b` int(11) NOT NULL,\n" +
+		"  `pad` varbinary(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
+	tk.MustQuery("show create table t5").Check(testkit.Rows("t5 " + expect))
 }

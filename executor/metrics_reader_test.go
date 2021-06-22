@@ -20,10 +20,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -62,10 +60,11 @@ func (s *testSuite7) TestStmtLabel(c *C) {
 	for _, tt := range tests {
 		stmtNode, err := parser.New().ParseOneStmt(tt.sql, "", "")
 		c.Check(err, IsNil)
-		is := tk.Se.GetInfoSchema().(infoschema.InfoSchema)
-		err = plannercore.Preprocess(tk.Se.(sessionctx.Context), stmtNode, is)
+		preprocessorReturn := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(tk.Se, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
+		c.Check(err, IsNil)
 		c.Assert(err, IsNil)
-		_, _, err = planner.Optimize(context.TODO(), tk.Se, stmtNode, is)
+		_, _, err = planner.Optimize(context.TODO(), tk.Se, stmtNode, preprocessorReturn.InfoSchema)
 		c.Assert(err, IsNil)
 		c.Assert(executor.GetStmtLabel(stmtNode), Equals, tt.label)
 	}

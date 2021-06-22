@@ -802,7 +802,6 @@ func MergePatchBinary(bjs []*BinaryJSON) (*BinaryJSON, error) {
 		}
 		return MergePatchBinary([]*BinaryJSON{tmp, bjs[length-1]})
 	}
-
 	target := bjs[0]
 	for _, patch := range bjs[1:] {
 		target, err = mergePatchBinary(target, patch)

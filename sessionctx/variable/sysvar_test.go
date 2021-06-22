@@ -115,8 +115,10 @@ func (*testSysVarSuite) TestRegistrationOfNewSysVar(c *C) {
 	// Boolean oN or 1 converts to canonical ON or OFF
 	normalizedVal, err := sysVar.Validate(vars, "oN", ScopeSession)
 	c.Assert(normalizedVal, Equals, "ON")
+	c.Assert(err, IsNil)
 	normalizedVal, err = sysVar.Validate(vars, "0", ScopeSession)
 	c.Assert(normalizedVal, Equals, "OFF")
+	c.Assert(err, IsNil)
 
 	err = sysVar.SetSessionFromHook(vars, "OFF") // default is on
 	c.Assert(err.Error(), Matches, "set should fail")
@@ -448,6 +450,21 @@ func (*testSysVarSuite) TestSkipInit(c *C) {
 	c.Assert(sv.SkipInit(), IsTrue)
 }
 
+// IsNoop is used by the documentation to auto-generate docs for real sysvars.
+func (*testSysVarSuite) TestIsNoop(c *C) {
+	sv := GetSysVar(TiDBMultiStatementMode)
+	c.Assert(sv.IsNoop, IsFalse)
+
+	sv = GetSysVar(InnodbLockWaitTimeout)
+	c.Assert(sv.IsNoop, IsFalse)
+
+	sv = GetSysVar(InnodbFastShutdown)
+	c.Assert(sv.IsNoop, IsTrue)
+
+	sv = GetSysVar(ReadOnly)
+	c.Assert(sv.IsNoop, IsTrue)
+}
+
 func (*testSysVarSuite) TestInstanceScopedVars(c *C) {
 	// This tests instance scoped variables through GetSessionOrGlobalSystemVar().
 	// Eventually these should be changed to use getters so that the switch
@@ -578,4 +595,29 @@ func (*testSysVarSuite) TestDeepCopyGetSysVars(c *C) {
 	c.Assert(sv.Name, Equals, "datarace")
 	c.Assert(GetSysVar("datarace").Name, Equals, "datarace")
 	UnregisterSysVar("datarace")
+}
+
+// Test that sysvars defaults are logically valid. i.e.
+// the default itself must validate without error provided the scope and read-only is correct.
+// The default values should also be normalized for consistency.
+func (*testSysVarSuite) TestDefaultValuesAreSettable(c *C) {
+	vars := NewSessionVars()
+	for _, sv := range GetSysVars() {
+		if sv.HasSessionScope() && !sv.ReadOnly {
+			val, err := sv.Validate(vars, sv.Value, ScopeSession)
+			c.Assert(sv.Value, Equals, val)
+			c.Assert(err, IsNil)
+		}
+
+		if sv.HasGlobalScope() && !sv.ReadOnly {
+			if sv.Name == TiDBEnableNoopFuncs {
+				// TODO: this requires access to the global var accessor,
+				// which is not available in this test.
+				continue
+			}
+			val, err := sv.Validate(vars, sv.Value, ScopeGlobal)
+			c.Assert(sv.Value, Equals, val)
+			c.Assert(err, IsNil)
+		}
+	}
 }

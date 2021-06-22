@@ -28,9 +28,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/tikv/client-go/v2/mockstore/cluster"
 )
 
 type testBatchCopSuite struct {

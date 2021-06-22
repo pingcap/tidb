@@ -40,13 +40,16 @@ var SkipWithGrant = false
 var _ privilege.Manager = (*UserPrivileges)(nil)
 var dynamicPrivs = []string{
 	"BACKUP_ADMIN",
+	"RESTORE_ADMIN",
+	"SYSTEM_USER",
 	"SYSTEM_VARIABLES_ADMIN",
 	"ROLE_ADMIN",
 	"CONNECTION_ADMIN",
-	"RESTRICTED_TABLES_ADMIN",    // Can see system tables when SEM is enabled
-	"RESTRICTED_STATUS_ADMIN",    // Can see all status vars when SEM is enabled.
-	"RESTRICTED_VARIABLES_ADMIN", // Can see all variables when SEM is enabled
-	"RESTRICTED_USER_ADMIN",      // User can not have their access revoked by SUPER users.
+	"RESTRICTED_TABLES_ADMIN",     // Can see system tables when SEM is enabled
+	"RESTRICTED_STATUS_ADMIN",     // Can see all status vars when SEM is enabled.
+	"RESTRICTED_VARIABLES_ADMIN",  // Can see all variables when SEM is enabled
+	"RESTRICTED_USER_ADMIN",       // User can not have their access revoked by SUPER users.
+	"RESTRICTED_CONNECTION_ADMIN", // Can not be killed by PROCESS/CONNECTION_ADMIN privilege
 }
 var dynamicPrivLock sync.Mutex
 
@@ -171,11 +174,16 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 		return ""
 	}
 	pwd := record.AuthenticationString
-	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
-		logutil.BgLogger().Error("user password from system DB not like sha1sum", zap.String("user", user))
-		return ""
+	switch len(pwd) {
+	case 0:
+		return pwd
+	case mysql.PWDHashLen + 1: // mysql_native_password
+		return pwd
+	case 70: // caching_sha2_password
+		return pwd
 	}
-	return pwd
+	logutil.BgLogger().Error("user password from system DB not like a known hash format", zap.String("user", user), zap.Int("hash_length", len(pwd)))
+	return ""
 }
 
 // GetAuthWithoutVerification implements the Manager interface.

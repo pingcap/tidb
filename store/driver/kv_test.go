@@ -2,7 +2,7 @@ package driver
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/tikv/client-go/v2/config"
 )
 
 type testTiKVDriverSuite struct {
