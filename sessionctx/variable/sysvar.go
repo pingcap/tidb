@@ -810,7 +810,8 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: InitConnect, Value: ""},
 
 	/* TiDB specific variables */
-	{Scope: ScopeSession, Name: TiDBTxnScope, skipInit: true, Value: func() string {
+	// TODO: TiDBTxnScope is hidden because local txn feature is not done.
+	{Scope: ScopeSession, Name: TiDBTxnScope, skipInit: true, Hidden: true, Value: func() string {
 		if isGlobal, _ := config.GetTxnScopeFromConfig(); isGlobal {
 			return kv.GlobalTxnScope
 		}
@@ -1742,6 +1743,7 @@ var defaultSysVars = []*SysVar{
 		s.EnableGlobalTemporaryTable = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: SkipNameResolve, Value: Off, Type: TypeBool},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
