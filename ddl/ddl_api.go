@@ -1731,19 +1731,8 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	setTemporaryType(tbInfo, s.TemporaryKeyword)
-	switch s.TemporaryKeyword {
-	case ast.TemporaryGlobal:
-		if !ctx.GetSessionVars().EnableGlobalTemporaryTable {
-			return nil, errors.New("global temporary table is experimental and it is switched off by tidb_enable_global_temporary_table")
-		}
-		// "create global temporary table ... on commit preserve rows"
-		if !s.OnCommitDelete {
-			return nil, errors.Trace(errUnsupportedOnCommitPreserve)
-		}
-	case ast.TemporaryLocal:
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("local TEMPORARY TABLE is not supported yet, TEMPORARY will be parsed but ignored"))
-	default:
+	if err = setTemporaryType(ctx, tbInfo, s); err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	if err = setTableAutoRandomBits(ctx, tbInfo, colDefs); err != nil {
@@ -1812,7 +1801,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err != nil {
 		return errors.Trace(err)
 	}
-	setTemporaryType(tbInfo, s.TemporaryKeyword)
+	if err = setTemporaryType(ctx, tbInfo, s); err != nil {
+		return errors.Trace(err)
+	}
 
 	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		return err
@@ -1826,16 +1817,25 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist, false /*tryRetainID*/)
 }
 
-func setTemporaryType(tbInfo *model.TableInfo, temporaryWord ast.TemporaryKeyword) {
-	switch temporaryWord {
+func setTemporaryType(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
+	switch s.TemporaryKeyword {
 	case ast.TemporaryGlobal:
 		tbInfo.TempTableType = model.TempTableGlobal
+		if !ctx.GetSessionVars().EnableGlobalTemporaryTable {
+			return errors.New("global temporary table is experimental and it is switched off by tidb_enable_global_temporary_table")
+		}
+		// "create global temporary table ... on commit preserve rows"
+		if !s.OnCommitDelete {
+			return errors.Trace(errUnsupportedOnCommitPreserve)
+		}
 	case ast.TemporaryLocal:
 		// TODO: set "tbInfo.TempTableType = model.TempTableLocal" after local temporary table is supported.
 		tbInfo.TempTableType = model.TempTableNone
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("local TEMPORARY TABLE is not supported yet, TEMPORARY will be parsed but ignored"))
 	default:
 		tbInfo.TempTableType = model.TempTableNone
 	}
+	return nil
 }
 
 func (d *ddl) CreateTableWithInfo(
