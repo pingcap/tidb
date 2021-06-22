@@ -1493,11 +1493,9 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(8)
 	cancel() // cancel case 1
-	// Make linter happy.
-	_ = cancel
 
 	// case 2: agent hangs for a while
-	cancel = runWorkload(0, 10)
+	cancel2 := runWorkload(0, 10)
 	// empty agent address, should not collect records
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
@@ -1510,14 +1508,15 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	// agent server hangs for a while
 	agentServer.HangFromNow(time.Second * 6)
 	// run another set of SQL queries
-	cancel()
-	cancel = runWorkload(11, 20)
+	cancel2()
+
+	cancel3 := runWorkload(11, 20)
 	agentServer.WaitCollectCnt(1, time.Second*8)
 	checkFn(5)
-	_ = cancel
+	cancel3()
 
 	// case 3: agent restart
-	cancel = runWorkload(0, 10)
+	cancel4 := runWorkload(0, 10)
 	// empty agent address, should not collect records
 	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
 	agentServer.WaitCollectCnt(1, time.Second*4)
@@ -1527,10 +1526,9 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	agentServer.WaitCollectCnt(1, time.Second*8)
 	checkFn(5)
 	// run another set of SQL queries
-	cancel()
-	_ = cancel
+	cancel4()
 
-	cancel = runWorkload(11, 20)
+	cancel5 := runWorkload(11, 20)
 	// agent server shutdown
 	agentServer.Stop()
 	// agent server restart
@@ -1540,7 +1538,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	// check result
 	agentServer.WaitCollectCnt(2, time.Second*8)
 	checkFn(5)
-	_ = cancel
+	cancel5()
 }
 
 func (ts *tidbTestTopSQLSuite) loopExec(ctx context.Context, c *C, fn func(db *sql.DB)) {
