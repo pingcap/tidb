@@ -293,6 +293,7 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 
 // TestAddPrimaryKeyRollback1 is used to test scenarios that will roll back when a duplicate primary key is encountered.
 func (s *testDBSuite8) TestAddPrimaryKeyRollback1(c *C) {
+	c.Skip("unstable, skip it and fix it before 20210705")
 	hasNullValsInKey := false
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
