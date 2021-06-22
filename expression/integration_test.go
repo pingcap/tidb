@@ -9031,6 +9031,7 @@ PARTITION BY RANGE (c) (
 			expectErr: nil,
 		},
 	}
+	tk.MustExec("set global tidb_enable_local_txn = on;")
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		failpoint.Enable("tikvclient/injectTxnScope",
@@ -9057,6 +9058,7 @@ PARTITION BY RANGE (c) (
 		tk.Exec("commit")
 	}
 	failpoint.Disable("tikvclient/injectTxnScope")
+	tk.MustExec("set global tidb_enable_local_txn = off;")
 }
 
 func (s *testIntegrationSerialSuite) TestCollationUnion(c *C) {
@@ -9779,4 +9781,23 @@ func (s *testIntegrationSuite) TestCharsetErr(c *C) {
 
 	err = tk.ExecToErr("insert into charset_test(c1) values ('aaa\xEF\xBF\xBD')")
 	c.Assert(err.Error(), Equals, "[table:1366]Incorrect string value '\\xEF\\xBF\\xBD' for column 'c1'")
+}
+
+func (s *testIntegrationSuite2) TestIssue25591(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1_1, t2_1;")
+	tk.MustExec("CREATE TABLE `t1_1` (`col1` double DEFAULT NULL, `col2` double DEFAULT NULL);")
+	tk.MustExec("CREATE TABLE `t2_1` (`col1` varchar(20) DEFAULT NULL, `col2` double DEFAULT NULL);")
+	tk.MustExec("insert into t1_1 values(12.991, null), (12.991, null);")
+	tk.MustExec("insert into t2_1(col2) values(87), (-9.183), (-9.183);")
+
+	tk.MustExec("set @@tidb_enable_vectorized_expression  = false;")
+	rows := tk.MustQuery("select t1.col1, t2.col1, t2.col2 from t1_1 t1 inner join  t2_1 t2 on t1.col1 not in (1,t2.col1,t2.col2) order by 1,2,3;")
+	rows.Check(testkit.Rows())
+
+	tk.MustExec("set @@tidb_enable_vectorized_expression  = true;")
+	rows = tk.MustQuery("select t1.col1, t2.col1, t2.col2 from t1_1 t1 inner join  t2_1 t2 on t1.col1 not in (1,t2.col1,t2.col2) order by 1,2,3;")
+	rows.Check(testkit.Rows())
 }
