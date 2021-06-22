@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -158,14 +157,6 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		return err
 	}
 	newSnapshotTS := getSnapshotTSByName()
-	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
-	if newSnapshotIsSet {
-		err = gcutil.ValidateSnapshot(e.ctx, newSnapshotTS)
-		if err != nil {
-			fallbackOldSnapshotTS()
-			return err
-		}
-	}
 	err = e.loadSnapshotInfoSchemaIfNeeded(newSnapshotTS)
 	if err != nil {
 		fallbackOldSnapshotTS()
