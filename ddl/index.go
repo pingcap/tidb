@@ -1309,6 +1309,17 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker
 		if endKey.Cmp(keyRange.EndKey) < 0 {
 			endIncluded = true
 		}
+		if t.Meta().ShardRowIDBits > 0 {
+			endH, err := getReverseHandle(workers[0].sessCtx.GetStore(), workers[0].priority, t, startHandle, endHandle, endIncluded)
+			if err != nil {
+				logutil.BgLogger().Info("[ddl] send range task to workers, get reverse handle failed", zap.Error(err))
+			} else {
+				logutil.BgLogger().Info("xxx ======================================", zap.Int64("end handle", endHandle), zap.Int64("cur end handle", endH))
+				logutil.BgLogger().Info("[ddl] send range task to workers, change end handle", zap.Int64("end handle", endHandle), zap.Int64("current end handle", endH))
+				endHandle = endH
+				endIncluded = true
+			}
+		}
 		task := &reorgIndexTask{physicalTableID, startHandle, endHandle, endIncluded}
 		batchTasks = append(batchTasks, task)
 
@@ -1611,6 +1622,42 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 	}
 
 	return nil
+}
+
+func getReverseHandle(store kv.Storage, priority int, t table.Table, startHandle, endHandle int64, endIncluded bool) (int64, error) {
+	if endIncluded {
+		if endHandle == math.MaxInt64 {
+			return endHandle, nil
+		}
+		endHandle++
+	}
+
+	var handle int64
+	snap, err := store.GetSnapshot(kv.MaxVersion)
+	snap.SetOption(kv.Priority, priority)
+	if err != nil {
+		return handle, errors.Trace(err)
+	}
+	firstKey := t.RecordKey(endHandle)
+
+	it, err := snap.IterReverse(firstKey)
+	if err != nil {
+		return handle, errors.Trace(err)
+	}
+	defer it.Close()
+
+	if !it.Valid() {
+		return startHandle, nil
+	}
+	handle, err = tablecodec.DecodeRowKey(it.Key())
+	if err != nil {
+		return handle, errors.Trace(err)
+	}
+	if handle < startHandle {
+		handle = startHandle
+	}
+
+	return handle, nil
 }
 
 func getIndexInfoByNameAndColumn(oldTableInfo *model.TableInfo, newOne *model.IndexInfo) *model.IndexInfo {
