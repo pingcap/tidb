@@ -55,7 +55,7 @@ func InTxnRetry(p *preprocessor) {
 	p.flag |= inTxnRetry
 }
 
-// WithPreprocessorReturn returns a PreprocessOpt to initialize the PreprocesorReturn.
+// WithPreprocessorReturn returns a PreprocessOpt to initialize the PreprocessorReturn.
 func WithPreprocessorReturn(ret *PreprocessorReturn) PreprocessOpt {
 	return func(p *preprocessor) {
 		p.PreprocessorReturn = ret
@@ -93,7 +93,7 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 }
 
 // Preprocess resolves table names of the node, and checks some statements validation.
-// prepreocssReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
+// preprocessReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
 func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
 	v := preprocessor{ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0), withName: make(map[string]interface{})}
 	for _, optFn := range preprocessOpt {
@@ -833,12 +833,27 @@ func (p *preprocessor) checkDropSequenceGrammar(stmt *ast.DropSequenceStmt) {
 }
 
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
-	p.checkDropTableNames(stmt.Tables)
+	currentDB := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
 	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
-	if stmt.TemporaryKeyword != ast.TemporaryNone && !enableNoopFuncs {
-		p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE")
-		return
+	for _, t := range stmt.Tables {
+		if isIncorrectName(t.Name.String()) {
+			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
+			return
+		}
+		if t.Schema.String() != "" {
+			currentDB = t.Schema
+		}
+		tableInfo, err := p.ensureInfoSchema().TableByName(currentDB, t.Name)
+		if err != nil {
+			p.err = err
+			return
+		}
+		if stmt.TemporaryKeyword != ast.TemporaryNone && !enableNoopFuncs && tableInfo.Meta().TempTableType == model.TempTableNone {
+			p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE")
+			return
+		}
 	}
+
 }
 
 func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {

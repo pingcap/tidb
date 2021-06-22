@@ -292,10 +292,6 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE TEMPORARY TABLE t (a INT);", false, expression.ErrFunctionsNoopImpl.GenWithStackByArgs("CREATE TEMPORARY TABLE")},
 		{"DROP TEMPORARY TABLE t;", false, expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE")},
 
-		// issue 25595
-		{"create table tb2(id int);", false, nil},
-		{"drop global temporary table tb2;", false, expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE")},
-
 		// TABLESAMPLE
 		{"select * from t tablesample bernoulli();", false, expression.ErrInvalidTableSample},
 		{"select * from t tablesample bernoulli(10 rows);", false, expression.ErrInvalidTableSample},
@@ -340,4 +336,27 @@ func (s *testValidatorSuite) TestForeignKey(c *C) {
 	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (b) REFERENCES t2 (d)", false, nil)
 
 	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (c) REFERENCES test2.t (e)", false, nil)
+}
+
+func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
+	defer testleak.AfterTest(c)()
+	defer func() {
+		s.dom.Close()
+		s.store.Close()
+	}()
+
+	ctx := context.Background()
+	execSqlList := []string{
+		"use test",
+		"set tidb_enable_global_temporary_table=true",
+		"create table tb(id int);",
+		"create global temporary table temp(id int) on commit delete rows;",
+	}
+	for _, execSql := range execSqlList {
+		_, err := s.se.Execute(ctx, execSql)
+		c.Assert(err, IsNil)
+	}
+	s.is = s.dom.InfoSchema()
+	s.runSQL(c, "drop global temporary table tb;", false, expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE"))
+	s.runSQL(c, "drop global temporary table temp", false, nil)
 }
