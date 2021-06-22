@@ -9731,19 +9731,6 @@ OR Variable_name = 'sql_mode' OR Variable_name = 'query_cache_type'  OR Variable
 OR Variable_name = 'license' OR Variable_name = 'init_connect'`).Rows(), HasLen, 19)
 
 }
-<<<<<<< HEAD
-=======
-
-func (s *testIntegrationSuite) TestCharsetErr(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table charset_test(id int auto_increment primary key, c1 varchar(255) character set ascii)")
-	err := tk.ExecToErr("insert into charset_test(c1) values ('aaa\xEF\xBF\xBDabcdef')")
-	c.Assert(err.Error(), Equals, "[table:1366]Incorrect string value '\\xEF\\xBF\\xBDabc...' for column 'c1'")
-
-	err = tk.ExecToErr("insert into charset_test(c1) values ('aaa\xEF\xBF\xBD')")
-	c.Assert(err.Error(), Equals, "[table:1366]Incorrect string value '\\xEF\\xBF\\xBD' for column 'c1'")
-}
 
 func (s *testIntegrationSuite2) TestIssue25591(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -9763,4 +9750,3 @@ func (s *testIntegrationSuite2) TestIssue25591(c *C) {
 	rows = tk.MustQuery("select t1.col1, t2.col1, t2.col2 from t1_1 t1 inner join  t2_1 t2 on t1.col1 not in (1,t2.col1,t2.col2) order by 1,2,3;")
 	rows.Check(testkit.Rows())
 }
->>>>>>> ea1a1e79c... expression: fix IN expr critical bug (#25653)
