@@ -9031,6 +9031,7 @@ PARTITION BY RANGE (c) (
 			expectErr: nil,
 		},
 	}
+	tk.MustExec("set global tidb_enable_local_txn = on;")
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		failpoint.Enable("tikvclient/injectTxnScope",
@@ -9057,6 +9058,7 @@ PARTITION BY RANGE (c) (
 		tk.Exec("commit")
 	}
 	failpoint.Disable("tikvclient/injectTxnScope")
+	tk.MustExec("set global tidb_enable_local_txn = off;")
 }
 
 func (s *testIntegrationSerialSuite) TestCollationUnion(c *C) {
