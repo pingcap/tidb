@@ -178,6 +178,29 @@ func (s *testIntegrationSuite) TestPushLimitDownIndexLookUpReader(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) TestAggColumnPrune(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1),(2)")
+
+	var input []string
+	var output []struct {
+		SQL string
+		Res []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
+	}
+}
+
 func (s *testIntegrationSuite) TestIsFromUnixtimeNullRejective(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3266,6 +3289,15 @@ func (s *testIntegrationSuite) TestIssue24281(c *C) {
 		"WHERE 1 = 1 AND v.share_login = 'somevalue' " +
 		"GROUP BY s.member_login " +
 		"UNION select 1 as v1, 2 as v2")
+}
+
+func (s *testIntegrationSuite) TestLimitWindowColPrune(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustQuery("select count(a) f1, row_number() over (order by count(a)) as f2 from t limit 1").Check(testkit.Rows("1 1"))
 }
 
 func (s *testIntegrationSerialSuite) TestMergeContinuousSelections(c *C) {
