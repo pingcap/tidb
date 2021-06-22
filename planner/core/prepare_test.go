@@ -254,6 +254,7 @@ func (s *testPrepareSerialSuite) TestPrepareCacheNow(c *C) {
 }
 
 func (s *testPrepareSerialSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
+	c.Skip("unstable, skip it and fix it before 20210705")
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -813,6 +814,7 @@ func (s *testPlanSerialSuite) TestPlanCacheUnionScan(c *C) {
 }
 
 func (s *testPlanSerialSuite) TestPlanCacheHitInfo(c *C) {
+	c.Skip("unstable, skip it and fix it before 20210705")
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
