@@ -346,14 +346,14 @@ func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
 	}()
 
 	ctx := context.Background()
-	execSqlList := []string{
+	execSQLList := []string{
 		"use test",
 		"set tidb_enable_global_temporary_table=true",
 		"create table tb(id int);",
 		"create global temporary table temp(id int) on commit delete rows;",
 	}
-	for _, execSql := range execSqlList {
-		_, err := s.se.Execute(ctx, execSql)
+	for _, execSQL := range execSQLList {
+		_, err := s.se.Execute(ctx, execSQL)
 		c.Assert(err, IsNil)
 	}
 	s.is = s.dom.InfoSchema()
