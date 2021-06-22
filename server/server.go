@@ -37,7 +37,6 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
-	"unsafe"
 
 	// For pprof
 	_ "net/http/pprof"
@@ -46,6 +45,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
@@ -54,10 +54,11 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/fastrand"
@@ -99,6 +100,7 @@ var (
 	errConCount                = dbterror.ClassServer.NewStd(errno.ErrConCount)
 	errSecureTransportRequired = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
 	errMultiStatementDisabled  = dbterror.ClassServer.NewStd(errno.ErrMultiStatementDisabled)
+	errNewAbortingConnection   = dbterror.ClassServer.NewStd(errno.ErrNewAbortingConnection)
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -182,8 +184,11 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 	return cc
 }
 
+// isUnixSocket should ideally be a function of clientConnection!
+// But currently since unix-socket connections are forwarded to TCP when the server listens on both, it can really only be accurate on a server-level.
+// If the server is listening on both, it *must* return FALSE for remote-host authentication to be performed correctly. See #23460.
 func (s *Server) isUnixSocket() bool {
-	return s.cfg.Socket != ""
+	return s.cfg.Socket != "" && s.cfg.Port == 0
 }
 
 func (s *Server) forwardUnixSocketToTCP() {
@@ -306,9 +311,9 @@ func setSSLVariable(ca, key, cert string) {
 func setTxnScope() {
 	variable.SetSysVar("txn_scope", func() string {
 		if isGlobal, _ := config.GetTxnScopeFromConfig(); isGlobal {
-			return oracle.GlobalTxnScope
+			return kv.GlobalTxnScope
 		}
-		return oracle.LocalTxnScope
+		return kv.LocalTxnScope
 	}())
 }
 
@@ -477,6 +482,10 @@ func (s *Server) onConn(conn *clientConn) {
 	conn.Run(ctx)
 
 	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+		// Audit plugin may be disabled before a conn is created, leading no connectionInfo in sessionVars.
+		if sessionVars.ConnectionInfo == nil {
+			sessionVars.ConnectionInfo = conn.connectInfo()
+		}
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
 			sessionVars.ConnectionInfo.Duration = float64(time.Since(connectedTime)) / float64(time.Millisecond)
@@ -544,6 +553,22 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	for _, client := range s.clients {
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = pi
+		}
+	}
+	return rs
+}
+
+// ShowTxnList shows all txn info for displaying in `TIDB_TRX`
+func (s *Server) ShowTxnList() []*txninfo.TxnInfo {
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
+	rs := make([]*txninfo.TxnInfo, 0, len(s.clients))
+	for _, client := range s.clients {
+		if client.ctx.Session != nil {
+			info := client.ctx.Session.TxnInfo()
+			if info != nil {
+				rs = append(rs, info)
+			}
 		}
 	}
 	return rs

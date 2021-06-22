@@ -14,8 +14,8 @@
 package metrics
 
 import (
-	tikvmetrics "github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/prometheus/client_golang/prometheus"
+	tikvmetrics "github.com/tikv/client-go/v2/metrics"
 )
 
 var (
@@ -98,6 +98,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(JobsGauge)
 	prometheus.MustRegister(KeepAliveCounter)
 	prometheus.MustRegister(LoadPrivilegeCounter)
+	prometheus.MustRegister(InfoCacheCounters)
 	prometheus.MustRegister(LoadSchemaCounter)
 	prometheus.MustRegister(LoadSchemaDuration)
 	prometheus.MustRegister(MetaHistogram)
@@ -147,6 +148,10 @@ func RegisterMetrics() {
 	prometheus.MustRegister(ServerInfo)
 	prometheus.MustRegister(TokenGauge)
 	prometheus.MustRegister(ConfigStatus)
+	prometheus.MustRegister(TiFlashQueryTotalCounter)
+	prometheus.MustRegister(SmallTxnWriteDuration)
+	prometheus.MustRegister(TxnWriteThroughput)
+	prometheus.MustRegister(LoadSysVarCacheCounter)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

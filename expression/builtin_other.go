@@ -153,6 +153,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	return sig, nil
 }
 
+// nolint:structcheck
 type baseInSig struct {
 	baseBuiltinFunc
 	// nonConstArgsIdx stores the indices of non-constant args in the baseBuiltinFunc.args (the first arg is not included).

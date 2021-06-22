@@ -25,7 +25,9 @@ type telemetryData struct {
 	TelemetryHostExtra *telemetryHostExtraInfo `json:"hostExtra"`
 	ReportTimestamp    int64                   `json:"reportTimestamp"`
 	TrackingID         string                  `json:"trackingId"`
-	FeatureUsageInfo   *featureUsageInfo       `json:"featureUsageInfo"`
+	FeatureUsage       *featureUsage           `json:"featureUsage"`
+	WindowedStats      []*windowData           `json:"windowedStats"`
+	SlowQueryStats     *slowQueryStats         `json:"slowQueryStats"`
 }
 
 func generateTelemetryData(ctx sessionctx.Context, trackingID string) telemetryData {
@@ -39,13 +41,20 @@ func generateTelemetryData(ctx sessionctx.Context, trackingID string) telemetryD
 	if i, err := getClusterInfo(ctx); err == nil {
 		r.Instances = i
 	}
-	if f, err := getTelemetryFeatureUsageInfo(ctx); err == nil {
-		r.FeatureUsageInfo = f
+	if f, err := getFeatureUsage(ctx); err == nil {
+		r.FeatureUsage = f
 	}
+	if s, err := getSlowQueryStats(ctx); err == nil {
+		r.SlowQueryStats = s
+	}
+
+	r.WindowedStats = getWindowData()
 	r.TelemetryHostExtra = getTelemetryHostExtraInfo()
 	return r
 }
 
 func postReportTelemetryData() {
 	postReportTxnUsage()
+	postReportCTEUsage()
+	postReportSlowQueryStats()
 }

@@ -5,13 +5,19 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
-// GetTiFlashTelemetry execute telemetry for a plan.
-func GetTiFlashTelemetry(plan Plan) (tiFlashPushDown, tiFlashExchangePushDown bool) {
+// IsTiFlashContained returns whether the plan contains TiFlash related executors.
+func IsTiFlashContained(plan Plan) (tiFlashPushDown, tiFlashExchangePushDown bool) {
 	if plan == nil {
 		return
 	}
 	var tiflashProcess func(p Plan)
 	tiflashProcess = func(p Plan) {
+		if exp, isExplain := p.(*Explain); isExplain {
+			p = exp.TargetPlan
+			if p == nil {
+				return
+			}
+		}
 		pp, isPhysical := p.(PhysicalPlan)
 		if !isPhysical {
 			return

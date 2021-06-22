@@ -176,8 +176,12 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 	for idxID, idx := range tbl.Indices {
 		colsLen := len(tbl.Idx2ColumnIDs[idxID])
 		// tbl.Idx2ColumnIDs may only contain the prefix of index columns.
-		if colsLen != len(idx.Info.Columns) {
+		// But it may exceeds the total index since the index would contain the handle column if it's not a unique index.
+		// We append the handle at fillIndexPath.
+		if colsLen < len(idx.Info.Columns) {
 			continue
+		} else if colsLen > len(idx.Info.Columns) {
+			colsLen--
 		}
 		idxCols := make([]int64, colsLen)
 		copy(idxCols, tbl.Idx2ColumnIDs[idxID])
@@ -455,7 +459,11 @@ func (ds *DataSource) generateIndexMergeOrPaths() error {
 
 			accessConds := make([]expression.Expression, 0, len(partialPaths))
 			for _, p := range partialPaths {
-				accessConds = append(accessConds, p.AccessConds...)
+				indexCondsForP := p.AccessConds[:]
+				indexCondsForP = append(indexCondsForP, p.IndexFilters...)
+				if len(indexCondsForP) > 0 {
+					accessConds = append(accessConds, expression.ComposeCNFCondition(ds.ctx, indexCondsForP...))
+				}
 			}
 			accessDNF := expression.ComposeDNFCondition(ds.ctx, accessConds...)
 			sel, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, []expression.Expression{accessDNF}, nil)

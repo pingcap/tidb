@@ -45,7 +45,6 @@ type MetricRetriever struct {
 	table     *model.TableInfo
 	tblDef    *infoschema.MetricTableDef
 	extractor *plannercore.MetricTableExtractor
-	timeRange plannercore.QueryTimeRange
 	retrieved bool
 }
 

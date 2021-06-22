@@ -6,7 +6,7 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by aprettyPrintlicable law or agreed to in writing, software
+// Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
@@ -171,12 +171,12 @@ func (s *testPlanNormalize) TestNormalizedPlanForDiffStore(c *C) {
 		normalizedPlanRows := getPlanRows(normalizedPlan)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
-			output[i].Digest = digest
+			output[i].Digest = digest.String()
 			output[i].Plan = normalizedPlanRows
 		})
 		compareStringSlice(c, normalizedPlanRows, output[i].Plan)
-		c.Assert(digest != lastDigest, IsTrue)
-		lastDigest = digest
+		c.Assert(digest.String() != lastDigest, IsTrue)
+		lastDigest = digest.String()
 	}
 }
 
@@ -209,6 +209,20 @@ func (s *testPlanNormalize) TestEncodeDecodePlan(c *C) {
 	tk.MustExec("insert into t1 values (1,1,1);")
 	planTree = getPlanTree()
 	c.Assert(strings.Contains(planTree, "Insert"), IsTrue)
+	c.Assert(strings.Contains(planTree, "time"), IsTrue)
+	c.Assert(strings.Contains(planTree, "loops"), IsTrue)
+
+	tk.MustExec("with cte(a) as (select 1) select * from cte")
+	planTree = getPlanTree()
+	c.Assert(strings.Contains(planTree, "CTE"), IsTrue)
+	c.Assert(strings.Contains(planTree, "1->Column#1"), IsTrue)
+	c.Assert(strings.Contains(planTree, "time"), IsTrue)
+	c.Assert(strings.Contains(planTree, "loops"), IsTrue)
+
+	tk.MustExec("with cte(a) as (select 2) select * from cte")
+	planTree = getPlanTree()
+	c.Assert(strings.Contains(planTree, "CTE"), IsTrue)
+	c.Assert(strings.Contains(planTree, "2->Column#1"), IsTrue)
 	c.Assert(strings.Contains(planTree, "time"), IsTrue)
 	c.Assert(strings.Contains(planTree, "loops"), IsTrue)
 }
@@ -404,10 +418,10 @@ func testNormalizeDigest(tk *testkit.TestKit, c *C, sql1, sql2 string, isSame bo
 	comment := Commentf("sql1: %v, sql2: %v\n%v !=\n%v\n", sql1, sql2, normalized1, normalized2)
 	if isSame {
 		c.Assert(normalized1, Equals, normalized2, comment)
-		c.Assert(digest1, Equals, digest2, comment)
+		c.Assert(digest1.String(), Equals, digest2.String(), comment)
 	} else {
 		c.Assert(normalized1 != normalized2, IsTrue, comment)
-		c.Assert(digest1 != digest2, IsTrue, comment)
+		c.Assert(digest1.String() != digest2.String(), IsTrue, comment)
 	}
 }
 
@@ -431,6 +445,36 @@ func (s *testPlanNormalize) TestExplainFormatHint(c *C) {
 
 	tk.MustQuery("explain format='hint' select /*+ use_index(@`sel_2` `test`.`t2` `idx_c2`), hash_agg(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), hash_agg(@`sel_1`) */ count(1) from t t1 where c2 in (select c2 from t t2 where t2.c2 < 15 and t2.c2 > 12)").Check(testkit.Rows(
 		"use_index(@`sel_2` `test`.`t2` `idx_c2`), hash_agg(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), hash_agg(@`sel_1`)"))
+}
+
+func (s *testPlanNormalize) TestExplainFormatHintRecoverableForTiFlashReplica(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	// Create virtual `tiflash` replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	rows := tk.MustQuery("explain select * from t").Rows()
+	c.Assert(rows[len(rows)-1][2], Equals, "cop[tiflash]")
+
+	rows = tk.MustQuery("explain format='hint' select * from t").Rows()
+	c.Assert(rows[0][0], Equals, "read_from_storage(@`sel_1` tiflash[`test`.`t`])")
+
+	hints := tk.MustQuery("explain format='hint' select * from t;").Rows()[0][0]
+	rows = tk.MustQuery(fmt.Sprintf("explain select /*+ %s */ * from t", hints)).Rows()
+	c.Assert(rows[len(rows)-1][2], Equals, "cop[tiflash]")
 }
 
 func (s *testPlanNormalize) TestNthPlanHint(c *C) {

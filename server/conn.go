@@ -39,6 +39,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
+	goerr "errors"
 	"fmt"
 	"io"
 	"net"
@@ -52,8 +53,6 @@ import (
 	"time"
 	"unsafe"
 
-	goerr "errors"
-
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -63,7 +62,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
@@ -71,12 +69,14 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
+	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/tablecodec"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -84,6 +84,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -251,6 +252,18 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 		}
 		return err
 	}
+
+	// MySQL supports an "init_connect" query, which can be run on initial connection.
+	// The query must return a non-error or the client is disconnected.
+	if err := cc.initConnect(ctx); err != nil {
+		logutil.Logger(ctx).Warn("init_connect failed", zap.Error(err))
+		initErr := errNewAbortingConnection.FastGenByArgs(cc.connectionID, "unconnected", cc.user, cc.peerHost, "init_connect command failed")
+		if err1 := cc.writeError(ctx, initErr); err1 != nil {
+			terror.Log(err1)
+		}
+		return initErr
+	}
+
 	data := cc.alloc.AllocWithLen(4, 32)
 	data = append(data, mysql.OKHeader)
 	data = append(data, 0, 0)
@@ -722,6 +735,58 @@ func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error
 	return
 }
 
+// skipInitConnect follows MySQL's rules of when init-connect should be skipped.
+// In 5.7 it is any user with SUPER privilege, but in 8.0 it is:
+// - SUPER or the CONNECTION_ADMIN dynamic privilege.
+// - (additional exception) users with expired passwords (not yet supported)
+// In TiDB CONNECTION_ADMIN is satisfied by SUPER, so we only need to check once.
+func (cc *clientConn) skipInitConnect() bool {
+	checker := privilege.GetPrivilegeManager(cc.ctx.Session)
+	activeRoles := cc.ctx.GetSessionVars().ActiveRoles
+	return checker != nil && checker.RequestDynamicVerification(activeRoles, "CONNECTION_ADMIN", false)
+}
+
+// initConnect runs the initConnect SQL statement if it has been specified.
+// The semantics are MySQL compatible.
+func (cc *clientConn) initConnect(ctx context.Context) error {
+	val, err := cc.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.InitConnect)
+	if err != nil {
+		return err
+	}
+	if val == "" || cc.skipInitConnect() {
+		return nil
+	}
+	logutil.Logger(ctx).Debug("init_connect starting")
+	stmts, err := cc.ctx.Parse(ctx, val)
+	if err != nil {
+		return err
+	}
+	for _, stmt := range stmts {
+		rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
+		if err != nil {
+			return err
+		}
+		// init_connect does not care about the results,
+		// but they need to be drained because of lazy loading.
+		if rs != nil {
+			req := rs.NewChunk()
+			for {
+				if err = rs.Next(ctx, req); err != nil {
+					return err
+				}
+				if req.NumRows() == 0 {
+					break
+				}
+			}
+			if err := rs.Close(); err != nil {
+				return err
+			}
+		}
+	}
+	logutil.Logger(ctx).Debug("init_connect complete")
+	return nil
+}
+
 // Run reads client query and writes query result to client in for loop, if there is a panic during query handling,
 // it will be recovered and log the panic error.
 // This function returns and the connection is closed if there is an IO error or there is a panic.
@@ -841,14 +906,6 @@ func (cc *clientConn) ShutdownOrNotify() bool {
 	return false
 }
 
-func queryStrForLog(query string) string {
-	const size = 4096
-	if len(query) > size {
-		return query[:size] + fmt.Sprintf("(len: %d)", len(query))
-	}
-	return query
-}
-
 func errStrForLog(err error, enableRedactLog bool) string {
 	if enableRedactLog {
 		// currently, only ErrParse is considered when enableRedactLog because it may contain sensitive information like
@@ -882,7 +939,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	} else {
 		label := strconv.Itoa(int(cmd))
 		if err != nil {
-			metrics.QueryTotalCounter.WithLabelValues(label, "ERROR").Inc()
+			metrics.QueryTotalCounter.WithLabelValues(label, "Error").Inc()
 		} else {
 			metrics.QueryTotalCounter.WithLabelValues(label, "OK").Inc()
 		}
@@ -894,35 +951,39 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		sqlType = stmtType
 	}
 
+	cost := time.Since(startTime)
+	sessionVar := cc.ctx.GetSessionVars()
+	cc.ctx.GetTxnWriteThroughputSLI().FinishExecuteStmt(cost, cc.ctx.AffectedRows(), sessionVar.InTxn())
+
 	switch sqlType {
 	case "Use":
-		queryDurationHistogramUse.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramUse.Observe(cost.Seconds())
 	case "Show":
-		queryDurationHistogramShow.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramShow.Observe(cost.Seconds())
 	case "Begin":
-		queryDurationHistogramBegin.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramBegin.Observe(cost.Seconds())
 	case "Commit":
-		queryDurationHistogramCommit.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramCommit.Observe(cost.Seconds())
 	case "Rollback":
-		queryDurationHistogramRollback.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramRollback.Observe(cost.Seconds())
 	case "Insert":
-		queryDurationHistogramInsert.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramInsert.Observe(cost.Seconds())
 	case "Replace":
-		queryDurationHistogramReplace.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramReplace.Observe(cost.Seconds())
 	case "Delete":
-		queryDurationHistogramDelete.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramDelete.Observe(cost.Seconds())
 	case "Update":
-		queryDurationHistogramUpdate.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramUpdate.Observe(cost.Seconds())
 	case "Select":
-		queryDurationHistogramSelect.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramSelect.Observe(cost.Seconds())
 	case "Execute":
-		queryDurationHistogramExecute.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramExecute.Observe(cost.Seconds())
 	case "Set":
-		queryDurationHistogramSet.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramSet.Observe(cost.Seconds())
 	case metrics.LblGeneral:
-		queryDurationHistogramGeneral.Observe(time.Since(startTime).Seconds())
+		queryDurationHistogramGeneral.Observe(cost.Seconds())
 	default:
-		metrics.QueryDurationHistogram.WithLabelValues(sqlType).Observe(time.Since(startTime).Seconds())
+		metrics.QueryDurationHistogram.WithLabelValues(sqlType).Observe(cost.Seconds())
 	}
 }
 
@@ -942,7 +1003,10 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	}
 
 	span := opentracing.StartSpan("server.dispatch")
-	ctx = opentracing.ContextWithSpan(ctx, span)
+	cfg := config.GetGlobalConfig()
+	if cfg.OpenTracing.Enable {
+		ctx = opentracing.ContextWithSpan(ctx, span)
+	}
 
 	var cancelFunc context.CancelFunc
 	ctx, cancelFunc = context.WithCancel(ctx)
@@ -953,6 +1017,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
+	if variable.TopSQLEnabled() {
+		defer pprof.SetGoroutineLabels(ctx)
+	}
 	if variable.EnablePProfSQLCPU.Load() {
 		label := getLastStmtInConn{cc}.PProfLabel()
 		if len(label) > 0 {
@@ -1496,7 +1563,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
 		if err != nil {
 			_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
-			if allowTiFlashFallback && errors.ErrorEqual(err, tikv.ErrTiFlashServerTimeout) && retryable {
+			if allowTiFlashFallback && errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) && retryable {
 				// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
 				// server and fallback to TiKV.
 				warns := append(parserWarns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
@@ -1548,11 +1615,11 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	pointPlans := make([]plannercore.Plan, len(stmts))
 	var idxKeys []kv.Key
 	var rowKeys []kv.Key
-	is := domain.GetDomain(cc.ctx).InfoSchema()
 	sc := vars.StmtCtx
 	for i, stmt := range stmts {
 		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
-		if err = plannercore.Preprocess(cc.ctx, stmt, is); err != nil {
+		// TODO: handle the PreprocessorReturn.
+		if err = plannercore.Preprocess(cc.ctx, stmt); err != nil {
 			return nil, err
 		}
 		p := plannercore.TryFastPlan(cc.ctx.Session, stmt)
@@ -1619,6 +1686,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 // Currently the first return value is used to fallback to TiKV when TiFlash is down.
 func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) (bool, error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
+	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	reg.End()
@@ -1655,7 +1723,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 		if handled {
 			execStmt := cc.ctx.Value(session.ExecStmtVarKey)
 			if execStmt != nil {
-				execStmt.(*executor.ExecStmt).FinishExecuteStmt(0, err == nil, false)
+				execStmt.(*executor.ExecStmt).FinishExecuteStmt(0, err, false)
 			}
 		}
 		if err != nil {
@@ -1796,10 +1864,10 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
 			switch value.(string) {
 			case "firstNext":
-				failpoint.Return(firstNext, tikv.ErrTiFlashServerTimeout)
+				failpoint.Return(firstNext, storeerr.ErrTiFlashServerTimeout)
 			case "secondNext":
 				if !firstNext {
-					failpoint.Return(firstNext, tikv.ErrTiFlashServerTimeout)
+					failpoint.Return(firstNext, storeerr.ErrTiFlashServerTimeout)
 				}
 			}
 		})
@@ -2052,10 +2120,10 @@ func (cc getLastStmtInConn) String() string {
 		if cc.ctx.GetSessionVars().EnableRedactLog {
 			sql = parser.Normalize(sql)
 		}
-		return queryStrForLog(sql)
+		return tidbutil.QueryStrForLog(sql)
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
-		return queryStrForLog(cc.preparedStmt2String(stmtID))
+		return tidbutil.QueryStrForLog(cc.preparedStmt2String(stmtID))
 	case mysql.ComStmtClose, mysql.ComStmtReset:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
 		return mysql.Command2Str[cmd] + " " + strconv.Itoa(int(stmtID))
@@ -2083,10 +2151,10 @@ func (cc getLastStmtInConn) PProfLabel() string {
 	case mysql.ComStmtReset:
 		return "ResetStmt"
 	case mysql.ComQuery, mysql.ComStmtPrepare:
-		return parser.Normalize(queryStrForLog(string(hack.String(data))))
+		return parser.Normalize(tidbutil.QueryStrForLog(string(hack.String(data))))
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
-		return queryStrForLog(cc.preparedStmt2StringNoArgs(stmtID))
+		return tidbutil.QueryStrForLog(cc.preparedStmt2StringNoArgs(stmtID))
 	default:
 		return ""
 	}
