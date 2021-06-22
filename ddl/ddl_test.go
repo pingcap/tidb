@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -83,6 +84,11 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 		go w.start(d.ddlCtx)
 		asyncNotify(worker.ddlJobCh)
 	}
+}
+
+// GetMaxRowID is used for test.
+func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle int64, endIncluded bool) (int64, error) {
+	return getMaxRowID(store, priority, t, startHandle, endHandle, endIncluded)
 }
 
 func TestT(t *testing.T) {

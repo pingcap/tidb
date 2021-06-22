@@ -999,6 +999,61 @@ func (s *testDBSuite5) TestAddMultiColumnsIndex(c *C) {
 	s.tk.MustExec("alter table tidb.test add index idx1 (a, b);")
 	s.tk.MustExec("admin check table test")
 }
+
+func (s *testSerialSuite) TestGetReverseHandle(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database db_get")
+	tk.MustExec("use db_get")
+	tk.MustExec("drop table if exists test_get")
+	tk.MustExec("create table test_get(a bigint not null primary key, b bigint);")
+
+	insertVal := func(val int) {
+		sql := fmt.Sprintf("insert into test_get value(%d, %d)", val, val)
+		tk.MustExec(sql)
+	}
+	insertVal(math.MinInt64)
+	insertVal(math.MinInt64 + 1)
+	insertVal(1 << 61)
+	insertVal(3 << 61)
+	insertVal(math.MaxInt64)
+	insertVal(math.MaxInt64 - 1)
+
+	// Get table ID for split.
+	is := s.dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("db_get"), model.NewCIStr("test_get"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+	// Split the table.
+	cluster := mocktikv.NewCluster()
+	mvccStore := mocktikv.MustNewMVCCStore()
+	defer mvccStore.Close()
+	cluster.SplitTable(mvccStore, tblID, 4)
+
+	tk.MustQuery("select * from test_get order by a").Check(testkit.Rows("-9223372036854775808 -9223372036854775808",
+		"-9223372036854775807 -9223372036854775807",
+		"2305843009213693952 2305843009213693952",
+		"6917529027641081856 6917529027641081856",
+		"9223372036854775806 9223372036854775806",
+		"9223372036854775807 9223372036854775807",
+	))
+
+	h, err := ddl.GetMaxRowID(s.store, 0, tbl, math.MinInt64, 1<<61, false)
+	c.Assert(err, IsNil)
+	c.Assert(h, Equals, int64(math.MinInt64+1))
+	h, err = ddl.GetMaxRowID(s.store, 0, tbl, math.MinInt64, 1<<61, true)
+	c.Assert(err, IsNil)
+	c.Assert(h, Equals, int64(1<<61))
+	h, err = ddl.GetMaxRowID(s.store, 0, tbl, 1<<61, 2<<61, false)
+	c.Assert(err, IsNil)
+	c.Assert(h, Equals, int64(1<<61))
+	h, err = ddl.GetMaxRowID(s.store, 0, tbl, 3<<61, math.MaxInt64, false)
+	c.Assert(err, IsNil)
+	c.Assert(h, Equals, int64(math.MaxInt64-1))
+	h, err = ddl.GetMaxRowID(s.store, 0, tbl, 3<<61, math.MaxInt64, true)
+	c.Assert(err, IsNil)
+	c.Assert(h, Equals, int64(math.MaxInt64))
+}
+
 func (s *testDBSuite1) TestAddPrimaryKey1(c *C) {
 	testAddIndex(c, s.store, s.lease, false,
 		"create table test_add_index (c1 bigint, c2 bigint, c3 bigint, unique key(c1))", "primary")
@@ -1063,6 +1118,66 @@ func (s *testDBSuite4) TestAddIndex4(c *C) {
 			      partition p2 values less than (122880),
 			      partition p3 values less than (204800),
 			      partition p4 values less than maxvalue)`, "")
+}
+
+func (s *testDBSuite1) TestAddIndexWithShardRowID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists test_add_index")
+	tk.MustExec("create table test_add_index(a int, b int, c int) SHARD_ROW_ID_BITS = 4 pre_split_regions = 4;")
+
+	done := make(chan error, 1)
+	start := -20
+	num := defaultBatchSize
+	// first add some rows
+	wg := sync.WaitGroup{}
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tk1 := testkit.NewTestKit(c, s.store)
+			tk1.MustExec("use test_db")
+			batchInsert(tk1, "test_add_index", start, num)
+		}()
+	}
+	wg.Wait()
+
+	addIdxSQL := fmt.Sprintf("alter table test_add_index add index idx(a)")
+	testddlutil.SessionExecInGoroutine(c, s.store, addIdxSQL, done)
+
+	ticker := time.NewTicker(s.lease / 2)
+	defer ticker.Stop()
+	num = 0
+LOOP:
+	for {
+		select {
+		case err := <-done:
+			if err == nil {
+				break LOOP
+			}
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+		case <-ticker.C:
+			// When the server performance is particularly poor,
+			// the adding index operation can not be completed.
+			// So here is a limit to the number of rows inserted.
+			if num >= 1000 {
+				break
+			}
+			step := 50
+			// delete, insert and update some data
+			for i := num; i < num+step; i++ {
+				sql := fmt.Sprintf("delete from test_add_index where a = %d", i+1)
+				tk.MustExec(sql)
+				sql = fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", i, i, i)
+				tk.MustExec(sql)
+				sql = fmt.Sprintf("update test_add_index set b = %d", i*10)
+				tk.MustExec(sql)
+			}
+			num += step
+		}
+	}
+
+	tk.MustExec("admin check table test_add_index")
 }
 
 func testAddIndex(c *C, store kv.Storage, lease time.Duration, testPartition bool, createTableSQL, idxTp string) {

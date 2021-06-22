@@ -1310,12 +1310,12 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker
 			endIncluded = true
 		}
 		if t.Meta().ShardRowIDBits > 0 {
-			endH, err := getReverseHandle(workers[0].sessCtx.GetStore(), workers[0].priority, t, startHandle, endHandle, endIncluded)
+			endH, err := getMaxRowID(workers[0].sessCtx.GetStore(), workers[0].priority, t, startHandle, endHandle, endIncluded)
 			if err != nil {
 				logutil.BgLogger().Info("[ddl] send range task to workers, get reverse handle failed", zap.Error(err))
 			} else {
-				logutil.BgLogger().Info("xxx ======================================", zap.Int64("end handle", endHandle), zap.Int64("cur end handle", endH))
-				logutil.BgLogger().Info("[ddl] send range task to workers, change end handle", zap.Int64("end handle", endHandle), zap.Int64("current end handle", endH))
+				logutil.BgLogger().Info("[ddl] send range task to workers, change end handle",
+					zap.Int64("end handle", endHandle), zap.Int64("current end handle", endH))
 				endHandle = endH
 				endIncluded = true
 			}
@@ -1624,7 +1624,7 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 	return nil
 }
 
-func getReverseHandle(store kv.Storage, priority int, t table.Table, startHandle, endHandle int64, endIncluded bool) (int64, error) {
+func getMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle int64, endIncluded bool) (int64, error) {
 	if endIncluded {
 		if endHandle == math.MaxInt64 {
 			return endHandle, nil
