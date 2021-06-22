@@ -2993,10 +2993,13 @@ func parseSep(input string) (string, parseState) {
 	if len(input) == 0 {
 		return input, parseStateEndOfLine
 	}
-	if input[0] == ':' {
-		return input[1:], parseStateNormal
+	if input[0] != ':' {
+		return input, parseStateFail
 	}
-	return input, parseStateFail
+	if input = skipWhiteSpace(input[1:]); len(input) == 0 {
+		return input, parseStateEndOfLine
+	}
+	return input, parseStateNormal
 }
 
 func time12Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
@@ -3019,13 +3022,11 @@ func time12Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 		}
 		t.setHour(uint8(hour))
 
+		// ':'
 		if input, state = parseSep(input[length:]); state != parseStateNormal {
 			return input, state
 		}
 
-		if input = skipWhiteSpace(input); len(input) == 0 {
-			return input, parseStateEndOfLine
-		}
 		result = oneOrTwoDigitRegex.FindString(input) // 0..59
 		length = len(result)
 		minute, succ := parseDigits(input, length)
@@ -3034,13 +3035,11 @@ func time12Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 		}
 		t.setMinute(uint8(minute))
 
+		// ':'
 		if input, state = parseSep(input[length:]); state != parseStateNormal {
 			return input, state
 		}
 
-		if input = skipWhiteSpace(input); len(input) == 0 {
-			return input, parseStateEndOfLine
-		}
 		result = oneOrTwoDigitRegex.FindString(input) // 0..59
 		length = len(result)
 		second, succ := parseDigits(input, length)
@@ -3096,9 +3095,6 @@ func time24Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 		if input, state = parseSep(input[length:]); state != parseStateNormal {
 			return input, state
 		}
-		if input = skipWhiteSpace(input); len(input) == 0 {
-			return input, parseStateEndOfLine
-		}
 
 		result = oneOrTwoDigitRegex.FindString(input) // 0..59
 		length = len(result)
@@ -3111,9 +3107,6 @@ func time24Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 		// ':'
 		if input, state = parseSep(input[length:]); state != parseStateNormal {
 			return input, state
-		}
-		if input = skipWhiteSpace(input); len(input) == 0 {
-			return input, parseStateEndOfLine
 		}
 
 		result = oneOrTwoDigitRegex.FindString(input) // 0..59
