@@ -7181,7 +7181,7 @@ func (b *builtinTiDBBoundedStalenessSig) evalTime(row chunk.Row) (types.Time, bo
 
 func getMinSafeTime(sessionCtx sessionctx.Context, timeZone *time.Location) time.Time {
 	var minSafeTS uint64
-	_, txnScope := config.GetTxnScopeFromConfig()
+	txnScope := config.GetTxnScopeFromConfig()
 	if store := sessionCtx.GetStore(); store != nil {
 		minSafeTS = store.GetMinSafeTS(txnScope)
 	}
