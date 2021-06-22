@@ -270,9 +270,11 @@ func (s *testFieldTypeSuite) TestAggFieldType(c *C) {
 			c.Assert(aggTp.Tp, Equals, mysql.TypeDouble)
 		case mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDuration,
 			mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeVarchar,
-			mysql.TypeBit, mysql.TypeJSON, mysql.TypeEnum, mysql.TypeSet,
+			mysql.TypeJSON, mysql.TypeEnum, mysql.TypeSet,
 			mysql.TypeVarString, mysql.TypeGeometry:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeVarchar)
+		case mysql.TypeBit:
+			c.Assert(aggTp.Tp, Equals, mysql.TypeLonglong)
 		case mysql.TypeString:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeString)
 		case mysql.TypeUnspecified, mysql.TypeNewDecimal:

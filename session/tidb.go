@@ -65,7 +65,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 
 	ddlLease := time.Duration(atomic.LoadInt64(&schemaLease))
 	statisticLease := time.Duration(atomic.LoadInt64(&statsLease))
-	idxUsageSyncLease := time.Duration(atomic.LoadInt64(&indexUsageSyncLease))
+	idxUsageSyncLease := GetIndexUsageSyncLease()
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		logutil.BgLogger().Info("new domain",
 			zap.String("store", store.UUID()),
@@ -159,6 +159,11 @@ func SetStatsLease(lease time.Duration) {
 // SetIndexUsageSyncLease changes the default index usage sync lease time for loading info.
 func SetIndexUsageSyncLease(lease time.Duration) {
 	atomic.StoreInt64(&indexUsageSyncLease, int64(lease))
+}
+
+// GetIndexUsageSyncLease returns the index usage sync lease time.
+func GetIndexUsageSyncLease() time.Duration {
+	return time.Duration(atomic.LoadInt64(&indexUsageSyncLease))
 }
 
 // DisableStats4Test disables the stats for tests.
