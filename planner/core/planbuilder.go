@@ -1068,7 +1068,7 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
 			}
-			if path.Index.Global {
+			if path.Index != nil && path.Index.Global {
 				ignored = append(ignored, path)
 				continue
 			}
