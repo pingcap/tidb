@@ -3336,27 +3336,18 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
-<<<<<<< HEAD
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("")`)
-=======
 	// Check the default value of @@tidb_enable_local_txn and @@txn_scope whitout configuring the zone label.
->>>>>>> b858ce43c... config, session: make Local Transaction not to affect Stale Read  (#25559)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
 	// Check the default value of @@tidb_enable_local_txn and @@txn_scope with configuring the zone label.
-	failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`)
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("bj")`)
 	tk = testkit.NewTestKitWithInit(c, s.store)
 	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
-<<<<<<< HEAD
 	failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("bj")`)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
-=======
-	failpoint.Disable("tikvclient/injectTxnScope")
 
 	// @@tidb_enable_local_txn is off without configuring the zone label.
 	tk = testkit.NewTestKitWithInit(c, s.store)
@@ -3375,8 +3366,7 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
 
 	// @@tidb_enable_local_txn is off with configuring the zone label.
-	failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`)
->>>>>>> b858ce43c... config, session: make Local Transaction not to affect Stale Read  (#25559)
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("bj")`)
 	tk = testkit.NewTestKitWithInit(c, s.store)
 	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
@@ -3391,7 +3381,7 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	tk.MustExec("set @@txn_scope = 'global';")
 	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
-	failpoint.Disable("tikvclient/injectTxnScope")
+	failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
 
 	// @@tidb_enable_local_txn is on without configuring the zone label.
 	tk = testkit.NewTestKitWithInit(c, s.store)
@@ -3410,7 +3400,7 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
 
 	// @@tidb_enable_local_txn is on with configuring the zone label.
-	failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`)
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("bj")`)
 	tk = testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set global tidb_enable_local_txn = on;")
 	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.LocalTxnScope))
@@ -3427,7 +3417,7 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	err = tk.ExecToErr("set @@txn_scope='foo'")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, `.*txn_scope value should be global or local.*`)
-	failpoint.Disable("tikvclient/injectTxnScope")
+	failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
 }
 
 func (s *testSessionSerialSuite) TestGlobalAndLocalTxn(c *C) {

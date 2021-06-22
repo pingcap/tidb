@@ -519,12 +519,8 @@ PARTITION BY RANGE (c) (
 			c.Assert(err, NotNil)
 			c.Assert(err.Error(), Matches, testcase.err.Error())
 		}
-<<<<<<< HEAD
-		failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
-=======
 		tk.MustExec("set global tidb_enable_local_txn = off;")
-		failpoint.Disable("tikvclient/injectTxnScope")
->>>>>>> b858ce43c... config, session: make Local Transaction not to affect Stale Read  (#25559)
+		failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
 	}
 }
 

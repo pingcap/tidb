@@ -719,11 +719,7 @@ const (
 	DefTiDBTopSQLMaxCollect            = 10000
 	DefTiDBTopSQLReportIntervalSeconds = 60
 	DefTiDBEnableGlobalTemporaryTable  = false
-<<<<<<< HEAD
-=======
-	DefTMPTableSize                    = 16777216
 	DefTiDBEnableLocalTxn              = false
->>>>>>> b858ce43c... config, session: make Local Transaction not to affect Stale Read  (#25559)
 )
 
 // Process global variables.
