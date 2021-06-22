@@ -1760,6 +1760,7 @@ var defaultSysVars = []*SysVar{
 		s.EnableGlobalTemporaryTable = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: SkipNameResolve, Value: Off, Type: TypeBool},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
