@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -134,6 +136,7 @@ type PreprocessorReturn struct {
 	// otherwise it defaults to zero
 	LastSnapshotTS uint64
 	InfoSchema     infoschema.InfoSchema
+	TxnScope       string
 }
 
 // preprocessor is an ast.Visitor that preprocess
@@ -1456,9 +1459,27 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 }
 
 // handleAsOfAndReadTS tries to handle as of closure, or possibly read_ts.
-// If read_ts is not nil, it will be consumed.
-// If as of is not nil, timestamp is used to get the history infoschema from the infocache.
 func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
+	// When statement is during the Txn, we check whether there exists AsOfClause. If exists, we will return error,
+	// otherwise we should directly set the return param from TxnCtx.
+	p.TxnScope = oracle.GlobalTxnScope
+	if p.ctx.GetSessionVars().InTxn() {
+		if node != nil {
+			p.err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
+			return
+		}
+		txnCtx := p.ctx.GetSessionVars().TxnCtx
+		p.TxnScope = txnCtx.TxnScope
+		if txnCtx.IsStaleness {
+			p.LastSnapshotTS = txnCtx.StartTS
+			p.ExplicitStaleness = txnCtx.IsStaleness
+			p.initedLastSnapshotTS = true
+			return
+		}
+	}
+	// If the statement is in auto-commit mode, we will check whether there exists read_ts, if exists,
+	// we will directly use it. The txnScope will be defined by the zone label, if it is not set, we will use
+	// global txnScope directly.
 	ts := p.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
 	if ts > 0 {
 		if node != nil {
@@ -1470,14 +1491,10 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 				return ts, nil
 			}
 			p.LastSnapshotTS = ts
-			p.ExplicitStaleness = true
+			p.setStalenessReturn()
 		}
 	}
 	if node != nil {
-		if p.ctx.GetSessionVars().InTxn() {
-			p.err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
-			return
-		}
 		ts, p.err = calculateTsExpr(p.ctx, node)
 		if p.err != nil {
 			return
@@ -1487,7 +1504,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 				return calculateTsExpr(ctx, node)
 			}
 			p.LastSnapshotTS = ts
-			p.ExplicitStaleness = true
+			p.setStalenessReturn()
 		}
 	}
 	if p.LastSnapshotTS != ts {
@@ -1514,4 +1531,10 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 		p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	}
 	return p.InfoSchema
+}
+
+func (p *preprocessor) setStalenessReturn() {
+	_, txnScope := config.GetTxnScopeFromConfig()
+	p.ExplicitStaleness = true
+	p.TxnScope = txnScope
 }
