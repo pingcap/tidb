@@ -133,13 +133,15 @@ func (*testSysVarSuite) TestIntValidation(c *C) {
 	_, err := sv.Validate(vars, "oN", ScopeSession)
 	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'mynewsysvar'")
 
-	_, err = sv.Validate(vars, "301", ScopeSession)
-	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '301'")
+	val, err := sv.Validate(vars, "301", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "300")
 
-	_, err = sv.Validate(vars, "5", ScopeSession)
-	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '5'")
+	val, err = sv.Validate(vars, "5", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "10")
 
-	val, err := sv.Validate(vars, "300", ScopeSession)
+	val, err = sv.Validate(vars, "300", ScopeSession)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "300")
 
