@@ -1206,6 +1206,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 	dbt.mustExec("set @@global.tidb_enable_top_sql='On';")
 	dbt.mustExec("set @@tidb_top_sql_agent_address='127.0.0.1:4001';")
 	dbt.mustExec("set @@global.tidb_top_sql_precision_seconds=1;")
+	dbt.mustExec("set @@global.tidb_txn_mode = 'pessimistic'")
 
 	// Test case 1: DML query: insert/update/replace/delete/select
 	cases1 := []struct {
@@ -1264,9 +1265,12 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cases2[i].cancel = cancel
 		prepare, args := ca.prepare, ca.args
+		var stmt *sql.Stmt
 		go ts.loopExec(ctx, c, func(db *sql.DB) {
-			stmt, err := db.Prepare(prepare)
-			c.Assert(err, IsNil)
+			if stmt == nil {
+				stmt, err = db.Prepare(prepare)
+				c.Assert(err, IsNil)
+			}
 			if strings.HasPrefix(prepare, "select") {
 				rows, err := stmt.Query(args...)
 				c.Assert(err, IsNil)
@@ -1301,9 +1305,13 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cases3[i].cancel = cancel
 		prepare, args := ca.prepare, ca.args
+		doPrepare := true
 		go ts.loopExec(ctx, c, func(db *sql.DB) {
-			_, err := db.Exec(fmt.Sprintf("prepare stmt from '%v'", prepare))
-			c.Assert(err, IsNil)
+			if doPrepare {
+				doPrepare = false
+				_, err := db.Exec(fmt.Sprintf("prepare stmt from '%v'", prepare))
+				c.Assert(err, IsNil)
+			}
 			sqlBuf := bytes.NewBuffer(nil)
 			sqlBuf.WriteString("execute stmt ")
 			for i := range args {
