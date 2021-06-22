@@ -3861,7 +3861,7 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 
 	result = tk.MustQuery("select coalesce(NULL, a), coalesce(NULL, b, a), coalesce(c, NULL, a, b), coalesce(d, NULL), coalesce(d, c), coalesce(NULL, NULL, e, 1), coalesce(f), coalesce(1, a, b, c, d, e, f) from t2")
 	// coalesce(col_bit) is not same with MySQL, because it's a bug of MySQL(https://bugs.mysql.com/bug.php?id=103289&thanks=4)
-	result.Check(testkit.Rows(fmt.Sprintf("1 1.1 2017-08-01 12:01:01 12:01:01 %s 12:01:01 abcdef \x15 1", time.Now().In(tk.Se.GetSessionVars().Location()).Format("2006-01-02"))))
+	result.Check(testkit.Rows(fmt.Sprintf("1 1.1 2017-08-01 12:01:01 12:01:01 %s 12:01:01 abcdef \x00\x15 1", time.Now().In(tk.Se.GetSessionVars().Location()).Format("2006-01-02"))))
 
 	// nullif
 	result = tk.MustQuery(`SELECT NULLIF(NULL, 1), NULLIF(1, NULL), NULLIF(1, 1), NULLIF(NULL, NULL);`)
@@ -9031,6 +9031,7 @@ PARTITION BY RANGE (c) (
 			expectErr: nil,
 		},
 	}
+	tk.MustExec("set global tidb_enable_local_txn = on;")
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		failpoint.Enable("tikvclient/injectTxnScope",
@@ -9057,6 +9058,7 @@ PARTITION BY RANGE (c) (
 		tk.Exec("commit")
 	}
 	failpoint.Disable("tikvclient/injectTxnScope")
+	tk.MustExec("set global tidb_enable_local_txn = off;")
 }
 
 func (s *testIntegrationSerialSuite) TestCollationUnion(c *C) {
@@ -9750,4 +9752,23 @@ func (s *testIntegrationSuite) TestCharsetErr(c *C) {
 
 	err = tk.ExecToErr("insert into charset_test(c1) values ('aaa\xEF\xBF\xBD')")
 	c.Assert(err.Error(), Equals, "[table:1366]Incorrect string value '\\xEF\\xBF\\xBD' for column 'c1'")
+}
+
+func (s *testIntegrationSuite2) TestIssue25591(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1_1, t2_1;")
+	tk.MustExec("CREATE TABLE `t1_1` (`col1` double DEFAULT NULL, `col2` double DEFAULT NULL);")
+	tk.MustExec("CREATE TABLE `t2_1` (`col1` varchar(20) DEFAULT NULL, `col2` double DEFAULT NULL);")
+	tk.MustExec("insert into t1_1 values(12.991, null), (12.991, null);")
+	tk.MustExec("insert into t2_1(col2) values(87), (-9.183), (-9.183);")
+
+	tk.MustExec("set @@tidb_enable_vectorized_expression  = false;")
+	rows := tk.MustQuery("select t1.col1, t2.col1, t2.col2 from t1_1 t1 inner join  t2_1 t2 on t1.col1 not in (1,t2.col1,t2.col2) order by 1,2,3;")
+	rows.Check(testkit.Rows())
+
+	tk.MustExec("set @@tidb_enable_vectorized_expression  = true;")
+	rows = tk.MustQuery("select t1.col1, t2.col1, t2.col2 from t1_1 t1 inner join  t2_1 t2 on t1.col1 not in (1,t2.col1,t2.col2) order by 1,2,3;")
+	rows.Check(testkit.Rows())
 }
