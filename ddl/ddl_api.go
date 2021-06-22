@@ -1734,6 +1734,9 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	if err = setTemporaryType(ctx, tbInfo, s); err != nil {
 		return nil, errors.Trace(err)
 	}
+	if s.TemporaryKeyword == ast.TemporaryLocal {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("local TEMPORARY TABLE is not supported yet, TEMPORARY will be parsed but ignored"))
+	}
 
 	if err = setTableAutoRandomBits(ctx, tbInfo, colDefs); err != nil {
 		return nil, errors.Trace(err)
@@ -1831,7 +1834,6 @@ func setTemporaryType(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.Cr
 	case ast.TemporaryLocal:
 		// TODO: set "tbInfo.TempTableType = model.TempTableLocal" after local temporary table is supported.
 		tbInfo.TempTableType = model.TempTableNone
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("local TEMPORARY TABLE is not supported yet, TEMPORARY will be parsed but ignored"))
 	default:
 		tbInfo.TempTableType = model.TempTableNone
 	}
