@@ -1074,6 +1074,14 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 		}
 		t = cop.convertToRootTask(p.ctx)
 		sunk = p.sinkIntoIndexLookUp(t)
+	} else if mpp, ok := t.(*mppTask); ok {
+		newCount := p.Offset + p.Count
+		childProfile := mpp.plan().statsInfo()
+		stats := deriveLimitStats(childProfile, float64(newCount))
+		pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
+		mpp = attachPlan2Task(pushedDownLimit, mpp).(*mppTask)
+		pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
+		t = mpp.convertToRootTask(p.ctx)
 	}
 	if sunk {
 		return t
@@ -1135,12 +1143,12 @@ func (p *PhysicalTopN) GetCost(count float64, isRoot bool) float64 {
 }
 
 // canPushDown checks if this topN can be pushed down. If each of the expression can be converted to pb, it can be pushed.
-func (p *PhysicalTopN) canPushDown(cop *copTask) bool {
+func (p *PhysicalTopN) canPushDown(storeTp kv.StoreType) bool {
 	exprs := make([]expression.Expression, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		exprs = append(exprs, item.Expr)
 	}
-	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), cop.getStoreType())
+	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeTp)
 }
 
 func (p *PhysicalTopN) allColsFromSchema(schema *expression.Schema) bool {
@@ -1210,7 +1218,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputCount := t.count()
-	if copTask, ok := t.(*copTask); ok && p.canPushDown(copTask) && len(copTask.rootTaskConds) == 0 {
+	if copTask, ok := t.(*copTask); ok && p.canPushDown(copTask.getStoreType()) && len(copTask.rootTaskConds) == 0 {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
@@ -1223,6 +1231,9 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 			copTask.tablePlan = pushedDownTopN
 		}
 		copTask.addCost(pushedDownTopN.GetCost(inputCount, false))
+	} else if mppTask, ok := t.(*mppTask); ok && p.canPushDown(kv.TiFlash) {
+		pushedDownTopN := p.getPushedDownTopN(mppTask.p)
+		mppTask.p = pushedDownTopN
 	}
 	rootTask := t.convertToRootTask(p.ctx)
 	rootTask.addCost(p.GetCost(rootTask.count(), true))
@@ -1996,10 +2007,14 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		StoreType: kv.TiFlash,
 	}.Init(ctx, t.p.SelectBlockOffset())
 	p.stats = t.p.statsInfo()
-	return &rootTask{
+
+	cst := t.cst + t.count()*ctx.GetSessionVars().NetworkFactor
+	cst = cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
+	rt := &rootTask{
 		p:   p,
-		cst: t.cst / 20, // TODO: This is tricky because mpp doesn't run in a coprocessor way.
+		cst: cst,
 	}
+	return rt
 }
 
 func (t *mppTask) needEnforce(prop *property.PhysicalProperty) bool {
