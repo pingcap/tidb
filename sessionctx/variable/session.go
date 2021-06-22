@@ -852,9 +852,6 @@ type SessionVars struct {
 
 	// EnableGlobalTemporaryTable indicates whether to enable global temporary table
 	EnableGlobalTemporaryTable bool
-
-	// EnableLocalTxn indicates whether to enable Local Txn.
-	EnableLocalTxn bool
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
@@ -890,7 +887,7 @@ func (s *SessionVars) RaiseWarningWhenMPPEnforced(warning string) {
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
 func (s *SessionVars) CheckAndGetTxnScope() string {
-	if s.InRestrictedSQL || !s.EnableLocalTxn {
+	if s.InRestrictedSQL || !EnableLocalTxn.Load() {
 		return kv.GlobalTxnScope
 	}
 	if s.TxnScope.GetVarValue() == kv.LocalTxnScope {
@@ -1058,7 +1055,6 @@ func NewSessionVars() *SessionVars {
 		EnableAlterPlacement:        DefTiDBEnableAlterPlacement,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
-		EnableLocalTxn:              DefTiDBEnableLocalTxn,
 		TxnScope:                    kv.NewDefaultTxnScopeVar(),
 		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
 		EnableAsyncCommit:           DefTiDBEnableAsyncCommit,
@@ -1135,6 +1131,9 @@ func NewSessionVars() *SessionVars {
 		case kv.TiDB.Name():
 			vars.IsolationReadEngines[kv.TiDB] = struct{}{}
 		}
+	}
+	if !EnableLocalTxn.Load() {
+		vars.TxnScope = kv.NewGlobalTxnScopeVar()
 	}
 	return vars
 }

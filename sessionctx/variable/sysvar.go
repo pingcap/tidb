@@ -810,41 +810,40 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: InitConnect, Value: ""},
 
 	/* TiDB specific variables */
-	{Scope: ScopeGlobal, Name: TiDBEnableLocalTxn, Value: BoolToOnOff(DefTiDBEnableLocalTxn), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableLocalTxn = TiDBOptOn(val)
+	{Scope: ScopeGlobal, Name: TiDBEnableLocalTxn, Value: BoolToOnOff(DefTiDBEnableLocalTxn), Hidden: true, Type: TypeBool, GetSession: func(sv *SessionVars) (string, error) {
+		return BoolToOnOff(EnableLocalTxn.Load()), nil
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		oldVal := EnableLocalTxn.Load()
+		newVal := TiDBOptOn(val)
 		// Make sure the TxnScope is always Global when disable the Local Txn.
-		if !s.EnableLocalTxn {
+		// ON -> OFF
+		if oldVal && !newVal {
 			s.TxnScope = kv.NewGlobalTxnScopeVar()
-		} else {
+		} else if !oldVal && newVal { // OFF -> ON
 			s.TxnScope = kv.NewDefaultTxnScopeVar()
 		}
+		EnableLocalTxn.Store(newVal)
 		return nil
 	}},
 	// TODO: TiDBTxnScope is hidden because local txn feature is not done.
-	{Scope: ScopeSession, Name: TiDBTxnScope, skipInit: true, Hidden: true, Value: func() string {
-		if txnScope := config.GetTxnScopeFromConfig(); txnScope == kv.GlobalTxnScope {
-			return kv.GlobalTxnScope
-		}
-		// If the zone label is configured, we set @@txn_scope as LocalTxnScope by default.
-		return kv.LocalTxnScope
-	}(), SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeSession, Name: TiDBTxnScope, skipInit: true, Hidden: true, Value: kv.GlobalTxnScope, SetSession: func(s *SessionVars, val string) error {
 		switch val {
 		case kv.GlobalTxnScope:
 			s.TxnScope = kv.NewGlobalTxnScopeVar()
 		case kv.LocalTxnScope:
-			if !s.EnableLocalTxn {
-				return ErrWrongValueForVar.GenWithStack("@@txn_scope can not be set when tidb_enable_local_txn is off")
+			if !EnableLocalTxn.Load() {
+				return ErrWrongValueForVar.GenWithStack("@@txn_scope can not be set to local when tidb_enable_local_txn is off")
 			}
-			s.TxnScope = kv.NewLocalTxnScopeVar(config.GetTxnScopeFromConfig())
+			txnScope := config.GetTxnScopeFromConfig()
+			if txnScope == kv.GlobalTxnScope {
+				return ErrWrongValueForVar.GenWithStack("@@txn_scope can not be set to local when zone label is empty or \"global\"")
+			}
+			s.TxnScope = kv.NewLocalTxnScopeVar(txnScope)
 		default:
 			return ErrWrongValueForVar.GenWithStack("@@txn_scope value should be global or local")
 		}
 		return nil
 	}, GetSession: func(s *SessionVars) (string, error) {
-		// Make sure the TxnScope is always Global when disable the Local Txn.
-		if !s.EnableLocalTxn && s.TxnScope.GetVarValue() == kv.LocalTxnScope {
-			s.TxnScope = kv.NewGlobalTxnScopeVar()
-		}
 		return s.TxnScope.GetVarValue(), nil
 	}},
 	{Scope: ScopeSession, Name: TiDBTxnReadTS, Value: "", Hidden: true, SetSession: func(s *SessionVars, val string) error {
