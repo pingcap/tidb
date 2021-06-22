@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func (b *builtinMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
@@ -205,11 +205,12 @@ func (b *builtinSysDateWithoutFspSig) vecEvalTime(input *chunk.Chunk, result *ch
 	return nil
 }
 
-func (b *builtinExtractDatetimeSig) vectorized() bool {
-	return true
+func (b *builtinExtractDatetimeFromStringSig) vectorized() bool {
+	// TODO: to fix https://github.com/pingcap/tidb/issues/9716 in vectorized evaluation.
+	return false
 }
 
-func (b *builtinExtractDatetimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinExtractDatetimeFromStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
@@ -853,6 +854,70 @@ func (b *builtinTidbParseTsoSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 	return nil
 }
 
+func (b *builtinTiDBBoundedStalenessSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinTiDBBoundedStalenessSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err = b.args[0].VecEvalTime(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err = b.args[1].VecEvalTime(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	args0 := buf0.Times()
+	args1 := buf1.Times()
+	timeZone := getTimeZone(b.ctx)
+	minSafeTime := getMinSafeTime(b.ctx, timeZone)
+	result.ResizeTime(n, false)
+	result.MergeNulls(buf0, buf1)
+	times := result.Times()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if invalidArg0, invalidArg1 := args0[i].InvalidZero(), args1[i].InvalidZero(); invalidArg0 || invalidArg1 {
+			if invalidArg0 {
+				err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, args0[i].String()))
+			}
+			if invalidArg1 {
+				err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, args1[i].String()))
+			}
+			if err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		minTime, err := args0[i].GoTime(timeZone)
+		if err != nil {
+			return err
+		}
+		maxTime, err := args1[i].GoTime(timeZone)
+		if err != nil {
+			return err
+		}
+		if minTime.After(maxTime) {
+			result.SetNull(i, true)
+			continue
+		}
+		// Because the minimum unit of a TSO is millisecond, so we only need fsp to be 3.
+		times[i] = types.NewTime(types.FromGoTime(calAppropriateTime(minTime, maxTime, minSafeTime)), mysql.TypeDatetime, 3)
+	}
+	return nil
+}
+
 func (b *builtinFromDaysSig) vectorized() bool {
 	return true
 }
@@ -996,6 +1061,47 @@ func (b *builtinWeekWithModeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 		mode := int(ms[i])
 		week := date.Week(mode)
 		i64s[i] = int64(week)
+	}
+	return nil
+}
+
+func (b *builtinExtractDatetimeSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinExtractDatetimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	unit, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(unit)
+	if err := b.args[0].VecEvalString(b.ctx, input, unit); err != nil {
+		return err
+	}
+	dt, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dt)
+	if err = b.args[1].VecEvalTime(b.ctx, input, dt); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(unit, dt)
+	i64s := result.Int64s()
+	tmIs := dt.Times()
+	var t types.Time
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		unitI := unit.GetString(i)
+		t = tmIs[i]
+		i64s[i], err = types.ExtractDatetimeNum(&t, unitI)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -1668,7 +1774,9 @@ func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk
 
 		tm1, err := arg.GoTime(time.Local)
 		if err != nil {
-			return err
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			result.AppendNull()
+			continue
 		}
 		var tb time.Time
 		fsp := types.DefaultFsp
@@ -1872,14 +1980,19 @@ func (b *builtinSecToTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.
 			negative = "-"
 			secondsFloat = math.Abs(secondsFloat)
 		}
-		seconds := int64(secondsFloat)
+		seconds := uint64(secondsFloat)
 		demical := secondsFloat - float64(seconds)
-		var minute, second int64
+		var minute, second uint64
 		hour := seconds / 3600
 		if hour > 838 {
 			hour = 838
 			minute = 59
 			second = 59
+			demical = 0
+			err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("time", strconv.FormatFloat(secondsFloat, 'f', -1, 64)))
+			if err != nil {
+				return err
+			}
 		} else {
 			minute = seconds % 3600 / 60
 			second = seconds % 60
@@ -2669,6 +2782,12 @@ func (b *builtinTimestamp2ArgsSig) vecEvalTime(input *chunk.Chunk, result *chunk
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
 			}
+			result.SetNull(i, true)
+			continue
+		}
+		if tm.Year() == 0 {
+			// MySQL won't evaluate add for date with zero year.
+			// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_timefunc.cc#L2805
 			result.SetNull(i, true)
 			continue
 		}

@@ -49,8 +49,6 @@ type streamResult struct {
 	durationReported bool
 }
 
-func (r *streamResult) Fetch(context.Context) {}
-
 func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	for !chk.IsFull() {
@@ -105,7 +103,7 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	r.feedback.Update(resultSubset.GetStartKey(), stream.OutputCounts)
+	r.feedback.Update(resultSubset.GetStartKey(), stream.OutputCounts, stream.Ndvs)
 	r.partialCount++
 
 	hasStats, ok := resultSubset.(CopRuntimeStats)

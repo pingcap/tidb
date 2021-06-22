@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -31,14 +32,15 @@ import (
 
 // PBPlanBuilder uses to build physical plan from dag protocol buffers.
 type PBPlanBuilder struct {
-	sctx sessionctx.Context
-	tps  []*types.FieldType
-	is   infoschema.InfoSchema
+	sctx   sessionctx.Context
+	tps    []*types.FieldType
+	is     infoschema.InfoSchema
+	ranges []*coprocessor.KeyRange
 }
 
 // NewPBPlanBuilder creates a new pb plan builder.
-func NewPBPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema) *PBPlanBuilder {
-	return &PBPlanBuilder{sctx: sctx, is: is}
+func NewPBPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, ranges []*coprocessor.KeyRange) *PBPlanBuilder {
+	return &PBPlanBuilder{sctx: sctx, is: is, ranges: ranges}
 }
 
 // Build builds physical plan from dag protocol buffers.
@@ -107,7 +109,15 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 	}.Init(b.sctx, &property.StatsInfo{}, 0)
 	p.SetSchema(schema)
 	if strings.ToUpper(p.Table.Name.O) == infoschema.ClusterTableSlowLog {
-		p.Extractor = &SlowQueryExtractor{}
+		extractor := &SlowQueryExtractor{}
+		extractor.Desc = tblScan.Desc
+		if b.ranges != nil {
+			err := extractor.buildTimeRangeFromKeyRange(b.ranges)
+			if err != nil {
+				return nil, err
+			}
+		}
+		p.Extractor = extractor
 	}
 	return p, nil
 }
@@ -245,15 +255,15 @@ func (b *PBPlanBuilder) pbToKill(e *tipb.Executor) (PhysicalPlan, error) {
 	return &PhysicalSimpleWrapper{Inner: simple}, nil
 }
 
-func (b *PBPlanBuilder) predicatePushDown(p PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, PhysicalPlan) {
-	if p == nil {
-		return predicates, p
+func (b *PBPlanBuilder) predicatePushDown(physicalPlan PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, PhysicalPlan) {
+	if physicalPlan == nil {
+		return predicates, physicalPlan
 	}
-	switch p.(type) {
+	switch plan := physicalPlan.(type) {
 	case *PhysicalMemTable:
-		memTable := p.(*PhysicalMemTable)
+		memTable := plan
 		if memTable.Extractor == nil {
-			return predicates, p
+			return predicates, plan
 		}
 		names := make([]*types.FieldName, 0, len(memTable.Columns))
 		for _, col := range memTable.Columns {
@@ -274,8 +284,8 @@ func (b *PBPlanBuilder) predicatePushDown(p PhysicalPlan, predicates []expressio
 		predicates = memTable.Extractor.Extract(b.sctx, memTable.schema, names, predicates)
 		return predicates, memTable
 	case *PhysicalSelection:
-		selection := p.(*PhysicalSelection)
-		conditions, child := b.predicatePushDown(p.Children()[0], selection.Conditions)
+		selection := plan
+		conditions, child := b.predicatePushDown(plan.Children()[0], selection.Conditions)
 		if len(conditions) > 0 {
 			selection.Conditions = conditions
 			selection.SetChildren(child)
@@ -283,10 +293,10 @@ func (b *PBPlanBuilder) predicatePushDown(p PhysicalPlan, predicates []expressio
 		}
 		return predicates, child
 	default:
-		if children := p.Children(); len(children) > 0 {
+		if children := plan.Children(); len(children) > 0 {
 			_, child := b.predicatePushDown(children[0], nil)
-			p.SetChildren(child)
+			plan.SetChildren(child)
 		}
-		return predicates, p
+		return predicates, plan
 	}
 }

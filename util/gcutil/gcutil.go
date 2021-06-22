@@ -14,48 +14,38 @@
 package gcutil
 
 import (
-	"fmt"
+	"context"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/util"
 )
 
 const (
-	selectVariableValueSQL = `SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name='%s'`
-	insertVariableValueSQL = `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
-                              ON DUPLICATE KEY
-			                  UPDATE variable_value = '%[2]s', comment = '%[3]s'`
+	selectVariableValueSQL = `SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name=%?`
 )
 
 // CheckGCEnable is use to check whether GC is enable.
 func CheckGCEnable(ctx sessionctx.Context) (enable bool, err error) {
-	sql := fmt.Sprintf(selectVariableValueSQL, "tikv_gc_enable")
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	val, err := ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBGCEnable)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if len(rows) != 1 {
-		return false, errors.New("can not get 'tikv_gc_enable'")
-	}
-	return rows[0].GetString(0) == "true", nil
+	return variable.TiDBOptOn(val), nil
 }
 
 // DisableGC will disable GC enable variable.
 func DisableGC(ctx sessionctx.Context) error {
-	sql := fmt.Sprintf(insertVariableValueSQL, "tikv_gc_enable", "false", "Current GC enable status")
-	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
-	return errors.Trace(err)
+	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBGCEnable, variable.Off)
 }
 
 // EnableGC will enable GC enable variable.
 func EnableGC(ctx sessionctx.Context) error {
-	sql := fmt.Sprintf(insertVariableValueSQL, "tikv_gc_enable", "true", "Current GC enable status")
-	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
-	return errors.Trace(err)
+	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBGCEnable, variable.On)
 }
 
 // ValidateSnapshot checks that the newly set snapshot time is after GC safe point time.
@@ -80,8 +70,12 @@ func ValidateSnapshotWithGCSafePoint(snapshotTS, safePointTS uint64) error {
 
 // GetGCSafePoint loads GC safe point time from mysql.tidb.
 func GetGCSafePoint(ctx sessionctx.Context) (uint64, error) {
-	sql := fmt.Sprintf(selectVariableValueSQL, "tikv_gc_safe_point")
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.Background(), selectVariableValueSQL, "tikv_gc_safe_point")
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	rows, _, err := exec.ExecRestrictedStmt(context.Background(), stmt)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -93,6 +87,6 @@ func GetGCSafePoint(ctx sessionctx.Context) (uint64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	ts := variable.GoTimeToTS(safePointTime)
+	ts := oracle.GoTimeToTS(safePointTime)
 	return ts, nil
 }

@@ -73,6 +73,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			ctx:        ctx,
 			otherConds: otherConds,
 		}
+		originalSchema := p.Schema()
 		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold {
 			groupSolver := &joinReorderGreedySolver{
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
@@ -89,6 +90,25 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		if err != nil {
 			return nil, err
 		}
+		schemaChanged := false
+		if len(p.Schema().Columns) != len(originalSchema.Columns) {
+			schemaChanged = true
+		} else {
+			for i, col := range p.Schema().Columns {
+				if !col.Equal(nil, originalSchema.Columns[i]) {
+					schemaChanged = true
+					break
+				}
+			}
+		}
+		if schemaChanged {
+			proj := LogicalProjection{
+				Exprs: expression.Column2Exprs(originalSchema.Columns),
+			}.Init(p.SCtx(), p.SelectBlockOffset())
+			proj.SetSchema(originalSchema)
+			proj.SetChildren(p)
+			p = proj
+		}
 		return p, nil
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
@@ -103,6 +123,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 	return p, nil
 }
 
+// nolint:structcheck
 type baseSingleGroupJoinOrderSolver struct {
 	ctx          sessionctx.Context
 	curJoinGroup []*jrNode

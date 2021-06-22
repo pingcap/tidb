@@ -140,7 +140,7 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "11")
 
-	columns[0].Flag = columns[0].Flag | uint16(mysql.UnsignedFlag)
+	columns[0].Flag |= uint16(mysql.UnsignedFlag)
 	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(11)}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "11")
@@ -333,7 +333,7 @@ func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
 		},
 		{
 			0.0000000000000009,
-			"0.000",
+			"9e-16",
 			3,
 			64,
 		},
@@ -412,6 +412,18 @@ func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
 		{
 			-infVal,
 			"0",
+			-1,
+			64,
+		},
+		{
+			1e14,
+			"100000000000000",
+			-1,
+			64,
+		},
+		{
+			1e308,
+			"1e308",
 			-1,
 			64,
 		},

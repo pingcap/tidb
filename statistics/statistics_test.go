@@ -180,7 +180,7 @@ func encodeKey(key types.Datum) types.Datum {
 }
 
 func buildPK(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.RecordSet) (int64, *Histogram, error) {
-	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong))
+	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong), Version1)
 	ctx := context.Background()
 	for {
 		req := records.NewChunk()
@@ -204,7 +204,7 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.Reco
 }
 
 func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.RecordSet) (int64, *Histogram, *CMSketch, error) {
-	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob))
+	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob), Version1)
 	cms := NewCMSketch(8, 2048)
 	ctx := context.Background()
 	req := records.NewChunk()
@@ -242,6 +242,7 @@ func checkRepeats(c *C, hg *Histogram) {
 
 func (s *testStatisticsSuite) TestBuild(c *C) {
 	bucketCount := int64(256)
+	topNCount := 20
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
 	sketch, _, err := buildFMSketch(sc, s.rc.(*recordSet).data, 1000)
@@ -258,7 +259,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
 	c.Check(col.Len(), Equals, 226)
-	count := col.equalRowCount(types.NewIntDatum(1000))
+	count := col.equalRowCount(types.NewIntDatum(1000), false)
 	c.Check(int(count), Equals, 0)
 	count = col.lessRowCount(types.NewIntDatum(1000))
 	c.Check(int(count), Equals, 10000)
@@ -270,12 +271,38 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(int(count), Equals, 100000)
 	count = col.greaterRowCount(types.NewIntDatum(200000000))
 	c.Check(count, Equals, 0.0)
-	count = col.equalRowCount(types.NewIntDatum(200000000))
+	count = col.equalRowCount(types.NewIntDatum(200000000), false)
 	c.Check(count, Equals, 0.0)
 	count = col.BetweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
 	c.Check(int(count), Equals, 4994)
 	count = col.lessRowCount(types.NewIntDatum(1))
-	c.Check(int(count), Equals, 9)
+	c.Check(int(count), Equals, 5)
+
+	colv2, topnv2, err := BuildHistAndTopN(ctx, int(bucketCount), topNCount, 2, collector, types.NewFieldType(mysql.TypeLonglong), true)
+	c.Check(err, IsNil)
+	c.Check(topnv2.TopN, NotNil)
+	// The most common one's occurrence is 9990, the second most common one's occurrence is 30.
+	// The ndv of the histogram is 73344, the total count of it is 90010. 90010/73344 vs 30, it's not a bad estimate.
+	expectedTopNCount := []uint64{9990}
+	c.Assert(len(topnv2.TopN), Equals, len(expectedTopNCount))
+	for i, meta := range topnv2.TopN {
+		c.Check(meta.Count, Equals, expectedTopNCount[i])
+	}
+	c.Check(colv2.Len(), Equals, 251)
+	count = colv2.lessRowCount(types.NewIntDatum(1000))
+	c.Check(int(count), Equals, 328)
+	count = colv2.lessRowCount(types.NewIntDatum(2000))
+	c.Check(int(count), Equals, 10007)
+	count = colv2.greaterRowCount(types.NewIntDatum(2000))
+	c.Check(int(count), Equals, 80001)
+	count = colv2.lessRowCount(types.NewIntDatum(200000000))
+	c.Check(int(count), Equals, 90010)
+	count = colv2.greaterRowCount(types.NewIntDatum(200000000))
+	c.Check(count, Equals, 0.0)
+	count = colv2.BetweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
+	c.Check(int(count), Equals, 5001)
+	count = colv2.lessRowCount(types.NewIntDatum(1))
+	c.Check(int(count), Equals, 0)
 
 	builder := SampleBuilder{
 		Sc:              mock.NewContext().GetSessionVars().StmtCtx,
@@ -300,7 +327,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
 	c.Check(int(tblCount), Equals, 100000)
-	count = col.equalRowCount(encodeKey(types.NewIntDatum(10000)))
+	count = col.equalRowCount(encodeKey(types.NewIntDatum(10000)), false)
 	c.Check(int(count), Equals, 1)
 	count = col.lessRowCount(encodeKey(types.NewIntDatum(20000)))
 	c.Check(int(count), Equals, 19999)
@@ -317,7 +344,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
 	c.Check(int(tblCount), Equals, 100000)
-	count = col.equalRowCount(types.NewIntDatum(10000))
+	count = col.equalRowCount(types.NewIntDatum(10000), false)
 	c.Check(int(count), Equals, 1)
 	count = col.lessRowCount(types.NewIntDatum(20000))
 	c.Check(int(count), Equals, 20000)
@@ -403,7 +430,7 @@ func (s *testStatisticsSuite) TestMergeHistogram(c *C) {
 	for _, t := range tests {
 		lh := mockHistogram(t.leftLower, t.leftNum)
 		rh := mockHistogram(t.rightLower, t.rightNum)
-		h, err := MergeHistograms(sc, lh, rh, bucketCount)
+		h, err := MergeHistograms(sc, lh, rh, bucketCount, Version1)
 		c.Assert(err, IsNil)
 		c.Assert(h.NDV, Equals, t.ndv)
 		c.Assert(h.Len(), Equals, t.bucketNum)
@@ -434,14 +461,17 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 	count, err := tbl.ColumnEqualRowCount(sc, types.NewIntDatum(1000), colInfo.ID)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 10)
-	count = tbl.ColumnBetweenRowCount(sc, types.NewIntDatum(1000), types.NewIntDatum(5000), colInfo.ID)
+	count, _ = tbl.ColumnBetweenRowCount(sc, types.NewIntDatum(1000), types.NewIntDatum(5000), colInfo.ID)
 	c.Assert(int(count), Equals, 250)
 }
 
 func buildCMSketch(values []types.Datum) *CMSketch {
 	cms := NewCMSketch(8, 2048)
 	for _, val := range values {
-		cms.insert(&val)
+		err := cms.insert(&val)
+		if err != nil {
+			panic(err)
+		}
 	}
 	return cms
 }

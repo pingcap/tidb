@@ -16,65 +16,83 @@ package kv
 import (
 	"context"
 	"sync"
+
+	"github.com/coocood/freecache"
 )
 
 type (
-	cachedb struct {
+	cacheDB struct {
 		mu        sync.RWMutex
-		memTables map[int64]*memdb
+		memTables map[int64]*freecache.Cache
 	}
 
-	// MemManager add in executor and tikv for reduce query tikv
+	// MemManager adds a cache between transaction buffer and the storage to reduce requests to the storage.
+	// Beware, it uses table ID for partition tables, because the keys are unique for partition tables.
+	// no matter the physical IDs are the same or not.
 	MemManager interface {
-		Set(tableID int64, key Key, value []byte) error
-		Get(ctx context.Context, tableID int64, key Key) []byte
+		// UnionGet gets the value from cacheDB first, if it not exists,
+		// it gets the value from the snapshot, then caches the value in cacheDB.
+		UnionGet(ctx context.Context, tid int64, snapshot Snapshot, key Key) ([]byte, error)
+		// Delete releases the cache by tableID.
 		Delete(tableID int64)
 	}
 )
 
-// Set set value in cache
-func (c *cachedb) Set(tableID int64, key Key, value []byte) error {
+// Set set the key/value in cacheDB.
+func (c *cacheDB) set(tableID int64, key Key, value []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	table, ok := c.memTables[tableID]
 	if !ok {
-		table = newMemDB()
+		table = freecache.NewCache(100 * 1024 * 1024)
 		c.memTables[tableID] = table
 	}
-	err := table.Set(key, value)
-	if err != nil && ErrTxnTooLarge.Equal(err) {
-		// If it reaches the upper limit, refresh a new memory buffer.
-		c.memTables[tableID] = newMemDB()
-		return nil
-	}
-	return err
+	return table.Set(key, value, 0)
 }
 
-// Get gets value from memory
-func (c *cachedb) Get(ctx context.Context, tableID int64, key Key) []byte {
+// Get gets the value from cacheDB.
+func (c *cacheDB) get(tableID int64, key Key) []byte {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if table, ok := c.memTables[tableID]; ok {
-		if val, err := table.Get(ctx, key); err == nil {
+		if val, err := table.Get(key); err == nil {
 			return val
 		}
 	}
 	return nil
 }
 
-// Delete delete and reset table from tables in memory by tableID
-func (c *cachedb) Delete(tableID int64) {
+// UnionGet implements MemManager UnionGet interface.
+func (c *cacheDB) UnionGet(ctx context.Context, tid int64, snapshot Snapshot, key Key) (val []byte, err error) {
+	val = c.get(tid, key)
+	// key does not exist then get from snapshot and set to cache
+	if val == nil {
+		val, err = snapshot.Get(ctx, key)
+		if err != nil {
+			return nil, err
+		}
+
+		err = c.set(tid, key, val)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return val, nil
+}
+
+// Delete delete and reset table from tables in cacheDB by tableID
+func (c *cacheDB) Delete(tableID int64) {
 	c.mu.Lock()
 	if k, ok := c.memTables[tableID]; ok {
-		k.Reset()
+		k.Clear()
 		delete(c.memTables, tableID)
 	}
 	c.mu.Unlock()
 }
 
-// NewCacheDB new cachedb
+// NewCacheDB news the cacheDB.
 func NewCacheDB() MemManager {
-	mm := new(cachedb)
-	mm.memTables = make(map[int64]*memdb)
+	mm := new(cacheDB)
+	mm.memTables = make(map[int64]*freecache.Cache)
 	return mm
 }

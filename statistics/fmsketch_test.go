@@ -46,8 +46,8 @@ func (s *testStatisticsSuite) TestSketch(c *C) {
 	c.Check(err, IsNil)
 	c.Check(ndv, Equals, int64(100480))
 
-	sampleSketch.mergeFMSketch(pkSketch)
-	sampleSketch.mergeFMSketch(rcSketch)
+	sampleSketch.MergeFMSketch(pkSketch)
+	sampleSketch.MergeFMSketch(rcSketch)
 	c.Check(sampleSketch.NDV(), Equals, int64(100480))
 
 	maxSize = 2
@@ -73,4 +73,35 @@ func (s *testStatisticsSuite) TestSketchProtoConversion(c *C) {
 	for val := range sampleSketch.hashset {
 		c.Assert(f.hashset[val], IsTrue)
 	}
+}
+
+func (s *testStatisticsSuite) TestFMSketchCoding(c *C) {
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	maxSize := 1000
+	sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(s.samples), maxSize)
+	c.Check(err, IsNil)
+	c.Check(ndv, Equals, int64(6232))
+	bytes, err := EncodeFMSketch(sampleSketch)
+	c.Assert(err, IsNil)
+	fmsketch, err := DecodeFMSketch(bytes)
+	c.Assert(err, IsNil)
+	c.Assert(sampleSketch.NDV(), Equals, fmsketch.NDV())
+
+	rcSketch, ndv, err := buildFMSketch(sc, s.rc.(*recordSet).data, maxSize)
+	c.Check(err, IsNil)
+	c.Check(ndv, Equals, int64(73344))
+	bytes, err = EncodeFMSketch(rcSketch)
+	c.Assert(err, IsNil)
+	fmsketch, err = DecodeFMSketch(bytes)
+	c.Assert(err, IsNil)
+	c.Assert(rcSketch.NDV(), Equals, fmsketch.NDV())
+
+	pkSketch, ndv, err := buildFMSketch(sc, s.pk.(*recordSet).data, maxSize)
+	c.Check(err, IsNil)
+	c.Check(ndv, Equals, int64(100480))
+	bytes, err = EncodeFMSketch(pkSketch)
+	c.Assert(err, IsNil)
+	fmsketch, err = DecodeFMSketch(bytes)
+	c.Assert(err, IsNil)
+	c.Assert(pkSketch.NDV(), Equals, fmsketch.NDV())
 }

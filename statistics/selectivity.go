@@ -203,8 +203,8 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		}
 
 		colHist := coll.Columns[c.UniqueID]
-		if colHist.NDV > 0 {
-			ret *= 1 / float64(colHist.NDV)
+		if colHist.Histogram.NDV > 0 {
+			ret *= 1 / float64(colHist.Histogram.NDV)
 		} else {
 			ret *= 1.0 / pseudoEqualRate
 		}
@@ -239,7 +239,8 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	}
 	id2Paths := make(map[int64]*planutil.AccessPath)
 	for _, path := range filledPaths {
-		if path.IsTablePath() {
+		// Index merge path and table path don't have index.
+		if path.Index == nil {
 			continue
 		}
 		id2Paths[path.Index.ID] = path
@@ -248,8 +249,13 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		idxCols := expression.FindPrefixOfIndex(extractedCols, coll.Idx2ColumnIDs[id])
 		if len(idxCols) > 0 {
 			lengths := make([]int, 0, len(idxCols))
-			for i := 0; i < len(idxCols); i++ {
+			for i := 0; i < len(idxCols) && i < len(idxInfo.Info.Columns); i++ {
 				lengths = append(lengths, idxInfo.Info.Columns[i].Length)
+			}
+			// If the found columns are more than the columns held by the index. We are appending the int pk to the tail of it.
+			// When storing index data to key-value store, we use (idx_col1, ...., idx_coln, handle_col) as its key.
+			if len(idxCols) > len(idxInfo.Info.Columns) {
+				lengths = append(lengths, types.UnspecifiedLength)
 			}
 			maskCovered, ranges, partCover, err := getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, lengths, id2Paths[idxInfo.ID], idxCols...)
 			if err != nil {
@@ -289,6 +295,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	// Now we try to cover those still not covered DNF conditions using independence assumption,
 	// i.e., sel(condA or condB) = sel(condA) + sel(condB) - sel(condA) * sel(condB)
 	if mask > 0 {
+	OUTER:
 		for i, expr := range remainedExprs {
 			if mask&(1<<uint64(i)) == 0 {
 				continue
@@ -298,8 +305,20 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			if !ok || scalarCond.FuncName.L != ast.LogicOr {
 				continue
 			}
+			// If there're columns not in stats, we won't handle them. This case might happen after DDL operations.
+			cols := expression.ExtractColumns(scalarCond)
+			for i := range cols {
+				if _, ok := coll.Columns[cols[i].UniqueID]; !ok {
+					continue OUTER
+				}
+			}
+
 			dnfItems := expression.FlattenDNFConditions(scalarCond)
 			dnfItems = ranger.MergeDNFItems4Col(ctx, dnfItems)
+			// If the conditions only contain a single column, we won't handle them.
+			if len(dnfItems) <= 1 {
+				continue
+			}
 
 			selectivity := 0.0
 			for _, cond := range dnfItems {

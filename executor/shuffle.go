@@ -72,7 +72,7 @@ import (
 //          +---------->  |    fetch data from DataSource   |
 //                        +---------------------------------+
 //
-////////////////////////////////////////////////////////////////////////////////////////
+//
 type ShuffleExec struct {
 	baseExecutor
 	concurrency int

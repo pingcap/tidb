@@ -15,22 +15,19 @@ package types
 
 import (
 	"math"
+	"strconv"
 	"strings"
 	"unicode"
 
 	"github.com/pingcap/errors"
 )
 
-// RoundFloat rounds float val to the nearest integer value with float64 format, like MySQL Round function.
+// RoundFloat rounds float val to the nearest even integer value with float64 format, like MySQL Round function.
 // RoundFloat uses default rounding mode, see https://dev.mysql.com/doc/refman/5.7/en/precision-math-rounding.html
-// so rounding use "round half away from zero".
+// so rounding use "round to nearest even".
 // e.g, 1.5 -> 2, -1.5 -> -2.
 func RoundFloat(f float64) float64 {
-	if math.Abs(f) < 0.5 {
-		return 0
-	}
-
-	return math.Trunc(f + math.Copysign(0.5, f))
+	return math.RoundToEven(f)
 }
 
 // Round rounds the argument f to dec decimal places.
@@ -95,6 +92,12 @@ func TruncateFloat(f float64, flen int, decimal int) (float64, error) {
 	}
 
 	return f, errors.Trace(err)
+}
+
+// TruncateFloatToString is used to truncate float to string where dec is the number of digits after the decimal point.
+func TruncateFloatToString(f float64, dec int) string {
+	f = Truncate(f, dec)
+	return strconv.FormatFloat(f, 'f', -1, 64)
 }
 
 func isSpace(c byte) bool {

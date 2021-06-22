@@ -109,7 +109,8 @@
       "select t1.a, t1.b from t1 left join t2 on t1.a = t2.a where t1.a > 2 and t2.b > 200",
       "select t2.a, t2.b from t1 right join t2 on t1.a = t2.a where t1.a > 2 and t2.b > 200",
       "select t1.a, t1.b from t1, t2 where t1.a = t2.a order by t1.a",
-      "select * from t1 join t2 on t1.a = t2.a"
+      "select * from t1 join t2 on t1.a = t2.a",
+      "select * from t1 join t2 on t1.a = t2.a and t1.a > 2"
     ]
   },
   {

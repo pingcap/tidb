@@ -175,10 +175,10 @@ func CollationID2Name(id int32) string {
 	collation, err := charset.GetCollationByID(int(id))
 	if err != nil {
 		// TODO(bb7133): fix repeating logs when the following code is uncommented.
-		//logutil.BgLogger().Warn(
-		//	"Unable to get collation name from ID, use default collation instead.",
-		//	zap.Int32("ID", id),
-		//	zap.Stack("stack"))
+		// logutil.BgLogger().Warn(
+		// 	"Unable to get collation name from ID, use default collation instead.",
+		// 	zap.Int32("ID", id),
+		// 	zap.Stack("stack"))
 		return mysql.DefaultCollationName
 	}
 	return collation.Name
@@ -191,6 +191,21 @@ func CollationName2ID(name string) int {
 		return coll.ID
 	}
 	return mysql.DefaultCollationID
+}
+
+// SubstituteMissingCollationToDefault will switch to the default collation if
+// new collations are enabled and the specified collation is not supported.
+func SubstituteMissingCollationToDefault(co string) string {
+	var err error
+	if _, err = GetCollationByName(co); err == nil {
+		return co
+	}
+	logutil.BgLogger().Warn(err.Error())
+	var coll *charset.Collation
+	if coll, err = GetCollationByName(charset.CollationUTF8MB4); err != nil {
+		logutil.BgLogger().Warn(err.Error())
+	}
+	return coll.Name
 }
 
 // GetCollationByName wraps charset.GetCollationByName, it checks the collation.
@@ -211,6 +226,10 @@ func GetSupportedCollations() []*charset.Collation {
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {
 		newSupportedCollations := make([]*charset.Collation, 0, len(newCollatorMap))
 		for name := range newCollatorMap {
+			// utf8mb4_zh_pinyin_tidb_as_cs is under developing, should not be shown to user.
+			if name == "utf8mb4_zh_pinyin_tidb_as_cs" {
+				continue
+			}
 			if coll, err := charset.GetCollationByName(name); err != nil {
 				// Should never happens.
 				terror.Log(err)
@@ -276,6 +295,12 @@ func decodeRune(s string, si int) (r rune, newIndex int) {
 func IsCICollation(collate string) bool {
 	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci" ||
 		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci"
+}
+
+// IsBinCollation returns if the collation is 'xx_bin'
+func IsBinCollation(collate string) bool {
+	return collate == "ascii_bin" || collate == "latin1_bin" ||
+		collate == "utf8_bin" || collate == "utf8mb4_bin"
 }
 
 func init() {

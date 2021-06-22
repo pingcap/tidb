@@ -57,7 +57,10 @@ type SimpleLRUCache struct {
 	quota    uint64
 	guard    float64
 	elements map[string]*list.Element
-	cache    *list.List
+
+	// onEvict function will be called if any eviction happened
+	onEvict func(Key, Value)
+	cache   *list.List
 }
 
 // NewSimpleLRUCache creates a SimpleLRUCache object, whose capacity is "capacity".
@@ -72,19 +75,14 @@ func NewSimpleLRUCache(capacity uint, guard float64, quota uint64) *SimpleLRUCac
 		quota:    quota,
 		guard:    guard,
 		elements: make(map[string]*list.Element),
+		onEvict:  nil,
 		cache:    list.New(),
 	}
 }
 
-// GetAll try to get all value.
-func (l *SimpleLRUCache) GetAll() []interface{} {
-	values := make([]interface{}, 0)
-	for _, v := range l.elements {
-		if nv, ok := v.Value.(*cacheEntry); ok {
-			values = append(values, nv.value)
-		}
-	}
-	return values
+// SetOnEvict set the function called on each eviction.
+func (l *SimpleLRUCache) SetOnEvict(onEvict func(Key, Value)) {
+	l.onEvict = onEvict
 }
 
 // Get tries to find the corresponding value according to the given key.
@@ -102,6 +100,7 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 	hash := string(key.Hash())
 	element, exists := l.elements[hash]
 	if exists {
+		element.Value.(*cacheEntry).value = value
 		l.cache.MoveToFront(element)
 		return
 	}
@@ -119,6 +118,9 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 		if l.size > l.capacity {
 			lru := l.cache.Back()
 			l.cache.Remove(lru)
+			if l.onEvict != nil {
+				l.onEvict(lru.Value.(*cacheEntry).key, lru.Value.(*cacheEntry).value)
+			}
 			delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
 			l.size--
 		}
@@ -136,6 +138,11 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 		if lru == nil {
 			break
 		}
+
+		if l.onEvict != nil {
+			l.onEvict(lru.Value.(*cacheEntry).key, lru.Value.(*cacheEntry).value)
+		}
+
 		l.cache.Remove(lru)
 		delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
 		l.size--

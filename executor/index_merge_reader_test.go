@@ -14,7 +14,12 @@
 package executor_test
 
 import (
+	"fmt"
+	"math/rand"
+	"strings"
+
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -62,6 +67,22 @@ func (s *testSuite1) TestIndexMergeReaderAndGeneratedColumn(c *C) {
 	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE t0.c1 OR t0.c0").Check(testkit.Rows("1"))
 }
 
+// issue 25045
+func (s *testSuite1) TestIndexMergeReaderIssue25045(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int primary key, b int, c int, key(b), key(c));")
+	tk.MustExec("INSERT INTO t1 VALUES (10, 10, 10), (11, 11, 11)")
+	tk.MustQuery("explain format='brief' select /*+ use_index_merge(t1) */ * from t1 where c=10 or (b=10 and a=10);").Check(testkit.Rows(
+		"IndexMerge 0.01 root  ",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c(c) range:[10,10], keep order:false, stats:pseudo",
+		"├─TableRangeScan(Build) 1.00 cop[tikv] table:t1 range:[10,10], keep order:false, stats:pseudo",
+		"└─Selection(Probe) 0.01 cop[tikv]  or(eq(test.t1.c, 10), and(eq(test.t1.b, 10), eq(test.t1.a, 10)))",
+		"  └─TableRowIDScan 11.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where c=10 or (b=10 and a=10);").Check(testkit.Rows("10 10 10"))
+}
+
 func (s *testSuite1) TestIssue16910(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
@@ -77,4 +98,74 @@ func (s *testSuite1) TestIssue16910(c *C) {
 	tk.MustExec("create table t2 (a int not null, b bigint not null, index (a), index (b)) partition by hash(a) partitions 10;")
 	tk.MustExec("insert into t2 values (0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10), (11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (16, 16), (17, 17), (18, 18), (19, 19), (20, 20), (21, 21), (22, 22), (23, 23);")
 	tk.MustQuery("select /*+ USE_INDEX_MERGE(t1, a, b) */ * from t1 partition (p0) join t2 partition (p1) on t1.a = t2.a where t1.a < 40 or t1.b < 30;").Check(testkit.Rows("1 1 1 1"))
+}
+
+func (s *testSuite1) TestIndexMergeCausePanic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_index_merge = 1;")
+	tk.MustExec("create table t (a int, b int, c int, primary key(a), key(b))")
+	tk.MustQuery("explain select /*+ inl_join(t2) */ * from t t1 join t t2 on t1.a = t2.a and t1.c = t2.c where t2.a = 1 or t2.b = 1")
+}
+
+func (s *testSuite1) TestPartitionTableRandomIndexMerge(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_index_merge=1")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec(`create table t (a int, b int, key(a), key(b))
+		partition by range (a) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30),
+		partition p4 values less than (40))`)
+	tk.MustExec(`create table tnormal (a int, b int, key(a), key(b))`)
+
+	values := make([]string, 0, 128)
+	for i := 0; i < 128; i++ {
+		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(40), rand.Intn(40)))
+	}
+	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(values, ", ")))
+	tk.MustExec(fmt.Sprintf("insert into tnormal values %v", strings.Join(values, ", ")))
+
+	randRange := func() (int, int) {
+		a, b := rand.Intn(40), rand.Intn(40)
+		if a > b {
+			return b, a
+		}
+		return a, b
+	}
+	for i := 0; i < 256; i++ {
+		la, ra := randRange()
+		lb, rb := randRange()
+		cond := fmt.Sprintf("(a between %v and %v) or (b between %v and %v)", la, ra, lb, rb)
+		result := tk.MustQuery("select * from tnormal where " + cond).Sort().Rows()
+		tk.MustQuery("select /*+ USE_INDEX_MERGE(t, a, b) */ * from t where " + cond).Sort().Check(result)
+	}
+
+	// test a table with a primary key
+	tk.MustExec(`create table tpk (a int primary key, b int, key(b))
+		partition by range (a) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30),
+		partition p4 values less than (40))`)
+	tk.MustExec("truncate tnormal")
+
+	values = values[:0]
+	for i := 0; i < 40; i++ {
+		values = append(values, fmt.Sprintf("(%v, %v)", i, rand.Intn(40)))
+	}
+	tk.MustExec(fmt.Sprintf("insert into tpk values %v", strings.Join(values, ", ")))
+	tk.MustExec(fmt.Sprintf("insert into tnormal values %v", strings.Join(values, ", ")))
+	for i := 0; i < 256; i++ {
+		la, ra := randRange()
+		lb, rb := randRange()
+		cond := fmt.Sprintf("(a between %v and %v) or (b between %v and %v)", la, ra, lb, rb)
+		result := tk.MustQuery("select * from tnormal where " + cond).Sort().Rows()
+		tk.MustQuery("select /*+ USE_INDEX_MERGE(tpk, a, b) */ * from tpk where " + cond).Sort().Check(result)
+	}
 }
