@@ -72,6 +72,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		GoCtx:             ctx,
 		SnapshotTS:        ret.LastSnapshotTS,
 		ExplicitStaleness: ret.ExplicitStaleness,
+		TxnScope:          ret.TxnScope,
 		InfoSchema:        ret.InfoSchema,
 		Plan:              finalPlan,
 		LowerPriority:     lowerPriority,
