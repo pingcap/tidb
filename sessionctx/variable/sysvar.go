@@ -812,6 +812,12 @@ var defaultSysVars = []*SysVar{
 	/* TiDB specific variables */
 	{Scope: ScopeGlobal, Name: TiDBEnableLocalTxn, Value: BoolToOnOff(DefTiDBEnableLocalTxn), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableLocalTxn = TiDBOptOn(val)
+		// Make sure the TxnScope is always Global when disable the Local Txn.
+		if !s.EnableLocalTxn {
+			s.TxnScope = kv.NewGlobalTxnScopeVar()
+		} else {
+			s.TxnScope = kv.NewDefaultTxnScopeVar()
+		}
 		return nil
 	}},
 	// TODO: TiDBTxnScope is hidden because local txn feature is not done.

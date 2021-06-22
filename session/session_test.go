@@ -3347,20 +3347,20 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	// Check the default value of @@tidb_enable_local_txn and @@txn_scope whitout configuring the zone label.
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustQuery("select @@tidb_enable_local_txn;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
 	// Check the default value of @@tidb_enable_local_txn and @@txn_scope with configuring the zone label.
 	failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`)
 	tk = testkit.NewTestKitWithInit(c, s.store)
-	tk.MustQuery("select @@tidb_enable_local_txn;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
 	failpoint.Disable("tikvclient/injectTxnScope")
 
 	// @@tidb_enable_local_txn is off without configuring the zone label.
 	tk = testkit.NewTestKitWithInit(c, s.store)
-	tk.MustQuery("select @@tidb_enable_local_txn;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
 	// Set @@txn_scope to local.
@@ -3373,15 +3373,11 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	tk.MustExec("set @@txn_scope = 'global';")
 	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
-	// Try to set @@txn_scope to an invalid value.
-	err = tk.ExecToErr("set @@txn_scope='foo'")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Matches, `.*txn_scope value should be global or local.*`)
 
 	// @@tidb_enable_local_txn is off with configuring the zone label.
 	failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`)
 	tk = testkit.NewTestKitWithInit(c, s.store)
-	tk.MustQuery("select @@tidb_enable_local_txn;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
 	// Set @@txn_scope to local.
@@ -3394,10 +3390,6 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	tk.MustExec("set @@txn_scope = 'global';")
 	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
-	// Try to set @@txn_scope to an invalid value.
-	err = tk.ExecToErr("set @@txn_scope='foo'")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Matches, `.*txn_scope value should be global or local.*`)
 	failpoint.Disable("tikvclient/injectTxnScope")
 
 	// @@tidb_enable_local_txn is on without configuring the zone label.
@@ -3413,10 +3405,6 @@ func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
 	tk.MustExec("set @@txn_scope = 'global';")
 	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
-	// Try to set @@txn_scope to an invalid value.
-	err = tk.ExecToErr("set @@txn_scope='foo'")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Matches, `.*txn_scope value should be global or local.*`)
 
 	// @@tidb_enable_local_txn is on with configuring the zone label.
 	failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`)
