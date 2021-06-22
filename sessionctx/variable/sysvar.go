@@ -819,8 +819,6 @@ var defaultSysVars = []*SysVar{
 		// ON -> OFF
 		if oldVal && !newVal {
 			s.TxnScope = kv.NewGlobalTxnScopeVar()
-		} else if !oldVal && newVal { // OFF -> ON
-			s.TxnScope = kv.NewDefaultTxnScopeVar()
 		}
 		EnableLocalTxn.Store(newVal)
 		return nil
