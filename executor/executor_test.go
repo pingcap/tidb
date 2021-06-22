@@ -8665,5 +8665,5 @@ func (s *testSuite) TestIssue25506(c *C) {
 	tk.MustExec("insert into tbl_3 values (0xFF)")
 	tk.MustExec("create table tbl_23 (col_15 bit(15))")
 	tk.MustExec("insert into tbl_23 values (0xF)")
-	tk.MustQuery("(select col_15 from tbl_23) union all (select col_15 from tbl_3 for update)").Sort().Check(testkit.Rows("\x00\x00\x0F", "\x00\x00\xFF", "\x00\xFF\xFF"))
+	tk.MustQuery("(select col_15 from tbl_23) union all (select col_15 from tbl_3 for update) order by col_15").Check(testkit.Rows("\x00\x00\x0F", "\x00\x00\xFF", "\x00\xFF\xFF"))
 }
