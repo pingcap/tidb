@@ -613,6 +613,23 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	c.Assert(len(tableInfo.ForeignKeys), Equals, 0)
+
+	// Issue 25613.
+	tk.MustExec("drop table if exists tb2, tb3")
+	tk.MustExec("create table tb2(id int);")
+	tk.MustExec("create global temporary table tb3 like tb2 on commit delete rows;")
+	defer tk.MustExec("drop table if exists tb2, tb3")
+	tk.MustQuery("show create table tb3;").Check(testkit.Rows("tb3 CREATE GLOBAL TEMPORARY TABLE `tb3` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"))
+
+	tk.MustExec("drop table if exists tb4, tb5")
+	tk.MustExec("create table tb4(id int);")
+	tk.MustExec("create table tb5 like tb4")
+	defer tk.MustExec("drop table if exists tb4, tb5")
+	tk.MustQuery("show create table tb5;").Check(testkit.Rows("tb5 CREATE TABLE `tb5` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.

@@ -1815,6 +1815,13 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err != nil {
 		return errors.Trace(err)
 	}
+	switch s.TemporaryKeyword {
+	case ast.TemporaryGlobal:
+		tbInfo.TempTableType = model.TempTableGlobal
+	case ast.TemporaryLocal:
+		tbInfo.TempTableType = model.TempTableLocal
+	default:
+	}
 
 	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		return err
