@@ -833,8 +833,15 @@ func (p *preprocessor) checkDropSequenceGrammar(stmt *ast.DropSequenceStmt) {
 }
 
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
-	currentDB := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
 	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
+	if stmt.TemporaryKeyword == ast.TemporaryLocal && !enableNoopFuncs {
+		p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE")
+		return
+	}
+	currentDB := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
+	if stmt.TemporaryKeyword == ast.TemporaryNone {
+		return
+	}
 	for _, t := range stmt.Tables {
 		if isIncorrectName(t.Name.String()) {
 			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
@@ -848,8 +855,8 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 			p.err = err
 			return
 		}
-		if stmt.TemporaryKeyword != ast.TemporaryNone && !enableNoopFuncs && tableInfo.Meta().TempTableType == model.TempTableNone {
-			p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE")
+		if tableInfo.Meta().TempTableType == model.TempTableNone {
+			p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("drop temporary table")
 			return
 		}
 	}
