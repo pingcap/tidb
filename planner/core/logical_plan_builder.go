@@ -3088,14 +3088,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
 			return nil, err
 		}
-<<<<<<< HEAD
-		p = b.buildSelectLock(p, sel.LockTp)
-=======
-		p, err = b.buildSelectLock(p, sel.LockInfo)
+		p, err = b.buildSelectLock(p, sel.LockTp)
 		if err != nil {
 			return nil, err
 		}
->>>>>>> 0490590b0... planner,executor: fix 'select ...(join on partition table) for update' panic (#21148)
 	}
 	b.handleHelper.popMap()
 	b.handleHelper.pushMap(nil)
@@ -3220,8 +3216,21 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 	}
 }
 
-<<<<<<< HEAD
-=======
+const modelExtraPidColID = -2
+
+var modelExtraPartitionIdName = model.NewCIStr("_tidb_pid")
+
+// modelNewExtraPartitionIDColInfo mocks a column info for extra partition id column.
+func modelNewExtraPartitionIDColInfo() *model.ColumnInfo {
+	colInfo := &model.ColumnInfo{
+		ID:   modelExtraPidColID,
+		Name: modelExtraPartitionIdName,
+	}
+	colInfo.Tp = mysql.TypeLonglong
+	colInfo.Flen, colInfo.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	return colInfo
+}
+
 // addExtraPIDColumn add an extra PID column for partition table.
 // 'select ... for update' on a partition table need to know the partition ID
 // to construct the lock key, so this column is added to the chunk row.
@@ -3229,18 +3238,18 @@ func (ds *DataSource) addExtraPIDColumn(info *extraPIDInfo) {
 	pidCol := &expression.Column{
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
-		ID:       model.ExtraPidColID,
-		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraPartitionIdName),
+		ID:       modelExtraPidColID,
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, modelExtraPartitionIdName),
 	}
 
-	ds.Columns = append(ds.Columns, model.NewExtraPartitionIDColInfo())
+	ds.Columns = append(ds.Columns, modelNewExtraPartitionIDColInfo())
 	schema := ds.Schema()
 	schema.Append(pidCol)
 	ds.names = append(ds.names, &types.FieldName{
 		DBName:      ds.DBName,
 		TblName:     ds.TableInfo().Name,
-		ColName:     model.ExtraPartitionIdName,
-		OrigColName: model.ExtraPartitionIdName,
+		ColName:     modelExtraPartitionIdName,
+		OrigColName: modelExtraPartitionIdName,
 	})
 	ds.TblCols = append(ds.TblCols, pidCol)
 
@@ -3249,12 +3258,6 @@ func (ds *DataSource) addExtraPIDColumn(info *extraPIDInfo) {
 	return
 }
 
-var (
-	pseudoEstimationNotAvailable = metrics.PseudoEstimation.WithLabelValues("nodata")
-	pseudoEstimationOutdate      = metrics.PseudoEstimation.WithLabelValues("outdate")
-)
-
->>>>>>> 0490590b0... planner,executor: fix 'select ...(join on partition table) for update' panic (#21148)
 // getStatsTable gets statistics information for a table specified by "tableID".
 // A pseudo statistics table is returned in any of the following scenario:
 // 1. tidb-server started and statistics handle has not been initialized.
@@ -3987,16 +3990,10 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 			// buildSelectLock is an optimization that can reduce RPC call.
 			// We only need do this optimization for single table update which is the most common case.
 			// When TableRefs.Right is nil, it is single table update.
-<<<<<<< HEAD
-			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
-=======
-			p, err = b.buildSelectLock(p, &ast.SelectLockInfo{
-				LockType: ast.SelectLockForUpdate,
-			})
+			p, err = b.buildSelectLock(p, ast.SelectLockForUpdate)
 			if err != nil {
 				return nil, err
 			}
->>>>>>> 0490590b0... planner,executor: fix 'select ...(join on partition table) for update' panic (#21148)
 		}
 	}
 
@@ -4289,16 +4286,10 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}
 	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		if !delete.IsMultiTable {
-<<<<<<< HEAD
-			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
-=======
-			p, err = b.buildSelectLock(p, &ast.SelectLockInfo{
-				LockType: ast.SelectLockForUpdate,
-			})
+			p, err = b.buildSelectLock(p, ast.SelectLockForUpdate)
 			if err != nil {
 				return nil, err
 			}
->>>>>>> 0490590b0... planner,executor: fix 'select ...(join on partition table) for update' panic (#21148)
 		}
 	}
 

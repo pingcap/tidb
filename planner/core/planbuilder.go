@@ -1046,11 +1046,7 @@ func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.T
 	return remainedPaths
 }
 
-<<<<<<< HEAD
-func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock ast.SelectLockType) *LogicalLock {
-=======
-func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo) (*LogicalLock, error) {
->>>>>>> 0490590b0... planner,executor: fix 'select ...(join on partition table) for update' panic (#21148)
+func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock ast.SelectLockType) (*LogicalLock, error) {
 	selectLock := LogicalLock{
 		Lock:             lock,
 		tblID2Handle:     b.handleHelper.tailMap(),

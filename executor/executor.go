@@ -866,26 +866,18 @@ type SelectLockExec struct {
 	Lock ast.SelectLockType
 	keys []kv.Key
 
-<<<<<<< HEAD
 	tblID2Handle     map[int64][]*expression.Column
 	partitionedTable []table.PartitionedTable
-
-	// tblID2Table is cached to reduce cost.
-	tblID2Table map[int64]table.PartitionedTable
-	inited      bool
-=======
-	tblID2Handle map[int64][]plannercore.HandleCols
-
-	// All the partition tables in the children of this executor.
-	partitionedTable []table.PartitionedTable
-
 	// When SelectLock work on the partition table, we need the partition ID
 	// instead of table ID to calculate the lock KV. In that case, partition ID is store as an
 	// extra column in the chunk row.
 	// tblID2PIDColumnIndex stores the column index in the chunk row. The children may be join
 	// of multiple tables, so the map struct is used.
 	tblID2PIDColumnIndex map[int64]int
->>>>>>> 0490590b0... planner,executor: fix 'select ...(join on partition table) for update' panic (#21148)
+
+	// tblID2Table is cached to reduce cost.
+	tblID2Table map[int64]table.PartitionedTable
+	inited      bool
 }
 
 // Open implements the Executor Open interface.

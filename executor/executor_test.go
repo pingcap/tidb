@@ -6499,8 +6499,6 @@ func (s *testSuite) TestIssue19667(c *C) {
 	tk.MustQuery(`SELECT DATE_ADD(a, INTERVAL 1 SECOND) FROM t`).Check(testkit.Rows("1988-04-17 02:00:00"))
 }
 
-<<<<<<< HEAD
-=======
 func issue20975Prepare(c *C, store kv.Storage) (*testkit.TestKit, *testkit.TestKit) {
 	tk1 := testkit.NewTestKit(c, store)
 	tk2 := testkit.NewTestKit(c, store)
@@ -6573,19 +6571,6 @@ func issue20975PreparePartitionTable(c *C, store kv.Storage) (*testkit.TestKit, 
 	return tk1, tk2
 }
 
-func (s *testSuite) TestIssue20975UpdateNoChangeWithPartitionTable(c *C) {
-	tk1, tk2 := issue20975PreparePartitionTable(c, s.store)
-
-	// Set projection concurrency to avoid data race here.
-	// TODO: remove this line after fixing https://github.com/pingcap/tidb/issues/25496
-	tk1.Se.GetSessionVars().Concurrency.SetProjectionConcurrency(0)
-
-	tk1.MustExec("begin pessimistic")
-	tk1.MustExec("update t1 set c=c")
-	tk2.MustExec("create table t2(a int)")
-	tk1.MustExec("commit")
-}
-
 func (s *testSuite) TestIssue20975SelectForUpdateWithPartitionTable(c *C) {
 	tk1, tk2 := issue20975PreparePartitionTable(c, s.store)
 	tk1.MustExec("begin")
@@ -6655,7 +6640,6 @@ func (s *testSuite) TestIssue20975SelectForUpdateBatchPointGetWithPartitionTable
 	tk1.MustExec("commit")
 }
 
->>>>>>> 0490590b0... planner,executor: fix 'select ...(join on partition table) for update' panic (#21148)
 func (s *testSuite) TestIssue20305(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
