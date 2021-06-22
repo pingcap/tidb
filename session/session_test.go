@@ -4768,3 +4768,36 @@ func (s *testStatisticsSuite) TestNewCollationStatsWithPrefixIndex(c *C) {
 		"1 3 15 0 2 0",
 	))
 }
+
+func (s *testStatisticsSuite) TestCMSketchBasic(c *C) {
+	defer s.cleanEnv(c, s.store, s.dom)
+	tk := testkit.NewTestKit(c, s.store)
+	h := s.dom.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set session tidb_analyze_version = 1")
+	tk.MustExec("create table t(a date, b int, c int unsigned, d time, e bit, f year, g timestamp, h datetime);")
+	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
+	tk.MustExec("insert into t value('2021-4-10', 1, 11, '10:20:30', 1, 2000, '2021-5-1', '2021-6-1');")
+	tk.MustExec("analyze table t;")
+	tk.MustExec("select * from t where a = '2021-4-10' and b = 1 and c = 11 and d = '10:20:30' and e = 1 and f = 2000 and g = '2021-5-1' and h = '2021-6-1';")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.LoadNeededHistograms(), IsNil)
+	cases := []struct {
+		sql    string
+		result string
+	}{
+		{"explain select * from t where a = '2021-4-10';", "1.00"},
+		{"explain select * from t where b = 1;", "1.00"},
+		{"explain select * from t where c = 11;", "1.00"},
+		{"explain select * from t where d = '10:20:30';", "1.00"},
+		{"explain select * from t where e = 1;", "0.80"},
+		{"explain select * from t where f = 2000;", "1.00"},
+		{"explain select * from t where g = '2021-5-1';", "1.00"},
+		{"explain select * from t where h = '2021-6-1';", "1.00"},
+	}
+	for _, cs := range cases {
+		rows := tk.MustQuery(cs.sql).Rows()
+		c.Assert(fmt.Sprintf("%v", rows[0][1]), Equals, cs.result)
+	}
+}
