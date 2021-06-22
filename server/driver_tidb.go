@@ -217,6 +217,7 @@ func (tc *TiDBContext) WarningCount() uint16 {
 func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (ResultSet, error) {
 	rs, err := tc.Session.ExecuteStmt(ctx, stmt)
 	if err != nil {
+		tc.Session.GetSessionVars().StmtCtx.AppendError(err)
 		return nil, err
 	}
 	if rs == nil {

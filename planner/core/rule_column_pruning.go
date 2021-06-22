@@ -89,6 +89,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 	used := expression.GetUsedList(parentUsedCols, la.Schema())
 
 	allFirstRow := true
+	allRemainFirstRow := true
 	for i := len(used) - 1; i >= 0; i-- {
 		if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
 			allFirstRow = false
@@ -96,6 +97,8 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 		if !used[i] {
 			la.schema.Columns = append(la.schema.Columns[:i], la.schema.Columns[i+1:]...)
 			la.AggFuncs = append(la.AggFuncs[:i], la.AggFuncs[i+1:]...)
+		} else if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
+			allRemainFirstRow = false
 		}
 	}
 	var selfUsedCols []*expression.Column
@@ -106,7 +109,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 		aggrFunc.OrderByItems, cols = pruneByItems(aggrFunc.OrderByItems)
 		selfUsedCols = append(selfUsedCols, cols...)
 	}
-	if len(la.AggFuncs) == 0 {
+	if len(la.AggFuncs) == 0 || (!allFirstRow && allRemainFirstRow) {
 		// If all the aggregate functions are pruned, we should add an aggregate function to maintain the info of row numbers.
 		// For all the aggregate functions except `first_row`, if we have an empty table defined as t(a,b),
 		// `select agg(a) from t` would always return one row, while `select agg(a) from t group by b` would return empty.
@@ -121,12 +124,12 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 		if err != nil {
 			return err
 		}
-		la.AggFuncs = []*aggregation.AggFuncDesc{newAgg}
+		la.AggFuncs = append(la.AggFuncs, newAgg)
 		col := &expression.Column{
 			UniqueID: la.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  newAgg.RetTp,
 		}
-		la.schema.Columns = []*expression.Column{col}
+		la.schema.Columns = append(la.schema.Columns, col)
 	}
 
 	if len(la.GroupByItems) > 0 {
@@ -376,9 +379,8 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
 	}
 
 	if len(p.partitionedTable) > 0 {
-		// If the children include partitioned tables, do not prune columns.
-		// Because the executor needs the partitioned columns to calculate the lock key.
-		return p.children[0].PruneColumns(p.Schema().Columns)
+		// If the children include partitioned tables, there is an extra partition ID column.
+		parentUsedCols = append(parentUsedCols, p.extraPIDInfo.Columns...)
 	}
 
 	for _, cols := range p.tblID2Handle {
@@ -441,8 +443,14 @@ func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column) error {
 		return nil
 	}
 
-	p.inlineProjection(parentUsedCols)
-	return p.children[0].PruneColumns(parentUsedCols)
+	savedUsedCols := make([]*expression.Column, len(parentUsedCols))
+	copy(savedUsedCols, parentUsedCols)
+	if err := p.children[0].PruneColumns(parentUsedCols); err != nil {
+		return err
+	}
+	p.schema = nil
+	p.inlineProjection(savedUsedCols)
+	return nil
 }
 
 func (*columnPruner) name() string {

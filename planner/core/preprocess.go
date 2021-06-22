@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -31,12 +33,13 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
-	"github.com/pingcap/tidb/util/sem"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -133,6 +136,7 @@ type PreprocessorReturn struct {
 	// otherwise it defaults to zero
 	LastSnapshotTS uint64
 	InfoSchema     infoschema.InfoSchema
+	TxnScope       string
 }
 
 // preprocessor is an ast.Visitor that preprocess
@@ -337,6 +341,37 @@ func bindableStmtType(node ast.StmtNode) byte {
 	return TypeInvalid
 }
 
+func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
+	currentDB := p.ctx.GetSessionVars().CurrentDB
+	if tn.Schema.String() != "" {
+		currentDB = tn.Schema.L
+	}
+	if currentDB == "" {
+		return nil, errors.Trace(ErrNoDB)
+	}
+	sName := model.NewCIStr(currentDB)
+	tbl, err := p.ensureInfoSchema().TableByName(sName, tn.Name)
+	if err != nil {
+		// We should never leak that the table doesn't exist (i.e. attach ErrTableNotExists)
+		// unless we know that the user has permissions to it, should it exist.
+		// By checking here, this makes all SELECT/SHOW/INSERT/UPDATE/DELETE statements safe.
+		currentUser, activeRoles := p.ctx.GetSessionVars().User, p.ctx.GetSessionVars().ActiveRoles
+		if pm := privilege.GetPrivilegeManager(p.ctx); pm != nil {
+			if !pm.RequestVerification(activeRoles, sName.L, tn.Name.O, "", mysql.AllPrivMask) {
+				u := currentUser.Username
+				h := currentUser.Hostname
+				if currentUser.AuthHostname != "" {
+					u = currentUser.AuthUsername
+					h = currentUser.AuthHostname
+				}
+				return nil, ErrTableaccessDenied.GenWithStackByArgs(p.stmtType(), u, h, tn.Name.O)
+			}
+		}
+		return nil, err
+	}
+	return tbl, err
+}
+
 func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, defaultDB string) {
 	origTp := bindableStmtType(originNode)
 	hintedTp := bindableStmtType(hintedNode)
@@ -355,6 +390,39 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 			return
 		}
 	}
+
+	// Check the bind operation is not on any temporary table.
+	var resNode ast.ResultSetNode
+	switch n := originNode.(type) {
+	case *ast.SelectStmt:
+		resNode = n.From.TableRefs
+	case *ast.DeleteStmt:
+		resNode = n.TableRefs.TableRefs
+	case *ast.UpdateStmt:
+		resNode = n.TableRefs.TableRefs
+	case *ast.InsertStmt:
+		resNode = n.Table.TableRefs
+	}
+	if resNode != nil {
+		tblNames := extractTableList(resNode, nil, false)
+		for _, tn := range tblNames {
+			tbl, err := p.tableByName(tn)
+			if err != nil {
+				// If the operation is order is: drop table -> drop binding
+				// The table doesn't  exist, it is not an error.
+				if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+					continue
+				}
+				p.err = err
+				return
+			}
+			if tbl.Meta().TempTableType != model.TempTableNone {
+				p.err = ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("create binding")
+				return
+			}
+		}
+	}
+
 	originSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(originNode, defaultDB, originNode.Text()))
 	hintedSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(hintedNode, defaultDB, hintedNode.Text()))
 	if originSQL != hintedSQL {
@@ -598,17 +666,7 @@ func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
 
 func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 	for _, table := range stmt.Tables {
-		currentDB := p.ctx.GetSessionVars().CurrentDB
-		if table.Schema.String() != "" {
-			currentDB = table.Schema.L
-		}
-		if currentDB == "" {
-			p.err = errors.Trace(ErrNoDB)
-			return
-		}
-		sName := model.NewCIStr(currentDB)
-		tName := table.Name
-		tableInfo, err := p.ensureInfoSchema().TableByName(sName, tName)
+		tableInfo, err := p.tableByName(table)
 		if err != nil {
 			p.err = err
 			return
@@ -1270,27 +1328,12 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
-	table, err := p.ensureInfoSchema().TableByName(tn.Schema, tn.Name)
+	table, err := p.tableByName(tn)
 	if err != nil {
-		// We should never leak that the table doesn't exist (i.e. attach ErrTableNotExists)
-		// unless we know that the user has permissions to it, should it exist.
-		// By checking here, this makes all SELECT/SHOW/INSERT/UPDATE/DELETE statements safe.
-		currentUser, activeRoles := p.ctx.GetSessionVars().User, p.ctx.GetSessionVars().ActiveRoles
-		if pm := privilege.GetPrivilegeManager(p.ctx); pm != nil {
-			if !pm.RequestVerification(activeRoles, tn.Schema.L, tn.Name.O, "", mysql.AllPrivMask) {
-				u := currentUser.Username
-				h := currentUser.Hostname
-				if currentUser.AuthHostname != "" {
-					u = currentUser.AuthUsername
-					h = currentUser.AuthHostname
-				}
-				p.err = ErrTableaccessDenied.GenWithStackByArgs(p.stmtType(), u, h, tn.Name.O)
-				return
-			}
-		}
 		p.err = err
 		return
 	}
+
 	tableInfo := table.Meta()
 	dbInfo, _ := p.ensureInfoSchema().SchemaByName(tn.Schema)
 	// tableName should be checked as sequence object.
@@ -1335,9 +1378,6 @@ func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 }
 
 func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
-	if sem.IsEnabled() && node.Tp == ast.ShowConfig {
-		p.err = ErrNotSupportedWithSem.GenWithStackByArgs("SHOW CONFIG")
-	}
 	if node.DBName == "" {
 		if node.Table != nil && node.Table.Schema.L != "" {
 			node.DBName = node.Table.Schema.O
@@ -1419,9 +1459,27 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 }
 
 // handleAsOfAndReadTS tries to handle as of closure, or possibly read_ts.
-// If read_ts is not nil, it will be consumed.
-// If as of is not nil, timestamp is used to get the history infoschema from the infocache.
 func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
+	// When statement is during the Txn, we check whether there exists AsOfClause. If exists, we will return error,
+	// otherwise we should directly set the return param from TxnCtx.
+	p.TxnScope = oracle.GlobalTxnScope
+	if p.ctx.GetSessionVars().InTxn() {
+		if node != nil {
+			p.err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
+			return
+		}
+		txnCtx := p.ctx.GetSessionVars().TxnCtx
+		p.TxnScope = txnCtx.TxnScope
+		if txnCtx.IsStaleness {
+			p.LastSnapshotTS = txnCtx.StartTS
+			p.ExplicitStaleness = txnCtx.IsStaleness
+			p.initedLastSnapshotTS = true
+			return
+		}
+	}
+	// If the statement is in auto-commit mode, we will check whether there exists read_ts, if exists,
+	// we will directly use it. The txnScope will be defined by the zone label, if it is not set, we will use
+	// global txnScope directly.
 	ts := p.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
 	if ts > 0 {
 		if node != nil {
@@ -1433,14 +1491,10 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 				return ts, nil
 			}
 			p.LastSnapshotTS = ts
-			p.ExplicitStaleness = true
+			p.setStalenessReturn()
 		}
 	}
 	if node != nil {
-		if p.ctx.GetSessionVars().InTxn() {
-			p.err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
-			return
-		}
 		ts, p.err = calculateTsExpr(p.ctx, node)
 		if p.err != nil {
 			return
@@ -1450,11 +1504,11 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 				return calculateTsExpr(ctx, node)
 			}
 			p.LastSnapshotTS = ts
-			p.ExplicitStaleness = true
+			p.setStalenessReturn()
 		}
 	}
 	if p.LastSnapshotTS != ts {
-		p.err = ErrDifferentAsOf.GenWithStack("can not set different time in the as of")
+		p.err = ErrAsOf.GenWithStack("can not set different time in the as of")
 		return
 	}
 	if p.LastSnapshotTS != 0 {
@@ -1477,4 +1531,10 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 		p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	}
 	return p.InfoSchema
+}
+
+func (p *preprocessor) setStalenessReturn() {
+	txnScope := config.GetTxnScopeFromConfig()
+	p.ExplicitStaleness = true
+	p.TxnScope = txnScope
 }
