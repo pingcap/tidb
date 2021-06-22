@@ -2122,12 +2122,8 @@ func (s *testSuite) TestIssue25505(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set tidb_slow_log_threshold = 0")
-	tk.MustExec("set @@tidb_capture_plan_baselines='on'")
 	tk.MustExec("create table t (a int(11) default null,b int(11) default null,key b (b),key ba (b))")
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
-	defer func() {
-		tk.MustExec("set @@tidb_capture_plan_baselines = off")
-	}()
 	tk.MustExec("with cte as (select * from t where b=4) select * from t")
 	tk.MustExec("with cte as (select * from t where b=5) select * from t")
 	tk.MustExec("with cte as (select * from t where b=6) select * from t")
@@ -2137,21 +2133,8 @@ func (s *testSuite) TestIssue25505(c *C) {
 	tk.MustExec("with recursive cte1(a,b) as (select * from t where b = 1 union select a+1,b+1 from cte1 where a < 2) select * from t")
 	tk.MustExec("with recursive cte1(a,b) as (select * from t where b = 1 union select a+1,b+1 from cte1 where a < 2) select * from t")
 	tk.MustExec("with recursive cte1(a,b) as (select * from t where b = 1 union select a+1,b+1 from cte1 where a < 2) select * from t")
-
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	tk.MustExec("set tidb_slow_log_threshold = 300")
 	c.Assert(len(rows), Equals, 3)
-
-	c.Assert(rows[0][0], Equals, "with recursive `cte1` ( `a` , `b` ) as ( select * from `test` . `t` where `b` = ? union select `a` + ? , `b` + ? from `cte1` where `a` < ? ) select * from `test` . `t`")
-	c.Assert(rows[0][1], Equals, "WITH RECURSIVE `cte1` (`a`, `b`) AS (SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `b` = 1 UNION SELECT `a` + 1,`b` + 1 FROM `cte1` WHERE `a` < 2) SELECT * FROM `test`.`t`")
-	c.Assert(rows[0][3], Equals, "using")
-
-	c.Assert(rows[1][0], Equals, "with `cte1` as ( select * from `test` . `t` ) , `cte2` as ( select ? ) select * from `test` . `t`")
-	c.Assert(rows[1][1], Equals, "WITH `cte1` AS (SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t`), `cte2` AS (SELECT 4) SELECT * FROM `test`.`t`")
-	c.Assert(rows[1][3], Equals, "using")
-
-	c.Assert(rows[2][0], Equals, "with `cte` as ( select * from `test` . `t` where `b` = ? ) select * from `test` . `t`")
-	c.Assert(rows[2][1], Equals, "WITH `cte` AS (SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `b` = 4) SELECT * FROM `test`.`t`")
-	c.Assert(rows[2][3], Equals, "using")
 }
