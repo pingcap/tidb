@@ -1493,6 +1493,8 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(8)
 	cancel() // cancel case 1
+	// Make linter happy.
+	_ = cancel
 
 	// case 2: agent hangs for a while
 	cancel = runWorkload(0, 10)
@@ -1512,6 +1514,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	cancel = runWorkload(11, 20)
 	agentServer.WaitCollectCnt(1, time.Second*8)
 	checkFn(5)
+	_ = cancel
 
 	// case 3: agent restart
 	cancel = runWorkload(0, 10)
@@ -1525,6 +1528,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	checkFn(5)
 	// run another set of SQL queries
 	cancel()
+	_ = cancel
 
 	cancel = runWorkload(11, 20)
 	// agent server shutdown
@@ -1536,6 +1540,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	// check result
 	agentServer.WaitCollectCnt(2, time.Second*8)
 	checkFn(5)
+	_ = cancel
 }
 
 func (ts *tidbTestTopSQLSuite) loopExec(ctx context.Context, c *C, fn func(db *sql.DB)) {
