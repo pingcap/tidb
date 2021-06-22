@@ -9757,14 +9757,10 @@ func (s *testIntegrationSuite2) TestIssue25591(c *C) {
 
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1_1, t2_1;")
-	tk.MustExec("CREATE TABLE `t1_1` (`col1` double DEFAULT NULL);")
+	tk.MustExec("CREATE TABLE `t1_1` (`col1` double DEFAULT NULL, `col2` double DEFAULT NULL);")
 	tk.MustExec("CREATE TABLE `t2_1` (`col1` varchar(20) DEFAULT NULL, `col2` double DEFAULT NULL);")
-	tk.MustExec("insert into t1_1 values(12.991);")
+	tk.MustExec("insert into t1_1 values(12.991, null), (12.991, null);")
 	tk.MustExec("insert into t2_1(col2) values(87), (-9.183), (-9.183);")
-
-	// Analyze to make sure this specific plan can recurring problem.
-	tk.MustExec("analyze table t1_1;")
-	tk.MustExec("analyze table t2_1;")
 
 	tk.MustExec("set @@tidb_enable_vectorized_expression  = false;")
 	rows := tk.MustQuery("select t1.col1, t2.col1, t2.col2 from t1_1 t1 inner join  t2_1 t2 on t1.col1 not in (1,t2.col1,t2.col2) order by 1,2,3;")
