@@ -3218,13 +3218,13 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 
 const modelExtraPidColID = -2
 
-var modelExtraPartitionIdName = model.NewCIStr("_tidb_pid")
+var modelExtraPartitionIDName = model.NewCIStr("_tidb_pid")
 
 // modelNewExtraPartitionIDColInfo mocks a column info for extra partition id column.
 func modelNewExtraPartitionIDColInfo() *model.ColumnInfo {
 	colInfo := &model.ColumnInfo{
 		ID:   modelExtraPidColID,
-		Name: modelExtraPartitionIdName,
+		Name: modelExtraPartitionIDName,
 	}
 	colInfo.Tp = mysql.TypeLonglong
 	colInfo.Flen, colInfo.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
@@ -3239,7 +3239,7 @@ func (ds *DataSource) addExtraPIDColumn(info *extraPIDInfo) {
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
 		ID:       modelExtraPidColID,
-		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, modelExtraPartitionIdName),
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, modelExtraPartitionIDName),
 	}
 
 	ds.Columns = append(ds.Columns, modelNewExtraPartitionIDColInfo())
@@ -3248,8 +3248,8 @@ func (ds *DataSource) addExtraPIDColumn(info *extraPIDInfo) {
 	ds.names = append(ds.names, &types.FieldName{
 		DBName:      ds.DBName,
 		TblName:     ds.TableInfo().Name,
-		ColName:     modelExtraPartitionIdName,
-		OrigColName: modelExtraPartitionIdName,
+		ColName:     modelExtraPartitionIDName,
+		OrigColName: modelExtraPartitionIDName,
 	})
 	ds.TblCols = append(ds.TblCols, pidCol)
 
