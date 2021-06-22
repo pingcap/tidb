@@ -48,7 +48,6 @@ type UnionScanExec struct {
 
 	addedRows           [][]types.Datum
 	cursor4AddRows      int
-	sortErr             error
 	snapshotRows        [][]types.Datum
 	cursor4SnapshotRows int
 	snapshotChunkBuffer *chunk.Chunk

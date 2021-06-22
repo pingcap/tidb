@@ -18,7 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	tidbcfg "github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/tikv/client-go/v2/config"
 )
 
 func TestT(t *testing.T) {

@@ -447,6 +447,43 @@ func (ts *testSuite) TestCreatePartitionTableNotSupport(c *C) {
 	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
 }
 
+// issue 24880
+func (ts *testSuite) TestRangePartitionUnderNoUnsignedSub(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tu;")
+	tk.MustExec("SET @@sql_mode='NO_UNSIGNED_SUBTRACTION';")
+	tk.MustExec(`CREATE TABLE tu (c1 BIGINT UNSIGNED) PARTITION BY RANGE(c1 - 10) (
+				PARTITION p0 VALUES LESS THAN (-5),
+				PARTITION p1 VALUES LESS THAN (0),
+				PARTITION p2 VALUES LESS THAN (5),
+				PARTITION p3 VALUES LESS THAN (10),
+				PARTITION p4 VALUES LESS THAN (MAXVALUE)
+				);`)
+	// currently not support insert records whose partition value is negative
+	ErrMsg1 := "[types:1690]BIGINT UNSIGNED value is out of range in '(tu.c1 - 10)'"
+	tk.MustGetErrMsg("insert into tu values (0);", ErrMsg1)
+	tk.MustGetErrMsg("insert into tu values (cast(1 as unsigned));", ErrMsg1)
+	tk.MustExec(("insert into tu values (cast(9223372036854775807 as unsigned));"))
+	// MySQL will not support c1 value bigger than 9223372036854775817 in this case
+	tk.MustExec(("insert into tu values (cast(18446744073709551615 as unsigned));"))
+
+	// test `create table like`
+	ErrMsg2 := "[types:1690]BIGINT UNSIGNED value is out of range in '(tu2.c1 - 10)'"
+	tk.MustExec(`CREATE TABLE tu2 like tu;`)
+	// currently not support insert records whose partition value is negative
+	tk.MustGetErrMsg("insert into tu2 values (0);", ErrMsg2)
+	tk.MustGetErrMsg("insert into tu2 values (cast(1 as unsigned));", ErrMsg2)
+	tk.MustExec(("insert into tu2 values (cast(9223372036854775807 as unsigned));"))
+	// MySQL will not support c1 value bigger than 9223372036854775817 in this case
+	tk.MustExec(("insert into tu2 values (cast(18446744073709551615 as unsigned));"))
+
+	// compatible with MySQL
+	ErrMsg3 := "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition"
+	tk.MustExec("SET @@sql_mode='';")
+	tk.MustGetErrMsg(`CREATE TABLE tu3 like tu;`, ErrMsg3)
+}
+
 func (ts *testSuite) TestIntUint(c *C) {
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
@@ -529,4 +566,20 @@ func (ts *testSuite) TestIssue21574(c *C) {
 	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by list columns (`key`) (partition p0 values in (10));")
 	tk.MustExec("drop table t_21574")
 	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by list columns (`key`,`table`) (partition p0 values in ((1,1)));")
+}
+
+func (ts *testSuite) TestIssue24746(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop tables if exists t_24746")
+	tk.MustExec("create table t_24746 (a int, b varchar(60), c int, primary key(a)) partition by range(a) (partition p0 values less than (5),partition p1 values less than (10), partition p2 values less than maxvalue)")
+	defer tk.MustExec("drop table t_24746")
+	err := tk.ExecToErr("insert into t_24746 partition (p1) values(4,'ERROR, not matching partition p1',4)")
+	c.Assert(table.ErrRowDoesNotMatchGivenPartitionSet.Equal(err), IsTrue)
+	tk.MustExec("insert into t_24746 partition (p0) values(4,'OK, first row in correct partition',4)")
+	err = tk.ExecToErr("insert into t_24746 partition (p0) values(4,'DUPLICATE, in p0',4) on duplicate key update a = a + 1, b = 'ERROR, not allowed to write to p1'")
+	c.Assert(table.ErrRowDoesNotMatchGivenPartitionSet.Equal(err), IsTrue)
+	// Actual bug, before the fix this was updating the row in p0 (deleting it in p0 and inserting in p1):
+	err = tk.ExecToErr("insert into t_24746 partition (p1) values(4,'ERROR, not allowed to read from partition p0',4) on duplicate key update a = a + 1, b = 'ERROR, not allowed to read from p0!'")
+	c.Assert(table.ErrRowDoesNotMatchGivenPartitionSet.Equal(err), IsTrue)
 }

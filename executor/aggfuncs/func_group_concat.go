@@ -88,6 +88,7 @@ func (e *baseGroupConcat4String) truncatePartialResultIfNeed(sctx sessionctx.Con
 	return nil
 }
 
+// nolint:structcheck
 type basePartialResult4GroupConcat struct {
 	valsBuf *bytes.Buffer
 	buffer  *bytes.Buffer

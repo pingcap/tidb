@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ngaut/unistore/tikv/dbreader"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/mpp"
@@ -28,13 +27,14 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // mpp executor that only servers for mpp execution
@@ -108,11 +108,10 @@ func (e *tableScanExec) next() (*chunk.Chunk, error) {
 type exchSenderExec struct {
 	baseMPPExec
 
-	exchangeSender *tipb.ExchangeSender
-	tunnels        []*ExchangerTunnel
-	outputOffsets  []uint32
-	exchangeTp     tipb.ExchangeType
-	hashKeyOffset  int
+	tunnels       []*ExchangerTunnel
+	outputOffsets []uint32
+	exchangeTp    tipb.ExchangeType
+	hashKeyOffset int
 }
 
 func (e *exchSenderExec) open() error {
@@ -344,6 +343,20 @@ type joinExec struct {
 
 	defaultInner chunk.Row
 	inited       bool
+	// align the types of join keys and build keys
+	comKeyTp *types.FieldType
+}
+
+func (e *joinExec) getHashKey(keyCol types.Datum) (str string, err error) {
+	keyCol, err = keyCol.ConvertTo(e.sc, e.comKeyTp)
+	if err != nil {
+		return str, errors.Trace(err)
+	}
+	str, err = keyCol.ToString()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return str, nil
 }
 
 func (e *joinExec) buildHashTable() error {
@@ -359,7 +372,7 @@ func (e *joinExec) buildHashTable() error {
 		for i := 0; i < rows; i++ {
 			row := chk.GetRow(i)
 			keyCol := row.GetDatum(e.buildKey.Index, e.buildChild.getFieldTypes()[e.buildKey.Index])
-			key, err := keyCol.ToString()
+			key, err := e.getHashKey(keyCol)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -387,7 +400,7 @@ func (e *joinExec) fetchRows() (bool, error) {
 	for i := 0; i < chkSize; i++ {
 		row := chk.GetRow(i)
 		keyCol := row.GetDatum(e.probeKey.Index, e.probeChild.getFieldTypes()[e.probeKey.Index])
-		key, err := keyCol.ToString()
+		key, err := e.getHashKey(keyCol)
 		if err != nil {
 			return false, errors.Trace(err)
 		}

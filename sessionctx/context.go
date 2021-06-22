@@ -17,15 +17,23 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tipb/go-binlog"
 )
+
+// InfoschemaMetaVersion is a workaround. Due to circular dependency,
+// can not return the complete interface. But SchemaMetaVersion is widely used for logging.
+// So we give a convenience for that.
+// FIXME: remove this interface
+type InfoschemaMetaVersion interface {
+	SchemaMetaVersion() int64
+}
 
 // Context is an interface for transaction and executive args environment.
 type Context interface {
@@ -33,6 +41,8 @@ type Context interface {
 	// If old transaction is valid, it is committed first.
 	// It's used in BEGIN statement and DDL statements to commit old transaction.
 	NewTxn(context.Context) error
+	// NewStaleTxnWithStartTS initializes a staleness transaction with the given StartTS.
+	NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) error
 
 	// Txn returns the current transaction which is created before executing a statement.
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
@@ -55,6 +65,8 @@ type Context interface {
 	// ClearValue clears the value associated with this context for key.
 	ClearValue(key fmt.Stringer)
 
+	GetInfoSchema() InfoschemaMetaVersion
+
 	GetSessionVars() *variable.SessionVars
 
 	GetSessionManager() util.SessionManager
@@ -71,9 +83,6 @@ type Context interface {
 	// InitTxnWithStartTS initializes a transaction with startTS.
 	// It should be called right before we builds an executor.
 	InitTxnWithStartTS(startTS uint64) error
-
-	// NewTxnWithStalenessOption initializes a transaction with StalenessTxnOption
-	NewTxnWithStalenessOption(ctx context.Context, option StalenessTxnOption) error
 
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
@@ -113,6 +122,8 @@ type Context interface {
 	PrepareTSFuture(ctx context.Context)
 	// StoreIndexUsage stores the index usage information.
 	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
+	// GetTxnWriteThroughputSLI returns the TxnWriteThroughputSLI.
+	GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI
 }
 
 type basicCtxType int
@@ -138,10 +149,3 @@ const (
 	// LastExecuteDDL is the key for whether the session execute a ddl command last time.
 	LastExecuteDDL basicCtxType = 3
 )
-
-// StalenessTxnOption represents available options for the InitTxnWithStaleness
-type StalenessTxnOption struct {
-	Mode    ast.TimestampBoundMode
-	PrevSec uint64
-	StartTS uint64
-}

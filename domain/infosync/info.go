@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"path"
@@ -40,13 +39,15 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/types"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/versioninfo"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/clientv3/concurrency"
 	"go.uber.org/zap"
@@ -251,7 +252,9 @@ func UpdateTiFlashTableSyncProgress(ctx context.Context, tid int64, progress flo
 		return nil
 	}
 	key := fmt.Sprintf("%s/%v", TiFlashTableSyncProgressPath, tid)
-	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, strconv.FormatFloat(progress, 'f', 2, 64))
+	// truncate progress with 2 decimal digits so that it will not be rounded to 1 when the progress is 0.995
+	progressString := types.TruncateFloatToString(progress, 2)
+	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, progressString)
 }
 
 // DeleteTiFlashTableSyncProgress is used to delete the tiflash table replica sync progress.
@@ -330,7 +333,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			}
 		})
 		if err == nil {
-			bodyBytes, err := ioutil.ReadAll(res.Body)
+			bodyBytes, err := io.ReadAll(res.Body)
 			if err != nil {
 				return nil, err
 			}
@@ -550,13 +553,13 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	pl := is.manager.ShowProcessList()
 
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
-	currentVer, err := store.CurrentVersion(oracle.GlobalTxnScope)
+	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
 		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
 		return
 	}
-	now := time.Unix(0, oracle.ExtractPhysical(currentVer.Ver)*1e6)
-	startTSLowerLimit := oracle.GoTimeToTS(now.Add(-time.Duration(kv.MaxTxnTimeUse) * time.Millisecond))
+	now := oracle.GetTimeFromTS(currentVer.Ver)
+	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
 
 	minStartTS := oracle.GoTimeToTS(now)
 	for _, info := range pl {

@@ -285,7 +285,7 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 const (
 	// Version0 is the state that no statistics is actually collected, only the meta info.(the total count and the average col size)
 	Version0 = 0
-	// In Version1
+	// Version1 maintains the statistics in the following way.
 	// Column stats: CM Sketch is built in TiKV using full data. Histogram is built from samples. TopN is extracted from CM Sketch.
 	//    TopN + CM Sketch represent all data. Histogram also represents all data.
 	// Index stats: CM Sketch and Histogram is built in TiKV using full data. TopN is extracted from histogram. Then values covered by TopN is removed from CM Sketch.
@@ -293,10 +293,11 @@ const (
 	// Int PK column stats is always Version1 because it only has histogram built from full data.
 	// Fast analyze is always Version1 currently.
 	Version1 = 1
-	// In Version2
+	// Version2 maintains the statistics in the following way.
 	// Column stats: CM Sketch is not used. TopN and Histogram are built from samples. TopN + Histogram represent all data.
-	// Index stats: CM SKetch is not used. TopN and Histograms are built in TiKV using full data. NDV is also collected for each bucket in histogram.
+	// Index stats: CM SKetch is not used. TopN and Histograms are built from samples.
 	//    Then values covered by TopN is removed from Histogram. TopN + Histogram represent all data.
+	// Both Column and Index's NDVs are collected by full scan.
 	Version2 = 2
 )
 
@@ -343,22 +344,25 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d ndv: %d", hg.bucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat, hg.Buckets[bktID].NDV)
 }
 
-// RemoveIdxVals remove the given values from the histogram.
-func (hg *Histogram) RemoveIdxVals(idxValCntPairs []TopNMeta) {
+// RemoveVals remove the given values from the histogram.
+// This function contains an **ASSUMPTION**: valCntPairs is sorted in ascending order.
+func (hg *Histogram) RemoveVals(valCntPairs []TopNMeta) {
 	totalSubCnt := int64(0)
+	var cmpResult int
 	for bktIdx, pairIdx := 0, 0; bktIdx < hg.Len(); bktIdx++ {
-		for pairIdx < len(idxValCntPairs) {
+		for pairIdx < len(valCntPairs) {
 			// If the current val smaller than current bucket's lower bound, skip it.
-			cmpResult := bytes.Compare(hg.Bounds.Column(0).GetBytes(bktIdx*2), idxValCntPairs[pairIdx].Encoded)
+			cmpResult = bytes.Compare(hg.Bounds.Column(0).GetRaw(bktIdx*2), valCntPairs[pairIdx].Encoded)
 			if cmpResult > 0 {
+				pairIdx++
 				continue
 			}
 			// If the current val bigger than current bucket's upper bound, break.
-			cmpResult = bytes.Compare(hg.Bounds.Column(0).GetBytes(bktIdx*2+1), idxValCntPairs[pairIdx].Encoded)
+			cmpResult = bytes.Compare(hg.Bounds.Column(0).GetRaw(bktIdx*2+1), valCntPairs[pairIdx].Encoded)
 			if cmpResult < 0 {
 				break
 			}
-			totalSubCnt += int64(idxValCntPairs[pairIdx].Count)
+			totalSubCnt += int64(valCntPairs[pairIdx].Count)
 			if hg.Buckets[bktIdx].NDV > 0 {
 				hg.Buckets[bktIdx].NDV--
 			}
@@ -499,20 +503,12 @@ func (hg *Histogram) BetweenRowCount(a, b types.Datum) float64 {
 }
 
 // BetweenRowCount estimates the row count for interval [l, r).
-func (c *Column) BetweenRowCount(sc *stmtctx.StatementContext, l, r types.Datum) (float64, error) {
+func (c *Column) BetweenRowCount(sc *stmtctx.StatementContext, l, r types.Datum, lowEncoded, highEncoded []byte) float64 {
 	histBetweenCnt := c.Histogram.BetweenRowCount(l, r)
 	if c.StatsVer <= Version1 {
-		return histBetweenCnt, nil
+		return histBetweenCnt
 	}
-	lBytes, err := codec.EncodeKey(sc, nil, l)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	rBytes, err := codec.EncodeKey(sc, nil, r)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return float64(c.TopN.BetweenCount(lBytes, rBytes)) + histBetweenCnt, nil
+	return float64(c.TopN.BetweenCount(lowEncoded, highEncoded)) + histBetweenCnt
 }
 
 // TotalRowCount returns the total count of this histogram.
@@ -807,7 +803,7 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 		rAvg *= 2
 	}
 	for i := 0; i < rh.Len(); i++ {
-		if statsVer == Version2 {
+		if statsVer >= Version2 {
 			lh.AppendBucketWithNDV(rh.GetLower(i), rh.GetUpper(i), rh.Buckets[i].Count+lCount-offset, rh.Buckets[i].Repeat, rh.Buckets[i].NDV)
 			continue
 		}
@@ -918,14 +914,14 @@ func (c *Column) String() string {
 
 // TotalRowCount returns the total count of this column.
 func (c *Column) TotalRowCount() float64 {
-	if c.StatsVer == Version2 {
+	if c.StatsVer >= Version2 {
 		return c.Histogram.TotalRowCount() + float64(c.TopN.TotalCount())
 	}
 	return c.Histogram.TotalRowCount()
 }
 
 func (c *Column) notNullCount() float64 {
-	if c.StatsVer == Version2 {
+	if c.StatsVer >= Version2 {
 		return c.Histogram.notNullCount() + float64(c.TopN.TotalCount())
 	}
 	return c.Histogram.notNullCount()
@@ -971,7 +967,7 @@ func (c *Column) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
 	return c.TotalRowCount() == 0 || (c.Histogram.NDV > 0 && c.notNullCount() == 0)
 }
 
-func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, modifyCount int64) (float64, error) {
+func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, encodedVal []byte, modifyCount int64) (float64, error) {
 	if val.IsNull() {
 		return float64(c.NullCount), nil
 	}
@@ -980,7 +976,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 		if c.Histogram.Bounds.NumRows() == 0 {
 			return 0.0, nil
 		}
-		if c.Histogram.NDV > 0 && c.outOfRange(val) {
+		if c.Histogram.NDV > 0 && c.outOfRange(val, encodedVal) {
 			return outOfRangeEQSelectivity(c.Histogram.NDV, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 		}
 		if c.CMSketch != nil {
@@ -989,14 +985,17 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 		}
 		return c.Histogram.equalRowCount(val, false), nil
 	}
+	// All the values are null.
+	if c.Histogram.Bounds.NumRows() == 0 && c.TopN.Num() == 0 {
+		return 0, nil
+	}
+	if c.Histogram.NDV+int64(c.TopN.Num()) > 0 && c.outOfRange(val, encodedVal) {
+		return outOfRangeEQSelectivity(c.Histogram.NDV, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
+	}
 	// Stats version == 2
 	// 1. try to find this value in TopN
 	if c.TopN != nil {
-		valBytes, err := codec.EncodeKey(sc, nil, val)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		rowcount, ok := c.QueryTopN(valBytes)
+		rowcount, ok := c.QueryTopN(encodedVal)
 		if ok {
 			return float64(rowcount), nil
 		}
@@ -1047,6 +1046,14 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
+		lowEncoded, err := codec.EncodeKey(sc, nil, lowVal)
+		if err != nil {
+			return 0, err
+		}
+		highEncoded, err := codec.EncodeKey(sc, nil, highVal)
+		if err != nil {
+			return 0, err
+		}
 		if cmp == 0 {
 			// the point case.
 			if !rg.LowExclude && !rg.HighExclude {
@@ -1056,7 +1063,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 					continue
 				}
 				var cnt float64
-				cnt, err = c.equalRowCount(sc, lowVal, modifyCount)
+				cnt, err = c.equalRowCount(sc, lowVal, lowEncoded, modifyCount)
 				if err != nil {
 					return 0, errors.Trace(err)
 				}
@@ -1068,7 +1075,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		// The small range case.
 		if rangeVals != nil {
 			for _, val := range rangeVals {
-				cnt, err := c.equalRowCount(sc, val, modifyCount)
+				cnt, err := c.equalRowCount(sc, val, lowEncoded, modifyCount)
 				if err != nil {
 					return 0, err
 				}
@@ -1077,18 +1084,15 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			continue
 		}
 		// The interval case.
-		cnt, err := c.BetweenRowCount(sc, lowVal, highVal)
-		if err != nil {
-			return 0, err
-		}
-		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
+		cnt := c.BetweenRowCount(sc, lowVal, highVal, lowEncoded, highEncoded)
+		if (c.outOfRange(lowVal, lowEncoded) && !lowVal.IsNull()) || c.outOfRange(highVal, highEncoded) {
 			cnt += outOfRangeEQSelectivity(outOfRangeBetweenRate, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount()
 		}
 		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boudaries here.
 		// Note that, `cnt` does not include null values, we need specially handle cases
 		// where null is the lower bound.
 		if rg.LowExclude && !lowVal.IsNull() {
-			lowCnt, err := c.equalRowCount(sc, lowVal, modifyCount)
+			lowCnt, err := c.equalRowCount(sc, lowVal, lowEncoded, modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -1098,7 +1102,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			cnt += float64(c.NullCount)
 		}
 		if !rg.HighExclude {
-			highCnt, err := c.equalRowCount(sc, highVal, modifyCount)
+			highCnt, err := c.equalRowCount(sc, highVal, highEncoded, modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -1114,11 +1118,21 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 	return rowCount, nil
 }
 
+func (c *Column) outOfRange(val types.Datum, encodedVal []byte) bool {
+	outOfHist := c.Histogram.outOfRange(val)
+	if !outOfHist {
+		return false
+	}
+	// Already out of hist.
+	return c.TopN.outOfRange(encodedVal)
+}
+
 // Index represents an index histogram.
 type Index struct {
 	Histogram
 	*CMSketch
 	*TopN
+	FMSketch *FMSketch
 	ErrorRate
 	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
 	Info           *model.IndexInfo
@@ -1132,7 +1146,7 @@ func (idx *Index) String() string {
 
 // TotalRowCount returns the total count of this index.
 func (idx *Index) TotalRowCount() float64 {
-	if idx.StatsVer == Version2 {
+	if idx.StatsVer >= Version2 {
 		return idx.Histogram.TotalRowCount() + float64(idx.TopN.TotalCount())
 	}
 	return idx.Histogram.TotalRowCount()
@@ -1169,7 +1183,7 @@ func (idx *Index) equalRowCount(b []byte, modifyCount int64) float64 {
 		return float64(idx.QueryBytes(b))
 	}
 	// If it's version2, query the top-n first.
-	if idx.StatsVer == Version2 {
+	if idx.StatsVer >= Version2 {
 		count, found := idx.TopN.QueryTopN(b)
 		if found {
 			return float64(count)
@@ -1237,7 +1251,7 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, coll *HistColl, inde
 		expBackoffSuccess := false
 		// Due to the limitation of calcFraction and convertDatumToScalar, the histogram actually won't estimate anything.
 		// If the first column's range is point.
-		if rangePosition := GetOrdinalOfRangeCond(sc, indexRange); rangePosition > 0 && idx.StatsVer == Version2 && coll != nil {
+		if rangePosition := GetOrdinalOfRangeCond(sc, indexRange); rangePosition > 0 && idx.StatsVer >= Version2 && coll != nil {
 			var expBackoffSel float64
 			expBackoffSel, expBackoffSuccess, err = idx.expBackoffEstimation(sc, coll, indexRange)
 			if err != nil {
@@ -1496,7 +1510,15 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 }
 
 func (idx *Index) outOfRange(val types.Datum) bool {
-	if idx.Histogram.Len() == 0 {
+	outOfTopN := idx.TopN.outOfRange(val.GetBytes())
+	// The val is in TopN, return false.
+	if !outOfTopN {
+		return false
+	}
+
+	histEmpty := idx.Histogram.Len() == 0
+	// HistEmpty->Hist out of range.
+	if histEmpty {
 		return true
 	}
 	withInLowBoundOrPrefixMatch := chunk.Compare(idx.Bounds.GetRow(0), 0, &val) <= 0 ||
@@ -1756,7 +1778,10 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	res := bucket4Merging{}
 	res.upper = buckets[len(buckets)-1].upper.Clone()
 	right := buckets[len(buckets)-1].Clone()
+
+	totNDV := int64(0)
 	for i := len(buckets) - 1; i >= 0; i-- {
+		totNDV += buckets[i].NDV
 		res.Count += buckets[i].Count
 		compare, err := buckets[i].upper.CompareDatum(sc, res.upper)
 		if err != nil {
@@ -1774,6 +1799,14 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 		}
 	}
 	res.NDV = right.NDV + right.disjointNDV
+
+	// since `mergeBucketNDV` is based on uniform and inclusion assumptions, it has the trend to under-estimate,
+	// and as the number of buckets increases, these assumptions become weak,
+	// so to mitigate this problem, a damping factor based on the number of buckets is introduced.
+	res.NDV = int64(float64(res.NDV) * math.Pow(1.15, float64(len(buckets)-1)))
+	if res.NDV > totNDV {
+		res.NDV = totNDV
+	}
 	return &res, nil
 }
 
@@ -1855,6 +1888,16 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		buckets = append(buckets, meta.buildBucket4Merging(&d))
 	}
 
+	// Remove empty buckets
+	tail := 0
+	for i := range buckets {
+		if buckets[i].Count != 0 {
+			buckets[tail] = buckets[i]
+			tail++
+		}
+	}
+	buckets = buckets[:tail]
+
 	var sortError error
 	sort.Slice(buckets, func(i, j int) bool {
 		res, err := buckets[i].upper.CompareDatum(sc, buckets[j].upper)
@@ -1873,14 +1916,17 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	if sortError != nil {
 		return nil, sortError
 	}
-	var sum int64
-	r := len(buckets)
+
+	var sum, prevSum int64
+	r, prevR := len(buckets), 0
 	bucketCount := int64(1)
+	gBucketCountThreshold := (totCount / expBucketNumber) * 80 / 100 // expectedBucketSize * 0.8
+	var bucketNDV int64
 	for i := len(buckets) - 1; i >= 0; i-- {
 		sum += buckets[i].Count
-		if sum >= totCount*bucketCount/expBucketNumber {
-			// if the buckets have the same upper, we merge them into the same new buckets.
-			for ; i > 0; i-- {
+		bucketNDV += buckets[i].NDV
+		if sum >= totCount*bucketCount/expBucketNumber && sum-prevSum >= gBucketCountThreshold {
+			for ; i > 0; i-- { // if the buckets have the same upper, we merge them into the same new buckets.
 				res, err := buckets[i-1].upper.CompareDatum(sc, buckets[i].upper)
 				if err != nil {
 					return nil, err
@@ -1888,18 +1934,33 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				if res != 0 {
 					break
 				}
+				sum += buckets[i-1].Count
+				bucketNDV += buckets[i-1].NDV
 			}
 			merged, err := mergePartitionBuckets(sc, buckets[i:r])
 			if err != nil {
 				return nil, err
 			}
 			globalBuckets = append(globalBuckets, merged)
+			prevR = r
 			r = i
 			bucketCount++
+			prevSum = sum
+			bucketNDV = 0
 		}
 	}
 	if r > 0 {
-		merged, err := mergePartitionBuckets(sc, buckets[0:r])
+		bucketSum := int64(0)
+		for _, b := range buckets[:r] {
+			bucketSum += b.Count
+		}
+
+		if len(globalBuckets) > 0 && bucketSum < gBucketCountThreshold { // merge them into the previous global bucket
+			r = prevR
+			globalBuckets = globalBuckets[:len(globalBuckets)-1]
+		}
+
+		merged, err := mergePartitionBuckets(sc, buckets[:r])
 		if err != nil {
 			return nil, err
 		}
@@ -1911,14 +1972,31 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	}
 
 	// Calc the bucket lower.
-	if minValue == nil { // both hists and popedTopN are empty, returns an empty hist in this case
+	if minValue == nil || len(globalBuckets) == 0 { // both hists and popedTopN are empty, returns an empty hist in this case
 		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize), nil
 	}
 	globalBuckets[0].lower = minValue.Clone()
 	for i := 1; i < len(globalBuckets); i++ {
-		globalBuckets[i].lower = globalBuckets[i-1].upper.Clone()
+		if globalBuckets[i].NDV == 1 { // there is only 1 value so lower = upper
+			globalBuckets[i].lower = globalBuckets[i].upper.Clone()
+		} else {
+			globalBuckets[i].lower = globalBuckets[i-1].upper.Clone()
+		}
 		globalBuckets[i].Count = globalBuckets[i].Count + globalBuckets[i-1].Count
 	}
+
+	// Recalculate repeats
+	// TODO: optimize it later since it's a simple but not the fastest implementation whose complexity is O(nBkt * nHist * log(nBkt))
+	for _, bucket := range globalBuckets {
+		var repeat float64
+		for _, hist := range hists {
+			repeat += hist.equalRowCount(*bucket.upper, isIndex) // only hists of indexes have bucket.NDV
+		}
+		if int64(repeat) > bucket.Repeat {
+			bucket.Repeat = int64(repeat)
+		}
+	}
+
 	globalHist := NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize)
 	for _, bucket := range globalBuckets {
 		if !isIndex {

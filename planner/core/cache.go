@@ -18,10 +18,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -147,12 +149,18 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 type FieldSlice []types.FieldType
 
 // Equal compares FieldSlice with []*types.FieldType
+// Currently this is only used in plan cache to invalidate cache when types of variables are different.
 func (s FieldSlice) Equal(tps []*types.FieldType) bool {
 	if len(s) != len(tps) {
 		return false
 	}
 	for i := range tps {
-		if !s[i].Equal(tps[i]) {
+		// We only use part of logic of `func (ft *FieldType) Equal(other *FieldType)` here because (1) only numeric and
+		// string types will show up here, and (2) we don't need flen and decimal to be matched exactly to use plan cache
+		tpEqual := (s[i].Tp == tps[i].Tp) ||
+			(s[i].Tp == mysql.TypeVarchar && tps[i].Tp == mysql.TypeVarString) ||
+			(s[i].Tp == mysql.TypeVarString && tps[i].Tp == mysql.TypeVarchar)
+		if !tpEqual || s[i].Charset != tps[i].Charset || s[i].Collate != tps[i].Collate {
 			return false
 		}
 	}
@@ -187,12 +195,14 @@ func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*mod
 
 // CachedPrepareStmt store prepared ast from PrepareExec and other related fields
 type CachedPrepareStmt struct {
-	PreparedAst    *ast.Prepared
-	VisitInfos     []visitInfo
-	ColumnInfos    interface{}
-	Executor       interface{}
-	NormalizedSQL  string
-	NormalizedPlan string
-	SQLDigest      string
-	PlanDigest     string
+	PreparedAst         *ast.Prepared
+	VisitInfos          []visitInfo
+	ColumnInfos         interface{}
+	Executor            interface{}
+	NormalizedSQL       string
+	NormalizedPlan      string
+	SQLDigest           *parser.Digest
+	PlanDigest          *parser.Digest
+	ForUpdateRead       bool
+	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
 }

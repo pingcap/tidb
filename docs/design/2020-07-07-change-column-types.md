@@ -69,6 +69,7 @@ This requires changing the state of `colA` and `idxA` to `StatePublic`, and then
 ### Compatibility issues with MySQL
 
 * Considering the complexity of supporting clustered-index and currently TiDB does not fully support clustered-index, so temporarily this feature does not support type modification for columns with the primary key.
+* In addition, we temporarily do not support column type change on three features of partition table, generated column, and expression index in the first stage of implementation.
 
 ### Compatibility issues with TiDB
 

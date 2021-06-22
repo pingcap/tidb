@@ -14,8 +14,6 @@
 package expression
 
 import (
-	"strconv"
-
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -127,12 +125,12 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 			i64s := result.Int64s()
 			buf := chunk.NewColumn(ft, input.NumRows())
 			buf.ReserveBytes(input.NumRows())
-			uintBuf := make([]byte, 8)
+			byteSize := (ft.Flen + 7) >> 3
 			for i := range i64s {
 				if result.IsNull(i) {
 					buf.AppendNull()
 				} else {
-					buf.AppendBytes(strconv.AppendUint(uintBuf[:0], uint64(i64s[i]), 10))
+					buf.AppendBytes(types.NewBinaryLiteralFromUint(uint64(i64s[i]), byteSize))
 				}
 			}
 			// TODO: recycle all old Columns returned here.
@@ -265,7 +263,16 @@ func executeToInt(ctx sessionctx.Context, expr Expression, fieldType *types.Fiel
 		return nil
 	}
 	if fieldType.Tp == mysql.TypeBit {
-		output.AppendBytes(colID, strconv.AppendUint(make([]byte, 0, 8), uint64(res), 10))
+		byteSize := (fieldType.Flen + 7) >> 3
+		output.AppendBytes(colID, types.NewBinaryLiteralFromUint(uint64(res), byteSize))
+		return nil
+	}
+	if fieldType.Tp == mysql.TypeEnum {
+		e, err := types.ParseEnumValue(fieldType.Elems, uint64(res))
+		if err != nil {
+			return err
+		}
+		output.AppendEnum(colID, e)
 		return nil
 	}
 	if mysql.HasUnsignedFlag(fieldType.Flag) {

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/cascades"
+	"github.com/pingcap/tidb/planner/core"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -43,7 +44,7 @@ import (
 )
 
 // GetPreparedStmt extract the prepared statement from the execute statement.
-func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.StmtNode, error) {
+func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*plannercore.CachedPrepareStmt, error) {
 	var ok bool
 	execID := stmt.ExecID
 	if stmt.Name != "" {
@@ -56,7 +57,7 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.Stm
 		if !ok {
 			return nil, errors.Errorf("invalid CachedPrepareStmt type")
 		}
-		return preparedObj.PreparedAst.Stmt, nil
+		return preparedObj, nil
 	}
 	return nil, plannercore.ErrStmtNotFound
 }
@@ -64,12 +65,12 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.Stm
 // IsReadOnly check whether the ast.Node is a read only statement.
 func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
-		s, err := GetPreparedStmt(execStmt, vars)
+		prepareStmt, err := GetPreparedStmt(execStmt, vars)
 		if err != nil {
 			logutil.BgLogger().Warn("GetPreparedStmt failed", zap.Error(err))
 			return false
 		}
-		return ast.IsReadOnly(s)
+		return ast.IsReadOnly(prepareStmt.PreparedAst.Stmt)
 	}
 	return ast.IsReadOnly(node)
 }
@@ -236,6 +237,18 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 	sctx.GetSessionVars().RewritePhaseInfo.DurationRewrite = time.Since(beginRewrite)
 
+	if execPlan, ok := p.(*plannercore.Execute); ok {
+		execID := execPlan.ExecID
+		if execPlan.Name != "" {
+			execID = sctx.GetSessionVars().PreparedStmtNameToID[execPlan.Name]
+		}
+		if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[execID]; ok {
+			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead {
+				is = domain.GetDomain(sctx).InfoSchema()
+			}
+		}
+	}
+
 	sctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
 	activeRoles := sctx.GetSessionVars().ActiveRoles
 	// Check privilege. Maybe it's better to move this to the Preprocess, but
@@ -314,7 +327,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 		}
 		normalizeSQL := normalizeExplainSQL[idx:]
 		hash := parser.DigestNormalized(normalizeSQL)
-		return x.Stmt, normalizeSQL, hash, nil
+		return x.Stmt, normalizeSQL, hash.String(), nil
 	case *ast.SelectStmt, *ast.SetOprStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 		plannercore.EraseLastSemicolon(x)
 		// This function is only used to find bind record.
@@ -326,7 +339,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 			return x, "", "", nil
 		}
 		normalizedSQL, hash := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
-		return x, normalizedSQL, hash, nil
+		return x, normalizedSQL, hash.String(), nil
 	}
 	return nil, "", "", nil
 }
@@ -560,4 +573,5 @@ func setFoundInBinding(sctx sessionctx.Context, opt bool) error {
 
 func init() {
 	plannercore.OptimizeAstNode = Optimize
+	plannercore.IsReadOnly = IsReadOnly
 }
