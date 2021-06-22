@@ -226,7 +226,6 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 			return
 		}
 	} else {
-		m.store.GetRegionCache().GetTiFlashStoreAddrs()
 		rpcResp, err = m.store.GetTiKVClient().SendRequest(ctx, req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutMedium)
 	}
 
