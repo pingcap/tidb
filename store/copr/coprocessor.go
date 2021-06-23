@@ -158,22 +158,16 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 	}
 
 	rangesLen := ranges.Len()
-
-	locs, err := cache.SplitKeyRangesByLocations(bo, ranges)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	var tasks []*copTask
-	for _, loc := range locs {
+	appendTask := func(regionWithRangeInfo *tikv.KeyLocation, ranges *KeyRanges) {
 		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
 		// to make sure the message can be sent successfully.
-		rLen := loc.Ranges.Len()
+		rLen := ranges.Len()
 		for i := 0; i < rLen; {
 			nextI := mathutil.Min(i+rangesPerTask, rLen)
 			tasks = append(tasks, &copTask{
-				region: loc.Location.Region,
-				ranges: loc.Ranges.Slice(i, nextI),
+				region: regionWithRangeInfo.Region,
+				ranges: ranges.Slice(i, nextI),
 				// Channel buffer is 2 for handling region split.
 				// In a common case, two region split tasks will not be blocked.
 				respChan:  make(chan *copResponse, 2),
@@ -183,6 +177,38 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 			i = nextI
 		}
 	}
+
+	err := cache.SplitKeyRanges(bo, ranges, appendTask)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// rangesLen := ranges.Len()
+
+	// locs, err := cache.SplitKeyRangesByLocations(bo, ranges)
+	// if err != nil {
+	// return nil, errors.Trace(err)
+	// }
+
+	// var tasks []*copTask
+	// for _, loc := range locs {
+	// // TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
+	// // to make sure the message can be sent successfully.
+	// rLen := loc.Ranges.Len()
+	// for i := 0; i < rLen; {
+	// nextI := mathutil.Min(i+rangesPerTask, rLen)
+	// tasks = append(tasks, &copTask{
+	// region: loc.Location.Region,
+	// ranges: loc.Ranges.Slice(i, nextI),
+	// // Channel buffer is 2 for handling region split.
+	// // In a common case, two region split tasks will not be blocked.
+	// respChan:  make(chan *copResponse, 2),
+	// cmdType:   cmdType,
+	// storeType: req.StoreType,
+	// })
+	// i = nextI
+	// }
+	// }
 
 	if req.Desc {
 		reverseTasks(tasks)

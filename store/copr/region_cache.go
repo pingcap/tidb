@@ -58,6 +58,54 @@ type LocationKeyRanges struct {
 	Ranges *KeyRanges
 }
 
+// SplitKeyRanges splits KeyRanges by the regions info from cache.
+func (cache *RegionCache) SplitKeyRanges(bo *Backoffer, ranges *KeyRanges, fn func(regionWithRangeInfo *tikv.KeyLocation, ranges *KeyRanges)) error {
+	for ranges.Len() > 0 {
+		loc, err := cache.LocateKey(bo.TiKVBackoffer(), ranges.At(0).StartKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// Iterate to the first range that is not complete in the region.
+		var i int
+		for ; i < ranges.Len(); i++ {
+			r := ranges.At(i)
+			if !(loc.Contains(r.EndKey) || bytes.Equal(loc.EndKey, r.EndKey)) {
+				break
+			}
+		}
+		// All rest ranges belong to the same region.
+		if i == ranges.Len() {
+			fn(loc, ranges)
+			break
+		}
+
+		r := ranges.At(i)
+		if loc.Contains(r.StartKey) {
+			// Part of r is not in the region. We need to split it.
+			taskRanges := ranges.Slice(0, i)
+			taskRanges.last = &kv.KeyRange{
+				StartKey: r.StartKey,
+				EndKey:   loc.EndKey,
+			}
+			fn(loc, taskRanges)
+
+			ranges = ranges.Slice(i+1, ranges.Len())
+			ranges.first = &kv.KeyRange{
+				StartKey: loc.EndKey,
+				EndKey:   r.EndKey,
+			}
+		} else {
+			// rs[i] is not in the region.
+			taskRanges := ranges.Slice(0, i)
+			fn(loc, taskRanges)
+			ranges = ranges.Slice(i, ranges.Len())
+		}
+	}
+
+	return nil
+}
+
 // SplitKeyRangesByLocations splits the KeyRanges by logical info in the cache.
 func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges) ([]*LocationKeyRanges, error) {
 	res := make([]*LocationKeyRanges, 0)
