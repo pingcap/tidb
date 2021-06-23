@@ -127,6 +127,9 @@ const (
 	inSequenceFunction
 )
 
+// Make linter happy.
+var _ = PreprocessorReturn{}.initedLastSnapshotTS
+
 // PreprocessorReturn is used to retain information obtained in the preprocessor.
 type PreprocessorReturn struct {
 	initedLastSnapshotTS bool
