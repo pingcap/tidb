@@ -1467,7 +1467,7 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 }
 
 func (p *preprocessor) setStalenessReturn() {
-	_, txnScope := config.GetTxnScopeFromConfig()
+	txnScope := config.GetTxnScopeFromConfig()
 	p.ExplicitStaleness = true
 	p.TxnScope = txnScope
 }
