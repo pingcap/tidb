@@ -201,10 +201,7 @@ type HashAggExec struct {
 	spillMode    uint32
 	spillChunk   *chunk.Chunk
 	spillAction  *AggSpillDiskAction
-	spillTimes   uint32
 	childDrained bool
-	drained      bool
-	haveData     bool
 }
 
 // HashAggInput indicates the input of hash agg exec.
@@ -249,7 +246,10 @@ func (e *HashAggExec) Close() error {
 				return err
 			}
 		}
-		e.spillChunk = nil
+		if e.spillAction != nil {
+			e.spillAction.spillTimes = maxSpillTimes
+		}
+		e.spillAction, e.spillChunk = nil, nil
 		return e.baseExecutor.Close()
 	}
 	if e.parallelExecInitialized {
@@ -320,10 +320,10 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.memTracker.Consume(e.childResult.MemoryUsage())
 
 	e.processIdx, e.lastChunkNum = 0, 0
-	e.haveData = false
-	e.drained, e.childDrained = false, false
+	e.executed, e.childDrained = false, false
 	e.listInDisk = chunk.NewListInDisk(retTypes(e.children[0]))
 	e.spillChunk = newFirstChunk(e.children[0])
+	e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
 }
 
 func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
@@ -898,35 +898,32 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 			}
 			e.resetSpillMode()
 		}
-		if e.drained {
+		if e.executed {
 			return nil
 		}
 		if err := e.execute(ctx); err != nil {
 			return err
 		}
-		if !e.haveData {
-			if (len(e.groupSet.StringSet) == 0) && len(e.GroupByItems) == 0 {
-				// If no groupby and no data, we should add an empty group.
-				// For example:
-				// "select count(c) from t;" should return one row [0]
-				// "select count(c) from t group by c1;" should return empty result set.
-				e.memTracker.Consume(e.groupSet.Insert(""))
-				e.groupKeys = append(e.groupKeys, "")
-			}
+		if (len(e.groupSet.StringSet) == 0) && len(e.GroupByItems) == 0 {
+			// If no groupby and no data, we should add an empty group.
+			// For example:
+			// "select count(c) from t;" should return one row [0]
+			// "select count(c) from t group by c1;" should return empty result set.
+			e.memTracker.Consume(e.groupSet.Insert(""))
+			e.groupKeys = append(e.groupKeys, "")
 		}
 		e.prepared = true
 	}
-	return nil
 }
 
 func (e *HashAggExec) resetSpillMode() {
 	e.cursor4GroupKey, e.groupKeys = 0, e.groupKeys[:0]
+	e.groupSet, _ = set.NewStringSetWithMemoryUsage()
 	e.partialResultMap = make(aggPartialResultMapper)
 	e.prepared = false
-	e.drained = e.lastChunkNum == e.listInDisk.NumChunks()
+	e.executed = e.lastChunkNum == e.listInDisk.NumChunks()
 	e.lastChunkNum = e.listInDisk.NumChunks()
 	e.memTracker.ReplaceBytesUsed(0)
-	atomic.AddUint32(&e.spillTimes, 1)
 	atomic.StoreUint32(&e.spillMode, 0)
 }
 
@@ -959,7 +956,6 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		if e.childResult.NumRows() == 0 {
 			return nil
 		}
-		e.haveData = true
 		e.groupKeyBuffer, err = getGroupKey(e.ctx, e.childResult, e.groupKeyBuffer, e.GroupByItems)
 		if err != nil {
 			return err
@@ -969,7 +965,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		for j := 0; j < e.childResult.NumRows(); j++ {
 			groupKey := string(e.groupKeyBuffer[j]) // do memory copy here, because e.groupKeyBuffer may be reused.
 			if !e.groupSet.Exist(groupKey) {
-				if atomic.LoadUint32(&e.spillMode) == 1 {
+				if atomic.LoadUint32(&e.spillMode) == 1 && e.groupSet.Count() > 0 {
 					e.spillChunk.Append(e.childResult, j, j+1)
 					if e.spillChunk.IsFull() {
 						err = e.listInDisk.Add(e.spillChunk)
@@ -1017,7 +1013,6 @@ func (e *HashAggExec) getNextChunk(ctx context.Context) (err error) {
 		e.processIdx++
 		return nil
 	}
-	e.drained = true
 	return nil
 }
 
@@ -1836,15 +1831,19 @@ func (e *HashAggExec) ActionSpill() *AggSpillDiskAction {
 	return e.spillAction
 }
 
+const maxSpillTimes = 10
+
 type AggSpillDiskAction struct {
 	memory.BaseOOMAction
-	e *HashAggExec
+	e          *HashAggExec
+	spillTimes uint32
 }
 
 func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
-	if atomic.LoadUint32(&a.e.spillMode) == 0 {
+	if atomic.LoadUint32(&a.e.spillMode) == 0 && a.spillTimes < maxSpillTimes {
+		a.spillTimes++
 		logutil.BgLogger().Info("memory exceeds quota, set aggregate mode to spill-mode",
-			zap.Uint32("spillTimes", atomic.LoadUint32(&a.e.spillTimes)+1))
+			zap.Uint32("spillTimes", a.spillTimes))
 		atomic.StoreUint32(&a.e.spillMode, 1)
 		return
 	}
