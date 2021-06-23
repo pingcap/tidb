@@ -16,6 +16,7 @@ package trace
 import (
 	"bytes"
 	"io/ioutil"
+	"math/rand"
 	"os"
 	"path"
 	"sort"
@@ -139,7 +140,7 @@ func initDDSpanList(traceDetailSpanLen int) *datadog.SpanList {
 func miniSpansToPbSpanSet(traceID uint64, spans []minitrace.Span) kvrpcpb.TraceDetail_SpanSet {
 	ss := kvrpcpb.TraceDetail_SpanSet{
 		NodeType:         kvrpcpb.TraceDetail_TiDB,
-		SpanIdPrefix:     0,
+		SpanIdPrefix:     rand.Uint32(),
 		TraceId:          traceID,
 		RootParentSpanId: 0,
 		Spans:            make([]*kvrpcpb.TraceDetail_Span, 0, len(spans)),
