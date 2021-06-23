@@ -835,6 +835,10 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 			if !alreadyHandle {
 				path.IdxCols = append(path.IdxCols, handleCol)
 				path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
+				// Also updates the map that maps the index id to its prefix column ids.
+				if len(ds.tableStats.HistColl.Idx2ColumnIDs[path.Index.ID]) == len(path.Index.Columns) {
+					ds.tableStats.HistColl.Idx2ColumnIDs[path.Index.ID] = append(ds.tableStats.HistColl.Idx2ColumnIDs[path.Index.ID], handleCol.UniqueID)
+				}
 			}
 		}
 	}
@@ -1021,6 +1025,16 @@ type LogicalLimit struct {
 	limitHints limitHintInfo
 }
 
+// extraPIDInfo is used by SelectLock on partitioned table, the TableReader need
+// to return the partition id column.
+// Because SelectLock has to used that partition id to encode the lock key.
+// the child of SelectLock may be Join, so that table can be multiple extra PID columns.
+// fields are for each of the table, and TblIDs are the corresponding table IDs.
+type extraPIDInfo struct {
+	Columns []*expression.Column
+	TblIDs  []int64
+}
+
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
 	baseLogicalPlan
@@ -1028,6 +1042,9 @@ type LogicalLock struct {
 	Lock             *ast.SelectLockInfo
 	tblID2Handle     map[int64][]HandleCols
 	partitionedTable []table.PartitionedTable
+	// extraPIDInfo is used when it works on partition table, the child executor
+	// need to return an extra partition ID column in the chunk row.
+	extraPIDInfo
 }
 
 // WindowFrame represents a window function frame.

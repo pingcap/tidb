@@ -955,6 +955,32 @@ func (s *testSerialSuite2) TestIssue20874(c *C) {
 		"test t  idxb 1 0 1 1 \x00A \x00A 0",
 		"test t  idxb 1 1 3 2 \x00C \x00C 0",
 	))
+	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
+		"0 1 3 0 9 1 1",
+		"0 2 2 0 9 1 -0.5",
+		"1 1 3 0 0 1 0",
+		"1 2 2 0 0 1 0",
+	))
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
+		"test t  a 0 \x02\xd2 1",
+		"test t  a 0 \x0e\x0f 1",
+		"test t  a 0 \x0e3 1",
+		"test t  b 0 \x00A 1",
+		"test t  b 0 \x00C 2",
+		"test t  idxa 1 \x02\xd2 1",
+		"test t  idxa 1 \x0e\x0f 1",
+		"test t  idxa 1 \x0e3 1",
+		"test t  idxb 1 \x00A 1",
+		"test t  idxb 1 \x00C 2",
+	))
+	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
+		"0 1 3 0 6 2 1",
+		"0 2 2 0 6 2 -0.5",
+		"1 1 3 0 6 2 0",
+		"1 2 2 0 6 2 0",
+	))
 }
 
 func (s *testSuite1) TestAnalyzeClusteredIndexPrimary(c *C) {
@@ -1012,7 +1038,7 @@ func (s *testSuite1) TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColu
 	tk.MustQuery("show stats_topn where table_name = 'sampling_index_prefix_col' and column_name = 'idx'").Check(testkit.Rows("test sampling_index_prefix_col  idx 1 a 3"))
 }
 
-func (s *testSuite2) TestAnalyzeSamplingWorkPanic(c *C) {
+func (s *testSerialSuite2) TestAnalyzeSamplingWorkPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")

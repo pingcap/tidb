@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/core"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -44,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -587,7 +589,11 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 		// With START TRANSACTION, autocommit remains disabled until you end
 		// the transaction with COMMIT or ROLLBACK. The autocommit mode then
 		// reverts to its previous state.
-		e.ctx.GetSessionVars().SetInTxn(true)
+		vars := e.ctx.GetSessionVars()
+		if err := vars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
+			return errors.Trace(err)
+		}
+		vars.SetInTxn(true)
 		return nil
 	}
 	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
@@ -847,16 +853,47 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 	}
 
 	failedUsers := make([]string, 0, len(s.Specs))
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker == nil {
+		return errors.New("could not load privilege checker")
+	}
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	hasCreateUserPriv := checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv)
+	hasSystemUserPriv := checker.RequestDynamicVerification(activeRoles, "SYSTEM_USER", false)
+	hasRestrictedUserPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_USER_ADMIN", false)
+	hasSystemSchemaPriv := checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.UpdatePriv)
+
 	for _, spec := range s.Specs {
 		user := e.ctx.GetSessionVars().User
 		if spec.User.CurrentUser || ((user != nil) && (user.Username == spec.User.Username) && (user.AuthHostname == spec.User.Hostname)) {
 			spec.User.Username = user.Username
 			spec.User.Hostname = user.AuthHostname
 		} else {
-			checker := privilege.GetPrivilegeManager(e.ctx)
-			activeRoles := e.ctx.GetSessionVars().ActiveRoles
-			if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
-				return ErrDBaccessDenied.GenWithStackByArgs(spec.User.Username, spec.User.Hostname, "mysql")
+
+			// The user executing the query (user) does not match the user specified (spec.User)
+			// The MySQL manual states:
+			// "In most cases, ALTER USER requires the global CREATE USER privilege, or the UPDATE privilege for the mysql system schema"
+			//
+			// This is true unless the user being modified has the SYSTEM_USER dynamic privilege.
+			// See: https://mysqlserverteam.com/the-system_user-dynamic-privilege/
+			//
+			// In the current implementation of DYNAMIC privileges, SUPER can be used as a substitute for any DYNAMIC privilege
+			// (unless SEM is enabled; in which case RESTRICTED_* privileges will not use SUPER as a substitute). This is intentional
+			// because visitInfo can not accept OR conditions for permissions and in many cases MySQL permits SUPER instead.
+
+			// Thus, any user with SUPER can effectively ALTER/DROP a SYSTEM_USER, and
+			// any user with only CREATE USER can not modify the properties of users with SUPER privilege.
+			// We extend this in TiDB with SEM, where SUPER users can not modify users with RESTRICTED_USER_ADMIN.
+			// For simplicity: RESTRICTED_USER_ADMIN also counts for SYSTEM_USER here.
+
+			if !(hasCreateUserPriv || hasSystemSchemaPriv) {
+				return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+			}
+			if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, spec.User) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
+				return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
+			}
+			if sem.IsEnabled() && checker.RequestDynamicVerificationWithUser("RESTRICTED_USER_ADMIN", false, spec.User) && !hasRestrictedUserPriv {
+				return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_USER_ADMIN")
 			}
 		}
 
@@ -1100,25 +1137,24 @@ func renameUserHostInSystemTable(sqlExecutor sqlexec.SQLExecutor, tableName, use
 func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	// Check privileges.
 	// Check `CREATE USER` privilege.
-	if !config.GetGlobalConfig().Security.SkipGrantTable {
-		checker := privilege.GetPrivilegeManager(e.ctx)
-		if checker == nil {
-			return errors.New("miss privilege checker")
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker == nil {
+		return errors.New("miss privilege checker")
+	}
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.DeletePriv) {
+		if s.IsDropRole {
+			if !checker.RequestVerification(activeRoles, "", "", "", mysql.DropRolePriv) &&
+				!checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+				return core.ErrSpecificAccessDenied.GenWithStackByArgs("DROP ROLE or CREATE USER")
+			}
 		}
-		activeRoles := e.ctx.GetSessionVars().ActiveRoles
-		if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.DeletePriv) {
-			if s.IsDropRole {
-				if !checker.RequestVerification(activeRoles, "", "", "", mysql.DropRolePriv) &&
-					!checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
-					return core.ErrSpecificAccessDenied.GenWithStackByArgs("DROP ROLE or CREATE USER")
-				}
-			}
-			if !s.IsDropRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
-				return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
-			}
+		if !s.IsDropRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+			return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		}
 	}
-
+	hasSystemUserPriv := checker.RequestDynamicVerification(activeRoles, "SYSTEM_USER", false)
+	hasRestrictedUserPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_USER_ADMIN", false)
 	failedUsers := make([]string, 0, len(s.UserList))
 	sysSession, err := e.getSysSession()
 	defer e.releaseSysSession(sysSession)
@@ -1144,6 +1180,18 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 				failedUsers = append(failedUsers, user.String())
 				break
 			}
+		}
+
+		// Certain users require additional privileges in order to be modified.
+		// If this is the case, we need to rollback all changes and return a privilege error.
+		// Because in TiDB SUPER can be used as a substitute for any dynamic privilege, this effectively means that
+		// any user with SUPER requires a user with SUPER to be able to DROP the user.
+		// We also allow RESTRICTED_USER_ADMIN to count for simplicity.
+		if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, user) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
+			if _, err := sqlExecutor.ExecuteInternal(context.TODO(), "rollback"); err != nil {
+				return err
+			}
+			return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
 		}
 
 		// begin a transaction to delete a user.

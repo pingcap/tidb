@@ -3207,7 +3207,7 @@ func (s *testIntegrationSerialSuite) TestPushDownProjectionForMPP(c *C) {
 		}
 	}
 
-	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_opt_broadcast_join=0;")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_opt_broadcast_join=0; set @@tidb_enforce_mpp=1;")
 
 	var input []string
 	var output []struct {
@@ -3770,6 +3770,15 @@ func (s *testIntegrationSuite) TestIssue24281(c *C) {
 		"WHERE 1 = 1 AND v.share_login = 'somevalue' " +
 		"GROUP BY s.member_login " +
 		"UNION select 1 as v1, 2 as v2")
+}
+
+func (s *testIntegrationSuite) TestLimitWindowColPrune(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustQuery("select count(a) f1, row_number() over (order by count(a)) as f2 from t limit 1").Check(testkit.Rows("1 1"))
 }
 
 func (s *testIntegrationSuite) TestIncrementalAnalyzeStatsVer2(c *C) {
