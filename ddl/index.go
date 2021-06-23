@@ -1634,10 +1634,10 @@ func getMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, end
 
 	var handle int64
 	snap, err := store.GetSnapshot(kv.MaxVersion)
-	snap.SetOption(kv.Priority, priority)
 	if err != nil {
 		return handle, errors.Trace(err)
 	}
+	snap.SetOption(kv.Priority, priority)
 	firstKey := t.RecordKey(endHandle)
 
 	it, err := snap.IterReverse(firstKey)
