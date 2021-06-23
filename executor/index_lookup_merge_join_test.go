@@ -122,10 +122,39 @@ func (s *testSuite9) TestIssue20400(c *C) {
 func (s *testSuite9) TestIndexMergeJoinBinding(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1, t2")
+<<<<<<< HEAD
 	tk.MustExec("create table t1(a int, b int, key(b))")
 	tk.MustExec("create table t2(a int, b int, key(b))")
 	tk.MustExec("create session binding for select * from t1 join t2 on t1.b = t2.b using select /*+ inl_merge_join(t1, t2) */ * from t1 join t2 on t1.b = t2.b")
 	rows := tk.MustQuery("explain select * from t1 join t2 on t1.b = t2.b").Rows()
 	// TODO: reopen index merge join in future
 	c.Assert(strings.Index(rows[0][0].(string), "IndexJoin"), Equals, 0)
+=======
+	tk.MustExec("CREATE TABLE `t1` (`id` bigint(20) NOT NULL AUTO_INCREMENT, `t2id` bigint(20) DEFAULT NULL, PRIMARY KEY (`id`), KEY `t2id` (`t2id`));")
+	tk.MustExec("INSERT INTO `t1` VALUES (1,NULL);")
+	tk.MustExec("CREATE TABLE `t2` (`id` bigint(20) NOT NULL AUTO_INCREMENT, PRIMARY KEY (`id`));")
+	tk.MustQuery("SELECT /*+ INL_MERGE_JOIN(t1,t2)  */ 1 from t1 left outer join t2 on t1.t2id=t2.id;").Check(
+		testkit.Rows("1"))
+	tk.MustQuery("SELECT /*+ HASH_JOIN(t1,t2)  */ 1 from t1 left outer join t2 on t1.t2id=t2.id;\n").Check(
+		testkit.Rows("1"))
+}
+
+func (s *testSuite9) TestIssue24473AndIssue25669(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists x, t2, t3")
+	tk.MustExec("CREATE TABLE `x` (  `a` enum('y','b','1','x','0','null') DEFAULT NULL,  KEY `a` (`a`));")
+	tk.MustExec("insert into x values(\"x\"),(\"x\"),(\"b\"),(\"y\");")
+	tk.MustQuery("SELECT /*+ merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;").Sort().Check(
+		testkit.Rows("b b", "x x", "x x", "x x", "x x", "y y"))
+	tk.MustQuery("SELECT /*+ inl_merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;").Sort().Check(
+		testkit.Rows("b b", "x x", "x x", "x x", "x x", "y y"))
+
+	tk.MustExec("drop table if exists x, t2, t3")
+	tk.MustExec("CREATE TABLE `x` (  `a` set('y','b','1','x','0','null') DEFAULT NULL,  KEY `a` (`a`));")
+	tk.MustExec("insert into x values(\"x\"),(\"x\"),(\"b\"),(\"y\");")
+	tk.MustQuery("SELECT /*+ merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;").Sort().Check(
+		testkit.Rows("b b", "x x", "x x", "x x", "x x", "y y"))
+	tk.MustQuery("SELECT /*+ inl_merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;").Sort().Check(
+		testkit.Rows("b b", "x x", "x x", "x x", "x x", "y y"))
+>>>>>>> 574de5e5e... planner: fix incorrect result of set type for merge join (#25672)
 }
