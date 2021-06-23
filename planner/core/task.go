@@ -1027,8 +1027,10 @@ func setTableScanToTableRowIDScan(p PhysicalPlan) {
 
 // rootTask is the final sink node of a plan graph. It should be a single goroutine on tidb.
 type rootTask struct {
-	p   PhysicalPlan
-	cst float64
+	p       PhysicalPlan
+	cst     float64
+	isEmpty bool // isEmpty indicates if this task contains a dual table and returns empty data.
+	// TODO: The flag 'isEmpty' is only checked by Projection and UnionAll. We should support more cases in the future.
 }
 
 func (t *rootTask) copy() task {
@@ -1074,6 +1076,14 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 		}
 		t = cop.convertToRootTask(p.ctx)
 		sunk = p.sinkIntoIndexLookUp(t)
+	} else if mpp, ok := t.(*mppTask); ok {
+		newCount := p.Offset + p.Count
+		childProfile := mpp.plan().statsInfo()
+		stats := deriveLimitStats(childProfile, float64(newCount))
+		pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
+		mpp = attachPlan2Task(pushedDownLimit, mpp).(*mppTask)
+		pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
+		t = mpp.convertToRootTask(p.ctx)
 	}
 	if sunk {
 		return t
@@ -1094,6 +1104,16 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 			return false
 		}
 	}
+
+	// If this happens, some Projection Operator must be inlined into this Limit. (issues/14428)
+	// For example, if the original plan is `IndexLookUp(col1, col2) -> Limit(col1, col2) -> Project(col1)`,
+	//  then after inlining the Project, it will be `IndexLookUp(col1, col2) -> Limit(col1)` here.
+	// If the Limit is sunk into the IndexLookUp, the IndexLookUp's schema needs to be updated as well,
+	//  but updating it here is not safe, so do not sink Limit into this IndexLookUp in this case now.
+	if p.Schema().Len() != reader.Schema().Len() {
+		return false
+	}
+
 	// We can sink Limit into IndexLookUpReader only if tablePlan contains no Selection.
 	ts, isTableScan := reader.tablePlan.(*PhysicalTableScan)
 	if !isTableScan {
@@ -1135,12 +1155,12 @@ func (p *PhysicalTopN) GetCost(count float64, isRoot bool) float64 {
 }
 
 // canPushDown checks if this topN can be pushed down. If each of the expression can be converted to pb, it can be pushed.
-func (p *PhysicalTopN) canPushDown(cop *copTask) bool {
+func (p *PhysicalTopN) canPushDown(storeTp kv.StoreType) bool {
 	exprs := make([]expression.Expression, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		exprs = append(exprs, item.Expr)
 	}
-	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), cop.getStoreType())
+	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeTp)
 }
 
 func (p *PhysicalTopN) allColsFromSchema(schema *expression.Schema) bool {
@@ -1210,7 +1230,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputCount := t.count()
-	if copTask, ok := t.(*copTask); ok && p.canPushDown(copTask) && len(copTask.rootTaskConds) == 0 {
+	if copTask, ok := t.(*copTask); ok && p.canPushDown(copTask.getStoreType()) && len(copTask.rootTaskConds) == 0 {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
@@ -1223,6 +1243,9 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 			copTask.tablePlan = pushedDownTopN
 		}
 		copTask.addCost(pushedDownTopN.GetCost(inputCount, false))
+	} else if mppTask, ok := t.(*mppTask); ok && p.canPushDown(kv.TiFlash) {
+		pushedDownTopN := p.getPushedDownTopN(mppTask.p)
+		mppTask.p = pushedDownTopN
 	}
 	rootTask := t.convertToRootTask(p.ctx)
 	rootTask.addCost(p.GetCost(rootTask.count(), true))
@@ -1262,10 +1285,43 @@ func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	t = t.convertToRootTask(p.ctx)
 	t = attachPlan2Task(p, t)
 	t.addCost(p.GetCost(t.count()))
+	if root, ok := tasks[0].(*rootTask); ok && root.isEmpty {
+		t.(*rootTask).isEmpty = true
+	}
+	return t
+}
+
+func (p *PhysicalUnionAll) attach2MppTasks(tasks ...task) task {
+	t := &mppTask{p: p}
+	childPlans := make([]PhysicalPlan, 0, len(tasks))
+	var childMaxCost float64
+	for _, tk := range tasks {
+		if mpp, ok := tk.(*mppTask); ok && !tk.invalid() {
+			childCost := mpp.cost()
+			if childCost > childMaxCost {
+				childMaxCost = childCost
+			}
+			childPlans = append(childPlans, mpp.plan())
+		} else if root, ok := tk.(*rootTask); ok && root.isEmpty {
+			continue
+		} else {
+			return invalidTask
+		}
+	}
+	if len(childPlans) == 0 {
+		return invalidTask
+	}
+	p.SetChildren(childPlans...)
+	t.cst = childMaxCost
 	return t
 }
 
 func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
+	for _, t := range tasks {
+		if _, ok := t.(*mppTask); ok {
+			return p.attach2MppTasks(tasks...)
+		}
+	}
 	t := &rootTask{p: p}
 	childPlans := make([]PhysicalPlan, 0, len(tasks))
 	var childMaxCost float64
@@ -1973,10 +2029,14 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		StoreType: kv.TiFlash,
 	}.Init(ctx, t.p.SelectBlockOffset())
 	p.stats = t.p.statsInfo()
-	return &rootTask{
+
+	cst := t.cst + t.count()*ctx.GetSessionVars().NetworkFactor
+	cst = cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
+	rt := &rootTask{
 		p:   p,
-		cst: t.cst / 20, // TODO: This is tricky because mpp doesn't run in a coprocessor way.
+		cst: cst,
 	}
+	return rt
 }
 
 func (t *mppTask) needEnforce(prop *property.PhysicalProperty) bool {
