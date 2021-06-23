@@ -228,7 +228,8 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []*point {
 		if col.RetType.EvalType() == types.ETString && (value.Kind() == types.KindString || value.Kind() == types.KindBinaryLiteral) {
 			value.SetString(value.GetString(), col.RetType.Collate)
 		}
-		if col.GetType().Tp == mysql.TypeYear {
+		// If nulleq with null value, values.ToInt64 will return err
+		if col.GetType().Tp == mysql.TypeYear && !value.IsNull() {
 			*value, err = types.ConvertDatumToFloatYear(r.sc, *value)
 		}
 		return
