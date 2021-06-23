@@ -1646,7 +1646,7 @@ func getMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, end
 	}
 	defer it.Close()
 
-	if !it.Valid() {
+	if !it.Valid() || !it.Key().HasPrefix(t.RecordPrefix()) {
 		return startHandle, nil
 	}
 	handle, err = tablecodec.DecodeRowKey(it.Key())

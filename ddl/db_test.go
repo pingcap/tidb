@@ -1037,7 +1037,10 @@ func (s *testSerialSuite) TestGetReverseHandle(c *C) {
 		"9223372036854775807 9223372036854775807",
 	))
 
-	h, err := ddl.GetMaxRowID(s.store, 0, tbl, math.MinInt64, 1<<61, false)
+	h, err := ddl.GetMaxRowID(s.store, 0, tbl, math.MinInt64, math.MinInt64, false)
+	c.Assert(err, IsNil)
+	c.Assert(h, Equals, int64(math.MinInt64))
+	h, err = ddl.GetMaxRowID(s.store, 0, tbl, math.MinInt64, 1<<61, false)
 	c.Assert(err, IsNil)
 	c.Assert(h, Equals, int64(math.MinInt64+1))
 	h, err = ddl.GetMaxRowID(s.store, 0, tbl, math.MinInt64, 1<<61, true)
