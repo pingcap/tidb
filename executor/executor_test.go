@@ -59,11 +59,6 @@ import (
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -82,6 +77,10 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/mockstore/cluster"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"google.golang.org/grpc"
 )
 
@@ -349,6 +348,7 @@ func (s *testSuiteP1) TestShow(c *C) {
 		"Usage Server Admin No privileges - allow connect only",
 		"BACKUP_ADMIN Server Admin ",
 		"RESTORE_ADMIN Server Admin ",
+		"SYSTEM_USER Server Admin ",
 		"SYSTEM_VARIABLES_ADMIN Server Admin ",
 		"ROLE_ADMIN Server Admin ",
 		"CONNECTION_ADMIN Server Admin ",
@@ -356,6 +356,7 @@ func (s *testSuiteP1) TestShow(c *C) {
 		"RESTRICTED_STATUS_ADMIN Server Admin ",
 		"RESTRICTED_VARIABLES_ADMIN Server Admin ",
 		"RESTRICTED_USER_ADMIN Server Admin ",
+		"RESTRICTED_CONNECTION_ADMIN Server Admin ",
 	))
 	c.Assert(len(tk.MustQuery("show table status").Rows()), Equals, 1)
 }
@@ -2459,7 +2460,7 @@ func (s *testSerialSuite) TestBatchPointGetRepeatableRead(c *C) {
 }
 
 func (s *testSerialSuite) TestSplitRegionTimeout(c *C) {
-	c.Assert(tikvutil.MockSplitRegionTimeout.Enable(`return(true)`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/mockSplitRegionTimeout", `return(true)`), IsNil)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2468,24 +2469,24 @@ func (s *testSerialSuite) TestSplitRegionTimeout(c *C) {
 	tk.MustExec(`set @@tidb_wait_split_region_timeout=1`)
 	// result 0 0 means split 0 region and 0 region finish scatter regions before timeout.
 	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("0 0"))
-	err := tikvutil.MockSplitRegionTimeout.Disable()
+	err := failpoint.Disable("tikvclient/mockSplitRegionTimeout")
 	c.Assert(err, IsNil)
 
 	// Test scatter regions timeout.
-	c.Assert(tikvutil.MockScatterRegionTimeout.Enable(`return(true)`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/mockScatterRegionTimeout", `return(true)`), IsNil)
 	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
-	err = tikvutil.MockScatterRegionTimeout.Disable()
+	err = failpoint.Disable("tikvclient/mockScatterRegionTimeout")
 	c.Assert(err, IsNil)
 
 	// Test pre-split with timeout.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@global.tidb_scatter_region=1;")
-	c.Assert(tikvutil.MockScatterRegionTimeout.Enable(`return(true)`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/mockScatterRegionTimeout", `return(true)`), IsNil)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	start := time.Now()
 	tk.MustExec("create table t (a int, b int) partition by hash(a) partitions 5;")
 	c.Assert(time.Since(start).Seconds(), Less, 10.0)
-	err = tikvutil.MockScatterRegionTimeout.Disable()
+	err = failpoint.Disable("tikvclient/mockScatterRegionTimeout")
 	c.Assert(err, IsNil)
 }
 
@@ -3063,9 +3064,9 @@ func (s *testSerialSuite) TestTiDBLastTxnInfoCommitMode(c *C) {
 	c.Assert(rows[0][1], Equals, "false")
 	c.Assert(rows[0][2], Equals, "false")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/invalidMaxCommitTS", "return"), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/invalidMaxCommitTS", "return"), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/invalidMaxCommitTS"), IsNil)
+		c.Assert(failpoint.Disable("tikvclient/invalidMaxCommitTS"), IsNil)
 	}()
 
 	tk.MustExec("set @@tidb_enable_async_commit = 1")
@@ -7139,7 +7140,7 @@ select * from t;
 }
 
 func (s *testSerialSuite) TestKillTableReader(c *C) {
-	var retry = "github.com/pingcap/tidb/store/tikv/mockRetrySendReqToRegion"
+	var retry = "github.com/tikv/client-go/v2/locate/mockRetrySendReqToRegion"
 	defer func() {
 		c.Assert(failpoint.Disable(retry), IsNil)
 	}()
@@ -7194,12 +7195,12 @@ func (s *testSerialSuite1) TestCollectCopRuntimeStats(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int, b int)")
 	tk.MustExec("set tidb_enable_collect_execution_info=1;")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreRespResult", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/tikvStoreRespResult", `return(true)`), IsNil)
 	rows := tk.MustQuery("explain analyze select * from t1").Rows()
 	c.Assert(len(rows), Equals, 2)
 	explain := fmt.Sprintf("%v", rows[0])
 	c.Assert(explain, Matches, ".*rpc_num: 2, .*regionMiss:.*")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreRespResult"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/tikvStoreRespResult"), IsNil)
 }
 
 func (s *testSerialSuite1) TestIndexLookupRuntimeStats(c *C) {
@@ -7589,6 +7590,11 @@ func issue20975PreparePartitionTable(c *C, store kv.Storage) (*testkit.TestKit, 
 
 func (s *testSuite) TestIssue20975UpdateNoChangeWithPartitionTable(c *C) {
 	tk1, tk2 := issue20975PreparePartitionTable(c, s.store)
+
+	// Set projection concurrency to avoid data race here.
+	// TODO: remove this line after fixing https://github.com/pingcap/tidb/issues/25496
+	tk1.Se.GetSessionVars().Concurrency.SetProjectionConcurrency(0)
+
 	tk1.MustExec("begin pessimistic")
 	tk1.MustExec("update t1 set c=c")
 	tk2.MustExec("create table t2(a int)")
@@ -7776,6 +7782,41 @@ func (s *testSuite) TestOOMActionPriority(c *C) {
 		action = action.GetFallback()
 	}
 	c.Assert(action.GetPriority(), Equals, int64(memory.DefLogPriority))
+}
+
+func (s *testSerialSuite) TestIssue21441(c *C) {
+	failpoint.Enable("github.com/pingcap/tidb/executor/issue21441", `return`)
+	defer failpoint.Disable("github.com/pingcap/tidb/executor/issue21441")
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec(`insert into t values(1),(2),(3)`)
+	tk.Se.GetSessionVars().InitChunkSize = 1
+	tk.Se.GetSessionVars().MaxChunkSize = 1
+	sql := `
+select a from t union all
+select a from t union all
+select a from t union all
+select a from t union all
+select a from t union all
+select a from t union all
+select a from t union all
+select a from t`
+	tk.MustQuery(sql).Sort().Check(testkit.Rows(
+		"1", "1", "1", "1", "1", "1", "1", "1",
+		"2", "2", "2", "2", "2", "2", "2", "2",
+		"3", "3", "3", "3", "3", "3", "3", "3",
+	))
+
+	tk.MustQuery("select a from (" + sql + ") t order by a limit 4").Check(testkit.Rows("1", "1", "1", "1"))
+	tk.MustQuery("select a from (" + sql + ") t order by a limit 7, 4").Check(testkit.Rows("1", "2", "2", "2"))
+
+	tk.MustExec("set @@tidb_executor_concurrency = 2")
+	c.Assert(tk.Se.GetSessionVars().UnionConcurrency(), Equals, 2)
+	tk.MustQuery("select a from (" + sql + ") t order by a limit 4").Check(testkit.Rows("1", "1", "1", "1"))
+	tk.MustQuery("select a from (" + sql + ") t order by a limit 7, 4").Check(testkit.Rows("1", "2", "2", "2"))
 }
 
 func (s *testSuite) Test17780(c *C) {
@@ -8362,14 +8403,14 @@ func (s testSerialSuite) TestTemporaryTableNoNetwork(c *C) {
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table tmp_t (id int, a int, index(a)) on commit delete rows")
 
-	tk.MustExec("begin")
-	tk.MustExec("insert into tmp_t values (1, 1)")
-	tk.MustExec("insert into tmp_t values (2, 2)")
-
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy", "return(true)"), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy"), IsNil)
 	}()
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into tmp_t values (1, 1)")
+	tk.MustExec("insert into tmp_t values (2, 2)")
 
 	// Make sure the fail point works.
 	// With that failpoint, all requests to the TiKV is discard.
@@ -8613,4 +8654,16 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 	for _, query := range queries {
 		tk.MustGetErrMsg(query.sql, "can not read temporary table when 'tidb_snapshot' is set")
 	}
+}
+
+func (s *testSuite) TestIssue25506(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tbl_3, tbl_23")
+	tk.MustExec("create table tbl_3 (col_15 bit(20))")
+	tk.MustExec("insert into tbl_3 values (0xFFFF)")
+	tk.MustExec("insert into tbl_3 values (0xFF)")
+	tk.MustExec("create table tbl_23 (col_15 bit(15))")
+	tk.MustExec("insert into tbl_23 values (0xF)")
+	tk.MustQuery("(select col_15 from tbl_23) union all (select col_15 from tbl_3 for update) order by col_15").Check(testkit.Rows("\x00\x00\x0F", "\x00\x00\xFF", "\x00\xFF\xFF"))
 }

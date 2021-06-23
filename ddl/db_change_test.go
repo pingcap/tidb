@@ -575,7 +575,7 @@ func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumnWithUniqIdx(c 
 
 // TestWriteReorgForModifyColumnWithPKIsHandle tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
 func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumnWithPKIsHandle(c *C) {
-	modifyColumnSQL := "alter table tt change column c cc tinyint unsigned not null default 1 first"
+	modifyColumnSQL := "alter table tt change column c cc tinyint not null default 1 first"
 
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
@@ -1753,4 +1753,25 @@ func (s *serialTestStateChangeSuite) TestModifyColumnTypeArgs(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(changingCol, IsNil)
 	c.Assert(changingIdxs, IsNil)
+}
+
+func (s *testStateChangeSuite) TestWriteReorgForColumnTypeChange(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	tk.MustExec(`CREATE TABLE t_ctc (
+  a DOUBLE NULL DEFAULT '1.732088511183121',
+  c char(30) NOT NULL,
+  KEY idx (a,c)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='…comment';
+`)
+	defer func() {
+		tk.MustExec("drop table t_ctc")
+	}()
+
+	sqls := make([]sqlWithErr, 2)
+	sqls[0] = sqlWithErr{"INSERT INTO t_ctc SET c = 'zr36f7ywjquj1curxh9gyrwnx', a = '1.9897043136824033';", nil}
+	sqls[1] = sqlWithErr{"DELETE FROM t_ctc;", nil}
+	dropColumnsSQL := "alter table t_ctc change column a ddd TIME NULL DEFAULT '18:21:32' AFTER c;"
+	query := &expectQuery{sql: "admin check table t_ctc;", rows: nil}
+	s.runTestInSchemaState(c, model.StateWriteReorganization, false, dropColumnsSQL, sqls, query)
 }

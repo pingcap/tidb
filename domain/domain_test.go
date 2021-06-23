@@ -38,12 +38,12 @@ import (
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.etcd.io/etcd/integration"
 )
 
