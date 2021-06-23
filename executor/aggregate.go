@@ -1822,6 +1822,7 @@ func (e *vecGroupChecker) reset() {
 	}
 }
 
+// ActionSpill returns a AggSpillDiskAction for spilling intermediate data for hashAgg.
 func (e *HashAggExec) ActionSpill() *AggSpillDiskAction {
 	if e.spillAction == nil {
 		e.spillAction = &AggSpillDiskAction{
@@ -1833,12 +1834,16 @@ func (e *HashAggExec) ActionSpill() *AggSpillDiskAction {
 
 const maxSpillTimes = 10
 
+// AggSpillDiskAction implements memory.ActionOnExceed for unparalleled HashAgg.
+// If the memory quota of a query is exceeded, AggSpillDiskAction.Action is
+// triggered.
 type AggSpillDiskAction struct {
 	memory.BaseOOMAction
 	e          *HashAggExec
 	spillTimes uint32
 }
 
+// Action set HashAggExec spill mode.
 func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
 	if atomic.LoadUint32(&a.e.spillMode) == 0 && a.spillTimes < maxSpillTimes {
 		a.spillTimes++
@@ -1852,8 +1857,10 @@ func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
 	}
 }
 
+// GetPriority get the priority of the Action
 func (a *AggSpillDiskAction) GetPriority() int64 {
 	return memory.DefSpillPriority
 }
 
+// SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
 func (a *AggSpillDiskAction) SetLogHook(hook func(uint642 uint64)) {}
