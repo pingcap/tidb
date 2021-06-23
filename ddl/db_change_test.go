@@ -874,9 +874,6 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 		}
 		for _, sqlWithErr := range sqlWithErrs {
 			_, err1 := se.Execute(context.Background(), sqlWithErr.sql)
-			if err1 != nil {
-				fmt.Println(err1.Error())
-			}
 			if !terror.ErrorEqual(err1, sqlWithErr.expectErr) {
 				checkErr = errors.Errorf("sql: %s, expect err: %v, got err: %v", sqlWithErr.sql, sqlWithErr.expectErr, err1)
 				break
