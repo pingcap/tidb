@@ -64,6 +64,71 @@
     ]
   },
   {
+    "Name": "TestAggColumnPrune",
+    "Cases": [
+      {
+        "SQL": "select count(1) from t join (select count(1) from t where false) as tmp",
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select max(a) from t where false) as tmp",
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select min(a) from t where false) as tmp",
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select sum(a) from t where false) as tmp",
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select avg(a) from t where false) as tmp",
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select count(1) from t where false group by a) as tmp",
+        "Res": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select max(a) from t where false group by a) as tmp",
+        "Res": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select min(a) from t where false group by a) as tmp",
+        "Res": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select sum(a) from t where false group by a) as tmp",
+        "Res": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select avg(a) from t where false group by a) as tmp",
+        "Res": [
+          "0"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestIndexJoinInnerIndexNDV",
     "Cases": [
       {
