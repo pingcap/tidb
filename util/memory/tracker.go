@@ -46,7 +46,7 @@ type Tracker struct {
 		// we wouldn't maintain its children in order to avoiding mutex contention.
 		children map[int][]*Tracker
 	}
-	actionMu struct {
+	actionMu, softLimitActionMu struct {
 		sync.Mutex
 		actionOnExceed ActionOnExceed
 	}
@@ -123,6 +123,14 @@ func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
 	t.actionMu.Lock()
 	defer t.actionMu.Unlock()
 	t.actionMu.actionOnExceed = reArrangeFallback(t.actionMu.actionOnExceed, a)
+}
+
+// FallbackOldAndSetNewActionForSoftLimit sets the action when memory usage exceeds soft bytesLimit
+// and set the original action as its fallback.
+func (t *Tracker) FallbackOldAndSetNewActionForSoftLimit(a ActionOnExceed) {
+	t.softLimitActionMu.Lock()
+	defer t.softLimitActionMu.Unlock()
+	t.softLimitActionMu.actionOnExceed = reArrangeFallback(t.softLimitActionMu.actionOnExceed, a)
 }
 
 // GetFallbackForTest get the oom action used by test.
@@ -255,6 +263,8 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 	t.Consume(newConsumed)
 }
 
+const softScale = 0.8
+
 // Consume is used to consume a memory usage. "bytes" can be a negative value,
 // which means this is a memory release operation. When memory usage of a tracker
 // exceeds its bytesLimit, the tracker calls its action, so does each of its ancestors.
@@ -262,10 +272,13 @@ func (t *Tracker) Consume(bytes int64) {
 	if bytes == 0 {
 		return
 	}
-	var rootExceed *Tracker
+	var rootExceed, rootExceedForSoftLimit *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		if atomic.AddInt64(&tracker.bytesConsumed, bytes) >= tracker.bytesLimit && tracker.bytesLimit > 0 {
 			rootExceed = tracker
+		}
+		if atomic.LoadInt64(&tracker.bytesConsumed) >= int64(float64(tracker.bytesLimit)*softScale) && tracker.bytesLimit > 0 {
+			rootExceedForSoftLimit = tracker
 		}
 
 		for {
@@ -277,6 +290,14 @@ func (t *Tracker) Consume(bytes int64) {
 			break
 		}
 	}
+	if bytes > 0 && rootExceedForSoftLimit != nil {
+		rootExceedForSoftLimit.softLimitActionMu.Lock()
+		defer rootExceedForSoftLimit.softLimitActionMu.Unlock()
+		if rootExceedForSoftLimit.softLimitActionMu.actionOnExceed != nil {
+			rootExceedForSoftLimit.softLimitActionMu.actionOnExceed.Action(rootExceedForSoftLimit)
+		}
+	}
+
 	if bytes > 0 && rootExceed != nil {
 		rootExceed.actionMu.Lock()
 		defer rootExceed.actionMu.Unlock()

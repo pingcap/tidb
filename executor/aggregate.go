@@ -194,6 +194,17 @@ type HashAggExec struct {
 	memTracker *memory.Tracker // track memory usage.
 
 	stats *HashAggRuntimeStats
+
+	listInDisk   *chunk.ListInDisk
+	lastChunkNum int
+	processIdx   int
+	spillMode    uint32
+	spillChunk   *chunk.Chunk
+	spillAction  *AggSpillDiskAction
+	spillTimes   uint32
+	childDrained bool
+	drained      bool
+	haveData     bool
 }
 
 // HashAggInput indicates the input of hash agg exec.
@@ -233,6 +244,12 @@ func (e *HashAggExec) Close() error {
 		if e.memTracker != nil {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
+		if e.listInDisk != nil {
+			if err := e.listInDisk.Close(); err != nil {
+				return err
+			}
+		}
+		e.spillChunk = nil
 		return e.baseExecutor.Close()
 	}
 	if e.parallelExecInitialized {
@@ -301,6 +318,12 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.groupKeyBuffer = make([][]byte, 0, 8)
 	e.childResult = newFirstChunk(e.children[0])
 	e.memTracker.Consume(e.childResult.MemoryUsage())
+
+	e.processIdx, e.lastChunkNum = 0, 0
+	e.haveData = false
+	e.drained, e.childDrained = false, false
+	e.listInDisk = chunk.NewListInDisk(retTypes(e.children[0]))
+	e.spillChunk = newFirstChunk(e.children[0])
 }
 
 func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
@@ -853,49 +876,73 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 
 // unparallelExec executes hash aggregation algorithm in single thread.
 func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) error {
-	// In this stage we consider all data from src as a single group.
-	if !e.prepared {
-		err := e.execute(ctx)
-		if err != nil {
-			return err
-		}
-		if (len(e.groupSet.StringSet) == 0) && len(e.GroupByItems) == 0 {
-			// If no groupby and no data, we should add an empty group.
-			// For example:
-			// "select count(c) from t;" should return one row [0]
-			// "select count(c) from t group by c1;" should return empty result set.
-			e.memTracker.Consume(e.groupSet.Insert(""))
-			e.groupKeys = append(e.groupKeys, "")
-		}
-		e.prepared = true
-	}
 	chk.Reset()
-
-	// Since we return e.maxChunkSize rows every time, so we should not traverse
-	// `groupSet` because of its randomness.
-	for ; e.cursor4GroupKey < len(e.groupKeys); e.cursor4GroupKey++ {
-		partialResults := e.getPartialResults(e.groupKeys[e.cursor4GroupKey])
-		if len(e.PartialAggFuncs) == 0 {
-			chk.SetNumVirtualRows(chk.NumRows() + 1)
-		}
-		for i, af := range e.PartialAggFuncs {
-			if err := af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk); err != nil {
-				return err
+	for {
+		if e.prepared {
+			// Since we return e.maxChunkSize rows every time, so we should not traverse
+			// `groupSet` because of its randomness.
+			for ; e.cursor4GroupKey < len(e.groupKeys); e.cursor4GroupKey++ {
+				partialResults := e.getPartialResults(e.groupKeys[e.cursor4GroupKey])
+				if len(e.PartialAggFuncs) == 0 {
+					chk.SetNumVirtualRows(chk.NumRows() + 1)
+				}
+				for i, af := range e.PartialAggFuncs {
+					if err := af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk); err != nil {
+						return err
+					}
+				}
+				if chk.IsFull() {
+					e.cursor4GroupKey++
+					return nil
+				}
 			}
+			e.resetSpillMode()
 		}
-		if chk.IsFull() {
-			e.cursor4GroupKey++
+		if e.drained {
 			return nil
 		}
+		if err := e.execute(ctx); err != nil {
+			return err
+		}
+		if !e.haveData {
+			if (len(e.groupSet.StringSet) == 0) && len(e.GroupByItems) == 0 {
+				// If no groupby and no data, we should add an empty group.
+				// For example:
+				// "select count(c) from t;" should return one row [0]
+				// "select count(c) from t group by c1;" should return empty result set.
+				e.memTracker.Consume(e.groupSet.Insert(""))
+				e.groupKeys = append(e.groupKeys, "")
+			}
+		}
+		e.prepared = true
 	}
 	return nil
 }
 
+func (e *HashAggExec) resetSpillMode() {
+	e.cursor4GroupKey, e.groupKeys = 0, e.groupKeys[:0]
+	e.partialResultMap = make(aggPartialResultMapper)
+	e.prepared = false
+	e.drained = e.lastChunkNum == e.listInDisk.NumChunks()
+	e.lastChunkNum = e.listInDisk.NumChunks()
+	e.memTracker.ReplaceBytesUsed(0)
+	atomic.AddUint32(&e.spillTimes, 1)
+	atomic.StoreUint32(&e.spillMode, 0)
+}
+
 // execute fetches Chunks from src and update each aggregate function for each row in Chunk.
 func (e *HashAggExec) execute(ctx context.Context) (err error) {
+	defer func() {
+		if e.spillChunk.NumRows() > 0 && err == nil {
+			err = e.listInDisk.Add(e.spillChunk)
+			e.spillChunk.Reset()
+		}
+	}()
 	for {
 		mSize := e.childResult.MemoryUsage()
-		err := Next(ctx, e.children[0], e.childResult)
+		if err := e.getNextChunk(ctx); err != nil {
+			return err
+		}
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 		if err != nil {
@@ -912,7 +959,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		if e.childResult.NumRows() == 0 {
 			return nil
 		}
-
+		e.haveData = true
 		e.groupKeyBuffer, err = getGroupKey(e.ctx, e.childResult, e.groupKeyBuffer, e.GroupByItems)
 		if err != nil {
 			return err
@@ -922,6 +969,17 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		for j := 0; j < e.childResult.NumRows(); j++ {
 			groupKey := string(e.groupKeyBuffer[j]) // do memory copy here, because e.groupKeyBuffer may be reused.
 			if !e.groupSet.Exist(groupKey) {
+				if atomic.LoadUint32(&e.spillMode) == 1 {
+					e.spillChunk.Append(e.childResult, j, j+1)
+					if e.spillChunk.IsFull() {
+						err = e.listInDisk.Add(e.spillChunk)
+						if err != nil {
+							return err
+						}
+						e.spillChunk.Reset()
+					}
+					continue
+				}
 				allMemDelta += e.groupSet.Insert(groupKey)
 				e.groupKeys = append(e.groupKeys, groupKey)
 			}
@@ -937,6 +995,30 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		e.memTracker.Consume(allMemDelta)
 	}
+}
+
+func (e *HashAggExec) getNextChunk(ctx context.Context) (err error) {
+	e.childResult.Reset()
+	if !e.childDrained {
+		if err := Next(ctx, e.children[0], e.childResult); err != nil {
+			return err
+		}
+		if e.childResult.NumRows() == 0 {
+			e.childDrained = true
+		} else {
+			return nil
+		}
+	}
+	if e.processIdx < e.lastChunkNum {
+		e.childResult, err = e.listInDisk.GetChunk(e.processIdx)
+		if err != nil {
+			return err
+		}
+		e.processIdx++
+		return nil
+	}
+	e.drained = true
+	return nil
 }
 
 func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResult {
@@ -1744,3 +1826,35 @@ func (e *vecGroupChecker) reset() {
 		e.lastRowDatums = e.lastRowDatums[:0]
 	}
 }
+
+func (e *HashAggExec) ActionSpill() *AggSpillDiskAction {
+	if e.spillAction == nil {
+		e.spillAction = &AggSpillDiskAction{
+			e: e,
+		}
+	}
+	return e.spillAction
+}
+
+type AggSpillDiskAction struct {
+	memory.BaseOOMAction
+	e *HashAggExec
+}
+
+func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
+	if atomic.LoadUint32(&a.e.spillMode) == 0 {
+		logutil.BgLogger().Info("memory exceeds quota, set aggregate mode to spill-mode",
+			zap.Uint32("spillTimes", atomic.LoadUint32(&a.e.spillTimes)+1))
+		atomic.StoreUint32(&a.e.spillMode, 1)
+		return
+	}
+	if fallback := a.GetFallback(); fallback != nil {
+		fallback.Action(t)
+	}
+}
+
+func (a *AggSpillDiskAction) GetPriority() int64 {
+	return memory.DefSpillPriority
+}
+
+func (a *AggSpillDiskAction) SetLogHook(hook func(uint642 uint64)) {}
