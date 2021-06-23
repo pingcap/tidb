@@ -46,11 +46,9 @@ type Tracker struct {
 		// we wouldn't maintain its children in order to avoiding mutex contention.
 		children map[int][]*Tracker
 	}
-	actionMu struct {
-		sync.Mutex
-		actionOnExceed ActionOnExceed
-	}
-	parMu struct {
+	actionMu             actionMu
+	actionMuForSoftLimit actionMu
+	parMu                struct {
 		sync.Mutex
 		parent *Tracker // The parent memory tracker.
 	}
@@ -60,6 +58,11 @@ type Tracker struct {
 	bytesLimit    int64 // bytesLimit <= 0 means no limit.
 	maxConsumed   int64 // max number of bytes consumed during execution.
 	isGlobal      bool  // isGlobal indicates whether this tracker is global tracker
+}
+
+type actionMu struct {
+	sync.Mutex
+	actionOnExceed ActionOnExceed
 }
 
 // NewTracker creates a memory tracker.
@@ -123,6 +126,14 @@ func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
 	t.actionMu.Lock()
 	defer t.actionMu.Unlock()
 	t.actionMu.actionOnExceed = reArrangeFallback(t.actionMu.actionOnExceed, a)
+}
+
+// FallbackOldAndSetNewActionForSoftLimit sets the action when memory usage exceeds soft bytesLimit
+// and set the original action as its fallback.
+func (t *Tracker) FallbackOldAndSetNewActionForSoftLimit(a ActionOnExceed) {
+	t.actionMuForSoftLimit.Lock()
+	defer t.actionMuForSoftLimit.Unlock()
+	t.actionMuForSoftLimit.actionOnExceed = reArrangeFallback(t.actionMuForSoftLimit.actionOnExceed, a)
 }
 
 // GetFallbackForTest get the oom action used by test.
@@ -255,6 +266,8 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 	t.Consume(newConsumed)
 }
 
+const softScale = 0.8
+
 // Consume is used to consume a memory usage. "bytes" can be a negative value,
 // which means this is a memory release operation. When memory usage of a tracker
 // exceeds its bytesLimit, the tracker calls its action, so does each of its ancestors.
@@ -262,10 +275,14 @@ func (t *Tracker) Consume(bytes int64) {
 	if bytes == 0 {
 		return
 	}
-	var rootExceed *Tracker
+	var rootExceed, rootExceedForSoftLimit *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
-		if atomic.AddInt64(&tracker.bytesConsumed, bytes) >= tracker.bytesLimit && tracker.bytesLimit > 0 {
+		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bytes)
+		if bytesConsumed >= tracker.bytesLimit && tracker.bytesLimit > 0 {
 			rootExceed = tracker
+		}
+		if bytesConsumed >= int64(float64(tracker.bytesLimit)*softScale) && tracker.bytesLimit > 0 {
+			rootExceedForSoftLimit = tracker
 		}
 
 		for {
@@ -277,12 +294,20 @@ func (t *Tracker) Consume(bytes int64) {
 			break
 		}
 	}
-	if bytes > 0 && rootExceed != nil {
-		rootExceed.actionMu.Lock()
-		defer rootExceed.actionMu.Unlock()
-		if rootExceed.actionMu.actionOnExceed != nil {
-			rootExceed.actionMu.actionOnExceed.Action(rootExceed)
+
+	tryAction := func(mu *actionMu, tracker *Tracker) {
+		mu.Lock()
+		defer mu.Unlock()
+		if mu.actionOnExceed != nil {
+			mu.actionOnExceed.Action(tracker)
 		}
+	}
+
+	if bytes > 0 && rootExceedForSoftLimit != nil {
+		tryAction(&rootExceedForSoftLimit.actionMuForSoftLimit, rootExceedForSoftLimit)
+	}
+	if bytes > 0 && rootExceed != nil {
+		tryAction(&rootExceed.actionMu, rootExceed)
 	}
 }
 

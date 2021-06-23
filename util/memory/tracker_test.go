@@ -117,6 +117,26 @@ func (s *testSuite) TestOOMAction(c *C) {
 	tracker.Consume(10000)
 	c.Assert(action1.called, IsTrue)
 	c.Assert(action2.called, IsTrue)
+
+	// test softLimit
+	tracker = NewTracker(1, 100)
+	action1 = &mockAction{}
+	action2 = &mockAction{}
+	action3 := &mockAction{}
+	tracker.FallbackOldAndSetNewActionForSoftLimit(action1)
+	tracker.FallbackOldAndSetNewActionForSoftLimit(action2)
+	tracker.SetActionOnExceed(action3)
+	c.Assert(action1.called, IsFalse)
+	c.Assert(action2.called, IsFalse)
+	c.Assert(action3.called, IsFalse)
+	tracker.Consume(80)
+	c.Assert(action1.called, IsTrue)
+	c.Assert(action2.called, IsFalse)
+	c.Assert(action3.called, IsFalse)
+	tracker.Consume(20)
+	c.Assert(action1.called, IsTrue)
+	c.Assert(action2.called, IsTrue) // SoftLimit fallback
+	c.Assert(action3.called, IsTrue) // HardLimit
 }
 
 type mockAction struct {
