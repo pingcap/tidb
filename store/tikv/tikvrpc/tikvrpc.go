@@ -16,7 +16,6 @@ package tikvrpc
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"sync/atomic"
 	"time"
 
@@ -563,10 +562,9 @@ func SetContext(ctx context.Context, req *Request, region *metapb.Region, peer *
 
 	spanID, traceID, Enable := minitrace.CurrentID(ctx)
 	reqCtx.TraceContext = &kvrpcpb.TraceContext{
-		Enable:           Enable,
-		TraceId:          traceID,
-		SpanIdPrefix:     rand.Uint32(),
-		RootParentSpanId: uint64(spanID),
+		Enable:       Enable,
+		TraceId:      traceID,
+		ParentSpanId: spanID,
 	}
 
 	switch req.Type {

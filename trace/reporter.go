@@ -16,7 +16,6 @@ package trace
 import (
 	"bytes"
 	"io/ioutil"
-	"math/rand"
 	"os"
 	"path"
 	"sort"
@@ -42,7 +41,7 @@ var (
 
 // Report tracing results to Jaeger and Datadog.
 func Report(handle minitrace.TraceHandle) {
-	spans, c := handle.Collect()
+	trace, c := handle.Collect()
 	ctx := c.(*Context)
 
 	storageDir := StorageDir.Load()
@@ -58,9 +57,8 @@ func Report(handle minitrace.TraceHandle) {
 	}
 
 	go func() {
-		spans = truncateSpans(spans, MaxSpansLength.Load())
-		traceID := handle.TraceID()
-		spanSet := miniSpansToPbSpanSet(traceID, spans)
+		trace.Spans = truncateSpans(trace.Spans, MaxSpansLength.Load())
+		spanSet := minitraceToPbSpanSet(trace)
 
 		traceDetail := ctx.TraceDetail
 		traceDetail.SpanSets = append(traceDetail.SpanSets, &spanSet)
@@ -71,7 +69,7 @@ func Report(handle minitrace.TraceHandle) {
 		}
 
 		if shouldStore {
-			storeToDir(storageDir, traceID, traceDetail)
+			storeToDir(storageDir, trace.TraceID, traceDetail)
 		}
 
 		var jgTraces *[]jaeger.Trace
@@ -137,16 +135,14 @@ func initDDSpanList(traceDetailSpanLen int) *datadog.SpanList {
 	return (*datadog.SpanList)(&s)
 }
 
-func miniSpansToPbSpanSet(traceID uint64, spans []minitrace.Span) kvrpcpb.TraceDetail_SpanSet {
+func minitraceToPbSpanSet(trace minitrace.Trace) kvrpcpb.TraceDetail_SpanSet {
 	ss := kvrpcpb.TraceDetail_SpanSet{
-		NodeType:         kvrpcpb.TraceDetail_TiDB,
-		SpanIdPrefix:     rand.Uint32(),
-		TraceId:          traceID,
-		RootParentSpanId: 0,
-		Spans:            make([]*kvrpcpb.TraceDetail_Span, 0, len(spans)),
+		NodeType: kvrpcpb.TraceDetail_TiDB,
+		TraceId:  trace.TraceID,
+		Spans:    make([]*kvrpcpb.TraceDetail_Span, 0, len(trace.Spans)),
 	}
 
-	for _, span := range spans {
+	for _, span := range trace.Spans {
 		pps := make([]*kvrpcpb.TraceDetail_Span_Property, 0, len(span.Properties))
 		for _, property := range span.Properties {
 			pps = append(pps, &kvrpcpb.TraceDetail_Span_Property{
@@ -171,11 +167,9 @@ type converter struct {
 	jTraces   *[]jaeger.Trace
 	dSpanList *datadog.SpanList
 
-	curTraceID          uint64
-	curServiceName      string
-	curJTrace           *jaeger.Trace
-	curSpanIDPrefix     uint32
-	curRootParentSpanID uint64
+	curTraceID     uint64
+	curServiceName string
+	curJTrace      *jaeger.Trace
 
 	tagBuf  []kv
 	metaBuf map[string]string
@@ -195,8 +189,6 @@ func (c *converter) convert(traceDetail kvrpcpb.TraceDetail) {
 			spanSet.NodeType,
 			len(spanSet.Spans),
 			spanSet.TraceId,
-			spanSet.SpanIdPrefix,
-			spanSet.RootParentSpanId,
 		)
 
 		for _, span := range spanSet.Spans {
@@ -209,8 +201,6 @@ func (c *converter) nextSpanSet(
 	nodeType kvrpcpb.TraceDetail_NodeType,
 	spanLen int,
 	traceID uint64,
-	spanIDPrefix uint32,
-	rootParentSpanID uint64,
 ) {
 	var serviceName string
 	switch nodeType {
@@ -237,24 +227,15 @@ func (c *converter) nextSpanSet(
 
 	c.curTraceID = traceID
 	c.curServiceName = serviceName
-	c.curSpanIDPrefix = spanIDPrefix
-	c.curRootParentSpanID = rootParentSpanID
 }
 
 func (c *converter) appendSpan(span *kvrpcpb.TraceDetail_Span) {
-	var parentID int64
-	if span.ParentId != 0 {
-		parentID = int64(c.curSpanIDPrefix)<<32 | int64(span.ParentId)
-	} else {
-		parentID = int64(c.curRootParentSpanID)
-	}
-
 	c.updateProperties(span.Properties)
 
 	if c.curJTrace != nil {
 		c.curJTrace.Spans = append(c.curJTrace.Spans, jaeger.Span{
-			SpanID:          int64(c.curSpanIDPrefix)<<32 | int64(span.Id),
-			ParentID:        parentID,
+			SpanID:          int64(span.Id),
+			ParentID:        int64(span.ParentId),
 			StartUnixTimeUs: int64(span.BeginUnixTimeNs / 1000),
 			DurationUs:      int64(span.DurationNs / 1000),
 			OperationName:   span.Event,
@@ -269,9 +250,9 @@ func (c *converter) appendSpan(span *kvrpcpb.TraceDetail_Span) {
 			Start:    int64(span.BeginUnixTimeNs),
 			Duration: int64(span.DurationNs),
 			Meta:     c.metaBuf,
-			SpanID:   uint64(c.curSpanIDPrefix)<<32 | uint64(span.Id),
+			SpanID:   span.Id,
 			TraceID:  c.curTraceID,
-			ParentID: uint64(parentID),
+			ParentID: span.ParentId,
 		})
 	}
 }

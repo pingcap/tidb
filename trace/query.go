@@ -57,18 +57,11 @@ func Retrieve(traceID uint64) *Response {
 	spanSets := make([]SpanSet, 0, len(traceDetail.SpanSets))
 	for _, set := range traceDetail.SpanSets {
 		spans := make([]Span, 0, len(set.Spans))
-		idConv := idConverter{idPrefix: set.SpanIdPrefix}
 
 		for _, span := range set.Spans {
-			parentID := idConv.convert(span.ParentId)
-			// Root Span
-			if parentID == 0 {
-				parentID = set.RootParentSpanId
-			}
-
 			spans = append(spans, Span{
-				SpanID:          idConv.convert(span.Id),
-				ParentID:        parentID,
+				SpanID:          span.Id,
+				ParentID:        span.ParentId,
 				BeginUnixTimeNs: span.BeginUnixTimeNs,
 				DurationNs:      span.DurationNs,
 				Event:           span.Event,
@@ -86,14 +79,6 @@ func Retrieve(traceID uint64) *Response {
 		TraceID:  int64(traceID),
 		SpanSets: spanSets,
 	}
-}
-
-type idConverter struct {
-	idPrefix uint32
-}
-
-func (c idConverter) convert(prevID uint32) uint64 {
-	return uint64(c.idPrefix)<<32 | uint64(prevID)
 }
 
 func mapProperties(pbProperties []*kvrpcpb.TraceDetail_Span_Property) (res []Property) {
