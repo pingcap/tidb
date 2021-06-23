@@ -46,11 +46,9 @@ type Tracker struct {
 		// we wouldn't maintain its children in order to avoiding mutex contention.
 		children map[int][]*Tracker
 	}
-	actionMu, softLimitActionMu struct {
-		sync.Mutex
-		actionOnExceed ActionOnExceed
-	}
-	parMu struct {
+	actionMu             actionMu
+	actionMuForSoftLimit actionMu
+	parMu                struct {
 		sync.Mutex
 		parent *Tracker // The parent memory tracker.
 	}
@@ -60,6 +58,11 @@ type Tracker struct {
 	bytesLimit    int64 // bytesLimit <= 0 means no limit.
 	maxConsumed   int64 // max number of bytes consumed during execution.
 	isGlobal      bool  // isGlobal indicates whether this tracker is global tracker
+}
+
+type actionMu struct {
+	sync.Mutex
+	actionOnExceed ActionOnExceed
 }
 
 // NewTracker creates a memory tracker.
@@ -128,9 +131,9 @@ func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
 // FallbackOldAndSetNewActionForSoftLimit sets the action when memory usage exceeds soft bytesLimit
 // and set the original action as its fallback.
 func (t *Tracker) FallbackOldAndSetNewActionForSoftLimit(a ActionOnExceed) {
-	t.softLimitActionMu.Lock()
-	defer t.softLimitActionMu.Unlock()
-	t.softLimitActionMu.actionOnExceed = reArrangeFallback(t.softLimitActionMu.actionOnExceed, a)
+	t.actionMuForSoftLimit.Lock()
+	defer t.actionMuForSoftLimit.Unlock()
+	t.actionMuForSoftLimit.actionOnExceed = reArrangeFallback(t.actionMuForSoftLimit.actionOnExceed, a)
 }
 
 // GetFallbackForTest get the oom action used by test.
@@ -274,10 +277,11 @@ func (t *Tracker) Consume(bytes int64) {
 	}
 	var rootExceed, rootExceedForSoftLimit *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
-		if atomic.AddInt64(&tracker.bytesConsumed, bytes) >= tracker.bytesLimit && tracker.bytesLimit > 0 {
+		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bytes)
+		if bytesConsumed >= tracker.bytesLimit && tracker.bytesLimit > 0 {
 			rootExceed = tracker
 		}
-		if atomic.LoadInt64(&tracker.bytesConsumed) >= int64(float64(tracker.bytesLimit)*softScale) && tracker.bytesLimit > 0 {
+		if bytesConsumed >= int64(float64(tracker.bytesLimit)*softScale) && tracker.bytesLimit > 0 {
 			rootExceedForSoftLimit = tracker
 		}
 
@@ -290,20 +294,20 @@ func (t *Tracker) Consume(bytes int64) {
 			break
 		}
 	}
-	if bytes > 0 && rootExceedForSoftLimit != nil {
-		rootExceedForSoftLimit.softLimitActionMu.Lock()
-		defer rootExceedForSoftLimit.softLimitActionMu.Unlock()
-		if rootExceedForSoftLimit.softLimitActionMu.actionOnExceed != nil {
-			rootExceedForSoftLimit.softLimitActionMu.actionOnExceed.Action(rootExceedForSoftLimit)
+
+	tryAction := func(mu *actionMu, tracker *Tracker) {
+		mu.Lock()
+		defer mu.Unlock()
+		if mu.actionOnExceed != nil {
+			mu.actionOnExceed.Action(tracker)
 		}
 	}
 
+	if bytes > 0 && rootExceedForSoftLimit != nil {
+		tryAction(&rootExceedForSoftLimit.actionMuForSoftLimit, rootExceedForSoftLimit)
+	}
 	if bytes > 0 && rootExceed != nil {
-		rootExceed.actionMu.Lock()
-		defer rootExceed.actionMu.Unlock()
-		if rootExceed.actionMu.actionOnExceed != nil {
-			rootExceed.actionMu.actionOnExceed.Action(rootExceed)
-		}
+		tryAction(&rootExceed.actionMu, rootExceed)
 	}
 }
 
