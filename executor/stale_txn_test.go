@@ -907,9 +907,6 @@ func (s *testStaleTxnSuite) TestStaleReadTemporaryTable(c *C) {
 			sql: "select /*+use_index(tmp1, code)*/ code from tmp1 where code > 1",
 		},
 		{
-			sql: "select * from tmp1 tablesample regions()",
-		},
-		{
 			sql: "select /*+ use_index_merge(tmp1, primary, code) */ * from tmp1 where id > 1 or code > 2",
 		},
 	}
