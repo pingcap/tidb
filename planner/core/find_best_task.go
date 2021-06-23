@@ -146,7 +146,7 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, planCou
 	}.Init(p.ctx, p.stats, p.blockOffset)
 	dual.SetSchema(p.schema)
 	planCounter.Dec(1)
-	return &rootTask{p: dual}, 1, nil
+	return &rootTask{p: dual, isEmpty: p.RowCount == 0}, 1, nil
 }
 
 func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (task, int64, error) {
@@ -212,7 +212,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		childTasks = childTasks[:0]
 		// The curCntPlan records the number of possible plans for pp
 		curCntPlan = 1
-		TimeStampNow := p.GetlogicalTS4TaskMap()
+		TimeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.ctx.GetSessionVars().PlanID
 		for j, child := range p.children {
 			childTask, cnt, err := child.findBestTask(pp.GetChildReqProps(j), &PlanCounterDisabled)
@@ -328,8 +328,8 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		// try to get the task with an enforced sort.
 		newProp.SortItems = []property.SortItem{}
 		newProp.ExpectedCnt = math.MaxFloat64
-		newProp.PartitionCols = nil
-		newProp.PartitionTp = property.AnyType
+		newProp.MPPPartitionCols = nil
+		newProp.MPPPartitionTp = property.AnyType
 		var hintCanWork bool
 		plansNeedEnforce, hintCanWork, err = p.self.exhaustPhysicalPlans(newProp)
 		if err != nil {
@@ -644,8 +644,8 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		}
 		// Next, get the bestTask with enforced prop
 		prop.SortItems = []property.SortItem{}
-		prop.PartitionTp = property.AnyType
-	} else if prop.PartitionTp != property.AnyType {
+		prop.MPPPartitionTp = property.AnyType
+	} else if prop.MPPPartitionTp != property.AnyType {
 		return invalidTask, 0, nil
 	}
 	defer func() {
@@ -723,7 +723,8 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			// We do not build [batch] point get for dynamic table partitions now. This can be optimized.
 			if ds.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 				canConvertPointGet = false
-			} else if len(path.Ranges) > 1 {
+			}
+			if canConvertPointGet && len(path.Ranges) > 1 {
 				// We can only build batch point get for hash partitions on a simple column now. This is
 				// decided by the current implementation of `BatchPointGetExec::initialize()`, specifically,
 				// the `getPhysID()` function. Once we optimize that part, we can come back and enable
@@ -731,6 +732,16 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				hashPartColName = getHashPartitionColumnName(ds.ctx, tblInfo)
 				if hashPartColName == nil {
 					canConvertPointGet = false
+				}
+			}
+			if canConvertPointGet {
+				// If the schema contains ExtraPidColID, do not convert to point get.
+				// Because the point get executor can not handle the extra partition ID column now.
+				for _, col := range ds.schema.Columns {
+					if col.ID == model.ExtraPidColID {
+						canConvertPointGet = false
+						break
+					}
 				}
 			}
 		}
@@ -888,10 +899,28 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 	return indexPlan, partialCost
 }
 
+func checkColinSchema(cols []*expression.Column, schema *expression.Schema) bool {
+	for _, col := range cols {
+		if schema.ColumnIndex(col) == -1 {
+			return false
+		}
+	}
+	return true
+}
+
 func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty, path *util.AccessPath) (
 	tablePlan PhysicalPlan, partialCost float64) {
 	ts, partialCost, rowCount := ds.getOriginalPhysicalTableScan(prop, path, false)
 	overwritePartialTableScanSchema(ds, ts)
+	// remove ineffetive filter condition after overwriting physicalscan schema
+	newFilterConds := make([]expression.Expression, 0, len(path.TableFilters))
+	for _, cond := range ts.filterCondition {
+		cols := expression.ExtractColumns(cond)
+		if checkColinSchema(cols, ts.schema) {
+			newFilterConds = append(newFilterConds, cond)
+		}
+	}
+	ts.filterCondition = newFilterConds
 	rowSize := ds.TblColHists.GetAvgRowSize(ds.ctx, ts.schema.Columns, false, false)
 	sessVars := ds.ctx.GetSessionVars()
 	if len(ts.filterCondition) > 0 {
@@ -1305,7 +1334,7 @@ func getMostCorrCol4Handle(exprs []expression.Expression, histColl *statistics.T
 }
 
 // getColumnRangeCounts estimates row count for each range respectively.
-func getColumnRangeCounts(sc *stmtctx.StatementContext, colID int64, ranges []*ranger.Range, histColl *statistics.Table, idxID int64) ([]float64, bool) {
+func getColumnRangeCounts(sc *stmtctx.StatementContext, colID int64, ranges []*ranger.Range, histColl *statistics.HistColl, idxID int64) ([]float64, bool) {
 	var err error
 	var count float64
 	rangeCounts := make([]float64, len(ranges))
@@ -1383,7 +1412,7 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, conds []expre
 	if col == nil || len(path.AccessConds) > 0 {
 		return 0, false, corr
 	}
-	colInfoID, colID := col.ID, col.UniqueID
+	colID := col.UniqueID
 	if corr < 0 {
 		desc = !desc
 	}
@@ -1400,7 +1429,7 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, conds []expre
 	if !idxExists {
 		idxID = -1
 	}
-	rangeCounts, ok := getColumnRangeCounts(sc, colInfoID, ranges, ds.statisticTable, idxID)
+	rangeCounts, ok := getColumnRangeCounts(sc, colID, ranges, ds.tableStats.HistColl, idxID)
 	if !ok {
 		return 0, false, corr
 	}
@@ -1410,9 +1439,9 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, conds []expre
 	}
 	var rangeCount float64
 	if idxExists {
-		rangeCount, err = ds.statisticTable.GetRowCountByIndexRanges(sc, idxID, convertedRanges)
+		rangeCount, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(sc, idxID, convertedRanges)
 	} else {
-		rangeCount, err = ds.statisticTable.GetRowCountByColumnRanges(sc, colInfoID, convertedRanges)
+		rangeCount, err = ds.tableStats.HistColl.GetRowCountByColumnRanges(sc, colID, convertedRanges)
 	}
 	if err != nil {
 		return 0, false, corr
@@ -1546,12 +1575,14 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		if ts.KeepOrder {
 			return &mppTask{}, nil
 		}
-		if prop.PartitionTp != property.AnyType || ts.isPartition {
+		if prop.MPPPartitionTp != property.AnyType || ts.isPartition {
 			// If ts is a single partition, then this partition table is in static-only prune, then we should not choose mpp execution.
+			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because table `" + ds.tableInfo.Name.O + "`is a partition table which is not supported when `@@tidb_partition_prune_mode=static`.")
 			return &mppTask{}, nil
 		}
 		for _, col := range ts.schema.Columns {
 			if col.VirtualExpr != nil {
+				ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because column `" + col.OrigName + "` is a virtual column which is not supported now.")
 				return &mppTask{}, nil
 			}
 		}
@@ -1964,7 +1995,7 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *
 
 	pcte := PhysicalCTE{SeedPlan: sp, RecurPlan: rp, CTE: p.cte, cteAsName: p.cteAsName}.Init(p.ctx, p.stats)
 	pcte.SetSchema(p.schema)
-	t = &rootTask{pcte, sp.statsInfo().RowCount}
+	t = &rootTask{pcte, sp.statsInfo().RowCount, false}
 	p.cte.cteTask = t
 	return t, 1, nil
 }

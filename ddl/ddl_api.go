@@ -18,7 +18,6 @@
 package ddl
 
 import (
-	"encoding/hex"
 	"fmt"
 	"math"
 	"strconv"
@@ -28,7 +27,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/cznic/mathutil"
-	"github.com/go-yaml/yaml"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
@@ -40,7 +38,6 @@ import (
 	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -49,14 +46,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -1395,8 +1389,7 @@ func buildTableInfo(
 		// Check clustered on non-primary key.
 		if constr.Option != nil && constr.Option.PrimaryKeyTp != model.PrimaryKeyTypeDefault &&
 			constr.Tp != ast.ConstraintPrimaryKey {
-			msg := mysql.Message("CLUSTERED/NONCLUSTERED keyword is only supported for primary key", nil)
-			return nil, dbterror.ClassDDL.NewStdErr(errno.ErrUnsupportedDDLOperation, msg)
+			return nil, errUnsupportedClusteredSecondaryKey
 		}
 		if constr.Tp == ast.ConstraintForeignKey {
 			for _, fk := range tbInfo.ForeignKeys {
@@ -1597,15 +1590,17 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 	if err := checkGeneratedColumn(s.Cols); err != nil {
 		return errors.Trace(err)
 	}
-	if tbInfo.Partition != nil && s.Partition != nil {
+	if tbInfo.Partition != nil {
 		if err := checkPartitionDefinitionConstraints(ctx, tbInfo); err != nil {
 			return errors.Trace(err)
 		}
-		if err := checkPartitionFuncType(ctx, s.Partition.Expr, tbInfo); err != nil {
-			return errors.Trace(err)
-		}
-		if err := checkPartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
-			return errors.Trace(err)
+		if s.Partition != nil {
+			if err := checkPartitionFuncType(ctx, s.Partition.Expr, tbInfo); err != nil {
+				return errors.Trace(err)
+			}
+			if err := checkPartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
@@ -3487,7 +3482,7 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 // There are two cases when types incompatible:
 // 1. returned canReorg == true: types can be changed by reorg
 // 2. returned canReorg == false: type change not supported yet
-func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (canReorg bool, errMsg string, err error) {
+func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (canReorg bool, err error) {
 	// Deal with the same type.
 	if origin.Tp == to.Tp {
 		if origin.Tp == mysql.TypeEnum || origin.Tp == mysql.TypeSet {
@@ -3497,13 +3492,13 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (ca
 			}
 			if len(to.Elems) < len(origin.Elems) {
 				msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", typeVar, len(origin.Elems))
-				return true, msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+				return true, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 			}
 			for index, originElem := range origin.Elems {
 				toElem := to.Elems[index]
 				if originElem != toElem {
 					msg := fmt.Sprintf("cannot modify %s column value %s to %s", typeVar, originElem, toElem)
-					return true, msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+					return true, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 				}
 			}
 		}
@@ -3514,21 +3509,21 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (ca
 			// remains the same.
 			if to.Flen != origin.Flen || to.Decimal != origin.Decimal || mysql.HasUnsignedFlag(to.Flag) != mysql.HasUnsignedFlag(origin.Flag) {
 				msg := fmt.Sprintf("decimal change from decimal(%d, %d) to decimal(%d, %d)", origin.Flen, origin.Decimal, to.Flen, to.Decimal)
-				return true, msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+				return true, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 			}
 		}
 
 		needReorg, reason := needReorgToChange(origin, to)
 		if !needReorg {
-			return false, "", nil
+			return false, nil
 		}
-		return true, reason, errUnsupportedModifyColumn.GenWithStackByArgs(reason)
+		return true, errUnsupportedModifyColumn.GenWithStackByArgs(reason)
 	}
 
 	// Deal with the different type.
 	if !checkTypeChangeSupported(origin, to) {
-		unsupportedMsg := fmt.Sprintf("change from original type %v to %v is currently unsupported yet", to.CompactStr(), origin.CompactStr())
-		return false, unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		unsupportedMsg := fmt.Sprintf("change from original type %v to %v is currently unsupported yet", origin.CompactStr(), to.CompactStr())
+		return false, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 	}
 
 	// Check if different type can directly convert and no need to reorg.
@@ -3537,13 +3532,13 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (ca
 	if stringToString || integerToInteger {
 		needReorg, reason := needReorgToChange(origin, to)
 		if !needReorg {
-			return false, "", nil
+			return false, nil
 		}
-		return true, reason, errUnsupportedModifyColumn.GenWithStackByArgs(reason)
+		return true, errUnsupportedModifyColumn.GenWithStackByArgs(reason)
 	}
 
 	notCompatibleMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
-	return true, notCompatibleMsg, errUnsupportedModifyColumn.GenWithStackByArgs(notCompatibleMsg)
+	return true, errUnsupportedModifyColumn.GenWithStackByArgs(notCompatibleMsg)
 }
 
 func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needReorg bool, reasonMsg string) {
@@ -3573,42 +3568,30 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needReorg 
 }
 
 func checkTypeChangeSupported(origin *types.FieldType, to *types.FieldType) bool {
-	if types.IsString(origin.Tp) && to.Tp == mysql.TypeBit {
-		// TODO: Currently string data type cast to bit are not compatible with mysql, should fix here after compatible.
+	if (types.IsTypeTime(origin.Tp) || origin.Tp == mysql.TypeDuration || origin.Tp == mysql.TypeYear ||
+		types.IsString(origin.Tp) || origin.Tp == mysql.TypeJSON) &&
+		to.Tp == mysql.TypeBit {
+		// TODO: Currently date/datetime/timestamp/time/year/string/json data type cast to bit are not compatible with mysql, should fix here after compatible.
 		return false
 	}
 
-	if (origin.Tp == mysql.TypeEnum || origin.Tp == mysql.TypeSet) &&
-		(types.IsTypeTime(to.Tp) || to.Tp == mysql.TypeDuration) {
-		// TODO: Currently enum/set cast to date/datetime/timestamp/time/bit are not support yet, should fix here after supported.
+	if (types.IsTypeTime(origin.Tp) || origin.Tp == mysql.TypeDuration || origin.Tp == mysql.TypeYear ||
+		origin.Tp == mysql.TypeNewDecimal || origin.Tp == mysql.TypeFloat || origin.Tp == mysql.TypeDouble || origin.Tp == mysql.TypeJSON || origin.Tp == mysql.TypeBit) &&
+		(to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet) {
+		// TODO: Currently date/datetime/timestamp/time/year/decimal/float/double/json/bit cast to enum/set are not support yet, should fix here after supported.
 		return false
 	}
 
-	if (types.IsTypeTime(origin.Tp) || origin.Tp == mysql.TypeDuration || origin.Tp == mysql.TypeYear) &&
-		(to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet || to.Tp == mysql.TypeBit) {
-		// TODO: Currently date and time cast to enum/set/bit are not support yet, should fix here after supported.
+	if (origin.Tp == mysql.TypeEnum || origin.Tp == mysql.TypeSet || origin.Tp == mysql.TypeBit ||
+		origin.Tp == mysql.TypeNewDecimal || origin.Tp == mysql.TypeFloat || origin.Tp == mysql.TypeDouble) &&
+		(types.IsTypeTime(to.Tp)) {
+		// TODO: Currently enum/set/bit/decimal/float/double cast to date/datetime/timestamp type are not support yet, should fix here after supported.
 		return false
 	}
 
-	if (origin.Tp == mysql.TypeFloat || origin.Tp == mysql.TypeDouble) &&
-		(types.IsTypeTime(to.Tp) || to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet) {
-		// TODO: Currently float/double cast to date/datetime/timestamp/enum/set type are not support yet, should fix here after supported.
-		return false
-	}
-
-	if origin.Tp == mysql.TypeBit &&
-		(types.IsTypeTime(to.Tp) || to.Tp == mysql.TypeDuration || to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet) {
-		// TODO: Currently bit cast to date/datetime/timestamp/time/enum/set are not support yet, should fix here after supported.
-		return false
-	}
-
-	if origin.Tp == mysql.TypeNewDecimal && (to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet) {
-		// TODO: Currently decimal cast to enum/set are not support yet, should fix here after supported.
-		return false
-	}
-
-	if origin.Tp == mysql.TypeJSON && (to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet || to.Tp == mysql.TypeBit) {
-		// TODO: Currently json cast to enum/set/bit are not support yet, should fix here after supported.
+	if (origin.Tp == mysql.TypeEnum || origin.Tp == mysql.TypeSet || origin.Tp == mysql.TypeBit) &&
+		to.Tp == mysql.TypeDuration {
+		// TODO: Currently enum/set/bit cast to time are not support yet, should fix here after supported.
 		return false
 	}
 
@@ -3617,20 +3600,15 @@ func checkTypeChangeSupported(origin *types.FieldType, to *types.FieldType) bool
 
 // checkModifyTypes checks if the 'origin' type can be modified to 'to' type no matter directly change
 // or change by reorg. It returns error if the two types are incompatible and correlated change are not
-// supported. However, even the two types can be change, if the flag "tidb_enable_change_column_type" not
-// set, or the "origin" type contains primary key, error will be returned.
+// supported. However, even the two types can be change, if the "origin" type contains primary key, error will be returned.
 func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
-	canReorg, changeColumnErrMsg, err := CheckModifyTypeCompatible(origin, to)
+	canReorg, err := CheckModifyTypeCompatible(origin, to)
 	if err != nil {
 		if !canReorg {
 			return errors.Trace(err)
 		}
-		enableChangeColumnType := ctx.GetSessionVars().EnableChangeColumnType
-		if !enableChangeColumnType {
-			msg := fmt.Sprintf("%s, and tidb_enable_change_column_type is false", changeColumnErrMsg)
-			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-		} else if mysql.HasPriKeyFlag(origin.Flag) {
-			msg := "tidb_enable_change_column_type is true and this column has primary key flag"
+		if mysql.HasPriKeyFlag(origin.Flag) {
+			msg := "this column has primary key flag"
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 	}
@@ -3663,11 +3641,27 @@ func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	if err != nil {
 		return hasDefaultValue, errors.Trace(err)
 	}
-	err = col.SetDefaultValue(value)
+	err = setDefaultValueWithBinaryPadding(col, value)
 	if err != nil {
 		return hasDefaultValue, errors.Trace(err)
 	}
 	return hasDefaultValue, nil
+}
+
+func setDefaultValueWithBinaryPadding(col *table.Column, value interface{}) error {
+	err := col.SetDefaultValue(value)
+	if err != nil {
+		return err
+	}
+	// https://dev.mysql.com/doc/refman/8.0/en/binary-varbinary.html
+	// Set the default value for binary type should append the paddings.
+	if value != nil {
+		if col.Tp == mysql.TypeString && types.IsBinaryStr(&col.FieldType) && len(value.(string)) < col.Flen {
+			padding := make([]byte, col.Flen-len(value.(string)))
+			col.DefaultValue = string(append([]byte(col.DefaultValue.(string)), padding...))
+		}
+	}
+	return nil
 }
 
 func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) error {
@@ -3892,12 +3886,12 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		}
 		return nil, errors.Trace(err)
 	}
-	if ctx.GetSessionVars().EnableChangeColumnType && needChangeColumnData(col.ColumnInfo, newCol.ColumnInfo) {
+	if needChangeColumnData(col.ColumnInfo, newCol.ColumnInfo) {
 		if err = isGeneratedRelatedColumn(t.Meta(), newCol.ColumnInfo, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
 		if t.Meta().Partition != nil {
-			return nil, errUnsupportedModifyColumn.GenWithStackByArgs("tidb_enable_change_column_type is true, table is partition table")
+			return nil, errUnsupportedModifyColumn.GenWithStackByArgs("table is partition table")
 		}
 	}
 
@@ -3913,7 +3907,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	// We support modifying the type definitions of 'null' to 'not null' now.
 	var modifyColumnTp byte
 	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		if err = checkForNullValue(ctx, col.Tp != newCol.Tp, ident.Schema, ident.Name, newCol.Name, col.ColumnInfo); err != nil {
+		if err = checkForNullValue(ctx, true, ident.Schema, ident.Name, newCol.Name, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
 		// `modifyColumnTp` indicates that there is a type modification.
@@ -4035,7 +4029,13 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 			return errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ic.Name)
 		}
 
-		if err := checkIndexColumn(col, ic.Length); err != nil {
+		prefixLength := types.UnspecifiedLength
+		if types.IsTypePrefixable(col.FieldType.Tp) && col.FieldType.Flen > ic.Length {
+			// When the index column is changed, prefix length is only valid
+			// if the type is still prefixable and larger than old prefix length.
+			prefixLength = ic.Length
+		}
+		if err := checkIndexColumn(col, prefixLength); err != nil {
 			return err
 		}
 	}
@@ -5912,150 +5912,6 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 	return errors.Trace(err)
 }
 
-func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*placement.Rule, error) {
-	rules := []*placement.Rule{}
-
-	cnstbytes := []byte(cnstr)
-
-	constraints1 := []string{}
-	err1 := yaml.UnmarshalStrict(cnstbytes, &constraints1)
-	if err1 == nil {
-		// can not emit REPLICAS with an array label
-		if replicas == 0 {
-			return rules, errors.Errorf("array CONSTRAINTS should be with a positive REPLICAS")
-		}
-
-		labelConstraints, err := placement.NewConstraints(constraints1)
-		if err != nil {
-			return rules, err
-		}
-
-		rules = append(rules, &placement.Rule{
-			Count:       int(replicas),
-			Constraints: labelConstraints,
-		})
-
-		return rules, nil
-	}
-
-	constraints2 := map[string]int{}
-	err2 := yaml.UnmarshalStrict(cnstbytes, &constraints2)
-	if err2 == nil {
-		ruleCnt := int(replicas)
-
-		for labels, cnt := range constraints2 {
-			if cnt <= 0 {
-				return rules, errors.Errorf("count should be positive, but got %d", cnt)
-			}
-
-			if replicas != 0 {
-				ruleCnt -= cnt
-				if ruleCnt < 0 {
-					return rules, errors.Errorf("REPLICAS should be larger or equal to the number of total replicas, but got %d", replicas)
-				}
-			}
-
-			labelConstraints, err := placement.NewConstraints(strings.Split(strings.TrimSpace(labels), ","))
-			if err != nil {
-				return rules, err
-			}
-
-			rules = append(rules, &placement.Rule{
-				Count:       cnt,
-				Constraints: labelConstraints,
-			})
-		}
-
-		if ruleCnt > 0 {
-			rules = append(rules, &placement.Rule{
-				Count: ruleCnt,
-			})
-		}
-
-		return rules, nil
-	}
-
-	return nil, errors.Errorf("constraint is neither an array of string, nor a string-to-number map, due to:\n%s\n%s", err1, err2)
-}
-
-func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (*placement.Bundle, error) {
-	var err error
-	var spec *ast.PlacementSpec
-
-	for _, rspec := range specs {
-		spec = rspec
-
-		var role placement.PeerRoleType
-		switch spec.Role {
-		case ast.PlacementRoleFollower:
-			role = placement.Follower
-		case ast.PlacementRoleLeader:
-			if spec.Replicas == 0 {
-				spec.Replicas = 1
-			}
-			if spec.Replicas > 1 {
-				err = errors.Errorf("replicas can only be 1 when the role is leader")
-			}
-			role = placement.Leader
-		case ast.PlacementRoleLearner:
-			role = placement.Learner
-		case ast.PlacementRoleVoter:
-			role = placement.Voter
-		default:
-			err = errors.Errorf("ROLE is not specified")
-		}
-		if err != nil {
-			break
-		}
-
-		if spec.Tp == ast.PlacementAlter || spec.Tp == ast.PlacementDrop {
-			origLen := len(bundle.Rules)
-			newRules := bundle.Rules[:0]
-			for _, r := range bundle.Rules {
-				if r.Role != role {
-					newRules = append(newRules, r)
-				}
-			}
-			bundle.Rules = newRules
-
-			// alter == drop + add new rules
-			if spec.Tp == ast.PlacementDrop {
-				// error if no rules will be dropped
-				if len(bundle.Rules) == origLen {
-					err = errors.Errorf("no rule of role '%s' to drop", role)
-					break
-				}
-				continue
-			}
-		}
-
-		var newRules []*placement.Rule
-		newRules, err = buildPlacementSpecReplicasAndConstraint(spec.Replicas, spec.Constraints)
-		if err != nil {
-			break
-		}
-		for _, r := range newRules {
-			r.Role = role
-			bundle.Rules = append(bundle.Rules, r)
-		}
-	}
-
-	if err != nil {
-		var sb strings.Builder
-		sb.Reset()
-
-		restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreKeyWordLowercase|format.RestoreNameBackQuotes, &sb)
-
-		if e := spec.Restore(restoreCtx); e != nil {
-			return nil, ErrInvalidPlacementSpec.GenWithStackByArgs("", err)
-		}
-
-		return nil, ErrInvalidPlacementSpec.GenWithStackByArgs(sb.String(), err)
-	}
-
-	return bundle, nil
-}
-
 func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
@@ -6072,61 +5928,29 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 		return errors.Trace(err)
 	}
 
-	oldBundle := infoschema.GetBundle(d.infoCache.GetLatest(), []int64{partitionID, meta.ID, schema.ID})
+	bundle := infoschema.GetBundle(d.infoCache.GetLatest(), []int64{partitionID, meta.ID, schema.ID})
 
-	oldBundle.ID = placement.GroupID(partitionID)
+	bundle.ID = placement.GroupID(partitionID)
 
-	bundle, err := buildPlacementSpecs(oldBundle, spec.PlacementSpecs)
+	err = bundle.ApplyPlacementSpec(spec.PlacementSpecs)
+	if err != nil {
+		var sb strings.Builder
+		sb.Reset()
+
+		restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreKeyWordLowercase|format.RestoreNameBackQuotes, &sb)
+
+		if e := spec.Restore(restoreCtx); e != nil {
+			return ErrInvalidPlacementSpec.GenWithStackByArgs("", err)
+		}
+		return ErrInvalidPlacementSpec.GenWithStackByArgs(sb.String(), err)
+	}
+
+	err = bundle.Tidy()
 	if err != nil {
 		return errors.Trace(err)
 	}
+	bundle.Reset(partitionID)
 
-	extraCnt := map[placement.PeerRoleType]int{}
-	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(partitionID)))
-	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(partitionID+1)))
-	newRules := bundle.Rules[:0]
-	for i, rule := range bundle.Rules {
-		// merge all empty constraints
-		if len(rule.Constraints) == 0 {
-			extraCnt[rule.Role] += rule.Count
-			continue
-		}
-		// refer to tidb#22065.
-		// add -engine=tiflash to every rule to avoid schedules to tiflash instances.
-		// placement rules in SQL is not compatible with `set tiflash replica` yet
-		if err := rule.Constraints.Add(placement.Constraint{
-			Op:     placement.NotIn,
-			Key:    placement.EngineLabelKey,
-			Values: []string{placement.EngineLabelTiFlash},
-		}); err != nil {
-			return errors.Trace(err)
-		}
-		rule.GroupID = bundle.ID
-		rule.ID = strconv.Itoa(i)
-		rule.StartKeyHex = startKey
-		rule.EndKeyHex = endKey
-		newRules = append(newRules, rule)
-	}
-	for role, cnt := range extraCnt {
-		if cnt <= 0 {
-			continue
-		}
-		// refer to tidb#22065.
-		newRules = append(newRules, &placement.Rule{
-			GroupID:     bundle.ID,
-			ID:          string(role),
-			Role:        role,
-			Count:       cnt,
-			StartKeyHex: startKey,
-			EndKeyHex:   endKey,
-			Constraints: []placement.Constraint{{
-				Op:     placement.NotIn,
-				Key:    placement.EngineLabelKey,
-				Values: []string{placement.EngineLabelTiFlash},
-			}},
-		})
-	}
-	bundle.Rules = newRules
 	if len(bundle.Rules) == 0 {
 		bundle.Index = 0
 		bundle.Override = false

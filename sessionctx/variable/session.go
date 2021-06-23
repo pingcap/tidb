@@ -28,6 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -40,8 +41,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -50,6 +49,8 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
+	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
 )
@@ -492,6 +493,9 @@ type SessionVars struct {
 	// size exceeds the broadcast threshold
 	AllowCartesianBCJ int
 
+	// MPPOuterJoinFixedBuildSide means in MPP plan, always use right(left) table as build side for left(right) out join
+	MPPOuterJoinFixedBuildSide bool
+
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
@@ -505,9 +509,16 @@ type SessionVars struct {
 	// Value set to 2 means to force to send batch cop for any query. Value set to 0 means never use batch cop.
 	AllowBatchCop int
 
-	// AllowMPPExecution means if we should use mpp way to execute query. Default value is "ON", means to be determined by the optimizer.
-	// Value set to "ENFORCE" means to use mpp whenever possible. Value set to means never use mpp.
-	allowMPPExecution string
+	// allowMPPExecution means if we should use mpp way to execute query.
+	// Default value is `true`, means to be determined by the optimizer.
+	// Value set to `false` means never use mpp.
+	allowMPPExecution bool
+
+	// enforceMPPExecution means if we should enforce mpp way to execute query.
+	// Default value is `false`, means to be determined by variable `allowMPPExecution`.
+	// Value set to `true` means enforce use mpp.
+	// Note if you want to set `enforceMPPExecution` to `true`, you must set `allowMPPExecution` to `true` first.
+	enforceMPPExecution bool
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
@@ -613,9 +624,6 @@ type SessionVars struct {
 
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
-
-	// EnableChangeColumnType is used to control whether to enable the change column type.
-	EnableChangeColumnType bool
 
 	// EnableChangeMultiSchema is used to control whether to enable the multi schema change.
 	EnableChangeMultiSchema bool
@@ -801,7 +809,7 @@ type SessionVars struct {
 	// PartitionPruneMode indicates how and when to prune partitions.
 	PartitionPruneMode atomic2.String
 
-	// TxnScope indicates the scope of the transactions. It should be `global` or equal to `dc-location` in configuration.
+	// TxnScope indicates the scope of the transactions. It should be `global` or equal to the value of key `zone` in config.Labels.
 	TxnScope kv.TxnScopeVar
 
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
@@ -836,6 +844,12 @@ type SessionVars struct {
 	// see https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_cte_max_recursion_depth
 	CTEMaxRecursionDepth int
 
+	// The temporary table size threshold
+	// In MySQL, when a temporary table exceed this size, it spills to disk.
+	// In TiDB, as we do not support spill to disk for now, an error is reported.
+	// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_tmp_table_size
+	TMPTableSize int64
+
 	// EnableGlobalTemporaryTable indicates whether to enable global temporary table
 	EnableGlobalTemporaryTable bool
 }
@@ -854,17 +868,26 @@ func (s *SessionVars) AllocMPPTaskID(startTS uint64) int64 {
 
 // IsMPPAllowed returns whether mpp execution is allowed.
 func (s *SessionVars) IsMPPAllowed() bool {
-	return s.allowMPPExecution != "OFF"
+	return s.allowMPPExecution
 }
 
 // IsMPPEnforced returns whether mpp execution is enforced.
 func (s *SessionVars) IsMPPEnforced() bool {
-	return s.allowMPPExecution == "ENFORCE"
+	return s.allowMPPExecution && s.enforceMPPExecution
+}
+
+// RaiseWarningWhenMPPEnforced will raise a warning when mpp mode is enforced and executing explain statement.
+// TODO: Confirm whether this function will be inlined and
+// omit the overhead of string construction when calling with false condition.
+func (s *SessionVars) RaiseWarningWhenMPPEnforced(warning string) {
+	if s.IsMPPEnforced() && s.StmtCtx.InExplainStmt {
+		s.StmtCtx.AppendWarning(errors.New(warning))
+	}
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
 func (s *SessionVars) CheckAndGetTxnScope() string {
-	if s.InRestrictedSQL {
+	if s.InRestrictedSQL || !EnableLocalTxn.Load() {
 		return kv.GlobalTxnScope
 	}
 	if s.TxnScope.GetVarValue() == kv.LocalTxnScope {
@@ -978,6 +1001,7 @@ func NewSessionVars() *SessionVars {
 		AllowAggPushDown:            false,
 		AllowBCJ:                    false,
 		AllowCartesianBCJ:           DefOptCartesianBCJ,
+		MPPOuterJoinFixedBuildSide:  DefOptMPPOuterJoinFixedBuildSide,
 		BroadcastJoinThresholdSize:  DefBroadcastJoinThresholdSize,
 		BroadcastJoinThresholdCount: DefBroadcastJoinThresholdSize,
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
@@ -1026,13 +1050,12 @@ func NewSessionVars() *SessionVars {
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
 		EnableParallelApply:         DefTiDBEnableParallelApply,
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
-		EnableChangeColumnType:      DefTiDBChangeColumnType,
 		EnableChangeMultiSchema:     DefTiDBChangeMultiSchema,
 		EnablePointGetCache:         DefTiDBPointGetCache,
 		EnableAlterPlacement:        DefTiDBEnableAlterPlacement,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
-		TxnScope:                    kv.GetTxnScopeVar(),
+		TxnScope:                    kv.NewDefaultTxnScopeVar(),
 		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
 		EnableAsyncCommit:           DefTiDBEnableAsyncCommit,
 		Enable1PC:                   DefTiDBEnable1PC,
@@ -1041,6 +1064,7 @@ func NewSessionVars() *SessionVars {
 		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
+		TMPTableSize:                DefTMPTableSize,
 		EnableGlobalTemporaryTable:  DefTiDBEnableGlobalTemporaryTable,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
@@ -1089,6 +1113,7 @@ func NewSessionVars() *SessionVars {
 
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
+	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
 
 	var enableChunkRPC string
 	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
@@ -1106,6 +1131,9 @@ func NewSessionVars() *SessionVars {
 		case kv.TiDB.Name():
 			vars.IsolationReadEngines[kv.TiDB] = struct{}{}
 		}
+	}
+	if !EnableLocalTxn.Load() {
+		vars.TxnScope = kv.NewGlobalTxnScopeVar()
 	}
 	return vars
 }

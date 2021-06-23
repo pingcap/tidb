@@ -104,9 +104,9 @@ func (s *testSuite5) TestShowWarnings(c *C) {
 	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec("insert show_warnings values ('a')")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect FLOAT value: 'a'"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DOUBLE value: 'a'"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect FLOAT value: 'a'"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DOUBLE value: 'a'"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 
 	// Test Warning level 'Error'
@@ -1337,4 +1337,20 @@ func (s *testSuite5) TestShowTemporaryTable(c *C) {
 	// Verify that the `show create table` result can be used to build the table.
 	createTable := strings.ReplaceAll(expect, "t3", "t4")
 	tk.MustExec(createTable)
+
+	// Cover auto increment column.
+	tk.MustExec(`CREATE GLOBAL TEMPORARY TABLE t5 (
+	id int(11) NOT NULL AUTO_INCREMENT,
+	b int(11) NOT NULL,
+	pad varbinary(255) DEFAULT NULL,
+	PRIMARY KEY (id),
+	KEY b (b)) ON COMMIT DELETE ROWS`)
+	expect = "CREATE GLOBAL TEMPORARY TABLE `t5` (\n" +
+		"  `id` int(11) NOT NULL AUTO_INCREMENT,\n" +
+		"  `b` int(11) NOT NULL,\n" +
+		"  `pad` varbinary(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
+	tk.MustQuery("show create table t5").Check(testkit.Rows("t5 " + expect))
 }

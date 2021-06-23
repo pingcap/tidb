@@ -961,7 +961,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
 		ast.JSONInsert /*ast.JSONReplace,*/, ast.JSONRemove, ast.JSONLength,
 		// FIXME: JSONUnquote is incompatible with Coprocessor
-		// ast.JSONUnquote,
+		ast.JSONUnquote,
 
 		// date functions.
 		ast.DateFormat, ast.FromDays /*ast.ToDays,*/, ast.DayOfYear, ast.DayOfMonth, ast.Year, ast.Month,
@@ -996,19 +996,30 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	switch function.FuncName.L {
+	case ast.Floor, ast.Ceil, ast.Ceiling:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_FloorIntToDec, tipb.ScalarFuncSig_CeilIntToDec:
+			return false
+		default:
+			return true
+		}
 	case
 		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or,
 		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like,
-		ast.Plus, ast.Minus, ast.Div, ast.Mul, /*ast.Mod,*/
+		ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.Abs, /*ast.Mod,*/
 		ast.If, ast.Ifnull, ast.Case,
 		ast.Concat, ast.ConcatWS,
 		ast.Year, ast.Month, ast.Day,
 		ast.DateDiff, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
+		ast.Sqrt,
 		ast.JSONLength:
 		return true
-	case ast.Substr, ast.Substring:
+	case ast.Substr, ast.Substring, ast.Left, ast.Right, ast.CharLength:
 		switch function.Function.PbCode() {
 		case
+			tipb.ScalarFuncSig_LeftUTF8,
+			tipb.ScalarFuncSig_RightUTF8,
+			tipb.ScalarFuncSig_CharLengthUTF8,
 			tipb.ScalarFuncSig_Substring2ArgsUTF8,
 			tipb.ScalarFuncSig_Substring3ArgsUTF8:
 			return true
@@ -1045,6 +1056,11 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	case ast.Extract:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_ExtractDatetime:
+			return true
+		}
+	case ast.Replace:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_Replace:
 			return true
 		}
 	case ast.StrToDate:

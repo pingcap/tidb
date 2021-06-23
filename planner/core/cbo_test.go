@@ -578,6 +578,7 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 	for i := 0; i < 10; i++ {
 		tk.MustExec("insert into t values (5,5,5), (10,10,10)")
 	}
+	tk.MustExec("set @@tidb_analyze_version=1")
 	tk.MustExec("analyze table t with 2 buckets")
 	// Force using the histogram to estimate.
 	tk.MustExec("update mysql.stats_histograms set stats_ver = 0")
@@ -1240,4 +1241,20 @@ func (s *testAnalyzeSuite) TestBatchPointGetTablePartition(c *C) {
 		"1 0",
 		"3 0",
 	))
+}
+
+// TestAppendIntPkToIndexTailForRangeBuilding tests for issue25219 https://github.com/pingcap/tidb/issues/25219.
+func (s *testAnalyzeSuite) TestAppendIntPkToIndexTailForRangeBuilding(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("create table t25219(a int primary key, col3 int, col1 int, index idx(col3))")
+	tk.MustExec("insert into t25219 values(1, 1, 1)")
+	tk.MustExec("analyze table t25219")
+	tk.MustQuery("select * from t25219 WHERE (col3 IS NULL OR col1 IS NOT NULL AND col3 <= 6659) AND col3 = 1;").Check(testkit.Rows("1 1 1"))
 }

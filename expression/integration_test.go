@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -55,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 var _ = Suite(&testIntegrationSuite{})
@@ -306,7 +306,7 @@ func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 	tk.MustQuery("select sleep(1);").Check(testkit.Rows("0"))
 	tk.MustQuery("select sleep(0);").Check(testkit.Rows("0"))
 	tk.MustQuery("select sleep('a');").Check(testkit.Rows("0"))
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: 'a'"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect DOUBLE value: 'a'"))
 	rs, err := tk.Exec("select sleep(-1);")
 	c.Assert(err, IsNil)
 	c.Assert(rs, NotNil)
@@ -397,6 +397,15 @@ func (s *testIntegrationSuite) TestConvertToBit(c *C) {
 		"Warning 1690 constant 599999999 overflows tinyint",
 		"Warning 1406 Data Too Long, field len 63"))
 	tk.MustQuery("select * from t;").Check(testkit.Rows("127 \u007f\xff\xff\xff\xff\xff\xff\xff"))
+
+	// For issue 24900
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(b bit(16));")
+	tk.MustExec("insert ignore into t values(0x3635313836),(0x333830);")
+	tk.MustQuery("show warnings;").Check(testkit.Rows(
+		"Warning 1406 Data Too Long, field len 16",
+		"Warning 1406 Data Too Long, field len 16"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("\xff\xff", "\xff\xff"))
 }
 
 func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
@@ -1909,7 +1918,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 
 	_, err = tk.Exec("insert into t value(dayOfWeek('0000-00-00'))")
-	c.Assert(table.ErrTruncatedWrongValueForField.Equal(err), IsTrue, Commentf("%v", err))
+	c.Assert(types.ErrWrongValue.Equal(err), IsTrue, Commentf("%v", err))
 	_, err = tk.Exec(`update t set a = dayOfWeek("0000-00-00")`)
 	c.Assert(types.ErrWrongValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`delete from t where a = dayOfWeek(123)`)
@@ -1924,7 +1933,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	tk.MustExec(`update t set a = dayOfMonth("0000-00-00")`)
 	tk.MustExec("set sql_mode = 'NO_ZERO_DATE,STRICT_TRANS_TABLES';")
 	_, err = tk.Exec("insert into t value(dayOfMonth('0000-00-00'))")
-	c.Assert(table.ErrTruncatedWrongValueForField.Equal(err), IsTrue)
+	c.Assert(types.ErrWrongValue.Equal(err), IsTrue)
 	tk.MustExec("insert into t value(0)")
 	_, err = tk.Exec(`update t set a = dayOfMonth("0000-00-00")`)
 	c.Assert(types.ErrWrongValue.Equal(err), IsTrue)
@@ -1932,7 +1941,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	c.Assert(err, IsNil)
 
 	_, err = tk.Exec("insert into t value(dayOfYear('0000-00-00'))")
-	c.Assert(table.ErrTruncatedWrongValueForField.Equal(err), IsTrue)
+	c.Assert(types.ErrWrongValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`update t set a = dayOfYear("0000-00-00")`)
 	c.Assert(types.ErrWrongValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`delete from t where a = dayOfYear(123)`)
@@ -2029,7 +2038,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 
 	_, err = tk.Exec("insert into t value(dayname('0000-00-00'))")
-	c.Assert(table.ErrTruncatedWrongValueForField.Equal(err), IsTrue)
+	c.Assert(types.ErrWrongValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`update t set a = dayname("0000-00-00")`)
 	c.Assert(types.ErrWrongValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`delete from t where a = dayname(123)`)
@@ -3852,7 +3861,7 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 
 	result = tk.MustQuery("select coalesce(NULL, a), coalesce(NULL, b, a), coalesce(c, NULL, a, b), coalesce(d, NULL), coalesce(d, c), coalesce(NULL, NULL, e, 1), coalesce(f), coalesce(1, a, b, c, d, e, f) from t2")
 	// coalesce(col_bit) is not same with MySQL, because it's a bug of MySQL(https://bugs.mysql.com/bug.php?id=103289&thanks=4)
-	result.Check(testkit.Rows(fmt.Sprintf("1 1.1 2017-08-01 12:01:01 12:01:01 %s 12:01:01 abcdef \x15 1", time.Now().In(tk.Se.GetSessionVars().Location()).Format("2006-01-02"))))
+	result.Check(testkit.Rows(fmt.Sprintf("1 1.1 2017-08-01 12:01:01 12:01:01 %s 12:01:01 abcdef \x00\x15 1", time.Now().In(tk.Se.GetSessionVars().Location()).Format("2006-01-02"))))
 
 	// nullif
 	result = tk.MustQuery(`SELECT NULLIF(NULL, 1), NULLIF(1, NULL), NULLIF(1, 1), NULLIF(NULL, NULL);`)
@@ -8046,9 +8055,9 @@ func (s *testIntegrationSerialSuite) TestIssue11177(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("SELECT 'lvuleck' BETWEEN '2008-09-16 22:23:50' AND 0;").Check(testkit.Rows("0"))
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: 'lvuleck'", "Warning 1292 Truncated incorrect FLOAT value: '2008-09-16 22:23:50'"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect DOUBLE value: 'lvuleck'", "Warning 1292 Truncated incorrect DOUBLE value: '2008-09-16 22:23:50'"))
 	tk.MustQuery("SELECT 'aa' BETWEEN 'bb' AND 0;").Check(testkit.Rows("1"))
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: 'aa'", "Warning 1292 Truncated incorrect FLOAT value: 'bb'"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect DOUBLE value: 'aa'", "Warning 1292 Truncated incorrect DOUBLE value: 'bb'"))
 	tk.MustQuery("select 1 between 0 and b'110';").Check(testkit.Rows("1"))
 	tk.MustQuery("show warnings;").Check(testkit.Rows())
 	tk.MustQuery("select 'b' between 'a' and b'110';").Check(testkit.Rows("0"))
@@ -8086,7 +8095,7 @@ func (s *testIntegrationSerialSuite) TestIssue19804(c *C) {
 	tk.MustExec(`create table t(a set('a', 'b', 'c'));`)
 	tk.MustExec(`alter table t change a a set('a', 'b', 'c', 'd');`)
 	tk.MustExec(`insert into t values('d');`)
-	tk.MustGetErrMsg(`alter table t change a a set('a', 'b', 'c', 'e', 'f');`, "[ddl:8200]Unsupported modify column: cannot modify set column value d to e, and tidb_enable_change_column_type is false")
+	tk.MustGetErrMsg(`alter table t change a a set('a', 'b', 'c', 'e', 'f');`, "[types:1265]Data truncated for column 'a', value is 'KindMysqlSet d'")
 }
 
 func (s *testIntegrationSerialSuite) TestIssue20209(c *C) {
@@ -8503,6 +8512,18 @@ func (s *testIntegrationSerialSuite) TestCollationIndexJoin(c *C) {
 	tk.MustQuery("select /*+ inl_merge_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
 	tk.MustQuery("select /*+ inl_merge_join(t2) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Optimizer Hint /*+ INL_MERGE_JOIN(t2) */ is inapplicable"))
+
+	tk.MustExec("drop table if exists a, b")
+	tk.MustExec("create table a(i int, k varbinary(40), v int, primary key(i, k) clustered)")
+	tk.MustExec("create table b(i int, k varchar(40), v int, primary key(i, k) clustered)")
+	tk.MustExec("insert into a select 3, 'nice mccarthy', 10")
+	tk.MustQuery("select * from a, b where a.i = b.i and a.k = b.k").Check(testkit.Rows())
+
+	tk.MustExec("drop table if exists a, b")
+	tk.MustExec("create table a(i int  NOT NULL, k varbinary(40)  NOT NULL, v int, key idx1(i, k))")
+	tk.MustExec("create table b(i int  NOT NULL, k varchar(40)  NOT NULL, v int, key idx1(i, k))")
+	tk.MustExec("insert into a select 3, 'nice mccarthy', 10")
+	tk.MustQuery(" select /*+ inl_join(b) */ b.i from a, b where a.i = b.i and a.k = b.k").Check(testkit.Rows())
 }
 
 func (s *testIntegrationSerialSuite) TestCollationMergeJoin(c *C) {
@@ -8922,6 +8943,7 @@ PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
 	PARTITION p1 VALUES LESS THAN (11)
 );`)
+	defer tk.MustExec("drop table if exists t1")
 
 	tk.MustExec(`insert into t1 (c,d,e) values (1,1,1);`)
 	tk.MustExec(`insert into t1 (c,d,e) values (2,3,5);`)
@@ -9027,11 +9049,13 @@ PARTITION BY RANGE (c) (
 			expectErr: nil,
 		},
 	}
+	tk.MustExec("set global tidb_enable_local_txn = on;")
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope",
+		failpoint.Enable("tikvclient/injectTxnScope",
 			fmt.Sprintf(`return("%v")`, testcase.zone))
 		tk.MustExec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
+		tk.Exec("begin")
 		res, err := tk.Exec(testcase.sql)
 		_, resErr := session.GetRows4Test(context.Background(), tk.Se, res)
 		var checkErr error
@@ -9049,8 +9073,10 @@ PARTITION BY RANGE (c) (
 		if res != nil {
 			res.Close()
 		}
-		failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
+		tk.Exec("commit")
 	}
+	failpoint.Disable("tikvclient/injectTxnScope")
+	tk.MustExec("set global tidb_enable_local_txn = off;")
 }
 
 func (s *testIntegrationSerialSuite) TestCollationUnion(c *C) {
@@ -9439,12 +9465,8 @@ func (s *testIntegrationSuite) TestSecurityEnhancedMode(c *C) {
 
 	// When SEM is enabled these features are restricted to all users
 	// regardless of what privileges they have available.
-
-	_, err := tk.Exec("SHOW CONFIG")
-	c.Assert(err.Error(), Equals, "[planner:8132]Feature 'SHOW CONFIG' is not supported when security enhanced mode is enabled")
-	_, err = tk.Exec("SELECT 1 INTO OUTFILE '/tmp/aaaa'")
+	_, err := tk.Exec("SELECT 1 INTO OUTFILE '/tmp/aaaa'")
 	c.Assert(err.Error(), Equals, "[planner:8132]Feature 'SELECT INTO' is not supported when security enhanced mode is enabled")
-
 }
 
 func (s *testIntegrationSuite) TestIssue23925(c *C) {
@@ -9588,6 +9610,41 @@ func (s *testIntegrationSuite) TestEnumIndex(c *C) {
 		testkit.Rows("2"))
 	tk.MustQuery("select /*+ use_index(t,idx) */ col3 from t where col2 = 'b' and col1 is not null;").Check(
 		testkit.Rows("2"))
+
+	// issue25099
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(e enum(\"a\",\"b\",\"c\"), index idx(e));")
+	tk.MustExec("insert ignore into t values(0),(1),(2),(3);")
+	tk.MustQuery("select * from t where e = '';").Check(
+		testkit.Rows(""))
+	tk.MustQuery("select * from t where e != 'a';").Sort().Check(
+		testkit.Rows("", "b", "c"))
+	tk.MustExec("alter table t drop index idx;")
+	tk.MustQuery("select * from t where e = '';").Check(
+		testkit.Rows(""))
+	tk.MustQuery("select * from t where e != 'a';").Sort().Check(
+		testkit.Rows("", "b", "c"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(e enum(\"\"), index idx(e));")
+	tk.MustExec("insert ignore into t values(0),(1);")
+	tk.MustQuery("select * from t where e = '';").Check(
+		testkit.Rows("", ""))
+	tk.MustExec("alter table t drop index idx;")
+	tk.MustQuery("select * from t where e = '';").Check(
+		testkit.Rows("", ""))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(e enum(\"a\",\"b\",\"c\"), index idx(e));")
+	tk.MustExec("insert ignore into t values(0);")
+	tk.MustExec("select * from t t1 join t t2 on t1.e=t2.e;")
+	tk.MustQuery("select /*+ inl_join(t1,t2) */ * from t t1 join t t2 on t1.e=t2.e;").Check(
+		testkit.Rows(" "))
+	tk.MustQuery("select /*+ hash_join(t1,t2) */ * from t t1 join t t2 on t1.e=t2.e;").Check(
+		testkit.Rows(" "))
+	tk.MustQuery("select /*+ inl_hash_join(t1,t2) */ * from t t1 join t t2 on t1.e=t2.e;").Check(
+		testkit.Rows(" "))
 }
 
 // Previously global values were cached. This is incorrect.
@@ -9693,13 +9750,43 @@ func (s *testIntegrationSuite) TestComplexShowVariables(c *C) {
 	// and 16 rows in MySQL 8.0 (the aliases for tx_isolation is removed, along with query cache)
 	// In the event that we hide noop sysvars in future, we must keep these variables.
 	tk := testkit.NewTestKit(c, s.store)
-	c.Assert(tk.MustQuery(`SHOW VARIABLES WHERE Variable_name ='language' OR Variable_name = 'net_write_timeout' OR Variable_name = 'interactive_timeout' 
-OR Variable_name = 'wait_timeout' OR Variable_name = 'character_set_client' OR Variable_name = 'character_set_connection' 
-OR Variable_name = 'character_set' OR Variable_name = 'character_set_server' OR Variable_name = 'tx_isolation' 
-OR Variable_name = 'transaction_isolation' OR Variable_name = 'character_set_results' OR Variable_name = 'timezone' 
-OR Variable_name = 'time_zone' OR Variable_name = 'system_time_zone' 
-OR Variable_name = 'lower_case_table_names' OR Variable_name = 'max_allowed_packet' OR Variable_name = 'net_buffer_length' 
-OR Variable_name = 'sql_mode' OR Variable_name = 'query_cache_type'  OR Variable_name = 'query_cache_size' 
+	c.Assert(tk.MustQuery(`SHOW VARIABLES WHERE Variable_name ='language' OR Variable_name = 'net_write_timeout' OR Variable_name = 'interactive_timeout'
+OR Variable_name = 'wait_timeout' OR Variable_name = 'character_set_client' OR Variable_name = 'character_set_connection'
+OR Variable_name = 'character_set' OR Variable_name = 'character_set_server' OR Variable_name = 'tx_isolation'
+OR Variable_name = 'transaction_isolation' OR Variable_name = 'character_set_results' OR Variable_name = 'timezone'
+OR Variable_name = 'time_zone' OR Variable_name = 'system_time_zone'
+OR Variable_name = 'lower_case_table_names' OR Variable_name = 'max_allowed_packet' OR Variable_name = 'net_buffer_length'
+OR Variable_name = 'sql_mode' OR Variable_name = 'query_cache_type'  OR Variable_name = 'query_cache_size'
 OR Variable_name = 'license' OR Variable_name = 'init_connect'`).Rows(), HasLen, 19)
 
+}
+
+func (s *testIntegrationSuite) TestCharsetErr(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table charset_test(id int auto_increment primary key, c1 varchar(255) character set ascii)")
+	err := tk.ExecToErr("insert into charset_test(c1) values ('aaa\xEF\xBF\xBDabcdef')")
+	c.Assert(err.Error(), Equals, "[table:1366]Incorrect string value '\\xEF\\xBF\\xBDabc...' for column 'c1'")
+
+	err = tk.ExecToErr("insert into charset_test(c1) values ('aaa\xEF\xBF\xBD')")
+	c.Assert(err.Error(), Equals, "[table:1366]Incorrect string value '\\xEF\\xBF\\xBD' for column 'c1'")
+}
+
+func (s *testIntegrationSuite2) TestIssue25591(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1_1, t2_1;")
+	tk.MustExec("CREATE TABLE `t1_1` (`col1` double DEFAULT NULL, `col2` double DEFAULT NULL);")
+	tk.MustExec("CREATE TABLE `t2_1` (`col1` varchar(20) DEFAULT NULL, `col2` double DEFAULT NULL);")
+	tk.MustExec("insert into t1_1 values(12.991, null), (12.991, null);")
+	tk.MustExec("insert into t2_1(col2) values(87), (-9.183), (-9.183);")
+
+	tk.MustExec("set @@tidb_enable_vectorized_expression  = false;")
+	rows := tk.MustQuery("select t1.col1, t2.col1, t2.col2 from t1_1 t1 inner join  t2_1 t2 on t1.col1 not in (1,t2.col1,t2.col2) order by 1,2,3;")
+	rows.Check(testkit.Rows())
+
+	tk.MustExec("set @@tidb_enable_vectorized_expression  = true;")
+	rows = tk.MustQuery("select t1.col1, t2.col1, t2.col2 from t1_1 t1 inner join  t2_1 t2 on t1.col1 not in (1,t2.col1,t2.col2) order by 1,2,3;")
+	rows.Check(testkit.Rows())
 }

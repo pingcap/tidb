@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -182,6 +183,7 @@ type Execute struct {
 	UsingVars     []expression.Expression
 	PrepareParams []types.Datum
 	ExecID        uint32
+	SnapshotTS    uint64
 	Stmt          ast.StmtNode
 	StmtType      string
 	Plan          Plan
@@ -256,6 +258,23 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 	}
 
+	var snapshotTS uint64
+	if preparedObj.SnapshotTSEvaluator != nil {
+		if vars.InTxn() {
+			return ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
+		}
+		// if preparedObj.SnapshotTSEvaluator != nil, it is a stale read SQL:
+		// which means its infoschema is specified by the SQL, not the current/latest infoschema
+		var err error
+		snapshotTS, err = preparedObj.SnapshotTSEvaluator(sctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
 		// cached plan once the schema version is changed.
@@ -265,7 +284,6 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		preparedObj.Executor = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
-		// FIXME: compatible with prepare https://github.com/pingcap/tidb/issues/24932
 		ret := &PreprocessorReturn{InfoSchema: is}
 		err := Preprocess(sctx, prepared.Stmt, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
@@ -277,6 +295,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	if err != nil {
 		return err
 	}
+	e.SnapshotTS = snapshotTS
 	e.Stmt = prepared.Stmt
 	return nil
 }
@@ -834,8 +853,8 @@ func (h *AnalyzeTableID) Equals(t *AnalyzeTableID) bool {
 	return h.TableID == t.TableID && h.PartitionID == t.PartitionID
 }
 
-// analyzeInfo is used to store the database name, table name and partition name of analyze task.
-type analyzeInfo struct {
+// AnalyzeInfo is used to store the database name, table name and partition name of analyze task.
+type AnalyzeInfo struct {
 	DBName        string
 	TableName     string
 	PartitionName string
@@ -851,14 +870,14 @@ type AnalyzeColumnsTask struct {
 	ColsInfo         []*model.ColumnInfo
 	TblInfo          *model.TableInfo
 	Indexes          []*model.IndexInfo
-	analyzeInfo
+	AnalyzeInfo
 }
 
 // AnalyzeIndexTask is used for analyze index.
 type AnalyzeIndexTask struct {
 	IndexInfo *model.IndexInfo
 	TblInfo   *model.TableInfo
-	analyzeInfo
+	AnalyzeInfo
 }
 
 // Analyze represents an analyze plan
