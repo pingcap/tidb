@@ -2755,6 +2755,10 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) Executor {
+	if v.StoreType != kv.TiKV && b.explicitStaleness {
+		b.err = errors.New("stale requests require tikv backend")
+		return nil
+	}
 	failpoint.Inject("checkUseMPP", func(val failpoint.Value) {
 		if val.(bool) != useMPPExecution(b.ctx, v) {
 			if val.(bool) {
@@ -2787,7 +2791,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ret
 	}
-	// When isPartition is set, it means the union rewriting is done, so a partition reader is prefered.
+	// When isPartition is set, it means the union rewriting is done, so a partition reader is preferred.
 	if ok, _ := ts.IsPartition(); ok {
 		return ret
 	}
@@ -3016,7 +3020,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ret
 	}
-	// When isPartition is set, it means the union rewriting is done, so a partition reader is prefered.
+	// When isPartition is set, it means the union rewriting is done, so a partition reader is preferred.
 	if ok, _ := is.IsPartition(); ok {
 		return ret
 	}

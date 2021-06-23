@@ -34,7 +34,6 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 		sql              string
 		IsStaleness      bool
 		expectPhysicalTS int64
-		txnScope         string
 		zone             string
 	}{
 		{
@@ -43,7 +42,6 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 			sql:              `START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00';`,
 			IsStaleness:      true,
 			expectPhysicalTS: 1599321600000,
-			txnScope:         "local",
 			zone:             "sh",
 		},
 		{
@@ -51,7 +49,6 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 			preSQL:      `START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00';`,
 			sql:         "begin",
 			IsStaleness: false,
-			txnScope:    oracle.GlobalTxnScope,
 			zone:        "",
 		},
 		{
@@ -60,7 +57,6 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 			sql:              `START TRANSACTION READ ONLY AS OF TIMESTAMP tidb_bounded_staleness('2015-09-21 00:07:01', NOW());`,
 			IsStaleness:      true,
 			expectPhysicalTS: 1442765221000,
-			txnScope:         "local",
 			zone:             "bj",
 		},
 		{
@@ -68,7 +64,6 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 			preSQL:      `START TRANSACTION READ ONLY AS OF TIMESTAMP tidb_bounded_staleness('2015-09-21 00:07:01', NOW());`,
 			sql:         "begin",
 			IsStaleness: false,
-			txnScope:    oracle.GlobalTxnScope,
 			zone:        "",
 		},
 	}
@@ -78,7 +73,6 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 		c.Log(testcase.name)
 		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope",
 			fmt.Sprintf(`return("%v")`, testcase.zone))
-		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
 		tk.MustExec(testcase.preSQL)
 		tk.MustExec(testcase.sql)
 		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, testcase.IsStaleness)
