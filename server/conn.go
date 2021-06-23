@@ -797,7 +797,11 @@ func (cc *clientConn) Run(ctx context.Context) {
 		var handle minitrace.TraceHandle
 		traceEnabled := tidbtrace.Enable.Load()
 		if traceEnabled {
-			ctx, handle = minitrace.StartRootSpan(ctx, cc.packetToSQL(data), rand.Uint64(), &tidbtrace.Context{})
+			traceID := cc.ctx.GetSessionVars().TraceID
+			if traceID == 0 {
+				traceID = rand.Uint64()
+			}
+			ctx, handle = minitrace.StartRootSpan(ctx, cc.packetToSQL(data), traceID, &tidbtrace.Context{})
 		}
 
 		cmd := data[0]

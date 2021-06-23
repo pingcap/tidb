@@ -198,6 +198,9 @@ const (
 
 	// TiDBTxnScope indicates whether using global transactions or local transactions.
 	TiDBTxnScope = "txn_scope"
+
+	// TiDBTraceID is the trace id of the current tracing context.
+	TiDBTraceID = "tidb_trace_id"
 )
 
 // TiDB system variable names that both in session and global scope.

@@ -802,6 +802,9 @@ type SessionVars struct {
 
 	// TrackAggregateMemoryUsage indicates whether to track the memory usage of aggregate function.
 	TrackAggregateMemoryUsage bool
+
+	// TraceID is the trace id of the current tracing context.
+	TraceID uint64
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
@@ -960,6 +963,7 @@ func NewSessionVars() *SessionVars {
 		GuaranteeExternalConsistency: DefTiDBGuaranteeExternalConsistency,
 		AnalyzeVersion:               DefTiDBAnalyzeVersion,
 		EnableIndexMergeJoin:         DefTiDBEnableIndexMergeJoin,
+		TraceID:                      0,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1686,6 +1690,11 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableIndexMergeJoin = TiDBOptOn(val)
 	case TiDBTrackAggregateMemoryUsage:
 		s.TrackAggregateMemoryUsage = TiDBOptOn(val)
+	case TiDBTraceID:
+		result, err := strconv.ParseUint(val, 10, 64)
+		if err == nil {
+			s.TraceID = result
+		}
 	}
 	s.systems[name] = val
 	return nil
