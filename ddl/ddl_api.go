@@ -1638,12 +1638,15 @@ func checkTableInfoValid(tblInfo *model.TableInfo) error {
 	return checkInvisibleIndexOnPK(tblInfo)
 }
 
-func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *ast.CreateTableStmt) (*model.TableInfo, error) {
+func buildTableInfoWithLike(ctx sessionctx.Context, ident ast.Ident, referTblInfo *model.TableInfo, s *ast.CreateTableStmt) (*model.TableInfo, error) {
 	// Check the referred table is a real table object.
 	if referTblInfo.IsSequence() || referTblInfo.IsView() {
 		return nil, ErrWrongObject.GenWithStackByArgs(ident.Schema, referTblInfo.Name, "BASE TABLE")
 	}
 	tblInfo := *referTblInfo
+	if err := setTemporaryType(ctx, &tblInfo, s); err != nil {
+		return nil, errors.Trace(err)
+	}
 	// Check non-public column and adjust column offset.
 	newColumns := referTblInfo.Cols()
 	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
@@ -1734,9 +1737,6 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	if err = setTemporaryType(ctx, tbInfo, s); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if s.TemporaryKeyword == ast.TemporaryLocal {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("local TEMPORARY TABLE is not supported yet, TEMPORARY will be parsed but ignored"))
-	}
 
 	if err = setTableAutoRandomBits(ctx, tbInfo, colDefs); err != nil {
 		return nil, errors.Trace(err)
@@ -1797,14 +1797,11 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	// build tableInfo
 	var tbInfo *model.TableInfo
 	if s.ReferTable != nil {
-		tbInfo, err = buildTableInfoWithLike(ident, referTbl.Meta(), s)
+		tbInfo, err = buildTableInfoWithLike(ctx, ident, referTbl.Meta(), s)
 	} else {
 		tbInfo, err = buildTableInfoWithStmt(ctx, s, schema.Charset, schema.Collate)
 	}
 	if err != nil {
-		return errors.Trace(err)
-	}
-	if err = setTemporaryType(ctx, tbInfo, s); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1834,6 +1831,7 @@ func setTemporaryType(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.Cr
 	case ast.TemporaryLocal:
 		// TODO: set "tbInfo.TempTableType = model.TempTableLocal" after local temporary table is supported.
 		tbInfo.TempTableType = model.TempTableNone
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("local TEMPORARY TABLE is not supported yet, TEMPORARY will be parsed but ignored"))
 	default:
 		tbInfo.TempTableType = model.TempTableNone
 	}
