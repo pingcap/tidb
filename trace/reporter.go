@@ -227,7 +227,7 @@ func (c *converter) nextSpanSet(
 
 	if c.jTraces != nil {
 		*c.jTraces = append(*c.jTraces, jaeger.Trace{
-			TraceID:     int64(traceID),
+			TraceIDLow:  int64(traceID),
 			ServiceName: serviceName,
 			Spans:       make([]jaeger.Span, 0, spanLen),
 		})
@@ -340,7 +340,8 @@ func (r *reporter) splitTrace(trace jaeger.Trace) {
 	totalTraces := (len(trace.Spans) + LIMIT - 1) / LIMIT
 	for i := 0; i < totalTraces; i++ {
 		r.traceBuf = append(r.traceBuf, jaeger.Trace{
-			TraceID:     trace.TraceID,
+			TraceIDLow:  trace.TraceIDLow,
+			TraceIDHigh: trace.TraceIDHigh,
 			ServiceName: trace.ServiceName,
 			Spans:       trace.Spans[i*LIMIT : min((i+1)*LIMIT, len(trace.Spans))],
 		})
