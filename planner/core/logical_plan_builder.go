@@ -3860,7 +3860,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		columns = tbl.WritableCols()
 	} else if b.inDeleteStmt {
 		// All hidden columns are needed because we need to delete the expression index that consists of hidden columns.
-		columns = tbl.FullHiddenColsAndVisibleCols()
+		columns = tbl.DeletableCols()
 	} else {
 		columns = tbl.Cols()
 	}
@@ -3931,12 +3931,13 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	for i, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		names = append(names, &types.FieldName{
-			DBName:            dbName,
-			TblName:           tableInfo.Name,
-			ColName:           col.Name,
-			OrigTblName:       tableInfo.Name,
-			OrigColName:       col.Name,
-			Hidden:            col.Hidden,
+			DBName:      dbName,
+			TblName:     tableInfo.Name,
+			ColName:     col.Name,
+			OrigTblName: tableInfo.Name,
+			OrigColName: col.Name,
+			Hidden:      col.Hidden,
+			// For update statement and delete statement, internal version should see the special middle state column, while user doesn't.
 			NotExplicitUsable: col.State != model.StatePublic,
 		})
 		newCol := &expression.Column{
@@ -4816,6 +4817,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	oldSchema := p.Schema()
 	oldLen := oldSchema.Len()
 
+	// For explicit column usage, should use the all-public columns.
 	if delete.Where != nil {
 		p, err = b.buildSelection(ctx, p, delete.Where, nil)
 		if err != nil {
