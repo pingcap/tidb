@@ -1230,10 +1230,10 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 	}{
 		{sql: "insert into t () values (),(),(),(),(),(),();", planRegexp: ""},
 		{sql: "insert into t (b) values (1),(1),(1),(1),(1),(1),(1),(1);", planRegexp: ""},
-		{sql: "replace into t (b) values (1),(1),(1),(1),(1),(1),(1),(1);", planRegexp: ""},
 		{sql: "update t set b=a where b is null limit 1;", planRegexp: ".*Limit.*TableReader.*"},
-		{sql: "delete from t where b is null limit 2;", planRegexp: ".*Limit.*TableReader.*"},
-		{sql: "select * from t use index(idx) where a<10;", planRegexp: ".*IndexLookUp.*"},
+		{sql: "delete from t where b = a limit 2;", planRegexp: ".*Limit.*TableReader.*"},
+		{sql: "replace into t (b) values (1),(1),(1),(1),(1),(1),(1),(1);", planRegexp: ""},
+		{sql: "select * from t use index(idx) where a<10000000;", planRegexp: ".*IndexLookUp.*"},
 		{sql: "select * from t ignore index(idx) where a>0;", planRegexp: ".*TableReader.*"},
 		{sql: "select /*+ HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a=t2.a where t1.b is not null;", planRegexp: ".*HashJoin.*"},
 		{sql: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t2.a=t1.a where t1.b is not null;", planRegexp: ".*IndexHashJoin.*"},
@@ -1267,8 +1267,9 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		{prepare: "insert into t1 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
 		{prepare: "replace into t1 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
 		{prepare: "update t1 set b=a where b is null limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
-		{prepare: "delete from t1 where b is null limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
-		{prepare: "select * from t1 use index(idx) where a<?;", args: []interface{}{1}, planRegexp: ".*IndexLookUp.*"},
+		{prepare: "delete from t1 where b = a limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
+		{prepare: "replace into t1 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
+		{prepare: "select * from t1 use index(idx) where a<?;", args: []interface{}{10000000}, planRegexp: ".*IndexLookUp.*"},
 		{prepare: "select * from t1 ignore index(idx) where a>?;", args: []interface{}{1}, planRegexp: ".*TableReader.*"},
 		{prepare: "select /*+ HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t1.a=t2.a where t1.b is not null;", args: nil, planRegexp: ".*HashJoin.*"},
 		{prepare: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t2.a=t1.a where t1.b is not null;", args: nil, planRegexp: ".*IndexHashJoin.*"},
@@ -1305,10 +1306,10 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		cancel     func()
 	}{
 		{prepare: "insert into t2 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
-		{prepare: "replace into t2 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
 		{prepare: "update t2 set b=a where b is null limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
-		{prepare: "delete from t2 where b is null limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
-		{prepare: "select * from t2 use index(idx) where a<?;", args: []interface{}{1}, planRegexp: ".*IndexLookUp.*"},
+		{prepare: "delete from t2 where b = a limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
+		{prepare: "replace into t2 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
+		{prepare: "select * from t2 use index(idx) where a<?;", args: []interface{}{10000000}, planRegexp: ".*IndexLookUp.*"},
 		{prepare: "select * from t2 ignore index(idx) where a>?;", args: []interface{}{1}, planRegexp: ".*TableReader.*"},
 		{prepare: "select /*+ HASH_JOIN(t1, t2) */ * from t2 t1 join t2 t2 on t1.a=t2.a where t1.b is not null;", args: nil, planRegexp: ".*HashJoin.*"},
 		{prepare: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t2 t1 join t2 t2 on t2.a=t1.a where t1.b is not null;", args: nil, planRegexp: ".*IndexHashJoin.*"},
@@ -1495,7 +1496,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	cancel() // cancel case 1
 
 	// case 2: agent hangs for a while
-	cancel = runWorkload(0, 10)
+	cancel2 := runWorkload(0, 10)
 	// empty agent address, should not collect records
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
@@ -1508,13 +1509,15 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	// agent server hangs for a while
 	agentServer.HangFromNow(time.Second * 6)
 	// run another set of SQL queries
-	cancel()
-	cancel = runWorkload(11, 20)
+	cancel2()
+
+	cancel3 := runWorkload(11, 20)
 	agentServer.WaitCollectCnt(1, time.Second*8)
 	checkFn(5)
+	cancel3()
 
 	// case 3: agent restart
-	cancel = runWorkload(0, 10)
+	cancel4 := runWorkload(0, 10)
 	// empty agent address, should not collect records
 	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
 	agentServer.WaitCollectCnt(1, time.Second*4)
@@ -1524,9 +1527,9 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	agentServer.WaitCollectCnt(1, time.Second*8)
 	checkFn(5)
 	// run another set of SQL queries
-	cancel()
+	cancel4()
 
-	cancel = runWorkload(11, 20)
+	cancel5 := runWorkload(11, 20)
 	// agent server shutdown
 	agentServer.Stop()
 	// agent server restart
@@ -1536,6 +1539,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	// check result
 	agentServer.WaitCollectCnt(2, time.Second*8)
 	checkFn(5)
+	cancel5()
 }
 
 func (ts *tidbTestTopSQLSuite) loopExec(ctx context.Context, c *C, fn func(db *sql.DB)) {
