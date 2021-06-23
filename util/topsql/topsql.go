@@ -16,7 +16,9 @@ package topsql
 import (
 	"context"
 	"runtime/pprof"
+	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql/reporter"
@@ -66,6 +68,22 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 	} else {
 		linkPlanTextWithDigest(planDigestBytes, normalizedPlan)
 	}
+	failpoint.Inject("mockHighLoadForEachSQL", func(val failpoint.Value) {
+		// In integration test, some SQL run very fast that Top SQL pprof profile unable to sample data of those SQL,
+		// So need mock some high cpu load to make sure pprof profile successfully samples the data of those SQL.
+		// Attention: Top SQL pprof profile unable to sample data of those SQL which run very fast, this behavior is expected.
+		// The integration test was just want to make sure each type of SQL will be set goroutine labels and and can be collected.
+		if val.(bool) {
+			start := time.Now()
+			for {
+				if time.Since(start) > 10*time.Millisecond {
+					break
+				}
+				for i := 0; i < 10e5; i++ {
+				}
+			}
+		}
+	})
 	return ctx
 }
 
