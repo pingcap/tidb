@@ -1380,6 +1380,15 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		}
 	}
 
+	// Test case 4: transaction commit
+	ctx4, cancel4 := context.WithCancel(context.Background())
+	defer cancel4()
+	go ts.loopExec(ctx4, c, func(db *sql.DB) {
+		db.Exec("begin")
+		db.Exec("insert into t () values (),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),()")
+		db.Exec("commit")
+	})
+
 	// Check result of test case 1.
 	for _, ca := range cases1 {
 		checkFn(ca.sql, ca.planRegexp)
@@ -1397,6 +1406,9 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		checkFn(ca.prepare, ca.planRegexp)
 		ca.cancel()
 	}
+
+	// Check result of test case 4.
+	checkFn("commit", "")
 }
 
 func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
