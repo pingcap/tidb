@@ -160,6 +160,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	newSnapshotTS := getSnapshotTSByName()
 	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
 	// We don't check snapshot with gc safe point for read_ts
+	// Client-go will automatically check the snapshotTS with gc safe point. It's unnecessary to check gc safe point during set executor.
 	if newSnapshotIsSet && name != variable.TiDBTxnReadTS {
 		err = gcutil.ValidateSnapshot(e.ctx, newSnapshotTS)
 		if err != nil {
