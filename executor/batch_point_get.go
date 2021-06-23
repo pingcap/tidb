@@ -229,7 +229,9 @@ func datumsContainNull(vals []types.Datum) bool {
 func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var handleVals map[string][]byte
 	var indexKeys []kv.Key
+	var valNotExistIdxKeys []kv.Key
 	var err error
+	var lockIdxKeys = variable.LockUniqueKeys.Load()
 	batchGetter := e.batchGetter
 	rc := e.ctx.GetSessionVars().IsPessimisticReadConsistency()
 	if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
@@ -279,6 +281,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		// indexKeys will be generated after getting handles.
 		if !rc {
 			indexKeys = toFetchIndexKeys
+			valNotExistIdxKeys = make([]kv.Key, 0, len(toFetchIndexKeys))
 		} else {
 			indexKeys = make([]kv.Key, 0, len(toFetchIndexKeys))
 		}
@@ -301,6 +304,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		for _, key := range toFetchIndexKeys {
 			handleVal := handleVals[string(key)]
 			if len(handleVal) == 0 {
+				valNotExistIdxKeys = append(valNotExistIdxKeys, key)
 				continue
 			}
 			handle, err1 := tablecodec.DecodeHandleInUniqueIndexValue(handleVal, e.tblInfo.IsCommonHandle)
@@ -402,9 +406,13 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var values map[string][]byte
 	// Lock keys (include exists and non-exists keys) before fetch all values for Repeatable Read Isolation.
 	if e.lock && !rc {
-		lockKeys := make([]kv.Key, len(keys)+len(indexKeys))
-		copy(lockKeys, keys)
-		copy(lockKeys[len(keys):], indexKeys)
+		lockKeys := make([]kv.Key, 0, len(keys)+len(indexKeys))
+		lockKeys = append(lockKeys, keys...)
+		if lockIdxKeys {
+			lockKeys = append(lockKeys, indexKeys...)
+		} else {
+			lockKeys = append(lockKeys, valNotExistIdxKeys...)
+		}
 		err = LockKeys(ctx, e.ctx, e.waitTime, lockKeys...)
 		if err != nil {
 			return err
@@ -438,7 +446,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			// with clustered index enabled, indexKeys is empty in this situation
 			// lock primary key for clustered index table is redundant
 			if len(indexKeys) != 0 {
-				existKeys = append(existKeys, indexKeys[i])
+				if lockIdxKeys {
+					existKeys = append(existKeys, indexKeys[i])
+				}
 			}
 		}
 	}

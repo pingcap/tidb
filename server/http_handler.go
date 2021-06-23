@@ -718,6 +718,17 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			config.StoreGlobalConfig(cfg)
 			deadlockhistory.GlobalDeadlockHistory.Resize(uint(capacity))
 		}
+		if lockUniqueKey := req.Form.Get("tidb_lock_unique_key"); lockUniqueKey != "" {
+			switch lockUniqueKey {
+			case "0":
+				variable.LockUniqueKeys.Store(false)
+			case "1":
+				variable.LockUniqueKeys.Store(true)
+			default:
+				writeError(w, errors.New("illegal argument, please use 0 or 1 for this"))
+				return
+			}
+		}
 	} else {
 		writeData(w, config.GetGlobalConfig())
 	}

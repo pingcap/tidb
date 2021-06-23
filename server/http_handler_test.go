@@ -1156,6 +1156,7 @@ func (ts *HTTPHandlerTestSerialSuite) TestPostSettings(c *C) {
 	form.Set("tidb_general_log", "1")
 	form.Set("tidb_enable_async_commit", "1")
 	form.Set("tidb_enable_1pc", "1")
+	form.Set("tidb_lock_unique_key", "1")
 	resp, err := ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
@@ -1168,12 +1169,14 @@ func (ts *HTTPHandlerTestSerialSuite) TestPostSettings(c *C) {
 	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnable1PC)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, variable.On)
+	c.Assert(variable.LockUniqueKeys.Load(), Equals, true)
 
 	form = make(url.Values)
 	form.Set("log_level", "fatal")
 	form.Set("tidb_general_log", "0")
 	form.Set("tidb_enable_async_commit", "0")
 	form.Set("tidb_enable_1pc", "0")
+	form.Set("tidb_lock_unique_key", "0")
 	resp, err = ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
@@ -1186,6 +1189,7 @@ func (ts *HTTPHandlerTestSerialSuite) TestPostSettings(c *C) {
 	val, err = variable.GetGlobalSystemVar(se.GetSessionVars(), variable.TiDBEnable1PC)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, variable.Off)
+	c.Assert(variable.LockUniqueKeys.Load(), Equals, false)
 	form.Set("log_level", os.Getenv("log_level"))
 
 	// test ddl_slow_threshold

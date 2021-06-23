@@ -2596,3 +2596,67 @@ func (s *testPessimisticSuite) TestAsyncCommitCalTSFail(c *C) {
 	tk2.MustExec("update tk set c2 = c2 + 1")
 	tk2.MustExec("commit")
 }
+
+func (s *testPessimisticSuite) TestSwitchForUniqueKeyLock(c *C) {
+	// Turn off the switch so the lock behaviours is that only lock delete operations on unique index keys.
+	variable.LockUniqueKeys.Store(false)
+	defer func() {
+		variable.LockUniqueKeys.Store(true)
+	}()
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id varchar(20) primary key, v int)")
+	tk.MustExec("insert into t values(1, 1), (2, 2)")
+	tk2.MustExec("set innodb_lock_wait_timeout = 1")
+	for _, isRC := range []bool{false, true} {
+		if isRC {
+			tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
+		}
+		// Test point get lock on unique key, the duplicate insert should not be blocked by the pessimistic lock.
+		// Test the exist key.
+		tk.MustExec("begin pessimistic")
+		tk.MustExec(`select * from t where id = "1" for update`)
+		tk2.MustExec("begin pessimistic")
+		err := tk2.ExecToErr(`insert into t values("1", 10)`)
+		c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+		tk2.MustExec("rollback")
+
+		// Test the non-exist key, the conflict insert should be blocked by the pessimistic lock if it's RC.
+		tk2.MustExec("begin pessimistic")
+		tk.MustExec(`select * from t where id = '3' for update`)
+		if !isRC {
+			err = tk2.ExecToErr(`insert into t values("3", 10)`)
+			c.Assert(err.Error(), Equals, storeerr.ErrLockWaitTimeout.Error())
+		} else {
+			tk2.MustExec(`insert into t values("3", 10)`)
+		}
+		tk2.MustExec("rollback")
+		tk.MustExec("rollback")
+
+		// Test batch point get lock on unique key, the duplicate insert should not be blocked by the pessimistic lock.
+		// Test the exist key.
+		tk.MustExec("begin pessimistic")
+		tk.MustExec(`select * from t where id in ("1", "2", "3") for update`)
+		tk2.MustExec("begin pessimistic")
+		err = tk2.ExecToErr(`insert into t values("1", 10)`)
+		c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+		tk2.MustExec("rollback")
+
+		// Test the non-exist key, the conflict insert should be blocked by the pessimistic lock if it's not RC.
+		tk2.MustExec("begin pessimistic")
+		tk.MustExec(`select * from t where id = '3' for update`)
+		if !isRC {
+			err = tk2.ExecToErr(`insert into t values("3", 10)`)
+			c.Assert(err.Error(), Equals, storeerr.ErrLockWaitTimeout.Error())
+		} else {
+			tk2.MustExec(`insert into t values("3", 10)`)
+		}
+		tk2.MustExec("rollback")
+		tk.MustExec("rollback")
+	}
+}

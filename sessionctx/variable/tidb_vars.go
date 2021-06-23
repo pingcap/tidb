@@ -751,6 +751,7 @@ var (
 		ReportIntervalSeconds: atomic.NewInt64(DefTiDBTopSQLReportIntervalSeconds),
 	}
 	EnableLocalTxn = atomic.NewBool(DefTiDBEnableLocalTxn)
+	LockUniqueKeys = atomic.NewBool(true)
 )
 
 // TopSQL is the variable for control top sql feature.

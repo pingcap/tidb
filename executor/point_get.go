@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -242,7 +243,21 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 			// try lock the index key if isolation level is not read consistency
 			// also lock key if read consistency read a value
-			if !e.ctx.GetSessionVars().IsPessimisticReadConsistency() || len(e.handleVal) > 0 {
+			lockIndexKey := false
+			keyExist := len(e.handleVal) > 0
+			enableLockIdxKey := variable.LockUniqueKeys.Load()
+			if !e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+				if !keyExist {
+					lockIndexKey = true
+				} else if keyExist && enableLockIdxKey {
+					lockIndexKey = true
+				}
+			} else {
+				if keyExist && enableLockIdxKey {
+					lockIndexKey = true
+				}
+			}
+			if lockIndexKey {
 				err = e.lockKeyIfNeeded(ctx, e.idxKey)
 				if err != nil {
 					return err
