@@ -1,17 +1,37 @@
-# Security Policy
+Security Vulnerability Disclosure and Response Process:
 
-If you think you have found a vulnerability in TiDB products or have experienced security incidents involving vulnerabilities in TiDB products, please report this vulnerability as soon as possible to help us solve it.
-We recommend that you provide as much vulnerability information as possible in the following format and send an email to the TiDB security team mailbox (security@tidb.io):
-issue title*:
+As we all know, TiDB is a fast-growing community. In order to ensure its steady development, we have adopted the following security vulnerability disclosure and response process.
+
+The primary goal of this process is to reduce users’ total exposure time to publicly known vulnerabilities.To ensure TiDB products’ vulnerabilities can be fixed quickly, our security team is responsible for the entire vulnerability management process, including internal communication and external disclosure.
+
+If you think you have found a vulnerability or have experienced security incidents involving vulnerabilities of TiDB products, please report it as soon as possible to the TiDB security team (security@tidb.io).
+
+Please kindly help provide as much vulnerability information as possible in the following format:
+
+Issue title*:
+
 Overview*:
-Affected components and version number*:
-CVE number (if any):
-Vulnerability verification process*:
-contact details*:
-*Indicates required items.
 
-prompt:
-TiDB takes all vulnerabilities very seriously. We will confirm the vulnerabilities you submit within 48 hours (working days) and keep in touch with you.
-When a security vulnerability fix announcement is issued, TiDB will thank and praise the reporter. At the same time, in order to gain credibility, security researchers must follow a responsible approach, including:
-The vulnerability will not be disclosed until TiDB releases a patch for this vulnerability
-Do not disclose the details of the problem, such as exploits or proof code.
+Affected components and version number*:
+
+CVE number (if any):
+
+Vulnerability verification process*:
+
+Contact information*:
+
+*mean required
+
+Response time:
+
+The TiDB security team will confirm the vulnerabilities within 2 working days after your submission and keep in touch with you.
+
+After a security vulnerability is fixed, we will thank the reporter publicly. However, in order to avoid negative impact, please kindly keep the vulnerability confidential before that. We would be really appreciated if you could obey the following code of conduct:
+
+The vulnerability will not be disclosed until TiDB releases a patch for it.
+
+Do not disclose the details of the vulnerability, such as exploits code.
+
+Release note
+
+No release note
