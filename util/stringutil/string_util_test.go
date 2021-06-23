@@ -102,22 +102,17 @@ func (s *testStringUtilSuite) TestPatternMatch(c *C) {
 		{`\_a`, `_a`, '\\', true},
 		{`\_a`, `aa`, '\\', false},
 		{`\\_a`, `\xa`, '\\', true},
-		{`\a\b`, `\a\b`, '\\', true},
+		{`\a\b`, `\a\b`, '\\', false},
+		{`\a\b`, `ab`, '\\', true},
 		{`%%_`, `abc`, '\\', true},
 		{`%_%_aA`, "aaaA", '\\', true},
 		{`+_a`, `_a`, '+', true},
 		{`+%a`, `%a`, '+', true},
 		{`\%a`, `%a`, '+', false},
 		{`++a`, `+a`, '+', true},
+		{`+a`, `a`, '+', true},
 		{`++_a`, `+xa`, '+', true},
 		{`___Հ`, `䇇Հ`, '\\', false},
-		// We may reopen these test when like function go back to case insensitive.
-		/*
-			{"_ab", "AAB", '\\', true},
-			{"%a%", "BAB", '\\', true},
-			{"%a", "AAA", '\\', true},
-			{"b%", "BBB", '\\', true},
-		*/
 	}
 	for _, v := range tbl {
 		patChars, patTypes := CompilePattern(v.pattern, v.escape)
@@ -144,7 +139,7 @@ func (s *testStringUtilSuite) TestCompileLike2Regexp(c *C) {
 		{`\%a`, `%a`},
 		{`\_a`, `_a`},
 		{`\\_a`, `\.a`},
-		{`\a\b`, `\a\b`},
+		{`\a\b`, `ab`},
 		{`%%_`, `..*`},
 		{`%_%_aA`, "...*aA"},
 	}
