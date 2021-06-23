@@ -127,6 +127,9 @@ const (
 	inSequenceFunction
 )
 
+// Make linter happy.
+var _ = PreprocessorReturn{}.initedLastSnapshotTS
+
 // PreprocessorReturn is used to retain information obtained in the preprocessor.
 type PreprocessorReturn struct {
 	initedLastSnapshotTS bool
@@ -1534,7 +1537,7 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 }
 
 func (p *preprocessor) setStalenessReturn() {
-	_, txnScope := config.GetTxnScopeFromConfig()
+	txnScope := config.GetTxnScopeFromConfig()
 	p.ExplicitStaleness = true
 	p.TxnScope = txnScope
 }
