@@ -17,6 +17,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/pingcap/tidb/statistics/handle"
 	"os"
 	"path"
 	"strings"
@@ -80,6 +81,7 @@ var _ = SerialSuites(&testSessionSerialSuite{})
 var _ = SerialSuites(&testBackupRestoreSuite{})
 var _ = Suite(&testClusteredSuite{})
 var _ = SerialSuites(&testClusteredSerialSuite{})
+var _ = SerialSuites(&testStatisticsSuite{})
 
 type testSessionSuiteBase struct {
 	cluster cluster.Cluster
@@ -105,6 +107,12 @@ type testSessionSerialSuite struct {
 }
 
 type testBackupRestoreSuite struct {
+	testSessionSuiteBase
+}
+
+// testStatisticsSuite contains test about statistics which need running with real TiKV.
+// Only tests under /session will be run with real TiKV so we put them here instead of /statistics.
+type testStatisticsSuite struct {
 	testSessionSuiteBase
 }
 
@@ -4295,4 +4303,51 @@ func (s *testSessionSuite) TestInTxnPSProtoPointGet(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("commit")
+}
+
+func (s *testStatisticsSuite) cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+	}
+	tk.MustExec("delete from mysql.stats_meta")
+	tk.MustExec("delete from mysql.stats_histograms")
+	tk.MustExec("delete from mysql.stats_buckets")
+	do.StatsHandle().Clear()
+}
+
+func (s *testStatisticsSuite) TestCMSketchBasic(c *C) {
+	defer s.cleanEnv(c, s.store, s.dom)
+	tk := testkit.NewTestKit(c, s.store)
+	h := s.dom.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set session tidb_analyze_version = 1")
+	tk.MustExec("create table t(a date, b int, c int unsigned, d time, e bit, f year, g timestamp, h datetime);")
+	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
+	tk.MustExec("insert into t value('2021-4-10', 1, 11, '10:20:30', 1, 2000, '2021-5-1', '2021-6-1');")
+	tk.MustExec("analyze table t;")
+	tk.MustExec("select * from t where a = '2021-4-10' and b = 1 and c = 11 and d = '10:20:30' and e = 1 and f = 2000 and g = '2021-5-1' and h = '2021-6-1';")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.LoadNeededHistograms(), IsNil)
+	cases := []struct {
+		sql    string
+		result string
+	}{
+		{"explain select * from t where a = '2021-4-10';", "1.00"},
+		{"explain select * from t where b = 1;", "1.00"},
+		{"explain select * from t where c = 11;", "1.00"},
+		{"explain select * from t where d = '10:20:30';", "1.00"},
+		{"explain select * from t where e = 1;", "0.80"},
+		{"explain select * from t where f = 2000;", "1.00"},
+		{"explain select * from t where g = '2021-5-1';", "1.00"},
+		{"explain select * from t where h = '2021-6-1';", "1.00"},
+	}
+	for _, cs := range cases {
+		rows := tk.MustQuery(cs.sql).Rows()
+		c.Assert(fmt.Sprintf("%v", rows[0][1]), Equals, cs.result)
+	}
 }
