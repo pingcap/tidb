@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/tikv/client-go/v2/oracle"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -93,14 +94,14 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			continue
 		}
 
-		if err := e.setSysVariable(name, v); err != nil {
+		if err := e.setSysVariable(ctx, name, v); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) error {
+func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expression.VarAssignment) error {
 	sessionVars := e.ctx.GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
@@ -166,6 +167,19 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		if err != nil {
 			fallbackOldSnapshotTS()
 			return err
+		}
+		// Validate that tidbSnapshotTS does not exceed the current timestamp
+		txnScope := sessionVars.CheckAndGetTxnScope()
+		latestTS, err := e.ctx.GetStore().GetOracle().GetLowResolutionTimestamp(ctx, &oracle.Option{TxnScope: txnScope})
+		// If we fail to get latestTS or the snapshotTS exceeds it, get a timestamp from PD to double check
+		if err != nil || newSnapshotTS > latestTS {
+			currentVer, err := e.ctx.GetStore().CurrentVersion(txnScope)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if newSnapshotTS > currentVer.Ver {
+				return errors.Errorf("cannot set tidb_snapshot to a future timestamp")
+			}
 		}
 	}
 	err = e.loadSnapshotInfoSchemaIfNeeded(newSnapshotTS)
