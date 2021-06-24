@@ -1260,6 +1260,38 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		})
 	}
 
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), time.Second*20)
+	defer cancel()
+	checkFn := func(sql, planRegexp string) {
+		c.Assert(timeoutCtx.Err(), IsNil)
+		commentf := Commentf("sql: %v", sql)
+		stats := collector.GetSQLStatsBySQLWithRetry(sql, len(planRegexp) > 0)
+		// since 1 sql may has many plan, check `len(stats) > 0` instead of `len(stats) == 1`.
+		c.Assert(len(stats) > 0, IsTrue, commentf)
+
+		for _, s := range stats {
+			sqlStr := collector.GetSQL(s.SQLDigest)
+			encodedPlan := collector.GetPlan(s.PlanDigest)
+			// Normalize the user SQL before check.
+			normalizedSQL := parser.Normalize(sql)
+			c.Assert(sqlStr, Equals, normalizedSQL, commentf)
+			// decode plan before check.
+			normalizedPlan, err := plancodec.DecodeNormalizedPlan(encodedPlan)
+			c.Assert(err, IsNil)
+			// remove '\n' '\t' before do regexp match.
+			normalizedPlan = strings.Replace(normalizedPlan, "\n", " ", -1)
+			normalizedPlan = strings.Replace(normalizedPlan, "\t", " ", -1)
+			c.Assert(normalizedPlan, Matches, planRegexp, commentf)
+		}
+	}
+	// Wait the top sql collector to collect profile data.
+	collector.WaitCollectCnt(1)
+	// Check result of test case 1.
+	for _, ca := range cases1 {
+		checkFn(ca.sql, ca.planRegexp)
+		ca.cancel()
+	}
+
 	// Test case 2: prepare/execute sql
 	cases2 := []struct {
 		prepare    string
@@ -1299,6 +1331,13 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 				stmt.Exec(args...)
 			}
 		})
+	}
+	// Wait the top sql collector to collect profile data.
+	collector.WaitCollectCnt(1)
+	// Check result of test case 2.
+	for _, ca := range cases2 {
+		checkFn(ca.prepare, ca.planRegexp)
+		ca.cancel()
 	}
 
 	// Test case 3: prepare, execute stmt using @val...
@@ -1357,44 +1396,6 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 
 	// Wait the top sql collector to collect profile data.
 	collector.WaitCollectCnt(1)
-
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), time.Second*20)
-	defer cancel()
-	checkFn := func(sql, planRegexp string) {
-		c.Assert(timeoutCtx.Err(), IsNil)
-		commentf := Commentf("sql: %v", sql)
-		stats := collector.GetSQLStatsBySQLWithRetry(sql, len(planRegexp) > 0)
-		// since 1 sql may has many plan, check `len(stats) > 0` instead of `len(stats) == 1`.
-		c.Assert(len(stats) > 0, IsTrue, commentf)
-
-		for _, s := range stats {
-			sqlStr := collector.GetSQL(s.SQLDigest)
-			encodedPlan := collector.GetPlan(s.PlanDigest)
-			// Normalize the user SQL before check.
-			normalizedSQL := parser.Normalize(sql)
-			c.Assert(sqlStr, Equals, normalizedSQL, commentf)
-			// decode plan before check.
-			normalizedPlan, err := plancodec.DecodeNormalizedPlan(encodedPlan)
-			c.Assert(err, IsNil)
-			// remove '\n' '\t' before do regexp match.
-			normalizedPlan = strings.Replace(normalizedPlan, "\n", " ", -1)
-			normalizedPlan = strings.Replace(normalizedPlan, "\t", " ", -1)
-			c.Assert(normalizedPlan, Matches, planRegexp, commentf)
-		}
-	}
-
-	// Check result of test case 1.
-	for _, ca := range cases1 {
-		checkFn(ca.sql, ca.planRegexp)
-		ca.cancel()
-	}
-
-	// Check result of test case 2.
-	for _, ca := range cases2 {
-		checkFn(ca.prepare, ca.planRegexp)
-		ca.cancel()
-	}
-
 	// Check result of test case 3.
 	for _, ca := range cases3 {
 		checkFn(ca.prepare, ca.planRegexp)
