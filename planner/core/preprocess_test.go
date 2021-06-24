@@ -351,6 +351,7 @@ func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
 		"set tidb_enable_global_temporary_table=true",
 		"create table tb(id int);",
 		"create global temporary table temp(id int) on commit delete rows;",
+		"create global temporary table temp1(id int) on commit delete rows;",
 	}
 	for _, execSQL := range execSQLList {
 		_, err := s.se.Execute(ctx, execSQL)
@@ -360,5 +361,5 @@ func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
 	s.runSQL(c, "drop global temporary table tb;", false, core.ErrDropTableOnTemporaryTable)
 	s.runSQL(c, "drop global temporary table temp", false, nil)
 	s.runSQL(c, "drop global temporary table test.tb;", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop global temporary table test.temp", false, nil)
+	s.runSQL(c, "drop global temporary table test.temp1", false, nil)
 }
