@@ -16,6 +16,7 @@ package sessionctx
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/tikv/client-go/v2/oracle"
 
 	"github.com/pingcap/errors"
@@ -158,6 +159,7 @@ func ValidateReadTS(ctx context.Context, sctx Context, readTS uint64) error {
 	latestTS, err := sctx.GetStore().GetOracle().GetLowResolutionTimestamp(ctx, &oracle.Option{TxnScope: txnScope})
 	// If we fail to get latestTS or the readTS exceeds it, get a timestamp from PD to double check
 	if err != nil || readTS > latestTS {
+		metrics.ValidateReadTSFromPDCount.Inc()
 		currentVer, err := sctx.GetStore().CurrentVersion(txnScope)
 		if err != nil {
 			return errors.Errorf("fail to validate read timestamp: %v", err)
