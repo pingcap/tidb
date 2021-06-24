@@ -9734,6 +9734,29 @@ OR Variable_name = 'license' OR Variable_name = 'init_connect'`).Rows(), HasLen,
 
 }
 
+<<<<<<< HEAD
+=======
+func (s *testIntegrationSuite) TestFloat64Inf(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select '1e800' + 1e100;").Check(
+		testkit.Rows("179769313486231570000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"))
+	tk.MustQuery("select '-1e800' - 1e100;").Check(
+		testkit.Rows("-179769313486231570000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"))
+}
+
+func (s *testIntegrationSuite) TestCharsetErr(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table charset_test(id int auto_increment primary key, c1 varchar(255) character set ascii)")
+	err := tk.ExecToErr("insert into charset_test(c1) values ('aaa\xEF\xBF\xBDabcdef')")
+	c.Assert(err.Error(), Equals, "[table:1366]Incorrect string value '\\xEF\\xBF\\xBDabc...' for column 'c1'")
+
+	err = tk.ExecToErr("insert into charset_test(c1) values ('aaa\xEF\xBF\xBD')")
+	c.Assert(err.Error(), Equals, "[table:1366]Incorrect string value '\\xEF\\xBF\\xBD' for column 'c1'")
+}
+
+>>>>>>> 88b587c08... expression: fix float64 overflow check in plus/minus real function (#24179)
 func (s *testIntegrationSuite2) TestIssue25591(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
