@@ -1161,6 +1161,11 @@ error = '''
 `%s` is unsupported on temporary tables.
 '''
 
+["planner:8007"]
+error = '''
+`drop global temporary table` can only drop global temporary table
+'''
+
 ["planner:8108"]
 error = '''
 Unsupported type %T
