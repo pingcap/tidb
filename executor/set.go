@@ -146,8 +146,12 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			sessionVars.TxnReadTS.SetTxnReadTS(oldSnapshotTS)
 		}
 	}
-	if name == variable.TxnIsolationOneShot && sessionVars.InTxn() {
-		return errors.Trace(ErrCantChangeTxCharacteristics)
+	if sessionVars.InTxn() {
+		if name == variable.TxnIsolationOneShot ||
+			name == variable.TiDBTxnReadTS ||
+			name == variable.TiDBSnapshot {
+			return errors.Trace(ErrCantChangeTxCharacteristics)
+		}
 	}
 	err = variable.SetSessionSystemVar(sessionVars, name, valStr)
 	if err != nil {
@@ -155,7 +159,9 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	}
 	newSnapshotTS := getSnapshotTSByName()
 	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
-	if newSnapshotIsSet {
+	// We don't check snapshot with gc safe point for read_ts
+	// Client-go will automatically check the snapshotTS with gc safe point. It's unnecessary to check gc safe point during set executor.
+	if newSnapshotIsSet && name != variable.TiDBTxnReadTS {
 		err = gcutil.ValidateSnapshot(e.ctx, newSnapshotTS)
 		if err != nil {
 			fallbackOldSnapshotTS()

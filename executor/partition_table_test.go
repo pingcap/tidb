@@ -3017,3 +3017,18 @@ PARTITION BY RANGE (a) (
 	s.testData.GetTestCases(c, &input, &output)
 	s.verifyPartitionResult(tk, input, output)
 }
+
+func (s *partitionTableSuite) TestIssue25528(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustExec("use test")
+	tk.MustExec("create table issue25528 (id int primary key, balance DECIMAL(10, 2), balance2 DECIMAL(10, 2) GENERATED ALWAYS AS (-balance) VIRTUAL, created_at TIMESTAMP) PARTITION BY HASH(id) PARTITIONS 8")
+	tk.MustExec("insert into issue25528 (id, balance, created_at) values(1, 100, '2021-06-17 22:35:20')")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from issue25528 where id = 1 for update").Check(testkit.Rows("1 100.00 -100.00 2021-06-17 22:35:20"))
+
+	tk.MustExec("drop table if exists issue25528")
+	tk.MustExec("CREATE TABLE `issue25528` ( `c1` int(11) NOT NULL, `c2` int(11) DEFAULT NULL, `c3` int(11) DEFAULT NULL, `c4` int(11) DEFAULT NULL, PRIMARY KEY (`c1`) /*T![clustered_index] CLUSTERED */, KEY `k2` (`c2`), KEY `k3` (`c3`) ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH( `c1` ) PARTITIONS 10;")
+	tk.MustExec("INSERT INTO issue25528 (`c1`, `c2`, `c3`, `c4`) VALUES (1, 1, 1, 1) , (3, 3, 3, 3) , (2, 2, 2, 2) , (4, 4, 4, 4);")
+	tk.MustQuery("select * from issue25528 where c1 in (3, 4) order by c2 for update;").Check(testkit.Rows("3 3 3 3", "4 4 4 4"))
+}

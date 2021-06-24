@@ -309,8 +309,11 @@ func setSSLVariable(ca, key, cert string) {
 }
 
 func setTxnScope() {
-	variable.SetSysVar("txn_scope", func() string {
-		if isGlobal, _ := config.GetTxnScopeFromConfig(); isGlobal {
+	variable.SetSysVar(variable.TiDBTxnScope, func() string {
+		if !variable.EnableLocalTxn.Load() {
+			return kv.GlobalTxnScope
+		}
+		if txnScope := config.GetTxnScopeFromConfig(); txnScope == kv.GlobalTxnScope {
 			return kv.GlobalTxnScope
 		}
 		return kv.LocalTxnScope

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -7180,8 +7181,9 @@ func (b *builtinTiDBBoundedStalenessSig) evalTime(row chunk.Row) (types.Time, bo
 
 func getMinSafeTime(sessionCtx sessionctx.Context, timeZone *time.Location) time.Time {
 	var minSafeTS uint64
+	txnScope := config.GetTxnScopeFromConfig()
 	if store := sessionCtx.GetStore(); store != nil {
-		minSafeTS = store.GetMinSafeTS(sessionCtx.GetSessionVars().CheckAndGetTxnScope())
+		minSafeTS = store.GetMinSafeTS(txnScope)
 	}
 	// Inject mocked SafeTS for test.
 	failpoint.Inject("injectSafeTS", func(val failpoint.Value) {
