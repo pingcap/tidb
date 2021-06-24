@@ -1027,8 +1027,10 @@ func setTableScanToTableRowIDScan(p PhysicalPlan) {
 
 // rootTask is the final sink node of a plan graph. It should be a single goroutine on tidb.
 type rootTask struct {
-	p   PhysicalPlan
-	cst float64
+	p       PhysicalPlan
+	cst     float64
+	isEmpty bool // isEmpty indicates if this task contains a dual table and returns empty data.
+	// TODO: The flag 'isEmpty' is only checked by Projection and UnionAll. We should support more cases in the future.
 }
 
 func (t *rootTask) copy() task {
@@ -1102,6 +1104,16 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 			return false
 		}
 	}
+
+	// If this happens, some Projection Operator must be inlined into this Limit. (issues/14428)
+	// For example, if the original plan is `IndexLookUp(col1, col2) -> Limit(col1, col2) -> Project(col1)`,
+	//  then after inlining the Project, it will be `IndexLookUp(col1, col2) -> Limit(col1)` here.
+	// If the Limit is sunk into the IndexLookUp, the IndexLookUp's schema needs to be updated as well,
+	//  but updating it here is not safe, so do not sink Limit into this IndexLookUp in this case now.
+	if p.Schema().Len() != reader.Schema().Len() {
+		return false
+	}
+
 	// We can sink Limit into IndexLookUpReader only if tablePlan contains no Selection.
 	ts, isTableScan := reader.tablePlan.(*PhysicalTableScan)
 	if !isTableScan {
@@ -1273,6 +1285,9 @@ func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	t = t.convertToRootTask(p.ctx)
 	t = attachPlan2Task(p, t)
 	t.addCost(p.GetCost(t.count()))
+	if root, ok := tasks[0].(*rootTask); ok && root.isEmpty {
+		t.(*rootTask).isEmpty = true
+	}
 	return t
 }
 
@@ -1287,9 +1302,14 @@ func (p *PhysicalUnionAll) attach2MppTasks(tasks ...task) task {
 				childMaxCost = childCost
 			}
 			childPlans = append(childPlans, mpp.plan())
+		} else if root, ok := tk.(*rootTask); ok && root.isEmpty {
+			continue
 		} else {
 			return invalidTask
 		}
+	}
+	if len(childPlans) == 0 {
+		return invalidTask
 	}
 	p.SetChildren(childPlans...)
 	t.cst = childMaxCost
@@ -1297,8 +1317,10 @@ func (p *PhysicalUnionAll) attach2MppTasks(tasks ...task) task {
 }
 
 func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
-	if _, ok := tasks[0].(*mppTask); ok {
-		return p.attach2MppTasks(tasks...)
+	for _, t := range tasks {
+		if _, ok := t.(*mppTask); ok {
+			return p.attach2MppTasks(tasks...)
+		}
 	}
 	t := &rootTask{p: p}
 	childPlans := make([]PhysicalPlan, 0, len(tasks))
