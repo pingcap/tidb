@@ -1764,7 +1764,7 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test")
 
-	tk.MustExec(fmt.Sprintf("set time_zone = 'UTC'"))
+	tk.MustExec("set time_zone = 'UTC'")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a VARCHAR(31) NULL DEFAULT 'wwrzfwzb01j6ddj', b DECIMAL(12,0) NULL DEFAULT '-729850476163')")
 	tk.MustExec("ALTER TABLE t ADD COLUMN x CHAR(218) NULL DEFAULT 'lkittuae'")
@@ -2105,4 +2105,27 @@ func (s *testColumnTypeChangeSuite) TestChangePrefixedIndexColumnToNonPrefixOne(
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a varchar(700), key(a(700)));")
 	tk.MustGetErrCode("alter table t change column a a tinytext;", mysql.ErrBlobKeyWithoutLength)
+}
+
+// Fix issue https://github.com/pingcap/tidb/issues/25469
+func (s *testColumnTypeChangeSuite) TestCastToTimeStampDecodeError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("CREATE TABLE `t` (" +
+		"  `a` datetime DEFAULT '1764-06-11 02:46:14'" +
+		") ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='7b84832e-f857-4116-8872-82fc9dcc4ab3'")
+	tk.MustExec("insert into `t` values();")
+	tk.MustGetErrCode("alter table `t` change column `a` `b` TIMESTAMP NULL DEFAULT '2015-11-14 07:12:24';", mysql.ErrTruncatedWrongValue)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"  `a` date DEFAULT '1764-06-11 02:46:14'" +
+		") ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='7b84832e-f857-4116-8872-82fc9dcc4ab3'")
+	tk.MustExec("insert into `t` values();")
+	tk.MustGetErrCode("alter table `t` change column `a` `b` TIMESTAMP NULL DEFAULT '2015-11-14 07:12:24';", mysql.ErrTruncatedWrongValue)
+	tk.MustExec("drop table if exists t")
+
+	// Normal cast datetime to timestamp can succeed.
+	tk.MustQuery("select timestamp(cast('1000-11-11 12-3-1' as date));").Check(testkit.Rows("1000-11-11 00:00:00"))
 }
