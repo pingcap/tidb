@@ -39,6 +39,12 @@ const (
 	SetPresumeKeyNotExists FlagsOp = iota
 	// SetNeedLocked marks the associated key need to be acquired lock.
 	SetNeedLocked
+	// SetAssertExist marks the associated key must exist.
+	SetAssertExist
+	// SetAssertNotExist marks the associated key must not exists.
+	SetAssertNotExist
+	// SetAssertNone marks the associated key without any assert.
+	SetAssertNone
 )
 
 // ApplyFlagsOps applys flagspos to origin.

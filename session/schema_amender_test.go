@@ -144,7 +144,7 @@ func prepareTestData(se *session, mutations *tikv.PlainMutations, oldTblInfo tab
 			oldData.ops = append(oldData.ops, keyOp)
 			oldData.rowValue = append(oldData.rowValue, thisRowValue)
 			if keyOp == kvrpcpb.Op_Del {
-				mutations.Push(keyOp, rowKey, []byte{}, true)
+				mutations.Push(keyOp, rowKey, []byte{}, true, false, false)
 			}
 		}
 		oldRowValues[i] = thisRowValue
@@ -172,9 +172,9 @@ func prepareTestData(se *session, mutations *tikv.PlainMutations, oldTblInfo tab
 		}
 		c.Assert(err, IsNil)
 		if keyOp == kvrpcpb.Op_Put || keyOp == kvrpcpb.Op_Insert {
-			mutations.Push(keyOp, rowKey, rowValue, true)
+			mutations.Push(keyOp, rowKey, rowValue, true, false, false)
 		} else if keyOp == kvrpcpb.Op_Lock {
-			mutations.Push(keyOp, rowKey, []byte{}, true)
+			mutations.Push(keyOp, rowKey, []byte{}, true, false, false)
 		}
 		newRowValues[i] = thisRowValue
 		newRowKvMap[string(rowKey)] = thisRowValue
@@ -213,7 +213,7 @@ func prepareTestData(se *session, mutations *tikv.PlainMutations, oldTblInfo tab
 					if info.indexInfoAtCommit.Meta().Unique {
 						isPessimisticLock = true
 					}
-					oldIdxKeyMutation.Push(kvrpcpb.Op_Del, idxKey, []byte{}, isPessimisticLock)
+					oldIdxKeyMutation.Push(kvrpcpb.Op_Del, idxKey, []byte{}, isPessimisticLock, false, false)
 				}
 			}
 			if addIndexNeedAddOp(info.AmendOpType) && mayGenPutIndexRowKeyOp(keyOp) {
@@ -225,7 +225,7 @@ func prepareTestData(se *session, mutations *tikv.PlainMutations, oldTblInfo tab
 					mutOp = kvrpcpb.Op_Insert
 					isPessimisticLock = true
 				}
-				newIdxKeyMutation.Push(mutOp, idxKey, idxVal, isPessimisticLock)
+				newIdxKeyMutation.Push(mutOp, idxKey, idxVal, isPessimisticLock, false, false)
 			}
 			skipMerge := false
 			if info.AmendOpType == AmendNeedAddDeleteAndInsert {
@@ -440,7 +440,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 				idxKey := tablecodec.EncodeIndexSeekKey(oldTbInfo.Meta().ID, oldTbInfo.Indices()[i].Meta().ID, idxValue)
 				err = txn.Set(idxKey, idxValue)
 				c.Assert(err, IsNil)
-				mutations.Push(kvrpcpb.Op_Put, idxKey, idxValue, false)
+				mutations.Push(kvrpcpb.Op_Put, idxKey, idxValue, false, false, false)
 			}
 
 			res, err := schemaAmender.genAllAmendMutations(ctx, &mutations, collector)

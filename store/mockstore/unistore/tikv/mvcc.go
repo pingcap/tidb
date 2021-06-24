@@ -852,6 +852,16 @@ func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutatio
 		Value:       m.Value,
 		Secondaries: req.Secondaries,
 	}
+	if item == nil {
+		if m.Assertion == kvrpcpb.Assertion_Exist {
+			log.Error("ASSERTION FAIL!!! non-exist for must exist key", zap.Stringer("mutation", m))
+		}
+	} else {
+		if m.Assertion == kvrpcpb.Assertion_NotExist {
+			log.Error("ASSERTION FAIL!!! exist for must non-exist key", zap.Stringer("mutation", m))
+		}
+	}
+
 	var err error
 	lock.Op = uint8(m.Op)
 	if lock.Op == uint8(kvrpcpb.Op_Insert) {

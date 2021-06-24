@@ -1189,7 +1189,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 	// stop txn ttl manager and remove primary key, make the other keys left behind
 	committer.CloseTTLManager()
 	muts := tikv.NewPlainMutations(1)
-	muts.Push(kvrpcpb.Op_Lock, pk, nil, true)
+	muts.Push(kvrpcpb.Op_Lock, pk, nil, true, false, false)
 	err = committer.PessimisticRollbackMutations(context.Background(), &muts)
 	c.Assert(err, IsNil)
 

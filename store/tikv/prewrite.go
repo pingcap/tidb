@@ -51,10 +51,18 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 	mutations := make([]*pb.Mutation, m.Len())
 	isPessimisticLock := make([]bool, m.Len())
 	for i := 0; i < m.Len(); i++ {
+		assertion := pb.Assertion_None
+		if m.IsAssertExists(i) {
+			assertion = pb.Assertion_Exist
+		}
+		if m.IsAssertNotExist(i) {
+			assertion = pb.Assertion_NotExist
+		}
 		mutations[i] = &pb.Mutation{
-			Op:    m.GetOp(i),
-			Key:   m.GetKey(i),
-			Value: m.GetValue(i),
+			Op:        m.GetOp(i),
+			Key:       m.GetKey(i),
+			Value:     m.GetValue(i),
+			Assertion: assertion,
 		}
 		isPessimisticLock[i] = m.IsPessimisticLock(i)
 	}
