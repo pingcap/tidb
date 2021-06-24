@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // InfoschemaMetaVersion is a workaround. Due to circular dependency,
@@ -149,3 +151,20 @@ const (
 	// LastExecuteDDL is the key for whether the session execute a ddl command last time.
 	LastExecuteDDL basicCtxType = 3
 )
+
+// ValidateReadTS validates that readTS does not exceed the current timestamp
+func ValidateReadTS(ctx context.Context, sctx Context, readTS uint64) error {
+	txnScope := sctx.GetSessionVars().CheckAndGetTxnScope()
+	latestTS, err := sctx.GetStore().GetOracle().GetLowResolutionTimestamp(ctx, &oracle.Option{TxnScope: txnScope})
+	// If we fail to get latestTS or the readTS exceeds it, get a timestamp from PD to double check
+	if err != nil || readTS > latestTS {
+		currentVer, err := sctx.GetStore().CurrentVersion(txnScope)
+		if err != nil {
+			return errors.Errorf("fail to validate read timestamp: %v", err)
+		}
+		if readTS > currentVer.Ver {
+			return errors.Errorf("cannot set read timestamp to a future time")
+		}
+	}
+	return nil
+}

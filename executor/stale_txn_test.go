@@ -938,3 +938,13 @@ func (s *testStaleTxnSuite) TestStaleSelect(c *C) {
 	time.Sleep(tolerance)
 	tk.MustQuery(fmt.Sprintf("select * from t as of timestamp '%s' where c=5", time6.Format("2006-1-2 15:04:05.000"))).Check(testkit.Rows("4 5 <nil>"))
 }
+
+func (s *testStaleTxnSuite) TestStaleReadFutureTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// Setting tx_read_ts to a time in the future will fail. (One day before the 2038 problem)
+	_, err := tk.Exec("start transaction read only as of timestamp '2038-01-18 03:14:07'")
+	c.Assert(err, ErrorMatches, "cannot set read timestamp to a future time")
+	// Transaction should not be started and read ts should not be set if check fails
+	c.Assert(tk.Se.GetSessionVars().InTxn(), IsFalse)
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(0))
+}

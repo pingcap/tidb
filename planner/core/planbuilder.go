@@ -2453,6 +2453,9 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			if err != nil {
 				return nil, err
 			}
+			if err := sessionctx.ValidateReadTS(ctx, b.ctx, startTS); err != nil {
+				return nil, err
+			}
 			p.StaleTxnStartTS = startTS
 		} else if readTS > 0 {
 			p.StaleTxnStartTS = readTS

@@ -24,12 +24,12 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -160,30 +160,23 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	}
 	newSnapshotTS := getSnapshotTSByName()
 	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
-	// We don't check snapshot with gc safe point for read_ts
-	// Client-go will automatically check the snapshotTS with gc safe point. It's unnecessary to check gc safe point during set executor.
-	if newSnapshotIsSet && name != variable.TiDBTxnReadTS {
-		err = gcutil.ValidateSnapshot(e.ctx, newSnapshotTS)
-		if err != nil {
+	if newSnapshotIsSet {
+		if err = sessionctx.ValidateReadTS(ctx, e.ctx, newSnapshotTS); err != nil {
 			fallbackOldSnapshotTS()
 			return err
 		}
-		// Validate that tidbSnapshotTS does not exceed the current timestamp
-		txnScope := sessionVars.CheckAndGetTxnScope()
-		latestTS, err := e.ctx.GetStore().GetOracle().GetLowResolutionTimestamp(ctx, &oracle.Option{TxnScope: txnScope})
-		// If we fail to get latestTS or the snapshotTS exceeds it, get a timestamp from PD to double check
-		if err != nil || newSnapshotTS > latestTS {
-			currentVer, err := e.ctx.GetStore().CurrentVersion(txnScope)
+
+		// We don't check snapshot with gc safe point for read_ts
+		// Client-go will automatically check the snapshotTS with gc safe point. It's unnecessary to check gc safe point during set executor.
+		if name != variable.TiDBTxnReadTS {
+			err = gcutil.ValidateSnapshot(e.ctx, newSnapshotTS)
 			if err != nil {
 				fallbackOldSnapshotTS()
-				return errors.Errorf("fail to validate tidb_snapshot: %v", err)
-			}
-			if newSnapshotTS > currentVer.Ver {
-				fallbackOldSnapshotTS()
-				return errors.Errorf("cannot set tidb_snapshot to a future time")
+				return err
 			}
 		}
 	}
+
 	err = e.loadSnapshotInfoSchemaIfNeeded(newSnapshotTS)
 	if err != nil {
 		fallbackOldSnapshotTS()
