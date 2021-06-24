@@ -4338,7 +4338,9 @@ func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error
 
 	sessionVars := b.ctx.GetSessionVars()
 	if sessionVars.SnapshotTS != 0 {
-		return errors.New("can not read temporary table when 'tidb_snapshot' is set")
+		// Some tools like dumpling use snapshotTS to dump all table's records and will be fail if we return an error.
+		// So we only return warning here.
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("can not read temporary table when 'tidb_snapshot' is set"))
 	}
 
 	if sessionVars.TxnCtx.IsStaleness || b.explicitStaleness {
