@@ -479,11 +479,25 @@ const (
 	version67 = 67
 	// version68 update the global variable 'tidb_enable_clustered_index' from 'off' to 'int_only'.
 	version68 = 68
+<<<<<<< HEAD
+=======
+	// version69 adds mysql.global_grants for DYNAMIC privileges
+	version69 = 69
+	// version70 adds mysql.user.plugin to allow multiple authentication plugins
+	version70 = 70
+	// version71 forces tidb_multi_statement_mode=OFF when tidb_multi_statement_mode=WARN
+	// This affects upgrades from v4.0 where the default was WARN.
+	version71 = 71
+>>>>>>> 1cab530b7... session: force tidb_multi_statement_mode=OFF when mode=WARN (#25723)
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
+<<<<<<< HEAD
 var currentBootstrapVersion int64 = version68
+=======
+var currentBootstrapVersion int64 = version71
+>>>>>>> 1cab530b7... session: force tidb_multi_statement_mode=OFF when mode=WARN (#25723)
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -555,6 +569,12 @@ var (
 		upgradeToVer66,
 		upgradeToVer67,
 		upgradeToVer68,
+<<<<<<< HEAD
+=======
+		upgradeToVer69,
+		upgradeToVer70,
+		upgradeToVer71,
+>>>>>>> 1cab530b7... session: force tidb_multi_statement_mode=OFF when mode=WARN (#25723)
 	}
 )
 
@@ -1477,6 +1497,31 @@ func upgradeToVer68(s Session, ver int64) {
 	mustExecute(s, "DELETE FROM mysql.global_variables where VARIABLE_NAME = 'tidb_enable_clustered_index' and VARIABLE_VALUE = 'OFF'")
 }
 
+<<<<<<< HEAD
+=======
+func upgradeToVer69(s Session, ver int64) {
+	if ver >= version69 {
+		return
+	}
+	doReentrantDDL(s, CreateGlobalGrantsTable)
+}
+
+func upgradeToVer70(s Session, ver int64) {
+	if ver >= version70 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN plugin CHAR(64) AFTER authentication_string", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET plugin='mysql_native_password'")
+}
+
+func upgradeToVer71(s Session, ver int64) {
+	if ver >= version71 {
+		return
+	}
+	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='OFF' WHERE VARIABLE_NAME = 'tidb_multi_statement_mode' AND VARIABLE_VALUE = 'WARN'")
+}
+
+>>>>>>> 1cab530b7... session: force tidb_multi_statement_mode=OFF when mode=WARN (#25723)
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
