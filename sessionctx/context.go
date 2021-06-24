@@ -16,18 +16,18 @@ package sessionctx
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/metrics"
-	"github.com/tikv/client-go/v2/oracle"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // InfoschemaMetaVersion is a workaround. Due to circular dependency,
