@@ -21,7 +21,7 @@ import (
 	"reflect"
 
 	"github.com/pingcap/errors"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -170,7 +170,7 @@ func colChangeAmendable(colAtStart *model.ColumnInfo, colAtCommit *model.ColumnI
 		if colAtStart.Charset != colAtCommit.Charset || colAtStart.Collate != colAtCommit.Collate {
 			return errors.Trace(errors.Errorf("charset or collate is not matched for column=%v", colAtCommit.Name.String()))
 		}
-		_, _, err := ddl.CheckModifyTypeCompatible(&colAtStart.FieldType, &colAtCommit.FieldType)
+		_, err := ddl.CheckModifyTypeCompatible(&colAtStart.FieldType, &colAtCommit.FieldType)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -283,13 +283,13 @@ func (a *amendCollector) collectTblAmendOps(sctx sessionctx.Context, phyTblID in
 }
 
 // mayGenDelIndexRowKeyOp returns if the row key op could generate Op_Del index key mutations.
-func mayGenDelIndexRowKeyOp(keyOp pb.Op) bool {
-	return keyOp == pb.Op_Del || keyOp == pb.Op_Put
+func mayGenDelIndexRowKeyOp(keyOp kvrpcpb.Op) bool {
+	return keyOp == kvrpcpb.Op_Del || keyOp == kvrpcpb.Op_Put
 }
 
 // mayGenPutIndexRowKeyOp returns if the row key op could generate Op_Put/Op_Insert index key mutations.
-func mayGenPutIndexRowKeyOp(keyOp pb.Op) bool {
-	return keyOp == pb.Op_Put || keyOp == pb.Op_Insert
+func mayGenPutIndexRowKeyOp(keyOp kvrpcpb.Op) bool {
+	return keyOp == kvrpcpb.Op_Put || keyOp == kvrpcpb.Op_Insert
 }
 
 // amendOp is an amend operation for a specific schema change, new mutations will be generated using input ones.
@@ -394,9 +394,9 @@ func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionc
 		}
 		for i := 0; i < len(insertedMutations.GetKeys()); i++ {
 			key := insertedMutations.GetKeys()[i]
-			destKeyOp := pb.Op_Insert
+			destKeyOp := kvrpcpb.Op_Insert
 			if _, ok := a.deletedOldIndexKeys[string(key)]; ok {
-				destKeyOp = pb.Op_Put
+				destKeyOp = kvrpcpb.Op_Put
 			}
 			resAddMutations.Push(destKeyOp, key, insertedMutations.GetValues()[i], insertedMutations.GetPessimisticFlags()[i])
 		}
@@ -477,14 +477,14 @@ func (a *amendOperationAddIndex) genNewIdxKey(ctx context.Context, sctx sessionc
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	newIndexOp := pb.Op_Put
+	newIndexOp := kvrpcpb.Op_Put
 	isPessimisticLock := false
 	if _, ok := a.insertedNewIndexKeys[string(newIdxKey)]; ok {
 		return nil, errors.Trace(errors.Errorf("amend process key same key=%v found for index=%v in table=%v",
 			newIdxKey, a.info.indexInfoAtCommit.Meta().Name, a.info.tblInfoAtCommit.Meta().Name))
 	}
 	if a.info.indexInfoAtCommit.Meta().Unique {
-		newIndexOp = pb.Op_Insert
+		newIndexOp = kvrpcpb.Op_Insert
 		isPessimisticLock = true
 	}
 	a.insertedNewIndexKeys[string(newIdxKey)] = struct{}{}
@@ -515,7 +515,7 @@ func (a *amendOperationAddIndex) genOldIdxKey(ctx context.Context, sctx sessionc
 			isPessimisticLock = true
 		}
 		a.deletedOldIndexKeys[string(newIdxKey)] = struct{}{}
-		return &tikv.PlainMutation{KeyOp: pb.Op_Del, Key: newIdxKey, Value: emptyVal, IsPessimisticLock: isPessimisticLock}, nil
+		return &tikv.PlainMutation{KeyOp: kvrpcpb.Op_Del, Key: newIdxKey, Value: emptyVal, IsPessimisticLock: isPessimisticLock}, nil
 	}
 	return nil, nil
 }
@@ -540,12 +540,12 @@ func (s *SchemaAmender) getAmendableKeys(commitMutations tikv.CommitterMutations
 		}
 		keyOp := commitMutations.GetOp(i)
 		switch keyOp {
-		case pb.Op_Put:
+		case kvrpcpb.Op_Put:
 			addKeys = append(addKeys, byteKey)
 			removeKeys = append(removeKeys, byteKey)
-		case pb.Op_Insert:
+		case kvrpcpb.Op_Insert:
 			addKeys = append(addKeys, byteKey)
-		case pb.Op_Del:
+		case kvrpcpb.Op_Del:
 			removeKeys = append(removeKeys, byteKey)
 		}
 	}
@@ -594,7 +594,7 @@ func (s *SchemaAmender) prepareKvMap(ctx context.Context, commitMutations tikv.C
 
 func (s *SchemaAmender) checkDupKeys(ctx context.Context, mutations tikv.CommitterMutations) error {
 	// Check if there are duplicate key entries.
-	checkMap := make(map[string]pb.Op)
+	checkMap := make(map[string]kvrpcpb.Op)
 	for i := 0; i < mutations.Len(); i++ {
 		key := mutations.GetKey(i)
 		keyOp := mutations.GetOp(i)

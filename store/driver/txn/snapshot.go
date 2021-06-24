@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/options"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 type tikvSnapshot struct {
@@ -83,20 +83,19 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 	case kv.TaskID:
 		s.KVSnapshot.SetTaskID(val.(uint64))
 	case kv.CollectRuntimeStats:
-		s.KVSnapshot.SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
+		if val == nil {
+			s.KVSnapshot.SetRuntimeStats(nil)
+		} else {
+			s.KVSnapshot.SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
+		}
 	case kv.IsStalenessReadOnly:
 		s.KVSnapshot.SetIsStatenessReadOnly(val.(bool))
 	case kv.MatchStoreLabels:
 		s.KVSnapshot.SetMatchStoreLabels(val.([]*metapb.StoreLabel))
 	case kv.ResourceGroupTag:
 		s.KVSnapshot.SetResourceGroupTag(val.([]byte))
-	}
-}
-
-func (s *tikvSnapshot) DelOption(opt int) {
-	switch opt {
-	case kv.CollectRuntimeStats:
-		s.KVSnapshot.SetRuntimeStats(nil)
+	case kv.TxnScope:
+		s.KVSnapshot.SetTxnScope(val.(string))
 	}
 }
 
