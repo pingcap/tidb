@@ -4336,10 +4336,10 @@ func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error
 		return nil
 	}
 
+	// Some tools like dumpling use history read to dump all table's records and will be fail if we return an error.
+	// So we do not check SnapshotTS here
+
 	sessionVars := b.ctx.GetSessionVars()
-	if sessionVars.SnapshotTS != 0 {
-		return errors.New("can not read temporary table when 'tidb_snapshot' is set")
-	}
 
 	if sessionVars.TxnCtx.IsStaleness || b.explicitStaleness {
 		return errors.New("can not stale read temporary table")

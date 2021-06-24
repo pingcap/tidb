@@ -8652,7 +8652,9 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 
 	tk.MustExec("set @@tidb_snapshot=NOW(6)")
 	for _, query := range queries {
-		tk.MustGetErrMsg(query.sql, "can not read temporary table when 'tidb_snapshot' is set")
+		// Will success here for compatibility with some tools like dumping
+		rs := tk.MustQuery(query.sql)
+		rs.Check(testkit.Rows())
 	}
 }
 
