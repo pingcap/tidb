@@ -77,7 +77,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "lc_messages_dir", Value: "/usr/local/mysql-5.6.25-osx10.8-x86_64/share/"},
 	{Scope: ScopeGlobal, Name: "ft_boolean_syntax", Value: "+ -><()~*:\"\"&|"},
 	{Scope: ScopeGlobal, Name: TableDefinitionCache, Value: "2000", Type: TypeUnsigned, MinValue: 400, MaxValue: 524288, AutoConvertOutOfRange: true},
-	{Scope: ScopeNone, Name: SkipNameResolve, Value: Off, Type: TypeBool},
 	{Scope: ScopeNone, Name: "performance_schema_max_file_handles", Value: "32768"},
 	{Scope: ScopeSession, Name: "transaction_allow_batching", Value: ""},
 	{Scope: ScopeNone, Name: "performance_schema_max_statement_classes", Value: "168"},
