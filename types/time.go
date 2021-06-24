@@ -1974,7 +1974,18 @@ func ParseTimeFromYear(sc *stmtctx.StatementContext, year int64) (Time, error) {
 func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int8) (Time, error) {
 	// MySQL compatibility: 0 should not be converted to null, see #11203
 	if num == 0 {
-		return NewTime(ZeroCoreTime, tp, DefaultFsp), nil
+		zt := NewTime(ZeroCoreTime, tp, DefaultFsp)
+		if sc.InCreateOrAlterStmt {
+			switch tp {
+			case mysql.TypeTimestamp:
+				return zt, ErrTruncatedWrongVal.GenWithStackByArgs("timestamp", "0")
+			case mysql.TypeDate:
+				return zt, ErrTruncatedWrongVal.GenWithStackByArgs("date", "0")
+			case mysql.TypeDatetime:
+				return zt, ErrTruncatedWrongVal.GenWithStackByArgs("datetime", "0")
+			}
+		}
+		return zt, nil
 	}
 	fsp, err := CheckFsp(int(fsp))
 	if err != nil {

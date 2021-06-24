@@ -2129,3 +2129,16 @@ func (s *testColumnTypeChangeSuite) TestCastToTimeStampDecodeError(c *C) {
 	// Normal cast datetime to timestamp can succeed.
 	tk.MustQuery("select timestamp(cast('1000-11-11 12-3-1' as date));").Check(testkit.Rows("1000-11-11 00:00:00"))
 }
+
+// https://github.com/pingcap/tidb/issues/25285.
+func (s *testColumnTypeChangeSuite) TestCastFromZeroIntToTimeError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (0);")
+	tk.MustGetErrCode("alter table t modify column a date;", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify column a datetime;", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify column a timestamp;", mysql.ErrTruncatedWrongValue)
+}
