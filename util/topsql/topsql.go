@@ -82,7 +82,7 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 				failpoint.Return(ctx)
 			}
 			isDML := false
-			for _, prefix := range []string{"insert", "update", "delete", "load", "replace", "select"} {
+			for _, prefix := range []string{"insert", "update", "delete", "load", "replace", "select", "commit"} {
 				if strings.HasPrefix(lowerSQL, prefix) {
 					isDML = true
 					break
