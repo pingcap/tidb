@@ -2141,4 +2141,5 @@ func (s *testColumnTypeChangeSuite) TestCastFromZeroIntToTimeError(c *C) {
 	tk.MustGetErrCode("alter table t modify column a date;", mysql.ErrTruncatedWrongValue)
 	tk.MustGetErrCode("alter table t modify column a datetime;", mysql.ErrTruncatedWrongValue)
 	tk.MustGetErrCode("alter table t modify column a timestamp;", mysql.ErrTruncatedWrongValue)
+	tk.MustExec("drop table if exists t;")
 }
