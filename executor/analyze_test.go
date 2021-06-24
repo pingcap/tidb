@@ -599,6 +599,7 @@ func (s *testSuite1) TestAnalyzeIncrementalStreaming(c *C) {
 	s.testAnalyzeIncremental(tk, c)
 }
 
+// nolint:unused
 func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
