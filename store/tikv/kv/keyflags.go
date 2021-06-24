@@ -14,7 +14,7 @@
 package kv
 
 // KeyFlags are metadata associated with key
-type KeyFlags uint8
+type KeyFlags uint16
 
 const (
 	flagPresumeKNE KeyFlags = 1 << iota
@@ -24,6 +24,8 @@ const (
 	flagNeedCheckExists
 	flagPrewriteOnly
 	flagIgnoredIn2PC
+	flagAssertExist
+	flagAssertNotExist
 
 	persistentFlags = flagKeyLocked | flagKeyLockedValExist
 )
@@ -36,6 +38,16 @@ func (f KeyFlags) HasPresumeKeyNotExists() bool {
 // HasLocked returns whether the associated key has acquired pessimistic lock.
 func (f KeyFlags) HasLocked() bool {
 	return f&flagKeyLocked != 0
+}
+
+// HasAssertExist returns whether the key need ensure exists in 2pc.
+func (f KeyFlags) HasAssertExist() bool {
+	return f&flagAssertExist != 0
+}
+
+// HasAssertNotExist returns whether the key need ensure non-exists in 2pc.
+func (f KeyFlags) HasAssertNotExist() bool {
+	return f&flagAssertNotExist != 0
 }
 
 // HasNeedLocked return whether the key needed to be locked
@@ -94,6 +106,15 @@ func ApplyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 			origin |= flagPrewriteOnly
 		case SetIgnoredIn2PC:
 			origin |= flagIgnoredIn2PC
+		case SetAssertExist:
+			origin &= ^flagAssertNotExist
+			origin |= flagAssertExist
+		case SetAssertNotExist:
+			origin &= ^flagAssertExist
+			origin |= flagAssertNotExist
+		case SetAssertNone:
+			origin &= ^flagAssertExist
+			origin &= ^flagAssertNotExist
 		}
 	}
 	return origin
@@ -126,4 +147,10 @@ const (
 	SetPrewriteOnly
 	// SetIgnoredIn2PC marks the key will be ignored in 2pc.
 	SetIgnoredIn2PC
+	// SetAssertExist marks the key must exist.
+	SetAssertExist
+	// SetAssertNotExist marks the key must not exist.
+	SetAssertNotExist
+	// SetAssertNone cleans up the key's assert.
+	SetAssertNone
 )

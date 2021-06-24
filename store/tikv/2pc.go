@@ -156,6 +156,14 @@ func (m *memBufferMutations) IsPessimisticLock(i int) bool {
 	return m.handles[i].UserData&1 != 0
 }
 
+func (m *memBufferMutations) IsAssertExists(i int) bool {
+	return m.handles[i].UserData&(1<<1) != 0
+}
+
+func (m *memBufferMutations) IsAssertNotExist(i int) bool {
+	return m.handles[i].UserData&(1<<2) != 0
+}
+
 func (m *memBufferMutations) Slice(from, to int) CommitterMutations {
 	return &memBufferMutations{
 		handles: m.handles[from:to],
@@ -163,10 +171,16 @@ func (m *memBufferMutations) Slice(from, to int) CommitterMutations {
 	}
 }
 
-func (m *memBufferMutations) Push(op pb.Op, isPessimisticLock bool, handle unionstore.MemKeyHandle) {
+func (m *memBufferMutations) Push(op pb.Op, isPessimisticLock bool, assertExist bool, assertNotExist bool, handle unionstore.MemKeyHandle) {
 	aux := uint16(op) << 1
 	if isPessimisticLock {
 		aux |= 1
+	}
+	if assertExist {
+		aux |= 1 << 1
+	}
+	if assertNotExist {
+		aux |= 1 << 2
 	}
 	handle.UserData = aux
 	m.handles = append(m.handles, handle)
@@ -181,6 +195,8 @@ type CommitterMutations interface {
 	GetValue(i int) []byte
 	IsPessimisticLock(i int) bool
 	Slice(from, to int) CommitterMutations
+	IsAssertExists(i int) bool
+	IsAssertNotExist(i int) bool
 }
 
 // PlainMutations contains transaction operations.
@@ -189,6 +205,8 @@ type PlainMutations struct {
 	keys              [][]byte
 	values            [][]byte
 	isPessimisticLock []bool
+	isAssertExist     []bool
+	isAssertNotExist  []bool
 }
 
 // NewPlainMutations creates a PlainMutations object with sizeHint reserved.
@@ -198,6 +216,8 @@ func NewPlainMutations(sizeHint int) PlainMutations {
 		keys:              make([][]byte, 0, sizeHint),
 		values:            make([][]byte, 0, sizeHint),
 		isPessimisticLock: make([]bool, 0, sizeHint),
+		isAssertExist:     make([]bool, 0, sizeHint),
+		isAssertNotExist:  make([]bool, 0, sizeHint),
 	}
 }
 
@@ -218,11 +238,13 @@ func (c *PlainMutations) Slice(from, to int) CommitterMutations {
 }
 
 // Push another mutation into mutations.
-func (c *PlainMutations) Push(op pb.Op, key []byte, value []byte, isPessimisticLock bool) {
+func (c *PlainMutations) Push(op pb.Op, key []byte, value []byte, isPessimisticLock, assertExist, assertNotExist bool) {
 	c.ops = append(c.ops, op)
 	c.keys = append(c.keys, key)
 	c.values = append(c.values, value)
 	c.isPessimisticLock = append(c.isPessimisticLock, isPessimisticLock)
+	c.isAssertExist = append(c.isAssertExist, assertExist)
+	c.isAssertNotExist = append(c.isAssertNotExist, assertNotExist)
 }
 
 // Len returns the count of mutations.
@@ -255,6 +277,14 @@ func (c *PlainMutations) GetPessimisticFlags() []bool {
 	return c.isPessimisticLock
 }
 
+func (c *PlainMutations) GetAssertExistFlags() []bool {
+	return c.isAssertExist
+}
+
+func (c *PlainMutations) GetAssertNotExitFlags() []bool {
+	return c.isAssertNotExist
+}
+
 // GetOp returns the key op at index.
 func (c *PlainMutations) GetOp(i int) pb.Op {
 	return c.ops[i]
@@ -271,6 +301,14 @@ func (c *PlainMutations) GetValue(i int) []byte {
 // IsPessimisticLock returns the key pessimistic flag at index.
 func (c *PlainMutations) IsPessimisticLock(i int) bool {
 	return c.isPessimisticLock[i]
+}
+
+func (c *PlainMutations) IsAssertExists(i int) bool {
+	return c.isAssertExist[i]
+}
+
+func (c *PlainMutations) IsAssertNotExist(i int) bool {
+	return c.isAssertNotExist[i]
 }
 
 // PlainMutation represents a single transaction operation.
@@ -390,7 +428,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		if flags.HasLocked() {
 			isPessimistic = c.isPessimistic
 		}
-		c.mutations.Push(op, isPessimistic, it.Handle())
+		c.mutations.Push(op, isPessimistic, flags.HasAssertExist(), flags.HasAssertNotExist(), it.Handle())
 		size += len(key) + len(value)
 
 		if len(c.primaryKey) == 0 && op != pb.Op_CheckNotExists {
@@ -1309,7 +1347,7 @@ func (c *twoPhaseCommitter) amendPessimisticLock(ctx context.Context, addMutatio
 	keysNeedToLock := NewPlainMutations(addMutations.Len())
 	for i := 0; i < addMutations.Len(); i++ {
 		if addMutations.IsPessimisticLock(i) {
-			keysNeedToLock.Push(addMutations.GetOp(i), addMutations.GetKey(i), addMutations.GetValue(i), addMutations.IsPessimisticLock(i))
+			keysNeedToLock.Push(addMutations.GetOp(i), addMutations.GetKey(i), addMutations.GetValue(i), addMutations.IsPessimisticLock(i), addMutations.IsAssertExists(i), addMutations.IsAssertNotExist(i))
 		}
 	}
 	// For unique index amend, we need to pessimistic lock the generated new index keys first.
@@ -1397,7 +1435,7 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 				return false, err
 			}
 			handle := c.txn.GetMemBuffer().IterWithFlags(key, nil).Handle()
-			c.mutations.Push(op, addMutations.IsPessimisticLock(i), handle)
+			c.mutations.Push(op, addMutations.IsPessimisticLock(i), addMutations.IsAssertExists(i), addMutations.IsAssertNotExist(i), handle)
 		}
 	}
 	return false, nil
@@ -1731,7 +1769,7 @@ func (c *twoPhaseCommitter) mutationsOfKeys(keys [][]byte) CommitterMutations {
 	for i := 0; i < c.mutations.Len(); i++ {
 		for _, key := range keys {
 			if bytes.Equal(c.mutations.GetKey(i), key) {
-				res.Push(c.mutations.GetOp(i), c.mutations.GetKey(i), c.mutations.GetValue(i), c.mutations.IsPessimisticLock(i))
+				res.Push(c.mutations.GetOp(i), c.mutations.GetKey(i), c.mutations.GetValue(i), c.mutations.IsPessimisticLock(i), c.mutations.IsAssertExists(i), c.mutations.IsAssertNotExist(i))
 				break
 			}
 		}

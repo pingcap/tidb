@@ -150,6 +150,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	for _, fn := range opts {
 		fn(&opt)
 	}
+	ss := opt.AssertionProto
 	vars := sctx.GetSessionVars()
 	writeBufs := vars.GetWriteStmtBufs()
 	skipCheck := vars.StmtCtx.BatchCheck
@@ -185,6 +186,9 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 
 	if !distinct || skipCheck || opt.Untouched {
 		err = txn.GetMemBuffer().Set(key, idxVal)
+		if ss != nil {
+			ss.SetAssertion(key, kv.SetAssertNone)
+		}
 		return nil, err
 	}
 
@@ -213,6 +217,9 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		} else {
 			err = txn.GetMemBuffer().Set(key, idxVal)
 		}
+		if ss != nil {
+			ss.SetAssertion(key, kv.SetAssertNotExist)
+		}
 		return nil, err
 	}
 
@@ -224,7 +231,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 }
 
 // Delete removes the entry for handle h and indexedValues from KV index.
-func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error {
+func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, ss kv.Transaction) error {
 	key, distinct, err := c.GenIndexKey(sc, indexedValues, h, nil)
 	if err != nil {
 		return err
@@ -233,6 +240,15 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 		err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
 	} else {
 		err = txn.GetMemBuffer().Delete(key)
+	}
+	if ss != nil {
+		switch c.idxInfo.State {
+		case model.StatePublic:
+			// If the index is in public state, delete this index means it must exists.
+			ss.SetAssertion(key, kv.SetAssertExist)
+		default:
+			ss.SetAssertion(key, kv.SetAssertNone)
+		}
 	}
 	return err
 }

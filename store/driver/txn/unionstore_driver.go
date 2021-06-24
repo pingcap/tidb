@@ -157,6 +157,12 @@ func getTiKVFlagsOp(op kv.FlagsOp) tikvstore.FlagsOp {
 		return tikvstore.SetPresumeKeyNotExists
 	case kv.SetNeedLocked:
 		return tikvstore.SetNeedLocked
+	case kv.SetAssertExist:
+		return tikvstore.SetAssertExist
+	case kv.SetAssertNotExist:
+		return tikvstore.SetAssertNotExist
+	case kv.SetAssertNone:
+		return tikvstore.SetAssertNone
 	}
 	return 0
 }

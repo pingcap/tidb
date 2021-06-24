@@ -704,6 +704,9 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64,
 		return nil, errors.Trace(err)
 	}
 	if !ok {
+		if m.Assertion == kvrpcpb.Assertion_Exist {
+			logutil.BgLogger().Error("ASSERTION FAIL!!! non-exist for must exist key", zap.Stringer("mutation", m))
+		}
 		return nil, nil
 	}
 
@@ -748,6 +751,7 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64,
 						Key: m.Key,
 					}
 				}
+				logutil.BgLogger().Error("ASSERTION FAIL!!! exist for must non-exist key", zap.Stringer("mutation", m))
 			} else if dec.value.valueType == typeDelete {
 				needCheckAssertion = false
 			}
@@ -764,6 +768,9 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64,
 		ok, err = dec.Decode(iter)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if m.Assertion == kvrpcpb.Assertion_Exist && !ok {
+			logutil.BgLogger().Error("ASSERTION FAIL!!! non-exist for must exist key", zap.Stringer("mutation", m))
 		}
 	}
 	if getVal {

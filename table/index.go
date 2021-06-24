@@ -34,6 +34,7 @@ type CreateIdxOpt struct {
 	Ctx             context.Context
 	SkipHandleCheck bool // If true, skip the handle constraint check.
 	Untouched       bool // If true, the index key/value is no need to commit.
+	kv.AssertionProto
 }
 
 // CreateIdxOptFunc is defined for the Create() method of Index interface.
@@ -59,6 +60,13 @@ func WithCtx(ctx context.Context) CreateIdxOptFunc {
 	}
 }
 
+// WithAssertion returns a CreateIdxFunc.
+func WithAssertion(x kv.AssertionProto) CreateIdxOptFunc {
+	return func(opt *CreateIdxOpt) {
+		opt.AssertionProto = x
+	}
+}
+
 // Index is the interface for index data on KV store.
 type Index interface {
 	// Meta returns IndexInfo.
@@ -66,7 +74,7 @@ type Index interface {
 	// Create supports insert into statement.
 	Create(ctx sessionctx.Context, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...CreateIdxOptFunc) (kv.Handle, error)
 	// Delete supports delete from statement.
-	Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error
+	Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, ss kv.Transaction) error
 	// Drop supports drop table, drop index statements.
 	Drop(txn kv.Transaction) error
 	// Exist supports check index exists or not.
