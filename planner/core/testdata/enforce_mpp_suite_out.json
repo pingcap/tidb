@@ -279,7 +279,12 @@
           "  ├─IndexRangeScan_39(Build) 10.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo",
           "  └─TableRowIDScan_40(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
+          "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
+          "Aggregation can not be pushed to tikv because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
+          "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now"
+        ]
       },
       {
         "SQL": "EXPLAIN SELECT count(*) from t group by b; -- 8. group by virtual column",
@@ -289,7 +294,10 @@
           "  └─TableReader_10 10000.00 root  data:TableFullScan_9",
           "    └─TableFullScan_9 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "Aggregation can not be pushed to tiflash because groupByItems contain virtual columns, which is not supported now",
+          "Aggregation can not be pushed to tiflash because groupByItems contain virtual columns, which is not supported now"
+        ]
       },
       {
         "SQL": "EXPLAIN SELECT group_concat(a) from t; -- 9. agg func not supported",
@@ -299,22 +307,26 @@
           "  └─TableReader_13 10000.00 root  data:TableFullScan_11",
           "    └─TableFullScan_11 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "Aggregation can not be pushed to tiflash because AggFunc `group_concat` is not supported now",
+          "Aggregation can not be pushed to tiflash because AggFunc `group_concat` is not supported now",
+          "Aggregation can not be pushed to tiflash because AggFunc `group_concat` is not supported now"
+        ]
       },
       {
         "SQL": "EXPLAIN SELECT count(a) from t group by md5(a); -- 10. scalar func not supported",
         "Plan": [
-          "TableReader_27 8000.00 root  data:ExchangeSender_26",
-          "└─ExchangeSender_26 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_22 8000.00 batchCop[tiflash]  Column#5",
-          "    └─HashAgg_23 8000.00 batchCop[tiflash]  group by:Column#8, funcs:sum(Column#9)->Column#5",
-          "      └─ExchangeReceiver_25 8000.00 batchCop[tiflash]  ",
-          "        └─ExchangeSender_24 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: Column#8",
-          "          └─HashAgg_8 8000.00 batchCop[tiflash]  group by:Column#13, funcs:count(Column#12)->Column#9",
-          "            └─Projection_31 10000.00 batchCop[tiflash]  test.t.a, md5(cast(test.t.a, var_string(20)))->Column#13",
-          "              └─TableFullScan_21 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "HashAgg_5 8000.00 root  group by:Column#7, funcs:count(Column#6)->Column#5",
+          "└─Projection_18 10000.00 root  test.t.a, md5(cast(test.t.a, var_string(20)))->Column#7",
+          "  └─TableReader_11 10000.00 root  data:TableFullScan_9",
+          "    └─TableFullScan_9 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "Scalar function 'md5'(signature: MD5) can not be pushed to tiflash",
+          "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs",
+          "Scalar function 'md5'(signature: MD5) can not be pushed to tiflash",
+          "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs"
+        ]
       },
       {
         "SQL": "EXPLAIN SELECT count(a) from t where c=1; -- 11. type not supported",
