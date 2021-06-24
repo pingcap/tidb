@@ -1526,7 +1526,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 		if p.err != nil {
 			return
 		}
-		if err := sessionctx.ValidateReadTS(context.Background(), p.ctx, ts); err != nil {
+		if err := sessionctx.ValidateStaleReadTS(context.Background(), p.ctx, ts); err != nil {
 			p.err = errors.Trace(err)
 			return
 		}

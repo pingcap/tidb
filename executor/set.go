@@ -161,7 +161,12 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	newSnapshotTS := getSnapshotTSByName()
 	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
 	if newSnapshotIsSet {
-		if err = sessionctx.ValidateReadTS(ctx, e.ctx, newSnapshotTS); err != nil {
+		if name == variable.TiDBTxnReadTS {
+			err = sessionctx.ValidateStaleReadTS(ctx, e.ctx, newSnapshotTS)
+		} else {
+			err = sessionctx.ValidateSnapshotReadTS(ctx, e.ctx, newSnapshotTS)
+		}
+		if err != nil {
 			fallbackOldSnapshotTS()
 			return err
 		}

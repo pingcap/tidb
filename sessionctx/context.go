@@ -153,8 +153,8 @@ const (
 	LastExecuteDDL basicCtxType = 3
 )
 
-// ValidateReadTS validates that readTS does not exceed the current timestamp
-func ValidateReadTS(ctx context.Context, sctx Context, readTS uint64) error {
+// ValidateSnapshotReadTS strictly validates that readTS does not exceed the PD timestamp
+func ValidateSnapshotReadTS(ctx context.Context, sctx Context, readTS uint64) error {
 	txnScope := sctx.GetSessionVars().CheckAndGetTxnScope()
 	latestTS, err := sctx.GetStore().GetOracle().GetLowResolutionTimestamp(ctx, &oracle.Option{TxnScope: txnScope})
 	// If we fail to get latestTS or the readTS exceeds it, get a timestamp from PD to double check
@@ -167,6 +167,25 @@ func ValidateReadTS(ctx context.Context, sctx Context, readTS uint64) error {
 		if readTS > currentVer.Ver {
 			return errors.Errorf("cannot set read timestamp to a future time")
 		}
+	}
+	return nil
+}
+
+// ValidateStaleReadTS validates that readTS does not exceed the current time not strictly.
+func ValidateStaleReadTS(ctx context.Context, sctx Context, readTS uint64) error {
+	txnScope := sctx.GetSessionVars().CheckAndGetTxnScope()
+	currentTS, err := sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, txnScope, 0)
+	// If we fail to calculate currentTS from local time, fallback to get a timestamp from PD
+	if err != nil {
+		metrics.ValidateReadTSFromPDCount.Inc()
+		currentVer, err := sctx.GetStore().CurrentVersion(txnScope)
+		if err != nil {
+			return errors.Errorf("fail to validate read timestamp: %v", err)
+		}
+		currentTS = currentVer.Ver
+	}
+	if readTS > currentTS {
+		return errors.Errorf("cannot set read timestamp to a future time")
 	}
 	return nil
 }
