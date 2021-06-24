@@ -404,10 +404,61 @@ const (
 	version49 = 49
 	// version50 fixes the bug of concurrent create / drop binding
 	version50 = 50
+<<<<<<< HEAD
 	// version51 restore all SQL bindings.
 	version51 = 51
 )
 
+=======
+	// version51 introduces CreateTablespacePriv to mysql.user.
+	// version51 will be redone in version63 so it's skipped here.
+	// version52 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
+	version52 = 52
+	// version53 introduce Global variable tidb_enable_strict_double_type_check
+	version53 = 53
+	// version54 writes a variable `mem_quota_query` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.9+.
+	version54 = 54
+	// version55 fixes the bug that upgradeToVer48 would be missed when upgrading from v4.0 to a new version
+	version55 = 55
+	// version56 fixes the bug that upgradeToVer49 would be missed when upgrading from v4.0 to a new version
+	version56 = 56
+	// version57 fixes the bug of concurrent create / drop binding
+	version57 = 57
+	// version58 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
+	// version58 will be redone in version64 so it's skipped here.
+	// version59 add writes a variable `oom-action` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.11+.
+	version59 = 59
+	// version60 redesigns `mysql.stats_extended`
+	version60 = 60
+	// version61 will be redone in version67
+	// version62 add column ndv for mysql.stats_buckets.
+	version62 = 62
+	// version63 fixes the bug that upgradeToVer51 would be missed when upgrading from v4.0 to a new version
+	version63 = 63
+	// version64 is redone upgradeToVer58 after upgradeToVer63, this is to preserve the order of the columns in mysql.user
+	version64 = 64
+	// version65 add mysql.stats_fm_sketch table.
+	version65 = 65
+	// version66 enables the feature `track_aggregate_memory_usage` by default.
+	version66 = 66
+	// version67 restore all SQL bindings.
+	version67 = 67
+	// version68 update the global variable 'tidb_enable_clustered_index' from 'off' to 'int_only'.
+	version68 = 68
+	// version69 adds mysql.global_grants for DYNAMIC privileges
+	version69 = 69
+	// version70 adds mysql.user.plugin to allow multiple authentication plugins
+	version70 = 70
+	// version71 forces tidb_multi_statement_mode=OFF when tidb_multi_statement_mode=WARN
+	// This affects upgrades from v4.0 where the default was WARN.
+	version71 = 71
+)
+
+// currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
+// please make sure this is the largest version
+var currentBootstrapVersion int64 = version71
+
+>>>>>>> 1cab530b7... session: force tidb_multi_statement_mode=OFF when mode=WARN (#25723)
 var (
 	bootstrapVersion = []func(Session, int64){
 		upgradeToVer2,
@@ -459,7 +510,31 @@ var (
 		upgradeToVer48,
 		upgradeToVer49,
 		upgradeToVer50,
+<<<<<<< HEAD
 		upgradeToVer51,
+=======
+		// We will redo upgradeToVer51 in upgradeToVer63, it is skipped here.
+		upgradeToVer52,
+		upgradeToVer53,
+		upgradeToVer54,
+		upgradeToVer55,
+		upgradeToVer56,
+		upgradeToVer57,
+		// We will redo upgradeToVer58 in upgradeToVer64, it is skipped here.
+		upgradeToVer59,
+		upgradeToVer60,
+		// We will redo upgradeToVer61 in upgradeToVer67, it is skipped here.
+		upgradeToVer62,
+		upgradeToVer63,
+		upgradeToVer64,
+		upgradeToVer65,
+		upgradeToVer66,
+		upgradeToVer67,
+		upgradeToVer68,
+		upgradeToVer69,
+		upgradeToVer70,
+		upgradeToVer71,
+>>>>>>> 1cab530b7... session: force tidb_multi_statement_mode=OFF when mode=WARN (#25723)
 	}
 )
 
@@ -1239,6 +1314,83 @@ func writeMemoryQuotaQuery(s Session) {
 	)
 }
 
+<<<<<<< HEAD
+=======
+func upgradeToVer62(s Session, ver int64) {
+	if ver >= version62 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets ADD COLUMN `ndv` bigint not null default 0", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer63(s Session, ver int64) {
+	if ver >= version63 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
+}
+
+func upgradeToVer64(s Session, ver int64) {
+	if ver >= version64 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y' where Super_priv='Y'")
+}
+
+func upgradeToVer65(s Session, ver int64) {
+	if ver >= version65 {
+		return
+	}
+	doReentrantDDL(s, CreateStatsFMSketchTable)
+}
+
+func upgradeToVer66(s Session, ver int64) {
+	if ver >= version66 {
+		return
+	}
+	mustExecute(s, "set @@global.tidb_track_aggregate_memory_usage = 1")
+}
+
+func upgradeToVer68(s Session, ver int64) {
+	if ver >= version68 {
+		return
+	}
+	mustExecute(s, "DELETE FROM mysql.global_variables where VARIABLE_NAME = 'tidb_enable_clustered_index' and VARIABLE_VALUE = 'OFF'")
+}
+
+func upgradeToVer69(s Session, ver int64) {
+	if ver >= version69 {
+		return
+	}
+	doReentrantDDL(s, CreateGlobalGrantsTable)
+}
+
+func upgradeToVer70(s Session, ver int64) {
+	if ver >= version70 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN plugin CHAR(64) AFTER authentication_string", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET plugin='mysql_native_password'")
+}
+
+func upgradeToVer71(s Session, ver int64) {
+	if ver >= version71 {
+		return
+	}
+	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='OFF' WHERE VARIABLE_NAME = 'tidb_multi_statement_mode' AND VARIABLE_VALUE = 'WARN'")
+}
+
+func writeOOMAction(s Session) {
+	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
+		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, config.OOMActionLog, comment, config.OOMActionLog,
+	)
+}
+
+>>>>>>> 1cab530b7... session: force tidb_multi_statement_mode=OFF when mode=WARN (#25723)
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
