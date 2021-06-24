@@ -357,6 +357,6 @@ func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
 		c.Assert(err, IsNil)
 	}
 	s.is = s.dom.InfoSchema()
-	s.runSQL(c, "drop global temporary table tb;", false, core.ErrOptOnTemporaryTable.GenWithStackByArgs("drop temporary table"))
+	s.runSQL(c, "drop global temporary table tb;", false, core.ErrDropTableOnTemporaryTable)
 	s.runSQL(c, "drop global temporary table temp", false, nil)
 }

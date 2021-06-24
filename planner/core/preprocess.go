@@ -857,7 +857,7 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 			return
 		}
 		if tableInfo.Meta().TempTableType != model.TempTableGlobal {
-			p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("drop temporary table")
+			p.err = ErrDropTableOnTemporaryTable
 			return
 		}
 	}
