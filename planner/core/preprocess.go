@@ -14,6 +14,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -1500,6 +1501,10 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	if node != nil {
 		ts, p.err = calculateTsExpr(p.ctx, node)
 		if p.err != nil {
+			return
+		}
+		if err := sessionctx.ValidateReadTS(context.Background(), p.ctx, ts); err != nil {
+			p.err = errors.Trace(err)
 			return
 		}
 		if !p.initedLastSnapshotTS {
