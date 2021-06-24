@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/texttree"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -184,6 +186,8 @@ type Execute struct {
 	PrepareParams []types.Datum
 	ExecID        uint32
 	SnapshotTS    uint64
+	IsStaleness   bool
+	TxnScope      string
 	Stmt          ast.StmtNode
 	StmtType      string
 	Plan          Plan
@@ -257,7 +261,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 			vars.PreparedParams = append(vars.PreparedParams, val)
 		}
 	}
-
+	e.TxnScope = oracle.GlobalTxnScope
 	var snapshotTS uint64
 	if preparedObj.SnapshotTSEvaluator != nil {
 		if vars.InTxn() {
@@ -274,6 +278,8 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		if err != nil {
 			return errors.Trace(err)
 		}
+		e.IsStaleness = true
+		e.TxnScope = config.GetTxnScopeFromConfig()
 	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
@@ -297,7 +303,30 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	}
 	e.SnapshotTS = snapshotTS
 	e.Stmt = prepared.Stmt
+	e.handleStalenessOption(sctx)
 	return nil
+}
+
+func (e *Execute) handleStalenessOption(sctx sessionctx.Context) {
+	vars := sctx.GetSessionVars()
+	readTS := vars.TxnReadTS.PeakTxnReadTS()
+	// If readTS > 0, it means we are handling the following case:
+	// 1. set transaction read only as of timestamp ts
+	// 2. execute prepared statement
+	if readTS > 0 {
+		e.IsStaleness = true
+		e.SnapshotTS = vars.TxnReadTS.UseTxnReadTS()
+		e.TxnScope = config.GetTxnScopeFromConfig()
+		return
+	}
+	// This is for the following case:
+	// 1. start transaction read only as of timestamp ts
+	// 2. execute prepared statement
+	if vars.InTxn() && vars.TxnCtx.IsStaleness {
+		e.IsStaleness = true
+		e.SnapshotTS = vars.TxnCtx.StartTS
+		e.TxnScope = vars.TxnCtx.TxnScope
+	}
 }
 
 func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context,
