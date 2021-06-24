@@ -175,10 +175,12 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		if err != nil || newSnapshotTS > latestTS {
 			currentVer, err := e.ctx.GetStore().CurrentVersion(txnScope)
 			if err != nil {
-				return errors.Trace(err)
+				fallbackOldSnapshotTS()
+				return errors.Errorf("fail to validate tidb_snapshot: %v", err)
 			}
 			if newSnapshotTS > currentVer.Ver {
-				return errors.Errorf("cannot set tidb_snapshot to a future timestamp")
+				fallbackOldSnapshotTS()
+				return errors.Errorf("cannot set tidb_snapshot to a future time")
 			}
 		}
 	}
