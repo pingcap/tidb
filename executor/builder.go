@@ -85,6 +85,7 @@ type executorBuilder struct {
 	Ti               *TelemetryInfo
 	// ExplicitStaleness means whether the 'SELECT' clause are using 'AS OF TIMESTAMP' to perform stale read explicitly.
 	explicitStaleness bool
+	txnScope          string
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -95,13 +96,14 @@ type CTEStorages struct {
 	IterInTbl cteutil.Storage
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, explicitStaleness bool) *executorBuilder {
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, explicitStaleness bool, txnScope string) *executorBuilder {
 	return &executorBuilder{
 		ctx:               ctx,
 		is:                is,
 		Ti:                ti,
 		snapshotTS:        snapshotTS,
 		explicitStaleness: explicitStaleness,
+		txnScope:          txnScope,
 	}
 }
 
@@ -1563,6 +1565,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableStatementsSummaryEvicted),
 			strings.ToLower(infoschema.ClusterTableStatementsSummary),
 			strings.ToLower(infoschema.ClusterTableStatementsSummaryHistory),
+			strings.ToLower(infoschema.ClusterTableStatementsSummaryEvicted),
 			strings.ToLower(infoschema.TablePlacementPolicy),
 			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
@@ -2678,6 +2681,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPB:          dagReq,
 		startTS:        startTS,
+		txnScope:       b.txnScope,
+		isStaleness:    b.explicitStaleness,
 		table:          tbl,
 		keepOrder:      ts.KeepOrder,
 		desc:           ts.Desc,
@@ -2750,6 +2755,10 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) Executor {
+	if v.StoreType != kv.TiKV && b.explicitStaleness {
+		b.err = errors.New("stale requests require tikv backend")
+		return nil
+	}
 	failpoint.Inject("checkUseMPP", func(val failpoint.Value) {
 		if val.(bool) != useMPPExecution(b.ctx, v) {
 			if val.(bool) {
@@ -2782,7 +2791,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ret
 	}
-	// When isPartition is set, it means the union rewriting is done, so a partition reader is prefered.
+	// When isPartition is set, it means the union rewriting is done, so a partition reader is preferred.
 	if ok, _ := ts.IsPartition(); ok {
 		return ret
 	}
@@ -2949,6 +2958,8 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPB:           dagReq,
 		startTS:         startTS,
+		txnScope:        b.txnScope,
+		isStaleness:     b.explicitStaleness,
 		physicalTableID: physicalTableID,
 		table:           tbl,
 		index:           is.Index,
@@ -3009,7 +3020,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ret
 	}
-	// When isPartition is set, it means the union rewriting is done, so a partition reader is prefered.
+	// When isPartition is set, it means the union rewriting is done, so a partition reader is preferred.
 	if ok, _ := is.IsPartition(); ok {
 		return ret
 	}
@@ -3565,6 +3576,8 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
+		SetTxnScope(e.txnScope).
+		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		Build()
@@ -4077,6 +4090,8 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		idxInfo:      plan.IndexInfo,
 		rowDecoder:   decoder,
 		startTS:      startTS,
+		txnScope:     b.txnScope,
+		isStaleness:  b.explicitStaleness,
 		keepOrder:    plan.KeepOrder,
 		desc:         plan.Desc,
 		lock:         plan.Lock,
