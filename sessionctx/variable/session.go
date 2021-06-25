@@ -1692,11 +1692,15 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBTrackAggregateMemoryUsage:
 		s.TrackAggregateMemoryUsage = TiDBOptOn(val)
 	case TiDBTraceID:
-		sc, err := jaeger.ContextFromString(val)
-		if err != nil {
-			return err
+		if len(val) != 0 {
+			sc, err := jaeger.ContextFromString(val)
+			if err != nil {
+				return err
+			}
+			s.SpanContext = sc
+		} else {
+			s.SpanContext = jaeger.SpanContext{}
 		}
-		s.SpanContext = sc
 	}
 	s.systems[name] = val
 	return nil
