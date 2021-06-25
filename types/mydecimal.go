@@ -245,6 +245,22 @@ type MyDecimal struct {
 	wordBuf [maxWordBufLen]int32
 }
 
+func (d *MyDecimal) SetDigitsInt(digitsInt int8) {
+	d.digitsInt = digitsInt
+}
+
+func (d *MyDecimal) SetDigitsFrac(digitsFrac int8) {
+	d.digitsFrac = digitsFrac
+}
+
+func (d *MyDecimal) GetResultFrac() int8 {
+	return d.resultFrac
+}
+
+func (d *MyDecimal) SetResultFrac(resultFrac int8) {
+	d.resultFrac = resultFrac
+}
+
 // IsNegative returns whether a decimal is negative.
 func (d *MyDecimal) IsNegative() bool {
 	return d.negative

@@ -45,12 +45,30 @@ func (b *builtinGreatestDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *c
 				continue
 			}
 			v := buf.GetDecimal(i)
+
+			var maxDigitFrac = maxInt8(v.GetDigitsFrac(), d64s[i].GetDigitsFrac())
+			var maxDigitInt = maxInt8(v.GetDigitsInt(), d64s[i].GetDigitsInt())
+			var maxResultFrac = maxInt8(v.GetResultFrac(), d64s[i].GetResultFrac())
+
 			if v.Compare(&d64s[i]) > 0 {
 				d64s[i] = *v
 			}
+
+			d64s[i].SetDigitsFrac(maxDigitFrac)
+			d64s[i].SetDigitsInt(maxDigitInt)
+			d64s[i].SetResultFrac(maxResultFrac)
 		}
 	}
 	return nil
+}
+
+// maxInt8 return max value of two int8 value
+func maxInt8(x int8, y int8) int8 {
+	if x > y {
+		return x
+	}
+
+	return y
 }
 
 func (b *builtinGreatestDecimalSig) vectorized() bool {
@@ -80,9 +98,17 @@ func (b *builtinLeastDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chun
 				continue
 			}
 			v := buf.GetDecimal(i)
+			var maxDigitFrac = maxInt8(v.GetDigitsFrac(), d64s[i].GetDigitsFrac())
+			var maxDigitInt = maxInt8(v.GetDigitsInt(), d64s[i].GetDigitsInt())
+			var maxResultFrac = maxInt8(v.GetResultFrac(), d64s[i].GetResultFrac())
+
 			if v.Compare(&d64s[i]) < 0 {
 				d64s[i] = *v
 			}
+
+			d64s[i].SetDigitsFrac(maxDigitFrac)
+			d64s[i].SetDigitsInt(maxDigitInt)
+			d64s[i].SetResultFrac(maxResultFrac)
 		}
 	}
 	return nil
