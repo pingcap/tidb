@@ -277,10 +277,12 @@ func (c *PlainMutations) GetPessimisticFlags() []bool {
 	return c.isPessimisticLock
 }
 
+// GetAssertExistFlags returns the key assertExist flags.
 func (c *PlainMutations) GetAssertExistFlags() []bool {
 	return c.isAssertExist
 }
 
+// GetAssertNotExitFlags returns the key assertNotExist flags.
 func (c *PlainMutations) GetAssertNotExitFlags() []bool {
 	return c.isAssertNotExist
 }
