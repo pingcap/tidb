@@ -2252,6 +2252,25 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		}
 	case *ast.ShutdownStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShutdownPriv, "", "", "", nil)
+<<<<<<< HEAD
+=======
+	case *ast.BeginStmt:
+		readTS := b.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS()
+		if raw.AsOf != nil {
+			startTS, err := calculateTsExpr(b.ctx, raw.AsOf)
+			if err != nil {
+				return nil, err
+			}
+			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx, startTS); err != nil {
+				return nil, err
+			}
+			p.StaleTxnStartTS = startTS
+		} else if readTS > 0 {
+			p.StaleTxnStartTS = readTS
+			// consume read ts here
+			b.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
+		}
+>>>>>>> 92ddceb6a... executor: reject setting read ts to a future time (#25732)
 	}
 	return p, nil
 }

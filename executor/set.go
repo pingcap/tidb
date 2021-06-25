@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -102,6 +103,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			continue
 		}
 
+<<<<<<< HEAD
 		syns := e.getSynonyms(name)
 		// Set system variable
 		for _, n := range syns {
@@ -109,11 +111,16 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			if err != nil {
 				return err
 			}
+=======
+		if err := e.setSysVariable(ctx, name, v); err != nil {
+			return err
+>>>>>>> 92ddceb6a... executor: reject setting read ts to a future time (#25732)
 		}
 	}
 	return nil
 }
 
+<<<<<<< HEAD
 func (e *SetExecutor) getSynonyms(varName string) []string {
 	synonyms, ok := variable.SynonymsSysVariables[varName]
 	if ok {
@@ -125,6 +132,9 @@ func (e *SetExecutor) getSynonyms(varName string) []string {
 }
 
 func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) error {
+=======
+func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expression.VarAssignment) error {
+>>>>>>> 92ddceb6a... executor: reject setting read ts to a future time (#25732)
 	sessionVars := e.ctx.GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
@@ -180,6 +190,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		if name == variable.TxnIsolationOneShot && sessionVars.InTxn() {
 			return errors.Trace(ErrCantChangeTxCharacteristics)
 		}
+<<<<<<< HEAD
 		err = variable.SetSessionSystemVar(sessionVars, name, value)
 		if err != nil {
 			return err
@@ -193,6 +204,27 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			}
 		}
 		err = e.loadSnapshotInfoSchemaIfNeeded(name)
+=======
+	}
+	err = variable.SetSessionSystemVar(sessionVars, name, valStr)
+	if err != nil {
+		return err
+	}
+	newSnapshotTS := getSnapshotTSByName()
+	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
+	if newSnapshotIsSet {
+		if name == variable.TiDBTxnReadTS {
+			err = sessionctx.ValidateStaleReadTS(ctx, e.ctx, newSnapshotTS)
+		} else {
+			err = sessionctx.ValidateSnapshotReadTS(ctx, e.ctx, newSnapshotTS)
+			// Also check gc safe point for snapshot read.
+			// We don't check snapshot with gc safe point for read_ts
+			// Client-go will automatically check the snapshotTS with gc safe point. It's unnecessary to check gc safe point during set executor.
+			if err == nil {
+				err = gcutil.ValidateSnapshot(e.ctx, newSnapshotTS)
+			}
+		}
+>>>>>>> 92ddceb6a... executor: reject setting read ts to a future time (#25732)
 		if err != nil {
 			sessionVars.SnapshotTS = oldSnapshotTS
 			return err
@@ -205,6 +237,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			terror.Log(err)
 		}
 	}
+<<<<<<< HEAD
 	if scopeStr == scopeGlobal {
 		logutil.BgLogger().Info(fmt.Sprintf("set %s var", scopeStr), zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	} else {
@@ -230,6 +263,13 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		return stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(valStr, !v.IsGlobal)
 	case variable.TiDBCapturePlanBaseline:
 		variable.CapturePlanBaseline.Set(valStrToBoolStr, !v.IsGlobal)
+=======
+
+	err = e.loadSnapshotInfoSchemaIfNeeded(newSnapshotTS)
+	if err != nil {
+		fallbackOldSnapshotTS()
+		return err
+>>>>>>> 92ddceb6a... executor: reject setting read ts to a future time (#25732)
 	}
 
 	return nil

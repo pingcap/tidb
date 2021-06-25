@@ -14,6 +14,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -1281,3 +1282,91 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 		}
 	}
 }
+<<<<<<< HEAD
+=======
+
+// handleAsOfAndReadTS tries to handle as of closure, or possibly read_ts.
+func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
+	// When statement is during the Txn, we check whether there exists AsOfClause. If exists, we will return error,
+	// otherwise we should directly set the return param from TxnCtx.
+	p.TxnScope = oracle.GlobalTxnScope
+	if p.ctx.GetSessionVars().InTxn() {
+		if node != nil {
+			p.err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
+			return
+		}
+		txnCtx := p.ctx.GetSessionVars().TxnCtx
+		p.TxnScope = txnCtx.TxnScope
+		if txnCtx.IsStaleness {
+			p.LastSnapshotTS = txnCtx.StartTS
+			p.ExplicitStaleness = txnCtx.IsStaleness
+			p.initedLastSnapshotTS = true
+			return
+		}
+	}
+	// If the statement is in auto-commit mode, we will check whether there exists read_ts, if exists,
+	// we will directly use it. The txnScope will be defined by the zone label, if it is not set, we will use
+	// global txnScope directly.
+	ts := p.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
+	if ts > 0 {
+		if node != nil {
+			p.err = ErrAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
+			return
+		}
+		if !p.initedLastSnapshotTS {
+			p.SnapshotTSEvaluator = func(sessionctx.Context) (uint64, error) {
+				return ts, nil
+			}
+			p.LastSnapshotTS = ts
+			p.setStalenessReturn()
+		}
+	}
+	if node != nil {
+		ts, p.err = calculateTsExpr(p.ctx, node)
+		if p.err != nil {
+			return
+		}
+		if err := sessionctx.ValidateStaleReadTS(context.Background(), p.ctx, ts); err != nil {
+			p.err = errors.Trace(err)
+			return
+		}
+		if !p.initedLastSnapshotTS {
+			p.SnapshotTSEvaluator = func(ctx sessionctx.Context) (uint64, error) {
+				return calculateTsExpr(ctx, node)
+			}
+			p.LastSnapshotTS = ts
+			p.setStalenessReturn()
+		}
+	}
+	if p.LastSnapshotTS != ts {
+		p.err = ErrAsOf.GenWithStack("can not set different time in the as of")
+		return
+	}
+	if p.LastSnapshotTS != 0 {
+		dom := domain.GetDomain(p.ctx)
+		p.InfoSchema, p.err = dom.GetSnapshotInfoSchema(p.LastSnapshotTS)
+		if p.err != nil {
+			return
+		}
+	}
+	p.initedLastSnapshotTS = true
+}
+
+// ensureInfoSchema get the infoschema from the preprecessor.
+// there some situations:
+//    - the stmt specifies the schema version.
+//    - session variable
+//    - transcation context
+func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
+	if p.InfoSchema == nil {
+		p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	}
+	return p.InfoSchema
+}
+
+func (p *preprocessor) setStalenessReturn() {
+	txnScope := config.GetTxnScopeFromConfig()
+	p.ExplicitStaleness = true
+	p.TxnScope = txnScope
+}
+>>>>>>> 92ddceb6a... executor: reject setting read ts to a future time (#25732)
