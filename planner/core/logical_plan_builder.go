@@ -2733,6 +2733,28 @@ func checkColFuncDepend(
 			Name:   colInfo.Name,
 		}
 		pIdx, err := expression.FindFieldName(p.OutputNames(), pkName)
+		// It is possible that `pIdx < 0` and here is a case.
+		// ```
+		// CREATE TABLE `BB` (
+		//   `pk` int(11) NOT NULL AUTO_INCREMENT,
+		//   `col_int_not_null` int NOT NULL,
+		//   PRIMARY KEY (`pk`)
+		// );
+		//
+		// SELECT OUTR . col2 AS X
+		// FROM
+		//   BB AS OUTR2
+		// INNER JOIN
+		//   (SELECT col_int_not_null AS col1,
+		//     pk AS col2
+		//   FROM BB) AS OUTR ON OUTR2.col_int_not_null = OUTR.col1
+		// GROUP BY OUTR2.col_int_not_null;
+		// ```
+		// When we enter `checkColFuncDepend`, `pkName.Table` is `OUTR` which is an alias, while `pkName.Name` is `pk`
+		// which is a original name. Hence `expression.FindFieldName` will fail and `pIdx` will be less than 0.
+		// Currently, when we meet `pIdx < 0`, we directly regard `primaryFuncDepend` as false and jump out. This way is
+		// easy to implement but makes only-full-group-by checker not smart enough. Later we will refactor only-full-group-by
+		// checker and resolve the inconsistency between the alias table name and the original column name.
 		if err != nil || pIdx < 0 {
 			primaryFuncDepend = false
 			break
