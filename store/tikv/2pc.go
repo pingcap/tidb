@@ -305,10 +305,12 @@ func (c *PlainMutations) IsPessimisticLock(i int) bool {
 	return c.isPessimisticLock[i]
 }
 
+// IsAssertExists returns the key assertExist flag at index.
 func (c *PlainMutations) IsAssertExists(i int) bool {
 	return c.isAssertExist[i]
 }
 
+// IsAssertNotExist returns the key assertNotExist flag at index.
 func (c *PlainMutations) IsAssertNotExist(i int) bool {
 	return c.isAssertNotExist[i]
 }
