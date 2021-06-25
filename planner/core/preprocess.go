@@ -14,6 +14,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -55,7 +56,7 @@ func InTxnRetry(p *preprocessor) {
 	p.flag |= inTxnRetry
 }
 
-// WithPreprocessorReturn returns a PreprocessOpt to initialize the PreprocesorReturn.
+// WithPreprocessorReturn returns a PreprocessOpt to initialize the PreprocessorReturn.
 func WithPreprocessorReturn(ret *PreprocessorReturn) PreprocessOpt {
 	return func(p *preprocessor) {
 		p.PreprocessorReturn = ret
@@ -93,7 +94,7 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 }
 
 // Preprocess resolves table names of the node, and checks some statements validation.
-// prepreocssReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
+// preprocessReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
 func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
 	v := preprocessor{ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0), withName: make(map[string]interface{})}
 	for _, optFn := range preprocessOpt {
@@ -126,6 +127,9 @@ const (
 	// This flag indicates the tableName in these function should be checked as sequence object.
 	inSequenceFunction
 )
+
+// Make linter happy.
+var _ = PreprocessorReturn{}.initedLastSnapshotTS
 
 // PreprocessorReturn is used to retain information obtained in the preprocessor.
 type PreprocessorReturn struct {
@@ -839,6 +843,29 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 		p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE")
 		return
 	}
+	if stmt.TemporaryKeyword == ast.TemporaryNone {
+		return
+	}
+	currentDB := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
+	for _, t := range stmt.Tables {
+		if isIncorrectName(t.Name.String()) {
+			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
+			return
+		}
+		if t.Schema.String() != "" {
+			currentDB = t.Schema
+		}
+		tableInfo, err := p.ensureInfoSchema().TableByName(currentDB, t.Name)
+		if err != nil {
+			p.err = err
+			return
+		}
+		if tableInfo.Meta().TempTableType != model.TempTableGlobal {
+			p.err = ErrDropTableOnTemporaryTable
+			return
+		}
+	}
+
 }
 
 func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {
@@ -1497,6 +1524,10 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	if node != nil {
 		ts, p.err = calculateTsExpr(p.ctx, node)
 		if p.err != nil {
+			return
+		}
+		if err := sessionctx.ValidateStaleReadTS(context.Background(), p.ctx, ts); err != nil {
+			p.err = errors.Trace(err)
 			return
 		}
 		if !p.initedLastSnapshotTS {
