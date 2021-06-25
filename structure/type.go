@@ -39,6 +39,9 @@ const (
 	ListData TypeFlag = 'l'
 )
 
+// Make linter happy, since encodeHashMetaKey is unused in this repo.
+var _ = (&TxStructure{}).encodeHashMetaKey
+
 func (t *TxStructure) encodeStringDataKey(key []byte) kv.Key {
 	// for codec Encode, we may add extra bytes data, so here and following encode
 	// we will use extra length like 4 for a little optimization.
