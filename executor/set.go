@@ -165,20 +165,16 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			err = sessionctx.ValidateStaleReadTS(ctx, e.ctx, newSnapshotTS)
 		} else {
 			err = sessionctx.ValidateSnapshotReadTS(ctx, e.ctx, newSnapshotTS)
+			// Also check gc safe point for snapshot read.
+			// We don't check snapshot with gc safe point for read_ts
+			// Client-go will automatically check the snapshotTS with gc safe point. It's unnecessary to check gc safe point during set executor.
+			if err == nil {
+				err = gcutil.ValidateSnapshot(e.ctx, newSnapshotTS)
+			}
 		}
 		if err != nil {
 			fallbackOldSnapshotTS()
 			return err
-		}
-
-		// We don't check snapshot with gc safe point for read_ts
-		// Client-go will automatically check the snapshotTS with gc safe point. It's unnecessary to check gc safe point during set executor.
-		if name != variable.TiDBTxnReadTS {
-			err = gcutil.ValidateSnapshot(e.ctx, newSnapshotTS)
-			if err != nil {
-				fallbackOldSnapshotTS()
-				return err
-			}
 		}
 	}
 
