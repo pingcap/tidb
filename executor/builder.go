@@ -4211,12 +4211,17 @@ func fullRangePartition(idxArr []int) bool {
 	return len(idxArr) == 1 && idxArr[0] == plannercore.FullRange
 }
 
-func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *TableSampleExecutor {
-	if v.TableInfo.Meta().TempTableType != model.TempTableNone {
-		b.err = errors.New("TABLESAMPLE clause can not be applied to temporary tables")
-		return nil
-	}
+type emptySampler struct{}
 
+func (s *emptySampler) writeChunk(_ *chunk.Chunk) error {
+	return nil
+}
+
+func (s *emptySampler) finished() bool {
+	return true
+}
+
+func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *TableSampleExecutor {
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
@@ -4227,11 +4232,15 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 		table:        v.TableInfo,
 		startTS:      startTS,
 	}
-	if v.TableSampleInfo.AstNode.SampleMethod == ast.SampleMethodTypeTiDBRegion {
+
+	if v.TableInfo.Meta().TempTableType != model.TempTableNone {
+		e.sampler = &emptySampler{}
+	} else if v.TableSampleInfo.AstNode.SampleMethod == ast.SampleMethodTypeTiDBRegion {
 		e.sampler = newTableRegionSampler(
 			b.ctx, v.TableInfo, startTS, v.TableSampleInfo.Partitions, v.Schema(),
 			v.TableSampleInfo.FullSchema, e.retFieldTypes, v.Desc)
 	}
+
 	return e
 }
 
@@ -4336,10 +4345,10 @@ func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error
 		return nil
 	}
 
+	// Some tools like dumpling use history read to dump all table's records and will be fail if we return an error.
+	// So we do not check SnapshotTS here
+
 	sessionVars := b.ctx.GetSessionVars()
-	if sessionVars.SnapshotTS != 0 {
-		return errors.New("can not read temporary table when 'tidb_snapshot' is set")
-	}
 
 	if sessionVars.TxnCtx.IsStaleness || b.explicitStaleness {
 		return errors.New("can not stale read temporary table")

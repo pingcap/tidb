@@ -921,6 +921,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		if idxInfo.Invisible {
 			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
 		}
+		if idxInfo.Comment != "" {
+			fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
+		}
 		if idxInfo.Primary {
 			if tableInfo.PKIsHandle || tableInfo.IsCommonHandle {
 				buf.WriteString(" /*T![clustered_index] CLUSTERED */")
