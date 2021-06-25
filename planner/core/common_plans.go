@@ -261,25 +261,15 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 			vars.PreparedParams = append(vars.PreparedParams, val)
 		}
 	}
-	e.TxnScope = oracle.GlobalTxnScope
-	var snapshotTS uint64
-	if preparedObj.SnapshotTSEvaluator != nil {
-		if vars.InTxn() {
-			return ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
-		}
-		// if preparedObj.SnapshotTSEvaluator != nil, it is a stale read SQL:
-		// which means its infoschema is specified by the SQL, not the current/latest infoschema
-		var err error
-		snapshotTS, err = preparedObj.SnapshotTSEvaluator(sctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	snapshotTS, txnScope, isStaleness, err := e.handleExecuteBuilderOption(sctx, preparedObj)
+	if err != nil {
+		return err
+	}
+	if snapshotTS != 0 && isStaleness {
 		is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		e.IsStaleness = true
-		e.TxnScope = config.GetTxnScopeFromConfig()
 	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
@@ -297,36 +287,67 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
-	err := e.getPhysicalPlan(ctx, sctx, is, preparedObj)
+	err = e.getPhysicalPlan(ctx, sctx, is, preparedObj)
 	if err != nil {
 		return err
 	}
 	e.SnapshotTS = snapshotTS
+	e.TxnScope = txnScope
+	e.IsStaleness = isStaleness
 	e.Stmt = prepared.Stmt
-	e.handleStalenessOption(sctx)
 	return nil
 }
 
-func (e *Execute) handleStalenessOption(sctx sessionctx.Context) {
+func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
+	preparedObj *CachedPrepareStmt) (snapshotTS uint64, txnScope string, isStaleness bool, err error) {
+	snapshotTS = 0
+	txnScope = oracle.GlobalTxnScope
+	isStaleness = false
+	err = nil
 	vars := sctx.GetSessionVars()
 	readTS := vars.TxnReadTS.PeakTxnReadTS()
-	// If readTS > 0, it means we are handling the following case:
-	// 1. set transaction read only as of timestamp ts
-	// 2. execute prepared statement
 	if readTS > 0 {
-		e.IsStaleness = true
-		e.SnapshotTS = vars.TxnReadTS.UseTxnReadTS()
-		e.TxnScope = config.GetTxnScopeFromConfig()
+		// It means we meet following case:
+		// 1. set transaction read only as of timestamp ts
+		// 2. execute prepared statement with different as of ts
+		if preparedObj.SnapshotTSEvaluator != nil {
+			err = ErrAsOf.FastGenWithCause("as of timestamp can't be set after set transaction read only as of.")
+			return
+		}
+		// If readTS > 0, it means we are handling the following case:
+		// 1. set transaction read only as of timestamp ts
+		// 2. execute prepared statement
+		snapshotTS = vars.TxnReadTS.UseTxnReadTS()
+		isStaleness = true
+		txnScope = config.GetTxnScopeFromConfig()
+		return
+	}
+	if preparedObj.SnapshotTSEvaluator != nil {
+		if vars.InTxn() {
+			err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
+			return
+		}
+		// if preparedObj.SnapshotTSEvaluator != nil, it is a stale read SQL:
+		// which means its infoschema is specified by the SQL, not the current/latest infoschema
+		snapshotTS, err = preparedObj.SnapshotTSEvaluator(sctx)
+		if err != nil {
+			err = errors.Trace(err)
+			return
+		}
+		isStaleness = true
+		txnScope = config.GetTxnScopeFromConfig()
 		return
 	}
 	// This is for the following case:
 	// 1. start transaction read only as of timestamp ts
 	// 2. execute prepared statement
 	if vars.InTxn() && vars.TxnCtx.IsStaleness {
-		e.IsStaleness = true
-		e.SnapshotTS = vars.TxnCtx.StartTS
-		e.TxnScope = vars.TxnCtx.TxnScope
+		isStaleness = true
+		snapshotTS = vars.TxnCtx.StartTS
+		txnScope = vars.TxnCtx.TxnScope
+		return
 	}
+	return
 }
 
 func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context,

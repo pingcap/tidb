@@ -970,4 +970,8 @@ func (s *testStaleTxnSerialSuite) TestStaleReadPrepare(c *C) {
 	tk.MustExec(fmt.Sprintf(`start transaction read only as of timestamp '%s'`, time1.Format("2006-1-2 15:04:05.000")))
 	c.Assert("execute p1", NotNil)
 	tk.MustExec("commit")
+
+	// assert execute prepared statement should be error after set transaction read only as of
+	tk.MustExec(fmt.Sprintf(`set transaction read only as of timestamp '%s'`, time1.Format("2006-1-2 15:04:05.000")))
+	c.Assert("execute p1", NotNil)
 }
