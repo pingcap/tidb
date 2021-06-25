@@ -722,8 +722,10 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			switch lockUniqueKey {
 			case "0":
 				variable.LockUniqueKeys.Store(false)
+				logutil.BgLogger().Info("tidb_lock_unique_key is disabled")
 			case "1":
 				variable.LockUniqueKeys.Store(true)
+				logutil.BgLogger().Info("tidb_lock_unique_key is enabled")
 			default:
 				writeError(w, errors.New("illegal argument, please use 0 or 1 for this"))
 				return
