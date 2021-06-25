@@ -945,7 +945,7 @@ func (s *testTableSuite) TestFormatVersion(c *C) {
 	defaultVersions := []string{"5.7.25-TiDB-None", "5.7.25-TiDB-8.0.18", "5.7.25-TiDB-8.0.18-beta.1", "5.7.25-TiDB-v4.0.0-beta-446-g5268094af"}
 	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta"}
 	for i, v := range defaultVersions {
-		version := infoschema.FormatVersion(v, true)
+		version := infoschema.FormatTiDBVersion(v, true)
 		c.Assert(version, Equals, defaultRes[i])
 	}
 
@@ -953,9 +953,17 @@ func (s *testTableSuite) TestFormatVersion(c *C) {
 	versions := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
 	res := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
 	for i, v := range versions {
-		version := infoschema.FormatVersion(v, false)
+		version := infoschema.FormatTiDBVersion(v, false)
 		c.Assert(version, Equals, res[i])
 	}
+
+	versions = []string{"v4.0.12", "4.0.12", "v5.0.1"}
+	resultVersion := []string{"4.0.12", "4.0.12", "5.0.1"}
+
+	for i, versionString := range versions {
+		c.Assert(resultVersion[i], Equals, infoschema.FormatStoreServerVersion(versionString))
+	}
+
 }
 
 // Test statements_summary.
@@ -1374,12 +1382,18 @@ func (s *testTableSuite) TestStmtSummarySensitiveQuery(c *C) {
 		))
 }
 
+// test stmtSummaryEvictedCount
 func (s *testTableSuite) TestSimpleStmtSummaryEvictedCount(c *C) {
 	now := time.Now().Unix()
 	interval := int64(1800)
 	beginTimeForCurInterval := now - now%interval
 	tk := s.newTestKitWithPlanCache(c)
 	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval = %v", interval))
+
+	// clean up side effects
+	defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
+	defer tk.MustExec("set global tidb_stmt_summary_refresh_interval = 1800")
+
 	tk.MustExec("set global tidb_enable_stmt_summary = 0")
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	// first sql
@@ -1395,10 +1409,34 @@ func (s *testTableSuite) TestSimpleStmtSummaryEvictedCount(c *C) {
 				int64(2)),
 		))
 	// TODO: Add more tests.
+}
 
+// test stmtSummaryEvictedCount cluster table
+func (s *testClusterTableSuite) TestStmtSummaryEvictedCountTable(c *C) {
+	tk := s.newTestKitWithRoot(c)
+	// disable refreshing
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval=9999")
+	// set information_schema.statements_summary's size to 1
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
 	// clean up side effects
-	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
-	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 1800")
+	defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
+	defer tk.MustExec("set global tidb_stmt_summary_refresh_interval = 1800")
+	// clear information_schema.statements_summary
+	tk.MustExec("set global tidb_enable_stmt_summary=0")
+	tk.MustExec("set global tidb_enable_stmt_summary=1")
+
+	// make a new session for test...
+	tk = s.newTestKitWithRoot(c)
+	// first sql
+	tk.MustExec("show databases;")
+	// second sql, evict former sql from stmt_summary
+	tk.MustQuery("select evicted_count from information_schema.cluster_statements_summary_evicted;").
+		Check(testkit.Rows("1"))
+	// after executed the sql above
+	tk.MustQuery("select evicted_count from information_schema.cluster_statements_summary_evicted;").
+		Check(testkit.Rows("2"))
+	// TODO: Add more tests.
+
 }
 
 func (s *testTableSuite) TestStmtSummaryTableOther(c *C) {

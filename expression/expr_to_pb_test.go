@@ -904,6 +904,7 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestExprOnlyPushDownToFlash(c *C) {
+	c.Skip("unstable, skip it and fix it before 20210705")
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 	dg := new(dataGen4Expr2PbTest)

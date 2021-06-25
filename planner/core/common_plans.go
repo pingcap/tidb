@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -814,51 +815,12 @@ type Delete struct {
 	TblColPosInfos TblColPosInfoSlice
 }
 
-// AnalyzeTableID is hybrid table id used to analyze table.
-type AnalyzeTableID struct {
-	TableID int64
-	// PartitionID is used for the construction of partition table statistics. It indicate the ID of the partition.
-	// If the table is not the partition table, the PartitionID will be equal to -1.
-	PartitionID int64
-}
-
-// GetStatisticsID is used to obtain the table ID to build statistics.
-// If the 'PartitionID == -1', we use the TableID to build the statistics for non-partition tables.
-// Otherwise, we use the PartitionID to build the statistics of the partitions in the partition tables.
-func (h *AnalyzeTableID) GetStatisticsID() int64 {
-	statisticsID := h.TableID
-	if h.PartitionID != -1 {
-		statisticsID = h.PartitionID
-	}
-	return statisticsID
-}
-
-// IsPartitionTable indicates whether the table is partition table.
-func (h *AnalyzeTableID) IsPartitionTable() bool {
-	return h.PartitionID != -1
-}
-
-func (h *AnalyzeTableID) String() string {
-	return fmt.Sprintf("%d => %v", h.PartitionID, h.TableID)
-}
-
-// Equals indicates whether two table id is equal.
-func (h *AnalyzeTableID) Equals(t *AnalyzeTableID) bool {
-	if h == t {
-		return true
-	}
-	if h == nil || t == nil {
-		return false
-	}
-	return h.TableID == t.TableID && h.PartitionID == t.PartitionID
-}
-
 // AnalyzeInfo is used to store the database name, table name and partition name of analyze task.
 type AnalyzeInfo struct {
 	DBName        string
 	TableName     string
 	PartitionName string
-	TableID       AnalyzeTableID
+	TableID       statistics.AnalyzeTableID
 	Incremental   bool
 	StatsVersion  int
 }
