@@ -156,12 +156,11 @@ const (
 
 // ValidateSnapshotReadTS strictly validates that readTS does not exceed the PD timestamp
 func ValidateSnapshotReadTS(ctx context.Context, sctx Context, readTS uint64) error {
-	txnScope := sctx.GetSessionVars().CheckAndGetTxnScope()
-	latestTS, err := sctx.GetStore().GetOracle().GetLowResolutionTimestamp(ctx, &oracle.Option{TxnScope: txnScope})
+	latestTS, err := sctx.GetStore().GetOracle().GetLowResolutionTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	// If we fail to get latestTS or the readTS exceeds it, get a timestamp from PD to double check
 	if err != nil || readTS > latestTS {
 		metrics.ValidateReadTSFromPDCount.Inc()
-		currentVer, err := sctx.GetStore().CurrentVersion(txnScope)
+		currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
 		if err != nil {
 			return errors.Errorf("fail to validate read timestamp: %v", err)
 		}
