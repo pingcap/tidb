@@ -249,7 +249,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			if !e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
 				if !keyExist {
 					lockIndexKey = true
-				} else if keyExist && enableLockIdxKey {
+				} else if enableLockIdxKey {
 					lockIndexKey = true
 				}
 			} else {
