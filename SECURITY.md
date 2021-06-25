@@ -1,6 +1,6 @@
-Security Vulnerability Disclosure and Response Process:
+# Security Vulnerability Disclosure and Response Process
 
-As we all know, TiDB is a fast-growing community. In order to ensure its steady development, we have adopted the following security vulnerability disclosure and response process.
+As we all know, TiDB is a fast-growing open source database. In order to ensure its steady development, we have adopted the following security vulnerability disclosure and response process.
 
 The primary goal of this process is to reduce users’ total exposure time to publicly known vulnerabilities.To ensure TiDB products’ vulnerabilities can be fixed quickly, our security team is responsible for the entire vulnerability management process, including internal communication and external disclosure.
 
@@ -8,21 +8,21 @@ If you think you have found a vulnerability or have experienced security inciden
 
 Please kindly help provide as much vulnerability information as possible in the following format:
 
-Issue title*:
+- Issue title*:
 
-Overview*:
+- Overview*:
 
-Affected components and version number*:
+- Affected components and version number*:
 
-CVE number (if any):
+- CVE number (if any):
 
-Vulnerability verification process*:
+- Vulnerability verification process*:
 
-Contact information*:
+- Contact information*:
 
 *mean required
 
-Response time:
+# Response time
 
 The TiDB security team will confirm the vulnerabilities within 2 working days after your submission and keep in touch with you.
 
@@ -32,6 +32,3 @@ The vulnerability will not be disclosed until TiDB releases a patch for it.
 
 Do not disclose the details of the vulnerability, such as exploits code.
 
-Release note
-
-No release note
