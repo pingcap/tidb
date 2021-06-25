@@ -297,6 +297,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller) {
 		if !more {
 			break
 		}
+		w.ddlWorker.setDDLLabelForTopSQL(nil)
 
 		logutil.BgLogger().Debug("[ddl] backfill worker got task", zap.Int("workerID", w.id), zap.String("task", task.String()))
 		failpoint.Inject("mockBackfillRunErr", func() {
@@ -533,6 +534,7 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table) (map[int64]de
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
 func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType backfillWorkerType, indexInfo *model.IndexInfo, oldColInfo, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
+	w.setDDLLabelForTopSQL(job)
 	totalAddedCount := job.GetRowCount()
 
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
@@ -578,6 +580,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		if len(kvRanges) < int(workerCnt) {
 			workerCnt = int32(len(kvRanges))
 		}
+		w.setDDLLabelForTopSQL(job)
 		// Enlarge the worker size.
 		for i := len(backfillWorkers); i < int(workerCnt); i++ {
 			sessCtx := newContext(reorgInfo.d.store)

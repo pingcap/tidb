@@ -16,6 +16,8 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/util/topsql"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -87,6 +89,11 @@ type worker struct {
 	reorgCtx        *reorgCtx    // reorgCtx is used for reorganization.
 	delRangeManager delRangeManager
 	logCtx          context.Context
+
+	// below filed cache for top sql
+	cacheSQL           string
+	cacheNormalizedSQL string
+	cacheDigest        *parser.Digest
 }
 
 func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager) *worker {
@@ -451,6 +458,19 @@ func newMetaWithQueueTp(txn kv.Transaction, tp string) *meta.Meta {
 	return meta.NewMeta(txn)
 }
 
+func (w *worker) setDDLLabelForTopSQL(job *model.Job) {
+	if !variable.TopSQLEnabled() {
+		return
+	}
+
+	if job != nil && job.Query != w.cacheSQL {
+		w.cacheNormalizedSQL, w.cacheDigest = parser.NormalizeDigest(job.Query)
+		w.cacheSQL = job.Query
+	}
+
+	topsql.AttachSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, "", nil)
+}
+
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.
 func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 	once := true
@@ -479,6 +499,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			if job == nil || err != nil {
 				return errors.Trace(err)
 			}
+			w.setDDLLabelForTopSQL(job)
 			if isDone, err1 := isDependencyJobDone(t, job); err1 != nil || !isDone {
 				return errors.Trace(err1)
 			}
