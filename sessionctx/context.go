@@ -176,12 +176,11 @@ const allowedTimeFromNow = 100 * time.Millisecond
 
 // ValidateStaleReadTS validates that readTS does not exceed the current time not strictly.
 func ValidateStaleReadTS(ctx context.Context, sctx Context, readTS uint64) error {
-	txnScope := sctx.GetSessionVars().CheckAndGetTxnScope()
-	currentTS, err := sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, txnScope, 0)
+	currentTS, err := sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
 	// If we fail to calculate currentTS from local time, fallback to get a timestamp from PD
 	if err != nil {
 		metrics.ValidateReadTSFromPDCount.Inc()
-		currentVer, err := sctx.GetStore().CurrentVersion(txnScope)
+		currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
 		if err != nil {
 			return errors.Errorf("fail to validate read timestamp: %v", err)
 		}
