@@ -7421,6 +7421,24 @@ func (s *testIntegrationSuite) TestIssue16029(c *C) {
 	tk.MustExec("drop table t1;")
 }
 
+func (s *testIntegrationSerialSuite) TestIssue24502(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0,t1;")
+	tk.MustExec("create table t0(col1 varchar(255));")
+	tk.MustExec("create table t1(col1 int(11));")
+	tk.MustExec(`insert into t0 values("\\9jM\\M");`)
+	tk.MustExec(`insert into t1 values(0);`)
+	tk.MustExec(`insert into t1 values(null);`)
+	tk.MustExec(`insert into t1 values(null);`)
+
+	tk.MustQuery(`select t0.col1, t1.col1 from t0 left join t1 on t0.col1 not like t0.col1;`).
+		Check(testkit.Rows(`\9jM\M <nil>`, `\9jM\M <nil>`, `\9jM\M 0`))
+
+	tk.MustQuery(`select 'a' like '\\a'`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select 'a' like '+a' escape '+'`).Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSuite) TestIssue16426(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -9741,6 +9759,15 @@ OR Variable_name = 'lower_case_table_names' OR Variable_name = 'max_allowed_pack
 OR Variable_name = 'sql_mode' OR Variable_name = 'query_cache_type'  OR Variable_name = 'query_cache_size'
 OR Variable_name = 'license' OR Variable_name = 'init_connect'`).Rows(), HasLen, 19)
 
+}
+
+func (s *testIntegrationSuite) TestFloat64Inf(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select '1e800' + 1e100;").Check(
+		testkit.Rows("179769313486231570000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"))
+	tk.MustQuery("select '-1e800' - 1e100;").Check(
+		testkit.Rows("-179769313486231570000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"))
 }
 
 func (s *testIntegrationSuite) TestCharsetErr(c *C) {
