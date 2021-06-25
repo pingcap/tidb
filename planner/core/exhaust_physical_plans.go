@@ -148,8 +148,6 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 	joins := make([]PhysicalPlan, 0, len(p.leftProperties)+1)
 	// The leftProperties caches all the possible properties that are provided by its children.
 	leftJoinKeys, rightJoinKeys, isNullEQ, hasNullEQ := p.GetJoinKeys()
-<<<<<<< HEAD
-=======
 
 	// EnumType/SetType Unsupported: merge join conflicts with index order.
 	// ref: https://github.com/pingcap/tidb/issues/24473, https://github.com/pingcap/tidb/issues/25669
@@ -164,7 +162,6 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 		}
 	}
 
->>>>>>> 574de5e5e... planner: fix incorrect result of set type for merge join (#25672)
 	// TODO: support null equal join keys for merge join
 	if hasNullEQ {
 		return nil
@@ -531,8 +528,6 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		if len(join.InnerHashKeys) > len(join.InnerJoinKeys) {
 			return nil
 		}
-<<<<<<< HEAD
-=======
 
 		// EnumType/SetType Unsupported: merge join conflicts with index order.
 		// ref: https://github.com/pingcap/tidb/issues/24473, https://github.com/pingcap/tidb/issues/25669
@@ -547,7 +542,6 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 			}
 		}
 
->>>>>>> 574de5e5e... planner: fix incorrect result of set type for merge join (#25672)
 		hasPrefixCol := false
 		for _, l := range join.IdxColLens {
 			if l != types.UnspecifiedLength {
