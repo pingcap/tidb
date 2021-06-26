@@ -1281,12 +1281,18 @@ func (cli *testServerClient) runFailedTestMultiStatements(c *C) {
 		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
 		c.Assert(count, Equals, int64(1))
 		rows := dbt.mustQuery("show warnings")
-		cli.checkRows(c, rows, "Warning 8130 client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk")
+		c.Assert(rows.Next(), IsTrue)
+		var level, code, message string
+		err = rows.Scan(&level, &code, &message)
+		c.Assert(err, IsNil)
+		c.Assert(rows.Close(), IsNil)
+		c.Assert(level, Equals, "Warning")
+		c.Assert(code, Equals, "8130")
+		c.Assert(message, Equals, "client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk")
 		var out int
 		rows = dbt.mustQuery("SELECT value FROM test WHERE id=1;")
 		if rows.Next() {
-			err = rows.Scan(&out)
-			c.Assert(err, IsNil)
+			rows.Scan(&out)
 			c.Assert(out, Equals, 5)
 
 			if rows.Next() {
@@ -1310,8 +1316,7 @@ func (cli *testServerClient) runFailedTestMultiStatements(c *C) {
 		c.Assert(count, Equals, int64(1))
 		rows = dbt.mustQuery("SELECT value FROM test WHERE id=1;")
 		if rows.Next() {
-			err = rows.Scan(&out)
-			c.Assert(err, IsNil)
+			rows.Scan(&out)
 			c.Assert(out, Equals, 5)
 
 			if rows.Next() {
@@ -1327,7 +1332,7 @@ func (cli *testServerClient) runFailedTestMultiStatements(c *C) {
 func (cli *testServerClient) runTestMultiStatements(c *C) {
 
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
-		config.Params["multiStatements"] = "true"
+		config.Params = map[string]string{"multiStatements": "true"}
 	}, "MultiStatements", func(dbt *DBTest) {
 		// Create Table
 		dbt.mustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
@@ -1348,8 +1353,7 @@ func (cli *testServerClient) runTestMultiStatements(c *C) {
 		var out int
 		rows := dbt.mustQuery("SELECT value FROM test WHERE id=1;")
 		if rows.Next() {
-			err = rows.Scan(&out)
-			c.Assert(err, IsNil)
+			rows.Scan(&out)
 			c.Assert(out, Equals, 5)
 
 			if rows.Next() {
