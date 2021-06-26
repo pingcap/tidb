@@ -76,10 +76,6 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		}
 	})
 
-	if req.StoreTp == tikvrpc.TiDB {
-		return c.redirectRequestToRPCServer(ctx, addr, req, timeout)
-	}
-
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -394,25 +390,6 @@ type Client interface {
 	Close() error
 	// SendRequest sends Request.
 	SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error)
-}
-
-// GRPCClientFactory is the GRPC client factory.
-// Use global variable to avoid circle import.
-// TODO: remove this global variable.
-var GRPCClientFactory func() Client
-
-// redirectRequestToRPCServer redirects RPC request to TiDB rpc server, It is only use for test.
-// Mock TiDB rpc service will have circle import problem, so just use a real RPC client to send this RPC  server.
-func (c *RPCClient) redirectRequestToRPCServer(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
-	c.Once.Do(func() {
-		if GRPCClientFactory != nil {
-			c.rpcCli = GRPCClientFactory()
-		}
-	})
-	if c.rpcCli == nil {
-		return nil, errors.Errorf("GRPCClientFactory is nil")
-	}
-	return c.rpcCli.SendRequest(ctx, addr, req, timeout)
 }
 
 // Close closes RPCClient and cleanup temporal resources.
