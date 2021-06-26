@@ -22,6 +22,8 @@ import (
 	"sort"
 	"unicode/utf8"
 
+	goJSON "encoding/json"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -60,6 +62,9 @@ func (bj BinaryJSON) Unquote() (string, error) {
 	switch bj.TypeCode {
 	case TypeCodeString:
 		str := string(hack.String(bj.GetString()))
+		if str[0] == '"' && str[len(str)-1] == '"' && !goJSON.Valid([]byte(str)) {
+			return str, ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")
+		}
 		return UnquoteString(str)
 	default:
 		return bj.String(), nil
