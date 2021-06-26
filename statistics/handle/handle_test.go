@@ -847,6 +847,7 @@ func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 	c.Assert(len(result.Rows()), Equals, 20)
 }
 
+// nolint:unused
 func (s *testStatsSuite) prepareForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, tblName, dbName string) {
 	tk.MustExec("create database if not exists " + dbName)
 	tk.MustExec("use " + dbName)
@@ -870,6 +871,7 @@ func (s *testStatsSuite) prepareForGlobalStatsWithOpts(c *C, tk *testkit.TestKit
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 }
 
+// nolint:unused
 func (s *testStatsSuite) checkForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, p string, topn, buckets int) {
 	delta := buckets/2 + 1
 	for _, isIdx := range []int{0, 1} {
@@ -890,6 +892,7 @@ func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.prepareForGlobalStatsWithOpts(c, tk, "test_gstats_opt", "test_gstats_opt")
 
+	// nolint:unused
 	type opt struct {
 		topn    int
 		buckets int
