@@ -148,6 +148,20 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 	joins := make([]PhysicalPlan, 0, len(p.leftProperties)+1)
 	// The leftProperties caches all the possible properties that are provided by its children.
 	leftJoinKeys, rightJoinKeys, isNullEQ, hasNullEQ := p.GetJoinKeys()
+
+	// EnumType/SetType Unsupported: merge join conflicts with index order.
+	// ref: https://github.com/pingcap/tidb/issues/24473, https://github.com/pingcap/tidb/issues/25669
+	for _, leftKey := range leftJoinKeys {
+		if leftKey.RetType.Tp == mysql.TypeEnum || leftKey.RetType.Tp == mysql.TypeSet {
+			return nil
+		}
+	}
+	for _, rightKey := range rightJoinKeys {
+		if rightKey.RetType.Tp == mysql.TypeEnum || rightKey.RetType.Tp == mysql.TypeSet {
+			return nil
+		}
+	}
+
 	// TODO: support null equal join keys for merge join
 	if hasNullEQ {
 		return nil
@@ -514,6 +528,20 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		if len(join.InnerHashKeys) > len(join.InnerJoinKeys) {
 			return nil
 		}
+
+		// EnumType/SetType Unsupported: merge join conflicts with index order.
+		// ref: https://github.com/pingcap/tidb/issues/24473, https://github.com/pingcap/tidb/issues/25669
+		for _, innerKey := range join.InnerJoinKeys {
+			if innerKey.RetType.Tp == mysql.TypeEnum || innerKey.RetType.Tp == mysql.TypeSet {
+				return nil
+			}
+		}
+		for _, outerKey := range join.OuterJoinKeys {
+			if outerKey.RetType.Tp == mysql.TypeEnum || outerKey.RetType.Tp == mysql.TypeSet {
+				return nil
+			}
+		}
+
 		hasPrefixCol := false
 		for _, l := range join.IdxColLens {
 			if l != types.UnspecifiedLength {
@@ -1843,7 +1871,8 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		EqualConditions:  p.EqualConditions,
 		storeTp:          kv.TiFlash,
 		mppShuffleJoin:   !useBCJ,
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childrenProps...)
+		// Mpp Join has quite heavy cost. Even limit might not suspend it in time, so we dont scale the count.
+	}.Init(p.ctx, p.stats, p.blockOffset, childrenProps...)
 	return []PhysicalPlan{join}
 }
 
@@ -1994,6 +2023,9 @@ func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPl
 	if !lt.limitHints.preferLimitToCop {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
+	if lt.ctx.GetSessionVars().AllowMPPExecution {
+		allTaskTypes = append(allTaskTypes, property.MppTaskType)
+	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64}
@@ -2033,6 +2065,7 @@ func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []Physical
 			Count:  lt.Count,
 			Offset: lt.Offset,
 		}.Init(lt.ctx, lt.stats, lt.blockOffset, resultProp)
+		limit.SetSchema(lt.Schema())
 		ret = append(ret, limit)
 	}
 	return ret
@@ -2140,6 +2173,10 @@ func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) ([]
 // canPushToCop checks if it can be pushed to some stores. For TiKV, it only checks datasource.
 // For TiFlash, it will check whether the operator is supported, but note that the check might be inaccrute.
 func (p *baseLogicalPlan) canPushToCop(storeTp kv.StoreType) bool {
+	return p.canPushToCopImpl(storeTp, false)
+}
+
+func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bool) bool {
 	ret := true
 	for _, ch := range p.children {
 		switch c := ch.(type) {
@@ -2151,7 +2188,21 @@ func (p *baseLogicalPlan) canPushToCop(storeTp kv.StoreType) bool {
 				}
 			}
 			ret = ret && validDs
-		case *LogicalAggregation, *LogicalProjection, *LogicalSelection, *LogicalJoin:
+		case *LogicalUnionAll:
+			if storeTp == kv.TiFlash {
+				ret = ret && c.canPushToCopImpl(storeTp, true)
+			} else {
+				return false
+			}
+		case *LogicalProjection:
+			if storeTp == kv.TiFlash {
+				ret = ret && c.canPushToCopImpl(storeTp, considerDual)
+			} else {
+				return false
+			}
+		case *LogicalTableDual:
+			return storeTp == kv.TiFlash && considerDual
+		case *LogicalAggregation, *LogicalSelection, *LogicalJoin:
 			if storeTp == kv.TiFlash {
 				ret = ret && c.canPushToCop(storeTp)
 			} else {
@@ -2491,6 +2542,9 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 	if !p.limitHints.preferLimitToCop {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
+	if p.canPushToCop(kv.TiFlash) && p.ctx.GetSessionVars().AllowMPPExecution {
+		allTaskTypes = append(allTaskTypes, property.MppTaskType)
+	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(p.Count + p.Offset)}
@@ -2519,15 +2573,41 @@ func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 
 func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	// TODO: UnionAll can not pass any order, but we can change it to sort merge to keep order.
-	if !prop.IsEmpty() || prop.IsFlashProp() {
+	if !prop.IsEmpty() || (prop.IsFlashProp() && prop.TaskTp != property.MppTaskType) {
 		return nil, true
 	}
+	// TODO: UnionAll can pass partition info, but for briefness, we prevent it from pushing down.
+	if prop.TaskTp == property.MppTaskType && prop.PartitionTp != property.AnyType {
+		return nil, true
+	}
+	canUseMpp := p.ctx.GetSessionVars().AllowMPPExecution && p.canPushToCopImpl(kv.TiFlash, true)
 	chReqProps := make([]*property.PhysicalProperty, 0, len(p.children))
 	for range p.children {
-		chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt})
+		if canUseMpp && prop.TaskTp == property.MppTaskType {
+			chReqProps = append(chReqProps, &property.PhysicalProperty{
+				ExpectedCnt: prop.ExpectedCnt,
+				TaskTp:      property.MppTaskType,
+			})
+		} else {
+			chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt})
+		}
 	}
-	ua := PhysicalUnionAll{}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
+	ua := PhysicalUnionAll{
+		mpp: canUseMpp && prop.TaskTp == property.MppTaskType,
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
 	ua.SetSchema(p.Schema())
+	if canUseMpp && prop.TaskTp == property.RootTaskType {
+		chReqProps = make([]*property.PhysicalProperty, 0, len(p.children))
+		for range p.children {
+			chReqProps = append(chReqProps, &property.PhysicalProperty{
+				ExpectedCnt: prop.ExpectedCnt,
+				TaskTp:      property.MppTaskType,
+			})
+		}
+		mppUA := PhysicalUnionAll{mpp: true}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
+		mppUA.SetSchema(p.Schema())
+		return []PhysicalPlan{ua, mppUA}, true
+	}
 	return []PhysicalPlan{ua}, true
 }
 
