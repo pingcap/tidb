@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/tikv/client-go/v2/mockstore"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
@@ -79,6 +78,3 @@ func clearStorage(store kv.Storage) error {
 	}
 	return txn.Commit(context.Background())
 }
-
-// OneByOneSuite is a suite, When with-tikv flag is true, there is only one storage, so the test suite have to run one by one.
-type OneByOneSuite = mockstore.OneByOneSuite
