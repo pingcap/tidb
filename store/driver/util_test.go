@@ -34,7 +34,8 @@ func TestT(t *testing.T) {
 }
 
 var (
-	pdAddrs = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
+	pdAddrs  = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
+	withTiKV = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
 )
 
 // NewTestStore creates a kv.Storage for testing purpose.
@@ -43,7 +44,7 @@ func NewTestStore(c *C) kv.Storage {
 		flag.Parse()
 	}
 
-	if *mockstore.WithTiKV {
+	if *withTiKV {
 		var d TiKVDriver
 		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
 		c.Assert(err, IsNil)
