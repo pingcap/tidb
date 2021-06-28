@@ -34,7 +34,6 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 		sql              string
 		IsStaleness      bool
 		expectPhysicalTS int64
-		txnScope         string
 		zone             string
 	}{
 		{
@@ -43,7 +42,6 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 			sql:              `START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00';`,
 			IsStaleness:      true,
 			expectPhysicalTS: 1599321600000,
-			txnScope:         "local",
 			zone:             "sh",
 		},
 		{
@@ -51,7 +49,6 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 			preSQL:      `START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00';`,
 			sql:         "begin",
 			IsStaleness: false,
-			txnScope:    oracle.GlobalTxnScope,
 			zone:        "",
 		},
 		{
@@ -60,7 +57,6 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 			sql:              `START TRANSACTION READ ONLY AS OF TIMESTAMP tidb_bounded_staleness('2015-09-21 00:07:01', NOW());`,
 			IsStaleness:      true,
 			expectPhysicalTS: 1442765221000,
-			txnScope:         "local",
 			zone:             "bj",
 		},
 		{
@@ -68,7 +64,6 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 			preSQL:      `START TRANSACTION READ ONLY AS OF TIMESTAMP tidb_bounded_staleness('2015-09-21 00:07:01', NOW());`,
 			sql:         "begin",
 			IsStaleness: false,
-			txnScope:    oracle.GlobalTxnScope,
 			zone:        "",
 		},
 	}
@@ -78,7 +73,6 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 		c.Log(testcase.name)
 		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope",
 			fmt.Sprintf(`return("%v")`, testcase.zone))
-		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
 		tk.MustExec(testcase.preSQL)
 		tk.MustExec(testcase.sql)
 		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, testcase.IsStaleness)
@@ -943,4 +937,26 @@ func (s *testStaleTxnSuite) TestStaleSelect(c *C) {
 	tk.MustExec("insert into t values (5, 5, 5)")
 	time.Sleep(tolerance)
 	tk.MustQuery(fmt.Sprintf("select * from t as of timestamp '%s' where c=5", time6.Format("2006-1-2 15:04:05.000"))).Check(testkit.Rows("4 5 <nil>"))
+}
+
+func (s *testStaleTxnSuite) TestStaleReadFutureTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+
+	// Setting tx_read_ts to a time in the future will fail. (One day before the 2038 problem)
+	_, err := tk.Exec("start transaction read only as of timestamp '2038-01-18 03:14:07'")
+	c.Assert(err, ErrorMatches, "cannot set read timestamp to a future time")
+	// Transaction should not be started and read ts should not be set if check fails
+	c.Assert(tk.Se.GetSessionVars().InTxn(), IsFalse)
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(0))
+
+	_, err = tk.Exec("set transaction read only as of timestamp '2038-01-18 03:14:07'")
+	c.Assert(err, ErrorMatches, "cannot set read timestamp to a future time")
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(0))
+
+	_, err = tk.Exec("select * from t as of timestamp '2038-01-18 03:14:07'")
+	c.Assert(err, ErrorMatches, "cannot set read timestamp to a future time")
 }
