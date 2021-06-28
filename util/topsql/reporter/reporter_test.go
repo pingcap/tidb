@@ -111,13 +111,13 @@ func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
 			c.Assert(err, IsNil)
 			id = n
 		}
-		c.Assert(req.CpuTimeMsList, HasLen, 1)
-		for i := range req.CpuTimeMsList {
-			c.Assert(req.CpuTimeMsList[i], Equals, uint32(id))
+		c.Assert(req.RecordListCpuTimeMs, HasLen, 1)
+		for i := range req.RecordListCpuTimeMs {
+			c.Assert(req.RecordListCpuTimeMs[i], Equals, uint32(id))
 		}
-		c.Assert(req.TimestampList, HasLen, 1)
-		for i := range req.TimestampList {
-			c.Assert(req.TimestampList[i], Equals, uint64(1))
+		c.Assert(req.RecordListTimestampSec, HasLen, 1)
+		for i := range req.RecordListTimestampSec {
+			c.Assert(req.RecordListTimestampSec[i], Equals, uint64(1))
 		}
 		normalizedSQL, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		c.Assert(exist, IsTrue)
@@ -152,13 +152,13 @@ func (s *testTopSQLReporter) TestCollectAndEvicted(c *C) {
 			id = n
 		}
 		c.Assert(id >= maxSQLNum, IsTrue)
-		c.Assert(req.CpuTimeMsList, HasLen, 1)
-		for i := range req.CpuTimeMsList {
-			c.Assert(req.CpuTimeMsList[i], Equals, uint32(id))
+		c.Assert(req.RecordListCpuTimeMs, HasLen, 1)
+		for i := range req.RecordListCpuTimeMs {
+			c.Assert(req.RecordListCpuTimeMs[i], Equals, uint32(id))
 		}
-		c.Assert(req.TimestampList, HasLen, 1)
-		for i := range req.TimestampList {
-			c.Assert(req.TimestampList[i], Equals, uint64(2))
+		c.Assert(req.RecordListTimestampSec, HasLen, 1)
+		for i := range req.RecordListTimestampSec {
+			c.Assert(req.RecordListTimestampSec[i], Equals, uint64(2))
 		}
 		normalizedSQL, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		c.Assert(exist, IsTrue)
@@ -234,7 +234,7 @@ func (s *testTopSQLReporter) TestCollectAndTopN(c *C) {
 			c.Fatalf("the id should be 1 or 3, got: %v", id)
 		}
 		total := uint32(0)
-		for _, v := range req.CpuTimeMsList {
+		for _, v := range req.RecordListCpuTimeMs {
 			total += v
 		}
 		c.Assert(total, Equals, uint32(3))
