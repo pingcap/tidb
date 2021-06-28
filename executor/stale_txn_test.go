@@ -932,8 +932,6 @@ func (s *testStaleTxnSuite) TestStaleSelect(c *C) {
 	time.Sleep(tolerance)
 	tk.MustQuery(fmt.Sprintf("select * from t as of timestamp '%s' where c=5", time6.Format("2006-1-2 15:04:05.000"))).Check(testkit.Rows("4 5 <nil>"))
 }
-<<<<<<< HEAD
-=======
 
 func (s *testStaleTxnSuite) TestStaleReadFutureTime(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
