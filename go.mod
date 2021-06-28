@@ -47,7 +47,7 @@ require (
 	github.com/pingcap/parser v0.0.0-20210618053735-57843e8185c4
 	github.com/pingcap/sysutil v0.0.0-20210315073920-cc0985d983a3
 	github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible
-	github.com/pingcap/tipb v0.0.0-20210628060001-1793e022b962
+	github.com/pingcap/tipb v0.0.0-20210603161937-cfb5a9225f95
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
@@ -76,6 +76,7 @@ require (
 	golang.org/x/tools v0.1.0
 	google.golang.org/grpc v1.27.1
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
+	honnef.co/go/tools v0.2.0 // indirect
 	modernc.org/mathutil v1.2.2 // indirect
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67

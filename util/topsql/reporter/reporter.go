@@ -221,7 +221,7 @@ func encodeKey(buf *bytes.Buffer, sqlDigest, planDigest []byte) string {
 	return buf.String()
 }
 
-func (tsr *RemoteTopSQLReporter) getTopNRecords(records []tracecpu.SQLCPUTimeRecord) (topN, shouldEvict []tracecpu.SQLCPUTimeRecord) {
+func (tsr *RemoteTopSQLReporter) getTopNRecords(records []tracecpu.SQLCPUTimeRecord) (topn, evicted []tracecpu.SQLCPUTimeRecord) {
 	maxStmt := int(variable.TopSQLVariable.MaxStatementCount.Load())
 	if len(records) <= maxStmt {
 		return records, nil
@@ -233,7 +233,7 @@ func (tsr *RemoteTopSQLReporter) getTopNRecords(records []tracecpu.SQLCPUTimeRec
 	return records[:maxStmt], records[maxStmt:]
 }
 
-func (tsr *RemoteTopSQLReporter) getTopNDataPoints(records []*dataPoints) (topN, shouldEvict []*dataPoints) {
+func (tsr *RemoteTopSQLReporter) getTopNDataPoints(records []*dataPoints) (topn, evicted []*dataPoints) {
 	maxStmt := int(variable.TopSQLVariable.MaxStatementCount.Load())
 	if len(records) <= maxStmt {
 		return records, nil
