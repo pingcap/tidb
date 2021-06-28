@@ -759,6 +759,18 @@ func (s *testStatsSuite) TestCorrelation(c *C) {
 	c.Assert(result.Rows()[0][9], Equals, "0")
 }
 
+func (s *testStatsSuite) TestAnalyzeVirtualCol(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int generated always as (-a) virtual, c int generated always as (-a) stored, index (c))")
+	tk.MustExec("insert into t(a) values(2),(1),(1),(3),(NULL)")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("analyze table t")
+	c.Assert(len(tk.MustQuery("show stats_histograms where table_name ='t'").Rows()), Equals, 3)
+}
+
 func (s *testStatsSuite) TestShowGlobalStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
