@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/tikv/client-go/v2/oracle"
@@ -846,6 +847,7 @@ func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 	c.Assert(len(result.Rows()), Equals, 20)
 }
 
+// nolint:unused
 func (s *testStatsSuite) prepareForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, tblName, dbName string) {
 	tk.MustExec("create database if not exists " + dbName)
 	tk.MustExec("use " + dbName)
@@ -869,6 +871,7 @@ func (s *testStatsSuite) prepareForGlobalStatsWithOpts(c *C, tk *testkit.TestKit
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 }
 
+// nolint:unused
 func (s *testStatsSuite) checkForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, p string, topn, buckets int) {
 	delta := buckets/2 + 1
 	for _, isIdx := range []int{0, 1} {
@@ -882,11 +885,14 @@ func (s *testStatsSuite) checkForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, 
 }
 
 func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
-	c.Skip("unstable, skip race test")
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	s.prepareForGlobalStatsWithOpts(c, tk, "test_gstats_opt", "test_gstats_opt")
 
+	// nolint:unused
 	type opt struct {
 		topn    int
 		buckets int
@@ -918,7 +924,9 @@ func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
 }
 
 func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts2(c *C) {
-	c.Skip("unstable, skip race test")
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	s.prepareForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2")

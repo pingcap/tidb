@@ -23,6 +23,7 @@ import (
 	"strconv"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
@@ -1367,6 +1368,12 @@ func (s *testSuite5) TestSetClusterConfigJSONData(c *C) {
 }
 
 func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`), IsNil)
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop")
+		c.Assert(err, IsNil)
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@global.tidb_enable_top_sql='On';")
 	tk.MustQuery("select @@global.tidb_enable_top_sql;").Check(testkit.Rows("1"))
