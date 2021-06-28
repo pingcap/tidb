@@ -923,6 +923,7 @@ const (
 	ErrTxnTooLarge                         = 8004
 	ErrWriteConflictInTiDB                 = 8005
 	ErrOptOnTemporaryTable                 = 8006
+	ErrDropTableOnTemporaryTable           = 8007
 	ErrUnsupportedReloadPlugin             = 8018
 	ErrUnsupportedReloadPluginVar          = 8019
 	ErrTableLocked                         = 8020

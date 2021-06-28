@@ -94,11 +94,12 @@ var (
 	ErrCTERecursiveForbiddenJoinOrder        = dbterror.ClassOptimizer.NewStd(mysql.ErrCTERecursiveForbiddenJoinOrder)
 	ErrInvalidRequiresSingleReference        = dbterror.ClassOptimizer.NewStd(mysql.ErrInvalidRequiresSingleReference)
 	// Since we cannot know if user logged in with a password, use message of ErrAccessDeniedNoPassword instead
-	ErrAccessDenied        = dbterror.ClassOptimizer.NewStdErr(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDeniedNoPassword])
-	ErrBadNull             = dbterror.ClassOptimizer.NewStd(mysql.ErrBadNull)
-	ErrNotSupportedWithSem = dbterror.ClassOptimizer.NewStd(mysql.ErrNotSupportedWithSem)
-	ErrAsOf                = dbterror.ClassOptimizer.NewStd(mysql.ErrAsOf)
-	ErrOptOnTemporaryTable = dbterror.ClassOptimizer.NewStd(mysql.ErrOptOnTemporaryTable)
+	ErrAccessDenied              = dbterror.ClassOptimizer.NewStdErr(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDeniedNoPassword])
+	ErrBadNull                   = dbterror.ClassOptimizer.NewStd(mysql.ErrBadNull)
+	ErrNotSupportedWithSem       = dbterror.ClassOptimizer.NewStd(mysql.ErrNotSupportedWithSem)
+	ErrAsOf                      = dbterror.ClassOptimizer.NewStd(mysql.ErrAsOf)
+	ErrOptOnTemporaryTable       = dbterror.ClassOptimizer.NewStd(mysql.ErrOptOnTemporaryTable)
+	ErrDropTableOnTemporaryTable = dbterror.ClassOptimizer.NewStd(mysql.ErrDropTableOnTemporaryTable)
 	// ErrPartitionNoTemporary returns when partition at temporary mode
 	ErrPartitionNoTemporary = dbterror.ClassOptimizer.NewStd(mysql.ErrPartitionNoTemporary)
 )
