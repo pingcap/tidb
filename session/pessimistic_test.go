@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
-	"github.com/tikv/client-go/v2/mockstore"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 
@@ -233,7 +232,7 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 }
 
 func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
-	if *mockstore.WithTiKV {
+	if *withTiKV {
 		c.Skip("skip with tikv because cluster manipulate is not available")
 	}
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -2079,7 +2078,7 @@ func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 
 func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 	// TODO: implement commit_ts calculation in unistore
-	if !*mockstore.WithTiKV {
+	if !*withTiKV {
 		return
 	}
 
@@ -2153,7 +2152,7 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 
 func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 	// TODO: implement commit_ts calculation in unistore
-	if !*mockstore.WithTiKV {
+	if !*withTiKV {
 		return
 	}
 
