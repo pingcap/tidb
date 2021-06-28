@@ -265,7 +265,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	if err != nil {
 		return err
 	}
-	if snapshotTS != 0 && isStaleness {
+	if isStaleness {
 		is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
 		if err != nil {
 			return errors.Trace(err)
@@ -308,15 +308,19 @@ func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
 	readTS := vars.TxnReadTS.PeakTxnReadTS()
 	if readTS > 0 {
 		// It means we meet following case:
-		// 1. set transaction read only as of timestamp ts
-		// 2. execute prepared statement with different as of ts
+		// 1. prepare p from 'select * from t as of timestamp now() - x seconds'
+		// 1. set transaction read only as of timestamp ts2
+		// 2. execute prepare p
+		// The execute statement would be refused due to timestamp conflict
 		if preparedObj.SnapshotTSEvaluator != nil {
 			err = ErrAsOf.FastGenWithCause("as of timestamp can't be set after set transaction read only as of.")
 			return
 		}
-		// If readTS > 0, it means we are handling the following case:
-		// 1. set transaction read only as of timestamp ts
-		// 2. execute prepared statement
+		// It means we meet following case:
+		// 1. prepare p from 'select * from t as of timestamp ts1'
+		// 1. set transaction read only as of timestamp ts2
+		// 2. execute prepare p
+		// The execute statement would be refused due to timestamp conflict
 		snapshotTS = vars.TxnReadTS.UseTxnReadTS()
 		isStaleness = true
 		txnScope = config.GetTxnScopeFromConfig()
