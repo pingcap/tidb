@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tikv/client-go/v2/config"
+	"github.com/pingcap/tidb/config"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
@@ -53,7 +53,7 @@ func (c *clientRedirector) Close() error {
 func (c *clientRedirector) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	if req.StoreTp == tikvrpc.TiDB {
 		c.Once.Do(func() {
-			c.rpcClient = tikv.NewRPCClient(config.GetGlobalConfig().Security)
+			c.rpcClient = tikv.NewRPCClient(config.Security.ClusterSecurity())
 		})
 		return c.rpcClient.SendRequest(ctx, addr, req, timeout)
 	}
