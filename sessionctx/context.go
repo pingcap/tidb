@@ -24,11 +24,11 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tipb/go-binlog"
-	"github.com/tikv/client-go/v2/oracle"
 )
 
 // InfoschemaMetaVersion is a workaround. Due to circular dependency,
