@@ -9807,7 +9807,6 @@ func (s *testIntegrationSuite2) TestGreatestLeast(c *C) {
 	tk.MustExec("create table t(id int, nu decimal(10, 2));")
 	tk.MustExec("insert into t values(1, 2.00),(2, 1.00),(3,3.00);")
 
-
 	tk.MustQuery("select id, greatest(nu, 1, 2), least(nu, 1.000, 3.0000) from t order by id").Check(
-		testkit.Rows("1 2.00 1.0000", "2 2.00 1.0000", "3 3.00 1.0000")
+		testkit.Rows("1 2.00 1.0000", "2 2.00 1.0000", "3 3.00 1.0000"))
 }
