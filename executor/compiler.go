@@ -70,14 +70,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 	return &ExecStmt{
 		GoCtx:             ctx,
-<<<<<<< HEAD
 		SnapshotTS:        ret.LastSnapshotTS,
 		ExplicitStaleness: ret.ExplicitStaleness,
 		TxnScope:          ret.TxnScope,
-=======
-		SnapshotTS:        ret.SnapshotTS,
-		ExplicitStaleness: ret.ExplicitStaleness,
->>>>>>> 811253785... planner, executor: add stale read compatibility for temporary table (#25206)
 		InfoSchema:        ret.InfoSchema,
 		Plan:              finalPlan,
 		LowerPriority:     lowerPriority,

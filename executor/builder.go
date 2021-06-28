@@ -85,10 +85,7 @@ type executorBuilder struct {
 	Ti               *TelemetryInfo
 	// ExplicitStaleness means whether the 'SELECT' clause are using 'AS OF TIMESTAMP' to perform stale read explicitly.
 	explicitStaleness bool
-<<<<<<< HEAD
 	txnScope          string
-=======
->>>>>>> 811253785... planner, executor: add stale read compatibility for temporary table (#25206)
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.

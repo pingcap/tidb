@@ -862,7 +862,6 @@ func (s *testStaleTxnSuite) TestSetTransactionInfoSchema(c *C) {
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer3)
 }
 
-<<<<<<< HEAD
 func (s *testStaleTxnSuite) TestStaleSelect(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -938,7 +937,8 @@ func (s *testStaleTxnSuite) TestStaleSelect(c *C) {
 	tk.MustExec("insert into t values (5, 5, 5)")
 	time.Sleep(tolerance)
 	tk.MustQuery(fmt.Sprintf("select * from t as of timestamp '%s' where c=5", time6.Format("2006-1-2 15:04:05.000"))).Check(testkit.Rows("4 5 <nil>"))
-=======
+}
+
 func (s *testStaleTxnSuite) TestStaleReadTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
@@ -1026,5 +1026,4 @@ func (s *testStaleTxnSuite) TestStaleReadTemporaryTable(c *C) {
 	for _, query := range queries {
 		tk.MustExec(query.sql)
 	}
->>>>>>> 811253785... planner, executor: add stale read compatibility for temporary table (#25206)
 }
