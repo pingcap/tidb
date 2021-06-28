@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -1556,7 +1557,21 @@ func (e *SimpleExec) executeShutdown(s *ast.ShutdownStmt) error {
 // This function need to run with async model, otherwise it will block main coroutine
 func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 	time.Sleep(delay)
-	err := p.Kill()
+	// Send SIGTERM instead of SIGKILL to allow graceful shutdown and cleanups to work properly.
+	err := p.Signal(syscall.SIGTERM)
+	if err != nil {
+		panic(err)
+	}
+
+	// Sending SIGKILL should not be needed as SIGTERM should cause a graceful shutdown after
+	// n seconds as configured by the GracefulWaitBeforeShutdown. This is here in case that doesn't
+	// work for some reason.
+	graceTime := config.GetGlobalConfig().GracefulWaitBeforeShutdown
+
+	// The shutdown is supposed to start at graceTime and is allowed to take up to 10s.
+	time.Sleep(time.Second * time.Duration(graceTime+10))
+	logutil.BgLogger().Info("Killing process as grace period is over", zap.Int("pid", p.Pid), zap.Int("graceTime", graceTime))
+	err = p.Kill()
 	if err != nil {
 		panic(err)
 	}
