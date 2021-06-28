@@ -2,6 +2,7 @@ package metrics
 
 import "github.com/prometheus/client_golang/prometheus"
 
+// Top SQL metrics.
 var (
 	RegisterSQLFail = prometheus.NewCounter(
 		prometheus.CounterOpts{
