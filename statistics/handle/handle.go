@@ -1001,6 +1001,10 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 	// 2. Save histograms.
 	for _, result := range results.Ars {
 		for i, hg := range result.Hist {
+			// It's normal virtual column, skip it.
+			if hg == nil {
+				continue
+			}
 			var cms *statistics.CMSketch
 			if results.StatsVer != statistics.Version2 {
 				cms = result.Cms[i]
