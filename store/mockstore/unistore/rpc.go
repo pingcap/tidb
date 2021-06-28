@@ -18,7 +18,6 @@ import (
 	"math"
 	"os"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -51,12 +50,6 @@ type RPCClient struct {
 	rawHandler *rawHandler
 	persistent bool
 	closed     int32
-
-	// rpcCli uses to redirects RPC request to TiDB rpc server, It is only use for test.
-	// Mock TiDB rpc service will have circle import problem, so just use a real RPC client to send this RPC  server.
-	// sync.Once uses to avoid concurrency initialize rpcCli.
-	sync.Once
-	rpcCli Client
 }
 
 // UnistoreRPCClientSendHook exports for test.
@@ -397,12 +390,6 @@ func (c *RPCClient) Close() error {
 	atomic.StoreInt32(&c.closed, 1)
 	if c.usSvr != nil {
 		c.usSvr.Stop()
-	}
-	if c.rpcCli != nil {
-		err := c.rpcCli.Close()
-		if err != nil {
-			return err
-		}
 	}
 	if !c.persistent && c.path != "" {
 		err := os.RemoveAll(c.path)
