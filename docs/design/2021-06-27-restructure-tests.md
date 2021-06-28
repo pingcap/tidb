@@ -77,21 +77,37 @@ Many of Golang projects previous using pingcap/check, such as [pingcap/errors](h
 
 This section continues from the previous discussion on TiDB Internals forum, named [Turn off redundant logging in TiDB tests](https://internals.tidb.io/t/topic/48).
 
+Logs of created by passed tests are generally less interesting to developers. go.uber.org/zap provides a module named `zaptest` to redirect output to `testing.TB`. It only caches the output per test case, and only print the output to console if the test failed.
+
+[pingcap/log#16](https://github.com/pingcap/log/pull/16) brings this function to pingcap/log and we'd better make use of it to prevent redundant logs output. In detail, we will introduce a method with signature `logutil.InitTestLogger(t zaptest.TestingT, cfg *LogConfig)` and enable in every tests related to logs.
+
+Note that the test logger only prevent logs when go test without `-v` flag. But since we keep print log on failure case, we can safely remove the flag.
+
 ### Rethink each tests during the migration
+
+This section gathers principles we should consider while migrating test cases. If we just rewrite the cases from pingcap/check to stretchr/testify, we lost the best chance to improve test structure and build a testable codebase.
 
 #### Prefer determinate tests for concurrency logics
 
+Make use of `sync.Mutex`, `sync.WaitGroup`, or other concurrent utils like latches, and get rid of "long enough" sleep, which is brittle and causes unnecessary time for tests.
+
 #### Separate huge test files into small test units that can be run in parallel
+
+* `expression/integration_test.go` has 9801 lines.
+* `executor/executor_test.go` has 8726 lines.
+* `ddl/db_test.go` has 6930 lines.
+* `session/session_test.go` has 4825.
+* `planner/core/integration_test.go` has 3900 lines.
+
+We should break these test files into small test units and try to perform white box tests instead of just test the end-to-end behavior.
 
 ## Implementation Plan
 
 The implementation of detailed design is separated into three phases.
 
-### Phase 0: Start the migration to stretchr/testify, but new tests can be still written in pingcap/check
-
-### Phase 1: Once test kits in stretchr/testify version implemented and there is adequate migration examples, prevent new tests written in pingcap/check
-
-### Phase 2: Finalize the migration and drop the dependency to pingcap/check
+* **Phase 0**: Start the migration to stretchr/testify by introduce the dependency, but new tests can be still written in pingcap/check.
+* **Phase 1**: Once test kits in stretchr/testify version implemented and there is adequate migration examples, prevent new tests written in pingcap/check.
+* **Phase 2**: Finalize the migration and drop the dependency to pingcap/check.
 
 ## Test Design
 
@@ -111,9 +127,13 @@ Comment here if there are other projects suffer from this issue.
 
 ## Investigation & Alternatives
 
-How do other systems solve this issue? What other designs have been considered and what is the rationale for not choosing them?
+To be honest, go testing already provides a test framework with parallel supports, children tests supports, and logging supports.
 
-**To be done.**
+[kubernetes](https://github.com/kubernetes/kubernetes), [coredns](https://github.com/coredns/coredns), and [etcd](https://github.com/etcd-io/etcd) all make use of go testing, and only kubenetes uses stretchr/testify for its fruitful checkers.
+
+This proposal keeps the same preference that we stay as friend with go testing as possible, make use of checkers provided by stretchr/testify, and generate our own test kits.
+
+The most important part is, instead, code refactor during the migration.
 
 ## Unresolved Questions
 
