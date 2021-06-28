@@ -192,7 +192,7 @@ type HashAggExec struct {
 	prepared                bool
 	executed                bool
 
-	memTracker *memory.Tracker // track memory usage.
+	memTracker  *memory.Tracker // track memory usage.
 	diskTracker *disk.Tracker
 
 	stats *HashAggRuntimeStats
