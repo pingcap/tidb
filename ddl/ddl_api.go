@@ -5405,10 +5405,8 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		return err
 	}
 
-	uniqueIndex := make(map[string]bool, len(specs))
 	indexNames := make([]model.CIStr, 0, len(specs))
 	ifExists := make([]bool, 0, len(specs))
-
 	for _, spec := range specs {
 		var indexName model.CIStr
 		if spec.Tp == ast.AlterTableDropPrimaryKey {
@@ -5417,44 +5415,19 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 			indexName = model.NewCIStr(spec.Name)
 		}
 
-		_, ok := uniqueIndex[indexName.L]
-		if ok {
-			err := ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
-			if spec.IfExists {
-				ctx.GetSessionVars().StmtCtx.AppendNote(err)
-				continue
-			}
-			return err
-		}
-		uniqueIndex[indexName.L] = spec.IfExists
-
 		indexInfo := t.Meta().FindIndexByName(indexName.L)
-
-		_, err := checkIsDropPrimaryKey(indexName, indexInfo, t)
-		if err != nil {
-			return err
-		}
-
-		if indexInfo == nil {
-			err := ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
-			if spec.IfExists {
-				ctx.GetSessionVars().StmtCtx.AppendNote(err)
-				continue
+		if indexInfo != nil {
+			_, err := checkIsDropPrimaryKey(indexName, indexInfo, t)
+			if err != nil {
+				return err
 			}
-			return err
-		}
-
-		// Check for drop index on auto_increment column.
-		if err := checkDropIndexOnAutoIncrementColumn(t.Meta(), indexInfo); err != nil {
-			return errors.Trace(err)
+			if err := checkDropIndexOnAutoIncrementColumn(t.Meta(), indexInfo); err != nil {
+				return errors.Trace(err)
+			}
 		}
 
 		indexNames = append(indexNames, indexName)
 		ifExists = append(ifExists, spec.IfExists)
-	}
-
-	if len(indexNames) == 0 {
-		return nil
 	}
 
 	job := &model.Job{
@@ -5468,7 +5441,13 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 
 	err = d.doDDLJob(ctx, job)
 	if err != nil {
-		return errors.Trace(err)
+		if err, ok := err.(errors.); ok {
+			for _, indexName := range err.IndexNames {
+				ctx.GetSessionVars().StmtCtx.AppendNote(ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName))
+			}
+			return nil
+		}
+
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)

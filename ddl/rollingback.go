@@ -288,7 +288,12 @@ func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
 }
 
 func rollingbackDropIndexes(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, indexInfos, ifExists, err := checkDropIndexes(t, job)
+	tblInfo, indexNames, ifExists, err := getSchemaInfos(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	indexInfos, _, err := checkDropIndexes(tblInfo, job, indexNames, ifExists)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -311,11 +316,6 @@ func rollingbackDropIndexes(t *meta.Meta, job *model.Job) (ver int64, err error)
 	}
 
 	job.SchemaState = indexInfo.State
-	var indexNames []model.CIStr
-	for _, indexInfo := range indexInfos {
-		indexNames = append(indexNames, indexInfo.Name)
-	}
-	job.Args = []interface{}{indexNames, ifExists}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 	if err != nil {
 		return ver, errors.Trace(err)

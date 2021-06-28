@@ -343,11 +343,9 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 			return doInsert(s, job.ID, indexID, startKey, endKey, now)
 		}
 	case model.ActionDropIndexes:
-		var indexNames []model.CIStr
-		var ifExists []bool
 		var indexIDs []int64
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexNames, &ifExists, &indexIDs, &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&[]model.CIStr{}, &[]bool{}, &indexIDs, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
 		// Remove data in TiKV.
