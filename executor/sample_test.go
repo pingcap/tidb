@@ -119,8 +119,6 @@ func (s *testTableSampleSuite) TestTableSampleMultiRegions(c *C) {
 	tk.MustExec("drop table t2;")
 }
 
-<<<<<<< HEAD
-=======
 func (s *testTableSampleSuite) TestTableSampleNoSplitTable(c *C) {
 	tk := s.initSampleTest(c)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
@@ -135,19 +133,6 @@ func (s *testTableSampleSuite) TestTableSampleNoSplitTable(c *C) {
 	c.Assert(len(rows2), Equals, 1)
 }
 
-func (s *testTableSampleSuite) TestTableSamplePlan(c *C) {
-	tk := s.initSampleTest(c)
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a bigint, b int default 10);")
-	tk.MustExec("split table t between (0) and (100000) regions 4;")
-	tk.MustExec("insert into t(a) values (1), (2), (3);")
-	rows := tk.MustQuery("explain analyze select a from t tablesample regions();").Rows()
-	c.Assert(len(rows), Equals, 2)
-	tableSample := fmt.Sprintf("%v", rows[1])
-	c.Assert(tableSample, Matches, ".*TableSample.*")
-}
-
->>>>>>> c8772c4bc... executor: fix incorrect rows returned by `TABLESAMPLE`  (#25357)
 func (s *testTableSampleSuite) TestTableSampleSchema(c *C) {
 	tk := s.initSampleTest(c)
 	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
