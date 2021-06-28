@@ -148,8 +148,10 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	}
 	if sessionVars.InTxn() {
 		if name == variable.TxnIsolationOneShot ||
-			name == variable.TiDBTxnReadTS ||
-			name == variable.TiDBSnapshot {
+			name == variable.TiDBTxnReadTS {
+			return errors.Trace(ErrCantChangeTxCharacteristics)
+		}
+		if name == variable.TiDBSnapshot && sessionVars.TxnCtx.IsStaleness {
 			return errors.Trace(ErrCantChangeTxCharacteristics)
 		}
 	}
