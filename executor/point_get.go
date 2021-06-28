@@ -55,7 +55,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	e := &PointGetExecutor{
 		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ID()),
 		txnScope:     b.txnScope,
-		isStaleness:  b.explicitStaleness,
+		isStaleness:  b.isStaleness,
 	}
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
