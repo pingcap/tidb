@@ -153,6 +153,11 @@ func RegisterMetrics() {
 	prometheus.MustRegister(SmallTxnWriteDuration)
 	prometheus.MustRegister(TxnWriteThroughput)
 	prometheus.MustRegister(LoadSysVarCacheCounter)
+	prometheus.MustRegister(RegisterSQLFail)
+	prometheus.MustRegister(RegisterPlanFail)
+	prometheus.MustRegister(IgnoreCollectCnt)
+	prometheus.MustRegister(IgnoreReportCnt)
+	prometheus.MustRegister(ReportDurationHistogram)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

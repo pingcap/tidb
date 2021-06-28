@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -135,6 +136,7 @@ func NewRemoteTopSQLReporter(client ReportClient) *RemoteTopSQLReporter {
 // It should also return immediately, and do any CPU-intensive job asynchronously.
 func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL string) {
 	if tsr.sqlMapLength.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
+		metrics.RegisterSQLFail.Inc()
 		return
 	}
 	m := tsr.normalizedSQLMap.Load().(*sync.Map)
@@ -149,6 +151,7 @@ func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL str
 // This function is thread-safe and efficient.
 func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedBinaryPlan string) {
 	if tsr.planMapLength.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
+		metrics.RegisterPlanFail.Inc()
 		return
 	}
 	m := tsr.normalizedPlanMap.Load().(*sync.Map)
@@ -172,6 +175,7 @@ func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQ
 	}:
 	default:
 		// ignore if chan blocked
+		metrics.IgnoreCollectCnt.Inc()
 	}
 }
 
@@ -307,6 +311,8 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *m
 	select {
 	case tsr.reportDataChan <- data:
 	default:
+		// ignore if chan blocked
+		metrics.IgnoreReportCnt.Inc()
 	}
 }
 
@@ -354,6 +360,11 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 	}
 }
 
+var (
+	reportDurationSuccHistogram   = metrics.ReportDurationHistogram.WithLabelValues("OK")
+	reportDurationFailedHistogram = metrics.ReportDurationHistogram.WithLabelValues("OK")
+)
+
 func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 	defer util.Recover("top-sql", "doReport", nil, false)
 
@@ -362,7 +373,6 @@ func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 	}
 
 	agentAddr := variable.TopSQLVariable.AgentAddress.Load()
-
 	timeout := reportTimeout
 	failpoint.Inject("resetTimeoutForTest", func(val failpoint.Value) {
 		if val.(bool) {
@@ -373,10 +383,13 @@ func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 		}
 	})
 	ctx, cancel := context.WithTimeout(tsr.ctx, timeout)
-
+	start := time.Now()
 	err := tsr.client.Send(ctx, agentAddr, data)
 	if err != nil {
 		logutil.BgLogger().Warn("[top-sql] client failed to send data", zap.Error(err))
+		reportDurationFailedHistogram.Observe(time.Since(start).Seconds())
+	} else {
+		reportDurationSuccHistogram.Observe(time.Since(start).Seconds())
 	}
 	cancel()
 }
