@@ -317,16 +317,16 @@ func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
 			err = ErrAsOf.FastGenWithCause("as of timestamp can't be set after set transaction read only as of.")
 			return
 		}
-		// It means we meet following case:
-		// 1. prepare p from 'select * from t as of timestamp ts1'
-		// 1. set transaction read only as of timestamp ts2
-		// 2. execute prepare p
-		// The execute statement would be refused due to timestamp conflict
 		snapshotTS = vars.TxnReadTS.UseTxnReadTS()
 		isStaleness = true
 		txnScope = config.GetTxnScopeFromConfig()
 		return
 	}
+	// It means we meet following case:
+	// 1. prepare p from 'select * from t as of timestamp ts1'
+	// 1. begin
+	// 2. execute prepare p
+	// The execute statement would be refused due to timestamp conflict
 	if preparedObj.SnapshotTSEvaluator != nil {
 		if vars.InTxn() {
 			err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
@@ -343,9 +343,10 @@ func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
 		txnScope = config.GetTxnScopeFromConfig()
 		return
 	}
-	// This is for the following case:
-	// 1. start transaction read only as of timestamp ts
-	// 2. execute prepared statement
+	// It means we meet following case:
+	// 1. prepare p from 'select * from t'
+	// 1. start transaction read only as of timestamp ts1
+	// 2. execute prepare p
 	if vars.InTxn() && vars.TxnCtx.IsStaleness {
 		isStaleness = true
 		snapshotTS = vars.TxnCtx.StartTS
