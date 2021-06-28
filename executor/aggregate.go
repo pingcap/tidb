@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
@@ -192,6 +193,7 @@ type HashAggExec struct {
 	executed                bool
 
 	memTracker *memory.Tracker // track memory usage.
+	diskTracker *disk.Tracker
 
 	stats *HashAggRuntimeStats
 
@@ -323,7 +325,12 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.executed, e.childDrained = false, false
 	e.listInDisk = chunk.NewListInDisk(retTypes(e.children[0]))
 	e.spillChunk = newFirstChunk(e.children[0])
-	e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
+	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage {
+		e.diskTracker = disk.NewTracker(e.id, -1)
+		e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
+		e.listInDisk.GetDiskTracker().AttachTo(e.diskTracker)
+		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
+	}
 }
 
 func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
@@ -918,12 +925,13 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 
 func (e *HashAggExec) resetSpillMode() {
 	e.cursor4GroupKey, e.groupKeys = 0, e.groupKeys[:0]
-	e.groupSet, _ = set.NewStringSetWithMemoryUsage()
+	var setSize int64
+	e.groupSet, setSize = set.NewStringSetWithMemoryUsage()
 	e.partialResultMap = make(aggPartialResultMapper)
 	e.prepared = false
 	e.executed = e.lastChunkNum == e.listInDisk.NumChunks()
 	e.lastChunkNum = e.listInDisk.NumChunks()
-	e.memTracker.ReplaceBytesUsed(0)
+	e.memTracker.ReplaceBytesUsed(setSize)
 	atomic.StoreUint32(&e.spillMode, 0)
 }
 
