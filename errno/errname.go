@@ -925,6 +925,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrForUpdateCantRetry:            mysql.Message("[%d] can not retry select for update statement", nil),
 	ErrAdminCheckTable:               mysql.Message("TiDB admin check table failed.", nil),
 	ErrOptOnTemporaryTable:           mysql.Message("`%s` is unsupported on temporary tables.", nil),
+	ErrDropTableOnTemporaryTable:     mysql.Message("`drop global temporary table` applies on global temporary table only.", nil),
 	ErrTxnTooLarge:                   mysql.Message("Transaction is too large, size: %d", nil),
 	ErrWriteConflictInTiDB:           mysql.Message("Write conflict, txnStartTS %d is stale", nil),
 	ErrInvalidPluginID:               mysql.Message("Wrong plugin id: %s, valid plugin id is [name]-[version], both name and version should not contain '-'", nil),
