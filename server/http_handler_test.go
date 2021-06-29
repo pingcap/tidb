@@ -504,14 +504,14 @@ func getPortFromTCPAddr(addr net.Addr) uint {
 }
 
 func (ts *basicHTTPHandlerTestSuite) stopServer(c *C) {
+	if ts.server != nil {
+		ts.server.Close()
+	}
 	if ts.domain != nil {
 		ts.domain.Close()
 	}
 	if ts.store != nil {
 		ts.store.Close()
-	}
-	if ts.server != nil {
-		ts.server.Close()
 	}
 }
 
@@ -1142,7 +1142,6 @@ func (ts *HTTPHandlerTestSuite) TestGetSchemaStorage(c *C) {
 	dbt.mustExec("use test")
 	dbt.mustExec("drop table if exists t")
 	dbt.mustExec("create table t (c int, d int, e char(5), index idx(e))")
-	h.HandleDDLEvent(<-h.DDLEventCh())
 	dbt.mustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
@@ -1175,7 +1174,6 @@ func (ts *HTTPHandlerTestSuite) TestGetSchemaStorage(c *C) {
 		DeepEquals,
 		[]int64{3, 18, 54, 0, 6, 0},
 	)
-
 }
 
 func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
