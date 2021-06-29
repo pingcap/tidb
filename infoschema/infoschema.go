@@ -480,6 +480,7 @@ func (is *LocalTemporaryTables) RemoveTable(schema, table model.CIStr) (exist bo
 	return true
 }
 
+// SchemaByTable get a table's schema name
 func (is *LocalTemporaryTables) SchemaByTable(tableInfo *model.TableInfo) (string, bool) {
 	if tableInfo == nil {
 		return "", false
