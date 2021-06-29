@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -62,6 +63,7 @@ func TestT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	tikv.EnableFailpoints()
 	TestingT(t)
 }
 
