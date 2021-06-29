@@ -110,10 +110,10 @@ func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records m
 	}
 	for _, record := range records {
 		record := &tipb.CPUTimeRecord{
-			TimestampList: record.TimestampList,
-			CpuTimeMsList: record.CPUTimeMsList,
-			SqlDigest:     record.SQLDigest,
-			PlanDigest:    record.PlanDigest,
+			RecordListTimestampSec: record.TimestampList,
+			RecordListCpuTimeMs:    record.CPUTimeMsList,
+			SqlDigest:              record.SQLDigest,
+			PlanDigest:             record.PlanDigest,
 		}
 		if err := stream.Send(record); err != nil {
 			return err
