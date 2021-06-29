@@ -3780,8 +3780,8 @@ func (s *testIntegrationSuite) TestIssue25799(c *C) {
 	tk.MustExec(`insert into t1 values (1, 1)`)
 	tk.MustExec(`create table t2 (a float default null, b tinyint(4) DEFAULT NULL, key b (b))`)
 	tk.MustExec(`insert into t2 values (null, 1)`)
-	tk.HasPlan(`select t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 use index(b) where t1.b=t2.b)`, `IndexJoin`)
-	tk.MustQuery(`select t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 use index(b) where t1.b=t2.b)`).Check(testkit.Rows())
+	tk.HasPlan(`select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b)`, `IndexJoin`)
+	tk.MustQuery(`select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b)`).Check(testkit.Rows())
 }
 
 func (s *testIntegrationSuite) TestLimitWindowColPrune(c *C) {
