@@ -234,7 +234,7 @@ func (s *testTopSQLReporter) TestCollectAndTopN(c *C) {
 			c.Fatalf("the id should be 1 or 3, got: %v", id)
 		}
 		total := uint32(0)
-		for _, v := range req.CpuTimeMsList {
+		for _, v := range req.RecordListCpuTimeMs {
 			total += v
 		}
 		c.Assert(total, Equals, uint32(3))
