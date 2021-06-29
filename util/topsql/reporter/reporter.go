@@ -245,18 +245,21 @@ func getTopNDataPoints(records []*dataPoints) (topN, shouldEvict []*dataPoints) 
 	return records[:maxStmt], records[maxStmt:]
 }
 
-// doCollect uses a hashmap to store records in every second, and evict when necessary.
+// doCollect collects top N records of each round into collectTarget, and evict the data that is not in top N.
 func (tsr *RemoteTopSQLReporter) doCollect(
 	collectTarget map[string]*dataPoints, timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
 	defer util.Recover("top-sql", "doCollect", nil, false)
 
+	// Get top N records of each round records.
 	var evicted []tracecpu.SQLCPUTimeRecord
 	records, evicted = getTopNRecords(records)
+
 	keyBuf := bytes.NewBuffer(make([]byte, 0, 64))
 	listCapacity := int(variable.TopSQLVariable.ReportIntervalSeconds.Load()/variable.TopSQLVariable.PrecisionSeconds.Load() + 1)
 	if listCapacity < 1 {
 		listCapacity = 1
 	}
+	// Collect the top N records to collectTarget for each round.
 	for _, record := range records {
 		key := encodeKey(keyBuf, record.SQLDigest, record.PlanDigest)
 		entry, exist := collectTarget[key]
@@ -277,6 +280,7 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 		entry.CPUTimeMsTotal += uint64(record.CPUTimeMs)
 	}
 
+	// Evict redundant data.
 	normalizedSQLMap := tsr.normalizedSQLMap.Load().(*sync.Map)
 	normalizedPlanMap := tsr.normalizedPlanMap.Load().(*sync.Map)
 	for _, evict := range evicted {
