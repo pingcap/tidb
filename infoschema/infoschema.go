@@ -519,6 +519,9 @@ func (is *LocalTemporaryTables) schemaTables(schema model.CIStr) *schemaLocalTem
 }
 
 // TemporaryTableAttachedInfoSchema implements InfoSchema
+// Local temporary table has a loose relationship with database.
+// So when a database is dropped, its temporary tables still exist and can be return by TableByName/TableByID.
+// However SchemaByTable will return nil if database is dropped.
 type TemporaryTableAttachedInfoSchema struct {
 	InfoSchema
 	LocalTemporaryTables *LocalTemporaryTables
