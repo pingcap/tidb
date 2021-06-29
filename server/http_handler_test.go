@@ -1136,9 +1136,10 @@ func (ts *HTTPHandlerTestSuite) TestGetSchemaStorage(c *C) {
 	dbt.mustExec("create table t (c int, d int, e char(5), index idx(e))")
 	dbt.mustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
 
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 
 	h.FlushStats()
+	h.HandleUpdateStats(do.InfoSchema())
 
 	resp, err := ts.fetchStatus("/schema_storage/test")
 	c.Assert(err, IsNil)
