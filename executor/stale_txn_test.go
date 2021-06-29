@@ -1080,8 +1080,7 @@ func (s *testStaleTxnSuite) TestStmtCtxStaleFlag(c *C) {
 		},
 	}
 
-	for i, testcase := range testcases {
-		fmt.Println(i)
+	for _, testcase := range testcases {
 		failpoint.Enable("github.com/pingcap/tidb/exector/assertStmtCtxIsStaleness",
 			fmt.Sprintf("return(%v)", testcase.hasStaleFlag))
 		tk.MustExec(testcase.sql)
