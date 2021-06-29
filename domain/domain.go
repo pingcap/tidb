@@ -626,9 +626,7 @@ func (do *Domain) Close() {
 
 	do.cancel()
 	do.wg.Wait()
-
 	do.sysSessionPool.Close()
-
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
