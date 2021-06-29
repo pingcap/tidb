@@ -80,6 +80,16 @@ func FindCol(cols []*Column, name string) *Column {
 	return nil
 }
 
+// FindColLowerCase finds column in cols by name. It assumes the name is lowercase.
+func FindColLowerCase(cols []*Column, name string) *Column {
+	for _, col := range cols {
+		if col.Name.L == name {
+			return col
+		}
+	}
+	return nil
+}
+
 // ToColumn converts a *model.ColumnInfo to *Column.
 func ToColumn(col *model.ColumnInfo) *Column {
 	return &Column{
@@ -93,9 +103,24 @@ func ToColumn(col *model.ColumnInfo) *Column {
 // If pkIsHandle is false and name is ExtraHandleName, the extra handle column will be added.
 // If any columns don't match, return nil and the first missing column's name
 func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, string) {
+	return findCols(cols, names, pkIsHandle, false)
+}
+
+// FindColsLowerCase finds columns in cols by names.
+// Please make sure the names are lowercase.
+func FindColsLowerCase(cols []*Column, names []string, pkIsHandle bool) ([]*Column, string) {
+	return findCols(cols, names, pkIsHandle, true)
+}
+
+func findCols(cols []*Column, names []string, pkIsHandle bool, lowercaseNames bool) ([]*Column, string) {
 	var rcols []*Column
 	for _, name := range names {
-		col := FindCol(cols, name)
+		var col *Column
+		if lowercaseNames {
+			col = FindColLowerCase(cols, name)
+		} else {
+			col = FindCol(cols, name)
+		}
 		if col != nil {
 			rcols = append(rcols, col)
 		} else if name == model.ExtraHandleName.L && !pkIsHandle {

@@ -129,9 +129,9 @@ func (e *InsertValues) initInsertColumns() error {
 		// Process `set` type column.
 		columns := make([]string, 0, len(e.SetList))
 		for _, v := range e.SetList {
-			columns = append(columns, v.ColName.O)
+			columns = append(columns, v.ColName.L)
 		}
-		cols, missingColName = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
+		cols, missingColName = table.FindColsLowerCase(tableCols, columns, e.Table.Meta().PKIsHandle)
 		if missingColName != "" {
 			return errors.Errorf("INSERT INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
 		}
@@ -142,9 +142,9 @@ func (e *InsertValues) initInsertColumns() error {
 		// Process `name` type column.
 		columns := make([]string, 0, len(e.Columns))
 		for _, v := range e.Columns {
-			columns = append(columns, v.Name.O)
+			columns = append(columns, v.Name.L)
 		}
-		cols, missingColName = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
+		cols, missingColName = table.FindColsLowerCase(tableCols, columns, e.Table.Meta().PKIsHandle)
 		if missingColName != "" {
 			return errors.Errorf("INSERT INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
 		}
