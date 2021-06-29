@@ -450,8 +450,7 @@ func (*testSuite) TestLocalTemporaryTables(c *C) {
 		} else {
 			c.Assert(schema, NotNil)
 			c.Assert(ok, IsTrue)
-			c.Assert(got.Schema, Equals, schema)
-			c.Assert(got.Table, Equals, tb)
+			c.Assert(got, Equals, tb)
 		}
 	}
 
@@ -469,8 +468,19 @@ func (*testSuite) TestLocalTemporaryTables(c *C) {
 		} else {
 			c.Assert(schema, NotNil)
 			c.Assert(ok, IsTrue)
-			c.Assert(got.Schema, Equals, schema)
-			c.Assert(got.Table, Equals, tb)
+			c.Assert(got, Equals, tb)
+		}
+	}
+
+	assertSchemaByTable := func(sc *infoschema.LocalTemporaryTables, schema model.CIStr, tb *model.TableInfo) {
+		got, ok := sc.SchemaByTable(tb)
+		if tb == nil {
+			c.Assert(schema.L == "", IsTrue)
+			c.Assert(got, Equals, "")
+			c.Assert(ok, IsFalse)
+		} else {
+			c.Assert(ok, Equals, schema.L != "")
+			c.Assert(schema.L, Equals, got)
 		}
 	}
 
@@ -529,6 +539,7 @@ func (*testSuite) TestLocalTemporaryTables(c *C) {
 		)
 
 		assertTableByID(sc, p.tb.Meta().ID, p.db, p.tb)
+		assertSchemaByTable(sc, p.db.Name, p.tb.Meta())
 	}
 
 	// test add dup table
@@ -570,4 +581,65 @@ func (*testSuite) TestLocalTemporaryTables(c *C) {
 	for _, id := range []int64{nonExistID, tb11.Meta().ID, tb22.Meta().ID} {
 		assertTableByID(sc, id, nil, nil)
 	}
+
+	// test non exist table schemaByTable
+	assertSchemaByTable(sc, model.NewCIStr(""), tb11.Meta())
+	assertSchemaByTable(sc, model.NewCIStr(""), tb22.Meta())
+	assertSchemaByTable(sc, model.NewCIStr(""), nil)
+
+	// test TemporaryTableAttachedInfoSchema
+	dbTest := createNewSchemaInfo("test")
+	tmpTbTestA := createNewTable(dbTest.ID, "tba", model.TempTableLocal)
+	normalTbTestA := createNewTable(dbTest.ID, "tba", model.TempTableNone)
+	normalTbTestB := createNewTable(dbTest.ID, "tbb", model.TempTableNone)
+
+	is := &infoschema.TemporaryTableAttachedInfoSchema{
+		InfoSchema:           infoschema.MockInfoSchema([]*model.TableInfo{normalTbTestA.Meta(), normalTbTestB.Meta()}),
+		LocalTemporaryTables: sc,
+	}
+
+	err = sc.AddTable(dbTest, tmpTbTestA)
+	c.Assert(err, IsNil)
+
+	// test TableByName
+	tbl, err := is.TableByName(dbTest.Name, normalTbTestA.Meta().Name)
+	c.Assert(err, IsNil)
+	c.Assert(tbl, Equals, tmpTbTestA)
+	tbl, err = is.TableByName(dbTest.Name, normalTbTestB.Meta().Name)
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta(), Equals, normalTbTestB.Meta())
+	tbl, err = is.TableByName(db1.Name, tb11.Meta().Name)
+	c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
+	c.Assert(tbl, IsNil)
+	tbl, err = is.TableByName(db1.Name, tb12.Meta().Name)
+	c.Assert(err, IsNil)
+	c.Assert(tbl, Equals, tb12)
+
+	// test TableByID
+	tbl, ok := is.TableByID(normalTbTestA.Meta().ID)
+	c.Assert(ok, IsTrue)
+	c.Assert(tbl.Meta(), Equals, normalTbTestA.Meta())
+	tbl, ok = is.TableByID(normalTbTestB.Meta().ID)
+	c.Assert(ok, IsTrue)
+	c.Assert(tbl.Meta(), Equals, normalTbTestB.Meta())
+	tbl, ok = is.TableByID(tmpTbTestA.Meta().ID)
+	c.Assert(ok, IsTrue)
+	c.Assert(tbl, Equals, tmpTbTestA)
+	tbl, ok = is.TableByID(tb12.Meta().ID)
+	c.Assert(ok, IsTrue)
+	c.Assert(tbl, Equals, tb12)
+
+	// test SchemaByTable
+	info, ok := is.SchemaByTable(normalTbTestA.Meta())
+	c.Assert(ok, IsTrue)
+	c.Assert(info.Name.L, Equals, dbTest.Name.L)
+	info, ok = is.SchemaByTable(normalTbTestB.Meta())
+	c.Assert(ok, IsTrue)
+	c.Assert(info.Name.L, Equals, dbTest.Name.L)
+	info, ok = is.SchemaByTable(tmpTbTestA.Meta())
+	c.Assert(ok, IsTrue)
+	c.Assert(info.Name.L, Equals, dbTest.Name.L)
+	info, ok = is.SchemaByTable(tb12.Meta())
+	c.Assert(ok, IsFalse)
+	c.Assert(info, IsNil)
 }
