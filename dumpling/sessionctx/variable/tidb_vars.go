@@ -712,7 +712,7 @@ const (
 	DefTiDBTopSQLEnable                = false
 	DefTiDBTopSQLAgentAddress          = ""
 	DefTiDBTopSQLPrecisionSeconds      = 1
-	DefTiDBTopSQLMaxStatementCount     = 2000
+	DefTiDBTopSQLMaxStatementCount     = 200
 	DefTiDBTopSQLMaxCollect            = 10000
 	DefTiDBTopSQLReportIntervalSeconds = 60
 	DefTiDBEnableGlobalTemporaryTable  = false
