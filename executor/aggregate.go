@@ -928,6 +928,7 @@ func (e *HashAggExec) resetSpillMode() {
 	var setSize int64
 	e.groupSet, setSize = set.NewStringSetWithMemoryUsage()
 	e.partialResultMap = make(aggPartialResultMapper)
+	e.bInMap = 0
 	e.prepared = false
 	e.executed = e.lastChunkNum == e.listInDisk.NumChunks()
 	e.lastChunkNum = e.listInDisk.NumChunks()
