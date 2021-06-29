@@ -224,7 +224,18 @@ func GetUsedList(usedCols []*Column, schema *Schema) []bool {
 	tmpSchema := NewSchema(usedCols...)
 	used := make([]bool, schema.Len())
 	for i, col := range schema.Columns {
-		used[i] = tmpSchema.Contains(col)
+		if !used[i] {
+			used[i] = tmpSchema.Contains(col)
+
+			// when cols are a generated col, compare them in terms of virtual expr
+			if col.VirtualExpr != nil {
+				for j, colToCompare := range schema.Columns {
+					if !used[j] && (col.VirtualExpr).Equal(nil, colToCompare.VirtualExpr) {
+						used[j] = true
+					}
+				}
+			}
+		}
 	}
 	return used
 }

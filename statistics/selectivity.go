@@ -246,7 +246,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		id2Paths[path.Index.ID] = path
 	}
 	for id, idxInfo := range coll.Indices {
-		idxCols := expression.FindPrefixOfIndex(extractedCols, coll.Idx2ColumnIDs[id])
+		idxCols := expression.FindPrefixOfIndexByCol(extractedCols, id2Paths[idxInfo.Info.ID].IdxCols)
 		if len(idxCols) > 0 {
 			lengths := make([]int, 0, len(idxCols))
 			for i := 0; i < len(idxCols) && i < len(idxInfo.Info.Columns); i++ {
