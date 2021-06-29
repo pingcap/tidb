@@ -596,6 +596,10 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 			}
 		}
 		idxNDVPushDownCh := make(chan analyzeIndexNDVTotalResult, 1)
+		// subIndexWorkerWg is better to be initialized in handleNDVForSpecialIndexes, however if we do so, golang would
+		// report unexpected/unreasonable data race error on subIndexWorkerWg when running TestAnalyzeVirtualCol test
+		// case with `-race` flag now.
+		colExec.subIndexWorkerWg = &sync.WaitGroup{}
 		go colExec.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh)
 		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
 		if err != nil {
@@ -1008,7 +1012,6 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 		statistics.AddNewAnalyzeJob(task.job)
 	}
 	resultsCh := make(chan *statistics.AnalyzeResults, len(tasks))
-	e.subIndexWorkerWg = &sync.WaitGroup{}
 	e.subIndexWorkerWg.Add(statsConcurrncy)
 	for i := 0; i < statsConcurrncy; i++ {
 		go e.subIndexWorkerForNDV(taskCh, resultsCh, i == 0)
