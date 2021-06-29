@@ -372,6 +372,10 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 	for {
 		select {
 		case data := <-tsr.reportDataChan:
+			// When `reportDataChan` receives something, there could be ongoing `RegisterSQL` and `RegisterPlan` running,
+			// who writes to the data structure that `data` contains. So we wait for a little while to ensure that
+			// these writes are finished.
+			time.Sleep(time.Millisecond * 100)
 			tsr.doReport(data)
 		case <-tsr.ctx.Done():
 			return
