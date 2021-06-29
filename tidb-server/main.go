@@ -26,6 +26,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -170,6 +171,11 @@ func main() {
 		terror.MustNil(err)
 		checkTempStorageQuota()
 	}
+	// Enable failpoints in tikv/client-go if the test API is enabled.
+	// It appears in the main function to be set before any use of client-go to prevent data race.
+	if _, err := failpoint.Status("github.com/pingcap/tidb/server/enableTestAPI"); err == nil {
+		tikv.EnableFailpoints()
+	}
 	setGlobalVars()
 	setCPUAffinity()
 	setupLog()
@@ -306,7 +312,7 @@ func setupBinlogClient() {
 
 	terror.MustNil(err)
 
-	err = pumpcli.InitLogger(cfg.Log.ToLogConfig())
+	err = logutil.InitLogger(cfg.Log.ToLogConfig())
 	terror.MustNil(err)
 
 	binloginfo.SetPumpsClient(client)
@@ -588,7 +594,7 @@ func setGlobalVars() {
 
 func setupLog() {
 	cfg := config.GetGlobalConfig()
-	err := logutil.InitZapLogger(cfg.Log.ToLogConfig())
+	err := logutil.InitLogger(cfg.Log.ToLogConfig())
 	terror.MustNil(err)
 
 	// trigger internal http(s) client init.

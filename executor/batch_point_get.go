@@ -55,6 +55,8 @@ type BatchPointGetExec struct {
 	partTblID   int64
 	idxVals     [][]types.Datum
 	startTS     uint64
+	txnScope    string
+	isStaleness bool
 	snapshotTS  uint64
 	txn         kv.Transaction
 	lock        bool
@@ -105,7 +107,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	}
 	e.txn = txn
 	var snapshot kv.Snapshot
-	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
+	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == e.snapshotTS {
 		// We can safely reuse the transaction snapshot if startTS is equal to forUpdateTS.
 		// The snapshot may contains cache that can reduce RPC call.
 		snapshot = txn.GetSnapshot()
@@ -124,14 +126,22 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
-	snapshot.SetOption(kv.TxnScope, e.ctx.GetSessionVars().TxnCtx.TxnScope)
-	isStaleness := e.ctx.GetSessionVars().TxnCtx.IsStaleness
-	snapshot.SetOption(kv.IsStalenessReadOnly, isStaleness)
-	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != kv.GlobalTxnScope {
+	snapshot.SetOption(kv.TxnScope, e.txnScope)
+	snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
+	failpoint.Inject("assertBatchPointStalenessOption", func(val failpoint.Value) {
+		assertScope := val.(string)
+		if len(assertScope) > 0 {
+			if e.isStaleness && assertScope != e.txnScope {
+				panic("batch point get staleness option fail")
+			}
+		}
+	})
+
+	if e.isStaleness && e.txnScope != kv.GlobalTxnScope {
 		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
-				Value: e.ctx.GetSessionVars().TxnCtx.TxnScope,
+				Value: e.txnScope,
 			},
 		})
 	}

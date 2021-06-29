@@ -104,12 +104,14 @@ func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
 	c.Assert(s.memDiff(inUseFinal, inUseAfter), Less, delta)
 }
 
+// nolint:unused
 func (s *testMemoryLeak) readMem() (allocated, heapInUse uint64) {
 	var stat runtime.MemStats
 	runtime.ReadMemStats(&stat)
 	return stat.TotalAlloc, stat.HeapInuse
 }
 
+// nolint:unused
 func (s *testMemoryLeak) memDiff(m1, m2 uint64) uint64 {
 	if m1 > m2 {
 		return m1 - m2

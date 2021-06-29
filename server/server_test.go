@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -58,10 +59,11 @@ func TestT(t *testing.T) {
 	}
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	err := logutil.InitZapLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	if err != nil {
 		t.Fatal(err)
 	}
+	tikv.EnableFailpoints()
 	TestingT(t)
 }
 
