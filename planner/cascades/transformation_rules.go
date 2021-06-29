@@ -2559,7 +2559,10 @@ func (r *MergeAdjacentWindow) Match(expr *memo.ExprIter) bool {
 		if curWinPlan.Frame.Type != nextWinPlan.Frame.Type ||
 			curWinPlan.Frame.Start.Type != nextWinPlan.Frame.Start.Type ||
 			curWinPlan.Frame.Start.UnBounded != nextWinPlan.Frame.Start.UnBounded ||
-			curWinPlan.Frame.Start.Num != nextWinPlan.Frame.Start.Num {
+			curWinPlan.Frame.Start.Num != nextWinPlan.Frame.Start.Num ||
+			curWinPlan.Frame.End.Type != nextWinPlan.Frame.End.Type ||
+			curWinPlan.Frame.End.UnBounded != nextWinPlan.Frame.End.UnBounded ||
+			curWinPlan.Frame.End.Num != nextWinPlan.Frame.End.Num {
 			return false
 		}
 		for i, expr := range curWinPlan.Frame.Start.CalcFuncs {
