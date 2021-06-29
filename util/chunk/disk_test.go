@@ -14,12 +14,13 @@
 package chunk
 
 import (
+	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -30,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/checksum"
+	"github.com/pingcap/tidb/util/encrypt"
 )
 
 func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldType) {
@@ -142,7 +145,7 @@ type listInDiskWriteDisk struct {
 
 func newListInDiskWriteDisk(fieldTypes []*types.FieldType) (*listInDiskWriteDisk, error) {
 	l := listInDiskWriteDisk{*NewListInDisk(fieldTypes)}
-	disk, err := ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, strconv.Itoa(l.diskTracker.Label()))
+	disk, err := os.CreateTemp(config.GetGlobalConfig().TempStoragePath, strconv.Itoa(l.diskTracker.Label()))
 	if err != nil {
 		return nil, err
 	}
@@ -219,6 +222,8 @@ func (s *testChunkSuite) TestListInDiskWithChecksum(c *check.C) {
 	})
 	testListInDisk(c)
 
+	testReaderWithCache(c)
+	testReaderWithCacheNoFlush(c)
 }
 
 func (s *testChunkSuite) TestListInDiskWithChecksumAndEncrypt(c *check.C) {
@@ -227,4 +232,129 @@ func (s *testChunkSuite) TestListInDiskWithChecksumAndEncrypt(c *check.C) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
 	})
 	testListInDisk(c)
+
+	testReaderWithCache(c)
+	testReaderWithCacheNoFlush(c)
+}
+
+// Following diagram describes the testdata we use to test:
+// 4 B: checksum of this segment.
+// 8 B: all columns' length, in the following example, we will only have one column.
+// 1012 B: data in file. because max length of each segment is 1024, so we only have 1020B for user payload.
+//
+//           Data in File                                    Data in mem cache
+// +------+------------------------------------------+ +-----------------------------+
+// |      |    1020B payload                         | |                             |
+// |4Bytes| +---------+----------------------------+ | |                             |
+// |checksum|8B collen| 1012B user data            | | |  12B remained user data     |
+// |      | +---------+----------------------------+ | |                             |
+// |      |                                          | |                             |
+// +------+------------------------------------------+ +-----------------------------+
+func testReaderWithCache(c *check.C) {
+	testData := "0123456789"
+	buf := bytes.NewBuffer(nil)
+	for i := 0; i < 102; i++ {
+		buf.WriteString(testData)
+	}
+	buf.WriteString("0123")
+
+	field := []*types.FieldType{types.NewFieldType(mysql.TypeString)}
+	chk := NewChunkWithCapacity(field, 1)
+	chk.AppendString(0, buf.String())
+	l := NewListInDisk(field)
+	err := l.Add(chk)
+	c.Assert(err, check.IsNil)
+
+	// Basic test for GetRow().
+	row, err := l.GetRow(RowPtr{0, 0})
+	c.Assert(err, check.IsNil)
+	c.Assert(row.GetDatumRow(field), check.DeepEquals, chk.GetRow(0).GetDatumRow(field))
+
+	var underlying io.ReaderAt = l.disk
+	if l.ctrCipher != nil {
+		underlying = NewReaderWithCache(encrypt.NewReader(l.disk, l.ctrCipher), l.cipherWriter.GetCache(), l.cipherWriter.GetCacheDataOffset())
+	}
+	checksumReader := NewReaderWithCache(checksum.NewReader(underlying), l.checksumWriter.GetCache(), l.checksumWriter.GetCacheDataOffset())
+
+	// Read all data.
+	data := make([]byte, 1024)
+	// Offset is 8, because we want to ignore col length.
+	readCnt, err := checksumReader.ReadAt(data, 8)
+	c.Assert(err, check.IsNil)
+	c.Assert(readCnt, check.Equals, 1024)
+	c.Assert(reflect.DeepEqual(data, buf.Bytes()), check.IsTrue)
+
+	// Only read data of mem cache.
+	data = make([]byte, 1024)
+	readCnt, err = checksumReader.ReadAt(data, 1020)
+	c.Assert(err, check.Equals, io.EOF)
+	c.Assert(readCnt, check.Equals, 12)
+	c.Assert(reflect.DeepEqual(data[:12], buf.Bytes()[1012:]), check.IsTrue)
+
+	// Read partial data of mem cache.
+	data = make([]byte, 1024)
+	readCnt, err = checksumReader.ReadAt(data, 1025)
+	c.Assert(err, check.Equals, io.EOF)
+	c.Assert(readCnt, check.Equals, 7)
+	c.Assert(reflect.DeepEqual(data[:7], buf.Bytes()[1017:]), check.IsTrue)
+
+	// Read partial data from both file and mem cache.
+	data = make([]byte, 1024)
+	readCnt, err = checksumReader.ReadAt(data, 1010)
+	c.Assert(err, check.Equals, io.EOF)
+	c.Assert(readCnt, check.Equals, 22)
+	c.Assert(reflect.DeepEqual(data[:22], buf.Bytes()[1002:]), check.IsTrue)
+
+	// Offset is too large, so no data is read.
+	data = make([]byte, 1024)
+	readCnt, err = checksumReader.ReadAt(data, 1032)
+	c.Assert(err, check.Equals, io.EOF)
+	c.Assert(readCnt, check.Equals, 0)
+	c.Assert(reflect.DeepEqual(data, make([]byte, 1024)), check.IsTrue)
+
+	// Only read 1 byte from mem cache.
+	data = make([]byte, 1024)
+	readCnt, err = checksumReader.ReadAt(data, 1031)
+	c.Assert(err, check.Equals, io.EOF)
+	c.Assert(readCnt, check.Equals, 1)
+	c.Assert(reflect.DeepEqual(data[:1], buf.Bytes()[1023:]), check.IsTrue)
+
+	// Test user requested data is small.
+	// Only request 10 bytes.
+	data = make([]byte, 10)
+	readCnt, err = checksumReader.ReadAt(data, 1010)
+	c.Assert(err, check.IsNil)
+	c.Assert(readCnt, check.Equals, 10)
+	c.Assert(reflect.DeepEqual(data, buf.Bytes()[1002:1012]), check.IsTrue)
+}
+
+// Here we test situations where size of data is small, so no data is flushed to disk.
+func testReaderWithCacheNoFlush(c *check.C) {
+	testData := "0123456789"
+
+	field := []*types.FieldType{types.NewFieldType(mysql.TypeString)}
+	chk := NewChunkWithCapacity(field, 1)
+	chk.AppendString(0, testData)
+	l := NewListInDisk(field)
+	err := l.Add(chk)
+	c.Assert(err, check.IsNil)
+
+	// Basic test for GetRow().
+	row, err := l.GetRow(RowPtr{0, 0})
+	c.Assert(err, check.IsNil)
+	c.Assert(row.GetDatumRow(field), check.DeepEquals, chk.GetRow(0).GetDatumRow(field))
+
+	var underlying io.ReaderAt = l.disk
+	if l.ctrCipher != nil {
+		underlying = NewReaderWithCache(encrypt.NewReader(l.disk, l.ctrCipher), l.cipherWriter.GetCache(), l.cipherWriter.GetCacheDataOffset())
+	}
+	checksumReader := NewReaderWithCache(checksum.NewReader(underlying), l.checksumWriter.GetCache(), l.checksumWriter.GetCacheDataOffset())
+
+	// Read all data.
+	data := make([]byte, 1024)
+	// Offset is 8, because we want to ignore col length.
+	readCnt, err := checksumReader.ReadAt(data, 8)
+	c.Assert(err, check.Equals, io.EOF)
+	c.Assert(readCnt, check.Equals, len(testData))
+	c.Assert(reflect.DeepEqual(data[:10], []byte(testData)), check.IsTrue)
 }

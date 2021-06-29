@@ -995,3 +995,76 @@ func (s *testEvaluatorSuite) TestJSONStorageSize(c *C) {
 		}
 	}
 }
+
+func (s *testEvaluatorSuite) TestJSONPretty(c *C) {
+	fc := funcs[ast.JSONPretty]
+	tbl := []struct {
+		input    []interface{}
+		expected interface{}
+		success  bool
+	}{
+		// Tests scalar arguments
+		{[]interface{}{nil}, nil, true},
+		{[]interface{}{`true`}, "true", true},
+		{[]interface{}{`false`}, "false", true},
+		{[]interface{}{`2223`}, "2223", true},
+		// Tests simple json
+		{[]interface{}{`{"a":1}`}, `{
+  "a": 1
+}`, true},
+		{[]interface{}{`[1]`}, `[
+  1
+]`, true},
+		// Test complex json
+		{[]interface{}{`{"a":1,"b":[{"d":1},{"e":2},{"f":3}],"c":"eee"}`}, `{
+  "a": 1,
+  "b": [
+    {
+      "d": 1
+    },
+    {
+      "e": 2
+    },
+    {
+      "f": 3
+    }
+  ],
+  "c": "eee"
+}`, true},
+		{[]interface{}{`{"a":1,"b":"qwe","c":[1,2,3,"123",null],"d":{"d1":1,"d2":2}}`}, `{
+  "a": 1,
+  "b": "qwe",
+  "c": [
+    1,
+    2,
+    3,
+    "123",
+    null
+  ],
+  "d": {
+    "d1": 1,
+    "d2": 2
+  }
+}`, true},
+		// Tests invalid json data
+		{[]interface{}{`{1}`}, nil, false},
+		{[]interface{}{`[1,3,4,5]]`}, nil, false},
+	}
+	for _, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		if t.success {
+			c.Assert(err, IsNil)
+
+			if t.expected == nil {
+				c.Assert(d.IsNull(), IsTrue)
+			} else {
+				c.Assert(d.GetString(), Equals, t.expected.(string))
+			}
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
+}

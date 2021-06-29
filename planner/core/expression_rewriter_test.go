@@ -43,6 +43,16 @@ func (s *testExpressionRewriterSuite) TestIfNullEliminateColName(c *C) {
 	c.Assert(err, IsNil)
 	fields := rs.Fields()
 	c.Assert(fields[0].Column.Name.L, Equals, "ifnull(a,b)")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(e int not null, b int)")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("create table t1(e int not null, b int)")
+	tk.MustExec("insert into t1 values(1, 1)")
+	rows := tk.MustQuery("select b from t where ifnull(e, b)")
+	rows.Check(testkit.Rows("1"))
+	rows = tk.MustQuery("select b from t1 where ifnull(e, b)")
+	rows.Check(testkit.Rows("1"))
 }
 
 func (s *testExpressionRewriterSuite) TestBinaryOpFunction(c *C) {
@@ -394,4 +404,22 @@ func (s *testExpressionRewriterSuite) TestIssue22818(c *C) {
 	tk.MustExec("insert into t values(\"23:22:22\");")
 	tk.MustQuery("select * from t where a between \"23:22:22\" and \"23:22:22\"").Check(
 		testkit.Rows("23:22:22"))
+}
+
+func (s *testExpressionRewriterSuite) TestIssue24705(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1,t2;")
+	tk.MustExec("create table t1 (c_int int, c_str varchar(40) character set utf8 collate utf8_general_ci);")
+	tk.MustExec("create table t2 (c_int int, c_str varchar(40) character set utf8 collate utf8_unicode_ci);")
+	err = tk.ExecToErr("select * from t1 where c_str < any (select c_str from t2 where c_int between 6 and 9);")
+	c.Assert(err.Error(), Equals, "[expression:1267]Illegal mix of collations (utf8_general_ci,IMPLICIT) and (utf8_unicode_ci,IMPLICIT) for operation '<'")
 }

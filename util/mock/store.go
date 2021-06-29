@@ -16,8 +16,10 @@ package mock
 import (
 	"context"
 
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 // Store implements kv.Storage interface.
@@ -38,7 +40,7 @@ func (s *Store) GetOracle() oracle.Oracle { return nil }
 func (s *Store) Begin() (kv.Transaction, error) { return nil, nil }
 
 // BeginWithOption implements kv.Storage interface.
-func (s *Store) BeginWithOption(option kv.TransactionOption) (kv.Transaction, error) {
+func (s *Store) BeginWithOption(option tikv.StartTSOption) (kv.Transaction, error) {
 	return s.Begin()
 }
 
@@ -72,3 +74,13 @@ func (s *Store) GetMemCache() kv.MemManager {
 
 // ShowStatus implements kv.Storage interface.
 func (s *Store) ShowStatus(ctx context.Context, key string) (interface{}, error) { return nil, nil }
+
+// GetMinSafeTS implements kv.Storage interface.
+func (s *Store) GetMinSafeTS(txnScope string) uint64 {
+	return 0
+}
+
+// GetLockWaits implements kv.Storage interface.
+func (s *Store) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
+	return nil, nil
+}

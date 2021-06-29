@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// DispatchMPPTasks dispathes all tasks and returns an iterator.
+// DispatchMPPTasks dispatches all tasks and returns an iterator.
 func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int) (SelectResult, error) {
 	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks)
 	if resp == nil {
@@ -134,7 +134,7 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 }
 
 // Analyze do a analyze request.
-func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.Variables,
+func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{},
 	isRestrict bool, sessionMemTracker *memory.Tracker) (SelectResult, error) {
 	resp := client.Send(ctx, kvReq, vars, sessionMemTracker, false)
 	if resp == nil {
@@ -156,7 +156,7 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.
 }
 
 // Checksum sends a checksum request.
-func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.Variables) (SelectResult, error) {
+func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{}) (SelectResult, error) {
 	// FIXME: As BR have dependency of `Checksum` and TiDB also introduced BR as dependency, Currently we can't edit
 	// Checksum function signature. The two-way dependence should be removed in future.
 	resp := client.Send(ctx, kvReq, vars, nil, false)
