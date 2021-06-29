@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
@@ -50,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
@@ -1124,27 +1122,21 @@ func (ts *HTTPHandlerTestSuite) TestGetSchemaStorage(c *C) {
 	ts.prepareData(c)
 	defer ts.stopServer(c)
 
+	do := ts.domain
+	h := do.StatsHandle()
+
 	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
-	defer db.Close()
+	defer func() {
+		c.Assert(db.Close(), IsNil)
+	}()
 	dbt := &DBTest{c, db}
-
-	oldExpiryTime := executor.TableStatsCacheExpiry
-	executor.TableStatsCacheExpiry = 0
-	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
-
-	do := ts.sh.do
-	do.SetStatsUpdating(true)
-	h := do.StatsHandle()
-	h.Clear()
-	is := do.InfoSchema()
-
 	dbt.mustExec("use test")
 	dbt.mustExec("drop table if exists t")
 	dbt.mustExec("create table t (c int, d int, e char(5), index idx(e))")
 	dbt.mustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
+
+	h.FlushStats()
 
 	resp, err := ts.fetchStatus("/schema_storage/test")
 	c.Assert(err, IsNil)
