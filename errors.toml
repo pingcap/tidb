@@ -1163,7 +1163,7 @@ error = '''
 
 ["planner:8007"]
 error = '''
-`drop global temporary table` can only drop global temporary table
+`drop global temporary table` applies on global temporary table only.
 '''
 
 ["planner:8108"]
