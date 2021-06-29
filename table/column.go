@@ -101,26 +101,12 @@ func ToColumn(col *model.ColumnInfo) *Column {
 
 // FindCols finds columns in cols by names.
 // If pkIsHandle is false and name is ExtraHandleName, the extra handle column will be added.
-// If any columns don't match, return nil and the first missing column's name
+// If any columns don't match, return nil and the first missing column's name.
+// Please consider FindColumns first for a better performance.
 func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, string) {
-	return findCols(cols, names, pkIsHandle, false)
-}
-
-// FindColsLowerCase finds columns in cols by names.
-// Please make sure the names are lowercase.
-func FindColsLowerCase(cols []*Column, names []string, pkIsHandle bool) ([]*Column, string) {
-	return findCols(cols, names, pkIsHandle, true)
-}
-
-func findCols(cols []*Column, names []string, pkIsHandle bool, lowercaseNames bool) ([]*Column, string) {
 	var rcols []*Column
 	for _, name := range names {
-		var col *Column
-		if lowercaseNames {
-			col = FindColLowerCase(cols, name)
-		} else {
-			col = FindCol(cols, name)
-		}
+		col := FindCol(cols, name)
 		if col != nil {
 			rcols = append(rcols, col)
 		} else if name == model.ExtraHandleName.L && !pkIsHandle {
@@ -134,6 +120,26 @@ func findCols(cols []*Column, names []string, pkIsHandle bool, lowercaseNames bo
 	}
 
 	return rcols, ""
+}
+
+// FindColumns finds columns in cols by names with a better performance than FindCols().
+// It assumes names are lowercase.
+func FindColumns(cols []*Column, names []string, pkIsHandle bool) (foundCols []*Column, missingOffset int) {
+	var rcols []*Column
+	for i, name := range names {
+		col := FindColLowerCase(cols, name)
+		if col != nil {
+			rcols = append(rcols, col)
+		} else if name == model.ExtraHandleName.L && !pkIsHandle {
+			col := &Column{}
+			col.ColumnInfo = model.NewExtraHandleColInfo()
+			col.ColumnInfo.Offset = len(cols)
+			rcols = append(rcols, col)
+		} else {
+			return nil, i
+		}
+	}
+	return rcols, -1
 }
 
 // FindOnUpdateCols finds columns which have OnUpdateNow flag.
