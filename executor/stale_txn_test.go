@@ -996,3 +996,60 @@ func (s *testStaleTxnSerialSuite) TestStaleReadPrepare(c *C) {
 	tk.MustExec(fmt.Sprintf(`set transaction read only as of timestamp '%s'`, time1.Format("2006-1-2 15:04:05.000")))
 	c.Assert("execute p1", NotNil)
 }
+
+func (s *testStaleTxnSuite) TestStmtCtxStaleFlag(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+	time.Sleep(2 * time.Second)
+	time1 := time.Now().Format("2006-1-2 15:04:05")
+	testcases := []struct {
+		sql          string
+		hasStaleFlag bool
+	}{
+		{
+			sql:          fmt.Sprintf("select * from t as of timestamp '%v'", time1),
+			hasStaleFlag: true,
+		},
+		{
+			sql:          fmt.Sprintf("select * from t"),
+			hasStaleFlag: false,
+		},
+		{
+			sql:          fmt.Sprintf("start transaction read only as of timestamp '%v'", time1),
+			hasStaleFlag: false,
+		},
+		{
+			sql:          fmt.Sprintf("select * from t"),
+			hasStaleFlag: true,
+		},
+		{
+			sql:          "commit",
+			hasStaleFlag: false,
+		},
+		{
+			sql:          fmt.Sprintf("set transaction read only as of timestamp '%v'", time1),
+			hasStaleFlag: false,
+		},
+		{
+			sql:          fmt.Sprintf("select * from t"),
+			hasStaleFlag: true,
+		},
+		{
+			sql:          fmt.Sprintf("select * from t"),
+			hasStaleFlag: false,
+		},
+		// TODO: support assert prepare / execute statement
+	}
+
+	for _, testcase := range testcases {
+		failpoint.Enable("github.com/pingcap/tidb/exector/assertStmtCtxIsStaleness",
+			fmt.Sprintf("return(%v)", testcase.hasStaleFlag))
+		tk.MustExec(testcase.sql)
+		failpoint.Disable("github.com/pingcap/tidb/exector/assertStmtCtxIsStaleness")
+		// assert stale read flag should be false after each statement execution
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.IsStaleness, IsFalse)
+	}
+}

@@ -1497,6 +1497,9 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 		}
 		txnCtx := p.ctx.GetSessionVars().TxnCtx
 		p.TxnScope = txnCtx.TxnScope
+		// It means we meet following case:
+		// 1. start transaction read only as of timestamp ts
+		// 2. select statement
 		if txnCtx.IsStaleness {
 			p.LastSnapshotTS = txnCtx.StartTS
 			p.IsStaleness = txnCtx.IsStaleness
@@ -1513,6 +1516,9 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.err = ErrAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
 			return
 		}
+		// it means we meet following case:
+		// 1. set transaction read only as of timestamp ts
+		// 2. select statement
 		if !p.initedLastSnapshotTS {
 			p.SnapshotTSEvaluator = func(sessionctx.Context) (uint64, error) {
 				return ts, nil
@@ -1530,6 +1536,8 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.err = errors.Trace(err)
 			return
 		}
+		// It means we meet following case:
+		// select statement with as of timestamp
 		if !p.initedLastSnapshotTS {
 			p.SnapshotTSEvaluator = func(ctx sessionctx.Context) (uint64, error) {
 				return calculateTsExpr(ctx, node)
@@ -1549,6 +1557,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			return
 		}
 	}
+	p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.IsStaleness
 	p.initedLastSnapshotTS = true
 }
 
