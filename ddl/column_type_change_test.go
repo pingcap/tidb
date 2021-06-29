@@ -2135,11 +2135,43 @@ func (s *testColumnTypeChangeSuite) TestCastFromZeroIntToTimeError(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a int);")
-	tk.MustExec("insert into t values (0);")
-	tk.MustGetErrCode("alter table t modify column a date;", mysql.ErrTruncatedWrongValue)
-	tk.MustGetErrCode("alter table t modify column a datetime;", mysql.ErrTruncatedWrongValue)
-	tk.MustGetErrCode("alter table t modify column a timestamp;", mysql.ErrTruncatedWrongValue)
+	prepare := func() {
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a int);")
+		tk.MustExec("insert into t values (0);")
+	}
+	const errCodeNone = -1
+	testCases := []struct {
+		sqlMode string
+		errCode int
+	}{
+		{"STRICT_TRANS_TABLES", mysql.ErrTruncatedWrongValue},
+		{"STRICT_ALL_TABLES", mysql.ErrTruncatedWrongValue},
+		{"NO_ZERO_IN_DATE", errCodeNone},
+		{"NO_ZERO_DATE", errCodeNone},
+		{"ALLOW_INVALID_DATES", errCodeNone},
+		{"", errCodeNone},
+	}
+	for _, tc := range testCases {
+		prepare()
+		tk.MustExec(fmt.Sprintf("set @@sql_mode = '%s';", tc.sqlMode))
+		if tc.sqlMode == "NO_ZERO_DATE" {
+			tk.MustQuery(`select date(0);`).Check(testkit.Rows("<nil>"))
+		} else {
+			tk.MustQuery(`select date(0);`).Check(testkit.Rows("0000-00-00"))
+		}
+		tk.MustQuery(`select time(0);`).Check(testkit.Rows("00:00:00"))
+		if tc.errCode == errCodeNone {
+			tk.MustExec("alter table t modify column a date;")
+			prepare()
+			tk.MustExec("alter table t modify column a datetime;")
+			prepare()
+			tk.MustExec("alter table t modify column a timestamp;")
+		} else {
+			tk.MustGetErrCode("alter table t modify column a date;", mysql.ErrTruncatedWrongValue)
+			tk.MustGetErrCode("alter table t modify column a datetime;", mysql.ErrTruncatedWrongValue)
+			tk.MustGetErrCode("alter table t modify column a timestamp;", mysql.ErrTruncatedWrongValue)
+		}
+	}
 	tk.MustExec("drop table if exists t;")
 }
