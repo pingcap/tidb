@@ -60,6 +60,11 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 	stmtNode = plannercore.TryAddExtraLimit(c.Ctx, stmtNode)
 
+	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, ret.InfoSchema)
+	if err != nil {
+		return nil, err
+	}
+
 	failpoint.Inject("assertStmtCtxIsStaleness", func(val failpoint.Value) {
 		expected := val.(bool)
 		got := c.Ctx.GetSessionVars().StmtCtx.IsStaleness
@@ -67,11 +72,6 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 			panic(fmt.Sprintf("stmtctx isStaleness wrong, expected:%v, got:%v", expected, got))
 		}
 	})
-
-	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, ret.InfoSchema)
-	if err != nil {
-		return nil, err
-	}
 
 	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
 	var lowerPriority bool

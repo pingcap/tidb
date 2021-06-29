@@ -1009,14 +1009,17 @@ func (s *testStaleTxnSuite) TestStmtCtxStaleFlag(c *C) {
 		sql          string
 		hasStaleFlag bool
 	}{
+		// assert select as of statement
 		{
 			sql:          fmt.Sprintf("select * from t as of timestamp '%v'", time1),
 			hasStaleFlag: true,
 		},
+		// assert select statement
 		{
 			sql:          fmt.Sprintf("select * from t"),
 			hasStaleFlag: false,
 		},
+		// assert select statement in stale transaction
 		{
 			sql:          fmt.Sprintf("start transaction read only as of timestamp '%v'", time1),
 			hasStaleFlag: false,
@@ -1029,6 +1032,7 @@ func (s *testStaleTxnSuite) TestStmtCtxStaleFlag(c *C) {
 			sql:          "commit",
 			hasStaleFlag: false,
 		},
+		// assert select statement after set transaction
 		{
 			sql:          fmt.Sprintf("set transaction read only as of timestamp '%v'", time1),
 			hasStaleFlag: false,
@@ -1037,14 +1041,47 @@ func (s *testStaleTxnSuite) TestStmtCtxStaleFlag(c *C) {
 			sql:          fmt.Sprintf("select * from t"),
 			hasStaleFlag: true,
 		},
+		// assert select statement after consumed set transaction
 		{
 			sql:          fmt.Sprintf("select * from t"),
 			hasStaleFlag: false,
 		},
-		// TODO: support assert prepare / execute statement
+		// assert prepare statement with select as of statement
+		{
+			sql:          fmt.Sprintf(`prepare p from 'select * from t as of timestamp "%v"'`, time1),
+			hasStaleFlag: false,
+		},
+		// assert execute statement with select as of statement
+		{
+			sql:          "execute p",
+			hasStaleFlag: true,
+		},
+		// assert prepare common select statement
+		{
+			sql:          "prepare p1 from 'select * from t'",
+			hasStaleFlag: false,
+		},
+		{
+			sql:          "execute p1",
+			hasStaleFlag: false,
+		},
+		// assert execute select statement in stale transaction
+		{
+			sql:          fmt.Sprintf("start transaction read only as of timestamp '%v'", time1),
+			hasStaleFlag: false,
+		},
+		{
+			sql:          "execute p1",
+			hasStaleFlag: true,
+		},
+		{
+			sql:          "commit",
+			hasStaleFlag: false,
+		},
 	}
 
-	for _, testcase := range testcases {
+	for i, testcase := range testcases {
+		fmt.Println(i)
 		failpoint.Enable("github.com/pingcap/tidb/exector/assertStmtCtxIsStaleness",
 			fmt.Sprintf("return(%v)", testcase.hasStaleFlag))
 		tk.MustExec(testcase.sql)
