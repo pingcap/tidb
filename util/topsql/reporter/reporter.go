@@ -61,17 +61,17 @@ type dataPoints struct {
 	CPUTimeMsTotal uint64
 }
 
-type dataPointsSlice []*dataPoints
+type dataPointsOrderByCPUTime []*dataPoints
 
-func (t dataPointsSlice) Len() int {
+func (t dataPointsOrderByCPUTime) Len() int {
 	return len(t)
 }
 
-func (t dataPointsSlice) Less(i, j int) bool {
+func (t dataPointsOrderByCPUTime) Less(i, j int) bool {
 	// We need find the kth largest value, so here should use >
 	return t[i].CPUTimeMsTotal > t[j].CPUTimeMsTotal
 }
-func (t dataPointsSlice) Swap(i, j int) {
+func (t dataPointsOrderByCPUTime) Swap(i, j int) {
 	t[i], t[j] = t[j], t[i]
 }
 
@@ -221,7 +221,7 @@ func encodeKey(buf *bytes.Buffer, sqlDigest, planDigest []byte) string {
 	return buf.String()
 }
 
-func (tsr *RemoteTopSQLReporter) getTopNRecords(records []tracecpu.SQLCPUTimeRecord) (topN, shouldEvict []tracecpu.SQLCPUTimeRecord) {
+func getTopNRecords(records []tracecpu.SQLCPUTimeRecord) (topN, shouldEvict []tracecpu.SQLCPUTimeRecord) {
 	maxStmt := int(variable.TopSQLVariable.MaxStatementCount.Load())
 	if len(records) <= maxStmt {
 		return records, nil
@@ -233,12 +233,12 @@ func (tsr *RemoteTopSQLReporter) getTopNRecords(records []tracecpu.SQLCPUTimeRec
 	return records[:maxStmt], records[maxStmt:]
 }
 
-func (tsr *RemoteTopSQLReporter) getTopNDataPoints(records []*dataPoints) (topN, shouldEvict []*dataPoints) {
+func getTopNDataPoints(records []*dataPoints) (topN, shouldEvict []*dataPoints) {
 	maxStmt := int(variable.TopSQLVariable.MaxStatementCount.Load())
 	if len(records) <= maxStmt {
 		return records, nil
 	}
-	if err := quickselect.QuickSelect(dataPointsSlice(records), maxStmt); err != nil {
+	if err := quickselect.QuickSelect(dataPointsOrderByCPUTime(records), maxStmt); err != nil {
 		//	skip eviction
 		return records, nil
 	}
@@ -251,7 +251,7 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 	defer util.Recover("top-sql", "doCollect", nil, false)
 
 	var evicted []tracecpu.SQLCPUTimeRecord
-	records, evicted = tsr.getTopNRecords(records)
+	records, evicted = getTopNRecords(records)
 	keyBuf := bytes.NewBuffer(make([]byte, 0, 64))
 	listCapacity := int(variable.TopSQLVariable.ReportIntervalSeconds.Load()/variable.TopSQLVariable.PrecisionSeconds.Load() + 1)
 	if listCapacity < 1 {
@@ -304,26 +304,8 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *m
 	for _, v := range *collectedDataPtr {
 		records = append(records, v)
 	}
-	var evicted []*dataPoints
-	records, evicted = tsr.getTopNDataPoints(records)
 	normalizedSQLMap := tsr.normalizedSQLMap.Load().(*sync.Map)
 	normalizedPlanMap := tsr.normalizedPlanMap.Load().(*sync.Map)
-	for _, evict := range evicted {
-		_, loaded := normalizedSQLMap.LoadAndDelete(string(evict.SQLDigest))
-		if loaded {
-			tsr.sqlMapLength.Add(-1)
-		}
-		_, loaded = normalizedPlanMap.LoadAndDelete(string(evict.PlanDigest))
-		if loaded {
-			tsr.planMapLength.Add(-1)
-		}
-	}
-
-	data := reportData{
-		collectedData:     records,
-		normalizedSQLMap:  normalizedSQLMap,
-		normalizedPlanMap: normalizedPlanMap,
-	}
 
 	// Reset data for next report.
 	*collectedDataPtr = make(map[string]*dataPoints)
@@ -331,6 +313,20 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *m
 	tsr.normalizedPlanMap.Store(&sync.Map{})
 	tsr.sqlMapLength.Store(0)
 	tsr.planMapLength.Store(0)
+
+	// Evict redundant data.
+	var evicted []*dataPoints
+	records, evicted = getTopNDataPoints(records)
+	for _, evict := range evicted {
+		normalizedSQLMap.LoadAndDelete(string(evict.SQLDigest))
+		normalizedPlanMap.LoadAndDelete(string(evict.PlanDigest))
+	}
+
+	data := reportData{
+		collectedData:     records,
+		normalizedSQLMap:  normalizedSQLMap,
+		normalizedPlanMap: normalizedPlanMap,
+	}
 
 	// Send to report channel. When channel is full, data will be dropped.
 	select {
