@@ -475,7 +475,6 @@ func FindPrefixOfIndexByCol(cols []*expression.Column, idxColIDs []int64, cached
 			return retCols
 		}
 		return retCols
-	} else {
-		return expression.FindPrefixOfIndex(cols, idxColIDs)
 	}
+	return expression.FindPrefixOfIndex(cols, idxColIDs)
 }
