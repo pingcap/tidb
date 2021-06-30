@@ -27,9 +27,12 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -200,8 +203,62 @@ func (e *DDLExec) executeAlterDatabase(s *ast.AlterDatabaseStmt) error {
 }
 
 func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
+	if s.TemporaryKeyword == ast.TemporaryLocal {
+		return e.createSessionTemporaryTable(s)
+	}
+
 	err := domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, s)
 	return err
+}
+
+func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
+	is := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	dbInfo, ok := is.SchemaByName(s.Table.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(s.Table.Schema.O)
+	}
+	tbInfo, err := ddl.BuildTableInfoWithCheck(e.ctx, s, dbInfo.Charset, dbInfo.Collate)
+	if err != nil {
+		return err
+	}
+
+	dom := domain.GetDomain(e.ctx)
+	// Local temporary table uses a real table ID.
+	// We could mock a table ID, but the mocked ID might be identical to an existing
+	// real table, and then we'll get into trouble.
+	err = kv.RunInNewTxn(context.Background(), dom.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		tblID, err := m.GenGlobalID()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tbInfo.ID = tblID
+		tbInfo.State = model.StatePublic
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	// AutoID is allocated in mocked..
+	alloc := autoid.NewAllocatorFromTempTblInfo(tbInfo)
+	tbl, err := tables.TableFromMeta([]autoid.Allocator{alloc}, tbInfo)
+	if err != nil {
+		return err
+	}
+
+	// Store this temporary table to the session.
+	sessVars := e.ctx.GetSessionVars()
+	var localTempTables infoschema.TempTables
+	if sessVars.LocalTemporaryTables == nil {
+		localTempTables = make(infoschema.TempTables)
+	} else {
+		localTempTables = sessVars.LocalTemporaryTables.(infoschema.TempTables)
+	}
+	localTempTables.Add(tbl, s.Table.Schema)
+	sessVars.LocalTemporaryTables = localTempTables
+
+	return nil
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {

@@ -194,6 +194,21 @@ func (s *testSuite6) TestCreateTable(c *C) {
 	tk.MustExec("create table if not exists t1_if_exists(c int)")
 	tk.MustExec("drop table if exists t1_if_exists,t2_if_exists,t3_if_exists")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1051|Unknown table 'test.t2_if_exists'", "Note|1051|Unknown table 'test.t3_if_exists'"))
+
+	// Create temporary table.
+	tk.MustExec("set @@tidb_enable_noop_functions = 1")
+	tk.MustExec("create database tmp_db")
+	tk.MustExec("use tmp_db")
+	tk.MustExec("create temporary table t1 (id int)")
+	tk.MustExec("create temporary table tmp_db.t2 (id int)")
+	tk.MustQuery("select * from t1") // No error
+	tk.MustExec("drop database tmp_db")
+	_, err = tk.Exec("select * from t1")
+	c.Assert(err, NotNil)
+	// In MySQL, drop DB does not really drop the table, it's back!
+	tk.MustExec("create database tmp_db")
+	tk.MustExec("use tmp_db")
+	tk.MustQuery("select * from t1") // No error
 }
 
 func (s *testSuite6) TestCreateView(c *C) {

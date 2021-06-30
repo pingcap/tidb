@@ -403,3 +403,53 @@ func GetBundle(h InfoSchema, ids []int64) *placement.Bundle {
 	}
 	return &placement.Bundle{ID: placement.GroupID(id), Rules: newRules}
 }
+
+// OverrideWithTempTables overrides the old InfoSchema and provide a new InfoSchema.
+func OverrideWithTempTables(is InfoSchema, tables TempTables) InfoSchema {
+	return &infoSchemaWithTempTables{
+		InfoSchema: is,
+		TempTables: tables,
+	}
+}
+
+type tableWithSchema struct {
+	table.Table
+	schema model.CIStr
+}
+
+type TempTables map[string]tableWithSchema
+
+func (tables TempTables) Add(tbl table.Table, schema model.CIStr) error {
+	tbInfo := tbl.Meta()
+	if _, ok := tables[tbInfo.Name.L]; ok {
+		return ErrTableExists.GenWithStackByArgs(tbInfo.Name.O)
+	}
+	tables[tbInfo.Name.L] = tableWithSchema{tbl, schema}
+	return nil
+}
+
+type infoSchemaWithTempTables struct {
+	InfoSchema
+	TempTables
+}
+
+// TableByName overrides the TableByName method.
+func (ts *infoSchemaWithTempTables) TableByName(schema, table model.CIStr) (table.Table, error) {
+	if tbl, ok := ts.TempTables[table.L]; ok {
+		// Not only the table name, but also the schema should match!
+		if tbl.schema.L == schema.L {
+			return tbl, nil
+		}
+	}
+	return ts.InfoSchema.TableByName(schema, table)
+}
+
+// TableByName overrides the TableByID method.
+func (ts *infoSchemaWithTempTables) TableByID(id int64) (table.Table, bool) {
+	for _, tbl := range ts.TempTables {
+		if tbl.Meta().ID == id {
+			return tbl, true
+		}
+	}
+	return ts.InfoSchema.TableByID(id)
+}

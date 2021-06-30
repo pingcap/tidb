@@ -2689,7 +2689,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		return
 	}
 
-	is := domain.GetDomain(s).InfoSchema()
+	is := s.GetInfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema: is,
 		CreateTime: time.Now(),
@@ -2946,7 +2946,13 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 			return is
 		}
 	}
-	return domain.GetDomain(s).InfoSchema()
+
+	is := domain.GetDomain(s).InfoSchema()
+	// Override the infoschema if the session has temporary table.
+	if vars.LocalTemporaryTables != nil {
+		is = infoschema.OverrideWithTempTables(is, s.sessionVars.LocalTemporaryTables.(infoschema.TempTables))
+	}
+	return is
 }
 
 func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
