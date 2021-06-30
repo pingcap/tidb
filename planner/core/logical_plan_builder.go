@@ -1027,11 +1027,10 @@ func (b *PlanBuilder) buildProjectionFieldNameFromColumns(origField *ast.SelectF
 }
 
 // buildProjectionFieldNameFromExpressions builds the field name when field expression is a normal expression.
-func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(ctx context.Context, field *ast.SelectField) (model.CIStr, bool, error) {
-
+func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(ctx context.Context, field *ast.SelectField) (model.CIStr, error) {
 	if agg, ok := field.Expr.(*ast.AggregateFuncExpr); ok && agg.F == ast.AggFuncFirstRow {
 		// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
-		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name, false, nil
+		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name, nil
 	}
 
 	innerExpr := getInnerFromParenthesesAndUnaryPlus(field.Expr)
@@ -1041,19 +1040,16 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(ctx context.Contex
 	if isFuncCall && funcCall.FnName.L == ast.NameConst {
 		if v, err := evalAstExpr(b.ctx, funcCall.Args[0]); err == nil {
 			if s, err := v.ToString(); err == nil {
-				return model.NewCIStr(s), false, nil
+				return model.NewCIStr(s), nil
 			}
 		}
-		return model.NewCIStr(""), false, ErrWrongArguments.GenWithStackByArgs("NAME_CONST")
+		return model.NewCIStr(""), ErrWrongArguments.GenWithStackByArgs("NAME_CONST")
 	}
 	valueExpr, isValueExpr := innerExpr.(*driver.ValueExpr)
 
 	// Non-literal: Output as inputed, except that comments need to be removed.
 	if !isValueExpr {
-		// When the query is `create view as (select * from (select some_expr() ...))`,
-		// We should add alias name for `some_expr` when unfold wildcard.
-		// Otherwise unfolded name will be wrong when select this view.
-		return model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment)), true, nil
+		return model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment)), nil
 	}
 
 	// Literal: Need special processing
@@ -1069,21 +1065,21 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(ctx context.Contex
 		fieldName := strings.TrimLeftFunc(projName, func(r rune) bool {
 			return !unicode.IsOneOf(mysql.RangeGraph, r)
 		})
-		return model.NewCIStr(fieldName), false, nil
+		return model.NewCIStr(fieldName), nil
 	case types.KindNull:
 		// See #4053, #3685
-		return model.NewCIStr("NULL"), false, nil
+		return model.NewCIStr("NULL"), nil
 	case types.KindBinaryLiteral:
 		// Don't rewrite BIT literal or HEX literals
-		return model.NewCIStr(field.Text()), false, nil
+		return model.NewCIStr(field.Text()), nil
 	case types.KindInt64:
 		// See #9683
 		// TRUE or FALSE can be a int64
 		if mysql.HasIsBooleanFlag(valueExpr.Type.Flag) {
 			if i := valueExpr.GetValue().(int64); i == 0 {
-				return model.NewCIStr("FALSE"), false, nil
+				return model.NewCIStr("FALSE"), nil
 			}
-			return model.NewCIStr("TRUE"), false, nil
+			return model.NewCIStr("TRUE"), nil
 		}
 		fallthrough
 
@@ -1091,7 +1087,7 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(ctx context.Contex
 		fieldName := field.Text()
 		fieldName = strings.TrimLeft(fieldName, "\t\n +(")
 		fieldName = strings.TrimRight(fieldName, "\t\n )")
-		return model.NewCIStr(fieldName), false, nil
+		return model.NewCIStr(fieldName), nil
 	}
 }
 
@@ -1100,7 +1096,6 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 	var origTblName, tblName, origColName, colName, dbName model.CIStr
 	innerNode := getInnerFromParenthesesAndUnaryPlus(field.Expr)
 	col, isCol := expr.(*expression.Column)
-	var recordField bool
 	// Correlated column won't affect the final output names. So we can put it in any of the three logic block.
 	// Don't put it into the first block just for simplifying the codes.
 	if colNameField, ok := innerNode.(*ast.ColumnNameExpr); ok && isCol {
@@ -1120,7 +1115,7 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 	} else {
 		// Other: field is an expression.
 		var err error
-		if colName, recordField, err = b.buildProjectionFieldNameFromExpressions(ctx, field); err != nil {
+		if colName, err = b.buildProjectionFieldNameFromExpressions(ctx, field); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -1130,9 +1125,6 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 		ColName:     colName,
 		OrigColName: origColName,
 		DBName:      dbName,
-	}
-	if recordField {
-		name.SelectField = field
 	}
 	if isCol {
 		return col, name, nil
@@ -3095,12 +3087,12 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 		if field.WildCard.Table.L == "" && i > 0 {
 			return nil, ErrInvalidWildCard
 		}
-		list := unfoldWildStar(field, p.OutputNames(), p.Schema().Columns, b.capFlag)
+		list := unfoldWildStar(field, p.OutputNames(), p.Schema().Columns)
 		// For sql like `select t1.*, t2.* from t1 join t2 using(a)`, we should
 		// not coalesce the `t2.a` in the output result. Thus we need to unfold
 		// the wildstar from the underlying join.redundantSchema.
 		if isJoin && join.redundantSchema != nil && field.WildCard.Table.L != "" {
-			redundantList := unfoldWildStar(field, join.redundantNames, join.redundantSchema.Columns, b.capFlag)
+			redundantList := unfoldWildStar(field, join.redundantNames, join.redundantSchema.Columns)
 			if len(redundantList) > len(list) {
 				list = redundantList
 			}
@@ -3113,7 +3105,7 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 	return resultList, nil
 }
 
-func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column []*expression.Column, capFlag capFlagType) (resultList []*ast.SelectField) {
+func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column []*expression.Column) (resultList []*ast.SelectField) {
 	dbName := field.WildCard.Schema
 	tblName := field.WildCard.Table
 	for i, name := range outputName {
@@ -3132,15 +3124,26 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 				}}
 			colName.SetType(col.GetType())
 			field := &ast.SelectField{Expr: colName}
-			// Alias name is only to ensure the view definition is correct.
-			if capFlag&canExpandAST != 0 && name.SelectField != nil {
-				name.SelectField.AsName = colName.Name.Name
-			}
 			field.SetText(name.ColName.O)
 			resultList = append(resultList, field)
 		}
 	}
 	return resultList
+}
+
+func (b *PlanBuilder) addAliasName(selectFields []*ast.SelectField, p LogicalPlan) (resultList []*ast.SelectField, err error) {
+	if len(selectFields) != len(p.OutputNames()) {
+		return nil, errors.Errorf("lengths of selectFields and OutputNames are not equal(%d, %d)",
+			len(selectFields), len(p.OutputNames()))
+	}
+	for i, field := range selectFields {
+		newField := *field
+		if newField.AsName.L == "" {
+			newField.AsName = p.OutputNames()[i].ColName
+		}
+		resultList = append(resultList, &newField)
+	}
+	return resultList, nil
 }
 
 func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) {
@@ -3518,6 +3521,17 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, totalMap, nil, false, sel.OrderBy != nil)
 	if err != nil {
 		return nil, err
+	}
+
+	if b.capFlag&canExpandAST != 0 {
+		// To be compabitle with MySQL, we add alias name for each select field when creating view.
+		// This function assumes one to one mapping between sel.Fields.Fields and p.OutputNames().
+		// So we do this step right after Projection is built.
+		sel.Fields.Fields, err = b.addAliasName(sel.Fields.Fields, p)
+		if err != nil {
+			return nil, err
+		}
+		originalFields = sel.Fields.Fields
 	}
 
 	if sel.Having != nil {
