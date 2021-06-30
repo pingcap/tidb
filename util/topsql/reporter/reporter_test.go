@@ -169,6 +169,78 @@ func (s *testTopSQLReporter) TestCollectAndEvicted(c *C) {
 	}
 }
 
+func (s *testTopSQLReporter) newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32) tracecpu.SQLCPUTimeRecord {
+	key := []byte("sqlDigest" + strconv.Itoa(sqlID))
+	value := "sqlNormalized" + strconv.Itoa(sqlID)
+	tsr.RegisterSQL(key, value)
+
+	key = []byte("planDigest" + strconv.Itoa(sqlID))
+	value = "planNormalized" + strconv.Itoa(sqlID)
+	tsr.RegisterPlan(key, value)
+
+	return tracecpu.SQLCPUTimeRecord{
+		SQLDigest:  []byte("sqlDigest" + strconv.Itoa(sqlID)),
+		PlanDigest: []byte("planDigest" + strconv.Itoa(sqlID)),
+		CPUTimeMs:  cpuTimeMs,
+	}
+}
+
+func (s *testTopSQLReporter) collectAndWait(tsr *RemoteTopSQLReporter, timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
+	tsr.Collect(timestamp, records)
+	time.Sleep(time.Millisecond * 100)
+}
+
+func (s *testTopSQLReporter) TestCollectAndTopN(c *C) {
+	agentServer, err := mock.StartMockAgentServer()
+	c.Assert(err, IsNil)
+	defer agentServer.Stop()
+
+	tsr := setupRemoteTopSQLReporter(2, 1, agentServer.Address())
+	defer tsr.Close()
+
+	records := []tracecpu.SQLCPUTimeRecord{
+		s.newSQLCPUTimeRecord(tsr, 1, 1),
+		s.newSQLCPUTimeRecord(tsr, 2, 2),
+	}
+	s.collectAndWait(tsr, 1, records)
+
+	records = []tracecpu.SQLCPUTimeRecord{
+		s.newSQLCPUTimeRecord(tsr, 3, 3),
+		s.newSQLCPUTimeRecord(tsr, 1, 1),
+	}
+	s.collectAndWait(tsr, 2, records)
+
+	records = []tracecpu.SQLCPUTimeRecord{
+		s.newSQLCPUTimeRecord(tsr, 4, 1),
+		s.newSQLCPUTimeRecord(tsr, 1, 1),
+	}
+	s.collectAndWait(tsr, 3, records)
+
+	// Wait agent server collect finish.
+	agentServer.WaitCollectCnt(1, time.Second*10)
+
+	// check for equality of server received batch and the original data
+	results := agentServer.GetLatestRecords()
+	c.Assert(results, HasLen, 2)
+	for _, req := range results {
+		id := 0
+		prefix := "sqlDigest"
+		if strings.HasPrefix(string(req.SqlDigest), prefix) {
+			n, err := strconv.Atoi(string(req.SqlDigest)[len(prefix):])
+			c.Assert(err, IsNil)
+			id = n
+		}
+		if id != 1 && id != 3 {
+			c.Fatalf("the id should be 1 or 3, got: %v", id)
+		}
+		total := uint32(0)
+		for _, v := range req.RecordListCpuTimeMs {
+			total += v
+		}
+		c.Assert(total, Equals, uint32(3))
+	}
+}
+
 func (s *testTopSQLReporter) TestCollectCapacity(c *C) {
 	tsr := setupRemoteTopSQLReporter(maxSQLNum, 60, "")
 	defer tsr.Close()
