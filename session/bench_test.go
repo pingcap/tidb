@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -36,6 +37,10 @@ var smallCount = 100
 var bigCount = 10000
 
 func prepareBenchSession() (Session, *domain.Domain, kv.Storage) {
+	config.UpdateGlobal(func(cfg *config.Config) {
+		cfg.Log.EnableSlowLog = false
+	})
+
 	store, err := mockstore.NewMockStore()
 	if err != nil {
 		logutil.BgLogger().Fatal(err.Error())
@@ -108,8 +113,8 @@ func BenchmarkBasic(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -127,8 +132,8 @@ func BenchmarkTableScan(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "int", "%v", smallCount)
 	b.ResetTimer()
@@ -147,8 +152,8 @@ func BenchmarkExplainTableScan(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "int", "%v", 0)
 	b.ResetTimer()
@@ -167,8 +172,8 @@ func BenchmarkTableLookup(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "int", "%d", smallCount)
 	b.ResetTimer()
@@ -187,8 +192,8 @@ func BenchmarkExplainTableLookup(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "int", "%d", 0)
 	b.ResetTimer()
@@ -207,8 +212,8 @@ func BenchmarkStringIndexScan(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "varchar(255)", "'hello %d'", smallCount)
 	b.ResetTimer()
@@ -227,8 +232,8 @@ func BenchmarkExplainStringIndexScan(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "varchar(255)", "'hello %d'", 0)
 	b.ResetTimer()
@@ -247,8 +252,8 @@ func BenchmarkStringIndexLookup(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "varchar(255)", "'hello %d'", smallCount)
 	b.ResetTimer()
@@ -267,8 +272,8 @@ func BenchmarkIntegerIndexScan(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "int", "%v", smallCount)
 	b.ResetTimer()
@@ -287,8 +292,8 @@ func BenchmarkIntegerIndexLookup(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "int", "%v", smallCount)
 	b.ResetTimer()
@@ -307,8 +312,8 @@ func BenchmarkDecimalIndexScan(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "decimal(32,6)", "%v.1234", smallCount)
 	b.ResetTimer()
@@ -327,8 +332,8 @@ func BenchmarkDecimalIndexLookup(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "decimal(32,6)", "%v.1234", smallCount)
 	b.ResetTimer()
@@ -346,8 +351,8 @@ func BenchmarkInsertWithIndex(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, "create table t (pk int primary key, col int, index idx (col))")
@@ -362,8 +367,8 @@ func BenchmarkInsertNoIndex(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, "create table t (pk int primary key, col int)")
@@ -379,8 +384,8 @@ func BenchmarkSort(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareSortBenchData(se, "int", "%v", bigCount)
 	b.ResetTimer()
@@ -399,8 +404,8 @@ func BenchmarkJoin(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareJoinBenchData(se, "int", "%v", smallCount)
 	b.ResetTimer()
@@ -419,8 +424,8 @@ func BenchmarkJoinLimit(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareJoinBenchData(se, "int", "%v", smallCount)
 	b.ResetTimer()
