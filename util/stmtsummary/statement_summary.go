@@ -886,6 +886,7 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		logutil.BgLogger().Error("decode plan in statement summary failed", zap.String("plan", ssElement.samplePlan), zap.String("query", ssElement.sampleSQL), zap.Error(err))
 		plan = ""
 	}
+
 	sampleUser := ""
 	for key := range ssElement.authUsers {
 		sampleUser = key
