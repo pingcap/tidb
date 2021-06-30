@@ -1856,6 +1856,7 @@ type TableOption struct {
 	Default    bool
 	StrValue   string
 	UintValue  uint64
+	BoolValue  bool
 	TableNames []*TableName
 }
 
@@ -1889,6 +1890,9 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain("= ")
 		ctx.WriteKeyWord(n.StrValue)
 	case TableOptionAutoIncrement:
+		if n.BoolValue {
+			ctx.WriteKeyWord("FORCE ")
+		}
 		ctx.WriteKeyWord("AUTO_INCREMENT ")
 		ctx.WritePlain("= ")
 		ctx.WritePlainf("%d", n.UintValue)
@@ -1897,6 +1901,9 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain("= ")
 		ctx.WritePlainf("%d", n.UintValue)
 	case TableOptionAutoRandomBase:
+		if n.BoolValue {
+			ctx.WriteKeyWord("FORCE ")
+		}
 		ctx.WriteKeyWord("AUTO_RANDOM_BASE ")
 		ctx.WritePlain("= ")
 		ctx.WritePlainf("%d", n.UintValue)
