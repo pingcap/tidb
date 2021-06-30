@@ -2896,7 +2896,7 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 	// Check whether the column to be updated is the generated column.
 	tCols, missingColIdx := table.FindColumns(insertPlan.Table.VisibleCols(), colNames, tableInfo.PKIsHandle)
 	if missingColIdx > 0 {
-		return ErrUnknownColumn.GenWithStackByArgs(colNames[missingColIdx], clauseMsg[fieldList])
+		return ErrUnknownColumn.GenWithStackByArgs(insert.Setlist[missingColIdx].Column.Name.O, clauseMsg[fieldList])
 	}
 	generatedColumns := make(map[string]struct{}, len(tCols))
 	for _, tCol := range tCols {
