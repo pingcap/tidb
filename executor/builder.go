@@ -1584,6 +1584,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableClientErrorsSummaryByHost),
 			strings.ToLower(infoschema.TableTiDBTrx),
 			strings.ToLower(infoschema.TableTrxSQL),
+			strings.ToLower(infoschema.ClusterTableTrxSQL),
 			strings.ToLower(infoschema.ClusterTableTiDBTrx),
 			strings.ToLower(infoschema.TableDeadlocks),
 			strings.ToLower(infoschema.ClusterTableDeadlocks),

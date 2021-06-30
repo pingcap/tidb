@@ -158,10 +158,12 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
 		case infoschema.TableTiDBTrx:
 			e.setDataForTiDBTrx(sctx)
-		case infoschema.TableTrxSQL:
-			e.setDataForTrxSQL(sctx)
 		case infoschema.ClusterTableTiDBTrx:
 			err = e.setDataForClusterTiDBTrx(sctx)
+		case infoschema.TableTrxSQL:
+			e.setDataForTrxSQL(sctx)
+		case infoschema.ClusterTableTrxSQL:
+			err = e.setDataForClusterTrxSQL(sctx)
 		case infoschema.TableDeadlocks:
 			err = e.setDataForDeadlock(sctx)
 		case infoschema.ClusterTableDeadlocks:
@@ -2104,6 +2106,16 @@ func (e *memtableRetriever) setDataForTrxSQL(ctx sessionctx.Context) {
 
 func (e *memtableRetriever) setDataForClusterTiDBTrx(ctx sessionctx.Context) error {
 	e.setDataForTiDBTrx(ctx)
+	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
+	if err != nil {
+		return err
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForClusterTrxSQL(ctx sessionctx.Context) error {
+	e.setDataForTrxSQL(ctx)
 	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
 	if err != nil {
 		return err

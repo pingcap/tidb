@@ -167,12 +167,12 @@ const (
 	TableClientErrorsSummaryByHost = "CLIENT_ERRORS_SUMMARY_BY_HOST"
 	// TableTiDBTrx is current running transaction status table.
 	TableTiDBTrx = "TIDB_TRX"
+	// TableTrxSQL is a table which contains all SQL in current running transaction.
+	TableTrxSQL = "TRX_SQL"
 	// TableDeadlocks is the string constatnt of deadlock table.
 	TableDeadlocks = "DEADLOCKS"
 	// TableDataLockWaits is current lock waiting status table.
 	TableDataLockWaits = "DATA_LOCK_WAITS"
-	// TableTrxSQL is a table which contains all SQL in current running transaction.
-	TableTrxSQL = "TRX_SQL"
 )
 
 var tableIDMap = map[string]int64{
@@ -253,6 +253,7 @@ var tableIDMap = map[string]int64{
 	TableStatementsSummaryEvicted:           autoid.InformationSchemaDBID + 75,
 	ClusterTableStatementsSummaryEvicted:    autoid.InformationSchemaDBID + 76,
 	TableTrxSQL:                             autoid.InformationSchemaDBID + 77,
+	ClusterTableTrxSQL:                      autoid.InformationSchemaDBID + 77,
 }
 
 type columnInfo struct {
