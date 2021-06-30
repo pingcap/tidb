@@ -52,7 +52,7 @@ func (s *testPlanCodecSuite) TestEncodeTaskType(c *C) {
 }
 
 func (s *testPlanCodecSuite) TestDecodeDiscardPlan(c *C) {
-	plan, err := DecodePlan(DiscardEncodedPlan)
+	plan, err := DecodePlan(PlanDiscardedEncoded)
 	c.Assert(err, IsNil)
-	c.Assert(plan, DeepEquals, discardDecodedPlan)
+	c.Assert(plan, DeepEquals, planDiscardedDecoded)
 }

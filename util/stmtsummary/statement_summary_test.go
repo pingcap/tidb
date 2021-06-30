@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -440,7 +441,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	stmtExecInfo7 := stmtExecInfo1
 	stmtExecInfo7.PlanDigest = "plan_digest7"
 	stmtExecInfo7.PlanGenerator = func() (string, string) {
-		buf := make([]byte, maxEncodedPlanSize+1)
+		buf := make([]byte, maxEncodedPlanSizeInBytes+1)
 		for i := range buf {
 			buf[i] = 'a'
 		}
@@ -459,8 +460,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	c.Assert(stmt.digest, DeepEquals, key.digest)
 	e := stmt.history.Back()
 	ssElement := e.Value.(*stmtSummaryByDigestElement)
-	c.Assert(ssElement.samplePlan, Equals, discardPlanCauseTooLong)
-	c.Assert(ssElement.decodePlan(), Equals, discardPlanCauseTooLong)
+	c.Assert(ssElement.samplePlan, Equals, plancodec.PlanDiscardedEncoded)
 }
 
 func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
