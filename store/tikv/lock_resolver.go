@@ -38,9 +38,6 @@ import (
 // ResolvedCacheSize is max number of cached txn status.
 const ResolvedCacheSize = 2048
 
-// bigTxnThreshold : transaction involves keys exceed this threshold can be treated as `big transaction`.
-const bigTxnThreshold = 16
-
 var (
 	tikvLockResolverCountWithBatchResolve             = metrics.TiKVLockResolverCounter.WithLabelValues("batch_resolve")
 	tikvLockResolverCountWithExpired                  = metrics.TiKVLockResolverCounter.WithLabelValues("expired")
@@ -58,8 +55,9 @@ var (
 
 // LockResolver resolves locks and also caches resolved txn status.
 type LockResolver struct {
-	store Storage
-	mu    struct {
+	store                    Storage
+	resolveLockLiteThreshold uint64
+	mu                       struct {
 		sync.RWMutex
 		// resolved caches resolved txns (FIFO, txn id -> txnStatus).
 		resolved       map[uint64]TxnStatus
@@ -72,7 +70,8 @@ type LockResolver struct {
 
 func newLockResolver(store Storage) *LockResolver {
 	r := &LockResolver{
-		store: store,
+		store:                    store,
+		resolveLockLiteThreshold: config.GetGlobalConfig().ResolveLockLiteThreshold,
 	}
 	r.mu.resolved = make(map[uint64]TxnStatus)
 	r.mu.recentResolved = list.New()
@@ -158,7 +157,7 @@ func (l *Lock) String() string {
 	prettyWriteKey(buf, l.Key)
 	buf.WriteString(", primary: ")
 	prettyWriteKey(buf, l.Primary)
-	return fmt.Sprintf("%s, txnStartTS: %d, lockForUpdateTS:%d, ttl: %d, type: %s", buf.String(), l.TxnID, l.LockForUpdateTS, l.TTL, l.LockType)
+	return fmt.Sprintf("%s, txnStartTS: %d, lockForUpdateTS:%d, ttl: %d, type: %s, txnSize: %d", buf.String(), l.TxnID, l.LockForUpdateTS, l.TTL, l.LockType, l.TxnSize)
 }
 
 // NewLock creates a new *Lock.
@@ -599,7 +598,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 
 func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, lite bool, cleanRegions map[RegionVerID]struct{}) error {
 	tikvLockResolverCountWithResolveLocks.Inc()
-	resolveLite := lite || l.TxnSize < bigTxnThreshold
+	resolveLite := lite || l.TxnSize < lr.resolveLockLiteThreshold
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, l.Key)
 		if err != nil {
