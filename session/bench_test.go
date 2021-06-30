@@ -1603,7 +1603,7 @@ type BenchResult struct {
 	BytesPerOp  int64
 }
 
-func benchmarkResultToJson(name string, r testing.BenchmarkResult) BenchResult {
+func benchmarkResultToJSON(name string, r testing.BenchmarkResult) BenchResult {
 	return BenchResult{
 		Name:        name,
 		NsPerOp:     r.NsPerOp(),
@@ -1669,7 +1669,7 @@ func TestBenchDaily(t *testing.T) {
 	for _, t := range tests {
 		name := callerName(t)
 		r1 := testing.Benchmark(t)
-		r2 := benchmarkResultToJson(name, r1)
+		r2 := benchmarkResultToJSON(name, r1)
 		res = append(res, r2)
 	}
 
