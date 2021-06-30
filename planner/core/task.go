@@ -1874,6 +1874,13 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		}
 		// TODO: how to set 2-phase cost?
 		newMpp.addCost(p.GetCost(inputRows, false, true))
+<<<<<<< HEAD
+=======
+		finalAgg.SetCost(newMpp.cost())
+		if proj != nil {
+			proj.SetCost(newMpp.cost())
+		}
+>>>>>>> 3ad894da9... planner/core: thoroughly push down count-distinct agg in the MPP mode. (#25662)
 		return newMpp
 	case MppTiDB:
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, false)
@@ -1886,6 +1893,25 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		attachPlan2Task(finalAgg, t)
 		t.addCost(p.GetCost(inputRows, true, false))
 		return t
+	case MppScalar:
+		proj := p.convertAvgForMPP()
+		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
+		if partialAgg == nil || finalAgg == nil {
+			return invalidTask
+		}
+		attachPlan2Task(partialAgg, mpp)
+		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType}
+		newMpp := mpp.enforceExchangerImpl(prop)
+		attachPlan2Task(finalAgg, newMpp)
+		if proj != nil {
+			attachPlan2Task(proj, newMpp)
+		}
+		newMpp.addCost(p.GetCost(inputRows, false, true))
+		finalAgg.SetCost(newMpp.cost())
+		if proj != nil {
+			proj.SetCost(newMpp.cost())
+		}
+		return newMpp
 	default:
 		return invalidTask
 	}
