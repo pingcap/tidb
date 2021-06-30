@@ -590,24 +590,6 @@ idLoop:
 	return retCols
 }
 
-// FindPrefixOfIndexByCol will find columns in index by checking the unique id or the virtual expression.
-// So it will return at once no matching column is found.
-func FindPrefixOfIndexByCol(cols []*Column, idxCols []*Column) []*Column {
-	retCols := make([]*Column, 0, len(idxCols))
-idLoop:
-	for _, idCol := range idxCols {
-		for _, col := range cols {
-			if expr, ok := col.VirtualExpr.(*ScalarFunction); (ok && expr.Equal(nil, idCol.VirtualExpr)) || col.UniqueID == idCol.UniqueID {
-				retCols = append(retCols, col)
-				continue idLoop
-			}
-		}
-		// If no matching column is found, just return.
-		return retCols
-	}
-	return retCols
-}
-
 // EvalVirtualColumn evals the virtual column
 func (col *Column) EvalVirtualColumn(row chunk.Row) (types.Datum, error) {
 	return col.VirtualExpr.Eval(row)
