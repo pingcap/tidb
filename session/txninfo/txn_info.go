@@ -67,8 +67,6 @@ type TxnInfo struct {
 	// MemDB used memory
 	EntriesSize uint64
 
-	// The following fields will be filled in `session` instead of `LazyTxn`
-
 	// Which session this transaction belongs to
 	ConnectionID uint64
 	// The user who open this session
@@ -135,4 +133,17 @@ func (info *TxnInfo) ToDatum() []types.Datum {
 		info.CurrentDB,
 		allSQLs)...)
 	return datums
+}
+
+// AllSQLDatum dumps AllSQLDigests field to `Datum`s to show in the `TRX_SQL` table.
+func (info *TxnInfo) AllSQLDatum() [][]types.Datum {
+	var result [][]types.Datum
+	for index, digest := range info.AllSQLDigests {
+		result = append(result, types.MakeDatums(
+			info.StartTS,
+			digest,
+			index,
+		))
+	}
+	return result
 }

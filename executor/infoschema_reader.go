@@ -158,6 +158,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
 		case infoschema.TableTiDBTrx:
 			e.setDataForTiDBTrx(sctx)
+		case infoschema.TableTrxSQL:
+			e.setDataForTrxSQL(sctx)
 		case infoschema.ClusterTableTiDBTrx:
 			err = e.setDataForClusterTiDBTrx(sctx)
 		case infoschema.TableDeadlocks:
@@ -2078,6 +2080,25 @@ func (e *memtableRetriever) setDataForTiDBTrx(ctx sessionctx.Context) {
 			continue
 		}
 		e.rows = append(e.rows, info.ToDatum())
+	}
+}
+
+func (e *memtableRetriever) setDataForTrxSQL(ctx sessionctx.Context) {
+	sm := ctx.GetSessionManager()
+	if sm == nil {
+		return
+	}
+
+	loginUser := ctx.GetSessionVars().User
+	hasProcessPriv := hasPriv(ctx, mysql.ProcessPriv)
+	infoList := sm.ShowTxnList()
+	for _, info := range infoList {
+		// If you have the PROCESS privilege, you can see all running transactions.
+		// Otherwise, you can see only your own transactions.
+		if !hasProcessPriv && loginUser != nil && info.Username != loginUser.Username {
+			continue
+		}
+		e.rows = append(e.rows, info.AllSQLDatum()...)
 	}
 }
 

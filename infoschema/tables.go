@@ -171,6 +171,8 @@ const (
 	TableDeadlocks = "DEADLOCKS"
 	// TableDataLockWaits is current lock waiting status table.
 	TableDataLockWaits = "DATA_LOCK_WAITS"
+	// TableTrxSQL is a table which contains all SQL in current running transaction.
+	TableTrxSQL = "TRX_SQL"
 )
 
 var tableIDMap = map[string]int64{
@@ -250,6 +252,7 @@ var tableIDMap = map[string]int64{
 	TableDataLockWaits:                      autoid.InformationSchemaDBID + 74,
 	TableStatementsSummaryEvicted:           autoid.InformationSchemaDBID + 75,
 	ClusterTableStatementsSummaryEvicted:    autoid.InformationSchemaDBID + 76,
+	TableTrxSQL:                             autoid.InformationSchemaDBID + 77,
 }
 
 type columnInfo struct {
@@ -1371,6 +1374,12 @@ var tableTiDBTrxCols = []columnInfo{
 	{name: "ALL_SQL_DIGESTS", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
 }
 
+var tableTrxSQLCols = []columnInfo{
+	{name: "TRX_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "ID of the transaction"},
+	{name: "DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "Digest of the SQL"},
+	{name: "INDEX", tp: mysql.TypeLonglong, size: 64, comment: "INDEX of the statement in this transaction"},
+}
+
 var tableDeadlocksCols = []columnInfo{
 	{name: "DEADLOCK_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, comment: "The ID to distinguish different deadlock events"},
 	{name: "OCCUR_TIME", tp: mysql.TypeTimestamp, decimal: 6, size: 26, comment: "The physical time when the deadlock occurs"},
@@ -1778,6 +1787,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBTrx:                            tableTiDBTrxCols,
 	TableDeadlocks:                          tableDeadlocksCols,
 	TableDataLockWaits:                      tableDataLockWaitsCols,
+	TableTrxSQL:                             tableTrxSQLCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
