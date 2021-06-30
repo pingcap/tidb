@@ -128,6 +128,15 @@ func NewRemoteTopSQLReporter(client ReportClient) *RemoteTopSQLReporter {
 	return tsr
 }
 
+var (
+	registerSQLFail               = metrics.TopSQLRegisterFail.WithLabelValues("sql")
+	registerPlanFail              = metrics.TopSQLRegisterFail.WithLabelValues("plan")
+	ignoreCollectCnt              = metrics.TopSQLIgnoreCnt.WithLabelValues("collect")
+	ignoreReportCnt               = metrics.TopSQLIgnoreCnt.WithLabelValues("report")
+	reportDurationSuccHistogram   = metrics.TopSQLReportDurationHistogram.WithLabelValues("OK")
+	reportDurationFailedHistogram = metrics.TopSQLReportDurationHistogram.WithLabelValues("Error")
+)
+
 // RegisterSQL registers a normalized SQL string to a SQL digest.
 // This function is thread-safe and efficient.
 //
@@ -136,7 +145,7 @@ func NewRemoteTopSQLReporter(client ReportClient) *RemoteTopSQLReporter {
 // It should also return immediately, and do any CPU-intensive job asynchronously.
 func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL string) {
 	if tsr.sqlMapLength.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
-		metrics.RegisterSQLFail.Inc()
+		registerSQLFail.Inc()
 		return
 	}
 	m := tsr.normalizedSQLMap.Load().(*sync.Map)
@@ -151,7 +160,7 @@ func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL str
 // This function is thread-safe and efficient.
 func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedBinaryPlan string) {
 	if tsr.planMapLength.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
-		metrics.RegisterPlanFail.Inc()
+		registerPlanFail.Inc()
 		return
 	}
 	m := tsr.normalizedPlanMap.Load().(*sync.Map)
@@ -175,7 +184,7 @@ func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQ
 	}:
 	default:
 		// ignore if chan blocked
-		metrics.IgnoreCollectCnt.Inc()
+		ignoreCollectCnt.Inc()
 	}
 }
 
@@ -312,7 +321,7 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *m
 	case tsr.reportDataChan <- data:
 	default:
 		// ignore if chan blocked
-		metrics.IgnoreReportCnt.Inc()
+		ignoreReportCnt.Inc()
 	}
 }
 
@@ -359,11 +368,6 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 		}
 	}
 }
-
-var (
-	reportDurationSuccHistogram   = metrics.ReportDurationHistogram.WithLabelValues("OK")
-	reportDurationFailedHistogram = metrics.ReportDurationHistogram.WithLabelValues("OK")
-)
 
 func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 	defer util.Recover("top-sql", "doReport", nil, false)
