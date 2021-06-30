@@ -638,17 +638,14 @@ func (ssbd *stmtSummaryByDigest) collectHistorySummaries(historySize int) []*stm
 	return ssElements
 }
 
-var (
-	maxEncodedPlanSize      = 1024 * 1024
-	discardPlanCauseTooLong = "discard the plan because it is too long"
-)
+var maxEncodedPlanSize = 1024 * 1024
 
 func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
 	// sampleSQL / authUsers(sampleUser) / samplePlan / prevSQL / indexNames store the values shown at the first time,
 	// because it compacts performance to update every time.
 	samplePlan, planHint := sei.PlanGenerator()
 	if len(samplePlan) > maxEncodedPlanSize {
-		samplePlan = discardPlanCauseTooLong
+		samplePlan = plancodec.DiscardEncodedPlan
 	}
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime: beginTime,
@@ -884,7 +881,11 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 	ssElement.Lock()
 	defer ssElement.Unlock()
 
-	plan := ssElement.decodePlan()
+	plan, err := plancodec.DecodePlan(ssElement.samplePlan)
+	if err != nil {
+		logutil.BgLogger().Error("decode plan in statement summary failed", zap.String("plan", ssElement.samplePlan), zap.String("query", ssElement.sampleSQL), zap.Error(err))
+		plan = ""
+	}
 	sampleUser := ""
 	for key := range ssElement.authUsers {
 		sampleUser = key
@@ -983,19 +984,6 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		ssbd.planDigest,
 		plan,
 	)
-}
-
-func (ssElement *stmtSummaryByDigestElement) decodePlan() string {
-	plan, err := plancodec.DecodePlan(ssElement.samplePlan)
-	if err != nil {
-		if ssElement.samplePlan == discardPlanCauseTooLong {
-			plan = discardPlanCauseTooLong
-		} else {
-			logutil.BgLogger().Error("decode plan in statement summary failed", zap.String("plan", ssElement.samplePlan), zap.String("query", ssElement.sampleSQL), zap.Error(err))
-			plan = ""
-		}
-	}
-	return plan
 }
 
 // Truncate SQL to maxSQLLength.
