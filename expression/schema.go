@@ -228,9 +228,9 @@ func GetUsedList(usedCols []*Column, schema *Schema) []bool {
 			used[i] = tmpSchema.Contains(col)
 
 			// when cols are a generated expression col, compare them in terms of virtual expr
-			if expr, ok := col.VirtualExpr.(*ScalarFunction); ok {
+			if expr, ok := col.VirtualExpr.(*ScalarFunction); ok && used[i] {
 				for j, colToCompare := range schema.Columns {
-					if !used[j] && (expr).Equal(nil, colToCompare.VirtualExpr) {
+					if !used[j] && j != i && (expr).Equal(nil, colToCompare.VirtualExpr) {
 						used[j] = true
 					}
 				}
