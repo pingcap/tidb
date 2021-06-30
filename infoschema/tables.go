@@ -253,7 +253,7 @@ var tableIDMap = map[string]int64{
 	TableStatementsSummaryEvicted:           autoid.InformationSchemaDBID + 75,
 	ClusterTableStatementsSummaryEvicted:    autoid.InformationSchemaDBID + 76,
 	TableTrxSQL:                             autoid.InformationSchemaDBID + 77,
-	ClusterTableTrxSQL:                      autoid.InformationSchemaDBID + 77,
+	ClusterTableTrxSQL:                      autoid.InformationSchemaDBID + 78,
 }
 
 type columnInfo struct {
@@ -1378,7 +1378,7 @@ var tableTiDBTrxCols = []columnInfo{
 var tableTrxSQLCols = []columnInfo{
 	{name: "TRX_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "ID of the transaction"},
 	{name: "DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "Digest of the SQL"},
-	{name: "INDEX", tp: mysql.TypeLonglong, size: 64, comment: "INDEX of the statement in this transaction"},
+	{name: "INDEX", tp: mysql.TypeLonglong, size: 64, comment: "Index of the statement in this transaction"},
 }
 
 var tableDeadlocksCols = []columnInfo{
