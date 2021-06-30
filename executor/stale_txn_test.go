@@ -907,11 +907,6 @@ func (s *testStaleTxnSuite) TestStaleSelect(c *C) {
 	c.Assert(tk.ExecToErr(staleSQL), NotNil)
 	tk.MustExec("commit")
 
-	// test prepared stale select in stale txn
-	tk.MustExec(fmt.Sprintf(`start transaction read only as of timestamp '%s'`, time2.Format("2006-1-2 15:04:05.000")))
-	c.Assert(tk.ExecToErr(staleSQL), NotNil)
-	tk.MustExec("commit")
-
 	// test prepared stale select with schema change
 	tk.MustExec("alter table t add column c int")
 	tk.MustExec("insert into t values (4, 5)")
@@ -937,4 +932,67 @@ func (s *testStaleTxnSuite) TestStaleSelect(c *C) {
 	tk.MustExec("insert into t values (5, 5, 5)")
 	time.Sleep(tolerance)
 	tk.MustQuery(fmt.Sprintf("select * from t as of timestamp '%s' where c=5", time6.Format("2006-1-2 15:04:05.000"))).Check(testkit.Rows("4 5 <nil>"))
+}
+
+func (s *testStaleTxnSuite) TestStaleReadFutureTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+	// Setting tx_read_ts to a time in the future will fail. (One day before the 2038 problem)
+	_, err := tk.Exec("start transaction read only as of timestamp '2038-01-18 03:14:07'")
+	c.Assert(err, ErrorMatches, "cannot set read timestamp to a future time")
+	// Transaction should not be started and read ts should not be set if check fails
+	c.Assert(tk.Se.GetSessionVars().InTxn(), IsFalse)
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(0))
+
+	_, err = tk.Exec("set transaction read only as of timestamp '2038-01-18 03:14:07'")
+	c.Assert(err, ErrorMatches, "cannot set read timestamp to a future time")
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(0))
+
+	_, err = tk.Exec("select * from t as of timestamp '2038-01-18 03:14:07'")
+	c.Assert(err, ErrorMatches, "cannot set read timestamp to a future time")
+}
+
+func (s *testStaleTxnSerialSuite) TestStaleReadPrepare(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+	time.Sleep(2 * time.Second)
+	conf := *config.GetGlobalConfig()
+	oldConf := conf
+	defer config.StoreGlobalConfig(&oldConf)
+	conf.Labels = map[string]string{
+		placement.DCLabelKey: "sh",
+	}
+	config.StoreGlobalConfig(&conf)
+	time1 := time.Now()
+	tso := oracle.ComposeTS(time1.Unix()*1000, 0)
+	time.Sleep(200 * time.Millisecond)
+	failpoint.Enable("github.com/pingcap/tidb/executor/assertExecutePrepareStatementStalenessOption",
+		fmt.Sprintf(`return("%v_%v")`, tso, "sh"))
+	tk.MustExec(fmt.Sprintf(`prepare p1 from "select * from t as of timestamp '%v'"`, time1.Format("2006-1-2 15:04:05")))
+	tk.MustExec("execute p1")
+	// assert execute prepared statement in stale read txn
+	tk.MustExec(`prepare p2 from "select * from t"`)
+	tk.MustExec(fmt.Sprintf("start transaction read only as of timestamp '%v'", time1.Format("2006-1-2 15:04:05")))
+	tk.MustExec("execute p2")
+	tk.MustExec("commit")
+
+	// assert execute prepared statement in stale read txn
+	tk.MustExec(fmt.Sprintf("set transaction read only as of timestamp '%v'", time1.Format("2006-1-2 15:04:05")))
+	tk.MustExec("execute p2")
+	failpoint.Disable("github.com/pingcap/tidb/executor/assertExecutePrepareStatementStalenessOption")
+
+	// test prepared stale select in stale txn
+	tk.MustExec(fmt.Sprintf(`start transaction read only as of timestamp '%s'`, time1.Format("2006-1-2 15:04:05.000")))
+	c.Assert("execute p1", NotNil)
+	tk.MustExec("commit")
+
+	// assert execute prepared statement should be error after set transaction read only as of
+	tk.MustExec(fmt.Sprintf(`set transaction read only as of timestamp '%s'`, time1.Format("2006-1-2 15:04:05.000")))
+	c.Assert("execute p1", NotNil)
 }

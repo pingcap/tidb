@@ -14,6 +14,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -133,7 +134,7 @@ var _ = PreprocessorReturn{}.initedLastSnapshotTS
 // PreprocessorReturn is used to retain information obtained in the preprocessor.
 type PreprocessorReturn struct {
 	initedLastSnapshotTS bool
-	ExplicitStaleness    bool
+	IsStaleness          bool
 	SnapshotTSEvaluator  func(sessionctx.Context) (uint64, error)
 	// LastSnapshotTS is the last evaluated snapshotTS if any
 	// otherwise it defaults to zero
@@ -1502,7 +1503,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 		p.TxnScope = txnCtx.TxnScope
 		if txnCtx.IsStaleness {
 			p.LastSnapshotTS = txnCtx.StartTS
-			p.ExplicitStaleness = txnCtx.IsStaleness
+			p.IsStaleness = txnCtx.IsStaleness
 			p.initedLastSnapshotTS = true
 			return
 		}
@@ -1527,6 +1528,10 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	if node != nil {
 		ts, p.err = calculateTsExpr(p.ctx, node)
 		if p.err != nil {
+			return
+		}
+		if err := sessionctx.ValidateStaleReadTS(context.Background(), p.ctx, ts); err != nil {
+			p.err = errors.Trace(err)
 			return
 		}
 		if !p.initedLastSnapshotTS {
@@ -1565,6 +1570,6 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 
 func (p *preprocessor) setStalenessReturn() {
 	txnScope := config.GetTxnScopeFromConfig()
-	p.ExplicitStaleness = true
+	p.IsStaleness = true
 	p.TxnScope = txnScope
 }

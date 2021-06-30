@@ -49,6 +49,7 @@ import (
 )
 
 func TestT(t *testing.T) {
+	tikv.EnableFailpoints()
 	TestingT(t)
 }
 
