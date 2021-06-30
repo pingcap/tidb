@@ -16,6 +16,7 @@ package domain
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 
 	"github.com/pingcap/tidb/sessionctx"
@@ -123,7 +124,9 @@ func (svc *SysVarCache) RebuildSysVarCache(ctx sessionctx.Context) error {
 		if _, ok := tableContents[sv.Name]; ok {
 			sVal = tableContents[sv.Name]
 		}
-		if sv.HasSessionScope() {
+		// session cache stores non-skippable variables, which essentially means session scope.
+		// for historical purposes there are some globals, but these should eventually be removed.
+		if !sv.SkipInit() {
 			newSessionCache[sv.Name] = sVal
 		}
 		if sv.HasGlobalScope() {
@@ -143,9 +146,15 @@ func (svc *SysVarCache) RebuildSysVarCache(ctx sessionctx.Context) error {
 }
 
 // checkEnableServerGlobalVar processes variables that acts in server and global level.
+// This is required because the SetGlobal function on the sysvar struct only executes on
+// the initiating tidb-server. There is no current method to say "run this function on all
+// tidb servers when the value of this variable changes". If you do not require changes to
+// be applied on all servers, use a getter/setter instead! You don't need to add to this list.
 func checkEnableServerGlobalVar(name, sVal string) {
 	var err error
 	switch name {
+	case variable.TiDBEnableLocalTxn:
+		variable.EnableLocalTxn.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBEnableStmtSummary:
 		err = stmtsummary.StmtSummaryByDigestMap.SetEnabled(sVal, false)
 	case variable.TiDBStmtSummaryInternalQuery:
@@ -160,6 +169,36 @@ func checkEnableServerGlobalVar(name, sVal string) {
 		err = stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(sVal, false)
 	case variable.TiDBCapturePlanBaseline:
 		variable.CapturePlanBaseline.Set(sVal, false)
+	case variable.TiDBEnableTopSQL:
+		variable.TopSQLVariable.Enable.Store(variable.TiDBOptOn(sVal))
+	case variable.TiDBTopSQLPrecisionSeconds:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TopSQLVariable.PrecisionSeconds.Store(val)
+	case variable.TiDBTopSQLMaxStatementCount:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TopSQLVariable.MaxStatementCount.Store(val)
+	case variable.TiDBTopSQLMaxCollect:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TopSQLVariable.MaxCollect.Store(val)
+	case variable.TiDBTopSQLReportIntervalSeconds:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TopSQLVariable.ReportIntervalSeconds.Store(val)
 	}
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))

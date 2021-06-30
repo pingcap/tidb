@@ -30,12 +30,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/store/mockstore"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 func TestT(t *testing.T) {
@@ -47,6 +47,7 @@ func TestT(t *testing.T) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
+	tikv.EnableFailpoints()
 	TestingT(t)
 }
 
@@ -211,7 +212,7 @@ func (s *testMainSuite) TestKeysNeedLock(c *C) {
 	for _, tt := range tests {
 		c.Assert(keyNeedToLock(tt.key, tt.val, 0), Equals, tt.need)
 	}
-	flag := tikvstore.KeyFlags(1)
+	flag := kv.KeyFlags(1)
 	c.Assert(flag.HasPresumeKeyNotExists(), IsTrue)
 	c.Assert(keyNeedToLock(indexKey, deleteVal, flag), IsTrue)
 }

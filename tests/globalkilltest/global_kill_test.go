@@ -26,8 +26,8 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
@@ -535,6 +535,7 @@ func (s *TestGlobalKillSuite) TestMultipleTiDB(c *C) {
 }
 
 func (s *TestGlobalKillSuite) TestLostConnection(c *C) {
+	c.Skip("unstable, skip race test")
 	c.Assert(s.pdErr, IsNil, Commentf(msgErrConnectPD, s.pdErr))
 
 	// tidb1
