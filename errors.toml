@@ -981,6 +981,11 @@ error = '''
 `%-.192s`.`%-.192s` contains view recursion
 '''
 
+["planner:1562"]
+error = '''
+Cannot create temporary table with partitions
+'''
+
 ["planner:1706"]
 error = '''
 Primary key/partition key update is not allowed since the table is updated both as '%-.192s' and '%-.192s'.
@@ -1156,6 +1161,11 @@ error = '''
 `%s` is unsupported on temporary tables.
 '''
 
+["planner:8007"]
+error = '''
+`drop global temporary table` can only drop global temporary table
+'''
+
 ["planner:8108"]
 error = '''
 Unsupported type %T
@@ -1204,6 +1214,11 @@ In aggregated query without GROUP BY, expression #%d of SELECT list contains non
 ["planner:8132"]
 error = '''
 Feature '%s' is not supported when security enhanced mode is enabled
+'''
+
+["planner:8135"]
+error = '''
+invalid as of timestamp: %s
 '''
 
 ["privilege:1141"]

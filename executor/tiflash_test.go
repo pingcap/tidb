@@ -33,10 +33,10 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/tikv/client-go/v2/mockstore/cluster"
 )
 
 type tiflashTestSuite struct {
@@ -300,7 +300,7 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableShuffledHashJoin(c *C) {
 		tk.MustExec(fmt.Sprintf("analyze table %v", tbl))
 	}
 
-	tk.MustExec("SET tidb_allow_mpp=2")
+	tk.MustExec("SET tidb_enforce_mpp=1")
 	tk.MustExec("SET tidb_opt_broadcast_join=0")
 	tk.MustExec("SET tidb_broadcast_join_threshold_count=0")
 	tk.MustExec("SET tidb_broadcast_join_threshold_size=0")
@@ -378,9 +378,9 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableReader(c *C) {
 		tk.MustExec(fmt.Sprintf("insert into %v values %v", tbl, strings.Join(vals, ", ")))
 	}
 
-	tk.MustExec("SET tidb_allow_mpp=2")
+	tk.MustExec("SET tidb_enforce_mpp=1")
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 10; i++ {
 		l, r := rand.Intn(400), rand.Intn(400)
 		if l > r {
 			l, r = r, l
@@ -633,6 +633,17 @@ func (s *tiflashTestSuite) TestMppUnionAll(c *C) {
 	tk.MustQuery("select count(*) from (select * from x1 union all select * from x2 union all select * from x3) x join (select * from x1 union all select * from x2 union all select * from x3) y on x.a = y.b").Check(testkit.Rows("29"))
 	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
 
+	tk.MustExec("drop table if exists x4")
+	tk.MustExec("create table x4(a int not null, b int not null);")
+	tk.MustExec("alter table x4 set tiflash replica 1")
+	tb = testGetTableByName(c, tk.Se, "test", "x4")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("set @@tidb_enforce_mpp=1")
+	tk.MustExec("insert into x4 values (2, 2), (2, 3)")
+	tk.MustQuery("(select * from x1 union all select * from x4) order by a, b").Check(testkit.Rows("1 1", "2 2", "2 2", "2 3", "3 3", "4 4"))
+
 }
 
 func (s *tiflashTestSuite) TestMppApply(c *C) {
@@ -742,7 +753,7 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableShuffledHashAggregation(c *C
 		tk.MustExec(fmt.Sprintf("analyze table %v", tbl))
 	}
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
-	tk.MustExec("set @@session.tidb_allow_mpp=2")
+	tk.MustExec("set @@session.tidb_enforce_mpp=1")
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
@@ -814,7 +825,7 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableBroadcastJoin(c *C) {
 		tk.MustExec(fmt.Sprintf("analyze table %v", tbl))
 	}
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
-	tk.MustExec("set @@session.tidb_allow_mpp=2")
+	tk.MustExec("set @@session.tidb_enforce_mpp=1")
 	tk.MustExec("set @@session.tidb_opt_broadcast_join=ON")
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
