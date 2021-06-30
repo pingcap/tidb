@@ -1636,7 +1636,7 @@ func TestBenchDaily(t *testing.T) {
 		flag.Parse()
 	}
 
-	if date == "" {
+	if *date == "" {
 		// Don't run unless 'date' is specified.
 		// Avoiding slow down the CI.
 		return
