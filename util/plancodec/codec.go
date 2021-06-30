@@ -42,8 +42,8 @@ const (
 
 var (
 	// DiscardEncodedPlan indicates the discard plan because it is too long
-	PlanDiscardedEncoded = "discard"
-	planDiscardedDecoded = "plan discarded because too long"
+	PlanDiscardedEncoded = "[discard]"
+	planDiscardedDecoded = "(plan discarded because too long)"
 )
 
 var decoderPool = sync.Pool{
