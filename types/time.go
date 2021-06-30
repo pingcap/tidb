@@ -3004,7 +3004,7 @@ func parseSep(input string) (string, parseState) {
 
 func time12Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	tryParse := func(input string) (string, parseState) {
-		state := parseStateNormal
+		var state parseState
 		// hh:mm:ss AM
 		/// Note that we should update `t` as soon as possible, or we
 		/// can not get correct result for incomplete input like "12:13"
@@ -3082,7 +3082,7 @@ func time24Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 		/// Note that we should update `t` as soon as possible, or we
 		/// can not get correct result for incomplete input like "12:13"
 		/// that is shorter than "hh:mm:ss"
-		state := parseStateNormal
+		var state parseState
 		result := oneOrTwoDigitRegex.FindString(input) // 0..23
 		length := len(result)
 		hour, succ := parseDigits(input, length)
