@@ -255,9 +255,10 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 	} else {
 		localTempTables = sessVars.LocalTemporaryTables.(infoschema.TempTables)
 	}
-	localTempTables.Add(tbl, s.Table.Schema)
+	if err := localTempTables.Add(tbl, s.Table.Schema); err != nil {
+		return err
+	}
 	sessVars.LocalTemporaryTables = localTempTables
-
 	return nil
 }
 
