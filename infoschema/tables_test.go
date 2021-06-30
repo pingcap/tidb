@@ -1685,6 +1685,35 @@ func (s *testTableSuite) TestTrx(c *C) {
 		"425070846483628033 2021-05-20 21:16:35.778000 <nil> LockWaiting 2021-05-20 13:18:30.123456 0 0 10 user1 db1 [sql1, sql2]"))
 }
 
+func (s *testTableSuite) TestTrxSQL(c *C) {
+	tk := s.newTestKitWithRoot(c)
+	_, digest1 := parser.NormalizeDigest("select * from t1 for update;")
+	_, digest2 := parser.NormalizeDigest("select * from t2 for update;")
+	_, digest3 := parser.NormalizeDigest("select * from t3 for update;")
+	sm := &mockSessionManager{nil, make([]*txninfo.TxnInfo, 2)}
+	sm.txnInfo[0] = &txninfo.TxnInfo{
+		StartTS:       424768545227014155,
+		AllSQLDigests: []string{digest1.String()},
+	}
+	sm.txnInfo[1] = &txninfo.TxnInfo{
+		StartTS:       425070846483628033,
+		AllSQLDigests: []string{},
+	}
+	tk.Se.SetSessionManager(sm)
+	tk.MustQuery("select * from information_schema.TRX_SQL;").
+		Check(testkit.Rows("424768545227014155 " + digest1.String() + " 0"))
+	sm.txnInfo[0].AllSQLDigests = append(sm.txnInfo[0].AllSQLDigests, digest1.String())
+	sm.txnInfo[1].AllSQLDigests = append(sm.txnInfo[1].AllSQLDigests, digest2.String())
+	sm.txnInfo[1].AllSQLDigests = append(sm.txnInfo[1].AllSQLDigests, digest3.String())
+
+	tk.MustQuery("select * from information_schema.TRX_SQL;").
+		Check(testkit.Rows(
+			"424768545227014155 "+digest1.String()+" 0",
+			"424768545227014155 "+digest1.String()+" 1",
+			"425070846483628033 "+digest2.String()+" 0",
+			"425070846483628033 "+digest3.String()+" 1"))
+}
+
 func (s *testTableSuite) TestInfoschemaDeadlockPrivilege(c *C) {
 	tk := s.newTestKitWithRoot(c)
 	tk.MustExec("create user 'testuser'@'localhost'")
