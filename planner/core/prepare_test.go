@@ -345,6 +345,7 @@ func (s *testPrepareSerialSuite) TestPrepareTableAsNameOnGroupByWithCache(c *C) 
 	tk.MustQuery("execute stmt").Sort().Check(testkit.Rows("partner1", "partner2", "partner3", "partner4"))
 }
 
+// nolint:unused
 func readGaugeInt(g prometheus.Gauge) int {
 	ch := make(chan prometheus.Metric, 1)
 	g.Collect(ch)

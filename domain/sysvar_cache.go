@@ -153,6 +153,8 @@ func (svc *SysVarCache) RebuildSysVarCache(ctx sessionctx.Context) error {
 func checkEnableServerGlobalVar(name, sVal string) {
 	var err error
 	switch name {
+	case variable.TiDBEnableLocalTxn:
+		variable.EnableLocalTxn.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBEnableStmtSummary:
 		err = stmtsummary.StmtSummaryByDigestMap.SetEnabled(sVal, false)
 	case variable.TiDBStmtSummaryInternalQuery:

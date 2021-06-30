@@ -955,6 +955,151 @@ func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics
 	return table, nil
 }
 
+// SaveTableStatsToStorage saves the stats of a table to storage.
+func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, needDumpFMS bool) (err error) {
+	tableID := results.TableID.GetStatisticsID()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ctx := context.TODO()
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err = finishTransaction(context.Background(), exec, err)
+	}()
+	txn, err := h.mu.ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	version := txn.StartTS()
+	// 1. Save mysql.stats_meta.
+	var rs sqlexec.RecordSet
+	// Lock this row to prevent writing of concurrent analyze.
+	rs, err = exec.ExecuteInternal(ctx, "select snapshot from mysql.stats_meta where table_id = %? for update", tableID)
+	if err != nil {
+		return err
+	}
+	var rows []chunk.Row
+	rows, err = sqlexec.DrainRecordSet(ctx, rs, h.mu.ctx.GetSessionVars().MaxChunkSize)
+	if err != nil {
+		return err
+	}
+	if len(rows) > 0 {
+		snapshot := rows[0].GetUint64(0)
+		// A newer version analyze result has been written, so skip this writing.
+		if snapshot >= results.Snapshot && results.StatsVer == statistics.Version2 {
+			return nil
+		}
+	}
+	// This `replace` would reset modify_count to 0.
+	// TODO: subtract original modify_count from the current modify_count.
+	if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, snapshot) values (%?, %?, %?, %?)", version, tableID, results.Count, results.Snapshot); err != nil {
+		return err
+	}
+	// 2. Save histograms.
+	for _, result := range results.Ars {
+		for i, hg := range result.Hist {
+			// It's normal virtual column, skip it.
+			if hg == nil {
+				continue
+			}
+			var cms *statistics.CMSketch
+			if results.StatsVer != statistics.Version2 {
+				cms = result.Cms[i]
+			}
+			cmSketch, err := statistics.EncodeCMSketchWithoutTopN(cms)
+			if err != nil {
+				return err
+			}
+			fmSketch, err := statistics.EncodeFMSketch(result.Fms[i])
+			if err != nil {
+				return err
+			}
+			// Delete outdated data
+			if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {
+				return err
+			}
+			if topN := result.TopNs[i]; topN != nil {
+				for _, meta := range topN.TopN {
+					if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (%?, %?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, meta.Encoded, meta.Count); err != nil {
+						return err
+					}
+				}
+			}
+			if _, err := exec.ExecuteInternal(ctx, "delete from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {
+				return err
+			}
+			if fmSketch != nil && needDumpFMS {
+				if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_fm_sketch (table_id, is_index, hist_id, value) values (%?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, fmSketch); err != nil {
+					return err
+				}
+			}
+			if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
+				tableID, result.IsIndex, hg.ID, hg.NDV, version, hg.NullCount, cmSketch, hg.TotColSize, results.StatsVer, statistics.AnalyzeFlag, hg.Correlation); err != nil {
+				return err
+			}
+			if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {
+				return err
+			}
+			sc := h.mu.ctx.GetSessionVars().StmtCtx
+			var lastAnalyzePos []byte
+			for j := range hg.Buckets {
+				count := hg.Buckets[j].Count
+				if j > 0 {
+					count -= hg.Buckets[j-1].Count
+				}
+				var upperBound types.Datum
+				upperBound, err = hg.GetUpper(j).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+				if err != nil {
+					return err
+				}
+				if j == len(hg.Buckets)-1 {
+					lastAnalyzePos = upperBound.GetBytes()
+				}
+				var lowerBound types.Datum
+				lowerBound, err = hg.GetLower(j).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+				if err != nil {
+					return err
+				}
+				if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values(%?, %?, %?, %?, %?, %?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, j, count, hg.Buckets[j].Repeat, lowerBound.GetBytes(), upperBound.GetBytes(), hg.Buckets[j].NDV); err != nil {
+					return err
+				}
+			}
+			if len(lastAnalyzePos) > 0 {
+				if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_histograms set last_analyze_pos = %? where table_id = %? and is_index = %? and hist_id = %?", lastAnalyzePos, tableID, result.IsIndex, hg.ID); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	// 3. Save extended statistics.
+	extStats := results.ExtStats
+	if extStats == nil || len(extStats.Stats) == 0 {
+		return nil
+	}
+	var bytes []byte
+	var statsStr string
+	for name, item := range extStats.Stats {
+		bytes, err = json.Marshal(item.ColIDs)
+		if err != nil {
+			return err
+		}
+		strColIDs := string(bytes)
+		switch item.Tp {
+		case ast.StatsTypeCardinality, ast.StatsTypeCorrelation:
+			statsStr = fmt.Sprintf("%f", item.ScalarVals)
+		case ast.StatsTypeDependency:
+			statsStr = item.StringVals
+		}
+		if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_extended values (%?, %?, %?, %?, %?, %?, %?)", name, item.Tp, tableID, strColIDs, statsStr, version, StatsStatusAnalyzed); err != nil {
+			return err
+		}
+	}
+	return
+}
+
 // SaveStatsToStorage saves the stats to storage.
 func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, isAnalyzed int64, needDumpFMS bool) (err error) {
 	h.mu.Lock()
