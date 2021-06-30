@@ -140,14 +140,6 @@ func (s *Server) ConnectionCount() int {
 	return cnt
 }
 
-// IsConnectionIDExisted checks a connectionID existed or not.
-func (s *Server) IsConnectionIDExisted(connectionID uint64) bool {
-	s.rwlock.RLock()
-	_, ok := s.clients[connectionID]
-	s.rwlock.RUnlock()
-	return ok
-}
-
 func (s *Server) getToken() *Token {
 	start := time.Now()
 	tok := s.concurrentLimiter.Get()
@@ -237,7 +229,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	} else {
 		s.connectionIDAllocator = &util.SimpleConnIDAllocator{}
 	}
-	s.connectionIDAllocator.Init(nil, s.IsConnectionIDExisted) // set `serverIDGetter` in domain.
+	s.connectionIDAllocator.Init(nil) // set `serverIDGetter` in domain.
 
 	setTxnScope()
 	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)

@@ -160,9 +160,9 @@ func (s *testGlobalConnIDSuite) TestLockFreePoolInitEmpty(c *C) {
 	c.Assert(pool.Len(), Equals, uint32(0))
 }
 
-var _ util.LocalConnIDPool = (*LockBasedPool)(nil)
+var _ util.IDPool = (*LockBasedPool)(nil)
 
-// LockBasedPool implements LocalConnIDPool by lock-based manner.
+// LockBasedPool implements IDPool by lock-based manner.
 // For benchmark purpose.
 type LockBasedPool struct {
 	_    uint64 // align to 64bits
@@ -237,13 +237,13 @@ func (p *LockBasedPool) Get() (val uint32, ok bool) {
 	return val, true
 }
 
-func prepareLockBasedPool(sizeInBits uint32, fillCount uint32) util.LocalConnIDPool {
+func prepareLockBasedPool(sizeInBits uint32, fillCount uint32) util.IDPool {
 	var pool LockBasedPool
 	pool.Init(sizeInBits, fillCount)
 	return &pool
 }
 
-func prepareLockFreePool(sizeInBits uint32, fillCount uint32, headPos uint32) util.LocalConnIDPool {
+func prepareLockFreePool(sizeInBits uint32, fillCount uint32, headPos uint32) util.IDPool {
 	var pool util.LockFreePool
 	pool.Init(sizeInBits, fillCount)
 	if headPos > 0 {
@@ -253,7 +253,7 @@ func prepareLockFreePool(sizeInBits uint32, fillCount uint32, headPos uint32) ut
 	return &pool
 }
 
-func prepareConcurrencyTest(pool util.LocalConnIDPool, producers int, consumers int, requests int, total *int64) (ready chan struct{}, done chan struct{}, wgProducer *sync.WaitGroup, wgConsumer *sync.WaitGroup) {
+func prepareConcurrencyTest(pool util.IDPool, producers int, consumers int, requests int, total *int64) (ready chan struct{}, done chan struct{}, wgProducer *sync.WaitGroup, wgConsumer *sync.WaitGroup) {
 	ready = make(chan struct{})
 	done = make(chan struct{})
 
@@ -489,20 +489,22 @@ func BenchmarkPoolConcurrency(b *testing.B) {
 	}
 }
 
-func benchmarkLocalConnIDAllocator32(b *testing.B, a *util.LocalConnIDAllocator32) {
-	var id uint64
+func benchmarkLocalConnIDAllocator32(b *testing.B, pool util.IDPool) {
+	var (
+		id uint32
+		ok bool
+	)
 
 	// allocate local conn ID.
 	for {
-		var ok bool
-		if id, ok = a.Allocate(); ok {
+		if id, ok = pool.Get(); ok {
 			break
 		}
 		runtime.Gosched()
 	}
 
 	// deallocate local conn ID.
-	if err := a.Deallocate(id); err != nil {
+	if ok = pool.Put(id); !ok {
 		b.Fatal("pool unexpected full")
 	}
 }
@@ -514,31 +516,26 @@ func BenchmarkLocalConnIDAllocator(b *testing.B) {
 	for _, concurrency := range concurrencyCases {
 		b.Run(fmt.Sprintf("Allocator 64 x%v", concurrency), func(b *testing.B) {
 			const ServerID = 42
-			clients := make(map[uint64]struct{})
-			mu := sync.RWMutex{}
-			existedChecker := func(id uint64) bool {
-				mu.RLock()
-				_, ok := clients[id]
-				mu.RUnlock()
-				return ok
-			}
 
-			a := util.LocalConnIDAllocator64{}
-			a.Init(existedChecker)
+			a := util.AutoIncIDAllocator{}
+			a.Init(util.LocalConnIDBits64, true)
 
 			b.SetParallelism(concurrency)
 			b.ResetTimer()
 			b.RunParallel(func(pb *testing.PB) {
 				for pb.Next() {
-					id := a.Allocate(ServerID)
+					id, ok := a.Allocate(util.LocalConnIDAllocator64RetryCount)
+					if !ok {
+						b.Fatal("Allocator 64 allocates failed.")
+					}
 					a.Deallocate(id)
 				}
 			})
 		})
 
 		b.Run(fmt.Sprintf("Allocator 32(LockBased) x%v", concurrency), func(b *testing.B) {
-			a := util.LocalConnIDAllocator32{}
-			a.Init(&LockBasedPool{})
+			a := LockBasedPool{}
+			a.Init(util.LocalConnIDBits32, math.MaxUint32)
 
 			b.SetParallelism(concurrency)
 			b.ResetTimer()
@@ -549,9 +546,9 @@ func BenchmarkLocalConnIDAllocator(b *testing.B) {
 			})
 		})
 
-		b.Run(fmt.Sprintf("LockFreePool x%v", concurrency), func(b *testing.B) {
-			a := util.LocalConnIDAllocator32{}
-			a.Init(nil)
+		b.Run(fmt.Sprintf("Allocator 32(LockFreePool) x%v", concurrency), func(b *testing.B) {
+			a := util.LockFreePool{}
+			a.Init(util.LocalConnIDBits32, math.MaxUint32)
 
 			b.SetParallelism(concurrency)
 			b.ResetTimer()
