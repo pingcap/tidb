@@ -5733,8 +5733,8 @@ func (s *testRecoverTable) SetUpSuite(c *C) {
 }
 
 func (s *testRecoverTable) TearDownSuite(c *C) {
-	s.store.Close()
 	s.dom.Close()
+	s.store.Close()
 }
 
 func (s *testRecoverTable) mockGC(tk *testkit.TestKit) (string, string, string, func()) {
