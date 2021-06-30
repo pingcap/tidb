@@ -417,8 +417,11 @@ type tableWithSchema struct {
 	schema model.CIStr
 }
 
+// TempTables is defined for the local temporary table.
+// It stored in the session so different connection see different schema.
 type TempTables map[string]tableWithSchema
 
+// Add adds local temporary table to TempTables.
 func (tables TempTables) Add(tbl table.Table, schema model.CIStr) error {
 	tbInfo := tbl.Meta()
 	if _, ok := tables[tbInfo.Name.L]; ok {
