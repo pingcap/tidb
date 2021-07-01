@@ -15,13 +15,13 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/tidb/infoschema"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/util"
 )
 
@@ -285,8 +285,8 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) error {
 	switch p.TableInfo.Name.O {
 	case infoschema.TableStatementsSummary,
-		infoschema.ClusterTableStatementsSummary,
 		infoschema.TableStatementsSummaryHistory,
+		infoschema.ClusterTableStatementsSummary,
 		infoschema.ClusterTableStatementsSummaryHistory:
 		// currently prune mem-table column only use for statements summary table.
 	default:

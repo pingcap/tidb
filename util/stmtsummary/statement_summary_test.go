@@ -24,6 +24,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -623,6 +624,110 @@ func generateAnyExecInfo() *StmtExecInfo {
 	return stmtExecInfo
 }
 
+func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *StmtSummaryReader {
+	columnNames := []string{
+		SummaryBeginTimeStr,
+		SummaryEndTimeStr,
+		StmtTypeStr,
+		SchemaNameStr,
+		DigestStr,
+		DigestTextStr,
+		TableNamesStr,
+		IndexNamesStr,
+		SampleUserStr,
+		ExecCountStr,
+		SumErrorsStr,
+		SumWarningsStr,
+		SumLatencyStr,
+		MaxLatencyStr,
+		MinLatencyStr,
+		AvgLatencyStr,
+		AvgParseLatencyStr,
+		MaxParseLatencyStr,
+		AvgCompileLatencyStr,
+		MaxCompileLatencyStr,
+		SumCopTaskNumStr,
+		MaxCopProcessTimeStr,
+		MaxCopProcessAddressStr,
+		MaxCopWaitTimeStr,
+		MaxCopWaitAddressStr,
+		AvgProcessTimeStr,
+		MaxProcessTimeStr,
+		AvgWaitTimeStr,
+		MaxWaitTimeStr,
+		AvgBackoffTimeStr,
+		MaxBackoffTimeStr,
+		AvgTotalKeysStr,
+		MaxTotalKeysStr,
+		AvgProcessedKeysStr,
+		MaxProcessedKeysStr,
+		AvgRocksdbDeleteSkippedCountStr,
+		MaxRocksdbDeleteSkippedCountStr,
+		AvgRocksdbKeySkippedCountStr,
+		MaxRocksdbKeySkippedCountStr,
+		AvgRocksdbBlockCacheHitCountStr,
+		MaxRocksdbBlockCacheHitCountStr,
+		AvgRocksdbBlockReadCountStr,
+		MaxRocksdbBlockReadCountStr,
+		AvgRocksdbBlockReadByteStr,
+		MaxRocksdbBlockReadByteStr,
+		AvgPrewriteTimeStr,
+		MaxPrewriteTimeStr,
+		AvgCommitTimeStr,
+		MaxCommitTimeStr,
+		AvgGetCommitTsTimeStr,
+		MaxGetCommitTsTimeStr,
+		AvgCommitBackoffTimeStr,
+		MaxCommitBackoffTimeStr,
+		AvgResolveLockTimeStr,
+		MaxResolveLockTimeStr,
+		AvgLocalLatchWaitTimeStr,
+		MaxLocalLatchWaitTimeStr,
+		AvgWriteKeysStr,
+		MaxWriteKeysStr,
+		AvgWriteSizeStr,
+		MaxWriteSizeStr,
+		AvgPrewriteRegionsStr,
+		MaxPrewriteRegionsStr,
+		AvgTxnRetryStr,
+		MaxTxnRetryStr,
+		SumExecRetryStr,
+		SumExecRetryTimeStr,
+		SumBackoffTimesStr,
+		BackoffTypesStr,
+		AvgMemStr,
+		MaxMemStr,
+		AvgDiskStr,
+		MaxDiskStr,
+		AvgKvTimeStr,
+		AvgPdTimeStr,
+		AvgBackoffTotalTimeStr,
+		AvgWriteSqlRespTimeStr,
+		PreparedStr,
+		AvgAffectedRowsStr,
+		FirstSeenStr,
+		LastSeenStr,
+		PlanInCacheStr,
+		PlanCacheHitsStr,
+		PlanInBindingStr,
+		QuerySampleTextStr,
+		PrevSampleTextStr,
+		PlanDigestStr,
+		PlanStr,
+	}
+	cols := make([]*model.ColumnInfo, len(columnNames))
+	for i := range columnNames {
+		cols[i] = &model.ColumnInfo{
+			ID:     int64(i),
+			Name:   model.NewCIStr(columnNames[i]),
+			Offset: i,
+		}
+	}
+	reader := NewStmtSummaryReader(nil, true, cols, "")
+	reader.ssMap = ssMap
+	return reader
+}
+
 // Test stmtSummaryByDigest.ToDatum.
 func (s *testStmtSummarySuite) TestToDatum(c *C) {
 	s.ssMap.Clear()
@@ -632,7 +737,8 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 
 	stmtExecInfo1 := generateAnyExecInfo()
 	s.ssMap.AddStatement(stmtExecInfo1)
-	datums := s.ssMap.ToCurrentDatum(nil, true)
+	reader := newStmtSummaryReaderForTest(s.ssMap)
+	datums := reader.GetAllStmtSummaryRows()
 	c.Assert(len(datums), Equals, 1)
 	n := types.NewTime(types.FromGoTime(time.Unix(s.ssMap.beginTimeForCurInterval, 0)), mysql.TypeTimestamp, types.DefaultFsp)
 	e := types.NewTime(types.FromGoTime(time.Unix(s.ssMap.beginTimeForCurInterval+1800, 0)), mysql.TypeTimestamp, types.DefaultFsp)
@@ -668,7 +774,7 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 		t, t, 0, 0, 0, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL, "plan_digest", ""}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Unlock()
 	match(c, datums[0], expectedDatum...)
-	datums = s.ssMap.ToHistoryDatum(nil, true)
+	datums = reader.GetAllStmtSummaryHistoryRows()
 	c.Assert(len(datums), Equals, 1)
 	match(c, datums[0], expectedDatum...)
 
@@ -685,7 +791,7 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 	stmtExecInfo2.Digest = "bandit sei"
 	s.ssMap.AddStatement(stmtExecInfo2)
 	c.Assert(s.ssMap.summaryMap.Size(), Equals, 1)
-	datums = s.ssMap.ToCurrentDatum(nil, true)
+	datums = reader.GetAllStmtSummaryRows()
 	expectedEvictedDatum := []interface{}{n, e, "", "<nil>", "<nil>", "",
 		"<nil>", "<nil>", stmtExecInfo1.User, 1, 0, 0, int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency),
@@ -731,6 +837,7 @@ func (s *testStmtSummarySuite) TestAddStatementParallel(c *C) {
 	wg := sync.WaitGroup{}
 	wg.Add(threads)
 
+	reader := newStmtSummaryReaderForTest(s.ssMap)
 	addStmtFunc := func() {
 		defer wg.Done()
 		stmtExecInfo1 := generateAnyExecInfo()
@@ -742,7 +849,7 @@ func (s *testStmtSummarySuite) TestAddStatementParallel(c *C) {
 		}
 
 		// There would be 32 summaries.
-		datums := s.ssMap.ToCurrentDatum(nil, true)
+		datums := reader.GetAllStmtSummaryRows()
 		c.Assert(len(datums), Equals, loops)
 	}
 
@@ -751,7 +858,7 @@ func (s *testStmtSummarySuite) TestAddStatementParallel(c *C) {
 	}
 	wg.Wait()
 
-	datums := s.ssMap.ToCurrentDatum(nil, true)
+	datums := reader.GetAllStmtSummaryRows()
 	c.Assert(len(datums), Equals, loops)
 }
 
@@ -894,7 +1001,8 @@ func (s *testStmtSummarySuite) TestSetMaxStmtCountParallel(c *C) {
 
 	wg.Wait()
 
-	datums := s.ssMap.ToCurrentDatum(nil, true)
+	reader := newStmtSummaryReaderForTest(s.ssMap)
+	datums := reader.GetAllStmtSummaryRows()
 	// due to evictions happened in cache, an additional record will be appended to the table.
 	c.Assert(len(datums), Equals, 2)
 }
@@ -911,7 +1019,8 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 
 	stmtExecInfo1 := generateAnyExecInfo()
 	s.ssMap.AddStatement(stmtExecInfo1)
-	datums := s.ssMap.ToCurrentDatum(nil, true)
+	reader := newStmtSummaryReaderForTest(s.ssMap)
+	datums := reader.GetAllStmtSummaryRows()
 	c.Assert(len(datums), Equals, 0)
 
 	// Set true in session scope, it will overwrite global scope.
@@ -919,7 +1028,7 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	c.Assert(err, IsNil)
 
 	s.ssMap.AddStatement(stmtExecInfo1)
-	datums = s.ssMap.ToCurrentDatum(nil, true)
+	datums = reader.GetAllStmtSummaryRows()
 	c.Assert(len(datums), Equals, 1)
 
 	// Set false in global scope, it shouldn't work.
@@ -932,7 +1041,7 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	stmtExecInfo2.NormalizedSQL = "normalized_sql2"
 	stmtExecInfo2.Digest = "digest2"
 	s.ssMap.AddStatement(stmtExecInfo2)
-	datums = s.ssMap.ToCurrentDatum(nil, true)
+	datums = reader.GetAllStmtSummaryRows()
 	c.Assert(len(datums), Equals, 2)
 
 	// Unset in session scope.
@@ -940,7 +1049,7 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	c.Assert(err, IsNil)
 	s.ssMap.beginTimeForCurInterval = now + 60
 	s.ssMap.AddStatement(stmtExecInfo2)
-	datums = s.ssMap.ToCurrentDatum(nil, true)
+	datums = reader.GetAllStmtSummaryRows()
 	c.Assert(len(datums), Equals, 0)
 
 	// Unset in global scope.
@@ -948,7 +1057,7 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	c.Assert(err, IsNil)
 	s.ssMap.beginTimeForCurInterval = now + 60
 	s.ssMap.AddStatement(stmtExecInfo1)
-	datums = s.ssMap.ToCurrentDatum(nil, true)
+	datums = reader.GetAllStmtSummaryRows()
 	c.Assert(len(datums), Equals, 1)
 
 	// Set back.
@@ -965,6 +1074,7 @@ func (s *testStmtSummarySuite) TestEnableSummaryParallel(c *C) {
 	wg := sync.WaitGroup{}
 	wg.Add(threads)
 
+	reader := newStmtSummaryReaderForTest(s.ssMap)
 	addStmtFunc := func() {
 		defer wg.Done()
 		stmtExecInfo1 := generateAnyExecInfo()
@@ -976,7 +1086,7 @@ func (s *testStmtSummarySuite) TestEnableSummaryParallel(c *C) {
 			c.Assert(err, IsNil)
 			s.ssMap.AddStatement(stmtExecInfo1)
 			// Try to read it.
-			s.ssMap.ToHistoryDatum(nil, true)
+			reader.GetAllStmtSummaryHistoryRows()
 		}
 		err := s.ssMap.SetEnabled("1", false)
 		c.Assert(err, IsNil)
@@ -1111,12 +1221,13 @@ func (s *testStmtSummarySuite) TestSummaryHistory(c *C) {
 			c.Assert(ssElement.beginTime, Equals, now+20)
 		}
 	}
-	datum := s.ssMap.ToHistoryDatum(nil, true)
+	reader := newStmtSummaryReaderForTest(s.ssMap)
+	datum := reader.GetAllStmtSummaryHistoryRows()
 	c.Assert(len(datum), Equals, 10)
 
 	err = s.ssMap.SetHistorySize("5", false)
 	c.Assert(err, IsNil)
-	datum = s.ssMap.ToHistoryDatum(nil, true)
+	datum = reader.GetAllStmtSummaryHistoryRows()
 	c.Assert(len(datum), Equals, 5)
 
 	// test eviction
@@ -1141,7 +1252,7 @@ func (s *testStmtSummarySuite) TestSummaryHistory(c *C) {
 	c.Assert(s.ssMap.summaryMap.Size(), Equals, 1)
 	// length of `other` should not longer than historySize.
 	c.Assert(s.ssMap.other.history.Len(), Equals, 5)
-	datum = s.ssMap.ToHistoryDatum(nil, true)
+	datum = reader.GetAllStmtSummaryHistoryRows()
 	// length of STATEMENT_SUMMARY_HISTORY == (history in cache) + (history evicted)
 	c.Assert(len(datum), Equals, 6)
 }
@@ -1268,17 +1379,28 @@ func (s *testStmtSummarySuite) TestAccessPrivilege(c *C) {
 	user := &auth.UserIdentity{Username: "user"}
 	badUser := &auth.UserIdentity{Username: "bad_user"}
 
-	datums := s.ssMap.ToCurrentDatum(user, false)
+	reader := newStmtSummaryReaderForTest(s.ssMap)
+	reader.User = user
+	reader.isSuper = false
+	datums := reader.GetAllStmtSummaryRows()
 	c.Assert(len(datums), Equals, loops)
-	datums = s.ssMap.ToCurrentDatum(badUser, false)
+	reader.User = badUser
+	reader.isSuper = false
+	datums = reader.GetAllStmtSummaryRows()
 	c.Assert(len(datums), Equals, 0)
-	datums = s.ssMap.ToCurrentDatum(badUser, true)
+	reader.isSuper = true
+	datums = reader.GetAllStmtSummaryRows()
 	c.Assert(len(datums), Equals, loops)
 
-	datums = s.ssMap.ToHistoryDatum(user, false)
+	reader.User = user
+	reader.isSuper = false
+	datums = reader.GetAllStmtSummaryHistoryRows()
 	c.Assert(len(datums), Equals, loops)
-	datums = s.ssMap.ToHistoryDatum(badUser, false)
+	reader.User = badUser
+	reader.isSuper = false
+	datums = reader.GetAllStmtSummaryHistoryRows()
 	c.Assert(len(datums), Equals, 0)
-	datums = s.ssMap.ToHistoryDatum(badUser, true)
+	reader.isSuper = true
+	datums = reader.GetAllStmtSummaryHistoryRows()
 	c.Assert(len(datums), Equals, loops)
 }
