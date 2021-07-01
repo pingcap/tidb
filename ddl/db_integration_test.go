@@ -2800,7 +2800,7 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	tk.MustExec("create temporary table tmp_db.t2 (id int)")
 	tk.MustQuery("select * from t1") // No error
 	tk.MustExec("drop database tmp_db")
-	_, err = tk.Exec("select * from t1")
+	_, err := tk.Exec("select * from t1")
 	c.Assert(err, NotNil)
 	// In MySQL, drop DB does not really drop the table, it's back!
 	tk.MustExec("create database tmp_db")
