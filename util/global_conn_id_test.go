@@ -82,19 +82,66 @@ func (s *testGlobalConnIDSuite) TestParse(c *C) {
 	c.Assert(connID2.Is64bits, IsFalse)
 }
 
-func (s *testGlobalConnIDSuite) TestLockFreePoolBasic(c *C) {
+func (s *testGlobalConnIDSuite) TestAutoIncPool(c *C) {
 	const SizeInBits uint32 = 8
-	const Size uint32 = 1<<SizeInBits - 1
+	const Size uint64 = 1 << SizeInBits
+	const TryCnt = 4
 
 	var (
-		pool util.LockFreePool
-		val  uint32
+		pool util.AutoIncPool
+		val  uint64
 		ok   bool
-		i    uint32
+		i    uint64
 	)
 
-	pool.Init(SizeInBits, math.MaxUint32)
-	c.Assert(pool.Len(), Equals, Size)
+	pool.InitExt(SizeInBits, true, TryCnt)
+	c.Assert(pool.Len(), Equals, 0)
+
+	// get all.
+	for i = 1; i < Size; i++ {
+		val, ok = pool.Get()
+		c.Assert(ok, IsTrue)
+		c.Assert(val, Equals, i)
+	}
+	val, ok = pool.Get()
+	c.Assert(ok, IsTrue)
+	c.Assert(val, Equals, uint64(0)) // wrap around to 0
+	c.Assert(pool.Len(), Equals, int(Size))
+
+	_, ok = pool.Get() // exhausted. try TryCnt times, lastID is added to 0+TryCnt.
+	c.Assert(ok, IsFalse)
+
+	nextVal := uint64(TryCnt + 1)
+	pool.Put(nextVal)
+	val, ok = pool.Get()
+	c.Assert(ok, IsTrue)
+	c.Assert(val, Equals, nextVal)
+
+	nextVal += TryCnt - 1
+	pool.Put(nextVal)
+	val, ok = pool.Get()
+	c.Assert(ok, IsTrue)
+	c.Assert(val, Equals, nextVal)
+
+	nextVal += TryCnt + 1
+	pool.Put(nextVal)
+	val, ok = pool.Get()
+	c.Assert(ok, IsFalse)
+}
+
+func (s *testGlobalConnIDSuite) TestLockFreePoolBasic(c *C) {
+	const SizeInBits uint32 = 8
+	const Size uint64 = 1<<SizeInBits - 1
+
+	var (
+		pool util.LockFreeCircularPool
+		val  uint64
+		ok   bool
+		i    uint64
+	)
+
+	pool.InitExt(SizeInBits, math.MaxUint32)
+	c.Assert(pool.Len(), Equals, int(Size))
 
 	// get all.
 	for i = 1; i <= Size; i++ {
@@ -104,7 +151,7 @@ func (s *testGlobalConnIDSuite) TestLockFreePoolBasic(c *C) {
 	}
 	_, ok = pool.Get()
 	c.Assert(ok, IsFalse)
-	c.Assert(pool.Len(), Equals, uint32(0))
+	c.Assert(pool.Len(), Equals, 0)
 
 	// put to full.
 	for i = 1; i <= Size; i++ {
@@ -113,7 +160,7 @@ func (s *testGlobalConnIDSuite) TestLockFreePoolBasic(c *C) {
 	}
 	ok = pool.Put(0)
 	c.Assert(ok, IsFalse)
-	c.Assert(pool.Len(), Equals, Size)
+	c.Assert(pool.Len(), Equals, int(Size))
 
 	// get all.
 	for i = 1; i <= Size; i++ {
@@ -123,22 +170,22 @@ func (s *testGlobalConnIDSuite) TestLockFreePoolBasic(c *C) {
 	}
 	_, ok = pool.Get()
 	c.Assert(ok, IsFalse)
-	c.Assert(pool.Len(), Equals, uint32(0))
+	c.Assert(pool.Len(), Equals, 0)
 }
 
 func (s *testGlobalConnIDSuite) TestLockFreePoolInitEmpty(c *C) {
 	const SizeInBits uint32 = 8
-	const Size uint32 = 1<<SizeInBits - 1
+	const Size uint64 = 1<<SizeInBits - 1
 
 	var (
-		pool util.LockFreePool
-		val  uint32
+		pool util.LockFreeCircularPool
+		val  uint64
 		ok   bool
-		i    uint32
+		i    uint64
 	)
 
-	pool.Init(SizeInBits, 0)
-	c.Assert(pool.Len(), Equals, uint32(0))
+	pool.InitExt(SizeInBits, 0)
+	c.Assert(pool.Len(), Equals, 0)
 
 	// put to full.
 	for i = 1; i <= Size; i++ {
@@ -147,7 +194,7 @@ func (s *testGlobalConnIDSuite) TestLockFreePoolInitEmpty(c *C) {
 	}
 	ok = pool.Put(0)
 	c.Assert(ok, IsFalse)
-	c.Assert(pool.Len(), Equals, Size)
+	c.Assert(pool.Len(), Equals, int(Size))
 
 	// get all.
 	for i = 1; i <= Size; i++ {
@@ -157,14 +204,14 @@ func (s *testGlobalConnIDSuite) TestLockFreePoolInitEmpty(c *C) {
 	}
 	_, ok = pool.Get()
 	c.Assert(ok, IsFalse)
-	c.Assert(pool.Len(), Equals, uint32(0))
+	c.Assert(pool.Len(), Equals, 0)
 }
 
-var _ util.IDPool = (*LockBasedPool)(nil)
+var _ util.IDPool = (*LockBasedCircularPool)(nil)
 
-// LockBasedPool implements IDPool by lock-based manner.
+// LockBasedCircularPool implements IDPool by lock-based manner.
 // For benchmark purpose.
-type LockBasedPool struct {
+type LockBasedCircularPool struct {
 	_    uint64 // align to 64bits
 	head uint32 // first available slot
 	_    uint32 // padding to avoid false sharing
@@ -176,7 +223,11 @@ type LockBasedPool struct {
 	slots []uint32
 }
 
-func (p *LockBasedPool) Init(sizeInBits uint32, fillCount uint32) {
+func (p *LockBasedCircularPool) Init(sizeInBits uint32) {
+	p.InitExt(sizeInBits, 0)
+}
+
+func (p *LockBasedCircularPool) InitExt(sizeInBits uint32, fillCount uint32) {
 	p.mu = &sync.Mutex{}
 
 	p.cap = 1 << sizeInBits
@@ -188,20 +239,20 @@ func (p *LockBasedPool) Init(sizeInBits uint32, fillCount uint32) {
 		p.slots[i] = i + 1
 	}
 	for ; i < p.cap; i++ {
-		p.slots[i] = util.PoolInvalidValue
+		p.slots[i] = math.MaxUint32
 	}
 
 	p.head = 0
 	p.tail = fillCount
 }
 
-func (p *LockBasedPool) Len() uint32 {
+func (p *LockBasedCircularPool) Len() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.tail - p.head
+	return int(p.tail - p.head)
 }
 
-func (p LockBasedPool) String() string {
+func (p LockBasedCircularPool) String() string {
 	head := p.head
 	tail := p.tail
 	headVal := p.slots[head&(p.cap-1)]
@@ -212,7 +263,7 @@ func (p LockBasedPool) String() string {
 		p.cap, len, head, headVal, tail, tailVal)
 }
 
-func (p *LockBasedPool) Put(val uint32) (ok bool) {
+func (p *LockBasedCircularPool) Put(val uint64) (ok bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -220,32 +271,32 @@ func (p *LockBasedPool) Put(val uint32) (ok bool) {
 		return false
 	}
 
-	p.slots[p.tail&(p.cap-1)] = val
+	p.slots[p.tail&(p.cap-1)] = uint32(val)
 	p.tail++
 	return true
 }
 
-func (p *LockBasedPool) Get() (val uint32, ok bool) {
+func (p *LockBasedCircularPool) Get() (val uint64, ok bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.head == p.tail { // empty
-		return util.PoolInvalidValue, false
+		return util.IDPoolInvalidValue, false
 	}
 
-	val = p.slots[p.head&(p.cap-1)]
+	val = uint64(p.slots[p.head&(p.cap-1)])
 	p.head++
 	return val, true
 }
 
 func prepareLockBasedPool(sizeInBits uint32, fillCount uint32) util.IDPool {
-	var pool LockBasedPool
-	pool.Init(sizeInBits, fillCount)
+	var pool LockBasedCircularPool
+	pool.InitExt(sizeInBits, fillCount)
 	return &pool
 }
 
 func prepareLockFreePool(sizeInBits uint32, fillCount uint32, headPos uint32) util.IDPool {
-	var pool util.LockFreePool
-	pool.Init(sizeInBits, fillCount)
+	var pool util.LockFreeCircularPool
+	pool.InitExt(sizeInBits, fillCount)
 	if headPos > 0 {
 		pool.InitForTest(headPos, fillCount)
 	}
@@ -267,7 +318,7 @@ func prepareConcurrencyTest(pool util.IDPool, producers int, consumers int, requ
 				<-ready
 
 				for i := p * reqsPerProducer; i < (p+1)*reqsPerProducer && i < requests; i++ {
-					for !pool.Put(uint32(i)) {
+					for !pool.Put(uint64(i)) {
 						runtime.Gosched()
 					}
 				}
@@ -447,7 +498,7 @@ func BenchmarkPoolConcurrency(b *testing.B) {
 	}
 
 	for _, ta := range cases {
-		b.Run(fmt.Sprintf("LockBasedPool: P:C: %v:%v", ta.producers, ta.consumers), func(b *testing.B) {
+		b.Run(fmt.Sprintf("LockBasedCircularPool: P:C: %v:%v", ta.producers, ta.consumers), func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
@@ -467,7 +518,7 @@ func BenchmarkPoolConcurrency(b *testing.B) {
 			}
 		})
 
-		b.Run(fmt.Sprintf("LockFreePool: P:C: %v:%v", ta.producers, ta.consumers), func(b *testing.B) {
+		b.Run(fmt.Sprintf("LockFreeCircularPool: P:C: %v:%v", ta.producers, ta.consumers), func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
@@ -491,7 +542,7 @@ func BenchmarkPoolConcurrency(b *testing.B) {
 
 func benchmarkLocalConnIDAllocator32(b *testing.B, pool util.IDPool) {
 	var (
-		id uint32
+		id uint64
 		ok bool
 	)
 
@@ -517,44 +568,44 @@ func BenchmarkLocalConnIDAllocator(b *testing.B) {
 		b.Run(fmt.Sprintf("Allocator 64 x%v", concurrency), func(b *testing.B) {
 			const ServerID = 42
 
-			a := util.AutoIncIDAllocator{}
-			a.Init(util.LocalConnIDBits64, true)
+			pool := util.AutoIncPool{}
+			pool.InitExt(util.LocalConnIDBits64, true, util.LocalConnIDAllocator64TryCount)
 
 			b.SetParallelism(concurrency)
 			b.ResetTimer()
 			b.RunParallel(func(pb *testing.PB) {
 				for pb.Next() {
-					id, ok := a.Allocate(util.LocalConnIDAllocator64RetryCount)
+					id, ok := pool.Get()
 					if !ok {
-						b.Fatal("Allocator 64 allocates failed.")
+						b.Fatal("AutoIncPool.Get() failed.")
 					}
-					a.Deallocate(id)
+					pool.Put(id)
 				}
 			})
 		})
 
 		b.Run(fmt.Sprintf("Allocator 32(LockBased) x%v", concurrency), func(b *testing.B) {
-			a := LockBasedPool{}
-			a.Init(util.LocalConnIDBits32, math.MaxUint32)
+			pool := LockBasedCircularPool{}
+			pool.InitExt(util.LocalConnIDBits32, math.MaxUint32)
 
 			b.SetParallelism(concurrency)
 			b.ResetTimer()
 			b.RunParallel(func(pb *testing.PB) {
 				for pb.Next() {
-					benchmarkLocalConnIDAllocator32(b, &a)
+					benchmarkLocalConnIDAllocator32(b, &pool)
 				}
 			})
 		})
 
-		b.Run(fmt.Sprintf("Allocator 32(LockFreePool) x%v", concurrency), func(b *testing.B) {
-			a := util.LockFreePool{}
-			a.Init(util.LocalConnIDBits32, math.MaxUint32)
+		b.Run(fmt.Sprintf("Allocator 32(LockFreeCircularPool) x%v", concurrency), func(b *testing.B) {
+			pool := util.LockFreeCircularPool{}
+			pool.InitExt(util.LocalConnIDBits32, math.MaxUint32)
 
 			b.SetParallelism(concurrency)
 			b.ResetTimer()
 			b.RunParallel(func(pb *testing.PB) {
 				for pb.Next() {
-					benchmarkLocalConnIDAllocator32(b, &a)
+					benchmarkLocalConnIDAllocator32(b, &pool)
 				}
 			})
 		})

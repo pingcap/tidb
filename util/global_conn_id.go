@@ -37,7 +37,7 @@ type ConnectionIDAllocator interface {
 	SetServerIDGetter(serverIDGetter serverIDGetterFn)
 	// NextID returns next connection ID.
 	NextID() uint64
-	// Release releases connectionID to pool.
+	// Release releases connection ID to pool.
 	Release(connectionID uint64)
 }
 
@@ -46,14 +46,14 @@ var (
 	_ ConnectionIDAllocator = (*GlobalConnIDAllocator)(nil)
 )
 
-// SimpleConnIDAllocator is a simple connection id allocator used when GlobalKill feature is disabled.
+// SimpleConnIDAllocator is a simple connection id allocator used when GlobalKill feature is disable.
 type SimpleConnIDAllocator struct {
-	inner AutoIncIDAllocator
+	pool AutoIncPool
 }
 
 // Init implements ConnectionIDAllocator interface.
 func (a *SimpleConnIDAllocator) Init(_ serverIDGetterFn) {
-	a.inner.Init(64, false)
+	a.pool.Init(64)
 }
 
 // SetServerIDGetter implements ConnectionIDAllocator interface.
@@ -63,16 +63,17 @@ func (a *SimpleConnIDAllocator) SetServerIDGetter(_ serverIDGetterFn) {
 
 // NextID implements ConnectionIDAllocator interface.
 func (a *SimpleConnIDAllocator) NextID() uint64 {
-	id, _ := a.inner.Allocate(1)
+	id, _ := a.pool.Get()
 	return id
 }
 
 // Release implements ConnectionIDAllocator interface.
-func (a *SimpleConnIDAllocator) Release(_ uint64) {
-	// do nothing
+func (a *SimpleConnIDAllocator) Release(id uint64) {
+	a.pool.Put(id)
 }
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
+// Used when GlobalKill feature is enable.
 // See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md
 // 32 bits version:
 //   31    21 20               1    0
@@ -86,7 +87,6 @@ func (a *SimpleConnIDAllocator) Release(_ uint64) {
 //  |  |      serverId       |             local connId             |markup|
 //  |=0|       (22b)         |                 (40b)                |  =1  |
 //  +--+---------------------+--------------------------------------+------+
-// TODO: move to global_conn_id.go
 type GlobalConnID struct {
 	ServerID    uint64
 	LocalConnID uint64
@@ -161,8 +161,8 @@ type GlobalConnIDAllocator struct {
 	is64bits       sync2.AtomicInt32 // !0: true, 0: false
 	serverIDGetter func() uint64
 
-	local32 LockFreePool
-	local64 AutoIncIDAllocator
+	local32 LockFreeCircularPool
+	local64 AutoIncPool
 }
 
 // Is64 indicates allocate 64bits global connection ID or not.
@@ -175,12 +175,15 @@ func (g *GlobalConnIDAllocator) UpgradeTo64() {
 	g.is64bits.Set(1)
 }
 
+// LocalConnIDAllocator64TryCount is the try count of 64bits local connID allocation.
+const LocalConnIDAllocator64TryCount = 10
+
 // Init initiate members.
 func (g *GlobalConnIDAllocator) Init(serverIDGetter serverIDGetterFn) {
 	g.serverIDGetter = serverIDGetter
 
-	g.local32.Init(LocalConnIDBits32, math.MaxUint32)
-	g.local64.Init(LocalConnIDBits64, true)
+	g.local32.InitExt(LocalConnIDBits32, math.MaxUint32)
+	g.local64.InitExt(LocalConnIDBits64, true, LocalConnIDAllocator64TryCount)
 
 	g.is64bits.Set(1) // TODO: set 32bits as default, after 32bits logics is fully implemented and tested.
 }
@@ -195,9 +198,6 @@ func (g *GlobalConnIDAllocator) NextID() uint64 {
 	globalConnID := g.Allocate()
 	return globalConnID.ID()
 }
-
-// LocalConnIDAllocator64RetryCount is the retry count of 64bits local connID allocation.
-const LocalConnIDAllocator64RetryCount = 20
 
 // Allocate allocates a new global connID.
 func (g *GlobalConnIDAllocator) Allocate() GlobalConnID {
@@ -217,10 +217,10 @@ func (g *GlobalConnIDAllocator) Allocate() GlobalConnID {
 	}
 
 	// 64bits.
-	localConnID, ok := g.local64.Allocate(LocalConnIDAllocator64RetryCount)
+	localConnID, ok := g.local64.Get()
 	if !ok {
 		// local connID with 40bits pool size is big enough and should not be exhausted, as `MaxServerConnections` is no more than math.MaxUint32.
-		panic(fmt.Sprintf("Failed to allocate 64bits local connID after retry %v times. Should never happen", LocalConnIDAllocator64RetryCount))
+		panic(fmt.Sprintf("Failed to allocate 64bits local connID after try %v times. Should never happen", LocalConnIDAllocator64TryCount))
 	}
 	return GlobalConnID{
 		ServerID:    serverID,
@@ -238,83 +238,109 @@ func (g *GlobalConnIDAllocator) Release(connectionID uint64) {
 	}
 
 	if globalConnID.Is64bits {
-		g.local64.Deallocate(globalConnID.LocalConnID)
+		g.local64.Put(globalConnID.LocalConnID)
 	} else {
-		if ok := g.local32.Put(uint32(globalConnID.LocalConnID)); !ok {
+		if ok := g.local32.Put(globalConnID.LocalConnID); !ok {
 			logutil.BgLogger().Error("failed to release 32bits connection ID", zap.Uint64("connectionID", connectionID), zap.Uint64("localConnID", globalConnID.LocalConnID))
 		}
 	}
 }
 
-// AutoIncIDAllocator simply do auto-increment to allocate ID. Wrapping will happen.
-type AutoIncIDAllocator struct {
-	lastID  uint64
-	idMask  uint64
-	mu      sync.Mutex
-	existed map[uint64]struct{}
-}
-
-// Init initiates AutoIncIDAllocator.
-func (a *AutoIncIDAllocator) Init(sizeInBits uint32, checkExisted bool) {
-	a.idMask = 1<<sizeInBits - 1
-	if checkExisted {
-		a.existed = make(map[uint64]struct{})
-		a.mu = sync.Mutex{}
-	}
-}
-
-// Allocate id by auto-increment.
-func (a *AutoIncIDAllocator) Allocate(retry int) (id uint64, ok bool) {
-	for i := 0; i < retry; i++ {
-		id := atomic.AddUint64(&a.lastID, 1) & a.idMask
-		if a.existed != nil {
-			a.mu.Lock()
-			_, occupied := a.existed[id]
-			if occupied {
-				a.mu.Unlock()
-				continue
-			}
-			a.existed[id] = struct{}{}
-			a.mu.Unlock()
-		}
-		return id, true
-	}
-	return 0, false
-}
-
-// Deallocate id.
-func (a *AutoIncIDAllocator) Deallocate(id uint64) {
-	if a.existed != nil {
-		a.mu.Lock()
-		delete(a.existed, id)
-		a.mu.Unlock()
-	}
-}
-
 const (
-	// PoolInvalidValue indicates invalid value from LocalConnIDPool
-	PoolInvalidValue = math.MaxUint32
+	// PoolInvalidValue indicates invalid value from IDPool.
+	IDPoolInvalidValue = math.MaxUint64
 )
 
 // IDPool is the pool allocating & deallocating IDs.
 type IDPool interface {
 	fmt.Stringer
 	// Init initiates pool.
-	//   fillCount fills pool with [1, min(fillCount, 1<<(sizeInBits-1)].
-	//   pass "math.MaxUint32" to fillCount to fulfill the pool.
-	Init(sizeInBits uint32, fillCount uint32)
+	Init(sizeInBits uint32)
 	// Len returns length of available id's in pool.
-	Len() uint32
+	// Note that Len() would return -1 when this method is NOT supported.
+	Len() int
 	// Put puts value to pool. "ok" is false when pool is full.
-	Put(val uint32) (ok bool)
+	Put(val uint64) (ok bool)
 	// Get gets value from pool. "ok" is false when pool is empty.
-	Get() (val uint32, ok bool)
+	Get() (val uint64, ok bool)
 }
 
-var _ IDPool = (*LockFreePool)(nil)
+var _ IDPool = (*AutoIncPool)(nil)
+var _ IDPool = (*LockFreeCircularPool)(nil)
 
-// LockFreePool is a lock-free implementation of LocalConnIDPool.
-type LockFreePool struct {
+// AutoIncPool simply do auto-increment to allocate ID. Wrapping will happen.
+type AutoIncPool struct {
+	lastID uint64
+	idMask uint64
+	tryCnt int
+
+	mu      *sync.Mutex
+	existed map[uint64]struct{}
+}
+
+// Init initiates AutoIncPool.
+func (p *AutoIncPool) Init(sizeInBits uint32) {
+	p.InitExt(sizeInBits, false, 1)
+}
+
+// InitExt initiates AutoIncPool with more parameters.
+func (p *AutoIncPool) InitExt(sizeInBits uint32, checkExisted bool, tryCnt int) {
+	p.idMask = 1<<sizeInBits - 1
+	if checkExisted {
+		p.existed = make(map[uint64]struct{})
+		p.mu = &sync.Mutex{}
+	}
+	p.tryCnt = tryCnt
+}
+
+// Get id by auto-increment.
+func (p *AutoIncPool) Get() (id uint64, ok bool) {
+	for i := 0; i < p.tryCnt; i++ {
+		id := atomic.AddUint64(&p.lastID, 1) & p.idMask
+		if p.existed != nil {
+			p.mu.Lock()
+			_, occupied := p.existed[id]
+			if occupied {
+				p.mu.Unlock()
+				continue
+			}
+			p.existed[id] = struct{}{}
+			p.mu.Unlock()
+		}
+		return id, true
+	}
+	return 0, false
+}
+
+// Put id back to pool.
+func (p *AutoIncPool) Put(id uint64) (ok bool) {
+	if p.existed != nil {
+		p.mu.Lock()
+		delete(p.existed, id)
+		p.mu.Unlock()
+	}
+	return true
+}
+
+// Len implements IDPool interface.
+func (p *AutoIncPool) Len() int {
+	if p.existed != nil {
+		p.mu.Lock()
+		len := len(p.existed)
+		p.mu.Unlock()
+		return len
+	}
+	return -1
+}
+
+// String implements IDPool interface.
+func (p AutoIncPool) String() string {
+	return fmt.Sprintf("lastID: %v", p.lastID)
+}
+
+// LockFreeCircularPool is a lock-free circular implementation of IDPool.
+// Note that to reduce memory usage, LockFreeCircularPool supports 32bits IDs ONLY.
+type LockFreeCircularPool struct {
 	_    uint64             // align to 64bits
 	head sync2.AtomicUint32 // first available slot
 	_    uint32             // padding to avoid false sharing
@@ -337,8 +363,15 @@ type lockFreePoolItem struct {
 	seq uint32
 }
 
-// Init implements LockFreePool interface.
-func (p *LockFreePool) Init(sizeInBits uint32, fillCount uint32) {
+// Init implements IDPool interface.
+func (p *LockFreeCircularPool) Init(sizeInBits uint32) {
+	p.InitExt(sizeInBits, 0)
+}
+
+// InitExt initializes LockFreeCircularPool with more parameters.
+//   fillCount fills pool with [1, min(fillCount, 1<<(sizeInBits-1)].
+//   pass "math.MaxUint32" to fillCount to fulfill the pool.
+func (p *LockFreeCircularPool) InitExt(sizeInBits uint32, fillCount uint32) {
 	p.cap = 1 << sizeInBits
 	p.slots = make([]lockFreePoolItem, p.cap)
 
@@ -348,7 +381,7 @@ func (p *LockFreePool) Init(sizeInBits uint32, fillCount uint32) {
 		p.slots[i] = lockFreePoolItem{value: i + 1, seq: i + 1}
 	}
 	for ; i < p.cap; i++ {
-		p.slots[i] = lockFreePoolItem{value: PoolInvalidValue, seq: i}
+		p.slots[i] = lockFreePoolItem{value: math.MaxUint32, seq: i}
 	}
 
 	p.head.Set(0)
@@ -356,28 +389,28 @@ func (p *LockFreePool) Init(sizeInBits uint32, fillCount uint32) {
 }
 
 // InitForTest used to unit test overflow of head & tail.
-func (p *LockFreePool) InitForTest(head uint32, fillCount uint32) {
+func (p *LockFreeCircularPool) InitForTest(head uint32, fillCount uint32) {
 	fillCount = mathutil.MinUint32(p.cap-1, fillCount)
 	var i uint32
 	for i = 0; i < fillCount; i++ {
 		p.slots[i] = lockFreePoolItem{value: i + 1, seq: head + i + 1}
 	}
 	for ; i < p.cap; i++ {
-		p.slots[i] = lockFreePoolItem{value: PoolInvalidValue, seq: head + i}
+		p.slots[i] = lockFreePoolItem{value: math.MaxUint32, seq: head + i}
 	}
 
 	p.head.Set(head)
 	p.tail.Set(head + fillCount)
 }
 
-// Len implements LockFreePool interface.
-func (p *LockFreePool) Len() uint32 {
-	return p.tail.Get() - p.head.Get()
+// Len implements IDPool interface.
+func (p *LockFreeCircularPool) Len() int {
+	return int(p.tail.Get() - p.head.Get())
 }
 
-// String implements LockFreePool interface.
+// String implements IDPool interface.
 // Notice: NOT thread safe.
-func (p LockFreePool) String() string {
+func (p LockFreeCircularPool) String() string {
 	head := p.head.Get()
 	tail := p.tail.Get()
 	headSlot := &p.slots[head&(p.cap-1)]
@@ -388,8 +421,8 @@ func (p LockFreePool) String() string {
 		p.cap, len, head, headSlot.value, headSlot.seq, tail, tailSlot.value, tailSlot.seq)
 }
 
-// Put implements LockFreePool interface.
-func (p *LockFreePool) Put(val uint32) (ok bool) {
+// Put implements IDPool interface.
+func (p *LockFreeCircularPool) Put(val uint64) (ok bool) {
 	for {
 		tail := p.tail.Get() // `tail` should be loaded before `head`, to avoid "false full".
 		head := p.head.Get()
@@ -407,7 +440,7 @@ func (p *LockFreePool) Put(val uint32) (ok bool) {
 			seq := atomic.LoadUint32(&slot.seq)
 
 			if seq == tail { // writable
-				slot.value = val
+				slot.value = uint32(val)
 				atomic.StoreUint32(&slot.seq, tail+1)
 				return true
 			}
@@ -417,13 +450,13 @@ func (p *LockFreePool) Put(val uint32) (ok bool) {
 	}
 }
 
-// Get implements LockFreePool interface.
-func (p *LockFreePool) Get() (val uint32, ok bool) {
+// Get implements IDPool interface.
+func (p *LockFreeCircularPool) Get() (val uint64, ok bool) {
 	for {
 		head := p.head.Get()
 		tail := p.tail.Get()
 		if head == tail { // empty
-			return PoolInvalidValue, false
+			return IDPoolInvalidValue, false
 		}
 
 		if !p.head.CompareAndSwap(head, head+1) {
@@ -435,8 +468,8 @@ func (p *LockFreePool) Get() (val uint32, ok bool) {
 			seq := atomic.LoadUint32(&slot.seq)
 
 			if seq == head+1 { // readable
-				val = slot.value
-				slot.value = PoolInvalidValue
+				val = uint64(slot.value)
+				slot.value = math.MaxUint32
 				atomic.StoreUint32(&slot.seq, head+p.cap)
 				return val, true
 			}
