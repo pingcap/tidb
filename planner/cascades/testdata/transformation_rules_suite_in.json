@@ -223,6 +223,8 @@
     "cases": [
       "select a, b, max(b) over (partition by c), sum(c) over (partition by c) from t",
       "select a, b, max(b) over (partition by c), sum(c) over (partition by a) from t",
+      "select a, max(b) over (partition by c, d), sum(c) over (partition by c, d) from t",
+      "select a, max(b) over (partition by c, d), sum(c) over (partition by d, c) from t",
       "select a, b, c, d, max(b) over (partition by c order by d desc), sum(d) over (partition by c order by d desc) from t",
       "select a, b, c, d, max(b) over (partition by c order by d desc), sum(d) over (partition by c order by d) from t",
       "select a, b, c, d, max(b) over (partition by c order by d desc), sum(d) over (partition by a order by b desc) from t",

@@ -106,6 +106,9 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 	memo.OperandJoin: {
 		NewRuleTransformJoinCondToSel(),
 	},
+	memo.OperandWindow: {
+		NewRuleMergeAdjacentWindow(),
+	},
 }
 
 // TiKVLayerOptimizationBatch does the optimization related to TiKV layer.
@@ -129,9 +132,6 @@ var TiKVLayerOptimizationBatch = TransformationRuleBatch{
 	},
 	memo.OperandTopN: {
 		NewRulePushTopNDownTiKVSingleGather(),
-	},
-	memo.OperandWindow: {
-		NewRuleMergeAdjacentWindow(),
 	},
 }
 
@@ -2532,49 +2532,11 @@ func (r *MergeAdjacentWindow) Match(expr *memo.ExprIter) bool {
 	nextGroupChildren := nextGroupExpr.Children
 	ctx := expr.GetExpr().ExprNode.SCtx()
 
-	// Whether Partition parts are the same.
-	if len(curWinPlan.PartitionBy) != len(nextWinPlan.PartitionBy) ||
-		len(curWinPlan.OrderBy) != len(nextWinPlan.OrderBy) ||
-		(curWinPlan.Frame == nil && nextWinPlan.Frame != nil) ||
-		(curWinPlan.Frame != nil && nextWinPlan.Frame == nil) {
+	// Whether Partition, OrderBy and Frame parts are the same.
+	if !(curWinPlan.EqualPartitionBy(ctx, nextWinPlan) &&
+		curWinPlan.EqualOrderBy(ctx, nextWinPlan) &&
+		curWinPlan.EqualFrame(ctx, nextWinPlan)) {
 		return false
-	}
-	for i, item := range curWinPlan.PartitionBy {
-		if !item.Col.Equal(ctx, nextWinPlan.PartitionBy[i].Col) ||
-			item.Desc != nextWinPlan.PartitionBy[i].Desc {
-			return false
-		}
-	}
-
-	// Whether OrderBy parts are the same.
-	for i, item := range curWinPlan.OrderBy {
-		if !item.Col.Equal(ctx, nextWinPlan.OrderBy[i].Col) ||
-			item.Desc != nextWinPlan.OrderBy[i].Desc {
-			return false
-		}
-	}
-
-	// Whether Frame parts are the same.
-	if curWinPlan.Frame != nil {
-		if curWinPlan.Frame.Type != nextWinPlan.Frame.Type ||
-			curWinPlan.Frame.Start.Type != nextWinPlan.Frame.Start.Type ||
-			curWinPlan.Frame.Start.UnBounded != nextWinPlan.Frame.Start.UnBounded ||
-			curWinPlan.Frame.Start.Num != nextWinPlan.Frame.Start.Num ||
-			curWinPlan.Frame.End.Type != nextWinPlan.Frame.End.Type ||
-			curWinPlan.Frame.End.UnBounded != nextWinPlan.Frame.End.UnBounded ||
-			curWinPlan.Frame.End.Num != nextWinPlan.Frame.End.Num {
-			return false
-		}
-		for i, expr := range curWinPlan.Frame.Start.CalcFuncs {
-			if !expr.Equal(ctx, nextWinPlan.Frame.Start.CalcFuncs[i]) {
-				return false
-			}
-		}
-		for i, expr := range curWinPlan.Frame.End.CalcFuncs {
-			if !expr.Equal(ctx, nextWinPlan.Frame.End.CalcFuncs[i]) {
-				return false
-			}
-		}
 	}
 
 	// Whether the first window uses the unsettled columns in the next window.
@@ -2582,32 +2544,24 @@ func (r *MergeAdjacentWindow) Match(expr *memo.ExprIter) bool {
 	// `select a, b, sum(bb) over (partition by a) as 'sum_bb' from (select a, b, max(b) over (partition by a) as 'bb' from t) as tt`
 	// The adjacent windows in the above sql statement cannot be merged.
 	// The reason is that the first one uses an unsettled column `bb` from the second one.
-	nextWindowNewCols := make(map[*expression.Column]struct{})
+	nextWindowCols := make(map[int64]struct{})
+	nextWindowChildrenExistedCols := make(map[int64]struct{})
+	for _, ngc := range nextGroupChildren {
+		for _, c := range ngc.Prop.Schema.Columns {
+			nextWindowChildrenExistedCols[c.UniqueID] = struct{}{}
+		}
+	}
 	for _, nc := range nextSchema.Columns {
-		isExisted := false
-		for _, ngc := range nextGroupChildren {
-			for _, c := range ngc.Prop.Schema.Columns {
-				if nc.Equal(ctx, c) {
-					isExisted = true
-					break
-				}
-			}
-			if isExisted {
-				break
-			}
-		}
-		if !isExisted {
-			nextWindowNewCols[nc] = struct{}{}
-		}
+		nextWindowCols[nc.UniqueID] = struct{}{}
 	}
 	for _, funDesc := range curWinPlan.WindowFuncDescs {
 		for _, arg := range funDesc.Args {
 			cols := expression.ExtractColumns(arg)
 			for _, c := range cols {
-				for nc := range nextWindowNewCols {
-					if c.Equal(ctx, nc) {
-						return false
-					}
+				_, ok1 := nextWindowCols[c.UniqueID]
+				_, ok2 := nextWindowChildrenExistedCols[c.UniqueID]
+				if ok1 && !ok2 {
+					return false
 				}
 			}
 		}
