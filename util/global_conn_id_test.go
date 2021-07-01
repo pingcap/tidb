@@ -125,7 +125,7 @@ func (s *testGlobalConnIDSuite) TestAutoIncPool(c *C) {
 
 	nextVal += TryCnt + 1
 	pool.Put(nextVal)
-	val, ok = pool.Get()
+	_, ok = pool.Get()
 	c.Assert(ok, IsFalse)
 }
 
@@ -566,8 +566,6 @@ func BenchmarkLocalConnIDAllocator(b *testing.B) {
 	concurrencyCases := []int{1, 3, 10, 100, 1000, 10000}
 	for _, concurrency := range concurrencyCases {
 		b.Run(fmt.Sprintf("Allocator 64 x%v", concurrency), func(b *testing.B) {
-			const ServerID = 42
-
 			pool := util.AutoIncPool{}
 			pool.InitExt(util.LocalConnIDBits64, true, util.LocalConnIDAllocator64TryCount)
 

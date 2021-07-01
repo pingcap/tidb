@@ -209,7 +209,7 @@ func (g *GlobalConnIDAllocator) Allocate() GlobalConnID {
 		if ok {
 			return GlobalConnID{
 				ServerID:    serverID,
-				LocalConnID: uint64(localConnID),
+				LocalConnID: localConnID,
 				Is64bits:    false,
 			}
 		}
@@ -247,7 +247,7 @@ func (g *GlobalConnIDAllocator) Release(connectionID uint64) {
 }
 
 const (
-	// PoolInvalidValue indicates invalid value from IDPool.
+	// IDPoolInvalidValue indicates invalid value from IDPool.
 	IDPoolInvalidValue = math.MaxUint64
 )
 
