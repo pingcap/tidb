@@ -2792,7 +2792,7 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 
 	tk.MustExec("set @@tidb_enable_noop_functions = 1")
 
-	// Create temporary table.
+	// Create local temporary table.
 	tk.MustExec("set @@tidb_enable_noop_functions = 1")
 	tk.MustExec("create database tmp_db")
 	tk.MustExec("use tmp_db")
@@ -2806,4 +2806,11 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	tk.MustExec("create database tmp_db")
 	tk.MustExec("use tmp_db")
 	tk.MustQuery("select * from t1") // No error
+
+	// When local temporary table overlap the normal table, it takes a higher priority.
+	tk.MustExec("create table overlap (id int)")
+	tk.MustExec("create temporary table overlap (a int, b int)")
+	_, err = tk.Exec("insert into overlap values (1)") // column not match
+	c.Assert(err, NotNil)
+	tk.MustExec("insert into overlap values (1, 1)")
 }
