@@ -282,6 +282,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 	return nil
 }
 
+// PruneColumns implements LogicalPlan interface.
 func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) error {
 	switch p.TableInfo.Name.O {
 	case infoschema.TableStatementsSummary,

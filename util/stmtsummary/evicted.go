@@ -210,36 +210,6 @@ func (ssMap *stmtSummaryByDigestMap) ToEvictedCountDatum() [][]types.Datum {
 	return ssMap.other.ToEvictedCountDatum()
 }
 
-func (ssr *StmtSummaryReader) GetStmtEvictedOtherRow(ssbde *stmtSummaryByDigestEvicted) []types.Datum {
-	var seElement *stmtSummaryByDigestEvictedElement
-
-	ssbde.Lock()
-	if ssbde.history.Len() > 0 {
-		seElement = ssbde.history.Back().Value.(*stmtSummaryByDigestEvictedElement)
-	}
-	ssbde.Unlock()
-
-	if seElement == nil {
-		return nil
-	}
-
-	return ssr.GetStmtByDigestElementRow(seElement.otherSummary, new(stmtSummaryByDigest))
-}
-
-func (ssr *StmtSummaryReader) GetStmtEvictedOtherHistoryRow(ssbde *stmtSummaryByDigestEvicted, historySize int) [][]types.Datum {
-	// Collect all history summaries to an array.
-	ssbde.Lock()
-	seElements := ssbde.collectHistorySummaries(historySize)
-	ssbde.Unlock()
-	rows := make([][]types.Datum, 0, len(seElements))
-
-	ssbd := new(stmtSummaryByDigest)
-	for _, seElement := range seElements {
-		rows = append(rows, ssr.GetStmtByDigestElementRow(seElement.otherSummary, ssbd))
-	}
-	return rows
-}
-
 func (ssbde *stmtSummaryByDigestEvicted) collectHistorySummaries(historySize int) []*stmtSummaryByDigestEvictedElement {
 	lst := make([]*stmtSummaryByDigestEvictedElement, 0, ssbde.history.Len())
 	for element := ssbde.history.Front(); element != nil && len(lst) < historySize; element = element.Next() {

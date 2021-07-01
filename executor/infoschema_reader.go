@@ -2126,10 +2126,10 @@ func (e *stmtSummaryTableRetriever) retrieve(ctx context.Context, sctx sessionct
 	switch e.table.Name.O {
 	case infoschema.TableStatementsSummary,
 		infoschema.ClusterTableStatementsSummary:
-		rows = reader.GetAllStmtSummaryRows()
+		rows = reader.GetStmtSummaryCurrentRows()
 	case infoschema.TableStatementsSummaryHistory,
 		infoschema.ClusterTableStatementsSummaryHistory:
-		rows = reader.GetAllStmtSummaryHistoryRows()
+		rows = reader.GetStmtSummaryHistoryRows()
 	}
 
 	return rows, nil
