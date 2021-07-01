@@ -253,10 +253,7 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		sessVars.LocalTemporaryTables = infoschema.NewLocalTemporaryTables()
 	}
 	localTempTables := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
-	if err := localTempTables.AddTable(dbInfo, tbl); err != nil {
-		return err
-	}
-	return nil
+	return localTempTables.AddTable(dbInfo, tbl)
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
