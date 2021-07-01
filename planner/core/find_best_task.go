@@ -534,10 +534,6 @@ func (ds *DataSource) getIndexMergeCandidate(path *util.AccessPath) *candidatePa
 func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candidatePath {
 	candidates := make([]*candidatePath, 0, 4)
 	for _, path := range ds.possibleAccessPaths {
-		// skip tiflash if the statement is for stale read until tiflash support stale read
-		if ds.ctx.GetSessionVars().StmtCtx.IsStaleness && path.StoreType == kv.TiFlash {
-			continue
-		}
 		if path.PartialIndexPaths != nil {
 			candidates = append(candidates, ds.getIndexMergeCandidate(path))
 			continue
