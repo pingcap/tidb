@@ -1678,7 +1678,7 @@ func TestBenchDaily(t *testing.T) {
 	}
 	out, err := os.Create(*outfile)
 	if err != nil {
-		panic(err)
+		t.Fatal(err)
 	}
 	defer out.Close()
 
@@ -1690,6 +1690,6 @@ func TestBenchDaily(t *testing.T) {
 	enc := json.NewEncoder(out)
 	err = enc.Encode(output)
 	if err != nil {
-		panic(err)
+		t.Fatal(err)
 	}
 }
