@@ -143,13 +143,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.dataForTableTiFlashReplica(sctx, dbs)
 		case infoschema.TableTiKVStoreStatus:
 			err = e.dataForTiKVStoreStatus(sctx)
-		case infoschema.TableStatementsSummary,
-			infoschema.TableStatementsSummaryHistory,
-			infoschema.TableStatementsSummaryEvicted,
-			infoschema.ClusterTableStatementsSummary,
-			infoschema.ClusterTableStatementsSummaryHistory,
+		case infoschema.TableStatementsSummaryEvicted,
 			infoschema.ClusterTableStatementsSummaryEvicted:
-			err = e.setDataForStatementsSummary(sctx, e.table.Name.O)
+			err = e.setDataForStatementsSummary(sctx)
 		case infoschema.TablePlacementPolicy:
 			err = e.setDataForPlacementPolicy(sctx)
 		case infoschema.TableClientErrorsSummaryGlobal,
@@ -1907,27 +1903,10 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 	e.rows = rows
 }
 
-func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, tableName string) error {
-	user := ctx.GetSessionVars().User
-	isSuper := false
-	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		isSuper = pm.RequestVerificationWithUser("", "", "", mysql.SuperPriv, user)
-	}
-	switch tableName {
-	case infoschema.TableStatementsSummary,
-		infoschema.ClusterTableStatementsSummary:
-		e.rows = stmtsummary.StmtSummaryByDigestMap.ToCurrentDatum(user, isSuper)
-	case infoschema.TableStatementsSummaryHistory,
-		infoschema.ClusterTableStatementsSummaryHistory:
-		e.rows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum(user, isSuper)
-	case infoschema.TableStatementsSummaryEvicted,
-		infoschema.ClusterTableStatementsSummaryEvicted:
-		e.rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
-	}
-	switch tableName {
-	case infoschema.ClusterTableStatementsSummary,
-		infoschema.ClusterTableStatementsSummaryHistory,
-		infoschema.ClusterTableStatementsSummaryEvicted:
+func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context) error {
+	e.rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
+	switch e.table.Name.O {
+	case infoschema.ClusterTableStatementsSummaryEvicted:
 		rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
 		if err != nil {
 			return err
@@ -2113,6 +2092,57 @@ func (e *memtableRetriever) setDataForClusterDeadlock(ctx sessionctx.Context) er
 	return nil
 }
 
+type stmtSummaryTableRetriever struct {
+	dummyCloser
+	table     *model.TableInfo
+	columns   []*model.ColumnInfo
+	retrieved bool
+}
+
+// retrieve implements the infoschemaRetriever interface
+func (e *stmtSummaryTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.retrieved {
+		return nil, nil
+	}
+	e.retrieved = true
+	user := sctx.GetSessionVars().User
+	isSuper := false
+	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
+		isSuper = pm.RequestVerificationWithUser("", "", "", mysql.SuperPriv, user)
+	}
+	reader := &stmtsummary.StmtSummaryReader{
+		User:    user,
+		IsSuper: isSuper,
+		Columns: e.columns,
+	}
+
+	var err error
+	switch e.table.Name.O {
+	case infoschema.ClusterTableStatementsSummary,
+		infoschema.ClusterTableStatementsSummaryHistory,
+		infoschema.ClusterTableStatementsSummaryEvicted:
+		reader.InstanceAddr, err = infoschema.GetInstanceAddr(sctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var rows [][]types.Datum
+	switch e.table.Name.O {
+	case infoschema.TableStatementsSummary,
+		infoschema.ClusterTableStatementsSummary:
+		rows = reader.GetAllStmtSummaryRows(stmtsummary.StmtSummaryByDigestMap)
+	case infoschema.TableStatementsSummaryHistory,
+		infoschema.ClusterTableStatementsSummaryHistory:
+		rows = reader.GetAllStmtSummaryHistoryRows(stmtsummary.StmtSummaryByDigestMap)
+	case infoschema.TableStatementsSummaryEvicted,
+		infoschema.ClusterTableStatementsSummaryEvicted:
+		rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
+	}
+
+	return rows, nil
+}
+
 type hugeMemTableRetriever struct {
 	dummyCloser
 	table       *model.TableInfo
@@ -2154,6 +2184,9 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 }
 
 func adjustColumns(input [][]types.Datum, outColumns []*model.ColumnInfo, table *model.TableInfo) [][]types.Datum {
+	if table.Name.O == infoschema.TableStatementsSummary {
+		return input
+	}
 	if len(outColumns) == len(table.Columns) {
 		return input
 	}

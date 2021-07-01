@@ -210,6 +210,21 @@ func (ssMap *stmtSummaryByDigestMap) ToEvictedCountDatum() [][]types.Datum {
 	return ssMap.other.ToEvictedCountDatum()
 }
 
+func (ssr *StmtSummaryReader) GetStmtEvictedOtherRow(ssbde *stmtSummaryByDigestEvicted) []types.Datum {
+	var seElement *stmtSummaryByDigestEvictedElement
+
+	ssbde.Lock()
+	if ssbde.history.Len() > 0 {
+		seElement = ssbde.history.Back().Value.(*stmtSummaryByDigestEvictedElement)
+	}
+	ssbde.Unlock()
+
+	if seElement == nil {
+		return nil
+	}
+
+	return ssr.GetStmtByDigestElementRow(seElement.otherSummary, new(stmtSummaryByDigest))
+}
 func (ssbde *stmtSummaryByDigestEvicted) toCurrentDatum() []types.Datum {
 	var seElement *stmtSummaryByDigestEvictedElement
 
