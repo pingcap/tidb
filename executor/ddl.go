@@ -249,16 +249,13 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 
 	// Store this temporary table to the session.
 	sessVars := e.ctx.GetSessionVars()
-	var localTempTables infoschema.TempTables
 	if sessVars.LocalTemporaryTables == nil {
-		localTempTables = make(infoschema.TempTables)
-	} else {
-		localTempTables = sessVars.LocalTemporaryTables.(infoschema.TempTables)
+		sessVars.LocalTemporaryTables = infoschema.NewLocalTemporaryTables()
 	}
-	if err := localTempTables.Add(tbl, s.Table.Schema); err != nil {
+	localTempTables := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+	if err := localTempTables.AddTable(dbInfo, tbl); err != nil {
 		return err
 	}
-	sessVars.LocalTemporaryTables = localTempTables
 	return nil
 }
 

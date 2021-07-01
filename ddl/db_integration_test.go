@@ -2791,6 +2791,19 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	tk.MustGetErrCode("create temporary table t(id int)", errno.ErrNotSupportedYet)
 
 	tk.MustExec("set @@tidb_enable_noop_functions = 1")
-	tk.MustExec("create temporary table t (id int)")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1105 local TEMPORARY TABLE is not supported yet, TEMPORARY will be parsed but ignored"))
+
+	// Create temporary table.
+	tk.MustExec("set @@tidb_enable_noop_functions = 1")
+	tk.MustExec("create database tmp_db")
+	tk.MustExec("use tmp_db")
+	tk.MustExec("create temporary table t1 (id int)")
+	tk.MustExec("create temporary table tmp_db.t2 (id int)")
+	tk.MustQuery("select * from t1") // No error
+	tk.MustExec("drop database tmp_db")
+	_, err = tk.Exec("select * from t1")
+	c.Assert(err, NotNil)
+	// In MySQL, drop DB does not really drop the table, it's back!
+	tk.MustExec("create database tmp_db")
+	tk.MustExec("use tmp_db")
+	tk.MustQuery("select * from t1") // No error
 }

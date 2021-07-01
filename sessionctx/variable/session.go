@@ -853,7 +853,8 @@ type SessionVars struct {
 	// EnableGlobalTemporaryTable indicates whether to enable global temporary table
 	EnableGlobalTemporaryTable bool
 
-	// LocalTemporaryTables is *infoschema.SessionLocalTables, use interface to avoid circle dependency.
+	// LocalTemporaryTables is *infoschema.LocalTemporaryTables, use interface to avoid circle dependency.
+	// It's nil if there is no local temporary table.
 	LocalTemporaryTables interface{}
 }
 

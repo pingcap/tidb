@@ -2949,8 +2949,11 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 
 	is := domain.GetDomain(s).InfoSchema()
 	// Override the infoschema if the session has temporary table.
-	if vars.LocalTemporaryTables != nil {
-		is = infoschema.OverrideWithTempTables(is, s.sessionVars.LocalTemporaryTables.(infoschema.TempTables))
+	if local := vars.LocalTemporaryTables; local != nil {
+		is = &infoschema.TemporaryTableAttachedInfoSchema{
+			InfoSchema:           is,
+			LocalTemporaryTables: local.(*infoschema.LocalTemporaryTables),
+		}
 	}
 	return is
 }

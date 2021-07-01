@@ -404,55 +404,157 @@ func GetBundle(h InfoSchema, ids []int64) *placement.Bundle {
 	return &placement.Bundle{ID: placement.GroupID(id), Rules: newRules}
 }
 
-// OverrideWithTempTables overrides the old InfoSchema and provide a new InfoSchema.
-func OverrideWithTempTables(is InfoSchema, tables TempTables) InfoSchema {
-	return &infoSchemaWithTempTables{
-		InfoSchema: is,
-		TempTables: tables,
+type schemaLocalTempSchemaTables struct {
+	tables map[string]table.Table
+}
+
+// LocalTemporaryTables store local temporary tables
+type LocalTemporaryTables struct {
+	schemaMap map[string]*schemaLocalTempSchemaTables
+	idx2table map[int64]table.Table
+}
+
+// NewLocalTemporaryTables creates a new NewLocalTemporaryTables object
+func NewLocalTemporaryTables() *LocalTemporaryTables {
+	return &LocalTemporaryTables{
+		schemaMap: make(map[string]*schemaLocalTempSchemaTables),
+		idx2table: make(map[int64]table.Table),
 	}
 }
 
-type tableWithSchema struct {
-	table.Table
-	schema model.CIStr
+// TableByName get table by name
+func (is *LocalTemporaryTables) TableByName(schema, table model.CIStr) (table.Table, bool) {
+	if tbNames, ok := is.schemaMap[schema.L]; ok {
+		if t, ok := tbNames.tables[table.L]; ok {
+			return t, true
+		}
+	}
+	return nil, false
 }
 
-// TempTables is defined for the local temporary table.
-// It stored in the session so different connection see different schema.
-type TempTables map[string]tableWithSchema
+// TableExists check if table with the name exists
+func (is *LocalTemporaryTables) TableExists(schema, table model.CIStr) (ok bool) {
+	_, ok = is.TableByName(schema, table)
+	return
+}
 
-// Add adds local temporary table to TempTables.
-func (tables TempTables) Add(tbl table.Table, schema model.CIStr) error {
-	tbInfo := tbl.Meta()
-	if _, ok := tables[tbInfo.Name.L]; ok {
-		return ErrTableExists.GenWithStackByArgs(tbInfo.Name.O)
+// TableByID get table by table id
+func (is *LocalTemporaryTables) TableByID(id int64) (tbl table.Table, ok bool) {
+	tbl, ok = is.idx2table[id]
+	return
+}
+
+// AddTable add a table
+func (is *LocalTemporaryTables) AddTable(schema *model.DBInfo, tbl table.Table) error {
+	schemaTables := is.ensureSchema(schema.Name)
+
+	tblMeta := tbl.Meta()
+	if _, ok := schemaTables.tables[tblMeta.Name.L]; ok {
+		return ErrTableExists.GenWithStackByArgs(tblMeta.Name)
 	}
-	tables[tbInfo.Name.L] = tableWithSchema{tbl, schema}
+
+	if _, ok := is.idx2table[tblMeta.ID]; ok {
+		return ErrTableExists.GenWithStackByArgs(tblMeta.Name)
+	}
+
+	schemaTables.tables[tblMeta.Name.L] = tbl
+	is.idx2table[tblMeta.ID] = tbl
+
 	return nil
 }
 
-type infoSchemaWithTempTables struct {
-	InfoSchema
-	TempTables
+// RemoveTable remove a table
+func (is *LocalTemporaryTables) RemoveTable(schema, table model.CIStr) (exist bool) {
+	tbls := is.schemaTables(schema)
+	if tbls == nil {
+		return false
+	}
+
+	oldTable, exist := tbls.tables[table.L]
+	if !exist {
+		return false
+	}
+
+	delete(tbls.tables, table.L)
+	delete(is.idx2table, oldTable.Meta().ID)
+	return true
 }
 
-// TableByName overrides the TableByName method.
-func (ts *infoSchemaWithTempTables) TableByName(schema, table model.CIStr) (table.Table, error) {
-	if tbl, ok := ts.TempTables[table.L]; ok {
-		// Not only the table name, but also the schema should match!
-		if tbl.schema.L == schema.L {
-			return tbl, nil
+// SchemaByTable get a table's schema name
+func (is *LocalTemporaryTables) SchemaByTable(tableInfo *model.TableInfo) (string, bool) {
+	if tableInfo == nil {
+		return "", false
+	}
+
+	for schema, v := range is.schemaMap {
+		if tbl, ok := v.tables[tableInfo.Name.L]; ok {
+			if tbl.Meta().ID == tableInfo.ID {
+				return schema, true
+			}
 		}
 	}
+
+	return "", false
+}
+
+func (is *LocalTemporaryTables) ensureSchema(schema model.CIStr) *schemaLocalTempSchemaTables {
+	if tbls, ok := is.schemaMap[schema.L]; ok {
+		return tbls
+	}
+
+	tbls := &schemaLocalTempSchemaTables{tables: make(map[string]table.Table)}
+	is.schemaMap[schema.L] = tbls
+	return tbls
+}
+
+func (is *LocalTemporaryTables) schemaTables(schema model.CIStr) *schemaLocalTempSchemaTables {
+	if is.schemaMap == nil {
+		return nil
+	}
+
+	if tbls, ok := is.schemaMap[schema.L]; ok {
+		return tbls
+	}
+
+	return nil
+}
+
+// TemporaryTableAttachedInfoSchema implements InfoSchema
+// Local temporary table has a loose relationship with database.
+// So when a database is dropped, its temporary tables still exist and can be return by TableByName/TableByID.
+// However SchemaByTable will return nil if database is dropped.
+type TemporaryTableAttachedInfoSchema struct {
+	InfoSchema
+	LocalTemporaryTables *LocalTemporaryTables
+}
+
+// TableByName implements InfoSchema.TableByName
+func (ts *TemporaryTableAttachedInfoSchema) TableByName(schema, table model.CIStr) (table.Table, error) {
+	if tbl, ok := ts.LocalTemporaryTables.TableByName(schema, table); ok {
+		return tbl, nil
+	}
+
 	return ts.InfoSchema.TableByName(schema, table)
 }
 
-// TableByName overrides the TableByID method.
-func (ts *infoSchemaWithTempTables) TableByID(id int64) (table.Table, bool) {
-	for _, tbl := range ts.TempTables {
-		if tbl.Meta().ID == id {
-			return tbl, true
-		}
+// TableByID implements InfoSchema.TableByID
+func (ts *TemporaryTableAttachedInfoSchema) TableByID(id int64) (table.Table, bool) {
+	if tbl, ok := ts.LocalTemporaryTables.TableByID(id); ok {
+		return tbl, true
 	}
+
 	return ts.InfoSchema.TableByID(id)
+}
+
+// SchemaByTable implements InfoSchema.SchemaByTable
+func (ts *TemporaryTableAttachedInfoSchema) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
+	if tableInfo == nil {
+		return nil, false
+	}
+
+	if schemaName, ok := ts.LocalTemporaryTables.SchemaByTable(tableInfo); ok {
+		return ts.SchemaByName(model.NewCIStr(schemaName))
+	}
+
+	return ts.InfoSchema.SchemaByTable(tableInfo)
 }
