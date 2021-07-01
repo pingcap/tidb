@@ -448,7 +448,7 @@ enable = true
 enable-internal-query = false
 
 # max number of statements kept in memory.
-max-stmt-count = 200
+max-stmt-count = 3000
 
 # max length of displayed normalized sql and sample sql.
 max-sql-length = 4096
