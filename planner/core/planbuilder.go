@@ -1145,10 +1145,7 @@ func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.T
 	return remainedPaths
 }
 
-func removeTiflashDuringStaleRead(paths, ignoredPaths []*util.AccessPath) []*util.AccessPath {
-	if len(ignoredPaths) == 0 {
-		return paths
-	}
+func removeTiflashDuringStaleRead(paths []*util.AccessPath) []*util.AccessPath {
 	remainedPaths := make([]*util.AccessPath, 0, len(paths))
 	for _, path := range paths {
 		if path.StoreType == kv.TiFlash {
