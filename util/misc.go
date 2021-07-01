@@ -26,6 +26,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -443,8 +444,8 @@ func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, autoReloa
 	if len(cert) == 0 || len(key) == 0 {
 		autoReload = true
 		tempStoragePath := config.GetGlobalConfig().TempStoragePath
-		cert = tempStoragePath + "/cert.pem"
-		key = tempStoragePath + "/key.pem"
+		cert = filepath.Join(tempStoragePath, "/cert.pem")
+		key = filepath.Join(tempStoragePath, "/key.pem")
 		err = createTLSCertificates(cert, key)
 		if err != nil {
 			logutil.BgLogger().Warn("TLS Certificate creation failed", zap.Error(err))
