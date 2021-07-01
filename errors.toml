@@ -1166,6 +1166,11 @@ error = '''
 `%s` is unsupported on temporary tables.
 '''
 
+["planner:8007"]
+error = '''
+`drop global temporary table` can only drop global temporary table
+'''
+
 ["planner:8108"]
 error = '''
 Unsupported type %T
@@ -1214,6 +1219,11 @@ In aggregated query without GROUP BY, expression #%d of SELECT list contains non
 ["planner:8132"]
 error = '''
 Feature '%s' is not supported when security enhanced mode is enabled
+'''
+
+["planner:8135"]
+error = '''
+invalid as of timestamp: %s
 '''
 
 ["privilege:1141"]

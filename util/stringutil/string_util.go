@@ -168,18 +168,6 @@ func CompilePatternInner(pattern string, escape byte) (patWeights []rune, patTyp
 			if i < lenRunes-1 {
 				i++
 				r = runes[i]
-				if r == escapeRune || r == '_' || r == '%' {
-					// Valid escape.
-				} else {
-					// Invalid escape, fall back to escape byte.
-					// mysql will treat escape character as the origin value even
-					// the escape sequence is invalid in Go or C.
-					// e.g., \m is invalid in Go, but in MySQL we will get "m" for select '\m'.
-					// Following case is correct just for escape \, not for others like +.
-					// TODO: Add more checks for other escapes.
-					i--
-					r = escapeRune
-				}
 			}
 		case '_':
 			// %_ => _%

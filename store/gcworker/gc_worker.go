@@ -235,6 +235,7 @@ func createSession(store kv.Storage) session.Session {
 		}
 		// Disable privilege check for gc worker session.
 		privilege.BindPrivilegeManager(se, nil)
+		se.GetSessionVars().CommonGlobalLoaded = true
 		se.GetSessionVars().InRestrictedSQL = true
 		return se
 	}
