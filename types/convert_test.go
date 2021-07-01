@@ -899,7 +899,7 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
-		prefix, _ := getValidFloatPrefix(sc, tt.origin, false)
+		prefix, _ := getValidFloatPrefix(sc, tt.origin, false, false)
 		c.Assert(prefix, Equals, tt.valid)
 		_, err := strconv.ParseFloat(prefix, 64)
 		c.Assert(err, IsNil)
