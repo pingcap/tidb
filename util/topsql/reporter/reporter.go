@@ -62,25 +62,31 @@ type dataPoints struct {
 	CPUTimeMsTotal uint64
 }
 
-// cpuTimeSort is used to sort TopSQL records by total CPU time
-type cpuTimeSort struct {
-	Key            string
-	SQLDigest      []byte
-	PlanDigest     []byte
-	CPUTimeMsTotal uint64 // The sorting field
-}
+type dataPointsOrderByCPUTime []*dataPoints
 
-type cpuTimeSortSlice []cpuTimeSort
-
-func (t cpuTimeSortSlice) Len() int {
+func (t dataPointsOrderByCPUTime) Len() int {
 	return len(t)
 }
 
-func (t cpuTimeSortSlice) Less(i, j int) bool {
+func (t dataPointsOrderByCPUTime) Less(i, j int) bool {
 	// We need find the kth largest value, so here should use >
 	return t[i].CPUTimeMsTotal > t[j].CPUTimeMsTotal
 }
-func (t cpuTimeSortSlice) Swap(i, j int) {
+func (t dataPointsOrderByCPUTime) Swap(i, j int) {
+	t[i], t[j] = t[j], t[i]
+}
+
+type sqlCPUTimeRecordSlice []tracecpu.SQLCPUTimeRecord
+
+func (t sqlCPUTimeRecordSlice) Len() int {
+	return len(t)
+}
+
+func (t sqlCPUTimeRecordSlice) Less(i, j int) bool {
+	// We need find the kth largest value, so here should use >
+	return t[i].CPUTimeMs > t[j].CPUTimeMs
+}
+func (t sqlCPUTimeRecordSlice) Swap(i, j int) {
 	t[i], t[j] = t[j], t[i]
 }
 
@@ -231,16 +237,45 @@ func encodeKey(buf *bytes.Buffer, sqlDigest, planDigest []byte) string {
 	return buf.String()
 }
 
-// doCollect uses a hashmap to store records in every second, and evict when necessary.
+func getTopNRecords(records []tracecpu.SQLCPUTimeRecord) (topN, shouldEvict []tracecpu.SQLCPUTimeRecord) {
+	maxStmt := int(variable.TopSQLVariable.MaxStatementCount.Load())
+	if len(records) <= maxStmt {
+		return records, nil
+	}
+	if err := quickselect.QuickSelect(sqlCPUTimeRecordSlice(records), maxStmt); err != nil {
+		//	skip eviction
+		return records, nil
+	}
+	return records[:maxStmt], records[maxStmt:]
+}
+
+func getTopNDataPoints(records []*dataPoints) (topN, shouldEvict []*dataPoints) {
+	maxStmt := int(variable.TopSQLVariable.MaxStatementCount.Load())
+	if len(records) <= maxStmt {
+		return records, nil
+	}
+	if err := quickselect.QuickSelect(dataPointsOrderByCPUTime(records), maxStmt); err != nil {
+		//	skip eviction
+		return records, nil
+	}
+	return records[:maxStmt], records[maxStmt:]
+}
+
+// doCollect collects top N records of each round into collectTarget, and evict the data that is not in top N.
 func (tsr *RemoteTopSQLReporter) doCollect(
 	collectTarget map[string]*dataPoints, timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
 	defer util.Recover("top-sql", "doCollect", nil, false)
+
+	// Get top N records of each round records.
+	var evicted []tracecpu.SQLCPUTimeRecord
+	records, evicted = getTopNRecords(records)
 
 	keyBuf := bytes.NewBuffer(make([]byte, 0, 64))
 	listCapacity := int(variable.TopSQLVariable.ReportIntervalSeconds.Load()/variable.TopSQLVariable.PrecisionSeconds.Load() + 1)
 	if listCapacity < 1 {
 		listCapacity = 1
 	}
+	// Collect the top N records to collectTarget for each round.
 	for _, record := range records {
 		key := encodeKey(keyBuf, record.SQLDigest, record.PlanDigest)
 		entry, exist := collectTarget[key]
@@ -261,37 +296,15 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 		entry.CPUTimeMsTotal += uint64(record.CPUTimeMs)
 	}
 
-	// evict records according to `MaxStatementCount` variable.
-	// TODO: Better to pass in the variable in the constructor, instead of referencing directly.
-	maxStmt := int(variable.TopSQLVariable.MaxStatementCount.Load())
-	if len(collectTarget) <= maxStmt {
-		return
-	}
-
-	// find the max CPUTimeMsTotal that should be evicted
-	digestCPUTimeList := make([]cpuTimeSort, len(collectTarget))
-	idx := 0
-	for key, value := range collectTarget {
-		digestCPUTimeList[idx] = cpuTimeSort{
-			Key:            key,
-			SQLDigest:      value.SQLDigest,
-			PlanDigest:     value.PlanDigest,
-			CPUTimeMsTotal: value.CPUTimeMsTotal,
-		}
-		idx++
-	}
-
-	// QuickSelect will only return error when the second parameter is out of range
-	if err := quickselect.QuickSelect(cpuTimeSortSlice(digestCPUTimeList), maxStmt); err != nil {
-		//	skip eviction
-		return
-	}
-
-	itemsToEvict := digestCPUTimeList[maxStmt:]
+	// Evict redundant data.
 	normalizedSQLMap := tsr.normalizedSQLMap.Load().(*sync.Map)
 	normalizedPlanMap := tsr.normalizedPlanMap.Load().(*sync.Map)
-	for _, evict := range itemsToEvict {
-		delete(collectTarget, evict.Key)
+	for _, evict := range evicted {
+		key := encodeKey(keyBuf, evict.SQLDigest, evict.PlanDigest)
+		_, ok := collectTarget[key]
+		if ok {
+			continue
+		}
 		_, loaded := normalizedSQLMap.LoadAndDelete(string(evict.SQLDigest))
 		if loaded {
 			tsr.sqlMapLength.Add(-1)
@@ -306,11 +319,13 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 // takeDataAndSendToReportChan takes out (resets) collected data. These data will be send to a report channel
 // for reporting later.
 func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *map[string]*dataPoints) {
-	data := reportData{
-		collectedData:     *collectedDataPtr,
-		normalizedSQLMap:  tsr.normalizedSQLMap.Load().(*sync.Map),
-		normalizedPlanMap: tsr.normalizedPlanMap.Load().(*sync.Map),
+	// Fetch TopN dataPoints.
+	records := make([]*dataPoints, 0, len(*collectedDataPtr))
+	for _, v := range *collectedDataPtr {
+		records = append(records, v)
 	}
+	normalizedSQLMap := tsr.normalizedSQLMap.Load().(*sync.Map)
+	normalizedPlanMap := tsr.normalizedPlanMap.Load().(*sync.Map)
 
 	// Reset data for next report.
 	*collectedDataPtr = make(map[string]*dataPoints)
@@ -318,6 +333,20 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *m
 	tsr.normalizedPlanMap.Store(&sync.Map{})
 	tsr.sqlMapLength.Store(0)
 	tsr.planMapLength.Store(0)
+
+	// Evict redundant data.
+	var evicted []*dataPoints
+	records, evicted = getTopNDataPoints(records)
+	for _, evict := range evicted {
+		normalizedSQLMap.LoadAndDelete(string(evict.SQLDigest))
+		normalizedPlanMap.LoadAndDelete(string(evict.PlanDigest))
+	}
+
+	data := reportData{
+		collectedData:     records,
+		normalizedSQLMap:  normalizedSQLMap,
+		normalizedPlanMap: normalizedPlanMap,
+	}
 
 	// Send to report channel. When channel is full, data will be dropped.
 	select {
@@ -330,7 +359,7 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *m
 
 // reportData contains data that reporter sends to the agent
 type reportData struct {
-	collectedData     map[string]*dataPoints
+	collectedData     []*dataPoints
 	normalizedSQLMap  *sync.Map
 	normalizedPlanMap *sync.Map
 }
