@@ -9,7 +9,7 @@ var (
 			Namespace: "tidb",
 			Subsystem: "topsql",
 			Name:      "ignored_total",
-			Help:      "Counter of top-sql ignored register-sql, register-plan, collect-data and report-data, normally it should be 0.",
+			Help:      "Counter of ignored top-sql metrics (register-sql, register-plan, collect-data and report-data), normally it should be 0.",
 		}, []string{LblType})
 
 	TopSQLReportDurationHistogram = prometheus.NewHistogramVec(
