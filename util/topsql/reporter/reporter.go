@@ -129,12 +129,15 @@ func NewRemoteTopSQLReporter(client ReportClient) *RemoteTopSQLReporter {
 }
 
 var (
-	registerSQLFail               = metrics.TopSQLRegisterFail.WithLabelValues("sql")
-	registerPlanFail              = metrics.TopSQLRegisterFail.WithLabelValues("plan")
-	ignoreCollectCnt              = metrics.TopSQLIgnoreCnt.WithLabelValues("collect")
-	ignoreReportCnt               = metrics.TopSQLIgnoreCnt.WithLabelValues("report")
+	ignoreRegisterSQLCnt          = metrics.TopSQLIgnoredCounter.WithLabelValues("register-sql")
+	ignoreRegisterPlanCnt         = metrics.TopSQLIgnoredCounter.WithLabelValues("register-plan")
+	ignoreCollectCPUTimeCnt       = metrics.TopSQLIgnoredCounter.WithLabelValues("collect-data")
+	ignoreReportDataCnt           = metrics.TopSQLIgnoredCounter.WithLabelValues("report-data")
 	reportDurationSuccHistogram   = metrics.TopSQLReportDurationHistogram.WithLabelValues("OK")
 	reportDurationFailedHistogram = metrics.TopSQLReportDurationHistogram.WithLabelValues("Error")
+	topSQLReportRecordCnt         = metrics.TopSQLReportDataTotalCounter.WithLabelValues("record")
+	topSQLReportSQLCnt            = metrics.TopSQLReportDataTotalCounter.WithLabelValues("sql")
+	topSQLReportPlanCnt           = metrics.TopSQLReportDataTotalCounter.WithLabelValues("plan")
 )
 
 // RegisterSQL registers a normalized SQL string to a SQL digest.
@@ -145,7 +148,7 @@ var (
 // It should also return immediately, and do any CPU-intensive job asynchronously.
 func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL string) {
 	if tsr.sqlMapLength.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
-		registerSQLFail.Inc()
+		ignoreRegisterSQLCnt.Inc()
 		return
 	}
 	m := tsr.normalizedSQLMap.Load().(*sync.Map)
@@ -160,7 +163,7 @@ func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL str
 // This function is thread-safe and efficient.
 func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedBinaryPlan string) {
 	if tsr.planMapLength.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
-		registerPlanFail.Inc()
+		ignoreRegisterPlanCnt.Inc()
 		return
 	}
 	m := tsr.normalizedPlanMap.Load().(*sync.Map)
@@ -184,7 +187,7 @@ func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQ
 	}:
 	default:
 		// ignore if chan blocked
-		ignoreCollectCnt.Inc()
+		ignoreCollectCPUTimeCnt.Inc()
 	}
 }
 
@@ -321,7 +324,7 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *m
 	case tsr.reportDataChan <- data:
 	default:
 		// ignore if chan blocked
-		ignoreReportCnt.Inc()
+		ignoreReportDataCnt.Inc()
 	}
 }
 

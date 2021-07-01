@@ -119,6 +119,7 @@ func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records m
 			return err
 		}
 	}
+	topSQLReportRecordCnt.Add(float64(len(records)))
 	// See https://pkg.go.dev/google.golang.org/grpc#ClientConn.NewStream for how to avoid leaking the stream
 	_, err = stream.CloseAndRecv()
 	return err
@@ -131,7 +132,9 @@ func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, sqlMap *sync.Ma
 	if err != nil {
 		return err
 	}
+	cnt := 0
 	sqlMap.Range(func(key, value interface{}) bool {
+		cnt++
 		sqlMeta := &tipb.SQLMeta{
 			SqlDigest:     []byte(key.(string)),
 			NormalizedSql: value.(string),
@@ -145,6 +148,7 @@ func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, sqlMap *sync.Ma
 	if err != nil {
 		return err
 	}
+	topSQLReportSQLCnt.Add(float64(cnt))
 	_, err = stream.CloseAndRecv()
 	return err
 }
@@ -156,12 +160,14 @@ func (r *GRPCReportClient) sendBatchPlanMeta(ctx context.Context, planMap *sync.
 	if err != nil {
 		return err
 	}
+	cnt := 0
 	planMap.Range(func(key, value interface{}) bool {
 		planDecoded, errDecode := r.decodePlan(value.(string))
 		if errDecode != nil {
 			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(errDecode))
 			return true
 		}
+		cnt++
 		planMeta := &tipb.PlanMeta{
 			PlanDigest:     []byte(key.(string)),
 			NormalizedPlan: planDecoded,
@@ -175,6 +181,7 @@ func (r *GRPCReportClient) sendBatchPlanMeta(ctx context.Context, planMap *sync.
 	if err != nil {
 		return err
 	}
+	topSQLReportPlanCnt.Add(float64(cnt))
 	_, err = stream.CloseAndRecv()
 	return err
 }
