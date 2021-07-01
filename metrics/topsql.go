@@ -17,7 +17,7 @@ var (
 			Namespace: "tidb",
 			Subsystem: "topsql",
 			Name:      "report_duration_seconds",
-			Help:      "Bucket histogram of reporting gRPC duration to the top-sql agent",
+			Help:      "Bucket histogram of reporting time (s) to the top-sql agent",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblResult})
 
@@ -26,6 +26,6 @@ var (
 			Namespace: "tidb",
 			Subsystem: "topsql",
 			Name:      "report_data_total",
-			Help:      "Counter of top-sql report records/sql/plan data.",
+			Help:      "Counter of top-sql reported records/sql/plan.",
 		}, []string{LblType})
 )
