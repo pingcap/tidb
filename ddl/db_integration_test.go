@@ -2813,4 +2813,22 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	_, err = tk.Exec("insert into overlap values (1)") // column not match
 	c.Assert(err, NotNil)
 	tk.MustExec("insert into overlap values (1, 1)")
+
+	// Stale read see the local temporary table but can't read on it.
+	tk.MustExec("START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3)")
+	tk.MustGetErrMsg("select * from overlap", "can not stale read temporary table")
+	tk.MustExec("rollback")
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	// Considering snapshot, local temporary table is always visible.
+	tk.MustExec("set @@tidb_snapshot = '2016-01-01 15:04:05.999999'")
+	tk.MustExec("select * from overlap")
 }

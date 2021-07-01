@@ -1419,7 +1419,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	}()
 
 	if execOption.SnapshotTS != 0 {
-		se.sessionVars.SnapshotInfoschema, err = domain.GetDomain(s).GetSnapshotInfoSchema(execOption.SnapshotTS)
+		se.sessionVars.SnapshotInfoschema, err = getSnapshotInfoSchema(s, execOption.SnapshotTS)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1919,7 +1919,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		is, err = domain.GetDomain(s).GetSnapshotInfoSchema(snapshotTS)
+		is, err = getSnapshotInfoSchema(s, snapshotTS)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -2074,7 +2074,7 @@ func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 	txn.SetOption(kv.IsStalenessReadOnly, true)
 	txn.SetOption(kv.TxnScope, txnScope)
 	s.txn.changeInvalidToValid(txn)
-	is, err := domain.GetDomain(s).GetSnapshotInfoSchema(txn.StartTS())
+	is, err := getSnapshotInfoSchema(s, txn.StartTS())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2949,13 +2949,28 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 
 	is := domain.GetDomain(s).InfoSchema()
 	// Override the infoschema if the session has temporary table.
-	if local := vars.LocalTemporaryTables; local != nil {
-		is = &infoschema.TemporaryTableAttachedInfoSchema{
-			InfoSchema:           is,
-			LocalTemporaryTables: local.(*infoschema.LocalTemporaryTables),
-		}
+	return wrapWithTemporaryTable(s, is)
+}
+
+func getSnapshotInfoSchema(s sessionctx.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {
+	is, err := domain.GetDomain(s).GetSnapshotInfoSchema(snapshotTS)
+	if err != nil {
+		return nil, err
 	}
-	return is
+	// Set snapshot does not affect the witness of the local temporary table.
+	// The session always see the latest temporary tables.
+	return wrapWithTemporaryTable(s, is), nil
+}
+
+func wrapWithTemporaryTable(s sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
+	local := s.GetSessionVars().LocalTemporaryTables
+	if local == nil {
+		return is
+	}
+	return &infoschema.TemporaryTableAttachedInfoSchema{
+		InfoSchema:           is,
+		LocalTemporaryTables: local.(*infoschema.LocalTemporaryTables),
+	}
 }
 
 func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
