@@ -16,6 +16,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -2619,6 +2620,66 @@ func (s *testSerialDBSuite1) TestAutoIncrementTableOption(c *C) {
 	tk.MustExec("alter table t auto_increment = 12345678901234567890;")
 	tk.MustExec("insert into t values ();")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("12345678901234567890"))
+}
+
+func (s *testIntegrationSuite3) TestAutoIncrementForce(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists auto_inc_force;")
+	tk.MustExec("create database auto_inc_force;")
+	tk.MustExec("use auto_inc_force;")
+	getNextGlobalID := func() uint64 {
+		gidStr := tk.MustQuery("show table t next_row_id").Rows()[0][3]
+		gid, err := strconv.ParseUint(gidStr.(string), 10, 64)
+		c.Assert(err, IsNil)
+		return gid
+	}
+	// rebase _tidb_row_id.
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1),(2);")
+	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("1 1", "2 2"))
+	tk.MustExec("alter table t force auto_increment = 1;")
+	c.Assert(getNextGlobalID(), Equals, uint64(1))
+	// inserting new rows can overwrite the existing data.
+	tk.MustExec("insert into t values (3);")
+	tk.MustExec("insert into t values (3);")
+	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("3 1", "3 2"))
+
+	// rebase auto_increment.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int primary key auto_increment, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("insert into t values (100000000, 1);")
+	tk.MustExec("delete from t where a = 100000000;")
+	c.Assert(getNextGlobalID(), Greater, uint64(100000000))
+	tk.MustExec("alter table t /*T![force_inc] force */ auto_increment = 2;")
+	c.Assert(getNextGlobalID(), Equals, uint64(2))
+	tk.MustExec("insert into t(b) values (2);")
+	tk.MustQuery("select a, b from t;").Check(testkit.Rows("1 1", "2 2"))
+
+	// rebase auto_random.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a bigint primary key auto_random(5));")
+	tk.MustExec("insert into t values ();")
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+	tk.MustExec("insert into t values (100000000);")
+	tk.MustExec("delete from t where a = 100000000;")
+	c.Assert(getNextGlobalID(), Greater, uint64(100000000))
+	tk.MustExec("alter table t force auto_random_base = 2;")
+	c.Assert(getNextGlobalID(), Equals, uint64(2))
+	tk.MustExec("insert into t values ();")
+	tk.MustQuery("select (a & 3) from t order by 1;").Check(testkit.Rows("1", "2"))
+
+	// change next_global_id.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a bigint primary key auto_increment);")
+	tk.MustExec("insert into t values (1);")
+	bases := []uint64{1, 65535, 10, math.MaxUint64, math.MaxInt64 + 1, 1, math.MaxUint64, math.MaxInt64, 2}
+	for _, b := range bases {
+		tk.MustExec(fmt.Sprintf("alter table t force auto_increment = %d;", b))
+		c.Assert(getNextGlobalID(), Equals, b)
+	}
+	tk.MustExec("insert into t values ();")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("1", "2"))
 }
 
 func (s *testIntegrationSuite3) TestIssue20490(c *C) {
