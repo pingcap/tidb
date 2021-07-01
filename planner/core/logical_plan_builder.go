@@ -4093,9 +4093,13 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 	p := LogicalMemTable{
 		DBName:    dbName,
 		TableInfo: tableInfo,
+		Columns:   make([]*model.ColumnInfo, len(tableInfo.Columns)),
 	}.Init(b.ctx, b.getSelectOffset())
 	p.SetSchema(schema)
 	p.names = names
+	for i, col := range tableInfo.Columns {
+		p.Columns[i] = col
+	}
 
 	// Some memory tables can receive some predicates
 	switch dbName.L {

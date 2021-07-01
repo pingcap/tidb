@@ -2110,23 +2110,18 @@ func (e *stmtSummaryTableRetriever) retrieve(ctx context.Context, sctx sessionct
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
 		isSuper = pm.RequestVerificationWithUser("", "", "", mysql.SuperPriv, user)
 	}
-	reader := &stmtsummary.StmtSummaryReader{
-		User:    user,
-		IsSuper: isSuper,
-		Columns: e.columns,
-	}
 
 	var err error
+	var instanceAddr string
 	switch e.table.Name.O {
 	case infoschema.ClusterTableStatementsSummary,
-		infoschema.ClusterTableStatementsSummaryHistory,
-		infoschema.ClusterTableStatementsSummaryEvicted:
-		reader.InstanceAddr, err = infoschema.GetInstanceAddr(sctx)
+		infoschema.ClusterTableStatementsSummaryHistory:
+		instanceAddr, err = infoschema.GetInstanceAddr(sctx)
 		if err != nil {
 			return nil, err
 		}
 	}
-
+	reader := stmtsummary.NewStmtSummaryReader(user, isSuper, e.columns, instanceAddr)
 	var rows [][]types.Datum
 	switch e.table.Name.O {
 	case infoschema.TableStatementsSummary,
@@ -2135,9 +2130,6 @@ func (e *stmtSummaryTableRetriever) retrieve(ctx context.Context, sctx sessionct
 	case infoschema.TableStatementsSummaryHistory,
 		infoschema.ClusterTableStatementsSummaryHistory:
 		rows = reader.GetAllStmtSummaryHistoryRows(stmtsummary.StmtSummaryByDigestMap)
-	case infoschema.TableStatementsSummaryEvicted,
-		infoschema.ClusterTableStatementsSummaryEvicted:
-		rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
 	}
 
 	return rows, nil

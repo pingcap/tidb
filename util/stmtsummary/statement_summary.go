@@ -345,6 +345,17 @@ type StmtSummaryReader struct {
 	columnValueFactories []columnValueFactory
 }
 
+func NewStmtSummaryReader(user *auth.UserIdentity, isSuper bool, cols []*model.ColumnInfo, instanceAddr string) *StmtSummaryReader {
+	reader := &StmtSummaryReader{
+		User:         user,
+		IsSuper:      isSuper,
+		Columns:      cols,
+		InstanceAddr: instanceAddr,
+	}
+	reader.initialize()
+	return reader
+}
+
 func (ssr *StmtSummaryReader) initialize() {
 	ssr.columnValueFactories = make([]columnValueFactory, len(ssr.Columns))
 	for i, col := range ssr.Columns {
@@ -363,7 +374,6 @@ func (ssr *StmtSummaryReader) initialize() {
 }
 
 func (ssr *StmtSummaryReader) GetAllStmtSummaryRows(ssMap *stmtSummaryByDigestMap) [][]types.Datum {
-	ssr.initialize()
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
 	beginTime := ssMap.beginTimeForCurInterval
@@ -384,20 +394,19 @@ func (ssr *StmtSummaryReader) GetAllStmtSummaryRows(ssMap *stmtSummaryByDigestMa
 }
 
 func (ssr *StmtSummaryReader) GetAllStmtSummaryHistoryRows(ssMap *stmtSummaryByDigestMap) [][]types.Datum {
-	historySize := ssMap.historySize()
-
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
 	other := ssMap.other
 	ssMap.Unlock()
 
+	historySize := ssMap.historySize()
 	rows := make([][]types.Datum, 0, len(values)*historySize)
 	for _, value := range values {
 		records := ssr.GetStmtByDigestHistoryRow(value.(*stmtSummaryByDigest), historySize)
 		rows = append(rows, records...)
 	}
 
-	otherDatum := other.toHistoryDatum(historySize)
+	otherDatum := ssr.GetStmtEvictedOtherHistoryRow(other, historySize)
 	rows = append(rows, otherDatum...)
 	return rows
 }

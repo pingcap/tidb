@@ -241,6 +241,20 @@ func (ssbde *stmtSummaryByDigestEvicted) toCurrentDatum() []types.Datum {
 	return seElement.toDatum()
 }
 
+func (ssr *StmtSummaryReader) GetStmtEvictedOtherHistoryRow(ssbde *stmtSummaryByDigestEvicted, historySize int) [][]types.Datum {
+	// Collect all history summaries to an array.
+	ssbde.Lock()
+	seElements := ssbde.collectHistorySummaries(historySize)
+	ssbde.Unlock()
+	rows := make([][]types.Datum, 0, len(seElements))
+
+	ssbd := new(stmtSummaryByDigest)
+	for _, seElement := range seElements {
+		rows = append(rows, ssr.GetStmtByDigestElementRow(seElement.otherSummary, ssbd))
+	}
+	return rows
+}
+
 func (ssbde *stmtSummaryByDigestEvicted) toHistoryDatum(historySize int) [][]types.Datum {
 	// Collect all history summaries to an array.
 	ssbde.Lock()
