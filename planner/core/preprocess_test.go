@@ -236,6 +236,10 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE TABLE t IGNORE SELECT * FROM u UNION SELECT * from v", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
 		{"CREATE TABLE t (m int) REPLACE AS (SELECT * FROM u) UNION (SELECT * FROM v)", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
 
+		// issue 24309
+		{"SELECT * FROM t INTO OUTFILE 'ttt' UNION SELECT * FROM u", false, core.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")},
+		{"(SELECT * FROM t INTO OUTFILE 'ttt') UNION SELECT * FROM u", false, core.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")},
+
 		{"select * from ( select 1 ) a, (select 2) a;", false, core.ErrNonUniqTable},
 		{"select * from ( select 1 ) a, (select 2) b, (select 3) a;", false, core.ErrNonUniqTable},
 		{"select * from ( select 1 ) a, (select 2) b, (select 3) A;", false, core.ErrNonUniqTable},
@@ -336,4 +340,30 @@ func (s *testValidatorSuite) TestForeignKey(c *C) {
 	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (b) REFERENCES t2 (d)", false, nil)
 
 	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (c) REFERENCES test2.t (e)", false, nil)
+}
+
+func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
+	defer testleak.AfterTest(c)()
+	defer func() {
+		s.dom.Close()
+		s.store.Close()
+	}()
+
+	ctx := context.Background()
+	execSQLList := []string{
+		"use test",
+		"set tidb_enable_global_temporary_table=true",
+		"create table tb(id int);",
+		"create global temporary table temp(id int) on commit delete rows;",
+		"create global temporary table temp1(id int) on commit delete rows;",
+	}
+	for _, execSQL := range execSQLList {
+		_, err := s.se.Execute(ctx, execSQL)
+		c.Assert(err, IsNil)
+	}
+	s.is = s.dom.InfoSchema()
+	s.runSQL(c, "drop global temporary table tb;", false, core.ErrDropTableOnTemporaryTable)
+	s.runSQL(c, "drop global temporary table temp", false, nil)
+	s.runSQL(c, "drop global temporary table test.tb;", false, core.ErrDropTableOnTemporaryTable)
+	s.runSQL(c, "drop global temporary table test.temp1", false, nil)
 }

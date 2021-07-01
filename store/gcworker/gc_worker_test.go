@@ -42,13 +42,13 @@ import (
 	"github.com/tikv/client-go/v2/mockstore/mocktikv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/oracle/oracles"
-	"github.com/tikv/client-go/v2/retry"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	pd "github.com/tikv/pd/client"
 )
 
 func TestT(t *testing.T) {
+	tikv.EnableFailpoints()
 	TestingT(t)
 }
 
@@ -944,7 +944,7 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionEnlargeCausedByRegionM
 			mCluster.Merge(s.initRegion.regionID, region2)
 			regionMeta, _ := mCluster.GetRegion(s.initRegion.regionID)
 			_, err := s.tikvStore.GetRegionCache().OnRegionEpochNotMatch(
-				retry.NewNoopBackoff(context.Background()),
+				tikv.NewNoopBackoff(context.Background()),
 				&tikv.RPCContext{Region: regionID, Store: &tikv.Store{}},
 				[]*metapb.Region{regionMeta})
 			c.Assert(err, IsNil)
