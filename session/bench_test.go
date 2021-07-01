@@ -1623,7 +1623,7 @@ func callerName(f func(b *testing.B)) string {
 
 var (
 	date       = flag.String("date", "", " commit date")
-	commitHash = flag.String("commit", "0ec8f2d9f", "brief git commit hash")
+	commitHash = flag.String("commit", "unknown", "brief git commit hash")
 	outfile    = flag.String("outfile", "bench-daily.json", "specify the output file")
 )
 
