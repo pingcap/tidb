@@ -3088,6 +3088,21 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 	return resultList
 }
 
+func (b *PlanBuilder) addAliasName(selectFields []*ast.SelectField, p LogicalPlan) (resultList []*ast.SelectField, err error) {
+	if len(selectFields) != len(p.OutputNames()) {
+		return nil, errors.Errorf("lengths of selectFields and OutputNames are not equal(%d, %d)",
+			len(selectFields), len(p.OutputNames()))
+	}
+	for i, field := range selectFields {
+		newField := *field
+		if newField.AsName.L == "" {
+			newField.AsName = p.OutputNames()[i].ColName
+		}
+		resultList = append(resultList, &newField)
+	}
+	return resultList, nil
+}
+
 func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) {
 	var sb strings.Builder
 	ctx := format.NewRestoreCtx(0, &sb)
@@ -3428,6 +3443,17 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, totalMap, nil, false, sel.OrderBy != nil)
 	if err != nil {
 		return nil, err
+	}
+
+	if b.capFlag&canExpandAST != 0 {
+		// To be compabitle with MySQL, we add alias name for each select field when creating view.
+		// This function assumes one to one mapping between sel.Fields.Fields and p.OutputNames().
+		// So we do this step right after Projection is built.
+		sel.Fields.Fields, err = b.addAliasName(sel.Fields.Fields, p)
+		if err != nil {
+			return nil, err
+		}
+		originalFields = sel.Fields.Fields
 	}
 
 	if sel.Having != nil {
