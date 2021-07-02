@@ -229,7 +229,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	} else {
 		s.connectionIDAllocator = &util.SimpleConnIDAllocator{}
 	}
-	s.connectionIDAllocator.Init(nil) // set `serverIDGetter` in domain.
+	s.connectionIDAllocator.Init()
 
 	setTxnScope()
 	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)

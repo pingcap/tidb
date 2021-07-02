@@ -27,17 +27,34 @@ import (
 	"go.uber.org/zap"
 )
 
+//////////////////////////////////// Class Diagram //////////////////////////////////////
+//                                                                                     //
+//  +----------+      +-----------------------+         +-----------------------+      //
+//  |  Server  | ---> | ConnectionIDAllocator | <<--+-- | GlobalConnIDAllocator | --+  //
+//  +----------+      +-----------------------+     |   +-----------------------+   |  //
+//                                                  +-- | SimpleConnIDAllocator |   |  //
+//                                                      +----------+------------+   |  //
+//                                                                 |                |  //
+//                                                                 V                |  //
+//                                  +--------+          +----------------------+    |  //
+//                                  | IDPool | <<--+--  |     AutoIncPool      | <--+  //
+//                                  +--------+     |    +----------------------+    |  //
+//                                                 +--  | LockFreeCircularPool | <--+  //
+//                                                      +----------------------+       //
+//                                                                                     //
+/////////////////////////////////////////////////////////////////////////////////////////
+
 type serverIDGetterFn func() uint64
 
 // ConnectionIDAllocator allocates connection IDs.
 type ConnectionIDAllocator interface {
 	// Init initiates the allocator.
-	Init(serverIDGetter serverIDGetterFn)
+	Init()
 	// SetServerIDGetter set serverIDGetter to allocator.
 	SetServerIDGetter(serverIDGetter serverIDGetterFn)
 	// NextID returns next connection ID.
 	NextID() uint64
-	// Release releases connection ID to pool.
+	// Release releases connection ID to allocator.
 	Release(connectionID uint64)
 }
 
@@ -52,7 +69,7 @@ type SimpleConnIDAllocator struct {
 }
 
 // Init implements ConnectionIDAllocator interface.
-func (a *SimpleConnIDAllocator) Init(_ serverIDGetterFn) {
+func (a *SimpleConnIDAllocator) Init() {
 	a.pool.Init(64)
 }
 
@@ -179,9 +196,7 @@ func (g *GlobalConnIDAllocator) UpgradeTo64() {
 const LocalConnIDAllocator64TryCount = 10
 
 // Init initiate members.
-func (g *GlobalConnIDAllocator) Init(serverIDGetter serverIDGetterFn) {
-	g.serverIDGetter = serverIDGetter
-
+func (g *GlobalConnIDAllocator) Init() {
 	g.local32.InitExt(LocalConnIDBits32, math.MaxUint32)
 	g.local64.InitExt(LocalConnIDBits64, true, LocalConnIDAllocator64TryCount)
 
@@ -369,8 +384,7 @@ func (p *LockFreeCircularPool) Init(sizeInBits uint32) {
 }
 
 // InitExt initializes LockFreeCircularPool with more parameters.
-//   fillCount fills pool with [1, min(fillCount, 1<<(sizeInBits-1)].
-//   pass "math.MaxUint32" to fillCount to fulfill the pool.
+// fillCount: fills pool with [1, min(fillCount, 1<<(sizeInBits-1)]. Pass "math.MaxUint32" to fulfill the pool.
 func (p *LockFreeCircularPool) InitExt(sizeInBits uint32, fillCount uint32) {
 	p.cap = 1 << sizeInBits
 	p.slots = make([]lockFreePoolItem, p.cap)
