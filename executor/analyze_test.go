@@ -341,13 +341,20 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	}
 	opts := make(map[ast.AnalyzeOptionType]uint64)
 	opts[ast.AnalyzeOptNumSamples] = 20
+	// Get a start_ts later than the above inserts.
+	tk.MustExec("begin")
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	ts := txn.StartTS()
+	tk.MustExec("commit")
 	mockExec := &executor.AnalyzeTestFastExec{
 		Ctx:         tk.Se.(sessionctx.Context),
 		HandleCols:  handleCols,
 		ColsInfo:    colsInfo,
 		IdxsInfo:    indicesInfo,
 		Concurrency: 1,
-		TableID: core.AnalyzeTableID{
+		Snapshot:    ts,
+		TableID: statistics.AnalyzeTableID{
 			PartitionID: -1,
 			TableID:     tbl.(table.PhysicalTable).GetPhysicalID(),
 		},
@@ -599,6 +606,7 @@ func (s *testSuite1) TestAnalyzeIncrementalStreaming(c *C) {
 	s.testAnalyzeIncremental(tk, c)
 }
 
+// nolint:unused
 func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1038,7 +1046,7 @@ func (s *testSuite1) TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColu
 	tk.MustQuery("show stats_topn where table_name = 'sampling_index_prefix_col' and column_name = 'idx'").Check(testkit.Rows("test sampling_index_prefix_col  idx 1 a 3"))
 }
 
-func (s *testSuite2) TestAnalyzeSamplingWorkPanic(c *C) {
+func (s *testSerialSuite2) TestAnalyzeSamplingWorkPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
@@ -1055,4 +1063,50 @@ func (s *testSuite2) TestAnalyzeSamplingWorkPanic(c *C) {
 	err = tk.ExecToErr("analyze table t")
 	c.Assert(err, NotNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeSamplingMergeWorkerPanic"), IsNil)
+}
+
+func (s *testSuite10) TestSnapshotAnalyze(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, index index_a(a))")
+	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	tid := tblInfo.ID
+	tk.MustExec("insert into t values(1),(1),(1)")
+	tk.MustExec("begin")
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	startTS1 := txn.StartTS()
+	tk.MustExec("commit")
+	tk.MustExec("insert into t values(2),(2),(2)")
+	tk.MustExec("begin")
+	txn, err = tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	startTS2 := txn.StartTS()
+	tk.MustExec("commit")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS1)), IsNil)
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery(fmt.Sprintf("select count, snapshot from mysql.stats_meta where table_id = %d", tid)).Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "3")
+	s1Str := rows[0][1].(string)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS2)), IsNil)
+	tk.MustExec("analyze table t")
+	rows = tk.MustQuery(fmt.Sprintf("select count, snapshot from mysql.stats_meta where table_id = %d", tid)).Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "6")
+	s2Str := rows[0][1].(string)
+	c.Assert(s1Str != s2Str, IsTrue)
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS1)), IsNil)
+	tk.MustExec("analyze table t")
+	rows = tk.MustQuery(fmt.Sprintf("select count, snapshot from mysql.stats_meta where table_id = %d", tid)).Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "6")
+	s3Str := rows[0][1].(string)
+	c.Assert(s3Str, Equals, s2Str)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"), IsNil)
 }

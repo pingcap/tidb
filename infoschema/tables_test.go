@@ -241,7 +241,7 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 	tk.MustQuery("select CHARACTER_MAXIMUM_LENGTH,CHARACTER_OCTET_LENGTH,NUMERIC_PRECISION,NUMERIC_SCALE,DATETIME_PRECISION from information_schema.COLUMNS where table_name='timeschema'").
 		Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>", "<nil> <nil> <nil> <nil> 3", "<nil> <nil> <nil> <nil> 3", "<nil> <nil> <nil> <nil> 4", "<nil> <nil> <nil> <nil> <nil>"))
 	tk.MustQuery("select CHARACTER_MAXIMUM_LENGTH,CHARACTER_OCTET_LENGTH,NUMERIC_PRECISION,NUMERIC_SCALE,DATETIME_PRECISION from information_schema.COLUMNS where table_name='strschema'").
-		Check(testkit.Rows("3 3 <nil> <nil> <nil>", "3 3 <nil> <nil> <nil>", "255 255 <nil> <nil> <nil>", "255 255 <nil> <nil> <nil>"))
+		Check(testkit.Rows("3 12 <nil> <nil> <nil>", "3 12 <nil> <nil> <nil>", "255 255 <nil> <nil> <nil>", "255 1020 <nil> <nil> <nil>"))
 	tk.MustQuery("select NUMERIC_SCALE from information_schema.COLUMNS where table_name='floatschema'").
 		Check(testkit.Rows("<nil>", "3"))
 
@@ -945,7 +945,7 @@ func (s *testTableSuite) TestFormatVersion(c *C) {
 	defaultVersions := []string{"5.7.25-TiDB-None", "5.7.25-TiDB-8.0.18", "5.7.25-TiDB-8.0.18-beta.1", "5.7.25-TiDB-v4.0.0-beta-446-g5268094af"}
 	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta"}
 	for i, v := range defaultVersions {
-		version := infoschema.FormatVersion(v, true)
+		version := infoschema.FormatTiDBVersion(v, true)
 		c.Assert(version, Equals, defaultRes[i])
 	}
 
@@ -953,9 +953,17 @@ func (s *testTableSuite) TestFormatVersion(c *C) {
 	versions := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
 	res := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
 	for i, v := range versions {
-		version := infoschema.FormatVersion(v, false)
+		version := infoschema.FormatTiDBVersion(v, false)
 		c.Assert(version, Equals, res[i])
 	}
+
+	versions = []string{"v4.0.12", "4.0.12", "v5.0.1"}
+	resultVersion := []string{"4.0.12", "4.0.12", "5.0.1"}
+
+	for i, versionString := range versions {
+		c.Assert(resultVersion[i], Equals, infoschema.FormatStoreServerVersion(versionString))
+	}
+
 }
 
 // Test statements_summary.

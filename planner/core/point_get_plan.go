@@ -539,6 +539,13 @@ func newBatchPointGetPlan(
 		if partitionExpr == nil {
 			return nil
 		}
+
+		if partitionExpr.Expr == nil {
+			return nil
+		}
+		if _, ok := partitionExpr.Expr.(*expression.Column); !ok {
+			return nil
+		}
 	}
 	if handleCol != nil {
 		var handles = make([]kv.Handle, len(patternInExpr.List))
@@ -1273,6 +1280,12 @@ func findInPairs(colName string, pairs []nameValuePair) int {
 }
 
 func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan {
+	// avoid using the point_get when assignment_list contains the subquery in the UPDATE.
+	for _, list := range updateStmt.List {
+		if _, ok := list.Expr.(*ast.SubqueryExpr); ok {
+			return nil
+		}
+	}
 	selStmt := &ast.SelectStmt{
 		Fields:  &ast.FieldList{},
 		From:    updateStmt.TableRefs,
@@ -1582,22 +1595,17 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.Partition
 		}
 	case model.PartitionTypeRange:
 		// left range columns partition for future development
-		if len(pi.Columns) == 0 {
-			if col, ok := partitionExpr.Expr.(*expression.Column); ok {
-				colInfo := findColNameByColID(tbl.Columns, col)
-				partitionName = colInfo.Name
-			}
+		if col, ok := partitionExpr.Expr.(*expression.Column); ok && len(pi.Columns) == 0 {
+			colInfo := findColNameByColID(tbl.Columns, col)
+			partitionName = colInfo.Name
 		} else {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
 	case model.PartitionTypeList:
 		// left list columns partition for future development
-		if partitionExpr.ForListPruning.ColPrunes == nil {
-			locateExpr := partitionExpr.ForListPruning.LocateExpr
-			if locateExpr, ok := locateExpr.(*expression.Column); ok {
-				colInfo := findColNameByColID(tbl.Columns, locateExpr)
-				partitionName = colInfo.Name
-			}
+		if locateExpr, ok := partitionExpr.ForListPruning.LocateExpr.(*expression.Column); ok && partitionExpr.ForListPruning.ColPrunes == nil {
+			colInfo := findColNameByColID(tbl.Columns, locateExpr)
+			partitionName = colInfo.Name
 		} else {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}

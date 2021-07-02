@@ -1271,14 +1271,20 @@ var tableTableTiFlashTablesCols = []columnInfo{
 	{name: "AVG_PACK_ROWS_IN_STABLE", tp: mysql.TypeDouble, size: 64},
 	{name: "AVG_PACK_SIZE_IN_STABLE", tp: mysql.TypeDouble, size: 64},
 	{name: "STORAGE_STABLE_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_STABLE_OLDEST_SNAPSHOT_LIFETIME", tp: mysql.TypeDouble, size: 64},
+	{name: "STORAGE_STABLE_OLDEST_SNAPSHOT_THREAD_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_STABLE_NUM_PAGES", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_STABLE_NUM_NORMAL_PAGES", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_STABLE_MAX_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_DELTA_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_DELTA_OLDEST_SNAPSHOT_LIFETIME", tp: mysql.TypeDouble, size: 64},
+	{name: "STORAGE_DELTA_OLDEST_SNAPSHOT_THREAD_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_DELTA_NUM_PAGES", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_DELTA_NUM_NORMAL_PAGES", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_DELTA_MAX_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_META_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_META_OLDEST_SNAPSHOT_LIFETIME", tp: mysql.TypeDouble, size: 64},
+	{name: "STORAGE_META_OLDEST_SNAPSHOT_THREAD_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_META_NUM_PAGES", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_META_NUM_NORMAL_PAGES", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_META_MAX_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
@@ -1521,7 +1527,7 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			ServerType:     "tidb",
 			Address:        fmt.Sprintf("%s:%d", node.IP, node.Port),
 			StatusAddr:     fmt.Sprintf("%s:%d", node.IP, node.StatusPort),
-			Version:        FormatVersion(node.Version, isDefaultVersion),
+			Version:        FormatTiDBVersion(node.Version, isDefaultVersion),
 			GitHash:        node.GitHash,
 			StartTimestamp: node.StartTimestamp,
 			ServerID:       node.ServerIDGetter(),
@@ -1530,9 +1536,9 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
-// FormatVersion make TiDBVersion consistent to TiKV and PD.
+// FormatTiDBVersion make TiDBVersion consistent to TiKV and PD.
 // The default TiDBVersion is 5.7.25-TiDB-${TiDBReleaseVersion}.
-func FormatVersion(TiDBVersion string, isDefaultVersion bool) string {
+func FormatTiDBVersion(TiDBVersion string, isDefaultVersion bool) string {
 	var version, nodeVersion string
 
 	// The user hasn't set the config 'ServerVersion'.
@@ -1662,16 +1668,25 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		} else {
 			tp = tikv.GetStoreTypeByMeta(store).Name()
 		}
+
 		servers = append(servers, ServerInfo{
 			ServerType:     tp,
 			Address:        store.Address,
 			StatusAddr:     store.StatusAddress,
-			Version:        store.Version,
+			Version:        FormatStoreServerVersion(store.Version),
 			GitHash:        store.GitHash,
 			StartTimestamp: store.StartTimestamp,
 		})
 	}
 	return servers, nil
+}
+
+// FormatStoreServerVersion format version of store servers(Tikv or TiFlash)
+func FormatStoreServerVersion(version string) string {
+	if len(version) >= 1 && version[0] == 'v' {
+		version = version[1:]
+	}
+	return version
 }
 
 // GetTiFlashStoreCount returns the count of tiflash server.
