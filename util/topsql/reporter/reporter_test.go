@@ -14,6 +14,7 @@
 package reporter
 
 import (
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/topsql/reporter/mock"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 const (
@@ -139,10 +141,9 @@ func (s *testTopSQLReporter) TestCollectAndEvicted(c *C) {
 
 	agentServer.WaitCollectCnt(1, time.Second*10)
 
-	c.Assert(agentServer.GetLatestRecords(), HasLen, maxSQLNum)
-
 	// check for equality of server received batch and the original data
 	records := agentServer.GetLatestRecords()
+	c.Assert(records, HasLen, maxSQLNum+1)
 	for _, req := range records {
 		id := 0
 		prefix := "sqlDigest"
@@ -151,15 +152,19 @@ func (s *testTopSQLReporter) TestCollectAndEvicted(c *C) {
 			c.Assert(err, IsNil)
 			id = n
 		}
-		c.Assert(id >= maxSQLNum, IsTrue)
-		c.Assert(req.RecordListCpuTimeMs, HasLen, 1)
-		for i := range req.RecordListCpuTimeMs {
-			c.Assert(req.RecordListCpuTimeMs[i], Equals, uint32(id))
-		}
 		c.Assert(req.RecordListTimestampSec, HasLen, 1)
-		for i := range req.RecordListTimestampSec {
-			c.Assert(req.RecordListTimestampSec[i], Equals, uint64(2))
+		c.Assert(req.RecordListTimestampSec[0], Equals, uint64(2))
+		c.Assert(req.RecordListCpuTimeMs, HasLen, 1)
+		if id == 0 {
+			// test for others
+			c.Assert(req.SqlDigest, IsNil)
+			c.Assert(req.PlanDigest, IsNil)
+			// 12502500 is the sum of all evicted item's cpu time. 1 + 2 + 3 + ... + 5000 = (1 + 5000) * 2500 = 12502500
+			c.Assert(req.RecordListCpuTimeMs[0], Equals, uint32(12502500))
+			continue
 		}
+		c.Assert(id > maxSQLNum, IsTrue)
+		c.Assert(req.RecordListCpuTimeMs[0], Equals, uint32(id))
 		normalizedSQL, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedSQL, Equals, "sqlNormalized"+strconv.Itoa(id))
@@ -216,29 +221,34 @@ func (s *testTopSQLReporter) TestCollectAndTopN(c *C) {
 	}
 	s.collectAndWait(tsr, 3, records)
 
+	records = []tracecpu.SQLCPUTimeRecord{
+		s.newSQLCPUTimeRecord(tsr, 5, 1),
+		s.newSQLCPUTimeRecord(tsr, 1, 1),
+	}
+	s.collectAndWait(tsr, 4, records)
+
 	// Wait agent server collect finish.
 	agentServer.WaitCollectCnt(1, time.Second*10)
 
 	// check for equality of server received batch and the original data
 	results := agentServer.GetLatestRecords()
-	c.Assert(results, HasLen, 2)
-	for _, req := range results {
-		id := 0
-		prefix := "sqlDigest"
-		if strings.HasPrefix(string(req.SqlDigest), prefix) {
-			n, err := strconv.Atoi(string(req.SqlDigest)[len(prefix):])
-			c.Assert(err, IsNil)
-			id = n
-		}
-		if id != 1 && id != 3 {
-			c.Fatalf("the id should be 1 or 3, got: %v", id)
-		}
+	c.Assert(results, HasLen, 3)
+	sort.Slice(results, func(i, j int) bool {
+		return string(results[i].SqlDigest) < string(results[j].SqlDigest)
+	})
+	getTotalCPUTime := func(record *tipb.CPUTimeRecord) int {
 		total := uint32(0)
-		for _, v := range req.RecordListCpuTimeMs {
+		for _, v := range record.RecordListCpuTimeMs {
 			total += v
 		}
-		c.Assert(total, Equals, uint32(3))
+		return int(total)
 	}
+	c.Assert(results[0].SqlDigest, IsNil)
+	c.Assert(getTotalCPUTime(results[0]), Equals, 4)
+	c.Assert(results[1].SqlDigest, DeepEquals, []byte("sqlDigest1"))
+	c.Assert(getTotalCPUTime(results[1]), Equals, 4)
+	c.Assert(results[2].SqlDigest, DeepEquals, []byte("sqlDigest3"))
+	c.Assert(getTotalCPUTime(results[2]), Equals, 3)
 }
 
 func (s *testTopSQLReporter) TestCollectCapacity(c *C) {
@@ -289,16 +299,32 @@ func (s *testTopSQLReporter) TestCollectCapacity(c *C) {
 	c.Assert(tsr.planMapLength.Load(), Equals, int64(20000))
 
 	variable.TopSQLVariable.MaxStatementCount.Store(5000)
-	collectedData := make(map[string]*dataPoints)
+	collectedData := newCollectedData()
 	tsr.doCollect(collectedData, 1, genRecord(20000))
-	c.Assert(len(collectedData), Equals, 5000)
+	c.Assert(len(collectedData.data), Equals, 5000)
 	c.Assert(tsr.sqlMapLength.Load(), Equals, int64(5000))
 	c.Assert(tsr.planMapLength.Load(), Equals, int64(5000))
+}
 
-	tsr.takeDataAndSendToReportChan(&collectedData)
-	c.Assert(len(collectedData), Equals, 0)
-	c.Assert(tsr.sqlMapLength.Load(), Equals, int64(0))
-	c.Assert(tsr.planMapLength.Load(), Equals, int64(0))
+func (s *testTopSQLReporter) TestDataPointsMerge(c *C) {
+	d := &dataPoints{}
+	evict := &dataPoints{}
+	d.merge(evict)
+	evict.TimestampList = []uint64{1, 3}
+	evict.CPUTimeMsList = []uint32{10, 30}
+	evict.CPUTimeMsTotal = 40
+	d.merge(evict)
+	c.Assert(d.CPUTimeMsTotal, Equals, uint64(40))
+	c.Assert(d.TimestampList, DeepEquals, []uint64{1, 3})
+	c.Assert(d.CPUTimeMsList, DeepEquals, []uint32{10, 30})
+
+	evict.TimestampList = []uint64{1, 2, 3, 4, 5}
+	evict.CPUTimeMsList = []uint32{10, 20, 30, 40, 50}
+	evict.CPUTimeMsTotal = 150
+	d.merge(evict)
+	c.Assert(d.CPUTimeMsTotal, Equals, uint64(190))
+	c.Assert(d.TimestampList, DeepEquals, []uint64{1, 2, 3, 4, 5})
+	c.Assert(d.CPUTimeMsList, DeepEquals, []uint32{20, 20, 60, 40, 50})
 }
 
 func BenchmarkTopSQL_CollectAndIncrementFrequency(b *testing.B) {
