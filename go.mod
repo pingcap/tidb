@@ -82,3 +82,5 @@ require (
 )
 
 go 1.16
+
+replace github.com/tikv/client-go/v2 => github.com/disksing/tikv-client-go/v2 v2.0.0-20210702183812-29c974663257

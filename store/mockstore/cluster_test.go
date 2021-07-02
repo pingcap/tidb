@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
-	"github.com/tikv/client-go/v2/mockstore/mocktikv"
+	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
@@ -39,10 +39,11 @@ type testClusterSuite struct {
 }
 
 func (s *testClusterSuite) TestClusterSplit(c *C) {
-	rpcClient, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("", nil)
+	rpcClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
 	c.Assert(err, IsNil)
-	mocktikv.BootstrapWithSingleStore(cluster)
+	testutils.BootstrapWithSingleStore(cluster)
 	mvccStore := rpcClient.MvccStore
+
 	store, err := tikv.NewTestTiKVStore(rpcClient, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
 	s.store = store
@@ -85,8 +86,8 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 	allKeysMap := make(map[string]bool)
 	recordPrefix := tablecodec.GenTableRecordPrefix(tblID)
 	for _, region := range regions {
-		startKey := mocktikv.MvccKey(region.Meta.StartKey).Raw()
-		endKey := mocktikv.MvccKey(region.Meta.EndKey).Raw()
+		startKey := region.Meta.StartKey
+		endKey := region.Meta.EndKey
 		if !bytes.HasPrefix(startKey, recordPrefix) {
 			continue
 		}
@@ -107,8 +108,8 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 	indexPrefix := tablecodec.EncodeTableIndexPrefix(tblID, idxID)
 	regions = cluster.GetAllRegions()
 	for _, region := range regions {
-		startKey := mocktikv.MvccKey(region.Meta.StartKey).Raw()
-		endKey := mocktikv.MvccKey(region.Meta.EndKey).Raw()
+		startKey := region.Meta.StartKey
+		endKey := region.Meta.EndKey
 		if !bytes.HasPrefix(startKey, indexPrefix) {
 			continue
 		}
