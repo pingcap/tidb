@@ -2491,10 +2491,10 @@ func (b *builtinDateLiteralSig) vecEvalTime(input *chunk.Chunk, result *chunk.Co
 	n := input.NumRows()
 	mode := b.ctx.GetSessionVars().SQLMode
 	if mode.HasNoZeroDateMode() && b.literal.IsZero() {
-		return types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, b.literal.String())
+		return types.ErrWrongValue.GenWithStackByArgs(types.DateStr, b.literal.String())
 	}
 	if mode.HasNoZeroInDateMode() && (b.literal.InvalidZero() && !b.literal.IsZero()) {
-		return types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, b.literal.String())
+		return types.ErrWrongValue.GenWithStackByArgs(types.DateStr, b.literal.String())
 	}
 
 	result.ResizeTime(n, false)
