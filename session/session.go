@@ -2937,17 +2937,20 @@ func (s *session) TemporaryTableExists() bool {
 // Otherwise the latest infoschema is returned.
 func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	vars := s.GetSessionVars()
+	var is infoschema.InfoSchema
 	if snap, ok := vars.SnapshotInfoschema.(infoschema.InfoSchema); ok {
 		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", vars.ConnectionID), zap.Int64("schemaVersion", snap.SchemaMetaVersion()))
-		return snap
-	}
-	if vars.TxnCtx != nil && vars.InTxn() {
-		if is, ok := vars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok {
-			return is
+		is = snap
+	} else if vars.TxnCtx != nil && vars.InTxn() {
+		if tmp, ok := vars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok {
+			is = tmp
 		}
 	}
 
-	is := domain.GetDomain(s).InfoSchema()
+	if is == nil {
+		is = domain.GetDomain(s).InfoSchema()
+	}
+
 	// Override the infoschema if the session has temporary table.
 	return wrapWithTemporaryTable(s, is)
 }
@@ -2963,10 +2966,16 @@ func getSnapshotInfoSchema(s sessionctx.Context, snapshotTS uint64) (infoschema.
 }
 
 func wrapWithTemporaryTable(s sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
+	// Already a wrapped one.
+	if _, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
+		return is
+	}
+	// No temporary table.
 	local := s.GetSessionVars().LocalTemporaryTables
 	if local == nil {
 		return is
 	}
+
 	return &infoschema.TemporaryTableAttachedInfoSchema{
 		InfoSchema:           is,
 		LocalTemporaryTables: local.(*infoschema.LocalTemporaryTables),

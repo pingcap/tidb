@@ -2820,6 +2820,8 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into check_data values (1)")
 	tk.MustExec("create temporary table a_local_temp_table (id int)")
+	// Although "begin" take a infoschem snapshot, local temporary table inside txn should be always visible.
+	tk.MustExec("show create table tmp_db.a_local_temp_table")
 	tk.MustExec("rollback")
 	tk.MustQuery("select * from check_data").Check(testkit.Rows())
 
