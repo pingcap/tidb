@@ -991,6 +991,22 @@ func (s *testSerialSuite2) TestIssue20874(c *C) {
 	))
 }
 
+func (s *testSerialSuite2) TestIssue25700(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` ( `ldecimal` decimal(32,4) DEFAULT NULL, `rdecimal` decimal(32,4) DEFAULT NULL, `gen_col` decimal(36,4) GENERATED ALWAYS AS (`ldecimal` + `rdecimal`) VIRTUAL, `col_timestamp` timestamp(3) NULL DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("INSERT INTO `t` (`ldecimal`, `rdecimal`, `col_timestamp`) VALUES (2265.2200, 9843.4100, '1999-12-31 16:00:00') , (2449.2500, 8420.0900, '1999-12-31 16:16:40') , (9757.8100, 1015.0800, '1999-12-31 16:33:20') , (9970.5200, 9690.9200, '1999-12-31 16:50:00') , (-71221.0900, 8564.5300, '1999-12-31 17:06:40') , (8177.9800, 1066.2800, '1999-12-31 17:23:20') , (2517.3800, 31.7100, '1999-12-31 17:40:00') , (1191.2800, 9511.0600, '1999-12-31 17:56:40') , (4818.4100, 8510.2000, '1999-12-31 18:13:20') , (4381.3400, 661.4100, '1999-12-31 18:30:00');")
+	tk.MustExec("INSERT INTO `t` (`ldecimal`, `rdecimal`, `col_timestamp`) SELECT `ldecimal`, `rdecimal`, `col_timestamp` FROM `t`;")
+	tk.MustExec("INSERT INTO `t` (`ldecimal`, `rdecimal`, `col_timestamp`) SELECT `ldecimal`, `rdecimal`, `col_timestamp` FROM `t`;")
+	tk.MustExec("INSERT INTO `t` (`ldecimal`, `rdecimal`, `col_timestamp`) SELECT `ldecimal`, `rdecimal`, `col_timestamp` FROM `t`;")
+	tk.MustExec("INSERT INTO `t` (`ldecimal`, `rdecimal`, `col_timestamp`) SELECT `ldecimal`, `rdecimal`, `col_timestamp` FROM `t`;")
+	tk.MustExec("INSERT INTO `t` (`ldecimal`, `rdecimal`, `col_timestamp`) SELECT `ldecimal`, `rdecimal`, `col_timestamp` FROM `t`;")
+	tk.MustExec("INSERT INTO `t` (`ldecimal`, `rdecimal`, `col_timestamp`) SELECT `ldecimal`, `rdecimal`, `col_timestamp` FROM `t`;")
+	tk.MustExec("INSERT INTO `t` (`ldecimal`, `rdecimal`, `col_timestamp`) SELECT `ldecimal`, `rdecimal`, `col_timestamp` FROM `t`;")
+	tk.MustExec("analyze table t")
+}
+
 func (s *testSuite1) TestAnalyzeClusteredIndexPrimary(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
