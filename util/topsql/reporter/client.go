@@ -99,7 +99,7 @@ func (r *GRPCReportClient) Close() {
 }
 
 // sendBatchCPUTimeRecord sends a batch of TopSQL records by stream.
-func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records map[string]*dataPoints) error {
+func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records []*dataPoints) error {
 	if len(records) == 0 {
 		return nil
 	}
@@ -110,10 +110,10 @@ func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records m
 	}
 	for _, record := range records {
 		record := &tipb.CPUTimeRecord{
-			TimestampList: record.TimestampList,
-			CpuTimeMsList: record.CPUTimeMsList,
-			SqlDigest:     record.SQLDigest,
-			PlanDigest:    record.PlanDigest,
+			RecordListTimestampSec: record.TimestampList,
+			RecordListCpuTimeMs:    record.CPUTimeMsList,
+			SqlDigest:              record.SQLDigest,
+			PlanDigest:             record.PlanDigest,
 		}
 		if err := stream.Send(record); err != nil {
 			return err
