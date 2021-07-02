@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	pmodel "github.com/prometheus/common/model"
@@ -187,7 +188,10 @@ func RotateSubWindow() {
 		},
 	}
 
-	readSQLMetric(time.Now(), &thisSubWindow.SQLUsage)
+	err := readSQLMetric(time.Now(), &thisSubWindow.SQLUsage)
+	if err != nil {
+		logutil.BgLogger().Info("Error exists when getting the SQL Metric.")
+	}
 
 	thisSubWindow.SQLUsage.SQLTotal = getSQLSum(&thisSubWindow.SQLUsage.SQLType)
 
