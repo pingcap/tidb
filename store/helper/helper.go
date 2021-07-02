@@ -555,8 +555,8 @@ type RegionInfo struct {
 	Leader          RegionPeer       `json:"leader"`
 	DownPeers       []RegionPeerStat `json:"down_peers"`
 	PendingPeers    []RegionPeer     `json:"pending_peers"`
-	WrittenBytes    int64            `json:"written_bytes"`
-	ReadBytes       int64            `json:"read_bytes"`
+	WrittenBytes    uint64           `json:"written_bytes"`
+	ReadBytes       uint64           `json:"read_bytes"`
 	ApproximateSize int64            `json:"approximate_size"`
 	ApproximateKeys int64            `json:"approximate_keys"`
 
