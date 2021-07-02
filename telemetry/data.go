@@ -14,9 +14,11 @@
 package telemetry
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/tikv/client-go/v2/logutil"
 )
 
 type telemetryData struct {
@@ -49,6 +51,10 @@ func generateTelemetryData(ctx sessionctx.Context, trackingID string) telemetryD
 	}
 
 	r.WindowedStats = getWindowData()
+	promErrCnt := promAddressErr.Load()
+	if promErrCnt > 0 {
+		logutil.BgLogger().Info(fmt.Sprintf("Error exists when calling prometheus. PromErrCnt:%d", promErrCnt))
+	}
 	r.TelemetryHostExtra = getTelemetryHostExtraInfo()
 	return r
 }

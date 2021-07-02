@@ -22,9 +22,7 @@ import (
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	pmodel "github.com/prometheus/common/model"
-	"github.com/tikv/client-go/v2/logutil"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
 )
 
 var (
@@ -48,6 +46,7 @@ var (
 	CurrentCoprCacheHitRatioGTE80Count atomic.Uint64
 	// CurrentCoprCacheHitRatioGTE100Count is CurrentCoprCacheHitRatioGTE100Count
 	CurrentCoprCacheHitRatioGTE100Count atomic.Uint64
+	promAddressErr                      atomic.Uint64
 )
 
 const (
@@ -109,7 +108,7 @@ func readSQLMetric(timepoint time.Time, SQLResult *sqlUsageData) error {
 	promQL := "sum(tidb_executor_statement_total{}) by (instance,type)"
 	result, err := querySQLMetric(ctx, timepoint, promQL)
 	if err != nil {
-		logutil.BgLogger().Warn("querySQLMetric got error")
+		promAddressErr.Add(1)
 	}
 	anylisSQLUsage(result, SQLResult)
 	return nil
@@ -188,10 +187,8 @@ func RotateSubWindow() {
 		},
 	}
 
-	if err := readSQLMetric(time.Now(), &thisSubWindow.SQLUsage); err != nil {
-		logutil.BgLogger().Error("Error exists when calling prometheus", zap.Error(err))
+	readSQLMetric(time.Now(), &thisSubWindow.SQLUsage)
 
-	}
 	thisSubWindow.SQLUsage.SQLTotal = getSQLSum(&thisSubWindow.SQLUsage.SQLType)
 
 	subWindowsLock.Lock()
