@@ -42,6 +42,7 @@ Side effects
 
 Documentation
 
+- [ ] Affects user behaviors
 - [ ] Contains syntax changes
 - [ ] Contains variable changes
 - [ ] Contains experimental features
