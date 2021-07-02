@@ -882,6 +882,10 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, err
 		}
+		err = se.loadCommonGlobalVariablesIfNeeded()
+		if err != nil {
+			return nil, err
+		}
 		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutoCommit, "1")
 		if err != nil {
 			return nil, err
