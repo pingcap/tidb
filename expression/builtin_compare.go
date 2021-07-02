@@ -379,10 +379,6 @@ func aggregateType(args []Expression) *types.FieldType {
 // ResolveType4Between resolves eval type for between expression.
 func ResolveType4Between(args [3]Expression) types.EvalType {
 	cmpTp := args[0].GetType().EvalType()
-	if args[1].GetType().EvalType() == types.ETString && args[2].GetType().EvalType() == types.ETString && (args[0].GetType().Tp == mysql.TypeNewDecimal || args[0].GetType().Tp == mysql.TypeLonglong) {
-		return types.ETDecimal
-	}
-
 	for i := 1; i < 3; i++ {
 		cmpTp = getBaseCmpType(cmpTp, args[i].GetType().EvalType(), nil, nil)
 	}
