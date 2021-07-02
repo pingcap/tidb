@@ -119,7 +119,7 @@ func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records [
 			return err
 		}
 	}
-	topSQLReportRecordCnt.Add(float64(len(records)))
+	topSQLReportRecordHistogram.Observe(float64(len(records)))
 	// See https://pkg.go.dev/google.golang.org/grpc#ClientConn.NewStream for how to avoid leaking the stream
 	_, err = stream.CloseAndRecv()
 	return err
@@ -148,7 +148,7 @@ func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, sqlMap *sync.Ma
 	if err != nil {
 		return err
 	}
-	topSQLReportSQLCnt.Add(float64(cnt))
+	topSQLReportStatementHistogram.Observe(float64(cnt))
 	_, err = stream.CloseAndRecv()
 	return err
 }
@@ -181,7 +181,7 @@ func (r *GRPCReportClient) sendBatchPlanMeta(ctx context.Context, planMap *sync.
 	if err != nil {
 		return err
 	}
-	topSQLReportPlanCnt.Add(float64(cnt))
+	topSQLReportPlanHistogram.Observe(float64(cnt))
 	_, err = stream.CloseAndRecv()
 	return err
 }

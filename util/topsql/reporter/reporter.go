@@ -135,15 +135,15 @@ func NewRemoteTopSQLReporter(client ReportClient) *RemoteTopSQLReporter {
 }
 
 var (
-	ignoreRegisterSQLCnt          = metrics.TopSQLIgnoredCounter.WithLabelValues("register-sql")
-	ignoreRegisterPlanCnt         = metrics.TopSQLIgnoredCounter.WithLabelValues("register-plan")
-	ignoreCollectCPUTimeCnt       = metrics.TopSQLIgnoredCounter.WithLabelValues("collect-data")
-	ignoreReportDataCnt           = metrics.TopSQLIgnoredCounter.WithLabelValues("report-data")
-	reportDurationSuccHistogram   = metrics.TopSQLReportDurationHistogram.WithLabelValues("OK")
-	reportDurationFailedHistogram = metrics.TopSQLReportDurationHistogram.WithLabelValues("Error")
-	topSQLReportRecordCnt         = metrics.TopSQLReportDataTotalCounter.WithLabelValues("record")
-	topSQLReportSQLCnt            = metrics.TopSQLReportDataTotalCounter.WithLabelValues("sql")
-	topSQLReportPlanCnt           = metrics.TopSQLReportDataTotalCounter.WithLabelValues("plan")
+	ignoreRegisterSQLCnt           = metrics.TopSQLIgnoredCounter.WithLabelValues("register_sql")
+	ignoreRegisterPlanCnt          = metrics.TopSQLIgnoredCounter.WithLabelValues("register_plan")
+	ignoreCollectCPUTimeCnt        = metrics.TopSQLIgnoredCounter.WithLabelValues("collect_data")
+	ignoreReportDataCnt            = metrics.TopSQLIgnoredCounter.WithLabelValues("report_data")
+	reportDurationSuccHistogram    = metrics.TopSQLReportDurationHistogram.WithLabelValues(metrics.LblOK)
+	reportDurationFailedHistogram  = metrics.TopSQLReportDurationHistogram.WithLabelValues(metrics.LblError)
+	topSQLReportRecordHistogram    = metrics.TopSQLReportDataHistogram.WithLabelValues("record")
+	topSQLReportStatementHistogram = metrics.TopSQLReportDataHistogram.WithLabelValues("statement")
+	topSQLReportPlanHistogram      = metrics.TopSQLReportDataHistogram.WithLabelValues("plan")
 )
 
 // RegisterSQL registers a normalized SQL string to a SQL digest.

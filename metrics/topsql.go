@@ -18,14 +18,15 @@ var (
 			Subsystem: "topsql",
 			Name:      "report_duration_seconds",
 			Help:      "Bucket histogram of reporting time (s) to the top-sql agent",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 24), // 1ms ~ 2.3h
 		}, []string{LblResult})
 
-	TopSQLReportDataTotalCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
+	TopSQLReportDataHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "topsql",
 			Name:      "report_data_total",
-			Help:      "Counter of top-sql reported records/sql/plan.",
+			Help:      "Bucket histogram of reporting records/sql/plan count to the top-sql agent.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 20), // 1 ~ 524288
 		}, []string{LblType})
 )
