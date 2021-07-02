@@ -29,17 +29,22 @@ How it Works:
 
 Tests <!-- At least one of them must be included. -->
 
-- Unit test
-- Integration test
-- Manual test (add detailed scripts or steps below)
-- No code
+- [ ] Unit test
+- [ ] Integration test
+- [ ] Manual test (add detailed scripts or steps below)
+- [ ] No code
 
 Side effects
 
-- Performance regression
-    - Consumes more CPU
-    - Consumes more MEM
-- Breaking backward compatibility
+- [ ] Performance regression: Consumers more CPU
+- [ ] Performance regression: Consumers more Memory
+- [ ] Breaking backward compatibility
+
+Documentation
+
+- [ ] Contains syntax changes
+- [ ] Contains variable changes
+- [ ] Contains experimental features
 
 ### Release note <!-- bugfixes or new feature need a release note -->
 
