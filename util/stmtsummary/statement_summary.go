@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/tikv/client-go/v2/util"
 )
 
