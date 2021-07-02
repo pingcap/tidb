@@ -145,7 +145,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.dataForTiKVStoreStatus(sctx)
 		case infoschema.TableStatementsSummaryEvicted,
 			infoschema.ClusterTableStatementsSummaryEvicted:
-			err = e.setDataForStatementsSummary(sctx)
+			err = e.setDataForStatementsSummaryEvicted(sctx)
 		case infoschema.TablePlacementPolicy:
 			err = e.setDataForPlacementPolicy(sctx)
 		case infoschema.TableClientErrorsSummaryGlobal,
@@ -1903,7 +1903,7 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 	e.rows = rows
 }
 
-func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context) error {
+func (e *memtableRetriever) setDataForStatementsSummaryEvicted(ctx sessionctx.Context) error {
 	e.rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
 	switch e.table.Name.O {
 	case infoschema.ClusterTableStatementsSummaryEvicted:
