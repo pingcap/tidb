@@ -2790,13 +2790,13 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	// Follow the behaviour of the old version TiDB: parse and ignore the 'temporary' keyword.
 	tk.MustGetErrCode("create temporary table t(id int)", errno.ErrNotSupportedYet)
 
-	tk.MustExec("set @@tidb_enable_noop_functions = 1")
-
 	// Create local temporary table.
 	tk.MustExec("set @@tidb_enable_noop_functions = 1")
 	tk.MustExec("create database tmp_db")
 	tk.MustExec("use tmp_db")
 	tk.MustExec("create temporary table t1 (id int)")
+	// Create a normal table with the same name is ok.
+	tk.MustExec("create table t1 (id int)")
 	tk.MustExec("create temporary table tmp_db.t2 (id int)")
 	tk.MustQuery("select * from t1") // No error
 	tk.MustExec("drop database tmp_db")
@@ -2813,6 +2813,15 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	_, err = tk.Exec("insert into overlap values (1)") // column not match
 	c.Assert(err, NotNil)
 	tk.MustExec("insert into overlap values (1, 1)")
+
+	// Check create local temporary table does not auto commit the transaction.
+	// Normal DDL implies a commit, but create temporary does not.
+	tk.MustExec("create table check_data (id int)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into check_data values (1)")
+	tk.MustExec("create temporary table a_local_temp_table (id int)")
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from check_data").Check(testkit.Rows())
 
 	// Stale read see the local temporary table but can't read on it.
 	tk.MustExec("START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3)")

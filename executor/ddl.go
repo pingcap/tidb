@@ -76,9 +76,16 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	e.done = true
 
 	// For each DDL, we should commit the previous transaction and create a new transaction.
+	// An exception is create local temporary table.
+	if s, ok := e.stmt.(*ast.CreateTableStmt); ok {
+		if s.TemporaryKeyword == ast.TemporaryLocal {
+			return e.createSessionTemporaryTable(s)
+		}
+	}
 	if err = e.ctx.NewTxn(ctx); err != nil {
 		return err
 	}
+
 	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
 
 	switch x := e.stmt.(type) {
@@ -203,10 +210,6 @@ func (e *DDLExec) executeAlterDatabase(s *ast.AlterDatabaseStmt) error {
 }
 
 func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
-	if s.TemporaryKeyword == ast.TemporaryLocal {
-		return e.createSessionTemporaryTable(s)
-	}
-
 	err := domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, s)
 	return err
 }
