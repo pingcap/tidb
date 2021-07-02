@@ -62,7 +62,6 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tipb/go-binlog"
-	tikvmockstore "github.com/tikv/client-go/v2/mockstore"
 	"github.com/tikv/client-go/v2/mockstore/cluster"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.etcd.io/etcd/clientv3"
@@ -71,6 +70,7 @@ import (
 
 var (
 	pdAddrs         = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
+	withTiKV        = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
 	pdAddrChan      chan string
 	initPdAddrsOnce sync.Once
 )
@@ -192,7 +192,7 @@ func initPdAddrs() {
 func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 
-	if *tikvmockstore.WithTiKV {
+	if *withTiKV {
 		initPdAddrs()
 		s.pdAddr = <-pdAddrChan
 		var d driver.TiKVDriver
@@ -228,7 +228,7 @@ func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
-	if *tikvmockstore.WithTiKV {
+	if *withTiKV {
 		pdAddrChan <- s.pdAddr
 	}
 }
@@ -2800,6 +2800,9 @@ func (s *testSessionSuite3) TestEnablePartition(c *C) {
 
 	tk.MustExec("set tidb_enable_list_partition=off")
 	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition OFF"))
+	tk.MustExec("set global tidb_enable_list_partition=on")
+	tk.MustQuery("show global variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
+	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition OFF"))
 
 	tk.MustExec("set tidb_enable_list_partition=1")
 	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
@@ -2807,8 +2810,18 @@ func (s *testSessionSuite3) TestEnablePartition(c *C) {
 	tk.MustExec("set tidb_enable_list_partition=on")
 	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
 
+	tk.MustQuery("show global variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
+	tk.MustExec("set global tidb_enable_list_partition=off")
+	tk.MustQuery("show global variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition OFF"))
+	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
+	tk.MustExec("set tidb_enable_list_partition=off")
+	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition OFF"))
+
+	tk.MustExec("set global tidb_enable_list_partition=on")
+	tk.MustQuery("show global variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustQuery("show variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition ON"))
+	tk1.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
 }
 
 func (s *testSessionSerialSuite) TestTxnRetryErrMsg(c *C) {
@@ -3345,44 +3358,98 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
-	failpoint.Enable("tikvclient/injectTxnScope", `return("")`)
+	// Check the default value of @@tidb_enable_local_txn and @@txn_scope whitout configuring the zone label.
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	// assert default value
-	result := tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows(kv.GlobalTxnScope))
+	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
-	// assert set sys variable
-	tk.MustExec("set @@session.txn_scope = 'local';")
-	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows(kv.GlobalTxnScope))
+	// Check the default value of @@tidb_enable_local_txn and @@txn_scope with configuring the zone label.
+	failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`)
+	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
 	failpoint.Disable("tikvclient/injectTxnScope")
-	failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`)
-	defer failpoint.Disable("tikvclient/injectTxnScope")
+
+	// @@tidb_enable_local_txn is off without configuring the zone label.
 	tk = testkit.NewTestKitWithInit(c, s.store)
-	// assert default value
-	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows(kv.LocalTxnScope))
-	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, "bj")
-	// assert set sys variable
-	tk.MustExec("set @@session.txn_scope = 'global';")
-	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows(kv.GlobalTxnScope))
+	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+	// Set @@txn_scope to local.
+	err := tk.ExecToErr("set @@txn_scope = 'local';")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, `.*txn_scope can not be set to local when tidb_enable_local_txn is off.*`)
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+	// Set @@txn_scope to global.
+	tk.MustExec("set @@txn_scope = 'global';")
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
 
-	// assert set invalid txn_scope
-	err := tk.ExecToErr("set @@txn_scope='foo'")
+	// @@tidb_enable_local_txn is off with configuring the zone label.
+	failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`)
+	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+	// Set @@txn_scope to local.
+	err = tk.ExecToErr("set @@txn_scope = 'local';")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, `.*txn_scope can not be set to local when tidb_enable_local_txn is off.*`)
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+	// Set @@txn_scope to global.
+	tk.MustExec("set @@txn_scope = 'global';")
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+	failpoint.Disable("tikvclient/injectTxnScope")
+
+	// @@tidb_enable_local_txn is on without configuring the zone label.
+	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set global tidb_enable_local_txn = on;")
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+	// Set @@txn_scope to local.
+	err = tk.ExecToErr("set @@txn_scope = 'local';")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, `.*txn_scope can not be set to local when zone label is empty or "global".*`)
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+	// Set @@txn_scope to global.
+	tk.MustExec("set @@txn_scope = 'global';")
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+
+	// @@tidb_enable_local_txn is on with configuring the zone label.
+	failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`)
+	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set global tidb_enable_local_txn = on;")
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.LocalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, "bj")
+	// Set @@txn_scope to global.
+	tk.MustExec("set @@txn_scope = 'global';")
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+	// Set @@txn_scope to local.
+	tk.MustExec("set @@txn_scope = 'local';")
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.LocalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, "bj")
+	// Try to set @@txn_scope to an invalid value.
+	err = tk.ExecToErr("set @@txn_scope='foo'")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, `.*txn_scope value should be global or local.*`)
+	failpoint.Disable("tikvclient/injectTxnScope")
 }
 
 func (s *testSessionSerialSuite) TestGlobalAndLocalTxn(c *C) {
 	// Because the PD config of check_dev_2 test is not compatible with local/global txn yet,
 	// so we will skip this test for now.
-	if *tikvmockstore.WithTiKV {
+	if *withTiKV {
 		return
 	}
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set global tidb_enable_local_txn = on;")
 	tk.MustExec("drop table if exists t1;")
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec(`create table t1 (c int)
@@ -3536,6 +3603,7 @@ PARTITION BY RANGE (c) (
 	// Won't read the value 99 because the previous commit failed
 	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
 	c.Assert(len(result.Rows()), Equals, 4)
+	tk.MustExec("set global tidb_enable_local_txn = off;")
 }
 
 func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
@@ -3781,7 +3849,7 @@ func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
 
 func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 	// only run BR SQL integration test with tikv store.
-	if *tikvmockstore.WithTiKV {
+	if *withTiKV {
 		cfg := config.GetGlobalConfig()
 		cfg.Store = "tikv"
 		cfg.Path = s.pdAddr

@@ -7421,6 +7421,24 @@ func (s *testIntegrationSuite) TestIssue16029(c *C) {
 	tk.MustExec("drop table t1;")
 }
 
+func (s *testIntegrationSerialSuite) TestIssue24502(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0,t1;")
+	tk.MustExec("create table t0(col1 varchar(255));")
+	tk.MustExec("create table t1(col1 int(11));")
+	tk.MustExec(`insert into t0 values("\\9jM\\M");`)
+	tk.MustExec(`insert into t1 values(0);`)
+	tk.MustExec(`insert into t1 values(null);`)
+	tk.MustExec(`insert into t1 values(null);`)
+
+	tk.MustQuery(`select t0.col1, t1.col1 from t0 left join t1 on t0.col1 not like t0.col1;`).
+		Check(testkit.Rows(`\9jM\M <nil>`, `\9jM\M <nil>`, `\9jM\M 0`))
+
+	tk.MustQuery(`select 'a' like '\\a'`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select 'a' like '+a' escape '+'`).Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSuite) TestIssue16426(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -9031,6 +9049,7 @@ PARTITION BY RANGE (c) (
 			expectErr: nil,
 		},
 	}
+	tk.MustExec("set global tidb_enable_local_txn = on;")
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		failpoint.Enable("tikvclient/injectTxnScope",
@@ -9057,6 +9076,7 @@ PARTITION BY RANGE (c) (
 		tk.Exec("commit")
 	}
 	failpoint.Disable("tikvclient/injectTxnScope")
+	tk.MustExec("set global tidb_enable_local_txn = off;")
 }
 
 func (s *testIntegrationSerialSuite) TestCollationUnion(c *C) {
@@ -9741,6 +9761,15 @@ OR Variable_name = 'license' OR Variable_name = 'init_connect'`).Rows(), HasLen,
 
 }
 
+func (s *testIntegrationSuite) TestFloat64Inf(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select '1e800' + 1e100;").Check(
+		testkit.Rows("179769313486231570000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"))
+	tk.MustQuery("select '-1e800' - 1e100;").Check(
+		testkit.Rows("-179769313486231570000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"))
+}
+
 func (s *testIntegrationSuite) TestCharsetErr(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -9750,4 +9779,23 @@ func (s *testIntegrationSuite) TestCharsetErr(c *C) {
 
 	err = tk.ExecToErr("insert into charset_test(c1) values ('aaa\xEF\xBF\xBD')")
 	c.Assert(err.Error(), Equals, "[table:1366]Incorrect string value '\\xEF\\xBF\\xBD' for column 'c1'")
+}
+
+func (s *testIntegrationSuite2) TestIssue25591(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1_1, t2_1;")
+	tk.MustExec("CREATE TABLE `t1_1` (`col1` double DEFAULT NULL, `col2` double DEFAULT NULL);")
+	tk.MustExec("CREATE TABLE `t2_1` (`col1` varchar(20) DEFAULT NULL, `col2` double DEFAULT NULL);")
+	tk.MustExec("insert into t1_1 values(12.991, null), (12.991, null);")
+	tk.MustExec("insert into t2_1(col2) values(87), (-9.183), (-9.183);")
+
+	tk.MustExec("set @@tidb_enable_vectorized_expression  = false;")
+	rows := tk.MustQuery("select t1.col1, t2.col1, t2.col2 from t1_1 t1 inner join  t2_1 t2 on t1.col1 not in (1,t2.col1,t2.col2) order by 1,2,3;")
+	rows.Check(testkit.Rows())
+
+	tk.MustExec("set @@tidb_enable_vectorized_expression  = true;")
+	rows = tk.MustQuery("select t1.col1, t2.col1, t2.col2 from t1_1 t1 inner join  t2_1 t2 on t1.col1 not in (1,t2.col1,t2.col2) order by 1,2,3;")
+	rows.Check(testkit.Rows())
 }
