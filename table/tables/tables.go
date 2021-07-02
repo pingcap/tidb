@@ -19,6 +19,7 @@ package tables
 
 import (
 	"context"
+	"github.com/pingcap/parser/charset"
 	"math"
 	"strconv"
 	"strings"
@@ -1449,7 +1450,7 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 
 // CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore check whether recordID key or unique index key exists. if not exists, return nil,
 // otherwise return kv.ErrKeyExists error.
-func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID kv.Handle, newRow []types.Datum, modified []bool) error {
+func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID kv.Handle, newRow []types.Datum, oldRow []types.Datum, modified []bool) error {
 	physicalTableID := t.Meta().ID
 	if pt, ok := t.(*partitionedTable); ok {
 		info := t.Meta().GetPartitionInfo()
@@ -1480,20 +1481,39 @@ func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.C
 
 	// Check unique key exists.
 	{
-		shouldSkipIgnoreCheck := func(idx table.Index) bool {
+		shouldSkipIgnoreCheck := func(idx table.Index) (bool, error) {
 			if !IsIndexWritable(idx) || !idx.Meta().Unique || (t.Meta().IsCommonHandle && idx.Meta().Primary) {
-				return true
+				return true, nil
 			}
 			for _, c := range idx.Meta().Columns {
 				if modified[c.Offset] {
-					return false
+					if c.Length != types.UnspecifiedLength && (newRow[c.Offset].Kind() == types.KindString || newRow[c.Offset].Kind() == types.KindBytes) {
+						newCol := newRow[c.Offset].Clone()
+						tablecodec.TruncateIndexValue(newCol, c, t.Meta().Columns[c.Offset])
+						oldCol := oldRow[c.Offset].Clone()
+						tablecodec.TruncateIndexValue(oldCol, c, t.Meta().Columns[c.Offset])
+						// We should use binary collation to compare datum, otherwise the result will be incorrect.
+						newCol.SetCollation(charset.CollationBin)
+						cmp, err := newCol.CompareDatum(sctx.GetSessionVars().StmtCtx, oldCol)
+						if err != nil {
+							return false, errors.Trace(err)
+						}
+						if cmp == 0 {
+							continue
+						}
+					}
+					return false, nil
 				}
 			}
-			return true
+			return true, nil
 		}
 
 		for _, idx := range t.Indices() {
-			if shouldSkipIgnoreCheck(idx) {
+			skip, err := shouldSkipIgnoreCheck(idx)
+			if err != nil {
+				return err
+			}
+			if skip {
 				continue
 			}
 			newVals, err := idx.FetchValues(newRow, nil)

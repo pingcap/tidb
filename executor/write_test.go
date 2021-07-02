@@ -806,6 +806,12 @@ func (s *testSuite4) TestInsertIgnoreOnDup(c *C) {
 	tk.MustQuery("select * from t6").Check(testkit.Rows("100 10 20"))
 	tk.MustExec("insert ignore into t6 set a = 200, b= 10 on duplicate key update c = 1000")
 	tk.MustQuery("select * from t6").Check(testkit.Rows("100 10 1000"))
+
+	tk.MustExec("drop table if exists t8")
+	tk.MustExec("CREATE TABLE `t8` (`col_70` varbinary(444) NOT NULL DEFAULT 'bezhs', PRIMARY KEY (`col_70`) clustered, UNIQUE KEY `idx_22` (`col_70`(1)))")
+	tk.MustExec("insert into t8 values('lldcxiyfjrqzgj')")
+	tk.MustExec("insert ignore into t8 values ( 'lalozlkdosasfklmflo' ) on duplicate key update col_70 = 'lyhohxtby'")
+	tk.MustQuery("select * from t8").Check(testkit.Rows("lyhohxtby"))
 }
 
 func (s *testSuite4) TestInsertSetWithDefault(c *C) {
