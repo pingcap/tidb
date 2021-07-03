@@ -2881,7 +2881,7 @@ var dateFormatParserTable = map[string]dateFormatParser{
 	"%H": hour24Numeric,         // Hour (00..23)
 	"%I": hour12Numeric,         // Hour (01..12)
 	"%i": minutesNumeric,        // Minutes, numeric (00..59)
-	"%j": dayOfYearThreeDigits,  // Day of year (001..366)
+	"%j": dayOfYearNumeric,      // Day of year (001..366)
 	"%k": hour24Numeric,         // Hour (0..23)
 	"%l": hour12Numeric,         // Hour (1..12)
 	"%M": fullNameMonth,         // Month name (January..December)
@@ -3207,9 +3207,11 @@ func yearNumericNDigits(t *CoreTime, input string, ctx map[string]int, n int) (s
 	return input[step:], true
 }
 
-func dayOfYearThreeDigits(t *CoreTime, input string, ctx map[string]int) (string, bool) {
+func dayOfYearNumeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
+	// MySQL declares that "%j" should be "Day of year (001..366)". But actually,
+	// it accepts a number that is up to three digits, which range is [1, 999].
 	v, step := parseNDigits(input, 3)
-	if step <= 0 || v == 0 || v > 366 {
+	if step <= 0 || v == 0 {
 		return input, false
 	}
 	ctx["%j"] = v
