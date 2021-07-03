@@ -141,8 +141,8 @@ func (s *testSuite) TestMemJsonObjectagg(c *C) {
 		}
 
 		tests := []multiArgsAggMemTest{
-			buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg, defaultMultiArgsMemDeltaGens, true),
-			buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg, defaultMultiArgsMemDeltaGens, false),
+			buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg+aggfuncs.DefMapStringInterfaceBucketSize, defaultMultiArgsMemDeltaGens, true),
+			buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg+aggfuncs.DefMapStringInterfaceBucketSize, defaultMultiArgsMemDeltaGens, false),
 		}
 		for _, test := range tests {
 			s.testMultiArgsAggMemFunc(c, test)

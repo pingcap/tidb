@@ -65,7 +65,7 @@ We can find that the `hash` (the key of cache) and the `element`(the value of th
 3. we use [sizeof](https://github.com/templarbit/sizeof) (the result is similar, but lower, not exact) to calculate the size of each key and element is 80byte and 40byte.
 4. As 2.28 MB (120 byte * 20000) is similar to the 2.55MB, we can ensure that the heap profile would reflect the heap usage of `SimpleLRUCache`.
 
-## Compatibility and Mirgration Plan
+## Compatibility and Migration Plan
 
 None
 

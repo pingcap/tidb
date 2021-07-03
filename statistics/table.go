@@ -62,6 +62,12 @@ type Table struct {
 	Version       uint64
 	Name          string
 	ExtendedStats *ExtendedStatsColl
+	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
+	// It is the schema version of the corresponding table. It is used to skip redundant
+	// loading of stats, i.e, if the cached stats is already update-to-date with mysql.stats_xxx tables,
+	// and the schema of the table does not change, we don't need to load the stats for this
+	// table again.
+	TblInfoUpdateTS uint64
 }
 
 // ExtendedStatsItem is the cached item of a mysql.stats_extended record.
@@ -136,9 +142,10 @@ func (t *Table) Copy() *Table {
 		newHistColl.Indices[id] = idx
 	}
 	nt := &Table{
-		HistColl: newHistColl,
-		Version:  t.Version,
-		Name:     t.Name,
+		HistColl:        newHistColl,
+		Version:         t.Version,
+		Name:            t.Name,
+		TblInfoUpdateTS: t.TblInfoUpdateTS,
 	}
 	if t.ExtendedStats != nil {
 		newExtStatsColl := &ExtendedStatsColl{
@@ -195,6 +202,16 @@ func (t *Table) ColumnByName(colName string) *Column {
 		}
 	}
 	return nil
+}
+
+// GetStatsInfo returns their statistics according to the ID of the column or index, including histogram, CMSketch, TopN and FMSketch.
+func (t *Table) GetStatsInfo(ID int64, isIndex bool) (int64, *Histogram, *CMSketch, *TopN, *FMSketch) {
+	if isIndex {
+		idxStatsInfo := t.Indices[ID]
+		return int64(idxStatsInfo.TotalRowCount()), idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), idxStatsInfo.FMSketch.Copy()
+	}
+	colStatsInfo := t.Columns[ID]
+	return int64(colStatsInfo.TotalRowCount()), colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy()
 }
 
 type tableColumnID struct {
@@ -260,19 +277,24 @@ func (t *Table) ColumnLessRowCount(sc *stmtctx.StatementContext, value types.Dat
 }
 
 // ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
-func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.Datum, colID int64) float64 {
+func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.Datum, colID int64) (float64, error) {
 	c, ok := t.Columns[colID]
 	if !ok || c.IsInvalid(sc, t.Pseudo) {
-		return float64(t.Count) / pseudoBetweenRate
+		return float64(t.Count) / pseudoBetweenRate, nil
 	}
-	count, err := c.BetweenRowCount(sc, a, b)
+	aEncoded, err := codec.EncodeKey(sc, nil, a)
 	if err != nil {
-		return 0
+		return 0, err
 	}
+	bEncoded, err := codec.EncodeKey(sc, nil, b)
+	if err != nil {
+		return 0, err
+	}
+	count := c.BetweenRowCount(sc, a, b, aEncoded, bEncoded)
 	if a.IsNull() {
 		count += float64(c.NullCount)
 	}
-	return count * c.GetIncreaseFactor(t.Count)
+	return count * c.GetIncreaseFactor(t.Count), nil
 }
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
@@ -281,7 +303,11 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 	if !ok || c.IsInvalid(sc, t.Pseudo) {
 		return float64(t.Count) / pseudoEqualRate, nil
 	}
-	result, err := c.equalRowCount(sc, value, t.ModifyCount)
+	encodedVal, err := codec.EncodeKey(sc, nil, value)
+	if err != nil {
+		return 0, err
+	}
+	result, err := c.equalRowCount(sc, value, encodedVal, t.ModifyCount)
 	result *= c.GetIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
@@ -329,7 +355,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 	if idx.CMSketch != nil && idx.StatsVer == Version1 {
 		result, err = coll.getIndexRowCount(sc, idxID, indexRanges)
 	} else {
-		result, err = idx.GetRowCount(sc, indexRanges, coll.ModifyCount)
+		result, err = idx.GetRowCount(sc, coll, indexRanges, coll.ModifyCount)
 	}
 	result *= idx.GetIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
@@ -472,6 +498,9 @@ func (coll *HistColl) crossValidationSelectivity(sc *stmtctx.StatementContext, i
 			break
 		}
 		if col, ok := coll.Columns[colID]; ok {
+			if col.IsInvalid(sc, coll.Pseudo) {
+				continue
+			}
 			lowExclude := idxPointRange.LowExclude
 			highExclude := idxPointRange.HighExclude
 			// Consider this case:
@@ -526,7 +555,9 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 			if i >= usedColsLen {
 				break
 			}
-			ndv = mathutil.MaxInt64(ndv, coll.Columns[colID].NDV)
+			if col, ok := coll.Columns[colID]; ok {
+				ndv = mathutil.MaxInt64(ndv, col.Histogram.NDV)
+			}
 		}
 		return outOfRangeEQSelectivity(ndv, coll.ModifyCount, int64(idx.TotalRowCount())), nil
 	}
@@ -560,7 +591,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 		// on single-column index, use previous way as well, because CMSketch does not contain null
 		// values in this case.
 		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
-			count, err := idx.GetRowCount(sc, []*ranger.Range{ran}, coll.ModifyCount)
+			count, err := idx.GetRowCount(sc, nil, []*ranger.Range{ran}, coll.ModifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -895,4 +926,36 @@ func (coll *HistColl) GetIndexAvgRowSize(ctx sessionctx.Context, cols []*express
 		size++
 	}
 	return
+}
+
+// CheckAnalyzeVerOnTable checks whether the given version is the one from the tbl.
+// If not, it will return false and set the version to the tbl's.
+// We use this check to make sure all the statistics of the table are in the same version.
+func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
+	for _, col := range tbl.Columns {
+		// Version0 means no statistics is collected currently.
+		if col.StatsVer == Version0 {
+			continue
+		}
+		if col.StatsVer != int64(*version) {
+			*version = int(col.StatsVer)
+			return false
+		}
+		// If we found one column and the version is the same, we can directly return since all the versions from this table is the same.
+		return true
+	}
+	for _, idx := range tbl.Indices {
+		// Version0 means no statistics is collected currently.
+		if idx.StatsVer == Version0 {
+			continue
+		}
+		if idx.StatsVer != int64(*version) {
+			*version = int(idx.StatsVer)
+			return false
+		}
+		// If we found one column and the version is the same, we can directly return since all the versions from this table is the same.
+		return true
+	}
+	// This table has no statistics yet. We can directly return true.
+	return true
 }

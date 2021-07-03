@@ -153,6 +153,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	return sig, nil
 }
 
+// nolint:structcheck
 type baseInSig struct {
 	baseBuiltinFunc
 	// nonConstArgsIdx stores the indices of non-constant args in the baseBuiltinFunc.args (the first arg is not included).
@@ -216,7 +217,7 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 				return 1, false, nil
 			}
 		}
-		args = args[:0]
+		args = make([]Expression, 0, len(b.nonConstArgsIdx))
 		for _, i := range b.nonConstArgsIdx {
 			args = append(args, b.args[i])
 		}
@@ -305,7 +306,7 @@ func (b *builtinInStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 		if b.hashSet.Exist(string(collator.Key(arg0))) {
 			return 1, false, nil
 		}
-		args = args[:0]
+		args = make([]Expression, 0, len(b.nonConstArgsIdx))
 		for _, i := range b.nonConstArgsIdx {
 			args = append(args, b.args[i])
 		}
@@ -376,7 +377,7 @@ func (b *builtinInRealSig) evalInt(row chunk.Row) (int64, bool, error) {
 		if b.hashSet.Exist(arg0) {
 			return 1, false, nil
 		}
-		args = args[:0]
+		args = make([]Expression, 0, len(b.nonConstArgsIdx))
 		for _, i := range b.nonConstArgsIdx {
 			args = append(args, b.args[i])
 		}
@@ -456,7 +457,7 @@ func (b *builtinInDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
 		if b.hashSet.Exist(string(key)) {
 			return 1, false, nil
 		}
-		args = args[:0]
+		args = make([]Expression, 0, len(b.nonConstArgsIdx))
 		for _, i := range b.nonConstArgsIdx {
 			args = append(args, b.args[i])
 		}
@@ -527,7 +528,7 @@ func (b *builtinInTimeSig) evalInt(row chunk.Row) (int64, bool, error) {
 		if _, ok := b.hashSet[arg0.CoreTime()]; ok {
 			return 1, false, nil
 		}
-		args = args[:0]
+		args = make([]Expression, 0, len(b.nonConstArgsIdx))
 		for _, i := range b.nonConstArgsIdx {
 			args = append(args, b.args[i])
 		}
@@ -598,7 +599,7 @@ func (b *builtinInDurationSig) evalInt(row chunk.Row) (int64, bool, error) {
 		if _, ok := b.hashSet[arg0.Duration]; ok {
 			return 1, false, nil
 		}
-		args = args[:0]
+		args = make([]Expression, 0, len(b.nonConstArgsIdx))
 		for _, i := range b.nonConstArgsIdx {
 			args = append(args, b.args[i])
 		}

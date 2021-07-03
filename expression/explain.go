@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -31,14 +32,27 @@ func (expr *ScalarFunction) ExplainInfo() string {
 func (expr *ScalarFunction) explainInfo(normalized bool) string {
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "%s(", expr.FuncName.L)
-	for i, arg := range expr.GetArgs() {
-		if normalized {
-			buffer.WriteString(arg.ExplainNormalizedInfo())
-		} else {
-			buffer.WriteString(arg.ExplainInfo())
-		}
-		if i+1 < len(expr.GetArgs()) {
+	switch expr.FuncName.L {
+	case ast.Cast:
+		for _, arg := range expr.GetArgs() {
+			if normalized {
+				buffer.WriteString(arg.ExplainNormalizedInfo())
+			} else {
+				buffer.WriteString(arg.ExplainInfo())
+			}
 			buffer.WriteString(", ")
+			buffer.WriteString(expr.RetType.String())
+		}
+	default:
+		for i, arg := range expr.GetArgs() {
+			if normalized {
+				buffer.WriteString(arg.ExplainNormalizedInfo())
+			} else {
+				buffer.WriteString(arg.ExplainInfo())
+			}
+			if i+1 < len(expr.GetArgs()) {
+				buffer.WriteString(", ")
+			}
 		}
 	}
 	buffer.WriteString(")")

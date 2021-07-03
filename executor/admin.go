@@ -126,6 +126,7 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 		SetStartTS(txn.StartTS()).
 		SetKeepOrder(true).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		Build()
 	if err != nil {
 		return err
@@ -135,7 +136,6 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	e.result.Fetch(ctx)
 	return nil
 }
 
@@ -273,6 +273,7 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 		SetStartTS(txn.StartTS()).
 		SetKeepOrder(true).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		Build()
 	if err != nil {
 		return nil, err
@@ -285,7 +286,6 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 	if err != nil {
 		return nil, err
 	}
-	result.Fetch(ctx)
 	return result, nil
 }
 
@@ -349,6 +349,7 @@ func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, err
 type recoverRows struct {
 	handle  kv.Handle
 	idxVals []types.Datum
+	rsData  []types.Datum
 	skip    bool
 }
 
@@ -377,7 +378,8 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 			}
 			idxVals := extractIdxVals(row, e.idxValsBufs[result.scanRowCount], e.colFieldTypes, idxValLen)
 			e.idxValsBufs[result.scanRowCount] = idxVals
-			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, skip: false})
+			rsData := tables.TryGetHandleRestoredDataWrapper(e.table, plannercore.GetCommonHandleDatum(e.handleCols, row), nil, e.index.Meta())
+			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, rsData: rsData, skip: false})
 			result.scanRowCount++
 			result.currentHandle = handle
 		}
@@ -457,13 +459,13 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 			continue
 		}
 
-		recordKey := e.table.RecordKey(row.handle)
+		recordKey := tablecodec.EncodeRecordKey(e.table.RecordPrefix(), row.handle)
 		err := txn.LockKeys(ctx, new(kv.LockCtx), recordKey)
 		if err != nil {
 			return result, err
 		}
 
-		_, err = e.index.Create(e.ctx, txn.GetUnionStore(), row.idxVals, row.handle)
+		_, err = e.index.Create(e.ctx, txn, row.idxVals, row.handle, row.rsData)
 		if err != nil {
 			return result, err
 		}
@@ -553,7 +555,7 @@ func (e *CleanupIndexExec) getIdxColTypes() []*types.FieldType {
 
 func (e *CleanupIndexExec) batchGetRecord(txn kv.Transaction) (map[string][]byte, error) {
 	e.idxValues.Range(func(h kv.Handle, _ interface{}) bool {
-		e.batchKeys = append(e.batchKeys, e.table.RecordKey(h))
+		e.batchKeys = append(e.batchKeys, tablecodec.EncodeRecordKey(e.table.RecordPrefix(), h))
 		return true
 	})
 	values, err := txn.BatchGet(context.Background(), e.batchKeys)
@@ -575,7 +577,7 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 				return errors.Trace(errors.Errorf("batch keys are inconsistent with handles"))
 			}
 			for _, handleIdxVals := range handleIdxValsGroup.([][]types.Datum) {
-				if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn.GetUnionStore(), handleIdxVals, handle); err != nil {
+				if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, handleIdxVals, handle); err != nil {
 					return err
 				}
 				e.removeCnt++
@@ -735,6 +737,7 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 		SetStartTS(txn.StartTS()).
 		SetKeepOrder(true).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		Build()
 	if err != nil {
 		return nil, err
@@ -746,7 +749,6 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 	if err != nil {
 		return nil, err
 	}
-	result.Fetch(ctx)
 	return result, nil
 }
 

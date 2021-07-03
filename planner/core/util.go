@@ -234,15 +234,22 @@ func buildLogicalJoinSchema(joinType JoinType, join LogicalPlan) *expression.Sch
 
 // BuildPhysicalJoinSchema builds the schema of PhysicalJoin from it's children's schema.
 func BuildPhysicalJoinSchema(joinType JoinType, join PhysicalPlan) *expression.Schema {
+	leftSchema := join.Children()[0].Schema()
 	switch joinType {
 	case SemiJoin, AntiSemiJoin:
-		return join.Children()[0].Schema().Clone()
+		return leftSchema.Clone()
 	case LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		newSchema := join.Children()[0].Schema().Clone()
+		newSchema := leftSchema.Clone()
 		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
 		return newSchema
 	}
-	return expression.MergeSchema(join.Children()[0].Schema(), join.Children()[1].Schema())
+	newSchema := expression.MergeSchema(leftSchema, join.Children()[1].Schema())
+	if joinType == LeftOuterJoin {
+		resetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
+	} else if joinType == RightOuterJoin {
+		resetNotNullFlag(newSchema, 0, leftSchema.Len())
+	}
+	return newSchema
 }
 
 // GetStatsInfo gets the statistics info from a physical plan tree.
@@ -284,7 +291,7 @@ func extractStringFromStringSet(set set.StringSet) string {
 		l = append(l, fmt.Sprintf(`"%s"`, k))
 	}
 	sort.Strings(l)
-	return fmt.Sprintf("%s", strings.Join(l, ","))
+	return strings.Join(l, ",")
 }
 
 func tableHasDirtyContent(ctx sessionctx.Context, tableInfo *model.TableInfo) bool {

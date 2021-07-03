@@ -77,4 +77,6 @@ func (s *testPlanIDSuite) TestPlanIDChanged(c *C) {
 	c.Assert(typeTableRowIDScan, Equals, 45)
 	c.Assert(typeIndexFullScan, Equals, 46)
 	c.Assert(typeIndexRangeScan, Equals, 47)
+	c.Assert(typeExchangeReceiver, Equals, 48)
+	c.Assert(typeExchangeSender, Equals, 49)
 }

@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/rowDecoder"
+	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -171,7 +171,7 @@ func (s *testDecoderSuite) TestClusterIndexRowDecoder(c *C) {
 
 	cols := []*model.ColumnInfo{c1, c2, c3}
 
-	tblInfo := &model.TableInfo{ID: 1, Columns: cols, Indices: []*model.IndexInfo{pk}, IsCommonHandle: true}
+	tblInfo := &model.TableInfo{ID: 1, Columns: cols, Indices: []*model.IndexInfo{pk}, IsCommonHandle: true, CommonHandleVersion: 1}
 	tbl := tables.MockTableFromMeta(tblInfo)
 
 	ctx := mock.NewContext()

@@ -36,17 +36,21 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	. "github.com/pingcap/tidb/util/testutil"
+	"github.com/tikv/client-go/v2/mockstore/cluster"
 )
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
+	if err != nil {
+		t.Fatal(err)
+	}
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
@@ -160,6 +164,8 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	tk.MustExec("insert into pt values(1), (3), (5)")
 	tk.MustExec("create table nt(a int)")
 	tk.MustExec("insert into nt values(7)")
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
 	_, err = tk.Exec("alter table pt exchange partition p1 with table nt")
 	c.Assert(err, NotNil)
 
@@ -232,7 +238,8 @@ func (s *testFailDBSuite) TestAddIndexFailed(c *C) {
 	tblID := tbl.Meta().ID
 
 	// Split the table.
-	s.cluster.SplitTable(tblID, 100)
+	tableStart := tablecodec.GenTableRecordPrefix(tblID)
+	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)
 
 	tk.MustExec("alter table t add index idx_b(b)")
 	tk.MustExec("admin check index t idx_b")
@@ -349,7 +356,7 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists test_add_index")
 	if s.IsCommonHandle {
-		tk.MustExec("set @@tidb_enable_clustered_index = 1")
+		tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1, c3))")
 	} else {
 		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
@@ -370,7 +377,8 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 
 	splitCount := 100
 	// Split table to multi region.
-	s.cluster.SplitTable(tbl.Meta().ID, splitCount)
+	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
+	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), splitCount)
 
 	err = ddlutil.LoadDDLReorgVars(tk.Se)
 	c.Assert(err, IsNil)
@@ -452,16 +460,10 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 
-	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-	}()
-
 	tk.MustExec("create table t (a int not null default 1, b int default 2, c int not null default 0, primary key(c), index idx(b), index idx1(a), index idx2(b, c))")
 	tk.MustExec("insert into t values(1, 2, 3), (11, 22, 33)")
 	_, err := tk.Exec("alter table t change column c cc mediumint")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true and this column has primary key flag")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: this column has primary key flag")
 	tk.MustExec("alter table t change column b bb mediumint first")
 	dom := domain.GetDomain(tk.Se)
 	is := dom.InfoSchema()
@@ -483,7 +485,7 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 		"  `bb` mediumint(9) DEFAULT NULL,\n" +
 		"  `a` int(11) NOT NULL DEFAULT '1',\n" +
 		"  `c` int(11) NOT NULL DEFAULT '0',\n" +
-		"  PRIMARY KEY (`c`),\n" +
+		"  PRIMARY KEY (`c`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `idx` (`bb`),\n" +
 		"  KEY `idx1` (`a`),\n" +
 		"  KEY `idx2` (`bb`,`c`)\n" +
@@ -497,7 +499,7 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 		"  `bb` mediumint(9) DEFAULT NULL,\n" +
 		"  `c` int(11) NOT NULL DEFAULT '0',\n" +
 		"  `aa` mediumint(9) DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`c`),\n" +
+		"  PRIMARY KEY (`c`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `idx` (`bb`),\n" +
 		"  KEY `idx1` (`aa`),\n" +
 		"  KEY `idx2` (`bb`,`c`)\n" +
@@ -508,14 +510,16 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	// Test unsupport statements.
 	tk.MustExec("create table t1(a int) partition by hash (a) partitions 2")
 	_, err = tk.Exec("alter table t1 modify column a mediumint")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true, table is partition table")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: table is partition table")
 	tk.MustExec("create table t2(id int, a int, b int generated always as (abs(a)) virtual, c int generated always as (a+1) stored)")
 	_, err = tk.Exec("alter table t2 modify column b mediumint")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true, newCol IsGenerated false, oldCol IsGenerated true")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
 	_, err = tk.Exec("alter table t2 modify column c mediumint")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true, newCol IsGenerated false, oldCol IsGenerated true")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
 	_, err = tk.Exec("alter table t2 modify column a mediumint generated always as(id+1) stored")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true, newCol IsGenerated true, oldCol IsGenerated false")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: newCol IsGenerated true, oldCol IsGenerated false")
+	_, err = tk.Exec("alter table t2 modify column a mediumint")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: oldCol is a dependent column 'a' for generated column")
 
 	// Test multiple rows of data.
 	tk.MustExec("create table t3(a int not null default 1, b int default 2, c int not null default 0, primary key(c), index idx(b), index idx1(a), index idx2(b, c))")

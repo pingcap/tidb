@@ -22,10 +22,9 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // StatsHandler is the handler for dumping statistics.
@@ -93,6 +92,8 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		writeError(w, err)
 		return
 	}
+	defer se.Close()
+
 	se.GetSessionVars().StmtCtx.TimeZone = time.Local
 	t, err := types.ParseTime(se.GetSessionVars().StmtCtx, params[pSnapshot], mysql.TypeTimestamp, 6)
 	if err != nil {
@@ -104,7 +105,7 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		writeError(w, err)
 		return
 	}
-	snapshot := variable.GoTimeToTS(t1)
+	snapshot := oracle.GoTimeToTS(t1)
 	err = gcutil.ValidateSnapshot(se, snapshot)
 	if err != nil {
 		writeError(w, err)
@@ -122,9 +123,7 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		writeError(w, err)
 		return
 	}
-	se.GetSessionVars().SnapshotInfoschema, se.GetSessionVars().SnapshotTS = is, snapshot
-	historyStatsExec := se.(sqlexec.RestrictedSQLExecutor)
-	js, err := h.DumpStatsToJSON(params[pDBName], tbl.Meta(), historyStatsExec)
+	js, err := h.DumpStatsToJSONBySnapshot(params[pDBName], tbl.Meta(), snapshot)
 	if err != nil {
 		writeError(w, err)
 	} else {

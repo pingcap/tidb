@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -24,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // MergeJoinExec implements the merge join algorithm.
@@ -52,11 +50,6 @@ type MergeJoinExec struct {
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 }
-
-var (
-	innerTableLabel fmt.Stringer = stringutil.StringerStr("innerTable")
-	outerTableLabel fmt.Stringer = stringutil.StringerStr("outerTable")
-)
 
 type mergeJoinTable struct {
 	isInner    bool

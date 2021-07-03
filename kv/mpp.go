@@ -45,6 +45,20 @@ func (t *MPPTask) ToPB() *mpp.TaskMeta {
 	return meta
 }
 
+//MppTaskStates denotes the state of mpp tasks
+type MppTaskStates uint8
+
+const (
+	// MppTaskReady means the task is ready
+	MppTaskReady MppTaskStates = iota
+	// MppTaskRunning means the task is running
+	MppTaskRunning
+	// MppTaskCancelled means the task is cancelled
+	MppTaskCancelled
+	// MppTaskDone means the task is done
+	MppTaskDone
+)
+
 // MPPDispatchRequest stands for a dispatching task.
 type MPPDispatchRequest struct {
 	Data    []byte      // data encodes the dag coprocessor request.
@@ -55,6 +69,7 @@ type MPPDispatchRequest struct {
 	SchemaVar int64
 	StartTs   uint64
 	ID        int64 // identify a single task
+	State     MppTaskStates
 }
 
 // MPPClient accepts and processes mpp requests.
@@ -64,7 +79,7 @@ type MPPClient interface {
 	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest) ([]MPPTaskMeta, error)
 
 	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
-	DispatchMPPTasks(context.Context, []*MPPDispatchRequest) Response
+	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest) Response
 }
 
 // MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.

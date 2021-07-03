@@ -26,6 +26,7 @@ record=0
 record_case=""
 create=0
 create_case=""
+stats="s"
 
 set -eu
 trap 'set +e; PIDS=$(jobs -p); [ -n "$PIDS" ] && kill -9 $PIDS' EXIT
@@ -94,6 +95,13 @@ function build_explain_test()
     GO111MODULE=on go build -o $explain_test
 }
 
+function extract_stats()
+{
+    echo "extracting statistics: $stats"
+    rm -rf $stats
+    unzip -qq s.zip
+}
+
 while getopts "t:s:r:b:c:i:h:p" opt; do
     case $opt in
         t)
@@ -140,6 +148,8 @@ while getopts "t:s:r:b:c:i:h:p" opt; do
             ;;
     esac
 done
+
+extract_stats
 
 if [ $build -eq 1 ]; then
     if [ -z "$tidb_server" ]; then

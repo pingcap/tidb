@@ -1,0 +1,129 @@
+drop database if exists with_cluster_index;
+create database with_cluster_index;
+drop database if exists wout_cluster_index;
+create database wout_cluster_index;
+use with_cluster_index;
+create table tbl_0 ( col_0 decimal not null , col_1 blob(207) , col_2 text , col_3 datetime default '1986-07-01' , col_4 bigint unsigned default 1504335725690712365 , primary key idx_0 ( col_3,col_2(1),col_1(6) ) clustered, key idx_1 ( col_3 ), unique key idx_2 ( col_3 ) , unique key idx_3 ( col_0 ) , key idx_4 ( col_1(1),col_2(1) ) , key idx_5 ( col_2(1) ) )  ;
+create table tbl_1 ( col_5 char(135) , col_6 bit(17) default 50609 not null , col_7 char(202) default 'IoQWYoGdbbgBDlxpDHQ' , col_8 char(213) , col_9 time not null , primary key idx_6 ( col_6 ) clustered, unique key idx_7 ( col_5 ) )  ;
+create table tbl_2 ( col_10 datetime default '1976-05-11' , col_11 datetime , col_12 float , col_13 double(56,29) default 18.0118 , col_14 char not null , primary key idx_8 ( col_14,col_13,col_10 ) clustered, key idx_9 ( col_11 ) )  ;
+create table tbl_3 ( col_15 tinyint default -91 not null , col_16 bit(61) default 990141831018971350 not null , col_17 double(244,22) default 3985 not null , col_18 binary(32) default 'kxMlWqvpxXNBlxoU' , col_19 text(401) , primary key idx_10 ( col_18,col_19(4) ) clustered, key idx_11 ( col_17,col_18,col_19(2),col_15,col_16 ) , unique key idx_12 ( col_17 ) )  ;
+create table tbl_4 ( col_20 double(230,16) default 8.49 not null , col_21 int unsigned not null , col_22 enum('Alice','Bob','Charlie','David') not null , col_23 float default 3066.13040283622 , col_24 datetime default '1980-10-27' not null , primary key idx_13 ( col_22,col_24 ) clustered, key idx_14 ( col_23,col_20 ) , key idx_15 ( col_24 ) , key idx_16 ( col_20 ) , unique key idx_17 ( col_24 ) , key idx_18 ( col_21 ) )  ;
+load stats 's/with_cluster_index_tbl_0.json';
+load stats 's/with_cluster_index_tbl_1.json';
+load stats 's/with_cluster_index_tbl_2.json';
+load stats 's/with_cluster_index_tbl_3.json';
+load stats 's/with_cluster_index_tbl_4.json';
+use wout_cluster_index;
+create table tbl_0 ( col_0 decimal not null , col_1 blob(207) , col_2 text , col_3 datetime default '1986-07-01' , col_4 bigint unsigned default 1504335725690712365 , primary key idx_0 ( col_3,col_2(1),col_1(6) ) nonclustered, key idx_1 ( col_3 ) , unique key idx_2 ( col_3 ) , unique key idx_3 ( col_0 ) , key idx_4 ( col_1(1),col_2(1) ) , key idx_5 ( col_2(1) ) )  ;
+create table tbl_1 ( col_5 char(135) , col_6 bit(17) default 50609 not null , col_7 char(202) default 'IoQWYoGdbbgBDlxpDHQ' , col_8 char(213) , col_9 time not null , primary key idx_6 ( col_6 ) nonclustered, unique key idx_7 ( col_5 ) )  ;
+create table tbl_2 ( col_10 datetime default '1976-05-11' , col_11 datetime , col_12 float , col_13 double(56,29) default 18.0118 , col_14 char not null , primary key idx_8 ( col_14,col_13,col_10 ) nonclustered, key idx_9 ( col_11 ) )  ;
+create table tbl_3 ( col_15 tinyint default -91 not null , col_16 bit(61) default 990141831018971350 not null , col_17 double(244,22) default 3985 not null , col_18 binary(32) default 'kxMlWqvpxXNBlxoU' , col_19 text(401) , primary key idx_10 ( col_18,col_19(4) ) nonclustered, key idx_11 ( col_17,col_18,col_19(2),col_15,col_16 ) , unique key idx_12 ( col_17 ) )  ;
+create table tbl_4 ( col_20 double(230,16) default 8.49 not null , col_21 int unsigned not null , col_22 enum('Alice','Bob','Charlie','David') not null , col_23 float default 3066.13040283622 , col_24 datetime default '1980-10-27' not null , primary key idx_13 ( col_22,col_24 ) nonclustered, key idx_14 ( col_23,col_20 ) , key idx_15 ( col_24 ) , key idx_16 ( col_20 ) , unique key idx_17 ( col_24 ) , key idx_18 ( col_21 ) )  ;
+load stats 's/wout_cluster_index_tbl_0.json';
+load stats 's/wout_cluster_index_tbl_1.json';
+load stats 's/wout_cluster_index_tbl_2.json';
+load stats 's/wout_cluster_index_tbl_3.json';
+load stats 's/wout_cluster_index_tbl_4.json';
+explain select count(*) from with_cluster_index.tbl_0 where col_0 < 5429  ;
+id	estRows	task	access object	operator info
+StreamAgg_17	1.00	root		funcs:count(Column#8)->Column#6
+└─IndexReader_18	1.00	root		index:StreamAgg_9
+  └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#8
+    └─IndexRangeScan_16	798.90	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,5429), keep order:false
+explain select count(*) from wout_cluster_index.tbl_0 where col_0 < 5429  ;
+id	estRows	task	access object	operator info
+StreamAgg_17	1.00	root		funcs:count(Column#9)->Column#7
+└─IndexReader_18	1.00	root		index:StreamAgg_9
+  └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#9
+    └─IndexRangeScan_16	798.90	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,5429), keep order:false
+explain select count(*) from with_cluster_index.tbl_0 where col_0 < 41  ;
+id	estRows	task	access object	operator info
+StreamAgg_17	1.00	root		funcs:count(Column#8)->Column#6
+└─IndexReader_18	1.00	root		index:StreamAgg_9
+  └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#8
+    └─IndexRangeScan_16	41.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,41), keep order:false
+explain select count(*) from wout_cluster_index.tbl_0 where col_0 < 41  ;
+id	estRows	task	access object	operator info
+StreamAgg_17	1.00	root		funcs:count(Column#9)->Column#7
+└─IndexReader_18	1.00	root		index:StreamAgg_9
+  └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#9
+    └─IndexRangeScan_16	41.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,41), keep order:false
+explain select col_14 from with_cluster_index.tbl_2 where col_11 <> '2013-11-01' ;
+id	estRows	task	access object	operator info
+Projection_4	4509.00	root		with_cluster_index.tbl_2.col_14
+└─IndexReader_6	4509.00	root		index:IndexRangeScan_5
+  └─IndexRangeScan_5	4509.00	cop[tikv]	table:tbl_2, index:idx_9(col_11)	range:[-inf,2013-11-01 00:00:00), (2013-11-01 00:00:00,+inf], keep order:false
+explain select col_14 from wout_cluster_index.tbl_2 where col_11 <> '2013-11-01' ;
+id	estRows	task	access object	operator info
+Projection_4	4509.00	root		wout_cluster_index.tbl_2.col_14
+└─TableReader_7	4509.00	root		data:Selection_6
+  └─Selection_6	4509.00	cop[tikv]		ne(wout_cluster_index.tbl_2.col_11, 2013-11-01 00:00:00.000000)
+    └─TableFullScan_5	4673.00	cop[tikv]	table:tbl_2	keep order:false
+explain select sum( col_4 ) from with_cluster_index.tbl_0 where col_3 != '1993-12-02' ;
+id	estRows	task	access object	operator info
+StreamAgg_17	1.00	root		funcs:sum(Column#8)->Column#6
+└─TableReader_18	1.00	root		data:StreamAgg_9
+  └─StreamAgg_9	1.00	cop[tikv]		funcs:sum(with_cluster_index.tbl_0.col_4)->Column#8
+    └─TableRangeScan_16	2244.00	cop[tikv]	table:tbl_0	range:[-inf,1993-12-02 00:00:00), (1993-12-02 00:00:00,+inf], keep order:false
+explain select sum( col_4 ) from wout_cluster_index.tbl_0 where col_3 != '1993-12-02' ;
+id	estRows	task	access object	operator info
+StreamAgg_37	1.00	root		funcs:sum(Column#20)->Column#7
+└─TableReader_38	1.00	root		data:StreamAgg_9
+  └─StreamAgg_9	1.00	cop[tikv]		funcs:sum(wout_cluster_index.tbl_0.col_4)->Column#20
+    └─Selection_36	2244.00	cop[tikv]		ne(wout_cluster_index.tbl_0.col_3, 1993-12-02 00:00:00.000000)
+      └─TableFullScan_35	2244.00	cop[tikv]	table:tbl_0	keep order:false
+explain select col_0 from with_cluster_index.tbl_0 where col_0 <= 0  ;
+id	estRows	task	access object	operator info
+IndexReader_6	1.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	1.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,0], keep order:false
+explain select col_0 from wout_cluster_index.tbl_0 where col_0 <= 0  ;
+id	estRows	task	access object	operator info
+IndexReader_6	1.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	1.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,0], keep order:false
+explain select col_3 from with_cluster_index.tbl_0 where col_3 >= '1981-09-15'  ;
+id	estRows	task	access object	operator info
+TableReader_6	1859.31	root		data:TableRangeScan_5
+└─TableRangeScan_5	1859.31	cop[tikv]	table:tbl_0	range:[1981-09-15 00:00:00,+inf], keep order:false
+explain select col_3 from wout_cluster_index.tbl_0 where col_3 >= '1981-09-15'  ;
+id	estRows	task	access object	operator info
+IndexReader_10	1859.31	root		index:IndexRangeScan_9
+└─IndexRangeScan_9	1859.31	cop[tikv]	table:tbl_0, index:idx_2(col_3)	range:[1981-09-15 00:00:00,+inf], keep order:false
+explain select tbl_2.col_14 , tbl_0.col_1 from with_cluster_index.tbl_2 right join with_cluster_index.tbl_0 on col_3 = col_11 ;
+id	estRows	task	access object	operator info
+MergeJoin_6	2533.51	root		right outer join, left key:with_cluster_index.tbl_2.col_11, right key:with_cluster_index.tbl_0.col_3
+├─IndexReader_21(Build)	4509.00	root		index:IndexFullScan_20
+│ └─IndexFullScan_20	4509.00	cop[tikv]	table:tbl_2, index:idx_9(col_11)	keep order:true
+└─TableReader_23(Probe)	2244.00	root		data:TableFullScan_22
+  └─TableFullScan_22	2244.00	cop[tikv]	table:tbl_0	keep order:true
+explain select tbl_2.col_14 , tbl_0.col_1 from wout_cluster_index.tbl_2 right join wout_cluster_index.tbl_0 on col_3 = col_11 ;
+id	estRows	task	access object	operator info
+HashJoin_22	2533.51	root		right outer join, equal:[eq(wout_cluster_index.tbl_2.col_11, wout_cluster_index.tbl_0.col_3)]
+├─TableReader_40(Build)	2244.00	root		data:TableFullScan_39
+│ └─TableFullScan_39	2244.00	cop[tikv]	table:tbl_0	keep order:false
+└─TableReader_43(Probe)	4509.00	root		data:Selection_42
+  └─Selection_42	4509.00	cop[tikv]		not(isnull(wout_cluster_index.tbl_2.col_11))
+    └─TableFullScan_41	4673.00	cop[tikv]	table:tbl_2	keep order:false
+explain select count(*) from with_cluster_index.tbl_0 where col_0 <= 0 ;
+id	estRows	task	access object	operator info
+StreamAgg_16	1.00	root		funcs:count(Column#8)->Column#6
+└─IndexReader_17	1.00	root		index:StreamAgg_9
+  └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#8
+    └─IndexRangeScan_11	1.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,0], keep order:false
+explain select count(*) from wout_cluster_index.tbl_0 where col_0 <= 0 ;
+id	estRows	task	access object	operator info
+StreamAgg_16	1.00	root		funcs:count(Column#9)->Column#7
+└─IndexReader_17	1.00	root		index:StreamAgg_9
+  └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#9
+    └─IndexRangeScan_11	1.00	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,0], keep order:false
+explain select count(*) from with_cluster_index.tbl_0 where col_0 >= 803163  ;
+id	estRows	task	access object	operator info
+StreamAgg_17	1.00	root		funcs:count(Column#8)->Column#6
+└─IndexReader_18	1.00	root		index:StreamAgg_9
+  └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#8
+    └─IndexRangeScan_16	109.70	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[803163,+inf], keep order:false
+explain select count(*) from wout_cluster_index.tbl_0 where col_0 >= 803163  ;
+id	estRows	task	access object	operator info
+StreamAgg_17	1.00	root		funcs:count(Column#9)->Column#7
+└─IndexReader_18	1.00	root		index:StreamAgg_9
+  └─StreamAgg_9	1.00	cop[tikv]		funcs:count(1)->Column#9
+    └─IndexRangeScan_16	109.70	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[803163,+inf], keep order:false
