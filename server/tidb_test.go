@@ -304,7 +304,6 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	time.Sleep(time.Millisecond * 100)
-	c.Assert(server.isUnixSocket(), IsFalse) // If listening on tcp-only, return FALSE
 
 	// https connection should work.
 	ts.runTestStatusAPI(c)
@@ -411,7 +410,6 @@ func (ts *tidbTestSuite) TestSocketForwarding(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	time.Sleep(time.Millisecond * 100)
-	c.Assert(server.isUnixSocket(), IsFalse) // If listening on both, return FALSE
 	defer server.Close()
 
 	cli.runTestRegression(c, func(config *mysql.Config) {
@@ -438,7 +436,6 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	time.Sleep(time.Millisecond * 100)
-	c.Assert(server.isUnixSocket(), IsTrue) // If listening on socket-only, return TRUE
 	defer server.Close()
 
 	// a fake server client, config is override, just used to run tests
