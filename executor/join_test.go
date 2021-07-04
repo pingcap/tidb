@@ -2599,11 +2599,6 @@ func (s *testSuiteJoinSerial) TestIssue25902(c *C) {
 	tk.MustExec("create table tt1 (ts timestamp);")
 	tk.MustExec("create table tt2 (ts varchar(32));")
 	tk.MustExec("insert into tt1 values (\"2001-01-01 00:00:00\");")
-	//tk.MustExec("insert into tt1 values (\"2001-01-01 08:00:00\");")
 	tk.MustExec("insert into tt2 values (\"2001-01-01 00:00:00\");")
-	tk.MustExec("set @@tidb_hash_join_concurrency=1;")
-	//tk.MustQuery("select  /*+ MERGE_JOIN(tt1, tt2) */ * from tt1 inner join tt2 on tt1.ts=tt2.ts;").Check(testkit.Rows("2001-01-01 00:00:00 2001-01-01 00:00:00"))
 	tk.MustQuery("select * from tt1 where ts in (select ts from tt2);").Check(testkit.Rows("2001-01-01 00:00:00"))
-	//tk.MustQuery("select * from tt2 left outer join tt1 on tt1.ts=tt2.ts;").Check(testkit.Rows("2001-01-01 00:00:00"))
-//	tk.MustQuery("select tt2.* from tt1 left outer join tt2 on tt1.ts=tt2.ts;").Check(testkit.Rows("2001-01-01 00:00:00"))
 }
