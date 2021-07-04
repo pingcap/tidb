@@ -2598,7 +2598,10 @@ func (s *testSuiteJoinSerial) TestIssue25902(c *C) {
 	tk.MustExec("drop table if exists tt1,tt2; ")
 	tk.MustExec("create table tt1 (ts timestamp);")
 	tk.MustExec("create table tt2 (ts varchar(32));")
+	tk.MustExec("create table tt3 (ts datetime);")
 	tk.MustExec("insert into tt1 values (\"2001-01-01 00:00:00\");")
 	tk.MustExec("insert into tt2 values (\"2001-01-01 00:00:00\");")
+	tk.MustExec("insert into tt3 values (\"2001-01-01 00:00:00\");")
 	tk.MustQuery("select * from tt1 where ts in (select ts from tt2);").Check(testkit.Rows("2001-01-01 00:00:00"))
+	tk.MustQuery("select * from tt1 where ts in (select ts from tt3);").Check(testkit.Rows("2001-01-01 00:00:00"))
 }
