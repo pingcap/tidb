@@ -46,6 +46,7 @@ Documentation
 - [ ] Contains syntax changes
 - [ ] Contains variable changes
 - [ ] Contains experimental features
+- [ ] Changes MySQL compatibility
 
 ### Release note <!-- bugfixes or new feature need a release note -->
 
