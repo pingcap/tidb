@@ -446,7 +446,7 @@ type PointPlanVal struct {
 // TryFastPlan tries to use the PointGetPlan for the query.
 func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 	if checkStableResultMode(ctx) {
-		// the rule of stabilizing results has not taken effect yet, so cannot generate a plan here
+		// the rule of stabilizing results has not taken effect yet, so cannot generate a plan here in this mode
 		return nil
 	}
 
