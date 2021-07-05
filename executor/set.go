@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -265,6 +266,14 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(snapshotTS uint64) error {
 	if err != nil {
 		return err
 	}
+
+	if local := vars.LocalTemporaryTables; local != nil {
+		snapInfo = &infoschema.TemporaryTableAttachedInfoSchema{
+			InfoSchema:           snapInfo,
+			LocalTemporaryTables: local.(*infoschema.LocalTemporaryTables),
+		}
+	}
+
 	vars.SnapshotInfoschema = snapInfo
 	return nil
 }
