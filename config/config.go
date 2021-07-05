@@ -138,8 +138,9 @@ type Config struct {
 	SplitRegionMaxNum   uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
 	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
-	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
-	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
+	RepairMode               bool     `toml:"repair-mode" json:"repair-mode"`
+	RepairTableList          []string `toml:"repair-table-list" json:"repair-table-list"`
+	ResolveLockLiteThreshold uint64   `toml:"resolve-lock-lite-threshold" json:"resolve-lock-lite-threshold"`
 	// IsolationRead indicates that the TiDB reads data from which isolation level(engine and label).
 	IsolationRead IsolationRead `toml:"isolation-read" json:"isolation-read"`
 	// MaxServerConnections is the maximum permitted number of simultaneous client connections.
@@ -566,6 +567,7 @@ var defaultConf = Config{
 	EnableTableLock:              false,
 	DelayCleanTableLock:          0,
 	SplitRegionMaxNum:            1000,
+	ResolveLockLiteThreshold:     128,
 	RepairMode:                   false,
 	RepairTableList:              []string{},
 	MaxServerConnections:         0,
