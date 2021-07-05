@@ -2125,6 +2125,18 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
+	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+	count, modifyCount, err := statsHandle.StatsMetaCountAndModifyCount(task.TableID.GetStatisticsID())
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	failpoint.Inject("injectBaseCount", func(val failpoint.Value) {
+		count = int64(val.(int))
+	})
+	failpoint.Inject("injectBaseModifyCount", func(val failpoint.Value) {
+		modifyCount = int64(val.(int))
+	})
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -2146,6 +2158,8 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		indexes:                 availableIdx,
 		AnalyzeInfo:             task.AnalyzeInfo,
 		schemaForVirtualColEval: schemaForVirtualColEval,
+		baseCount:               count,
+		baseModifyCnt:           modifyCount,
 	}
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
 		BucketSize:   int64(opts[ast.AnalyzeOptNumBuckets]),
