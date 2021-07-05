@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/types/json"
 )
 
 var _ = Suite(&testJSONSuite{})
@@ -125,7 +124,6 @@ func (s *testJSONSuite) TestBinaryJSONUnquote(c *C) {
 		{json: `true`, unquoted: "true", err: nil},
 		{json: `null`, unquoted: "null", err: nil},
 		{json: `{"a": [1, 2]}`, unquoted: `{"a": [1, 2]}`, err: nil},
-		{json: `"\""`, unquoted: `"`, err: json.ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")},
 		{json: `"'"`, unquoted: `'`, err: nil},
 		{json: `"''"`, unquoted: `''`, err: nil},
 		{json: `""`, unquoted: ``, err: nil},
