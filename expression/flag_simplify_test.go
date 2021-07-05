@@ -15,16 +15,10 @@ package expression_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -72,73 +66,4 @@ func (s *testFlagSimplifySuite) TestSimplifyExpressionByFlag(c *C) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
-}
-
-type dataGen4Expr2PbTest struct {
-}
-
-func (dg *dataGen4Expr2PbTest) genColumn(tp byte, id int64) *expression.Column {
-	return &expression.Column{
-		RetType: types.NewFieldType(tp),
-		ID:      id,
-		Index:   int(id),
-	}
-}
-
-
-func (s *testFlagSimplifySuite) TestExprOnlyPushDownToFlash(c *C) {
-	sc := new(stmtctx.StatementContext)
-	client := new(mock.Client)
-	dg := new(dataGen4Expr2PbTest)
-	exprs := make([]expression.Expression, 0)
-
-	//jsonColumn := dg.genColumn(mysql.TypeJSON, 1)
-	intColumn := dg.genColumn(mysql.TypeLonglong, 2)
-	//realColumn := dg.genColumn(mysql.TypeDouble, 3)
-	decimalColumn := dg.genColumn(mysql.TypeNewDecimal, 4)
-	stringColumn := dg.genColumn(mysql.TypeString, 5)
-	datetimeColumn := dg.genColumn(mysql.TypeDatetime, 6)
-	binaryStringColumn := dg.genColumn(mysql.TypeString, 7)
-	binaryStringColumn.RetType.Collate = charset.CollationBin
-
-	function, err := expression.NewFunction(mock.NewContext(), ast.Substr, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
-	c.Assert(err, IsNil)
-	exprs = append(exprs, function)
-
-	function, err = expression.NewFunction(mock.NewContext(), ast.Substring, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
-	c.Assert(err, IsNil)
-	exprs = append(exprs, function)
-
-	function, err = expression.NewFunction(mock.NewContext(), ast.DateAdd, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, stringColumn)
-	c.Assert(err, IsNil)
-	exprs = append(exprs, function)
-
-	function, err = expression.NewFunction(mock.NewContext(), ast.TimestampDiff, types.NewFieldType(mysql.TypeLonglong), stringColumn, datetimeColumn, datetimeColumn)
-	c.Assert(err, IsNil)
-	exprs = append(exprs, function)
-
-	function, err = expression.NewFunction(mock.NewContext(), ast.FromUnixTime, types.NewFieldType(mysql.TypeDatetime), decimalColumn)
-	c.Assert(err, IsNil)
-	exprs = append(exprs, function)
-
-	function, err = expression.NewFunction(mock.NewContext(), ast.Extract, types.NewFieldType(mysql.TypeLonglong), stringColumn, datetimeColumn)
-	c.Assert(err, IsNil)
-	exprs = append(exprs, function)
-
-	pushed, remained := expression.PushDownExprs(sc, exprs, client, kv.UnSpecified)
-	c.Assert(len(pushed), Equals, len(exprs))
-	c.Assert(len(remained), Equals, 0)
-
-	canPush := expression.CanExprsPushDown(sc, exprs, client, kv.TiFlash)
-	c.Assert(canPush, Equals, true)
-	canPush = expression.CanExprsPushDown(sc, exprs, client, kv.TiKV)
-	c.Assert(canPush, Equals, false)
-
-	pushed, remained = expression.PushDownExprs(sc, exprs, client, kv.TiFlash)
-	c.Assert(len(pushed), Equals, len(exprs))
-	c.Assert(len(remained), Equals, 0)
-
-	pushed, remained = expression.PushDownExprs(sc, exprs, client, kv.TiKV)
-	c.Assert(len(pushed), Equals, 0)
-	c.Assert(len(remained), Equals, len(exprs))
 }
