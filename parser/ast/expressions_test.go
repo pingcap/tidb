@@ -363,6 +363,8 @@ func (tc *testExpressionsSuite) TestExistsSubqueryExprRestore(c *C) {
 	testCases := []NodeRestoreTestCase{
 		{"EXISTS (SELECT 2)", "EXISTS (SELECT 2)"},
 		{"NOT EXISTS (SELECT 2)", "NOT EXISTS (SELECT 2)"},
+		{"NOT NOT EXISTS (SELECT 2)", "EXISTS (SELECT 2)"},
+		{"NOT NOT NOT EXISTS (SELECT 2)", "NOT EXISTS (SELECT 2)"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Where
