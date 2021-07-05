@@ -131,7 +131,7 @@ func (s *testJSONSuite) TestBinaryJSONUnquote(c *C) {
 	for _, tt := range tests {
 		bj := mustParseBinaryFromString(c, tt.json)
 		unquoted, err := bj.Unquote()
-		c.Assert(err.Error(), Equals, tt.err.Error())
+		c.Assert(err, Equals, tt.err)
 		c.Assert(unquoted, Equals, tt.unquoted)
 	}
 }
