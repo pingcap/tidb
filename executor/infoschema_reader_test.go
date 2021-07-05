@@ -456,7 +456,10 @@ func (s *testInfoschemaTableSerialSuite) TestPartitionsTable(c *C) {
 	tk.MustQuery("select PARTITION_NAME, TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH from information_schema.PARTITIONS where table_name='test_partitions_1';").Check(
 		testkit.Rows("<nil> 3 18 54 6"))
 
-	tk.MustExec("DROP TABLE `test_partitions`;")
+	pid, err := strconv.Atoi(tk.MustQuery("select TIDB_PARTITION_ID from information_schema.partitions where table_name = 'test_partitions';").Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	c.Assert(pid, Greater, 0)
+	tk.MustExec("drop table test_partitions")
 }
 
 func (s *testInfoschemaTableSuite) TestMetricTables(c *C) {

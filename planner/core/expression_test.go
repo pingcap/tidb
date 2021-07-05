@@ -72,6 +72,7 @@ func (s *testExpressionSuite) TestBetween(c *C) {
 		{exprStr: "1 not between 2 and 3", resultStr: "1"},
 		{exprStr: "'2001-04-10 12:34:56' between cast('2001-01-01 01:01:01' as datetime) and '01-05-01'", resultStr: "1"},
 		{exprStr: "20010410123456 between cast('2001-01-01 01:01:01' as datetime) and 010501", resultStr: "0"},
+		{exprStr: "20010410123456 between cast('2001-01-01 01:01:01' as datetime) and 20010501123456", resultStr: "1"},
 	}
 	s.runTests(c, tests)
 }

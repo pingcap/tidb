@@ -385,7 +385,6 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return err
 	}
-	e.initRuntimeStats()
 	err = e.open(ctx)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -398,6 +397,7 @@ func (e *IndexLookUpExecutor) open(ctx context.Context) error {
 	// instead of in function "Open", because this "IndexLookUpExecutor" may be
 	// constructed by a "IndexLookUpJoin" and "Open" will not be called in that
 	// situation.
+	e.initRuntimeStats()
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
@@ -622,10 +622,8 @@ func (e *IndexLookUpExecutor) initRuntimeStats() {
 	if e.runtimeStats != nil {
 		if e.stats == nil {
 			e.stats = &IndexLookUpRunTimeStats{
-				IndexScan:    0,
-				TableRowScan: 0,
-				TableTaskNum: 0,
-				Concurrency:  e.ctx.GetSessionVars().IndexLookupConcurrency,
+				indexScanBasicStats: &execdetails.BasicRuntimeStats{},
+				Concurrency:         e.ctx.GetSessionVars().IndexLookupConcurrency,
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
@@ -693,16 +691,15 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 		chk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.idxLookup.maxChunkSize)
 	}
 	idxID := w.idxLookup.getIndexPlanRootID()
-	var basicStats *execdetails.BasicRuntimeStats
 	if w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
-		if idxID != w.idxLookup.id {
-			basicStats = &execdetails.BasicRuntimeStats{}
-			w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(idxID, basicStats)
+		if idxID != w.idxLookup.id && w.idxLookup.stats != nil {
+			w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(idxID, w.idxLookup.stats.indexScanBasicStats)
 		}
 	}
 	for {
 		startTime := time.Now()
 		handles, retChunk, scannedKeys, err := w.extractTaskHandles(ctx, chk, result, count)
+		finishFetch := time.Now()
 		if err != nil {
 			doneCh := make(chan error, 1)
 			doneCh <- err
@@ -716,9 +713,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			return count, nil
 		}
 		task := w.buildTableTask(handles, retChunk)
-		if w.idxLookup.stats != nil {
-			atomic.AddInt64(&w.idxLookup.stats.IndexScan, int64(time.Since(startTime)))
-		}
+		finishBuild := time.Now()
 		select {
 		case <-ctx.Done():
 			return count, nil
@@ -727,8 +722,10 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 		case w.workCh <- task:
 			w.resultCh <- task
 		}
-		if basicStats != nil {
-			basicStats.Record(time.Since(startTime), chk.NumRows())
+		if w.idxLookup.stats != nil {
+			atomic.AddInt64(&w.idxLookup.stats.FetchHandle, int64(finishFetch.Sub(startTime)))
+			atomic.AddInt64(&w.idxLookup.stats.TaskWait, int64(time.Since(finishBuild)))
+			atomic.AddInt64(&w.idxLookup.stats.FetchHandleTotal, int64(time.Since(startTime)))
 		}
 	}
 }
@@ -751,9 +748,13 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			}
 		}
 		chk.SetRequiredRows(requiredRows, w.maxChunkSize)
+		startTime := time.Now()
 		err = errors.Trace(idxResult.Next(ctx, chk))
 		if err != nil {
 			return handles, nil, scannedKeys, err
+		}
+		if w.idxLookup.stats != nil {
+			w.idxLookup.stats.indexScanBasicStats.Record(time.Since(startTime), chk.NumRows())
 		}
 		if chk.NumRows() == 0 {
 			return handles, retChk, scannedKeys, nil
@@ -873,39 +874,44 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 
 // IndexLookUpRunTimeStats record the indexlookup runtime stat
 type IndexLookUpRunTimeStats struct {
-	IndexScan    int64
-	TableRowScan int64
-	TableTaskNum int64
-	Concurrency  int
+	// indexScanBasicStats uses to record basic runtime stats for index scan.
+	indexScanBasicStats *execdetails.BasicRuntimeStats
+	FetchHandleTotal    int64
+	FetchHandle         int64
+	TaskWait            int64
+	TableRowScan        int64
+	TableTaskNum        int64
+	Concurrency         int
 }
 
 func (e *IndexLookUpRunTimeStats) String() string {
 	var buf bytes.Buffer
-	indexScan := atomic.LoadInt64(&e.IndexScan)
+	fetchHandle := atomic.LoadInt64(&e.FetchHandleTotal)
+	indexScan := atomic.LoadInt64(&e.FetchHandle)
+	taskWait := atomic.LoadInt64(&e.TaskWait)
 	tableScan := atomic.LoadInt64(&e.TableRowScan)
 	tableTaskNum := atomic.LoadInt64(&e.TableTaskNum)
 	concurrency := e.Concurrency
 	if indexScan != 0 {
-		buf.WriteString(fmt.Sprintf("index_task:%s", time.Duration(indexScan)))
+		buf.WriteString(fmt.Sprintf("index_task: {total_time: %s, fetch_handle: %s, build: %s, wait: %s}",
+			execdetails.FormatDuration(time.Duration(fetchHandle)),
+			execdetails.FormatDuration(time.Duration(indexScan)),
+			execdetails.FormatDuration(time.Duration(fetchHandle-indexScan-taskWait)),
+			execdetails.FormatDuration(time.Duration(taskWait))))
 	}
 	if tableScan != 0 {
 		if buf.Len() > 0 {
 			buf.WriteByte(',')
 		}
-		buf.WriteString(fmt.Sprintf(" table_task:{num:%d, concurrency:%d, time:%s}", tableTaskNum, concurrency, time.Duration(tableScan)))
+		buf.WriteString(fmt.Sprintf(" table_task: {total_time: %v, num: %d, concurrency: %d}", execdetails.FormatDuration(time.Duration(tableScan)), tableTaskNum, concurrency))
 	}
 	return buf.String()
 }
 
 // Clone implements the RuntimeStats interface.
 func (e *IndexLookUpRunTimeStats) Clone() execdetails.RuntimeStats {
-	newRs := &IndexLookUpRunTimeStats{
-		IndexScan:    e.IndexScan,
-		TableRowScan: e.TableRowScan,
-		TableTaskNum: e.TableTaskNum,
-		Concurrency:  e.Concurrency,
-	}
-	return newRs
+	newRs := *e
+	return &newRs
 }
 
 // Merge implements the RuntimeStats interface.
@@ -914,7 +920,9 @@ func (e *IndexLookUpRunTimeStats) Merge(other execdetails.RuntimeStats) {
 	if !ok {
 		return
 	}
-	e.IndexScan += tmp.IndexScan
+	e.FetchHandleTotal += tmp.FetchHandleTotal
+	e.FetchHandle += tmp.FetchHandle
+	e.TaskWait += tmp.TaskWait
 	e.TableRowScan += tmp.TableRowScan
 	e.TableTaskNum += tmp.TableTaskNum
 	e.Concurrency += tmp.Concurrency

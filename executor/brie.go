@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -403,6 +404,7 @@ func (gs *tidbGlueSession) CreateSession(store kv.Storage) (glue.Session, error)
 
 // Execute implements glue.Session
 func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
+	// FIXME: br relies on a deprecated API, it may be unsafe
 	_, err := gs.se.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	return err
 }
@@ -464,4 +466,8 @@ func (gs *tidbGlueSession) Record(name string, value uint64) {
 	case "Size":
 		gs.info.archiveSize = value
 	}
+}
+
+func (gs *tidbGlueSession) GetVersion() string {
+	return "TiDB\n" + printer.GetTiDBInfo()
 }

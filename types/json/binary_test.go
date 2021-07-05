@@ -15,6 +15,7 @@ package json
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -351,7 +352,7 @@ func BenchmarkBinaryMarshal(b *testing.B) {
 	b.SetBytes(int64(len(benchStr)))
 	bj, _ := ParseBinaryFromString(benchStr)
 	for i := 0; i < b.N; i++ {
-		bj.MarshalJSON()
+		_, _ = bj.MarshalJSON()
 	}
 }
 
@@ -405,6 +406,16 @@ func (s *testJSONSuite) TestGetKeys(c *C) {
 	c.Assert(parsedBJ.GetKeys().String(), Equals, "[]")
 	parsedBJ = mustParseBinaryFromString(c, "{}")
 	c.Assert(parsedBJ.GetKeys().String(), Equals, "[]")
+
+	b := strings.Builder{}
+	b.WriteString("{\"")
+	for i := 0; i < 65536; i++ {
+		b.WriteByte('a')
+	}
+	b.WriteString("\": 1}")
+	parsedBJ, err := ParseBinaryFromString(b.String())
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:8129]TiDB does not yet support JSON objects with the key length >= 65536")
 }
 
 func (s *testJSONSuite) TestBinaryJSONDepth(c *C) {

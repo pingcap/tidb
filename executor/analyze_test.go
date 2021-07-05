@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -645,4 +646,27 @@ func (s *testSuite1) TestDefaultValForAnalyze(c *C) {
 	tk.MustExec("analyze table t with 0 topn;")
 	tk.MustQuery("explain select * from t where a = 1").Check(testkit.Rows("IndexReader_6 1.00 root  index:IndexRangeScan_5",
 		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
+}
+
+func (s *testSerialSuite2) TestIssue20874(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a char(10) collate utf8mb4_unicode_ci not null, b char(20) collate utf8mb4_general_ci not null)")
+	tk.MustExec("insert into t values ('#', 'C'), ('$', 'c'), ('a', 'a')")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
+		"test t  a 0 0 1 1 \x02\xd2 \x02\xd2",
+		"test t  a 0 1 2 1 \x0e\x0f \x0e\x0f",
+		"test t  a 0 2 3 1 \x0e3 \x0e3",
+		"test t  b 0 0 1 1 \x00A \x00A",
+		"test t  b 0 1 3 2 \x00C \x00C",
+	))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a char(10) collate utf8mb4_general_ci not null)")
+	tk.MustExec("insert into t values ('汉字'), ('中文'), ('汉字'), ('中文'), ('汉字'), ('中文'), ('汉字'), ('中文'), ('汉字'), ('中文'), ('汉字'), ('中文'), ('汉字'), ('中文')")
+	tk.MustExec("analyze table t")
 }

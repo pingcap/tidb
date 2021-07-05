@@ -885,6 +885,7 @@ const (
 	ErrMaxExecTimeExceeded                                          = 1907
 	ErrInvalidFieldSize                                             = 3013
 	ErrInvalidArgumentForLogarithm                                  = 3020
+	ErrAggregateOrderNonAggQuery                                    = 3029
 	ErrIncorrectType                                                = 3064
 	ErrInvalidJSONData                                              = 3069
 	ErrGeneratedColumnFunctionIsNotAllowed                          = 3102
@@ -1044,6 +1045,8 @@ const (
 	ErrBRIERestoreFailed                   = 8125
 	ErrBRIEImportFailed                    = 8126
 	ErrBRIEExportFailed                    = 8127
+	ErrJSONObjectKeyTooLong                = 8129 // skip ErrInvalidTableSample (8128) in master only
+	ErrMultiStatementDisabled              = 8130
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation        = 8200

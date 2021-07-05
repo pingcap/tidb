@@ -31,11 +31,11 @@ Projection_6	3333.33	root		test.access_path_selection.a, test.access_path_select
     └─TableFullScan_11	10000.00	cop[tikv]	table:access_path_selection	keep order:true, stats:pseudo
 explain select max(_tidb_rowid) from access_path_selection;
 id	estRows	task	access object	operator info
-StreamAgg_13	1.00	root		funcs:max(test.access_path_selection._tidb_rowid)->Column#4
-└─Limit_17	1.00	root		offset:0, count:1
-  └─TableReader_27	1.00	root		data:Limit_26
-    └─Limit_26	1.00	cop[tikv]		offset:0, count:1
-      └─TableFullScan_25	1.25	cop[tikv]	table:access_path_selection	keep order:true, desc, stats:pseudo
+StreamAgg_10	1.00	root		funcs:max(test.access_path_selection._tidb_rowid)->Column#4
+└─Limit_14	1.00	root		offset:0, count:1
+  └─TableReader_24	1.00	root		data:Limit_23
+    └─Limit_23	1.00	cop[tikv]		offset:0, count:1
+      └─TableFullScan_22	1.25	cop[tikv]	table:access_path_selection	keep order:true, desc, stats:pseudo
 explain select count(1) from access_path_selection;
 id	estRows	task	access object	operator info
 StreamAgg_28	1.00	root		funcs:count(Column#18)->Column#4

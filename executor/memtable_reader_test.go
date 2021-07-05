@@ -849,6 +849,19 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 				{"2019/08/26 06:27:17.011", "pd", "critical", "[test log message pd 14, bar]"},
 			},
 		},
+		{
+			conditions: []string{
+				"time>='2019/08/26 06:18:13.011'",
+				"time<='2099/08/26 06:28:19.011'",
+				// this pattern verifies that there is no optimization breaking
+				// length of multiple wildcards, for example, %% may be
+				// converted to %, but %_ cannot be converted to %.
+				"message like '%tidb_%_4%'",
+			},
+			expected: [][]string{
+				{"2019/08/26 06:25:17.011", "tidb", "critical", "[test log message tidb 14, bar]"},
+			},
+		},
 	}
 
 	var servers []string

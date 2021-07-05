@@ -606,7 +606,7 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 }
 
 // genIndexKeyStr generates index content string representation.
-func (t *TableCommon) genIndexKeyStr(colVals []types.Datum) (string, error) {
+func genIndexKeyStr(colVals []types.Datum) (string, error) {
 	// Pass pre-composed error to txn.
 	strVals := make([]string, 0, len(colVals))
 	for _, cv := range colVals {
@@ -658,7 +658,7 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID int64, r []ty
 		}
 		var dupErr error
 		if !skipCheck && v.Meta().Unique {
-			entryKey, err := t.genIndexKeyStr(indexVals)
+			entryKey, err := genIndexKeyStr(indexVals)
 			if err != nil {
 				return 0, err
 			}
@@ -913,7 +913,7 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMu
 	if _, err := idx.Create(ctx, rm, vals, h, opts...); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
-			entryKey, err1 := t.genIndexKeyStr(vals)
+			entryKey, err1 := genIndexKeyStr(vals)
 			if err1 != nil {
 				// if genIndexKeyStr failed, return the original error.
 				return err
@@ -1228,6 +1228,68 @@ func CheckHandleExists(ctx context.Context, sctx sessionctx.Context, t table.Tab
 		return existErrInfo.Err()
 	} else if !kv.ErrNotExist.Equal(err) {
 		return err
+	}
+	return nil
+}
+
+// CheckUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore check whether recordID key or unique index key exists. if not exists, return nil,
+// otherwise return kv.ErrKeyExists error.
+func CheckUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID int64, data []types.Datum, modified []bool) error {
+	if pt, ok := t.(*partitionedTable); ok {
+		info := t.Meta().GetPartitionInfo()
+		pid, err := pt.locatePartition(sctx, info, data)
+		if err != nil {
+			return err
+		}
+		t = pt.GetPartition(pid)
+	}
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	shouldSkipIgnoreCheck := func(idx table.Index) bool {
+		if !IsIndexWritable(idx) || !idx.Meta().Unique {
+			return true
+		}
+		for _, c := range idx.Meta().Columns {
+			if modified[c.Offset] {
+				return false
+			}
+		}
+		return true
+	}
+	for _, idx := range t.Indices() {
+		if shouldSkipIgnoreCheck(idx) {
+			continue
+		}
+		vals, err := idx.FetchValues(data, nil)
+		if err != nil {
+			return err
+		}
+		key, _, err := idx.GenIndexKey(sctx.GetSessionVars().StmtCtx, vals, recordID, nil)
+		if err != nil {
+			return err
+		}
+		entryKey, err := genIndexKeyStr(vals)
+		if err != nil {
+			return err
+		}
+		err = func() error {
+			existErrInfo := kv.NewExistErrInfo(idx.Meta().Name.String(), entryKey)
+			txn.SetOption(kv.PresumeKeyNotExistsError, existErrInfo)
+			txn.SetOption(kv.CheckExists, sctx.GetSessionVars().StmtCtx.CheckKeyExists)
+			defer txn.DelOption(kv.PresumeKeyNotExistsError)
+			_, err = txn.Get(ctx, key)
+			if err == nil {
+				return existErrInfo.Err()
+			} else if !kv.ErrNotExist.Equal(err) {
+				return err
+			}
+			return nil
+		}()
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }

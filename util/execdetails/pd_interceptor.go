@@ -84,7 +84,7 @@ func (m InterceptedPDClient) GetRegion(ctx context.Context, key []byte) (*pd.Reg
 // GetPrevRegion implements pd.Client#GetPrevRegion.
 func (m InterceptedPDClient) GetPrevRegion(ctx context.Context, key []byte) (*pd.Region, error) {
 	start := time.Now()
-	r, err := m.Client.GetRegion(ctx, key)
+	r, err := m.Client.GetPrevRegion(ctx, key)
 	recordPDWaitTime(ctx, start)
 	return r, err
 }

@@ -19,11 +19,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sli"
 )
 
 // IDriver opens IContext.
@@ -63,14 +66,17 @@ type QueryCtx interface {
 	// WarningCount returns warning count of last executed command.
 	WarningCount() uint16
 
+	// GetWarnings returns all warnings
+	GetWarnings() []stmtctx.SQLWarn
+
 	// CurrentDB returns current DB.
 	CurrentDB() string
 
-	// Execute executes a SQL statement.
-	Execute(ctx context.Context, sql string) ([]ResultSet, error)
+	// ExecuteStmt executes a SQL statement.
+	ExecuteStmt(context.Context, ast.StmtNode) (ResultSet, error)
 
-	// ExecuteInternal executes a internal SQL statement.
-	ExecuteInternal(ctx context.Context, sql string) ([]ResultSet, error)
+	// Parse parses a SQL to statement node.
+	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 
 	// SetClientCapability sets client capability flags
 	SetClientCapability(uint32)
@@ -99,6 +105,9 @@ type QueryCtx interface {
 	SetCommandValue(command byte)
 
 	SetSessionManager(util.SessionManager)
+
+	// GetTxnWriteThroughputSLI returns the TxnWriteThroughputSLI.
+	GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI
 }
 
 // PreparedStatement is the interface to use a prepared statement.

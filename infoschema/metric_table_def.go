@@ -1843,7 +1843,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The flow rate of compaction operations per type",
 	},
 	"tikv_compaction_pending_bytes": {
-		PromQL:  `sum(rate(tikv_engine_pending_compaction_bytes{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (cf,instance,db)`,
+		PromQL:  `tikv_engine_pending_compaction_bytes{$LABEL_CONDITIONS}`,
 		Labels:  []string{"instance", "cf", "db"},
 		Comment: "The pending bytes to be compacted",
 	},
@@ -2513,7 +2513,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tidb_distsql_copr_cache": {
 		Comment:  "The quantile of TiDB distsql coprocessor cache",
-		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_distsql_copr_cache_buckets{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance))",
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_distsql_copr_cache_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance))",
 		Labels:   []string{"instance", "type"},
 		Quantile: 0.95,
 	},

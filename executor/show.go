@@ -284,12 +284,17 @@ func (e *ShowExec) fetchShowBind() error {
 }
 
 func (e *ShowExec) fetchShowEngines() error {
-	sql := `SELECT * FROM information_schema.engines`
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
+	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT * FROM information_schema.engines`)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	for _, row := range rows {
 		e.result.AppendRow(row)
 	}
@@ -410,16 +415,32 @@ func (e *ShowExec) fetchShowTableStatus() error {
 		return ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
 
-	sql := fmt.Sprintf(`SELECT
-               table_name, engine, version, row_format, table_rows,
-               avg_row_length, data_length, max_data_length, index_length,
-               data_free, auto_increment, create_time, update_time, check_time,
-               table_collation, IFNULL(checksum,''), create_options, table_comment
-               FROM information_schema.tables
-	       WHERE table_schema='%s' ORDER BY table_name`, e.DBName)
+	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithSnapshot(sql)
+	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT
+		table_name, engine, version, row_format, table_rows,
+		avg_row_length, data_length, max_data_length, index_length,
+		data_free, auto_increment, create_time, update_time, check_time,
+		table_collation, IFNULL(checksum,''), create_options, table_comment
+		FROM information_schema.tables
+		WHERE lower(table_schema)=%? ORDER BY table_name`, e.DBName.L)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
+	var snapshot uint64
+	txn, err := e.ctx.Txn(false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if txn.Valid() {
+		snapshot = txn.StartTS()
+	}
+	if e.ctx.GetSessionVars().SnapshotTS != 0 {
+		snapshot = e.ctx.GetSessionVars().SnapshotTS
+	}
+
+	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt, sqlexec.ExecOptionWithSnapshot(snapshot))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1199,22 +1220,32 @@ func (e *ShowExec) fetchShowCreateUser() error {
 		}
 	}
 
-	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User='%s' AND Host='%s';`,
-		mysql.SystemDB, mysql.UserTable, userName, hostName)
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+
+	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT * FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.UserTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	if len(rows) == 0 {
+		// FIXME: the error returned is not escaped safely
 		return ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER",
 			fmt.Sprintf("'%s'@'%s'", e.User.Username, e.User.Hostname))
 	}
-	sql = fmt.Sprintf(`SELECT PRIV FROM %s.%s WHERE User='%s' AND Host='%s'`,
-		mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
-	rows, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+
+	stmt, err = exec.ParseWithParams(context.TODO(), `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	rows, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	require := "NONE"
 	if len(rows) == 1 {
 		privData := rows[0].GetString(0)
@@ -1225,6 +1256,7 @@ func (e *ShowExec) fetchShowCreateUser() error {
 		}
 		require = privValue.RequireStr()
 	}
+	// FIXME: the returned string is not escaped safely
 	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH 'mysql_native_password' AS '%s' REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK",
 		e.User.Username, e.User.Hostname, checker.GetEncodedPassword(e.User.Username, e.User.Hostname), require)
 	e.appendRow([]interface{}{showStr})

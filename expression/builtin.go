@@ -86,11 +86,11 @@ func (b *baseBuiltinFunc) collator() collate.Collator {
 	return b.ctor
 }
 
-func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expression) (baseBuiltinFunc, error) {
+func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType) (baseBuiltinFunc, error) {
 	if ctx == nil {
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
-	if err := checkIllegalMixCollation(funcName, args); err != nil {
+	if err := checkIllegalMixCollation(funcName, args, retType); err != nil {
 		return baseBuiltinFunc{}, err
 	}
 	derivedCharset, derivedCollate := DeriveCollationFromExprs(ctx, args...)
@@ -109,21 +109,33 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	return bf, nil
 }
 
-func checkIllegalMixCollation(funcName string, args []Expression) error {
-	firstExplicitCollation := ""
-	for _, arg := range args {
-		if arg.GetType().EvalType() != types.ETString {
-			continue
-		}
-		if arg.Coercibility() == CoercibilityExplicit {
-			if firstExplicitCollation == "" {
-				firstExplicitCollation = arg.GetType().Collate
-			} else if firstExplicitCollation != arg.GetType().Collate {
-				return collate.ErrIllegalMixCollation.GenWithStackByArgs(firstExplicitCollation, "EXPLICIT", arg.GetType().Collate, "EXPLICIT", funcName)
-			}
-		}
+var (
+	coerString = []string{"EXPLICIT", "NONE", "IMPLICIT", "SYSCONST", "COERCIBLE", "NUMERIC", "IGNORABLE"}
+)
+
+func checkIllegalMixCollation(funcName string, args []Expression, evalType types.EvalType) error {
+	if len(args) < 2 {
+		return nil
+	}
+	_, _, coercibility, legal := inferCollation(args...)
+	if !legal {
+		return illegalMixCollationErr(funcName, args)
+	}
+	if coercibility == CoercibilityNone && evalType != types.ETString {
+		return illegalMixCollationErr(funcName, args)
 	}
 	return nil
+}
+
+func illegalMixCollationErr(funcName string, args []Expression) error {
+	switch len(args) {
+	case 2:
+		return collate.ErrIllegalMix2Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], funcName)
+	case 3:
+		return collate.ErrIllegalMix3Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], args[0].GetType().Collate, coerString[args[2].Coercibility()], funcName)
+	default:
+		return collate.ErrIllegalMixCollation.GenWithStackByArgs(funcName)
+	}
 }
 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
@@ -158,7 +170,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		}
 	}
 
-	if err = checkIllegalMixCollation(funcName, args); err != nil {
+	if err = checkIllegalMixCollation(funcName, args, retType); err != nil {
 		return
 	}
 
@@ -229,6 +241,9 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	}
 	if mysql.HasBinaryFlag(fieldType.Flag) && fieldType.Tp != mysql.TypeJSON {
 		fieldType.Charset, fieldType.Collate = charset.CharsetBin, charset.CollationBin
+	}
+	if _, ok := booleanFunctions[funcName]; ok {
+		fieldType.Flag |= mysql.IsBooleanFlag
 	}
 	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalSliceBuffer(len(args)),
@@ -539,17 +554,32 @@ type baseFunctionClass struct {
 }
 
 func (b *baseFunctionClass) verifyArgs(args []Expression) error {
-	l := len(args)
+	return b.verifyArgsByCount(len(args))
+}
+
+func (b *baseFunctionClass) verifyArgsByCount(l int) error {
 	if l < b.minArgs || (b.maxArgs != -1 && l > b.maxArgs) {
 		return ErrIncorrectParameterCount.GenWithStackByArgs(b.funcName)
 	}
 	return nil
 }
 
+// VerifyArgsWrapper verifies a function by its name and the count of the arguments.
+// Note that this function assumes that the function is supported.
+func VerifyArgsWrapper(name string, l int) error {
+	f, ok := funcs[name]
+	if !ok {
+		return nil
+	}
+	return f.verifyArgsByCount(l)
+}
+
 // functionClass is the interface for a function which may contains multiple functions.
 type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
 	getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error)
+	// verifyArgsByCount verifies the count of parameters.
+	verifyArgsByCount(l int) error
 }
 
 // funcs holds all registered builtin functions. When new function is added,

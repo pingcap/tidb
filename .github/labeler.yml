@@ -1,6 +1,7 @@
 component/executor:
   - distsql/*
   - executor/*
+  - !executor/brie*
   - util/chunk/*
   - util/disk/*
   - util/execdetails/*
@@ -31,3 +32,6 @@ component/DDL:
 
 component/config:
   - config/*
+
+sig/migrate:
+  - executor/brie*
