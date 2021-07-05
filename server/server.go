@@ -307,13 +307,21 @@ func (s *Server) Run() error {
 	if s.cfg.Status.ReportStatus {
 		s.startStatusHTTP()
 	}
-	go s.startNetworkListener(s.listener)
-	go s.startNetworkListener(s.socket)
-	return nil
+	// If error should be reported and exit the server it can be sent on this
+	// channel. Otherwise end with sending a nil error to signal "done"
+	errChan := make(chan error)
+	go s.startNetworkListener(s.listener, false, errChan)
+	go s.startNetworkListener(s.socket, true, errChan)
+	err := <-errChan
+	if err != nil {
+		return err
+	}
+	return <-errChan
 }
 
-func (s *Server) startNetworkListener(listener net.Listener) {
+func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, errChan chan error) {
 	if listener == nil {
+		errChan <- nil
 		return
 	}
 	for {
@@ -321,6 +329,11 @@ func (s *Server) startNetworkListener(listener net.Listener) {
 		if err != nil {
 			if opErr, ok := err.(*net.OpError); ok {
 				if opErr.Err.Error() == "use of closed network connection" {
+					if s.inShutdownMode {
+						errChan <- nil
+					} else {
+						errChan <- err
+					}
 					return
 				}
 			}
@@ -332,6 +345,7 @@ func (s *Server) startNetworkListener(listener net.Listener) {
 			}
 
 			logutil.BgLogger().Error("accept failed", zap.Error(err))
+			errChan <- err
 			return
 		}
 
