@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -127,6 +128,24 @@ func NewRemoteTopSQLReporter(client ReportClient) *RemoteTopSQLReporter {
 	return tsr
 }
 
+var (
+	ignoreExceedSQLCounter              = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_exceed_sql")
+	ignoreExceedPlanCounter             = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_exceed_plan")
+	ignoreCollectChannelFullCounter     = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_collect_channel_full")
+	ignoreReportChannelFullCounter      = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_report_channel_full")
+	reportAllDurationSuccHistogram      = metrics.TopSQLReportDurationHistogram.WithLabelValues("all", metrics.LblOK)
+	reportAllDurationFailedHistogram    = metrics.TopSQLReportDurationHistogram.WithLabelValues("all", metrics.LblError)
+	reportRecordDurationSuccHistogram   = metrics.TopSQLReportDurationHistogram.WithLabelValues("record", metrics.LblOK)
+	reportRecordDurationFailedHistogram = metrics.TopSQLReportDurationHistogram.WithLabelValues("record", metrics.LblError)
+	reportSQLDurationSuccHistogram      = metrics.TopSQLReportDurationHistogram.WithLabelValues("sql", metrics.LblOK)
+	reportSQLDurationFailedHistogram    = metrics.TopSQLReportDurationHistogram.WithLabelValues("sql", metrics.LblError)
+	reportPlanDurationSuccHistogram     = metrics.TopSQLReportDurationHistogram.WithLabelValues("plan", metrics.LblOK)
+	reportPlanDurationFailedHistogram   = metrics.TopSQLReportDurationHistogram.WithLabelValues("plan", metrics.LblError)
+	topSQLReportRecordCounterHistogram  = metrics.TopSQLReportDataHistogram.WithLabelValues("record")
+	topSQLReportSQLCountHistogram       = metrics.TopSQLReportDataHistogram.WithLabelValues("sql")
+	topSQLReportPlanCountHistogram      = metrics.TopSQLReportDataHistogram.WithLabelValues("plan")
+)
+
 // RegisterSQL registers a normalized SQL string to a SQL digest.
 // This function is thread-safe and efficient.
 //
@@ -135,6 +154,7 @@ func NewRemoteTopSQLReporter(client ReportClient) *RemoteTopSQLReporter {
 // It should also return immediately, and do any CPU-intensive job asynchronously.
 func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL string) {
 	if tsr.sqlMapLength.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
+		ignoreExceedSQLCounter.Inc()
 		return
 	}
 	m := tsr.normalizedSQLMap.Load().(*sync.Map)
@@ -149,6 +169,7 @@ func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL str
 // This function is thread-safe and efficient.
 func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedBinaryPlan string) {
 	if tsr.planMapLength.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
+		ignoreExceedPlanCounter.Inc()
 		return
 	}
 	m := tsr.normalizedPlanMap.Load().(*sync.Map)
@@ -172,6 +193,7 @@ func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQ
 	}:
 	default:
 		// ignore if chan blocked
+		ignoreCollectChannelFullCounter.Inc()
 	}
 }
 
@@ -307,6 +329,8 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *m
 	select {
 	case tsr.reportDataChan <- data:
 	default:
+		// ignore if chan blocked
+		ignoreReportChannelFullCounter.Inc()
 	}
 }
 
@@ -362,7 +386,6 @@ func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 	}
 
 	agentAddr := variable.TopSQLVariable.AgentAddress.Load()
-
 	timeout := reportTimeout
 	failpoint.Inject("resetTimeoutForTest", func(val failpoint.Value) {
 		if val.(bool) {
@@ -373,10 +396,13 @@ func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 		}
 	})
 	ctx, cancel := context.WithTimeout(tsr.ctx, timeout)
-
+	start := time.Now()
 	err := tsr.client.Send(ctx, agentAddr, data)
 	if err != nil {
 		logutil.BgLogger().Warn("[top-sql] client failed to send data", zap.Error(err))
+		reportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
+	} else {
+		reportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
 	}
 	cancel()
 }
