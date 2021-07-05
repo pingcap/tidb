@@ -65,33 +65,14 @@ const (
 	Serializable    = "SERIALIZABLE"
 	RepeatableRead  = "REPEATABLE-READ"
 
-	// Valid formats for explain statement.
-	ExplainFormatROW     = "row"
-	ExplainFormatDOT     = "dot"
-	ExplainFormatJSON    = "json"
-	ExplainFormatHint    = "hint"
-	ExplainFormatVerbose = "verbose"
-	ExplainFormatBrief   = "brief"
-	PumpType             = "PUMP"
-	DrainerType          = "DRAINER"
+	PumpType    = "PUMP"
+	DrainerType = "DRAINER"
 )
 
 // Transaction mode constants.
 const (
 	Optimistic  = "OPTIMISTIC"
 	Pessimistic = "PESSIMISTIC"
-)
-
-var (
-	// ExplainFormats stores the valid formats for explain statement, used by validator.
-	ExplainFormats = []string{
-		ExplainFormatROW,
-		ExplainFormatDOT,
-		ExplainFormatJSON,
-		ExplainFormatHint,
-		ExplainFormatVerbose,
-		ExplainFormatBrief,
-	}
 )
 
 // TypeOpt is used for parsing data type option from SQL.
