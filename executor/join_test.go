@@ -2604,4 +2604,6 @@ func (s *testSuiteJoinSerial) TestIssue25902(c *C) {
 	tk.MustExec("insert into tt3 values (\"2001-01-01 00:00:00\");")
 	tk.MustQuery("select * from tt1 where ts in (select ts from tt2);").Check(testkit.Rows("2001-01-01 00:00:00"))
 	tk.MustQuery("select * from tt1 where ts in (select ts from tt3);").Check(testkit.Rows("2001-01-01 00:00:00"))
+	tk.MustExec("set @@session.time_zone = '+10:00';")
+	tk.MustQuery("select * from tt1 where ts in (select ts from tt2);").Check(testkit.Rows())
 }
