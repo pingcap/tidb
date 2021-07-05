@@ -135,15 +135,21 @@ func NewRemoteTopSQLReporter(client ReportClient) *RemoteTopSQLReporter {
 }
 
 var (
-	ignoreRegisterSQLCnt           = metrics.TopSQLIgnoredCounter.WithLabelValues("register_sql")
-	ignoreRegisterPlanCnt          = metrics.TopSQLIgnoredCounter.WithLabelValues("register_plan")
-	ignoreCollectCPUTimeCnt        = metrics.TopSQLIgnoredCounter.WithLabelValues("collect_data")
-	ignoreReportDataCnt            = metrics.TopSQLIgnoredCounter.WithLabelValues("report_data")
-	reportDurationSuccHistogram    = metrics.TopSQLReportDurationHistogram.WithLabelValues(metrics.LblOK)
-	reportDurationFailedHistogram  = metrics.TopSQLReportDurationHistogram.WithLabelValues(metrics.LblError)
-	topSQLReportRecordHistogram    = metrics.TopSQLReportDataHistogram.WithLabelValues("record")
-	topSQLReportStatementHistogram = metrics.TopSQLReportDataHistogram.WithLabelValues("statement")
-	topSQLReportPlanHistogram      = metrics.TopSQLReportDataHistogram.WithLabelValues("plan")
+	ignoreExceedSQLCounter              = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_exceed_sql")
+	ignoreExceedPlanCounter             = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_exceed_plan")
+	ignoreCollectChannelFullCounter     = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_collect_channel_full")
+	ignoreReportChannelFullCounter      = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_report_channel_full")
+	reportAllDurationSuccHistogram      = metrics.TopSQLReportDurationHistogram.WithLabelValues("all", metrics.LblOK)
+	reportAllDurationFailedHistogram    = metrics.TopSQLReportDurationHistogram.WithLabelValues("all", metrics.LblError)
+	reportRecordDurationSuccHistogram   = metrics.TopSQLReportDurationHistogram.WithLabelValues("record", metrics.LblOK)
+	reportRecordDurationFailedHistogram = metrics.TopSQLReportDurationHistogram.WithLabelValues("record", metrics.LblError)
+	reportSQLDurationSuccHistogram      = metrics.TopSQLReportDurationHistogram.WithLabelValues("sql", metrics.LblOK)
+	reportSQLDurationFailedHistogram    = metrics.TopSQLReportDurationHistogram.WithLabelValues("sql", metrics.LblError)
+	reportPlanDurationSuccHistogram     = metrics.TopSQLReportDurationHistogram.WithLabelValues("plan", metrics.LblOK)
+	reportPlanDurationFailedHistogram   = metrics.TopSQLReportDurationHistogram.WithLabelValues("plan", metrics.LblError)
+	topSQLReportRecordCounterHistogram  = metrics.TopSQLReportDataHistogram.WithLabelValues("record")
+	topSQLReportSQLCountHistogram       = metrics.TopSQLReportDataHistogram.WithLabelValues("sql")
+	topSQLReportPlanCountHistogram      = metrics.TopSQLReportDataHistogram.WithLabelValues("plan")
 )
 
 // RegisterSQL registers a normalized SQL string to a SQL digest.
@@ -154,7 +160,7 @@ var (
 // It should also return immediately, and do any CPU-intensive job asynchronously.
 func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL string) {
 	if tsr.sqlMapLength.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
-		ignoreRegisterSQLCnt.Inc()
+		ignoreExceedSQLCounter.Inc()
 		return
 	}
 	m := tsr.normalizedSQLMap.Load().(*sync.Map)
@@ -169,7 +175,7 @@ func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL str
 // This function is thread-safe and efficient.
 func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedBinaryPlan string) {
 	if tsr.planMapLength.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
-		ignoreRegisterPlanCnt.Inc()
+		ignoreExceedPlanCounter.Inc()
 		return
 	}
 	m := tsr.normalizedPlanMap.Load().(*sync.Map)
@@ -193,7 +199,7 @@ func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQ
 	}:
 	default:
 		// ignore if chan blocked
-		ignoreCollectCPUTimeCnt.Inc()
+		ignoreCollectChannelFullCounter.Inc()
 	}
 }
 
@@ -353,7 +359,7 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *m
 	case tsr.reportDataChan <- data:
 	default:
 		// ignore if chan blocked
-		ignoreReportDataCnt.Inc()
+		ignoreReportChannelFullCounter.Inc()
 	}
 }
 
@@ -423,9 +429,9 @@ func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 	err := tsr.client.Send(ctx, agentAddr, data)
 	if err != nil {
 		logutil.BgLogger().Warn("[top-sql] client failed to send data", zap.Error(err))
-		reportDurationFailedHistogram.Observe(time.Since(start).Seconds())
+		reportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
 	} else {
-		reportDurationSuccHistogram.Observe(time.Since(start).Seconds())
+		reportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
 	}
 	cancel()
 }

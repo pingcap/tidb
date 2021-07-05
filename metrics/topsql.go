@@ -19,7 +19,7 @@ var (
 			Name:      "report_duration_seconds",
 			Help:      "Bucket histogram of reporting time (s) to the top-sql agent",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 24), // 1ms ~ 2.3h
-		}, []string{LblResult})
+		}, []string{LblType, LblResult})
 
 	TopSQLReportDataHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
