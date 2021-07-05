@@ -350,7 +350,7 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 		}
 
 		clientConn := s.newConn(conn)
-		if listener == s.socket {
+		if isUnixSocket {
 			clientConn.isUnixSocket = true
 		}
 
