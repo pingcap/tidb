@@ -149,6 +149,7 @@ type Session interface {
 	Close()
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
 	AuthWithoutVerification(user *auth.UserIdentity) bool
+	AuthPluginForUser(user *auth.UserIdentity) (string, error)
 	ShowProcess() *util.ProcessInfo
 	// Return the information of the txn current running
 	TxnInfo() *txninfo.TxnInfo
@@ -2145,6 +2146,15 @@ func (s *session) Close() {
 // GetSessionVars implements the context.Context interface.
 func (s *session) GetSessionVars() *variable.SessionVars {
 	return s.sessionVars
+}
+
+func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
+	pm := privilege.GetPrivilegeManager(s)
+	authplugin, err := pm.GetAuthPlugin(user.Username, user.Hostname)
+	if err != nil {
+		return "", err
+	}
+	return authplugin, nil
 }
 
 func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) bool {
