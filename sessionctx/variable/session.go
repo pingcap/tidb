@@ -855,6 +855,10 @@ type SessionVars struct {
 
 	// EnableStableResultMode if stabilize query results.
 	EnableStableResultMode bool
+
+	// LocalTemporaryTables is *infoschema.LocalTemporaryTables, use interface to avoid circle dependency.
+	// It's nil if there is no local temporary table.
+	LocalTemporaryTables interface{}
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's

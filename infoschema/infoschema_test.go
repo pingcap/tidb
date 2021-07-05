@@ -484,7 +484,7 @@ func (*testSuite) TestLocalTemporaryTables(c *C) {
 		}
 	}
 
-	sc := infoschema.NewLocalTemporaryTableInfoSchema()
+	sc := infoschema.NewLocalTemporaryTables()
 	db1 := createNewSchemaInfo("db1")
 	tb11 := createNewTable(db1.ID, "tb1", model.TempTableLocal)
 	tb12 := createNewTable(db1.ID, "Tb2", model.TempTableLocal)

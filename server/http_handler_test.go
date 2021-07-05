@@ -1074,7 +1074,7 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(dbtbl.TableInfo.Name.L, Equals, "user")
 	c.Assert(dbtbl.DBInfo.Name.L, Equals, "mysql")
-	se, err := session.CreateSession(ts.store.(kv.Storage))
+	se, err := session.CreateSession(ts.store)
 	c.Assert(err, IsNil)
 	c.Assert(dbtbl.SchemaVersion, Equals, domain.GetDomain(se.(sessionctx.Context)).InfoSchema().SchemaMetaVersion())
 
@@ -1148,7 +1148,7 @@ func (ts *HTTPHandlerTestSerialSuite) TestPostSettings(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
-	se, err := session.CreateSession(ts.store.(kv.Storage))
+	se, err := session.CreateSession(ts.store)
 	c.Assert(err, IsNil)
 
 	form := make(url.Values)
@@ -1298,7 +1298,7 @@ func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
 	c.Assert(info.GitHash, Equals, versioninfo.TiDBGitHash)
 
 	store := ts.server.newTikvHandlerTool().Store.(kv.Storage)
-	do, err := session.GetDomain(store.(kv.Storage))
+	do, err := session.GetDomain(store)
 	c.Assert(err, IsNil)
 	ddl := do.DDL()
 	c.Assert(info.ID, Equals, ddl.GetID())
@@ -1321,7 +1321,7 @@ func (ts *HTTPHandlerTestSerialSuite) TestAllServerInfo(c *C) {
 	c.Assert(clusterInfo.ServersNum, Equals, 1)
 
 	store := ts.server.newTikvHandlerTool().Store.(kv.Storage)
-	do, err := session.GetDomain(store.(kv.Storage))
+	do, err := session.GetDomain(store)
 	c.Assert(err, IsNil)
 	ddl := do.DDL()
 	c.Assert(clusterInfo.OwnerID, Equals, ddl.GetID())

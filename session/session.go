@@ -1420,7 +1420,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	}()
 
 	if execOption.SnapshotTS != 0 {
-		se.sessionVars.SnapshotInfoschema, err = domain.GetDomain(s).GetSnapshotInfoSchema(execOption.SnapshotTS)
+		se.sessionVars.SnapshotInfoschema, err = getSnapshotInfoSchema(s, execOption.SnapshotTS)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1920,7 +1920,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		is, err = domain.GetDomain(s).GetSnapshotInfoSchema(snapshotTS)
+		is, err = getSnapshotInfoSchema(s, snapshotTS)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -2075,7 +2075,7 @@ func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 	txn.SetOption(kv.IsStalenessReadOnly, true)
 	txn.SetOption(kv.TxnScope, txnScope)
 	s.txn.changeInvalidToValid(txn)
-	is, err := domain.GetDomain(s).GetSnapshotInfoSchema(txn.StartTS())
+	is, err := getSnapshotInfoSchema(s, txn.StartTS())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2699,7 +2699,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		return
 	}
 
-	is := domain.GetDomain(s).InfoSchema()
+	is := s.GetInfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema: is,
 		CreateTime: time.Now(),
@@ -2947,16 +2947,49 @@ func (s *session) TemporaryTableExists() bool {
 // Otherwise the latest infoschema is returned.
 func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	vars := s.GetSessionVars()
+	var is infoschema.InfoSchema
 	if snap, ok := vars.SnapshotInfoschema.(infoschema.InfoSchema); ok {
 		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", vars.ConnectionID), zap.Int64("schemaVersion", snap.SchemaMetaVersion()))
-		return snap
-	}
-	if vars.TxnCtx != nil && vars.InTxn() {
-		if is, ok := vars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok {
-			return is
+		is = snap
+	} else if vars.TxnCtx != nil && vars.InTxn() {
+		if tmp, ok := vars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok {
+			is = tmp
 		}
 	}
-	return domain.GetDomain(s).InfoSchema()
+
+	if is == nil {
+		is = domain.GetDomain(s).InfoSchema()
+	}
+
+	// Override the infoschema if the session has temporary table.
+	return wrapWithTemporaryTable(s, is)
+}
+
+func getSnapshotInfoSchema(s sessionctx.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {
+	is, err := domain.GetDomain(s).GetSnapshotInfoSchema(snapshotTS)
+	if err != nil {
+		return nil, err
+	}
+	// Set snapshot does not affect the witness of the local temporary table.
+	// The session always see the latest temporary tables.
+	return wrapWithTemporaryTable(s, is), nil
+}
+
+func wrapWithTemporaryTable(s sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
+	// Already a wrapped one.
+	if _, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
+		return is
+	}
+	// No temporary table.
+	local := s.GetSessionVars().LocalTemporaryTables
+	if local == nil {
+		return is
+	}
+
+	return &infoschema.TemporaryTableAttachedInfoSchema{
+		InfoSchema:           is,
+		LocalTemporaryTables: local.(*infoschema.LocalTemporaryTables),
+	}
 }
 
 func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
