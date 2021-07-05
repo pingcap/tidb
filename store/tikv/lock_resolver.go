@@ -430,8 +430,10 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 	return msBeforeTxnExpired.value(), pushed, nil
 }
 
-func (lr *LockResolver) resolveLocksForWrite(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, error) {
-	msBeforeTxnExpired, _, err := lr.resolveLocks(bo, callerStartTS, locks, true, false)
+func (lr *LockResolver) resolveLocksForWrite(bo *Backoffer, callerStartTS, callerForUpdateTS uint64, locks []*Lock) (int64, error) {
+	// The forWrite parameter is only useful for optimistic transactions which can avoid deadlock between large transactions,
+	// so only use forWrite if the callerForUpdateTS is zero.
+	msBeforeTxnExpired, _, err := lr.resolveLocks(bo, callerStartTS, locks, callerForUpdateTS == 0, false)
 	return msBeforeTxnExpired, err
 }
 
