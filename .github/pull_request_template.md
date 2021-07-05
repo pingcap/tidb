@@ -36,8 +36,8 @@ Tests <!-- At least one of them must be included. -->
 
 Side effects
 
-- [ ] Performance regression: Consumers more CPU
-- [ ] Performance regression: Consumers more Memory
+- [ ] Performance regression: Consumes more CPU
+- [ ] Performance regression: Consumes more Memory
 - [ ] Breaking backward compatibility
 
 Documentation
