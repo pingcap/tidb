@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -83,9 +84,9 @@ type executorBuilder struct {
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
 	Ti               *TelemetryInfo
-	// ExplicitStaleness means whether the 'SELECT' clause are using 'AS OF TIMESTAMP' to perform stale read explicitly.
-	explicitStaleness bool
-	txnScope          string
+	// isStaleness means whether this statement use stale read.
+	isStaleness bool
+	txnScope    string
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -96,14 +97,14 @@ type CTEStorages struct {
 	IterInTbl cteutil.Storage
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, explicitStaleness bool, txnScope string) *executorBuilder {
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, isStaleness bool, txnScope string) *executorBuilder {
 	return &executorBuilder{
-		ctx:               ctx,
-		is:                is,
-		Ti:                ti,
-		snapshotTS:        snapshotTS,
-		explicitStaleness: explicitStaleness,
-		txnScope:          txnScope,
+		ctx:         ctx,
+		is:          is,
+		Ti:          ti,
+		snapshotTS:  snapshotTS,
+		isStaleness: isStaleness,
+		txnScope:    txnScope,
 	}
 }
 
@@ -678,6 +679,8 @@ func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
 
 func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 	b.snapshotTS = v.SnapshotTS
+	b.isStaleness = v.IsStaleness
+	b.txnScope = v.TxnScope
 	if b.snapshotTS != 0 {
 		b.is, b.err = domain.GetDomain(b.ctx).GetSnapshotInfoSchema(b.snapshotTS)
 	}
@@ -691,6 +694,15 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		plan:         v.Plan,
 		outputNames:  v.OutputNames(),
 	}
+	failpoint.Inject("assertExecutePrepareStatementStalenessOption", func(val failpoint.Value) {
+		vs := strings.Split(val.(string), "_")
+		assertTS, assertTxnScope := vs[0], vs[1]
+		if strconv.FormatUint(b.snapshotTS, 10) != assertTS ||
+			assertTxnScope != b.txnScope {
+			panic("execute prepare statement have wrong staleness option")
+		}
+	})
+
 	return e
 }
 
@@ -2113,6 +2125,18 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
+	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+	count, modifyCount, err := statsHandle.StatsMetaCountAndModifyCount(task.TableID.GetStatisticsID())
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	failpoint.Inject("injectBaseCount", func(val failpoint.Value) {
+		count = int64(val.(int))
+	})
+	failpoint.Inject("injectBaseModifyCount", func(val failpoint.Value) {
+		modifyCount = int64(val.(int))
+	})
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -2134,6 +2158,8 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		indexes:                 availableIdx,
 		AnalyzeInfo:             task.AnalyzeInfo,
 		schemaForVirtualColEval: schemaForVirtualColEval,
+		baseCount:               count,
+		baseModifyCnt:           modifyCount,
 	}
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
 		BucketSize:   int64(opts[ast.AnalyzeOptNumBuckets]),
@@ -2750,7 +2776,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		dagPB:          dagReq,
 		startTS:        startTS,
 		txnScope:       b.txnScope,
-		isStaleness:    b.explicitStaleness,
+		isStaleness:    b.isStaleness,
 		table:          tbl,
 		keepOrder:      ts.KeepOrder,
 		desc:           ts.Desc,
@@ -2823,7 +2849,7 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) Executor {
-	if v.StoreType != kv.TiKV && b.explicitStaleness {
+	if v.StoreType != kv.TiKV && b.isStaleness {
 		b.err = errors.New("stale requests require tikv backend")
 		return nil
 	}
@@ -3027,7 +3053,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		dagPB:           dagReq,
 		startTS:         startTS,
 		txnScope:        b.txnScope,
-		isStaleness:     b.explicitStaleness,
+		isStaleness:     b.isStaleness,
 		physicalTableID: physicalTableID,
 		table:           tbl,
 		index:           is.Index,
@@ -4159,7 +4185,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		rowDecoder:   decoder,
 		startTS:      startTS,
 		txnScope:     b.txnScope,
-		isStaleness:  b.explicitStaleness,
+		isStaleness:  b.isStaleness,
 		keepOrder:    plan.KeepOrder,
 		desc:         plan.Desc,
 		lock:         plan.Lock,
@@ -4418,7 +4444,7 @@ func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error
 
 	sessionVars := b.ctx.GetSessionVars()
 
-	if sessionVars.TxnCtx.IsStaleness || b.explicitStaleness {
+	if sessionVars.TxnCtx.IsStaleness || b.isStaleness {
 		return errors.New("can not stale read temporary table")
 	}
 
