@@ -105,7 +105,7 @@ func (s *testEvaluatorSuite) TestJSONUnquote(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{d}))
 		c.Assert(err, IsNil)
 		d, err = evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err.Error(), testutil.DatumEquals, t.Error)
+		c.Assert(err.Error(), Equals, t.Error.Error())
 		c.Assert(d, testutil.DatumEquals, t.Result)
 	}
 }
