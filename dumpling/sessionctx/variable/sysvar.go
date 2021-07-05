@@ -679,9 +679,6 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeNone, Name: Hostname, Value: DefHostname},
 	{Scope: ScopeSession, Name: Timestamp, Value: "", skipInit: true},
-	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetFilesystem, Value: "binary", skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		return checkCharacterSet(normalizedValue, CharacterSetFilesystem)
-	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationDatabase, Value: mysql.DefaultCollationName, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCollation(vars, normalizedValue, originalValue, scope)
 	}, SetSession: func(s *SessionVars, val string) error {
