@@ -9274,3 +9274,16 @@ func (s *testIntegrationSuite) TestConstPropNullFunctions(c *C) {
 	tk.MustExec("insert into t2 values (0, 'c', null), (1, null, 0.1), (3, 'b', 0.01), (2, 'q', 0.12), (null, 'a', -0.1), (null, null, null)")
 	tk.MustQuery("select * from t2 where t2.i2=((select count(1) from t1 where t1.i1=t2.i2))").Check(testkit.Rows("1 <nil> 0.1"))
 }
+
+func (s *testIntegrationSuite2) TestIssue25526(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists tbl_6, tbl_17;")
+	tk.MustExec("create table tbl_6 (col_31 year, index(col_31));")
+	tk.MustExec("create table tbl_17 (col_102 int, col_105 int);")
+	tk.MustExec("replace into tbl_17 (col_102, col_105) values (9999, 0);")
+
+	rows := tk.MustQuery("select tbl_6.col_31 from tbl_6 where col_31 in (select col_102 from tbl_17 where tbl_17.col_102 = 9999 and tbl_17.col_105 = 0);")
+	rows.Check(testkit.Rows())
+}
