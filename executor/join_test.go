@@ -2595,7 +2595,7 @@ func (s *testSuiteJoinSerial) TestIssue20219(c *C) {
 
 func (s *testSuiteJoinSerial) TestIssue25902(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists tt1,tt2; ")
+	tk.MustExec("drop table if exists tt1,tt2,tt3; ")
 	tk.MustExec("create table tt1 (ts timestamp);")
 	tk.MustExec("create table tt2 (ts varchar(32));")
 	tk.MustExec("create table tt3 (ts datetime);")
