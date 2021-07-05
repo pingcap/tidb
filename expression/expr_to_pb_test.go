@@ -593,7 +593,7 @@ func (s *testEvaluatorSuite) TestOtherFunc2Pb(c *C) {
 	}
 }
 
-func (s *testEvaluatorSerialSuites) TestExprPushDownToFlash(c *C) {
+func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 	dg := new(dataGen4Expr2PbTest)
@@ -903,7 +903,7 @@ func (s *testEvaluatorSerialSuites) TestExprPushDownToFlash(c *C) {
 	c.Assert(len(remained), Equals, len(exprs))
 }
 
-func (s *testEvaluatorSerialSuites) TestExprOnlyPushDownToFlash(c *C) {
+func (s *testEvaluatorSuite) TestExprOnlyPushDownToFlash(c *C) {
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 	dg := new(dataGen4Expr2PbTest)
@@ -960,7 +960,7 @@ func (s *testEvaluatorSerialSuites) TestExprOnlyPushDownToFlash(c *C) {
 	c.Assert(len(remained), Equals, len(exprs))
 }
 
-func (s *testEvaluatorSerialSuites) TestExprOnlyPushDownToTiKV(c *C) {
+func (s *testEvaluatorSuite) TestExprOnlyPushDownToTiKV(c *C) {
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 	dg := new(dataGen4Expr2PbTest)
