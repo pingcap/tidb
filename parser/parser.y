@@ -628,11 +628,13 @@ import (
 	bitOr                 "BIT_OR"
 	bitXor                "BIT_XOR"
 	bound                 "BOUND"
+	briefType             "BRIEF"
 	cast                  "CAST"
 	copyKwd               "COPY"
 	curTime               "CURTIME"
 	dateAdd               "DATE_ADD"
 	dateSub               "DATE_SUB"
+	dotType               "DOT"
 	exact                 "EXACT"
 	extract               "EXTRACT"
 	flashback             "FLASHBACK"
@@ -683,6 +685,7 @@ import (
 	follower              "FOLLOWER"
 	leader                "LEADER"
 	learner               "LEARNER"
+	verboseType           "VERBOSE"
 	voter                 "VOTER"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
@@ -4462,13 +4465,11 @@ ExplainStmt:
 
 ExplainFormatType:
 	"TRADITIONAL"
-	{
-		$$ = "row"
-	}
 |	"JSON"
-	{
-		$$ = "json"
-	}
+|	"ROW"
+|	"DOT"
+|	"BRIEF"
+|	"VERBOSE"
 
 /*******************************************************************
  * Backup / restore / import statements
@@ -5921,11 +5922,13 @@ NotKeywordToken:
 |	"BIT_AND"
 |	"BIT_OR"
 |	"BIT_XOR"
+|	"BRIEF"
 |	"CAST"
 |	"COPY"
 |	"CURTIME"
 |	"DATE_ADD"
 |	"DATE_SUB"
+|	"DOT"
 |	"EXTRACT"
 |	"GET_FORMAT"
 |	"GROUP_CONCAT"
@@ -5977,6 +5980,7 @@ NotKeywordToken:
 |	"FOLLOWER"
 |	"LEADER"
 |	"LEARNER"
+|	"VERBOSE"
 |	"VOTER"
 
 /************************************************************************************
