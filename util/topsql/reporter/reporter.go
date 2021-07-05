@@ -187,8 +187,11 @@ func (tsr *RemoteTopSQLReporter) Close() {
 	tsr.client.Close()
 }
 
+// collectedData stores the collected top-sql data.
 type collectedData struct {
-	data   map[string]*dataPoints
+	// data stores topN records for each round.
+	data map[string]*dataPoints
+	// others stores the summary of all evicted records.
 	others *dataPoints
 }
 
@@ -316,6 +319,7 @@ func getTopNDataPoints(records []*dataPoints) (topN, shouldEvict []*dataPoints) 
 }
 
 // doCollect collects top N records of each round into collectTarget, and evict the data that is not in top N.
+// All the evicted record will be summary into the collectedData.others.
 func (tsr *RemoteTopSQLReporter) doCollect(
 	collectTarget *collectedData, timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
 	defer util.Recover("top-sql", "doCollect", nil, false)
@@ -373,8 +377,8 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 	collectTarget.addEvictedCPUTime(timestamp, totalEvictedCPUTime)
 }
 
-// takeDataAndSendToReportChan takes out (resets) collected data. These data will be send to a report channel
-// for reporting later.
+// takeDataAndSendToReportChan takes the topN collected data and the other data which summary all evicted data.
+// These data will be send to a report channel for reporting later.
 func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectTarget *collectedData) {
 	// Fetch TopN dataPoints.
 	records := make([]*dataPoints, 0, len(collectTarget.data))
@@ -399,7 +403,7 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectTarget *coll
 		collectTarget.addEvictedDataPoints(evict)
 	}
 
-	// append others which contains all evicted item's cpu-time.
+	// append others which summary all evicted item's cpu-time.
 	if collectTarget.others.CPUTimeMsTotal > 0 {
 		records = append(records, collectTarget.others)
 	}
