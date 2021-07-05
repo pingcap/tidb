@@ -2800,6 +2800,9 @@ func (s *testSessionSuite3) TestEnablePartition(c *C) {
 
 	tk.MustExec("set tidb_enable_list_partition=off")
 	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition OFF"))
+	tk.MustExec("set global tidb_enable_list_partition=on")
+	tk.MustQuery("show global variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
+	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition OFF"))
 
 	tk.MustExec("set tidb_enable_list_partition=1")
 	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
@@ -2807,8 +2810,18 @@ func (s *testSessionSuite3) TestEnablePartition(c *C) {
 	tk.MustExec("set tidb_enable_list_partition=on")
 	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
 
+	tk.MustQuery("show global variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
+	tk.MustExec("set global tidb_enable_list_partition=off")
+	tk.MustQuery("show global variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition OFF"))
+	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
+	tk.MustExec("set tidb_enable_list_partition=off")
+	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition OFF"))
+
+	tk.MustExec("set global tidb_enable_list_partition=on")
+	tk.MustQuery("show global variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustQuery("show variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition ON"))
+	tk1.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
 }
 
 func (s *testSessionSerialSuite) TestTxnRetryErrMsg(c *C) {
