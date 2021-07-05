@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	dbconfig "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -44,8 +45,9 @@ const bigTxnThreshold = 16
 
 // LockResolver resolves locks and also caches resolved txn status.
 type LockResolver struct {
-	store *KVStore
-	mu    struct {
+	store                    *KVStore
+	resolveLockLiteThreshold uint64
+	mu                       struct {
 		sync.RWMutex
 		// resolved caches resolved txns (FIFO, txn id -> txnStatus).
 		resolved       map[uint64]TxnStatus
@@ -58,7 +60,8 @@ type LockResolver struct {
 
 func newLockResolver(store *KVStore) *LockResolver {
 	r := &LockResolver{
-		store: store,
+		store:                    store,
+		resolveLockLiteThreshold: dbconfig.GetGlobalConfig().ResolveLockLiteThreshold,
 	}
 	r.mu.resolved = make(map[uint64]TxnStatus)
 	r.mu.recentResolved = list.New()
@@ -171,8 +174,8 @@ func (l *Lock) String() string {
 	prettyWriteKey(buf, l.Key)
 	buf.WriteString(", primary: ")
 	prettyWriteKey(buf, l.Primary)
-	return fmt.Sprintf("%s, txnStartTS: %d, lockForUpdateTS:%d, minCommitTs:%d, ttl: %d, type: %s, UseAsyncCommit: %t",
-		buf.String(), l.TxnID, l.LockForUpdateTS, l.MinCommitTS, l.TTL, l.LockType, l.UseAsyncCommit)
+	return fmt.Sprintf("%s, txnStartTS: %d, lockForUpdateTS:%d, minCommitTs:%d, ttl: %d, type: %s, UseAsyncCommit: %t, txnSize: %d",
+		buf.String(), l.TxnID, l.LockForUpdateTS, l.MinCommitTS, l.TTL, l.LockType, l.UseAsyncCommit, l.TxnSize)
 }
 
 // NewLock creates a new *Lock.
@@ -893,7 +896,7 @@ func (lr *LockResolver) resolveRegionLocks(bo *Backoffer, l *Lock, region Region
 
 func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, lite bool, cleanRegions map[RegionVerID]struct{}) error {
 	metrics.LockResolverCountWithResolveLocks.Inc()
-	resolveLite := lite || l.TxnSize < bigTxnThreshold
+	resolveLite := lite || l.TxnSize < lr.resolveLockLiteThreshold
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, l.Key)
 		if err != nil {
