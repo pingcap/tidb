@@ -355,7 +355,8 @@ func (s *testBatchPointGetSuite) TestBatchPointGetIssue25167(c *C) {
 	defer func() {
 		tk.MustExec("drop table if exists t")
 	}()
-	tk.MustExec("set @a=(select current_timestamp(6))")
+	time.Sleep(50 * time.Millisecond)
+	tk.MustExec("set @a=(select current_timestamp(3))")
 	tk.MustExec("insert into t values (1)")
 	tk.MustQuery("select * from t as of timestamp @a where a in (1,2,3)").Check(testkit.Rows())
 }
