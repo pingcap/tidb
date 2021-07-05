@@ -4204,7 +4204,16 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	viewParser.SetParserConfig(b.ctx.GetSessionVars().BuildParserConfig())
 	selectNode, err := viewParser.ParseOneStmt(tableInfo.View.SelectStmt, charset, collation)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
+	}
+	ret := &PreprocessorReturn{}
+	err = Preprocess(b.ctx, selectNode, WithPreprocessorReturn(ret))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// FIXME: support read from stale view, or ban it in DDL
+	if ret.IsStaleness {
+		return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 	}
 	originalVisitInfo := b.visitInfo
 	b.visitInfo = make([]visitInfo, 0)
