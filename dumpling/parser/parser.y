@@ -4974,7 +4974,7 @@ Expression:
 	{
 		expr, ok := $2.(*ast.ExistsSubqueryExpr)
 		if ok {
-			expr.Not = true
+			expr.Not = !expr.Not
 			$$ = $2
 		} else {
 			$$ = &ast.UnaryOperationExpr{Op: opcode.Not, V: $2}
