@@ -30,11 +30,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/util/plancodec"
-	"github.com/tikv/client-go/v2/util"
->>>>>>> c4424c292... util/stmtsummary: discard the plan if it is too long and enlarge the tidb_stmt_summary_max_stmt_count value to 3000 (#25843)
 )
 
 var _ = Suite(&testStmtSummarySuite{})
