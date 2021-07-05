@@ -105,8 +105,12 @@ func (s *testEvaluatorSuite) TestJSONUnquote(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{d}))
 		c.Assert(err, IsNil)
 		d, err = evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err.Error(), Equals, t.Error.Error())
-		c.Assert(d, testutil.DatumEquals, t.Result)
+		if t.Error == nil {
+			c.Assert(d.GetString(), Equals, t.Result)
+			c.Assert(err, IsNil)
+		} else {
+			c.Assert(err, ErrorMatches, ".*The document root must not be followed by other values.*")
+		}
 	}
 }
 
