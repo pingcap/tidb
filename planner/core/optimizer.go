@@ -137,8 +137,7 @@ func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visit
 func checkStableResultMode(sctx sessionctx.Context) bool {
 	s := sctx.GetSessionVars()
 	st := s.StmtCtx
-	return s.EnableStableResultMode && (
-		!st.InInsertStmt && !st.InUpdateStmt && !st.InDeleteStmt && !st.InLoadDataStmt)
+	return s.EnableStableResultMode && (!st.InInsertStmt && !st.InUpdateStmt && !st.InDeleteStmt && !st.InLoadDataStmt)
 }
 
 // DoOptimize optimizes a logical plan to a physical plan.
