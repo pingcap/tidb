@@ -83,6 +83,11 @@ func substituteExpression(cond expression.Expression, sctx *stmtctx.StatementCon
 	if !ok {
 		return
 	}
+	defer func() {
+		// If the argument is not changed, hash code doesn't need to recount again.
+		// But we always do it to keep the code simple and stupid.
+		expression.ReHashCode(sf, sctx)
+	}()
 	var expr *expression.Expression
 	var tp types.EvalType
 	switch sf.FuncName.L {
