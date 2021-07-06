@@ -16,6 +16,7 @@ package expression
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -78,31 +79,38 @@ func (s *testEvaluatorSuite) TestJSONQuote(c *C) {
 func (s *testEvaluatorSuite) TestJSONUnquote(c *C) {
 	fc := funcs[ast.JSONUnquote]
 	tbl := []struct {
-		Input    interface{}
-		Expected interface{}
+		Input  string
+		Result string
+		Error  error
 	}{
-		{nil, nil},
-		{``, ``},
-		{`""`, ``},
-		{`''`, `''`},
-		{`"a"`, `a`},
-		{`3`, `3`},
-		{`{"a": "b"}`, `{"a": "b"}`},
-		{`{"a":     "b"}`, `{"a":     "b"}`},
-		{`"hello,\"quoted string\",world"`, `hello,"quoted string",world`},
-		{`"hello,\"宽字符\",world"`, `hello,"宽字符",world`},
-		{`Invalid Json string\tis OK`, `Invalid Json string\tis OK`},
-		{`"1\\u2232\\u22322"`, `1\u2232\u22322`},
-		{`"[{\"x\":\"{\\\"y\\\":12}\"}]"`, `[{"x":"{\"y\":12}"}]`},
-		{`[{\"x\":\"{\\\"y\\\":12}\"}]`, `[{\"x\":\"{\\\"y\\\":12}\"}]`},
+		{``, ``, nil},
+		{`""`, ``, nil},
+		{`''`, `''`, nil},
+		{`3`, `3`, nil},
+		{`{"a": "b"}`, `{"a": "b"}`, nil},
+		{`{"a":     "b"}`, `{"a":     "b"}`, nil},
+		{`"hello,\"quoted string\",world"`, `hello,"quoted string",world`, nil},
+		{`"hello,\"宽字符\",world"`, `hello,"宽字符",world`, nil},
+		{`Invalid Json string\tis OK`, `Invalid Json string\tis OK`, nil},
+		{`"1\\u2232\\u22322"`, `1\u2232\u22322`, nil},
+		{`"[{\"x\":\"{\\\"y\\\":12}\"}]"`, `[{"x":"{\"y\":12}"}]`, nil},
+		{`[{\"x\":\"{\\\"y\\\":12}\"}]`, `[{\"x\":\"{\\\"y\\\":12}\"}]`, nil},
+		{`"a"`, `a`, nil},
+		{`""a""`, `""a""`, json.ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")},
+		{`"""a"""`, `"""a"""`, json.ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")},
 	}
-	dtbl := tblToDtbl(tbl)
-	for _, t := range dtbl {
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+	for _, t := range tbl {
+		var d types.Datum
+		d.SetString(t.Input, mysql.DefaultCollationName)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{d}))
 		c.Assert(err, IsNil)
-		d, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
+		d, err = evalBuiltinFunc(f, chunk.Row{})
+		if t.Error == nil {
+			c.Assert(d.GetString(), Equals, t.Result)
+			c.Assert(err, IsNil)
+		} else {
+			c.Assert(err, ErrorMatches, ".*The document root must not be followed by other values.*")
+		}
 	}
 }
 

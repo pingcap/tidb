@@ -40,6 +40,12 @@ const (
 	separatorStr   = "\t"
 )
 
+var (
+	// PlanDiscardedEncoded indicates the discard plan because it is too long
+	PlanDiscardedEncoded = "[discard]"
+	planDiscardedDecoded = "(plan discarded because too long)"
+)
+
 var decoderPool = sync.Pool{
 	New: func() interface{} {
 		return &planDecoder{}
@@ -87,6 +93,9 @@ type planInfo struct {
 func (pd *planDecoder) decode(planString string) (string, error) {
 	str, err := decompress(planString)
 	if err != nil {
+		if planString == PlanDiscardedEncoded {
+			return planDiscardedDecoded, nil
+		}
 		return "", err
 	}
 	return pd.buildPlanTree(str)
