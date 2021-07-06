@@ -1360,7 +1360,7 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 	buffer.WriteString("}\n")
 
 	for _, cop := range copTasks {
-		e.prepareTaskDot(cop.(PhysicalPlan), "cop", buffer)
+		e.prepareTaskDot(cop, "cop", buffer)
 	}
 
 	for i := range pipelines {
