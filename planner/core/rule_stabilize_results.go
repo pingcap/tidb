@@ -107,10 +107,6 @@ func (rs *resultsStabilizer) extractHandleCol(lp LogicalPlan) *expression.Column
 			return handleCol
 		}
 	case *DataSource:
-		if x.tableInfo.IsCommonHandle {
-			// Currently we deliberately don't support common handle case for simplicity.
-			return nil
-		}
 		handleCol := x.getPKIsHandleCol()
 		if handleCol != nil {
 			return handleCol
