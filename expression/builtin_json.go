@@ -216,8 +216,8 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	return sig, nil
 }
 
-func (b *builtinJSONUnquoteSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
-	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+func (b *builtinJSONUnquoteSig) evalString(row chunk.Row) (str string, isNull bool, err error) {
+	str, isNull, err = b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
