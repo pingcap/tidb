@@ -1236,6 +1236,7 @@ func (b *builtinJSONMergePatchSig) vecEvalJSON(input *chunk.Chunk, result *chunk
 		}
 	}
 
+	result.ReserveJSON(nr)
 	jsonValues := make([][]*json.BinaryJSON, nr)
 	for i := 0; i < nr; i++ {
 		jsonValues[i] = make([]*json.BinaryJSON, 0, len(b.args))
@@ -1247,9 +1248,7 @@ func (b *builtinJSONMergePatchSig) vecEvalJSON(input *chunk.Chunk, result *chunk
 				jsonValues[i] = append(jsonValues[i], &v)
 			}
 		}
-	}
-	result.ReserveJSON(nr)
-	for i := 0; i < nr; i++ {
+
 		tmpJSON, e := json.MergePatchBinary(jsonValues[i])
 		if e != nil {
 			return e

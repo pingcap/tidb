@@ -824,7 +824,6 @@ func mergePatchBinary(target, patch *BinaryJSON) (result *BinaryJSON, err error)
 
 		keyValMap := make(map[string]BinaryJSON)
 		keys := make([][]byte, 0, len(keyValMap))
-		keyExists := make(map[string]bool)
 		if target.TypeCode == TypeCodeObject {
 			elemCount := target.GetElemCount()
 			for i := 0; i < elemCount; i++ {
@@ -834,9 +833,9 @@ func mergePatchBinary(target, patch *BinaryJSON) (result *BinaryJSON, err error)
 
 				keyValMap[k] = val
 				keys = append(keys, key)
-				keyExists[k] = true
 			}
 		}
+		var tmp *BinaryJSON
 		elemCount := patch.GetElemCount()
 		for i := 0; i < elemCount; i++ {
 			key := patch.objectGetKey(i)
@@ -846,23 +845,18 @@ func mergePatchBinary(target, patch *BinaryJSON) (result *BinaryJSON, err error)
 			targetKV, exists := keyValMap[k]
 			if val.TypeCode == TypeCodeLiteral && val.Value[0] == LiteralNil {
 				if exists {
-					delete(keyExists, k)
+					delete(keyValMap, k)
 				}
 			} else {
-				tmp, err := mergePatchBinary(&targetKV, &val)
+				tmp, err = mergePatchBinary(&targetKV, &val)
 				if err != nil {
 					return result, err
 				}
 
-				keyValMap[k] = *tmp
-				if yes, ok := keyExists[k]; ok {
-					if !yes {
-						keyExists[k] = true
-					}
-				} else {
+				if _, ok := keyValMap[k]; !ok {
 					keys = append(keys, key)
-					keyExists[k] = true
 				}
+				keyValMap[k] = *tmp
 			}
 		}
 		sort.Slice(keys, func(i, j int) bool {
@@ -871,7 +865,7 @@ func mergePatchBinary(target, patch *BinaryJSON) (result *BinaryJSON, err error)
 		values := make([]BinaryJSON, 0, len(keys))
 		for index := 0; index < len(keys); {
 			k := string(keys[index])
-			if yes, ok := keyExists[k]; !ok || !yes {
+			if _, ok := keyValMap[k]; !ok {
 				keys = append(keys[:index], keys[index+1:]...)
 				continue
 			}
@@ -879,8 +873,8 @@ func mergePatchBinary(target, patch *BinaryJSON) (result *BinaryJSON, err error)
 			values = append(values, keyValMap[k])
 			index++
 		}
-		binaryObject, err := buildBinaryObject(keys, values)
-		if err != nil {
+		binaryObject, e := buildBinaryObject(keys, values)
+		if e != nil {
 			panic("mergePatchBinary should never panic, please contact the TiDB team for help")
 		}
 		return &binaryObject, nil
