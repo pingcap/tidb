@@ -108,6 +108,9 @@ func (rs *resultsStabilizer) extractHandleCol(lp LogicalPlan) *expression.Column
 			return handleCol
 		}
 	case *DataSource:
+		if x.tableInfo.IsCommonHandle {
+			return nil // clustered index is enabled
+		}
 		handleCol := x.getPKIsHandleCol()
 		if handleCol != nil {
 			return handleCol

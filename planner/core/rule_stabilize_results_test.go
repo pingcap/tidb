@@ -58,6 +58,7 @@ func (s *testRuleStabilizeResultsSerial) TestPlanCache(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_stable_result_mode=1")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int, d int, key(b))")
 	tk.MustExec("prepare s1 from 'select * from t where a > ? limit 10'")
 	tk.MustExec("set @a = 10")
@@ -71,6 +72,7 @@ func (s *testRuleStabilizeResultsSerial) TestSQLBinding(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_stable_result_mode=1")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int, d int, key(b))")
 	tk.MustQuery("explain select * from t where a > 0 limit 1").Check(testkit.Rows(
 		"Limit_12 1.00 root  offset:0, count:1",
@@ -86,6 +88,21 @@ func (s *testRuleStabilizeResultsSerial) TestSQLBinding(c *C) {
 		"  │ └─Selection_17 3333.33 cop[tikv]  gt(test.t.a, 0)",
 		"  │   └─IndexFullScan_15 10000.00 cop[tikv] table:t, index:b(b) keep order:false, stats:pseudo",
 		"  └─TableRowIDScan_16(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+}
+
+func (s *testRuleStabilizeResultsSerial) TestClusteredIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_stable_result_mode=1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a int,b int,c int, PRIMARY KEY (a,b))")
+	tk.MustQuery("explain select * from t limit 10").Check(testkit.Rows(
+		"TopN_7 10.00 root  test.t.a, test.t.b, test.t.c, offset:0, count:10",
+		"└─TableReader_16 10.00 root  data:TopN_15",
+		"  └─TopN_15 10.00 cop[tikv]  test.t.a, test.t.b, test.t.c, offset:0, count:10",
+		"    └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
 }
 
 type testRuleStabilizeResults struct {
