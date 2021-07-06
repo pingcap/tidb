@@ -14,10 +14,6 @@
 package core_test
 
 import (
-	"math"
-	"strings"
-
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -25,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"math"
 )
 
 var _ = Suite(&testRuleStabilizeResults{})
@@ -187,13 +184,4 @@ func (s *testRuleStabilizeResults) TestStableResultModeOnPartitionTable(c *C) {
 					partition p2 values less than (300),
 					partition p3 values less than (400))`)
 	s.runTestData(c, tk, "TestStableResultModeOnPartitionTable")
-}
-
-func (s *testRuleStabilizeResults) TestHideStableResultSwitch(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	rs := tk.MustQuery("show variables").Rows()
-	for _, r := range rs {
-		c.Assert(strings.ToLower(r[0].(string)), Not(Equals), "tidb_enable_stable_result_mode")
-	}
-	c.Assert(len(tk.MustQuery("show variables where variable_name like '%tidb_enable_stable_result_mode%'").Rows()), Equals, 0)
 }
