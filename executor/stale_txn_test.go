@@ -1091,3 +1091,4 @@ func (s *testStaleTxnSuite) TestStmtCtxStaleFlag(c *C) {
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.IsStaleness, IsFalse)
 	}
 }
+
