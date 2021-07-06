@@ -417,15 +417,16 @@ count(*)
 drop table if exists t;
 create table t(a int, b varchar(10), key((lower(b)), (a+1)));
 insert into t values (1, "A"), (2, "B"), (3, "C"), (4, "D"), (5, "E"), (6, "F");
+analyze table t;
 desc format = 'brief' select * from t where (lower(b) = "a" and a+1 = 2) or (lower(b) = "b" and a+1 = 5);
 id	estRows	task	access object	operator info
-Projection	0.20	root		test.t.a, test.t.b
-└─IndexLookUp	0.20	root		
-  ├─IndexRangeScan(Build)	0.20	cop[tikv]	table:t, index:expression_index(lower(`b`), `a` + 1)	range:["a" 2,"a" 2], ["b" 5,"b" 5], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	0.20	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection	1.00	root		test.t.a, test.t.b
+└─IndexLookUp	1.00	root		
+  ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:expression_index(lower(`b`), `a` + 1)	range:["a" 2,"a" 2], ["b" 5,"b" 5], keep order:false
+  └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false
 desc format = 'brief' select * from t where not (lower(b) >= "a");
 id	estRows	task	access object	operator info
-Projection	3323.33	root		test.t.a, test.t.b
-└─Selection	10000.00	root		lt(EMPTY_NAME, "a")
-  └─TableReader	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection	0.00	root		test.t.a, test.t.b
+└─IndexLookUp	0.00	root		
+  ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t, index:expression_index(lower(`b`), `a` + 1)	range:[-inf,"a"), keep order:false
+  └─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t	keep order:false
