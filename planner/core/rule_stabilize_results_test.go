@@ -95,7 +95,7 @@ type testRuleStabilizeResults struct {
 	testData testutil.TestData
 }
 
-func (s *testRuleStabilizeResults) SetUpTest(c *C) {
+func (s *testRuleStabilizeResults) SetUpSuite(c *C) {
 	var err error
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -127,6 +127,7 @@ func (s *testRuleStabilizeResults) TestStableResultMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_stable_result_mode=1")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int, d int, key(b))")
 	s.runTestData(c, tk, "TestStableResultMode")
 }
@@ -135,6 +136,7 @@ func (s *testRuleStabilizeResults) TestStableResultModeOnDML(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_stable_result_mode=1")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int, key(b))")
 	s.runTestData(c, tk, "TestStableResultModeOnDML")
 }
@@ -143,6 +145,8 @@ func (s *testRuleStabilizeResults) TestStableResultModeOnSubQuery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_stable_result_mode=1")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1 (a int primary key, b int, c int, d int, key(b))")
 	tk.MustExec("create table t2 (a int primary key, b int, c int, d int, key(b))")
 	s.runTestData(c, tk, "TestStableResultModeOnSubQuery")
@@ -152,6 +156,8 @@ func (s *testRuleStabilizeResults) TestStableResultModeOnJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_stable_result_mode=1")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1 (a int primary key, b int, c int, d int, key(b))")
 	tk.MustExec("create table t2 (a int primary key, b int, c int, d int, key(b))")
 	s.runTestData(c, tk, "TestStableResultModeOnJoin")
@@ -161,6 +167,8 @@ func (s *testRuleStabilizeResults) TestStableResultModeOnOtherOperators(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_stable_result_mode=1")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1 (a int primary key, b int, c int, d int, unique key(b))")
 	tk.MustExec("create table t2 (a int primary key, b int, c int, d int, unique key(b))")
 	s.runTestData(c, tk, "TestStableResultModeOnOtherOperators")
@@ -171,6 +179,8 @@ func (s *testRuleStabilizeResults) TestStableResultModeOnPartitionTable(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec(fmt.Sprintf(`set tidb_partition_prune_mode='%v'`, variable.DefTiDBPartitionPruneMode))
 	tk.MustExec("set tidb_enable_stable_result_mode=1")
+	tk.MustExec("drop table if exists thash")
+	tk.MustExec("drop table if exists trange")
 	tk.MustExec("create table thash (a int primary key, b int, c int, d int) partition by hash(a) partitions 4")
 	tk.MustExec(`create table trange (a int primary key, b int, c int, d int) partition by range(a) (
 					partition p0 values less than (100),
