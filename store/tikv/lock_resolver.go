@@ -40,9 +40,6 @@ import (
 // ResolvedCacheSize is max number of cached txn status.
 const ResolvedCacheSize = 2048
 
-// bigTxnThreshold : transaction involves keys exceed this threshold can be treated as `big transaction`.
-const bigTxnThreshold = 16
-
 // LockResolver resolves locks and also caches resolved txn status.
 type LockResolver struct {
 	store                    *KVStore

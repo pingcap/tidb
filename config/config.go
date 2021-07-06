@@ -567,7 +567,7 @@ var defaultConf = Config{
 	EnableTableLock:              false,
 	DelayCleanTableLock:          0,
 	SplitRegionMaxNum:            1000,
-	ResolveLockLiteThreshold:     128,
+	ResolveLockLiteThreshold:     16,
 	RepairMode:                   false,
 	RepairTableList:              []string{},
 	MaxServerConnections:         0,

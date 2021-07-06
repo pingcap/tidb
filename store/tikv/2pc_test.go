@@ -1177,6 +1177,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 
 	// pk is the primary lock of txn1
 	pk := kv.Key("pk")
+	bigTxnThreshold := 16
 	secondaryLockkeys := make([]kv.Key, 0, bigTxnThreshold)
 	for i := 0; i < bigTxnThreshold; i++ {
 		optimisticLock := kv.Key(fmt.Sprintf("optimisticLockKey%d", i))
