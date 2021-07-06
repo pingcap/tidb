@@ -20,11 +20,6 @@ What's Changed:
 
 How it Works:
 
-### Related changes
-
-- PR to update `pingcap/docs`/`pingcap/docs-cn`:
-- Need to cherry-pick to the release branch
-
 ### Check List <!--REMOVE the items that are not applicable-->
 
 Tests <!-- At least one of them must be included. -->
