@@ -537,6 +537,34 @@ const (
 	// TiDBAllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
 	// Now we only support TiFlash.
 	TiDBAllowFallbackToTiKV = "tidb_allow_fallback_to_tikv"
+<<<<<<< HEAD
+=======
+
+	// TiDBEnableTopSQL indicates whether the top SQL is enabled.
+	TiDBEnableTopSQL = "tidb_enable_top_sql"
+
+	// TiDBTopSQLAgentAddress indicates the top SQL agent address.
+	TiDBTopSQLAgentAddress = "tidb_top_sql_agent_address"
+
+	// TiDBTopSQLPrecisionSeconds indicates the top SQL precision seconds.
+	TiDBTopSQLPrecisionSeconds = "tidb_top_sql_precision_seconds"
+
+	// TiDBTopSQLMaxStatementCount indicates the max number of statements been collected.
+	TiDBTopSQLMaxStatementCount = "tidb_top_sql_max_statement_count"
+
+	// TiDBTopSQLMaxCollect indicates the max capacity of the collect map.
+	TiDBTopSQLMaxCollect = "tidb_top_sql_max_collect"
+
+	// TiDBTopSQLReportIntervalSeconds indicates the top SQL report interval seconds.
+	TiDBTopSQLReportIntervalSeconds = "tidb_top_sql_report_interval_seconds"
+	// TiDBEnableGlobalTemporaryTable indicates whether to enable global temporary table
+	TiDBEnableGlobalTemporaryTable = "tidb_enable_global_temporary_table"
+	// TiDBEnableLocalTxn indicates whether to enable Local Txn.
+	TiDBEnableLocalTxn = "tidb_enable_local_txn"
+
+	// TiDBEnableStableResultMode indicates if stabilize query results.
+	TiDBEnableStableResultMode = "tidb_enable_stable_result_mode"
+>>>>>>> c24a90f9e... planner: support stable result mode (#25971)
 )
 
 // TiDB vars that have only global scope
@@ -679,6 +707,20 @@ const (
 	DefTiDBEnableIndexMergeJoin        = false
 	DefTiDBTrackAggregateMemoryUsage   = true
 	DefTiDBEnableExchangePartition     = false
+<<<<<<< HEAD
+=======
+	DefCTEMaxRecursionDepth            = 1000
+	DefTiDBTopSQLEnable                = false
+	DefTiDBTopSQLAgentAddress          = ""
+	DefTiDBTopSQLPrecisionSeconds      = 1
+	DefTiDBTopSQLMaxStatementCount     = 200
+	DefTiDBTopSQLMaxCollect            = 10000
+	DefTiDBTopSQLReportIntervalSeconds = 60
+	DefTiDBEnableGlobalTemporaryTable  = false
+	DefTMPTableSize                    = 16777216
+	DefTiDBEnableLocalTxn              = false
+	DefTiDBEnableStableResultMode      = false
+>>>>>>> c24a90f9e... planner: support stable result mode (#25971)
 )
 
 // Process global variables.
