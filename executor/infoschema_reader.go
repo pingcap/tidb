@@ -629,7 +629,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 				colLen += (len(col.Elems) - 1)
 			}
 			charMaxLen = colLen
-			charOctLen = colLen
+			charOctLen = calcCharOctLength(colLen, col.Charset)
 		} else if col.Tp == mysql.TypeEnum {
 			// Example: In MySQL enum('a', 'ab', 'cdef') has length 4, because
 			// the longest string in the enum is 'cdef'
@@ -641,10 +641,10 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 				}
 			}
 			charMaxLen = colLen
-			charOctLen = colLen
+			charOctLen = calcCharOctLength(colLen, col.Charset)
 		} else if types.IsString(col.Tp) {
 			charMaxLen = colLen
-			charOctLen = colLen
+			charOctLen = calcCharOctLength(colLen, col.Charset)
 		} else if types.IsTypeFractionable(col.Tp) {
 			datetimePrecision = decimal
 		} else if types.IsTypeNumeric(col.Tp) {
@@ -686,6 +686,14 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 		)
 		e.rows = append(e.rows, record)
 	}
+}
+
+func calcCharOctLength(lenInChar int, cs string) int {
+	lenInBytes := lenInChar
+	if desc, err := charset.GetCharsetDesc(cs); err == nil {
+		lenInBytes = desc.Maxlen * lenInChar
+	}
+	return lenInBytes
 }
 
 func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) error {
@@ -1408,8 +1416,8 @@ func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *helper.RegionInfo,
 	}
 	row[9].SetInt64(region.Epoch.ConfVer)
 	row[10].SetInt64(region.Epoch.Version)
-	row[11].SetInt64(region.WrittenBytes)
-	row[12].SetInt64(region.ReadBytes)
+	row[11].SetUint64(region.WrittenBytes)
+	row[12].SetUint64(region.ReadBytes)
 	row[13].SetInt64(region.ApproximateSize)
 	row[14].SetInt64(region.ApproximateKeys)
 	if region.ReplicationStatus != nil {
