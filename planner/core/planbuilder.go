@@ -1146,14 +1146,14 @@ func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.T
 }
 
 func removeTiflashDuringStaleRead(paths []*util.AccessPath) []*util.AccessPath {
-	remainedPaths := make([]*util.AccessPath, 0, len(paths))
+	n := 0
 	for _, path := range paths {
-		if path.StoreType == kv.TiFlash {
-			continue
+		if path.StoreType != kv.TiFlash {
+			paths[n] = path
+			n++
 		}
-		remainedPaths = append(remainedPaths, path)
 	}
-	return remainedPaths
+	return paths[:n]
 }
 
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo) (*LogicalLock, error) {
