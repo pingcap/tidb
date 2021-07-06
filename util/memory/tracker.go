@@ -53,17 +53,20 @@ type Tracker struct {
 		parent *Tracker // The parent memory tracker.
 	}
 
-	label         int   // Label of this "Tracker".
-	bytesConsumed int64 // Consumed bytes.
-	bytesLimit    int64 // bytesLimit <= 0 means no limit.
-	maxConsumed   int64 // max number of bytes consumed during execution.
-	isGlobal      bool  // isGlobal indicates whether this tracker is global tracker
+	label          int   // Label of this "Tracker".
+	bytesConsumed  int64 // Consumed bytes.
+	bytesLimit     int64 // bytesLimit <= 0 means no limit.
+	bytesSoftLimit int64
+	maxConsumed    int64 // max number of bytes consumed during execution.
+	isGlobal       bool  // isGlobal indicates whether this tracker is global tracker
 }
 
 type actionMu struct {
 	sync.Mutex
 	actionOnExceed ActionOnExceed
 }
+
+const softScale = 0.8
 
 // NewTracker creates a memory tracker.
 //	1. "label" is the label used in the usage string.
@@ -74,6 +77,7 @@ func NewTracker(label int, bytesLimit int64) *Tracker {
 		label:      label,
 		bytesLimit: bytesLimit,
 	}
+	t.bytesSoftLimit = int64(float64(bytesLimit) * softScale)
 	t.actionMu.actionOnExceed = &LogOnExceed{}
 	t.isGlobal = false
 	return t
@@ -85,6 +89,7 @@ func NewGlobalTracker(label int, bytesLimit int64) *Tracker {
 		label:      label,
 		bytesLimit: bytesLimit,
 	}
+	t.bytesSoftLimit = int64(float64(bytesLimit) * softScale)
 	t.actionMu.actionOnExceed = &LogOnExceed{}
 	t.isGlobal = true
 	return t
@@ -100,6 +105,7 @@ func (t *Tracker) CheckBytesLimit(val int64) bool {
 // "bytesLimit <= 0" means no limit.
 func (t *Tracker) SetBytesLimit(bytesLimit int64) {
 	t.bytesLimit = bytesLimit
+	t.bytesSoftLimit = int64(float64(bytesLimit) * softScale)
 }
 
 // GetBytesLimit gets the bytes limit for this tracker.
@@ -266,8 +272,6 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 	t.Consume(newConsumed)
 }
 
-const softScale = 0.8
-
 // Consume is used to consume a memory usage. "bytes" can be a negative value,
 // which means this is a memory release operation. When memory usage of a tracker
 // exceeds its bytesLimit, the tracker calls its action, so does each of its ancestors.
@@ -281,7 +285,7 @@ func (t *Tracker) Consume(bytes int64) {
 		if bytesConsumed >= tracker.bytesLimit && tracker.bytesLimit > 0 {
 			rootExceed = tracker
 		}
-		if bytesConsumed >= int64(float64(tracker.bytesLimit)*softScale) && tracker.bytesLimit > 0 {
+		if bytesConsumed >= tracker.bytesSoftLimit && tracker.bytesSoftLimit > 0 {
 			rootExceedForSoftLimit = tracker
 		}
 
