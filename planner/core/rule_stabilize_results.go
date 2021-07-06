@@ -106,7 +106,11 @@ func (rs *resultsStabilizer) isInputOrderKeeper(lp LogicalPlan) bool {
 func (rs *resultsStabilizer) extractHandleCol(lp LogicalPlan) *expression.Column {
 	switch x := lp.(type) {
 	case *LogicalSelection, *LogicalLimit:
-		return rs.extractHandleCol(lp.Children()[0])
+		handleCol := rs.extractHandleCol(lp.Children()[0])
+		if x.Schema().Contains(handleCol) {
+			// some Projection Operator might be inlined, so check the column again here
+			return handleCol
+		}
 	case *DataSource:
 		handleCol := x.getPKIsHandleCol()
 		if handleCol != nil {

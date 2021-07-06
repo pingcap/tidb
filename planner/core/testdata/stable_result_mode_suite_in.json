@@ -13,7 +13,9 @@
       "select * from t use index(primary) limit 10",
       "select b from t use index(b) order by b",
       "select b, c, d from t use index(b) order by b",
-      "select t1.a, t2.a from t t1, t t2 where t1.a=t2.a"
+      "select t1.a, t2.a from t t1, t t2 where t1.a=t2.a",
+      "select b from t where a>0",
+      "select b from t where a>0 limit 1"
     ]
   },
   {
