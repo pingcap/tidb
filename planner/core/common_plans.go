@@ -1013,6 +1013,10 @@ func GetExplainRowsForPlan(plan Plan) (rows [][]string) {
 func (e *Explain) prepareSchema() error {
 	var fieldNames []string
 	format := strings.ToLower(e.Format)
+	if format == types.ExplainFormatTraditional {
+		format = types.ExplainFormatROW
+		e.Format = types.ExplainFormatROW
+	}
 	switch {
 	case (format == types.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil)) || (format == types.ExplainFormatBrief):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
