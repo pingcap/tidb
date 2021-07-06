@@ -450,6 +450,163 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 
 }
 
+func (ts *tidbTestSuite) TestSocketAndIp(c *C) {
+	cli := newTestServerClient()
+	cfg := newTestConfig()
+	cfg.Socket = "/tmp/tidbtest.sock"
+	cfg.Port = cli.port
+	os.Remove(cfg.Socket)
+	cfg.Status.ReportStatus = false
+
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
+	time.Sleep(time.Millisecond * 100)
+	defer server.Close()
+
+	// Test with Socket connection + Setup user1@% for all host access
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	defer func() {
+		cli.runTests(c, func(config *mysql.Config) {
+			config.User = "root"
+		},
+			func(dbt *DBTest) {
+				dbt.mustQuery("DROP USER IF EXISTS 'user1'@'%'")
+				dbt.mustQuery("DROP USER IF EXISTS 'user1'@'localhost'")
+				dbt.mustQuery("DROP USER IF EXISTS 'user1'@'127.0.0.1'")
+			})
+	}()
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "root"
+		config.Net = "unix"
+		config.Addr = "/tmp/tidbtest.sock"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "root@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			dbt.mustQuery("CREATE USER user1@'%'")
+			dbt.mustQuery("GRANT SELECT ON test.* TO user1@'%'")
+			//dbt.mustQuery("CREATE USER user1@127.0.0.1")
+			//dbt.mustQuery("GRANT SELECT,INSERT ON test.* TO user1@'127.0.0.1'")
+			//dbt.mustQuery("CREATE USER user1@localhost")
+			//dbt.mustQuery("GRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO user1@localhost")
+		})
+	// Test with Network interface connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
+			cli.checkRows(c, rows, "user1@127.0.0.1")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT Select ON test.* TO 'user1'@'%'")
+		})
+	// Test with unix domain socket file connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = "/tmp/tidbtest.sock"
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "user1@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT Select ON test.* TO 'user1'@'%'")
+		})
+
+	// Setup user1@127.0.0.1 for loop back network interface access
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "root"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
+			cli.checkRows(c, rows, "root@127.0.0.1")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			dbt.mustQuery("CREATE USER user1@127.0.0.1")
+			dbt.mustQuery("GRANT SELECT,INSERT ON test.* TO user1@'127.0.0.1'")
+		})
+	// Test with Network interface connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
+			cli.checkRows(c, rows, "user1@127.0.0.1")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'127.0.0.1'\nGRANT Select,Insert ON test.* TO 'user1'@'127.0.0.1'")
+		})
+	// Test with unix domain socket file connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = "/tmp/tidbtest.sock"
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "user1@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT Select ON test.* TO 'user1'@'%'")
+		})
+
+	// Setup user1@localhost for socket (and if MySQL compatible; loop back network interface access)
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = "/tmp/tidbtest.sock"
+		config.User = "root"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "root@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			dbt.mustQuery("CREATE USER user1@localhost")
+			dbt.mustQuery("GRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO user1@localhost")
+		})
+	// Test with Network interface connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
+			cli.checkRows(c, rows, "user1@127.0.0.1")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'127.0.0.1'\nGRANT Select,Insert ON test.* TO 'user1'@'127.0.0.1'")
+		})
+	// Test with unix domain socket file connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = "/tmp/tidbtest.sock"
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "user1@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT Select,Insert,Update,Delete ON test.* TO 'user1'@'localhost'")
+		})
+
+}
+
 // generateCert generates a private key and a certificate in PEM format based on parameters.
 // If parentCert and parentCertKey is specified, the new certificate will be signed by the parentCert.
 // Otherwise, the new certificate will be self-signed and is a CA.
