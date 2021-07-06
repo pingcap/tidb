@@ -674,6 +674,150 @@ type SessionVars struct {
 
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
+<<<<<<< HEAD
+=======
+
+	// EnableAsyncCommit indicates whether to enable the async commit feature.
+	EnableAsyncCommit bool
+
+	// Enable1PC indicates whether to enable the one-phase commit feature.
+	Enable1PC bool
+
+	// GuaranteeLinearizability indicates whether to guarantee linearizability
+	GuaranteeLinearizability bool
+
+	// AnalyzeVersion indicates how TiDB collect and use analyzed statistics.
+	AnalyzeVersion int
+
+	// EnableIndexMergeJoin indicates whether to enable index merge join.
+	EnableIndexMergeJoin bool
+
+	// TrackAggregateMemoryUsage indicates whether to track the memory usage of aggregate function.
+	TrackAggregateMemoryUsage bool
+
+	// TiDBEnableExchangePartition indicates whether to enable exchange partition
+	TiDBEnableExchangePartition bool
+
+	// AllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
+	// Now we only support TiFlash.
+	AllowFallbackToTiKV map[kv.StoreType]struct{}
+
+	// CTEMaxRecursionDepth indicates The common table expression (CTE) maximum recursion depth.
+	// see https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_cte_max_recursion_depth
+	CTEMaxRecursionDepth int
+
+	// The temporary table size threshold
+	// In MySQL, when a temporary table exceed this size, it spills to disk.
+	// In TiDB, as we do not support spill to disk for now, an error is reported.
+	// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_tmp_table_size
+	TMPTableSize int64
+
+	// EnableGlobalTemporaryTable indicates whether to enable global temporary table
+	EnableGlobalTemporaryTable bool
+
+	// EnableStableResultMode if stabilize query results.
+	EnableStableResultMode bool
+
+	// LocalTemporaryTables is *infoschema.LocalTemporaryTables, use interface to avoid circle dependency.
+	// It's nil if there is no local temporary table.
+	LocalTemporaryTables interface{}
+}
+
+// AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
+// startTs is different.
+func (s *SessionVars) AllocMPPTaskID(startTS uint64) int64 {
+	if s.mppTaskIDAllocator.lastTS == startTS {
+		s.mppTaskIDAllocator.taskID++
+		return s.mppTaskIDAllocator.taskID
+	}
+	s.mppTaskIDAllocator.lastTS = startTS
+	s.mppTaskIDAllocator.taskID = 1
+	return 1
+}
+
+// IsMPPAllowed returns whether mpp execution is allowed.
+func (s *SessionVars) IsMPPAllowed() bool {
+	return s.allowMPPExecution
+}
+
+// IsMPPEnforced returns whether mpp execution is enforced.
+func (s *SessionVars) IsMPPEnforced() bool {
+	return s.allowMPPExecution && s.enforceMPPExecution
+}
+
+// RaiseWarningWhenMPPEnforced will raise a warning when mpp mode is enforced and executing explain statement.
+// TODO: Confirm whether this function will be inlined and
+// omit the overhead of string construction when calling with false condition.
+func (s *SessionVars) RaiseWarningWhenMPPEnforced(warning string) {
+	if s.IsMPPEnforced() && s.StmtCtx.InExplainStmt {
+		s.StmtCtx.AppendWarning(errors.New(warning))
+	}
+}
+
+// CheckAndGetTxnScope will return the transaction scope we should use in the current session.
+func (s *SessionVars) CheckAndGetTxnScope() string {
+	if s.InRestrictedSQL || !EnableLocalTxn.Load() {
+		return kv.GlobalTxnScope
+	}
+	if s.TxnScope.GetVarValue() == kv.LocalTxnScope {
+		return s.TxnScope.GetTxnScope()
+	}
+	return kv.GlobalTxnScope
+}
+
+// UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
+func (s *SessionVars) UseDynamicPartitionPrune() bool {
+	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
+}
+
+// BuildParserConfig generate parser.ParserConfig for initial parser
+func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
+	return parser.ParserConfig{
+		EnableWindowFunction:        s.EnableWindowFunction,
+		EnableStrictDoubleTypeCheck: s.EnableStrictDoubleTypeCheck,
+	}
+}
+
+// PartitionPruneMode presents the prune mode used.
+type PartitionPruneMode string
+
+const (
+	// Static indicates only prune at plan phase.
+	Static PartitionPruneMode = "static"
+	// Dynamic indicates only prune at execute phase.
+	Dynamic PartitionPruneMode = "dynamic"
+
+	// Don't use out-of-date mode.
+
+	// StaticOnly is out-of-date.
+	StaticOnly PartitionPruneMode = "static-only"
+	// DynamicOnly is out-of-date.
+	DynamicOnly PartitionPruneMode = "dynamic-only"
+	// StaticButPrepareDynamic is out-of-date.
+	StaticButPrepareDynamic PartitionPruneMode = "static-collect-dynamic"
+)
+
+// Valid indicate PruneMode is validated.
+func (p PartitionPruneMode) Valid() bool {
+	switch p {
+	case Static, Dynamic, StaticOnly, DynamicOnly:
+		return true
+	default:
+		return false
+	}
+}
+
+// Update updates out-of-date PruneMode.
+func (p PartitionPruneMode) Update() PartitionPruneMode {
+	switch p {
+	case StaticOnly, StaticButPrepareDynamic:
+		return Static
+	case DynamicOnly:
+		return Dynamic
+	default:
+		return p
+	}
+>>>>>>> c24a90f9e... planner: support stable result mode (#25971)
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.

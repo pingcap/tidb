@@ -430,8 +430,77 @@ const (
 	// TiDBEnableRateLimitAction indicates whether enabled ratelimit action
 	TiDBEnableRateLimitAction = "tidb_enable_rate_limit_action"
 
+<<<<<<< HEAD
 	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
 	TiDBMemoryUsageAlarmRatio = "tidb_memory_usage_alarm_ratio"
+=======
+	// TiDBEnableAsyncCommit indicates whether to enable the async commit feature.
+	TiDBEnableAsyncCommit = "tidb_enable_async_commit"
+
+	// TiDBEnable1PC indicates whether to enable the one-phase commit feature.
+	TiDBEnable1PC = "tidb_enable_1pc"
+
+	// TiDBGuaranteeLinearizability indicates whether to guarantee linearizability.
+	TiDBGuaranteeLinearizability = "tidb_guarantee_linearizability"
+
+	// TiDBAnalyzeVersion indicates the how tidb collects the analyzed statistics and how use to it.
+	TiDBAnalyzeVersion = "tidb_analyze_version"
+
+	// TiDBEnableIndexMergeJoin indicates whether to enable index merge join.
+	TiDBEnableIndexMergeJoin = "tidb_enable_index_merge_join"
+
+	// TiDBTrackAggregateMemoryUsage indicates whether track the memory usage of aggregate function.
+	TiDBTrackAggregateMemoryUsage = "tidb_track_aggregate_memory_usage"
+
+	// TiDBEnableExchangePartition indicates whether to enable exchange partition.
+	TiDBEnableExchangePartition = "tidb_enable_exchange_partition"
+
+	// TiDBAllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
+	// Now we only support TiFlash.
+	TiDBAllowFallbackToTiKV = "tidb_allow_fallback_to_tikv"
+
+	// TiDBEnableTopSQL indicates whether the top SQL is enabled.
+	TiDBEnableTopSQL = "tidb_enable_top_sql"
+
+	// TiDBTopSQLAgentAddress indicates the top SQL agent address.
+	TiDBTopSQLAgentAddress = "tidb_top_sql_agent_address"
+
+	// TiDBTopSQLPrecisionSeconds indicates the top SQL precision seconds.
+	TiDBTopSQLPrecisionSeconds = "tidb_top_sql_precision_seconds"
+
+	// TiDBTopSQLMaxStatementCount indicates the max number of statements been collected.
+	TiDBTopSQLMaxStatementCount = "tidb_top_sql_max_statement_count"
+
+	// TiDBTopSQLMaxCollect indicates the max capacity of the collect map.
+	TiDBTopSQLMaxCollect = "tidb_top_sql_max_collect"
+
+	// TiDBTopSQLReportIntervalSeconds indicates the top SQL report interval seconds.
+	TiDBTopSQLReportIntervalSeconds = "tidb_top_sql_report_interval_seconds"
+	// TiDBEnableGlobalTemporaryTable indicates whether to enable global temporary table
+	TiDBEnableGlobalTemporaryTable = "tidb_enable_global_temporary_table"
+	// TiDBEnableLocalTxn indicates whether to enable Local Txn.
+	TiDBEnableLocalTxn = "tidb_enable_local_txn"
+
+	// TiDBEnableStableResultMode indicates if stabilize query results.
+	TiDBEnableStableResultMode = "tidb_enable_stable_result_mode"
+)
+
+// TiDB vars that have only global scope
+
+const (
+	// TiDBGCEnable turns garbage collection on or OFF
+	TiDBGCEnable = "tidb_gc_enable"
+	// TiDBGCRunInterval sets the interval that GC runs
+	TiDBGCRunInterval = "tidb_gc_run_interval"
+	// TiDBGCLifetime sets the retention window of older versions
+	TiDBGCLifetime = "tidb_gc_life_time"
+	// TiDBGCConcurrency sets the concurrency of garbage collection. -1 = AUTO value
+	TiDBGCConcurrency = "tidb_gc_concurrency"
+	// TiDBGCScanLockMode enables the green GC feature (default)
+	TiDBGCScanLockMode = "tidb_gc_scan_lock_mode"
+	// TiDBEnableEnhancedSecurity restricts SUPER users from certain operations.
+	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
+>>>>>>> c24a90f9e... planner: support stable result mode (#25971)
 )
 
 // Default TiDB system variable values.
@@ -535,6 +604,27 @@ const (
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableAmendPessimisticTxn   = false
 	DefTiDBEnableRateLimitAction       = true
+<<<<<<< HEAD
+=======
+	DefTiDBEnableAsyncCommit           = false
+	DefTiDBEnable1PC                   = false
+	DefTiDBGuaranteeLinearizability    = true
+	DefTiDBAnalyzeVersion              = 2
+	DefTiDBEnableIndexMergeJoin        = false
+	DefTiDBTrackAggregateMemoryUsage   = true
+	DefTiDBEnableExchangePartition     = false
+	DefCTEMaxRecursionDepth            = 1000
+	DefTiDBTopSQLEnable                = false
+	DefTiDBTopSQLAgentAddress          = ""
+	DefTiDBTopSQLPrecisionSeconds      = 1
+	DefTiDBTopSQLMaxStatementCount     = 200
+	DefTiDBTopSQLMaxCollect            = 10000
+	DefTiDBTopSQLReportIntervalSeconds = 60
+	DefTiDBEnableGlobalTemporaryTable  = false
+	DefTMPTableSize                    = 16777216
+	DefTiDBEnableLocalTxn              = false
+	DefTiDBEnableStableResultMode      = false
+>>>>>>> c24a90f9e... planner: support stable result mode (#25971)
 )
 
 // Process global variables.
