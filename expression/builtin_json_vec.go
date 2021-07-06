@@ -1170,7 +1170,11 @@ func (b *builtinJSONUnquoteSig) vecEvalString(input *chunk.Chunk, result *chunk.
 			result.AppendNull()
 			continue
 		}
-		str, err := json.UnquoteString(buf.GetString(i))
+		str := buf.GetString(i)
+		if len(str) >= 2 && str[0] == '"' && str[len(str)-1] == '"' && !goJSON.Valid([]byte(str)) {
+			return json.ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")
+		}
+		str, err := json.UnquoteString(str)
 		if err != nil {
 			return err
 		}
