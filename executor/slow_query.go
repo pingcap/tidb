@@ -552,10 +552,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 				} else {
 					fieldValues := strings.Split(line, " ")
 					for i := 0; i < len(fieldValues)-1; i += 2 {
-						field := fieldValues[i]
-						if strings.HasSuffix(field, ":") {
-							field = field[:len(field)-1]
-						}
+						field := strings.TrimSuffix(fieldValues[i], ":")
 						valid, err := st.setFieldValue(tz, field, fieldValues[i+1], fileLine, e.checker)
 						if err != nil {
 							sctx.GetSessionVars().StmtCtx.AppendWarning(err)
