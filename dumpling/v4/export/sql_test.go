@@ -317,7 +317,7 @@ func (s *testSQLSuite) TestParseSnapshotToTSO(c *C) {
 		WillReturnRows(sqlmock.NewRows([]string{`unix_timestamp("2020/07/18 20:31:50")`}).AddRow(1595075510))
 	tso, err := parseSnapshotToTSO(db, snapshot)
 	c.Assert(err, IsNil)
-	c.Assert(tso, Equals, (unixTimeStamp<<18)*1000+1)
+	c.Assert(tso, Equals, (unixTimeStamp<<18)*1000)
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
 
 	// generate columns not valid snapshot

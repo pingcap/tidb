@@ -967,7 +967,7 @@ func parseSnapshotToTSO(pool *sql.DB, snapshot string) (uint64, error) {
 	if !tso.Valid {
 		return 0, errors.Errorf("snapshot %s format not supported. please use tso or '2006-01-02 15:04:05' format time", snapshot)
 	}
-	return (uint64(tso.Int64)<<18)*1000 + 1, nil
+	return (uint64(tso.Int64) << 18) * 1000, nil
 }
 
 func buildWhereCondition(conf *Config, where string) string {
