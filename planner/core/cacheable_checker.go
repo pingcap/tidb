@@ -39,8 +39,19 @@ func Cacheable(node ast.Node, is infoschema.InfoSchema) bool {
 		schema:    is,
 	}
 	node.Accept(&checker)
-	return checker.cacheable
+	cacheable := checker.cacheable
+	if !cacheable && checker.reason == Partition && isInsert {
+		cacheable = true
+	}
+	return cacheable
 }
+
+type missReason int
+
+const (
+	Other missReason = iota
+	Partition
+)
 
 // cacheableChecker checks whether a query's plan can be cached, querys that:
 //	 1. have ExistsSubqueryExpr, or
@@ -50,6 +61,7 @@ func Cacheable(node ast.Node, is infoschema.InfoSchema) bool {
 type cacheableChecker struct {
 	cacheable bool
 	schema    infoschema.InfoSchema
+	reason    missReason
 }
 
 // Enter implements Visitor interface.
@@ -120,6 +132,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		if checker.schema != nil {
 			if checker.isPartitionTable(node) {
 				checker.cacheable = false
+				checker.reason = Partition
 				return in, true
 			}
 		}
