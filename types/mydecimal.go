@@ -529,6 +529,10 @@ func (d *MyDecimal) FromString(str []byte) error {
 	if strErr != nil {
 		return strErr
 	}
+
+	if endIdx != len(str) {
+		return ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", string(str))
+	}
 	return err
 }
 
