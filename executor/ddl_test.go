@@ -293,7 +293,7 @@ func (s *testSuite6) TestCreateView(c *C) {
 	tk.MustExec("drop view v_nested, v_nested2")
 
 	// Refer https://github.com/pingcap/tidb/issues/25876
-	err = tk.ExecToErr("create view v_stale as select * from source_table as of timestamp now()")
+	err = tk.ExecToErr("create view v_stale as select * from source_table as of timestamp current_timestamp(3)")
 	c.Assert(terror.ErrorEqual(err, executor.ErrViewInvalid), IsTrue, Commentf("err %s", err))
 }
 
