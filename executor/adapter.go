@@ -906,6 +906,8 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 	// Reset DurationParse due to the next statement may not need to be parsed (not a text protocol query).
 	sessVars.DurationParse = 0
+	// Clean the stale read flag when statement execution finish
+	sessVars.StmtCtx.IsStaleness = false
 }
 
 // CloseRecordSet will finish the execution of current statement and do some record work
