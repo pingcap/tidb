@@ -172,6 +172,11 @@ type StatementContext struct {
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
 	CTEStorageMap interface{}
+
+	// cache is used to reduce object allocation.
+	cache struct {
+		execdetails.RuntimeStatsColl
+	}
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -268,6 +273,12 @@ func (sc *StatementContext) GetResourceGroupTag() []byte {
 	tag = resourcegrouptag.EncodeResourceGroupTag(sqlDigest, sc.planDigest)
 	sc.resourceGroupTag.Store(tag)
 	return tag
+}
+
+// InitRuntimeStatsColl initializes the sc.RuntimeStatsColl, use cache to avoid allocation..
+func (sc *StatementContext) InitRuntimeStatsColl() {
+	execdetails.InitRuntimeStatsColl(&sc.cache.RuntimeStatsColl)
+	sc.RuntimeStatsColl = &sc.cache.RuntimeStatsColl
 }
 
 // SetPlanDigest sets the normalized plan and plan digest.

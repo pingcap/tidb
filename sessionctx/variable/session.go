@@ -859,6 +859,17 @@ type SessionVars struct {
 	// LocalTemporaryTables is *infoschema.LocalTemporaryTables, use interface to avoid circle dependency.
 	// It's nil if there is no local temporary table.
 	LocalTemporaryTables interface{}
+
+	// cache is used to reduce object allocation.
+	cache struct {
+		stmtctx.StatementContext
+	}
+}
+
+// InitStatementContext initialize s.StmtCtx for the struct itself, this avoids allocation.
+func (s *SessionVars) InitStatementContext() {
+	s.cache.StatementContext = stmtctx.StatementContext{}
+	s.StmtCtx = &s.cache.StatementContext
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's

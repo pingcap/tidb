@@ -1656,14 +1656,15 @@ func (e *UnionExec) Close() error {
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
-	sc := &stmtctx.StatementContext{
-		TimeZone:      vars.Location(),
-		MemTracker:    memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery),
-		DiskTracker:   disk.NewTracker(memory.LabelForSQLText, -1),
-		TaskID:        stmtctx.AllocateTaskID(),
-		CTEStorageMap: map[int]*CTEStorages{},
-		IsStaleness:   false,
-	}
+	vars.InitStatementContext()
+	sc := vars.StmtCtx
+	sc.TimeZone = vars.Location()
+	sc.MemTracker = memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
+	sc.DiskTracker = disk.NewTracker(memory.LabelForSQLText, -1)
+	sc.TaskID = stmtctx.AllocateTaskID()
+	sc.CTEStorageMap = map[int]*CTEStorages{}
+	sc.IsStaleness = false
+
 	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 	globalConfig := config.GetGlobalConfig()
 	if globalConfig.OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
@@ -1804,14 +1805,13 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.PrevAffectedRows = -1
 	}
 	if globalConfig.EnableCollectExecutionInfo {
-		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
+		sc.InitRuntimeStatsColl()
 	}
 
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount
 	vars.SysWarningCount = warnCount
-	vars.StmtCtx = sc
 	vars.PrevFoundInPlanCache = vars.FoundInPlanCache
 	vars.FoundInPlanCache = false
 	vars.ClearStmtVars()

@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/cteutil"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -970,7 +969,7 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
 	}
 	if v.Analyze {
 		if b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil {
-			b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
+			b.ctx.GetSessionVars().StmtCtx.InitRuntimeStatsColl()
 		}
 		explainExec.analyzeExec = b.build(v.TargetPlan)
 	}

@@ -554,10 +554,10 @@ type RuntimeStatsColl struct {
 	copStats  map[int]*CopRuntimeStats
 }
 
-// NewRuntimeStatsColl creates new executor collector.
-func NewRuntimeStatsColl() *RuntimeStatsColl {
-	return &RuntimeStatsColl{rootStats: make(map[int]*RootRuntimeStats),
-		copStats: make(map[int]*CopRuntimeStats)}
+// InitRuntimeStatsColl creates new executor collector.
+func InitRuntimeStatsColl(s *RuntimeStatsColl) {
+	s.rootStats = make(map[int]*RootRuntimeStats)
+	s.copStats = make(map[int]*CopRuntimeStats)
 }
 
 // RegisterStats register execStat for a executor.

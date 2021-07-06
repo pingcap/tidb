@@ -167,7 +167,8 @@ func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
 		rpcStat:          tikv.NewRegionRequestRuntimeStats(),
 	}
 	s2 := *s1
-	stmtStats := execdetails.NewRuntimeStatsColl()
+	var stmtStats execdetails.RuntimeStatsColl
+	execdetails.InitRuntimeStatsColl(&stmtStats)
 	stmtStats.RegisterStats(1, basic)
 	stmtStats.RegisterStats(1, s1)
 	stmtStats.RegisterStats(1, &s2)
