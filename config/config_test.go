@@ -265,7 +265,7 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.StmtSummary.HistorySize, Equals, 100)
 	c.Assert(conf.EnableBatchDML, Equals, true)
 	c.Assert(conf.RepairMode, Equals, true)
-	c.Assert(conf.ResolveLockLiteThreshold, Equals, 16)
+	c.Assert(conf.ResolveLockLiteThreshold, Equals, uint64(16))
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
 	c.Assert(conf.Experimental.AllowsExpressionIndex, IsTrue)
