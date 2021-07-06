@@ -306,6 +306,16 @@ func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 	tk.MustExec(`set @v1=2, @v2=2, @v3=3, @v4=3`)
 	tk.MustQuery(`execute stmt2 using @v1,@v2,@v3,@v4`).Check(testkit.Rows("2 2 222", "3 3 333"))
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(id int primary key, v int) partition by hash(id) partitions 3")
+	tk.MustExec(`prepare stmt1 from "insert into t2 values(?, ?)"`)
+	tk.MustExec("set @x=1, @y=2")
+	tk.MustExec("execute stmt1 using @x, @x")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec("execute stmt1 using @y, @y")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
 func (s *testPrepareSuite) TestPlanCacheWithDifferentVariableTypes(c *C) {
