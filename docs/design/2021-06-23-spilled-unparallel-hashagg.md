@@ -1,12 +1,8 @@
-<!--
-This is a template for TiDB's change proposal process, documented [here](./README.md).
--->
-
 # Proposal: Support Spilling Unparalleled HashAgg
 
 - Author(s): [@wshwsh12](https://github.com/wshwsh12)
-- Discussion PR: Need Update
-- Tracking Issue: Need Update
+- Discussion PR: N/A
+- Tracking Issue: https://github.com/pingcap/tidb/issues/25882
 
 ## Table of Contents
 
@@ -37,9 +33,9 @@ In aggregate processing, memory increases when tuples are inserted into the hash
 
 1. When the memory usage is higher than the mem-quota, switch the HashAgg executor to spill-mode.
 2. When HashAgg is in spill-mode, keep the tuple in the hashMap no longer growing.
-  a. If the processing key exists in the Map, aggreagte the result.
+  a. If the processing key exists in the Map, aggregate the result.
   b. If the processing key doesn't exist in the Map, spill the data to disk.
-3. After all data have been processed, output the aggreagte result in the Map, clear the Map. Then read the spilling data from disk, repeat the Step1-Step3 until all data have been aggregated.
+3. After all data have been processed, output the aggregate result in the Map, clear the Map. Then read the spilling data from disk, repeat the Step1-Step3 until all data have been aggregated.
 
 ## Test Design
 
@@ -49,7 +45,7 @@ In aggregate processing, memory increases when tuples are inserted into the hash
 
 ### Scenario Tests
 
-* In a scenario where aggreagte executor use too many memory, this feature helps recude memory usage and run the sql successfully.
+* In a scenario where aggregate executor use too many memory, this feature helps reduce memory usage and run the sql successfully.
 
 ### Compatibility Tests
 
