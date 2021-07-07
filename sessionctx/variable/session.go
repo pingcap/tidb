@@ -853,6 +853,9 @@ type SessionVars struct {
 	// EnableGlobalTemporaryTable indicates whether to enable global temporary table
 	EnableGlobalTemporaryTable bool
 
+	// EnableStableResultMode if stabilize query results.
+	EnableStableResultMode bool
+
 	// LocalTemporaryTables is *infoschema.LocalTemporaryTables, use interface to avoid circle dependency.
 	// It's nil if there is no local temporary table.
 	LocalTemporaryTables interface{}
