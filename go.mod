@@ -42,7 +42,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20201126102027-b0a155152ca3
 	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
-	github.com/pingcap/kvproto v0.0.0-20210611081648-a215b4e61d2f
+	github.com/pingcap/kvproto v0.0.0-20210706045240-6a7633d47452
 	github.com/pingcap/log v0.0.0-20210317133921-96f4fcab92a4
 	github.com/pingcap/parser v0.0.0-20210618124025-07ae8d9291c4
 	github.com/pingcap/sysutil v0.0.0-20210315073920-cc0985d983a3
@@ -83,3 +83,5 @@ require (
 )
 
 go 1.16
+
+replace github.com/tikv/client-go/v2 => github.com/hanfei1991/client-go/v2 v2.0.0-alpha.0.20210706150052-d30d49d0147c
