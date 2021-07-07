@@ -197,6 +197,9 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 		return
 	}
 
+	normalizedSQL := parser.DigestNormalized(record.OriginalSQL)
+	oldRecord := h.GetBindRecord(normalizedSQL.String(), record.OriginalSQL, record.Db)
+
 	defer func() {
 		if err != nil {
 			_, err1 := exec.ExecuteInternal(context.TODO(), "ROLLBACK")
@@ -209,21 +212,34 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 			return
 		}
 
-		sqlDigest := parser.DigestNormalized(record.OriginalSQL)
-		h.setBindRecord(sqlDigest.String(), record)
+		if oldRecord != nil {
+			h.removeBindRecord(normalizedSQL.String(), oldRecord)
+		}
+		h.appendBindRecord(normalizedSQL.String(), record)
 	}()
 
 	// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
 	if err = h.lockBindInfoTable(); err != nil {
 		return err
 	}
-	// Binding recreation should physically delete previous bindings.
-	_, err = exec.ExecuteInternal(context.TODO(), `DELETE FROM mysql.bind_info WHERE original_sql = %?`, record.OriginalSQL)
-	if err != nil {
-		return err
-	}
 
 	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+
+	if oldRecord != nil {
+		for _, binding := range oldRecord.Bindings {
+			updateTs := now.String()
+			if binding.BindSQL == "" {
+				_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
+					deleted, updateTs, record.OriginalSQL, updateTs)
+			} else {
+				_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %?`,
+					deleted, updateTs, record.OriginalSQL, updateTs, binding.BindSQL)
+			}
+			if err != nil {
+				return err
+			}
+		}
+	}
 
 	for i := range record.Bindings {
 		record.Bindings[i].CreateTime = now

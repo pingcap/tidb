@@ -1060,7 +1060,7 @@ func (s *testSuite) TestBaselineDBLowerCase(c *C) {
 	c.Assert(rows[0][0], Equals, "select * from `spm` . `t`")
 	// default_db should have lower case.
 	c.Assert(rows[0][2], Equals, "spm")
-	tk.MustQuery("select original_sql, default_db, status from mysql.bind_info where original_sql = 'select * from `spm` . `t`'").Check(testkit.Rows(
+	tk.MustQuery("select original_sql, default_db, status from mysql.bind_info where original_sql = 'select * from `spm` . `t`' and Status = 'using'").Check(testkit.Rows(
 		"select * from `spm` . `t` spm using",
 	))
 }
@@ -1869,26 +1869,29 @@ func (s *testSuite) TestReCreateBind(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 
-	tk.MustQuery("select * from mysql.bind_info").Check(testkit.Rows())
+	rows := tk.MustQuery("select * from mysql.bind_info").Rows()
+	c.Assert(len(rows), Equals, 0)
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
 
 	tk.MustExec("create global binding for select * from t using select * from t")
-	tk.MustQuery("select original_sql, status from mysql.bind_info").Check(testkit.Rows(
-		"select * from `test` . `t` using",
-	))
-	rows := tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 1)
+	rows = tk.MustQuery("select original_sql, status from mysql.bind_info").Rows()
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t`")
-	c.Assert(rows[0][3], Equals, "using")
-
-	tk.MustExec("create global binding for select * from t using select * from t")
-	tk.MustQuery("select original_sql, status from mysql.bind_info").Check(testkit.Rows(
-		"select * from `test` . `t` using",
-	))
+	c.Assert(rows[0][1], Equals, "using")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t`")
 	c.Assert(rows[0][3], Equals, "using")
+
+	tk.MustExec("create global binding for select * from t using select * from t")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t`")
+	c.Assert(rows[0][3], Equals, "using")
+
+	rows = tk.MustQuery("select original_sql, status from mysql.bind_info").Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0][1], Equals, "deleted")
+	c.Assert(rows[1][1], Equals, "using")
 }
 
 func (s *testSuite) TestDMLIndexHintBind(c *C) {
@@ -1947,6 +1950,7 @@ func (s *testSuite) TestConcurrentCapture(c *C) {
 	tk.MustExec("select * from t")
 	tk.MustExec("admin capture bindings")
 	tk.MustQuery("select original_sql, source from mysql.bind_info where source != 'builtin'").Check(testkit.Rows(
+		"select * from `test` . `t` manual",
 		"select * from `test` . `t` capture",
 	))
 }
