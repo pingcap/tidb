@@ -980,7 +980,6 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because tiflash replicas of table `" + tblInfo.Name.O + "` not ready.")
 	} else {
 		publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
-		publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
 	}
 
 	optimizerUseInvisibleIndexes := ctx.GetSessionVars().OptimizerUseInvisibleIndexes

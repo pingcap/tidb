@@ -1513,12 +1513,13 @@
       {
         "SQL": "desc format = 'brief' select * from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
         "Plan": [
-          "TableReader 10000.00 root  data:HashJoin",
-          "└─HashJoin 10000.00 cop[tiflash]  inner join, equal:[eq(Column#4, Column#8)]",
-          "  ├─Projection(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#4",
-          "  │ └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "  │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
-          "  └─Projection(Probe) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#8",
+          "HashJoin 10000.00 root  inner join, equal:[eq(Column#4, Column#8)]",
+          "├─Projection(Build) 8000.00 root  minus(test.t.id, 2)->Column#8",
+          "│ └─TableReader 8000.00 root  data:Selection",
+          "│   └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
+          "│     └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "└─Projection(Probe) 8000.00 root  minus(test.t.id, 2)->Column#4",
+          "  └─TableReader 8000.00 root  data:Selection",
           "    └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
           "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
@@ -1526,34 +1527,37 @@
       {
         "SQL": "desc format = 'brief' select * from t join (select id-2 as b from t) A on A.b=t.id",
         "Plan": [
-          "TableReader 10000.00 root  data:HashJoin",
-          "└─HashJoin 10000.00 cop[tiflash]  inner join, equal:[eq(test.t.id, Column#7)]",
-          "  ├─Projection(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#7",
-          "  │ └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "  │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
-          "  └─Selection(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "HashJoin 10000.00 root  inner join, equal:[eq(test.t.id, Column#7)]",
+          "├─Projection(Build) 8000.00 root  minus(test.t.id, 2)->Column#7",
+          "│ └─TableReader 8000.00 root  data:Selection",
+          "│   └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
+          "│     └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.id))",
           "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select * from t left join (select id-2 as b from t) A on A.b=t.id",
         "Plan": [
-          "TableReader 10000.00 root  data:HashJoin",
-          "└─HashJoin 10000.00 cop[tiflash]  left outer join, equal:[eq(test.t.id, Column#7)]",
-          "  ├─Projection(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#7",
-          "  │ └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "  │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
-          "  └─TableFullScan(Probe) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "HashJoin 10000.00 root  left outer join, equal:[eq(test.t.id, Column#7)]",
+          "├─Projection(Build) 8000.00 root  minus(test.t.id, 2)->Column#7",
+          "│ └─TableReader 8000.00 root  data:Selection",
+          "│   └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
+          "│     └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select * from t right join (select id-2 as b from t) A on A.b=t.id",
         "Plan": [
-          "TableReader 12487.50 root  data:HashJoin",
-          "└─HashJoin 12487.50 cop[tiflash]  right outer join, equal:[eq(test.t.id, Column#7)]",
-          "  ├─Selection(Build) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "  │ └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
-          "  └─Projection(Probe) 10000.00 cop[tiflash]  minus(test.t.id, 2)->Column#7",
+          "HashJoin 12487.50 root  right outer join, equal:[eq(test.t.id, Column#7)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "│   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "└─Projection(Probe) 10000.00 root  minus(test.t.id, 2)->Column#7",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
           "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
@@ -1561,12 +1565,13 @@
         "SQL": "desc format = 'brief' select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
         "Plan": [
           "Projection 10000.00 root  Column#8, Column#4",
-          "└─TableReader 10000.00 root  data:HashJoin",
-          "  └─HashJoin 10000.00 cop[tiflash]  inner join, equal:[eq(Column#4, Column#8)]",
-          "    ├─Projection(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#4",
-          "    │ └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "    │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
-          "    └─Projection(Probe) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#8",
+          "└─HashJoin 10000.00 root  inner join, equal:[eq(Column#4, Column#8)]",
+          "  ├─Projection(Build) 8000.00 root  minus(test.t.id, 2)->Column#8",
+          "  │ └─TableReader 8000.00 root  data:Selection",
+          "  │   └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
+          "  │     └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "  └─Projection(Probe) 8000.00 root  minus(test.t.id, 2)->Column#4",
+          "    └─TableReader 8000.00 root  data:Selection",
           "      └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
           "        └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
@@ -1574,21 +1579,23 @@
       {
         "SQL": "desc format = 'brief' select A.id from t as A where exists (select 1 from t where t.id=A.id)",
         "Plan": [
-          "TableReader 7992.00 root  data:HashJoin",
-          "└─HashJoin 7992.00 cop[tiflash]  semi join, equal:[eq(test.t.id, test.t.id)]",
-          "  ├─Selection(Build) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "  │ └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
-          "  └─Selection(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "HashJoin 7992.00 root  semi join, equal:[eq(test.t.id, test.t.id)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "│   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.id))",
           "    └─TableFullScan 10000.00 cop[tiflash] table:A keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select A.id from t as A where not exists  (select 1 from t where t.id=A.id)",
         "Plan": [
-          "TableReader 8000.00 root  data:HashJoin",
-          "└─HashJoin 8000.00 cop[tiflash]  anti semi join, equal:[eq(test.t.id, test.t.id)]",
-          "  ├─TableFullScan(Build) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
-          "  └─TableFullScan(Probe) 10000.00 cop[tiflash] table:A keep order:false, stats:pseudo"
+          "HashJoin 8000.00 root  anti semi join, equal:[eq(test.t.id, test.t.id)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tiflash] table:A keep order:false, stats:pseudo"
         ]
       }
     ]
