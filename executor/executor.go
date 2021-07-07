@@ -1662,6 +1662,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		DiskTracker:   disk.NewTracker(memory.LabelForSQLText, -1),
 		TaskID:        stmtctx.AllocateTaskID(),
 		CTEStorageMap: map[int]*CTEStorages{},
+		IsStaleness:   false,
 	}
 	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 	globalConfig := config.GetGlobalConfig()
@@ -1701,7 +1702,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OriginalSQL = s.Text()
 	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
 		sc.InExplainStmt = true
-		sc.IgnoreExplainIDSuffix = (strings.ToLower(explainStmt.Format) == ast.ExplainFormatBrief)
+		sc.IgnoreExplainIDSuffix = (strings.ToLower(explainStmt.Format) == types.ExplainFormatBrief)
 		s = explainStmt.Stmt
 	}
 	if _, ok := s.(*ast.ExplainForStmt); ok {
