@@ -1026,7 +1026,7 @@ func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, id
 			// check duplicate expression idx
 			expr, ok := col.VirtualExpr.(*expression.ScalarFunction)
 			isMatchExpr := ok && expr.Equal(nil, indexCol.VirtualExpr)
-			if (col.Equal(nil, indexCol) || isMatchExpr) && isFullLen{
+			if (col.Equal(nil, indexCol) || isMatchExpr) && isFullLen {
 				return true
 			}
 		}
