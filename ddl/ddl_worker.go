@@ -16,8 +16,6 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/tidb/util/topsql"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -25,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/topsql"
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
@@ -461,11 +461,11 @@ func newMetaWithQueueTp(txn kv.Transaction, tp string) *meta.Meta {
 }
 
 func (w *worker) setDDLLabelForTopSQL(job *model.Job) {
-	if !variable.TopSQLEnabled() {
+	if !variable.TopSQLEnabled() || job == nil {
 		return
 	}
 
-	if job != nil && job.Query != w.cacheSQL {
+	if job.Query != w.cacheSQL {
 		w.cacheNormalizedSQL, w.cacheDigest = parser.NormalizeDigest(job.Query)
 		w.cacheSQL = job.Query
 	}

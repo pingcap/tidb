@@ -102,8 +102,7 @@ type RemoteTopSQLReporter struct {
 	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are normalized SQL strings
 	normalizedSQLMap atomic.Value // sync.Map
 	sqlMapLength     atomic2.Int64
-
-	//
+	// internalSQLMap is an map, whose key are internal SQL digest string, and the values are struct {}{}.
 	internalSQLMap atomic.Value
 
 	// normalizedPlanMap is an map, whose keys are plan digest strings and values are normalized plans **in binary**.

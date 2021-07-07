@@ -1381,7 +1381,8 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	if variable.TopSQLEnabled() {
 		normalized, digest := parser.NormalizeDigest(sql)
 		if digest != nil {
-			// Fixme: reset/clean the label when internal sql execute finish.
+			// Reset the goroutine label when internal sql execute finish.
+			// Specifically reset in ExecRestrictedStmt function.
 			topsql.AttachSQLInfo(ctx, normalized, digest, "", nil, s.sessionVars.InRestrictedSQL)
 		}
 	}
@@ -1391,6 +1392,9 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 // ExecRestrictedStmt implements RestrictedSQLExecutor interface.
 func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
 	[]chunk.Row, []*ast.ResultField, error) {
+	if variable.TopSQLEnabled() {
+		defer pprof.SetGoroutineLabels(ctx)
+	}
 	var execOption sqlexec.ExecOption
 	for _, opt := range opts {
 		opt(&execOption)

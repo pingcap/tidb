@@ -16,7 +16,6 @@ package util
 import (
 	"context"
 	"encoding/hex"
-	"runtime/pprof"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -165,10 +164,6 @@ func LoadDDLVars(ctx sessionctx.Context) error {
 // LoadGlobalVars loads global variable from mysql.global_variables.
 func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []string) error {
 	if e, ok := sctx.(sqlexec.RestrictedSQLExecutor); ok {
-		if variable.TopSQLEnabled() {
-			//  Restore the goroutine label by using the original ctx after execution is finished.
-			defer pprof.SetGoroutineLabels(ctx)
-		}
 		var buf strings.Builder
 		buf.WriteString(loadGlobalVars)
 		paramNames := make([]interface{}, 0, len(varNames))

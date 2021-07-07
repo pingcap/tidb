@@ -286,7 +286,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	return result
 }
 
-func (w *backfillWorker) run(d *ddlCtx, bf backfiller) {
+func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 	logutil.BgLogger().Info("[ddl] backfill worker start", zap.Int("workerID", w.id))
 	defer func() {
 		w.resultCh <- &backfillResult{err: errReorgPanic}
@@ -297,7 +297,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller) {
 		if !more {
 			break
 		}
-		w.ddlWorker.setDDLLabelForTopSQL(nil)
+		w.ddlWorker.setDDLLabelForTopSQL(job)
 
 		logutil.BgLogger().Debug("[ddl] backfill worker got task", zap.Int("workerID", w.id), zap.String("task", task.String()))
 		failpoint.Inject("mockBackfillRunErr", func() {
@@ -534,7 +534,6 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table) (map[int64]de
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
 func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType backfillWorkerType, indexInfo *model.IndexInfo, oldColInfo, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
-	w.setDDLLabelForTopSQL(job)
 	totalAddedCount := job.GetRowCount()
 
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
@@ -580,7 +579,6 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		if len(kvRanges) < int(workerCnt) {
 			workerCnt = int32(len(kvRanges))
 		}
-		w.setDDLLabelForTopSQL(job)
 		// Enlarge the worker size.
 		for i := len(backfillWorkers); i < int(workerCnt); i++ {
 			sessCtx := newContext(reorgInfo.d.store)
@@ -602,17 +600,17 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 				idxWorker := newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap, reorgInfo.ReorgMeta.SQLMode)
 				idxWorker.priority = job.Priority
 				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
-				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker)
+				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
 			case typeUpdateColumnWorker:
 				updateWorker := newUpdateColumnWorker(sessCtx, w, i, t, oldColInfo, colInfo, decodeColMap, reorgInfo.ReorgMeta.SQLMode)
 				updateWorker.priority = job.Priority
 				backfillWorkers = append(backfillWorkers, updateWorker.backfillWorker)
-				go updateWorker.backfillWorker.run(reorgInfo.d, updateWorker)
+				go updateWorker.backfillWorker.run(reorgInfo.d, updateWorker, job)
 			case typeCleanUpIndexWorker:
 				idxWorker := newCleanUpIndexWorker(sessCtx, w, i, t, decodeColMap, reorgInfo.ReorgMeta.SQLMode)
 				idxWorker.priority = job.Priority
 				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
-				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker)
+				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
 			default:
 				return errors.New("unknow backfill type")
 			}
