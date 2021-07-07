@@ -30,4 +30,4 @@ We will publicly thank you after fixing the security vulnerability. To avoid neg
 
 The vulnerability will not be disclosed until TiDB releases a patch for it.
 
-Do not disclose the details of the vulnerability, such as exploits code.
+The details of the vulnerability, for example, exploits code, will not be disclosed.
