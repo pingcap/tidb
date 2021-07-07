@@ -1241,19 +1241,19 @@ func (b *builtinJSONMergePatchSig) vecEvalJSON(input *chunk.Chunk, result *chunk
 	}
 
 	result.ReserveJSON(nr)
-	jsonValues := make([][]*json.BinaryJSON, nr)
+	jsonValue := make([]*json.BinaryJSON, 0, len(b.args))
 	for i := 0; i < nr; i++ {
-		jsonValues[i] = make([]*json.BinaryJSON, 0, len(b.args))
+		jsonValue = jsonValue[:0]
 		for j := 0; j < len(b.args); j++ {
 			if argBuffers[j].IsNull(i) {
-				jsonValues[i] = append(jsonValues[i], nil)
+				jsonValue = append(jsonValue, nil)
 			} else {
 				v := argBuffers[j].GetJSON(i)
-				jsonValues[i] = append(jsonValues[i], &v)
+				jsonValue = append(jsonValue, &v)
 			}
 		}
 
-		tmpJSON, e := json.MergePatchBinary(jsonValues[i])
+		tmpJSON, e := json.MergePatchBinary(jsonValue)
 		if e != nil {
 			return e
 		}
