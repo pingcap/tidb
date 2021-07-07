@@ -868,6 +868,7 @@ type SessionVars struct {
 
 // InitStatementContext initialize s.StmtCtx for the struct itself, this avoids allocation.
 func (s *SessionVars) InitStatementContext() {
+	s.cache.StatementContext = stmtctx.StatementContext{}
 	s.StmtCtx = &s.cache.StatementContext
 }
 

@@ -1656,7 +1656,24 @@ func (e *UnionExec) Close() error {
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
-	var sc stmtctx.StatementContext
+	// Save some variable in StmtCtx before reset it.
+	saveWarnings := vars.StmtCtx.GetWarnings()
+	saveAffectedRows := vars.StmtCtx.AffectedRows()
+	saveLastInsertID := vars.StmtCtx.LastInsertID
+	savePrevLastInsertID := vars.StmtCtx.PrevLastInsertID
+	saveErrCount, saveWarnCount := vars.StmtCtx.NumErrorWarnings()
+	saveInUpdateStmt, saveInDeleteStmt, saveInInsertStmt, saveInSelectStmt := vars.StmtCtx.InUpdateStmt, vars.StmtCtx.InDeleteStmt, vars.StmtCtx.InInsertStmt, vars.StmtCtx.InSelectStmt
+
+	if vars.TxnCtx.CouldRetry {
+		// Must construct new statement context object, the retry history need context for every statement.
+		// TODO: Maybe one day we can get rid of transaction retry, then this logic can be deleted.
+		vars.StmtCtx = &stmtctx.StatementContext{}
+	} else {
+		// Reuse mem to reduce object allocation.
+		vars.InitStatementContext()
+	}
+
+	sc := vars.StmtCtx
 	sc.TimeZone = vars.Location()
 	sc.MemTracker = memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
 	sc.DiskTracker = disk.NewTracker(memory.LabelForSQLText, -1)
@@ -1714,7 +1731,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	// pushing them down to TiKV as flags.
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:
-		ResetUpdateStmtCtx(&sc, stmt, vars)
+		ResetUpdateStmtCtx(sc, stmt, vars)
 	case *ast.DeleteStmt:
 		sc.InDeleteStmt = true
 		sc.DupKeyAsWarning = stmt.IgnoreErr
@@ -1777,7 +1794,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors {
 			sc.InShowWarning = true
-			sc.SetWarnings(vars.StmtCtx.GetWarnings())
+			sc.SetWarnings(saveWarnings)
 		}
 	case *ast.SplitRegionStmt:
 		sc.IgnoreTruncate = false
@@ -1792,27 +1809,24 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
 		sc.Priority = priority
 	}
-	if vars.StmtCtx.LastInsertID > 0 {
-		sc.PrevLastInsertID = vars.StmtCtx.LastInsertID
+	if saveLastInsertID > 0 {
+		sc.PrevLastInsertID = saveLastInsertID
 	} else {
-		sc.PrevLastInsertID = vars.StmtCtx.PrevLastInsertID
+		sc.PrevLastInsertID = savePrevLastInsertID
 	}
 	sc.PrevAffectedRows = 0
-	if vars.StmtCtx.InUpdateStmt || vars.StmtCtx.InDeleteStmt || vars.StmtCtx.InInsertStmt {
-		sc.PrevAffectedRows = int64(vars.StmtCtx.AffectedRows())
-	} else if vars.StmtCtx.InSelectStmt {
-		sc.PrevAffectedRows = -1
-	}
 	if globalConfig.EnableCollectExecutionInfo {
 		sc.InitRuntimeStatsColl()
 	}
+	if saveInUpdateStmt || saveInDeleteStmt || saveInInsertStmt {
+		sc.PrevAffectedRows = int64(saveAffectedRows)
+	} else if saveInSelectStmt {
+		sc.PrevAffectedRows = -1
+	}
 
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
-	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
-	vars.SysErrorCount = errCount
-	vars.SysWarningCount = warnCount
-	// TODO(tiancaiamao): update statement context in-place, avoid this data copy
-	*vars.StmtCtx = sc
+	vars.SysErrorCount = saveErrCount
+	vars.SysWarningCount = saveWarnCount
 	vars.PrevFoundInPlanCache = vars.FoundInPlanCache
 	vars.FoundInPlanCache = false
 	vars.ClearStmtVars()
