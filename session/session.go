@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
 	"strings"
@@ -1233,6 +1234,10 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...inter
 	s.sessionVars.InRestrictedSQL = true
 	defer func() {
 		s.sessionVars.InRestrictedSQL = origin
+		if variable.TopSQLEnabled() {
+			//  Restore the goroutine label by using the original ctx after execution is finished.
+			pprof.SetGoroutineLabels(ctx)
+		}
 	}()
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -1375,7 +1380,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		normalized, digest := parser.NormalizeDigest(sql)
 		if digest != nil {
 			// Fixme: reset/clean the label when internal sql execute finish.
-			topsql.AttachSQLInfo(ctx, normalized, digest, "", nil)
+			topsql.AttachSQLInfo(ctx, normalized, digest, "", nil, s.sessionVars.InRestrictedSQL)
 		}
 	}
 	return stmts[0], nil
@@ -1490,7 +1495,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
 	if variable.TopSQLEnabled() {
-		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil)
+		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, s.sessionVars.InRestrictedSQL)
 	}
 
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {

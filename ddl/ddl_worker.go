@@ -91,6 +91,7 @@ type worker struct {
 	logCtx          context.Context
 
 	// below filed cache for top sql
+	ddlJobCtx          context.Context
 	cacheSQL           string
 	cacheNormalizedSQL string
 	cacheDigest        *parser.Digest
@@ -102,6 +103,7 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 		tp:              tp,
 		ddlJobCh:        make(chan struct{}, 1),
 		ctx:             ctx,
+		ddlJobCtx:       ctx,
 		reorgCtx:        &reorgCtx{notifyCancelReorgJob: 0},
 		sessPool:        sessPool,
 		delRangeManager: delRangeMgr,
@@ -468,7 +470,7 @@ func (w *worker) setDDLLabelForTopSQL(job *model.Job) {
 		w.cacheSQL = job.Query
 	}
 
-	topsql.AttachSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, "", nil)
+	w.ddlJobCtx = topsql.AttachSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, "", nil, false)
 }
 
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.

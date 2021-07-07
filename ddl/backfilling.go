@@ -498,7 +498,7 @@ func loadDDLReorgVars(w *worker) error {
 		return errors.Trace(err)
 	}
 	defer w.sessPool.put(ctx)
-	return ddlutil.LoadDDLReorgVars(ctx)
+	return ddlutil.LoadDDLReorgVars(w.ddlJobCtx, ctx)
 }
 
 func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table) (map[int64]decoder.Column, error) {
@@ -580,7 +580,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		if len(kvRanges) < int(workerCnt) {
 			workerCnt = int32(len(kvRanges))
 		}
-		w.setDDLLabelForTopSQL(job)
+		//w.setDDLLabelForTopSQL(job)
 		// Enlarge the worker size.
 		for i := len(backfillWorkers); i < int(workerCnt); i++ {
 			sessCtx := newContext(reorgInfo.d.store)

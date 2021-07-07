@@ -66,7 +66,7 @@ func (r *GRPCReportClient) Send(ctx context.Context, targetRPCAddr string, data 
 
 	go func() {
 		defer wg.Done()
-		errCh <- r.sendBatchSQLMeta(ctx, data.normalizedSQLMap)
+		errCh <- r.sendBatchSQLMeta(ctx, data.normalizedSQLMap, data.internalSQLMap)
 	}()
 	go func() {
 		defer wg.Done()
@@ -125,7 +125,7 @@ func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records m
 }
 
 // sendBatchSQLMeta sends a batch of SQL metas by stream.
-func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, sqlMap *sync.Map) error {
+func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, sqlMap, internalSQLMap *sync.Map) error {
 	client := tipb.NewTopSQLAgentClient(r.conn)
 	stream, err := client.ReportSQLMeta(ctx)
 	if err != nil {

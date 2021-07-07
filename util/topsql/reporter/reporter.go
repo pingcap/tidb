@@ -42,7 +42,7 @@ var _ TopSQLReporter = &RemoteTopSQLReporter{}
 // TopSQLReporter collects Top SQL metrics.
 type TopSQLReporter interface {
 	tracecpu.Collector
-	RegisterSQL(sqlDigest []byte, normalizedSQL string)
+	RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool)
 	RegisterPlan(planDigest []byte, normalizedPlan string)
 	Close()
 }
@@ -96,6 +96,9 @@ type RemoteTopSQLReporter struct {
 	normalizedSQLMap atomic.Value // sync.Map
 	sqlMapLength     atomic2.Int64
 
+	//
+	internalSQLMap atomic.Value
+
 	// normalizedPlanMap is an map, whose keys are plan digest strings and values are normalized plans **in binary**.
 	// The normalized plans in binary can be decoded to string using the `planBinaryDecoder`.
 	normalizedPlanMap atomic.Value // sync.Map
@@ -120,6 +123,7 @@ func NewRemoteTopSQLReporter(client ReportClient) *RemoteTopSQLReporter {
 	}
 	tsr.normalizedSQLMap.Store(&sync.Map{})
 	tsr.normalizedPlanMap.Store(&sync.Map{})
+	tsr.internalSQLMap.Store(&sync.Map{})
 
 	go tsr.collectWorker()
 	go tsr.reportWorker()
@@ -133,7 +137,7 @@ func NewRemoteTopSQLReporter(client ReportClient) *RemoteTopSQLReporter {
 // Note that the normalized SQL string can be of >1M long.
 // This function should be thread-safe, which means parallelly calling it in several goroutines should be fine.
 // It should also return immediately, and do any CPU-intensive job asynchronously.
-func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL string) {
+func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool) {
 	if tsr.sqlMapLength.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
 		return
 	}
@@ -142,6 +146,9 @@ func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL str
 	_, loaded := m.LoadOrStore(key, normalizedSQL)
 	if !loaded {
 		tsr.sqlMapLength.Add(1)
+	}
+	if isInternal {
+		tsr.internalSQLMap.Load().(*sync.Map).LoadOrStore(key, struct{}{})
 	}
 }
 
@@ -274,6 +281,7 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 	itemsToEvict := digestCPUTimeList[maxStmt:]
 	normalizedSQLMap := tsr.normalizedSQLMap.Load().(*sync.Map)
 	normalizedPlanMap := tsr.normalizedPlanMap.Load().(*sync.Map)
+	internalSQLMap := tsr.internalSQLMap.Load().(*sync.Map)
 	for _, evict := range itemsToEvict {
 		delete(collectTarget, evict.Key)
 		_, loaded := normalizedSQLMap.LoadAndDelete(string(evict.SQLDigest))
@@ -284,6 +292,7 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 		if loaded {
 			tsr.planMapLength.Add(-1)
 		}
+		internalSQLMap.Delete(string(evict.SQLDigest))
 	}
 }
 
@@ -294,12 +303,14 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *m
 		collectedData:     *collectedDataPtr,
 		normalizedSQLMap:  tsr.normalizedSQLMap.Load().(*sync.Map),
 		normalizedPlanMap: tsr.normalizedPlanMap.Load().(*sync.Map),
+		internalSQLMap:    tsr.internalSQLMap.Load().(*sync.Map),
 	}
 
 	// Reset data for next report.
 	*collectedDataPtr = make(map[string]*dataPoints)
 	tsr.normalizedSQLMap.Store(&sync.Map{})
 	tsr.normalizedPlanMap.Store(&sync.Map{})
+	tsr.internalSQLMap.Store(&sync.Map{})
 	tsr.sqlMapLength.Store(0)
 	tsr.planMapLength.Store(0)
 
@@ -315,6 +326,7 @@ type reportData struct {
 	collectedData     map[string]*dataPoints
 	normalizedSQLMap  *sync.Map
 	normalizedPlanMap *sync.Map
+	internalSQLMap    *sync.Map
 }
 
 func (d *reportData) hasData() bool {
