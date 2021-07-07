@@ -11857,7 +11857,7 @@ RequireClause:
 	"REQUIRE" "NONE"
 	{
 		t := &ast.TLSOption{
-			Type: ast.TslNone,
+			Type: ast.TlsNone,
 		}
 		$$ = []*ast.TLSOption{t}
 	}
