@@ -596,6 +596,10 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 			}
 		}
 		idxNDVPushDownCh := make(chan analyzeIndexNDVTotalResult, 1)
+		// subIndexWorkerWg is better to be initialized in handleNDVForSpecialIndexes, however if we do so, golang would
+		// report unexpected/unreasonable data race error on subIndexWorkerWg when running TestAnalyzeVirtualCol test
+		// case with `-race` flag now.
+		colExec.subIndexWorkerWg = &sync.WaitGroup{}
 		go colExec.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh)
 		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
 		if err != nil {
@@ -622,13 +626,15 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 			Fms:   fmSketches[:cLen],
 		}
 		return &statistics.AnalyzeResults{
-			TableID:  colExec.tableID,
-			Ars:      []*statistics.AnalyzeResult{colResult, colGroupResult},
-			Job:      colExec.job,
-			StatsVer: colExec.StatsVersion,
-			Count:    count,
-			Snapshot: colExec.snapshot,
-			ExtStats: extStats,
+			TableID:       colExec.tableID,
+			Ars:           []*statistics.AnalyzeResult{colResult, colGroupResult},
+			Job:           colExec.job,
+			StatsVer:      colExec.StatsVersion,
+			Count:         count,
+			Snapshot:      colExec.snapshot,
+			ExtStats:      extStats,
+			BaseCount:     colExec.baseCount,
+			BaseModifyCnt: colExec.baseModifyCnt,
 		}
 	}
 	hists, cms, topNs, fms, extStats, err := colExec.buildStats(ranges, collExtStats)
@@ -711,6 +717,8 @@ type AnalyzeColumnsExec struct {
 	samplingMergeWg   *sync.WaitGroup
 
 	schemaForVirtualColEval *expression.Schema
+	baseCount               int64
+	baseModifyCnt           int64
 }
 
 func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
@@ -770,7 +778,7 @@ func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 		totFts = append(totFts, col.RetType)
 	}
 	chk := chunk.NewChunkWithCapacity(totFts, len(collector.Samples))
-	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().TimeZone)
+	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
 	for _, sample := range collector.Samples {
 		for i := range sample.Columns {
 			if schema.Columns[i].VirtualExpr != nil {
@@ -1008,7 +1016,6 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 		statistics.AddNewAnalyzeJob(task.job)
 	}
 	resultsCh := make(chan *statistics.AnalyzeResults, len(tasks))
-	e.subIndexWorkerWg = &sync.WaitGroup{}
 	e.subIndexWorkerWg.Add(statsConcurrncy)
 	for i := 0; i < statsConcurrncy; i++ {
 		go e.subIndexWorkerForNDV(taskCh, resultsCh, i == 0)

@@ -19,6 +19,7 @@ RUN apk add --no-cache \
     make \
     git \
     gcc \
+    binutils-gold \
     musl-dev
 
 RUN wget -O /usr/local/bin/dumb-init https://github.com/Yelp/dumb-init/releases/download/v1.2.2/dumb-init_1.2.2_amd64 \
