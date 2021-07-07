@@ -14,6 +14,9 @@
 package core_test
 
 import (
+	"math"
+
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -21,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
-	"math"
 )
 
 var _ = Suite(&testRuleStabilizeResults{})
