@@ -393,6 +393,7 @@ func (d *MyDecimal) ToString() (str []byte) {
 // FromString parses decimal from string.
 func (d *MyDecimal) FromString(str []byte) error {
 	// strErr is used to check str is bad number or not
+	var str_bak = str
 	var strErr error
 	for i := 0; i < len(str); i++ {
 		if !isSpace(str[i]) {
@@ -402,7 +403,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 	}
 	if len(str) == 0 {
 		*d = zeroMyDecimal
-		return ErrBadNumber
+		return ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", string(str_bak))
 	}
 	switch str[0] {
 	case '-':
@@ -423,9 +424,13 @@ func (d *MyDecimal) FromString(str []byte) error {
 		for endIdx < len(str) && isDigit(str[endIdx]) {
 			endIdx++
 		}
+
+		if endIdx != len(str) {
+			strErr = ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", string(str_bak))
+		}
 		digitsFrac = endIdx - strIdx - 1
 	} else if strIdx < len(str) && (str[strIdx] != 'e' && str[strIdx] != 'E' && str[strIdx] != ' ') {
-		strErr = ErrBadNumber
+		strErr = ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", string(str_bak))
 	} else {
 		digitsFrac = 0
 		endIdx = strIdx
@@ -461,6 +466,11 @@ func (d *MyDecimal) FromString(str []byte) error {
 			innerIdx = 0
 		}
 	}
+
+	if digitsInt != 0 {
+		strErr = ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", string(str_bak))
+	}
+
 	if innerIdx != 0 {
 		wordIdx--
 		d.wordBuf[wordIdx] = word
@@ -488,8 +498,8 @@ func (d *MyDecimal) FromString(str []byte) error {
 	if endIdx+1 <= len(str) && (str[endIdx] == 'e' || str[endIdx] == 'E') {
 		exponent, err1 := strToInt(string(str[endIdx+1:]))
 		if err1 != nil {
-			err = errors.Cause(err1)
-			if err != ErrTruncated {
+			err = err1
+			if errors.Cause(err1) != ErrTruncated {
 				*d = zeroMyDecimal
 			}
 		}
@@ -515,6 +525,15 @@ func (d *MyDecimal) FromString(str []byte) error {
 			}
 		}
 	}
+
+	if err == ErrTruncated {
+		strErr = ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", string(str))
+	}
+
+	if strErr == nil && (endIdx+1 <= len(str) && str[endIdx] == ' ') {
+		strErr = ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", string(str))
+	}
+
 	allZero := true
 	for i := 0; i < wordBufLen; i++ {
 		if d.wordBuf[i] != 0 {
@@ -530,9 +549,6 @@ func (d *MyDecimal) FromString(str []byte) error {
 		return strErr
 	}
 
-	if endIdx != len(str) {
-		return ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", string(str))
-	}
 	return err
 }
 
