@@ -1656,8 +1656,7 @@ func (e *UnionExec) Close() error {
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
-	vars.InitStatementContext()
-	sc := vars.StmtCtx
+	var sc stmtctx.StatementContext
 	sc.TimeZone = vars.Location()
 	sc.MemTracker = memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
 	sc.DiskTracker = disk.NewTracker(memory.LabelForSQLText, -1)
@@ -1715,7 +1714,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	// pushing them down to TiKV as flags.
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:
-		ResetUpdateStmtCtx(sc, stmt, vars)
+		ResetUpdateStmtCtx(&sc, stmt, vars)
 	case *ast.DeleteStmt:
 		sc.InDeleteStmt = true
 		sc.DupKeyAsWarning = stmt.IgnoreErr
@@ -1812,6 +1811,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount
 	vars.SysWarningCount = warnCount
+	// TODO(tiancaiamao): update statement context in-place, avoid this data copy
+	*vars.StmtCtx = sc
 	vars.PrevFoundInPlanCache = vars.FoundInPlanCache
 	vars.FoundInPlanCache = false
 	vars.ClearStmtVars()
