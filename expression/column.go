@@ -477,6 +477,7 @@ func (col *Column) resolveIndices(schema *Schema) error {
 	return nil
 }
 
+// ResolveIndicesByVirtualExpr is used to resolve indices by expression virtual columns.
 func (col *Column) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool) {
 	newCol := col.Clone().(*Column)
 	for i, c := range schema.Columns {
