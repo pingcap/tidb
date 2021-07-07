@@ -126,3 +126,20 @@ IndexMerge_8	5000000.00	root
 ├─TableRangeScan_5(Build)	49.00	cop[tikv]	table:t	range:[-inf,50), keep order:false
 ├─IndexRangeScan_6(Build)	4999999.00	cop[tikv]	table:t, index:tb(b)	range:[-inf,5000000), keep order:false
 └─TableRowIDScan_7(Probe)	5000000.00	cop[tikv]	table:t	keep order:false
+set session tidb_enable_index_merge = on;
+drop table if exists t;
+CREATE TABLE t (
+`id` int(11) NOT NULL,
+`aid` bigint,
+`c1` varchar(255) DEFAULT NULL,
+`c2` varchar(255) DEFAULT NULL,
+PRIMARY KEY (`id`),
+KEY `aid_c1` (`aid`,`c1`),
+KEY `aid_c2` (`aid`,`c2`)
+);
+desc select /*+ USE_INDEX_MERGE(t, aid_c1, aid_c2) */ * from t where (aid = 1 and c1='aaa') or (aid = 2 and c2='bbb');
+id	estRows	task	access object	operator info
+IndexLookUp_11	8.08	root		
+├─IndexRangeScan_8(Build)	10.10	cop[tikv]	table:t, index:aid_c1(aid, c1)	range:[1 "aaa",1 "aaa"], [2,2], keep order:false, stats:pseudo
+└─Selection_10(Probe)	8.08	cop[tikv]		or(and(eq(test.t.aid, 1), eq(test.t.c1, "aaa")), and(eq(test.t.aid, 2), eq(test.t.c2, "bbb")))
+  └─TableRowIDScan_9	10.10	cop[tikv]	table:t	keep order:false, stats:pseudo

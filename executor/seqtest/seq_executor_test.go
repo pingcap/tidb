@@ -842,15 +842,15 @@ func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 	tk.MustExec("create table t3(id bigint primary key auto_random(5), c int)")
 	// Start handle is 1.
 	r = tk.MustQuery(str + " t3 next_row_id")
-	r.Check(testkit.Rows("test1 t3 _tidb_rowid 1 AUTO_INCREMENT", "test1 t3 id 1 AUTO_RANDOM"))
+	r.Check(testkit.Rows("test1 t3 id 1 AUTO_RANDOM"))
 	// Insert some rows.
 	tk.MustExec("insert into t3 (c) values (1), (2);")
 	r = tk.MustQuery(str + " t3 next_row_id")
-	r.Check(testkit.Rows("test1 t3 _tidb_rowid 1 AUTO_INCREMENT", "test1 t3 id 11 AUTO_RANDOM"))
+	r.Check(testkit.Rows("test1 t3 id 11 AUTO_RANDOM"))
 	// Rebase.
 	tk.MustExec("insert into t3 (id, c) values (103, 3);")
 	r = tk.MustQuery(str + " t3 next_row_id")
-	r.Check(testkit.Rows("test1 t3 _tidb_rowid 1 AUTO_INCREMENT", "test1 t3 id 114 AUTO_RANDOM"))
+	r.Check(testkit.Rows("test1 t3 id 114 AUTO_RANDOM"))
 
 	// Test for a sequence.
 	tk.MustExec("create sequence seq1 start 15 cache 57")

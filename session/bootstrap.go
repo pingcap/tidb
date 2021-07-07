@@ -404,8 +404,10 @@ const (
 	version49 = 49
 	// version50 fixes the bug of concurrent create / drop binding
 	version50 = 50
-	// version51 will be redone in version52
-	// version52 restore all SQL bindings.
+	// version51 restore all SQL bindings.
+	version51 = 51
+	// version52 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
+	// and forces tidb_multi_statement_mode=OFF when tidb_multi_statement_mode=WARN
 	version52 = 52
 )
 
@@ -460,7 +462,7 @@ var (
 		upgradeToVer48,
 		upgradeToVer49,
 		upgradeToVer50,
-		// We will redo upgradeToVer51 in upgradeToVer52, it is skipped here.
+		upgradeToVer51,
 		upgradeToVer52,
 	}
 )
@@ -1145,7 +1147,7 @@ type bindInfo struct {
 	source     string
 }
 
-func upgradeToVer52(s Session, ver int64) {
+func upgradeToVer51(s Session, ver int64) {
 	if ver >= version52 {
 		return
 	}
@@ -1201,6 +1203,18 @@ func upgradeToVer52(s Session, ver int64) {
 			expression.Quote(bind.source),
 		))
 	}
+}
+
+func upgradeToVer52(s Session, ver int64) {
+	if ver >= version52 {
+		return
+	}
+	// This is probably already done in upgradeToVer48
+	// There is no harm in repeating it.
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY cm_sketch BLOB(6291456)")
+
+	// Change the default value
+	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='OFF' WHERE VARIABLE_NAME = 'tidb_multi_statement_mode' AND VARIABLE_VALUE = 'WARN'")
 }
 
 func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[string]bindInfo) {

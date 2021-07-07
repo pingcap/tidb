@@ -236,7 +236,10 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		}
 	}
 	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && isReadOnlyTxn {
-		ds.generateAndPruneIndexMergePath(ds.indexMergeHints != nil)
+		err := ds.generateAndPruneIndexMergePath(ds.indexMergeHints != nil)
+		if err != nil {
+			return nil, err
+		}
 	} else if len(ds.indexMergeHints) > 0 {
 		ds.indexMergeHints = nil
 		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable or disabled"))
@@ -244,23 +247,27 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	return ds.stats, nil
 }
 
-func (ds *DataSource) generateAndPruneIndexMergePath(needPrune bool) {
+func (ds *DataSource) generateAndPruneIndexMergePath(needPrune bool) error {
 	regularPathCount := len(ds.possibleAccessPaths)
-	ds.generateIndexMergeOrPaths()
+	err := ds.generateIndexMergeOrPaths()
+	if err != nil {
+		return err
+	}
 	// If without hints, it means that `enableIndexMerge` is true
 	if len(ds.indexMergeHints) == 0 {
-		return
+		return nil
 	}
 	// With hints and without generated IndexMerge paths
 	if regularPathCount == len(ds.possibleAccessPaths) {
 		ds.indexMergeHints = nil
 		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable or disabled"))
-		return
+		return nil
 	}
 	// Do not need to consider the regular paths in find_best_task().
 	if needPrune {
 		ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
 	}
+	return nil
 }
 
 // DeriveStats implements LogicalPlan DeriveStats interface.
@@ -313,7 +320,7 @@ func (is *LogicalIndexScan) DeriveStats(childStats []*property.StatsInfo, selfSc
 }
 
 // getIndexMergeOrPath generates all possible IndexMergeOrPaths.
-func (ds *DataSource) generateIndexMergeOrPaths() {
+func (ds *DataSource) generateIndexMergeOrPaths() error {
 	usedIndexCount := len(ds.possibleAccessPaths)
 	for i, cond := range ds.pushedDownConds {
 		sf, ok := cond.(*expression.ScalarFunction)
@@ -329,7 +336,10 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 				partialPaths = nil
 				break
 			}
-			partialPath := ds.buildIndexMergePartialPath(itemPaths)
+			partialPath, err := ds.buildIndexMergePartialPath(itemPaths)
+			if err != nil {
+				return err
+			}
 			if partialPath == nil {
 				partialPaths = nil
 				break
@@ -339,7 +349,7 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 		if len(partialPaths) > 1 {
 			possiblePath := ds.buildIndexMergeOrPath(partialPaths, i)
 			if possiblePath == nil {
-				return
+				return nil
 			}
 
 			accessConds := make([]expression.Expression, 0, len(partialPaths))
@@ -356,6 +366,7 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 			ds.possibleAccessPaths = append(ds.possibleAccessPaths, possiblePath)
 		}
 	}
+	return nil
 }
 
 // isInIndexMergeHints checks whether current index or primary key is in IndexMerge hints.
@@ -437,26 +448,22 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 }
 
 // buildIndexMergePartialPath chooses the best index path from all possible paths.
-// Now we just choose the index with most columns.
-// We should improve this strategy, because it is not always better to choose index
-// with most columns, e.g, filter is c > 1 and the input indexes are c and c_d_e,
-// the former one is enough, and it is less expensive in execution compared with the latter one.
-// TODO: improve strategy of the partial path selection
-func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.AccessPath) *util.AccessPath {
+// Now we choose the index with minimal estimate row count.
+func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.AccessPath) (*util.AccessPath, error) {
 	if len(indexAccessPaths) == 1 {
-		return indexAccessPaths[0]
+		return indexAccessPaths[0], nil
 	}
 
-	maxColsIndex := 0
-	maxCols := len(indexAccessPaths[0].IdxCols)
-	for i := 1; i < len(indexAccessPaths); i++ {
-		current := len(indexAccessPaths[i].IdxCols)
-		if current > maxCols {
-			maxColsIndex = i
-			maxCols = current
+	minEstRowIndex := 0
+	minEstRow := math.MaxFloat64
+	for i := 0; i < len(indexAccessPaths); i++ {
+		rc := indexAccessPaths[i].CountAfterAccess
+		if rc < minEstRow {
+			minEstRowIndex = i
+			minEstRow = rc
 		}
 	}
-	return indexAccessPaths[maxColsIndex]
+	return indexAccessPaths[minEstRowIndex], nil
 }
 
 // buildIndexMergeOrPath generates one possible IndexMergePath.

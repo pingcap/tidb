@@ -6276,6 +6276,13 @@ func (s *testIntegrationSerialSuite) TestCollateConstantPropagation(c *C) {
 	tk.MustExec("insert into t1 values ('ß', 's');")
 	tk.MustExec("insert into t2 values ('s', 's')")
 	tk.MustQuery("select * from t1 left join t2 on t1.a = t2.a collate utf8mb4_unicode_ci where t1.a = 's';").Check(testkit.Rows("ß s <nil> <nil>"))
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(a char(10) collate utf8mb4_general_ci, index (a));")
+	tk.MustExec("create table t2(a char(10) collate utf8_bin, index (a));")
+	tk.MustExec("insert into t1 values ('a');")
+	tk.MustExec("insert into t2 values ('A');")
+	tk.MustExec("set names utf8 collate utf8_general_ci;")
+	tk.MustQuery("select * from t1, t2 where t1.a=t2.a and t1.a= 'a';").Check(testkit.Rows("a A"))
 }
 
 func (s *testIntegrationSerialSuite) TestMixCollation(c *C) {
@@ -7753,11 +7760,38 @@ func (s *testIntegrationSerialSuite) TestCollationIndexJoin(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Optimizer Hint /*+ INL_MERGE_JOIN(t2) */ is inapplicable"))
 }
 
+func (s *testIntegrationSerialSuite) TestCollationMergeJoin(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"  `col_10` blob DEFAULT NULL," +
+		"  `col_11` decimal(17,5) NOT NULL," +
+		"  `col_13` varchar(381) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'Yr'," +
+		"  PRIMARY KEY (`col_13`,`col_11`)," +
+		"  KEY `idx_4` (`col_10`(3))" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("insert into t values ('a', 12523, 'A');")
+	tk.MustExec("insert into t values ('A', 2, 'a');")
+	tk.MustExec("insert into t values ('a', 23, 'A');")
+	tk.MustExec("insert into t values ('a', 23, 'h2');")
+	tk.MustExec("insert into t values ('a', 23, 'h3');")
+	tk.MustExec("insert into t values ('a', 23, 'h4');")
+	tk.MustExec("insert into t values ('a', 23, 'h5');")
+	tk.MustExec("insert into t values ('a', 23, 'h6');")
+	tk.MustExec("insert into t values ('a', 23, 'h7');")
+	tk.MustQuery("select /*+ MERGE_JOIN(t) */ t.* from t where col_13 in ( select col_10 from t where t.col_13 in ( 'a', 'b' ) ) order by col_10, col_11;").Check(
+		testkit.Rows("\x41 2.00000 a", "\x61 23.00000 A", "\x61 12523.00000 A"))
+}
+
 func (s *testIntegrationSerialSuite) TestIssue20876(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE `t` (" +
 		"  `a` char(10) COLLATE utf8mb4_unicode_ci NOT NULL," +
@@ -8163,4 +8197,25 @@ func (s *testIntegrationSerialSuite) TestCollationForBinaryLiteral(c *C) {
 	tk.MustExec("insert into t values(0x1E,0xEC,6966939640596047133);")
 	tk.MustQuery("select * from t where col1 not in (0x1B,0x20) order by col1").Check(testkit.Rows("\x1e \xec 6966939640596047133"))
 	tk.MustExec("drop table t")
+}
+
+func (s *testIntegrationSuite) Test22717(c *C) {
+	// For issue 22717
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t(
+					 	a enum('a','','c'),
+						b enum('0','1','2'),
+						c set('a','','c'),
+						d set('0','1','2')
+					 )`)
+	tk.MustExec("insert into t values(1,1,1,1),(2,2,2,2),(3,3,3,3)")
+	tk.MustExec("set @@sql_mode = ''")
+	tk.MustExec("insert into t values('','','','')")
+	tk.MustQuery("select * from t").Check(testkit.Rows("a 0 a 0", " 1  1", "c 2 a, 0,1", "   "))
+	tk.MustQuery("select a from t where a").Check(testkit.Rows("a", "", "c", ""))
+	tk.MustQuery("select b from t where b").Check(testkit.Rows("0", "1", "2"))
+	tk.MustQuery("select c from t where c").Check(testkit.Rows("a", "", "a,", ""))
+	tk.MustQuery("select d from t where d").Check(testkit.Rows("0", "1", "0,1"))
 }
