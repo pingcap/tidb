@@ -142,9 +142,11 @@ func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, sqlMap, interna
 	cnt := 0
 	sqlMap.Range(func(key, value interface{}) bool {
 		cnt++
+		_, isInternal := internalSQLMap.Load(key)
 		sqlMeta := &tipb.SQLMeta{
 			SqlDigest:     []byte(key.(string)),
 			NormalizedSql: value.(string),
+			IsInternalSql: isInternal,
 		}
 		if err = stream.Send(sqlMeta); err != nil {
 			return false
