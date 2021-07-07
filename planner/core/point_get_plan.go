@@ -375,7 +375,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 		// the rule of stabilizing results has not taken effect yet, so cannot generate a plan here in this mode
 		return nil
 	}
-	
+
 	ctx.GetSessionVars().PlanID = 0
 	ctx.GetSessionVars().PlanColumnID = 0
 	switch x := node.(type) {
