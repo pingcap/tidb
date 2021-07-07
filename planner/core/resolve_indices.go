@@ -278,6 +278,11 @@ func (p *PhysicalIndexReader) ResolveIndices() (err error) {
 	for i, col := range p.OutputColumns {
 		newCol, err := col.ResolveIndices(p.indexPlan.Schema())
 		if err != nil {
+			newExprCol, isOK := col.ResolveIndicesByVirtualExpr(p.indexPlan.Schema())
+			if isOK {
+				p.OutputColumns[i] = newExprCol.(*expression.Column)
+				continue
+			}
 			return err
 		}
 		p.OutputColumns[i] = newCol.(*expression.Column)

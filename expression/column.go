@@ -477,6 +477,17 @@ func (col *Column) resolveIndices(schema *Schema) error {
 	return nil
 }
 
+func (col *Column) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool) {
+	newCol := col.Clone().(*Column)
+	for i, c := range schema.Columns {
+		if expr, ok := c.VirtualExpr.(*ScalarFunction); ok && expr.Equal(nil, col.VirtualExpr) {
+			newCol.Index = i
+			return newCol, true
+		}
+	}
+	return nil, false
+}
+
 // Vectorized returns if this expression supports vectorized evaluation.
 func (col *Column) Vectorized() bool {
 	return true
