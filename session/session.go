@@ -480,9 +480,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
 	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
 		if val.(bool) {
-			if _, err := failpoint.Eval("tikvclient/mockCommitErrorOpt"); err == nil {
-				failpoint.Return(kv.ErrTxnRetryable)
-			}
+			failpoint.Return(kv.ErrTxnRetryable)
 		}
 	})
 

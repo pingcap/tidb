@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -327,12 +326,6 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Trace(err)
 		}
 
-		failpoint.Inject("mockRecoverTableCommitErr", func(val failpoint.Value) {
-			if val.(bool) && atomic.CompareAndSwapUint32(&mockRecoverTableCommitErrOnce, 0, 1) {
-				err = failpoint.Enable(`tikvclient/mockCommitErrorOpt`, "return(true)")
-			}
-		})
-
 		job.CtxVars = []interface{}{tids}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
@@ -346,10 +339,6 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	}
 	return ver, nil
 }
-
-// mockRecoverTableCommitErrOnce uses to make sure
-// `mockRecoverTableCommitErr` only mock error once.
-var mockRecoverTableCommitErrOnce uint32
 
 func enableGC(w *worker) error {
 	ctx, err := w.sessPool.get()
