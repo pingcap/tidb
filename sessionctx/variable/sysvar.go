@@ -742,6 +742,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, TiDBEnableTelemetry, BoolToIntStr(DefTiDBEnableTelemetry)},
 	{ScopeGlobal | ScopeSession, TiDBEnableAmendPessimisticTxn, boolToOnOff(DefTiDBEnableAmendPessimisticTxn)},
 	{ScopeGlobal | ScopeSession, TiDBMultiStatementMode, Warn},
+	{ScopeGlobal | ScopeSession, TiDBEnableStableResultMode, boolToOnOff(DefTiDBEnableStableResultMode)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.
