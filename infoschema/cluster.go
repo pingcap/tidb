@@ -57,7 +57,7 @@ var memTableToClusterTables = map[string]string{
 }
 
 func init() {
-	var addrCol = columnInfo{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64}
+	var addrCol = columnInfo{name: util.ClusterTableInstanceColumnName, tp: mysql.TypeVarchar, size: 64}
 	for memTableName, clusterMemTableName := range memTableToClusterTables {
 		memTableCols := tableNameToColumns[memTableName]
 		if len(memTableCols) == 0 {
@@ -91,16 +91,9 @@ func isClusterTableByName(dbName, tableName string) bool {
 
 // AppendHostInfoToRows appends host info to the rows.
 func AppendHostInfoToRows(ctx sessionctx.Context, rows [][]types.Datum) ([][]types.Datum, error) {
-	serverInfo, err := infosync.GetServerInfo()
+	addr, err := GetInstanceAddr(ctx)
 	if err != nil {
 		return nil, err
-	}
-	addr := serverInfo.IP + ":" + strconv.FormatUint(uint64(serverInfo.StatusPort), 10)
-	if sem.IsEnabled() {
-		checker := privilege.GetPrivilegeManager(ctx)
-		if checker == nil || !checker.RequestDynamicVerification(ctx.GetSessionVars().ActiveRoles, "RESTRICTED_TABLES_ADMIN", false) {
-			addr = serverInfo.ID
-		}
 	}
 	for i := range rows {
 		row := make([]types.Datum, 0, len(rows[i])+1)
@@ -109,4 +102,20 @@ func AppendHostInfoToRows(ctx sessionctx.Context, rows [][]types.Datum) ([][]typ
 		rows[i] = row
 	}
 	return rows, nil
+}
+
+// GetInstanceAddr gets the instance address.
+func GetInstanceAddr(ctx sessionctx.Context) (string, error) {
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		return "", err
+	}
+	addr := serverInfo.IP + ":" + strconv.FormatUint(uint64(serverInfo.StatusPort), 10)
+	if sem.IsEnabled() {
+		checker := privilege.GetPrivilegeManager(ctx)
+		if checker == nil || !checker.RequestDynamicVerification(ctx.GetSessionVars().ActiveRoles, "RESTRICTED_TABLES_ADMIN", false) {
+			addr = serverInfo.ID
+		}
+	}
+	return addr, nil
 }

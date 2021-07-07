@@ -167,9 +167,9 @@ func (s *testSuite) TestTopSQLReporter(c *C) {
 	records := server.GetLatestRecords()
 	checkSQLPlanMap := map[string]struct{}{}
 	for _, req := range records {
-		c.Assert(len(req.CpuTimeMsList) > 0, IsTrue)
-		c.Assert(req.CpuTimeMsList[0] > 0, IsTrue)
-		c.Assert(req.TimestampList[0] > 0, IsTrue)
+		c.Assert(len(req.RecordListCpuTimeMs) > 0, IsTrue)
+		c.Assert(req.RecordListCpuTimeMs[0] > 0, IsTrue)
+		c.Assert(req.RecordListCpuTimeMs[0] > 0, IsTrue)
 		normalizedSQL, exist := server.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		expectedNormalizedSQL, exist := sqlMap[string(req.SqlDigest)]
@@ -198,10 +198,10 @@ func (s *testSuite) TestMaxSQLAndPlanTest(c *C) {
 	// Test for normal sql and plan
 	sql := "select * from t"
 	sqlDigest := mock.GenSQLDigest(sql)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil,false)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil, false)
 	plan := "TableReader table:t"
 	planDigest := genDigest(plan)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest,false)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false)
 
 	cSQL := collector.GetSQL(sqlDigest.Bytes())
 	c.Assert(cSQL, Equals, sql)
@@ -211,10 +211,10 @@ func (s *testSuite) TestMaxSQLAndPlanTest(c *C) {
 	// Test for huge sql and plan
 	sql = genStr(topsql.MaxSQLTextSize + 10)
 	sqlDigest = mock.GenSQLDigest(sql)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil,false)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil, false)
 	plan = genStr(topsql.MaxPlanTextSize + 10)
 	planDigest = genDigest(plan)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest,false)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false)
 
 	cSQL = collector.GetSQL(sqlDigest.Bytes())
 	c.Assert(cSQL, Equals, sql[:topsql.MaxSQLTextSize])

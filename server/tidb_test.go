@@ -25,6 +25,7 @@ import (
 	"database/sql"
 	"encoding/pem"
 	"fmt"
+	"io/ioutil"
 	"math/big"
 	"net/http"
 	"os"
@@ -304,7 +305,6 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	time.Sleep(time.Millisecond * 100)
-	c.Assert(server.isUnixSocket(), IsFalse) // If listening on tcp-only, return FALSE
 
 	// https connection should work.
 	ts.runTestStatusAPI(c)
@@ -411,7 +411,6 @@ func (ts *tidbTestSuite) TestSocketForwarding(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	time.Sleep(time.Millisecond * 100)
-	c.Assert(server.isUnixSocket(), IsFalse) // If listening on both, return FALSE
 	defer server.Close()
 
 	cli.runTestRegression(c, func(config *mysql.Config) {
@@ -438,7 +437,6 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	time.Sleep(time.Millisecond * 100)
-	c.Assert(server.isUnixSocket(), IsTrue) // If listening on socket-only, return TRUE
 	defer server.Close()
 
 	// a fake server client, config is override, just used to run tests
@@ -450,6 +448,302 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 		config.DBName = "test"
 		config.Params = map[string]string{"sql_mode": "STRICT_ALL_TABLES"}
 	}, "SocketRegression")
+
+}
+
+func (ts *tidbTestSuite) TestSocketAndIp(c *C) {
+	osTempDir := os.TempDir()
+	tempDir, err := ioutil.TempDir(osTempDir, "tidb-test.*.socket")
+	c.Assert(err, IsNil)
+	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
+	defer os.RemoveAll(tempDir)
+	cli := newTestServerClient()
+	cfg := newTestConfig()
+	cfg.Socket = socketFile
+	cfg.Port = cli.port
+	cfg.Status.ReportStatus = false
+
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
+	time.Sleep(time.Millisecond * 100)
+	defer server.Close()
+
+	// Test with Socket connection + Setup user1@% for all host access
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	defer func() {
+		cli.runTests(c, func(config *mysql.Config) {
+			config.User = "root"
+		},
+			func(dbt *DBTest) {
+				dbt.mustQuery("DROP USER IF EXISTS 'user1'@'%'")
+				dbt.mustQuery("DROP USER IF EXISTS 'user1'@'localhost'")
+				dbt.mustQuery("DROP USER IF EXISTS 'user1'@'127.0.0.1'")
+			})
+	}()
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "root"
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "root@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			dbt.mustQuery("CREATE USER user1@'%'")
+			dbt.mustQuery("GRANT SELECT ON test.* TO user1@'%'")
+		})
+	// Test with Network interface connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
+			cli.checkRows(c, rows, "user1@127.0.0.1")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT Select ON test.* TO 'user1'@'%'")
+		})
+	// Test with unix domain socket file connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "user1@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT Select ON test.* TO 'user1'@'%'")
+		})
+
+	// Setup user1@127.0.0.1 for loop back network interface access
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "root"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
+			cli.checkRows(c, rows, "root@127.0.0.1")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			dbt.mustQuery("CREATE USER user1@127.0.0.1")
+			dbt.mustQuery("GRANT SELECT,INSERT ON test.* TO user1@'127.0.0.1'")
+		})
+	// Test with Network interface connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
+			cli.checkRows(c, rows, "user1@127.0.0.1")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'127.0.0.1'\nGRANT Select,Insert ON test.* TO 'user1'@'127.0.0.1'")
+		})
+	// Test with unix domain socket file connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "user1@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT Select ON test.* TO 'user1'@'%'")
+		})
+
+	// Setup user1@localhost for socket (and if MySQL compatible; loop back network interface access)
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.User = "root"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "root@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			dbt.mustQuery("CREATE USER user1@localhost")
+			dbt.mustQuery("GRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO user1@localhost")
+		})
+	// Test with Network interface connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
+			cli.checkRows(c, rows, "user1@127.0.0.1")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'127.0.0.1'\nGRANT Select,Insert ON test.* TO 'user1'@'127.0.0.1'")
+		})
+	// Test with unix domain socket file connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "user1@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT Select,Insert,Update,Delete ON test.* TO 'user1'@'localhost'")
+		})
+
+}
+
+// TestOnlySocket for server configuration without network interface for mysql clients
+func (ts *tidbTestSuite) TestOnlySocket(c *C) {
+	osTempDir := os.TempDir()
+	tempDir, err := ioutil.TempDir(osTempDir, "tidb-test.*.socket")
+	c.Assert(err, IsNil)
+	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
+	defer os.RemoveAll(tempDir)
+	cli := newTestServerClient()
+	cfg := newTestConfig()
+	cfg.Socket = socketFile
+	cfg.Host = "" // No network interface listening for mysql traffic
+	cfg.Status.ReportStatus = false
+
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, IsNil)
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
+	time.Sleep(time.Millisecond * 100)
+	defer server.Close()
+	c.Assert(server.listener, IsNil)
+	c.Assert(server.socket, NotNil)
+
+	// Test with Socket connection + Setup user1@% for all host access
+	defer func() {
+		cli.runTests(c, func(config *mysql.Config) {
+			config.User = "root"
+			config.Net = "unix"
+			config.Addr = socketFile
+		},
+			func(dbt *DBTest) {
+				dbt.mustQuery("DROP USER IF EXISTS 'user1'@'%'")
+				dbt.mustQuery("DROP USER IF EXISTS 'user1'@'localhost'")
+				dbt.mustQuery("DROP USER IF EXISTS 'user1'@'127.0.0.1'")
+			})
+	}()
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "root"
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "root@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			dbt.mustQuery("CREATE USER user1@'%'")
+			dbt.mustQuery("GRANT SELECT ON test.* TO user1@'%'")
+		})
+	// Test with Network interface connection with all hosts, should fail since server not configured
+	_, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+		config.User = "root"
+		config.DBName = "test"
+		config.Addr = "127.0.0.1"
+	}))
+	c.Assert(err, IsNil, Commentf("Connect succeeded when not configured!?!"))
+	_, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+		config.User = "user1"
+		config.DBName = "test"
+		config.Addr = "127.0.0.1"
+	}))
+	c.Assert(err, IsNil, Commentf("Connect succeeded when not configured!?!"))
+	// Test with unix domain socket file connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "user1@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT Select ON test.* TO 'user1'@'%'")
+		})
+
+	// Setup user1@127.0.0.1 for loop back network interface access
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.User = "root"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
+			cli.checkRows(c, rows, "root@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			dbt.mustQuery("CREATE USER user1@127.0.0.1")
+			dbt.mustQuery("GRANT SELECT,INSERT ON test.* TO user1@'127.0.0.1'")
+		})
+	// Test with unix domain socket file connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "user1@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT Select ON test.* TO 'user1'@'%'")
+		})
+
+	// Setup user1@localhost for socket (and if MySQL compatible; loop back network interface access)
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.User = "root"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "root@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			dbt.mustQuery("CREATE USER user1@localhost")
+			dbt.mustQuery("GRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO user1@localhost")
+		})
+	// Test with unix domain socket file connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "user1@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT Select,Insert,Update,Delete ON test.* TO 'user1'@'localhost'")
+		})
 
 }
 
@@ -1202,8 +1496,11 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 	}()
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachSQL", `return(true)`), IsNil)
 	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop")
+		err = failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop")
+		c.Assert(err, IsNil)
+		err = failpoint.Disable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachSQL")
 		c.Assert(err, IsNil)
 	}()
 
@@ -1233,8 +1530,8 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		{sql: "update t set b=a where b is null limit 1;", planRegexp: ".*Limit.*TableReader.*"},
 		{sql: "delete from t where b = a limit 2;", planRegexp: ".*Limit.*TableReader.*"},
 		{sql: "replace into t (b) values (1),(1),(1),(1),(1),(1),(1),(1);", planRegexp: ""},
-		{sql: "select * from t use index(idx) where a<10000000;", planRegexp: ".*IndexLookUp.*"},
-		{sql: "select * from t ignore index(idx) where a>0;", planRegexp: ".*TableReader.*"},
+		{sql: "select * from t use index(idx) where a<10;", planRegexp: ".*IndexLookUp.*"},
+		{sql: "select * from t ignore index(idx) where a>1000000000;", planRegexp: ".*TableReader.*"},
 		{sql: "select /*+ HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a=t2.a where t1.b is not null;", planRegexp: ".*HashJoin.*"},
 		{sql: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t2.a=t1.a where t1.b is not null;", planRegexp: ".*IndexHashJoin.*"},
 		{sql: "select * from t where a=1;", planRegexp: ".*Point_Get.*"},
@@ -1257,6 +1554,38 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		})
 	}
 
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), time.Second*20)
+	defer cancel()
+	checkFn := func(sql, planRegexp string) {
+		c.Assert(timeoutCtx.Err(), IsNil)
+		commentf := Commentf("sql: %v", sql)
+		stats := collector.GetSQLStatsBySQLWithRetry(sql, len(planRegexp) > 0)
+		// since 1 sql may has many plan, check `len(stats) > 0` instead of `len(stats) == 1`.
+		c.Assert(len(stats) > 0, IsTrue, commentf)
+
+		for _, s := range stats {
+			sqlStr := collector.GetSQL(s.SQLDigest)
+			encodedPlan := collector.GetPlan(s.PlanDigest)
+			// Normalize the user SQL before check.
+			normalizedSQL := parser.Normalize(sql)
+			c.Assert(sqlStr, Equals, normalizedSQL, commentf)
+			// decode plan before check.
+			normalizedPlan, err := plancodec.DecodeNormalizedPlan(encodedPlan)
+			c.Assert(err, IsNil)
+			// remove '\n' '\t' before do regexp match.
+			normalizedPlan = strings.Replace(normalizedPlan, "\n", " ", -1)
+			normalizedPlan = strings.Replace(normalizedPlan, "\t", " ", -1)
+			c.Assert(normalizedPlan, Matches, planRegexp, commentf)
+		}
+	}
+	// Wait the top sql collector to collect profile data.
+	collector.WaitCollectCnt(1)
+	// Check result of test case 1.
+	for _, ca := range cases1 {
+		checkFn(ca.sql, ca.planRegexp)
+		ca.cancel()
+	}
+
 	// Test case 2: prepare/execute sql
 	cases2 := []struct {
 		prepare    string
@@ -1269,8 +1598,8 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		{prepare: "update t1 set b=a where b is null limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
 		{prepare: "delete from t1 where b = a limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
 		{prepare: "replace into t1 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
-		{prepare: "select * from t1 use index(idx) where a<?;", args: []interface{}{10000000}, planRegexp: ".*IndexLookUp.*"},
-		{prepare: "select * from t1 ignore index(idx) where a>?;", args: []interface{}{1}, planRegexp: ".*TableReader.*"},
+		{prepare: "select * from t1 use index(idx) where a<?;", args: []interface{}{10}, planRegexp: ".*IndexLookUp.*"},
+		{prepare: "select * from t1 ignore index(idx) where a>?;", args: []interface{}{1000000000}, planRegexp: ".*TableReader.*"},
 		{prepare: "select /*+ HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t1.a=t2.a where t1.b is not null;", args: nil, planRegexp: ".*HashJoin.*"},
 		{prepare: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t2.a=t1.a where t1.b is not null;", args: nil, planRegexp: ".*IndexHashJoin.*"},
 		{prepare: "select * from t1 where a=?;", args: []interface{}{1}, planRegexp: ".*Point_Get.*"},
@@ -1297,6 +1626,13 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 			}
 		})
 	}
+	// Wait the top sql collector to collect profile data.
+	collector.WaitCollectCnt(1)
+	// Check result of test case 2.
+	for _, ca := range cases2 {
+		checkFn(ca.prepare, ca.planRegexp)
+		ca.cancel()
+	}
 
 	// Test case 3: prepare, execute stmt using @val...
 	cases3 := []struct {
@@ -1309,8 +1645,8 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		{prepare: "update t2 set b=a where b is null limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
 		{prepare: "delete from t2 where b = a limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
 		{prepare: "replace into t2 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
-		{prepare: "select * from t2 use index(idx) where a<?;", args: []interface{}{10000000}, planRegexp: ".*IndexLookUp.*"},
-		{prepare: "select * from t2 ignore index(idx) where a>?;", args: []interface{}{1}, planRegexp: ".*TableReader.*"},
+		{prepare: "select * from t2 use index(idx) where a<?;", args: []interface{}{10}, planRegexp: ".*IndexLookUp.*"},
+		{prepare: "select * from t2 ignore index(idx) where a>?;", args: []interface{}{1000000000}, planRegexp: ".*TableReader.*"},
 		{prepare: "select /*+ HASH_JOIN(t1, t2) */ * from t2 t1 join t2 t2 on t1.a=t2.a where t1.b is not null;", args: nil, planRegexp: ".*HashJoin.*"},
 		{prepare: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t2 t1 join t2 t2 on t2.a=t1.a where t1.b is not null;", args: nil, planRegexp: ".*IndexHashJoin.*"},
 		{prepare: "select * from t2 where a=?;", args: []interface{}{1}, planRegexp: ".*Point_Get.*"},
@@ -1354,30 +1690,10 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 
 	// Wait the top sql collector to collect profile data.
 	collector.WaitCollectCnt(1)
-
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), time.Second*20)
-	defer cancel()
-	checkFn := func(sql, planRegexp string) {
-		c.Assert(timeoutCtx.Err(), IsNil)
-		commentf := Commentf("sql: %v", sql)
-		stats := collector.GetSQLStatsBySQLWithRetry(sql, len(planRegexp) > 0)
-		// since 1 sql may has many plan, check `len(stats) > 0` instead of `len(stats) == 1`.
-		c.Assert(len(stats) > 0, IsTrue, commentf)
-
-		for _, s := range stats {
-			sqlStr := collector.GetSQL(s.SQLDigest)
-			encodedPlan := collector.GetPlan(s.PlanDigest)
-			// Normalize the user SQL before check.
-			normalizedSQL := parser.Normalize(sql)
-			c.Assert(sqlStr, Equals, normalizedSQL, commentf)
-			// decode plan before check.
-			normalizedPlan, err := plancodec.DecodeNormalizedPlan(encodedPlan)
-			c.Assert(err, IsNil)
-			// remove '\n' '\t' before do regexp match.
-			normalizedPlan = strings.Replace(normalizedPlan, "\n", " ", -1)
-			normalizedPlan = strings.Replace(normalizedPlan, "\t", " ", -1)
-			c.Assert(normalizedPlan, Matches, planRegexp, commentf)
-		}
+	// Check result of test case 3.
+	for _, ca := range cases3 {
+		checkFn(ca.prepare, ca.planRegexp)
+		ca.cancel()
 	}
 
 	// Test case 4: transaction commit
@@ -1388,25 +1704,6 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		db.Exec("insert into t () values (),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),()")
 		db.Exec("commit")
 	})
-
-	// Check result of test case 1.
-	for _, ca := range cases1 {
-		checkFn(ca.sql, ca.planRegexp)
-		ca.cancel()
-	}
-
-	// Check result of test case 2.
-	for _, ca := range cases2 {
-		checkFn(ca.prepare, ca.planRegexp)
-		ca.cancel()
-	}
-
-	// Check result of test case 3.
-	for _, ca := range cases3 {
-		checkFn(ca.prepare, ca.planRegexp)
-		ca.cancel()
-	}
-
 	// Check result of test case 4.
 	checkFn("commit", "")
 }
@@ -1427,10 +1724,13 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/topsql/reporter/resetTimeoutForTest", `return(true)`), IsNil)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachSQL", `return(true)`), IsNil)
 	defer func() {
 		err := failpoint.Disable("github.com/pingcap/tidb/util/topsql/reporter/resetTimeoutForTest")
 		c.Assert(err, IsNil)
 		err = failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop")
+		c.Assert(err, IsNil)
+		err = failpoint.Disable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachSQL")
 		c.Assert(err, IsNil)
 	}()
 
