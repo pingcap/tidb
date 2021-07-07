@@ -9,7 +9,7 @@ require (
 	github.com/cznic/y v0.0.0-20170802143616-045f81c6662a
 	github.com/go-sql-driver/mysql v1.3.0
 	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
-	github.com/pingcap/errors v0.11.5-0.20210513014640-40f9a1999b3b
+	github.com/pingcap/errors v0.11.5-0.20210425183316-da1aaba5fb63
 	github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7
 	github.com/remyoudompheng/bigfft v0.0.0-20200410134404-eec4a21b6bb0 // indirect
 	go.uber.org/zap v1.18.1
