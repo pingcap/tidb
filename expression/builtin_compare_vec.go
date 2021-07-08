@@ -16,6 +16,7 @@ package expression
 import (
 	"strings"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -45,9 +46,18 @@ func (b *builtinGreatestDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *c
 				continue
 			}
 			v := buf.GetDecimal(i)
+
+			var maxDigitFrac = mathutil.MaxInt8(v.GetDigitsFrac(), d64s[i].GetDigitsFrac())
+			var maxDigitInt = mathutil.MaxInt8(v.GetDigitsInt(), d64s[i].GetDigitsInt())
+			var maxResultFrac = mathutil.MaxInt8(v.GetResultFrac(), d64s[i].GetResultFrac())
+
 			if v.Compare(&d64s[i]) > 0 {
 				d64s[i] = *v
 			}
+
+			d64s[i].SetDigitsFrac(maxDigitFrac)
+			d64s[i].SetDigitsInt(maxDigitInt)
+			d64s[i].SetResultFrac(maxResultFrac)
 		}
 	}
 	return nil
@@ -80,9 +90,17 @@ func (b *builtinLeastDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chun
 				continue
 			}
 			v := buf.GetDecimal(i)
+			var maxDigitFrac = mathutil.MaxInt8(v.GetDigitsFrac(), d64s[i].GetDigitsFrac())
+			var maxDigitInt = mathutil.MaxInt8(v.GetDigitsInt(), d64s[i].GetDigitsInt())
+			var maxResultFrac = mathutil.MaxInt8(v.GetResultFrac(), d64s[i].GetResultFrac())
+
 			if v.Compare(&d64s[i]) < 0 {
 				d64s[i] = *v
 			}
+
+			d64s[i].SetDigitsFrac(maxDigitFrac)
+			d64s[i].SetDigitsInt(maxDigitInt)
+			d64s[i].SetResultFrac(maxResultFrac)
 		}
 	}
 	return nil
