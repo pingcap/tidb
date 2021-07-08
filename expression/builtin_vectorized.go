@@ -42,8 +42,7 @@ func newLocalSliceBuffer(initCap int) *localSliceBuffer {
 		pool: sync.Pool{
 			New: func() interface{} {
 				// Use default arguments
-				col, _ := newBuffer(types.EvalType(mysql.TypeLonglong), chunk.InitialCapacity)
-				return col
+				return chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity)
 			},
 		},
 	}
