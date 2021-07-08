@@ -35,6 +35,8 @@ const (
 	reportTimeout             = 40 * time.Second
 	grpcInitialWindowSize     = 1 << 30
 	grpcInitialConnWindowSize = 1 << 30
+	// keyOthers is the key of others which stores the summary of all evicted records.
+	keyOthers = ""
 )
 
 var _ TopSQLReporter = &RemoteTopSQLReporter{}
@@ -187,30 +189,20 @@ func (tsr *RemoteTopSQLReporter) Close() {
 	tsr.client.Close()
 }
 
-// collectedData stores the collected top-sql data.
-type collectedData struct {
-	// data stores topN records for each round.
-	data map[string]*dataPoints
-	// others stores the summary of all evicted records.
-	others *dataPoints
-}
-
-func newCollectedData() *collectedData {
-	return &collectedData{
-		data:   make(map[string]*dataPoints),
-		others: &dataPoints{},
+func addEvictedCPUTime(collectTarget map[string]*dataPoints, timestamp uint64, totalCPUTimeMs uint32) {
+	others, ok := collectTarget[keyOthers]
+	if !ok {
+		others = &dataPoints{}
+		collectTarget[keyOthers] = others
 	}
-}
-
-func (c *collectedData) addEvictedCPUTime(timestamp uint64, totalCPUTimeMs uint32) {
-	if len(c.others.TimestampList) == 0 {
-		c.others.TimestampList = []uint64{timestamp}
-		c.others.CPUTimeMsList = []uint32{totalCPUTimeMs}
+	if len(others.TimestampList) == 0 {
+		others.TimestampList = []uint64{timestamp}
+		others.CPUTimeMsList = []uint32{totalCPUTimeMs}
 	} else {
-		c.others.TimestampList = append(c.others.TimestampList, timestamp)
-		c.others.CPUTimeMsList = append(c.others.CPUTimeMsList, totalCPUTimeMs)
+		others.TimestampList = append(others.TimestampList, timestamp)
+		others.CPUTimeMsList = append(others.CPUTimeMsList, totalCPUTimeMs)
 	}
-	c.others.CPUTimeMsTotal += uint64(totalCPUTimeMs)
+	others.CPUTimeMsTotal += uint64(totalCPUTimeMs)
 }
 
 func (d *dataPoints) merge(other *dataPoints) {
@@ -250,20 +242,25 @@ func (d *dataPoints) merge(other *dataPoints) {
 	}
 }
 
-func (c *collectedData) addEvictedDataPoints(evict *dataPoints) {
+func addEvictedDataPoints(collectTarget map[string]*dataPoints, evict *dataPoints) {
 	if len(evict.TimestampList) != len(evict.CPUTimeMsList) {
 		logutil.BgLogger().Error("[top-sql] add evicted data error, should never happen",
 			zap.Uint64s("timestamp-list", evict.TimestampList),
 			zap.Uint32s("cpu-time-list", evict.CPUTimeMsList))
 		return
 	}
-	c.others.merge(evict)
+	others, ok := collectTarget[keyOthers]
+	if !ok {
+		others = &dataPoints{}
+		collectTarget[keyOthers] = others
+	}
+	others.merge(evict)
 }
 
 func (tsr *RemoteTopSQLReporter) collectWorker() {
 	defer util.Recover("top-sql", "collectWorker", nil, false)
 
-	collectedData := newCollectedData()
+	collectedData := make(map[string]*dataPoints)
 	currentReportInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load()
 	reportTicker := time.NewTicker(time.Second * time.Duration(currentReportInterval))
 	for {
@@ -272,9 +269,7 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 			// On receiving data to collect: Write to local data array, and retain records with most CPU time.
 			tsr.doCollect(collectedData, data.timestamp, data.records)
 		case <-reportTicker.C:
-			oldData := collectedData
-			collectedData = newCollectedData()
-			tsr.takeDataAndSendToReportChan(oldData)
+			tsr.takeDataAndSendToReportChan(&collectedData)
 
 			// Update `reportTicker` if report interval changed.
 			if newInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load(); newInterval != currentReportInterval {
@@ -321,7 +316,7 @@ func getTopNDataPoints(records []*dataPoints) (topN, shouldEvict []*dataPoints) 
 // doCollect collects top N records of each round into collectTarget, and evict the data that is not in top N.
 // All the evicted record will be summary into the collectedData.others.
 func (tsr *RemoteTopSQLReporter) doCollect(
-	collectTarget *collectedData, timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
+	collectTarget map[string]*dataPoints, timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
 	defer util.Recover("top-sql", "doCollect", nil, false)
 
 	// Get top N records of each round records.
@@ -336,7 +331,7 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 	// Collect the top N records to collectTarget for each round.
 	for _, record := range records {
 		key := encodeKey(keyBuf, record.SQLDigest, record.PlanDigest)
-		entry, exist := collectTarget.data[key]
+		entry, exist := collectTarget[key]
 		if !exist {
 			entry = &dataPoints{
 				SQLDigest:     record.SQLDigest,
@@ -346,7 +341,7 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 			}
 			entry.CPUTimeMsList[0] = record.CPUTimeMs
 			entry.TimestampList[0] = timestamp
-			collectTarget.data[key] = entry
+			collectTarget[key] = entry
 		} else {
 			entry.CPUTimeMsList = append(entry.CPUTimeMsList, record.CPUTimeMs)
 			entry.TimestampList = append(entry.TimestampList, timestamp)
@@ -361,7 +356,7 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 	for _, evict := range evicted {
 		totalEvictedCPUTime += evict.CPUTimeMs
 		key := encodeKey(keyBuf, evict.SQLDigest, evict.PlanDigest)
-		_, ok := collectTarget.data[key]
+		_, ok := collectTarget[key]
 		if ok {
 			continue
 		}
@@ -374,25 +369,19 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 			tsr.planMapLength.Add(-1)
 		}
 	}
-	collectTarget.addEvictedCPUTime(timestamp, totalEvictedCPUTime)
+	addEvictedCPUTime(collectTarget, timestamp, totalEvictedCPUTime)
 }
 
 // takeDataAndSendToReportChan takes the topN collected data and the other data which summary all evicted data.
 // These data will be send to a report channel for reporting later.
-func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectTarget *collectedData) {
+func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectTarget *map[string]*dataPoints) {
 	// Fetch TopN dataPoints.
-	records := make([]*dataPoints, 0, len(collectTarget.data))
-	for _, v := range collectTarget.data {
+	records := make([]*dataPoints, 0, len(*collectTarget))
+	for _, v := range *collectTarget {
 		records = append(records, v)
 	}
 	normalizedSQLMap := tsr.normalizedSQLMap.Load().(*sync.Map)
 	normalizedPlanMap := tsr.normalizedPlanMap.Load().(*sync.Map)
-
-	// Reset data for next report.
-	tsr.normalizedSQLMap.Store(&sync.Map{})
-	tsr.normalizedPlanMap.Store(&sync.Map{})
-	tsr.sqlMapLength.Store(0)
-	tsr.planMapLength.Store(0)
 
 	// Evict redundant data.
 	var evicted []*dataPoints
@@ -400,13 +389,21 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectTarget *coll
 	for _, evict := range evicted {
 		normalizedSQLMap.LoadAndDelete(string(evict.SQLDigest))
 		normalizedPlanMap.LoadAndDelete(string(evict.PlanDigest))
-		collectTarget.addEvictedDataPoints(evict)
+		addEvictedDataPoints(*collectTarget, evict)
 	}
 
-	// append others which summary all evicted item's cpu-time.
-	if collectTarget.others.CPUTimeMsTotal > 0 {
-		records = append(records, collectTarget.others)
+	// append others which summarize all evicted item's cpu-time.
+	if others, ok := (*collectTarget)[keyOthers]; ok && others.CPUTimeMsTotal > 0 {
+		records = append(records, others)
 	}
+
+	// Reset data for next report.
+	*collectTarget = make(map[string]*dataPoints)
+	tsr.normalizedSQLMap.Store(&sync.Map{})
+	tsr.normalizedPlanMap.Store(&sync.Map{})
+	tsr.sqlMapLength.Store(0)
+	tsr.planMapLength.Store(0)
+
 	data := reportData{
 		collectedData:     records,
 		normalizedSQLMap:  normalizedSQLMap,

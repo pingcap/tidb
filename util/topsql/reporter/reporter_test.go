@@ -160,7 +160,7 @@ func (s *testTopSQLReporter) TestCollectAndEvicted(c *C) {
 			c.Assert(req.SqlDigest, IsNil)
 			c.Assert(req.PlanDigest, IsNil)
 			// 12502500 is the sum of all evicted item's cpu time. 1 + 2 + 3 + ... + 5000 = (1 + 5000) * 2500 = 12502500
-			c.Assert(req.RecordListCpuTimeMs[0], Equals, uint32(12502500))
+			c.Assert(int(req.RecordListCpuTimeMs[0]), Equals, 12502500)
 			continue
 		}
 		c.Assert(id > maxSQLNum, IsTrue)
@@ -299,9 +299,9 @@ func (s *testTopSQLReporter) TestCollectCapacity(c *C) {
 	c.Assert(tsr.planMapLength.Load(), Equals, int64(20000))
 
 	variable.TopSQLVariable.MaxStatementCount.Store(5000)
-	collectedData := newCollectedData()
+	collectedData := make(map[string]*dataPoints)
 	tsr.doCollect(collectedData, 1, genRecord(20000))
-	c.Assert(len(collectedData.data), Equals, 5000)
+	c.Assert(len(collectedData), Equals, 5001)
 	c.Assert(tsr.sqlMapLength.Load(), Equals, int64(5000))
 	c.Assert(tsr.planMapLength.Load(), Equals, int64(5000))
 }
