@@ -61,8 +61,8 @@ type LazyTxn struct {
 
 	// TxnInfo is added for the lock view feature, the data is frequent modified but
 	// rarely read (just in query select * from information_schema.tidb_trx).
-	// The data in this session would be query be other sessions, so Mutex is necessary.
-	// Since read is rare, the reader can copy on read to get a data snapshot.
+	// The data in this session would be query by other sessions, so Mutex is necessary.
+	// Since read is rare, the reader can copy-on-read to get a data snapshot.
 	mu struct {
 		sync.RWMutex
 		txninfo.TxnInfo
