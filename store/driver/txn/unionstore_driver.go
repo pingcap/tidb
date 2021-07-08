@@ -27,7 +27,7 @@ type memBuffer struct {
 	*tikv.MemDB
 }
 
-func newMemBuffer(m *tikv.MemDB) kv.MemBuffer {
+func NewMemBuffer(m *tikv.MemDB) kv.MemBuffer {
 	if m == nil {
 		return nil
 	}

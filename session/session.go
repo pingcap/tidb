@@ -18,6 +18,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	transaction "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
@@ -541,7 +543,83 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
 	}
 
-	return s.txn.Commit(tikvutil.SetSessionID(ctx, sessVars.ConnectionID))
+	return s.commitTxnWithTemporaryData(tikvutil.SetSessionID(ctx, sessVars.ConnectionID), &s.txn)
+}
+
+func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transaction) error {
+	txnTempTables := s.sessionVars.TxnCtx.TemporaryTables
+	if len(txnTempTables) == 0 {
+		return txn.Commit(ctx)
+	}
+
+	sessionData := s.sessionVars.TemporaryTableData
+	var stage kv.StagingHandle
+	for tblID, tbl := range txnTempTables {
+		if !tbl.GetModified() {
+			continue
+		}
+
+		if tbl.GetMeta().TempTableType != model.TempTableLocal {
+			continue
+		}
+
+		if sessionData == nil {
+			sessionData = transaction.NewMemBuffer(tikv.NewMemDB())
+		}
+
+		if stage == kv.InvalidStagingHandle {
+			stage = sessionData.Staging()
+		}
+
+		tblPrefix := tablecodec.EncodeTablePrefix(tblID)
+		endKey := tablecodec.EncodeTablePrefix(tblID + 1)
+
+		txnMemBuffer := s.txn.GetMemBuffer()
+		iter, err := txnMemBuffer.Iter(tblPrefix, endKey)
+		if err != nil {
+			return err
+		}
+
+		for iter.Valid() {
+			key := iter.Key()
+			if !bytes.HasPrefix(key, tblPrefix) {
+				break
+			}
+
+			value := iter.Value()
+			if len(value) == 0 {
+				err = sessionData.Delete(key)
+			} else {
+				err = sessionData.Set(key, iter.Value())
+			}
+
+			if err != nil {
+				return err
+			}
+
+			err = txnMemBuffer.Delete(key)
+			if err != nil {
+				return err
+			}
+
+			err = iter.Next()
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	err := txn.Commit(ctx)
+	if stage != kv.InvalidStagingHandle {
+		if err != nil {
+			sessionData.Cleanup(stage)
+		} else {
+			sessionData.Release(stage)
+			s.sessionVars.TemporaryTableData = sessionData
+		}
+	}
+
+	return err
 }
 
 type temporaryTableKVFilter map[int64]tableutil.TempTable
