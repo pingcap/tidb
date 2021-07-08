@@ -83,4 +83,4 @@ require (
 
 go 1.16
 
-replace github.com/tikv/client-go/v2 => ../client-go
+replace github.com/tikv/client-go/v2 => github.com/jackysp/client-go/v2 v2.0.0-alpha.0.20210707080113-71fd74fccde8
