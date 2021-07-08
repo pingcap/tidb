@@ -24,11 +24,11 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -86,6 +86,7 @@ type StatementContext struct {
 	IgnoreNoPartition         bool
 	OptimDependOnMutableConst bool
 	IgnoreExplainIDSuffix     bool
+	IsStaleness               bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {

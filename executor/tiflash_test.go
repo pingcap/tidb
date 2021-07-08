@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"bytes"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -33,10 +34,10 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/tikv/client-go/v2/mockstore/cluster"
 )
 
 type tiflashTestSuite struct {
@@ -260,9 +261,7 @@ func (s *tiflashTestSuite) TestInjectExtraProj(c *C) {
 }
 
 func (s *tiflashTestSuite) TestTiFlashPartitionTableShuffledHashJoin(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("exhaustive types test, skip race test")
-	}
+	c.Skip("too slow")
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`create database tiflash_partition_SHJ`)
@@ -336,9 +335,7 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableShuffledHashJoin(c *C) {
 }
 
 func (s *tiflashTestSuite) TestTiFlashPartitionTableReader(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("exhaustive types test, skip race test")
-	}
+	c.Skip("too slow")
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`create database tiflash_partition_tablereader`)
@@ -380,7 +377,7 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableReader(c *C) {
 
 	tk.MustExec("SET tidb_enforce_mpp=1")
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 10; i++ {
 		l, r := rand.Intn(400), rand.Intn(400)
 		if l > r {
 			l, r = r, l
@@ -633,6 +630,17 @@ func (s *tiflashTestSuite) TestMppUnionAll(c *C) {
 	tk.MustQuery("select count(*) from (select * from x1 union all select * from x2 union all select * from x3) x join (select * from x1 union all select * from x2 union all select * from x3) y on x.a = y.b").Check(testkit.Rows("29"))
 	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
 
+	tk.MustExec("drop table if exists x4")
+	tk.MustExec("create table x4(a int not null, b int not null);")
+	tk.MustExec("alter table x4 set tiflash replica 1")
+	tb = testGetTableByName(c, tk.Se, "test", "x4")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("set @@tidb_enforce_mpp=1")
+	tk.MustExec("insert into x4 values (2, 2), (2, 3)")
+	tk.MustQuery("(select * from x1 union all select * from x4) order by a, b").Check(testkit.Rows("1 1", "2 2", "2 2", "2 3", "3 3", "4 4"))
+
 }
 
 func (s *tiflashTestSuite) TestMppApply(c *C) {
@@ -702,9 +710,7 @@ func (s *tiflashTestSuite) TestTiFlashVirtualColumn(c *C) {
 }
 
 func (s *tiflashTestSuite) TestTiFlashPartitionTableShuffledHashAggregation(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("exhaustive types test, skip race test")
-	}
+	c.Skip("too slow")
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database tiflash_partition_AGG")
@@ -774,9 +780,7 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableShuffledHashAggregation(c *C
 }
 
 func (s *tiflashTestSuite) TestTiFlashPartitionTableBroadcastJoin(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("exhaustive types test, skip race test")
-	}
+	c.Skip("too slow")
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database tiflash_partition_BCJ")
@@ -844,4 +848,39 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableBroadcastJoin(c *C) {
 			}
 		}
 	}
+}
+
+func (s *tiflashTestSuite) TestForbidTiflashDuringStaleRead(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint(20))")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	time.Sleep(2 * time.Second)
+	tk.MustExec("insert into t values (9223372036854775807)")
+	tk.MustExec("insert into t values (9223372036854775807)")
+	tk.MustExec("insert into t values (9223372036854775807)")
+	tk.MustExec("insert into t values (9223372036854775807)")
+	tk.MustExec("insert into t values (9223372036854775807)")
+	tk.MustExec("insert into t values (9223372036854775807)")
+	rows := tk.MustQuery("explain select avg(a) from t").Rows()
+	resBuff := bytes.NewBufferString("")
+	for _, row := range rows {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	res := resBuff.String()
+	c.Assert(strings.Contains(res, "tiflash"), IsTrue)
+	c.Assert(strings.Contains(res, "tikv"), IsFalse)
+	tk.MustExec("set transaction read only as of timestamp now(1)")
+	rows = tk.MustQuery("explain select avg(a) from t").Rows()
+	resBuff = bytes.NewBufferString("")
+	for _, row := range rows {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	res = resBuff.String()
+	c.Assert(strings.Contains(res, "tiflash"), IsFalse)
+	c.Assert(strings.Contains(res, "tikv"), IsTrue)
 }

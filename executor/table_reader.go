@@ -19,6 +19,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -73,9 +74,11 @@ type TableReaderExecutor struct {
 	ranges []*ranger.Range
 
 	// kvRanges are only use for union scan.
-	kvRanges []kv.KeyRange
-	dagPB    *tipb.DAGRequest
-	startTS  uint64
+	kvRanges    []kv.KeyRange
+	dagPB       *tipb.DAGRequest
+	startTS     uint64
+	txnScope    string
+	isStaleness bool
 	// columns are only required by union scan and virtual column.
 	columns []*model.ColumnInfo
 
@@ -104,6 +107,24 @@ type TableReaderExecutor struct {
 	virtualColumnRetFieldTypes []*types.FieldType
 	// batchCop indicates whether use super batch coprocessor request, only works for TiFlash engine.
 	batchCop bool
+
+	// extraPIDColumnIndex is used for partition reader to add an extra partition ID column.
+	extraPIDColumnIndex offsetOptional
+}
+
+// offsetOptional may be a positive integer, or invalid.
+type offsetOptional int
+
+func newOffset(i int) offsetOptional {
+	return offsetOptional(i + 1)
+}
+
+func (i offsetOptional) valid() bool {
+	return i != 0
+}
+
+func (i offsetOptional) value() int {
+	return int(i - 1)
 }
 
 // Open initializes necessary variables for using this executor.
@@ -218,7 +239,24 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		return err
 	}
 
+	// When 'select ... for update' work on a partitioned table, the table reader should
+	// add the partition ID as an extra column. The SelectLockExec need this information
+	// to construct the lock key.
+	physicalID := getPhysicalTableID(e.table)
+	if e.extraPIDColumnIndex.valid() {
+		fillExtraPIDColumn(req, e.extraPIDColumnIndex.value(), physicalID)
+	}
+
 	return nil
+}
+
+func fillExtraPIDColumn(req *chunk.Chunk, extraPIDColumnIndex int, physicalID int64) {
+	numRows := req.NumRows()
+	pidColumn := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), numRows)
+	for i := 0; i < numRows; i++ {
+		pidColumn.AppendInt64(physicalID)
+	}
+	req.SetCol(extraPIDColumnIndex, pidColumn)
 }
 
 // Close implements the Executor Close interface.
@@ -288,6 +326,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
 			SetStreaming(e.streaming).
+			SetTxnScope(e.txnScope).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
 			SetFromInfoSchema(e.ctx.GetInfoSchema()).
 			SetMemTracker(e.memTracker).
@@ -319,6 +358,8 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
+		SetTxnScope(e.txnScope).
+		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		SetMemTracker(e.memTracker).
