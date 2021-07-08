@@ -867,7 +867,6 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 	originalCallback := d.GetHook()
 	d.(ddl.DDLForTest).SetHook(callback)
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
-	fmt.Println(alterTableSQL)
 	c.Assert(err, IsNil)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	d.(ddl.DDLForTest).SetHook(originalCallback)

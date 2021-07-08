@@ -615,8 +615,8 @@ type regionMeta struct {
 	start           string
 	end             string
 	scattering      bool
-	writtenBytes    int64
-	readBytes       int64
+	writtenBytes    uint64
+	readBytes       uint64
 	approximateSize int64
 	approximateKeys int64
 }

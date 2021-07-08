@@ -19,6 +19,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -150,14 +151,15 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 	// The leftProperties caches all the possible properties that are provided by its children.
 	leftJoinKeys, rightJoinKeys, isNullEQ, hasNullEQ := p.GetJoinKeys()
 
-	// EnumType Unsupported: merge join conflicts with index order. ref: https://github.com/pingcap/tidb/issues/24473
+	// EnumType/SetType Unsupported: merge join conflicts with index order.
+	// ref: https://github.com/pingcap/tidb/issues/24473, https://github.com/pingcap/tidb/issues/25669
 	for _, leftKey := range leftJoinKeys {
-		if leftKey.RetType.Tp == mysql.TypeEnum {
+		if leftKey.RetType.Tp == mysql.TypeEnum || leftKey.RetType.Tp == mysql.TypeSet {
 			return nil
 		}
 	}
 	for _, rightKey := range rightJoinKeys {
-		if rightKey.RetType.Tp == mysql.TypeEnum {
+		if rightKey.RetType.Tp == mysql.TypeEnum || rightKey.RetType.Tp == mysql.TypeSet {
 			return nil
 		}
 	}
@@ -467,6 +469,11 @@ func (p *LogicalJoin) constructIndexJoin(
 				lhs, ok1 := c.GetArgs()[0].(*expression.Column)
 				rhs, ok2 := c.GetArgs()[1].(*expression.Column)
 				if ok1 && ok2 {
+					if lhs.InOperand || rhs.InOperand {
+						// if this other-cond is from a `[not] in` sub-query, do not convert it into eq-cond since
+						// IndexJoin cannot deal with NULL correctly in this case; please see #25799 for more details.
+						continue
+					}
 					outerSchema, innerSchema := p.Children()[outerIdx].Schema(), p.Children()[1-outerIdx].Schema()
 					if outerSchema.Contains(lhs) && innerSchema.Contains(rhs) {
 						outerHashKeys = append(outerHashKeys, lhs)
@@ -529,14 +536,15 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 			return nil
 		}
 
-		// EnumType Unsupported: merge join conflicts with index order. ref: https://github.com/pingcap/tidb/issues/24473
+		// EnumType/SetType Unsupported: merge join conflicts with index order.
+		// ref: https://github.com/pingcap/tidb/issues/24473, https://github.com/pingcap/tidb/issues/25669
 		for _, innerKey := range join.InnerJoinKeys {
-			if innerKey.RetType.Tp == mysql.TypeEnum {
+			if innerKey.RetType.Tp == mysql.TypeEnum || innerKey.RetType.Tp == mysql.TypeSet {
 				return nil
 			}
 		}
 		for _, outerKey := range join.OuterJoinKeys {
-			if outerKey.RetType.Tp == mysql.TypeEnum {
+			if outerKey.RetType.Tp == mysql.TypeEnum || outerKey.RetType.Tp == mysql.TypeSet {
 				return nil
 			}
 		}
@@ -2003,13 +2011,25 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	if !ok {
 		return nil, true, nil
 	}
-	proj := PhysicalProjection{
-		Exprs:                p.Exprs,
-		CalculateNoDelay:     p.CalculateNoDelay,
-		AvoidColumnEvaluator: p.AvoidColumnEvaluator,
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, newProp)
-	proj.SetSchema(p.schema)
-	return []PhysicalPlan{proj}, true, nil
+	newProps := []*property.PhysicalProperty{newProp}
+	// generate a mpp task candidate if enforced mpp
+	if newProp.TaskTp != property.MppTaskType && p.SCtx().GetSessionVars().IsMPPEnforced() && p.canPushToCop(kv.TiFlash) &&
+		expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.Exprs, p.SCtx().GetClient(), kv.TiFlash) {
+		mppProp := newProp.CloneEssentialFields()
+		mppProp.TaskTp = property.MppTaskType
+		newProps = append(newProps, mppProp)
+	}
+	ret := make([]PhysicalPlan, 0, len(newProps))
+	for _, newProp := range newProps {
+		proj := PhysicalProjection{
+			Exprs:                p.Exprs,
+			CalculateNoDelay:     p.CalculateNoDelay,
+			AvoidColumnEvaluator: p.AvoidColumnEvaluator,
+		}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, newProp)
+		proj.SetSchema(p.schema)
+		ret = append(ret, proj)
+	}
+	return ret, true, nil
 }
 
 func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -2355,17 +2375,24 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 
 // TODO: support more operators and distinct later
 func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
+	hasUnsupportedDistinct := false
 	for _, agg := range la.AggFuncs {
 		// MPP does not support distinct except count distinct now
 		if agg.HasDistinct {
 			if agg.Name != ast.AggFuncCount {
-				return false
+				hasUnsupportedDistinct = true
 			}
 		}
 		// MPP does not support AggFuncApproxCountDistinct now
 		if agg.Name == ast.AggFuncApproxCountDistinct {
-			return false
+			hasUnsupportedDistinct = true
 		}
+	}
+	if hasUnsupportedDistinct {
+		if la.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+			la.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("Aggregation can not be pushed to storage layer in mpp mode because it contains agg function with distinct"))
+		}
+		return false
 	}
 	return CheckAggCanPushCop(la.ctx, la.AggFuncs, la.GroupByItems, kv.TiFlash)
 }
@@ -2424,7 +2451,11 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64}
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.schema.Clone())
-		agg.MppRunMode = MppTiDB
+		if la.HasDistinct() {
+			agg.MppRunMode = MppScalar
+		} else {
+			agg.MppRunMode = MppTiDB
+		}
 		hashAggs = append(hashAggs, agg)
 	}
 	return
@@ -2447,6 +2478,9 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if la.HasDistinct() {
 		// TODO: remove after the cost estimation of distinct pushdown is implemented.
 		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
+			if la.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+				la.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("Aggregation can not be pushed to storage layer in non-mpp mode because it contains agg function with distinct"))
+			}
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
 	} else if !la.aggHints.preferAggToCop {
