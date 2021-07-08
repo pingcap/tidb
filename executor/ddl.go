@@ -351,7 +351,12 @@ func (e *DDLExec) executeDropSequence(s *ast.DropSequenceStmt) error {
 // dropTableObject actually applies to `tableObject`, `viewObject` and `sequenceObject`.
 func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifExists bool) error {
 	var notExistTables []string
+	sessVars := e.ctx.GetSessionVars()
+	localTempTables := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
 	for _, tn := range objects {
+		if localTempTables.RemoveTable(tn.Schema, tn.Name) {
+			continue
+		}
 		fullti := ast.Ident{Schema: tn.Schema, Name: tn.Name}
 		_, ok := e.is.SchemaByName(tn.Schema)
 		if !ok {

@@ -2849,3 +2849,15 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	tk.MustExec("set @@tidb_snapshot = '2016-01-01 15:04:05.999999'")
 	tk.MustExec("select * from overlap")
 }
+
+func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_noop_functions = 1")
+
+	// Check drop temporary table.
+	tk.MustExec("create temporary table if not exists b_local_temp_table (id int)")
+	tk.MustQuery("select * from b_local_temp_table").Check(testkit.Rows())
+	tk.MustExec("drop table b_local_temp_table")
+	tk.MustGetErrMsg("select * from b_local_temp_table", "[schema:1146]Table 'test.b_local_temp_table' doesn't exist")
+}
