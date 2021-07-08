@@ -23,17 +23,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/tikv/client-go/v2/util"
-	"go.uber.org/zap"
 )
 
 // stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
@@ -335,47 +330,6 @@ func (ssMap *stmtSummaryByDigestMap) clearInternal() {
 	}
 }
 
-// ToCurrentDatum converts current statement summaries to datum.
-func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum(user *auth.UserIdentity, isSuper bool) [][]types.Datum {
-	ssMap.Lock()
-	values := ssMap.summaryMap.Values()
-	beginTime := ssMap.beginTimeForCurInterval
-	other := ssMap.other
-	ssMap.Unlock()
-
-	rows := make([][]types.Datum, 0, len(values))
-	for _, value := range values {
-		record := value.(*stmtSummaryByDigest).toCurrentDatum(beginTime, user, isSuper)
-		if record != nil {
-			rows = append(rows, record)
-		}
-	}
-	if otherDatum := other.toCurrentDatum(); otherDatum != nil {
-		rows = append(rows, otherDatum)
-	}
-	return rows
-}
-
-// ToHistoryDatum converts history statements summaries to datum.
-func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum(user *auth.UserIdentity, isSuper bool) [][]types.Datum {
-	historySize := ssMap.historySize()
-
-	ssMap.Lock()
-	values := ssMap.summaryMap.Values()
-	other := ssMap.other
-	ssMap.Unlock()
-
-	rows := make([][]types.Datum, 0, len(values)*historySize)
-	for _, value := range values {
-		records := value.(*stmtSummaryByDigest).toHistoryDatum(historySize, user, isSuper)
-		rows = append(rows, records...)
-	}
-
-	otherDatum := other.toHistoryDatum(historySize)
-	rows = append(rows, otherDatum...)
-	return rows
-}
-
 // BindableStmt is a wrapper struct for a statement that is extracted from statements_summary and can be
 // created binding on.
 type BindableStmt struct {
@@ -584,44 +538,6 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 	}
 }
 
-func (ssbd *stmtSummaryByDigest) toCurrentDatum(beginTimeForCurInterval int64, user *auth.UserIdentity, isSuper bool) []types.Datum {
-	var ssElement *stmtSummaryByDigestElement
-
-	ssbd.Lock()
-	if ssbd.initialized && ssbd.history.Len() > 0 {
-		ssElement = ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
-	}
-	ssbd.Unlock()
-
-	// `ssElement` is lazy expired, so expired elements could also be read.
-	// `beginTime` won't change since `ssElement` is created, so locking is not needed here.
-	isAuthed := true
-	if user != nil && !isSuper {
-		_, isAuthed = ssElement.authUsers[user.Username]
-	}
-	if ssElement == nil || ssElement.beginTime < beginTimeForCurInterval || !isAuthed {
-		return nil
-	}
-	return ssElement.toDatum(ssbd)
-}
-
-func (ssbd *stmtSummaryByDigest) toHistoryDatum(historySize int, user *auth.UserIdentity, isSuper bool) [][]types.Datum {
-	// Collect all history summaries to an array.
-	ssElements := ssbd.collectHistorySummaries(historySize)
-
-	rows := make([][]types.Datum, 0, len(ssElements))
-	for _, ssElement := range ssElements {
-		isAuthed := true
-		if user != nil && !isSuper {
-			_, isAuthed = ssElement.authUsers[user.Username]
-		}
-		if isAuthed {
-			rows = append(rows, ssElement.toDatum(ssbd))
-		}
-	}
-	return rows
-}
-
 // collectHistorySummaries puts at most `historySize` summaries to an array.
 func (ssbd *stmtSummaryByDigest) collectHistorySummaries(historySize int) []*stmtSummaryByDigestElement {
 	ssbd.Lock()
@@ -638,10 +554,15 @@ func (ssbd *stmtSummaryByDigest) collectHistorySummaries(historySize int) []*stm
 	return ssElements
 }
 
+var maxEncodedPlanSizeInBytes = 1024 * 1024
+
 func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
 	// sampleSQL / authUsers(sampleUser) / samplePlan / prevSQL / indexNames store the values shown at the first time,
 	// because it compacts performance to update every time.
 	samplePlan, planHint := sei.PlanGenerator()
+	if len(samplePlan) > maxEncodedPlanSizeInBytes {
+		samplePlan = plancodec.PlanDiscardedEncoded
+	}
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime: beginTime,
 		sampleSQL: formatSQL(sei.OriginalSQL),
@@ -870,116 +791,6 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	ssElement.sumPDTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitPDRespDuration))
 	ssElement.sumBackoffTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.BackoffDuration))
 	ssElement.sumWriteSQLRespTotal += sei.StmtExecDetails.WriteSQLRespDuration
-}
-
-func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) []types.Datum {
-	ssElement.Lock()
-	defer ssElement.Unlock()
-
-	plan, err := plancodec.DecodePlan(ssElement.samplePlan)
-	if err != nil {
-		logutil.BgLogger().Error("decode plan in statement summary failed", zap.String("plan", ssElement.samplePlan), zap.String("query", ssElement.sampleSQL), zap.Error(err))
-		plan = ""
-	}
-
-	sampleUser := ""
-	for key := range ssElement.authUsers {
-		sampleUser = key
-		break
-	}
-
-	// Actually, there's a small chance that endTime is out of date, but it's hard to keep it up to date all the time.
-	return types.MakeDatums(
-		types.NewTime(types.FromGoTime(time.Unix(ssElement.beginTime, 0)), mysql.TypeTimestamp, 0),
-		types.NewTime(types.FromGoTime(time.Unix(ssElement.endTime, 0)), mysql.TypeTimestamp, 0),
-		ssbd.stmtType,
-		// This behaviour follow MySQL. see more in https://dev.mysql.com/doc/refman/5.7/en/performance-schema-statement-digests.html
-		convertEmptyToNil(ssbd.schemaName),
-		convertEmptyToNil(ssbd.digest),
-		ssbd.normalizedSQL,
-		convertEmptyToNil(ssbd.tableNames),
-		convertEmptyToNil(strings.Join(ssElement.indexNames, ",")),
-		convertEmptyToNil(sampleUser),
-		ssElement.execCount,
-		ssElement.sumErrors,
-		ssElement.sumWarnings,
-		int64(ssElement.sumLatency),
-		int64(ssElement.maxLatency),
-		int64(ssElement.minLatency),
-		avgInt(int64(ssElement.sumLatency), ssElement.execCount),
-		avgInt(int64(ssElement.sumParseLatency), ssElement.execCount),
-		int64(ssElement.maxParseLatency),
-		avgInt(int64(ssElement.sumCompileLatency), ssElement.execCount),
-		int64(ssElement.maxCompileLatency),
-		ssElement.sumNumCopTasks,
-		int64(ssElement.maxCopProcessTime),
-		convertEmptyToNil(ssElement.maxCopProcessAddress),
-		int64(ssElement.maxCopWaitTime),
-		convertEmptyToNil(ssElement.maxCopWaitAddress),
-		avgInt(int64(ssElement.sumProcessTime), ssElement.execCount),
-		int64(ssElement.maxProcessTime),
-		avgInt(int64(ssElement.sumWaitTime), ssElement.execCount),
-		int64(ssElement.maxWaitTime),
-		avgInt(int64(ssElement.sumBackoffTime), ssElement.execCount),
-		int64(ssElement.maxBackoffTime),
-		avgInt(ssElement.sumTotalKeys, ssElement.execCount),
-		ssElement.maxTotalKeys,
-		avgInt(ssElement.sumProcessedKeys, ssElement.execCount),
-		ssElement.maxProcessedKeys,
-		avgInt(int64(ssElement.sumRocksdbDeleteSkippedCount), ssElement.execCount),
-		ssElement.maxRocksdbDeleteSkippedCount,
-		avgInt(int64(ssElement.sumRocksdbKeySkippedCount), ssElement.execCount),
-		ssElement.maxRocksdbKeySkippedCount,
-		avgInt(int64(ssElement.sumRocksdbBlockCacheHitCount), ssElement.execCount),
-		ssElement.maxRocksdbBlockCacheHitCount,
-		avgInt(int64(ssElement.sumRocksdbBlockReadCount), ssElement.execCount),
-		ssElement.maxRocksdbBlockReadCount,
-		avgInt(int64(ssElement.sumRocksdbBlockReadByte), ssElement.execCount),
-		ssElement.maxRocksdbBlockReadByte,
-		avgInt(int64(ssElement.sumPrewriteTime), ssElement.commitCount),
-		int64(ssElement.maxPrewriteTime),
-		avgInt(int64(ssElement.sumCommitTime), ssElement.commitCount),
-		int64(ssElement.maxCommitTime),
-		avgInt(int64(ssElement.sumGetCommitTsTime), ssElement.commitCount),
-		int64(ssElement.maxGetCommitTsTime),
-		avgInt(ssElement.sumCommitBackoffTime, ssElement.commitCount),
-		ssElement.maxCommitBackoffTime,
-		avgInt(ssElement.sumResolveLockTime, ssElement.commitCount),
-		ssElement.maxResolveLockTime,
-		avgInt(int64(ssElement.sumLocalLatchTime), ssElement.commitCount),
-		int64(ssElement.maxLocalLatchTime),
-		avgFloat(ssElement.sumWriteKeys, ssElement.commitCount),
-		ssElement.maxWriteKeys,
-		avgFloat(ssElement.sumWriteSize, ssElement.commitCount),
-		ssElement.maxWriteSize,
-		avgFloat(ssElement.sumPrewriteRegionNum, ssElement.commitCount),
-		int(ssElement.maxPrewriteRegionNum),
-		avgFloat(ssElement.sumTxnRetry, ssElement.commitCount),
-		ssElement.maxTxnRetry,
-		int(ssElement.execRetryCount),
-		int64(ssElement.execRetryTime),
-		ssElement.sumBackoffTimes,
-		formatBackoffTypes(ssElement.backoffTypes),
-		avgInt(ssElement.sumMem, ssElement.execCount),
-		ssElement.maxMem,
-		avgInt(ssElement.sumDisk, ssElement.execCount),
-		ssElement.maxDisk,
-		avgInt(int64(ssElement.sumKVTotal), ssElement.commitCount),
-		avgInt(int64(ssElement.sumPDTotal), ssElement.commitCount),
-		avgInt(int64(ssElement.sumBackoffTotal), ssElement.commitCount),
-		avgInt(int64(ssElement.sumWriteSQLRespTotal), ssElement.commitCount),
-		ssElement.prepared,
-		avgFloat(int64(ssElement.sumAffectedRows), ssElement.execCount),
-		types.NewTime(types.FromGoTime(ssElement.firstSeen), mysql.TypeTimestamp, 0),
-		types.NewTime(types.FromGoTime(ssElement.lastSeen), mysql.TypeTimestamp, 0),
-		ssElement.planInCache,
-		ssElement.planCacheHits,
-		ssElement.planInBinding,
-		ssElement.sampleSQL,
-		ssElement.prevSQL,
-		ssbd.planDigest,
-		plan,
-	)
 }
 
 // Truncate SQL to maxSQLLength.
