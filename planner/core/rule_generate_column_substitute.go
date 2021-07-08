@@ -56,10 +56,12 @@ func collectGenerateColumn(lp LogicalPlan, exprToColumn ExprColumnMap) {
 	if !ok {
 		return
 	}
-	tblInfo := ds.tableInfo
-	for _, idx := range tblInfo.Indices {
-		for _, idxPart := range idx.Columns {
-			colInfo := tblInfo.Columns[idxPart.Offset]
+	for _, p := range ds.possibleAccessPaths {
+		if p.IsTablePath() {
+			continue
+		}
+		for _, idxPart := range p.Index.Columns {
+			colInfo := ds.tableInfo.Columns[idxPart.Offset]
 			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
 				s := ds.schema.Columns
 				col := expression.ColInfo2Col(s, colInfo)
