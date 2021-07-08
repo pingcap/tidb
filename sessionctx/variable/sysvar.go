@@ -325,9 +325,9 @@ func (sv *SysVar) checkTimeSystemVar(value string, vars *SessionVars) (string, e
 	var t time.Time
 	var err error
 	if len(value) <= len(localDayTimeFormat) {
-		t, err = time.ParseInLocation(localDayTimeFormat, value, vars.TimeZone)
+		t, err = time.ParseInLocation(localDayTimeFormat, value, vars.Location())
 	} else {
-		t, err = time.ParseInLocation(FullDayTimeFormat, value, vars.TimeZone)
+		t, err = time.ParseInLocation(FullDayTimeFormat, value, vars.Location())
 	}
 	if err != nil {
 		return "", err
