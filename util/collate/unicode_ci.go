@@ -78,7 +78,7 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 			if as == 0 {
 				for an == 0 && ai < len(a) {
 					ar, ai = decodeRune(a, ai)
-					an, as = convertUnicode(ar)
+					an, as = convertRuneUnicodeCI(ar)
 				}
 			} else {
 				an = as
@@ -90,7 +90,7 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 			if bs == 0 {
 				for bn == 0 && bi < len(b) {
 					br, bi = decodeRune(b, bi)
-					bn, bs = convertUnicode(br)
+					bn, bs = convertRuneUnicodeCI(br)
 				}
 			} else {
 				bn = bs
@@ -128,7 +128,7 @@ func (uc *unicodeCICollator) Key(str string) []byte {
 
 	for si < len(str) {
 		r, si = decodeRune(str, si)
-		sn, ss = convertUnicode(r)
+		sn, ss = convertRuneUnicodeCI(r)
 		for sn != 0 {
 			buf = append(buf, byte((sn&0xFF00)>>8), byte(sn))
 			sn >>= 16
@@ -144,7 +144,7 @@ func (uc *unicodeCICollator) Key(str string) []byte {
 // convert rune to weights.
 // `first` represent first 4 uint16 weights of rune
 // `second` represent last 4 uint16 weights of rune if exist, 0 if not
-func convertUnicode(r rune) (first, second uint64) {
+func convertRuneUnicodeCI(r rune) (first, second uint64) {
 	if r > 0xFFFF {
 		return 0xFFFD, 0
 	}
@@ -166,131 +166,25 @@ type unicodePattern struct {
 
 // Compile implements WildcardPattern interface.
 func (p *unicodePattern) Compile(patternStr string, escape byte) {
-	p.patChars, p.patTypes = compilePatternUnicodeCI(patternStr, escape)
+	p.patChars, p.patTypes = stringutil.CompilePatternInner(patternStr, escape)
 }
 
 // DoMatch implements WildcardPattern interface.
 func (p *unicodePattern) DoMatch(str string) bool {
-	return doMatchUnicodeCI(str, p.patChars, p.patTypes)
-}
-
-// compilePatternUnicodeCI handles escapes and wild cards, generate pattern weights and types.
-// This function is modified from stringutil.CompilePattern.
-func compilePatternUnicodeCI(pattern string, escape byte) (patWeights []rune, patTypes []byte) {
-	runes := []rune(pattern)
-	escapeRune := rune(escape)
-	lenRunes := len(runes)
-	patWeights = make([]rune, lenRunes)
-	patTypes = make([]byte, lenRunes)
-	patLen := 0
-	for i := 0; i < lenRunes; i++ {
-		var tp byte
-		var r = runes[i]
-		switch r {
-		case escapeRune:
-			tp = stringutil.PatMatch
-			if i < lenRunes-1 {
-				i++
-				r = runes[i]
-				if r == escapeRune || r == '_' || r == '%' {
-					// Valid escape.
-				} else {
-					// Invalid escape, fall back to escape byte.
-					// mysql will treat escape character as the origin value even
-					// the escape sequence is invalid in Go or C.
-					// e.g., \m is invalid in Go, but in MySQL we will get "m" for select '\m'.
-					// Following case is correct just for escape \, not for others like +.
-					// TODO: Add more checks for other escapes.
-					i--
-					r = escapeRune
-				}
-			}
-		case '_':
-			// %_ => _%
-			if patLen > 0 && patTypes[patLen-1] == stringutil.PatAny {
-				tp = stringutil.PatAny
-				r = '%'
-				patWeights[patLen-1], patTypes[patLen-1] = '_', stringutil.PatOne
-			} else {
-				tp = stringutil.PatOne
-			}
-		case '%':
-			// %% => %
-			if patLen > 0 && patTypes[patLen-1] == stringutil.PatAny {
-				continue
-			}
-			tp = stringutil.PatAny
-		default:
-			tp = stringutil.PatMatch
+	return stringutil.DoMatchInner(str, p.patChars, p.patTypes, func(a, b rune) bool {
+		if a > 0xFFFF || b > 0xFFFF {
+			return a == b
 		}
-		patWeights[patLen] = r
-		patTypes[patLen] = tp
-		patLen++
-	}
-	patWeights = patWeights[:patLen]
-	patTypes = patTypes[:patLen]
-	return
-}
 
-// doMatchUnicodeCI matches the string with patWeights and patTypes.
-// The algorithm has linear time complexity.
-// https://research.swtch.com/glob
-// This function is modified from stringutil.DoMatch.
-func doMatchUnicodeCI(str string, patWeights []rune, patTypes []byte) bool {
-	runes := []rune(str)
-	lenRunes := len(runes)
-	var rIdx, pIdx, nextRIdx, nextPIdx int
-	for pIdx < len(patWeights) || rIdx < lenRunes {
-		if pIdx < len(patWeights) {
-			switch patTypes[pIdx] {
-			case stringutil.PatMatch:
-				if rIdx < lenRunes && runeEqual(runes[rIdx], patWeights[pIdx]) {
-					pIdx++
-					rIdx++
-					continue
-				}
-			case stringutil.PatOne:
-				if rIdx < lenRunes {
-					pIdx++
-					rIdx++
-					continue
-				}
-			case stringutil.PatAny:
-				// Try to match at sIdx.
-				// If that doesn't work out,
-				// restart at sIdx+1 next.
-				nextPIdx = pIdx
-				nextRIdx = rIdx + 1
-				pIdx++
-				continue
-			}
+		ar, br := mapTable[a], mapTable[b]
+		if ar != br {
+			return false
 		}
-		// Mismatch. Maybe restart.
-		if 0 < nextRIdx && nextRIdx <= lenRunes {
-			pIdx = nextPIdx
-			rIdx = nextRIdx
-			continue
+
+		if ar == longRune {
+			return a == b
 		}
-		return false
-	}
-	// Matched all of pattern to all of name. Success.
-	return true
-}
 
-// runeEqual compare rune is equal with unicode_ci collation
-func runeEqual(a, b rune) bool {
-	if a > 0xFFFF || b > 0xFFFF {
-		return a == b
-	}
-
-	ar, br := mapTable[a], mapTable[b]
-	if ar != br {
-		return false
-	}
-
-	if ar == longRune {
-		return a == b
-	}
-
-	return true
+		return true
+	})
 }

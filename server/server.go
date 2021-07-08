@@ -172,8 +172,11 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 	return cc
 }
 
+// isUnixSocket should ideally be a function of clientConnection!
+// But currently since unix-socket connections are forwarded to TCP when the server listens on both, it can really only be accurate on a server-level.
+// If the server is listening on both, it *must* return FALSE for remote-host authentication to be performed correctly. See #23460.
 func (s *Server) isUnixSocket() bool {
-	return s.cfg.Socket != ""
+	return s.cfg.Socket != "" && s.cfg.Port == 0
 }
 
 func (s *Server) forwardUnixSocketToTCP() {
@@ -292,7 +295,9 @@ func setSSLVariable(ca, key, cert string) {
 
 // Export config-related metrics
 func (s *Server) reportConfig() {
-	metrics.TokenLimitGauge.Set(float64(s.cfg.TokenLimit))
+	metrics.ConfigStatus.WithLabelValues("token-limit").Set(float64(s.cfg.TokenLimit))
+	metrics.ConfigStatus.WithLabelValues("mem-quota-query").Set(float64(s.cfg.MemQuotaQuery))
+	metrics.ConfigStatus.WithLabelValues("max-server-connections").Set(float64(s.cfg.MaxServerConnections))
 }
 
 // Run runs the server.
@@ -447,6 +452,10 @@ func (s *Server) onConn(conn *clientConn) {
 	conn.Run(ctx)
 
 	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+		// Audit plugin may be disabled before a conn is created, leading no connectionInfo in sessionVars.
+		if sessionVars.ConnectionInfo == nil {
+			sessionVars.ConnectionInfo = conn.connectInfo()
+		}
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
 			sessionVars.ConnectionInfo.Duration = float64(time.Since(connectedTime)) / float64(time.Millisecond)

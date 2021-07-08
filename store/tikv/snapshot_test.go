@@ -317,4 +317,26 @@ func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
 	snapshot.recordBackoffInfo(bo)
 	expect := "Get:{num_rpc:4, total_time:2s},txnLockFast_backoff:{num:2, total_time:60ms}"
 	c.Assert(snapshot.mu.stats.String(), Equals, expect)
+	detail := &pb.ExecDetailsV2{
+		TimeDetail: &pb.TimeDetail{
+			WaitWallTimeMs:    100,
+			ProcessWallTimeMs: 100,
+		},
+		ScanDetailV2: &pb.ScanDetailV2{
+			ProcessedVersions: 10,
+			TotalVersions:     15,
+		},
+	}
+	snapshot.mergeExecDetail(detail)
+	expect = "Get:{num_rpc:4, total_time:2s},txnLockFast_backoff:{num:2, total_time:60ms}, " +
+		"total_process_time: 100ms, total_wait_time: 100ms, " +
+		"scan_detail: {total_process_keys: 10, " +
+		"total_keys: 15}"
+	c.Assert(snapshot.mu.stats.String(), Equals, expect)
+	snapshot.mergeExecDetail(detail)
+	expect = "Get:{num_rpc:4, total_time:2s},txnLockFast_backoff:{num:2, total_time:60ms}, " +
+		"total_process_time: 200ms, total_wait_time: 200ms, " +
+		"scan_detail: {total_process_keys: 20, " +
+		"total_keys: 30}"
+	c.Assert(snapshot.mu.stats.String(), Equals, expect)
 }

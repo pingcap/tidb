@@ -357,7 +357,8 @@ create table t(
 	index idx_cb(c, a),
 	index idx_d(d(2)),
 	index idx_e(e(2)),
-	index idx_f(f)
+	index idx_f(f),
+	index idx_de(d(2), e)
 )`)
 
 	tests := []struct {
@@ -384,14 +385,14 @@ create table t(
 		{
 			indexPos:    0,
 			exprStr:     "a LIKE 'abc'",
-			accessConds: "[like(test.t.a, abc, 92)]",
+			accessConds: "[eq(test.t.a, abc)]",
 			filterConds: "[]",
 			resultStr:   "[[\"abc\",\"abc\"]]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "ab\_c"`,
-			accessConds: "[like(test.t.a, ab\\_c, 92)]",
+			accessConds: "[eq(test.t.a, ab_c)]",
 			filterConds: "[]",
 			resultStr:   "[[\"ab_c\",\"ab_c\"]]",
 		},
@@ -405,14 +406,14 @@ create table t(
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE '\%a'`,
-			accessConds: "[like(test.t.a, \\%a, 92)]",
+			accessConds: "[eq(test.t.a, %a)]",
 			filterConds: "[]",
 			resultStr:   `[["%a","%a"]]`,
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "\\"`,
-			accessConds: "[like(test.t.a, \\, 92)]",
+			accessConds: "[eq(test.t.a, \\)]",
 			filterConds: "[]",
 			resultStr:   "[[\"\\\",\"\\\"]]",
 		},
@@ -625,6 +626,13 @@ create table t(
 			accessConds: "[]",
 			filterConds: "[like(test.t.f, @%, 92)]",
 			resultStr:   "[[NULL,+inf]]",
+		},
+		{
+			indexPos:    5,
+			exprStr:     "d in ('aab', 'aac') and e = 'a'",
+			accessConds: "[in(test.t.d, aab, aac) eq(test.t.e, a)]",
+			filterConds: "[in(test.t.d, aab, aac)]",
+			resultStr:   "[[\"aa\" \"[97]\",\"aa\" \"[97]\"]]",
 		},
 	}
 

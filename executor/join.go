@@ -839,6 +839,39 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	return nil
 }
 
+// aggExecutorTreeInputEmpty checks whether the executor tree returns empty if without aggregate operators.
+// Note that, the prerequisite is that this executor tree has been executed already and it returns one row.
+func aggExecutorTreeInputEmpty(e Executor) bool {
+	children := e.base().children
+	if len(children) == 0 {
+		return false
+	}
+	if len(children) > 1 {
+		_, ok := e.(*UnionExec)
+		if !ok {
+			// It is a Join executor.
+			return false
+		}
+		for _, child := range children {
+			if !aggExecutorTreeInputEmpty(child) {
+				return false
+			}
+		}
+		return true
+	}
+	// Single child executors.
+	if aggExecutorTreeInputEmpty(children[0]) {
+		return true
+	}
+	if hashAgg, ok := e.(*HashAggExec); ok {
+		return hashAgg.isChildReturnEmpty
+	}
+	if streamAgg, ok := e.(*StreamAggExec); ok {
+		return streamAgg.isChildReturnEmpty
+	}
+	return false
+}
+
 func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *chunk.Chunk) (*chunk.Row, error) {
 	outerIter := chunk.NewIterator4Chunk(e.outerChunk)
 	for {
@@ -853,6 +886,13 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 			e.outerSelected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, outerIter, e.outerSelected)
 			if err != nil {
 				return nil, err
+			}
+			// For cases like `select count(1), (select count(1) from s where s.a > t.a) as sub from t where t.a = 1`,
+			// if outer child has no row satisfying `t.a = 1`, `sub` should be `null` instead of `0` theoretically; however, the
+			// outer `count(1)` produces one row <0, null> over the empty input, we should specially mark this outer row
+			// as not selected, to trigger the mismatch join procedure.
+			if e.outerChunkCursor == 0 && e.outerChunk.NumRows() == 1 && e.outerSelected[0] && aggExecutorTreeInputEmpty(e.outerExec) {
+				e.outerSelected[0] = false
 			}
 			e.outerChunkCursor = 0
 		}

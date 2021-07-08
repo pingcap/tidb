@@ -14,13 +14,13 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 	"math/bits"
 	"strings"
 	"sync/atomic"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
@@ -352,7 +352,7 @@ func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return updateColumnDefaultValue(t, job, newCol, &newCol.Name)
 }
 
-func (w *worker) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	newCol := &model.ColumnInfo{}
 	oldColName := &model.CIStr{}
 	pos := &ast.ColumnPosition{}
@@ -364,12 +364,12 @@ func (w *worker) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return ver, errors.Trace(err)
 	}
 
-	return w.doModifyColumn(t, job, newCol, oldColName, pos, modifyColumnTp, updatedAutoRandomBits)
+	return w.doModifyColumn(d, t, job, newCol, oldColName, pos, modifyColumnTp, updatedAutoRandomBits)
 }
 
 // doModifyColumn updates the column information and reorders all columns.
 func (w *worker) doModifyColumn(
-	t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr,
+	d *ddlCtx, t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr,
 	pos *ast.ColumnPosition, modifyColumnTp byte, newAutoRandBits uint64) (ver int64, _ error) {
 	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
@@ -412,11 +412,12 @@ func (w *worker) doModifyColumn(
 		}
 	})
 
-	if newAutoRandBits > 0 {
-		if err := checkAndApplyNewAutoRandomBits(job, t, tblInfo, newCol, oldName, newAutoRandBits); err != nil {
-			return ver, errors.Trace(err)
-		}
+	err = checkAndApplyAutoRandomBits(d, t, dbInfo, tblInfo, oldCol, newCol, newAutoRandBits)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
 	}
+
 	// Column from null to not null.
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
 		noPreventNullFlag := !mysql.HasPreventNullInsertFlag(oldCol.Flag)
@@ -507,47 +508,98 @@ func (w *worker) doModifyColumn(
 	return ver, nil
 }
 
-func checkAndApplyNewAutoRandomBits(job *model.Job, t *meta.Meta, tblInfo *model.TableInfo,
-	newCol *model.ColumnInfo, oldName *model.CIStr, newAutoRandBits uint64) error {
-	schemaID := job.SchemaID
-	newLayout := autoid.NewShardIDLayout(&newCol.FieldType, newAutoRandBits)
-
-	// GenAutoRandomID first to prevent concurrent update.
-	_, err := t.GenAutoRandomID(schemaID, tblInfo.ID, 1)
+func checkAndApplyAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+	oldCol *model.ColumnInfo, newCol *model.ColumnInfo, newAutoRandBits uint64) error {
+	if newAutoRandBits == 0 {
+		return nil
+	}
+	err := checkNewAutoRandomBits(m, dbInfo.ID, tblInfo.ID, oldCol, newCol, newAutoRandBits)
 	if err != nil {
 		return err
 	}
-	currentIncBitsVal, err := t.GetAutoRandomID(schemaID, tblInfo.ID)
+	return applyNewAutoRandomBits(d, m, dbInfo, tblInfo, oldCol, newAutoRandBits)
+}
+
+// checkNewAutoRandomBits checks whether the new auto_random bits number can cause overflow.
+func checkNewAutoRandomBits(m *meta.Meta, schemaID, tblID int64,
+	oldCol *model.ColumnInfo, newCol *model.ColumnInfo, newAutoRandBits uint64) error {
+	newLayout := autoid.NewShardIDLayout(&newCol.FieldType, newAutoRandBits)
+
+	allocTp := autoid.AutoRandomType
+	convertedFromAutoInc := mysql.HasAutoIncrementFlag(oldCol.Flag)
+	if convertedFromAutoInc {
+		allocTp = autoid.AutoIncrementType
+	}
+	// GenerateAutoID first to prevent concurrent update in DML.
+	_, err := autoid.GenerateAutoID(m, schemaID, tblID, 1, allocTp)
+	if err != nil {
+		return err
+	}
+	currentIncBitsVal, err := autoid.GetAutoID(m, schemaID, tblID, allocTp)
 	if err != nil {
 		return err
 	}
 	// Find the max number of available shard bits by
 	// counting leading zeros in current inc part of auto_random ID.
-	availableBits := bits.LeadingZeros64(uint64(currentIncBitsVal))
-	isOccupyingIncBits := newLayout.TypeBitsLength-newLayout.IncrementalBits > uint64(availableBits)
-	if isOccupyingIncBits {
-		availableBits := mathutil.Min(autoid.MaxAutoRandomBits, availableBits)
-		errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, availableBits, newAutoRandBits, oldName.O)
-		job.State = model.JobStateCancelled
+	usedBits := uint64(64 - bits.LeadingZeros64(uint64(currentIncBitsVal)))
+	if usedBits > newLayout.IncrementalBits {
+		overflowCnt := usedBits - newLayout.IncrementalBits
+		errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, newAutoRandBits-overflowCnt, newAutoRandBits, oldCol.Name.O)
 		return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 	}
+	return nil
+}
+
+// applyNewAutoRandomBits set auto_random bits to TableInfo and
+// migrate auto_increment ID to auto_random ID if possible.
+func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
+	tblInfo *model.TableInfo, oldCol *model.ColumnInfo, newAutoRandBits uint64) error {
 	tblInfo.AutoRandomBits = newAutoRandBits
+	needMigrateFromAutoIncToAutoRand := mysql.HasAutoIncrementFlag(oldCol.Flag)
+	if !needMigrateFromAutoIncToAutoRand {
+		return nil
+	}
+	autoRandAlloc := autoid.NewAllocatorsFromTblInfo(d.store, dbInfo.ID, tblInfo).Get(autoid.AutoRandomType)
+	if autoRandAlloc == nil {
+		errMsg := fmt.Sprintf(autoid.AutoRandomAllocatorNotFound, dbInfo.Name.O, tblInfo.Name.O)
+		return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+	}
+	nextAutoIncID, err := m.GetAutoTableID(dbInfo.ID, tblInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = autoRandAlloc.Rebase(tblInfo.ID, nextAutoIncID, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := m.CleanAutoID(dbInfo.ID, tblInfo.ID); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 
 // checkForNullValue ensure there are no null values of the column of this table.
 // `isDataTruncated` indicates whether the new field and the old field type are the same, in order to be compatible with mysql.
 func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, table, newCol model.CIStr, oldCols ...*model.ColumnInfo) error {
-	colsStr := ""
+	var buf strings.Builder
+	buf.WriteString("select 1 from %n.%n where ")
+	paramsList := make([]interface{}, 0, 2+len(oldCols))
+	paramsList = append(paramsList, schema.L, table.L)
 	for i, col := range oldCols {
 		if i == 0 {
-			colsStr += "`" + col.Name.L + "` is null"
+			buf.WriteString("%n is null")
+			paramsList = append(paramsList, col.Name.L)
 		} else {
-			colsStr += " or `" + col.Name.L + "` is null"
+			buf.WriteString(" or %n is null")
+			paramsList = append(paramsList, col.Name.L)
 		}
 	}
-	sql := fmt.Sprintf("select 1 from `%s`.`%s` where %s limit 1;", schema.L, table.L, colsStr)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	buf.WriteString(" limit 1")
+	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.Background(), buf.String(), paramsList...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.Background(), stmt)
 	if err != nil {
 		return errors.Trace(err)
 	}

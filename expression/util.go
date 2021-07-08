@@ -239,11 +239,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 					_ = append(append(append(tmpArgs, refExprArr.Result()[0:idx]...), refExprArr.Result()[idx+1:]...), newFuncExpr)
 					_, newColl := DeriveCollationFromExprs(v.GetCtx(), append(v.GetArgs(), newFuncExpr)...)
 					if coll == newColl {
-						collStrictness, ok1 := CollationStrictness[coll]
-						newResStrictness, ok2 := CollationStrictness[newFuncExpr.GetType().Collate]
-						if ok1 && ok2 && newResStrictness >= collStrictness {
-							changed = true
-						}
+						changed = checkCollationStrictness(coll, newFuncExpr.GetType().Collate)
 					}
 				}
 			}
@@ -257,6 +253,27 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		}
 	}
 	return false, expr
+}
+
+// checkCollationStrictness check collation strictness-ship between `coll` and `newFuncColl`
+// return true iff `newFuncColl` is not weaker than `coll`
+func checkCollationStrictness(coll, newFuncColl string) bool {
+	collGroupID, ok1 := CollationStrictnessGroup[coll]
+	newFuncCollGroupID, ok2 := CollationStrictnessGroup[newFuncColl]
+
+	if ok1 && ok2 {
+		if collGroupID == newFuncCollGroupID {
+			return true
+		}
+
+		for _, id := range CollationStrictness[collGroupID] {
+			if newFuncCollGroupID == id {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // getValidPrefix gets a prefix of string which can parsed to a number with base. the minimum base is 2 and the maximum is 36.

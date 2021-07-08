@@ -365,6 +365,14 @@ func (p *PhysicalIndexMergeReader) ResolveIndices() (err error) {
 		}
 	}
 	for i := 0; i < len(p.partialPlans); i++ {
+		switch x := p.partialPlans[i].(type) {
+		case *PhysicalTableReader:
+			newCol, err := p.ExtraHandleCol.ResolveIndices(x.Schema())
+			if err != nil {
+				return err
+			}
+			p.ExtraHandleCol = newCol.(*expression.Column)
+		}
 		err = p.partialPlans[i].ResolveIndices()
 		if err != nil {
 			return err

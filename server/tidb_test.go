@@ -148,6 +148,12 @@ func (ts *tidbTestSerialSuite) TestLoadData(c *C) {
 	ts.runTestLoadDataForSlowLog(c, ts.server)
 }
 
+// Fix issue#22540. Change tidb_dml_batch_size,
+// then check if load data into table with auto random column works properly.
+func (ts *tidbTestSerialSuite) TestLoadDataAutoRandom(c *C) {
+	ts.runTestLoadDataAutoRandom(c)
+}
+
 func (ts *tidbTestSerialSuite) TestExplainFor(c *C) {
 	ts.runTestExplainForConn(c)
 }
@@ -176,6 +182,7 @@ func (ts *tidbTestSuite) TestIssues(c *C) {
 	c.Parallel()
 	ts.runTestIssue3662(c)
 	ts.runTestIssue3680(c)
+	ts.runTestIssue22646(c)
 }
 
 func (ts *tidbTestSuite) TestDBNameEscape(c *C) {
@@ -241,6 +248,7 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
 	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
+	c.Assert(server.isUnixSocket(), IsFalse) // If listening on tcp-only, return FALSE
 
 	// https connection should work.
 	ts.runTestStatusAPI(c)
@@ -341,6 +349,7 @@ func (ts *tidbTestSuite) TestSocketForwarding(c *C) {
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
+	c.Assert(server.isUnixSocket(), IsFalse) // If listening on both, return FALSE
 	defer server.Close()
 
 	cli.runTestRegression(c, func(config *mysql.Config) {
@@ -364,6 +373,7 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 	c.Assert(err, IsNil)
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
+	c.Assert(server.isUnixSocket(), IsTrue) // If listening on socket-only, return TRUE
 	defer server.Close()
 
 	//a fake server client, config is override, just used to run tests
@@ -923,6 +933,10 @@ func (ts *tidbTestSuite) TestFieldList(c *C) {
 	cols = rs.Columns()
 	c.Assert(cols[0].OrgName, Equals, "c_bit")
 	c.Assert(cols[0].Name, Equals, columnAsName)
+}
+
+func (ts *tidbTestSuite) TestClientErrors(c *C) {
+	ts.runTestInfoschemaClientErrors(c)
 }
 
 func (ts *tidbTestSuite) TestSumAvg(c *C) {

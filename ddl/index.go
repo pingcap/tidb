@@ -618,6 +618,12 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Set column index flag.
 		dropIndexColumnFlag(tblInfo, indexInfo)
 
+		failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
+			if val.(bool) {
+				panic("panic test in cancelling add index")
+			}
+		})
+
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-len(dependentHiddenCols)]
 
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != model.StateNone)

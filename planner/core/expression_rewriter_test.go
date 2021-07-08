@@ -377,3 +377,21 @@ func (s *testExpressionRewriterSuite) TestCompareMultiFieldsInSubquery(c *C) {
 	tk.MustQuery("SELECT * FROM t3 WHERE (SELECT c1, c2 FROM t3 LIMIT 1) != ALL(SELECT c1, c2 FROM t4);").Check(testkit.Rows())
 
 }
+
+func (s *testExpressionRewriterSuite) TestIssue22818(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a time);")
+	tk.MustExec("insert into t values(\"23:22:22\");")
+	tk.MustQuery("select * from t where a between \"23:22:22\" and \"23:22:22\"").Check(
+		testkit.Rows("23:22:22"))
+}

@@ -7,5 +7,17 @@
       "select * from t1 natural right join t2 order by a",
       "SELECT * FROM t1 NATURAL LEFT JOIN t2 WHERE not(t1.a <=> t2.a)"
     ]
+  },
+  {
+    "name": "TestIndexScanWithYearCol",
+    "cases": [
+      "select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL",
+      "select * from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL",
+      "select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL",
+      "select t1.c1, t2.c1 from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL",
+      "select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL",
+      "select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL",
+      "select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 is not NULL"
+    ]
   }
 ]

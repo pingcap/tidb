@@ -199,7 +199,10 @@ func (ss *RegionBatchRequestSender) onSendFail(bo *Backoffer, ctxs []copTaskAndR
 	// When a store is not available, the leader of related region should be elected quickly.
 	// TODO: the number of retry time should be limited:since region may be unavailable
 	// when some unrecoverable disaster happened.
-	err = bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctxs: %v, try next peer later", err, ctxs))
+
+	// Currently this function is only used in TiFlash batch cop.
+	// TODO: need code refactoring for these functions.
+	err = bo.Backoff(boTiFlashRPC, errors.Errorf("send tiflash request error: %v, ctxs: %v, try next peer later", err, ctxs))
 	return errors.Trace(err)
 }
 
@@ -604,7 +607,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 
 	if storeNotMatch := regionErr.GetStoreNotMatch(); storeNotMatch != nil {
 		// store not match
-		logutil.BgLogger().Warn("tikv reports `StoreNotMatch` retry later",
+		logutil.BgLogger().Debug("tikv reports `StoreNotMatch` retry later",
 			zap.Stringer("storeNotMatch", storeNotMatch),
 			zap.Stringer("ctx", ctx))
 		ctx.Store.markNeedCheck(s.regionCache.notifyCheckCh)

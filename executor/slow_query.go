@@ -457,6 +457,8 @@ type slowQueryTuple struct {
 	rewriteTime            float64
 	preprocSubqueries      uint64
 	preprocSubQueryTime    float64
+	optimizeTime           float64
+	waitTSTime             float64
 	preWriteTime           float64
 	waitPrewriteBinlogTime float64
 	commitTime             float64
@@ -496,6 +498,7 @@ type slowQueryTuple struct {
 	isInternal             bool
 	succ                   bool
 	planFromCache          bool
+	planFromBinding        bool
 	prepared               bool
 	kvTotal                float64
 	pdTotal                float64
@@ -563,6 +566,10 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.parseTime, err = strconv.ParseFloat(value, 64)
 	case variable.SlowLogCompileTimeStr:
 		st.compileTime, err = strconv.ParseFloat(value, 64)
+	case variable.SlowLogOptimizeTimeStr:
+		st.optimizeTime, err = strconv.ParseFloat(value, 64)
+	case variable.SlowLogWaitTSTimeStr:
+		st.waitTSTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.PreWriteTimeStr:
 		st.preWriteTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.WaitPrewriteBinlogTimeStr:
@@ -635,6 +642,8 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.succ, err = strconv.ParseBool(value)
 	case variable.SlowLogPlanFromCache:
 		st.planFromCache, err = strconv.ParseBool(value)
+	case variable.SlowLogPlanFromBinding:
+		st.planFromBinding, err = strconv.ParseBool(value)
 	case variable.SlowLogPlan:
 		st.plan = value
 	case variable.SlowLogPlanDigest:
@@ -687,6 +696,8 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewFloat64Datum(st.rewriteTime))
 	record = append(record, types.NewUintDatum(st.preprocSubqueries))
 	record = append(record, types.NewFloat64Datum(st.preprocSubQueryTime))
+	record = append(record, types.NewFloat64Datum(st.optimizeTime))
+	record = append(record, types.NewFloat64Datum(st.waitTSTime))
 	record = append(record, types.NewFloat64Datum(st.preWriteTime))
 	record = append(record, types.NewFloat64Datum(st.waitPrewriteBinlogTime))
 	record = append(record, types.NewFloat64Datum(st.commitTime))
@@ -738,6 +749,11 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 		record = append(record, types.NewIntDatum(0))
 	}
 	if st.planFromCache {
+		record = append(record, types.NewIntDatum(1))
+	} else {
+		record = append(record, types.NewIntDatum(0))
+	}
+	if st.planFromBinding {
 		record = append(record, types.NewIntDatum(1))
 	} else {
 		record = append(record, types.NewIntDatum(0))

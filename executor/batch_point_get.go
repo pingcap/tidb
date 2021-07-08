@@ -180,6 +180,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
 			}
+			if idxKey == nil {
+				continue
+			}
 			s := hack.String(idxKey)
 			if _, found := dedup[s]; found {
 				continue
@@ -389,7 +392,7 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]
 }
 
 func getPhysID(tblInfo *model.TableInfo, val int64) int64 {
-	pi := tblInfo.Partition
+	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return tblInfo.ID
 	}

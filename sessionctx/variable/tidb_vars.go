@@ -72,6 +72,9 @@ const (
 	// TiDBLastTxnInfo is used to get the last transaction info within the current session.
 	TiDBLastTxnInfo = "tidb_last_txn_info"
 
+	// TiDBLastTxnInfo is used to get the last query info within the current session.
+	TiDBLastQueryInfo = "tidb_last_query_info"
+
 	// tidb_config is a read-only variable that shows the config of the current server.
 	TiDBConfig = "tidb_config"
 
@@ -180,6 +183,9 @@ const (
 
 	// TiDBFoundInPlanCache indicates whether the last statement was found in plan cache
 	TiDBFoundInPlanCache = "last_plan_from_cache"
+
+	// TiDBFoundInBinding indicates whether the last statement was matched with the hints in the binding.
+	TiDBFoundInBinding = "last_plan_from_binding"
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	TiDBAllowAutoRandExplicitInsert = "allow_auto_random_explicit_insert"
@@ -525,6 +531,7 @@ const (
 	DefTiDBMetricSchemaStep            = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
 	DefTiDBFoundInPlanCache            = false
+	DefTiDBFoundInBinding              = false
 	DefTiDBEnableCollectExecutionInfo  = true
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBRedactLog                   = false

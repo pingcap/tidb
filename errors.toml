@@ -496,6 +496,16 @@ error = '''
 Illegal mix of collations (%s,%s) and (%s,%s) for operation '%s'
 '''
 
+["expression:1270"]
+error = '''
+Illegal mix of collations (%s,%s), (%s,%s), (%s,%s) for operation '%s'
+'''
+
+["expression:1271"]
+error = '''
+Illegal mix of collations for operation '%s'
+'''
+
 ["expression:1365"]
 error = '''
 Division by 0

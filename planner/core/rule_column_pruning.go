@@ -217,6 +217,8 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) erro
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) error {
 	parentUsedCols = append(parentUsedCols, p.handleCol)
+	condCols := expression.ExtractColumnsFromExpressions(nil, p.conditions, nil)
+	parentUsedCols = append(parentUsedCols, condCols...)
 	return p.children[0].PruneColumns(parentUsedCols)
 }
 
@@ -301,17 +303,7 @@ func (p *LogicalJoin) extractUsedCols(parentUsedCols []*expression.Column) (left
 }
 
 func (p *LogicalJoin) mergeSchema() {
-	lChild := p.children[0]
-	rChild := p.children[1]
-	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
-		p.schema = lChild.Schema().Clone()
-	} else if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
-		joinCol := p.schema.Columns[len(p.schema.Columns)-1]
-		p.schema = lChild.Schema().Clone()
-		p.schema.Append(joinCol)
-	} else {
-		p.schema = expression.MergeSchema(lChild.Schema(), rChild.Schema())
-	}
+	p.schema = buildLogicalJoinSchema(p.JoinType, p)
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -367,9 +359,8 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
 	}
 
 	if len(p.partitionedTable) > 0 {
-		// If the children include partitioned tables, do not prune columns.
-		// Because the executor needs the partitioned columns to calculate the lock key.
-		return p.children[0].PruneColumns(p.Schema().Columns)
+		// If the children include partitioned tables, there is an extra partition ID column.
+		parentUsedCols = append(parentUsedCols, p.extraPIDInfo.Columns...)
 	}
 
 	for _, cols := range p.tblID2Handle {

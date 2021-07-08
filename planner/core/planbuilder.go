@@ -461,10 +461,6 @@ type PlanBuilder struct {
 	// correlatedAggMapper stores columns for correlated aggregates which should be evaluated in outer query.
 	correlatedAggMapper map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
 
-	// cache ResultSetNodes and HandleHelperMap to avoid rebuilding.
-	cachedResultSetNodes  map[*ast.Join]LogicalPlan
-	cachedHandleHelperMap map[*ast.Join]map[int64][]*expression.Column
-
 	// isForUpdateRead should be true in either of the following situations
 	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
 	// 2. isolation level is RC
@@ -569,15 +565,13 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 	}
 	return &PlanBuilder{
-		ctx:                   sctx,
-		is:                    is,
-		colMapper:             make(map[*ast.ColumnNameExpr]int),
-		handleHelper:          &handleColHelper{id2HandleMapStack: make([]map[int64][]*expression.Column, 0)},
-		hintProcessor:         processor,
-		correlatedAggMapper:   make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
-		cachedResultSetNodes:  make(map[*ast.Join]LogicalPlan),
-		cachedHandleHelperMap: make(map[*ast.Join]map[int64][]*expression.Column),
-		isForUpdateRead:       sctx.GetSessionVars().IsPessimisticReadConsistency(),
+		ctx:                 sctx,
+		is:                  is,
+		colMapper:           make(map[*ast.ColumnNameExpr]int),
+		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]*expression.Column, 0)},
+		hintProcessor:       processor,
+		correlatedAggMapper: make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
+		isForUpdateRead:     sctx.GetSessionVars().IsPessimisticReadConsistency(),
 	}, savedBlockNames
 }
 
@@ -1052,14 +1046,47 @@ func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.T
 	return remainedPaths
 }
 
-func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock ast.SelectLockType) *LogicalLock {
+func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock ast.SelectLockType) (*LogicalLock, error) {
 	selectLock := LogicalLock{
 		Lock:             lock,
 		tblID2Handle:     b.handleHelper.tailMap(),
 		partitionedTable: b.partitionedTable,
 	}.Init(b.ctx)
 	selectLock.SetChildren(src)
-	return selectLock
+
+	if len(b.partitionedTable) > 0 {
+		// If a chunk row is read from a partitioned table, which partition the row
+		// comes from is unknown. With the existence of Join, the situation could be
+		// even worse: SelectLock have to know the `pid` to construct the lock key.
+		// To solve the problem, an extra `pid` column is add to the schema, and the
+		// DataSource need to return the `pid` information in the chunk row.
+		err := addExtraPIDColumnToDataSource(src, &selectLock.extraPIDInfo)
+		if err != nil {
+			return nil, err
+		}
+		// TODO: Dynamic partition mode does not support adding extra pid column to the data source.
+		// (Because one table reader can read from multiple partitions, which partition a chunk row comes from is unknown)
+		// So we have to use the old "rewrite to union" way here, set `flagPartitionProcessor` flag for that.
+		b.optFlag = b.optFlag | flagPartitionProcessor
+	}
+	return selectLock, nil
+}
+
+func addExtraPIDColumnToDataSource(p LogicalPlan, info *extraPIDInfo) error {
+	switch raw := p.(type) {
+	case *DataSource:
+		raw.addExtraPIDColumn(info)
+		return nil
+	default:
+		var err error
+		for _, child := range p.Children() {
+			err = addExtraPIDColumnToDataSource(child, info)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
@@ -2237,14 +2264,30 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
 
+	user := b.ctx.GetSessionVars().User
 	var authErr error
-	if b.ctx.GetSessionVars().User != nil {
-		authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.AuthUsername,
-			b.ctx.GetSessionVars().User.AuthHostname, tableInfo.Name.L)
+	if user != nil {
+		authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, tableInfo.Name.L)
 	}
 
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tn.DBInfo.Name.L,
 		tableInfo.Name.L, "", authErr)
+
+	// `REPLACE INTO` requires both INSERT + DELETE privilege
+	// `ON DUPLICATE KEY UPDATE` requires both INSERT + UPDATE privilege
+	var extraPriv mysql.PrivilegeType
+	if insert.IsReplace {
+		extraPriv = mysql.DeletePriv
+	} else if insert.OnDuplicate != nil {
+		extraPriv = mysql.UpdatePriv
+	}
+	if extraPriv != 0 {
+		if user != nil {
+			cmd := strings.ToUpper(mysql.Priv2Str[extraPriv])
+			authErr = ErrTableaccessDenied.GenWithStackByArgs(cmd, user.AuthUsername, user.AuthHostname, tableInfo.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, extraPriv, tn.DBInfo.Name.L, tableInfo.Name.L, "", authErr)
+	}
 
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	mockTablePlan.SetSchema(insertPlan.tableSchema)

@@ -291,6 +291,16 @@ func (s *testSuite6) TestViewRecursion(c *C) {
 	tk.MustExec("drop view recursive_view1, t")
 }
 
+func (s *testSuite6) TestIssue23027(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t23027")
+	tk.MustExec("create table t23027(a char(10))")
+	tk.MustExec("insert into t23027 values ('a'), ('a')")
+	tk.MustExec("create definer='root'@'localhost' view v23027 as select group_concat(a) from t23027;")
+	tk.MustQuery("select * from v23027").Check(testkit.Rows("a,a"))
+}
+
 func (s *testSuite6) TestIssue16250(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

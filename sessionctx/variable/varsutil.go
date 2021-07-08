@@ -122,6 +122,12 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 			return "", true, err
 		}
 		return string(info), true, nil
+	case TiDBLastQueryInfo:
+		info, err := json.Marshal(s.LastQueryInfo)
+		if err != nil {
+			return "", true, err
+		}
+		return string(info), true, nil
 	case TiDBGeneralLog:
 		return fmt.Sprintf("%d", atomic.LoadUint32(&ProcessGeneralLog)), true, nil
 	case TiDBPProfSQLCPU:
@@ -163,6 +169,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return CapturePlanBaseline.GetVal(), true, nil
 	case TiDBFoundInPlanCache:
 		return BoolToIntStr(s.PrevFoundInPlanCache), true, nil
+	case TiDBFoundInBinding:
+		return BoolToIntStr(s.PrevFoundInBinding), true, nil
 	case TiDBEnableCollectExecutionInfo:
 		return BoolToIntStr(config.GetGlobalConfig().EnableCollectExecutionInfo), true, nil
 	}
