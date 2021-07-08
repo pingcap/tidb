@@ -34,15 +34,19 @@ type columnBufferAllocator interface {
 // localSliceBuffer implements columnBufferAllocator interface.
 // It works like a concurrency-safe deque which is implemented by a lock + slice.
 type localSliceBuffer struct {
-	sync.Mutex
-	buffers []*chunk.Column
-	head    int
-	tail    int
-	size    int
+	pool sync.Pool
 }
 
 func newLocalSliceBuffer(initCap int) *localSliceBuffer {
-	return &localSliceBuffer{buffers: make([]*chunk.Column, initCap)}
+	return &localSliceBuffer{
+		pool: sync.Pool{
+			New: func() interface{} {
+				// Use default arguments
+				col, _ := newBuffer(types.EvalType(mysql.TypeLonglong), chunk.InitialCapacity)
+				return col
+			},
+		},
+	}
 }
 
 var globalColumnAllocator = newLocalSliceBuffer(1024)
@@ -79,38 +83,14 @@ func PutColumn(buf *chunk.Column) {
 }
 
 func (r *localSliceBuffer) get(evalType types.EvalType, capacity int) (*chunk.Column, error) {
-	r.Lock()
-	if r.size > 0 {
-		buf := r.buffers[r.head]
-		r.head++
-		if r.head == len(r.buffers) {
-			r.head = 0
-		}
-		r.size--
-		r.Unlock()
-		return buf, nil
+	if col, ok := r.pool.Get().(*chunk.Column); ok {
+		return col, nil
 	}
-	r.Unlock()
 	return newBuffer(evalType, capacity)
 }
 
-func (r *localSliceBuffer) put(buf *chunk.Column) {
-	r.Lock()
-	if r.size == len(r.buffers) {
-		buffers := make([]*chunk.Column, len(r.buffers)*2)
-		copy(buffers, r.buffers[r.head:])
-		copy(buffers[r.size-r.head:], r.buffers[:r.tail])
-		r.head = 0
-		r.tail = len(r.buffers)
-		r.buffers = buffers
-	}
-	r.buffers[r.tail] = buf
-	r.tail++
-	if r.tail == len(r.buffers) {
-		r.tail = 0
-	}
-	r.size++
-	r.Unlock()
+func (r *localSliceBuffer) put(col *chunk.Column) {
+	r.pool.Put(col)
 }
 
 // vecEvalIntByRows uses the non-vectorized(row-based) interface `evalInt` to eval the expression.
