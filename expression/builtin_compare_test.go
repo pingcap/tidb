@@ -291,6 +291,14 @@ func (s *testEvaluatorSuite) TestGreatestLeastFunc(c *C) {
 			curTimeString, "123", false, false,
 		},
 		{
+			[]interface{}{2.0, 3, 1.000, 4.00},
+			4.000, 1.000, false, false,
+		},
+		{
+			[]interface{}{2.0, 3, 1.00, 4},
+			4.00, 1.00, false, false,
+		},
+		{
 			[]interface{}{tm, 123},
 			curTimeString, "123", false, false,
 		},
