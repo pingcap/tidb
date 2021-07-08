@@ -136,22 +136,29 @@ func (s *testVectorizeSuite2) TestMockVecPlusIntParallel(c *C) {
 	wg.Wait()
 }
 
+const (
+	initTestBufCap = 65536
+	numTestGet     = 4096
+)
+
 func BenchmarkColumnBufferAllocate(b *testing.B) {
-	allocator := newLocalSliceBuffer(1)
+	allocator := newLocalSliceBuffer(initTestBufCap)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		buf, _ := allocator.get(types.ETInt, 1024)
-		allocator.put(buf)
+		for j := 0; j < numTestGet; j++ {
+			col, _ := allocator.get(types.ETInt, chunk.InitialCapacity)
+			allocator.put(col)
+		}
 	}
 }
 
 func BenchmarkColumnBufferAllocateParallel(b *testing.B) {
-	allocator := newLocalSliceBuffer(1)
+	allocator := newLocalSliceBuffer(initTestBufCap)
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			buf, _ := allocator.get(types.ETInt, 1024)
-			allocator.put(buf)
+			col, _ := allocator.get(types.ETInt, chunk.InitialCapacity)
+			allocator.put(col)
 		}
 	})
 }
