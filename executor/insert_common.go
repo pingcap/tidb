@@ -515,7 +515,7 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 		// Type A to Type B, the value maybe truncated directly.
 		casted, err := table.CastValue(e.ctx, vals[i], e.insertColumns[i].ToInfo(), false, false)
 		// TODO: try to ignore the error in the CastValue with sessionCtx.
-		// Because: the returned truncated value with truncated value here is still not the valid ones.
+		// Because: the returned truncated value with truncated error here is still not the valid ones.
 		// load data into t:  CAST(BINARY(X'c2c2c2c2') -> CHAR(2); the returned truncated value is X'c2c2'
 		// which is still invalid without right utf8 encode.
 		if e.handleErr(nil, &vals[i], 0, err) != nil {
