@@ -185,7 +185,8 @@ func (s *testMyDecimalSuite) TestToFloat(c *C) {
 		c.Assert(err, IsNil)
 		f, err := dec.ToFloat64()
 		c.Check(err, IsNil)
-		std, _ := strconv.ParseFloat(ca.out, 64)
+		std, err := strconv.ParseFloat(ca.out, 64)
+		c.Check(err, IsNil)
 		c.Check(f, Equals, std)
 	}
 }
