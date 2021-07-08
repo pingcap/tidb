@@ -69,10 +69,10 @@ type windowData struct {
 	SQLUsage       sqlUsageData       `json:"SQLUsage"`
 }
 
-type sqlType map[string]int64
+type sqlType map[string]uint64
 
 type sqlUsageData struct {
-	SQLTotal int64   `json:"total"`
+	SQLTotal uint64  `json:"total"`
 	SQLType  sqlType `json:"type"`
 }
 
@@ -96,8 +96,8 @@ var (
 	subWindowsLock    = sync.RWMutex{}
 )
 
-func getSQLSum(sqlTypeData *sqlType) int64 {
-	result := int64(0)
+func getSQLSum(sqlTypeData *sqlType) uint64 {
+	result := uint64(0)
 	for _, v := range *sqlTypeData {
 		result += v
 	}
@@ -106,7 +106,7 @@ func getSQLSum(sqlTypeData *sqlType) int64 {
 
 func readSQLMetric(timepoint time.Time, SQLResult *sqlUsageData) error {
 	ctx := context.TODO()
-	promQL := "sum(tidb_executor_statement_total{}) by (instance,type)"
+	promQL := "avg(tidb_executor_statement_total{}) by (type)"
 	result, err := querySQLMetric(ctx, timepoint, promQL)
 	if err != nil {
 		promAddressErr.Add(1)
@@ -159,7 +159,7 @@ func anylisSQLUsage(promResult pmodel.Value, SQLResult *sqlUsageData) {
 		for _, m := range matrix {
 			v := m.Value
 			promLable := string(m.Metric[pmodel.LabelName("type")])
-			SQLResult.SQLType[promLable] = int64(float64(v))
+			SQLResult.SQLType[promLable] = uint64(v)
 		}
 	}
 }
