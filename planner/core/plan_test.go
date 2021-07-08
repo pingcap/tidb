@@ -614,6 +614,7 @@ func (s *testPlanNormalize) TestIssue25729(c *C) {
 	tk.MustQuery("select * from tt where a+1 = 5 and b=3;").Check(testkit.Rows("4 3"))
 
 	// Case2
+	tk.MustExec("drop table if exists t1")
 	tk.MustExec("CREATE TABLE `t1` (" +
 		"  `a` varchar(10) DEFAULT NULL," +
 		"  `b` varchar(10) DEFAULT NULL," +
