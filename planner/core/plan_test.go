@@ -599,6 +599,7 @@ func (s *testPlanNormalize) TestIssue25729(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tt")
+	// Case1
 	tk.MustExec("create table tt(a int, b int, key k((a+1)), key k1((a+1), b), key k2((a+1), b), key k3((a+1)));")
 
 	for i := 0; i < 10; i++ {
@@ -611,4 +612,23 @@ func (s *testPlanNormalize) TestIssue25729(c *C) {
 
 	tk.MustExec("insert into tt values(4, 3);")
 	tk.MustQuery("select * from tt where a+1 = 5 and b=3;").Check(testkit.Rows("4 3"))
+
+	// Case2
+	tk.MustExec("CREATE TABLE `t1` (" +
+		"  `a` varchar(10) DEFAULT NULL," +
+		"  `b` varchar(10) DEFAULT NULL," +
+		"  KEY `expression_index` ((concat(`a`, `b`)))," +
+		"  KEY `expression_index_2` ((concat(`a`, `b`)))," +
+		"  KEY `idx` ((concat(`a`, `b`)),`a`)," +
+		"  KEY `idx1` (`a`,(concat(`a`, `b`)))," +
+		"  KEY `idx2` (`a`,(concat(`a`, `b`)),`b`)" +
+		");")
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain select * from t1  where concat(a, b) like \"aadwa\" and a = \"a\";").Check(testkit.Rows(
+			"Projection_4 0.10 root  test.t1.a, test.t1.b",
+			"└─IndexReader_6 0.10 root  index:IndexRangeScan_5",
+			"  └─IndexRangeScan_5 0.10 cop[tikv] table:t1, index:idx2(a, concat(`a`, `b`), b) range:[\"a\" \"aadwa\",\"a\" \"aadwa\"], keep order:false, stats:pseudo"))
+	}
+	tk.MustExec("insert into t1 values(\"a\", \"adwa\");")
+	tk.MustQuery("select * from t1  where concat(a, b) like \"aadwa\" and a = \"a\";").Check(testkit.Rows("a adwa"))
 }

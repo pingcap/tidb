@@ -180,6 +180,15 @@ func (col *CorrelatedColumn) resolveIndices(_ *Schema) error {
 	return nil
 }
 
+// ResolveIndicesByVirtualExpr implements Expression interface.
+func (col *CorrelatedColumn) ResolveIndicesByVirtualExpr(_ *Schema) (Expression, bool) {
+	return col, true
+}
+
+func (col *CorrelatedColumn) resolveIndicesByVirtualExpr(_ *Schema) bool {
+	return true
+}
+
 // Column represents a column.
 type Column struct {
 	RetType *types.FieldType
@@ -477,16 +486,21 @@ func (col *Column) resolveIndices(schema *Schema) error {
 	return nil
 }
 
-// ResolveIndicesByVirtualExpr is used to resolve indices by expression virtual columns.
+// ResolveIndicesByVirtualExpr implements Expression interface.
 func (col *Column) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool) {
-	newCol := col.Clone().(*Column)
+	newCol := col.Clone()
+	isOk := newCol.resolveIndicesByVirtualExpr(schema)
+	return newCol, isOk
+}
+
+func (col *Column) resolveIndicesByVirtualExpr(schema *Schema) bool {
 	for i, c := range schema.Columns {
-		if expr, ok := c.VirtualExpr.(*ScalarFunction); ok && expr.Equal(nil, col.VirtualExpr) {
-			newCol.Index = i
-			return newCol, true
+		if expr, ok := c.VirtualExpr.(*ScalarFunction); (ok && expr.Equal(nil, col.VirtualExpr)) || c.UniqueID == col.UniqueID {
+			col.Index = i
+			return true
 		}
 	}
-	return nil, false
+	return false
 }
 
 // Vectorized returns if this expression supports vectorized evaluation.

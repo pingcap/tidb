@@ -1023,7 +1023,7 @@ func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, id
 	for i, indexCol := range indexCols {
 		isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
 		if indexCol != nil {
-			// check duplicate expression idx
+			// Check duplicate expression columns
 			expr, ok := col.VirtualExpr.(*expression.ScalarFunction)
 			isMatchExpr := ok && expr.Equal(nil, indexCol.VirtualExpr)
 			if (col.Equal(nil, indexCol) || isMatchExpr) && isFullLen {
