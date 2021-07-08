@@ -1250,13 +1250,13 @@ func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *Fie
 			ret.SetMysqlDuration(dur)
 			return ret, errors.Trace(err)
 		}
-		dur, err = dur.RoundFrac(fsp)
+		dur, err = dur.RoundFrac(fsp, sc.TimeZone)
 		ret.SetMysqlDuration(dur)
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
 	case KindMysqlDuration:
-		dur, err := d.GetMysqlDuration().RoundFrac(fsp)
+		dur, err := d.GetMysqlDuration().RoundFrac(fsp, sc.TimeZone)
 		ret.SetMysqlDuration(dur)
 		if err != nil {
 			return ret, errors.Trace(err)
@@ -1728,7 +1728,7 @@ func (d *Datum) toSignedInteger(sc *stmtctx.StatementContext, tp byte) (int64, e
 	case KindMysqlDuration:
 		// 11:11:11.999999 -> 111112
 		// 11:59:59.999999 -> 120000
-		dur, err := d.GetMysqlDuration().RoundFrac(DefaultFsp)
+		dur, err := d.GetMysqlDuration().RoundFrac(DefaultFsp, sc.TimeZone)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
