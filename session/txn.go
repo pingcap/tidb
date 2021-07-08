@@ -120,17 +120,28 @@ func (txn *LazyTxn) cleanupStmtBuf() {
 	buf.Cleanup(txn.stagingHandle)
 	txn.initCnt = buf.Len()
 
-	txn.updateTxnInfo(func(info *txninfo.TxnInfo) {
-		info.EntriesCount = uint64(txn.Transaction.Len())
-		info.EntriesSize = uint64(txn.Transaction.Size())
-	})
-}
-
-func (txn *LazyTxn) updateTxnInfo(f func(info *txninfo.TxnInfo)) {
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
+	info.EntriesCount = uint64(txn.Transaction.Len())
+	info.EntriesSize = uint64(txn.Transaction.Size())
+}
 
-	f(&txn.mu.TxnInfo)
+// resetTxnInfo resets the transaction info.
+// Note: call it under lock!
+func (txn *LazyTxn) resetTxnInfo(
+	startTS uint64,
+	state txninfo.TxnRunningState,
+	entriesCount,
+	entriesSize uint64,
+	currentSQLDigest string,
+	allSQLDigests []string,
+) {
+	txn.mu.TxnInfo.StartTS = startTS
+	txn.mu.TxnInfo.State = state
+	txn.mu.TxnInfo.EntriesCount = entriesCount
+	txn.mu.TxnInfo.EntriesSize = entriesSize
+	txn.mu.TxnInfo.CurrentSQLDigest = currentSQLDigest
+	txn.mu.TxnInfo.AllSQLDigests = allSQLDigests
 }
 
 // Size implements the MemBuffer interface.
@@ -203,13 +214,13 @@ func (txn *LazyTxn) changeInvalidToValid(kvTxn kv.Transaction) {
 
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
-
-	txn.mu.TxnInfo.StartTS = kvTxn.StartTS()
-	txn.mu.TxnInfo.State = txninfo.TxnRunningNormal
-	txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
-	txn.mu.TxnInfo.EntriesSize = uint64(txn.Transaction.Size())
-	txn.mu.TxnInfo.CurrentSQLDigest = ""
-	txn.mu.TxnInfo.AllSQLDigests = nil
+	txn.resetTxnInfo(
+		kvTxn.StartTS(),
+		txninfo.TxnRunningNormal,
+		uint64(txn.Transaction.Len()),
+		uint64(txn.Transaction.Size()),
+		"",
+		nil)
 }
 
 func (txn *LazyTxn) changeInvalidToPending(future *txnFuture) {
@@ -237,11 +248,13 @@ func (txn *LazyTxn) changePendingToValid(ctx context.Context) error {
 	// The txnInfo may already recorded the first statement (usually "begin") when it's pending, so keep them.
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
-
-	txn.mu.TxnInfo.StartTS = t.StartTS()
-	txn.mu.TxnInfo.State = txninfo.TxnRunningNormal
-	txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
-	txn.mu.TxnInfo.EntriesSize = uint64(txn.Transaction.Size())
+	txn.resetTxnInfo(
+		t.StartTS(),
+		txninfo.TxnRunningNormal,
+		uint64(txn.Transaction.Len()),
+		uint64(txn.Transaction.Size()),
+		txn.mu.TxnInfo.CurrentSQLDigest,
+		txn.mu.TxnInfo.AllSQLDigests)
 
 	return nil
 }
