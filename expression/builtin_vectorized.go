@@ -41,15 +41,14 @@ func newLocalSliceBuffer(initCap int) *localSliceBuffer {
 	buf := &localSliceBuffer{
 		pool: sync.Pool{
 			New: func() interface{} {
-				// Use default arguments
-				return chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity)
+				return nil
 			},
 		},
 	}
-	// cols := make([]chunk.Column, initCap)
-	// for _, col := range cols {
-	// 	buf.put(&col)
-	// }
+	cols := make([]*chunk.Column, initCap)
+	for _, col := range cols {
+		buf.put(col)
+	}
 	return buf
 }
 
@@ -87,7 +86,7 @@ func PutColumn(buf *chunk.Column) {
 }
 
 func (r *localSliceBuffer) get(evalType types.EvalType, capacity int) (*chunk.Column, error) {
-	if col, ok := r.pool.Get().(*chunk.Column); ok {
+	if col, _ := r.pool.Get().(*chunk.Column); col != nil {
 		return col, nil
 	}
 	return newBuffer(evalType, capacity)
