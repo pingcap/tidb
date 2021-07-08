@@ -625,10 +625,15 @@ func (s *testPlanNormalize) TestIssue25729(c *C) {
 		"  KEY `idx2` (`a`,(concat(`a`, `b`)),`b`)" +
 		");")
 	for i := 0; i < 10; i++ {
-		tk.MustQuery("explain select * from t1  where concat(a, b) like \"aadwa\" and a = \"a\";").Check(testkit.Rows(
-			"Projection_4 0.10 root  test.t1.a, test.t1.b",
-			"└─IndexReader_6 0.10 root  index:IndexRangeScan_5",
-			"  └─IndexRangeScan_5 0.10 cop[tikv] table:t1, index:idx2(a, concat(`a`, `b`), b) range:[\"a\" \"aadwa\",\"a\" \"aadwa\"], keep order:false, stats:pseudo"))
+		tk.MustQuery("explain format='brief' select * from t1  where concat(a, b) like \"aadwa\" and a = \"a\";").Check(testkit.Rows(
+			"Projection 0.10 root  test.t1.a, test.t1.b",
+			"└─IndexReader 0.10 root  index:IndexRangeScan",
+			"  └─IndexRangeScan 0.10 cop[tikv] table:t1, index:idx2(a, concat(`a`, `b`), b) range:[\"a\" \"aadwa\",\"a\" \"aadwa\"], keep order:false, stats:pseudo"))
+
+		tk.MustQuery("explain format='brief' select b from t1 where concat(a, b) >= \"aa\" and a = \"b\";").Check(testkit.Rows(
+			"Projection 33.33 root  test.t1.b",
+			"└─IndexReader 33.33 root  index:IndexRangeScan",
+			"  └─IndexRangeScan 33.33 cop[tikv] table:t1, index:idx2(a, concat(`a`, `b`), b) range:[\"b\" \"aa\",\"b\" +inf], keep order:false, stats:pseudo"))
 	}
 	tk.MustExec("insert into t1 values(\"a\", \"adwa\");")
 	tk.MustQuery("select * from t1  where concat(a, b) like \"aadwa\" and a = \"a\";").Check(testkit.Rows("a adwa"))

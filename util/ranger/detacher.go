@@ -284,6 +284,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	}
 	checker := &conditionChecker{
 		colUniqueID:   d.cols[eqOrInCount].UniqueID,
+		checkerCol:    d.cols[eqOrInCount],
 		length:        d.lengths[eqOrInCount],
 		shouldReserve: d.lengths[eqOrInCount] != types.UnspecifiedLength,
 	}
@@ -546,6 +547,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 	sc := d.sctx.GetSessionVars().StmtCtx
 	firstColumnChecker := &conditionChecker{
 		colUniqueID:   d.cols[0].UniqueID,
+		checkerCol:    d.cols[0],
 		shouldReserve: d.lengths[0] != types.UnspecifiedLength,
 		length:        d.lengths[0],
 	}
@@ -697,9 +699,10 @@ func removeAccessConditions(conditions, accessConds []expression.Expression) []e
 
 // ExtractAccessConditionsForColumn extracts the access conditions used for range calculation. Since
 // we don't need to return the remained filter conditions, it is much simpler than DetachCondsForColumn.
-func ExtractAccessConditionsForColumn(conds []expression.Expression, uniqueID int64) []expression.Expression {
+func ExtractAccessConditionsForColumn(conds []expression.Expression, col *expression.Column) []expression.Expression {
 	checker := conditionChecker{
-		colUniqueID: uniqueID,
+		colUniqueID: col.UniqueID,
+		checkerCol:  col,
 		length:      types.UnspecifiedLength,
 	}
 	accessConds := make([]expression.Expression, 0, 8)
@@ -710,6 +713,7 @@ func ExtractAccessConditionsForColumn(conds []expression.Expression, uniqueID in
 func DetachCondsForColumn(sctx sessionctx.Context, conds []expression.Expression, col *expression.Column) (accessConditions, otherConditions []expression.Expression) {
 	checker := &conditionChecker{
 		colUniqueID: col.UniqueID,
+		checkerCol:  col,
 		length:      types.UnspecifiedLength,
 	}
 	return detachColumnCNFConditions(sctx, conds, checker)
@@ -732,6 +736,7 @@ func MergeDNFItems4Col(ctx sessionctx.Context, dnfItems []expression.Expression)
 		uniqueID := cols[0].UniqueID
 		checker := &conditionChecker{
 			colUniqueID: uniqueID,
+			checkerCol:  cols[0],
 			length:      types.UnspecifiedLength,
 		}
 		// If we can't use this condition to build range, we can't merge it.

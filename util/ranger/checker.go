@@ -23,6 +23,7 @@ import (
 // conditionChecker checks if this condition can be pushed to index planner.
 type conditionChecker struct {
 	colUniqueID   int64
+	checkerCol    *expression.Column
 	shouldReserve bool // check if a access condition should be reserved in filter conditions.
 	length        int
 }
@@ -160,6 +161,12 @@ func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
 	col, ok := expr.(*expression.Column)
 	if !ok {
 		return false
+	}
+	// Check if virtual expression column matched
+	if c.checkerCol != nil {
+		virExpr, ok := c.checkerCol.VirtualExpr.(*expression.ScalarFunction)
+		isMatchExpr := ok && virExpr.Equal(nil, col.VirtualExpr)
+		return c.checkerCol.UniqueID == col.UniqueID || isMatchExpr
 	}
 	return c.colUniqueID == col.UniqueID
 }
