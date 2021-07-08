@@ -1729,3 +1729,49 @@ func (s *testPrivilegeSuite) TestDynamicPrivsRegistration(c *C) {
 		tk.MustExec(sqlGrant)
 	}
 }
+
+func (s *testPrivilegeSuite) TestInfoschemaUserPrivileges(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER isnobody, isroot, isselectonmysqluser")
+	tk.MustExec("GRANT SUPER ON *.* TO isroot")
+	tk.MustExec("GRANT SELECT ON mysql.user TO isselectonmysqluser")
+
+	// First as Nobody
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "isnobody",
+		Hostname:     "localhost",
+		AuthUsername: "isnobody",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	// I can see myself, but I can not see other users
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isnobody'@'%'"`).Check(testkit.Rows("'isnobody'@'%' def USAGE NO"))
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isroot'@'%'"`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysqluser'@'%'"`).Check(testkit.Rows())
+
+	// Now as root
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "isroot",
+		Hostname:     "localhost",
+		AuthUsername: "isroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	// I can see myself, but I can not see other users
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isnobody'@'%'"`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isroot'@'%'"`).Check(testkit.Rows("'isroot'@'%' def Super NO"))
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysqluser'@'%'"`).Check(testkit.Rows())
+
+	// Now as isselectonmysqluser
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "isselectonmysqluser",
+		Hostname:     "localhost",
+		AuthUsername: "isselectonmysqluser",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	// Now as isselectonmysqluser
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isnobody'@'%'"`).Check(testkit.Rows("'isnobody'@'%' def USAGE NO"))
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isroot'@'%'"`).Check(testkit.Rows("'isroot'@'%' def Super NO"))
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysqluser'@'%'"`).Check(testkit.Rows("'isselectonmysqluser'@'%' def USAGE NO"))
+}
