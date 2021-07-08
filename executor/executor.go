@@ -1743,7 +1743,13 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true
 		sc.BadNullAsWarning = true
-		sc.TruncateAsWarning = !vars.StrictSQLMode
+		// With IGNORE or LOCAL, data-interpretation errors become warnings and the load operation continues,
+		// even if the SQL mode is restrictive. For examples, see Column Value Assignment.
+		if stmt.IsLocal || stmt.OnDuplicate == ast.OnDuplicateKeyHandlingIgnore {
+			sc.TruncateAsWarning = true
+		} else {
+			sc.TruncateAsWarning = !vars.StrictSQLMode
+		}
 		sc.InLoadDataStmt = true
 		// return warning instead of error when load data meet no partition for value
 		sc.IgnoreNoPartition = true
