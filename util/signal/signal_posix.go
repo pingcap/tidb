@@ -26,7 +26,7 @@ import (
 )
 
 // SetupSignalHandler setup signal handler for TiDB Server
-func SetupSignalHandler(shutdownFunc func(bool)) {
+func SetupSignalHandler(shutdownFunc func(bool, bool)) {
 	usrDefSignalChan := make(chan os.Signal, 1)
 
 	signal.Notify(usrDefSignalChan, syscall.SIGUSR1)
@@ -46,11 +46,13 @@ func SetupSignalHandler(shutdownFunc func(bool)) {
 		syscall.SIGHUP,
 		syscall.SIGINT,
 		syscall.SIGTERM,
-		syscall.SIGQUIT)
+		syscall.SIGUSR2,
+		syscall.SIGQUIT,
+	)
 
 	go func() {
 		sig := <-closeSignalChan
 		logutil.BgLogger().Info("got signal to exit", zap.Stringer("signal", sig))
-		shutdownFunc(sig == syscall.SIGQUIT)
+		shutdownFunc(sig == syscall.SIGQUIT || sig == syscall.SIGUSR2, sig == syscall.SIGUSR2)
 	}()
 }

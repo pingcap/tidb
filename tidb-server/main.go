@@ -159,45 +159,52 @@ func main() {
 		flag.Usage()
 		os.Exit(0)
 	}
+
 	if *version {
 		fmt.Println(printer.GetTiDBInfo())
 		os.Exit(0)
 	}
 	registerStores()
 	registerMetrics()
-	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig)
-	if config.GetGlobalConfig().OOMUseTmpStorage {
-		config.GetGlobalConfig().UpdateTempStoragePath()
-		err := disk.InitializeTempDir()
-		terror.MustNil(err)
-		checkTempStorageQuota()
-	}
-	// Enable failpoints in tikv/client-go if the test API is enabled.
-	// It appears in the main function to be set before any use of client-go to prevent data race.
-	if _, err := failpoint.Status("github.com/pingcap/tidb/server/enableTestAPI"); err == nil {
-		tikv.EnableFailpoints()
-	}
-	setGlobalVars()
-	setCPUAffinity()
-	setupLog()
-	setHeapProfileTracker()
-	setupTracing() // Should before createServer and after setup config.
-	printInfo()
-	setupBinlogClient()
-	setupMetrics()
+	for {
+		config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig)
+		if config.GetGlobalConfig().OOMUseTmpStorage {
+			config.GetGlobalConfig().UpdateTempStoragePath()
+			err := disk.InitializeTempDir()
+			terror.MustNil(err)
+			checkTempStorageQuota()
+		}
+		// Enable failpoints in tikv/client-go if the test API is enabled.
+		// It appears in the main function to be set before any use of client-go to prevent data race.
+		if _, err := failpoint.Status("github.com/pingcap/tidb/server/enableTestAPI"); err == nil {
+			tikv.EnableFailpoints()
+		}
+		setGlobalVars()
+		setCPUAffinity()
+		setupLog()
+		setHeapProfileTracker()
+		setupTracing() // Should before createServer and after setup config.
+		printInfo()
+		setupBinlogClient()
+		setupMetrics()
 
-	storage, dom := createStoreAndDomain()
-	svr := createServer(storage, dom)
+		storage, dom := createStoreAndDomain()
+		svr := createServer(storage, dom)
 
-	exited := make(chan struct{})
-	signal.SetupSignalHandler(func(graceful bool) {
-		svr.Close()
-		cleanup(svr, storage, dom, graceful)
-		close(exited)
-	})
-	topsql.SetupTopSQL()
-	terror.MustNil(svr.Run())
-	<-exited
+		exited := make(chan bool)
+		signal.SetupSignalHandler(func(graceful bool, restart bool) {
+			svr.Close()
+			cleanup(svr, storage, dom, graceful)
+			exited <- restart
+		})
+		topsql.SetupTopSQL()
+		terror.MustNil(svr.Run())
+		restart := <-exited
+		if !restart {
+			break
+		}
+		log.Info("Performing restart")
+	}
 	syncLog()
 }
 

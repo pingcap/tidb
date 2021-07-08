@@ -158,6 +158,8 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeSetDefaultRole(x)
 	case *ast.ShutdownStmt:
 		err = e.executeShutdown(x)
+	case *ast.RestartStmt:
+		err = e.executeRestart(x)
 	case *ast.AdminStmt:
 		err = e.executeAdminReloadStatistics(x)
 	}
@@ -1571,7 +1573,9 @@ func (e *SimpleExec) autoNewTxn() bool {
 
 func (e *SimpleExec) executeShutdown(s *ast.ShutdownStmt) error {
 	sessVars := e.ctx.GetSessionVars()
-	logutil.BgLogger().Info("execute shutdown statement", zap.Uint64("conn", sessVars.ConnectionID))
+	user := e.ctx.GetSessionVars().User
+	logutil.BgLogger().Info("execute shutdown statement", zap.Uint64("conn", sessVars.ConnectionID), zap.String("user", user.Username+"@"+user.Hostname))
+
 	p, err := os.FindProcess(os.Getpid())
 	if err != nil {
 		return err
@@ -1607,6 +1611,24 @@ func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func (e *SimpleExec) executeRestart(s *ast.RestartStmt) error {
+	sessVars := e.ctx.GetSessionVars()
+	user := e.ctx.GetSessionVars().User
+	logutil.BgLogger().Info("execute restart statement", zap.Uint64("conn", sessVars.ConnectionID), zap.String("user", user.Username+"@"+user.Hostname))
+
+	p, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		return err
+	}
+
+	err = p.Signal(syscall.SIGUSR2)
+	if err != nil {
+		logutil.BgLogger().Error("Failed to send signal for restart", zap.Error(err))
+	}
+
+	return nil
 }
 
 func (e *SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
