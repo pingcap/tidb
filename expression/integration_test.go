@@ -9800,6 +9800,17 @@ func (s *testIntegrationSuite2) TestIssue25591(c *C) {
 	rows.Check(testkit.Rows())
 }
 
+func (s *testIntegrationSuite2) TestGreatestLeast(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(id int, nu decimal(10, 2));")
+	tk.MustExec("insert into t values(1, 2.00),(2, 1.00),(3,3.00);")
+
+	tk.MustQuery("select id, greatest(nu, 1, 2), least(nu, 1.000, 3.0000) from t order by id").Check(
+		testkit.Rows("1 2.00 1.0000", "2 2.00 1.0000", "3 3.00 1.0000"))
+}
+
 func (s *testIntegrationSuite2) TestIssue25526(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
