@@ -739,11 +739,10 @@ func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error
 // In 5.7 it is any user with SUPER privilege, but in 8.0 it is:
 // - SUPER or the CONNECTION_ADMIN dynamic privilege.
 // - (additional exception) users with expired passwords (not yet supported)
-// In TiDB CONNECTION_ADMIN is satisfied by SUPER, so we only need to check once.
 func (cc *clientConn) skipInitConnect() bool {
 	checker := privilege.GetPrivilegeManager(cc.ctx.Session)
 	activeRoles := cc.ctx.GetSessionVars().ActiveRoles
-	return checker != nil && checker.RequestDynamicVerification(activeRoles, "CONNECTION_ADMIN", false)
+	return checker != nil && checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv)
 }
 
 // initConnect runs the initConnect SQL statement if it has been specified.
