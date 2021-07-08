@@ -142,6 +142,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 			storeTaskMap[s.StoreID()] = &batchCopTask{
 				storeAddr: s.GetAddr(),
 				cmdType:   originalTasks[0].cmdType,
+				ctx:       &tikv.RPCContext{Addr: s.GetAddr(), Store: s},
 			}
 		}
 	}
