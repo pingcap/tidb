@@ -118,7 +118,7 @@ func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
 }
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
-	return NewMemBuffer(txn.KVTxn.GetMemBuffer())
+	return newMemBuffer(txn.KVTxn.GetMemBuffer())
 }
 
 func (txn *tikvTxn) SetOption(opt int, val interface{}) {

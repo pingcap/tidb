@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	transaction "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
@@ -564,7 +563,13 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 		}
 
 		if sessionData == nil {
-			sessionData = transaction.NewMemBuffer(tikv.NewMemDB())
+			// Create this txn just for getting a MemBuffer. It's a little tricky
+			bufferTxn, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
+			if err != nil {
+				return err
+			}
+
+			sessionData = bufferTxn.GetMemBuffer()
 		}
 
 		if stage == kv.InvalidStagingHandle {
