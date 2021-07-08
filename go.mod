@@ -55,7 +55,7 @@ require (
 	github.com/shirou/gopsutil v3.21.2+incompatible
 	github.com/soheilhy/cmux v0.1.4
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210706041121-6ca00989ddb4
+	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210708065617-a1adc5b85b8e
 	github.com/tikv/pd v1.1.0-beta.0.20210323121136-78679e5e209d
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber-go/atomic v1.4.0
@@ -82,5 +82,3 @@ require (
 )
 
 go 1.16
-
-replace github.com/tikv/client-go/v2 => github.com/tiancaiamao/client-go tsset
