@@ -86,8 +86,8 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 	allKeysMap := make(map[string]bool)
 	recordPrefix := tablecodec.GenTableRecordPrefix(tblID)
 	for _, region := range regions {
-		startKey := region.Meta.StartKey
-		endKey := region.Meta.EndKey
+		startKey := toRawKey(region.Meta.StartKey)
+		endKey := toRawKey(region.Meta.EndKey)
 		if !bytes.HasPrefix(startKey, recordPrefix) {
 			continue
 		}
@@ -108,8 +108,8 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 	indexPrefix := tablecodec.EncodeTableIndexPrefix(tblID, idxID)
 	regions = cluster.GetAllRegions()
 	for _, region := range regions {
-		startKey := region.Meta.StartKey
-		endKey := region.Meta.EndKey
+		startKey := toRawKey(region.Meta.StartKey)
+		endKey := toRawKey(region.Meta.EndKey)
 		if !bytes.HasPrefix(startKey, indexPrefix) {
 			continue
 		}
@@ -122,4 +122,15 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 		}
 	}
 	c.Assert(allIndexMap, HasLen, 1000)
+}
+
+func toRawKey(k []byte) []byte {
+	if len(k) == 0 {
+		return nil
+	}
+	_, k, err := codec.DecodeBytes(k, nil)
+	if err != nil {
+		panic(err)
+	}
+	return k
 }
