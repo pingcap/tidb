@@ -5153,7 +5153,7 @@ func getBf4TimeAddSub(ctx sessionctx.Context, funcName string, args []Expression
 }
 
 func getTimeZone(ctx sessionctx.Context) *time.Location {
-	ret := ctx.GetSessionVars().TimeZone
+	ret := ctx.GetSessionVars().Location()
 	if ret == nil {
 		ret = time.Local
 	}

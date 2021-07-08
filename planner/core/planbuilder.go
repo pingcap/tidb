@@ -2497,7 +2497,7 @@ func calculateTsExpr(sctx sessionctx.Context, asOfClause *ast.AsOfClause) (uint6
 	if err != nil {
 		return 0, err
 	}
-	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(sctx.GetSessionVars().TimeZone)
+	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(sctx.GetSessionVars().Location())
 	if err != nil {
 		return 0, err
 	}
@@ -3806,7 +3806,7 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, err
 		return &Explain{Format: explainFor.Format}, nil
 	}
 	var explainRows [][]string
-	if explainFor.Format == ast.ExplainFormatROW {
+	if explainFor.Format == types.ExplainFormatROW {
 		explainRows = processInfo.PlanExplainRows
 	}
 	return b.buildExplainPlan(targetPlan, explainFor.Format, explainRows, false, nil, processInfo.RuntimeStatsColl)
