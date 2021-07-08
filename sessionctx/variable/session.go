@@ -174,9 +174,9 @@ type TransactionContext struct {
 	// TableDeltaMap lock to prevent potential data race
 	tdmLock sync.Mutex
 
-	// GlobalTemporaryTables is used to store transaction-specific information for global temporary tables.
+	// TemporaryTables is used to store transaction-specific information for global temporary tables.
 	// It can also be stored in sessionCtx with local temporary tables, but it's easier to clean this data after transaction ends.
-	GlobalTemporaryTables map[int64]tableutil.TempTable
+	TemporaryTables map[int64]tableutil.TempTable
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -852,6 +852,13 @@ type SessionVars struct {
 
 	// EnableGlobalTemporaryTable indicates whether to enable global temporary table
 	EnableGlobalTemporaryTable bool
+
+	// EnableStableResultMode if stabilize query results.
+	EnableStableResultMode bool
+
+	// LocalTemporaryTables is *infoschema.LocalTemporaryTables, use interface to avoid circle dependency.
+	// It's nil if there is no local temporary table.
+	LocalTemporaryTables interface{}
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
@@ -1481,19 +1488,19 @@ func (s *SessionVars) LazyCheckKeyNotExists() bool {
 
 // GetTemporaryTable returns a TempTable by tableInfo.
 func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.TempTable {
-	if tblInfo.TempTableType == model.TempTableGlobal {
-		if s.TxnCtx.GlobalTemporaryTables == nil {
-			s.TxnCtx.GlobalTemporaryTables = make(map[int64]tableutil.TempTable)
+	if tblInfo.TempTableType != model.TempTableNone {
+		if s.TxnCtx.TemporaryTables == nil {
+			s.TxnCtx.TemporaryTables = make(map[int64]tableutil.TempTable)
 		}
-		globalTempTables := s.TxnCtx.GlobalTemporaryTables
-		globalTempTable, ok := globalTempTables[tblInfo.ID]
+		tempTables := s.TxnCtx.TemporaryTables
+		tempTable, ok := tempTables[tblInfo.ID]
 		if !ok {
-			globalTempTable = tableutil.TempTableFromMeta(tblInfo)
-			globalTempTables[tblInfo.ID] = globalTempTable
+			tempTable = tableutil.TempTableFromMeta(tblInfo)
+			tempTables[tblInfo.ID] = tempTable
 		}
-		return globalTempTable
+		return tempTable
 	}
-	// TODO: check local temporary tables
+
 	return nil
 }
 
