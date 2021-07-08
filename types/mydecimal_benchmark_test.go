@@ -18,6 +18,7 @@ import (
 	"math/rand"
 	"strconv"
 	"testing"
+	"time"
 )
 
 const (
@@ -26,7 +27,22 @@ const (
 
 var (
 	testDec []MyDecimal
+	flag    = false
 )
+
+func genTestDecimals() {
+	if flag {
+		return
+	}
+	for i := 0; i < numTestDec; i++ {
+		f := rand.Float64()
+		digits := rand.Int()%12 + 1
+		offset := rand.Int()%digits + 1
+		f = math.Round(f*math.Pow10(digits)) / math.Pow10(digits-offset)
+		testDec = append(testDec, *NewDecFromFloatForTest(f))
+	}
+	flag = true
+}
 
 func BenchmarkRound(b *testing.B) {
 	b.StopTimer()
@@ -84,6 +100,7 @@ func BenchmarkRound(b *testing.B) {
 }
 
 func BenchmarkToFloat64New(b *testing.B) {
+	genTestDecimals()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < numTestDec; j++ {
@@ -94,6 +111,7 @@ func BenchmarkToFloat64New(b *testing.B) {
 }
 
 func BenchmarkToFloat64Old(b *testing.B) {
+	genTestDecimals()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < numTestDec; j++ {
@@ -104,11 +122,5 @@ func BenchmarkToFloat64Old(b *testing.B) {
 }
 
 func init() {
-	for i := 0; i < numTestDec; i++ {
-		f := rand.Float64()
-		digits := rand.Int()%12 + 1
-		offset := rand.Int()%digits + 1
-		f = math.Round(f*math.Pow10(digits)) / math.Pow10(digits-offset)
-		testDec = append(testDec, *NewDecFromFloatForTest(f))
-	}
+	rand.Seed(time.Now().Unix())
 }
