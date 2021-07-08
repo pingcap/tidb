@@ -46,9 +46,9 @@ func newLocalSliceBuffer(initCap int) *localSliceBuffer {
 			},
 		},
 	}
-	cols := make([]*chunk.Column, initCap)
+	cols := make([]chunk.Column, initCap)
 	for _, col := range cols {
-		buf.put(col)
+		buf.put(&col)
 	}
 	return buf
 }
