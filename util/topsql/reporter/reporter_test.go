@@ -227,6 +227,18 @@ func (s *testTopSQLReporter) TestCollectAndTopN(c *C) {
 	}
 	s.collectAndWait(tsr, 4, records)
 
+	// Test for time jump back.
+	records = []tracecpu.SQLCPUTimeRecord{
+		s.newSQLCPUTimeRecord(tsr, 6, 6),
+		s.newSQLCPUTimeRecord(tsr, 7, 7),
+	}
+	s.collectAndWait(tsr, 3, records)
+	records = []tracecpu.SQLCPUTimeRecord{
+		s.newSQLCPUTimeRecord(tsr, 8, 8),
+		s.newSQLCPUTimeRecord(tsr, 9, 9),
+	}
+	s.collectAndWait(tsr, 4, records)
+
 	// Wait agent server collect finish.
 	agentServer.WaitCollectCnt(1, time.Second*10)
 

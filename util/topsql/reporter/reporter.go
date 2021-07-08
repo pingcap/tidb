@@ -287,11 +287,19 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 	collectedData := make(map[string]*dataPoints)
 	currentReportInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load()
 	reportTicker := time.NewTicker(time.Second * time.Duration(currentReportInterval))
+	lastTimestamp := uint64(0)
 	for {
 		select {
 		case data := <-tsr.collectCPUDataChan:
-			// On receiving data to collect: Write to local data array, and retain records with most CPU time.
-			tsr.doCollect(collectedData, data.timestamp, data.records)
+			// Make sure the timestamp remains incrementing.
+			// Ignore small timestamps when a time jump occurs。
+			if data.timestamp > lastTimestamp {
+				lastTimestamp = data.timestamp
+				// On receiving data to collect: Write to local data array, and retain records with most CPU time.
+				tsr.doCollect(collectedData, data.timestamp, data.records)
+			} else {
+				logutil.BgLogger().Warn("[top-sql] system time jump backward", zap.Uint64("last-collect-ts", lastTimestamp), zap.Uint64("current-ts", data.timestamp))
+			}
 		case <-reportTicker.C:
 			tsr.takeDataAndSendToReportChan(&collectedData)
 
@@ -373,6 +381,9 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 		entry.CPUTimeMsTotal += uint64(record.CPUTimeMs)
 	}
 
+	if len(evicted) == 0 {
+		return
+	}
 	// Evict redundant data.
 	normalizedSQLMap := tsr.normalizedSQLMap.Load().(*sync.Map)
 	normalizedPlanMap := tsr.normalizedPlanMap.Load().(*sync.Map)
