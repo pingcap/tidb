@@ -146,10 +146,7 @@ func (p *LogicalJoin) checkJoinKeyCollation(leftKeys, rightKeys []*expression.Co
 func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo, leftStatsInfo *property.StatsInfo, rightStatsInfo *property.StatsInfo) []PhysicalPlan {
 	joins := make([]PhysicalPlan, 0, len(p.leftProperties)+1)
 	// The leftProperties caches all the possible properties that are provided by its children.
-<<<<<<< HEAD
 	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
-=======
-	leftJoinKeys, rightJoinKeys, isNullEQ, hasNullEQ := p.GetJoinKeys()
 
 	// EnumType Unsupported: merge join conflicts with index order. ref: https://github.com/pingcap/tidb/issues/24473
 	for _, leftKey := range leftJoinKeys {
@@ -163,11 +160,6 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 		}
 	}
 
-	// TODO: support null equal join keys for merge join
-	if hasNullEQ {
-		return nil
-	}
->>>>>>> 982dcece3... executor: fix incorrect result of enum type merge join (#24775)
 	for _, lhsChildProperty := range p.leftProperties {
 		offsets := getMaxSortPrefix(lhsChildProperty, leftJoinKeys)
 		// If not all equal conditions hit properties. We ban merge join heuristically. Because in this case, merge join
