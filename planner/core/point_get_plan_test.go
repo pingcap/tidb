@@ -206,6 +206,19 @@ func (s *testPointGetSuite) TestPointGetForUpdate(c *C) {
 	tk.MustExec("rollback")
 }
 
+func (s *testPointGetSuite) TestPointGetForUpdateWithSubquery(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE users (id bigint(20) unsigned NOT NULL primary key, name longtext DEFAULT NULL, company_id bigint(20) DEFAULT NULL)")
+	tk.MustExec("create table companies(id bigint primary key, name longtext default null)")
+	tk.MustExec("insert into companies values(14, 'Company14')")
+	tk.MustExec("insert into companies values(15, 'Company15')")
+	tk.MustExec("insert into users(id, company_id, name) values(239, 15, 'xxxx')")
+	tk.MustExec("UPDATE users SET name=(SELECT name FROM companies WHERE companies.id = users.company_id)  WHERE id = 239")
+
+	tk.MustQuery("select * from users").Check(testkit.Rows("239 Company15 15"))
+}
+
 func checkUseForUpdate(tk *testkit.TestKit, c *C, expectLock bool) {
 	res := tk.MustQuery("explain format = 'brief' select * from fu where id = 6 for update")
 	// Point_Get_1	1.00	root	table:fu, handle:6

@@ -451,6 +451,7 @@ type LogicalMemTable struct {
 	Extractor MemTablePredicateExtractor
 	DBName    model.CIStr
 	TableInfo *model.TableInfo
+	Columns   []*model.ColumnInfo
 	// QueryTimeRange is used to specify the time range for metrics summary tables and inspection tables
 	// e.g: select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from metrics_summary;
 	//      select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from metrics_summary_by_label;
@@ -835,6 +836,10 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 			if !alreadyHandle {
 				path.IdxCols = append(path.IdxCols, handleCol)
 				path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
+				// Also updates the map that maps the index id to its prefix column ids.
+				if len(ds.tableStats.HistColl.Idx2ColumnIDs[path.Index.ID]) == len(path.Index.Columns) {
+					ds.tableStats.HistColl.Idx2ColumnIDs[path.Index.ID] = append(ds.tableStats.HistColl.Idx2ColumnIDs[path.Index.ID], handleCol.UniqueID)
+				}
 			}
 		}
 	}

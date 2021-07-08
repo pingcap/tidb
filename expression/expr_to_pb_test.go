@@ -926,10 +926,6 @@ func (s *testEvaluatorSuite) TestExprOnlyPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.DateAdd, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, stringColumn)
-	c.Assert(err, IsNil)
-	exprs = append(exprs, function)
-
 	function, err = NewFunction(mock.NewContext(), ast.TimestampDiff, types.NewFieldType(mysql.TypeLonglong), stringColumn, datetimeColumn, datetimeColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)

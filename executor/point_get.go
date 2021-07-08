@@ -54,6 +54,8 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	}
 	e := &PointGetExecutor{
 		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ID()),
+		txnScope:     b.txnScope,
+		isStaleness:  b.isStaleness,
 	}
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
@@ -76,6 +78,8 @@ type PointGetExecutor struct {
 	handleVal    []byte
 	idxVals      []types.Datum
 	startTS      uint64
+	txnScope     string
+	isStaleness  bool
 	txn          kv.Transaction
 	snapshot     kv.Snapshot
 	done         bool
@@ -154,17 +158,24 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
-	e.snapshot.SetOption(kv.TxnScope, e.ctx.GetSessionVars().TxnCtx.TxnScope)
-	isStaleness := e.ctx.GetSessionVars().TxnCtx.IsStaleness
-	e.snapshot.SetOption(kv.IsStalenessReadOnly, isStaleness)
-	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != kv.GlobalTxnScope {
+	e.snapshot.SetOption(kv.TxnScope, e.txnScope)
+	e.snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
+	if e.isStaleness && e.txnScope != kv.GlobalTxnScope {
 		e.snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
-				Value: e.ctx.GetSessionVars().TxnCtx.TxnScope,
+				Value: e.txnScope,
 			},
 		})
 	}
+	failpoint.Inject("assertPointStalenessOption", func(val failpoint.Value) {
+		assertScope := val.(string)
+		if len(assertScope) > 0 {
+			if e.isStaleness && assertScope != e.txnScope {
+				panic("batch point get staleness option fail")
+			}
+		}
+	})
 	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
 	return nil
 }
@@ -395,7 +406,10 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
-	txnScope := e.txn.GetOption(kv.TxnScope).(string)
+	if e.isStaleness {
+		return nil
+	}
+	txnScope := e.txnScope
 	if txnScope == "" || txnScope == kv.GlobalTxnScope {
 		return nil
 	}

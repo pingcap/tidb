@@ -15,8 +15,10 @@ package executor
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
@@ -63,23 +65,32 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		return nil, err
 	}
 
+	failpoint.Inject("assertStmtCtxIsStaleness", func(val failpoint.Value) {
+		expected := val.(bool)
+		got := c.Ctx.GetSessionVars().StmtCtx.IsStaleness
+		if got != expected {
+			panic(fmt.Sprintf("stmtctx isStaleness wrong, expected:%v, got:%v", expected, got))
+		}
+	})
+
 	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
 	var lowerPriority bool
 	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
 		lowerPriority = needLowerPriority(finalPlan)
 	}
 	return &ExecStmt{
-		GoCtx:             ctx,
-		SnapshotTS:        ret.LastSnapshotTS,
-		ExplicitStaleness: ret.ExplicitStaleness,
-		InfoSchema:        ret.InfoSchema,
-		Plan:              finalPlan,
-		LowerPriority:     lowerPriority,
-		Text:              stmtNode.Text(),
-		StmtNode:          stmtNode,
-		Ctx:               c.Ctx,
-		OutputNames:       names,
-		Ti:                &TelemetryInfo{},
+		GoCtx:         ctx,
+		SnapshotTS:    ret.LastSnapshotTS,
+		IsStaleness:   ret.IsStaleness,
+		TxnScope:      ret.TxnScope,
+		InfoSchema:    ret.InfoSchema,
+		Plan:          finalPlan,
+		LowerPriority: lowerPriority,
+		Text:          stmtNode.Text(),
+		StmtNode:      stmtNode,
+		Ctx:           c.Ctx,
+		OutputNames:   names,
+		Ti:            &TelemetryInfo{},
 	}, nil
 }
 

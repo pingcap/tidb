@@ -16,6 +16,7 @@ package implementation
 import (
 	"math"
 
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -56,15 +57,17 @@ func (impl *MemTableScanImpl) CalcCost(outCount float64, children ...memo.Implem
 // TableReaderImpl implementation of PhysicalTableReader.
 type TableReaderImpl struct {
 	baseImpl
+	tblInfo     *model.TableInfo
 	tblColHists *statistics.HistColl
 }
 
 // NewTableReaderImpl creates a new table reader Implementation.
-func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, hists *statistics.HistColl) *TableReaderImpl {
+func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, source *plannercore.DataSource) *TableReaderImpl {
 	base := baseImpl{plan: reader}
 	impl := &TableReaderImpl{
 		baseImpl:    base,
-		tblColHists: hists,
+		tblInfo:     source.TableInfo(),
+		tblColHists: source.TblColHists,
 	}
 	return impl
 }
@@ -76,7 +79,7 @@ func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 	sessVars := reader.SCtx().GetSessionVars()
 	// TableReaderImpl don't have tableInfo property, so using nil to replace it.
 	// Todo add the tableInfo property for the TableReaderImpl.
-	networkCost := outCount * sessVars.GetNetworkFactor(nil) * width
+	networkCost := outCount * sessVars.GetNetworkFactor(impl.tblInfo) * width
 	// copTasks are run in parallel, to make the estimated cost closer to execution time, we amortize
 	// the cost to cop iterator workers. According to `CopClient::Send`, the concurrency
 	// is Min(DistSQLScanConcurrency, numRegionsInvolvedInScan), since we cannot infer
@@ -130,6 +133,7 @@ func (impl *TableScanImpl) CalcCost(outCount float64, children ...memo.Implement
 // IndexReaderImpl is the implementation of PhysicalIndexReader.
 type IndexReaderImpl struct {
 	baseImpl
+	tblInfo     *model.TableInfo
 	tblColHists *statistics.HistColl
 }
 
@@ -148,17 +152,18 @@ func (impl *IndexReaderImpl) GetCostLimit(costLimit float64, children ...memo.Im
 func (impl *IndexReaderImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	reader := impl.plan.(*plannercore.PhysicalIndexReader)
 	sessVars := reader.SCtx().GetSessionVars()
-	networkCost := outCount * sessVars.GetNetworkFactor(nil) * impl.tblColHists.GetAvgRowSize(reader.SCtx(), children[0].GetPlan().Schema().Columns, true, false)
+	networkCost := outCount * sessVars.GetNetworkFactor(impl.tblInfo) * impl.tblColHists.GetAvgRowSize(reader.SCtx(), children[0].GetPlan().Schema().Columns, true, false)
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
 	impl.cost = (networkCost + children[0].GetCost()) / copIterWorkers
 	return impl.cost
 }
 
 // NewIndexReaderImpl creates a new IndexReader Implementation.
-func NewIndexReaderImpl(reader *plannercore.PhysicalIndexReader, tblColHists *statistics.HistColl) *IndexReaderImpl {
+func NewIndexReaderImpl(reader *plannercore.PhysicalIndexReader, source *plannercore.DataSource) *IndexReaderImpl {
 	return &IndexReaderImpl{
 		baseImpl:    baseImpl{plan: reader},
-		tblColHists: tblColHists,
+		tblInfo:     source.TableInfo(),
+		tblColHists: source.TblColHists,
 	}
 }
 

@@ -565,16 +565,38 @@ func (b *builtinGreatestDecimalSig) evalDecimal(row chunk.Row) (max *types.MyDec
 	if isNull || err != nil {
 		return max, isNull, err
 	}
+
+	var digitFrac = max.GetDigitsFrac()
+	var digitsInt = max.GetDigitsInt()
+	var resultFrac = max.GetResultFrac()
+
 	for i := 1; i < len(b.args); i++ {
 		var v *types.MyDecimal
 		v, isNull, err = b.args[i].EvalDecimal(b.ctx, row)
 		if isNull || err != nil {
 			return max, isNull, err
 		}
+
+		if v.GetResultFrac() > resultFrac {
+			resultFrac = v.GetResultFrac()
+		}
+
+		if v.GetDigitsFrac() > digitFrac {
+			digitFrac = v.GetDigitsFrac()
+		}
+
+		if v.GetDigitsInt() > digitsInt {
+			digitsInt = v.GetDigitsInt()
+		}
+
 		if v.Compare(max) > 0 {
 			max = v
 		}
 	}
+
+	max.SetResultFrac(resultFrac)
+	max.SetDigitsFrac(digitFrac)
+	max.SetDigitsInt(digitsInt)
 	return
 }
 
@@ -782,16 +804,38 @@ func (b *builtinLeastDecimalSig) evalDecimal(row chunk.Row) (min *types.MyDecima
 	if isNull || err != nil {
 		return min, isNull, err
 	}
+
+	var digitFrac = min.GetDigitsFrac()
+	var digitsInt = min.GetDigitsInt()
+	var resultFrac = min.GetResultFrac()
+
 	for i := 1; i < len(b.args); i++ {
 		var v *types.MyDecimal
 		v, isNull, err = b.args[i].EvalDecimal(b.ctx, row)
 		if isNull || err != nil {
 			return min, isNull, err
 		}
+
+		if v.GetResultFrac() > resultFrac {
+			resultFrac = v.GetResultFrac()
+		}
+
+		if v.GetDigitsFrac() > digitFrac {
+			digitFrac = v.GetDigitsFrac()
+		}
+
+		if v.GetDigitsInt() > digitsInt {
+			digitsInt = v.GetDigitsInt()
+		}
+
 		if v.Compare(min) < 0 {
 			min = v
 		}
 	}
+
+	min.SetResultFrac(resultFrac)
+	min.SetDigitsFrac(digitFrac)
+	min.SetDigitsInt(digitsInt)
 	return
 }
 

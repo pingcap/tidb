@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -83,8 +84,9 @@ type executorBuilder struct {
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
 	Ti               *TelemetryInfo
-	// ExplicitStaleness means whether the 'SELECT' clause are using 'AS OF TIMESTAMP' to perform stale read explicitly.
-	explicitStaleness bool
+	// isStaleness means whether this statement use stale read.
+	isStaleness bool
+	txnScope    string
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -95,13 +97,14 @@ type CTEStorages struct {
 	IterInTbl cteutil.Storage
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, explicitStaleness bool) *executorBuilder {
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, isStaleness bool, txnScope string) *executorBuilder {
 	return &executorBuilder{
-		ctx:               ctx,
-		is:                is,
-		Ti:                ti,
-		snapshotTS:        snapshotTS,
-		explicitStaleness: explicitStaleness,
+		ctx:         ctx,
+		is:          is,
+		Ti:          ti,
+		snapshotTS:  snapshotTS,
+		isStaleness: isStaleness,
+		txnScope:    txnScope,
 	}
 }
 
@@ -676,6 +679,8 @@ func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
 
 func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 	b.snapshotTS = v.SnapshotTS
+	b.isStaleness = v.IsStaleness
+	b.txnScope = v.TxnScope
 	if b.snapshotTS != 0 {
 		b.is, b.err = domain.GetDomain(b.ctx).GetSnapshotInfoSchema(b.snapshotTS)
 	}
@@ -689,6 +694,15 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		plan:         v.Plan,
 		outputNames:  v.OutputNames(),
 	}
+	failpoint.Inject("assertExecutePrepareStatementStalenessOption", func(val failpoint.Value) {
+		vs := strings.Split(val.(string), "_")
+		assertTS, assertTxnScope := vs[0], vs[1]
+		if strconv.FormatUint(b.snapshotTS, 10) != assertTS ||
+			assertTxnScope != b.txnScope {
+			panic("execute prepare statement have wrong staleness option")
+		}
+	})
+
 	return e
 }
 
@@ -1558,11 +1572,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableTiFlashReplica),
 			strings.ToLower(infoschema.TableTiDBServersInfo),
 			strings.ToLower(infoschema.TableTiKVStoreStatus),
-			strings.ToLower(infoschema.TableStatementsSummary),
-			strings.ToLower(infoschema.TableStatementsSummaryHistory),
 			strings.ToLower(infoschema.TableStatementsSummaryEvicted),
-			strings.ToLower(infoschema.ClusterTableStatementsSummary),
-			strings.ToLower(infoschema.ClusterTableStatementsSummaryHistory),
+			strings.ToLower(infoschema.ClusterTableStatementsSummaryEvicted),
 			strings.ToLower(infoschema.TablePlacementPolicy),
 			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
@@ -1576,6 +1587,18 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &memtableRetriever{
+					table:   v.Table,
+					columns: v.Columns,
+				},
+			}
+		case strings.ToLower(infoschema.TableStatementsSummary),
+			strings.ToLower(infoschema.TableStatementsSummaryHistory),
+			strings.ToLower(infoschema.ClusterTableStatementsSummaryHistory),
+			strings.ToLower(infoschema.ClusterTableStatementsSummary):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+				table:        v.Table,
+				retriever: &stmtSummaryTableRetriever{
 					table:   v.Table,
 					columns: v.Columns,
 				},
@@ -1991,20 +2014,34 @@ func (b *executorBuilder) refreshForUpdateTSForRC() error {
 }
 
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
+	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze index " + task.IndexInfo.Name.O}
 	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
-	e := &AnalyzeIndexExec{
-		ctx:            b.ctx,
-		tableID:        task.TableID,
-		isCommonHandle: task.TblInfo.IsCommonHandle,
-		idxInfo:        task.IndexInfo,
-		concurrency:    b.ctx.GetSessionVars().IndexSerialScanConcurrency(),
+	startTS, err := b.getSnapshotTS()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
+		startTS = uint64(val.(int))
+	})
+	base := baseAnalyzeExec{
+		ctx:         b.ctx,
+		tableID:     task.TableID,
+		concurrency: b.ctx.GetSessionVars().IndexSerialScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeIndex,
 			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
-		opts: opts,
+		opts:     opts,
+		job:      job,
+		snapshot: startTS,
+	}
+	e := &AnalyzeIndexExec{
+		baseAnalyzeExec: base,
+		isCommonHandle:  task.TblInfo.IsCommonHandle,
+		idxInfo:         task.IndexInfo,
 	}
 	topNSize := new(int32)
 	*topNSize = int32(opts[ast.AnalyzeOptNumTopN])
@@ -2024,7 +2061,6 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
 	e.analyzePB.IdxReq.CmsketchDepth = &depth
 	e.analyzePB.IdxReq.CmsketchWidth = &width
-	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze index " + task.IndexInfo.Name.O}
 	return &analyzeTask{taskType: idxTask, idxExec: e, job: job}
 }
 
@@ -2061,13 +2097,17 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 		oldTopN.RemoveVal(oldHist.Bounds.GetRow(len(oldHist.Buckets)*2 - 1).GetBytes(0))
 	}
 	oldHist = oldHist.RemoveUpperBound()
+	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "analyze incremental index " + task.IndexInfo.Name.O}
+	exec := analyzeTask.idxExec
+	exec.job = job
 	analyzeTask.taskType = idxIncrementalTask
-	analyzeTask.idxIncrementalExec = &analyzeIndexIncrementalExec{AnalyzeIndexExec: *analyzeTask.idxExec, oldHist: oldHist, oldCMS: idx.CMSketch, oldTopN: oldTopN}
-	analyzeTask.job = &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "analyze incremental index " + task.IndexInfo.Name.O}
+	analyzeTask.idxIncrementalExec = &analyzeIndexIncrementalExec{AnalyzeIndexExec: *exec, oldHist: oldHist, oldCMS: idx.CMSketch, oldTopN: oldTopN}
+	analyzeTask.job = job
 	return analyzeTask
 }
 
 func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
+	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze table"}
 	availableIdx := make([]*model.IndexInfo, 0, len(task.Indexes))
 	colGroups := make([]*tipb.AnalyzeColumnGroup, 0, len(task.Indexes))
 	if len(task.Indexes) > 0 {
@@ -2085,21 +2125,49 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 
 	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
-	e := &AnalyzeColumnsExec{
+	startTS, err := b.getSnapshotTS()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
+		startTS = uint64(val.(int))
+	})
+	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+	count, modifyCount, err := statsHandle.StatsMetaCountAndModifyCount(task.TableID.GetStatisticsID())
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	failpoint.Inject("injectBaseCount", func(val failpoint.Value) {
+		count = int64(val.(int))
+	})
+	failpoint.Inject("injectBaseModifyCount", func(val failpoint.Value) {
+		modifyCount = int64(val.(int))
+	})
+	base := baseAnalyzeExec{
 		ctx:         b.ctx,
-		tableInfo:   task.TblInfo,
-		colsInfo:    task.ColsInfo,
-		handleCols:  task.HandleCols,
+		tableID:     task.TableID,
 		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeFullSampling,
 			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
-		opts:                    opts,
+		opts:     opts,
+		job:      job,
+		snapshot: startTS,
+	}
+	e := &AnalyzeColumnsExec{
+		baseAnalyzeExec:         base,
+		tableInfo:               task.TblInfo,
+		colsInfo:                task.ColsInfo,
+		handleCols:              task.HandleCols,
 		indexes:                 availableIdx,
 		AnalyzeInfo:             task.AnalyzeInfo,
 		schemaForVirtualColEval: schemaForVirtualColEval,
+		baseCount:               count,
+		baseModifyCnt:           modifyCount,
 	}
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
 		BucketSize:   int64(opts[ast.AnalyzeOptNumBuckets]),
@@ -2115,7 +2183,6 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		}
 	}
 	b.err = plannercore.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, task.ColsInfo)
-	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze table"}
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
 }
 
@@ -2123,6 +2190,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 	if task.StatsVersion == statistics.Version2 {
 		return b.buildAnalyzeSamplingPushdown(task, opts, autoAnalyze, schemaForVirtualColEval)
 	}
+	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze columns"}
 	cols := task.ColsInfo
 	if hasPkHist(task.HandleCols) {
 		colInfo := task.TblInfo.Columns[task.HandleCols.GetCol(0).Index]
@@ -2138,18 +2206,32 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 
 	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
-	e := &AnalyzeColumnsExec{
+	startTS, err := b.getSnapshotTS()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
+		startTS = uint64(val.(int))
+	})
+	base := baseAnalyzeExec{
 		ctx:         b.ctx,
-		colsInfo:    task.ColsInfo,
-		handleCols:  task.HandleCols,
+		tableID:     task.TableID,
 		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
 			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
-		opts:        opts,
-		AnalyzeInfo: task.AnalyzeInfo,
+		opts:     opts,
+		job:      job,
+		snapshot: startTS,
+	}
+	e := &AnalyzeColumnsExec{
+		baseAnalyzeExec: base,
+		colsInfo:        task.ColsInfo,
+		handleCols:      task.HandleCols,
+		AnalyzeInfo:     task.AnalyzeInfo,
 	}
 	depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
 	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
@@ -2188,7 +2270,6 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		e.commonHandle = task.CommonHandleInfo
 	}
 	b.err = plannercore.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols)
-	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze columns"}
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
 }
 
@@ -2222,10 +2303,12 @@ func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColu
 		oldHist = col.TruncateHistogram(bktID)
 		oldHist.NDV = int64(oldHist.TotalRowCount())
 	}
+	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "analyze incremental primary key"}
 	exec := analyzeTask.colExec
+	exec.job = job
 	analyzeTask.taskType = pkIncrementalTask
 	analyzeTask.colIncrementalExec = &analyzePKIncrementalExec{AnalyzeColumnsExec: *exec, oldHist: oldHist}
-	analyzeTask.job = &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "analyze incremental primary key"}
+	analyzeTask.job = job
 	return analyzeTask
 }
 
@@ -2239,20 +2322,31 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 		}
 	}
 	if !findTask {
+		job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "fast analyze columns"}
 		var concurrency int
 		concurrency, b.err = getBuildStatsConcurrency(e.ctx)
 		if b.err != nil {
 			return
 		}
-		fastExec := &AnalyzeFastExec{
+		startTS, err := b.getSnapshotTS()
+		if err != nil {
+			b.err = err
+			return
+		}
+		base := baseAnalyzeExec{
 			ctx:         b.ctx,
 			tableID:     task.TableID,
-			colsInfo:    task.ColsInfo,
-			handleCols:  task.HandleCols,
 			opts:        opts,
-			tblInfo:     task.TblInfo,
 			concurrency: concurrency,
-			wg:          &sync.WaitGroup{},
+			job:         job,
+			snapshot:    startTS,
+		}
+		fastExec := &AnalyzeFastExec{
+			baseAnalyzeExec: base,
+			colsInfo:        task.ColsInfo,
+			handleCols:      task.HandleCols,
+			tblInfo:         task.TblInfo,
+			wg:              &sync.WaitGroup{},
 		}
 		b.err = fastExec.calculateEstimateSampleStep()
 		if b.err != nil {
@@ -2261,7 +2355,7 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 		e.tasks = append(e.tasks, &analyzeTask{
 			taskType: fastTask,
 			fastExec: fastExec,
-			job:      &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "fast analyze columns"},
+			job:      job,
 		})
 	}
 }
@@ -2276,19 +2370,30 @@ func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore
 		}
 	}
 	if !findTask {
+		job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: "fast analyze index " + task.IndexInfo.Name.O}
 		var concurrency int
 		concurrency, b.err = getBuildStatsConcurrency(e.ctx)
 		if b.err != nil {
 			return
 		}
-		fastExec := &AnalyzeFastExec{
+		startTS, err := b.getSnapshotTS()
+		if err != nil {
+			b.err = err
+			return
+		}
+		base := baseAnalyzeExec{
 			ctx:         b.ctx,
 			tableID:     task.TableID,
-			idxsInfo:    []*model.IndexInfo{task.IndexInfo},
 			opts:        opts,
-			tblInfo:     task.TblInfo,
 			concurrency: concurrency,
-			wg:          &sync.WaitGroup{},
+			job:         job,
+			snapshot:    startTS,
+		}
+		fastExec := &AnalyzeFastExec{
+			baseAnalyzeExec: base,
+			idxsInfo:        []*model.IndexInfo{task.IndexInfo},
+			tblInfo:         task.TblInfo,
+			wg:              &sync.WaitGroup{},
 		}
 		b.err = fastExec.calculateEstimateSampleStep()
 		if b.err != nil {
@@ -2297,7 +2402,7 @@ func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore
 		e.tasks = append(e.tasks, &analyzeTask{
 			taskType: fastTask,
 			fastExec: fastExec,
-			job:      &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: "fast analyze index " + task.IndexInfo.Name.O},
+			job:      job,
 		})
 	}
 }
@@ -2678,6 +2783,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPB:          dagReq,
 		startTS:        startTS,
+		txnScope:       b.txnScope,
+		isStaleness:    b.isStaleness,
 		table:          tbl,
 		keepOrder:      ts.KeepOrder,
 		desc:           ts.Desc,
@@ -2750,6 +2857,10 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) Executor {
+	if v.StoreType != kv.TiKV && b.isStaleness {
+		b.err = errors.New("stale requests require tikv backend")
+		return nil
+	}
 	failpoint.Inject("checkUseMPP", func(val failpoint.Value) {
 		if val.(bool) != useMPPExecution(b.ctx, v) {
 			if val.(bool) {
@@ -2782,7 +2893,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ret
 	}
-	// When isPartition is set, it means the union rewriting is done, so a partition reader is prefered.
+	// When isPartition is set, it means the union rewriting is done, so a partition reader is preferred.
 	if ok, _ := ts.IsPartition(); ok {
 		return ret
 	}
@@ -2949,6 +3060,8 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPB:           dagReq,
 		startTS:         startTS,
+		txnScope:        b.txnScope,
+		isStaleness:     b.isStaleness,
 		physicalTableID: physicalTableID,
 		table:           tbl,
 		index:           is.Index,
@@ -3009,7 +3122,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ret
 	}
-	// When isPartition is set, it means the union rewriting is done, so a partition reader is prefered.
+	// When isPartition is set, it means the union rewriting is done, so a partition reader is preferred.
 	if ok, _ := is.IsPartition(); ok {
 		return ret
 	}
@@ -3565,6 +3678,8 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
+		SetTxnScope(e.txnScope).
+		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		Build()
@@ -4077,6 +4192,8 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		idxInfo:      plan.IndexInfo,
 		rowDecoder:   decoder,
 		startTS:      startTS,
+		txnScope:     b.txnScope,
+		isStaleness:  b.isStaleness,
 		keepOrder:    plan.KeepOrder,
 		desc:         plan.Desc,
 		lock:         plan.Lock,
@@ -4196,12 +4313,17 @@ func fullRangePartition(idxArr []int) bool {
 	return len(idxArr) == 1 && idxArr[0] == plannercore.FullRange
 }
 
-func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *TableSampleExecutor {
-	if v.TableInfo.Meta().TempTableType != model.TempTableNone {
-		b.err = errors.New("TABLESAMPLE clause can not be applied to temporary tables")
-		return nil
-	}
+type emptySampler struct{}
 
+func (s *emptySampler) writeChunk(_ *chunk.Chunk) error {
+	return nil
+}
+
+func (s *emptySampler) finished() bool {
+	return true
+}
+
+func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *TableSampleExecutor {
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
@@ -4212,11 +4334,15 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 		table:        v.TableInfo,
 		startTS:      startTS,
 	}
-	if v.TableSampleInfo.AstNode.SampleMethod == ast.SampleMethodTypeTiDBRegion {
+
+	if v.TableInfo.Meta().TempTableType != model.TempTableNone {
+		e.sampler = &emptySampler{}
+	} else if v.TableSampleInfo.AstNode.SampleMethod == ast.SampleMethodTypeTiDBRegion {
 		e.sampler = newTableRegionSampler(
 			b.ctx, v.TableInfo, startTS, v.TableSampleInfo.Partitions, v.Schema(),
 			v.TableSampleInfo.FullSchema, e.retFieldTypes, v.Desc)
 	}
+
 	return e
 }
 
@@ -4321,12 +4447,12 @@ func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error
 		return nil
 	}
 
-	sessionVars := b.ctx.GetSessionVars()
-	if sessionVars.SnapshotTS != 0 {
-		return errors.New("can not read temporary table when 'tidb_snapshot' is set")
-	}
+	// Some tools like dumpling use history read to dump all table's records and will be fail if we return an error.
+	// So we do not check SnapshotTS here
 
-	if sessionVars.TxnCtx.IsStaleness || b.explicitStaleness {
+	sessionVars := b.ctx.GetSessionVars()
+
+	if sessionVars.TxnCtx.IsStaleness || b.isStaleness {
 		return errors.New("can not stale read temporary table")
 	}
 

@@ -18,12 +18,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	pmodel "github.com/prometheus/common/model"
-	"github.com/tikv/client-go/v2/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -110,12 +109,8 @@ func readSQLMetric(timepoint time.Time, SQLResult *sqlUsageData) error {
 	promQL := "sum(tidb_executor_statement_total{}) by (instance,type)"
 	result, err := querySQLMetric(ctx, timepoint, promQL)
 	if err != nil {
-		if err1, ok := err.(*promv1.Error); ok {
-			return errors.Errorf("query metric error, msg: %v, detail: %v", err1.Msg, err1.Detail)
-		}
-		return errors.Errorf("query metric error: %v", err.Error())
+		logutil.BgLogger().Warn("querySQLMetric got error")
 	}
-
 	anylisSQLUsage(result, SQLResult)
 	return nil
 }
@@ -155,6 +150,9 @@ func querySQLMetric(ctx context.Context, queryTime time.Time, promQL string) (re
 }
 
 func anylisSQLUsage(promResult pmodel.Value, SQLResult *sqlUsageData) {
+	if promResult == nil {
+		return
+	}
 	switch promResult.Type() {
 	case pmodel.ValVector:
 		matrix := promResult.(pmodel.Vector)

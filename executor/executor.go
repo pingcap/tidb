@@ -1022,14 +1022,14 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.L
 
 func filterTemporaryTableKeys(vars *variable.SessionVars, keys []kv.Key) []kv.Key {
 	txnCtx := vars.TxnCtx
-	if txnCtx == nil || txnCtx.GlobalTemporaryTables == nil {
+	if txnCtx == nil || txnCtx.TemporaryTables == nil {
 		return keys
 	}
 
-	newKeys := keys[:]
+	newKeys := keys[:0:len(keys)]
 	for _, key := range keys {
 		tblID := tablecodec.DecodeTableID(key)
-		if _, ok := txnCtx.GlobalTemporaryTables[tblID]; !ok {
+		if _, ok := txnCtx.TemporaryTables[tblID]; !ok {
 			newKeys = append(newKeys, key)
 		}
 	}
@@ -1290,12 +1290,14 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	for {
 		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
-			if !e.selected[e.inputRow.Idx()] {
-				continue
-			}
 			if req.IsFull() {
 				return nil
 			}
+
+			if !e.selected[e.inputRow.Idx()] {
+				continue
+			}
+
 			req.AppendRow(e.inputRow)
 		}
 		mSize := e.childResult.MemoryUsage()
@@ -1660,6 +1662,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		DiskTracker:   disk.NewTracker(memory.LabelForSQLText, -1),
 		TaskID:        stmtctx.AllocateTaskID(),
 		CTEStorageMap: map[int]*CTEStorages{},
+		IsStaleness:   false,
 	}
 	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 	globalConfig := config.GetGlobalConfig()
@@ -1699,7 +1702,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OriginalSQL = s.Text()
 	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
 		sc.InExplainStmt = true
-		sc.IgnoreExplainIDSuffix = (strings.ToLower(explainStmt.Format) == ast.ExplainFormatBrief)
+		sc.IgnoreExplainIDSuffix = (strings.ToLower(explainStmt.Format) == types.ExplainFormatBrief)
 		s = explainStmt.Stmt
 	}
 	if _, ok := s.(*ast.ExplainForStmt); ok {

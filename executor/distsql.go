@@ -166,10 +166,11 @@ type IndexReaderExecutor struct {
 	partRangeMap    map[int64][]*ranger.Range // each partition may have different ranges
 
 	// kvRanges are only used for union scan.
-	kvRanges []kv.KeyRange
-	dagPB    *tipb.DAGRequest
-	startTS  uint64
-
+	kvRanges    []kv.KeyRange
+	dagPB       *tipb.DAGRequest
+	startTS     uint64
+	txnScope    string
+	isStaleness bool
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result distsql.SelectResult
 	// columns are only required by union scan.
@@ -290,6 +291,8 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
+		SetTxnScope(e.txnScope).
+		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		SetMemTracker(e.memTracker)
@@ -548,6 +551,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
 			SetStreaming(e.indexStreaming).
+			SetTxnScope(e.txnScope).
+			SetIsStaleness(e.isStaleness).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
 			SetFromInfoSchema(e.ctx.GetInfoSchema()).
 			SetMemTracker(tracker)
@@ -645,6 +650,8 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		table:               table,
 		dagPB:               e.tableRequest,
 		startTS:             e.startTS,
+		txnScope:            e.txnScope,
+		isStaleness:         e.isStaleness,
 		columns:             e.columns,
 		streaming:           e.tableStreaming,
 		feedback:            statistics.NewQueryFeedback(0, nil, 0, false),
