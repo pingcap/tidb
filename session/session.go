@@ -602,11 +602,6 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 				return err
 			}
 
-			err = txnMemBuffer.Delete(key)
-			if err != nil {
-				return err
-			}
-
 			err = iter.Next()
 			if err != nil {
 				return err
