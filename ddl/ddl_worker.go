@@ -90,7 +90,12 @@ type worker struct {
 	delRangeManager delRangeManager
 	logCtx          context.Context
 
-	// below filed cache for top sql
+	ddlJobCache
+}
+
+// ddlJobCache is a cache for each DDL job.
+type ddlJobCache struct {
+	// below fields are cache for top sql
 	ddlJobCtx          context.Context
 	cacheSQL           string
 	cacheNormalizedSQL string
@@ -103,7 +108,7 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 		tp:              tp,
 		ddlJobCh:        make(chan struct{}, 1),
 		ctx:             ctx,
-		ddlJobCtx:       ctx,
+		ddlJobCache:     ddlJobCache{ddlJobCtx: context.Background()},
 		reorgCtx:        &reorgCtx{notifyCancelReorgJob: 0},
 		sessPool:        sessPool,
 		delRangeManager: delRangeMgr,
@@ -363,10 +368,10 @@ func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error 
 	return errors.Trace(t.UpdateDDLJob(0, job, updateRawArgs))
 }
 
-func (w *worker) deleteRange(job *model.Job) error {
+func (w *worker) deleteRange(ctx context.Context, job *model.Job) error {
 	var err error
 	if job.Version <= currentVersion {
-		err = w.delRangeManager.addDelRangeJob(job)
+		err = w.delRangeManager.addDelRangeJob(ctx, job)
 	} else {
 		err = errInvalidDDLJobVersion.GenWithStackByArgs(job.Version, currentVersion)
 	}
@@ -389,14 +394,14 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 			}
 
 			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
-			err = w.deleteRange(job)
+			err = w.deleteRange(w.ddlJobCtx, job)
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn:
-			err = w.deleteRange(job)
+			err = w.deleteRange(w.ddlJobCtx, job)
 		}
 	}
 	if job.Type == model.ActionRecoverTable {
-		err = finishRecoverTable(w, t, job)
+		err = finishRecoverTable(w, job)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -419,7 +424,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	return errors.Trace(err)
 }
 
-func finishRecoverTable(w *worker, t *meta.Meta, job *model.Job) error {
+func finishRecoverTable(w *worker, job *model.Job) error {
 	tbInfo := &model.TableInfo{}
 	var autoIncID, autoRandID, dropJobID, recoverTableCheckFlag int64
 	var snapshotTS uint64

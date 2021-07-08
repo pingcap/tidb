@@ -118,7 +118,7 @@ func RemoveFromGCDeleteRange(ctx sessionctx.Context, jobID, elementID int64) err
 }
 
 // RemoveMultiFromGCDeleteRange is exported for ddl pkg to use.
-func RemoveMultiFromGCDeleteRange(ctx sessionctx.Context, jobID int64, elementIDs []int64) error {
+func RemoveMultiFromGCDeleteRange(ctx context.Context, sctx sessionctx.Context, jobID int64, elementIDs []int64) error {
 	var buf strings.Builder
 	buf.WriteString(completeDeleteMultiRangesSQL)
 	paramIDs := make([]interface{}, 0, 1+len(elementIDs))
@@ -131,7 +131,7 @@ func RemoveMultiFromGCDeleteRange(ctx sessionctx.Context, jobID int64, elementID
 		paramIDs = append(paramIDs, elementID)
 	}
 	buf.WriteString(")")
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), buf.String(), paramIDs...)
+	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, buf.String(), paramIDs...)
 	return errors.Trace(err)
 }
 
