@@ -329,6 +329,15 @@ const (
 		LAST_USED_AT timestamp,
 		PRIMARY KEY(TABLE_ID, INDEX_ID)
 	);`
+
+	// CreateGlobalGrantsTable stores dynamic privs
+	CreateGlobalGrantsTable = `CREATE TABLE IF NOT EXISTS mysql.global_grants (
+		USER char(32) NOT NULL DEFAULT '',
+		HOST char(255) NOT NULL DEFAULT '',
+		PRIV char(32) NOT NULL DEFAULT '',
+		WITH_GRANT_OPTION enum('N','Y') NOT NULL DEFAULT 'N',
+		PRIMARY KEY (USER,HOST,PRIV)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -479,11 +488,15 @@ const (
 	version67 = 67
 	// version68 update the global variable 'tidb_enable_clustered_index' from 'off' to 'int_only'.
 	version68 = 68
+	// version69 adds mysql.global_grants for DYNAMIC privileges
+	// and forces tidb_multi_statement_mode=OFF when tidb_multi_statement_mode=WARN
+	// This affects upgrades from v4.0 where the default was WARN.
+	version69 = 69
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version68
+var currentBootstrapVersion int64 = version69
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -555,6 +568,7 @@ var (
 		upgradeToVer66,
 		upgradeToVer67,
 		upgradeToVer68,
+		upgradeToVer69,
 	}
 )
 
@@ -1392,6 +1406,12 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		bind := row.GetString(0)
 		db := row.GetString(1)
+		status := row.GetString(2)
+
+		if status != "using" && status != "builtin" {
+			continue
+		}
+
 		charset := row.GetString(4)
 		collation := row.GetString(5)
 		stmt, err := p.ParseOneStmt(bind, charset, collation)
@@ -1410,7 +1430,7 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 		}
 		bindMap[originWithDB] = bindInfo{
 			bindSQL:    utilparser.RestoreWithDefaultDB(stmt, db, bind),
-			status:     row.GetString(2),
+			status:     status,
 			createTime: row.GetTime(3),
 			charset:    charset,
 			collation:  collation,
@@ -1469,6 +1489,14 @@ func upgradeToVer68(s Session, ver int64) {
 		return
 	}
 	mustExecute(s, "DELETE FROM mysql.global_variables where VARIABLE_NAME = 'tidb_enable_clustered_index' and VARIABLE_VALUE = 'OFF'")
+}
+
+func upgradeToVer69(s Session, ver int64) {
+	if ver >= version69 {
+		return
+	}
+	doReentrantDDL(s, CreateGlobalGrantsTable)
+	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='OFF' WHERE VARIABLE_NAME = 'tidb_multi_statement_mode' AND VARIABLE_VALUE = 'WARN'")
 }
 
 func writeOOMAction(s Session) {
@@ -1547,6 +1575,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateSchemaIndexUsageTable)
 	// Create stats_fm_sketch table.
 	mustExecute(s, CreateStatsFMSketchTable)
+	// Create global_grants
+	mustExecute(s, CreateGlobalGrantsTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
