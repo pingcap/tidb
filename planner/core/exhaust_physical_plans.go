@@ -146,10 +146,7 @@ func (p *LogicalJoin) checkJoinKeyCollation(leftKeys, rightKeys []*expression.Co
 func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo, leftStatsInfo *property.StatsInfo, rightStatsInfo *property.StatsInfo) []PhysicalPlan {
 	joins := make([]PhysicalPlan, 0, len(p.leftProperties)+1)
 	// The leftProperties caches all the possible properties that are provided by its children.
-<<<<<<< HEAD
 	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
-=======
-	leftJoinKeys, rightJoinKeys, isNullEQ, hasNullEQ := p.GetJoinKeys()
 
 	// EnumType/SetType Unsupported: merge join conflicts with index order.
 	// ref: https://github.com/pingcap/tidb/issues/24473, https://github.com/pingcap/tidb/issues/25669
@@ -164,11 +161,6 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 		}
 	}
 
-	// TODO: support null equal join keys for merge join
-	if hasNullEQ {
-		return nil
-	}
->>>>>>> 574de5e5e... planner: fix incorrect result of set type for merge join (#25672)
 	for _, lhsChildProperty := range p.leftProperties {
 		offsets := getMaxSortPrefix(lhsChildProperty, leftJoinKeys)
 		// If not all equal conditions hit properties. We ban merge join heuristically. Because in this case, merge join
@@ -491,8 +483,6 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		if len(join.InnerHashKeys) > len(join.InnerJoinKeys) {
 			return nil
 		}
-<<<<<<< HEAD
-=======
 
 		// EnumType/SetType Unsupported: merge join conflicts with index order.
 		// ref: https://github.com/pingcap/tidb/issues/24473, https://github.com/pingcap/tidb/issues/25669
@@ -507,7 +497,6 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 			}
 		}
 
->>>>>>> 574de5e5e... planner: fix incorrect result of set type for merge join (#25672)
 		hasPrefixCol := false
 		for _, l := range join.IdxColLens {
 			if l != types.UnspecifiedLength {
