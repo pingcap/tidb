@@ -68,7 +68,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
-	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -732,9 +731,9 @@ func (cc *clientConn) PeerHost(hasPassword string) (host string, err error) {
 // - (additional exception) users with expired passwords (not yet supported)
 // In TiDB CONNECTION_ADMIN is satisfied by SUPER, so we only need to check once.
 func (cc *clientConn) skipInitConnect() bool {
-	checker := privilege.GetPrivilegeManager(cc.ctx.Session)
+	checker := cc.ctx.GetPrivilegeManager()
 	activeRoles := cc.ctx.GetSessionVars().ActiveRoles
-	return checker != nil && checker.RequestDynamicVerification(activeRoles, "CONNECTION_ADMIN", false)
+	return checker != nil && checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv)
 }
 
 // initConnect runs the initConnect SQL statement if it has been specified.
