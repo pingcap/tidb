@@ -547,7 +547,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		}
 		var currentCandidate *candidatePath
 		if path.IsTablePath() {
-			if path.StoreType == kv.TiFlash && prop.TaskTp != property.CopTiFlashGlobalReadTaskType {
+			if path.StoreType == kv.TiFlash {
 				currentCandidate = ds.getTableCandidate(path, prop)
 			} else if !prop.IsFlashProp() {
 				currentCandidate = ds.getTableCandidate(path, prop)

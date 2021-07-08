@@ -54,8 +54,6 @@ func (t TaskType) String() string {
 		return "copDoubleReadTask"
 	case CopTiFlashLocalReadTaskType:
 		return "copTiFlashLocalReadTask"
-	case CopTiFlashGlobalReadTaskType:
-		return "copTiFlashGlobalReadTask"
 	case MppTaskType:
 		return "mppTask"
 	}
