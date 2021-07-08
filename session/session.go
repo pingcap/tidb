@@ -507,8 +507,8 @@ func (s *session) doCommit(ctx context.Context) error {
 	sessVars := s.GetSessionVars()
 	// Get the related table or partition IDs.
 	relatedPhysicalTables := sessVars.TxnCtx.TableDeltaMap
-	// Get accessed global temporary tables in the transaction.
-	temporaryTables := sessVars.TxnCtx.GlobalTemporaryTables
+	// Get accessed temporary tables in the transaction.
+	temporaryTables := sessVars.TxnCtx.TemporaryTables
 	physicalTableIDs := make([]int64, 0, len(relatedPhysicalTables))
 	for id := range relatedPhysicalTables {
 		// Schema change on global temporary tables doesn't affect transactions.
@@ -537,7 +537,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.SetOption(kv.GuaranteeLinearizability,
 			sessVars.TxnCtx.IsExplicit && sessVars.GuaranteeLinearizability)
 	}
-	if tables := sessVars.TxnCtx.GlobalTemporaryTables; len(tables) > 0 {
+	if tables := sessVars.TxnCtx.TemporaryTables; len(tables) > 0 {
 		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
 	}
 
@@ -2882,7 +2882,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
 				break
 			}
-			dcLocation, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
+			dcLocation, ok := bundle.GetLeaderDC(placement.DCLabelKey)
 			if !ok {
 				errMsg := fmt.Sprintf("table %v's leader placement policy is not defined", tableName)
 				if len(partitionName) > 0 {

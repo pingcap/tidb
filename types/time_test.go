@@ -914,7 +914,7 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 	for _, t := range tbl {
 		v, err := types.ParseDuration(sc, t.Input, types.MaxFsp)
 		c.Assert(err, IsNil)
-		nv, err := v.RoundFrac(t.Fsp)
+		nv, err := v.RoundFrac(t.Fsp, sc.TimeZone)
 		c.Assert(err, IsNil)
 		c.Assert(nv.String(), Equals, t.Except)
 	}
@@ -1052,7 +1052,7 @@ func (s *testTimeSuite) TestDurationClock(c *C) {
 	}
 
 	for _, t := range tbl {
-		d, err := types.ParseDuration(nil, t.Input, types.MaxFsp)
+		d, err := types.ParseDuration(&stmtctx.StatementContext{TimeZone: time.UTC}, t.Input, types.MaxFsp)
 		c.Assert(err, IsNil)
 		c.Assert(d.Hour(), Equals, t.Hour)
 		c.Assert(d.Minute(), Equals, t.Minute)
