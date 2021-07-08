@@ -81,9 +81,9 @@ func (txn *LazyTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 
 func (txn *LazyTxn) init() {
 	txn.mutations = make(map[int64]*binlog.TableMutation)
-	txn.updateTxnInfo(func(info *txninfo.TxnInfo) {
-		info.State = txninfo.TxnRunningNormal
-	})
+	txn.mu.Lock()
+	txn.mu.TxnInfo.State = txninfo.TxnRunningNormal
+	txn.mu.Unlock()
 }
 
 func (txn *LazyTxn) initStmtBuf() {
@@ -122,8 +122,8 @@ func (txn *LazyTxn) cleanupStmtBuf() {
 
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
-	info.EntriesCount = uint64(txn.Transaction.Len())
-	info.EntriesSize = uint64(txn.Transaction.Size())
+	txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
+	txn.mu.TxnInfo.EntriesSize = uint64(txn.Transaction.Size())
 }
 
 // resetTxnInfo resets the transaction info.
