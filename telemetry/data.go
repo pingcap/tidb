@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/tikv/client-go/v2/logutil"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 type telemetryData struct {
