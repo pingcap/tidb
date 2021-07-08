@@ -18,7 +18,6 @@ import (
 	"math/rand"
 	"strconv"
 	"testing"
-	"time"
 )
 
 const (
@@ -119,8 +118,4 @@ func BenchmarkToFloat64Old(b *testing.B) {
 			_ = f
 		}
 	}
-}
-
-func init() {
-	rand.Seed(time.Now().Unix())
 }
