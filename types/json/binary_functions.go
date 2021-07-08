@@ -790,18 +790,13 @@ func MergePatchBinary(bjs []*BinaryJSON) (*BinaryJSON, error) {
 	// according to the implements of RFC7396
 	// when the last item is not object
 	// we can return the last item directly
-	if bjs[length-1] == nil || bjs[length-1].TypeCode != TypeCodeObject {
-		return bjs[length-1], nil
+	for i := length - 1; i >= 0; i-- {
+		if bjs[i] == nil || bjs[i].TypeCode != TypeCodeObject {
+			bjs = bjs[i:]
+			break
+		}
 	}
 
-	// recursive calling and avoid stack overflow
-	if length > 2 && length < 10 {
-		tmp, e := MergePatchBinary(bjs[0 : length-1])
-		if e != nil {
-			return nil, e
-		}
-		return MergePatchBinary([]*BinaryJSON{tmp, bjs[length-1]})
-	}
 	target := bjs[0]
 	for _, patch := range bjs[1:] {
 		target, err = mergePatchBinary(target, patch)
