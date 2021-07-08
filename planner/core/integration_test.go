@@ -3180,7 +3180,6 @@ func (s *testIntegrationSerialSuite) TestPushDownProjectionForTiFlash(c *C) {
 		}
 	}
 
-	tk.MustExec("set @@tidb_allow_mpp = 1;")
 	tk.MustExec("set @@tidb_opt_broadcast_join=1;")
 
 	var input []string
