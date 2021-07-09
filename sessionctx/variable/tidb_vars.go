@@ -723,6 +723,7 @@ const (
 	DefTiDBTopSQLReportIntervalSeconds = 60
 	DefTiDBEnableGlobalTemporaryTable  = false
 	DefTiDBEnableLocalTxn              = false
+	DefTMPTableSize                    = 16777216
 	DefTiDBEnableStableResultMode      = false
 )
 
