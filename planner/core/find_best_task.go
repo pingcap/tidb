@@ -631,6 +631,16 @@ func (ds *DataSource) canConvertToPointGet(candidate *candidatePath) bool {
 		}
 	}
 
+	if tblInfo := ds.table.Meta(); tblInfo.GetPartitionInfo() != nil {
+		// If the schema contains ExtraPidColID, do not convert to point get.
+		// Because the point get executor can not handle the extra partition ID column now.
+		for _, col := range ds.schema.Columns {
+			if col.ID == modelExtraPidColID {
+				return false
+			}
+		}
+	}
+
 	return true
 }
 
