@@ -535,6 +535,7 @@ func upgrade(s Session) {
 	ver, err := getBootstrapVersion(s)
 	terror.MustNil(err)
 	minorVer, err := getMinorVersion(s)
+	terror.MustNil(err)
 	if ver >= currentBootstrapVersion && minorVer >= currentMinorVersion {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
 		return
