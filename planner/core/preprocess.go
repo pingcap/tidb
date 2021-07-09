@@ -816,17 +816,19 @@ func (p *preprocessor) checkCreateViewWithSelect(stmt ast.Node) {
 			return
 		}
 
-		tblNames := extractTableList(s.From.TableRefs, nil, false)
-		for _, tn := range tblNames {
-			tbl, err := p.tableByName(tn)
-			if err != nil {
-				p.err = err
-				return
-			}
+		if s.From != nil {
+			tblNames := extractTableList(s.From.TableRefs, nil, false)
+			for _, tn := range tblNames {
+				tbl, err := p.tableByName(tn)
+				if err != nil {
+					p.err = err
+					return
+				}
 
-			if tbl.Meta().TempTableType == model.TempTableLocal {
-				p.err = ErrViewSelectTemporaryTable.GenWithStackByArgs(tn.Name)
-				return
+				if tbl.Meta().TempTableType == model.TempTableLocal {
+					p.err = ErrViewSelectTemporaryTable.GenWithStackByArgs(tn.Name)
+					return
+				}
 			}
 		}
 	case *ast.SetOprSelectList:
