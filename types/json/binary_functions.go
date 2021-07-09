@@ -864,7 +864,7 @@ func mergePatchBinary(target, patch *BinaryJSON) (result *BinaryJSON, err error)
 
 		binaryObject, e := buildBinaryObject(keys, values)
 		if e != nil {
-			panic("mergePatchBinary should never panic, please contact the TiDB team for help")
+			return nil, e
 		}
 		return &binaryObject, nil
 	}
