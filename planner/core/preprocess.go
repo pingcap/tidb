@@ -14,6 +14,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -133,7 +134,7 @@ var _ = PreprocessorReturn{}.initedLastSnapshotTS
 // PreprocessorReturn is used to retain information obtained in the preprocessor.
 type PreprocessorReturn struct {
 	initedLastSnapshotTS bool
-	ExplicitStaleness    bool
+	IsStaleness          bool
 	SnapshotTSEvaluator  func(sessionctx.Context) (uint64, error)
 	// LastSnapshotTS is the last evaluated snapshotTS if any
 	// otherwise it defaults to zero
@@ -453,8 +454,8 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 			break
 		}
 		valid := false
-		for i, length := 0, len(ast.ExplainFormats); i < length; i++ {
-			if strings.ToLower(x.Format) == ast.ExplainFormats[i] {
+		for i, length := 0, len(types.ExplainFormats); i < length; i++ {
+			if strings.ToLower(x.Format) == types.ExplainFormats[i] {
 				valid = true
 				break
 			}
@@ -631,6 +632,10 @@ func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 	for _, sel := range stmt.Selects[:len(stmt.Selects)-1] {
 		switch s := sel.(type) {
 		case *ast.SelectStmt:
+			if s.SelectIntoOpt != nil {
+				p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")
+				return
+			}
 			if s.IsInBraces {
 				continue
 			}
@@ -1496,9 +1501,12 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 		}
 		txnCtx := p.ctx.GetSessionVars().TxnCtx
 		p.TxnScope = txnCtx.TxnScope
+		// It means we meet following case:
+		// 1. start transaction read only as of timestamp ts
+		// 2. select statement
 		if txnCtx.IsStaleness {
 			p.LastSnapshotTS = txnCtx.StartTS
-			p.ExplicitStaleness = txnCtx.IsStaleness
+			p.IsStaleness = txnCtx.IsStaleness
 			p.initedLastSnapshotTS = true
 			return
 		}
@@ -1512,6 +1520,9 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.err = ErrAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
 			return
 		}
+		// it means we meet following case:
+		// 1. set transaction read only as of timestamp ts
+		// 2. select statement
 		if !p.initedLastSnapshotTS {
 			p.SnapshotTSEvaluator = func(sessionctx.Context) (uint64, error) {
 				return ts, nil
@@ -1525,6 +1536,12 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 		if p.err != nil {
 			return
 		}
+		if err := sessionctx.ValidateStaleReadTS(context.Background(), p.ctx, ts); err != nil {
+			p.err = errors.Trace(err)
+			return
+		}
+		// It means we meet following case:
+		// select statement with as of timestamp
 		if !p.initedLastSnapshotTS {
 			p.SnapshotTSEvaluator = func(ctx sessionctx.Context) (uint64, error) {
 				return calculateTsExpr(ctx, node)
@@ -1544,6 +1561,9 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			return
 		}
 	}
+	if p.flag&inPrepare == 0 {
+		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.IsStaleness
+	}
 	p.initedLastSnapshotTS = true
 }
 
@@ -1561,6 +1581,6 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 
 func (p *preprocessor) setStalenessReturn() {
 	txnScope := config.GetTxnScopeFromConfig()
-	p.ExplicitStaleness = true
+	p.IsStaleness = true
 	p.TxnScope = txnScope
 }
