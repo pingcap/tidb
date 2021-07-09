@@ -565,11 +565,6 @@ func (s *testMyDecimalSerialSuite) TestFromString(c *C) {
 		var dec MyDecimal
 		err := dec.FromString([]byte(ca.input))
 
-		//if err == nil || ca.err == nil {
-		//	c.Check(err, Equals, ca.err, Commentf("input: %s", ca.input))
-		//} else {
-		//	c.Check(err.Error(), Equals, ca.err.Error(), Commentf("input: %s", ca.input))
-		//}
 		c.Assert(terror.ErrorEqual(err, ca.err), IsTrue, Commentf("input: %s", ca.input))
 		result := dec.ToString()
 		c.Check(string(result), Equals, ca.output, Commentf("dec:%s", dec.String()))
@@ -583,11 +578,6 @@ func (s *testMyDecimalSerialSuite) TestFromString(c *C) {
 	for _, ca := range tests {
 		var dec MyDecimal
 		err := dec.FromString([]byte(ca.input))
-		//if err == nil || ca.err == nil {
-		//	c.Check(err, Equals, ca.err)
-		//} else {
-		//	c.Check(err.Error(), Equals, ca.err.Error())
-		//}
 		c.Assert(terror.ErrorEqual(err, ca.err), IsTrue)
 		result := dec.ToString()
 		c.Check(string(result), Equals, ca.output, Commentf("dec:%s", dec.String()))
