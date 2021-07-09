@@ -47,7 +47,7 @@ func init() {
 		dec := new(types.MyDecimal)
 		err := dec.FromString(hack.Slice(str))
 		if err == types.ErrTruncated || (err != nil &&
-			strings.Contains(err.Error(), "Truncated incorrect MyDecimal")) {
+			strings.Contains(err.Error(), "Truncated incorrect")) {
 			err = nil
 		}
 		return dec, err
