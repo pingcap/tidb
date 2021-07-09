@@ -17,6 +17,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"runtime"
 	"strconv"
@@ -207,6 +208,12 @@ func exit() {
 
 func syncLog() {
 	if err := log.Sync(); err != nil {
+		// Don't complain about /dev/stdout as Fsync will return EINVAL.
+		if pathErr, ok := err.(*fs.PathError); ok {
+			if pathErr.Path == "/dev/stdout" {
+				os.Exit(0)
+			}
+		}
 		fmt.Fprintln(os.Stderr, "sync log err:", err)
 		os.Exit(1)
 	}
