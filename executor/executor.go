@@ -1022,14 +1022,14 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.L
 
 func filterTemporaryTableKeys(vars *variable.SessionVars, keys []kv.Key) []kv.Key {
 	txnCtx := vars.TxnCtx
-	if txnCtx == nil || txnCtx.GlobalTemporaryTables == nil {
+	if txnCtx == nil || txnCtx.TemporaryTables == nil {
 		return keys
 	}
 
 	newKeys := keys[:0:len(keys)]
 	for _, key := range keys {
 		tblID := tablecodec.DecodeTableID(key)
-		if _, ok := txnCtx.GlobalTemporaryTables[tblID]; !ok {
+		if _, ok := txnCtx.TemporaryTables[tblID]; !ok {
 			newKeys = append(newKeys, key)
 		}
 	}
