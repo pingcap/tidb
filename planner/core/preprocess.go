@@ -815,6 +815,20 @@ func (p *preprocessor) checkCreateViewWithSelect(stmt ast.Node) {
 			s.LockInfo.LockType = ast.SelectLockNone
 			return
 		}
+
+		tblNames := extractTableList(s.From.TableRefs, nil, false)
+		for _, tn := range tblNames {
+			tbl, err := p.tableByName(tn)
+			if err != nil {
+				p.err = err
+				return
+			}
+
+			if tbl.Meta().TempTableType == model.TempTableLocal {
+				p.err = ErrViewSelectTemporaryTable.GenWithStackByArgs(tn.Name)
+				return
+			}
+		}
 	case *ast.SetOprSelectList:
 		for _, sel := range s.Selects {
 			p.checkCreateViewWithSelect(sel)
