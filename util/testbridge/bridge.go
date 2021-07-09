@@ -19,7 +19,11 @@ import (
 	"flag"
 )
 
-var (
-	_ = flag.Duration("check.timeout", 0, "timeout value for each function")
-	_ = flag.Bool("check.p", false, "Run suites in parallel")
-)
+func WorkaroundGoCheckFlags() {
+	if flag.Lookup("check.timeout") == nil {
+		_ = flag.Duration("check.timeout", 0, "WorkaroundGoCheckFlags: check.timeout")
+	}
+	if flag.Lookup("check.p") == nil {
+		_ = flag.Bool("check.p", false, "WorkaroundGoCheckFlags: check.p")
+	}
+}

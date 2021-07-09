@@ -16,7 +16,6 @@ package errno
 import (
 	"testing"
 
-	_ "github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/assert"
 )
 
