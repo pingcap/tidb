@@ -229,15 +229,10 @@ func (s *testTopSQLReporter) TestCollectAndTopN(c *C) {
 
 	// Test for time jump back.
 	records = []tracecpu.SQLCPUTimeRecord{
-		s.newSQLCPUTimeRecord(tsr, 6, 6),
-		s.newSQLCPUTimeRecord(tsr, 7, 7),
+		s.newSQLCPUTimeRecord(tsr, 6, 1),
+		s.newSQLCPUTimeRecord(tsr, 1, 1),
 	}
-	s.collectAndWait(tsr, 3, records)
-	records = []tracecpu.SQLCPUTimeRecord{
-		s.newSQLCPUTimeRecord(tsr, 8, 8),
-		s.newSQLCPUTimeRecord(tsr, 9, 9),
-	}
-	s.collectAndWait(tsr, 4, records)
+	s.collectAndWait(tsr, 0, records)
 
 	// Wait agent server collect finish.
 	agentServer.WaitCollectCnt(1, time.Second*10)
@@ -256,9 +251,11 @@ func (s *testTopSQLReporter) TestCollectAndTopN(c *C) {
 		return int(total)
 	}
 	c.Assert(results[0].SqlDigest, IsNil)
-	c.Assert(getTotalCPUTime(results[0]), Equals, 4)
+	c.Assert(getTotalCPUTime(results[0]), Equals, 5)
+	c.Assert(results[0].RecordListTimestampSec, DeepEquals, []uint64{0, 1, 3, 4})
+	c.Assert(results[0].RecordListCpuTimeMs, DeepEquals, []uint32{1, 2, 1, 1})
 	c.Assert(results[1].SqlDigest, DeepEquals, []byte("sqlDigest1"))
-	c.Assert(getTotalCPUTime(results[1]), Equals, 4)
+	c.Assert(getTotalCPUTime(results[1]), Equals, 5)
 	c.Assert(results[2].SqlDigest, DeepEquals, []byte("sqlDigest3"))
 	c.Assert(getTotalCPUTime(results[2]), Equals, 3)
 }
@@ -318,8 +315,49 @@ func (s *testTopSQLReporter) TestCollectCapacity(c *C) {
 	c.Assert(tsr.planMapLength.Load(), Equals, int64(5000))
 }
 
-func (s *testTopSQLReporter) TestDataPointsMerge(c *C) {
+func (s *testTopSQLReporter) TestCollectOthers(c *C) {
+	collectTarget := make(map[string]*dataPoints)
+	addEvictedCPUTime(collectTarget, 1, 10)
+	addEvictedCPUTime(collectTarget, 3, 30)
+	// test for time jump backward.
+	addEvictedCPUTime(collectTarget, 2, 20)
+
+	others := collectTarget[keyOthers]
+	c.Assert(others.CPUTimeMsTotal, Equals, uint64(60))
+	c.Assert(others.TimestampList, DeepEquals, []uint64{1, 2, 3})
+	c.Assert(others.CPUTimeMsList, DeepEquals, []uint32{10, 20, 30})
+
+	others = addEvictedDataPoints(nil, others)
+	c.Assert(others.CPUTimeMsTotal, Equals, uint64(60))
+
+	// test for time jump backward.
+	evict := &dataPoints{}
+	evict.TimestampList = []uint64{3, 2, 4}
+	evict.CPUTimeMsList = []uint32{30, 20, 40}
+	evict.CPUTimeMsTotal = 90
+	others = addEvictedDataPoints(others, evict)
+	c.Assert(others.CPUTimeMsTotal, Equals, uint64(150))
+	c.Assert(others.TimestampList, DeepEquals, []uint64{1, 2, 3, 4})
+	c.Assert(others.CPUTimeMsList, DeepEquals, []uint32{10, 40, 60, 40})
+}
+
+func (s *testTopSQLReporter) TestDataPoints(c *C) {
+	// test for dataPoints invalid.
 	d := &dataPoints{}
+	d.TimestampList = []uint64{1}
+	d.CPUTimeMsList = []uint32{10, 30}
+	c.Assert(d.isInvalid(), Equals, true)
+
+	// test for dataPoints sort.
+	d = &dataPoints{}
+	d.TimestampList = []uint64{1, 2, 5, 6, 3, 4}
+	d.CPUTimeMsList = []uint32{10, 20, 50, 60, 30, 40}
+	sort.Sort(d)
+	c.Assert(d.TimestampList, DeepEquals, []uint64{1, 2, 3, 4, 5, 6})
+	c.Assert(d.CPUTimeMsList, DeepEquals, []uint32{10, 20, 30, 40, 50, 60})
+
+	// test for dataPoints merge.
+	d = &dataPoints{}
 	evict := &dataPoints{}
 	d.merge(evict)
 	evict.TimestampList = []uint64{1, 3}
@@ -337,6 +375,28 @@ func (s *testTopSQLReporter) TestDataPointsMerge(c *C) {
 	c.Assert(d.CPUTimeMsTotal, Equals, uint64(190))
 	c.Assert(d.TimestampList, DeepEquals, []uint64{1, 2, 3, 4, 5})
 	c.Assert(d.CPUTimeMsList, DeepEquals, []uint32{20, 20, 60, 40, 50})
+
+	// test for time jump backward.
+	d = &dataPoints{}
+	evict = &dataPoints{}
+	evict.TimestampList = []uint64{3, 2}
+	evict.CPUTimeMsList = []uint32{30, 20}
+	evict.CPUTimeMsTotal = 50
+	d.merge(evict)
+	c.Assert(d.CPUTimeMsTotal, Equals, uint64(50))
+	c.Assert(d.TimestampList, DeepEquals, []uint64{2, 3})
+	c.Assert(d.CPUTimeMsList, DeepEquals, []uint32{20, 30})
+
+	// test for merge invalid dataPoints
+	d = &dataPoints{}
+	evict = &dataPoints{}
+	evict.TimestampList = []uint64{1}
+	evict.CPUTimeMsList = []uint32{10, 30}
+	c.Assert(evict.isInvalid(), Equals, true)
+	d.merge(evict)
+	c.Assert(d.isInvalid(), Equals, false)
+	c.Assert(d.CPUTimeMsList, IsNil)
+	c.Assert(d.TimestampList, IsNil)
 }
 
 func BenchmarkTopSQL_CollectAndIncrementFrequency(b *testing.B) {

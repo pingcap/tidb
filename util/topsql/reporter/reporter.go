@@ -16,6 +16,7 @@ package reporter
 import (
 	"bytes"
 	"context"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -62,6 +63,23 @@ type dataPoints struct {
 	TimestampList  []uint64
 	CPUTimeMsList  []uint32
 	CPUTimeMsTotal uint64
+}
+
+func (d *dataPoints) isInvalid() bool {
+	return len(d.TimestampList) != len(d.CPUTimeMsList)
+}
+
+func (d *dataPoints) Len() int {
+	return len(d.TimestampList)
+}
+
+func (d *dataPoints) Less(i, j int) bool {
+	// sort by timestamp
+	return d.TimestampList[i] < d.TimestampList[j]
+}
+func (d *dataPoints) Swap(i, j int) {
+	d.TimestampList[i], d.TimestampList[j] = d.TimestampList[j], d.TimestampList[i]
+	d.CPUTimeMsList[i], d.CPUTimeMsList[j] = d.CPUTimeMsList[j], d.CPUTimeMsList[i]
 }
 
 type dataPointsOrderByCPUTime []*dataPoints
@@ -226,6 +244,12 @@ func addEvictedCPUTime(collectTarget map[string]*dataPoints, timestamp uint64, t
 	} else {
 		others.TimestampList = append(others.TimestampList, timestamp)
 		others.CPUTimeMsList = append(others.CPUTimeMsList, totalCPUTimeMs)
+		length := len(others.TimestampList)
+		if others.TimestampList[length-1] < others.TimestampList[length-2] {
+			// This situation appears only when time jump backward.
+			// If so, sort the data points by timestamp.
+			sort.Sort(others)
+		}
 	}
 	others.CPUTimeMsTotal += uint64(totalCPUTimeMs)
 }
@@ -233,6 +257,15 @@ func addEvictedCPUTime(collectTarget map[string]*dataPoints, timestamp uint64, t
 func (d *dataPoints) merge(other *dataPoints) {
 	if other == nil || len(other.TimestampList) == 0 {
 		return
+	}
+	if other.isInvalid() {
+		logutil.BgLogger().Warn("[top-sql] data points is invalid, it should never happen", zap.Reflect("self", *d), zap.Reflect("other", *other))
+		return
+	}
+	if !sort.IsSorted(other) {
+		// This situation appears only when time jump backward.
+		// If so, sort the data points by timestamp.
+		sort.Sort(other)
 	}
 	if len(d.TimestampList) == 0 {
 		d.TimestampList = other.TimestampList
@@ -268,12 +301,6 @@ func (d *dataPoints) merge(other *dataPoints) {
 }
 
 func addEvictedDataPoints(others *dataPoints, evict *dataPoints) *dataPoints {
-	if len(evict.TimestampList) != len(evict.CPUTimeMsList) {
-		logutil.BgLogger().Error("[top-sql] add evicted data error, should never happen",
-			zap.Uint64s("timestamp-list", evict.TimestampList),
-			zap.Uint32s("cpu-time-list", evict.CPUTimeMsList))
-		return others
-	}
 	if others == nil {
 		others = &dataPoints{}
 	}
@@ -287,19 +314,11 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 	collectedData := make(map[string]*dataPoints)
 	currentReportInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load()
 	reportTicker := time.NewTicker(time.Second * time.Duration(currentReportInterval))
-	lastTimestamp := uint64(0)
 	for {
 		select {
 		case data := <-tsr.collectCPUDataChan:
-			// Make sure the timestamp remains incrementing.
-			// Ignore small timestamps when a time jump occurs。
-			if data.timestamp > lastTimestamp {
-				lastTimestamp = data.timestamp
-				// On receiving data to collect: Write to local data array, and retain records with most CPU time.
-				tsr.doCollect(collectedData, data.timestamp, data.records)
-			} else {
-				logutil.BgLogger().Warn("[top-sql] system time jump backward", zap.Uint64("last-collect-ts", lastTimestamp), zap.Uint64("current-ts", data.timestamp))
-			}
+			// On receiving data to collect: Write to local data array, and retain records with most CPU time.
+			tsr.doCollect(collectedData, data.timestamp, data.records)
 		case <-reportTicker.C:
 			tsr.takeDataAndSendToReportChan(&collectedData)
 
