@@ -14,12 +14,12 @@
 package types
 
 import (
-	"github.com/pingcap/parser/terror"
 	"strconv"
 	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
 )
 
 var _ = Suite(&testMyDecimalSuite{})
