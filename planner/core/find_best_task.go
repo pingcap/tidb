@@ -511,7 +511,9 @@ func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.Ph
 	// it needs not to keep order for index scan.
 	if !prop.IsEmpty() && all {
 		for i, col := range path.IdxCols {
-			if col.Equal(nil, prop.SortItems[0].Col) {
+			expr, isOk := prop.SortItems[0].Col.VirtualExpr.(*expression.ScalarFunction)
+			isVirExprMatched := isOk && expr.Equal(nil, col.VirtualExpr)
+			if col.Equal(nil, prop.SortItems[0].Col) || isVirExprMatched {
 				candidate.isMatchProp = matchIndicesProp(path.IdxCols[i:], path.IdxColLens[i:], prop.SortItems)
 				break
 			} else if i >= path.EqCondCount {
@@ -1286,7 +1288,9 @@ func matchIndicesProp(idxCols []*expression.Column, colLens []int, propItems []p
 		return false
 	}
 	for i, item := range propItems {
-		if colLens[i] != types.UnspecifiedLength || !item.Col.Equal(nil, idxCols[i]) {
+		expr, isOk := item.Col.VirtualExpr.(*expression.ScalarFunction)
+		isVirExprMatched := isOk && expr.Equal(nil, idxCols[i].VirtualExpr)
+		if colLens[i] != types.UnspecifiedLength || !(item.Col.Equal(nil, idxCols[i]) || isVirExprMatched) {
 			return false
 		}
 	}
