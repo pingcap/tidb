@@ -296,7 +296,7 @@ task GoTest BuildFailPoint, {
     }
     $env:log_level = 'fatal'
     $env:TZ = 'Asia/Shanghai'
-    exec { & $GO test -p $P -ldflags "`"$testFlags`"" -cover $packages '-check.p' true '-check.timeout' 4s '-timeout' 4s }
+    exec { & $GO test -p $P -ldflags "`"$testFlags`"" -cover $packages '-check.p' true '-check.timeout' 4s }
 } -Done {
     Disable-FailPoint
     $env:log_level = $Task.Data.logLevel
