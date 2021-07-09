@@ -90,7 +90,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
 		rpcCancel:       tikv.NewRPCanceller(),
-		resolvedLocks:   util.NewTSSet(5),
 	}
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
@@ -262,7 +261,7 @@ type copIterator struct {
 	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
 	closed uint32
 
-	resolvedLocks *util.TSSet
+	resolvedLocks util.TSSet
 
 	actionOnExceed *rateLimitAction
 }
@@ -405,7 +404,7 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction bool) {
 			respChan:        it.respChan,
 			finishCh:        it.finishCh,
 			vars:            it.vars,
-			kvclient:        tikv.NewClientHelper(it.store.store, it.resolvedLocks),
+			kvclient:        tikv.NewClientHelper(it.store.store, &it.resolvedLocks),
 			memTracker:      it.memTracker,
 			replicaReadSeed: it.replicaReadSeed,
 			actionOnExceed:  it.actionOnExceed,
