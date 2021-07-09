@@ -191,6 +191,76 @@ func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 	c.Assert(r.Close(), IsNil)
 }
 
+func (s *testBootstrapSuite) TestMinorUpgrade(c *C) {
+	ctx := context.Background()
+	defer testleak.AfterTest(c)()
+	store, _ := newStoreWithBootstrap(c, s.dbName)
+	defer store.Close()
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "USE mysql;")
+
+	// bootstrap with currentBootstrapVersion
+	r := mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_4.0_minor_version";`)
+	req := r.NewChunk()
+	err := r.Next(ctx, req)
+	row := req.GetRow(0)
+	c.Assert(err, IsNil)
+	c.Assert(req.NumRows() == 0, IsFalse)
+	c.Assert(row.Len(), Equals, 1)
+	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", currentMinorVersion)))
+	c.Assert(r.Close(), IsNil)
+
+	se1 := newSession(c, store, s.dbName)
+	ver, err := getMinorVersion(se1)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, int64(currentMinorVersion))
+
+	// Do something to downgrade the store.
+	// downgrade meta bootstrap version
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(1))
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	mustExecSQL(c, se1, `delete from mysql.TiDB where VARIABLE_NAME="tidb_4.0_minor_version";`)
+	mustExecSQL(c, se1, fmt.Sprintf(`delete from mysql.global_variables where VARIABLE_NAME="%s";`,
+		variable.TiDBDistSQLScanConcurrency))
+	mustExecSQL(c, se1, `commit;`)
+	unsetStoreBootstrapped(store.UUID())
+	// Make sure the version is downgraded.
+	r = mustExecSQL(c, se1, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_4.0_minor_version";`)
+	req = r.NewChunk()
+	err = r.Next(ctx, req)
+	c.Assert(err, IsNil)
+	c.Assert(req.NumRows() == 0, IsTrue)
+	c.Assert(r.Close(), IsNil)
+
+	ver, err = getMinorVersion(se1)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, int64(0))
+
+	// Create a new session then upgrade() will run automatically.
+	dom1, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom1.Close()
+	se2 := newSession(c, store, s.dbName)
+	r = mustExecSQL(c, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_4.0_minor_version";`)
+	req = r.NewChunk()
+	err = r.Next(ctx, req)
+	c.Assert(err, IsNil)
+	c.Assert(req.NumRows() == 0, IsFalse)
+	row = req.GetRow(0)
+	c.Assert(row.Len(), Equals, 1)
+	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", currentMinorVersion)))
+	c.Assert(r.Close(), IsNil)
+
+	ver, err = getMinorVersion(se2)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, int64(currentMinorVersion))
+}
+
 // TestUpgrade tests upgrading
 func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	ctx := context.Background()
