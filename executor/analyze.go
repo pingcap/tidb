@@ -778,7 +778,7 @@ func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 		totFts = append(totFts, col.RetType)
 	}
 	chk := chunk.NewChunkWithCapacity(totFts, len(collector.Samples))
-	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().TimeZone)
+	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
 	for _, sample := range collector.Samples {
 		for i := range sample.Columns {
 			if schema.Columns[i].VirtualExpr != nil {

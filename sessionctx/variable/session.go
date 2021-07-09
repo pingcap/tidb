@@ -15,6 +15,7 @@ package variable
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
@@ -174,9 +175,9 @@ type TransactionContext struct {
 	// TableDeltaMap lock to prevent potential data race
 	tdmLock sync.Mutex
 
-	// GlobalTemporaryTables is used to store transaction-specific information for global temporary tables.
+	// TemporaryTables is used to store transaction-specific information for global temporary tables.
 	// It can also be stored in sessionCtx with local temporary tables, but it's easier to clean this data after transaction ends.
-	GlobalTemporaryTables map[int64]tableutil.TempTable
+	TemporaryTables map[int64]tableutil.TempTable
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -860,16 +861,13 @@ type SessionVars struct {
 	// It's nil if there is no local temporary table.
 	LocalTemporaryTables interface{}
 
+	// TemporaryTableData stores committed kv values for temporary table for current session.
+	TemporaryTableData kv.MemBuffer
+
 	// cache is used to reduce object allocation.
 	cache struct {
 		stmtctx.StatementContext
 	}
-}
-
-// InitStatementContext initialize s.StmtCtx for the struct itself, this avoids allocation.
-func (s *SessionVars) InitStatementContext() {
-	s.cache.StatementContext = stmtctx.StatementContext{}
-	s.StmtCtx = &s.cache.StatementContext
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
@@ -1497,21 +1495,27 @@ func (s *SessionVars) LazyCheckKeyNotExists() bool {
 	return s.PresumeKeyNotExists || (s.TxnCtx.IsPessimistic && !s.StmtCtx.DupKeyAsWarning)
 }
 
+// InitStatementContext initialize s.StmtCtx for the struct itself, this avoids allocation.
+func (s *SessionVars) InitStatementContext() {
+	s.cache.StatementContext = stmtctx.StatementContext{}
+	s.StmtCtx = &s.cache.StatementContext
+}
+
 // GetTemporaryTable returns a TempTable by tableInfo.
 func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.TempTable {
-	if tblInfo.TempTableType == model.TempTableGlobal {
-		if s.TxnCtx.GlobalTemporaryTables == nil {
-			s.TxnCtx.GlobalTemporaryTables = make(map[int64]tableutil.TempTable)
+	if tblInfo.TempTableType != model.TempTableNone {
+		if s.TxnCtx.TemporaryTables == nil {
+			s.TxnCtx.TemporaryTables = make(map[int64]tableutil.TempTable)
 		}
-		globalTempTables := s.TxnCtx.GlobalTemporaryTables
-		globalTempTable, ok := globalTempTables[tblInfo.ID]
+		tempTables := s.TxnCtx.TemporaryTables
+		tempTable, ok := tempTables[tblInfo.ID]
 		if !ok {
-			globalTempTable = tableutil.TempTableFromMeta(tblInfo)
-			globalTempTables[tblInfo.ID] = globalTempTable
+			tempTable = tableutil.TempTableFromMeta(tblInfo)
+			tempTables[tblInfo.ID] = tempTable
 		}
-		return globalTempTable
+		return tempTable
 	}
-	// TODO: check local temporary tables
+
 	return nil
 }
 
@@ -2209,4 +2213,41 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 		}
 	}
 	return s.seekFactor
+}
+
+// GetTemporaryTableSnapshotValue get temporary table value from session
+func (s *SessionVars) GetTemporaryTableSnapshotValue(ctx context.Context, key kv.Key) ([]byte, error) {
+	memData := s.TemporaryTableData
+	if memData == nil {
+		return nil, kv.ErrNotExist
+	}
+
+	v, err := memData.Get(ctx, key)
+	if err != nil {
+		return v, err
+	}
+
+	if len(v) == 0 {
+		return nil, kv.ErrNotExist
+	}
+
+	return v, nil
+}
+
+// GetTemporaryTableTxnValue returns a kv.Getter to fetch temporary table data in txn
+func (s *SessionVars) GetTemporaryTableTxnValue(ctx context.Context, txn kv.Transaction, key kv.Key) ([]byte, error) {
+	v, err := txn.GetMemBuffer().Get(ctx, key)
+	if err == nil {
+		if len(v) == 0 {
+			return nil, kv.ErrNotExist
+		}
+
+		return v, nil
+	}
+
+	if !kv.IsErrNotFound(err) {
+		return v, err
+	}
+
+	return s.GetTemporaryTableSnapshotValue(ctx, key)
 }
