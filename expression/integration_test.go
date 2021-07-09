@@ -2744,7 +2744,7 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '1.4a'"))
 
 	result = tk.MustQuery(`select cast('1e - 1' as decimal);`)
-	result.Check(testkit.Rows("0"))
+	result.Check(testkit.Rows("1"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '1e - 1'"))
 
 	result = tk.MustQuery(`select cast('1 1' as decimal)`)
