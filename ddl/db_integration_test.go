@@ -2871,7 +2871,7 @@ func (s *testIntegrationSuite3) TestAvoidCreateViewOnLocalTemporaryTable(c *C) {
 		c.Assert(err, NotNil)
 		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v1' doesn't exist")
 
-		_, err = tk.Exec("create view v1 as select * from (select * from t1)")
+		_, err = tk.Exec("create view v1 as select * from (select * from t1) as tt")
 		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
 		_, err = tk.Exec("select * from v1")
 		c.Assert(err, NotNil)
