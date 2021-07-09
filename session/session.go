@@ -553,6 +553,14 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 
 	sessionData := s.sessionVars.TemporaryTableData
 	var stage kv.StagingHandle
+
+	defer func() {
+		// stage != kv.InvalidStagingHandle means error occurs, we need to cleanup sessionData
+		if stage != kv.InvalidStagingHandle {
+			sessionData.Cleanup(stage)
+		}
+	}()
+
 	for tblID, tbl := range txnTempTables {
 		if !tbl.GetModified() {
 			continue
@@ -610,16 +618,17 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 	}
 
 	err := txn.Commit(ctx)
-	if stage != kv.InvalidStagingHandle {
-		if err != nil {
-			sessionData.Cleanup(stage)
-		} else {
-			sessionData.Release(stage)
-			s.sessionVars.TemporaryTableData = sessionData
-		}
+	if err != nil {
+		return err
 	}
 
-	return err
+	if stage != kv.InvalidStagingHandle {
+		sessionData.Release(stage)
+		s.sessionVars.TemporaryTableData = sessionData
+		stage = kv.InvalidStagingHandle
+	}
+
+	return nil
 }
 
 type temporaryTableKVFilter map[int64]tableutil.TempTable
