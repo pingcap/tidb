@@ -1246,6 +1246,6 @@ func readLastLines(ctx context.Context, file *os.File, endCursor int64) ([]strin
 }
 
 func (e *slowQueryRetriever) initializeAsyncParsing(ctx context.Context, sctx sessionctx.Context) {
-	e.taskList = make(chan slowLogTask, 100)
+	e.taskList = make(chan slowLogTask, 1)
 	go e.parseDataForSlowLog(ctx, sctx)
 }
