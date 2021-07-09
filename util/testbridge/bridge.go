@@ -19,6 +19,11 @@ import (
 	"flag"
 )
 
+// WorkaroundGoCheckFlags registers flags of go-check for pkg does not import go-check
+// to workaround the go-check flags passed in Makefile.
+//
+// TODO: Remove this function when the migration from go-check to testify[1] is done.
+// [1] https://github.com/pingcap/tidb/issues/26022
 func WorkaroundGoCheckFlags() {
 	if flag.Lookup("check.timeout") == nil {
 		_ = flag.Duration("check.timeout", 0, "WorkaroundGoCheckFlags: check.timeout")
