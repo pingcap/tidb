@@ -622,9 +622,11 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 		return err
 	}
 
-	sessionData.Release(stage)
-	s.sessionVars.TemporaryTableData = sessionData
-	stage = kv.InvalidStagingHandle
+	if stage != kv.InvalidStagingHandle {
+		sessionData.Release(stage)
+		s.sessionVars.TemporaryTableData = sessionData
+		stage = kv.InvalidStagingHandle
+	}
 
 	return nil
 }
