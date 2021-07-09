@@ -47,7 +47,6 @@ var (
 	CurrentCoprCacheHitRatioGTE80Count atomic.Uint64
 	// CurrentCoprCacheHitRatioGTE100Count is CurrentCoprCacheHitRatioGTE100Count
 	CurrentCoprCacheHitRatioGTE100Count atomic.Uint64
-	promAddressErr                      atomic.Uint64
 )
 
 const (
@@ -107,10 +106,7 @@ func getSQLSum(sqlTypeData *sqlType) uint64 {
 func readSQLMetric(timepoint time.Time, SQLResult *sqlUsageData) error {
 	ctx := context.TODO()
 	promQL := "avg(tidb_executor_statement_total{}) by (type)"
-	result, err := querySQLMetric(ctx, timepoint, promQL)
-	if err != nil {
-		promAddressErr.Add(1)
-	}
+	result, _ := querySQLMetric(ctx, timepoint, promQL)
 	anylisSQLUsage(result, SQLResult)
 	return nil
 }

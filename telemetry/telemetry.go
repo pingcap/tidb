@@ -154,7 +154,6 @@ func ReportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) error 
 		CheckAt: time.Now().Format(time.RFC3339),
 	}
 	reported, err := reportUsageData(ctx, etcdClient)
-	promAddressErr.Swap(0)
 	if err != nil {
 		s.IsError = true
 		s.ErrorMessage = err.Error()
