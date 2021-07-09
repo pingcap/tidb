@@ -155,7 +155,7 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 func (s *testCoprocessorSuite) TestSplitRegionRanges(c *C) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
-	_, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	_, cluster, pdClient, _ := testutils.NewMockTiKV("", nil)
 	testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
 	pdCli := &tikv.CodecPDClient{Client: pdClient}
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
