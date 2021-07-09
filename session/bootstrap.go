@@ -414,7 +414,6 @@ const (
 	// and forces tidb_multi_statement_mode=OFF when tidb_multi_statement_mode=WARN
 	version52 = 52
 
-
 	// Const for TiDB release-4.0 minorVersion
 	// minorVersion1 restore all SQL bindings.
 	minorVersion1 = 1
@@ -475,7 +474,7 @@ var (
 		upgradeToVer52,
 	}
 
-	upgradeMinorVersion = []func(Session, int64) {
+	upgradeMinorVersion = []func(Session, int64){
 		upgradeToMinorVer1,
 	}
 )
@@ -1331,7 +1330,6 @@ func getMinorVersion(s Session) (int64, error) {
 	}
 	return strconv.ParseInt(sVal, 10, 64)
 }
-
 
 // doDDLWorks executes DDL statements in bootstrap stage.
 func doDDLWorks(s Session) {
