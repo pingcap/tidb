@@ -3803,7 +3803,15 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		dbName = model.NewCIStr(sessionVars.CurrentDB)
 	}
 
-	tbl, err := b.is.TableByName(dbName, tn.Name)
+	is := b.is
+	if len(b.buildingViewStack) > 0 {
+		if tempIs, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
+			// for tables in view, always ignore local temporary table
+			is = tempIs.InfoSchema
+		}
+	}
+
+	tbl, err := is.TableByName(dbName, tn.Name)
 	if err != nil {
 		return nil, err
 	}
