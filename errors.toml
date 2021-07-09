@@ -976,6 +976,11 @@ error = '''
 EXPLAIN/SHOW can not be issued; lacking privileges for underlying table
 '''
 
+["planner:1352"]
+error = '''
+View's SELECT refers to a temporary table '%-.192s'
+'''
+
 ["planner:1356"]
 error = '''
 View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
