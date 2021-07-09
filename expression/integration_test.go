@@ -2726,7 +2726,7 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	// test builtinCastStringAsDecimalSig
 	tk.MustExec(`drop table if exists tb5`)
 	tk.MustExec(`create table tb5 (a varchar(20));`)
-	tk.MustExec(`insert into tb5 values ('123', '.0a1');`)
+	tk.MustExec(`insert into tb5 values ('123'), ('.0a1');`)
 	result = tk.MustQuery(`select cast(a as decimal(10, 2)) from tb5;`)
 	result.Check(testkit.Rows("123.00", "0.00"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '.0a1'"))
