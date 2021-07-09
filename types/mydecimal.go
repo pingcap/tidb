@@ -413,14 +413,22 @@ func (d *MyDecimal) ToString() (str []byte) {
 // FromString parses decimal from string.
 func (d *MyDecimal) FromString(str []byte) error {
 	// strErr is used to check str is bad number or not
-	var strBak = str
 	var strErr error
+	var strBak = str
 	for i := 0; i < len(str); i++ {
 		if !isSpace(str[i]) {
 			str = str[i:]
 			break
 		}
 	}
+	// trim space in the end
+	for j := len(str) - 1; j >= 0; j-- {
+		if !isSpace(str[j]) {
+			str = str[:j+1]
+			break
+		}
+	}
+
 	if len(str) == 0 {
 		*d = zeroMyDecimal
 		return ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", string(strBak))
@@ -445,7 +453,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 			endIdx++
 		}
 
-		if endIdx != len(str) {
+		if endIdx < len(str) && str[endIdx] != 'E' && str[endIdx] != 'e' && str[endIdx] != ' ' {
 			strErr = ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", string(strBak))
 		}
 		digitsFrac = endIdx - strIdx - 1
@@ -550,7 +558,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 		strErr = ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", string(str))
 	}
 
-	if strErr == nil && (endIdx+1 <= len(str) && str[endIdx] == ' ') {
+	if strErr == nil && (endIdx+1 < len(str) && str[endIdx] == ' ') {
 		strErr = ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", string(str))
 	}
 

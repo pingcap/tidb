@@ -14,6 +14,7 @@
 package types
 
 import (
+	"github.com/pingcap/parser/terror"
 	"strings"
 	"testing"
 
@@ -524,28 +525,41 @@ func (s *testMyDecimalSerialSuite) TestFromString(c *C) {
 		{"1e -1", "0.1", nil},
 		{"0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
 			"0.000000000000000000000000000000000000000000000000000000000000000000000000",
-			ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", "0.000000000000000000000000000000000000000000000000000000000000000000000000")},
+			ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL",
+				"0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")},
 		{"0.1a2", "0.1", ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", "0.1a2")},
 		{"123aE5", "123", ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", "123aE5")},
-		{"123E5a", "123", ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", "123E5a")},
+		{"123E5a", "12300000", ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", "123E5a")},
 		{"1 1", "1", ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", "1 1")},
 	}
 	for _, ca := range tests {
 		var dec MyDecimal
 		err := dec.FromString([]byte(ca.input))
-		c.Check(err, Equals, ca.err, Commentf("input: %s", ca.input))
+
+		//if err == nil || ca.err == nil {
+		//	c.Check(err, Equals, ca.err, Commentf("input: %s", ca.input))
+		//} else {
+		//	c.Check(err.Error(), Equals, ca.err.Error(), Commentf("input: %s", ca.input))
+		//}
+		c.Assert(terror.ErrorEqual(err, ca.err), IsTrue, Commentf("input: %s", ca.input))
 		result := dec.ToString()
 		c.Check(string(result), Equals, ca.output, Commentf("dec:%s", dec.String()))
 	}
 	wordBufLen = 1
 	tests = []tcase{
 		{"123450000098765", "98765", ErrOverflow},
-		{"123450.000098765", "123450", ErrTruncated},
+		{"123450.000098765", "123450",
+			ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", "123450.000098765")},
 	}
 	for _, ca := range tests {
 		var dec MyDecimal
 		err := dec.FromString([]byte(ca.input))
-		c.Check(err, Equals, ca.err)
+		//if err == nil || ca.err == nil {
+		//	c.Check(err, Equals, ca.err)
+		//} else {
+		//	c.Check(err.Error(), Equals, ca.err.Error())
+		//}
+		c.Assert(terror.ErrorEqual(err, ca.err), IsTrue)
 		result := dec.ToString()
 		c.Check(string(result), Equals, ca.output, Commentf("dec:%s", dec.String()))
 	}
