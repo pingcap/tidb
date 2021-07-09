@@ -421,6 +421,39 @@ type candidatePath struct {
 	isMatchProp  bool
 }
 
+// onlyPointQuery checks whether there's only point query
+func (c *candidatePath) onlyPointQuery(sc *stmtctx.StatementContext) bool {
+	noIntervalRange := true
+	if c.path.IsIntHandlePath {
+		for _, ran := range c.path.Ranges {
+			if !ran.IsPoint(sc) {
+				noIntervalRange = false
+				break
+			}
+		}
+		return noIntervalRange
+	}
+	haveNullVal := false
+	for _, ran := range c.path.Ranges {
+		// Not point or the not full matched.
+		if !ran.IsPoint(sc) || len(ran.HighVal) != len(c.path.Index.Columns) {
+			noIntervalRange = false
+			break
+		}
+		// Check whether there's null value.
+		for i := 0; i < len(c.path.Index.Columns); i++ {
+			if ran.HighVal[i].IsNull() {
+				haveNullVal = true
+				break
+			}
+		}
+		if haveNullVal {
+			break
+		}
+	}
+	return noIntervalRange && !haveNullVal
+}
+
 // compareColumnSet will compares the two set. The last return value is used to indicate
 // if they are comparable, it is false when both two sets have columns that do not occur in the other.
 // When the second return value is true, the value of first:
@@ -529,9 +562,7 @@ func (ds *DataSource) getIndexMergeCandidate(path *util.AccessPath) *candidatePa
 	return candidate
 }
 
-// skylinePruning prunes access paths according to different factors. An access path can be pruned only if
-// there exists a path that is not worse than it at all factors and there is at least one better factor.
-func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candidatePath {
+func (ds *DataSource) getCandidatePaths(prop *property.PhysicalProperty) []*candidatePath {
 	candidates := make([]*candidatePath, 0, 4)
 	for _, path := range ds.possibleAccessPaths {
 		if path.PartialIndexPaths != nil {
@@ -545,22 +576,18 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
 			continue
 		}
-		var currentCandidate *candidatePath
 		if path.IsTablePath() {
 			if path.StoreType == kv.TiFlash {
 				if path.IsTiFlashGlobalRead && prop.TaskTp == property.CopTiFlashGlobalReadTaskType {
-					currentCandidate = ds.getTableCandidate(path, prop)
+					candidates = append(candidates, ds.getTableCandidate(path, prop))
 				}
 				if !path.IsTiFlashGlobalRead && prop.TaskTp != property.CopTiFlashGlobalReadTaskType {
-					currentCandidate = ds.getTableCandidate(path, prop)
+					candidates = append(candidates, ds.getTableCandidate(path, prop))
 				}
 			} else {
 				if !path.IsTiFlashGlobalRead && !prop.IsFlashProp() {
-					currentCandidate = ds.getTableCandidate(path, prop)
+					candidates = append(candidates, ds.getTableCandidate(path, prop))
 				}
-			}
-			if currentCandidate == nil {
-				continue
 			}
 		} else {
 			coveredByIdx := ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
@@ -570,43 +597,83 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 				// 2. We have a non-empty prop to match.
 				// 3. This index is forced to choose.
 				// 4. The needed columns are all covered by index columns(and handleCol).
-				currentCandidate = ds.getIndexCandidate(path, prop, coveredByIdx)
-			} else {
-				continue
+				candidates = append(candidates, ds.getIndexCandidate(path, prop, coveredByIdx))
 			}
-		}
-		pruned := false
-		for i := len(candidates) - 1; i >= 0; i-- {
-			if candidates[i].path.StoreType == kv.TiFlash {
-				continue
-			}
-			result := compareCandidates(candidates[i], currentCandidate)
-			if result == 1 {
-				pruned = true
-				// We can break here because the current candidate cannot prune others anymore.
-				break
-			} else if result == -1 {
-				candidates = append(candidates[:i], candidates[i+1:]...)
-			}
-		}
-		if !pruned {
-			candidates = append(candidates, currentCandidate)
 		}
 	}
+	return candidates
+}
 
-	if ds.ctx.GetSessionVars().GetAllowPreferRangeScan() && len(candidates) > 1 {
-		// remove the table/index full scan path
-		for i, c := range candidates {
-			for _, ran := range c.path.Ranges {
-				if ran.IsFullRange() {
-					candidates = append(candidates[:i], candidates[i+1:]...)
-					return candidates
+func (ds *DataSource) tryHeuristics(candidates []*candidatePath) *candidatePath {
+	// TODO(yifan): check OptimDependOnMutableConst
+	uniqueIndicesWithDoubleScan := make([]*candidatePath, 0, len(candidates))
+	singleScanIndices := make([]*candidatePath, 0, len(candidates))
+	for _, cand := range candidates {
+		if cand.path.PartialIndexPaths != nil || cand.path.StoreType == kv.TiFlash {
+			// TODO(yifan): do we need to handle TiFlash case?
+			continue
+		}
+		if cand.onlyPointQuery(ds.ctx.GetSessionVars().StmtCtx) {
+			if (cand.path.Index != nil && cand.path.Index.Unique) || cand.path.IsIntHandlePath {
+				if cand.isSingleScan {
+					// TODO(yifan): what if multiple candidates satisfy the above conditions?
+					return cand
+				}
+				uniqueIndicesWithDoubleScan = append(uniqueIndicesWithDoubleScan, cand)
+			}
+		} else {
+			if cand.isSingleScan {
+				singleScanIndices = append(singleScanIndices, cand)
+			}
+		}
+	}
+	var currentBest *candidatePath
+	for _, uniqueIdx := range uniqueIndicesWithDoubleScan {
+		if currentBest == nil || len(uniqueIdx.path.Ranges) < len(currentBest.path.Ranges) {
+			currentBest = uniqueIdx
+		}
+	}
+	for _, singleScanIdx := range singleScanIndices {
+		for _, uniqueIdx := range uniqueIndicesWithDoubleScan {
+			setsResult, comparable := compareColumnSet(singleScanIdx.columnSet, uniqueIdx.columnSet)
+			if comparable && setsResult == 1 {
+				if currentBest == nil || len(singleScanIdx.path.Ranges) < len(currentBest.path.Ranges) {
+					currentBest = uniqueIdx
 				}
 			}
 		}
 	}
+	return currentBest
+}
 
-	return candidates
+// skylinePruning prunes access paths according to different factors. An access path can be pruned only if
+// there exists a path that is not worse than it at all factors and there is at least one better factor.
+func (ds *DataSource) skylinePruning(candidates []*candidatePath) []*candidatePath {
+	pruned := make([]bool, len(candidates))
+	newCandidates := make([]*candidatePath, 0, len(candidates))
+	for i, cand := range candidates {
+		// TODO: do we need to compare between TiFlash candidates?
+		if cand.path.StoreType == kv.TiFlash {
+			continue
+		}
+		for j := i + 1; j < len(candidates); j++ {
+			if candidates[j].path.StoreType == kv.TiFlash {
+				continue
+			}
+			result := compareCandidates(cand, candidates[j])
+			if result == 1 {
+				pruned[j] = true
+			} else if result == -1 {
+				pruned[i] = true
+			}
+		}
+	}
+	for i, p := range pruned {
+		if !p {
+			newCandidates = append(newCandidates, candidates[i])
+		}
+	}
+	return newCandidates
 }
 
 // findBestTask implements the PhysicalPlan interface.
@@ -672,9 +739,27 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		return t, 1, err
 	}
 
-	t = invalidTask
-	candidates := ds.skylinePruning(prop)
+	candidates := ds.getCandidatePaths(prop)
+	if len(candidates) > 1 {
+		hit := ds.tryHeuristics(candidates)
+		if hit != nil {
+			candidates = []*candidatePath{hit}
+		} else {
+			candidates = ds.skylinePruning(candidates)
+			if ds.ctx.GetSessionVars().GetAllowPreferRangeScan() && len(candidates) > 1 {
+				// remove the table/index full scan path
+				for i, c := range candidates {
+					for _, ran := range c.path.Ranges {
+						if ran.IsFullRange() {
+							candidates = append(candidates[:i], candidates[i+1:]...)
+						}
+					}
+				}
+			}
+		}
+	}
 
+	t = invalidTask
 	cntPlan = 0
 	for _, candidate := range candidates {
 		path := candidate.path
