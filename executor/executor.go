@@ -1663,6 +1663,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	savePrevLastInsertID := vars.StmtCtx.PrevLastInsertID
 	saveErrCount, saveWarnCount := vars.StmtCtx.NumErrorWarnings()
 	saveInUpdateStmt, saveInDeleteStmt, saveInInsertStmt, saveInSelectStmt := vars.StmtCtx.InUpdateStmt, vars.StmtCtx.InDeleteStmt, vars.StmtCtx.InInsertStmt, vars.StmtCtx.InSelectStmt
+	saveRuntimeStatsColl := vars.StmtCtx.RuntimeStatsColl
 
 	if vars.TxnCtx.CouldRetry {
 		// Must construct new statement context object, the retry history need context for every statement.
@@ -1816,7 +1817,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	sc.PrevAffectedRows = 0
 	if globalConfig.EnableCollectExecutionInfo {
-		sc.InitRuntimeStatsColl()
+		if saveRuntimeStatsColl == nil {
+			sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
+		} else {
+			execdetails.ResetRuntimeStatsColl(saveRuntimeStatsColl)
+			sc.RuntimeStatsColl = saveRuntimeStatsColl
+		}
 	}
 	if saveInUpdateStmt || saveInDeleteStmt || saveInInsertStmt {
 		sc.PrevAffectedRows = int64(saveAffectedRows)
