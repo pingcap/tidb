@@ -1413,7 +1413,7 @@ func doDMLWorks(s Session) {
 		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion,
 	)
 
-	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES(%?, %?, "Minor version. Do not delete.")`,
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES(%?, %?, "TiDB minor version. Only for release-4.0.")`,
 		mysql.SystemDB, mysql.TiDBTable, tidbServerMinorVersionVar, currentMinorVersion,
 	)
 
