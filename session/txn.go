@@ -136,6 +136,7 @@ func (txn *LazyTxn) resetTxnInfo(
 	currentSQLDigest string,
 	allSQLDigests []string,
 ) {
+	txn.mu.TxnInfo = txninfo.TxnInfo{}
 	txn.mu.TxnInfo.StartTS = startTS
 	txn.mu.TxnInfo.State = state
 	txn.mu.TxnInfo.EntriesCount = entriesCount
