@@ -559,7 +559,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromStringToOthers(c *C)
 	tk.MustExec("alter table t modify txt decimal(7, 4)")
 	tk.MustExec("alter table t modify e decimal(7, 4)")
 	tk.MustExec("alter table t modify s decimal(7, 4)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("123.4500 123.4500 123.4500 123.4500 123.4500 123.4500 1.0000 1.0000"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("123.4500 123.4500 123.45\x00\x00 123.4500 123.4500 123.4500 1.0000 1.0000"))
 	// double
 	reset(tk)
 	tk.MustExec("insert into t values ('123.45', '123.45', '123.45', '123.45', '123.45', '123.45', '123', '123')")
