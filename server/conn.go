@@ -185,6 +185,7 @@ type clientConn struct {
 	collation    uint8             // collation used by client, may be different from the collation used by database.
 	lastActive   time.Time         // last active time
 	authPlugin   string            // default authentication plugin
+	isUnixSocket bool              // connection is Unix Socket file
 
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
@@ -837,7 +838,7 @@ func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error
 		return cc.peerHost, "", nil
 	}
 	host = variable.DefHostname
-	if cc.server.isUnixSocket() {
+	if cc.isUnixSocket {
 		cc.peerHost = host
 		return
 	}

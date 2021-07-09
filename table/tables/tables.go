@@ -323,7 +323,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
-	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
+	if m := t.Meta(); m.TempTableType != model.TempTableNone {
 		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
 			if tmpTable.GetSize() > sctx.GetSessionVars().TMPTableSize {
 				return table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
@@ -623,7 +623,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		fn.ApplyOn(&opt)
 	}
 
-	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
+	if m := t.Meta(); m.TempTableType != model.TempTableNone {
 		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
 			if tmpTable.GetSize() > sctx.GetSessionVars().TMPTableSize {
 				return nil, table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
@@ -1034,7 +1034,7 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	if err != nil {
 		return err
 	}
-	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
+	if m := t.Meta(); m.TempTableType != model.TempTableNone {
 		if tmpTable := addTemporaryTable(ctx, m); tmpTable != nil {
 			if tmpTable.GetSize() > ctx.GetSessionVars().TMPTableSize {
 				return table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
