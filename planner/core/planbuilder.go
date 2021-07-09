@@ -2499,7 +2499,7 @@ func calculateTsExpr(sctx sessionctx.Context, asOfClause *ast.AsOfClause) (uint6
 	if err != nil {
 		return 0, err
 	}
-	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(sctx.GetSessionVars().TimeZone)
+	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(sctx.GetSessionVars().Location())
 	if err != nil {
 		return 0, err
 	}
@@ -3021,6 +3021,8 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 					Value:   x.Datum,
 					RetType: &x.Type,
 				}
+			case *driver.ParamMarkerExpr:
+				expr, err = expression.ParamMarkerExpression(b.ctx, x)
 			default:
 				b.curClause = fieldList
 				// subquery in insert values should not reference upper scope
