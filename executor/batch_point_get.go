@@ -434,11 +434,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 	handles := make([]kv.Handle, 0, len(values))
 	var existKeys []kv.Key
-	if e.lock && rc {
-		existKeys = make([]kv.Key, 0, 2*len(values))
-	}
 	e.values = make([][]byte, 0, len(values))
 	if e.lock && rc {
+		existKeys = make([]kv.Key, 0, 2*len(values))
 		if len(indexKeys) > 0 {
 			if !e.txn.Valid() {
 				return kv.ErrInvalidTxn
