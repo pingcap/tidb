@@ -818,16 +818,12 @@ func mergePatchBinary(target, patch *BinaryJSON) (result *BinaryJSON, err error)
 		}
 
 		keyValMap := make(map[string]BinaryJSON)
-		keys := make([][]byte, 0, len(keyValMap))
 		if target.TypeCode == TypeCodeObject {
 			elemCount := target.GetElemCount()
 			for i := 0; i < elemCount; i++ {
 				key := target.objectGetKey(i)
 				val := target.objectGetVal(i)
-				k := string(key)
-
-				keyValMap[k] = val
-				keys = append(keys, key)
+				keyValMap[string(key)] = val
 			}
 		}
 		var tmp *BinaryJSON
@@ -848,26 +844,24 @@ func mergePatchBinary(target, patch *BinaryJSON) (result *BinaryJSON, err error)
 					return result, err
 				}
 
-				if _, ok := keyValMap[k]; !ok {
-					keys = append(keys, key)
-				}
 				keyValMap[k] = *tmp
 			}
+		}
+
+		length := len(keyValMap)
+		keys := make([][]byte, 0, length)
+		for key := range keyValMap {
+			keys = append(keys, []byte(key))
 		}
 		sort.Slice(keys, func(i, j int) bool {
 			return bytes.Compare(keys[i], keys[j]) < 0
 		})
+		length = len(keys)
 		values := make([]BinaryJSON, 0, len(keys))
-		for index := 0; index < len(keys); {
-			k := string(keys[index])
-			if _, ok := keyValMap[k]; !ok {
-				keys = append(keys[:index], keys[index+1:]...)
-				continue
-			}
-
-			values = append(values, keyValMap[k])
-			index++
+		for i := 0; i < length; i++ {
+			values = append(values, keyValMap[string(keys[i])])
 		}
+
 		binaryObject, e := buildBinaryObject(keys, values)
 		if e != nil {
 			panic("mergePatchBinary should never panic, please contact the TiDB team for help")
