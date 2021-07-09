@@ -134,9 +134,20 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 		for _, s := range stores {
 			aliveReq := tikvrpc.NewRequest(tikvrpc.CmdMPPAlive, &mpp.IsAliveRequest{}, kvrpcpb.Context{})
 			aliveReq.StoreTp = tikvrpc.TiFlash
-			_, err := kvStore.GetTiKVClient().SendRequest(ctx, s.GetAddr(), aliveReq, tikv.ReadTimeoutMedium)
+			alive := false
+			resp, err := kvStore.GetTiKVClient().SendRequest(ctx, s.GetAddr(), aliveReq, tikv.ReadTimeoutMedium)
 			if err != nil {
 				logutil.BgLogger().Warn("Cannot detect store's availablity", zap.String("store address", s.GetAddr()), zap.String("err message", err.Error()))
+			} else {
+				rpcResp := resp.Resp.(*mpp.IsAliveResponse)
+				if rpcResp.Available {
+					alive = true
+				} else {
+					logutil.BgLogger().Warn("Cannot detect store's availablity", zap.String("store address", s.GetAddr()))
+				}
+			}
+			if !alive {
+				continue
 			}
 
 			storeTaskMap[s.StoreID()] = &batchCopTask{
