@@ -106,8 +106,12 @@ func getSQLSum(sqlTypeData *sqlType) uint64 {
 func readSQLMetric(timepoint time.Time, SQLResult *sqlUsageData) error {
 	ctx := context.TODO()
 	promQL := "avg(tidb_executor_statement_total{}) by (type)"
-	result, _ := querySQLMetric(ctx, timepoint, promQL)
-	anylisSQLUsage(result, SQLResult)
+	result, err := querySQLMetric(ctx, timepoint, promQL)
+	if err != nil {
+		analysisSQLUsage(result, SQLResult)
+	} else {
+		analysisSQLUsage(result, SQLResult)
+	}
 	return nil
 }
 
@@ -145,7 +149,7 @@ func querySQLMetric(ctx context.Context, queryTime time.Time, promQL string) (re
 	return result, err
 }
 
-func anylisSQLUsage(promResult pmodel.Value, SQLResult *sqlUsageData) {
+func analysisSQLUsage(promResult pmodel.Value, SQLResult *sqlUsageData) {
 	if promResult == nil {
 		return
 	}
