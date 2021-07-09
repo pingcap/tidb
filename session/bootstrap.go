@@ -1231,7 +1231,7 @@ func updateGlobalBindings(s Session) {
 }
 
 func upgradeToVer51(s Session, ver int64) {
-	if ver >= version52 {
+	if ver >= version51 {
 		return
 	}
 	updateGlobalBindings(s)
