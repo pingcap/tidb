@@ -1021,9 +1021,10 @@ func (lt *LogicalTopN) isLimit() bool {
 type LogicalLimit struct {
 	logicalSchemaProducer
 
-	Offset     uint64
-	Count      uint64
-	limitHints limitHintInfo
+	Offset        uint64
+	Count         uint64
+	CalcFoundRows bool
+	limitHints    limitHintInfo
 }
 
 // extraPIDInfo is used by SelectLock on partitioned table, the TableReader need

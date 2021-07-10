@@ -962,8 +962,9 @@ type PhysicalLock struct {
 type PhysicalLimit struct {
 	physicalSchemaProducer
 
-	Offset uint64
-	Count  uint64
+	Offset        uint64
+	Count         uint64
+	CalcFoundRows bool
 }
 
 // Clone implements PhysicalPlan interface.

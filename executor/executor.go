@@ -1052,11 +1052,18 @@ type LimitExec struct {
 
 	// columnIdxsUsedByChild keep column indexes of child executor used for inline projection
 	columnIdxsUsedByChild []int
+
+	// calcFoundRows indicates if we should calculate the exact row count
+	// even if a limit is applied. This is used by the feature SQL_CALC_FOUND_ROWS.
+	calcFoundRows bool
 }
 
 // Next implements the Executor Next interface.
 func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
+	if e.calcFoundRows {
+		return e.nextCalcFoundRows(ctx, req)
+	}
 	if e.cursor >= e.end {
 		return nil
 	}
@@ -1154,6 +1161,70 @@ func (e *LimitExec) adjustRequiredRows(chk *chunk.Chunk) *chunk.Chunk {
 	}
 
 	return chk.SetRequiredRows(mathutil.Min(limitTotal, limitRequired), e.maxChunkSize)
+}
+
+func minUint64(a, b uint64) uint64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// nextCalcFoundRows is different from Next() because we must read through all of the rows
+// in order to calculate the total number of rows. This is part of the SQL_CALC_FOUND_ROWS feature.
+// It is typically slower than running two queries (a LIMIT and a COUNT(*) for total),
+// but is required for MySQL compatibility.
+func (e *LimitExec) nextCalcFoundRows(ctx context.Context, req *chunk.Chunk) error {
+	for {
+		err := Next(ctx, e.children[0], e.adjustRequiredRows(e.childResult))
+		if err != nil {
+			return err
+		}
+		batchSize := uint64(e.childResult.NumRows())
+		// no more data.
+		if batchSize == 0 {
+			break
+		}
+		// skip these chunks if we are not ready to read these chunks.
+		// or we already have all the data we need.
+		if e.cursor+batchSize < e.begin || e.cursor >= e.end {
+			e.cursor += batchSize
+			e.ctx.GetSessionVars().StmtCtx.AddFoundRows(batchSize)
+			continue
+		}
+
+		begin := uint64(0)
+		if e.begin > e.cursor {
+			// Because begin > cursor we know from the above skip that
+			// the begin will be somewhere in this batch. We need to offset
+			// the read to be begin - cursor, and then add these offset rows
+			// to the FOUND_ROWS count.
+			begin = e.begin - e.cursor
+			e.ctx.GetSessionVars().StmtCtx.AddFoundRows(begin)
+		}
+
+		// If this batch exceeds what we need, we need to truncate the end point.
+		// We then add these rows onto the found rows.
+		end := minUint64(batchSize, e.end-e.begin-e.cursor+begin)
+		if end < batchSize {
+			e.ctx.GetSessionVars().StmtCtx.AddFoundRows(batchSize - end)
+		}
+
+		// skip these chunks since we are not interested in the data.
+		if begin == end {
+			e.cursor += batchSize
+			e.ctx.GetSessionVars().StmtCtx.AddFoundRows(batchSize)
+			continue
+		}
+		if e.columnIdxsUsedByChild != nil {
+			req.Append(e.childResult.Prune(e.columnIdxsUsedByChild), int(begin), int(end))
+		} else {
+			req.Append(e.childResult, int(begin), int(end))
+		}
+		// Add all these rows to the cursor
+		e.cursor += batchSize
+	}
+	return nil
 }
 
 func init() {

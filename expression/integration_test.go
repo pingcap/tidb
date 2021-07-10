@@ -3347,12 +3347,35 @@ func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
 	tk.MustQuery("select * from t")
 	result = tk.MustQuery("select found_rows()")
 	result.Check(testkit.Rows("3"))
-	tk.MustQuery("select * from t where a = 0")
-	result = tk.MustQuery("select found_rows()")
-	result.Check(testkit.Rows("0"))
-	tk.MustQuery("select * from t where a = 1")
-	result = tk.MustQuery("select found_rows()")
-	result.Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t LIMIT 1").Check(testkit.Rows("1"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS * FROM t ORDER BY a LIMIT 1").Check(testkit.Rows("1"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS * FROM t ORDER BY a LIMIT 3").Check(testkit.Rows("1", "2", "2"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS * FROM t ORDER BY a LIMIT 100").Check(testkit.Rows("1", "2", "2"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS * FROM t ORDER BY a LIMIT 9999999").Check(testkit.Rows("1", "2", "2"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS * FROM t ORDER BY a LIMIT 1,2").Check(testkit.Rows("2", "2"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))
+	tk.MustQuery("select * from t where a = 0").Check(testkit.Rows())
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("0"))
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS * from t where a = 0").Check(testkit.Rows())
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t where a = 1").Check(testkit.Rows("1"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+	tk.MustQuery("select sql_calc_found_rows * from t where a = 1").Check(testkit.Rows("1"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+	tk.MustQuery("select sql_calc_found_rows * from t where a = 1 LIMIT 2").Check(testkit.Rows("1"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+	tk.MustQuery("select sql_calc_found_rows * from t where a = 1 LIMIT 999999").Check(testkit.Rows("1"))
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+	tk.MustQuery("select sql_calc_found_rows * from t where a = 1 LIMIT 999999,1").Check(testkit.Rows())
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t where a = 1 LIMIT 999999,1").Check(testkit.Rows())
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("0"))
+
 	tk.MustQuery("select * from t where a like '2'") // Test SelectionExec
 	result = tk.MustQuery("select found_rows()")
 	result.Check(testkit.Rows("2"))
@@ -3455,6 +3478,72 @@ func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
 	// 2 * 2, error.
 	err = tk.ExecToErr(twoColumnQuery)
 	c.Assert(err, NotNil)
+}
+
+// This tests the use case of wordpress
+// Roughly copied from https://github.com/pingcap/tidb/issues/20133
+// But changed to be deterministic.
+func (s *testIntegrationSuite) TestWordpressPaginationUseCase(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("SET sql_mode='';")
+	defer tk.MustExec("SET sql_mode=DEFAULT;")
+
+	tk.MustExec("DROP TABLE IF EXISTS posts")
+	tk.MustExec(`CREATE TABLE posts (
+	  ID bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+	  post_author bigint(20) unsigned NOT NULL DEFAULT 0,
+	  post_date datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+	  post_date_gmt datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+	  post_content longtext COLLATE utf8mb4_unicode_520_ci NOT NULL,
+	  post_title text COLLATE utf8mb4_unicode_520_ci NOT NULL,
+	  post_excerpt text COLLATE utf8mb4_unicode_520_ci NOT NULL,
+	  post_status varchar(20) COLLATE utf8mb4_unicode_520_ci NOT NULL DEFAULT 'publish',
+	  comment_status varchar(20) COLLATE utf8mb4_unicode_520_ci NOT NULL DEFAULT 'open',
+	  ping_status varchar(20) COLLATE utf8mb4_unicode_520_ci NOT NULL DEFAULT 'open',
+	  post_password varchar(255) COLLATE utf8mb4_unicode_520_ci NOT NULL DEFAULT '',
+	  post_name varchar(200) COLLATE utf8mb4_unicode_520_ci NOT NULL DEFAULT '',
+	  to_ping text COLLATE utf8mb4_unicode_520_ci NOT NULL,
+	  pinged text COLLATE utf8mb4_unicode_520_ci NOT NULL,
+	  post_modified datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+	  post_modified_gmt datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+	  post_content_filtered longtext COLLATE utf8mb4_unicode_520_ci NOT NULL,
+	  post_parent bigint(20) unsigned NOT NULL DEFAULT 0,
+	  guid varchar(255) COLLATE utf8mb4_unicode_520_ci NOT NULL DEFAULT '',
+	  menu_order int(11) NOT NULL DEFAULT 0,
+	  post_type varchar(20) COLLATE utf8mb4_unicode_520_ci NOT NULL DEFAULT 'post',
+	  post_mime_type varchar(100) COLLATE utf8mb4_unicode_520_ci NOT NULL DEFAULT '',
+	  comment_count bigint(20) NOT NULL DEFAULT 0,
+	  PRIMARY KEY (ID),
+	  KEY post_name (post_name(191)),
+	  KEY type_status_date (post_type,post_status,post_date,ID),
+	  KEY post_parent (post_parent),
+	  KEY post_author (post_author)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci AUTO_INCREMENT=124960;`)
+
+	tk.MustExec("INSERT INTO posts (post_type, post_status, post_date) SELECT 'post', 'something', NOW() FROM dual;")
+	tk.MustExec("INSERT INTO posts (post_type, post_status, post_date) SELECT 'post', 'something', NOW() FROM posts a JOIN posts b JOIN posts c;")
+	tk.MustExec("INSERT INTO posts (post_type, post_status, post_date) SELECT 'post', 'something', NOW() FROM posts a JOIN posts b JOIN posts c;")
+	tk.MustExec("INSERT INTO posts (post_type, post_status, post_date) SELECT 'post', 'something', NOW() FROM posts a JOIN posts b JOIN posts c LIMIT 100;")
+	tk.MustExec("UPDATE posts SET post_status='future' WHERE ID % 3 = 1;")
+
+	result := tk.MustQuery("SELECT SQL_CALC_FOUND_ROWS DISTINCT posts.ID FROM posts WHERE 1=1 AND posts.post_type = 'post' AND ((posts.post_status = 'future')) ORDER BY posts.post_date DESC LIMIT 0, 10;")
+	c.Assert(len(result.Rows()), Equals, 10)
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("37"))
+
+	result = tk.MustQuery("SELECT SQL_CALC_FOUND_ROWS DISTINCT posts.ID FROM posts WHERE 1=1 AND posts.post_type = 'post' AND ((posts.post_status = 'future')) ORDER BY posts.post_date DESC LIMIT 10, 10;")
+	c.Assert(len(result.Rows()), Equals, 10)
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("37"))
+
+	result = tk.MustQuery("SELECT SQL_CALC_FOUND_ROWS DISTINCT posts.ID FROM posts WHERE 1=1 AND posts.post_type = 'post' AND ((posts.post_status = 'future')) ORDER BY posts.post_date DESC LIMIT 20, 10;")
+	c.Assert(len(result.Rows()), Equals, 10)
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("37"))
+
+	result = tk.MustQuery("SELECT SQL_CALC_FOUND_ROWS DISTINCT posts.ID FROM posts WHERE 1=1 AND posts.post_type = 'post' AND ((posts.post_status = 'future')) ORDER BY posts.post_date DESC LIMIT 30, 10;")
+	c.Assert(len(result.Rows()), Equals, 7)
+	tk.MustQuery("select found_rows()").Check(testkit.Rows("37"))
 }
 
 func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
@@ -7991,7 +8080,6 @@ func (s *testIntegrationSerialSuite) TestNoopFunctions(c *C) {
 
 	message := `.* has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions`
 	stmts := []string{
-		"SELECT SQL_CALC_FOUND_ROWS * FROM t1 LIMIT 1",
 		"SELECT * FROM t1 LOCK IN SHARE MODE",
 		"SELECT * FROM t1 GROUP BY a DESC",
 		"SELECT * FROM t1 GROUP BY a ASC",

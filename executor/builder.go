@@ -649,9 +649,10 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec)
 	base.initCap = n
 	e := &LimitExec{
-		baseExecutor: base,
-		begin:        v.Offset,
-		end:          v.Offset + v.Count,
+		baseExecutor:  base,
+		begin:         v.Offset,
+		end:           v.Offset + v.Count,
+		calcFoundRows: v.CalcFoundRows,
 	}
 
 	childUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema())[0]
