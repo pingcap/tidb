@@ -23,13 +23,13 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/tikv/client-go/v2/mockstore/cluster"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 var _ = Suite(&testFeatureInfoSuite{})
 
 type testFeatureInfoSuite struct {
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	store   kv.Storage
 	dom     *domain.Domain
 	se      session.Session
@@ -37,7 +37,7 @@ type testFeatureInfoSuite struct {
 
 func (s *testFeatureInfoSuite) SetUpTest(c *C) {
 	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			s.cluster = c
 		}),
