@@ -36,6 +36,8 @@ type TempTable interface {
 
 	GetSize() int64
 	SetSize(int64)
+
+	GetMeta() *model.TableInfo
 }
 
 // TempTableFromMeta builds a TempTable from *model.TableInfo.
