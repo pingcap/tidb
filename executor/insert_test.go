@@ -340,7 +340,7 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	_, err = tk.Exec(`insert ignore into t values(1900);`)
 	c.Assert(err, IsNil)
 	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|8033|invalid year"))
-	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`0000`))
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`0`))
 }
 
 func (s *testSuite3) TestInsertValueForCastDecimalField(c *C) {
