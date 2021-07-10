@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -62,6 +63,7 @@ func TestT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	tikv.EnableFailpoints()
 	TestingT(t)
 }
 
@@ -129,14 +131,9 @@ func (cli *testServerClient) runTests(c *C, overrider configOverrider, tests ...
 		c.Assert(err, IsNil)
 	}()
 
-	_, err = db.Exec("DROP TABLE IF EXISTS test")
-	c.Assert(err, IsNil)
-
 	dbt := &DBTest{c, db}
 	for _, test := range tests {
 		test(dbt)
-		// fixed query error
-		_, _ = dbt.db.Exec("DROP TABLE IF EXISTS test")
 	}
 }
 

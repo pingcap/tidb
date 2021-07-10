@@ -50,7 +50,7 @@ type Manager interface {
 	// Dynamic privileges are only assignable globally, and have their own grantable attribute.
 	RequestDynamicVerification(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool
 
-	// RequestDynamicVerification verifies a DYNAMIC privilege for a specific user.
+	// RequestDynamicVerificationWithUser verifies a DYNAMIC privilege for a specific user.
 	RequestDynamicVerificationWithUser(privName string, grantable bool, user *auth.UserIdentity) bool
 
 	// ConnectionVerification verifies user privilege for connection.
@@ -80,6 +80,9 @@ type Manager interface {
 
 	// IsDynamicPrivilege returns if a privilege is in the list of privileges.
 	IsDynamicPrivilege(privNameInUpper string) bool
+
+	// Get the authentication plugin for a user
+	GetAuthPlugin(user, host string) (string, error)
 }
 
 const key keyType = 0

@@ -152,6 +152,7 @@ func (s *testEvaluatorSuite) TestRowFunc(c *C) {
 func (s *testEvaluatorSuite) TestSetVar(c *C) {
 	fc := funcs[ast.SetVar]
 	dec := types.NewDecFromInt(5)
+	timeDec := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	testCases := []struct {
 		args []interface{}
 		res  interface{}
@@ -164,6 +165,7 @@ func (s *testEvaluatorSuite) TestSetVar(c *C) {
 		{[]interface{}{"d", int64(3)}, int64(3)},
 		{[]interface{}{"e", float64(2.5)}, float64(2.5)},
 		{[]interface{}{"f", dec}, dec},
+		{[]interface{}{"g", timeDec}, timeDec},
 	}
 	for _, tc := range testCases {
 		fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
@@ -183,6 +185,7 @@ func (s *testEvaluatorSuite) TestSetVar(c *C) {
 
 func (s *testEvaluatorSuite) TestGetVar(c *C) {
 	dec := types.NewDecFromInt(5)
+	timeDec := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	sessionVars := []struct {
 		key string
 		val interface{}
@@ -193,10 +196,16 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 		{"e", int64(3)},
 		{"f", float64(2.5)},
 		{"g", dec},
+		{"h", timeDec},
 	}
 	for _, kv := range sessionVars {
 		s.ctx.GetSessionVars().Users[kv.key] = types.NewDatum(kv.val)
-		tp := types.NewFieldType(mysql.TypeVarString)
+		var tp *types.FieldType
+		if _, ok := kv.val.(types.Time); ok {
+			tp = types.NewFieldType(mysql.TypeDatetime)
+		} else {
+			tp = types.NewFieldType(mysql.TypeVarString)
+		}
 		types.DefaultParamTypeForValue(kv.val, tp)
 		s.ctx.GetSessionVars().UserVarTypes[kv.key] = tp
 	}
@@ -212,6 +221,7 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 		{[]interface{}{"e"}, int64(3)},
 		{[]interface{}{"f"}, float64(2.5)},
 		{[]interface{}{"g"}, dec},
+		{[]interface{}{"h"}, timeDec.String()},
 	}
 	for _, tc := range testCases {
 		tp, ok := s.ctx.GetSessionVars().UserVarTypes[tc.args[0].(string)]

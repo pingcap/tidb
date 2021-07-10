@@ -2992,7 +2992,7 @@ func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.Partiti
 	info := tbl.Meta().GetPartitionInfo()
 	for _, def := range info.Definitions {
 		pid := def.ID
-		partition := tbl.(table.PartitionedTable).GetPartition(pid)
+		partition := tbl.GetPartition(pid)
 		c.Assert(ctx.NewTxn(context.Background()), IsNil)
 		err := tables.IterRecords(partition, ctx, partition.Cols(),
 			func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {

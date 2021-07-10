@@ -195,7 +195,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 					// TODO: support show tiflash config once tiflash supports it
 					return
 				default:
-					ch <- result{err: errors.Errorf("unknown node type: %s(%s)", typ, address)}
+					ch <- result{err: errors.Errorf("currently we do not support get config from node type: %s(%s)", typ, address)}
 					return
 				}
 
