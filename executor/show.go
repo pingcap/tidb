@@ -921,6 +921,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		if idxInfo.Invisible {
 			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
 		}
+		if idxInfo.Comment != "" {
+			fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
+		}
 		if idxInfo.Primary {
 			if tableInfo.PKIsHandle || tableInfo.IsCommonHandle {
 				buf.WriteString(" /*T![clustered_index] CLUSTERED */")
@@ -1709,8 +1712,8 @@ func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
 			e.result.AppendInt64(6, 0)
 		}
 
-		e.result.AppendInt64(7, regions[i].writtenBytes)
-		e.result.AppendInt64(8, regions[i].readBytes)
+		e.result.AppendUint64(7, regions[i].writtenBytes)
+		e.result.AppendUint64(8, regions[i].readBytes)
 		e.result.AppendInt64(9, regions[i].approximateSize)
 		e.result.AppendInt64(10, regions[i].approximateKeys)
 	}
