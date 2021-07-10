@@ -904,7 +904,6 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestExprOnlyPushDownToFlash(c *C) {
-	c.Skip("unstable, skip it and fix it before 20210705")
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 	dg := new(dataGen4Expr2PbTest)
@@ -924,10 +923,6 @@ func (s *testEvaluatorSuite) TestExprOnlyPushDownToFlash(c *C) {
 	exprs = append(exprs, function)
 
 	function, err = NewFunction(mock.NewContext(), ast.Substring, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
-	c.Assert(err, IsNil)
-	exprs = append(exprs, function)
-
-	function, err = NewFunction(mock.NewContext(), ast.DateAdd, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, stringColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
