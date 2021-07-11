@@ -82,37 +82,28 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(input *chunk.Chunk, r
 	var frac int
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
 		err = types.DecimalDiv(&x[i], &y[i], &to, types.DivFracIncr)
 		if err == types.ErrDivByZero {
 			if err = handleDivisionByZeroError(b.ctx); err != nil {
-				if result.IsNull(i) {
-					continue
-				}
 				return err
 			}
 			result.SetNull(i, true)
 			continue
 		} else if err == types.ErrTruncated {
 			if err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", to)); err != nil {
-				if result.IsNull(i) {
-					continue
-				}
 				return err
 			}
 		} else if err == nil {
 			_, frac = to.PrecisionAndFrac()
 			if frac < b.baseBuiltinFunc.tp.Decimal {
 				if err = to.Round(&to, b.baseBuiltinFunc.tp.Decimal, types.ModeHalfEven); err != nil {
-					if result.IsNull(i) {
-						continue
-					}
 					return err
 				}
 			}
 		} else {
-			if result.IsNull(i) {
-				continue
-			}
 			return err
 		}
 		x[i] = to
@@ -364,10 +355,10 @@ func (b *builtinArithmeticMinusDecimalSig) vecEvalDecimal(input *chunk.Chunk, re
 	y := buf.Decimals()
 	var to types.MyDecimal
 	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
 		if err = types.DecimalSub(&x[i], &y[i], &to); err != nil {
-			if result.IsNull(i) {
-				continue
-			}
 			return err
 		}
 		x[i] = to
@@ -563,11 +554,11 @@ func (b *builtinArithmeticMultiplyDecimalSig) vecEvalDecimal(input *chunk.Chunk,
 	y := buf.Decimals()
 	var to types.MyDecimal
 	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
 		err = types.DecimalMul(&x[i], &y[i], &to)
 		if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
-			if result.IsNull(i) {
-				continue
-			}
 			return err
 		}
 		x[i] = to
@@ -607,14 +598,14 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(input *chunk.Chunk, re
 	result.MergeNulls(buf[0], buf[1])
 	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
 
 		c := &types.MyDecimal{}
 		err = types.DecimalDiv(&num[0][i], &num[1][i], c, types.DivFracIncr)
 		if err == types.ErrDivByZero {
 			if err = handleDivisionByZeroError(b.ctx); err != nil {
-				if result.IsNull(i) {
-					continue
-				}
 				return err
 			}
 			result.SetNull(i, true)
@@ -627,9 +618,6 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(input *chunk.Chunk, re
 			err = sc.HandleOverflow(newErr, newErr)
 		}
 		if err != nil {
-			if result.IsNull(i) {
-				continue
-			}
 			return err
 		}
 
@@ -637,9 +625,6 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(input *chunk.Chunk, re
 			val, err := c.ToUint()
 			// err returned by ToUint may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
 			if err == types.ErrOverflow {
-				if result.IsNull(i) {
-					continue
-				}
 				v, err := c.ToInt()
 				// when the final result is at (-1, 0], it should be return 0 instead of the error
 				if v == 0 && err == types.ErrTruncated {
@@ -653,9 +638,6 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(input *chunk.Chunk, re
 			i64s[i], err = c.ToInt()
 			// err returned by ToInt may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
 			if err == types.ErrOverflow {
-				if result.IsNull(i) {
-					continue
-				}
 				return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s DIV %s)", num[0][i].String(), num[1][i].String()))
 			}
 		}
@@ -725,11 +707,11 @@ func (b *builtinArithmeticDivideRealSig) vecEvalReal(input *chunk.Chunk, result 
 	x := result.Float64s()
 	y := buf.Float64s()
 	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
 		if y[i] == 0 {
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
-				if result.IsNull(i) {
-					continue
-				}
 				return err
 			}
 			result.SetNull(i, true)
@@ -738,9 +720,6 @@ func (b *builtinArithmeticDivideRealSig) vecEvalReal(input *chunk.Chunk, result 
 
 		x[i] = x[i] / y[i]
 		if math.IsInf(x[i], 0) {
-			if result.IsNull(i) {
-				continue
-			}
 			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s / %s)", b.args[0].String(), b.args[1].String()))
 		}
 	}
@@ -796,10 +775,10 @@ func (b *builtinArithmeticIntDivideIntSig) divideUU(result *chunk.Column, lhsI64
 		lhs, rhs := lhsI64s[i], rhsI64s[i]
 
 		if rhs == 0 {
+			if result.IsNull(i) {
+				continue
+			}
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
-				if result.IsNull(i) {
-					continue
-				}
 				return err
 			}
 			result.SetNull(i, true)
@@ -816,10 +795,10 @@ func (b *builtinArithmeticIntDivideIntSig) divideUS(result *chunk.Column, lhsI64
 		lhs, rhs := lhsI64s[i], rhsI64s[i]
 
 		if rhs == 0 {
+			if result.IsNull(i) {
+				continue
+			}
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
-				if result.IsNull(i) {
-					continue
-				}
 				return err
 			}
 			result.SetNull(i, true)
@@ -842,10 +821,10 @@ func (b *builtinArithmeticIntDivideIntSig) divideSU(result *chunk.Column, lhsI64
 		lhs, rhs := lhsI64s[i], rhsI64s[i]
 
 		if rhs == 0 {
+			if result.IsNull(i) {
+				continue
+			}
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
-				if result.IsNull(i) {
-					continue
-				}
 				return err
 			}
 			result.SetNull(i, true)
@@ -868,10 +847,10 @@ func (b *builtinArithmeticIntDivideIntSig) divideSS(result *chunk.Column, lhsI64
 		lhs, rhs := lhsI64s[i], rhsI64s[i]
 
 		if rhs == 0 {
+			if result.IsNull(i) {
+				continue
+			}
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
-				if result.IsNull(i) {
-					continue
-				}
 				return err
 			}
 			result.SetNull(i, true)
@@ -1030,10 +1009,10 @@ func (b *builtinArithmeticPlusDecimalSig) vecEvalDecimal(input *chunk.Chunk, res
 	y := buf.Decimals()
 	to := new(types.MyDecimal)
 	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
 		if err = types.DecimalAdd(&x[i], &y[i], to); err != nil {
-			if result.IsNull(i) {
-				continue
-			}
 			return err
 		}
 		x[i] = *to
