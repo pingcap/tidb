@@ -736,14 +736,16 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	warns := &dropIndexesWarns{}
+	if len(nonExsitentIndexNames) != 0 {
+		var warnings []*errors.Error
+		for _, indexName := range nonExsitentIndexNames {
+			warnings = append(warnings, toTError(ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)))
+		}
+		job.MultiSchemaInfo = &model.MultiSchemaInfo{Warnings: warnings}
+	}
 
 	if len(indexInfos) == 0 {
 		job.State = model.JobStateCancelled
-		if len(nonExsitentIndexNames) != 0 {
-			warns.IndexNames = nonExsitentIndexNames
-			return ver, warns
-		}
 		return ver, nil
 	}
 
@@ -823,9 +825,6 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		err = ErrInvalidDDLState.GenWithStackByArgs("index", indexInfos[0].State)
 	}
 
-	if err == nil && len(nonExsitentIndexNames) != 0 {
-		return ver, warns
-	}
 	return ver, errors.Trace(err)
 }
 

@@ -5440,15 +5440,6 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 	}
 
 	err = d.doDDLJob(ctx, job)
-	if err != nil {
-		if err, ok := err.(errors.); ok {
-			for _, indexName := range err.IndexNames {
-				ctx.GetSessionVars().StmtCtx.AppendNote(ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName))
-			}
-			return nil
-		}
-
-	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
