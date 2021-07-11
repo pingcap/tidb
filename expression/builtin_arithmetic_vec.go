@@ -1030,10 +1030,10 @@ func (b *builtinArithmeticPlusDecimalSig) vecEvalDecimal(input *chunk.Chunk, res
 	y := buf.Decimals()
 	to := new(types.MyDecimal)
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		if err = types.DecimalAdd(&x[i], &y[i], to); err != nil {
+			if result.IsNull(i) {
+				continue
+			}
 			return err
 		}
 		x[i] = *to
