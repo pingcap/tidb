@@ -46,11 +46,11 @@ func (b *builtinArithmeticMultiplyRealSig) vecEvalReal(input *chunk.Chunk, resul
 	x := result.Float64s()
 	y := buf.Float64s()
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		x[i] = x[i] * y[i]
 		if math.IsInf(x[i], 0) {
+			if result.IsNull(i) {
+				continue
+			}
 			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s * %s)", b.args[0].String(), b.args[1].String()))
 		}
 	}
@@ -82,28 +82,37 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(input *chunk.Chunk, r
 	var frac int
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		err = types.DecimalDiv(&x[i], &y[i], &to, types.DivFracIncr)
 		if err == types.ErrDivByZero {
 			if err = handleDivisionByZeroError(b.ctx); err != nil {
+				if result.IsNull(i) {
+					continue
+				}
 				return err
 			}
 			result.SetNull(i, true)
 			continue
 		} else if err == types.ErrTruncated {
 			if err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", to)); err != nil {
+				if result.IsNull(i) {
+					continue
+				}
 				return err
 			}
 		} else if err == nil {
 			_, frac = to.PrecisionAndFrac()
 			if frac < b.baseBuiltinFunc.tp.Decimal {
 				if err = to.Round(&to, b.baseBuiltinFunc.tp.Decimal, types.ModeHalfEven); err != nil {
+					if result.IsNull(i) {
+						continue
+					}
 					return err
 				}
 			}
 		} else {
+			if result.IsNull(i) {
+				continue
+			}
 			return err
 		}
 		x[i] = to
