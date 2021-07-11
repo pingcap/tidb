@@ -607,14 +607,14 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(input *chunk.Chunk, re
 	result.MergeNulls(buf[0], buf[1])
 	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
 
 		c := &types.MyDecimal{}
 		err = types.DecimalDiv(&num[0][i], &num[1][i], c, types.DivFracIncr)
 		if err == types.ErrDivByZero {
 			if err = handleDivisionByZeroError(b.ctx); err != nil {
+				if result.IsNull(i) {
+					continue
+				}
 				return err
 			}
 			result.SetNull(i, true)
@@ -627,6 +627,9 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(input *chunk.Chunk, re
 			err = sc.HandleOverflow(newErr, newErr)
 		}
 		if err != nil {
+			if result.IsNull(i) {
+				continue
+			}
 			return err
 		}
 
@@ -634,6 +637,9 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(input *chunk.Chunk, re
 			val, err := c.ToUint()
 			// err returned by ToUint may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
 			if err == types.ErrOverflow {
+				if result.IsNull(i) {
+					continue
+				}
 				v, err := c.ToInt()
 				// when the final result is at (-1, 0], it should be return 0 instead of the error
 				if v == 0 && err == types.ErrTruncated {
@@ -647,6 +653,9 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(input *chunk.Chunk, re
 			i64s[i], err = c.ToInt()
 			// err returned by ToInt may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
 			if err == types.ErrOverflow {
+				if result.IsNull(i) {
+					continue
+				}
 				return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s DIV %s)", num[0][i].String(), num[1][i].String()))
 			}
 		}
@@ -716,11 +725,11 @@ func (b *builtinArithmeticDivideRealSig) vecEvalReal(input *chunk.Chunk, result 
 	x := result.Float64s()
 	y := buf.Float64s()
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		if y[i] == 0 {
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
+				if result.IsNull(i) {
+					continue
+				}
 				return err
 			}
 			result.SetNull(i, true)
@@ -729,6 +738,9 @@ func (b *builtinArithmeticDivideRealSig) vecEvalReal(input *chunk.Chunk, result 
 
 		x[i] = x[i] / y[i]
 		if math.IsInf(x[i], 0) {
+			if result.IsNull(i) {
+				continue
+			}
 			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s / %s)", b.args[0].String(), b.args[1].String()))
 		}
 	}
@@ -781,13 +793,13 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result
 
 func (b *builtinArithmeticIntDivideIntSig) divideUU(result *chunk.Column, lhsI64s, rhsI64s, resultI64s []int64) error {
 	for i := 0; i < len(lhsI64s); i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		lhs, rhs := lhsI64s[i], rhsI64s[i]
 
 		if rhs == 0 {
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
+				if result.IsNull(i) {
+					continue
+				}
 				return err
 			}
 			result.SetNull(i, true)
@@ -801,19 +813,22 @@ func (b *builtinArithmeticIntDivideIntSig) divideUU(result *chunk.Column, lhsI64
 
 func (b *builtinArithmeticIntDivideIntSig) divideUS(result *chunk.Column, lhsI64s, rhsI64s, resultI64s []int64) error {
 	for i := 0; i < len(lhsI64s); i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		lhs, rhs := lhsI64s[i], rhsI64s[i]
 
 		if rhs == 0 {
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
+				if result.IsNull(i) {
+					continue
+				}
 				return err
 			}
 			result.SetNull(i, true)
 		} else {
 			val, err := types.DivUintWithInt(uint64(lhs), rhs)
 			if err != nil {
+				if result.IsNull(i) {
+					continue
+				}
 				return err
 			}
 			resultI64s[i] = int64(val)
@@ -824,19 +839,22 @@ func (b *builtinArithmeticIntDivideIntSig) divideUS(result *chunk.Column, lhsI64
 
 func (b *builtinArithmeticIntDivideIntSig) divideSU(result *chunk.Column, lhsI64s, rhsI64s, resultI64s []int64) error {
 	for i := 0; i < len(lhsI64s); i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		lhs, rhs := lhsI64s[i], rhsI64s[i]
 
 		if rhs == 0 {
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
+				if result.IsNull(i) {
+					continue
+				}
 				return err
 			}
 			result.SetNull(i, true)
 		} else {
 			val, err := types.DivIntWithUint(lhs, uint64(rhs))
 			if err != nil {
+				if result.IsNull(i) {
+					continue
+				}
 				return err
 			}
 			resultI64s[i] = int64(val)
@@ -847,19 +865,22 @@ func (b *builtinArithmeticIntDivideIntSig) divideSU(result *chunk.Column, lhsI64
 
 func (b *builtinArithmeticIntDivideIntSig) divideSS(result *chunk.Column, lhsI64s, rhsI64s, resultI64s []int64) error {
 	for i := 0; i < len(lhsI64s); i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		lhs, rhs := lhsI64s[i], rhsI64s[i]
 
 		if rhs == 0 {
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
+				if result.IsNull(i) {
+					continue
+				}
 				return err
 			}
 			result.SetNull(i, true)
 		} else {
 			val, err := types.DivInt64(lhs, rhs)
 			if err != nil {
+				if result.IsNull(i) {
+					continue
+				}
 				return err
 			}
 			resultI64s[i] = val
