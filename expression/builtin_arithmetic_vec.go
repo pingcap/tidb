@@ -796,7 +796,6 @@ func (b *builtinArithmeticIntDivideIntSig) divideUS(result *chunk.Column, lhsI64
 			continue
 		}
 		lhs, rhs := lhsI64s[i], rhsI64s[i]
-
 		if rhs == 0 {
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
