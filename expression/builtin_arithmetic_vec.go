@@ -563,11 +563,11 @@ func (b *builtinArithmeticMultiplyDecimalSig) vecEvalDecimal(input *chunk.Chunk,
 	y := buf.Decimals()
 	var to types.MyDecimal
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		err = types.DecimalMul(&x[i], &y[i], &to)
 		if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
+			if result.IsNull(i) {
+				continue
+			}
 			return err
 		}
 		x[i] = to
@@ -687,12 +687,12 @@ func (b *builtinArithmeticMultiplyIntSig) vecEvalInt(input *chunk.Chunk, result 
 	result.MergeNulls(buf)
 	var tmp int64
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
 
 		tmp = x[i] * y[i]
 		if (x[i] != 0 && tmp/x[i] != y[i]) || (tmp == math.MinInt64 && x[i] == -1) {
+			if result.IsNull(i) {
+				continue
+			}
 			result.SetNull(i, true)
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s * %s)", b.args[0].String(), b.args[1].String()))
 		}
@@ -1065,12 +1065,12 @@ func (b *builtinArithmeticMultiplyIntUnsignedSig) vecEvalInt(input *chunk.Chunk,
 	result.MergeNulls(buf)
 	var res uint64
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
 
 		res = x[i] * y[i]
 		if x[i] != 0 && res/x[i] != y[i] {
+			if result.IsNull(i) {
+				continue
+			}
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s * %s)", b.args[0].String(), b.args[1].String()))
 		}
 		x[i] = res
