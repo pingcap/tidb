@@ -364,10 +364,10 @@ func (b *builtinArithmeticMinusDecimalSig) vecEvalDecimal(input *chunk.Chunk, re
 	y := buf.Decimals()
 	var to types.MyDecimal
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		if err = types.DecimalSub(&x[i], &y[i], &to); err != nil {
+			if result.IsNull(i) {
+				continue
+			}
 			return err
 		}
 		x[i] = to
@@ -529,10 +529,10 @@ func (b *builtinArithmeticPlusRealSig) vecEvalReal(input *chunk.Chunk, result *c
 	x := result.Float64s()
 	y := buf.Float64s()
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		if !math2.IsFinite(x[i] + y[i]) {
+			if result.IsNull(i) {
+				continue
+			}
 			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
 		x[i] = x[i] + y[i]
