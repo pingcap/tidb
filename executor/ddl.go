@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/table"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -220,7 +221,7 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(s.Table.Schema.O)
 	}
-	tbInfo, err := ddl.BuildTableInfoWithCheck(e.ctx, s, dbInfo.Charset, dbInfo.Collate)
+	tbInfo, err := ddl.BuildSessionTemporaryTableInfo(e.ctx, is, s, dbInfo.Charset, dbInfo.Collate)
 	if err != nil {
 		return err
 	}
@@ -245,7 +246,11 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 
 	// AutoID is allocated in mocked..
 	alloc := autoid.NewAllocatorFromTempTblInfo(tbInfo)
-	tbl, err := tables.TableFromMeta([]autoid.Allocator{alloc}, tbInfo)
+	allocs := make([]autoid.Allocator, 0, 1)
+	if alloc != nil {
+		allocs = append(allocs, alloc)
+	}
+	tbl, err := tables.TableFromMeta(allocs, tbInfo)
 	if err != nil {
 		return err
 	}
@@ -256,7 +261,13 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		sessVars.LocalTemporaryTables = infoschema.NewLocalTemporaryTables()
 	}
 	localTempTables := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
-	err = localTempTables.AddTable(dbInfo, tbl)
+	var referTbl table.Table
+	referTbl, err = is.TableByName(s.Table.Schema, s.Table.Name)
+	if referTbl != nil {
+		err = infoschema.ErrTableExists.GenWithStackByArgs(referTbl.Meta().Name)
+	} else {
+		err = localTempTables.AddTable(dbInfo, tbl)
+	}
 
 	if err != nil && s.IfNotExists && infoschema.ErrTableExists.Equal(err) {
 		e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
