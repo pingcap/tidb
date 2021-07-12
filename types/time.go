@@ -16,7 +16,6 @@ package types
 import (
 	"bytes"
 	"fmt"
-	"github.com/cznic/mathutil"
 	"math"
 	"regexp"
 	"strconv"
@@ -24,6 +23,7 @@ import (
 	gotime "time"
 	"unicode"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
