@@ -20,6 +20,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
@@ -52,14 +54,15 @@ var ParseSlowLogBatchSize = 64
 
 // slowQueryRetriever is used to read slow log data.
 type slowQueryRetriever struct {
-	table       *model.TableInfo
-	outputCols  []*model.ColumnInfo
-	initialized bool
-	extractor   *plannercore.SlowQueryExtractor
-	files       []logFile
-	fileIdx     int
-	fileLine    int
-	checker     *slowLogChecker
+	table                 *model.TableInfo
+	outputCols            []*model.ColumnInfo
+	initialized           bool
+	extractor             *plannercore.SlowQueryExtractor
+	files                 []logFile
+	fileIdx               int
+	fileLine              int
+	checker               *slowLogChecker
+	columnValueFactoryMap map[string]slowQueryColumnValueFactory
 
 	taskList chan slowLogTask
 	stats    *slowQueryRuntimeStats
@@ -73,25 +76,7 @@ func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Conte
 		}
 		e.initializeAsyncParsing(ctx, sctx)
 	}
-	rows, retrieved, err := e.dataForSlowLog(ctx, sctx)
-	if err != nil {
-		return nil, err
-	}
-	if retrieved {
-		return nil, nil
-	}
-	if len(e.outputCols) == len(e.table.Columns) {
-		return rows, nil
-	}
-	retRows := make([][]types.Datum, len(rows))
-	for i, fullRow := range rows {
-		row := make([]types.Datum, len(e.outputCols))
-		for j, col := range e.outputCols {
-			row[j] = fullRow[col.Offset]
-		}
-		retRows[i] = row
-	}
-	return retRows, nil
+	return e.dataForSlowLog(ctx, sctx)
 }
 
 func (e *slowQueryRetriever) initialize(ctx context.Context, sctx sessionctx.Context) error {
@@ -100,6 +85,22 @@ func (e *slowQueryRetriever) initialize(ctx context.Context, sctx sessionctx.Con
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
 		hasProcessPriv = pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv)
 	}
+	// initialize column value factories.
+	e.columnValueFactoryMap = make(map[string]slowQueryColumnValueFactory, len(e.outputCols))
+	for idx, col := range e.outputCols {
+		factoryFn, err := getColumnValueFactoryFnByName(sctx, col.Name.O)
+		if err != nil {
+			return err
+		}
+		if factoryFn == nil {
+			panic(fmt.Sprintf("should never happen, should register new column %v into getColumnValueFactoryFnByName function", col.Name.O))
+		}
+		e.columnValueFactoryMap[col.Name.O] = slowQueryColumnValueFactory{
+			fn:        factoryFn,
+			columnIdx: idx,
+		}
+	}
+	// initialize checker.
 	e.checker = &slowLogChecker{
 		hasProcessPriv: hasProcessPriv,
 		user:           sctx.GetSessionVars().User,
@@ -192,7 +193,7 @@ func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessi
 	e.parseSlowLog(ctx, sctx, reader, ParseSlowLogBatchSize)
 }
 
-func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, bool, error) {
+func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	var (
 		task slowLogTask
 		ok   bool
@@ -201,24 +202,24 @@ func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context, sctx sessionctx
 		select {
 		case task, ok = <-e.taskList:
 		case <-ctx.Done():
-			return nil, false, ctx.Err()
+			return nil, ctx.Err()
 		}
 		if !ok {
-			return nil, true, nil
+			return nil, nil
 		}
 		result := <-task.resultCh
 		rows, err := result.rows, result.err
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 		if len(rows) == 0 {
 			continue
 		}
 		if e.table.Name.L == strings.ToLower(infoschema.ClusterTableSlowLog) {
 			rows, err := infoschema.AppendHostInfoToRows(sctx, rows)
-			return rows, false, err
+			return rows, err
 		}
-		return rows, false, nil
+		return rows, nil
 	}
 }
 
@@ -495,6 +496,10 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("%s", r)
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			logutil.BgLogger().Warn("slow query parse slow log panic", zap.Error(err), zap.String("stack", string(buf)))
 		}
 		if e.stats != nil {
 			atomic.AddInt64(&e.stats.parseLog, int64(time.Since(start)))
@@ -505,7 +510,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 			panic("panic test")
 		}
 	})
-	var st *slowQueryTuple
+	var row []types.Datum
 	tz := sctx.GetSessionVars().Location()
 	startFlag := false
 	for index, line := range log {
@@ -514,12 +519,8 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 		}
 		fileLine := getLineIndex(offset, index)
 		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
-			st = &slowQueryTuple{}
-			valid, err := st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):], fileLine, e.checker)
-			if err != nil {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-				continue
-			}
+			row = make([]types.Datum, len(e.outputCols))
+			valid := e.setColumnValue(sctx, row, tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):], e.checker, fileLine)
 			if valid {
 				startFlag = true
 			}
@@ -528,40 +529,35 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 		if startFlag {
 			if strings.HasPrefix(line, variable.SlowLogRowPrefixStr) {
 				line = line[len(variable.SlowLogRowPrefixStr):]
+				valid := true
 				if strings.HasPrefix(line, variable.SlowLogPrevStmtPrefix) {
-					st.prevStmt = line[len(variable.SlowLogPrevStmtPrefix):]
+					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogPrevStmt, line[len(variable.SlowLogPrevStmtPrefix):], e.checker, fileLine)
 				} else if strings.HasPrefix(line, variable.SlowLogUserAndHostStr+variable.SlowLogSpaceMarkStr) {
 					value := line[len(variable.SlowLogUserAndHostStr+variable.SlowLogSpaceMarkStr):]
-					valid, err := st.setFieldValue(tz, variable.SlowLogUserAndHostStr, value, fileLine, e.checker)
-					if err != nil {
-						sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+					fields := strings.SplitN(value, "@", 2)
+					if len(fields) < 2 {
 						continue
 					}
+					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogUserStr, fields[0], e.checker, fileLine)
 					if !valid {
 						startFlag = false
 					}
+					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogHostStr, fields[1], e.checker, fileLine)
 				} else if strings.HasPrefix(line, variable.SlowLogCopBackoffPrefix) {
-					valid, err := st.setFieldValue(tz, variable.SlowLogBackoffDetail, line, fileLine, e.checker)
-					if err != nil {
-						sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-						continue
-					}
-					if !valid {
-						startFlag = false
-					}
+					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogBackoffDetail, line, e.checker, fileLine)
 				} else {
 					fieldValues := strings.Split(line, " ")
 					for i := 0; i < len(fieldValues)-1; i += 2 {
 						field := strings.TrimSuffix(fieldValues[i], ":")
-						valid, err := st.setFieldValue(tz, field, fieldValues[i+1], fileLine, e.checker)
-						if err != nil {
-							sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-							continue
-						}
+						valid := e.setColumnValue(sctx, row, tz, field, fieldValues[i+1], e.checker, fileLine)
 						if !valid {
 							startFlag = false
+							break
 						}
 					}
+				}
+				if !valid {
+					startFlag = false
 				}
 			} else if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
 				if strings.HasPrefix(line, "use") {
@@ -571,14 +567,8 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 					continue
 				}
 				// Get the sql string, and mark the start flag to false.
-				_, err := st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), fileLine, e.checker)
-				if err != nil {
-					sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-					continue
-				}
-				if e.checker.hasPrivilege(st.user) {
-					data = append(data, st.convertToDatumRow())
-				}
+				_ = e.setColumnValue(sctx, row, tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), e.checker, fileLine)
+				data = append(data, row)
 				startFlag = false
 			} else {
 				startFlag = false
@@ -586,6 +576,228 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 		}
 	}
 	return data, nil
+}
+
+type slowQueryColumnValueFactory struct {
+	fn        slowQueryColumnValueFactoryFunc
+	columnIdx int
+}
+
+type slowQueryColumnValueFactoryFunc func(row []types.Datum, columnIdx int, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error)
+
+func getColumnValueFactoryFnByName(sctx sessionctx.Context, colName string) (slowQueryColumnValueFactoryFunc, error) {
+	fn := slowQueryColumnValueFactoryMap[colName]
+	if fn != nil {
+		return fn, nil
+	}
+	// get default column value factory fn.
+	switch colName {
+	case variable.SlowLogConnIDStr, variable.SlowLogExecRetryCount, variable.SlowLogPreprocSubQueriesStr,
+		execdetails.WriteKeysStr, execdetails.WriteSizeStr, execdetails.PrewriteRegionStr, execdetails.TxnRetryStr,
+		execdetails.RequestCountStr, execdetails.TotalKeysStr, execdetails.ProcessKeysStr,
+		execdetails.RocksdbDeleteSkippedCountStr, execdetails.RocksdbKeySkippedCountStr,
+		execdetails.RocksdbBlockCacheHitCountStr, execdetails.RocksdbBlockReadCountStr,
+		variable.SlowLogTxnStartTSStr, execdetails.RocksdbBlockReadByteStr:
+		return func(row []types.Datum, columnIdx int, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
+			v, err := strconv.ParseUint(value, 10, 64)
+			if err != nil {
+				return false, err
+			}
+			row[columnIdx] = types.NewUintDatum(v)
+			return true, nil
+		}, nil
+	case variable.SlowLogExecRetryTime, variable.SlowLogQueryTimeStr, variable.SlowLogParseTimeStr,
+		variable.SlowLogCompileTimeStr, variable.SlowLogRewriteTimeStr, variable.SlowLogPreProcSubQueryTimeStr,
+		variable.SlowLogOptimizeTimeStr, variable.SlowLogWaitTSTimeStr, execdetails.PreWriteTimeStr,
+		execdetails.WaitPrewriteBinlogTimeStr, execdetails.CommitTimeStr, execdetails.GetCommitTSTimeStr,
+		execdetails.CommitBackoffTimeStr, execdetails.ResolveLockTimeStr, execdetails.LocalLatchWaitTimeStr,
+		execdetails.CopTimeStr, execdetails.ProcessTimeStr, execdetails.WaitTimeStr, execdetails.BackoffTimeStr,
+		execdetails.LockKeysTimeStr, variable.SlowLogCopProcAvg, variable.SlowLogCopProcP90, variable.SlowLogCopProcMax,
+		variable.SlowLogCopWaitAvg, variable.SlowLogCopWaitP90, variable.SlowLogCopWaitMax, variable.SlowLogKVTotal,
+		variable.SlowLogPDTotal, variable.SlowLogBackoffTotal, variable.SlowLogWriteSQLRespTotal:
+		return func(row []types.Datum, columnIdx int, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
+			v, err := strconv.ParseFloat(value, 64)
+			if err != nil {
+				return false, err
+			}
+			row[columnIdx] = types.NewFloat64Datum(v)
+			return true, nil
+		}, nil
+	case execdetails.BackoffTypesStr, variable.SlowLogDBStr, variable.SlowLogIndexNamesStr, variable.SlowLogDigestStr,
+		variable.SlowLogStatsInfoStr, variable.SlowLogCopProcAddr, variable.SlowLogCopWaitAddr, variable.SlowLogPlanDigest,
+		variable.SlowLogPrevStmt, variable.SlowLogQuerySQLStr:
+		return func(row []types.Datum, columnIdx int, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
+			row[columnIdx] = types.NewStringDatum(value)
+			return true, nil
+		}, nil
+	case variable.SlowLogMemMax, variable.SlowLogDiskMax:
+		return func(row []types.Datum, columnIdx int, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
+			v, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return false, err
+			}
+			row[columnIdx] = types.NewIntDatum(v)
+			return true, nil
+		}, nil
+	case variable.SlowLogPrepared, variable.SlowLogSucc, variable.SlowLogPlanFromCache, variable.SlowLogPlanFromBinding,
+		variable.SlowLogIsInternalStr:
+		return func(row []types.Datum, columnIdx int, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
+			v, err := strconv.ParseBool(value)
+			if err != nil {
+				return false, err
+			}
+			row[columnIdx] = types.NewDatum(v)
+			return true, nil
+		}, nil
+	case util.ClusterTableInstanceColumnName:
+		instanceAddr, err := infoschema.GetInstanceAddr(sctx)
+		if err != nil {
+			return nil, err
+		}
+		return func(row []types.Datum, rowIdx int, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
+			row[rowIdx] = types.NewStringDatum(instanceAddr)
+			return true, nil
+		}, nil
+	}
+	return nil, nil
+}
+
+var slowQueryColumnValueFactoryMap = map[string]slowQueryColumnValueFactoryFunc{
+	variable.SlowLogTimeStr: func(row []types.Datum, columnIdx int, value string, tz *time.Location, checker *slowLogChecker) (bool, error) {
+		t, err := ParseTime(value)
+		if err != nil {
+			return false, err
+		}
+		timeValue := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, types.MaxFsp)
+		if checker != nil {
+			valid := checker.isTimeValid(timeValue)
+			if !valid {
+				return valid, nil
+			}
+		}
+		if t.Location() != tz {
+			t = t.In(tz)
+			timeValue = types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, types.MaxFsp)
+		}
+		row[columnIdx] = types.NewTimeDatum(timeValue)
+		return true, nil
+	},
+	variable.SlowLogUserStr: func(row []types.Datum, columnIdx int, value string, tz *time.Location, checker *slowLogChecker) (bool, error) {
+		// the new User&Host format: root[root] @ localhost [127.0.0.1]
+		tmp := strings.Split(value, "[")
+		user := strings.TrimSpace(tmp[0])
+		if checker != nil {
+			valid := checker.hasPrivilege(user)
+			if !valid {
+				return valid, nil
+			}
+		}
+		row[columnIdx] = types.NewStringDatum(user)
+		return true, nil
+	},
+	variable.SlowLogHostStr: func(row []types.Datum, columnIdx int, value string, tz *time.Location, checker *slowLogChecker) (bool, error) {
+		tmp := strings.Split(value, "[")
+		host := strings.TrimSpace(tmp[0])
+		if checker != nil {
+			valid := checker.hasPrivilege(host)
+			if !valid {
+				return valid, nil
+			}
+		}
+		row[columnIdx] = types.NewStringDatum(host)
+		return true, nil
+	},
+	//variable.SlowLogConnIDStr:                defaultUintColumnValueFactoryFn,
+	//variable.SlowLogExecRetryCount:           defaultUintColumnValueFactoryFn,
+	//variable.SlowLogExecRetryTime:            defaultFloat64ColumnValueFactoryFn,
+	//variable.SlowLogQueryTimeStr:             defaultFloat64ColumnValueFactoryFn,
+	//variable.SlowLogParseTimeStr:             defaultFloat64ColumnValueFactoryFn,
+	//variable.SlowLogCompileTimeStr:           defaultFloat64ColumnValueFactoryFn,
+	//variable.SlowLogRewriteTimeStr:           defaultFloat64ColumnValueFactoryFn,
+	//variable.SlowLogPreprocSubQueriesStr:     defaultUintColumnValueFactoryFn,
+	//variable.SlowLogPreProcSubQueryTimeStr:   defaultFloat64ColumnValueFactoryFn,
+	//variable.SlowLogOptimizeTimeStr:          defaultFloat64ColumnValueFactoryFn,
+	//variable.SlowLogWaitTSTimeStr:            defaultFloat64ColumnValueFactoryFn,
+	//execdetails.PreWriteTimeStr:              defaultFloat64ColumnValueFactoryFn,
+	//execdetails.WaitPrewriteBinlogTimeStr:    defaultFloat64ColumnValueFactoryFn,
+	//execdetails.CommitTimeStr:                defaultFloat64ColumnValueFactoryFn,
+	//execdetails.GetCommitTSTimeStr:           defaultFloat64ColumnValueFactoryFn,
+	//execdetails.CommitBackoffTimeStr:         defaultFloat64ColumnValueFactoryFn,
+	//execdetails.BackoffTypesStr:              defaultStringColumnValueFactoryFn,
+	//execdetails.ResolveLockTimeStr:           defaultFloat64ColumnValueFactoryFn,
+	//execdetails.LocalLatchWaitTimeStr:        defaultFloat64ColumnValueFactoryFn,
+	//execdetails.WriteKeysStr:                 defaultUintColumnValueFactoryFn,
+	//execdetails.WriteSizeStr:                 defaultUintColumnValueFactoryFn,
+	//execdetails.PrewriteRegionStr:            defaultUintColumnValueFactoryFn,
+	//execdetails.TxnRetryStr:                  defaultUintColumnValueFactoryFn,
+	//execdetails.CopTimeStr:                   defaultFloat64ColumnValueFactoryFn,
+	//execdetails.ProcessTimeStr:               defaultFloat64ColumnValueFactoryFn,
+	//execdetails.WaitTimeStr:                  defaultFloat64ColumnValueFactoryFn,
+	//execdetails.BackoffTimeStr:               defaultFloat64ColumnValueFactoryFn,
+	//execdetails.LockKeysTimeStr:              defaultFloat64ColumnValueFactoryFn,
+	//execdetails.RequestCountStr:              defaultUintColumnValueFactoryFn,
+	//execdetails.TotalKeysStr:                 defaultUintColumnValueFactoryFn,
+	//execdetails.ProcessKeysStr:               defaultUintColumnValueFactoryFn,
+	//execdetails.RocksdbDeleteSkippedCountStr: defaultUintColumnValueFactoryFn,
+	//execdetails.RocksdbKeySkippedCountStr:    defaultUintColumnValueFactoryFn,
+	//execdetails.RocksdbBlockCacheHitCountStr: defaultUintColumnValueFactoryFn,
+	//execdetails.RocksdbBlockReadCountStr:     defaultUintColumnValueFactoryFn,
+	//execdetails.RocksdbBlockReadByteStr:      defaultUintColumnValueFactoryFn,
+	//variable.SlowLogDBStr:                    defaultStringColumnValueFactoryFn,
+	//variable.SlowLogIndexNamesStr:            defaultStringColumnValueFactoryFn,
+	//variable.SlowLogIsInternalStr: func(row []types.Datum, columnIdx int, value string, tz *time.Location, checker *slowLogChecker) (bool, error) {
+	//	isInternal := value == "true"
+	//	row[columnIdx] = types.NewDatum(isInternal)
+	//	return true, nil
+	//},
+	//variable.SlowLogDigestStr:         defaultStringColumnValueFactoryFn,
+	//variable.SlowLogStatsInfoStr:      defaultStringColumnValueFactoryFn,
+	//variable.SlowLogCopProcAvg:        defaultFloat64ColumnValueFactoryFn,
+	//variable.SlowLogCopProcP90:        defaultFloat64ColumnValueFactoryFn,
+	//variable.SlowLogCopProcMax:        defaultFloat64ColumnValueFactoryFn,
+	//variable.SlowLogCopProcAddr:       defaultStringColumnValueFactoryFn,
+	//variable.SlowLogCopWaitAvg:        defaultFloat64ColumnValueFactoryFn,
+	//variable.SlowLogCopWaitP90:        defaultFloat64ColumnValueFactoryFn,
+	//variable.SlowLogCopWaitMax:        defaultFloat64ColumnValueFactoryFn,
+	//variable.SlowLogCopWaitAddr:       defaultStringColumnValueFactoryFn,
+	//variable.SlowLogMemMax:            defaultIntColumnValueFactoryFn,
+	//variable.SlowLogDiskMax:           defaultIntColumnValueFactoryFn,
+	//variable.SlowLogKVTotal:           defaultFloat64ColumnValueFactoryFn,
+	//variable.SlowLogPDTotal:           defaultFloat64ColumnValueFactoryFn,
+	//variable.SlowLogBackoffTotal:      defaultFloat64ColumnValueFactoryFn,
+	//variable.SlowLogWriteSQLRespTotal: defaultFloat64ColumnValueFactoryFn,
+	variable.SlowLogBackoffDetail: func(row []types.Datum, columnIdx int, value string, tz *time.Location, checker *slowLogChecker) (bool, error) {
+		backoffDetail := row[columnIdx].GetString()
+		if len(backoffDetail) > 0 {
+			backoffDetail += " "
+		}
+		backoffDetail += value
+		row[columnIdx] = types.NewStringDatum(backoffDetail)
+		return true, nil
+	},
+	//variable.SlowLogPrepared:        defaultBoolColumnValueFactoryFn,
+	//variable.SlowLogSucc:            defaultBoolColumnValueFactoryFn,
+	//variable.SlowLogPlanFromCache:   defaultBoolColumnValueFactoryFn,
+	//variable.SlowLogPlanFromBinding: defaultBoolColumnValueFactoryFn,
+	variable.SlowLogPlan: func(row []types.Datum, columnIdx int, value string, tz *time.Location, checker *slowLogChecker) (bool, error) {
+		plan := parsePlan(value)
+		row[columnIdx] = types.NewStringDatum(plan)
+		return true, nil
+	},
+}
+
+func (e *slowQueryRetriever) setColumnValue(sctx sessionctx.Context, row []types.Datum, tz *time.Location, field, value string, checker *slowLogChecker, lineNum int) bool {
+	factory, ok := e.columnValueFactoryMap[field]
+	if !ok || factory.fn == nil {
+		return true
+	}
+	valid, err := factory.fn(row, factory.columnIdx, value, tz, checker)
+	if err != nil {
+		err = fmt.Errorf("Parse slow log at line %v, failed field is %v, failed value is %v, error is %v", lineNum, field, value, err)
+		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return true
+	}
+	return valid
 }
 
 type slowQueryTuple struct {
