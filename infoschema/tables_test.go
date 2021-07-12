@@ -535,6 +535,7 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		))
 
 	sm = &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2), nil}
+	stmtCtx := *tk.Se.GetSessionVars().StmtCtx
 	sm.processInfoMap[1] = &util.ProcessInfo{
 		ID:      1,
 		User:    "user-1",
@@ -543,7 +544,7 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		Command: byte(1),
 		Digest:  "abc1",
 		State:   1,
-		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
+		StmtCtx: &stmtCtx,
 	}
 	sm.processInfoMap[2] = &util.ProcessInfo{
 		ID:            2,
@@ -553,7 +554,7 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		Digest:        "abc2",
 		State:         2,
 		Info:          strings.Repeat("x", 101),
-		StmtCtx:       tk.Se.GetSessionVars().StmtCtx,
+		StmtCtx:       &stmtCtx,
 		CurTxnStartTS: 410090409861578752,
 	}
 	tk.Se.SetSessionManager(sm)
