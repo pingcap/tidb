@@ -1,6 +1,6 @@
 [
   {
-    "Name": "TestStableResultMode",
+    "Name": "TestOrderedResultMode",
     "Cases": [
       {
         "Plan": [
@@ -113,7 +113,7 @@
     ]
   },
   {
-    "Name": "TestStableResultModeOnDML",
+    "Name": "TestOrderedResultModeOnDML",
     "Cases": [
       {
         "Plan": [
@@ -179,7 +179,7 @@
     ]
   },
   {
-    "Name": "TestStableResultModeOnSubQuery",
+    "Name": "TestOrderedResultModeOnSubQuery",
     "Cases": [
       {
         "Plan": [
@@ -283,7 +283,7 @@
     ]
   },
   {
-    "Name": "TestStableResultModeOnJoin",
+    "Name": "TestOrderedResultModeOnJoin",
     "Cases": [
       {
         "Plan": [
@@ -331,7 +331,7 @@
     ]
   },
   {
-    "Name": "TestStableResultModeOnOtherOperators",
+    "Name": "TestOrderedResultModeOnOtherOperators",
     "Cases": [
       {
         "Plan": [
@@ -415,7 +415,7 @@
     ]
   },
   {
-    "Name": "TestStableResultModeOnPartitionTable",
+    "Name": "TestOrderedResultModeOnPartitionTable",
     "Cases": [
       {
         "Plan": [
