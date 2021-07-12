@@ -18,6 +18,8 @@ import (
 	"fmt"
 	math2 "math"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -133,14 +135,14 @@ func (p *PointGetPlan) ExplainNormalizedInfo() string {
 
 // AccessObject implements dataAccesser interface.
 func (p *PointGetPlan) AccessObject(normalized bool) string {
-	buffer := bytes.NewBufferString("")
+	var buffer strings.Builder
 	tblName := p.TblInfo.Name.O
-	fmt.Fprintf(buffer, "table:%s", tblName)
+	buffer.WriteString("table:" + tblName)
 	if p.PartitionInfo != nil {
 		if normalized {
-			fmt.Fprintf(buffer, ", partition:?")
+			buffer.WriteString(", partition:?")
 		} else {
-			fmt.Fprintf(buffer, ", partition:%s", p.PartitionInfo.Name.L)
+			buffer.WriteString(", partition:" + p.PartitionInfo.Name.L)
 		}
 	}
 	if p.IndexInfo != nil {
@@ -166,23 +168,30 @@ func (p *PointGetPlan) AccessObject(normalized bool) string {
 
 // OperatorInfo implements dataAccesser interface.
 func (p *PointGetPlan) OperatorInfo(normalized bool) string {
-	buffer := bytes.NewBufferString("")
+	var buffer strings.Builder
+	if p.Handle == nil && !p.Lock {
+		return ""
+	}
 	if p.Handle != nil {
 		if normalized {
-			fmt.Fprintf(buffer, "handle:?, ")
+			// fmt.Fprintf(buffer, "handle:?, ")
+			buffer.WriteString("handle:?")
 		} else {
 			if p.UnsignedHandle {
-				fmt.Fprintf(buffer, "handle:%d, ", uint64(p.Handle.IntValue()))
+				// fmt.Fprintf(buffer, "handle:%d, ", uint64(p.Handle.IntValue()))
+				buffer.WriteString("handle:" + strconv.FormatUint(uint64(p.Handle.IntValue()), 10))
 			} else {
-				fmt.Fprintf(buffer, "handle:%s, ", p.Handle)
+				// fmt.Fprintf(buffer, "handle:%s, ", p.Handle)
+				buffer.WriteString("handle:" + p.Handle.String())
 			}
 		}
 	}
 	if p.Lock {
-		fmt.Fprintf(buffer, "lock, ")
-	}
-	if buffer.Len() >= 2 {
-		buffer.Truncate(buffer.Len() - 2)
+		if p.Handle != nil {
+			buffer.WriteString(", lock")
+		} else {
+			buffer.WriteString("lock")
+		}
 	}
 	return buffer.String()
 }

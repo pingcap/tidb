@@ -16,6 +16,8 @@ package core_test
 import (
 	"bytes"
 	"fmt"
+	"net/http"
+	_ "net/http/pprof"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -23,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -571,9 +572,7 @@ func (s *testPlanNormalize) BenchmarkEncodePlan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
-	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 8192;")
+	tk.MustExec("create table th (i int primary key);")
 	tk.MustExec("set @@tidb_slow_log_threshold=200000")
 
 	query := "select count(*) from th t1 join th t2 join th t3 join th t4 join th t5 join th t6 where t1.i=t2.a and t1.i=t3.i and t3.i=t4.i and t4.i=t5.i and t5.i=t6.i"
@@ -586,6 +585,30 @@ func (s *testPlanNormalize) BenchmarkEncodePlan(c *C) {
 	tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	c.ResetTimer()
 	for i := 0; i < c.N; i++ {
+		core.EncodePlan(p)
+	}
+}
+
+func (s *testPlanNormalize) BenchmarkEncodePlanPProf(c *C) {
+	go func() {
+		fmt.Println(http.ListenAndServe("localhost:8086", nil))
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists th")
+	tk.MustExec("create table th (i int primary key);")
+	tk.MustExec("set @@tidb_slow_log_threshold=200000")
+
+	query := "select * from th where i = 2333;"
+	tk.Se.GetSessionVars().PlanID = 0
+	tk.MustExec(query)
+	info := tk.Se.ShowProcess()
+	c.Assert(info, NotNil)
+	p, ok := info.Plan.(core.PhysicalPlan)
+	c.Assert(ok, IsTrue)
+	tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
+	c.ResetTimer()
+	for {
 		core.EncodePlan(p)
 	}
 }
