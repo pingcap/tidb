@@ -27,9 +27,12 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -73,9 +76,16 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	e.done = true
 
 	// For each DDL, we should commit the previous transaction and create a new transaction.
+	// An exception is create local temporary table.
+	if s, ok := e.stmt.(*ast.CreateTableStmt); ok {
+		if s.TemporaryKeyword == ast.TemporaryLocal {
+			return e.createSessionTemporaryTable(s)
+		}
+	}
 	if err = e.ctx.NewTxn(ctx); err != nil {
 		return err
 	}
+
 	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
 
 	switch x := e.stmt.(type) {
@@ -201,6 +211,58 @@ func (e *DDLExec) executeAlterDatabase(s *ast.AlterDatabaseStmt) error {
 
 func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 	err := domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, s)
+	return err
+}
+
+func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
+	is := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	dbInfo, ok := is.SchemaByName(s.Table.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(s.Table.Schema.O)
+	}
+	tbInfo, err := ddl.BuildTableInfoWithCheck(e.ctx, s, dbInfo.Charset, dbInfo.Collate)
+	if err != nil {
+		return err
+	}
+
+	dom := domain.GetDomain(e.ctx)
+	// Local temporary table uses a real table ID.
+	// We could mock a table ID, but the mocked ID might be identical to an existing
+	// real table, and then we'll get into trouble.
+	err = kv.RunInNewTxn(context.Background(), dom.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		tblID, err := m.GenGlobalID()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tbInfo.ID = tblID
+		tbInfo.State = model.StatePublic
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	// AutoID is allocated in mocked..
+	alloc := autoid.NewAllocatorFromTempTblInfo(tbInfo)
+	tbl, err := tables.TableFromMeta([]autoid.Allocator{alloc}, tbInfo)
+	if err != nil {
+		return err
+	}
+
+	// Store this temporary table to the session.
+	sessVars := e.ctx.GetSessionVars()
+	if sessVars.LocalTemporaryTables == nil {
+		sessVars.LocalTemporaryTables = infoschema.NewLocalTemporaryTables()
+	}
+	localTempTables := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+	err = localTempTables.AddTable(dbInfo, tbl)
+
+	if err != nil && s.IfNotExists && infoschema.ErrTableExists.Equal(err) {
+		e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+
 	return err
 }
 
