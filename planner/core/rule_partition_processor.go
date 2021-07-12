@@ -251,11 +251,7 @@ func (s *partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.
 			})
 			continue
 		}
-<<<<<<< HEAD
 		return nil, errors.New(fmt.Sprintf("information of column %v is not found", colExpr.String()))
-=======
-		return nil, errors.Trace(fmt.Errorf("information of column %v is not found", colExpr.String()))
->>>>>>> 0490590b0... planner,executor: fix 'select ...(join on partition table) for update' panic (#21148)
 	}
 	return names, nil
 }

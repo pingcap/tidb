@@ -14,14 +14,8 @@
 package executor_test
 
 import (
-<<<<<<< HEAD
-=======
-	"fmt"
-	"math/rand"
-	"strings"
 	"time"
 
->>>>>>> 0490590b0... planner,executor: fix 'select ...(join on partition table) for update' panic (#21148)
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
