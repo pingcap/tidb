@@ -24,7 +24,6 @@ import (
 	"runtime"
 	"strings"
 	"time"
-	"unsafe"
 
 	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
@@ -1661,7 +1660,6 @@ func (s *testTableSuite) TestTrx(c *C) {
 		StartTS:          424768545227014155,
 		CurrentSQLDigest: digest.String(),
 		State:            txninfo.TxnRunningNormal,
-		BlockStartTime:   nil,
 		EntriesCount:     1,
 		EntriesSize:      19,
 		ConnectionID:     2,
@@ -1674,11 +1672,12 @@ func (s *testTableSuite) TestTrx(c *C) {
 		CurrentSQLDigest: "",
 		AllSQLDigests:    []string{"sql1", "sql2"},
 		State:            txninfo.TxnLockWaiting,
-		BlockStartTime:   unsafe.Pointer(&blockTime2),
 		ConnectionID:     10,
 		Username:         "user1",
 		CurrentDB:        "db1",
 	}
+	sm.txnInfo[1].BlockStartTime.Valid = true
+	sm.txnInfo[1].BlockStartTime.Time = blockTime2
 	tk.Se.SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.TIDB_TRX;").Check(testkit.Rows(
 		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" Normal <nil> 1 19 2 root test []",

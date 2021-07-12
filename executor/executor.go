@@ -1022,14 +1022,14 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.L
 
 func filterTemporaryTableKeys(vars *variable.SessionVars, keys []kv.Key) []kv.Key {
 	txnCtx := vars.TxnCtx
-	if txnCtx == nil || txnCtx.GlobalTemporaryTables == nil {
+	if txnCtx == nil || txnCtx.TemporaryTables == nil {
 		return keys
 	}
 
 	newKeys := keys[:0:len(keys)]
 	for _, key := range keys {
 		tblID := tablecodec.DecodeTableID(key)
-		if _, ok := txnCtx.GlobalTemporaryTables[tblID]; !ok {
+		if _, ok := txnCtx.TemporaryTables[tblID]; !ok {
 			newKeys = append(newKeys, key)
 		}
 	}
@@ -1658,12 +1658,13 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
 	sc := &stmtctx.StatementContext{
 		TimeZone:      vars.Location(),
-		MemTracker:    memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery),
-		DiskTracker:   disk.NewTracker(memory.LabelForSQLText, -1),
 		TaskID:        stmtctx.AllocateTaskID(),
 		CTEStorageMap: map[int]*CTEStorages{},
 		IsStaleness:   false,
 	}
+
+	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
+	sc.InitDiskTracker(memory.LabelForSQLText, -1)
 	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 	globalConfig := config.GetGlobalConfig()
 	if globalConfig.OOMUseTmpStorage && GlobalDiskUsageTracker != nil {

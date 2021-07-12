@@ -1466,7 +1466,13 @@ func (d Duration) ConvertToTime(sc *stmtctx.StatementContext, tp uint8) (Time, e
 // We will use the “round half up” rule, e.g, >= 0.5 -> 1, < 0.5 -> 0,
 // so 10:10:10.999999 round 0 -> 10:10:11
 // and 10:10:10.000000 round 0 -> 10:10:10
-func (d Duration) RoundFrac(fsp int8) (Duration, error) {
+func (d Duration) RoundFrac(fsp int8, loc *gotime.Location) (Duration, error) {
+	tz := loc
+	if tz == nil {
+		logutil.BgLogger().Warn("use gotime.local because sc.timezone is nil")
+		tz = gotime.Local
+	}
+
 	fsp, err := CheckFsp(int(fsp))
 	if err != nil {
 		return d, errors.Trace(err)
@@ -1476,7 +1482,7 @@ func (d Duration) RoundFrac(fsp int8) (Duration, error) {
 		return d, nil
 	}
 
-	n := gotime.Date(0, 0, 0, 0, 0, 0, 0, gotime.Local)
+	n := gotime.Date(0, 0, 0, 0, 0, 0, 0, tz)
 	nd := n.Add(d.Duration).Round(gotime.Duration(math.Pow10(9-int(fsp))) * gotime.Nanosecond).Sub(n)
 	return Duration{Duration: nd, Fsp: fsp}, nil
 }
@@ -1765,7 +1771,7 @@ func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int8) (Duration
 		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
-	return d.RoundFrac(fsp)
+	return d.RoundFrac(fsp, sc.TimeZone)
 }
 
 // TruncateOverflowMySQLTime truncates d when it overflows, and returns ErrTruncatedWrongVal.
@@ -3310,6 +3316,7 @@ func DateFSP(date string) (fsp int) {
 func DateTimeIsOverflow(sc *stmtctx.StatementContext, date Time) (bool, error) {
 	tz := sc.TimeZone
 	if tz == nil {
+		logutil.BgLogger().Warn("use gotime.local because sc.timezone is nil")
 		tz = gotime.Local
 	}
 
