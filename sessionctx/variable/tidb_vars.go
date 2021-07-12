@@ -723,12 +723,8 @@ const (
 	DefTiDBTopSQLReportIntervalSeconds = 60
 	DefTiDBEnableGlobalTemporaryTable  = false
 	DefTiDBEnableLocalTxn              = false
-<<<<<<< HEAD
 	DefTMPTableSize                    = 16777216
-	DefTiDBEnableStableResultMode      = false
-=======
 	DefTiDBEnableOrderedResultMode     = false
->>>>>>> 0db5df550... planner: rename stable-result-mode to ordered-result-mode (#26093)
 )
 
 // Process global variables.
