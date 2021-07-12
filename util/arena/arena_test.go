@@ -27,6 +27,7 @@ const (
 )
 
 func TestSimpleArenaAllocator(t *testing.T) {
+    t.Parallel()
 
 	arena := NewAllocator(arenaCap)
 	slice := arena.Alloc(allocCapSmall)
@@ -55,6 +56,7 @@ func TestSimpleArenaAllocator(t *testing.T) {
 }
 
 func TestStdAllocator(t *testing.T) {
+    t.Parallel()
 	slice := StdAllocator.Alloc(allocCapMedium)
 	assert.Len(t, slice, 0)
 	assert.Equal(t, allocCapMedium, cap(slice))
