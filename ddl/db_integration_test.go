@@ -2680,6 +2680,9 @@ func (s *testIntegrationSuite3) TestAutoIncrementForce(c *C) {
 	}
 	tk.MustExec("insert into t values ();")
 	tk.MustQuery("select a from t;").Check(testkit.Rows("1", "2"))
+
+	// cannot set next global ID to 0.
+	tk.MustGetErrCode("alter table t force auto_increment = 0;", errno.ErrAutoincReadFailed)
 }
 
 func (s *testIntegrationSuite3) TestIssue20490(c *C) {

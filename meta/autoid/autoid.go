@@ -386,6 +386,9 @@ func (alloc *allocator) ForceRebase(tableID, requiredBase int64) error {
 	if tableID <= 0 {
 		return errInvalidTableID.GenWithStack("Invalid tableID")
 	}
+	if requiredBase == -1 {
+		return ErrAutoincReadFailed.GenWithStack("Cannot force rebase the next global ID to '0'")
+	}
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	startTime := time.Now()

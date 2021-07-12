@@ -591,6 +591,7 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.Al
 			err = alloc.Rebase(tblInfo.ID, newEnd, false)
 		}
 		if err != nil {
+			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 	}
