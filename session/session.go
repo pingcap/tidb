@@ -452,15 +452,21 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 }
 
 func (s *session) TxnInfo() *txninfo.TxnInfo {
-	txnInfo := s.txn.Info()
-	if txnInfo == nil {
+	s.txn.mu.RLock()
+	// Copy on read to get a snapshot, this API shouldn't be frequently called.
+	txnInfo := s.txn.mu.TxnInfo
+	s.txn.mu.RUnlock()
+
+	if txnInfo.StartTS == 0 {
 		return nil
 	}
+
 	processInfo := s.ShowProcess()
 	txnInfo.ConnectionID = processInfo.ID
 	txnInfo.Username = processInfo.User
 	txnInfo.CurrentDB = processInfo.DB
-	return txnInfo
+
+	return &txnInfo
 }
 
 func (s *session) doCommit(ctx context.Context) error {
