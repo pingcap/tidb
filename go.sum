@@ -278,8 +278,6 @@ github.com/grpc-ecosystem/grpc-gateway v1.9.5/go.mod h1:vNeuVxBJEsws4ogUvrchl83t
 github.com/grpc-ecosystem/grpc-gateway v1.12.1 h1:zCy2xE9ablevUOrUZc3Dl72Dt+ya2FNAvC2yLYMHzi4=
 github.com/grpc-ecosystem/grpc-gateway v1.12.1/go.mod h1:8XEsbTttt/W+VvjtQhLACqCisSPWTxCZ7sBRjU6iH9c=
 github.com/gtank/cryptopasta v0.0.0-20170601214702-1f550f6f2f69/go.mod h1:YLEMZOtU+AZ7dhN9T/IpGhXVGly2bvkJQ+zxj3WeVQo=
-github.com/hanfei1991/client-go/v2 v2.0.0-alpha.0.20210712051757-87f5da8ec10d h1:/6/1pdj+keke+ddoHPw/i+TwEUTx47BuYUf/6B8eSyg=
-github.com/hanfei1991/client-go/v2 v2.0.0-alpha.0.20210712051757-87f5da8ec10d/go.mod h1:+bOiuuZZUqIq19EqyhTWQFaB0PeXLOh/il1vnVZx3Tk=
 github.com/hashicorp/go-uuid v0.0.0-20180228145832-27454136f036/go.mod h1:6SBZvOh/SIDV7/2o3Jml5SYk/TvGqwFJ/bN7x4byOro=
 github.com/hashicorp/golang-lru v0.5.0/go.mod h1:/m3WP610KZHVQ1SGc6re/UDhFvYD7pJ4Ao+sR/qLZy8=
 github.com/hashicorp/golang-lru v0.5.1/go.mod h1:/m3WP610KZHVQ1SGc6re/UDhFvYD7pJ4Ao+sR/qLZy8=
@@ -439,9 +437,6 @@ github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989/go.mod h1:O17Xtb
 github.com/pingcap/kvproto v0.0.0-20191211054548-3c6b38ea5107/go.mod h1:WWLmULLO7l8IOcQG+t+ItJ3fEcrL5FxF0Wu+HrMy26w=
 github.com/pingcap/kvproto v0.0.0-20200411081810-b85805c9476c/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
 github.com/pingcap/kvproto v0.0.0-20210219064844-c1844a4775d6/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
-github.com/pingcap/kvproto v0.0.0-20210531063847-f42e582bf0bb/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
-github.com/pingcap/kvproto v0.0.0-20210611081648-a215b4e61d2f h1:6K+5nbl1I3el9mYt/mlWorBR95qqmQdwrXYaNQrWWE8=
-github.com/pingcap/kvproto v0.0.0-20210611081648-a215b4e61d2f/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
 github.com/pingcap/kvproto v0.0.0-20210712050333-b66fdbd6bfd5 h1:LN/ml4lm5+AYdn+N/CJ102wFUph2OIpo8hHqi8QxKiQ=
 github.com/pingcap/kvproto v0.0.0-20210712050333-b66fdbd6bfd5/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
 github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9/go.mod h1:4rbK1p9ILyIfb6hU7OG2CiWSqMXnp3JMbiaVJ6mvoY8=
@@ -566,8 +561,8 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfK
 github.com/tidwall/gjson v1.3.5/go.mod h1:P256ACg0Mn+j1RXIDXoss50DeIABTYK1PULOJHhxOls=
 github.com/tidwall/match v1.0.1/go.mod h1:LujAq0jyVjBy028G1WhWfIzbpQfMO8bBZ6Tyb0+pL9E=
 github.com/tidwall/pretty v1.0.0/go.mod h1:XNkn88O1ChpSDQmQeStsy+sBenx6DDtFZJxhVysOjyk=
-github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210709052506-aadf3cf62721 h1:TxzBXVMbGWm5SuLpWgWoj4HgPbeCNdq1t9zrO6/UXTA=
-github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210709052506-aadf3cf62721/go.mod h1:4odrPuyxU7g2kgFK9V4i1ZBOg+EDIeHCGWPygqA0ym4=
+github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210712082038-2c7970b2b7e8 h1:xMbxiAVbJPzzrITV8yqUBgltm4GNdYebkuwUBB5RX9Y=
+github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210712082038-2c7970b2b7e8/go.mod h1:+bOiuuZZUqIq19EqyhTWQFaB0PeXLOh/il1vnVZx3Tk=
 github.com/tikv/pd v1.1.0-beta.0.20210323121136-78679e5e209d h1:K0XnvsnT6ofLDuM8Rt3PuFQO4p8bNraeHYstspD316g=
 github.com/tikv/pd v1.1.0-beta.0.20210323121136-78679e5e209d/go.mod h1:Jw9KG11C/23Rr7DW4XWQ7H5xOgGZo6DFL1OKAF4+Igw=
 github.com/tklauser/go-sysconf v0.3.4 h1:HT8SVixZd3IzLdfs/xlpq0jeSfTX57g1v6wB1EuzV7M=
