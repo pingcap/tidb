@@ -30,6 +30,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -54,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/deadlockhistory"
+	"github.com/pingcap/tidb/util/keydecoder"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
@@ -314,6 +316,13 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 		return 0, err
 	}
 	return tbl.Allocators(ctx).Get(autoid.RowIDAllocType).Base() + 1, nil
+}
+
+func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		return pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", priv)
+	}
+	return false
 }
 
 func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) {
@@ -1013,40 +1022,6 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err 
 			}
 		}
 		e.rows = append(e.rows, row)
-	}
-	return nil
-}
-
-func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
-	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		return pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", priv)
-	}
-	return false
-}
-
-func (e *memtableRetriever) setDataForTableDataLockWaits(ctx sessionctx.Context) error {
-	if !hasPriv(ctx, mysql.ProcessPriv) {
-		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
-	}
-	waits, err := ctx.GetStore().GetLockWaits()
-	if err != nil {
-		return err
-	}
-	for _, wait := range waits {
-		var digestStr interface{}
-		digest, err := resourcegrouptag.DecodeResourceGroupTag(wait.ResourceGroupTag)
-		if err != nil {
-			logutil.BgLogger().Warn("failed to decode resource group tag", zap.Error(err))
-			digestStr = nil
-		} else {
-			digestStr = hex.EncodeToString(digest)
-		}
-		e.rows = append(e.rows, types.MakeDatums(
-			hex.EncodeToString(wait.Key),
-			wait.Txn,
-			wait.WaitForTxn,
-			digestStr,
-		))
 	}
 	return nil
 }
@@ -2074,8 +2049,8 @@ func (e *memtableRetriever) setDataForDeadlock(ctx sessionctx.Context) error {
 	if !hasPriv(ctx, mysql.ProcessPriv) {
 		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
-
-	e.rows = deadlockhistory.GlobalDeadlockHistory.GetAllDatum()
+	infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	e.rows = deadlockhistory.GlobalDeadlockHistory.GetAllDatum(infoSchema)
 	return nil
 }
 
@@ -2089,6 +2064,48 @@ func (e *memtableRetriever) setDataForClusterDeadlock(ctx sessionctx.Context) er
 		return err
 	}
 	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForTableDataLockWaits(ctx sessionctx.Context) error {
+	if !hasPriv(ctx, mysql.ProcessPriv) {
+		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
+	waits, err := ctx.GetStore().GetLockWaits()
+	if err != nil {
+		return err
+	}
+	for _, wait := range waits {
+		var digestStr interface{}
+		digest, err := resourcegrouptag.DecodeResourceGroupTag(wait.ResourceGroupTag)
+		if err != nil {
+			logutil.BgLogger().Warn("failed to decode resource group tag", zap.Error(err))
+			digestStr = nil
+		} else {
+			digestStr = hex.EncodeToString(digest)
+		}
+		infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
+		decodedKey, err := keydecoder.DecodeKey(wait.Key, infoSchema)
+		var decodedKeyStr string
+		if err == nil {
+			decodedKeyBytes, err := json.Marshal(decodedKey)
+			if err != nil {
+				log.Warn("marshal decoded key info to JSON failed", zap.Error(err))
+			} else {
+				decodedKeyStr = string(decodedKeyBytes)
+			}
+		}
+		if err != nil {
+			return err
+		}
+		e.rows = append(e.rows, types.MakeDatums(
+			hex.EncodeToString(wait.Key),
+			decodedKeyStr,
+			wait.Txn,
+			wait.WaitForTxn,
+			digestStr,
+		))
+	}
 	return nil
 }
 
