@@ -57,6 +57,7 @@ type cpuData struct {
 }
 
 // dataPoints represents the cumulative SQL plan CPU time in current minute window
+// dataPoints do not guarantee the TimestampList is sorted by timestamp when there is a time jump backward.
 type dataPoints struct {
 	SQLDigest      []byte
 	PlanDigest     []byte
