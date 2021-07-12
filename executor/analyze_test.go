@@ -45,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/tikv/client-go/v2/mockstore/cluster"
+	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
@@ -288,9 +288,9 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 }
 
 func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
-	var cls cluster.Cluster
+	var cls testutils.Cluster
 	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cls = c
 		}),
@@ -395,9 +395,9 @@ func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (boo
 }
 
 func (s *testFastAnalyze) TestFastAnalyze(c *C) {
-	var cls cluster.Cluster
+	var cls testutils.Cluster
 	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cls = c
 		}),
@@ -714,9 +714,9 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 		return cli
 	}
 
-	var cls cluster.Cluster
+	var cls testutils.Cluster
 	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cls = c
 		}),
