@@ -53,13 +53,13 @@ func (s *testSuite) TestSetLabel(c *C) {
 	tracker := NewTracker(1, -1)
 	c.Assert(tracker.label, Equals, 1)
 	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
-	c.Assert(tracker.bytesLimit, Equals, int64(-1))
+	c.Assert(tracker.bytesHardLimit, Equals, int64(-1))
 	c.Assert(tracker.getParent(), IsNil)
 	c.Assert(len(tracker.mu.children), Equals, 0)
 	tracker.SetLabel(2)
 	c.Assert(tracker.label, Equals, 2)
 	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
-	c.Assert(tracker.bytesLimit, Equals, int64(-1))
+	c.Assert(tracker.bytesHardLimit, Equals, int64(-1))
 	c.Assert(tracker.getParent(), IsNil)
 	c.Assert(len(tracker.mu.children), Equals, 0)
 }
@@ -458,7 +458,7 @@ func (s *testSuite) TestOOMActionPriority(c *C) {
 	tracker.Consume(10000)
 
 	tracker = NewTracker(1, 1)
-	tracker.actionMu.actionOnExceed = nil
+	tracker.actionMuForHardLimit.actionOnExceed = nil
 	n := 100
 	actions := make([]*mockAction, n)
 	for i := 0; i < n; i++ {
