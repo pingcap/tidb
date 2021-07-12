@@ -863,11 +863,6 @@ type SessionVars struct {
 
 	// TemporaryTableData stores committed kv values for temporary table for current session.
 	TemporaryTableData kv.MemBuffer
-
-	// cache is used to reduce object allocation.
-	cache struct {
-		stmtctx.StatementContext
-	}
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
@@ -1493,12 +1488,6 @@ func (s *SessionVars) GetPrevStmtDigest() string {
 // LazyCheckKeyNotExists returns if we can lazy check key not exists.
 func (s *SessionVars) LazyCheckKeyNotExists() bool {
 	return s.PresumeKeyNotExists || (s.TxnCtx.IsPessimistic && !s.StmtCtx.DupKeyAsWarning)
-}
-
-// InitStatementContext initialize s.StmtCtx for the struct itself, this avoids allocation.
-func (s *SessionVars) InitStatementContext() {
-	s.cache.StatementContext = stmtctx.StatementContext{}
-	s.StmtCtx = &s.cache.StatementContext
 }
 
 // GetTemporaryTable returns a TempTable by tableInfo.

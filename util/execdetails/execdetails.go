@@ -555,20 +555,21 @@ type RuntimeStatsColl struct {
 }
 
 // NewRuntimeStatsColl creates new executor collector.
-func NewRuntimeStatsColl() *RuntimeStatsColl {
+// Reuse the object to reduce allocation when *RuntimeStatsColl is not nil.
+func NewRuntimeStatsColl(reuse *RuntimeStatsColl) *RuntimeStatsColl {
+	if reuse != nil {
+		for k := range reuse.rootStats {
+			delete(reuse.rootStats, k)
+		}
+		for k := range reuse.copStats {
+			delete(reuse.copStats, k)
+		}
+		return reuse
+	}
+
 	return &RuntimeStatsColl{
 		rootStats: make(map[int]*RootRuntimeStats),
 		copStats:  make(map[int]*CopRuntimeStats),
-	}
-}
-
-// ResetRuntimeStatsColl resets RuntimeStatsColl for reuse.
-func ResetRuntimeStatsColl(r *RuntimeStatsColl) {
-	for k := range r.rootStats {
-		delete(r.rootStats, k)
-	}
-	for k := range r.copStats {
-		delete(r.copStats, k)
 	}
 }
 

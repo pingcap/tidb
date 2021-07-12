@@ -1665,19 +1665,16 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	saveInUpdateStmt, saveInDeleteStmt, saveInInsertStmt, saveInSelectStmt := vars.StmtCtx.InUpdateStmt, vars.StmtCtx.InDeleteStmt, vars.StmtCtx.InInsertStmt, vars.StmtCtx.InSelectStmt
 	saveRuntimeStatsColl := vars.StmtCtx.RuntimeStatsColl
 
-	if vars.TxnCtx.CouldRetry {
+	if vars.StmtCtx == nil || vars.TxnCtx.CouldRetry {
 		// Must construct new statement context object, the retry history need context for every statement.
 		// TODO: Maybe one day we can get rid of transaction retry, then this logic can be deleted.
 		vars.StmtCtx = &stmtctx.StatementContext{}
 	} else {
 		// Reuse mem to reduce object allocation.
-		vars.InitStatementContext()
+		*vars.StmtCtx = stmtctx.StatementContext{}
 	}
-
 	sc := vars.StmtCtx
 	sc.TimeZone = vars.Location()
-	sc.MemTracker = memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
-	sc.DiskTracker = disk.NewTracker(memory.LabelForSQLText, -1)
 	sc.TaskID = stmtctx.AllocateTaskID()
 	sc.CTEStorageMap = map[int]*CTEStorages{}
 	sc.IsStaleness = false
@@ -1818,12 +1815,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	sc.PrevAffectedRows = 0
 	if globalConfig.EnableCollectExecutionInfo {
-		if saveRuntimeStatsColl == nil {
-			sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
-		} else {
-			execdetails.ResetRuntimeStatsColl(saveRuntimeStatsColl)
-			sc.RuntimeStatsColl = saveRuntimeStatsColl
-		}
+		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(saveRuntimeStatsColl)
 	}
 	if saveInUpdateStmt || saveInDeleteStmt || saveInInsertStmt {
 		sc.PrevAffectedRows = int64(saveAffectedRows)
