@@ -151,7 +151,9 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			if val.(bool) && config.GetGlobalConfig().OOMUseTmpStorage {
 				defer resAction.WaitForTest()
 				defer iterInAction.WaitForTest()
-				defer iterOutAction.WaitForTest()
+				if iterOutAction != nil {
+					defer iterOutAction.WaitForTest()
+				}
 			}
 		})
 
