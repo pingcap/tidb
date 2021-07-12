@@ -256,36 +256,54 @@ func (e *ShowExec) fetchShowBind() error {
 	} else {
 		bindRecords = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
-	parser := parser.New()
-	for _, bindData := range bindRecords {
-		for _, hint := range bindData.Bindings {
-			stmt, err := parser.ParseOneStmt(hint.BindSQL, hint.Charset, hint.Collation)
-			if err != nil {
-				return err
-			}
-			checker := visibleChecker{
-				defaultDB: bindData.Db,
-				ctx:       e.ctx,
-				is:        e.is,
-				manager:   privilege.GetPrivilegeManager(e.ctx),
-				ok:        true,
-			}
-			stmt.Accept(&checker)
-			if !checker.ok {
-				continue
-			}
-			e.appendRow([]interface{}{
-				bindData.OriginalSQL,
-				hint.BindSQL,
-				bindData.Db,
-				hint.Status,
-				hint.CreateTime,
-				hint.UpdateTime,
-				hint.Charset,
-				hint.Collation,
-				hint.Source,
-			})
+	type bindingData struct {
+		OriginalSQL string
+		Db          string
+		Binding     *bindinfo.Binding
+	}
+	var bindings []*bindingData
+	for _, bindRecord := range bindRecords {
+		for _, binding := range bindRecord.Bindings {
+			bindings = append(bindings, &bindingData{
+				OriginalSQL: bindRecord.OriginalSQL,
+				Db:          bindRecord.Db,
+				Binding:     &binding})
 		}
+	}
+	sort.Slice(bindings, func(i, j int) bool {
+		cmpResult := bindings[i].Binding.UpdateTime.Compare(bindings[j].Binding.UpdateTime)
+		return cmpResult > 0
+	})
+	parser := parser.New()
+	for _, bindData := range bindings {
+		stmt, err := parser.ParseOneStmt(bindData.Binding.BindSQL,
+			bindData.Binding.Charset,
+			bindData.Binding.Collation)
+		if err != nil {
+			return err
+		}
+		checker := visibleChecker{
+			defaultDB: bindData.Db,
+			ctx:       e.ctx,
+			is:        e.is,
+			manager:   privilege.GetPrivilegeManager(e.ctx),
+			ok:        true,
+		}
+		stmt.Accept(&checker)
+		if !checker.ok {
+			continue
+		}
+		e.appendRow([]interface{}{
+			bindData.OriginalSQL,
+			bindData.Binding.BindSQL,
+			bindData.Db,
+			bindData.Binding.Status,
+			bindData.Binding.CreateTime,
+			bindData.Binding.UpdateTime,
+			bindData.Binding.Charset,
+			bindData.Binding.Collation,
+			bindData.Binding.Source,
+		})
 	}
 	return nil
 }
