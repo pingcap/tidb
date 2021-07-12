@@ -446,6 +446,9 @@ max-retry-count = 256
 # The max count of deadlock events that will be recorded in the information_schema.deadlocks table.
 deadlock-history-capacity = 10
 
+# Whether retryable deadlocks (in-statement deadlocks) are collected to the information_schema.deadlocks table.
+deadlock-history-collect-retryable = false
+
 [stmt-summary]
 # enable statement summary.
 enable = true

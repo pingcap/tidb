@@ -90,7 +90,8 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
 		rpcCancel:       tikv.NewRPCanceller(),
-		resolvedLocks:   util.NewTSSet(5),
+		// Temporarily fix compiling. TiDB should address the change of https://github.com/tikv/client-go/pull/218
+		resolvedLocks:   &util.TSSet{},
 	}
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
