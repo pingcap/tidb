@@ -21,7 +21,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -266,7 +265,7 @@ func (d *dataPoints) merge(other *dataPoints) {
 		d.CPUTimeMsTotal = other.CPUTimeMsTotal
 		return
 	}
-	length := mathutil.Max(len(d.TimestampList), len(other.TimestampList))
+	length := len(d.TimestampList) + len(other.TimestampList)
 	timestampList := make([]uint64, 0, length)
 	cpuTimeMsList := make([]uint32, 0, length)
 	i := 0
