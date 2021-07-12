@@ -49,7 +49,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	. "github.com/pingcap/tidb/util/testutil"
-	"github.com/tikv/client-go/v2/mockstore/cluster"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 // Make it serial because config is modified in test cases.
@@ -61,7 +61,7 @@ var _ = Suite(&testIntegrationSuite7{&testIntegrationSuite{}})
 type testSerialSuite struct {
 	CommonHandleSuite
 	store   kv.Storage
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	dom     *domain.Domain
 }
 
@@ -76,7 +76,7 @@ func (s *testSerialSuite) SetUpSuite(c *C) {
 
 	var err error
 	s.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			s.cluster = c
 		}),
