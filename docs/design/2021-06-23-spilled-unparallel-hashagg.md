@@ -47,8 +47,8 @@ In aggregate processing, memory increases when tuples are inserted into the hash
 
 * When the unparallel-agg exceeds the memory quota, this feature helps reduce memory usage and run the sql successfully.
 * When the parallel-agg exceeds the memory quota, the SQL will be canceled before. After the agg-concurrency args are set to 1, the SQL can run successfully.
-* When the ndv of the data is low, the SQL contains distinct function will be canceled before. After the agg-concurrency args are set to 1, the SQL can run successfully.
-* When the ndv of the data is high, the SQL contains distinct function will be canceled before. After the agg-concurrency args are set to 1, the SQL can be canceled successfully if there is insufficient memory.
+* When the ndv of the data is low, the SQL contains distinct function will be canceled before. This feature helps the SQL run successfully.
+* When the ndv of the data is high, the SQL contains distinct function will be canceled before. The SQL can be canceled successfully if there is insufficient memory.
 
 ### Compatibility Tests
 
