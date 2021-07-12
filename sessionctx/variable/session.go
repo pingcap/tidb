@@ -15,6 +15,7 @@ package variable
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
@@ -859,6 +860,9 @@ type SessionVars struct {
 	// LocalTemporaryTables is *infoschema.LocalTemporaryTables, use interface to avoid circle dependency.
 	// It's nil if there is no local temporary table.
 	LocalTemporaryTables interface{}
+
+	// TemporaryTableData stores committed kv values for temporary table for current session.
+	TemporaryTableData kv.MemBuffer
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
@@ -2198,4 +2202,41 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 		}
 	}
 	return s.seekFactor
+}
+
+// GetTemporaryTableSnapshotValue get temporary table value from session
+func (s *SessionVars) GetTemporaryTableSnapshotValue(ctx context.Context, key kv.Key) ([]byte, error) {
+	memData := s.TemporaryTableData
+	if memData == nil {
+		return nil, kv.ErrNotExist
+	}
+
+	v, err := memData.Get(ctx, key)
+	if err != nil {
+		return v, err
+	}
+
+	if len(v) == 0 {
+		return nil, kv.ErrNotExist
+	}
+
+	return v, nil
+}
+
+// GetTemporaryTableTxnValue returns a kv.Getter to fetch temporary table data in txn
+func (s *SessionVars) GetTemporaryTableTxnValue(ctx context.Context, txn kv.Transaction, key kv.Key) ([]byte, error) {
+	v, err := txn.GetMemBuffer().Get(ctx, key)
+	if err == nil {
+		if len(v) == 0 {
+			return nil, kv.ErrNotExist
+		}
+
+		return v, nil
+	}
+
+	if !kv.IsErrNotFound(err) {
+		return v, err
+	}
+
+	return s.GetTemporaryTableSnapshotValue(ctx, key)
 }
