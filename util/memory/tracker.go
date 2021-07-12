@@ -62,9 +62,25 @@ type Tracker struct {
 	isGlobal      bool  // isGlobal indicates whether this tracker is global tracker
 }
 
-// NewTracker creates a memory tracker.
+// InitTracker initializes a memory tracker.
 //	1. "label" is the label used in the usage string.
 //	2. "bytesLimit <= 0" means no limit.
+// For the common tracker, isGlobal is default as false
+func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed) {
+	t.mu.children = nil
+	t.actionMu.actionOnExceed = action
+	t.parMu.parent = nil
+
+	t.label = label
+	t.bytesLimit = bytesLimit
+	t.maxConsumed = 0
+	t.isGlobal = false
+	return
+}
+
+// NewTracker creates a memory tracker.
+//     1. "label" is the label used in the usage string.
+//     2. "bytesLimit <= 0" means no limit.
 // For the common tracker, isGlobal is default as false
 func NewTracker(label int, bytesLimit int64) *Tracker {
 	t := &Tracker{
