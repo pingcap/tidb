@@ -10000,7 +10000,6 @@ func (s *testIntegrationSuite2) TestIssue25526(c *C) {
 	rows.Check(testkit.Rows())
 }
 
-
 func (s *testIntegrationSuite) TestTimestampIssue25093(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
