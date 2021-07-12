@@ -265,7 +265,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		if innCasted, exit, innErr := handleZeroDatetime(ctx, col, casted, val.GetString(), types.ErrWrongValue.Equal(err)); exit {
 			return innCasted, innErr
 		}
-	} else if (sc.InInsertStmt || sc.InUpdateStmt) && err != nil && col.FieldType.Tp == mysql.TypeYear {
+	} else if (sc.InInsertStmt || sc.InUpdateStmt) && types.ErrInvalidYear.Equal(err) {
 		casted.SetInt64(0)
 	}
 
