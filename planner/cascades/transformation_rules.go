@@ -2528,7 +2528,6 @@ func (r *MergeAdjacentWindow) Match(expr *memo.ExprIter) bool {
 	curWinPlan := expr.GetExpr().ExprNode.(*plannercore.LogicalWindow)
 	nextGroupExpr := expr.Children[0].GetExpr()
 	nextWinPlan := nextGroupExpr.ExprNode.(*plannercore.LogicalWindow)
-	nextSchema := nextGroupExpr.Group.Prop.Schema
 	nextGroupChildren := nextGroupExpr.Children
 	ctx := expr.GetExpr().ExprNode.SCtx()
 
@@ -2544,23 +2543,17 @@ func (r *MergeAdjacentWindow) Match(expr *memo.ExprIter) bool {
 	// `select a, b, sum(bb) over (partition by a) as 'sum_bb' from (select a, b, max(b) over (partition by a) as 'bb' from t) as tt`
 	// The adjacent windows in the above sql statement cannot be merged.
 	// The reason is that the first one uses an unsettled column `bb` from the second one.
-	nextWindowCols := make(map[int64]struct{})
 	nextWindowChildrenExistedCols := make(map[int64]struct{})
 	for _, ngc := range nextGroupChildren {
 		for _, c := range ngc.Prop.Schema.Columns {
 			nextWindowChildrenExistedCols[c.UniqueID] = struct{}{}
 		}
 	}
-	for _, nc := range nextSchema.Columns {
-		nextWindowCols[nc.UniqueID] = struct{}{}
-	}
 	for _, funDesc := range curWinPlan.WindowFuncDescs {
 		for _, arg := range funDesc.Args {
 			cols := expression.ExtractColumns(arg)
 			for _, c := range cols {
-				_, ok1 := nextWindowCols[c.UniqueID]
-				_, ok2 := nextWindowChildrenExistedCols[c.UniqueID]
-				if ok1 && !ok2 {
+				if _, ok := nextWindowChildrenExistedCols[c.UniqueID]; !ok {
 					return false
 				}
 			}
