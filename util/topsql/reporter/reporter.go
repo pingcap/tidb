@@ -248,62 +248,60 @@ func addEvictedCPUTime(collectTarget map[string]*dataPoints, timestamp uint64, t
 	others.CPUTimeMsTotal += uint64(totalCPUTimeMs)
 }
 
-func (d *dataPoints) merge(other *dataPoints) {
-	if other == nil || len(other.TimestampList) == 0 {
-		return
-	}
-	if other.isInvalid() {
-		logutil.BgLogger().Warn("[top-sql] data points is invalid, it should never happen", zap.Any("self", d), zap.Any("other", other))
-		return
-	}
-	// Sort the dataPoints by timestamp to fix the affect of time jump backward.
-	sort.Sort(d)
-	sort.Sort(other)
-	if len(d.TimestampList) == 0 {
-		d.TimestampList = other.TimestampList
-		d.CPUTimeMsList = other.CPUTimeMsList
-		d.CPUTimeMsTotal = other.CPUTimeMsTotal
-		return
-	}
-	length := len(d.TimestampList) + len(other.TimestampList)
-	timestampList := make([]uint64, 0, length)
-	cpuTimeMsList := make([]uint32, 0, length)
-	i := 0
-	j := 0
-	for i < len(d.TimestampList) && j < len(other.TimestampList) {
-		if d.TimestampList[i] == other.TimestampList[j] {
-			timestampList = append(timestampList, d.TimestampList[i])
-			cpuTimeMsList = append(cpuTimeMsList, d.CPUTimeMsList[i]+other.CPUTimeMsList[j])
-			i++
-			j++
-		} else if d.TimestampList[i] < other.TimestampList[j] {
-			timestampList = append(timestampList, d.TimestampList[i])
-			cpuTimeMsList = append(cpuTimeMsList, d.CPUTimeMsList[i])
-			i++
-		} else {
-			timestampList = append(timestampList, other.TimestampList[j])
-			cpuTimeMsList = append(cpuTimeMsList, other.CPUTimeMsList[j])
-			j++
-		}
-	}
-	if i < len(d.TimestampList) {
-		timestampList = append(timestampList, d.TimestampList[i:]...)
-		cpuTimeMsList = append(cpuTimeMsList, d.CPUTimeMsList[i:]...)
-	}
-	if j < len(other.TimestampList) {
-		timestampList = append(timestampList, other.TimestampList[j:]...)
-		cpuTimeMsList = append(cpuTimeMsList, other.CPUTimeMsList[j:]...)
-	}
-	d.TimestampList = timestampList
-	d.CPUTimeMsList = cpuTimeMsList
-	d.CPUTimeMsTotal += other.CPUTimeMsTotal
-}
-
+// addEvictedDataPoints adds the evict dataPoints into others.
+// Attention, this function will both modify the evict and others dataPoints to make sure they are sorted by timestamp.
 func addEvictedDataPoints(others *dataPoints, evict *dataPoints) *dataPoints {
 	if others == nil {
 		others = &dataPoints{}
 	}
-	others.merge(evict)
+	if evict == nil || len(evict.TimestampList) == 0 {
+		return others
+	}
+	if evict.isInvalid() {
+		logutil.BgLogger().Warn("[top-sql] data points is invalid, it should never happen", zap.Any("self", others), zap.Any("evict", evict))
+		return others
+	}
+	// Sort the dataPoints by timestamp to fix the affect of time jump backward.
+	sort.Sort(others)
+	sort.Sort(evict)
+	if len(others.TimestampList) == 0 {
+		others.TimestampList = evict.TimestampList
+		others.CPUTimeMsList = evict.CPUTimeMsList
+		others.CPUTimeMsTotal = evict.CPUTimeMsTotal
+		return others
+	}
+	length := len(others.TimestampList) + len(evict.TimestampList)
+	timestampList := make([]uint64, 0, length)
+	cpuTimeMsList := make([]uint32, 0, length)
+	i := 0
+	j := 0
+	for i < len(others.TimestampList) && j < len(evict.TimestampList) {
+		if others.TimestampList[i] == evict.TimestampList[j] {
+			timestampList = append(timestampList, others.TimestampList[i])
+			cpuTimeMsList = append(cpuTimeMsList, others.CPUTimeMsList[i]+evict.CPUTimeMsList[j])
+			i++
+			j++
+		} else if others.TimestampList[i] < evict.TimestampList[j] {
+			timestampList = append(timestampList, others.TimestampList[i])
+			cpuTimeMsList = append(cpuTimeMsList, others.CPUTimeMsList[i])
+			i++
+		} else {
+			timestampList = append(timestampList, evict.TimestampList[j])
+			cpuTimeMsList = append(cpuTimeMsList, evict.CPUTimeMsList[j])
+			j++
+		}
+	}
+	if i < len(others.TimestampList) {
+		timestampList = append(timestampList, others.TimestampList[i:]...)
+		cpuTimeMsList = append(cpuTimeMsList, others.CPUTimeMsList[i:]...)
+	}
+	if j < len(evict.TimestampList) {
+		timestampList = append(timestampList, evict.TimestampList[j:]...)
+		cpuTimeMsList = append(cpuTimeMsList, evict.CPUTimeMsList[j:]...)
+	}
+	others.TimestampList = timestampList
+	others.CPUTimeMsList = cpuTimeMsList
+	others.CPUTimeMsTotal += evict.CPUTimeMsTotal
 	return others
 }
 

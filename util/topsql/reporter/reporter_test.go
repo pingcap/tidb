@@ -357,11 +357,11 @@ func (s *testTopSQLReporter) TestDataPoints(c *C) {
 	// test for dataPoints merge.
 	d = &dataPoints{}
 	evict := &dataPoints{}
-	d.merge(evict)
+	addEvictedDataPoints(d, evict)
 	evict.TimestampList = []uint64{1, 3}
 	evict.CPUTimeMsList = []uint32{10, 30}
 	evict.CPUTimeMsTotal = 40
-	d.merge(evict)
+	addEvictedDataPoints(d, evict)
 	c.Assert(d.CPUTimeMsTotal, Equals, uint64(40))
 	c.Assert(d.TimestampList, DeepEquals, []uint64{1, 3})
 	c.Assert(d.CPUTimeMsList, DeepEquals, []uint32{10, 30})
@@ -369,7 +369,7 @@ func (s *testTopSQLReporter) TestDataPoints(c *C) {
 	evict.TimestampList = []uint64{1, 2, 3, 4, 5}
 	evict.CPUTimeMsList = []uint32{10, 20, 30, 40, 50}
 	evict.CPUTimeMsTotal = 150
-	d.merge(evict)
+	addEvictedDataPoints(d, evict)
 	c.Assert(d.CPUTimeMsTotal, Equals, uint64(190))
 	c.Assert(d.TimestampList, DeepEquals, []uint64{1, 2, 3, 4, 5})
 	c.Assert(d.CPUTimeMsList, DeepEquals, []uint32{20, 20, 60, 40, 50})
@@ -380,7 +380,7 @@ func (s *testTopSQLReporter) TestDataPoints(c *C) {
 	evict.TimestampList = []uint64{3, 2}
 	evict.CPUTimeMsList = []uint32{30, 20}
 	evict.CPUTimeMsTotal = 50
-	d.merge(evict)
+	addEvictedDataPoints(d, evict)
 	c.Assert(d.CPUTimeMsTotal, Equals, uint64(50))
 	c.Assert(d.TimestampList, DeepEquals, []uint64{2, 3})
 	c.Assert(d.CPUTimeMsList, DeepEquals, []uint32{20, 30})
@@ -391,7 +391,7 @@ func (s *testTopSQLReporter) TestDataPoints(c *C) {
 	evict.TimestampList = []uint64{1}
 	evict.CPUTimeMsList = []uint32{10, 30}
 	c.Assert(evict.isInvalid(), Equals, true)
-	d.merge(evict)
+	addEvictedDataPoints(d, evict)
 	c.Assert(d.isInvalid(), Equals, false)
 	c.Assert(d.CPUTimeMsList, IsNil)
 	c.Assert(d.TimestampList, IsNil)
