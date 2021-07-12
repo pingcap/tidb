@@ -538,35 +538,8 @@ const (
 	// Now we only support TiFlash.
 	TiDBAllowFallbackToTiKV = "tidb_allow_fallback_to_tikv"
 
-<<<<<<< HEAD
-	// TiDBEnableStableResultMode indicates if stabilize query results.
-	TiDBEnableStableResultMode = "tidb_enable_stable_result_mode"
-=======
-	// TiDBEnableTopSQL indicates whether the top SQL is enabled.
-	TiDBEnableTopSQL = "tidb_enable_top_sql"
-
-	// TiDBTopSQLAgentAddress indicates the top SQL agent address.
-	TiDBTopSQLAgentAddress = "tidb_top_sql_agent_address"
-
-	// TiDBTopSQLPrecisionSeconds indicates the top SQL precision seconds.
-	TiDBTopSQLPrecisionSeconds = "tidb_top_sql_precision_seconds"
-
-	// TiDBTopSQLMaxStatementCount indicates the max number of statements been collected.
-	TiDBTopSQLMaxStatementCount = "tidb_top_sql_max_statement_count"
-
-	// TiDBTopSQLMaxCollect indicates the max capacity of the collect map.
-	TiDBTopSQLMaxCollect = "tidb_top_sql_max_collect"
-
-	// TiDBTopSQLReportIntervalSeconds indicates the top SQL report interval seconds.
-	TiDBTopSQLReportIntervalSeconds = "tidb_top_sql_report_interval_seconds"
-	// TiDBEnableGlobalTemporaryTable indicates whether to enable global temporary table
-	TiDBEnableGlobalTemporaryTable = "tidb_enable_global_temporary_table"
-	// TiDBEnableLocalTxn indicates whether to enable Local Txn.
-	TiDBEnableLocalTxn = "tidb_enable_local_txn"
-
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
->>>>>>> 0db5df550... planner: rename stable-result-mode to ordered-result-mode (#26093)
 )
 
 // TiDB vars that have only global scope
@@ -709,21 +682,7 @@ const (
 	DefTiDBEnableIndexMergeJoin        = false
 	DefTiDBTrackAggregateMemoryUsage   = true
 	DefTiDBEnableExchangePartition     = false
-<<<<<<< HEAD
-	DefTiDBEnableStableResultMode      = false
-=======
-	DefCTEMaxRecursionDepth            = 1000
-	DefTiDBTopSQLEnable                = false
-	DefTiDBTopSQLAgentAddress          = ""
-	DefTiDBTopSQLPrecisionSeconds      = 1
-	DefTiDBTopSQLMaxStatementCount     = 200
-	DefTiDBTopSQLMaxCollect            = 10000
-	DefTiDBTopSQLReportIntervalSeconds = 60
-	DefTiDBEnableGlobalTemporaryTable  = false
-	DefTMPTableSize                    = 16777216
-	DefTiDBEnableLocalTxn              = false
 	DefTiDBEnableOrderedResultMode     = false
->>>>>>> 0db5df550... planner: rename stable-result-mode to ordered-result-mode (#26093)
 )
 
 // Process global variables.
