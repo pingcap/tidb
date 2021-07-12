@@ -249,9 +249,10 @@ func addEvictedCPUTime(collectTarget map[string]*dataPoints, timestamp uint64, t
 	others.CPUTimeMsTotal += uint64(totalCPUTimeMs)
 }
 
-// addEvictedDataPoints adds the evict dataPoints into others.
-// Attention, this function will both modify the evict and others dataPoints to make sure they are sorted by timestamp.
-func addEvictedDataPoints(others *dataPoints, evict *dataPoints) *dataPoints {
+// addEvictedIntoSortedDataPoints adds the evict dataPoints into others.
+// Attention, this function depend on others dataPoints is sorted, and this function will modify the evict dataPoints
+// to make sure it is sorted by timestamp.
+func addEvictedIntoSortedDataPoints(others *dataPoints, evict *dataPoints) *dataPoints {
 	if others == nil {
 		others = &dataPoints{}
 	}
@@ -263,7 +264,6 @@ func addEvictedDataPoints(others *dataPoints, evict *dataPoints) *dataPoints {
 		return others
 	}
 	// Sort the dataPoints by timestamp to fix the affect of time jump backward.
-	sort.Sort(others)
 	sort.Sort(evict)
 	if len(others.TimestampList) == 0 {
 		others.TimestampList = evict.TimestampList
@@ -447,10 +447,14 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *m
 	// Evict redundant data.
 	var evicted []*dataPoints
 	records, evicted = getTopNDataPoints(records)
+	if others != nil {
+		// Sort the dataPoints by timestamp to fix the affect of time jump backward.
+		sort.Sort(others)
+	}
 	for _, evict := range evicted {
 		normalizedSQLMap.LoadAndDelete(string(evict.SQLDigest))
 		normalizedPlanMap.LoadAndDelete(string(evict.PlanDigest))
-		others = addEvictedDataPoints(others, evict)
+		others = addEvictedIntoSortedDataPoints(others, evict)
 	}
 
 	// append others which summarize all evicted item's cpu-time.
