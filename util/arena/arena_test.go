@@ -19,34 +19,47 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+const (
+	arenaCap       = 1000
+	allocCapSmall  = 10
+	allocCapMedium = 20
+	allocCapOut    = 1024
+)
+
 func TestSimpleArenaAllocator(t *testing.T) {
-	arena := NewAllocator(1000)
-	slice := arena.Alloc(10)
-	assert.Equal(t, 10, arena.off, "off not match, expect 10 bug got")
-	assert.False(t, len(slice) != 0 || cap(slice) != 10, "slice length or cap not match")
 
-	slice = arena.Alloc(20)
-	assert.Equal(t, 30, arena.off, "off not match, expect 30 bug got")
-	assert.False(t, len(slice) != 0 || cap(slice) != 20, "slice length or cap not match")
+	arena := NewAllocator(arenaCap)
+	slice := arena.Alloc(allocCapSmall)
+	assert.Equal(t, allocCapSmall, arena.off)
+	assert.Len(t, slice, 0)
+	assert.Equal(t, allocCapSmall, cap(slice))
 
-	slice = arena.Alloc(1024)
-	assert.Equal(t, 30, arena.off, "off not match, expect 30 bug got")
-	assert.False(t, len(slice) != 0 || cap(slice) != 1024, "slice length or cap not match")
+	slice = arena.Alloc(allocCapMedium)
+	assert.Equal(t, allocCapSmall+allocCapMedium, arena.off)
+	assert.Len(t, slice, 0)
+	assert.Equal(t, allocCapMedium, cap(slice))
 
-	slice = arena.AllocWithLen(2, 10)
-	assert.Equal(t, 40, arena.off, "off not match, expect 40 bug got")
-	assert.False(t, len(slice) != 2 || cap(slice) != 10, "slice length or cap not match")
+	slice = arena.Alloc(allocCapOut)
+	assert.Equal(t, allocCapSmall+allocCapMedium, arena.off)
+	assert.Len(t, slice, 0)
+	assert.Equal(t, allocCapOut, cap(slice))
+
+	slice = arena.AllocWithLen(2, allocCapSmall)
+	assert.Equal(t, allocCapSmall+allocCapMedium+allocCapSmall, arena.off)
+	assert.Len(t, slice, 2)
+	assert.Equal(t, allocCapSmall, cap(slice))
 
 	arena.Reset()
-	assert.False(t, arena.off != 0 || cap(arena.arena) != 1000, "off or cap not match")
+	assert.Zero(t, arena.off)
+	assert.Equal(t, arenaCap, cap(arena.arena))
 }
 
 func TestStdAllocator(t *testing.T) {
-	slice := StdAllocator.Alloc(20)
-	assert.Equal(t, 0, len(slice), "length not match")
-	assert.Equal(t, 20, cap(slice), "cap not match")
+	slice := StdAllocator.Alloc(allocCapMedium)
+	assert.Len(t, slice, 0)
+	assert.Equal(t, allocCapMedium, cap(slice))
 
-	slice = StdAllocator.AllocWithLen(10, 20)
-	assert.Equal(t, 10, len(slice), "length not match")
-	assert.Equal(t, 20, cap(slice), "cap not match")
+	slice = StdAllocator.AllocWithLen(allocCapSmall, allocCapMedium)
+	assert.Len(t, slice, allocCapSmall)
+	assert.Equal(t, allocCapMedium, cap(slice))
 }
