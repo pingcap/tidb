@@ -142,14 +142,19 @@ func (p *PointGetPlan) AccessObject(normalized bool) string {
 		if normalized {
 			buffer.WriteString(", partition:?")
 		} else {
-			buffer.WriteString(", partition:" + p.PartitionInfo.Name.L)
+			buffer.WriteString(", partition:")
+			buffer.WriteString(p.PartitionInfo.Name.L)
 		}
 	}
 	if p.IndexInfo != nil {
 		if p.IndexInfo.Primary && p.TblInfo.IsCommonHandle {
-			buffer.WriteString(", clustered index:" + p.IndexInfo.Name.O + "(")
+			buffer.WriteString(", clustered index:")
+			buffer.WriteString(p.IndexInfo.Name.O)
+			buffer.WriteString("(")
 		} else {
-			buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
+			buffer.WriteString(", index:")
+			buffer.WriteString(p.IndexInfo.Name.O)
+			buffer.WriteString("(")
 		}
 		for i, idxCol := range p.IndexInfo.Columns {
 			if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
@@ -174,15 +179,13 @@ func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 	}
 	if p.Handle != nil {
 		if normalized {
-			// fmt.Fprintf(buffer, "handle:?, ")
 			buffer.WriteString("handle:?")
 		} else {
+			buffer.WriteString("handle:")
 			if p.UnsignedHandle {
-				// fmt.Fprintf(buffer, "handle:%d, ", uint64(p.Handle.IntValue()))
-				buffer.WriteString("handle:" + strconv.FormatUint(uint64(p.Handle.IntValue()), 10))
+				buffer.WriteString(strconv.FormatUint(uint64(p.Handle.IntValue()), 10))
 			} else {
-				// fmt.Fprintf(buffer, "handle:%s, ", p.Handle)
-				buffer.WriteString("handle:" + p.Handle.String())
+				buffer.WriteString(p.Handle.String())
 			}
 		}
 	}
