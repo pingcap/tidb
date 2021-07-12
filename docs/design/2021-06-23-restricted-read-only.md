@@ -21,7 +21,7 @@ We will create a new global variable TIDB_RESTRICTED_READ_ONLY, and turning it t
 
 To allow replication service to write, we introduced a new dynamic privilege level called `RESTRICTED_REPLICA_WRITER_ADMIN`, user with this privilege will be ignored for read-only checks.
 
-All TiDB servers in the cluster will periodically update their own cache of the global variable table, so if we change the global variable, eventually all TiDB servers will see the change.
+Upon the change of the variable on a TiDB sever, the change will be broadcasted to all other TiDB servers through PD. Normally, the other TiDB servers will receive the update immediately, however under certain circumstances (such as TiDB server lose connection to PD), the lag can be up to 30 seconds.
 
 ### How to restrict SQLs
 
