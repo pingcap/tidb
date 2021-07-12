@@ -282,6 +282,8 @@ github.com/hanfei1991/client-go/v2 v2.0.0-alpha.0.20210706150052-d30d49d0147c h1
 github.com/hanfei1991/client-go/v2 v2.0.0-alpha.0.20210706150052-d30d49d0147c/go.mod h1:YISwZqZWZyfuaAboyi+6lTz17sn/C8dgkBCgWmqL5rY=
 github.com/hanfei1991/client-go/v2 v2.0.0-alpha.0.20210709095150-6bbe01773f7f h1:9mzD1qCwD9LkP82bxdfUhaxGujHul0eJWkKgyxXkMoQ=
 github.com/hanfei1991/client-go/v2 v2.0.0-alpha.0.20210709095150-6bbe01773f7f/go.mod h1:qb/QMGzCQxvLSXJmyR36R29VoPph6IRNYyeRFHEqzTI=
+github.com/hanfei1991/client-go/v2 v2.0.0-alpha.0.20210712051757-87f5da8ec10d h1:/6/1pdj+keke+ddoHPw/i+TwEUTx47BuYUf/6B8eSyg=
+github.com/hanfei1991/client-go/v2 v2.0.0-alpha.0.20210712051757-87f5da8ec10d/go.mod h1:+bOiuuZZUqIq19EqyhTWQFaB0PeXLOh/il1vnVZx3Tk=
 github.com/hashicorp/go-uuid v0.0.0-20180228145832-27454136f036/go.mod h1:6SBZvOh/SIDV7/2o3Jml5SYk/TvGqwFJ/bN7x4byOro=
 github.com/hashicorp/golang-lru v0.5.0/go.mod h1:/m3WP610KZHVQ1SGc6re/UDhFvYD7pJ4Ao+sR/qLZy8=
 github.com/hashicorp/golang-lru v0.5.1/go.mod h1:/m3WP610KZHVQ1SGc6re/UDhFvYD7pJ4Ao+sR/qLZy8=
@@ -448,6 +450,8 @@ github.com/pingcap/kvproto v0.0.0-20210706045240-6a7633d47452 h1:DQQLQqmnHlXkI75
 github.com/pingcap/kvproto v0.0.0-20210706045240-6a7633d47452/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
 github.com/pingcap/kvproto v0.0.0-20210709093521-3ceb4948663c h1:3ifKlzOQqajY4bpk5PHB8w6L6dfR6HtIwInTuP1jcXQ=
 github.com/pingcap/kvproto v0.0.0-20210709093521-3ceb4948663c/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
+github.com/pingcap/kvproto v0.0.0-20210712050333-b66fdbd6bfd5 h1:LN/ml4lm5+AYdn+N/CJ102wFUph2OIpo8hHqi8QxKiQ=
+github.com/pingcap/kvproto v0.0.0-20210712050333-b66fdbd6bfd5/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
 github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9/go.mod h1:4rbK1p9ILyIfb6hU7OG2CiWSqMXnp3JMbiaVJ6mvoY8=
 github.com/pingcap/log v0.0.0-20200511115504-543df19646ad/go.mod h1:4rbK1p9ILyIfb6hU7OG2CiWSqMXnp3JMbiaVJ6mvoY8=
 github.com/pingcap/log v0.0.0-20201112100606-8f1e84a3abc8/go.mod h1:4rbK1p9ILyIfb6hU7OG2CiWSqMXnp3JMbiaVJ6mvoY8=
