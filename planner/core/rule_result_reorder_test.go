@@ -26,21 +26,21 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-var _ = Suite(&testRuleStabilizeResults{})
-var _ = SerialSuites(&testRuleStabilizeResultsSerial{})
+var _ = Suite(&testRuleReorderResults{})
+var _ = SerialSuites(&testRuleReorderResultsSerial{})
 
-type testRuleStabilizeResultsSerial struct {
+type testRuleReorderResultsSerial struct {
 	store kv.Storage
 	dom   *domain.Domain
 }
 
-func (s *testRuleStabilizeResultsSerial) SetUpTest(c *C) {
+func (s *testRuleReorderResultsSerial) SetUpTest(c *C) {
 	var err error
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 }
 
-func (s *testRuleStabilizeResultsSerial) TestPlanCache(c *C) {
+func (s *testRuleReorderResultsSerial) TestPlanCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -54,7 +54,7 @@ func (s *testRuleStabilizeResultsSerial) TestPlanCache(c *C) {
 	c.Assert(err, IsNil)
 
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_stable_result_mode=1")
+	tk.MustExec("set tidb_enable_ordered_result_mode=1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int, d int, key(b))")
 	tk.MustExec("prepare s1 from 'select * from t where a > ? limit 10'")
@@ -65,10 +65,10 @@ func (s *testRuleStabilizeResultsSerial) TestPlanCache(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // plan cache is still working
 }
 
-func (s *testRuleStabilizeResultsSerial) TestSQLBinding(c *C) {
+func (s *testRuleReorderResultsSerial) TestSQLBinding(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_stable_result_mode=1")
+	tk.MustExec("set tidb_enable_ordered_result_mode=1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int, d int, key(b))")
 	tk.MustQuery("explain select * from t where a > 0 limit 1").Check(testkit.Rows(
@@ -79,35 +79,59 @@ func (s *testRuleStabilizeResultsSerial) TestSQLBinding(c *C) {
 
 	tk.MustExec("create session binding for select * from t where a>0 limit 1 using select * from t use index(b) where a>0 limit 1")
 	tk.MustQuery("explain select * from t where a > 0 limit 1").Check(testkit.Rows(
+<<<<<<< HEAD:planner/core/rule_stabilize_results_test.go
 		"TopN_9 1.00 root  test.t.a:asc, offset:0, count:1",
 		"└─IndexLookUp_18 1.00 root  ",
 		"  ├─TopN_17(Build) 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
 		"  │ └─Selection_16 3333.33 cop[tikv]  gt(test.t.a, 0)",
 		"  │   └─IndexFullScan_14 10000.00 cop[tikv] table:t, index:b(b) keep order:false, stats:pseudo",
 		"  └─TableRowIDScan_15(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+=======
+		"TopN_9 1.00 root  test.t.a, offset:0, count:1",
+		"└─IndexLookUp_19 1.00 root  ",
+		"  ├─TopN_18(Build) 1.00 cop[tikv]  test.t.a, offset:0, count:1",
+		"  │ └─Selection_17 3333.33 cop[tikv]  gt(test.t.a, 0)",
+		"  │   └─IndexFullScan_15 10000.00 cop[tikv] table:t, index:b(b) keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_16(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 }
 
-type testRuleStabilizeResults struct {
+func (s *testRuleReorderResultsSerial) TestClusteredIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_ordered_result_mode=1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a int,b int,c int, PRIMARY KEY (a,b))")
+	tk.MustQuery("explain select * from t limit 10").Check(testkit.Rows(
+		"TopN_7 10.00 root  test.t.a, test.t.b, test.t.c, offset:0, count:10",
+		"└─TableReader_16 10.00 root  data:TopN_15",
+		"  └─TopN_15 10.00 cop[tikv]  test.t.a, test.t.b, test.t.c, offset:0, count:10",
+		"    └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
+>>>>>>> 0db5df550... planner: rename stable-result-mode to ordered-result-mode (#26093):planner/core/rule_result_reorder_test.go
+}
+
+type testRuleReorderResults struct {
 	store kv.Storage
 	dom   *domain.Domain
 
 	testData testutil.TestData
 }
 
-func (s *testRuleStabilizeResults) SetUpSuite(c *C) {
+func (s *testRuleReorderResults) SetUpSuite(c *C) {
 	var err error
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "stable_result_mode_suite")
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "ordered_result_mode_suite")
 	c.Assert(err, IsNil)
 }
 
-func (s *testRuleStabilizeResults) TearDownSuite(c *C) {
+func (s *testRuleReorderResults) TearDownSuite(c *C) {
 	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
-func (s *testRuleStabilizeResults) runTestData(c *C, tk *testkit.TestKit, name string) {
+func (s *testRuleReorderResults) runTestData(c *C, tk *testkit.TestKit, name string) {
 	var input []string
 	var output []struct {
 		Plan []string
@@ -122,61 +146,66 @@ func (s *testRuleStabilizeResults) runTestData(c *C, tk *testkit.TestKit, name s
 	}
 }
 
-func (s *testRuleStabilizeResults) TestStableResultMode(c *C) {
+func (s *testRuleReorderResults) TestOrderedResultMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_stable_result_mode=1")
+	tk.MustExec("set tidb_enable_ordered_result_mode=1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int, d int, key(b))")
-	s.runTestData(c, tk, "TestStableResultMode")
+	s.runTestData(c, tk, "TestOrderedResultMode")
 }
 
-func (s *testRuleStabilizeResults) TestStableResultModeOnDML(c *C) {
+func (s *testRuleReorderResults) TestOrderedResultModeOnDML(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_stable_result_mode=1")
+	tk.MustExec("set tidb_enable_ordered_result_mode=1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int, key(b))")
-	s.runTestData(c, tk, "TestStableResultModeOnDML")
+	s.runTestData(c, tk, "TestOrderedResultModeOnDML")
 }
 
-func (s *testRuleStabilizeResults) TestStableResultModeOnSubQuery(c *C) {
+func (s *testRuleReorderResults) TestOrderedResultModeOnSubQuery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_stable_result_mode=1")
+	tk.MustExec("set tidb_enable_ordered_result_mode=1")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1 (a int primary key, b int, c int, d int, key(b))")
 	tk.MustExec("create table t2 (a int primary key, b int, c int, d int, key(b))")
-	s.runTestData(c, tk, "TestStableResultModeOnSubQuery")
+	s.runTestData(c, tk, "TestOrderedResultModeOnSubQuery")
 }
 
-func (s *testRuleStabilizeResults) TestStableResultModeOnJoin(c *C) {
+func (s *testRuleReorderResults) TestOrderedResultModeOnJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_stable_result_mode=1")
+	tk.MustExec("set tidb_enable_ordered_result_mode=1")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1 (a int primary key, b int, c int, d int, key(b))")
 	tk.MustExec("create table t2 (a int primary key, b int, c int, d int, key(b))")
-	s.runTestData(c, tk, "TestStableResultModeOnJoin")
+	s.runTestData(c, tk, "TestOrderedResultModeOnJoin")
 }
 
-func (s *testRuleStabilizeResults) TestStableResultModeOnOtherOperators(c *C) {
+func (s *testRuleReorderResults) TestOrderedResultModeOnOtherOperators(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_stable_result_mode=1")
+	tk.MustExec("set tidb_enable_ordered_result_mode=1")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1 (a int primary key, b int, c int, d int, unique key(b))")
 	tk.MustExec("create table t2 (a int primary key, b int, c int, d int, unique key(b))")
-	s.runTestData(c, tk, "TestStableResultModeOnOtherOperators")
+	s.runTestData(c, tk, "TestOrderedResultModeOnOtherOperators")
 }
 
-func (s *testRuleStabilizeResults) TestStableResultModeOnPartitionTable(c *C) {
+func (s *testRuleReorderResults) TestOrderedResultModeOnPartitionTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+<<<<<<< HEAD:planner/core/rule_stabilize_results_test.go
 	tk.MustExec("set tidb_enable_stable_result_mode=1")
+=======
+	tk.MustExec(fmt.Sprintf(`set tidb_partition_prune_mode='%v'`, variable.DefTiDBPartitionPruneMode))
+	tk.MustExec("set tidb_enable_ordered_result_mode=1")
+>>>>>>> 0db5df550... planner: rename stable-result-mode to ordered-result-mode (#26093):planner/core/rule_result_reorder_test.go
 	tk.MustExec("drop table if exists thash")
 	tk.MustExec("drop table if exists trange")
 	tk.MustExec("create table thash (a int primary key, b int, c int, d int) partition by hash(a) partitions 4")
@@ -185,5 +214,20 @@ func (s *testRuleStabilizeResults) TestStableResultModeOnPartitionTable(c *C) {
 					partition p1 values less than (200),
 					partition p2 values less than (300),
 					partition p3 values less than (400))`)
+<<<<<<< HEAD:planner/core/rule_stabilize_results_test.go
 	s.runTestData(c, tk, "TestStableResultModeOnPartitionTable")
 }
+=======
+	tk.MustQuery("select @@tidb_partition_prune_mode").Check(testkit.Rows("static"))
+	s.runTestData(c, tk, "TestOrderedResultModeOnPartitionTable")
+}
+
+func (s *testRuleReorderResults) TestHideStableResultSwitch(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	rs := tk.MustQuery("show variables").Rows()
+	for _, r := range rs {
+		c.Assert(strings.ToLower(r[0].(string)), Not(Equals), "tidb_enable_ordered_result_mode")
+	}
+	c.Assert(len(tk.MustQuery("show variables where variable_name like '%tidb_enable_ordered_result_mode%'").Rows()), Equals, 0)
+}
+>>>>>>> 0db5df550... planner: rename stable-result-mode to ordered-result-mode (#26093):planner/core/rule_result_reorder_test.go

@@ -436,8 +436,8 @@ const (
 	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
 	TiDBMemoryUsageAlarmRatio = "tidb_memory_usage_alarm_ratio"
 
-	// TiDBEnableStableResultMode indicates if stabilize query results.
-	TiDBEnableStableResultMode = "tidb_enable_stable_result_mode"
+	// TiDBEnableOrderedResultMode indicates if stabilize query results.
+	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
 )
 
 // Default TiDB system variable values.
@@ -541,7 +541,28 @@ const (
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableAmendPessimisticTxn   = false
 	DefTiDBEnableRateLimitAction       = true
+<<<<<<< HEAD
 	DefTiDBEnableStableResultMode      = false
+=======
+	DefTiDBEnableAsyncCommit           = false
+	DefTiDBEnable1PC                   = false
+	DefTiDBGuaranteeLinearizability    = true
+	DefTiDBAnalyzeVersion              = 2
+	DefTiDBEnableIndexMergeJoin        = false
+	DefTiDBTrackAggregateMemoryUsage   = true
+	DefTiDBEnableExchangePartition     = false
+	DefCTEMaxRecursionDepth            = 1000
+	DefTiDBTopSQLEnable                = false
+	DefTiDBTopSQLAgentAddress          = ""
+	DefTiDBTopSQLPrecisionSeconds      = 1
+	DefTiDBTopSQLMaxStatementCount     = 200
+	DefTiDBTopSQLMaxCollect            = 10000
+	DefTiDBTopSQLReportIntervalSeconds = 60
+	DefTiDBEnableGlobalTemporaryTable  = false
+	DefTMPTableSize                    = 16777216
+	DefTiDBEnableLocalTxn              = false
+	DefTiDBEnableOrderedResultMode     = false
+>>>>>>> 0db5df550... planner: rename stable-result-mode to ordered-result-mode (#26093)
 )
 
 // Process global variables.
