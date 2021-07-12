@@ -568,8 +568,8 @@ const (
 	// TiDBEnableLocalTxn indicates whether to enable Local Txn.
 	TiDBEnableLocalTxn = "tidb_enable_local_txn"
 
-	// TiDBEnableStableResultMode indicates if stabilize query results.
-	TiDBEnableStableResultMode = "tidb_enable_stable_result_mode"
+	// TiDBEnableOrderedResultMode indicates if stabilize query results.
+	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
 )
 
 // TiDB vars that have only global scope
@@ -723,8 +723,12 @@ const (
 	DefTiDBTopSQLReportIntervalSeconds = 60
 	DefTiDBEnableGlobalTemporaryTable  = false
 	DefTiDBEnableLocalTxn              = false
+<<<<<<< HEAD
 	DefTMPTableSize                    = 16777216
 	DefTiDBEnableStableResultMode      = false
+=======
+	DefTiDBEnableOrderedResultMode     = false
+>>>>>>> 0db5df550... planner: rename stable-result-mode to ordered-result-mode (#26093)
 )
 
 // Process global variables.
