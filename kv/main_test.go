@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,18 +16,11 @@ package kv
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
 )
 
-func TestVersion(t *testing.T) {
-	t.Parallel()
-
-	le := NewVersion(42).Cmp(NewVersion(43))
-	gt := NewVersion(42).Cmp(NewVersion(41))
-	eq := NewVersion(42).Cmp(NewVersion(42))
-
-	assert.True(t, le < 0)
-	assert.True(t, gt > 0)
-	assert.True(t, eq == 0)
-	assert.True(t, MinVersion.Cmp(MaxVersion) < 0)
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	goleak.VerifyTestMain(m)
 }
