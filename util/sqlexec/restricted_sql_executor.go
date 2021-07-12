@@ -153,3 +153,20 @@ type MultiQueryNoDelayResult interface {
 	// LastInsertID return last insert id for one statement in multi-queries.
 	LastInsertID() uint64
 }
+
+// DrainRecordSet fetches the rows in the RecordSet.
+func DrainRecordSet(ctx context.Context, rs RecordSet, maxChunkSize int) ([]chunk.Row, error) {
+	var rows []chunk.Row
+	req := rs.NewChunk()
+	for {
+		err := rs.Next(ctx, req)
+		if err != nil || req.NumRows() == 0 {
+			return rows, err
+		}
+		iter := chunk.NewIterator4Chunk(req)
+		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
+			rows = append(rows, r)
+		}
+		req = chunk.Renew(req, maxChunkSize)
+	}
+}

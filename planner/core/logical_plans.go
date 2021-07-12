@@ -451,6 +451,7 @@ type LogicalMemTable struct {
 	Extractor MemTablePredicateExtractor
 	DBName    model.CIStr
 	TableInfo *model.TableInfo
+	Columns   []*model.ColumnInfo
 	// QueryTimeRange is used to specify the time range for metrics summary tables and inspection tables
 	// e.g: select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from metrics_summary;
 	//      select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from metrics_summary_by_label;

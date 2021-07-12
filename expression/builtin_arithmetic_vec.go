@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	math2 "github.com/pingcap/tidb/util/math"
 )
 
 func (b *builtinArithmeticMultiplyRealSig) vectorized() bool {
@@ -135,10 +136,10 @@ func (b *builtinArithmeticModIntUnsignedUnsignedSig) vecEvalInt(input *chunk.Chu
 	rhi64s := rh.Int64s()
 
 	for i := 0; i < len(lhi64s); i++ {
-		if rh.IsNull(i) {
-			continue
-		}
 		if rhi64s[i] == 0 {
+			if rh.IsNull(i) {
+				continue
+			}
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
@@ -180,10 +181,10 @@ func (b *builtinArithmeticModIntUnsignedSignedSig) vecEvalInt(input *chunk.Chunk
 	rhi64s := rh.Int64s()
 
 	for i := 0; i < len(lhi64s); i++ {
-		if rh.IsNull(i) {
-			continue
-		}
 		if rhi64s[i] == 0 {
+			if rh.IsNull(i) {
+				continue
+			}
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
@@ -229,10 +230,10 @@ func (b *builtinArithmeticModIntSignedUnsignedSig) vecEvalInt(input *chunk.Chunk
 	rhi64s := rh.Int64s()
 
 	for i := 0; i < len(lhi64s); i++ {
-		if rh.IsNull(i) {
-			continue
-		}
 		if rhi64s[i] == 0 {
+			if rh.IsNull(i) {
+				continue
+			}
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
@@ -278,10 +279,10 @@ func (b *builtinArithmeticModIntSignedSignedSig) vecEvalInt(input *chunk.Chunk, 
 	rhi64s := rh.Int64s()
 
 	for i := 0; i < len(lhi64s); i++ {
-		if rh.IsNull(i) {
-			continue
-		}
 		if rhi64s[i] == 0 {
+			if rh.IsNull(i) {
+				continue
+			}
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
@@ -323,7 +324,7 @@ func (b *builtinArithmeticMinusRealSig) vecEvalReal(input *chunk.Chunk, result *
 		if result.IsNull(i) {
 			continue
 		}
-		if (x[i] > 0 && -y[i] > math.MaxFloat64-x[i]) || (x[i] < 0 && -y[i] < -math.MaxFloat64-x[i]) {
+		if !math2.IsFinite(x[i] - y[i]) {
 			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
 		}
 		x[i] = x[i] - y[i]
@@ -522,7 +523,7 @@ func (b *builtinArithmeticPlusRealSig) vecEvalReal(input *chunk.Chunk, result *c
 		if result.IsNull(i) {
 			continue
 		}
-		if (x[i] > 0 && y[i] > math.MaxFloat64-x[i]) || (x[i] < 0 && y[i] < -math.MaxFloat64-x[i]) {
+		if !math2.IsFinite(x[i] + y[i]) {
 			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
 		x[i] = x[i] + y[i]
