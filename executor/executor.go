@@ -1658,12 +1658,13 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
 	sc := &stmtctx.StatementContext{
 		TimeZone:      vars.Location(),
-		MemTracker:    memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery),
-		DiskTracker:   disk.NewTracker(memory.LabelForSQLText, -1),
 		TaskID:        stmtctx.AllocateTaskID(),
 		CTEStorageMap: map[int]*CTEStorages{},
 		IsStaleness:   false,
 	}
+
+	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
+	sc.InitDiskTracker(memory.LabelForSQLText, -1)
 	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 	globalConfig := config.GetGlobalConfig()
 	if globalConfig.OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
