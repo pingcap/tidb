@@ -56,6 +56,290 @@ func (s *testBundleSuite) TestClone(c *C) {
 	c.Assert(newBundle, DeepEquals, &Bundle{ID: GroupID(2), Rules: []*Rule{{ID: "121"}}})
 }
 
+func (s *testBundleSuite) TestObjectID(c *C) {
+	type TestCase struct {
+		name       string
+		bundleID   string
+		expectedID int64
+		err        error
+	}
+	tests := []TestCase{
+		{"non tidb bundle", "pd", 0, ErrInvalidBundleIDFormat},
+		{"id of words", "TiDB_DDL_foo", 0, ErrInvalidBundleID},
+		{"id of words and nums", "TiDB_DDL_3x", 0, ErrInvalidBundleID},
+		{"id of floats", "TiDB_DDL_3.0", 0, ErrInvalidBundleID},
+		{"id of negatives", "TiDB_DDL_-10", 0, ErrInvalidBundleID},
+		{"id of positive integer", "TiDB_DDL_10", 10, nil},
+	}
+	for _, t := range tests {
+		comment := Commentf("%s", t.name)
+		bundle := Bundle{ID: t.bundleID}
+		id, err := bundle.ObjectID()
+		if t.err == nil {
+			c.Assert(err, IsNil, comment)
+			c.Assert(id, Equals, t.expectedID, comment)
+		} else {
+			c.Assert(errors.Is(err, t.err), IsTrue, comment)
+		}
+	}
+}
+
+func (s *testBundleSuite) TestGetLeaderDCByBundle(c *C) {
+	testcases := []struct {
+		name       string
+		bundle     *Bundle
+		expectedDC string
+	}{
+		{
+			name: "only leader",
+			bundle: &Bundle{
+				ID: GroupID(1),
+				Rules: []*Rule{
+					{
+						ID:   "12",
+						Role: Leader,
+						Constraints: Constraints{
+							{
+								Key:    "zone",
+								Op:     In,
+								Values: []string{"bj"},
+							},
+						},
+						Count: 1,
+					},
+				},
+			},
+			expectedDC: "bj",
+		},
+		{
+			name: "no leader",
+			bundle: &Bundle{
+				ID: GroupID(1),
+				Rules: []*Rule{
+					{
+						ID:   "12",
+						Role: Voter,
+						Constraints: Constraints{
+							{
+								Key:    "zone",
+								Op:     In,
+								Values: []string{"bj"},
+							},
+						},
+						Count: 3,
+					},
+				},
+			},
+			expectedDC: "",
+		},
+		{
+			name: "voter and leader",
+			bundle: &Bundle{
+				ID: GroupID(1),
+				Rules: []*Rule{
+					{
+						ID:   "11",
+						Role: Leader,
+						Constraints: Constraints{
+							{
+								Key:    "zone",
+								Op:     In,
+								Values: []string{"sh"},
+							},
+						},
+						Count: 1,
+					},
+					{
+						ID:   "12",
+						Role: Voter,
+						Constraints: Constraints{
+							{
+								Key:    "zone",
+								Op:     In,
+								Values: []string{"bj"},
+							},
+						},
+						Count: 3,
+					},
+				},
+			},
+			expectedDC: "sh",
+		},
+		{
+			name: "wrong label key",
+			bundle: &Bundle{
+				ID: GroupID(1),
+				Rules: []*Rule{
+					{
+						ID:   "11",
+						Role: Leader,
+						Constraints: Constraints{
+							{
+								Key:    "fake",
+								Op:     In,
+								Values: []string{"sh"},
+							},
+						},
+						Count: 1,
+					},
+				},
+			},
+			expectedDC: "",
+		},
+		{
+			name: "wrong operator",
+			bundle: &Bundle{
+				ID: GroupID(1),
+				Rules: []*Rule{
+					{
+						ID:   "11",
+						Role: Leader,
+						Constraints: Constraints{
+							{
+								Key:    "zone",
+								Op:     NotIn,
+								Values: []string{"sh"},
+							},
+						},
+						Count: 1,
+					},
+				},
+			},
+			expectedDC: "",
+		},
+		{
+			name: "leader have multi values",
+			bundle: &Bundle{
+				ID: GroupID(1),
+				Rules: []*Rule{
+					{
+						ID:   "11",
+						Role: Leader,
+						Constraints: Constraints{
+							{
+								Key:    "zone",
+								Op:     In,
+								Values: []string{"sh", "bj"},
+							},
+						},
+						Count: 1,
+					},
+				},
+			},
+			expectedDC: "",
+		},
+		{
+			name: "irrelvant rules",
+			bundle: &Bundle{
+				ID: GroupID(1),
+				Rules: []*Rule{
+					{
+						ID:   "15",
+						Role: Leader,
+						Constraints: Constraints{
+							{
+								Key:    EngineLabelKey,
+								Op:     NotIn,
+								Values: []string{EngineLabelTiFlash},
+							},
+						},
+						Count: 1,
+					},
+					{
+						ID:   "14",
+						Role: Leader,
+						Constraints: Constraints{
+							{
+								Key:    "disk",
+								Op:     NotIn,
+								Values: []string{"ssd", "hdd"},
+							},
+						},
+						Count: 1,
+					},
+					{
+						ID:   "13",
+						Role: Leader,
+						Constraints: Constraints{
+							{
+								Key:    "zone",
+								Op:     In,
+								Values: []string{"bj"},
+							},
+						},
+						Count: 1,
+					},
+				},
+			},
+			expectedDC: "bj",
+		},
+		{
+			name: "multi leaders 1",
+			bundle: &Bundle{
+				ID: GroupID(1),
+				Rules: []*Rule{
+					{
+						ID:   "16",
+						Role: Leader,
+						Constraints: Constraints{
+							{
+								Key:    "zone",
+								Op:     In,
+								Values: []string{"sh"},
+							},
+						},
+						Count: 2,
+					},
+				},
+			},
+			expectedDC: "",
+		},
+		{
+			name: "multi leaders 2",
+			bundle: &Bundle{
+				ID: GroupID(1),
+				Rules: []*Rule{
+					{
+						ID:   "17",
+						Role: Leader,
+						Constraints: Constraints{
+							{
+								Key:    "zone",
+								Op:     In,
+								Values: []string{"sh"},
+							},
+						},
+						Count: 1,
+					},
+					{
+						ID:   "18",
+						Role: Leader,
+						Constraints: Constraints{
+							{
+								Key:    "zone",
+								Op:     In,
+								Values: []string{"bj"},
+							},
+						},
+						Count: 1,
+					},
+				},
+			},
+			expectedDC: "sh",
+		},
+	}
+	for _, testcase := range testcases {
+		comment := Commentf("%s", testcase.name)
+		result, ok := testcase.bundle.GetLeaderDC("zone")
+		if len(testcase.expectedDC) > 0 {
+			c.Assert(ok, Equals, true, comment)
+		} else {
+			c.Assert(ok, Equals, false, comment)
+		}
+		c.Assert(result, Equals, testcase.expectedDC, comment)
+	}
+}
+
 func (s *testBundleSuite) TestApplyPlacmentSpec(c *C) {
 	type TestCase struct {
 		name   string

@@ -6,10 +6,9 @@ import (
 )
 
 type testTiKVDriverSuite struct {
-	OneByOneSuite
 }
 
-var _ = Suite(&testTiKVDriverSuite{})
+var _ = SerialSuites(&testTiKVDriverSuite{})
 
 func (s *testTiKVDriverSuite) TestSetDefaultAndOptions(c *C) {
 	globalConfig := config.GetGlobalConfig()
