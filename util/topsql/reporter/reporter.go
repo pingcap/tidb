@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -244,12 +245,6 @@ func addEvictedCPUTime(collectTarget map[string]*dataPoints, timestamp uint64, t
 	} else {
 		others.TimestampList = append(others.TimestampList, timestamp)
 		others.CPUTimeMsList = append(others.CPUTimeMsList, totalCPUTimeMs)
-		length := len(others.TimestampList)
-		if others.TimestampList[length-1] < others.TimestampList[length-2] {
-			// This situation appears only when time jump backward.
-			// If so, sort the data points by timestamp.
-			sort.Sort(others)
-		}
 	}
 	others.CPUTimeMsTotal += uint64(totalCPUTimeMs)
 }
@@ -259,45 +254,50 @@ func (d *dataPoints) merge(other *dataPoints) {
 		return
 	}
 	if other.isInvalid() {
-		logutil.BgLogger().Warn("[top-sql] data points is invalid, it should never happen", zap.Reflect("self", *d), zap.Reflect("other", *other))
+		logutil.BgLogger().Warn("[top-sql] data points is invalid, it should never happen", zap.Any("self", d), zap.Any("other", other))
 		return
 	}
-	if !sort.IsSorted(other) {
-		// This situation appears only when time jump backward.
-		// If so, sort the data points by timestamp.
-		sort.Sort(other)
-	}
+	// Sort the dataPoints by timestamp to fix the affect of time jump backward.
+	sort.Sort(d)
+	sort.Sort(other)
 	if len(d.TimestampList) == 0 {
 		d.TimestampList = other.TimestampList
 		d.CPUTimeMsList = other.CPUTimeMsList
 		d.CPUTimeMsTotal = other.CPUTimeMsTotal
 		return
 	}
-	d.CPUTimeMsTotal += other.CPUTimeMsTotal
-	findIdx := 0
-	for idx, ts := range other.TimestampList {
-		cpuTimeMs := other.CPUTimeMsList[idx]
-		for ; findIdx < len(d.TimestampList); findIdx++ {
-			findTs := d.TimestampList[findIdx]
-			if ts == findTs {
-				d.CPUTimeMsList[findIdx] += cpuTimeMs
-				break
-			}
-			if ts < findTs {
-				d.TimestampList = append(d.TimestampList, 0)
-				copy(d.TimestampList[findIdx+1:], d.TimestampList[findIdx:])
-				d.TimestampList[findIdx] = ts
-				d.CPUTimeMsList = append(d.CPUTimeMsList, 0)
-				copy(d.CPUTimeMsList[findIdx+1:], d.CPUTimeMsList[findIdx:])
-				d.CPUTimeMsList[findIdx] = cpuTimeMs
-				break
-			}
-		}
-		if ts > d.TimestampList[len(d.TimestampList)-1] {
-			d.TimestampList = append(d.TimestampList, ts)
-			d.CPUTimeMsList = append(d.CPUTimeMsList, cpuTimeMs)
+	length := mathutil.Max(len(d.TimestampList), len(other.TimestampList))
+	timestampList := make([]uint64, 0, length)
+	cpuTimeMsList := make([]uint32, 0, length)
+	i := 0
+	j := 0
+	for i < len(d.TimestampList) && j < len(other.TimestampList) {
+		if d.TimestampList[i] == other.TimestampList[j] {
+			timestampList = append(timestampList, d.TimestampList[i])
+			cpuTimeMsList = append(cpuTimeMsList, d.CPUTimeMsList[i]+other.CPUTimeMsList[j])
+			i++
+			j++
+		} else if d.TimestampList[i] < other.TimestampList[j] {
+			timestampList = append(timestampList, d.TimestampList[i])
+			cpuTimeMsList = append(cpuTimeMsList, d.CPUTimeMsList[i])
+			i++
+		} else {
+			timestampList = append(timestampList, other.TimestampList[j])
+			cpuTimeMsList = append(cpuTimeMsList, other.CPUTimeMsList[j])
+			j++
 		}
 	}
+	if i < len(d.TimestampList) {
+		timestampList = append(timestampList, d.TimestampList[i:]...)
+		cpuTimeMsList = append(cpuTimeMsList, d.CPUTimeMsList[i:]...)
+	}
+	if j < len(other.TimestampList) {
+		timestampList = append(timestampList, other.TimestampList[j:]...)
+		cpuTimeMsList = append(cpuTimeMsList, other.CPUTimeMsList[j:]...)
+	}
+	d.TimestampList = timestampList
+	d.CPUTimeMsList = cpuTimeMsList
+	d.CPUTimeMsTotal += other.CPUTimeMsTotal
 }
 
 func addEvictedDataPoints(others *dataPoints, evict *dataPoints) *dataPoints {

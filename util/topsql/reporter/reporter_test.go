@@ -318,10 +318,8 @@ func (s *testTopSQLReporter) TestCollectCapacity(c *C) {
 func (s *testTopSQLReporter) TestCollectOthers(c *C) {
 	collectTarget := make(map[string]*dataPoints)
 	addEvictedCPUTime(collectTarget, 1, 10)
-	addEvictedCPUTime(collectTarget, 3, 30)
-	// test for time jump backward.
 	addEvictedCPUTime(collectTarget, 2, 20)
-
+	addEvictedCPUTime(collectTarget, 3, 30)
 	others := collectTarget[keyOthers]
 	c.Assert(others.CPUTimeMsTotal, Equals, uint64(60))
 	c.Assert(others.TimestampList, DeepEquals, []uint64{1, 2, 3})
