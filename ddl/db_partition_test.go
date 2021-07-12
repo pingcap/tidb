@@ -2992,7 +2992,7 @@ func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.Partiti
 	info := tbl.Meta().GetPartitionInfo()
 	for _, def := range info.Definitions {
 		pid := def.ID
-		partition := tbl.(table.PartitionedTable).GetPartition(pid)
+		partition := tbl.GetPartition(pid)
 		c.Assert(ctx.NewTxn(context.Background()), IsNil)
 		err := tables.IterRecords(partition, ctx, partition.Cols(),
 			func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
@@ -3393,6 +3393,7 @@ func (s *testSerialDBSuite1) TestPartitionListWithNewCollation(c *C) {
 
 func (s *testSerialDBSuite1) TestAddTableWithPartition(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists global_partition_table;")
 	tk.MustGetErrCode("create global temporary table global_partition_table (a int, b int) partition by hash(a) partitions 3 ON COMMIT DELETE ROWS;", errno.ErrPartitionNoTemporary)

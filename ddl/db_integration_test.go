@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -49,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 var _ = Suite(&testIntegrationSuite1{&testIntegrationSuite{}})
@@ -60,7 +60,7 @@ var _ = Suite(&testIntegrationSuite6{&testIntegrationSuite{}})
 
 type testIntegrationSuite struct {
 	lease   time.Duration
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	store   kv.Storage
 	dom     *domain.Domain
 	ctx     sessionctx.Context
@@ -72,7 +72,7 @@ func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
 	ddl.SetWaitTimeWhenErrorOccurred(0)
 
 	s.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			s.cluster = c
 		}),
@@ -955,15 +955,15 @@ func (s *testIntegrationSuite5) TestModifyColumnOption(c *C) {
 	tk.MustExec("create table t2 (b char, c int)")
 	assertErrCode("alter table t2 modify column c int references t1(a)", errMsg)
 	_, err := tk.Exec("alter table t1 change a a varchar(16)")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type varchar(16) not match origin int(11), and tidb_enable_change_column_type is false")
+	c.Assert(err, IsNil)
 	_, err = tk.Exec("alter table t1 change a a varchar(10)")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type varchar(10) not match origin int(11), and tidb_enable_change_column_type is false")
+	c.Assert(err, IsNil)
 	_, err = tk.Exec("alter table t1 change a a datetime")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type datetime not match origin int(11), and tidb_enable_change_column_type is false")
+	c.Assert(err, IsNil)
 	_, err = tk.Exec("alter table t1 change a a int(11) unsigned")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: can't change unsigned integer to signed or vice versa, and tidb_enable_change_column_type is false")
+	c.Assert(err, IsNil)
 	_, err = tk.Exec("alter table t2 change b b int(11) unsigned")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type int(11) not match origin char(1), and tidb_enable_change_column_type is false")
+	c.Assert(err, IsNil)
 }
 
 func (s *testIntegrationSuite4) TestIndexOnMultipleGeneratedColumn(c *C) {
@@ -2776,6 +2776,7 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	tk.MustExec("drop table if exists t;")
 
 	// Grammar error.
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustGetErrCode("create global temporary table t(a double(0, 0))", errno.ErrParse)
 	tk.MustGetErrCode("create temporary table t(id int) on commit delete rows", errno.ErrParse)
 	tk.MustGetErrCode("create temporary table t(id int) on commit preserve rows", errno.ErrParse)
@@ -2789,7 +2790,62 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	// Follow the behaviour of the old version TiDB: parse and ignore the 'temporary' keyword.
 	tk.MustGetErrCode("create temporary table t(id int)", errno.ErrNotSupportedYet)
 
+	// Create local temporary table.
 	tk.MustExec("set @@tidb_enable_noop_functions = 1")
-	tk.MustExec("create temporary table t (id int)")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1105 local TEMPORARY TABLE is not supported yet, TEMPORARY will be parsed but ignored"))
+	tk.MustExec("create database tmp_db")
+	tk.MustExec("use tmp_db")
+	tk.MustExec("create temporary table t1 (id int)")
+	// Create a normal table with the same name is ok.
+	tk.MustExec("create table t1 (id int)")
+	tk.MustExec("create temporary table tmp_db.t2 (id int)")
+	tk.MustQuery("select * from t1") // No error
+	tk.MustExec("drop database tmp_db")
+	_, err := tk.Exec("select * from t1")
+	c.Assert(err, NotNil)
+	// In MySQL, drop DB does not really drop the table, it's back!
+	tk.MustExec("create database tmp_db")
+	tk.MustExec("use tmp_db")
+	tk.MustQuery("select * from t1") // No error
+
+	// When local temporary table overlap the normal table, it takes a higher priority.
+	tk.MustExec("create table overlap (id int)")
+	tk.MustExec("create temporary table overlap (a int, b int)")
+	_, err = tk.Exec("insert into overlap values (1)") // column not match
+	c.Assert(err, NotNil)
+	tk.MustExec("insert into overlap values (1, 1)")
+
+	// Check create local temporary table does not auto commit the transaction.
+	// Normal DDL implies a commit, but create temporary does not.
+	tk.MustExec("create table check_data (id int)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into check_data values (1)")
+	tk.MustExec("create temporary table a_local_temp_table (id int)")
+	// Although "begin" take a infoschem snapshot, local temporary table inside txn should be always visible.
+	tk.MustExec("show create table tmp_db.a_local_temp_table")
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from check_data").Check(testkit.Rows())
+
+	// Check create temporary table for if not exists
+	tk.MustExec("create temporary table b_local_temp_table (id int)")
+	_, err = tk.Exec("create temporary table b_local_temp_table (id int)")
+	c.Assert(infoschema.ErrTableExists.Equal(err), IsTrue)
+	tk.MustExec("create temporary table if not exists b_local_temp_table (id int)")
+
+	// Stale read see the local temporary table but can't read on it.
+	tk.MustExec("START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3)")
+	tk.MustGetErrMsg("select * from overlap", "can not stale read temporary table")
+	tk.MustExec("rollback")
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	// Considering snapshot, local temporary table is always visible.
+	tk.MustExec("set @@tidb_snapshot = '2016-01-01 15:04:05.999999'")
+	tk.MustExec("select * from overlap")
 }

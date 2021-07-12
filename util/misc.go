@@ -170,6 +170,8 @@ var (
 	PerformanceSchemaName = model.NewCIStr("PERFORMANCE_SCHEMA")
 	// MetricSchemaName is the `METRICS_SCHEMA` database name.
 	MetricSchemaName = model.NewCIStr("METRICS_SCHEMA")
+	// ClusterTableInstanceColumnName is the `INSTANCE` column name of the cluster table.
+	ClusterTableInstanceColumnName = "INSTANCE"
 )
 
 // IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.
@@ -534,4 +536,13 @@ func GetLocalIP() string {
 		}
 	}
 	return ""
+}
+
+// QueryStrForLog trim the query if the query length more than 4096
+func QueryStrForLog(query string) string {
+	const size = 4096
+	if len(query) > size {
+		return query[:size] + fmt.Sprintf("(len: %d)", len(query))
+	}
+	return query
 }

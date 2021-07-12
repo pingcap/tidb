@@ -21,9 +21,9 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 

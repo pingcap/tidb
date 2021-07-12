@@ -457,7 +457,7 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 		stmt, err := s.ParseOneStmt(ca, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
@@ -483,7 +483,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		s.ctx.GetSessionVars().SetHashJoinConcurrency(1)
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
@@ -848,7 +848,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		comment := Commentf("for %s", sql)
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
 		_, _, err = BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		if tt.err == nil {
@@ -1257,7 +1257,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: "RESTORE DATABASE test FROM 'local:///tmp/a'",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "BACKUP_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "RESTORE_ADMIN", false},
 			},
 		},
 		{
@@ -1269,7 +1269,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: "SHOW RESTORES",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "BACKUP_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "RESTORE_ADMIN", false},
 			},
 		},
 		{
@@ -1302,14 +1302,22 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.CreateUserPriv, "", "", "", ErrSpecificAccessDenied, false, "", false},
 			},
 		},
+		{
+			sql: "SHOW CONFIG",
+			ans: []visitInfo{
+				{mysql.ConfigPriv, "", "", "", ErrSpecificAccessDenied, false, "", false},
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		// to fix, Table 'test.ttt' doesn't exist
-		_ = Preprocess(s.ctx, stmt, s.is)
+
+		// TODO: to fix, Table 'test.ttt' doesn't exist
+		_ = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+
 		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		builder.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 		_, err = builder.Build(context.TODO(), stmt)
@@ -1389,7 +1397,7 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt)
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
 		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		plan, err := builder.Build(ctx, stmt)
@@ -1402,7 +1410,7 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		}
 		c.Assert(err, IsNil)
 		p := plan.(LogicalPlan)
-		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+		p, err = logicalOptimize(ctx, builder.optFlag, p)
 		s.testData.OnRecord(func() {
 			output[i].Best = ToString(p)
 		})
@@ -1422,7 +1430,7 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt)
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
 		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
@@ -1465,6 +1473,7 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		{"delete a from (select * from t ) as a, t", "[planner:1288]The target table a of the DELETE is not updatable"},
 		{"delete b from (select * from t ) as a, t", "[planner:1109]Unknown table 'b' in MULTI DELETE"},
 		{"select '' as fakeCol from t group by values(fakeCol)", "[planner:1054]Unknown column '' in 'VALUES() function'"},
+		{"update t, (select * from t) as b set b.a = t.a", "[planner:1288]The target table b of the UPDATE is not updatable"},
 		{"select row_number() over () from t group by 1", "[planner:1056]Can't group on 'row_number() over ()'"},
 		{"select row_number() over () as x from t group by 1", "[planner:1056]Can't group on 'x'"},
 		{"select sum(a) as x from t group by 1", "[planner:1056]Can't group on 'x'"},
@@ -1496,7 +1505,7 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt)
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
 		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
@@ -1533,7 +1542,7 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
 		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
@@ -1605,7 +1614,7 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 	if err != nil {
 		return nil, nil, err
 	}
-	err = Preprocess(s.ctx, stmt, s.is)
+	err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1697,7 +1706,7 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
 		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
@@ -1768,7 +1777,7 @@ func (s *testPlanSuite) TestFastPlanContextTables(c *C) {
 	for _, tt := range tests {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil)
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
 		s.ctx.GetSessionVars().StmtCtx.Tables = nil
 		p := TryFastPlan(s.ctx, stmt)
@@ -1792,7 +1801,7 @@ func (s *testPlanSuite) TestUpdateEQCond(c *C) {
 	}{
 		{
 			sql:  "select t1.a from t t1, t t2 where t1.a = t2.a+1",
-			best: "Join{DataScan(t1)->DataScan(t2)->Projection}(test.t.a,Column#25)->Projection",
+			best: "Join{DataScan(t1)->DataScan(t2)->Projection}(test.t.a,Column#25)->Projection->Projection",
 		},
 	}
 	ctx := context.TODO()
@@ -1800,7 +1809,7 @@ func (s *testPlanSuite) TestUpdateEQCond(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
 		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
@@ -1817,7 +1826,7 @@ func (s *testPlanSuite) TestConflictedJoinTypeHints(c *C) {
 	ctx := context.TODO()
 	stmt, err := s.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
-	err = Preprocess(s.ctx, stmt, s.is)
+	err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 	c.Assert(err, IsNil)
 	builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, stmt)
@@ -1838,7 +1847,7 @@ func (s *testPlanSuite) TestSimplyOuterJoinWithOnlyOuterExpr(c *C) {
 	ctx := context.TODO()
 	stmt, err := s.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
-	err = Preprocess(s.ctx, stmt, s.is)
+	err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 	c.Assert(err, IsNil)
 	builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, stmt)
@@ -1890,7 +1899,7 @@ func (s *testPlanSuite) TestResolvingCorrelatedAggregate(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil, comment)
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil, comment)
@@ -1932,7 +1941,8 @@ func (s *testPlanSuite) TestFastPathInvalidBatchPointGet(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tc.sql)
 		stmt, err := s.ParseOneStmt(tc.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		c.Assert(Preprocess(s.ctx, stmt, s.is), IsNil, comment)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		c.Assert(err, IsNil, comment)
 		plan := TryFastPlan(s.ctx, stmt)
 		if tc.fastPlan {
 			c.Assert(plan, NotNil)

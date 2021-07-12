@@ -30,9 +30,9 @@ import (
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	tikvcfg "github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
+	tikvcfg "github.com/tikv/client-go/v2/config"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/zap"
 )
@@ -137,7 +137,6 @@ type Config struct {
 	DelayCleanTableLock uint64      `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
 	SplitRegionMaxNum   uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
 	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
-	TopSQL              TopSQL      `toml:"top-sql" json:"top-sql"`
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
 	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
@@ -298,7 +297,7 @@ func (b *nullableBool) UnmarshalJSON(data []byte) error {
 type Log struct {
 	// Log level.
 	Level string `toml:"level" json:"level"`
-	// Log format. one of json, text, or console.
+	// Log format, one of json or text.
 	Format string `toml:"format" json:"format"`
 	// Disable automatic timestamps in output. Deprecated: use EnableTimestamp instead.
 	DisableTimestamp nullableBool `toml:"disable-timestamp" json:"disable-timestamp"`
@@ -382,7 +381,6 @@ func (e *ErrConfigValidationFailed) Error() string {
 		"TiDB manual to make sure this option has not been deprecated and removed from your TiDB "+
 		"version if the option does not appear to be a typo", e.confFile, strings.Join(
 		e.UndecodedItems, ", "))
-
 }
 
 // ClusterSecurity returns Security info for cluster
@@ -426,6 +424,7 @@ type Performance struct {
 	MemProfileInterval    string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
 	IndexUsageSyncLease   string  `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
 	GOGC                  int     `toml:"gogc" json:"gogc"`
+	EnforceMPP            bool    `toml:"enforce-mpp" json:"enforce-mpp"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -496,12 +495,15 @@ type Binlog struct {
 type PessimisticTxn struct {
 	// The max count of retry for a single statement in a pessimistic transaction.
 	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
+	// The max count of deadlock events that will be recorded in the information_schema.deadlocks table.
+	DeadlockHistoryCapacity uint `toml:"deadlock-history-capacity" json:"deadlock-history-capacity"`
 }
 
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn
 func DefaultPessimisticTxn() PessimisticTxn {
 	return PessimisticTxn{
-		MaxRetryCount: 256,
+		MaxRetryCount:           256,
+		DeadlockHistoryCapacity: 10,
 	}
 }
 
@@ -525,16 +527,6 @@ type StmtSummary struct {
 	RefreshInterval int `toml:"refresh-interval" json:"refresh-interval"`
 	// The maximum history size of statement summary.
 	HistorySize int `toml:"history-size" json:"history-size"`
-}
-
-// TopSQL is the config for top sql.
-type TopSQL struct {
-	// Enable statement summary or not.
-	Enable bool `toml:"enable" json:"enable"`
-	// The refresh interval of statement summary.
-	RefreshInterval int `toml:"refresh-interval" json:"refresh-interval"`
-	// The maximum number of statements kept in memory.
-	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
 }
 
 // IsolationRead is the config for isolation read.
@@ -633,6 +625,7 @@ var defaultConf = Config{
 		// TODO: set indexUsageSyncLease to 60s.
 		IndexUsageSyncLease: "0s",
 		GOGC:                100,
+		EnforceMPP:          false,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -661,15 +654,10 @@ var defaultConf = Config{
 	StmtSummary: StmtSummary{
 		Enable:              true,
 		EnableInternalQuery: false,
-		MaxStmtCount:        200,
+		MaxStmtCount:        3000,
 		MaxSQLLength:        4096,
 		RefreshInterval:     1800,
 		HistorySize:         24,
-	},
-	TopSQL: TopSQL{
-		Enable:          true,
-		RefreshInterval: 1,
-		MaxStmtCount:    5000,
 	},
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
@@ -956,11 +944,6 @@ func hasRootPrivilege() bool {
 // TableLockEnabled uses to check whether enabled the table lock feature.
 func TableLockEnabled() bool {
 	return GetGlobalConfig().EnableTableLock
-}
-
-// TopSQLEnabled uses to check whether enabled the top SQL feature.
-func TopSQLEnabled() bool {
-	return GetGlobalConfig().TopSQL.Enable
 }
 
 // TableLockDelayClean uses to get the time of delay clean table lock.

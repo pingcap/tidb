@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/config"
@@ -158,6 +159,9 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 		rows [][]types.Datum
 		err  error
 	}
+	if !hasPriv(sctx, mysql.ConfigPriv) {
+		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
+	}
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterConfigServerInfo", func(val failpoint.Value) {
 		if s := val.(string); len(s) > 0 {
@@ -195,7 +199,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 					// TODO: support show tiflash config once tiflash supports it
 					return
 				default:
-					ch <- result{err: errors.Errorf("unknown node type: %s(%s)", typ, address)}
+					ch <- result{err: errors.Errorf("currently we do not support get config from node type: %s(%s)", typ, address)}
 					return
 				}
 

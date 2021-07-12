@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,38 +37,40 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
-	txninfo "github.com/pingcap/tidb/session/txninfo"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mockcopr"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
-	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.etcd.io/etcd/clientv3"
 	"google.golang.org/grpc"
 )
 
 var (
-	withTiKV        = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
 	pdAddrs         = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
+	withTiKV        = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
 	pdAddrChan      chan string
 	initPdAddrsOnce sync.Once
 )
@@ -82,10 +85,11 @@ var _ = SerialSuites(&testSessionSerialSuite{})
 var _ = SerialSuites(&testBackupRestoreSuite{})
 var _ = Suite(&testClusteredSuite{})
 var _ = SerialSuites(&testClusteredSerialSuite{})
-var _ = SerialSuites(&testTxnStateSuite{})
+var _ = SerialSuites(&testTxnStateSerialSuite{})
+var _ = SerialSuites(&testStatisticsSuite{})
 
 type testSessionSuiteBase struct {
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	store   kv.Storage
 	dom     *domain.Domain
 	pdAddr  string
@@ -108,6 +112,12 @@ type testSessionSerialSuite struct {
 }
 
 type testBackupRestoreSuite struct {
+	testSessionSuiteBase
+}
+
+// testStatisticsSuite contains test about statistics which need running with real TiKV.
+// Only tests under /session will be run with real TiKV so we put them here instead of /statistics.
+type testStatisticsSuite struct {
 	testSessionSuiteBase
 }
 
@@ -199,7 +209,7 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 		s.store = store
 	} else {
 		store, err := mockstore.NewMockStore(
-			mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.WithClusterInspector(func(c testutils.Cluster) {
 				mockstore.BootstrapWithSingleStore(c)
 				s.cluster = c
 			}),
@@ -788,6 +798,7 @@ func (s *testSessionSuite) TestRetryUnion(c *C) {
 
 func (s *testSessionSuite) TestRetryGlobalTempTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("drop table if exists normal_table")
 	tk.MustExec("create table normal_table(a int primary key, b int)")
 	defer tk.MustExec("drop table if exists normal_table")
@@ -1993,7 +2004,7 @@ func (s *testSessionSuite2) TestInformationSchemaCreateTime(c *C) {
 }
 
 type testSchemaSuiteBase struct {
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	store   kv.Storage
 	dom     *domain.Domain
 }
@@ -2018,7 +2029,7 @@ func (s *testSchemaSuiteBase) TearDownTest(c *C) {
 func (s *testSchemaSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			s.cluster = c
 		}),
@@ -2138,6 +2149,7 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerTempTable(c *C) {
 	tk.MustExec(`drop table if exists normal_table`)
 	tk.MustExec(`create table normal_table (id int, c int);`)
 	defer tk.MustExec(`drop table if exists normal_table`)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec(`drop table if exists temp_table`)
 	tk.MustExec(`create global temporary table temp_table (id int, c int) on commit delete rows;`)
 	defer tk.MustExec(`drop table if exists temp_table`)
@@ -2750,9 +2762,9 @@ func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	c.Assert(vars.BackOffWeight, Equals, 50)
 
 	tk.MustExec("set @@autocommit = 1")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/probeSetVars", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/probeSetVars", `return(true)`), IsNil)
 	tk.MustExec("select * from kvvars where a = 1")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/probeSetVars"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/probeSetVars"), IsNil)
 	c.Assert(tikv.SetSuccess, IsTrue)
 	tikv.SetSuccess = false
 }
@@ -2788,6 +2800,9 @@ func (s *testSessionSuite3) TestEnablePartition(c *C) {
 
 	tk.MustExec("set tidb_enable_list_partition=off")
 	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition OFF"))
+	tk.MustExec("set global tidb_enable_list_partition=on")
+	tk.MustQuery("show global variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
+	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition OFF"))
 
 	tk.MustExec("set tidb_enable_list_partition=1")
 	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
@@ -2795,8 +2810,18 @@ func (s *testSessionSuite3) TestEnablePartition(c *C) {
 	tk.MustExec("set tidb_enable_list_partition=on")
 	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
 
+	tk.MustQuery("show global variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
+	tk.MustExec("set global tidb_enable_list_partition=off")
+	tk.MustQuery("show global variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition OFF"))
+	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
+	tk.MustExec("set tidb_enable_list_partition=off")
+	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition OFF"))
+
+	tk.MustExec("set global tidb_enable_list_partition=on")
+	tk.MustQuery("show global variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustQuery("show variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition ON"))
+	tk1.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
 }
 
 func (s *testSessionSerialSuite) TestTxnRetryErrMsg(c *C) {
@@ -2807,9 +2832,9 @@ func (s *testSessionSerialSuite) TestTxnRetryErrMsg(c *C) {
 	tk1.MustExec("begin")
 	tk2.MustExec("update no_retry set id = id + 1")
 	tk1.MustExec("update no_retry set id = id + 1")
-	c.Assert(tikvutil.MockRetryableErrorResp.Enable(`return(true)`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/mockRetryableErrorResp", `return(true)`), IsNil)
 	_, err := tk1.Se.Execute(context.Background(), "commit")
-	tikvutil.MockRetryableErrorResp.Disable()
+	failpoint.Disable("tikvclient/mockRetryableErrorResp")
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrTxnRetryable.Equal(err), IsTrue, Commentf("error: %s", err))
 	c.Assert(strings.Contains(err.Error(), "mock retryable error"), IsTrue, Commentf("error: %s", err))
@@ -3333,35 +3358,88 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestSetTxnScope(c *C) {
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("")`)
+	// Check the default value of @@tidb_enable_local_txn and @@txn_scope whitout configuring the zone label.
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	// assert default value
-	result := tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows(kv.GlobalTxnScope))
+	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
-	// assert set sys variable
-	tk.MustExec("set @@session.txn_scope = 'local';")
-	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows(kv.GlobalTxnScope))
-	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("bj")`)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
+	// Check the default value of @@tidb_enable_local_txn and @@txn_scope with configuring the zone label.
+	failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`)
 	tk = testkit.NewTestKitWithInit(c, s.store)
-	// assert default value
-	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows(kv.LocalTxnScope))
-	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, "bj")
-	// assert set sys variable
-	tk.MustExec("set @@session.txn_scope = 'global';")
-	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows(kv.GlobalTxnScope))
+	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+	failpoint.Disable("tikvclient/injectTxnScope")
+
+	// @@tidb_enable_local_txn is off without configuring the zone label.
+	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+	// Set @@txn_scope to local.
+	err := tk.ExecToErr("set @@txn_scope = 'local';")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, `.*txn_scope can not be set to local when tidb_enable_local_txn is off.*`)
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+	// Set @@txn_scope to global.
+	tk.MustExec("set @@txn_scope = 'global';")
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
 	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
 
-	// assert set invalid txn_scope
-	err := tk.ExecToErr("set @@txn_scope='foo'")
+	// @@tidb_enable_local_txn is off with configuring the zone label.
+	failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`)
+	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+	// Set @@txn_scope to local.
+	err = tk.ExecToErr("set @@txn_scope = 'local';")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, `.*txn_scope can not be set to local when tidb_enable_local_txn is off.*`)
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+	// Set @@txn_scope to global.
+	tk.MustExec("set @@txn_scope = 'global';")
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+	failpoint.Disable("tikvclient/injectTxnScope")
+
+	// @@tidb_enable_local_txn is on without configuring the zone label.
+	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set global tidb_enable_local_txn = on;")
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+	// Set @@txn_scope to local.
+	err = tk.ExecToErr("set @@txn_scope = 'local';")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, `.*txn_scope can not be set to local when zone label is empty or "global".*`)
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+	// Set @@txn_scope to global.
+	tk.MustExec("set @@txn_scope = 'global';")
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+
+	// @@tidb_enable_local_txn is on with configuring the zone label.
+	failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`)
+	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set global tidb_enable_local_txn = on;")
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.LocalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, "bj")
+	// Set @@txn_scope to global.
+	tk.MustExec("set @@txn_scope = 'global';")
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, kv.GlobalTxnScope)
+	// Set @@txn_scope to local.
+	tk.MustExec("set @@txn_scope = 'local';")
+	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.LocalTxnScope))
+	c.Assert(tk.Se.GetSessionVars().CheckAndGetTxnScope(), Equals, "bj")
+	// Try to set @@txn_scope to an invalid value.
+	err = tk.ExecToErr("set @@txn_scope='foo'")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, `.*txn_scope value should be global or local.*`)
+	failpoint.Disable("tikvclient/injectTxnScope")
 }
 
 func (s *testSessionSerialSuite) TestGlobalAndLocalTxn(c *C) {
@@ -3371,6 +3449,7 @@ func (s *testSessionSerialSuite) TestGlobalAndLocalTxn(c *C) {
 		return
 	}
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set global tidb_enable_local_txn = on;")
 	tk.MustExec("drop table if exists t1;")
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec(`create table t1 (c int)
@@ -3454,8 +3533,8 @@ PARTITION BY RANGE (c) (
 	result = tk.MustQuery("select * from t1")      // read dc-1 and dc-2 with global scope
 	c.Assert(len(result.Rows()), Equals, 3)
 
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope", `return("dc-1")`)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/config/injectTxnScope")
+	failpoint.Enable("tikvclient/injectTxnScope", `return("dc-1")`)
+	defer failpoint.Disable("tikvclient/injectTxnScope")
 	// set txn_scope to local
 	tk.MustExec("set @@session.txn_scope = 'local';")
 	result = tk.MustQuery("select @@txn_scope;")
@@ -3496,9 +3575,13 @@ PARTITION BY RANGE (c) (
 
 	// test wrong scope local txn auto commit
 	_, err = tk.Exec("insert into t1 (c) values (101)") // write dc-2 with dc-1 scope
+	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, ".*out of txn_scope.*")
+	tk.MustExec("begin")
 	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
+	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, ".*can not be read by.*")
+	tk.MustExec("commit")
 
 	// begin and commit reading & writing the data in dc-2 with dc-1 txn scope
 	tk.MustExec("begin")
@@ -3508,16 +3591,19 @@ PARTITION BY RANGE (c) (
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert into t1 (c) values (101)")       // write dc-2 with dc-1 scope
 	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
+	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, ".*can not be read by.*")
 	tk.MustExec("insert into t1 (c) values (99)")           // write dc-1 with dc-1 scope
 	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
 	c.Assert(len(result.Rows()), Equals, 5)
 	c.Assert(txn.Valid(), IsTrue)
 	_, err = tk.Exec("commit")
+	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, ".*out of txn_scope.*")
 	// Won't read the value 99 because the previous commit failed
 	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
 	c.Assert(len(result.Rows()), Equals, 4)
+	tk.MustExec("set global tidb_enable_local_txn = off;")
 }
 
 func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
@@ -4157,6 +4243,7 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 
 func (s *testSessionSuite3) TestGlobalTemporaryTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table g_tmp (a int primary key, b int, c int, index i_b(b)) on commit delete rows")
 	tk.MustExec("begin")
 	tk.MustExec("insert into g_tmp values (3, 3, 3)")
@@ -4178,33 +4265,94 @@ func (s *testSessionSuite3) TestGlobalTemporaryTable(c *C) {
 	tk.MustQuery("select * from g_tmp").Check(testkit.Rows())
 }
 
-type testTxnStateSuite struct {
+type testTxnStateSerialSuite struct {
 	testSessionSuiteBase
 }
 
-func (s *testTxnStateSuite) TestBasic(c *C) {
+func (s *testTxnStateSerialSuite) TestBasic(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t(a) values (1);")
 	info := tk.Se.TxnInfo()
 	c.Assert(info, IsNil)
+
 	tk.MustExec("begin pessimistic;")
-	tk.MustExec("select * from t for update;")
+	startTSStr := tk.MustQuery("select @@tidb_current_ts;").Rows()[0][0].(string)
+	startTS, err := strconv.ParseUint(startTSStr, 10, 64)
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("tikvclient/beforePessimisticLock", "pause"), IsNil)
+	ch := make(chan interface{})
+	go func() {
+		tk.MustExec("select * from t for update;")
+		ch <- nil
+	}()
+	time.Sleep(100 * time.Millisecond)
 	info = tk.Se.TxnInfo()
 	_, expectedDigest := parser.NormalizeDigest("select * from t for update;")
 	c.Assert(info.CurrentSQLDigest, Equals, expectedDigest.String())
+	c.Assert(info.State, Equals, txninfo.TxnLockWaiting)
+	c.Assert(info.BlockStartTime.Valid, IsTrue)
+	c.Assert(info.StartTS, Equals, startTS)
+
+	c.Assert(failpoint.Disable("tikvclient/beforePessimisticLock"), IsNil)
+	<-ch
+
+	info = tk.Se.TxnInfo()
+	c.Assert(info.CurrentSQLDigest, Equals, "")
 	c.Assert(info.State, Equals, txninfo.TxnRunningNormal)
-	c.Assert(info.BlockStartTime, IsNil)
+	c.Assert(info.BlockStartTime.Valid, IsFalse)
+	c.Assert(info.StartTS, Equals, startTS)
+	_, beginDigest := parser.NormalizeDigest("begin pessimistic;")
+	_, selectTSDigest := parser.NormalizeDigest("select @@tidb_current_ts;")
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest.String(), selectTSDigest.String(), expectedDigest.String()})
+
 	// len and size will be covered in TestLenAndSize
 	c.Assert(info.ConnectionID, Equals, tk.Se.GetSessionVars().ConnectionID)
 	c.Assert(info.Username, Equals, "")
 	c.Assert(info.CurrentDB, Equals, "test")
-	tk.MustExec("commit;")
+	c.Assert(info.StartTS, Equals, startTS)
+
+	c.Assert(failpoint.Enable("tikvclient/beforePrewrite", "pause"), IsNil)
+	go func() {
+		tk.MustExec("commit;")
+		ch <- nil
+	}()
+	time.Sleep(100 * time.Millisecond)
+	_, commitDigest := parser.NormalizeDigest("commit;")
+	info = tk.Se.TxnInfo()
+	c.Assert(info.CurrentSQLDigest, Equals, commitDigest.String())
+	c.Assert(info.State, Equals, txninfo.TxnCommitting)
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest.String(), selectTSDigest.String(), expectedDigest.String(), commitDigest.String()})
+
+	c.Assert(failpoint.Disable("tikvclient/beforePrewrite"), IsNil)
+	<-ch
+	info = tk.Se.TxnInfo()
+	c.Assert(info, IsNil)
+
+	// Test autocommit transaction
+	c.Assert(failpoint.Enable("tikvclient/beforePrewrite", "pause"), IsNil)
+	go func() {
+		tk.MustExec("insert into t values (2)")
+		ch <- nil
+	}()
+	time.Sleep(100 * time.Millisecond)
+	info = tk.Se.TxnInfo()
+	_, expectedDigest = parser.NormalizeDigest("insert into t values (2)")
+	c.Assert(info.CurrentSQLDigest, Equals, expectedDigest.String())
+	c.Assert(info.State, Equals, txninfo.TxnCommitting)
+	c.Assert(info.BlockStartTime.Valid, IsFalse)
+	c.Assert(info.StartTS, Greater, startTS)
+	c.Assert(len(info.AllSQLDigests), Equals, 1)
+	c.Assert(info.AllSQLDigests[0], Equals, expectedDigest.String())
+
+	c.Assert(failpoint.Disable("tikvclient/beforePrewrite"), IsNil)
+	<-ch
 	info = tk.Se.TxnInfo()
 	c.Assert(info, IsNil)
 }
 
-func (s *testTxnStateSuite) TestEntriesCountAndSize(c *C) {
+func (s *testTxnStateSerialSuite) TestEntriesCountAndSize(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("begin pessimistic;")
@@ -4219,7 +4367,7 @@ func (s *testTxnStateSuite) TestEntriesCountAndSize(c *C) {
 	tk.MustExec("commit;")
 }
 
-func (s *testTxnStateSuite) TestBlocked(c *C) {
+func (s *testTxnStateSerialSuite) TestBlocked(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(a int);")
@@ -4237,7 +4385,7 @@ func (s *testTxnStateSuite) TestBlocked(c *C) {
 	tk.MustExec("commit;")
 }
 
-func (s *testTxnStateSuite) TestCommitting(c *C) {
+func (s *testTxnStateSerialSuite) TestCommitting(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(a int);")
@@ -4249,8 +4397,10 @@ func (s *testTxnStateSuite) TestCommitting(c *C) {
 		tk2.MustExec("begin pessimistic")
 		c.Assert(tk2.Se.TxnInfo(), NotNil)
 		tk2.MustExec("select * from t where a = 2 for update;")
-		failpoint.Enable("github.com/pingcap/tidb/session/mockSlowCommit", "sleep(200)")
-		defer failpoint.Disable("github.com/pingcap/tidb/session/mockSlowCommit")
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockSlowCommit", "sleep(200)"), IsNil)
+		defer func() {
+			c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockSlowCommit"), IsNil)
+		}()
 		tk2.MustExec("commit;")
 		ch <- struct{}{}
 	}()
@@ -4260,7 +4410,7 @@ func (s *testTxnStateSuite) TestCommitting(c *C) {
 	<-ch
 }
 
-func (s *testTxnStateSuite) TestRollbacking(c *C) {
+func (s *testTxnStateSerialSuite) TestRollbacking(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t(a) values (1), (2);")
@@ -4276,6 +4426,125 @@ func (s *testTxnStateSuite) TestRollbacking(c *C) {
 	time.Sleep(100 * time.Millisecond)
 	c.Assert(tk.Se.TxnInfo().State, Equals, txninfo.TxnRollingBack)
 	<-ch
+}
+
+func (s *testTxnStateSerialSuite) TestTxnInfoWithPreparedStmt(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("prepare s1 from 'insert into t values (?)'")
+	tk.MustExec("set @v = 1")
+
+	tk.MustExec("begin pessimistic")
+	c.Assert(failpoint.Enable("tikvclient/beforePessimisticLock", "pause"), IsNil)
+	ch := make(chan interface{})
+	go func() {
+		tk.MustExec("execute s1 using @v")
+		ch <- nil
+	}()
+	time.Sleep(100 * time.Millisecond)
+	info := tk.Se.TxnInfo()
+	_, expectDigest := parser.NormalizeDigest("insert into t values (?)")
+	c.Assert(info.CurrentSQLDigest, Equals, expectDigest.String())
+
+	c.Assert(failpoint.Disable("tikvclient/beforePessimisticLock"), IsNil)
+	<-ch
+	info = tk.Se.TxnInfo()
+	c.Assert(info.CurrentSQLDigest, Equals, "")
+	_, beginDigest := parser.NormalizeDigest("begin pessimistic")
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest.String(), expectDigest.String()})
+
+	tk.MustExec("rollback")
+}
+
+func (s *testTxnStateSerialSuite) TestTxnInfoWithScalarSubquery(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (1, 10), (2, 1)")
+
+	tk.MustExec("begin pessimistic")
+	_, beginDigest := parser.NormalizeDigest("begin pessimistic")
+	tk.MustExec("select * from t where a = (select b from t where a = 2)")
+	_, s1Digest := parser.NormalizeDigest("select * from t where a = (select b from t where a = 2)")
+
+	c.Assert(failpoint.Enable("tikvclient/beforePessimisticLock", "pause"), IsNil)
+	ch := make(chan interface{})
+	go func() {
+		tk.MustExec("update t set b = b + 1 where a = (select b from t where a = 2)")
+		ch <- nil
+	}()
+	_, s2Digest := parser.NormalizeDigest("update t set b = b + 1 where a = (select b from t where a = 1)")
+	time.Sleep(100 * time.Millisecond)
+	info := tk.Se.TxnInfo()
+	c.Assert(info.CurrentSQLDigest, Equals, s2Digest.String())
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest.String(), s1Digest.String(), s2Digest.String()})
+
+	c.Assert(failpoint.Disable("tikvclient/beforePessimisticLock"), IsNil)
+	<-ch
+	tk.MustExec("rollback")
+}
+
+func (s *testTxnStateSerialSuite) TestTxnInfoWithPSProtocol(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (a int primary key)")
+
+	// Test autocommit transaction
+
+	idInsert, _, _, err := tk.Se.PrepareStmt("insert into t values (?)")
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("tikvclient/beforePrewrite", "pause"), IsNil)
+	ch := make(chan interface{})
+	go func() {
+		_, err := tk.Se.ExecutePreparedStmt(context.Background(), idInsert, types.MakeDatums(1))
+		c.Assert(err, IsNil)
+		ch <- nil
+	}()
+	time.Sleep(100 * time.Millisecond)
+	_, digest := parser.NormalizeDigest("insert into t values (1)")
+	info := tk.Se.TxnInfo()
+	c.Assert(info, NotNil)
+	c.Assert(info.StartTS, Greater, uint64(0))
+	c.Assert(info.State, Equals, txninfo.TxnCommitting)
+	c.Assert(info.CurrentSQLDigest, Equals, digest.String())
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{digest.String()})
+
+	c.Assert(failpoint.Disable("tikvclient/beforePrewrite"), IsNil)
+	<-ch
+	info = tk.Se.TxnInfo()
+	c.Assert(info, IsNil)
+
+	// Test non-autocommit transaction
+
+	id1, _, _, err := tk.Se.PrepareStmt("select * from t where a = ?")
+	c.Assert(err, IsNil)
+	_, digest1 := parser.NormalizeDigest("select * from t where a = ?")
+	id2, _, _, err := tk.Se.PrepareStmt("update t set a = a + 1 where a = ?")
+	c.Assert(err, IsNil)
+	_, digest2 := parser.NormalizeDigest("update t set a = a + 1 where a = ?")
+
+	tk.MustExec("begin pessimistic")
+
+	_, err = tk.Se.ExecutePreparedStmt(context.Background(), id1, types.MakeDatums(1))
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("tikvclient/beforePessimisticLock", "pause"), IsNil)
+	go func() {
+		_, err := tk.Se.ExecutePreparedStmt(context.Background(), id2, types.MakeDatums(1))
+		c.Assert(err, IsNil)
+		ch <- nil
+	}()
+	time.Sleep(100 * time.Millisecond)
+	info = tk.Se.TxnInfo()
+	c.Assert(info.StartTS, Greater, uint64(0))
+	c.Assert(info.CurrentSQLDigest, Equals, digest2.String())
+	c.Assert(info.State, Equals, txninfo.TxnLockWaiting)
+	c.Assert(info.BlockStartTime.Valid, IsTrue)
+	_, beginDigest := parser.NormalizeDigest("begin pessimistic")
+	c.Assert(info.AllSQLDigests, DeepEquals, []string{beginDigest.String(), digest1.String(), digest2.String()})
+
+	c.Assert(failpoint.Disable("tikvclient/beforePessimisticLock"), IsNil)
+	<-ch
+	tk.MustExec("rollback")
 }
 
 func (s *testSessionSuite) TestReadDMLBatchSize(c *C) {
@@ -4344,4 +4613,344 @@ func (s *testSessionSuite) TestInTxnPSProtoPointGet(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("commit")
+}
+
+func (s *testSessionSuite) TestTMPTableSize(c *C) {
+	// Test the @@tmp_table_size system variable.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_temporary_table=on")
+	tk.MustExec("create global temporary table t (c1 int, c2 varchar(512)) on commit delete rows")
+
+	tk.MustQuery("select @@global.tmp_table_size").Check(testkit.Rows(strconv.Itoa(variable.DefTMPTableSize)))
+	c.Assert(tk.Se.GetSessionVars().TMPTableSize, Equals, int64(variable.DefTMPTableSize))
+
+	// Min value 1024, so the result is change to 1024, with a warning.
+	tk.MustExec("set @@global.tmp_table_size = 123")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tmp_table_size value: '123'"))
+
+	// Change the session scope value.
+	tk.MustExec("set @@session.tmp_table_size = 2097152")
+	c.Assert(tk.Se.GetSessionVars().TMPTableSize, Equals, int64(2097152))
+
+	// Check in another sessin, change session scope value does not affect the global scope.
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustQuery("select @@global.tmp_table_size").Check(testkit.Rows("1024"))
+
+	// The value is now 1024, check the error when table size exceed it.
+	tk.MustExec("set @@session.tmp_table_size = 1024")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1, repeat('x', 512))")
+	tk.MustExec("insert into t values (1, repeat('x', 512))")
+	tk.MustGetErrCode("insert into t values (1, repeat('x', 512))", errno.ErrRecordFileFull)
+}
+
+func (s *testSessionSuite) TestTiDBEnableGlobalTemporaryTable(c *C) {
+	// Test the @@tidb_enable_global_temporary_table system variable.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// variable 'tidb_enable_global_temporary_table' should not be seen when show variables
+	tk.MustQuery("show variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows())
+	tk.MustQuery("show global variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows())
+
+	// variable 'tidb_enable_global_temporary_table' is turned off by default
+	tk.MustQuery("select @@global.tidb_enable_global_temporary_table").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@tidb_enable_global_temporary_table").Check(testkit.Rows("0"))
+	c.Assert(tk.Se.GetSessionVars().EnableGlobalTemporaryTable, IsFalse)
+
+	// cannot create global temporary table when 'tidb_enable_global_temporary_table' is off
+	tk.MustGetErrMsg(
+		"create global temporary table temp_test(id int primary key auto_increment) on commit delete rows",
+		"global temporary table is experimental and it is switched off by tidb_enable_global_temporary_table",
+	)
+	tk.MustQuery("show tables like 'temp_test'").Check(testkit.Rows())
+
+	// you can create global temporary table when 'tidb_enable_global_temporary_table' is on
+	tk.MustExec("set tidb_enable_global_temporary_table=on")
+	tk.MustQuery("select @@tidb_enable_global_temporary_table").Check(testkit.Rows("1"))
+	c.Assert(tk.Se.GetSessionVars().EnableGlobalTemporaryTable, IsTrue)
+	tk.MustExec("create global temporary table temp_test(id int primary key auto_increment) on commit delete rows")
+	tk.MustQuery("show tables like 'temp_test'").Check(testkit.Rows("temp_test"))
+}
+
+func (s *testStatisticsSuite) cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+	}
+	tk.MustExec("delete from mysql.stats_meta")
+	tk.MustExec("delete from mysql.stats_histograms")
+	tk.MustExec("delete from mysql.stats_buckets")
+	do.StatsHandle().Clear()
+}
+
+func (s *testStatisticsSuite) TestNewCollationStatsWithPrefixIndex(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	defer s.cleanEnv(c, s.store, s.dom)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(40) collate utf8mb4_general_ci, index ia3(a(3)), index ia10(a(10)), index ia(a))")
+	tk.MustExec("insert into t values('aaAAaaaAAAabbc'), ('AaAaAaAaAaAbBC'), ('AAAaabbBBbbb'), ('AAAaabbBBbbbccc'), ('aaa'), ('Aa'), ('A'), ('ab')")
+	tk.MustExec("insert into t values('b'), ('bBb'), ('Bb'), ('bA'), ('BBBB'), ('BBBBBDDDDDdd'), ('bbbbBBBBbbBBR'), ('BBbbBBbbBBbbBBRRR')")
+	h := s.dom.StatsHandle()
+	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
+
+	tk.MustExec("set @@session.tidb_analyze_version=1")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	tk.MustExec("analyze table t")
+	tk.MustExec("explain select * from t where a = 'aaa'")
+	c.Assert(h.LoadNeededHistograms(), IsNil)
+	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
+		"test t  a 0 0 1 1 \x00A \x00A 0",
+		"test t  a 0 1 2 1 \x00A\x00A \x00A\x00A 0",
+		"test t  a 0 10 12 1 \x00B\x00B\x00B \x00B\x00B\x00B 0",
+		"test t  a 0 11 13 1 \x00B\x00B\x00B\x00B \x00B\x00B\x00B\x00B 0",
+		"test t  a 0 12 14 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R\x00R\x00R \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R\x00R\x00R 0",
+		"test t  a 0 13 15 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R 0",
+		"test t  a 0 14 16 1 \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D\x00D\x00D \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D\x00D\x00D 0",
+		"test t  a 0 2 3 1 \x00A\x00A\x00A \x00A\x00A\x00A 0",
+		"test t  a 0 3 5 2 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C 0",
+		"test t  a 0 4 6 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B 0",
+		"test t  a 0 5 7 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00C\x00C\x00C \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00C\x00C\x00C 0",
+		"test t  a 0 6 8 1 \x00A\x00B \x00A\x00B 0",
+		"test t  a 0 7 9 1 \x00B \x00B 0",
+		"test t  a 0 8 10 1 \x00B\x00A \x00B\x00A 0",
+		"test t  a 0 9 11 1 \x00B\x00B \x00B\x00B 0",
+		"test t  ia 1 0 1 1 \x00A \x00A 0",
+		"test t  ia 1 1 2 1 \x00A\x00A \x00A\x00A 0",
+		"test t  ia 1 10 12 1 \x00B\x00B\x00B \x00B\x00B\x00B 0",
+		"test t  ia 1 11 13 1 \x00B\x00B\x00B\x00B \x00B\x00B\x00B\x00B 0",
+		"test t  ia 1 12 14 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R\x00R\x00R \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R\x00R\x00R 0",
+		"test t  ia 1 13 15 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R 0",
+		"test t  ia 1 14 16 1 \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D\x00D\x00D \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D\x00D\x00D 0",
+		"test t  ia 1 2 3 1 \x00A\x00A\x00A \x00A\x00A\x00A 0",
+		"test t  ia 1 3 5 2 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C 0",
+		"test t  ia 1 4 6 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B 0",
+		"test t  ia 1 5 7 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00C\x00C\x00C \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00C\x00C\x00C 0",
+		"test t  ia 1 6 8 1 \x00A\x00B \x00A\x00B 0",
+		"test t  ia 1 7 9 1 \x00B \x00B 0",
+		"test t  ia 1 8 10 1 \x00B\x00A \x00B\x00A 0",
+		"test t  ia 1 9 11 1 \x00B\x00B \x00B\x00B 0",
+		"test t  ia10 1 0 1 1 \x00A \x00A 0",
+		"test t  ia10 1 1 2 1 \x00A\x00A \x00A\x00A 0",
+		"test t  ia10 1 10 13 1 \x00B\x00B\x00B\x00B \x00B\x00B\x00B\x00B 0",
+		"test t  ia10 1 11 15 2 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B 0",
+		"test t  ia10 1 12 16 1 \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D 0",
+		"test t  ia10 1 2 3 1 \x00A\x00A\x00A \x00A\x00A\x00A 0",
+		"test t  ia10 1 3 5 2 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A 0",
+		"test t  ia10 1 4 7 2 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B 0",
+		"test t  ia10 1 5 8 1 \x00A\x00B \x00A\x00B 0",
+		"test t  ia10 1 6 9 1 \x00B \x00B 0",
+		"test t  ia10 1 7 10 1 \x00B\x00A \x00B\x00A 0",
+		"test t  ia10 1 8 11 1 \x00B\x00B \x00B\x00B 0",
+		"test t  ia10 1 9 12 1 \x00B\x00B\x00B \x00B\x00B\x00B 0",
+		"test t  ia3 1 0 1 1 \x00A \x00A 0",
+		"test t  ia3 1 1 2 1 \x00A\x00A \x00A\x00A 0",
+		"test t  ia3 1 2 7 5 \x00A\x00A\x00A \x00A\x00A\x00A 0",
+		"test t  ia3 1 3 8 1 \x00A\x00B \x00A\x00B 0",
+		"test t  ia3 1 4 9 1 \x00B \x00B 0",
+		"test t  ia3 1 5 10 1 \x00B\x00A \x00B\x00A 0",
+		"test t  ia3 1 6 11 1 \x00B\x00B \x00B\x00B 0",
+		"test t  ia3 1 7 16 5 \x00B\x00B\x00B \x00B\x00B\x00B 0",
+	))
+	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
+		"test t  a 0 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C 2",
+	))
+	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
+		"0 1 15 0 1 0.8411764705882353",
+		"1 1 8 0 1 0",
+		"1 2 13 0 1 0",
+		"1 3 15 0 1 0",
+	))
+
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	h = s.dom.StatsHandle()
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	tk.MustExec("analyze table t")
+	tk.MustExec("explain select * from t where a = 'aaa'")
+	c.Assert(h.LoadNeededHistograms(), IsNil)
+	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows())
+	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
+		"test t  a 0 \x00A 1",
+		"test t  a 0 \x00A\x00A 1",
+		"test t  a 0 \x00A\x00A\x00A 1",
+		"test t  a 0 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C 2",
+		"test t  a 0 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B 1",
+		"test t  a 0 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00C\x00C\x00C 1",
+		"test t  a 0 \x00A\x00B 1",
+		"test t  a 0 \x00B 1",
+		"test t  a 0 \x00B\x00A 1",
+		"test t  a 0 \x00B\x00B 1",
+		"test t  a 0 \x00B\x00B\x00B 1",
+		"test t  a 0 \x00B\x00B\x00B\x00B 1",
+		"test t  a 0 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R\x00R\x00R 1",
+		"test t  a 0 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R 1",
+		"test t  a 0 \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D\x00D\x00D 1",
+		"test t  ia 1 \x00A 1",
+		"test t  ia 1 \x00A\x00A 1",
+		"test t  ia 1 \x00A\x00A\x00A 1",
+		"test t  ia 1 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C 2",
+		"test t  ia 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B 1",
+		"test t  ia 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00C\x00C\x00C 1",
+		"test t  ia 1 \x00A\x00B 1",
+		"test t  ia 1 \x00B 1",
+		"test t  ia 1 \x00B\x00A 1",
+		"test t  ia 1 \x00B\x00B 1",
+		"test t  ia 1 \x00B\x00B\x00B 1",
+		"test t  ia 1 \x00B\x00B\x00B\x00B 1",
+		"test t  ia 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R\x00R\x00R 1",
+		"test t  ia 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R 1",
+		"test t  ia 1 \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D\x00D\x00D 1",
+		"test t  ia10 1 \x00A 1",
+		"test t  ia10 1 \x00A\x00A 1",
+		"test t  ia10 1 \x00A\x00A\x00A 1",
+		"test t  ia10 1 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A 2",
+		"test t  ia10 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B 2",
+		"test t  ia10 1 \x00A\x00B 1",
+		"test t  ia10 1 \x00B 1",
+		"test t  ia10 1 \x00B\x00A 1",
+		"test t  ia10 1 \x00B\x00B 1",
+		"test t  ia10 1 \x00B\x00B\x00B 1",
+		"test t  ia10 1 \x00B\x00B\x00B\x00B 1",
+		"test t  ia10 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B 2",
+		"test t  ia10 1 \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D 1",
+		"test t  ia3 1 \x00A 1",
+		"test t  ia3 1 \x00A\x00A 1",
+		"test t  ia3 1 \x00A\x00A\x00A 5",
+		"test t  ia3 1 \x00A\x00B 1",
+		"test t  ia3 1 \x00B 1",
+		"test t  ia3 1 \x00B\x00A 1",
+		"test t  ia3 1 \x00B\x00B 1",
+		"test t  ia3 1 \x00B\x00B\x00B 5",
+	))
+	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
+		"0 1 15 0 2 0.8411764705882353",
+		"1 1 8 0 2 0",
+		"1 2 13 0 2 0",
+		"1 3 15 0 2 0",
+	))
+}
+
+func (s *testSessionSuite) TestAuthPluginForUser(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER 'tapfu1' IDENTIFIED WITH mysql_native_password BY 'tapfu1'")
+	plugin, err := tk.Se.AuthPluginForUser(&auth.UserIdentity{Username: "tapfu1", Hostname: `%`})
+	c.Assert(err, IsNil)
+	c.Assert(plugin, Equals, "mysql_native_password")
+
+	tk.MustExec("CREATE USER 'tapfu2' IDENTIFIED WITH mysql_native_password")
+	plugin, err = tk.Se.AuthPluginForUser(&auth.UserIdentity{Username: "tapfu2", Hostname: `%`})
+	c.Assert(err, IsNil)
+	c.Assert(plugin, Equals, "")
+
+	tk.MustExec("CREATE USER 'tapfu3' IDENTIFIED WITH caching_sha2_password BY 'tapfu3'")
+	plugin, err = tk.Se.AuthPluginForUser(&auth.UserIdentity{Username: "tapfu3", Hostname: `%`})
+	c.Assert(err, IsNil)
+	c.Assert(plugin, Equals, "caching_sha2_password")
+
+	tk.MustExec("CREATE USER 'tapfu4' IDENTIFIED WITH caching_sha2_password")
+	plugin, err = tk.Se.AuthPluginForUser(&auth.UserIdentity{Username: "tapfu4", Hostname: `%`})
+	c.Assert(err, IsNil)
+	c.Assert(plugin, Equals, "")
+}
+
+func (s *testSessionSuite) TestLocalTemporaryTableInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_noop_functions=1")
+	tk.MustExec("use test")
+	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
+	tk.MustExec("insert into tmp1 (u, v) values(11, 101)")
+	tk.MustExec("insert into tmp1 (u, v) values(12, 102)")
+	tk.MustExec("insert into tmp1 values(3, 13, 102)")
+
+	checkRecordOneTwoThreeAndNonExist := func() {
+		tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
+		tk.MustQuery("select * from tmp1 where id=2").Check(testkit.Rows("2 12 102"))
+		tk.MustQuery("select * from tmp1 where id=3").Check(testkit.Rows("3 13 102"))
+		tk.MustQuery("select * from tmp1 where id=99").Check(testkit.Rows())
+	}
+
+	// inserted records exist
+	checkRecordOneTwoThreeAndNonExist()
+
+	// insert dup records out txn must be error
+	_, err := tk.Exec("insert into tmp1 values(1, 999, 9999)")
+	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
+	checkRecordOneTwoThreeAndNonExist()
+
+	_, err = tk.Exec("insert into tmp1 values(99, 11, 999)")
+	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
+	checkRecordOneTwoThreeAndNonExist()
+
+	// insert dup records in txn must be error
+	tk.MustExec("begin")
+	_, err = tk.Exec("insert into tmp1 values(1, 999, 9999)")
+	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
+	checkRecordOneTwoThreeAndNonExist()
+
+	_, err = tk.Exec("insert into tmp1 values(99, 11, 9999)")
+	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
+	checkRecordOneTwoThreeAndNonExist()
+
+	tk.MustExec("insert into tmp1 values(4, 14, 104)")
+	tk.MustQuery("select * from tmp1 where id=4").Check(testkit.Rows("4 14 104"))
+
+	_, err = tk.Exec("insert into tmp1 values(4, 999, 9999)")
+	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
+
+	_, err = tk.Exec("insert into tmp1 values(99, 14, 9999)")
+	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
+
+	checkRecordOneTwoThreeAndNonExist()
+	tk.MustExec("commit")
+
+	// check committed insert works
+	checkRecordOneTwoThreeAndNonExist()
+	tk.MustQuery("select * from tmp1 where id=4").Check(testkit.Rows("4 14 104"))
+
+	// check rollback works
+	tk.MustExec("begin")
+	tk.MustExec("insert into tmp1 values(5, 15, 105)")
+	tk.MustQuery("select * from tmp1 where id=5").Check(testkit.Rows("5 15 105"))
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from tmp1 where id=5").Check(testkit.Rows())
+}
+
+func (s *testSessionSuite) TestLocalTemporaryTablePointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_noop_functions=1")
+	tk.MustExec("use test")
+	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
+	tk.MustExec("insert into tmp1 values(1, 11, 101)")
+	tk.MustExec("insert into tmp1 values(2, 12, 102)")
+
+	// check point get out transaction
+	tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
+	tk.MustQuery("select * from tmp1 where u=11").Check(testkit.Rows("1 11 101"))
+	tk.MustQuery("select * from tmp1 where id=2").Check(testkit.Rows("2 12 102"))
+	tk.MustQuery("select * from tmp1 where u=12").Check(testkit.Rows("2 12 102"))
+
+	// check point get in transaction
+	tk.MustExec("begin")
+	tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
+	tk.MustQuery("select * from tmp1 where u=11").Check(testkit.Rows("1 11 101"))
+	tk.MustQuery("select * from tmp1 where id=2").Check(testkit.Rows("2 12 102"))
+	tk.MustQuery("select * from tmp1 where u=12").Check(testkit.Rows("2 12 102"))
+	tk.MustExec("insert into tmp1 values(3, 13, 103)")
+	tk.MustQuery("select * from tmp1 where id=3").Check(testkit.Rows("3 13 103"))
+	tk.MustQuery("select * from tmp1 where u=13").Check(testkit.Rows("3 13 103"))
+	tk.MustExec("update tmp1 set v=999 where id=2")
+	tk.MustQuery("select * from tmp1 where id=2").Check(testkit.Rows("2 12 999"))
+	tk.MustExec("commit")
+
+	// check point get after transaction
+	tk.MustQuery("select * from tmp1 where id=3").Check(testkit.Rows("3 13 103"))
+	tk.MustQuery("select * from tmp1 where u=13").Check(testkit.Rows("3 13 103"))
+	tk.MustQuery("select * from tmp1 where id=2").Check(testkit.Rows("2 12 999"))
 }

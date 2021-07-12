@@ -1571,6 +1571,22 @@ func combination(items []string) func() []string {
 	}
 }
 
+// See https://github.com/pingcap/tidb/issues/24582
+func (s *testSuite10) TestDuplicatedEntryErr(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(a int, b varchar(20), primary key(a,b(3)) clustered);")
+	tk.MustExec("insert into t1 values(1,'aaaaa');")
+	err := tk.ExecToErr("insert into t1 values(1,'aaaaa');")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-aaa' for key 'PRIMARY'")
+	err = tk.ExecToErr("insert into t1 select 1, 'aaa'")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-aaa' for key 'PRIMARY'")
+	tk.MustExec("insert into t1 select 1, 'bb'")
+	err = tk.ExecToErr("insert into t1 select 1, 'bb'")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-bb' for key 'PRIMARY'")
+}
+
 func (s *testSuite10) TestBinaryLiteralInsertToEnum(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
@@ -1601,6 +1617,7 @@ func (s *testSuite13) TestGlobalTempTableAutoInc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec("drop table if exists temp_test")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table temp_test(id int primary key auto_increment) on commit delete rows")
 	defer tk.MustExec("drop table if exists temp_test")
 
@@ -1646,6 +1663,7 @@ func (s *testSuite13) TestGlobalTempTableRowID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec("drop table if exists temp_test")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table temp_test(id int) on commit delete rows")
 	defer tk.MustExec("drop table if exists temp_test")
 
@@ -1681,6 +1699,7 @@ func (s *testSuite13) TestGlobalTempTableParallel(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec("drop table if exists temp_test")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table temp_test(id int primary key auto_increment) on commit delete rows")
 	defer tk.MustExec("drop table if exists temp_test")
 

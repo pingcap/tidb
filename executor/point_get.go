@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -39,9 +38,15 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
+	if err := b.validCanReadTemporaryTable(p.TblInfo); err != nil {
+		b.err = err
+		return nil
+	}
+
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
@@ -49,6 +54,8 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	}
 	e := &PointGetExecutor{
 		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ID()),
+		txnScope:     b.txnScope,
+		isStaleness:  b.isStaleness,
 	}
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
@@ -71,6 +78,8 @@ type PointGetExecutor struct {
 	handleVal    []byte
 	idxVals      []types.Datum
 	startTS      uint64
+	txnScope     string
+	isStaleness  bool
 	txn          kv.Transaction
 	snapshot     kv.Snapshot
 	done         bool
@@ -129,7 +138,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	if err != nil {
 		return err
 	}
-	if e.txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
+	if e.txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
 		e.snapshot = e.txn.GetSnapshot()
 	} else {
 		e.snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
@@ -149,16 +158,24 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
-	isStaleness := e.ctx.GetSessionVars().TxnCtx.IsStaleness
-	e.snapshot.SetOption(kv.IsStalenessReadOnly, isStaleness)
-	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != kv.GlobalTxnScope {
+	e.snapshot.SetOption(kv.TxnScope, e.txnScope)
+	e.snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
+	if e.isStaleness && e.txnScope != kv.GlobalTxnScope {
 		e.snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
-				Value: e.ctx.GetSessionVars().TxnCtx.TxnScope,
+				Value: e.txnScope,
 			},
 		})
 	}
+	failpoint.Inject("assertPointStalenessOption", func(val failpoint.Value) {
+		assertScope := val.(string)
+		if len(assertScope) > 0 {
+			if e.isStaleness && assertScope != e.txnScope {
+				panic("batch point get staleness option fail")
+			}
+		}
+	})
 	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
 	return nil
 }
@@ -373,6 +390,12 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	if e.tblInfo.TempTableType == model.TempTableGlobal {
 		return nil, nil
 	}
+
+	// Local temporary table always get snapshot value from session
+	if e.tblInfo.TempTableType == model.TempTableLocal {
+		return e.ctx.GetSessionVars().GetTemporaryTableSnapshotValue(ctx, key)
+	}
+
 	lock := e.tblInfo.Lock
 	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
 		if e.ctx.GetSessionVars().EnablePointGetCache {
@@ -389,7 +412,10 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
-	txnScope := e.txn.GetOption(kv.TxnScope).(string)
+	if e.isStaleness {
+		return nil
+	}
+	txnScope := e.txnScope
 	if txnScope == "" || txnScope == kv.GlobalTxnScope {
 		return nil
 	}

@@ -72,11 +72,6 @@ var ExecOptionAnalyzeVer2 OptionFuncAlias = func(option *ExecOption) {
 	option.AnalyzeVer = 2
 }
 
-// ExecOptionAnalyzeVer3 tells ExecRestrictedStmt to collect statistics with version3.
-var ExecOptionAnalyzeVer3 OptionFuncAlias = func(option *ExecOption) {
-	option.AnalyzeVer = 3
-}
-
 // ExecOptionWithSnapshot tells ExecRestrictedStmt to use a snapshot.
 func ExecOptionWithSnapshot(snapshot uint64) OptionFuncAlias {
 	return func(option *ExecOption) {
@@ -157,4 +152,21 @@ type MultiQueryNoDelayResult interface {
 	Status() uint16
 	// LastInsertID return last insert id for one statement in multi-queries.
 	LastInsertID() uint64
+}
+
+// DrainRecordSet fetches the rows in the RecordSet.
+func DrainRecordSet(ctx context.Context, rs RecordSet, maxChunkSize int) ([]chunk.Row, error) {
+	var rows []chunk.Row
+	req := rs.NewChunk()
+	for {
+		err := rs.Next(ctx, req)
+		if err != nil || req.NumRows() == 0 {
+			return rows, err
+		}
+		iter := chunk.NewIterator4Chunk(req)
+		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
+			rows = append(rows, r)
+		}
+		req = chunk.Renew(req, maxChunkSize)
+	}
 }

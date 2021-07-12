@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -35,19 +36,21 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/core"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -575,31 +578,25 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 		}
 		if s.AsOf != nil {
 			// start transaction read only as of failed due to we set tx_read_ts before
-			if e.ctx.GetSessionVars().TxnReadTS > 0 {
+			if e.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS() > 0 {
 				return errors.New("start transaction read only as of is forbidden after set transaction read only as of")
 			}
-			if err := e.ctx.NewStaleTxnWithStartTS(ctx, e.staleTxnStartTS); err != nil {
-				return err
-			}
-			// With START TRANSACTION, autocommit remains disabled until you end
-			// the transaction with COMMIT or ROLLBACK. The autocommit mode then
-			// reverts to its previous state.
-			e.ctx.GetSessionVars().SetInTxn(true)
-			return nil
 		}
 	}
-	// When TxnReadTS is not 0, it indicates the transaction is staleness transaction
-	if e.ctx.GetSessionVars().TxnReadTS > 0 {
-		startTS := e.ctx.GetSessionVars().TxnReadTS
-		// clear TxnReadTS after we used it.
-		e.ctx.GetSessionVars().TxnReadTS = 0
-		if err := e.ctx.NewStaleTxnWithStartTS(ctx, startTS); err != nil {
+	if e.staleTxnStartTS > 0 {
+		if err := e.ctx.NewStaleTxnWithStartTS(ctx, e.staleTxnStartTS); err != nil {
 			return err
 		}
-		e.ctx.GetSessionVars().SetInTxn(true)
+		// With START TRANSACTION, autocommit remains disabled until you end
+		// the transaction with COMMIT or ROLLBACK. The autocommit mode then
+		// reverts to its previous state.
+		vars := e.ctx.GetSessionVars()
+		if err := vars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
+			return errors.Trace(err)
+		}
+		vars.SetInTxn(true)
 		return nil
 	}
-
 	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
 	// need to call NewTxn, which commits the existing transaction and begins a new one.
 	// If the last un-committed/un-rollback transaction is a time-bounded read-only transaction, we should
@@ -753,9 +750,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 	sql := new(strings.Builder)
 	if s.IsCreateRole {
-		sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, Account_locked) VALUES `, mysql.SystemDB, mysql.UserTable)
+		sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, plugin, Account_locked) VALUES `, mysql.SystemDB, mysql.UserTable)
 	} else {
-		sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string) VALUES `, mysql.SystemDB, mysql.UserTable)
+		sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, authentication_string, plugin) VALUES `, mysql.SystemDB, mysql.UserTable)
 	}
 
 	users := make([]*auth.UserIdentity, 0, len(s.Specs))
@@ -780,13 +777,18 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			continue
 		}
 		pwd, ok := spec.EncodedPassword()
+
 		if !ok {
 			return errors.Trace(ErrPasswordFormat)
 		}
+		authPlugin := mysql.AuthNativePassword
+		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" {
+			authPlugin = spec.AuthOpt.AuthPlugin
+		}
 		if s.IsCreateRole {
-			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?)`, spec.User.Hostname, spec.User.Username, pwd, "Y")
+			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?)`, spec.User.Hostname, spec.User.Username, pwd, authPlugin, "Y")
 		} else {
-			sqlexec.MustFormatSQL(sql, `(%?, %?, %?)`, spec.User.Hostname, spec.User.Username, pwd)
+			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?)`, spec.User.Hostname, spec.User.Username, pwd, authPlugin)
 		}
 		users = append(users, spec.User)
 	}
@@ -857,11 +859,48 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 	}
 
 	failedUsers := make([]string, 0, len(s.Specs))
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker == nil {
+		return errors.New("could not load privilege checker")
+	}
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	hasCreateUserPriv := checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv)
+	hasSystemUserPriv := checker.RequestDynamicVerification(activeRoles, "SYSTEM_USER", false)
+	hasRestrictedUserPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_USER_ADMIN", false)
+	hasSystemSchemaPriv := checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.UpdatePriv)
+
 	for _, spec := range s.Specs {
-		if spec.User.CurrentUser {
-			user := e.ctx.GetSessionVars().User
+		user := e.ctx.GetSessionVars().User
+		if spec.User.CurrentUser || ((user != nil) && (user.Username == spec.User.Username) && (user.AuthHostname == spec.User.Hostname)) {
 			spec.User.Username = user.Username
 			spec.User.Hostname = user.AuthHostname
+		} else {
+
+			// The user executing the query (user) does not match the user specified (spec.User)
+			// The MySQL manual states:
+			// "In most cases, ALTER USER requires the global CREATE USER privilege, or the UPDATE privilege for the mysql system schema"
+			//
+			// This is true unless the user being modified has the SYSTEM_USER dynamic privilege.
+			// See: https://mysqlserverteam.com/the-system_user-dynamic-privilege/
+			//
+			// In the current implementation of DYNAMIC privileges, SUPER can be used as a substitute for any DYNAMIC privilege
+			// (unless SEM is enabled; in which case RESTRICTED_* privileges will not use SUPER as a substitute). This is intentional
+			// because visitInfo can not accept OR conditions for permissions and in many cases MySQL permits SUPER instead.
+
+			// Thus, any user with SUPER can effectively ALTER/DROP a SYSTEM_USER, and
+			// any user with only CREATE USER can not modify the properties of users with SUPER privilege.
+			// We extend this in TiDB with SEM, where SUPER users can not modify users with RESTRICTED_USER_ADMIN.
+			// For simplicity: RESTRICTED_USER_ADMIN also counts for SYSTEM_USER here.
+
+			if !(hasCreateUserPriv || hasSystemSchemaPriv) {
+				return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+			}
+			if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, spec.User) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
+				return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
+			}
+			if sem.IsEnabled() && checker.RequestDynamicVerificationWithUser("RESTRICTED_USER_ADMIN", false, spec.User) && !hasRestrictedUserPriv {
+				return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_USER_ADMIN")
+			}
 		}
 
 		exists, err := userExists(e.ctx, spec.User.Username, spec.User.Hostname)
@@ -873,22 +912,32 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 			failedUsers = append(failedUsers, user)
 			continue
 		}
-		pwd, ok := spec.EncodedPassword()
-		if !ok {
-			return errors.Trace(ErrPasswordFormat)
-		}
-		exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-		stmt, err := exec.ParseWithParams(context.TODO(), `UPDATE %n.%n SET authentication_string=%? WHERE Host=%? and User=%?;`, mysql.SystemDB, mysql.UserTable, pwd, spec.User.Hostname, spec.User.Username)
+
+		authplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
 		if err != nil {
 			return err
 		}
-		_, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
-		if err != nil {
-			failedUsers = append(failedUsers, spec.User.String())
+		if spec.AuthOpt != nil {
+			spec.AuthOpt.AuthPlugin = authplugin
+		}
+		exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+		if spec.AuthOpt != nil {
+			pwd, ok := spec.EncodedPassword()
+			if !ok {
+				return errors.Trace(ErrPasswordFormat)
+			}
+			stmt, err := exec.ParseWithParams(context.TODO(), `UPDATE %n.%n SET authentication_string=%? WHERE Host=%? and User=%?;`, mysql.SystemDB, mysql.UserTable, pwd, spec.User.Hostname, spec.User.Username)
+			if err != nil {
+				return err
+			}
+			_, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
+			if err != nil {
+				failedUsers = append(failedUsers, spec.User.String())
+			}
 		}
 
 		if len(privData) > 0 {
-			stmt, err = exec.ParseWithParams(context.TODO(), "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)", mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))
+			stmt, err := exec.ParseWithParams(context.TODO(), "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)", mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))
 			if err != nil {
 				return err
 			}
@@ -1101,25 +1150,24 @@ func renameUserHostInSystemTable(sqlExecutor sqlexec.SQLExecutor, tableName, use
 func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	// Check privileges.
 	// Check `CREATE USER` privilege.
-	if !config.GetGlobalConfig().Security.SkipGrantTable {
-		checker := privilege.GetPrivilegeManager(e.ctx)
-		if checker == nil {
-			return errors.New("miss privilege checker")
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker == nil {
+		return errors.New("miss privilege checker")
+	}
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.DeletePriv) {
+		if s.IsDropRole {
+			if !checker.RequestVerification(activeRoles, "", "", "", mysql.DropRolePriv) &&
+				!checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+				return core.ErrSpecificAccessDenied.GenWithStackByArgs("DROP ROLE or CREATE USER")
+			}
 		}
-		activeRoles := e.ctx.GetSessionVars().ActiveRoles
-		if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.DeletePriv) {
-			if s.IsDropRole {
-				if !checker.RequestVerification(activeRoles, "", "", "", mysql.DropRolePriv) &&
-					!checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
-					return core.ErrSpecificAccessDenied.GenWithStackByArgs("DROP ROLE or CREATE USER")
-				}
-			}
-			if !s.IsDropRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
-				return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
-			}
+		if !s.IsDropRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+			return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		}
 	}
-
+	hasSystemUserPriv := checker.RequestDynamicVerification(activeRoles, "SYSTEM_USER", false)
+	hasRestrictedUserPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_USER_ADMIN", false)
 	failedUsers := make([]string, 0, len(s.UserList))
 	sysSession, err := e.getSysSession()
 	defer e.releaseSysSession(sysSession)
@@ -1145,6 +1193,18 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 				failedUsers = append(failedUsers, user.String())
 				break
 			}
+		}
+
+		// Certain users require additional privileges in order to be modified.
+		// If this is the case, we need to rollback all changes and return a privilege error.
+		// Because in TiDB SUPER can be used as a substitute for any dynamic privilege, this effectively means that
+		// any user with SUPER requires a user with SUPER to be able to DROP the user.
+		// We also allow RESTRICTED_USER_ADMIN to count for simplicity.
+		if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, user) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
+			if _, err := sqlExecutor.ExecuteInternal(context.TODO(), "rollback"); err != nil {
+				return err
+			}
+			return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
 		}
 
 		// begin a transaction to delete a user.
@@ -1274,6 +1334,15 @@ func userExistsInternal(sqlExecutor sqlexec.SQLExecutor, name string, host strin
 	return rows > 0, err
 }
 
+func (e *SimpleExec) userAuthPlugin(name string, host string) (string, error) {
+	pm := privilege.GetPrivilegeManager(e.ctx)
+	authplugin, err := pm.GetAuthPlugin(name, host)
+	if err != nil {
+		return "", err
+	}
+	return authplugin, nil
+}
+
 func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 	var u, h string
 	if s.User == nil {
@@ -1299,9 +1368,20 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 		return errors.Trace(ErrPasswordNoMatch)
 	}
 
+	authplugin, err := e.userAuthPlugin(u, h)
+	if err != nil {
+		return err
+	}
+	var pwd string
+	if authplugin == mysql.AuthCachingSha2Password {
+		pwd = auth.NewSha2Password(s.Password)
+	} else {
+		pwd = auth.EncodePassword(s.Password)
+	}
+
 	// update mysql.user
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.TODO(), `UPDATE %n.%n SET authentication_string=%? WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, auth.EncodePassword(s.Password), u, h)
+	stmt, err := exec.ParseWithParams(context.TODO(), `UPDATE %n.%n SET authentication_string=%? WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, h)
 	if err != nil {
 		return err
 	}
@@ -1509,7 +1589,21 @@ func (e *SimpleExec) executeShutdown(s *ast.ShutdownStmt) error {
 // This function need to run with async model, otherwise it will block main coroutine
 func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 	time.Sleep(delay)
-	err := p.Kill()
+	// Send SIGTERM instead of SIGKILL to allow graceful shutdown and cleanups to work properly.
+	err := p.Signal(syscall.SIGTERM)
+	if err != nil {
+		panic(err)
+	}
+
+	// Sending SIGKILL should not be needed as SIGTERM should cause a graceful shutdown after
+	// n seconds as configured by the GracefulWaitBeforeShutdown. This is here in case that doesn't
+	// work for some reason.
+	graceTime := config.GetGlobalConfig().GracefulWaitBeforeShutdown
+
+	// The shutdown is supposed to start at graceTime and is allowed to take up to 10s.
+	time.Sleep(time.Second * time.Duration(graceTime+10))
+	logutil.BgLogger().Info("Killing process as grace period is over", zap.Int("pid", p.Pid), zap.Int("graceTime", graceTime))
+	err = p.Kill()
 	if err != nil {
 		panic(err)
 	}

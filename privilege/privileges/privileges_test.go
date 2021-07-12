@@ -468,6 +468,105 @@ func (s *testPrivilegeSuite) TestSetPasswdStmt(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testPrivilegeSuite) TestAlterUserStmt(c *C) {
+	se := newSession(c, s.store, s.dbName)
+
+	// high privileged user setting password for other user (passes)
+	mustExec(c, se, "CREATE USER superuser2, nobodyuser2, nobodyuser3, nobodyuser4, nobodyuser5, semuser1, semuser2, semuser3, semuser4")
+	mustExec(c, se, "GRANT ALL ON *.* TO superuser2")
+	mustExec(c, se, "GRANT CREATE USER ON *.* TO nobodyuser2")
+	mustExec(c, se, "GRANT SYSTEM_USER ON *.* TO nobodyuser4")
+	mustExec(c, se, "GRANT UPDATE ON mysql.user TO nobodyuser5, semuser1")
+	mustExec(c, se, "GRANT RESTRICTED_TABLES_ADMIN ON *.* TO semuser1")
+	mustExec(c, se, "GRANT RESTRICTED_USER_ADMIN ON *.* TO semuser1, semuser2, semuser3")
+	mustExec(c, se, "GRANT SYSTEM_USER ON *.* to semuser3") // user is both restricted + has SYSTEM_USER (or super)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "superuser2", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+
+	// low privileged user trying to set password for others
+	// nobodyuser3 = SUCCESS (not a SYSTEM_USER)
+	// nobodyuser4 = FAIL (has SYSTEM_USER)
+	// superuser2  = FAIL (has SYSTEM_USER privilege implied by SUPER)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser2", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'nobodyuser3' IDENTIFIED BY ''")
+	_, err := se.ExecuteInternal(context.Background(), "ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'superuser2' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation")
+
+	// Nobody3 has no privileges at all, but they can still alter their own password.
+	// Any other user fails.
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser3", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser3' IDENTIFIED BY ''")
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'superuser2' IDENTIFIED BY 'newpassword'") // it checks create user before SYSTEM_USER
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+
+	// Nobody5 doesn't explicitly have CREATE USER, but mysql also accepts UDPATE on mysql.user
+	// as a substitute so it can modify nobody2 and nobody3 but not nobody4
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser5", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'nobodyuser3' IDENTIFIED BY ''")
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "semuser1", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'semuser1' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'semuser2' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'semuser3' IDENTIFIED BY ''")
+
+	sem.Enable()
+	defer sem.Disable()
+
+	// When SEM is enabled, even though we have UPDATE privilege on mysql.user, it explicitly
+	// denies writeable privileges to system schemas unless RESTRICTED_TABLES_ADMIN is granted.
+	// so the previous method of granting to the table instead of CREATE USER will fail now.
+	// This is intentional because SEM plugs directly into the privilege manager to DENY
+	// any request for UpdatePriv on mysql.user even if the privilege exists in the internal mysql.user table.
+
+	// UpdatePriv on mysql.user
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser5", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+
+	// actual CreateUserPriv
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser2", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'nobodyuser3' IDENTIFIED BY ''")
+
+	// UpdatePriv on mysql.user but also has RESTRICTED_TABLES_ADMIN
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "semuser1", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'nobodyuser3' IDENTIFIED BY ''")
+
+	// As it has (RESTRICTED_TABLES_ADMIN + UpdatePriv on mysql.user) + RESTRICTED_USER_ADMIN it can modify other restricted_user_admins like semuser2
+	// and it can modify semuser3 because RESTRICTED_USER_ADMIN does not also need SYSTEM_USER
+	mustExec(c, se, "ALTER USER 'semuser1' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'semuser2' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'semuser3' IDENTIFIED BY ''")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "superuser2", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'semuser1' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "semuser4", Hostname: "localhost"}, nil, nil), IsTrue)
+	// has restricted_user_admin but not CREATE USER or (update on mysql.user + RESTRICTED_TABLES_ADMIN)
+	mustExec(c, se, "ALTER USER 'semuser4' IDENTIFIED BY ''") // can modify self
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'nobodyuser3' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'semuser1' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'semuser3' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+}
+
 func (s *testPrivilegeSuite) TestSelectViewSecurity(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	ctx, _ := se.(sessionctx.Context)
@@ -902,9 +1001,12 @@ func (s *testPrivilegeSuite) TestConfigPrivilege(c *C) {
 	mustExec(c, se, `REVOKE CONFIG ON *.* FROM tcd2`)
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthHostname: "tcd1", AuthUsername: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, `SHOW CONFIG`)
 	mustExec(c, se, `SET CONFIG TIKV testkey="testval"`)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd2", Hostname: "localhost", AuthHostname: "tcd2", AuthUsername: "%"}, nil, nil), IsTrue)
-	_, err := se.ExecuteInternal(context.Background(), `SET CONFIG TIKV testkey="testval"`)
+	_, err := se.ExecuteInternal(context.Background(), `SHOW CONFIG`)
+	c.Assert(err, ErrorMatches, ".*you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), `SET CONFIG TIKV testkey="testval"`)
 	c.Assert(err, ErrorMatches, ".*you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation")
 	mustExec(c, se, `DROP USER tcd1, tcd2`)
 }
@@ -1253,11 +1355,9 @@ func (s *testPrivilegeSuite) TestDynamicPrivs(c *C) {
 	mustExec(c, rootSe, "CREATE USER notsuper")
 	mustExec(c, rootSe, "CREATE USER otheruser")
 	mustExec(c, rootSe, "CREATE ROLE anyrolename")
-	mustExec(c, rootSe, "SET tidb_enable_dynamic_privileges=1")
 
 	se := newSession(c, s.store, s.dbName)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "notsuper", Hostname: "%"}, nil, nil), IsTrue)
-	mustExec(c, se, "SET tidb_enable_dynamic_privileges=1")
 
 	// test SYSTEM_VARIABLES_ADMIN
 	_, err := se.ExecuteInternal(context.Background(), "SET GLOBAL wait_timeout = 86400")
@@ -1298,20 +1398,17 @@ func (s *testPrivilegeSuite) TestDynamicGrantOption(c *C) {
 	mustExec(c, rootSe, "CREATE USER varuser1")
 	mustExec(c, rootSe, "CREATE USER varuser2")
 	mustExec(c, rootSe, "CREATE USER varuser3")
-	mustExec(c, rootSe, "SET tidb_enable_dynamic_privileges=1")
 
 	mustExec(c, rootSe, "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser1")
 	mustExec(c, rootSe, "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser2 WITH GRANT OPTION")
 
 	se1 := newSession(c, s.store, s.dbName)
-	mustExec(c, se1, "SET tidb_enable_dynamic_privileges=1")
 
 	c.Assert(se1.Auth(&auth.UserIdentity{Username: "varuser1", Hostname: "%"}, nil, nil), IsTrue)
 	_, err := se1.ExecuteInternal(context.Background(), "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser3")
 	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the GRANT OPTION privilege(s) for this operation")
 
 	se2 := newSession(c, s.store, s.dbName)
-	mustExec(c, se2, "SET tidb_enable_dynamic_privileges=1")
 
 	c.Assert(se2.Auth(&auth.UserIdentity{Username: "varuser2", Hostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se2, "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO varuser3")
@@ -1321,14 +1418,12 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeRestrictedTables(c *C) {
 	// This provides an integration test of the tests in util/security/security_test.go
 	cloudAdminSe := newSession(c, s.store, s.dbName)
 	mustExec(c, cloudAdminSe, "CREATE USER cloudadmin")
-	mustExec(c, cloudAdminSe, "SET tidb_enable_dynamic_privileges=1")
 	mustExec(c, cloudAdminSe, "GRANT RESTRICTED_TABLES_ADMIN, SELECT ON *.* to cloudadmin")
 	mustExec(c, cloudAdminSe, "GRANT CREATE ON mysql.* to cloudadmin")
 	mustExec(c, cloudAdminSe, "CREATE USER uroot")
 	mustExec(c, cloudAdminSe, "GRANT ALL ON *.* to uroot WITH GRANT OPTION") // A "MySQL" all powerful user.
 	c.Assert(cloudAdminSe.Auth(&auth.UserIdentity{Username: "cloudadmin", Hostname: "%"}, nil, nil), IsTrue)
 	urootSe := newSession(c, s.store, s.dbName)
-	mustExec(c, urootSe, "SET tidb_enable_dynamic_privileges=1")
 	c.Assert(urootSe.Auth(&auth.UserIdentity{Username: "uroot", Hostname: "%"}, nil, nil), IsTrue)
 
 	sem.Enable()
@@ -1352,13 +1447,10 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeInfoschema(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE USER uroot1, uroot2, uroot3")
 	tk.MustExec("GRANT SUPER ON *.* to uroot1 WITH GRANT OPTION") // super not process
-	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
 	tk.MustExec("GRANT SUPER, PROCESS, RESTRICTED_TABLES_ADMIN ON *.* to uroot2 WITH GRANT OPTION")
 	tk.Se.Auth(&auth.UserIdentity{
-		Username:     "uroot1",
-		Hostname:     "localhost",
-		AuthUsername: "uroot",
-		AuthHostname: "%",
+		Username: "uroot1",
+		Hostname: "localhost",
 	}, nil, nil)
 
 	sem.Enable()
@@ -1372,16 +1464,36 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeInfoschema(c *C) {
 
 	// That is unless we have the RESTRICTED_TABLES_ADMIN privilege
 	tk.Se.Auth(&auth.UserIdentity{
-		Username:     "uroot2",
-		Hostname:     "localhost",
-		AuthUsername: "uroot",
-		AuthHostname: "%",
+		Username: "uroot2",
+		Hostname: "localhost",
 	}, nil, nil)
 
 	// flip from is NOT NULL etc
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.tidb_servers_info WHERE ip IS NULL`).Check(testkit.Rows("0"))
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.cluster_info WHERE status_address IS NULL`).Check(testkit.Rows("0"))
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.CLUSTER_STATEMENTS_SUMMARY WHERE length(instance) = 36`).Check(testkit.Rows("0"))
+}
+
+func (s *testPrivilegeSuite) TestClusterConfigInfoschema(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER ccnobody, ccconfig")
+	tk.MustExec("GRANT CONFIG ON *.* TO ccconfig")
+
+	// incorrect permissions
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "ccnobody",
+		Hostname: "localhost",
+	}, nil, nil)
+
+	err := tk.QueryToErr("SELECT * FROM information_schema.cluster_config")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CONFIG privilege(s) for this operation")
+
+	// With correct permissions
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "ccconfig",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SELECT * FROM information_schema.cluster_config")
 }
 
 func (s *testPrivilegeSuite) TestSecurityEnhancedModeStatusVars(c *C) {
@@ -1391,14 +1503,40 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeStatusVars(c *C) {
 	// and verify if it appears.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE USER unostatus, ustatus")
-	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
 	tk.MustExec("GRANT RESTRICTED_STATUS_ADMIN ON *.* to ustatus")
 	tk.Se.Auth(&auth.UserIdentity{
-		Username:     "unostatus",
-		Hostname:     "localhost",
-		AuthUsername: "uroot",
-		AuthHostname: "%",
+		Username: "unostatus",
+		Hostname: "localhost",
 	}, nil, nil)
+
+}
+
+func (s *testPrivilegeSuite) TestSecurityEnhancedLocalBackupRestore(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER backuprestore")
+	tk.MustExec("GRANT BACKUP_ADMIN,RESTORE_ADMIN ON *.* to backuprestore")
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "backuprestore",
+		Hostname: "localhost",
+	}, nil, nil)
+
+	// Prior to SEM nolocal has permission, the error should be because backup requires tikv
+	_, err := tk.Se.ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'Local:///tmp/test';")
+	c.Assert(err.Error(), Equals, "BACKUP requires tikv store, not unistore")
+
+	_, err = tk.Se.ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
+	c.Assert(err.Error(), Equals, "RESTORE requires tikv store, not unistore")
+
+	sem.Enable()
+	defer sem.Disable()
+
+	// With SEM enabled nolocal does not have permission, but yeslocal does.
+	_, err = tk.Se.ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'Local:///tmp/test';")
+	c.Assert(err.Error(), Equals, "[planner:8132]Feature 'local://' is not supported when security enhanced mode is enabled")
+
+	_, err = tk.Se.ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
+	c.Assert(err.Error(), Equals, "[planner:8132]Feature 'local://' is not supported when security enhanced mode is enabled")
+
 }
 
 func (s *testPrivilegeSuite) TestRenameUser(c *C) {
@@ -1453,7 +1591,6 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeSysVars(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE USER svroot1, svroot2")
 	tk.MustExec("GRANT SUPER ON *.* to svroot1 WITH GRANT OPTION")
-	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
 	tk.MustExec("GRANT SUPER, RESTRICTED_VARIABLES_ADMIN ON *.* to svroot2")
 
 	sem.Enable()
@@ -1531,7 +1668,6 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeRestrictedUsers(c *C) {
 	tk.MustExec("CREATE USER ruroot1, ruroot2, ruroot3")
 	tk.MustExec("CREATE ROLE notimportant")
 	tk.MustExec("GRANT SUPER, CREATE USER ON *.* to ruroot1 WITH GRANT OPTION")
-	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
 	tk.MustExec("GRANT SUPER, RESTRICTED_USER_ADMIN,  CREATE USER  ON *.* to ruroot2 WITH GRANT OPTION")
 	tk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* to ruroot3")
 	tk.MustExec("GRANT notimportant TO ruroot2, ruroot3")
@@ -1594,7 +1730,6 @@ func (s *testPrivilegeSuite) TestDynamicPrivsRegistration(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE USER privassigntest")
-	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
 
 	// Check that all privileges registered are assignable to users,
 	// including the recently registered ACDC_ADMIN

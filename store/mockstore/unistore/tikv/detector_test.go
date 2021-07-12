@@ -30,7 +30,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	deadlockPB "github.com/pingcap/kvproto/pkg/deadlock"
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 )
 
 func TestT(t *testing.T) {
@@ -48,7 +48,7 @@ func (s *testDeadlockSuite) TestDeadlock(c *C) {
 			resourceGroupTag: []byte(resourceGroupTag),
 		}
 	}
-	checkWaitChainEntry := func(entry *deadlockPB.WaitForEntry, txn, waitForTxn uint64, key, resourceGroupTag string) {
+	checkWaitChainEntry := func(entry *deadlockpb.WaitForEntry, txn, waitForTxn uint64, key, resourceGroupTag string) {
 		c.Assert(entry.Txn, Equals, txn)
 		c.Assert(entry.WaitForTxn, Equals, waitForTxn)
 		c.Assert(string(entry.Key), Equals, key)

@@ -23,10 +23,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // secondsPerYear represents seconds in a normal year. Leap year is not considered here.
@@ -359,6 +359,7 @@ func parseTimeZone(s string) (*time.Location, error) {
 func setSnapshotTS(s *SessionVars, sVal string) error {
 	if sVal == "" {
 		s.SnapshotTS = 0
+		s.SnapshotInfoschema = nil
 		return nil
 	}
 
@@ -372,25 +373,31 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 		return err
 	}
 
-	t1, err := t.GoTime(s.TimeZone)
+	t1, err := t.GoTime(s.Location())
 	s.SnapshotTS = oracle.GoTimeToTS(t1)
+	// tx_read_ts should be mutual exclusive with tidb_snapshot
+	s.TxnReadTS = NewTxnReadTS(0)
 	return err
 }
 
 func setTxnReadTS(s *SessionVars, sVal string) error {
 	if sVal == "" {
-		s.TxnReadTS = 0
+		s.TxnReadTS = NewTxnReadTS(0)
 		return nil
 	}
+
 	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
 		return err
 	}
-	t1, err := t.GoTime(s.TimeZone)
+	t1, err := t.GoTime(s.Location())
 	if err != nil {
 		return err
 	}
-	s.TxnReadTS = oracle.GoTimeToTS(t1)
+	s.TxnReadTS = NewTxnReadTS(oracle.GoTimeToTS(t1))
+	// tx_read_ts should be mutual exclusive with tidb_snapshot
+	s.SnapshotTS = 0
+	s.SnapshotInfoschema = nil
 	return err
 }
 

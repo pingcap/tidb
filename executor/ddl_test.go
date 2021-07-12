@@ -335,7 +335,10 @@ func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 	tk.MustExec("create view v as select distinct'" + strings.Repeat("a", 65) + "', " +
 		"max('" + strings.Repeat("b", 65) + "'), " +
 		"'cccccccccc', '" + strings.Repeat("d", 65) + "';")
-	resultCreateStmt := "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `v` (`name_exp_1`, `name_exp_2`, `cccccccccc`, `name_exp_4`) AS SELECT DISTINCT _UTF8MB4'" + strings.Repeat("a", 65) + "',MAX(_UTF8MB4'" + strings.Repeat("b", 65) + "'),_UTF8MB4'cccccccccc',_UTF8MB4'" + strings.Repeat("d", 65) + "'"
+	resultCreateStmt := "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `v` (`name_exp_1`, `name_exp_2`, `cccccccccc`, `name_exp_4`) AS " +
+		"SELECT DISTINCT _UTF8MB4'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' AS `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`," +
+		"MAX(_UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb') AS `max('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')`," +
+		"_UTF8MB4'cccccccccc' AS `cccccccccc`,_UTF8MB4'ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd' AS `ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd`"
 	tk.MustQuery("select * from v")
 	tk.MustQuery("select name_exp_1, name_exp_2, cccccccccc, name_exp_4 from v")
 	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
@@ -347,7 +350,10 @@ func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 		"union select '" + strings.Repeat("c", 65) + "', " +
 		"count(distinct '" + strings.Repeat("b", 65) + "', " +
 		"'c');")
-	resultCreateStmt = "CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`a`, `name_exp_2`) AS SELECT _UTF8MB4'a',_UTF8MB4'" + strings.Repeat("b", 65) + "' FROM `test`.`t` UNION SELECT _UTF8MB4'" + strings.Repeat("c", 65) + "',COUNT(DISTINCT _UTF8MB4'" + strings.Repeat("b", 65) + "', _UTF8MB4'c')"
+	resultCreateStmt = "CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`a`, `name_exp_2`) AS " +
+		"SELECT _UTF8MB4'a' AS `a`,_UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' AS `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb` FROM `test`.`t` " +
+		"UNION SELECT _UTF8MB4'ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' AS `ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc`," +
+		"COUNT(DISTINCT _UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', _UTF8MB4'c') AS `count(distinct 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'c')`"
 	tk.MustQuery("select * from v")
 	tk.MustQuery("select a, name_exp_2 from v")
 	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
@@ -443,7 +449,7 @@ func (s *testSuite6) TestCreateDropView(c *C) {
 	tk.MustExec("create view v as select * from t_v1;")
 	tk.MustExec("create or replace view v  as select * from t_v2;")
 	tk.MustQuery("select * from information_schema.views where table_name ='v';").Check(
-		testkit.Rows("def test v SELECT `test`.`t_v2`.`a`,`test`.`t_v2`.`b` FROM `test`.`t_v2` CASCADED NO @ DEFINER utf8mb4 utf8mb4_bin"))
+		testkit.Rows("def test v SELECT `test`.`t_v2`.`a` AS `a`,`test`.`t_v2`.`b` AS `b` FROM `test`.`t_v2` CASCADED NO @ DEFINER utf8mb4 utf8mb4_bin"))
 }
 
 func (s *testSuite6) TestCreateDropIndex(c *C) {
@@ -544,14 +550,14 @@ func (s *testSuite6) TestAlterTableModifyColumn(c *C) {
 	c.Assert(err, NotNil)
 
 	_, err = tk.Exec("alter table mc modify column c2 varchar(8)")
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 	tk.MustExec("alter table mc modify column c2 varchar(11)")
-	tk.MustGetErrCode("alter table mc modify column c2 text(13)", errno.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table mc modify column c2 text", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("alter table mc modify column c2 text(13)")
+	tk.MustExec("alter table mc modify column c2 text")
 	tk.MustExec("alter table mc modify column c3 bit")
 	result := tk.MustQuery("show create table mc")
 	createSQL := result.Rows()[0][1]
-	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` varchar(11) DEFAULT NULL,\n  `c3` bit(1) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text DEFAULT NULL,\n  `c3` bit(1) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	c.Assert(createSQL, Equals, expected)
 	tk.MustExec("create or replace view alter_view as select c1,c2 from mc")
 	_, err = tk.Exec("alter table alter_view modify column c2 text")
@@ -1525,15 +1531,4 @@ func (s *testRecoverTable) TestRenameMultiTables(c *C) {
 	tk.MustExec("drop database rename1")
 	tk.MustExec("drop database rename2")
 	tk.MustExec("drop database rename3")
-}
-
-// See https://github.com/pingcap/tidb/issues/24582
-func (s *testSuite6) TestDuplicatedEntryErr(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1(a int, b varchar(20), primary key(a,b(3)) clustered);")
-	tk.MustExec("insert into t1 values(1,'aaaaa');")
-	_, err := tk.Exec("insert into t1 values(1,'aaaaa');")
-	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-aaa' for key 'PRIMARY'")
 }

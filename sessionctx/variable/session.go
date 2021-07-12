@@ -15,6 +15,7 @@ package variable
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
@@ -28,6 +29,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -40,8 +42,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -50,6 +50,8 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
+	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
 )
@@ -173,9 +175,9 @@ type TransactionContext struct {
 	// TableDeltaMap lock to prevent potential data race
 	tdmLock sync.Mutex
 
-	// GlobalTemporaryTables is used to store transaction-specific information for global temporary tables.
+	// TemporaryTables is used to store transaction-specific information for global temporary tables.
 	// It can also be stored in sessionCtx with local temporary tables, but it's easier to clean this data after transaction ends.
-	GlobalTemporaryTables map[int64]tableutil.TempTable
+	TemporaryTables map[int64]tableutil.TempTable
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -463,7 +465,7 @@ type SessionVars struct {
 	SnapshotTS uint64
 
 	// TxnReadTS is used for staleness transaction, it provides next staleness transaction startTS.
-	TxnReadTS uint64
+	TxnReadTS *TxnReadTS
 
 	// SnapshotInfoschema is used with SnapshotTS, when the schema version at snapshotTS less than current schema
 	// version, we load an old version schema for query.
@@ -486,6 +488,15 @@ type SessionVars struct {
 
 	// AllowBCJ means allow broadcast join.
 	AllowBCJ bool
+
+	// AllowCartesianBCJ means allow broadcast CARTESIAN join, 0 means not allow, 1 means allow broadcast CARTESIAN join
+	// but the table size should under the broadcast threshold, 2 means allow broadcast CARTESIAN join even if the table
+	// size exceeds the broadcast threshold
+	AllowCartesianBCJ int
+
+	// MPPOuterJoinFixedBuildSide means in MPP plan, always use right(left) table as build side for left(right) out join
+	MPPOuterJoinFixedBuildSide bool
+
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
@@ -499,9 +510,16 @@ type SessionVars struct {
 	// Value set to 2 means to force to send batch cop for any query. Value set to 0 means never use batch cop.
 	AllowBatchCop int
 
-	// AllowMPPExecution means if we should use mpp way to execute query. Default value is "ON", means to be determined by the optimizer.
-	// Value set to "ENFORCE" means to use mpp whenever possible. Value set to means never use mpp.
-	allowMPPExecution string
+	// allowMPPExecution means if we should use mpp way to execute query.
+	// Default value is `true`, means to be determined by the optimizer.
+	// Value set to `false` means never use mpp.
+	allowMPPExecution bool
+
+	// enforceMPPExecution means if we should enforce mpp way to execute query.
+	// Default value is `false`, means to be determined by variable `allowMPPExecution`.
+	// Value set to `true` means enforce use mpp.
+	// Note if you want to set `enforceMPPExecution` to `true`, you must set `allowMPPExecution` to `true` first.
+	enforceMPPExecution bool
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
@@ -526,14 +544,14 @@ type SessionVars struct {
 	CopCPUFactor float64
 	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
 	CopTiFlashConcurrencyFactor float64
-	// NetworkFactor is the network cost of transferring 1 byte data.
-	NetworkFactor float64
+	// networkFactor is the network cost of transferring 1 byte data.
+	networkFactor float64
 	// ScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
-	ScanFactor float64
-	// DescScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash in desc order.
-	DescScanFactor float64
-	// SeekFactor is the IO cost of seeking the start value of a range in TiKV or TiFlash.
-	SeekFactor float64
+	scanFactor float64
+	// descScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash in desc order.
+	descScanFactor float64
+	// seekFactor is the IO cost of seeking the start value of a range in TiKV or TiFlash.
+	seekFactor float64
 	// MemoryFactor is the memory cost of storing one tuple.
 	MemoryFactor float64
 	// DiskFactor is the IO cost of reading/writing one byte to temporary disk.
@@ -596,6 +614,9 @@ type SessionVars struct {
 	// EnableWindowFunction enables the window function.
 	EnableWindowFunction bool
 
+	// EnablePipelinedWindowExec enables executing window functions in a pipelined manner.
+	EnablePipelinedWindowExec bool
+
 	// EnableStrictDoubleTypeCheck enables table field double type check.
 	EnableStrictDoubleTypeCheck bool
 
@@ -604,9 +625,6 @@ type SessionVars struct {
 
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
-
-	// EnableChangeColumnType is used to control whether to enable the change column type.
-	EnableChangeColumnType bool
 
 	// EnableChangeMultiSchema is used to control whether to enable the multi schema change.
 	EnableChangeMultiSchema bool
@@ -792,7 +810,7 @@ type SessionVars struct {
 	// PartitionPruneMode indicates how and when to prune partitions.
 	PartitionPruneMode atomic2.String
 
-	// TxnScope indicates the scope of the transactions. It should be `global` or equal to `dc-location` in configuration.
+	// TxnScope indicates the scope of the transactions. It should be `global` or equal to the value of key `zone` in config.Labels.
 	TxnScope kv.TxnScopeVar
 
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
@@ -823,12 +841,28 @@ type SessionVars struct {
 	// Now we only support TiFlash.
 	AllowFallbackToTiKV map[kv.StoreType]struct{}
 
-	// EnableDynamicPrivileges indicates whether to permit experimental support for MySQL 8.0 compatible dynamic privileges.
-	EnableDynamicPrivileges bool
-
 	// CTEMaxRecursionDepth indicates The common table expression (CTE) maximum recursion depth.
 	// see https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_cte_max_recursion_depth
 	CTEMaxRecursionDepth int
+
+	// The temporary table size threshold
+	// In MySQL, when a temporary table exceed this size, it spills to disk.
+	// In TiDB, as we do not support spill to disk for now, an error is reported.
+	// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_tmp_table_size
+	TMPTableSize int64
+
+	// EnableGlobalTemporaryTable indicates whether to enable global temporary table
+	EnableGlobalTemporaryTable bool
+
+	// EnableStableResultMode if stabilize query results.
+	EnableStableResultMode bool
+
+	// LocalTemporaryTables is *infoschema.LocalTemporaryTables, use interface to avoid circle dependency.
+	// It's nil if there is no local temporary table.
+	LocalTemporaryTables interface{}
+
+	// TemporaryTableData stores committed kv values for temporary table for current session.
+	TemporaryTableData kv.MemBuffer
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
@@ -845,17 +879,26 @@ func (s *SessionVars) AllocMPPTaskID(startTS uint64) int64 {
 
 // IsMPPAllowed returns whether mpp execution is allowed.
 func (s *SessionVars) IsMPPAllowed() bool {
-	return s.allowMPPExecution != "OFF"
+	return s.allowMPPExecution
 }
 
 // IsMPPEnforced returns whether mpp execution is enforced.
 func (s *SessionVars) IsMPPEnforced() bool {
-	return s.allowMPPExecution == "ENFORCE"
+	return s.allowMPPExecution && s.enforceMPPExecution
+}
+
+// RaiseWarningWhenMPPEnforced will raise a warning when mpp mode is enforced and executing explain statement.
+// TODO: Confirm whether this function will be inlined and
+// omit the overhead of string construction when calling with false condition.
+func (s *SessionVars) RaiseWarningWhenMPPEnforced(warning string) {
+	if s.IsMPPEnforced() && s.StmtCtx.InExplainStmt {
+		s.StmtCtx.AppendWarning(errors.New(warning))
+	}
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
 func (s *SessionVars) CheckAndGetTxnScope() string {
-	if s.InRestrictedSQL {
+	if s.InRestrictedSQL || !EnableLocalTxn.Load() {
 		return kv.GlobalTxnScope
 	}
 	if s.TxnScope.GetVarValue() == kv.LocalTxnScope {
@@ -968,6 +1011,8 @@ func NewSessionVars() *SessionVars {
 		StmtCtx:                     new(stmtctx.StatementContext),
 		AllowAggPushDown:            false,
 		AllowBCJ:                    false,
+		AllowCartesianBCJ:           DefOptCartesianBCJ,
+		MPPOuterJoinFixedBuildSide:  DefOptMPPOuterJoinFixedBuildSide,
 		BroadcastJoinThresholdSize:  DefBroadcastJoinThresholdSize,
 		BroadcastJoinThresholdCount: DefBroadcastJoinThresholdSize,
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
@@ -981,10 +1026,10 @@ func NewSessionVars() *SessionVars {
 		CPUFactor:                   DefOptCPUFactor,
 		CopCPUFactor:                DefOptCopCPUFactor,
 		CopTiFlashConcurrencyFactor: DefOptTiFlashConcurrencyFactor,
-		NetworkFactor:               DefOptNetworkFactor,
-		ScanFactor:                  DefOptScanFactor,
-		DescScanFactor:              DefOptDescScanFactor,
-		SeekFactor:                  DefOptSeekFactor,
+		networkFactor:               DefOptNetworkFactor,
+		scanFactor:                  DefOptScanFactor,
+		descScanFactor:              DefOptDescScanFactor,
+		seekFactor:                  DefOptSeekFactor,
 		MemoryFactor:                DefOptMemoryFactor,
 		DiskFactor:                  DefOptDiskFactor,
 		ConcurrencyFactor:           DefOptConcurrencyFactor,
@@ -1016,13 +1061,12 @@ func NewSessionVars() *SessionVars {
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
 		EnableParallelApply:         DefTiDBEnableParallelApply,
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
-		EnableChangeColumnType:      DefTiDBChangeColumnType,
 		EnableChangeMultiSchema:     DefTiDBChangeMultiSchema,
 		EnablePointGetCache:         DefTiDBPointGetCache,
 		EnableAlterPlacement:        DefTiDBEnableAlterPlacement,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
-		TxnScope:                    kv.GetTxnScopeVar(),
+		TxnScope:                    kv.NewDefaultTxnScopeVar(),
 		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
 		EnableAsyncCommit:           DefTiDBEnableAsyncCommit,
 		Enable1PC:                   DefTiDBEnable1PC,
@@ -1031,6 +1075,8 @@ func NewSessionVars() *SessionVars {
 		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
+		TMPTableSize:                DefTMPTableSize,
+		EnableGlobalTemporaryTable:  DefTiDBEnableGlobalTemporaryTable,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1078,6 +1124,7 @@ func NewSessionVars() *SessionVars {
 
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
+	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
 
 	var enableChunkRPC string
 	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
@@ -1095,6 +1142,9 @@ func NewSessionVars() *SessionVars {
 		case kv.TiDB.Name():
 			vars.IsolationReadEngines[kv.TiDB] = struct{}{}
 		}
+	}
+	if !EnableLocalTxn.Load() {
+		vars.TxnScope = kv.NewGlobalTxnScopeVar()
 	}
 	return vars
 }
@@ -1442,19 +1492,19 @@ func (s *SessionVars) LazyCheckKeyNotExists() bool {
 
 // GetTemporaryTable returns a TempTable by tableInfo.
 func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.TempTable {
-	if tblInfo.TempTableType == model.TempTableGlobal {
-		if s.TxnCtx.GlobalTemporaryTables == nil {
-			s.TxnCtx.GlobalTemporaryTables = make(map[int64]tableutil.TempTable)
+	if tblInfo.TempTableType != model.TempTableNone {
+		if s.TxnCtx.TemporaryTables == nil {
+			s.TxnCtx.TemporaryTables = make(map[int64]tableutil.TempTable)
 		}
-		globalTempTables := s.TxnCtx.GlobalTemporaryTables
-		globalTempTable, ok := globalTempTables[tblInfo.ID]
+		tempTables := s.TxnCtx.TemporaryTables
+		tempTable, ok := tempTables[tblInfo.ID]
 		if !ok {
-			globalTempTable = tableutil.TempTableFromMeta(tblInfo)
-			globalTempTables[tblInfo.ID] = globalTempTable
+			tempTable = tableutil.TempTableFromMeta(tblInfo)
+			tempTables[tblInfo.ID] = tempTable
 		}
-		return globalTempTable
+		return tempTable
 	}
-	// TODO: check local temporary tables
+
 	return nil
 }
 
@@ -2057,4 +2107,136 @@ type QueryInfo struct {
 	StartTS     uint64 `json:"start_ts"`
 	ForUpdateTS uint64 `json:"for_update_ts"`
 	ErrMsg      string `json:"error,omitempty"`
+}
+
+// TxnReadTS indicates the value and used situation for tx_read_ts
+type TxnReadTS struct {
+	readTS uint64
+	used   bool
+}
+
+// NewTxnReadTS creates TxnReadTS
+func NewTxnReadTS(ts uint64) *TxnReadTS {
+	return &TxnReadTS{
+		readTS: ts,
+		used:   false,
+	}
+}
+
+// UseTxnReadTS returns readTS, and mark used as true
+func (t *TxnReadTS) UseTxnReadTS() uint64 {
+	if t == nil {
+		return 0
+	}
+	t.used = true
+	return t.readTS
+}
+
+// SetTxnReadTS update readTS, and refresh used
+func (t *TxnReadTS) SetTxnReadTS(ts uint64) {
+	if t == nil {
+		return
+	}
+	t.used = false
+	t.readTS = ts
+}
+
+// PeakTxnReadTS returns readTS
+func (t *TxnReadTS) PeakTxnReadTS() uint64 {
+	if t == nil {
+		return 0
+	}
+	return t.readTS
+}
+
+// CleanupTxnReadTSIfUsed cleans txnReadTS if used
+func (s *SessionVars) CleanupTxnReadTSIfUsed() {
+	if s.TxnReadTS == nil {
+		return
+	}
+	if s.TxnReadTS.used && s.TxnReadTS.readTS > 0 {
+		s.TxnReadTS = NewTxnReadTS(0)
+		s.SnapshotInfoschema = nil
+	}
+}
+
+// GetNetworkFactor returns the session variable networkFactor
+// returns 0 when tbl is a temporary table.
+func (s *SessionVars) GetNetworkFactor(tbl *model.TableInfo) float64 {
+	if tbl != nil {
+		if tbl.TempTableType != model.TempTableNone {
+			return 0
+		}
+	}
+	return s.networkFactor
+}
+
+// GetScanFactor returns the session variable scanFactor
+// returns 0 when tbl is a temporary table.
+func (s *SessionVars) GetScanFactor(tbl *model.TableInfo) float64 {
+	if tbl != nil {
+		if tbl.TempTableType != model.TempTableNone {
+			return 0
+		}
+	}
+	return s.scanFactor
+}
+
+// GetDescScanFactor returns the session variable descScanFactor
+// returns 0 when tbl is a temporary table.
+func (s *SessionVars) GetDescScanFactor(tbl *model.TableInfo) float64 {
+	if tbl != nil {
+		if tbl.TempTableType != model.TempTableNone {
+			return 0
+		}
+	}
+	return s.descScanFactor
+}
+
+// GetSeekFactor returns the session variable seekFactor
+// returns 0 when tbl is a temporary table.
+func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
+	if tbl != nil {
+		if tbl.TempTableType != model.TempTableNone {
+			return 0
+		}
+	}
+	return s.seekFactor
+}
+
+// GetTemporaryTableSnapshotValue get temporary table value from session
+func (s *SessionVars) GetTemporaryTableSnapshotValue(ctx context.Context, key kv.Key) ([]byte, error) {
+	memData := s.TemporaryTableData
+	if memData == nil {
+		return nil, kv.ErrNotExist
+	}
+
+	v, err := memData.Get(ctx, key)
+	if err != nil {
+		return v, err
+	}
+
+	if len(v) == 0 {
+		return nil, kv.ErrNotExist
+	}
+
+	return v, nil
+}
+
+// GetTemporaryTableTxnValue returns a kv.Getter to fetch temporary table data in txn
+func (s *SessionVars) GetTemporaryTableTxnValue(ctx context.Context, txn kv.Transaction, key kv.Key) ([]byte, error) {
+	v, err := txn.GetMemBuffer().Get(ctx, key)
+	if err == nil {
+		if len(v) == 0 {
+			return nil, kv.ErrNotExist
+		}
+
+		return v, nil
+	}
+
+	if !kv.IsErrNotFound(err) {
+		return v, err
+	}
+
+	return s.GetTemporaryTableSnapshotValue(ctx, key)
 }

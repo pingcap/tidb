@@ -14,11 +14,12 @@
       {
         "SQL": "explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 order by b desc limit 2,1",
         "Plan": [
-          "Projection 1.00 root  test.tbl.a, test.tbl.b, test.tbl.c",
-          "└─IndexLookUp 1.00 root  limit embedded(offset:2, count:1)",
-          "  ├─Limit(Build) 3.00 cop[tikv]  offset:0, count:3",
-          "  │ └─IndexRangeScan 3.00 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:true, desc",
-          "  └─TableRowIDScan(Probe) 1.00 cop[tikv] table:tbl keep order:false, stats:pseudo"
+          "Limit 1.00 root  offset:2, count:1",
+          "└─Projection 3.00 root  test.tbl.a, test.tbl.b, test.tbl.c",
+          "  └─IndexLookUp 3.00 root  ",
+          "    ├─Limit(Build) 3.00 cop[tikv]  offset:0, count:3",
+          "    │ └─IndexRangeScan 3.00 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:true, desc",
+          "    └─TableRowIDScan(Probe) 3.00 cop[tikv] table:tbl keep order:false, stats:pseudo"
         ]
       },
       {
@@ -59,6 +60,77 @@
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestAggColumnPrune",
+    "Cases": [
+      {
+        "SQL": "select count(1) from t join (select count(1) from t where false) as tmp",
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select max(a) from t where false) as tmp",
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select min(a) from t where false) as tmp",
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select sum(a) from t where false) as tmp",
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select avg(a) from t where false) as tmp",
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select count(1) from t where false group by a) as tmp",
+        "Res": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select max(a) from t where false group by a) as tmp",
+        "Res": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select min(a) from t where false group by a) as tmp",
+        "Res": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select sum(a) from t where false group by a) as tmp",
+        "Res": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t join (select avg(a) from t where false group by a) as tmp",
+        "Res": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "SELECT avg(2) FROM(SELECT min(c) FROM t JOIN(SELECT 1 c) d ORDER BY a) e",
+        "Res": [
+          "2.0000"
         ]
       }
     ]
@@ -532,25 +604,25 @@
       {
         "SQL": "select /*+ USE_INDEX_MERGE(t1, a, b, c, d) */ * from t1",
         "Warnings": [
-          "[planner:1815]use_index_merge(test.t1, a, b, c, d) is inapplicable, check whether the indexes (c, d) exist, or the indexes are conflicted with use_index/ignore_index hints."
+          "[planner:1815]use_index_merge(test.t1, a, b, c, d) is inapplicable, check whether the indexes (c, d) exist, or the indexes are conflicted with use_index/ignore_index/force_index hints."
         ]
       },
       {
         "SQL": "select /*+ USE_INDEX_MERGE(t1, a, b), USE_INDEX(t1, a) */ * from t1",
         "Warnings": [
-          "[planner:1815]use_index_merge(test.t1, a, b) is inapplicable, check whether the indexes (b) exist, or the indexes are conflicted with use_index/ignore_index hints."
+          "[planner:1815]use_index_merge(test.t1, a, b) is inapplicable, check whether the indexes (b) exist, or the indexes are conflicted with use_index/ignore_index/force_index hints."
         ]
       },
       {
         "SQL": "select /*+ USE_INDEX_MERGE(t1, a, b), IGNORE_INDEX(t1, a) */ * from t1",
         "Warnings": [
-          "[planner:1815]use_index_merge(test.t1, a, b) is inapplicable, check whether the indexes (a) exist, or the indexes are conflicted with use_index/ignore_index hints."
+          "[planner:1815]use_index_merge(test.t1, a, b) is inapplicable, check whether the indexes (a) exist, or the indexes are conflicted with use_index/ignore_index/force_index hints."
         ]
       },
       {
         "SQL": "select /*+ USE_INDEX_MERGE(t1, primary, a, b, c) */ * from t1",
         "Warnings": [
-          "[planner:1815]use_index_merge(test.t1, primary, a, b, c) is inapplicable, check whether the indexes (c) exist, or the indexes are conflicted with use_index/ignore_index hints."
+          "[planner:1815]use_index_merge(test.t1, primary, a, b, c) is inapplicable, check whether the indexes (c) exist, or the indexes are conflicted with use_index/ignore_index/force_index hints."
         ]
       }
     ]
@@ -912,8 +984,8 @@
       {
         "SQL": "select * from t1 where t1.a = 1 and t1.b < \"333\"",
         "Plan": [
-          "TableReader 0.67 root  data:TableRangeScan",
-          "└─TableRangeScan 0.67 cop[tikv] table:t1 range:[1 -inf,1 \"333\"), keep order:false"
+          "TableReader 0.82 root  data:TableRangeScan",
+          "└─TableRangeScan 0.82 cop[tikv] table:t1 range:[1 -inf,1 \"333\"), keep order:false"
         ],
         "Res": [
           "1 111 1.1000000000 11"

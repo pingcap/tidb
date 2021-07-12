@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -263,6 +264,13 @@ func (g *defaultGener) gen() interface{} {
 	case types.ETDatetime, types.ETTimestamp:
 		gt := getRandomTime(g.randGen.Rand)
 		t := types.NewTime(gt, convertETType(g.eType), 0)
+		// TiDB has DST time problem, and it causes ErrWrongValue.
+		// We should ignore ambiguous Time. See https://timezonedb.com/time-zones/Asia/Shanghai.
+		for _, err := t.GoTime(time.Local); err != nil; {
+			gt = getRandomTime(g.randGen.Rand)
+			t = types.NewTime(gt, convertETType(g.eType), 0)
+			_, err = t.GoTime(time.Local)
+		}
 		return t
 	case types.ETDuration:
 		d := types.Duration{
@@ -625,6 +633,27 @@ func (g *ipv4MappedByteGener) gen() interface{} {
 		ip[i] = uint8(g.randGen.Intn(256)) // reset the last 4 bytes
 	}
 	return string(ip[:net.IPv6len])
+}
+
+// uuidStrGener is used to generate uuid strings.
+type uuidStrGener struct {
+	randGen *defaultRandGen
+}
+
+func (g *uuidStrGener) gen() interface{} {
+	u, _ := uuid.NewUUID()
+	return u.String()
+}
+
+// uuidBinGener is used to generate uuid binarys.
+type uuidBinGener struct {
+	randGen *defaultRandGen
+}
+
+func (g *uuidBinGener) gen() interface{} {
+	u, _ := uuid.NewUUID()
+	bin, _ := u.MarshalBinary()
+	return string(bin)
 }
 
 // randLenStrGener is used to generate strings whose lengths are in [lenBegin, lenEnd).

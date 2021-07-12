@@ -14,11 +14,12 @@
 package txninfo
 
 import (
+	"strings"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // TxnRunningState is the current state of a transaction
@@ -43,19 +44,31 @@ var TxnRunningStateStrs = []string{
 // TxnInfo is information about a running transaction
 // This is supposed to be the datasource of `TIDB_TRX` in infoschema
 type TxnInfo struct {
+	// The following fields are immutable and can be safely read across threads.
+
 	StartTS uint64
-	// digest of SQL current running
+	// Digest of SQL currently running
 	CurrentSQLDigest string
-	// current executing State
+	// Digests of all SQLs executed in the transaction.
+	AllSQLDigests []string
+
+	// The following fields are mutable and needs to be read or written by atomic operations. But since only the
+	// transaction's thread can modify its value, it's ok for the transaction's thread to read it without atomic
+	// operations.
+
+	// Current execution state of the transaction.
 	State TxnRunningState
-	// last trying to block start time
-	BlockStartTime *time.Time
+	// Last trying to block start time. Invalid if State is not TxnLockWaiting.
+	BlockStartTime struct {
+		Valid bool
+		time.Time
+	}
 	// How many entries are in MemDB
 	EntriesCount uint64
 	// MemDB used memory
 	EntriesSize uint64
 
-	// the following fields will be filled in `session` instead of `LazyTxn`
+	// The following fields will be filled in `session` instead of `LazyTxn`
 
 	// Which session this transaction belongs to
 	ConnectionID uint64
@@ -65,24 +78,35 @@ type TxnInfo struct {
 	CurrentDB string
 }
 
-// ToDatum Converts the `TxnInfo` to `Datum` to show in the `TIDB_TRX` table
+// ToDatum Converts the `TxnInfo` to `Datum` to show in the `TIDB_TRX` table.
 func (info *TxnInfo) ToDatum() []types.Datum {
 	humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
+
+	var currentDigest interface{}
+	if len(info.CurrentSQLDigest) != 0 {
+		currentDigest = info.CurrentSQLDigest
+	}
+
 	var blockStartTime interface{}
-	if info.BlockStartTime == nil {
+	if !info.BlockStartTime.Valid {
 		blockStartTime = nil
 	} else {
-		blockStartTime = types.NewTime(types.FromGoTime(*info.BlockStartTime), mysql.TypeTimestamp, 0)
+		blockStartTime = types.NewTime(types.FromGoTime(info.BlockStartTime.Time), mysql.TypeTimestamp, types.MaxFsp)
 	}
+
 	e, err := types.ParseEnumValue(TxnRunningStateStrs, uint64(info.State+1))
 	if err != nil {
 		panic("this should never happen")
 	}
+
+	allSQLs := "[" + strings.Join(info.AllSQLDigests, ", ") + "]"
+
 	state := types.NewMysqlEnumDatum(e)
+
 	datums := types.MakeDatums(
 		info.StartTS,
-		types.NewTime(types.FromGoTime(humanReadableStartTime), mysql.TypeTimestamp, 0),
-		info.CurrentSQLDigest,
+		types.NewTime(types.FromGoTime(humanReadableStartTime), mysql.TypeTimestamp, types.MaxFsp),
+		currentDigest,
 	)
 	datums = append(datums, state)
 	datums = append(datums, types.MakeDatums(
@@ -91,6 +115,7 @@ func (info *TxnInfo) ToDatum() []types.Datum {
 		info.EntriesSize,
 		info.ConnectionID,
 		info.Username,
-		info.CurrentDB)...)
+		info.CurrentDB,
+		allSQLs)...)
 	return datums
 }

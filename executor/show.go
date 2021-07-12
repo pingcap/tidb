@@ -921,6 +921,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		if idxInfo.Invisible {
 			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
 		}
+		if idxInfo.Comment != "" {
+			fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
+		}
 		if idxInfo.Primary {
 			if tableInfo.PKIsHandle || tableInfo.IsCommonHandle {
 				buf.WriteString(" /*T![clustered_index] CLUSTERED */")
@@ -1331,7 +1334,7 @@ func (e *ShowExec) fetchShowCreateUser() error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT * FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.UserTable, userName, hostName)
+	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT plugin FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.UserTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1344,6 +1347,11 @@ func (e *ShowExec) fetchShowCreateUser() error {
 		// FIXME: the error returned is not escaped safely
 		return ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER",
 			fmt.Sprintf("'%s'@'%s'", e.User.Username, e.User.Hostname))
+	}
+
+	authplugin := mysql.AuthNativePassword
+	if len(rows) == 1 && rows[0].GetString(0) != "" {
+		authplugin = rows[0].GetString(0)
 	}
 
 	stmt, err = exec.ParseWithParams(context.TODO(), `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
@@ -1366,8 +1374,8 @@ func (e *ShowExec) fetchShowCreateUser() error {
 		require = privValue.RequireStr()
 	}
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH 'mysql_native_password' AS '%s' REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK",
-		e.User.Username, e.User.Hostname, checker.GetEncodedPassword(e.User.Username, e.User.Hostname), require)
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s' AS '%s' REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK",
+		e.User.Username, e.User.Hostname, authplugin, checker.GetEncodedPassword(e.User.Username, e.User.Hostname), require)
 	e.appendRow([]interface{}{showStr})
 	return nil
 }
@@ -1704,8 +1712,8 @@ func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
 			e.result.AppendInt64(6, 0)
 		}
 
-		e.result.AppendInt64(7, regions[i].writtenBytes)
-		e.result.AppendInt64(8, regions[i].readBytes)
+		e.result.AppendUint64(7, regions[i].writtenBytes)
+		e.result.AppendUint64(8, regions[i].readBytes)
 		e.result.AppendInt64(9, regions[i].approximateSize)
 		e.result.AppendInt64(10, regions[i].approximateKeys)
 	}
