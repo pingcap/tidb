@@ -551,7 +551,7 @@ func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
 		)
 		mustExecSQL(c, se, sql)
 
-		upgradeToVer52(se, version50)
+		upgradeToMinorVer1(se, 0)
 		r := mustExecSQL(c, se, `select original_sql, bind_sql, default_db, status from mysql.bind_info where source != 'builtin'`)
 		req := r.NewChunk()
 		c.Assert(r.Next(ctx, req), IsNil)
@@ -586,7 +586,7 @@ func (s *testBootstrapSuite) TestUpdateDuplicateBindInfo(c *C) {
 	// The latest one.
 	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from test . t', 'select /*+ use_index(t, idx_b)*/ * from test.t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-09 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 
-	upgradeToVer52(se, version50)
+	upgradeToMinorVer1(se, 0)
 
 	r := mustExecSQL(c, se, `select original_sql, bind_sql, default_db, status, create_time from mysql.bind_info where source != 'builtin'`)
 	req := r.NewChunk()

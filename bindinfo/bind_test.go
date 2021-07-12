@@ -375,7 +375,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from test . t where i > ?")
 	bind := bindData.Bindings[0]
-	c.Check(bind.BindSQL, Equals, "SELECT * FROM test.t USE INDEX (index_t) WHERE i > 99")
+	c.Check(bind.BindSQL, Equals, "SELECT * FROM `test`.`t` USE INDEX (`index_t`) WHERE `i` > 99")
 	c.Check(bindData.Db, Equals, "test")
 	c.Check(bind.Status, Equals, "using")
 	c.Check(bind.Charset, NotNil)
@@ -391,7 +391,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	c.Check(chk.NumRows(), Equals, 1)
 	row := chk.GetRow(0)
 	c.Check(row.GetString(0), Equals, "select * from test . t where i > ?")
-	c.Check(row.GetString(1), Equals, "SELECT * FROM test.t USE INDEX (index_t) WHERE i > 99")
+	c.Check(row.GetString(1), Equals, "SELECT * FROM `test`.`t` USE INDEX (`index_t`) WHERE `i` > 99")
 	c.Check(row.GetString(2), Equals, "test")
 	c.Check(row.GetString(3), Equals, "using")
 	c.Check(row.GetTime(4), NotNil)
@@ -408,7 +408,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from test . t where i > ?")
 	bind = bindData.Bindings[0]
-	c.Check(bind.BindSQL, Equals, "SELECT * FROM test.t USE INDEX (index_t) WHERE i > 99")
+	c.Check(bind.BindSQL, Equals, "SELECT * FROM `test`.`t` USE INDEX (`index_t`) WHERE `i` > 99")
 	c.Check(bindData.Db, Equals, "test")
 	c.Check(bind.Status, Equals, "using")
 	c.Check(bind.Charset, NotNil)
@@ -425,7 +425,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(0))
 	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
 	// From newly created global bind handle.
-	c.Assert(pb.GetGauge().GetValue(), Equals, float64(112))
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(120))
 
 	bindHandle = bindinfo.NewBindHandle(tk.Se)
 	err = bindHandle.Update(true)
@@ -479,7 +479,7 @@ func (s *testSuite) TestSessionBinding(c *C) {
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from test . t where i > ?")
 	bind := bindData.Bindings[0]
-	c.Check(bind.BindSQL, Equals, "SELECT * FROM test.t USE INDEX (index_t) WHERE i > 99")
+	c.Check(bind.BindSQL, Equals, "SELECT * FROM `test`.`t` USE INDEX (`index_t`) WHERE `i` > 99")
 	c.Check(bindData.Db, Equals, "test")
 	c.Check(bind.Status, Equals, "using")
 	c.Check(bind.Charset, NotNil)
@@ -502,7 +502,7 @@ func (s *testSuite) TestSessionBinding(c *C) {
 	c.Check(chk.NumRows(), Equals, 1)
 	row := chk.GetRow(0)
 	c.Check(row.GetString(0), Equals, "select * from test . t where i > ?")
-	c.Check(row.GetString(1), Equals, "SELECT * FROM test.t USE INDEX (index_t) WHERE i > 99")
+	c.Check(row.GetString(1), Equals, "SELECT * FROM `test`.`t` USE INDEX (`index_t`) WHERE `i` > 99")
 	c.Check(row.GetString(2), Equals, "test")
 	c.Check(row.GetString(3), Equals, "using")
 	c.Check(row.GetTime(4), NotNil)
@@ -832,11 +832,11 @@ func (s *testSuite) TestDMLCapturePlanBaseline(c *C) {
 	c.Assert(len(rows), Equals, 4)
 	c.Assert(rows[0][0], Equals, "delete from test . t where b = ? and c > ?")
 	c.Assert(rows[0][1], Equals, "DELETE /*+ use_index(@`del_1` `test`.`t` `idx_b`)*/ FROM `test`.`t` WHERE `b` = 1 AND `c` > 1")
-	c.Assert(rows[1][0], Equals, "insert into `test` . `t1` select * from `test` . `t` where `t` . `b` = ? and `t` . `c` > ?")
+	c.Assert(rows[1][0], Equals, "insert into test . t1 select * from test . t where t . b = ? and t . c > ?")
 	c.Assert(rows[1][1], Equals, "INSERT INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b` = 1 AND `t`.`c` > 1")
-	c.Assert(rows[2][0], Equals, "replace into `test` . `t1` select * from `test` . `t` where `t` . `b` = ? and `t` . `c` > ?")
+	c.Assert(rows[2][0], Equals, "replace into test . t1 select * from test . t where t . b = ? and t . c > ?")
 	c.Assert(rows[2][1], Equals, "REPLACE INTO `test`.`t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `test`.`t` WHERE `t`.`b` = 1 AND `t`.`c` > 1")
-	c.Assert(rows[3][0], Equals, "update `test` . `t` set `a` = ? where `b` = ? and `c` > ?")
+	c.Assert(rows[3][0], Equals, "update test . t set a = ? where b = ? and c > ?")
 	c.Assert(rows[3][1], Equals, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx_b`)*/ `test`.`t` SET `a`=1 WHERE `b` = 1 AND `c` > 1")
 }
 
@@ -1029,7 +1029,7 @@ func (s *testSuite) TestCapturePreparedStmt(c *C) {
 	tk.MustExec("admin evolve bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `b` = ? and `c` > ?")
+	c.Assert(rows[0][0], Equals, "select * from test . t where b = ? and c > ?")
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b` = ? AND `c` > ?")
 }
 
@@ -1829,69 +1829,23 @@ func (s *testSuite) TestUpdateSubqueryCapture(c *C) {
 func (s *testSuite) TestCapturedBindingCharset(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec(`CREATE TABLE t (
-		 pk VARBINARY(36) NOT NULL PRIMARY KEY,
-		 b BIGINT NOT NULL,
-		 c BIGINT NOT NULL,
-		 pad VARBINARY(2048),
-		 INDEX idxb(b),
-		 INDEX idxc(c)
-		)`)
-
-	// Test for create binding
-	s.cleanBindingEnv(tk)
-	tk.MustExec("create global binding for select * from t using select /*+ use_index(t, idxb) */ * from t")
-	rows := tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from test . t")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(`t` `idxb`)*/ * FROM `test`.`t`")
-	c.Assert(tk.MustUseIndex("select * from t", "idxb(b)"), IsTrue)
-	c.Assert(tk.MustUseIndex("select * from test.t", "idxb(b)"), IsTrue)
-
-	tk.MustExec("create global binding for select * from t WHERE b=2 AND c=3924541 using select /*+ use_index(@sel_1 test.t idxb) */ * from t WHERE b=2 AND c=3924541")
-	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"), IsTrue)
-	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"), IsTrue)
-
-	// Test for capture baseline
-	s.cleanBindingEnv(tk)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
-	tk.MustExec("select * from t where b=2 and c=213124")
-	tk.MustExec("select * from t where b=2 and c=213124")
-	tk.MustExec("admin capture bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `b` = ? and `c` = ?")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxb`)*/ * FROM `test`.`t` WHERE `b` = 2 AND `c` = 213124")
-	tk.MustExec("set @@tidb_capture_plan_baselines = off")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(name varchar(25), index idx(name))")
 
 	tk.MustExec("set character_set_connection = 'ascii'")
 	tk.MustExec("update t set name = 'hello' where name <= 'abc'")
 	tk.MustExec("update t set name = 'hello' where name <= 'abc'")
 	tk.MustExec("set character_set_connection = 'utf8mb4'")
 	tk.MustExec("admin capture bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
+	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `c` = ?")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxb`)*/ * FROM `test`.`t` WHERE `c` = 3924541")
-	tk.MustExec("select /*+ use_index(t idxc)*/ * from t where c=3924541")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idxb")
-	tk.MustExec("admin flush bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][0], Equals, "select * from `test` . `t` where `c` = ?")
-	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`), use_index(`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541")
-	c.Assert(rows[1][3], Equals, "pending verify")
-	tk.MustExec("admin evolve bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][0], Equals, "select * from `test` . `t` where `c` = ?")
-	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`), use_index(`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541")
-	status := rows[1][3].(string)
-	c.Assert(status == "using" || status == "rejected", IsTrue)
-	tk.MustExec("set @@tidb_evolve_plan_baselines=0")
+	c.Assert(rows[0][0], Equals, "update test . t set name = ? where name <= ?")
+	c.Assert(rows[0][1], Equals, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx`)*/ `test`.`t` SET `name`='hello' WHERE `name` <= 'abc'")
+	// Charset and Collation are empty now, they are not used currently.
+	c.Assert(rows[0][6], Equals, "")
+	c.Assert(rows[0][7], Equals, "")
 }
 
 func (s *testSuite) TestCaptureWithZeroSlowLogThreshold(c *C) {
