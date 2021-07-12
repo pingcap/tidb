@@ -77,8 +77,8 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/mockstore/cluster"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"google.golang.org/grpc"
@@ -168,13 +168,13 @@ type testStaleTxnSuite struct{ *baseTestSuite }
 type testCoprCache struct {
 	store kv.Storage
 	dom   *domain.Domain
-	cls   cluster.Cluster
+	cls   testutils.Cluster
 }
 type testPrepareSuite struct{ testData testutil.TestData }
 type testResourceTagSuite struct{ *baseTestSuite }
 
 type baseTestSuite struct {
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	store   kv.Storage
 	domain  *domain.Domain
 	*parser.Parser
@@ -189,7 +189,7 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	useMockTikv := *mockTikv
 	if useMockTikv {
 		store, err := mockstore.NewMockStore(
-			mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.WithClusterInspector(func(c testutils.Cluster) {
 				mockstore.BootstrapWithSingleStore(c)
 				s.cluster = c
 			}),
@@ -5707,7 +5707,7 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 type testRecoverTable struct {
 	store   kv.Storage
 	dom     *domain.Domain
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	cli     *regionProperityClient
 }
 
@@ -5722,7 +5722,7 @@ func (s *testRecoverTable) SetUpSuite(c *C) {
 	var err error
 	s.store, err = mockstore.NewMockStore(
 		mockstore.WithClientHijacker(hijackClient),
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			s.cluster = c
 		}),
@@ -5733,8 +5733,8 @@ func (s *testRecoverTable) SetUpSuite(c *C) {
 }
 
 func (s *testRecoverTable) TearDownSuite(c *C) {
-	s.store.Close()
 	s.dom.Close()
+	s.store.Close()
 }
 
 func (s *testRecoverTable) mockGC(tk *testkit.TestKit) (string, string, string, func()) {
@@ -7362,7 +7362,7 @@ func (s *testCoprCache) SetUpSuite(c *C) {
 	}
 	var err error
 	s.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			s.cls = c
 		}),
@@ -8576,6 +8576,95 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 		}
 		c.Assert(checkCnt > 0, IsTrue, commentf)
 	}
+}
+
+func (s *testSuite) TestIssue24933(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop view if exists v;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(1), (2), (3);")
+
+	tk.MustExec("create definer='root'@'localhost' view v as select count(*) as c1 from t;")
+	rows := tk.MustQuery("select * from v;")
+	rows.Check(testkit.Rows("3"))
+
+	// Test subquery and outer field is wildcard.
+	tk.MustExec("drop view v;")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from (select count(*) from t) s;")
+	rows = tk.MustQuery("select * from v order by 1;")
+	rows.Check(testkit.Rows("3"))
+
+	tk.MustExec("drop view v;")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from (select avg(a) from t group by a) s;")
+	rows = tk.MustQuery("select * from v order by 1;")
+	rows.Check(testkit.Rows("1.0000", "2.0000", "3.0000"))
+
+	tk.MustExec("drop view v;")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from (select sum(a) from t group by a) s;")
+	rows = tk.MustQuery("select * from v order by 1;")
+	rows.Check(testkit.Rows("1", "2", "3"))
+
+	tk.MustExec("drop view v;")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from (select group_concat(a) from t group by a) s;")
+	rows = tk.MustQuery("select * from v order by 1;")
+	rows.Check(testkit.Rows("1", "2", "3"))
+
+	// Test alias names.
+	tk.MustExec("drop view v;")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from (select count(0) as c1 from t) s;")
+	rows = tk.MustQuery("select * from v order by 1;")
+	rows.Check(testkit.Rows("3"))
+
+	tk.MustExec("drop view v;")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from (select count(*) as c1 from t) s;")
+	rows = tk.MustQuery("select * from v order by 1;")
+	rows.Check(testkit.Rows("3"))
+
+	tk.MustExec("drop view v;")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from (select group_concat(a) as `concat(a)` from t group by a) s;")
+	rows = tk.MustQuery("select * from v order by 1;")
+	rows.Check(testkit.Rows("1", "2", "3"))
+
+	// Test firstrow.
+	tk.MustExec("drop view v;")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from (select a from t group by a) s;")
+	rows = tk.MustQuery("select * from v order by 1;")
+	rows.Check(testkit.Rows("1", "2", "3"))
+
+	// Test direct select.
+	err := tk.ExecToErr("SELECT `s`.`count(a)` FROM (SELECT COUNT(`a`) FROM `test`.`t`) AS `s`")
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 's.count(a)' in 'field list'")
+
+	tk.MustExec("drop view v;")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from (select count(a) from t) s;")
+	rows = tk.MustQuery("select * from v")
+	rows.Check(testkit.Rows("3"))
+
+	// Test window function.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(c1 int);")
+	tk.MustExec("insert into t values(111), (222), (333);")
+	tk.MustExec("drop view if exists v;")
+	tk.MustExec("create definer='root'@'localhost' view v as (select * from (select row_number() over (order by c1) from t) s);")
+	rows = tk.MustQuery("select * from v;")
+	rows.Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("drop view if exists v;")
+	tk.MustExec("create definer='root'@'localhost' view v as (select * from (select c1, row_number() over (order by c1) from t) s);")
+	rows = tk.MustQuery("select * from v;")
+	rows.Check(testkit.Rows("111 1", "222 2", "333 3"))
+
+	// Test simple expr.
+	tk.MustExec("drop view if exists v;")
+	tk.MustExec("create definer='root'@'localhost' view v as (select * from (select c1 or 0 from t) s)")
+	rows = tk.MustQuery("select * from v;")
+	rows.Check(testkit.Rows("1", "1", "1"))
+	rows = tk.MustQuery("select `c1 or 0` from v;")
+	rows.Check(testkit.Rows("1", "1", "1"))
+
+	tk.MustExec("drop view v;")
 }
 
 func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {

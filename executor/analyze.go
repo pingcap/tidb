@@ -626,13 +626,15 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 			Fms:   fmSketches[:cLen],
 		}
 		return &statistics.AnalyzeResults{
-			TableID:  colExec.tableID,
-			Ars:      []*statistics.AnalyzeResult{colResult, colGroupResult},
-			Job:      colExec.job,
-			StatsVer: colExec.StatsVersion,
-			Count:    count,
-			Snapshot: colExec.snapshot,
-			ExtStats: extStats,
+			TableID:       colExec.tableID,
+			Ars:           []*statistics.AnalyzeResult{colResult, colGroupResult},
+			Job:           colExec.job,
+			StatsVer:      colExec.StatsVersion,
+			Count:         count,
+			Snapshot:      colExec.snapshot,
+			ExtStats:      extStats,
+			BaseCount:     colExec.baseCount,
+			BaseModifyCnt: colExec.baseModifyCnt,
 		}
 	}
 	hists, cms, topNs, fms, extStats, err := colExec.buildStats(ranges, collExtStats)
@@ -715,6 +717,8 @@ type AnalyzeColumnsExec struct {
 	samplingMergeWg   *sync.WaitGroup
 
 	schemaForVirtualColEval *expression.Schema
+	baseCount               int64
+	baseModifyCnt           int64
 }
 
 func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
@@ -774,7 +778,7 @@ func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 		totFts = append(totFts, col.RetType)
 	}
 	chk := chunk.NewChunkWithCapacity(totFts, len(collector.Samples))
-	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().TimeZone)
+	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
 	for _, sample := range collector.Samples {
 		for i := range sample.Columns {
 			if schema.Columns[i].VirtualExpr != nil {

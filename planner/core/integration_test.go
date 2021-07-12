@@ -1322,6 +1322,10 @@ func (s *testIntegrationSuite) TestErrNoDB(c *C) {
 	tk.MustExec("create user test")
 	_, err := tk.Exec("grant select on test1111 to test@'%'")
 	c.Assert(errors.Cause(err), Equals, core.ErrNoDB)
+	_, err = tk.Exec("grant select on * to test@'%'")
+	c.Assert(errors.Cause(err), Equals, core.ErrNoDB)
+	_, err = tk.Exec("revoke select on * from test@'%'")
+	c.Assert(errors.Cause(err), Equals, core.ErrNoDB)
 	tk.MustExec("use test")
 	tk.MustExec("create table test1111 (id int)")
 	tk.MustExec("grant select on test1111 to test@'%'")
@@ -1461,6 +1465,14 @@ func (s *testIntegrationSuite) TestInvisibleIndex(c *C) {
 	tk.MustQuery("select /*+ IGNORE_INDEX(t, i_a), USE_INDEX(t, i_b) */ a from t order by a")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, errStr)
+	tk.MustQuery("select /*+ FORCE_INDEX(t, i_a), USE_INDEX(t, i_b) */ a from t order by a")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, errStr)
+	// For issue 15519
+	inapplicableErrStr := "[planner:1815]force_index(test.aaa) is inapplicable, check whether the table(test.aaa) exists"
+	tk.MustQuery("select /*+ FORCE_INDEX(aaa) */ * from t")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, inapplicableErrStr)
 
 	tk.MustExec("admin check table t")
 	tk.MustExec("admin check index t i_a")
