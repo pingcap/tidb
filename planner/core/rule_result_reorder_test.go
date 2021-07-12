@@ -171,3 +171,18 @@ func (s *testRuleReorderResults) TestOrderedResultModeOnOtherOperators(c *C) {
 	tk.MustExec("create table t2 (a int primary key, b int, c int, d int, unique key(b))")
 	s.runTestData(c, tk, "TestOrderedResultModeOnOtherOperators")
 }
+
+func (s *testRuleReorderResults) TestOrderedResultModeOnPartitionTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_ordered_result_mode=1")
+	tk.MustExec("drop table if exists thash")
+	tk.MustExec("drop table if exists trange")
+	tk.MustExec("create table thash (a int primary key, b int, c int, d int) partition by hash(a) partitions 4")
+	tk.MustExec(`create table trange (a int primary key, b int, c int, d int) partition by range(a) (
+					partition p0 values less than (100),
+					partition p1 values less than (200),
+					partition p2 values less than (300),
+					partition p3 values less than (400))`)
+	s.runTestData(c, tk, "TestOrderedResultModeOnPartitionTable")
+}
