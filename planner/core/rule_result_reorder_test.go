@@ -14,8 +14,6 @@
 package core_test
 
 import (
-	"math"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -24,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"math"
 )
 
 var _ = Suite(&testRuleReorderResults{})
@@ -79,36 +78,12 @@ func (s *testRuleReorderResultsSerial) TestSQLBinding(c *C) {
 
 	tk.MustExec("create session binding for select * from t where a>0 limit 1 using select * from t use index(b) where a>0 limit 1")
 	tk.MustQuery("explain select * from t where a > 0 limit 1").Check(testkit.Rows(
-<<<<<<< HEAD:planner/core/rule_stabilize_results_test.go
 		"TopN_9 1.00 root  test.t.a:asc, offset:0, count:1",
 		"└─IndexLookUp_18 1.00 root  ",
 		"  ├─TopN_17(Build) 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
 		"  │ └─Selection_16 3333.33 cop[tikv]  gt(test.t.a, 0)",
 		"  │   └─IndexFullScan_14 10000.00 cop[tikv] table:t, index:b(b) keep order:false, stats:pseudo",
 		"  └─TableRowIDScan_15(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"))
-=======
-		"TopN_9 1.00 root  test.t.a, offset:0, count:1",
-		"└─IndexLookUp_19 1.00 root  ",
-		"  ├─TopN_18(Build) 1.00 cop[tikv]  test.t.a, offset:0, count:1",
-		"  │ └─Selection_17 3333.33 cop[tikv]  gt(test.t.a, 0)",
-		"  │   └─IndexFullScan_15 10000.00 cop[tikv] table:t, index:b(b) keep order:false, stats:pseudo",
-		"  └─TableRowIDScan_16(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"))
-}
-
-func (s *testRuleReorderResultsSerial) TestClusteredIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_ordered_result_mode=1")
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("CREATE TABLE t (a int,b int,c int, PRIMARY KEY (a,b))")
-	tk.MustQuery("explain select * from t limit 10").Check(testkit.Rows(
-		"TopN_7 10.00 root  test.t.a, test.t.b, test.t.c, offset:0, count:10",
-		"└─TableReader_16 10.00 root  data:TopN_15",
-		"  └─TopN_15 10.00 cop[tikv]  test.t.a, test.t.b, test.t.c, offset:0, count:10",
-		"    └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
->>>>>>> 0db5df550... planner: rename stable-result-mode to ordered-result-mode (#26093):planner/core/rule_result_reorder_test.go
 }
 
 type testRuleReorderResults struct {
@@ -200,12 +175,7 @@ func (s *testRuleReorderResults) TestOrderedResultModeOnOtherOperators(c *C) {
 func (s *testRuleReorderResults) TestOrderedResultModeOnPartitionTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-<<<<<<< HEAD:planner/core/rule_stabilize_results_test.go
-	tk.MustExec("set tidb_enable_stable_result_mode=1")
-=======
-	tk.MustExec(fmt.Sprintf(`set tidb_partition_prune_mode='%v'`, variable.DefTiDBPartitionPruneMode))
 	tk.MustExec("set tidb_enable_ordered_result_mode=1")
->>>>>>> 0db5df550... planner: rename stable-result-mode to ordered-result-mode (#26093):planner/core/rule_result_reorder_test.go
 	tk.MustExec("drop table if exists thash")
 	tk.MustExec("drop table if exists trange")
 	tk.MustExec("create table thash (a int primary key, b int, c int, d int) partition by hash(a) partitions 4")
@@ -214,20 +184,6 @@ func (s *testRuleReorderResults) TestOrderedResultModeOnPartitionTable(c *C) {
 					partition p1 values less than (200),
 					partition p2 values less than (300),
 					partition p3 values less than (400))`)
-<<<<<<< HEAD:planner/core/rule_stabilize_results_test.go
-	s.runTestData(c, tk, "TestStableResultModeOnPartitionTable")
-}
-=======
 	tk.MustQuery("select @@tidb_partition_prune_mode").Check(testkit.Rows("static"))
 	s.runTestData(c, tk, "TestOrderedResultModeOnPartitionTable")
 }
-
-func (s *testRuleReorderResults) TestHideStableResultSwitch(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	rs := tk.MustQuery("show variables").Rows()
-	for _, r := range rs {
-		c.Assert(strings.ToLower(r[0].(string)), Not(Equals), "tidb_enable_ordered_result_mode")
-	}
-	c.Assert(len(tk.MustQuery("show variables where variable_name like '%tidb_enable_ordered_result_mode%'").Rows()), Equals, 0)
-}
->>>>>>> 0db5df550... planner: rename stable-result-mode to ordered-result-mode (#26093):planner/core/rule_result_reorder_test.go

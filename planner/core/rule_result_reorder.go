@@ -23,12 +23,8 @@ import (
 /*
 	resultReorder reorder query results.
 	NOTE: it's not a common rule for all queries, it's specially implemented for a few customers.
-<<<<<<< HEAD:planner/core/rule_stabilize_results.go
-	Results of some queries are not stable, for example:
-=======
 
 	Results of some queries are not ordered, for example:
->>>>>>> 0db5df550... planner: rename stable-result-mode to ordered-result-mode (#26093):planner/core/rule_result_reorder.go
 		create table t (a int); insert into t values (1), (2); select a from t;
 	In the case above, the result can be `1 2` or `2 1`, which is not ordered.
 	This rule reorders results by modifying or injecting a Sort operator:
