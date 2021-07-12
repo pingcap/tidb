@@ -185,6 +185,5 @@ func (s *testRuleReorderResults) TestOrderedResultModeOnPartitionTable(c *C) {
 					partition p1 values less than (200),
 					partition p2 values less than (300),
 					partition p3 values less than (400))`)
-	tk.MustQuery("select @@tidb_partition_prune_mode").Check(testkit.Rows("static"))
 	s.runTestData(c, tk, "TestOrderedResultModeOnPartitionTable")
 }
