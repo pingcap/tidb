@@ -1669,7 +1669,6 @@ func checkChildFitBC(p Plan) bool {
 }
 
 // If we can use mpp broadcast join, that's our first choice.
-
 func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 	if p.ctx.GetSessionVars().BroadcastJoinThresholdSize == 0 || p.ctx.GetSessionVars().BroadcastJoinThresholdCount == 0 {
 		return p.ctx.GetSessionVars().AllowBCJ
@@ -1792,12 +1791,13 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	}
 
 	if len(p.EqualConditions) == 0 {
-		if p.ctx.GetSessionVars().AllowCartesianBCJ == 0 || !useBCJ {
-			p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because join type `" + p.JoinType.String() + "` is not supported now.")
+		if !useBCJ || p.ctx.GetSessionVars().AllowCartesianBCJ == 0 {
+			p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because `Cartesian Product` is only supported with broad cast join, check value and documents of variables `tidb_opt_broadcast_join`, `tidb_opt_broadcast_cartesian_join`, `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`.")
 			return nil
 		}
 	}
 	if (len(p.LeftConditions) != 0 && p.JoinType != LeftOuterJoin) || (len(p.RightConditions) != 0 && p.JoinType != RightOuterJoin) {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported now, see https://github.com/pingcap/tidb/issues/26090 for more information.")
 		return nil
 	}
 
