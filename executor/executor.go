@@ -1815,7 +1815,13 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	sc.PrevAffectedRows = 0
 	if globalConfig.EnableCollectExecutionInfo {
-		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(saveRuntimeStatsColl)
+		// In ExplainFor case, RuntimeStatsColl should not be reset for reuse,
+		// because ExplainFor need to display the last statement information.
+		if _, ok := s.(*ast.ExplainForStmt); ok {
+			sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+		} else {
+			sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(saveRuntimeStatsColl)
+		}
 	}
 	if saveInUpdateStmt || saveInDeleteStmt || saveInInsertStmt {
 		sc.PrevAffectedRows = int64(saveAffectedRows)
