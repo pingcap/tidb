@@ -77,6 +77,19 @@ func (p *UserPrivileges) RequestDynamicVerificationWithUser(privName string, gra
 	return mysqlPriv.RequestDynamicVerification(roles, user.Username, user.Hostname, privName, grantable)
 }
 
+func (p *UserPrivileges) HasExplicitlyGrantedDynamicPriviledge(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool {
+	if SkipWithGrant {
+		return true
+	}
+	if p.user == "" && p.host == "" {
+		return true
+	}
+
+	mysqlPriv := p.Handle.Get()
+	return mysqlPriv.HasExplicitlyGrantedDynamicPriviledge(activeRoles, p.user, p.host, privName, grantable)
+
+}
+
 // RequestDynamicVerification implements the Manager interface.
 func (p *UserPrivileges) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool {
 	if SkipWithGrant {

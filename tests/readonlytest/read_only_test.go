@@ -37,24 +37,7 @@ var _ = Suite(&TestReadOnlySuit{})
 type TestReadOnlySuit struct {
 	db  *sql.DB
 	udb *sql.DB
-}
-
-func (s *TestReadOnlySuit) SetUpSuite(c *C) {
-	var err error
-	s.db, err = sql.Open("mysql", fmt.Sprintf("root:%s@(%s:%d)/test", *tidbRootPassword, "127.0.0.1", *tidbStartPort+1))
-	c.Assert(err, IsNil)
-
-	_, err = s.db.Exec("set global tidb_restricted_read_only=0")
-	c.Assert(err, IsNil)
-
-	_, err = s.db.Exec("drop user if exists 'u1'@'%'")
-	c.Assert(err, IsNil)
-	_, err = s.db.Exec("create user 'u1'@'%' identified by 'password'")
-	c.Assert(err, IsNil)
-	_, err = s.db.Exec("grant all privileges on test.* to 'u1'@'%'")
-	c.Assert(err, IsNil)
-	s.udb, err = sql.Open("mysql", fmt.Sprintf("u1:password@(%s:%d)/test", "127.0.0.1", *tidbStartPort+2))
-	c.Assert(err, IsNil)
+	rdb *sql.DB
 }
 
 func checkVariable(c *C, db *sql.DB, on bool) {
@@ -71,6 +54,37 @@ func checkVariable(c *C, db *sql.DB, on bool) {
 	} else {
 		c.Assert(status, Equals, "OFF")
 	}
+}
+
+func setReadOnly(c *C, db *sql.DB, status int) {
+	_, err := db.Exec(fmt.Sprintf("set global tidb_restricted_read_only=%d", status))
+	c.Assert(err, IsNil)
+}
+
+func (s *TestReadOnlySuit) SetUpSuite(c *C) {
+	var err error
+	s.db, err = sql.Open("mysql", fmt.Sprintf("root:%s@(%s:%d)/test", *tidbRootPassword, "127.0.0.1", *tidbStartPort+1))
+	c.Assert(err, IsNil)
+
+	setReadOnly(c, s.db, 0)
+
+	_, err = s.db.Exec("drop user if exists 'u1'@'%'")
+	c.Assert(err, IsNil)
+	_, err = s.db.Exec("create user 'u1'@'%' identified by 'password'")
+	c.Assert(err, IsNil)
+	_, err = s.db.Exec("grant all privileges on test.* to 'u1'@'%'")
+	c.Assert(err, IsNil)
+	s.udb, err = sql.Open("mysql", fmt.Sprintf("u1:password@(%s:%d)/test", "127.0.0.1", *tidbStartPort+2))
+	c.Assert(err, IsNil)
+	_, err = s.db.Exec("drop user if exists 'r1'@'%'")
+	c.Assert(err, IsNil)
+	_, err = s.db.Exec("create user 'r1'@'%' identified by 'password'")
+	c.Assert(err, IsNil)
+	_, err = s.db.Exec("grant all privileges on test.* to 'r1'@'%'")
+	c.Assert(err, IsNil)
+	_, err = s.db.Exec("grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'r1'@'%'")
+	c.Assert(err, IsNil)
+	s.rdb, err = sql.Open("mysql", fmt.Sprintf("r1:password@(%s:%d)/test", "127.0.0.1", *tidbStartPort+2))
 }
 
 func (s *TestReadOnlySuit) TestRestriction(c *C) {
@@ -123,4 +137,34 @@ func (s *TestReadOnlySuit) TestRestrictionWithConnectionPool(c *C) {
 	case success := <-done:
 		c.Assert(success, IsTrue)
 	}
+}
+
+func (s *TestReadOnlySuit) TestReplicationWriter(c *C) {
+	_, err := s.db.Exec("set global tidb_restricted_read_only=0")
+	c.Assert(err, IsNil)
+	_, err = s.db.Exec("drop table if exists t")
+	c.Assert(err, IsNil)
+	_, err = s.db.Exec("create table t (a int)")
+	c.Assert(err, IsNil)
+	time.Sleep(1)
+	checkVariable(c, s.udb, false)
+
+	conn, err := s.rdb.Conn(context.Background())
+	c.Assert(err, IsNil)
+	go func(conn *sql.Conn) {
+		ticker := time.NewTicker(50 * time.Millisecond)
+		for {
+			t := <-ticker.C
+			_, err := conn.ExecContext(context.Background(), fmt.Sprintf("insert into t values (%d)", t.Nanosecond()))
+			c.Assert(err, IsNil)
+		}
+	}(conn)
+	time.Sleep(1 * time.Second)
+	timer := time.NewTimer(3 * time.Second)
+	_, err = s.db.Exec("set global tidb_restricted_read_only=1")
+	c.Assert(err, IsNil)
+	// SUPER user can't write
+	_, err = s.db.Exec("insert into t values (1)")
+	c.Assert(err.Error(), Equals, ReadOnlyErrMsg)
+	<-timer.C
 }

@@ -42,7 +42,7 @@ If read-only is turned on, we will reject SQLs that might change data during pla
 
 - add `tidb_restricted_read_only` to hidden variables, i.e., only users with `RESTRICTED_VARIABLES_ADMIN` privilege can modify it.
   - alternative: add `RESTRICTED_READ_ONLY_ADMIN` privilege, only user with this privilege can change the setting, and user with this privilege can write to the cluster without being affected by the read-only setting. However it might be redundant for introducing a new privilege level.
-- add `RESTRICTED_REPLICA_WRITER_ADMIN` to allow replication writer to surpass read-only checks.
+- add `RESTRICTED_REPLICA_WRITER_ADMIN` to allow replication writer to surpass read-only checks. Note this privilege check is required even if SEM is not enabled, i.e., SUPER user still needs to be explicitly granted this privilege to be able to write.
 
 ## Difference with MySQL read-only
 
