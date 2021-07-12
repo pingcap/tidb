@@ -2685,7 +2685,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ret
 	}
-	// When isPartition is set, it means the union rewriting is done, so a partition reader is prefered.
+	// When isPartition is set, it means the union rewriting is done, so a partition reader is preferred.
 	if ok, _ := ts.IsPartition(); ok {
 		return ret
 	}
@@ -2927,7 +2927,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ret
 	}
-	// When isPartition is set, it means the union rewriting is done, so a partition reader is prefered.
+	// When isPartition is set, it means the union rewriting is done, so a partition reader is preferred.
 	if ok, _ := is.IsPartition(); ok {
 		return ret
 	}
