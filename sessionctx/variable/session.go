@@ -833,6 +833,9 @@ type SessionVars struct {
 	// AllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
 	// Now we only support TiFlash.
 	AllowFallbackToTiKV map[kv.StoreType]struct{}
+
+	// EnableStableResultMode if stabilize query results.
+	EnableStableResultMode bool
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
@@ -1791,6 +1794,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 				s.AllowFallbackToTiKV[kv.TiFlash] = struct{}{}
 			}
 		}
+	case TiDBEnableStableResultMode:
+		s.EnableStableResultMode = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

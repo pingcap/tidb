@@ -537,6 +537,9 @@ const (
 	// TiDBAllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
 	// Now we only support TiFlash.
 	TiDBAllowFallbackToTiKV = "tidb_allow_fallback_to_tikv"
+
+	// TiDBEnableStableResultMode indicates if stabilize query results.
+	TiDBEnableStableResultMode = "tidb_enable_stable_result_mode"
 )
 
 // TiDB vars that have only global scope
@@ -679,6 +682,7 @@ const (
 	DefTiDBEnableIndexMergeJoin        = false
 	DefTiDBTrackAggregateMemoryUsage   = true
 	DefTiDBEnableExchangePartition     = false
+	DefTiDBEnableStableResultMode      = false
 )
 
 // Process global variables.
