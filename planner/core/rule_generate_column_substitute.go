@@ -56,10 +56,12 @@ func collectGenerateColumn(lp LogicalPlan, exprToColumn ExprColumnMap) {
 	if !ok {
 		return
 	}
-	tblInfo := ds.tableInfo
-	for _, idx := range tblInfo.Indices {
-		for _, idxPart := range idx.Columns {
-			colInfo := tblInfo.Columns[idxPart.Offset]
+	for _, p := range ds.possibleAccessPaths {
+		if p.IsTablePath() {
+			continue
+		}
+		for _, idxPart := range p.Index.Columns {
+			colInfo := ds.tableInfo.Columns[idxPart.Offset]
 			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
 				s := ds.schema.Columns
 				col := expression.ColInfo2Col(s, colInfo)
@@ -157,29 +159,27 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToC
 				tryToSubstituteExpr(&x.ByItems[i].Expr, lp.SCtx(), candidateExpr, tp, x.Schema(), column)
 			}
 		}
-		// TODO: Uncomment these code after we support virtual generate column push down.
-		// case *LogicalAggregation:
-		// 	for _, aggFunc := range x.AggFuncs {
-		// 		for i := 0; i < len(aggFunc.Args); i++ {
-		// 			tp = aggFunc.Args[i].GetType().EvalType()
-		// 			for candidateExpr, column := range exprToColumn {
-		// 				if aggFunc.Args[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
-		// 					x.Schema().ColumnIndex(column) != -1 {
-		// 					aggFunc.Args[i] = column
-		// 				}
-		// 			}
-		// 		}
-		// 	}
-		// 	for i := 0; i < len(x.GroupByItems); i++ {
-		// 		tp = x.GroupByItems[i].GetType().EvalType()
-		// 		for candidateExpr, column := range exprToColumn {
-		// 			if x.GroupByItems[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
-		// 				x.Schema().ColumnIndex(column) != -1 {
-		// 				x.GroupByItems[i] = column
-		// 				x.groupByCols = append(x.groupByCols, column)
-		// 			}
-		// 		}
-		// 	}
+	case *LogicalAggregation:
+		for _, aggFunc := range x.AggFuncs {
+			for i := 0; i < len(aggFunc.Args); i++ {
+				tp = aggFunc.Args[i].GetType().EvalType()
+				for candidateExpr, column := range exprToColumn {
+					if aggFunc.Args[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
+						x.Schema().ColumnIndex(column) != -1 {
+						aggFunc.Args[i] = column
+					}
+				}
+			}
+		}
+		for i := 0; i < len(x.GroupByItems); i++ {
+			tp = x.GroupByItems[i].GetType().EvalType()
+			for candidateExpr, column := range exprToColumn {
+				if x.GroupByItems[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
+					x.Schema().ColumnIndex(column) != -1 {
+					x.GroupByItems[i] = column
+				}
+			}
+		}
 	}
 	for _, child := range lp.Children() {
 		gc.substitute(ctx, child, exprToColumn)
