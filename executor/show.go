@@ -575,7 +575,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			"",               // Comment
 			"",               // Index_comment
 			"YES",            // Index_visible
-			"NULL",           // Expression
+			nil,              // Expression
 			"YES",            // Clustered
 		})
 	}
@@ -611,7 +611,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			}
 
 			colName := col.Name.O
-			expression := "NULL"
+			var expression interface{}
 			if tblCol.Hidden {
 				colName = "NULL"
 				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
