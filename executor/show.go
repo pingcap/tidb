@@ -263,11 +263,11 @@ func (e *ShowExec) fetchShowBind() error {
 	}
 	var bindings []*bindingData
 	for _, bindRecord := range bindRecords {
-		for _, binding := range bindRecord.Bindings {
+		for i := 0; i < len(bindRecord.Bindings); i++ {
 			bindings = append(bindings, &bindingData{
 				OriginalSQL: bindRecord.OriginalSQL,
 				Db:          bindRecord.Db,
-				Binding:     &binding})
+				Binding:     &bindRecord.Bindings[i]})
 		}
 	}
 	sort.Slice(bindings, func(i, j int) bool {
