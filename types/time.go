@@ -16,6 +16,7 @@ package types
 import (
 	"bytes"
 	"fmt"
+	"github.com/cznic/mathutil"
 	"math"
 	"regexp"
 	"strconv"
@@ -775,7 +776,16 @@ func ParseDateFormat(format string) []string {
 		}
 	}
 
-	seps = append(seps, format[start:])
+	var end = 0
+	for end = start; end < len(format) && !isValidSeparator(format[end], len(seps)); end++ {
+
+	}
+
+	end = mathutil.Min(end, len(format))
+	if end != start {
+		seps = append(seps, format[start:end])
+	}
+
 	return seps
 }
 
