@@ -41,8 +41,8 @@ import (
 // 2. Other operations of a Tracker tree is not thread-safe.
 //
 // We have two thresholds for the memory limit: soft limit and hard limit.
-// If the soft limit(0.8 * hard limit) is exceeded, we will triage the action that alleviate the speed of memory growth.
-// If the hard limit(memory-quota-query) is exceeded, we will triage the action that immediately reduce memory usage.
+// If the soft limit(0.8 * hard limit) is exceeded, we will trigger the action that alleviate the speed of memory growth.
+// If the hard limit(memory-quota-query) is exceeded, we will trigger the action that immediately reduce memory usage.
 type Tracker struct {
 	mu struct {
 		sync.Mutex
