@@ -279,7 +279,7 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 
 // Consume is used to consume a memory usage. "bytes" can be a negative value,
 // which means this is a memory release operation. When memory usage of a tracker
-// exceeds its bytesHardLimit, the tracker calls its action, so does each of its ancestors.
+// exceeds its bytesSoftLimit/bytesHardLimit, the tracker calls its action, so does each of its ancestors.
 func (t *Tracker) Consume(bytes int64) {
 	if bytes == 0 {
 		return
