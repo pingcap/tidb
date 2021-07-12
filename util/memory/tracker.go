@@ -44,6 +44,7 @@ import (
 // If the soft threshold is exceeded, we will trigger the action that alleviates the
 // speed of memory growth. The soft threshold is hard-coded as `0.8*hard threshold`.
 // The actions that could be triggered are: None.
+//
 // If the hard threshold is exceeded, we will trigger the action that immediately
 // reduces memory usage. The hard threshold is set by the config item `mem-quota-query`
 // or the system variable `tidb_mem_query_quota`.
