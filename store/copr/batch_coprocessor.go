@@ -159,20 +159,18 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 	}
 
 	for _, task := range originalTasks {
-		taskStoreID := task.regionInfos[0].AllStores[0]
 		for index, ri := range task.regionInfos {
 			// for each region, figure out the valid store num
 			validStoreNum := 0
 			if index == 0 && !isMPP {
 				continue
 			}
-			if len(ri.AllStores) <= 1 {
-				validStoreNum = 1
-			} else {
-				for _, storeID := range ri.AllStores {
-					if _, ok := storeTaskMap[storeID]; ok {
-						validStoreNum++
-					}
+			var validStoreID uint64
+			for _, storeID := range ri.AllStores {
+				if _, ok := storeTaskMap[storeID]; ok {
+					validStoreNum++
+					// original store id might be invalid, so we have to set it again.
+					validStoreID = storeID
 				}
 			}
 			if validStoreNum == 0 {
@@ -180,7 +178,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 				return originalTasks
 			} else if validStoreNum == 1 {
 				// if only one store is valid, just put it to storeTaskMap
-				storeTaskMap[taskStoreID].regionInfos = append(storeTaskMap[taskStoreID].regionInfos, ri)
+				storeTaskMap[validStoreID].regionInfos = append(storeTaskMap[validStoreID].regionInfos, ri)
 			} else {
 				// if more than one store is valid, put the region
 				// to store candidate map
