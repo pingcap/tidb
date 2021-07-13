@@ -1488,12 +1488,16 @@ func (s *testPrivilegeSuite) TestClusterConfigInfoschema(c *C) {
 	err := tk.QueryToErr("SELECT * FROM information_schema.cluster_config")
 	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CONFIG privilege(s) for this operation")
 
+	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_info")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CONFIG privilege(s) for this operation")
+
 	// With correct permissions
 	tk.Se.Auth(&auth.UserIdentity{
 		Username: "ccconfig",
 		Hostname: "localhost",
 	}, nil, nil)
 	tk.MustQuery("SELECT * FROM information_schema.cluster_config")
+	tk.MustQuery("SELECT * FROM information_schema.cluster_info")
 }
 
 func (s *testPrivilegeSuite) TestSecurityEnhancedModeStatusVars(c *C) {
