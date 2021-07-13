@@ -963,7 +963,9 @@ func (p *MySQLPrivilege) matchColumns(user, host, db, table, column string) *col
 	return nil
 }
 
-func (p *MySQLPrivilege) HasExplicitlyGrantedDynamicPriviledge(activeRoles []*auth.RoleIdentity, user, host, privName string, withGrant bool) bool {
+// HasExplicitlyGrantedDynamicPrivilege checks if a user has a DYNAMIC privilege
+// without accepting SUPER privilege as a fallback.
+func (p *MySQLPrivilege) HasExplicitlyGrantedDynamicPrivilege(activeRoles []*auth.RoleIdentity, user, host, privName string, withGrant bool) bool {
 	privName = strings.ToUpper(privName)
 	roleList := p.FindAllRole(activeRoles)
 	roleList = append(roleList, &auth.RoleIdentity{Username: user, Hostname: host})
