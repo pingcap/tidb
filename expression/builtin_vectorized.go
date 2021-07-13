@@ -38,7 +38,7 @@ type localSliceBuffer struct {
 }
 
 func newLocalSliceBuffer(initCap int) *localSliceBuffer {
-	buf := &localSliceBuffer{
+	return &localSliceBuffer{
 		pool: sync.Pool{
 			New: func() interface{} {
 				// Use default arguments
@@ -46,11 +46,6 @@ func newLocalSliceBuffer(initCap int) *localSliceBuffer {
 			},
 		},
 	}
-	cols := make([]*chunk.Column, initCap)
-	for _, col := range cols {
-		buf.put(col)
-	}
-	return buf
 }
 
 var globalColumnAllocator = newLocalSliceBuffer(1024)
