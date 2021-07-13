@@ -47,8 +47,8 @@ func (c *batchCopTask) GetAddress() string {
 
 func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 	resultTasks := make([]kv.MPPTaskMeta, 0)
-	for _, addr := range c.store.GetRegionCache().GetTiFlashStoreAddrs() {
-		task := &batchCopTask{storeAddr: addr, cmdType: tikvrpc.CmdMPPTask}
+	for _, s := range c.store.GetRegionCache().GetTiFlashStores() {
+		task := &batchCopTask{storeAddr: s.GetAddr(), cmdType: tikvrpc.CmdMPPTask}
 		resultTasks = append(resultTasks, task)
 	}
 	return resultTasks
@@ -62,7 +62,7 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 		return c.selectAllTiFlashStore(), nil
 	}
 	ranges := NewKeyRanges(req.KeyRanges)
-	tasks, err := buildBatchCopTasks(bo, c.store.GetRegionCache(), ranges, kv.TiFlash)
+	tasks, err := buildBatchCopTasks(bo, c.store, ranges, kv.TiFlash, true)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
