@@ -561,7 +561,6 @@ func NewRuntimeStatsColl(reuse *RuntimeStatsColl) *RuntimeStatsColl {
 		// Reuse map is cheaper than create a new map object.
 		// Go compiler optimize this cleanup code pattern to a clearmap() function.
 		for k := range reuse.rootStats {
-
 			delete(reuse.rootStats, k)
 		}
 		for k := range reuse.copStats {
