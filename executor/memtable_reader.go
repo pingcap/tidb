@@ -294,7 +294,8 @@ type clusterServerInfoRetriever struct {
 // retrieve implements the memTableRetriever interface
 func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	switch e.serverInfoType {
-	case diagnosticspb.ServerInfoType_LoadInfo, diagnosticspb.ServerInfoType_SystemInfo:
+	case diagnosticspb.ServerInfoType_LoadInfo,
+		diagnosticspb.ServerInfoType_SystemInfo:
 		if !hasPriv(sctx, mysql.ProcessPriv) {
 			return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("Process")
 		}
