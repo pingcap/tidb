@@ -53,13 +53,13 @@ func (s *testSuite) TestSetLabel(c *C) {
 	tracker := NewTracker(1, -1)
 	c.Assert(tracker.label, Equals, 1)
 	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
-	c.Assert(tracker.bytesLimit, Equals, int64(-1))
+	c.Assert(tracker.bytesHardLimit, Equals, int64(-1))
 	c.Assert(tracker.getParent(), IsNil)
 	c.Assert(len(tracker.mu.children), Equals, 0)
 	tracker.SetLabel(2)
 	c.Assert(tracker.label, Equals, 2)
 	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
-	c.Assert(tracker.bytesLimit, Equals, int64(-1))
+	c.Assert(tracker.bytesHardLimit, Equals, int64(-1))
 	c.Assert(tracker.getParent(), IsNil)
 	c.Assert(len(tracker.mu.children), Equals, 0)
 }
@@ -117,6 +117,26 @@ func (s *testSuite) TestOOMAction(c *C) {
 	tracker.Consume(10000)
 	c.Assert(action1.called, IsTrue)
 	c.Assert(action2.called, IsTrue)
+
+	// test softLimit
+	tracker = NewTracker(1, 100)
+	action1 = &mockAction{}
+	action2 = &mockAction{}
+	action3 := &mockAction{}
+	tracker.FallbackOldAndSetNewActionForSoftLimit(action1)
+	tracker.FallbackOldAndSetNewActionForSoftLimit(action2)
+	tracker.SetActionOnExceed(action3)
+	c.Assert(action1.called, IsFalse)
+	c.Assert(action2.called, IsFalse)
+	c.Assert(action3.called, IsFalse)
+	tracker.Consume(80)
+	c.Assert(action1.called, IsTrue)
+	c.Assert(action2.called, IsFalse)
+	c.Assert(action3.called, IsFalse)
+	tracker.Consume(20)
+	c.Assert(action1.called, IsTrue)
+	c.Assert(action2.called, IsTrue) // SoftLimit fallback
+	c.Assert(action3.called, IsTrue) // HardLimit
 }
 
 type mockAction struct {
@@ -438,7 +458,7 @@ func (s *testSuite) TestOOMActionPriority(c *C) {
 	tracker.Consume(10000)
 
 	tracker = NewTracker(1, 1)
-	tracker.actionMu.actionOnExceed = nil
+	tracker.actionMuForHardLimit.actionOnExceed = nil
 	n := 100
 	actions := make([]*mockAction, n)
 	for i := 0; i < n; i++ {
