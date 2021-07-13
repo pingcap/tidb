@@ -24,6 +24,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -2848,6 +2850,82 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	// Considering snapshot, local temporary table is always visible.
 	tk.MustExec("set @@tidb_snapshot = '2016-01-01 15:04:05.999999'")
 	tk.MustExec("select * from overlap")
+}
+
+func (s *testIntegrationSuite3) TestAvoidCreateViewOnLocalTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk.MustExec("drop table if exists tt0")
+	tk.MustExec("drop table if exists tt1")
+	tk.MustExec("drop table if exists tt2")
+
+	tk.MustExec("set @@tidb_enable_noop_functions=1")
+	tk.MustExec("create table tt0 (a int, b int)")
+	tk.MustExec("create view v0 as select * from tt0")
+	tk.MustExec("create temporary table tt1 (a int, b int)")
+	tk.MustExec("create temporary table tt2 (c int, d int)")
+
+	checkCreateView := func() {
+		_, err := tk.Exec("create view v1 as select * from tt1")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+		_, err = tk.Exec("select * from v1")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v1' doesn't exist")
+
+		_, err = tk.Exec("create view v1 as select * from (select * from tt1) as tt")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+		_, err = tk.Exec("select * from v1")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v1' doesn't exist")
+
+		_, err = tk.Exec("create view v2 as select * from tt0 union select * from tt1")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+		_, err = tk.Exec("select * from v2")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v2' doesn't exist")
+
+		_, err = tk.Exec("create view v3 as select * from tt0, tt1 where tt0.a = tt1.a")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+		_, err = tk.Exec("select * from v3")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v3' doesn't exist")
+
+		_, err = tk.Exec("create view v4 as select a, (select count(1) from tt1 where tt1.a = tt0.a) as tt1a from tt0")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+		_, err = tk.Exec("select * from v4")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v4' doesn't exist")
+
+		_, err = tk.Exec("create view v5 as select a, (select count(1) from tt1 where tt1.a = 1) as tt1a from tt0")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+		_, err = tk.Exec("select * from v5")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v5' doesn't exist")
+
+		_, err = tk.Exec("create view v6 as select * from tt0 where tt0.a=(select max(tt1.b) from tt1)")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+		_, err = tk.Exec("select * from v6")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v6' doesn't exist")
+
+		_, err = tk.Exec("create view v7 as select * from tt0 where tt0.b=(select max(tt1.b) from tt1 where tt0.a=tt1.a)")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+		_, err = tk.Exec("select * from v7")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v7' doesn't exist")
+
+		_, err = tk.Exec("create or replace view v0 as select * from tt1")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+	}
+
+	checkCreateView()
+	tk.MustExec("create temporary table tt0 (a int, b int)")
+	tk.MustExec("create table tt1 (a int, b int)")
+	tk.MustExec("create table tt2 (c int, d int)")
+	tk.MustExec("create view vv as select * from v0")
+	checkCreateView()
 }
 
 func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
