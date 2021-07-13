@@ -452,15 +452,21 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 }
 
 func (s *session) TxnInfo() *txninfo.TxnInfo {
-	txnInfo := s.txn.Info()
-	if txnInfo == nil {
+	s.txn.mu.RLock()
+	// Copy on read to get a snapshot, this API shouldn't be frequently called.
+	txnInfo := s.txn.mu.TxnInfo
+	s.txn.mu.RUnlock()
+
+	if txnInfo.StartTS == 0 {
 		return nil
 	}
+
 	processInfo := s.ShowProcess()
 	txnInfo.ConnectionID = processInfo.ID
 	txnInfo.Username = processInfo.User
 	txnInfo.CurrentDB = processInfo.DB
-	return txnInfo
+
+	return &txnInfo
 }
 
 func (s *session) doCommit(ctx context.Context) error {
@@ -570,16 +576,6 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 			continue
 		}
 
-		if sessionData == nil {
-			// Create this txn just for getting a MemBuffer. It's a little tricky
-			bufferTxn, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
-			if err != nil {
-				return err
-			}
-
-			sessionData = bufferTxn.GetMemBuffer()
-		}
-
 		if stage == kv.InvalidStagingHandle {
 			stage = sessionData.Staging()
 		}
@@ -624,7 +620,6 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 
 	if stage != kv.InvalidStagingHandle {
 		sessionData.Release(stage)
-		s.sessionVars.TemporaryTableData = sessionData
 		stage = kv.InvalidStagingHandle
 	}
 
