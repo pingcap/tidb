@@ -46,6 +46,7 @@ func NewTestKit(t *testing.T, store kv.Storage) *TestKit {
 		require: require.New(t),
 		assert:  assert.New(t),
 		store:   store,
+		session: newSession(t, store),
 	}
 }
 
@@ -62,13 +63,6 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 
 // Exec executes a sql statement using the prepared stmt API
 func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, error) {
-	var err error
-	if tk.session == nil {
-		tk.session, err = session.CreateSession4Test(tk.store)
-		tk.require.Nil(err)
-		tk.GetConnectionID()
-	}
-
 	ctx := context.Background()
 	if len(args) == 0 {
 		sc := tk.session.GetSessionVars().StmtCtx
@@ -115,10 +109,9 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 	return rs, nil
 }
 
-// GetConnectionID get the connection ID for tk.session
-func (tk *TestKit) GetConnectionID() {
-	if tk.session != nil {
-		id := idGenerator.Inc()
-		tk.session.SetConnectionID(id)
-	}
+func newSession(t *testing.T, store kv.Storage) session.Session {
+	se, err := session.CreateSession4Test(store)
+	require.Nil(t, err)
+	se.SetConnectionID(idGenerator.Inc())
+	return se
 }
