@@ -1027,7 +1027,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	case ast.Cast:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_CastIntAsTime:
-			// ban the function of casting year type as time type pushing down to tiflash
+			// ban the function of casting year type as time type pushing down to tiflash because of https://github.com/pingcap/tics/issues/1964
 			return function.GetArgs()[0].GetType().Tp != mysql.TypeYear
 		case tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastIntAsReal, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastIntAsString,
 			tipb.ScalarFuncSig_CastRealAsInt, tipb.ScalarFuncSig_CastRealAsReal, tipb.ScalarFuncSig_CastRealAsDecimal, tipb.ScalarFuncSig_CastRealAsString, tipb.ScalarFuncSig_CastRealAsTime,
