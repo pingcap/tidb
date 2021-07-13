@@ -487,6 +487,8 @@ type PlanBuilder struct {
 	buildingViewStack set.StringSet
 	// renamingViewName is the name of the view which is being renamed.
 	renamingViewName string
+	// isCreateView indicates whether the query is create view.
+	isCreateView bool
 
 	// evalDefaultExpr needs this information to find the corresponding column.
 	// It stores the OutputNames before buildProjection.
@@ -3608,11 +3610,13 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				v.ReferTable.Name.L, "", authErr)
 		}
 	case *ast.CreateViewStmt:
+		b.isCreateView = true
 		b.capFlag |= canExpandAST | renameView
 		b.renamingViewName = v.ViewName.Schema.L + "." + v.ViewName.Name.L
 		defer func() {
 			b.capFlag &= ^canExpandAST
 			b.capFlag &= ^renameView
+			b.isCreateView = false
 		}()
 		plan, err := b.Build(ctx, v.Select)
 		if err != nil {
