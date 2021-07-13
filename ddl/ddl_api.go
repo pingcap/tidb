@@ -3068,7 +3068,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		SchemaName: schema.Name.L,
 		Type:       model.ActionTruncateTablePartition,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{pids},
+		Args:       []interface{}{pids, spec.PartitionNames},
 	}
 
 	err = d.doDDLJob(ctx, job)

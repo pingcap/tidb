@@ -1043,8 +1043,11 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 // onTruncateTablePartition truncates old partition meta.
 func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 	var ver int64
-	var oldIDs []int64
-	if err := job.DecodeArgs(&oldIDs); err != nil {
+	var (
+		oldIDs   []int64
+		oldNames []model.CIStr
+	)
+	if err := job.DecodeArgs(&oldIDs, &oldNames); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -1057,11 +1060,12 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		return ver, errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
+	compareByNames := len(oldNames) == len(oldIDs)
 	newPartitions := make([]model.PartitionDefinition, 0, len(oldIDs))
 	for _, oldID := range oldIDs {
 		for i := 0; i < len(pi.Definitions); i++ {
 			def := &pi.Definitions[i]
-			if def.ID == oldID {
+			if (compareByNames && def.Name.L == oldNames[i].L) || def.ID == oldID {
 				pid, err1 := t.GenGlobalID()
 				if err1 != nil {
 					return ver, errors.Trace(err1)
