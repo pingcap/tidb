@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -237,6 +238,7 @@ func (d *HashAggIntermData) getPartialResultBatch(sc *stmtctx.StatementContext, 
 // Close implements the Executor Close interface.
 func (e *HashAggExec) Close() error {
 	if e.isUnparallelExec {
+		var firstErr error
 		e.childResult = nil
 		e.groupSet, _ = set.NewStringSetWithMemoryUsage()
 		e.partialResultMap = nil
@@ -244,15 +246,16 @@ func (e *HashAggExec) Close() error {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
 		if e.listInDisk != nil {
-			if err := e.listInDisk.Close(); err != nil {
-				return err
-			}
+			firstErr = e.listInDisk.Close()
 		}
 		if e.spillAction != nil {
 			e.spillAction.spillTimes = maxSpillTimes
 		}
 		e.spillAction, e.spillChunk = nil, nil
-		return e.baseExecutor.Close()
+		if err := e.baseExecutor.Close(); firstErr == nil {
+			firstErr = err
+		}
+		return firstErr
 	}
 	if e.parallelExecInitialized {
 		// `Close` may be called after `Open` without calling `Next` in test.
@@ -325,7 +328,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.executed, e.childDrained = false, false
 	e.listInDisk = chunk.NewListInDisk(retTypes(e.children[0]))
 	e.spillChunk = newFirstChunk(e.children[0])
-	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage {
+	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage && config.GetGlobalConfig().OOMUseTmpStorage {
 		e.diskTracker = disk.NewTracker(e.id, -1)
 		e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 		e.listInDisk.GetDiskTracker().AttachTo(e.diskTracker)
@@ -971,18 +974,12 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		}
 
 		allMemDelta := int64(0)
+		sel := make([]int, 0, e.childResult.NumRows())
 		for j := 0; j < e.childResult.NumRows(); j++ {
 			groupKey := string(e.groupKeyBuffer[j]) // do memory copy here, because e.groupKeyBuffer may be reused.
 			if !e.groupSet.Exist(groupKey) {
 				if atomic.LoadUint32(&e.spillMode) == 1 && e.groupSet.Count() > 0 {
-					e.spillChunk.Append(e.childResult, j, j+1)
-					if e.spillChunk.IsFull() {
-						err = e.listInDisk.Add(e.spillChunk)
-						if err != nil {
-							return err
-						}
-						e.spillChunk.Reset()
-					}
+					sel = append(sel, j)
 					continue
 				}
 				allMemDelta += e.groupSet.Insert(groupKey)
@@ -995,6 +992,26 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 					return err
 				}
 				allMemDelta += memDelta
+			}
+		}
+
+		if length := len(sel); length > 0 {
+			if length == e.childResult.NumRows() {
+				err = e.listInDisk.Add(e.childResult)
+				if err != nil {
+					return err
+				}
+			} else {
+				for _, j := range sel {
+					e.spillChunk.Append(e.childResult, j, j+1)
+					if e.spillChunk.IsFull() {
+						err = e.listInDisk.Add(e.spillChunk)
+						if err != nil {
+							return err
+						}
+						e.spillChunk.Reset()
+					}
+				}
 			}
 		}
 		failpoint.Inject("ConsumeRandomPanic", nil)
@@ -1020,7 +1037,6 @@ func (e *HashAggExec) getNextChunk(ctx context.Context) (err error) {
 			return err
 		}
 		e.processIdx++
-		return nil
 	}
 	return nil
 }
