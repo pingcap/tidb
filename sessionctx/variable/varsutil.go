@@ -459,7 +459,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		TiDBCheckMb4ValueInUTF8, TiDBEnableSlowLog, TiDBRecordPlanInSlowLog,
 		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace,
 		TiDBEnableVectorizedExpression, TiDBFoundInPlanCache, TiDBEnableCollectExecutionInfo,
-		TiDBAllowAutoRandExplicitInsert, TiDBEnableTelemetry, TiDBEnableAmendPessimisticTxn, TiDBEnableStableResultMode:
+		TiDBAllowAutoRandExplicitInsert, TiDBEnableTelemetry, TiDBEnableAmendPessimisticTxn, TiDBEnableOrderedResultMode:
 		fallthrough
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
