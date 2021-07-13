@@ -291,7 +291,7 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) erro
 		infoschema.ClusterTableStatementsSummary,
 		infoschema.ClusterTableStatementsSummaryHistory,
 		infoschema.ClusterTableSlowLog:
-		// currently prune mem-table column only use for statements summary table.
+		// currently prune mem-table column only use for statements summary and slow query table.
 	default:
 		return nil
 	}
