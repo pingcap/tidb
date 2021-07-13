@@ -140,9 +140,8 @@
       {
         "SQL": "select * from t where a = 1 and (b is null or b = 2) and c > 1;",
         "Plan": [
-          "IndexReader_7 0.07 root  index:Selection_6",
-          "└─Selection_6 0.07 cop[tikv]  gt(test.t.c, 1)",
-          "  └─IndexRangeScan_5 0.20 cop[tikv] table:t, index:a(a, b, c) range:[1 NULL,1 NULL], [1 2,1 2], keep order:false, stats:pseudo"
+          "IndexReader_6 0.67 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 0.67 cop[tikv] table:t, index:a(a, b, c) range:(1 NULL 1,1 NULL +inf], (1 2 1,1 2 +inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 2 2"
