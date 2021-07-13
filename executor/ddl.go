@@ -76,13 +76,47 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	}
 	e.done = true
 
+	isLocalTempTable := func(keyWord ast.TemporaryKeyword) bool {
+		return keyWord == ast.TemporaryLocal
+	}
+	dropLocalTempTable := func(originTbNames []*ast.TableName) []*ast.TableName {
+		sessVars := e.ctx.GetSessionVars()
+		sessVarsTempTable := sessVars.LocalTemporaryTables
+		if sessVarsTempTable == nil {
+			return originTbNames
+		}
+		filteredTbNames := make([]*ast.TableName, 0)
+		localTempTables := sessVarsTempTable.(*infoschema.LocalTemporaryTables)
+		for tbIdx := range originTbNames {
+			if localTempTables.RemoveTable(originTbNames[tbIdx].Schema, originTbNames[tbIdx].Name) {
+				continue
+			}
+			filteredTbNames = append(filteredTbNames, originTbNames[tbIdx])
+		}
+		return filteredTbNames
+	}
+
 	// For each DDL, we should commit the previous transaction and create a new transaction.
-	// An exception is create local temporary table.
-	if s, ok := e.stmt.(*ast.CreateTableStmt); ok {
-		if s.TemporaryKeyword == ast.TemporaryLocal {
+	// Following cases are exceptions
+	switch s := e.stmt.(type) {
+	case *ast.CreateTableStmt:
+		if isLocalTempTable(s.TemporaryKeyword) {
 			return e.createSessionTemporaryTable(s)
 		}
+	case *ast.DropTableStmt:
+		if !s.IsView {
+			s.Tables = dropLocalTempTable(s.Tables)
+			if len(s.Tables) == 0 {
+				return nil
+			}
+		}
+	case *ast.DropSequenceStmt:
+		s.Sequences = dropLocalTempTable(s.Sequences)
+		if len(s.Sequences) == 0 {
+			return nil
+		}
 	}
+
 	if err = e.ctx.NewTxn(ctx); err != nil {
 		return err
 	}
@@ -363,19 +397,8 @@ func (e *DDLExec) executeDropSequence(s *ast.DropSequenceStmt) error {
 
 // dropTableObject actually applies to `tableObject`, `viewObject` and `sequenceObject`.
 func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifExists bool) error {
-	var (
-		notExistTables  []string
-		localTempTables *infoschema.LocalTemporaryTables
-	)
-	sessVars := e.ctx.GetSessionVars()
-	sessVarsTempTable := sessVars.LocalTemporaryTables
-	if sessVarsTempTable != nil {
-		localTempTables = sessVarsTempTable.(*infoschema.LocalTemporaryTables)
-	}
+	var notExistTables []string
 	for _, tn := range objects {
-		if localTempTables != nil && localTempTables.RemoveTable(tn.Schema, tn.Name) {
-			continue
-		}
 		fullti := ast.Ident{Schema: tn.Schema, Name: tn.Name}
 		_, ok := e.is.SchemaByName(tn.Schema)
 		if !ok {
