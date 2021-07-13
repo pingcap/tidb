@@ -259,3 +259,12 @@ func (s *testPointGetSuite) TestIssue21447(c *C) {
 	tk1.MustQuery("select * from t1 where id in (1, 2) for update").Check(testkit.Rows("1 xyz"))
 	tk1.MustExec("commit")
 }
+
+func (s *testPointGetSuite) TestIssue23553(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists tt`)
+	tk.MustExec(`create table tt (m0 varchar(64), status tinyint not null)`)
+	tk.MustExec(`insert into tt values('1',0),('1',0),('1',0)`)
+	tk.MustExec(`update tt a inner join (select m0 from tt where status!=1 group by m0 having count(*)>1) b on a.m0=b.m0 set a.status=1`)
+}

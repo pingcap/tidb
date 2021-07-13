@@ -54,7 +54,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
 	datums := statistics.RowToDatums(req.GetRow(0), r.Fields())
-	match(c, datums, `%`, "root", []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y")
+	match(c, datums, `%`, "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y")
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte("")), IsTrue)
 	mustExecSQL(c, se, "USE test;")
@@ -159,7 +159,7 @@ func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 	c.Assert(req.NumRows() == 0, IsFalse)
 	row := req.GetRow(0)
 	datums := statistics.RowToDatums(row, r.Fields())
-	match(c, datums, `%`, "root", []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y")
+	match(c, datums, `%`, "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y")
 	c.Assert(r.Close(), IsNil)
 
 	mustExecSQL(c, se, "USE test;")
@@ -189,6 +189,76 @@ func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetBytes(0), BytesEquals, []byte("True"))
 	c.Assert(r.Close(), IsNil)
+}
+
+func (s *testBootstrapSuite) TestMinorUpgrade(c *C) {
+	ctx := context.Background()
+	defer testleak.AfterTest(c)()
+	store, _ := newStoreWithBootstrap(c, s.dbName)
+	defer store.Close()
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "USE mysql;")
+
+	// bootstrap with currentBootstrapVersion
+	r := mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_4.0_minor_version";`)
+	req := r.NewChunk()
+	err := r.Next(ctx, req)
+	row := req.GetRow(0)
+	c.Assert(err, IsNil)
+	c.Assert(req.NumRows() == 0, IsFalse)
+	c.Assert(row.Len(), Equals, 1)
+	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", currentMinorVersion)))
+	c.Assert(r.Close(), IsNil)
+
+	se1 := newSession(c, store, s.dbName)
+	ver, err := getMinorVersion(se1)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, int64(currentMinorVersion))
+
+	// Do something to downgrade the store.
+	// downgrade meta bootstrap version
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(1))
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	mustExecSQL(c, se1, `delete from mysql.TiDB where VARIABLE_NAME="tidb_4.0_minor_version";`)
+	mustExecSQL(c, se1, fmt.Sprintf(`delete from mysql.global_variables where VARIABLE_NAME="%s";`,
+		variable.TiDBDistSQLScanConcurrency))
+	mustExecSQL(c, se1, `commit;`)
+	unsetStoreBootstrapped(store.UUID())
+	// Make sure the version is downgraded.
+	r = mustExecSQL(c, se1, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_4.0_minor_version";`)
+	req = r.NewChunk()
+	err = r.Next(ctx, req)
+	c.Assert(err, IsNil)
+	c.Assert(req.NumRows() == 0, IsTrue)
+	c.Assert(r.Close(), IsNil)
+
+	ver, err = getMinorVersion(se1)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, int64(0))
+
+	// Create a new session then upgrade() will run automatically.
+	dom1, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom1.Close()
+	se2 := newSession(c, store, s.dbName)
+	r = mustExecSQL(c, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_4.0_minor_version";`)
+	req = r.NewChunk()
+	err = r.Next(ctx, req)
+	c.Assert(err, IsNil)
+	c.Assert(req.NumRows() == 0, IsFalse)
+	row = req.GetRow(0)
+	c.Assert(row.Len(), Equals, 1)
+	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", currentMinorVersion)))
+	c.Assert(r.Close(), IsNil)
+
+	ver, err = getMinorVersion(se2)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, int64(currentMinorVersion))
 }
 
 // TestUpgrade tests upgrading
@@ -429,4 +499,105 @@ func (s *testBootstrapSuite) TestStmtSummary(c *C) {
 	row := req.GetRow(0)
 	c.Assert(row.GetBytes(0), BytesEquals, []byte("1"))
 	c.Assert(r.Close(), IsNil)
+}
+
+type bindTestStruct struct {
+	originText   string
+	bindText     string
+	db           string
+	originWithDB string
+	bindWithDB   string
+	deleteText   string
+}
+
+func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
+	bindCases := []bindTestStruct{
+		{
+			originText:   "select * from t where a > ?",
+			bindText:     "select /*+ use_index(t, idxb) */ * from t where a > 1",
+			db:           "test",
+			originWithDB: "select * from test . t where a > ?",
+			bindWithDB:   "SELECT /*+ use_index(`t` `idxb`)*/ * FROM `test`.`t` WHERE `a` > 1",
+			deleteText:   "select * from test.t where a > 1",
+		},
+		{
+			originText:   "select count ( ? ), max ( a ) from t group by b",
+			bindText:     "select /*+ use_index(t, idx) */ count(1), max(a) from t group by b",
+			db:           "test",
+			originWithDB: "select count ( ? ) , max ( a ) from test . t group by b",
+			bindWithDB:   "SELECT /*+ use_index(`t` `idx`)*/ count(1),max(`a`) FROM `test`.`t` GROUP BY `b`",
+			deleteText:   "select count(1), max(a) from test.t group by b",
+		},
+		{
+			originText:   "select * from `test` . `t` where `a` = (_charset) ?",
+			bindText:     "SELECT * FROM test.t WHERE a = _utf8\\'ab\\'",
+			db:           "test",
+			originWithDB: "select * from test . t where a = ?",
+			bindWithDB:   "SELECT * FROM `test`.`t` WHERE `a` = 'ab'",
+			deleteText:   "select * from test.t where a = 'c'",
+		},
+	}
+	defer testleak.AfterTest(c)()
+	ctx := context.Background()
+	store, dom := newStoreWithBootstrap(c, s.dbName)
+	defer store.Close()
+	defer dom.Close()
+	se := newSession(c, store, s.dbName)
+	for _, bindCase := range bindCases {
+		sql := fmt.Sprintf("insert into mysql.bind_info values('%s', '%s', '%s', 'using', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')",
+			bindCase.originText,
+			bindCase.bindText,
+			bindCase.db,
+		)
+		mustExecSQL(c, se, sql)
+
+		upgradeToMinorVer1(se, 0)
+		r := mustExecSQL(c, se, `select original_sql, bind_sql, default_db, status from mysql.bind_info where source != 'builtin'`)
+		req := r.NewChunk()
+		c.Assert(r.Next(ctx, req), IsNil)
+		row := req.GetRow(0)
+		c.Assert(row.GetString(0), Equals, bindCase.originWithDB)
+		c.Assert(row.GetString(1), Equals, bindCase.bindWithDB)
+		c.Assert(row.GetString(2), Equals, "")
+		c.Assert(row.GetString(3), Equals, "using")
+		c.Assert(r.Close(), IsNil)
+		sql = fmt.Sprintf("drop global binding for %s", bindCase.deleteText)
+		mustExecSQL(c, se, sql)
+		r = mustExecSQL(c, se, `select original_sql, bind_sql, status from mysql.bind_info where source != 'builtin'`)
+		c.Assert(r.Next(ctx, req), IsNil)
+		row = req.GetRow(0)
+		c.Assert(row.GetString(0), Equals, bindCase.originWithDB)
+		c.Assert(row.GetString(1), Equals, bindCase.bindWithDB)
+		c.Assert(row.GetString(2), Equals, "deleted")
+		c.Assert(r.Close(), IsNil)
+		sql = fmt.Sprintf("delete from mysql.bind_info where original_sql = '%s'", bindCase.originWithDB)
+		mustExecSQL(c, se, sql)
+	}
+}
+
+func (s *testBootstrapSuite) TestUpdateDuplicateBindInfo(c *C) {
+	defer testleak.AfterTest(c)()
+	ctx := context.Background()
+	store, dom := newStoreWithBootstrap(c, s.dbName)
+	defer store.Close()
+	defer dom.Close()
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from t', 'select /*+ use_index(t, idx_a)*/ * from t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
+	// The latest one.
+	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from test . t', 'select /*+ use_index(t, idx_b)*/ * from test.t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-09 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
+
+	upgradeToMinorVer1(se, 0)
+
+	r := mustExecSQL(c, se, `select original_sql, bind_sql, default_db, status, create_time from mysql.bind_info where source != 'builtin'`)
+	req := r.NewChunk()
+	c.Assert(r.Next(ctx, req), IsNil)
+	c.Assert(req.NumRows(), Equals, 1)
+	row := req.GetRow(0)
+	c.Assert(row.GetString(0), Equals, "select * from test . t")
+	c.Assert(row.GetString(1), Equals, "SELECT /*+ use_index(`t` `idx_b`)*/ * FROM `test`.`t`")
+	c.Assert(row.GetString(2), Equals, "")
+	c.Assert(row.GetString(3), Equals, "using")
+	c.Assert(row.GetTime(4).String(), Equals, "2021-01-04 14:50:58.257")
+	c.Assert(r.Close(), IsNil)
+	mustExecSQL(c, se, "delete from mysql.bind_info where original_sql = 'select * from test . t'")
 }

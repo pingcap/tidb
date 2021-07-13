@@ -291,6 +291,16 @@ func (s *testSuite6) TestViewRecursion(c *C) {
 	tk.MustExec("drop view recursive_view1, t")
 }
 
+func (s *testSuite6) TestIssue23027(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t23027")
+	tk.MustExec("create table t23027(a char(10))")
+	tk.MustExec("insert into t23027 values ('a'), ('a')")
+	tk.MustExec("create definer='root'@'localhost' view v23027 as select group_concat(a) from t23027;")
+	tk.MustQuery("select * from v23027").Check(testkit.Rows("a,a"))
+}
+
 func (s *testSuite6) TestIssue16250(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1239,6 +1249,12 @@ func (s *testSuite6) TestGeneratedColumnRelatedDDL(c *C) {
 	c.Assert(err.Error(), Equals, ddl.ErrBadField.GenWithStackByArgs("z", "generated column function").Error())
 
 	tk.MustExec("drop table t1;")
+
+	tk.MustExec("create table t1(a int, b int as (a+1), c int as (b+1));")
+	tk.MustExec("insert into t1 (a) values (1);")
+	tk.MustGetErrCode("alter table t1 modify column c int as (b+1) first;", mysql.ErrGeneratedColumnNonPrior)
+	tk.MustGetErrCode("alter table t1 modify column b int as (a+1) after c;", mysql.ErrGeneratedColumnNonPrior)
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 2 3"))
 }
 
 func (s *testSuite6) TestSetDDLErrorCountLimit(c *C) {

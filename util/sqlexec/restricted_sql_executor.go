@@ -42,6 +42,43 @@ type RestrictedSQLExecutor interface {
 	// If current session sets the snapshot timestamp, then execute with this snapshot timestamp.
 	// Otherwise, execute with the current transaction start timestamp if the transaction is valid.
 	ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast.ResultField, error)
+
+	// The above methods are all deprecated.
+	// After the refactor finish, they will be removed.
+
+	// ParseWithParams is the parameterized version of Parse: it will try to prevent injection under utf8mb4.
+	// It works like printf() in c, there are following format specifiers:
+	// 1. %?: automatic conversion by the type of arguments. E.g. []string -> ('s1','s2'..)
+	// 2. %%: output %
+	// 3. %n: for identifiers, for example ("use %n", db)
+	//
+	// Attention: it does not prevent you from doing parse("select '%?", ";SQL injection!;") => "select '';SQL injection!;'".
+	// One argument should be a standalone entity. It should not "concat" with other placeholders and characters.
+	// This function only saves you from processing potentially unsafe parameters.
+	ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error)
+	// ExecRestrictedStmt run sql statement in ctx with some restriction.
+	ExecRestrictedStmt(ctx context.Context, stmt ast.StmtNode, opts ...OptionFuncAlias) ([]chunk.Row, []*ast.ResultField, error)
+}
+
+// ExecOption is a struct defined for ExecRestrictedSQLWithContext option.
+type ExecOption struct {
+	IgnoreWarning bool
+	SnapshotTS    uint64
+}
+
+// OptionFuncAlias is defined for the optional paramater of ExecRestrictedSQLWithContext.
+type OptionFuncAlias = func(option *ExecOption)
+
+// ExecOptionIgnoreWarning tells ExecRestrictedSQLWithContext to ignore the warnings.
+var ExecOptionIgnoreWarning OptionFuncAlias = func(option *ExecOption) {
+	option.IgnoreWarning = true
+}
+
+// ExecOptionWithSnapshot tells ExecRestrictedSQLWithContext to use a snapshot.
+func ExecOptionWithSnapshot(snapshot uint64) OptionFuncAlias {
+	return func(option *ExecOption) {
+		option.SnapshotTS = snapshot
+	}
 }
 
 // SQLExecutor is an interface provides executing normal sql statement.
@@ -51,7 +88,8 @@ type RestrictedSQLExecutor interface {
 type SQLExecutor interface {
 	Execute(ctx context.Context, sql string) ([]RecordSet, error)
 	// ExecuteInternal means execute sql as the internal sql.
-	ExecuteInternal(ctx context.Context, sql string) ([]RecordSet, error)
+	ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (RecordSet, error)
+	ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (RecordSet, error)
 }
 
 // SQLParser is an interface provides parsing sql statement.

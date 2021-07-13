@@ -183,12 +183,16 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				return err
 			}
 		}
-		if len(e.handleVal) == 0 {
-			// handle is not found, try lock the index key if isolation level is not read consistency
-			if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-				return nil
+		// try lock the index key if isolation level is not read consistency
+		// also lock key if read consistency read a value
+		if !e.ctx.GetSessionVars().IsPessimisticReadConsistency() || len(e.handleVal) > 0 {
+			err = e.lockKeyIfNeeded(ctx, e.idxKey)
+			if err != nil {
+				return err
 			}
-			return e.lockKeyIfNeeded(ctx, e.idxKey)
+		}
+		if len(e.handleVal) == 0 {
+			return nil
 		}
 		e.handle, err = tablecodec.DecodeHandle(e.handleVal)
 		if err != nil {
@@ -267,6 +271,9 @@ func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []by
 }
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
+	if len(key) == 0 {
+		return nil
+	}
 	if e.lock {
 		seVars := e.ctx.GetSessionVars()
 		lockCtx := newLockCtx(seVars, e.lockWaitTime)
@@ -341,8 +348,11 @@ func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.In
 			str, err = idxVals[i].ToString()
 			idxVals[i].SetString(str, colInfo.FieldType.Collate)
 		} else {
+			// If a truncated error or an overflow error is thrown when converting the type of `idxVal[i]` to
+			// the type of `colInfo`, the `idxVal` does not exist in the `idxInfo` for sure.
 			idxVals[i], err = table.CastValue(e.ctx, idxVals[i], colInfo, true, false)
-			if types.ErrOverflow.Equal(err) {
+			if types.ErrOverflow.Equal(err) || types.ErrDataTooLong.Equal(err) ||
+				types.ErrTruncated.Equal(err) || types.ErrTruncatedWrongVal.Equal(err) {
 				return nil, false, kv.ErrNotExist
 			}
 		}

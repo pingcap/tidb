@@ -204,6 +204,7 @@ type HotTableIndex struct {
 func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchemas []*model.DBInfo) ([]HotTableIndex, error) {
 	hotTables := make([]HotTableIndex, 0, len(metrics))
 	for regionID, regionMetric := range metrics {
+		regionMetric := regionMetric
 		t := HotTableIndex{RegionID: regionID, RegionMetric: &regionMetric}
 		region, err := h.RegionCache.LocateRegionByID(tikv.NewBackofferWithVars(context.Background(), 500, nil), regionID)
 		if err != nil {
@@ -416,8 +417,8 @@ type RegionEpoch struct {
 
 // RegionPeerStat stores one field `DownSec` which indicates how long it's down than `RegionPeer`.
 type RegionPeerStat struct {
-	RegionPeer
-	DownSec int64 `json:"down_seconds"`
+	Peer    RegionPeer `json:"peer"`
+	DownSec int64      `json:"down_seconds"`
 }
 
 // RegionInfo stores the information of one region.

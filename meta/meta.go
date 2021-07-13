@@ -67,6 +67,7 @@ var (
 	mRandomIDPrefix   = "TARID"
 	mBootstrapKey     = []byte("BootstrapKey")
 	mSchemaDiffPrefix = "Diff"
+	mMinorVersionKey  = []byte("MinorVersionKey")
 )
 
 var (
@@ -430,6 +431,15 @@ func (m *Meta) DropTableOrView(dbID int64, tblID int64, delAutoID bool) error {
 		if err := m.txn.HDel(dbKey, m.autoRandomTableIDKey(tblID)); err != nil {
 			return errors.Trace(err)
 		}
+	}
+	return nil
+}
+
+// CleanAutoID is used to delete the auto-id of specific table.
+func (m *Meta) CleanAutoID(dbID, tblID int64) error {
+	dbKey := m.dbKey(dbID)
+	if err := m.txn.HDel(dbKey, m.autoTableIDKey(tblID)); err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }
@@ -861,6 +871,18 @@ func (m *Meta) GetBootstrapVersion() (int64, error) {
 // FinishBootstrap finishes bootstrap.
 func (m *Meta) FinishBootstrap(version int64) error {
 	err := m.txn.Set(mBootstrapKey, []byte(fmt.Sprintf("%d", version)))
+	return errors.Trace(err)
+}
+
+// GetMinorVersion returns the minor version of the server which bootstrap the store.
+func (m *Meta) GetMinorVersion() (int64, error) {
+	value, err := m.txn.GetInt64(mMinorVersionKey)
+	return value, errors.Trace(err)
+}
+
+// SetMinorVersion sets the minor version.
+func (m *Meta) SetMinorVersion(version int64) error {
+	err := m.txn.Set(mMinorVersionKey, []byte(fmt.Sprintf("%d", version)))
 	return errors.Trace(err)
 }
 

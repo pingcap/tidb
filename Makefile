@@ -306,8 +306,9 @@ tools/bin/ineffassign:tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/ineffassign github.com/gordonklaus/ineffassign
 
-tools/bin/errdoc-gen: go.mod
-	$(GO) build -o $@ github.com/pingcap/tiup/components/errdoc/errdoc-gen
+tools/bin/errdoc-gen: tools/check/go.mod
+	cd tools/check; \
+	$(GO) build -o ../bin/errdoc-gen github.com/pingcap/errors/errdoc-gen
 
 tools/bin/golangci-lint:
 	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.21.0

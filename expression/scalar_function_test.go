@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
@@ -45,6 +46,21 @@ func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
 	c.Assert(newSf.RetType.Tp, Equals, mysql.TypeLonglong)
 	_, ok = newSf.Function.(*builtinValuesIntSig)
 	c.Assert(ok, IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestIssue23309(c *C) {
+	a := &Column{
+		UniqueID: 1,
+		RetType:  types.NewFieldType(mysql.TypeDouble),
+	}
+	a.RetType.Flag |= mysql.NotNullFlag
+	null := NewNull()
+	null.RetType = types.NewFieldType(mysql.TypeNull)
+	sf, _ := newFunction(ast.NE, a, null).(*ScalarFunction)
+	v, err := sf.GetArgs()[1].Eval(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), IsTrue)
+	c.Assert(mysql.HasNotNullFlag(sf.GetArgs()[1].GetType().Flag), IsFalse)
 }
 
 func (s *testEvaluatorSuite) TestScalarFuncs2Exprs(c *C) {

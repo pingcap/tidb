@@ -122,6 +122,12 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 			return "", true, err
 		}
 		return string(info), true, nil
+	case TiDBLastQueryInfo:
+		info, err := json.Marshal(s.LastQueryInfo)
+		if err != nil {
+			return "", true, err
+		}
+		return string(info), true, nil
 	case TiDBGeneralLog:
 		return fmt.Sprintf("%d", atomic.LoadUint32(&ProcessGeneralLog)), true, nil
 	case TiDBPProfSQLCPU:
@@ -163,6 +169,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return CapturePlanBaseline.GetVal(), true, nil
 	case TiDBFoundInPlanCache:
 		return BoolToIntStr(s.PrevFoundInPlanCache), true, nil
+	case TiDBFoundInBinding:
+		return BoolToIntStr(s.PrevFoundInBinding), true, nil
 	case TiDBEnableCollectExecutionInfo:
 		return BoolToIntStr(config.GetGlobalConfig().EnableCollectExecutionInfo), true, nil
 	}
@@ -457,7 +465,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		TiDBCheckMb4ValueInUTF8, TiDBEnableSlowLog, TiDBRecordPlanInSlowLog,
 		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace,
 		TiDBEnableVectorizedExpression, TiDBFoundInPlanCache, TiDBEnableCollectExecutionInfo,
-		TiDBAllowAutoRandExplicitInsert, TiDBEnableTelemetry, TiDBEnableAmendPessimisticTxn:
+		TiDBAllowAutoRandExplicitInsert, TiDBEnableTelemetry, TiDBEnableAmendPessimisticTxn, TiDBEnableStableResultMode:
 		fallthrough
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
@@ -809,13 +817,54 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		if _, err := collate.GetCollationByName(value); err != nil {
 			return value, errors.Trace(err)
 		}
+	case TiDBMultiStatementMode:
+		if TiDBOptOn(value) {
+			return On, nil
+		}
+		if TiDBOptOff(value) {
+			return Off, nil
+		}
+		if TiDBOptWarn(value) {
+			return Warn, nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	}
 	return value, nil
 }
 
 // TiDBOptOn could be used for all tidb session variable options, we use "ON"/1 to turn on those options.
 func TiDBOptOn(opt string) bool {
-	return strings.EqualFold(opt, "ON") || opt == "1"
+	return strings.EqualFold(opt, On) || opt == "1"
+}
+
+// TiDBOptOff could be used for all tidb session variable options, we use "OFF"/0 to turn on those options.
+func TiDBOptOff(opt string) bool {
+	return strings.EqualFold(opt, Off) || opt == "0"
+}
+
+// TiDBOptWarn is used for 3-state booleans
+func TiDBOptWarn(opt string) bool {
+	return strings.EqualFold(opt, Warn) || opt == "2"
+}
+
+const (
+	// OffInt is used by TiDBMultiStatementMode
+	OffInt = 0
+	// OnInt is used TiDBMultiStatementMode
+	OnInt = 1
+	// WarnInt is used by TiDBMultiStatementMode
+	WarnInt = 2
+)
+
+// TiDBOptMultiStmt converts multi-stmt options to int.
+func TiDBOptMultiStmt(opt string) int {
+	switch opt {
+	case Off:
+		return OffInt
+	case On:
+		return OnInt
+	}
+	return WarnInt
 }
 
 func tidbOptPositiveInt32(opt string, defaultVal int) int {

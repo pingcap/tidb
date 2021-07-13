@@ -38,8 +38,10 @@ func CheckFsp(fsp int) (int8, error) {
 	if fsp == int(UnspecifiedFsp) {
 		return DefaultFsp, nil
 	}
-	if fsp < int(MinFsp) || fsp > int(MaxFsp) {
+	if fsp < int(MinFsp) {
 		return DefaultFsp, errors.Errorf("Invalid fsp %d", fsp)
+	} else if fsp > int(MaxFsp) {
+		return MaxFsp, nil
 	}
 	return int8(fsp), nil
 }

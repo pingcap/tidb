@@ -357,7 +357,8 @@ create table t(
 	index idx_cb(c, a),
 	index idx_d(d(2)),
 	index idx_e(e(2)),
-	index idx_f(f)
+	index idx_f(f),
+	index idx_de(d(2), e)
 )`)
 
 	tests := []struct {
@@ -626,6 +627,13 @@ create table t(
 			filterConds: "[like(test.t.f, @%, 92)]",
 			resultStr:   "[[NULL,+inf]]",
 		},
+		{
+			indexPos:    5,
+			exprStr:     "d in ('aab', 'aac') and e = 'a'",
+			accessConds: "[in(test.t.d, aab, aac) eq(test.t.e, a)]",
+			filterConds: "[in(test.t.d, aab, aac)]",
+			resultStr:   "[[\"aa\" \"[97]\",\"aa\" \"[97]\"]]",
+		},
 	}
 
 	collate.SetNewCollationEnabledForTest(true)
@@ -661,7 +669,7 @@ create table t(
 }
 
 // for issue #6661
-func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
+func (s *testRangerSuite) TestIndexRangeForUnsigned(c *C) {
 	defer testleak.AfterTest(c)()
 	dom, store, err := newDomainStoreWithBootstrap(c)
 	defer func() {
@@ -672,7 +680,7 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t (a smallint(5) unsigned,key (a) )")
+	testKit.MustExec("create table t (a smallint(5) unsigned,key (a) ,decimal_unsigned decimal unsigned,key (decimal_unsigned), float_unsigned float unsigned,key(float_unsigned), double_unsigned double unsigned,key(double_unsigned))")
 
 	tests := []struct {
 		indexPos    int
@@ -748,6 +756,27 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 			accessConds: "[lt(test.t.a, -1) lt(test.t.a, 1)]",
 			filterConds: "[]",
 			resultStr:   "[]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "decimal_unsigned > -100",
+			accessConds: "[gt(test.t.decimal_unsigned, -100)]",
+			filterConds: "[]",
+			resultStr:   "[[0,+inf]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     "float_unsigned > -100",
+			accessConds: "[gt(test.t.float_unsigned, -100)]",
+			filterConds: "[]",
+			resultStr:   "[[0,+inf]]",
+		},
+		{
+			indexPos:    3,
+			exprStr:     "double_unsigned > -100",
+			accessConds: "[gt(test.t.double_unsigned, -100)]",
+			filterConds: "[]",
+			resultStr:   "[[0,+inf]]",
 		},
 	}
 

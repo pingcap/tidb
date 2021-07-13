@@ -188,6 +188,21 @@ type Execute struct {
 	Plan          Plan
 }
 
+// Check if result of GetVar expr is BinaryLiteral
+// Because GetVar use String to represent BinaryLiteral, here we need to convert string back to BinaryLiteral.
+func isGetVarBinaryLiteral(sctx sessionctx.Context, expr expression.Expression) (res bool) {
+	scalarFunc, ok := expr.(*expression.ScalarFunction)
+	if ok && scalarFunc.FuncName.L == ast.GetVar {
+		name, isNull, err := scalarFunc.GetArgs()[0].EvalString(sctx, chunk.Row{})
+		if err != nil || isNull {
+			res = false
+		} else if dt, ok2 := sctx.GetSessionVars().Users[name]; ok2 {
+			res = (dt.Kind() == types.KindBinaryLiteral)
+		}
+	}
+	return res
+}
+
 // OptimizePreparedPlan optimizes the prepared statement.
 func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema) error {
 	vars := sctx.GetSessionVars()
@@ -229,6 +244,13 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 				return err
 			}
 			param := prepared.Params[i].(*driver.ParamMarkerExpr)
+			if isGetVarBinaryLiteral(sctx, usingVar) {
+				binVal, convErr := val.ToBytes()
+				if convErr != nil {
+					return convErr
+				}
+				val.SetBinaryLiteral(types.BinaryLiteral(binVal))
+			}
 			param.Datum = val
 			param.InExecute = true
 			vars.PreparedParams = append(vars.PreparedParams, val)
@@ -375,7 +397,7 @@ REBUILD:
 	e.names = names
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
-	if !isTableDual && prepared.UseCache {
+	if !isTableDual && prepared.UseCache && !stmtCtx.OptimDependOnMutableConst {
 		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
@@ -1012,7 +1034,11 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 			return errors.Errorf("the store type %v is unknown", x.StoreType)
 		}
 		storeType = x.StoreType.Name()
-		err = e.explainPlanInRowFormat(x.tablePlan, "cop["+storeType+"]", "", childIndent, true)
+		taskName := "cop"
+		if x.BatchCop {
+			taskName = "batchCop"
+		}
+		err = e.explainPlanInRowFormat(x.tablePlan, taskName+"["+storeType+"]", "", childIndent, true)
 	case *PhysicalIndexReader:
 		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "", childIndent, true)
 	case *PhysicalIndexLookUpReader:
@@ -1053,33 +1079,32 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetail
 	explainID := p.ID()
 
 	// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
-	// So check copTaskEkxecDetail first and print the real cop task information if it's not empty.
+	// So check copTaskExecDetail first and print the real cop task information if it's not empty.
 	if runtimeStatsColl.ExistsRootStats(explainID) {
-		rootstats := runtimeStatsColl.GetRootStats(explainID)
-		analyzeInfo = rootstats.String()
-		actRows = fmt.Sprint(rootstats.GetActRows())
+		rootStats := runtimeStatsColl.GetRootStats(explainID)
+		analyzeInfo = rootStats.String()
+		actRows = fmt.Sprint(rootStats.GetActRows())
 	} else {
-		analyzeInfo = "time:0ns, loops:0"
 		actRows = "0"
 	}
 	if runtimeStatsColl.ExistsCopStats(explainID) {
-		copstats := runtimeStatsColl.GetCopStats(explainID)
 		if len(analyzeInfo) > 0 {
 			analyzeInfo += ", "
 		}
-		analyzeInfo += copstats.String()
-		actRows = fmt.Sprint(copstats.GetActRows())
+		copStats := runtimeStatsColl.GetCopStats(explainID)
+		analyzeInfo += copStats.String()
+		actRows = fmt.Sprint(copStats.GetActRows())
 	}
 	memoryInfo = "N/A"
 	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())
 	if memTracker != nil {
-		memoryInfo = memTracker.BytesToString(memTracker.MaxConsumed())
+		memoryInfo = memTracker.FormatBytes(memTracker.MaxConsumed())
 	}
 
 	diskInfo = "N/A"
 	diskTracker := ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTrackerWithoutLock(p.ID())
 	if diskTracker != nil {
-		diskInfo = diskTracker.BytesToString(diskTracker.MaxConsumed())
+		diskInfo = diskTracker.FormatBytes(diskTracker.MaxConsumed())
 	}
 	return
 }

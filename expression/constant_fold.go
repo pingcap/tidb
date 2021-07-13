@@ -191,15 +191,17 @@ func foldConstant(expr Expression) (Expression, bool) {
 				return expr, isDeferredConst
 			}
 			if value.IsNull() {
-				if isDeferredConst {
-					return &Constant{Value: value, RetType: x.RetType, DeferredExpr: x}, true
-				}
+				// This Constant is created to compose the result expression of EvaluateExprWithNull when InNullRejectCheck
+				// is true. We just check whether the result expression is null or false and then let it die. Basically,
+				// the constant is used once briefly and will not be retained for a long time. Hence setting DeferredExpr
+				// of Constant to nil is ok.
 				return &Constant{Value: value, RetType: x.RetType}, false
 			}
 			if isTrue, err := value.ToBool(sc); err == nil && isTrue == 0 {
-				if isDeferredConst {
-					return &Constant{Value: value, RetType: x.RetType, DeferredExpr: x}, true
-				}
+				// This Constant is created to compose the result expression of EvaluateExprWithNull when InNullRejectCheck
+				// is true. We just check whether the result expression is null or false and then let it die. Basically,
+				// the constant is used once briefly and will not be retained for a long time. Hence setting DeferredExpr
+				// of Constant to nil is ok.
 				return &Constant{Value: value, RetType: x.RetType}, false
 			}
 			return expr, isDeferredConst

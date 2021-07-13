@@ -9,6 +9,13 @@
     ]
   },
   {
+    "name": "TestPushDownToTiFlashWithKeepOrder",
+    "cases": [
+      "explain select max(a) from t",
+      "explain select min(a) from t"
+    ]
+  },
+  {
     "name": "TestBroadcastJoin",
     "cases": [
       "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
@@ -88,6 +95,13 @@
       "explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.b",
       "explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.a",
       "explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.a = s.b"
+    ]
+  },
+  {
+    "name": "TestLimitIndexLookUpKeepOrder",
+    "cases": [
+      "desc select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b,c limit 10",
+      "desc select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b desc, c desc limit 10"
     ]
   }
 ]
