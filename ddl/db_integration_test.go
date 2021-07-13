@@ -48,7 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/tikv/client-go/v2/mockstore/cluster"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 var _ = Suite(&testIntegrationSuite1{&testIntegrationSuite{}})
@@ -60,7 +60,7 @@ var _ = Suite(&testIntegrationSuite6{&testIntegrationSuite{}})
 
 type testIntegrationSuite struct {
 	lease   time.Duration
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	store   kv.Storage
 	dom     *domain.Domain
 	ctx     sessionctx.Context
@@ -72,7 +72,7 @@ func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
 	ddl.SetWaitTimeWhenErrorOccurred(0)
 
 	s.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			s.cluster = c
 		}),
@@ -2824,6 +2824,12 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	tk.MustExec("show create table tmp_db.a_local_temp_table")
 	tk.MustExec("rollback")
 	tk.MustQuery("select * from check_data").Check(testkit.Rows())
+
+	// Check create temporary table for if not exists
+	tk.MustExec("create temporary table b_local_temp_table (id int)")
+	_, err = tk.Exec("create temporary table b_local_temp_table (id int)")
+	c.Assert(infoschema.ErrTableExists.Equal(err), IsTrue)
+	tk.MustExec("create temporary table if not exists b_local_temp_table (id int)")
 
 	// Stale read see the local temporary table but can't read on it.
 	tk.MustExec("START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3)")

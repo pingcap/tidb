@@ -1322,6 +1322,10 @@ func (s *testIntegrationSuite) TestErrNoDB(c *C) {
 	tk.MustExec("create user test")
 	_, err := tk.Exec("grant select on test1111 to test@'%'")
 	c.Assert(errors.Cause(err), Equals, core.ErrNoDB)
+	_, err = tk.Exec("grant select on * to test@'%'")
+	c.Assert(errors.Cause(err), Equals, core.ErrNoDB)
+	_, err = tk.Exec("revoke select on * from test@'%'")
+	c.Assert(errors.Cause(err), Equals, core.ErrNoDB)
 	tk.MustExec("use test")
 	tk.MustExec("create table test1111 (id int)")
 	tk.MustExec("grant select on test1111 to test@'%'")
@@ -3917,4 +3921,34 @@ func (s *testIntegrationSerialSuite) TestMergeContinuousSelections(c *C) {
 		res := tk.MustQuery(tt)
 		res.Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func (s *testIntegrationSerialSuite) TestSelectIgnoreTemporaryTableInView(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk.MustExec("set @@tidb_enable_noop_functions=1")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t2 (c int, d int)")
+	tk.MustExec("create view v1 as select * from t1 order by a")
+	tk.MustExec("create view v2 as select * from ((select * from t1) union (select * from t2)) as tt order by a, b")
+	tk.MustExec("create view v3 as select * from v1 order by a")
+	tk.MustExec("create view v4 as select * from t1, t2 where t1.a = t2.c order by a, b")
+	tk.MustExec("create view v5 as select * from (select * from t1) as t1 order by a")
+
+	tk.MustExec("insert into t1 values (1, 2), (3, 4)")
+	tk.MustExec("insert into t2 values (3, 5), (6, 7)")
+
+	tk.MustExec("create temporary table t1 (a int, b int)")
+	tk.MustExec("create temporary table t2 (c int, d int)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustQuery("select * from t2").Check(testkit.Rows())
+
+	tk.MustQuery("select * from v1").Check(testkit.Rows("1 2", "3 4"))
+	tk.MustQuery("select * from v2").Check(testkit.Rows("1 2", "3 4", "3 5", "6 7"))
+	tk.MustQuery("select * from v3").Check(testkit.Rows("1 2", "3 4"))
+	tk.MustQuery("select * from v4").Check(testkit.Rows("3 4 3 5"))
+	tk.MustQuery("select * from v5").Check(testkit.Rows("1 2", "3 4"))
+
 }
