@@ -989,7 +989,7 @@ func (p *MySQLPrivilege) HasExplicitlyGrantedDynamicPriviledge(activeRoles []*au
 // RequestDynamicVerification checks all roles for a specific DYNAMIC privilege.
 func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, user, host, privName string, withGrant bool) bool {
 	privName = strings.ToUpper(privName)
-	if p.HasExplicitlyGrantedDynamicPriviledge(activeRoles, user, host, privName, withGrant) {
+	if p.HasExplicitlyGrantedDynamicPrivilege(activeRoles, user, host, privName, withGrant) {
 		return true
 	}
 	// If SEM is enabled, and the privilege is of type restricted, do not fall through
