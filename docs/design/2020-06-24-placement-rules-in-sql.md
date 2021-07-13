@@ -1,14 +1,14 @@
 # Defining placement rules in SQL
 
-- Author(s):     [djshow832](https://github.com/djshow832) (Ming Zhang)
-- Last updated:  2020-06-24
+- Author(s):     [djshow832](https://github.com/djshow832) (Ming Zhang), [morgo](https://github.com/morgo) (Morgan Tocker)
+- Last updated:  2021-07-12
 - Discussion at: https://docs.google.com/document/d/18Kdhi90dv33muF9k_VAIccNLeGf-DdQyUc8JlWF9Gok
 
 ## Motivation
 
-TiDB supports placement rules, which can define the placement of data in a more flexible and more granular way. But it only provides configuration files to define them, and it’s complicated.
+TiDB currently supports placement rules, which can define the placement of data in a more flexible and more granular way. But the current usage requires configuration files to manage them, and for end-users this can be complicated.
 
-This article proposes an approach to configure placement rules through DDL statements. TiDB server parses the statements and notify PD to perform the change. In this way, usability can be improved.
+This document proposes an approach to configure placement rules through DDL statements. Usability is improved because the TiDB server parses the statements and notifies PD to perform the change.
 
 The scenarios of defining placement rules in SQL include:
 
@@ -20,40 +20,230 @@ The scenarios of defining placement rules in SQL include:
 - Increase the replica count of more important data
 - Separate irrelevant data into different stores to improve availability
 
-## Define placement rules
+These scenarios usually fit into one of the following categories:
 
-There are 3 kinds of operations on the placement:
+1. An optimization or availability use case (such as improving data access locality)
+2. A compliance use case (such as ensuring data resides within a geographic region)
 
-* ADD: Add more replicas for one role.
-* ALTER: Override the replica configuration for one role.
-* DROP: Remove the replica configuration for one role.
+This proposal makes some intentional decisions so that both categories of use-cases can be handled correctly. It improves upon the earlier proposal by reducing the risk of misconfiguration which can affect compliance use cases.
 
-They’re all achieved by executing `ALTER TABLE` statements.
+## New Syntax Overview
 
-### Add placement rules
+There are two ways to specify placement rules:
 
-Adding new replicas can be done by one or more `ADD PLACEMENT POLICY` clauses:
+1. By assigning `PLACEMENT` directly on a database, table or partition (direct assignment)
+2. By creating a new `PLACEMENT POLICY` and then applying the placement policy to a database, table or partition (placement policy)
 
-```sql
-ALTER TABLE table_name
-	ADD PLACEMENT POLICY CONSTRAINTS=constraints ROLE=role REPLICAS=replicas,
-	...
-```
+Using a `PLACEMENT POLICY` will be recommended for compliance requirements, since it can allow administrators to better keep track of usage. This can be seen as similar to how complex environments will use `ROLES` for management instead of directly assigning privileges to users.
 
-This statement indicates TiDB to add replicas for all data of table `table_name`, including indexes.
+Both syntaxes are considered a [`table_option`](https://dev.mysql.com/doc/refman/8.0/en/alter-table.html), and available in both `CREATE TABLE` and `ALTER TABLE` contexts.
 
-`ADD PLACEMENT POLICY` is just a part of alter options, just like `ADD COLUMN` or `ADD CONSTRAINT`.
+### Direct assignment
 
-To define multiple roles at once, multiple `ADD PLACEMENT POLICY` clauses can appear in a single `ALTER TABLE` statement, even for the same Raft role. For example:
+Creating a new table with a directly assigned `PLACEMENT` constraints:
 
 ```sql
-ALTER TABLE table_name
-	ADD PLACEMENT POLICY CONSTRAINTS="[+zone=sh]" ROLE=leader REPLICAS=1,
-	ADD PLACEMENT POLICY CONSTRAINTS="[+zone=sh]" ROLE=follower REPLICAS=1
-	ADD PLACEMENT POLICY CONSTRAINTS="[+zone=gz]" ROLE=follower REPLICAS=1;
+CREATE TABLE t1 (
+	id INT NOT NULL PRIMARY KEY,
+	b VARCHAR(100)
+) PLACEMENT CONSTRAINTS="[+zone=sh]" ROLE=leader REPLICAS=1, CONSTRAINTS="[+zone=sh]" ROLE=follower REPLICAS=1, CONSTRAINTS="[+zone=gz]" ROLE=follower REPLICAS=1;
 ```
 
-This statement indicates PD to schedule the leader to `sh`, add one follower to  `sh` and one to `gz`. Note that as the leader can be only one, the first clause doesn't actually add a replica, so this statement adds 2 replicas.
+Adding `PLACEMENT` to an existing table:
+
+```sql
+CREATE TABLE t1 (
+	id INT NOT NULL PRIMARY KEY,
+	b VARCHAR(100)
+);
+ALTER TABLE t1 PLACEMENT CONSTRAINTS="[+zone=sh]" ROLE=leader REPLICAS=1, CONSTRAINTS="[+zone=sh]" ROLE=follower REPLICAS=1, CONSTRAINTS="[+zone=gz]" ROLE=follower REPLICAS=1;
+```
+
+### Placement Policy
+
+Creating a new `PLACEMENT POLICY`:
+
+```sql
+CREATE PLACEMENT POLICY `companystandardpolicy` CONSTRAINTS="[+zone=sh]" ROLE=leader REPLICAS=1, CONSTRAINTS="[+zone=sh]" ROLE=follower REPLICAS=1, CONSTRAINTS="[+zone=gz]" ROLE=follower REPLICAS=1;
+```
+
+Creating a new table with a `PLACEMENT POLICY`:
+
+```sql
+CREATE TABLE t1 (
+	id INT NOT NULL PRIMARY KEY,
+	b VARCHAR(100)
+) PLACEMENT POLICY=`companystandardpolicy`;
+```
+
+Adding `PLACEMENT POLICY` to an existing table:
+
+```sql
+CREATE TABLE t1 (
+	id INT NOT NULL PRIMARY KEY,
+	b VARCHAR(100)
+);
+ALTER TABLE t1 PLACEMENT POLICY=`companystandardpolicy`;
+```
+
+Expected Behaviors:
+- `CREATE` or `ALTER` and specifying a `PLACEMENT POLICY` that does not exist results in an error: placement policy 'x' is not defined.
+- Placement policies are globally unique names. Thus; a policy named `companyplacementpolicy` can apply to the db `test` as well as `userdb`. The namespace does not overlap with other DB objects.
+- Placement Policy names are case insensitive, and follow the same rules as tables/other identifiers for length (64 chars) and special characters.
+- The full placement policy can be seen with `SHOW CREATE PLACEMENT POLICY x`. This is useful for shorthand usage by DBAs, and consistent with other database objects.
+- It is possible to update the definition of a placement policy with `ALTER PLACEMENT POLICY x CONSTRAINTS ..;` This is modeled on the statement `ALTER VIEW` (where the view needs to be redefined)
+- The statement `DROP PLACEMENT POLICY` should return an error if the policy is in use by any objects (TODO: should we reconsider this? It is not common to MySQL, but it looks problematic to allow it to be dropped).
+
+### CREATE DATABASE / ALTER DATABASE
+
+The semantics of a `PLACEMENT POLICY` on a database/schema should be similar to the [default character set attribute](https://dev.mysql.com/doc/refman/8.0/en/charset-database.html). For example:
+
+```sql
+CREATE DATABASE mydb [DEFAULT] PLACEMENT POLICY=`companystandardpolicy`;
+CREATE TABLE t1 (a INT);
+ALTER DATABASE mydb [DEFAULT] PLACEMENT POLICY=`companynewpolicy`;
+CREATE TABLE t2 (a INT);
+CREATE TABLE t3 (a INT) PLACEMENT POLICY=`companystandardpolicy`;
+```
+
+* The tables t1 and t3 are created with the policy `companystandardpolicy` and the table t2 is created with `companynewpolicy`.
+* The `DATABASE` default only affects tables when they are created and there is no explicit placement policy defined.
+* Thus, the inheritance rules only apply when tables are being created, and if the database policy changes this will not update the table values. This differs slightly for table partitions (see below)
+* The statement `SHOW CREATE DATABASE` is also available, and will show the [DEFAULT] PLACEMENT POLICY in TiDB feature specific comments (/*T![placement] DEFAULT PLACEMENT POLICY x */)
+
+### Partitioned Tables
+
+The semantics of partitioning are different to the default database policy. When a table is partitioned, the partitions will by default inherit the same placement policy as the table. This can be overwritten on a per-partition basis:
+
+```sql
+CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
+ PARTITION BY RANGE( YEAR(purchased) ) (
+  PARTITION p0 VALUES LESS THAN (2000) PLACEMENT POLICY='storeonhdd',
+  PARTITION p1 VALUES LESS THAN (2005),
+  PARTITION p2 VALUES LESS THAN (2010),
+  PARTITION p3 VALUES LESS THAN (2015),
+  PARTITION p4 VALUES LESS THAN MAXVLUE PLACEMENT POLICY='storeonfastssd'
+ )
+PLACEMENT POLICY='companystandardpolicy';
+```
+
+In this example, partition p0 uses the policy `storeonhdd`, partition p4 uses the policy `storeonfastssd` and the remaining partitions use the policy `companystandardpolicy`. Assuming the following `ALTER TABLE` statement is executed, only partitions p1-p3 will be updated:
+
+```sql
+ALTER TABLE t1 PLACEMENT POLICY=`companynewpolicy`;
+```
+
+This behavior is inspired by how a `CHARACTER SET` or `COLLATE` attribute applies to a column of a table, and columns will use the character set defined at the table-level by default.
+
+### SHOW CREATE TABLE
+
+The output of `SHOW CREATE TABLE` should describe any placement options that are either explicitly specified, or inherited from the default placement from `CREATE DATABASE` / `ALTER DATABASE`. This should be escaped in TiDB feature-specific comment syntax. i.e.
+
+```sql
+use test;
+CREATE TABLE t1 (a int);
+SHOW CREATE TABLE t1;
+-->
+CREATE TABLE `t1` (
+  `a` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE t2 (a int) PLACEMENT POLICY='acdc';
+SHOW CREATE TABLE t2;
+-->
+CREATE TABLE `t2` (
+  `a` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`acdc` */;
+
+ALTER DATABASE test DEFAULT PLACEMENT POLICY=`acdc`;
+CREATE TABLE t2 (a int);
+SHOW CREATE TABLE t3;
+-->
+CREATE TABLE `t3` (
+  `a` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement]  PLACEMENT POLICY=`acdc` */;
+```
+
+This helps ensure the highest level of compatibility between both TiDB versions and MySQL.
+
+### Policy Validation
+
+When placement policies are specified, they should be validated for correctness:
+
+```sql
+CREATE PLACEMENT POLICY `companystandardpolicy` CONSTRAINTS="[+zone=sh]" ROLE=leader REPLICAS=1, CONSTRAINTS="[+zone=sh]" ROLE=follower REPLICAS=1, CONSTRAINTS="[+zone=gz]" ROLE=follower REPLICAS=1;
+ALTER PLACEMENT POLICY `companystandardpolicy` CONSTRAINTS="[+zone=sh]" ROLE=leader REPLICAS=1, CONSTRAINTS="[+zone=sh]" ROLE=follower REPLICAS=1, CONSTRAINTS="[+zone=gz]" ROLE=follower REPLICAS=1;
+CREATE TABLE t1 (
+	id INT NOT NULL PRIMARY KEY,
+	b VARCHAR(100)
+) PLACEMENT POLICY CONSTRAINTS="[+zone=sh]" ROLE=leader REPLICAS=1, CONSTRAINTS="[+zone=sh]" ROLE=follower REPLICAS=1, CONSTRAINTS="[+zone=gz]" ROLE=follower REPLICAS=1;
+ALTER TABLE t1 PLACEMENT POLICY CONSTRAINTS="[+zone=sh]" ROLE=leader REPLICAS=1, CONSTRAINTS="[+zone=sh]" ROLE=follower REPLICAS=1, CONSTRAINTS="[+zone=gz]" ROLE=follower REPLICAS=1;
+# Only rule #3 applies for these examples
+CREATE TABLE t1 (a int) PLACEMENT POLICY `mycompanypolicy`;
+ALTER TABLE t1 PLACEMENT POLICY `mycompanypolicy`;
+```
+
+1. An impossible policy such as violating raft constraints (2 leaders) should result in an error:
+```sql
+# error
+ALTER TABLE test
+	ALTER PLACEMENT POLICY CONSTRAINTS="[+zone=sh]" ROLE=leader REPLICAS=2;
+```
+2. A policy that has an incorrect number of instances for a raft group (i.e. 1 leader and 1 follower, or just 1 leader and no followers) should be a warning. This allows for some transitional topologies and developer environments.
+3. A policy that is impossible based on the current topology (zone=sh and replicas=3, but there is only 1 store in sh) should be a warning. This allows for some transitional topologies.
+
+#### Ambiguous and edge cases
+
+The following two policies are not identical:
+
+```sql
+CREATE PLACEMENT POLICY p1 CONSTRAINTS="[+zone=sh]" ROLE=follower REPLICAS=1, CONSTRAINTS="[+zone=gz]" ROLE=follower REPLICAS=1;
+CREATE PLACEMENT POLICY p2 CONSTRAINTS="[+zone=sh,+zone=gz]" ROLE=follower REPLICAS=2;
+```
+
+This is because "[+zone=sh,+zone=gz]" is interpreted as either sh or gz. It is possible that both replicas could end up in the same zone. This is useful in the case that you want to ensure that `REPLICAS=2` exists in any of a list of zones:
+
+```sql
+CREATE PLACEMENT POLICY p2 CONSTRAINTS="[+zone=sh,+zone=gz,+zone=bz]" ROLE=follower REPLICAS=2;
+```
+
+However, using "short hand" JSON syntax, the following 2 policies are identical:
+
+```sql
+ALTER TABLE test
+	PLACEMENT POLICY CONSTRAINTS="{+zone=sh:2,+zone=bj:2}" ROLE=voter REPLICAS=4;
+
+ALTER TABLE test
+	PLACEMENT POLICY CONSTRAINTS="[+zone=sh]" ROLE=voter REPLICAS=2,
+	PLACEMENT POLICY CONSTRAINTS="[+zone=bj]" ROLE=voter REPLICAS=2;
+```
+
+**TODO:** Is the value of this short-hand syntax reduced now that there are named placement policies? We should discuss if it should be removed.
+
+### Removing placement from a database, table or partition
+
+Placement policy can be removed from an object via the following syntax:
+```sql
+ALTER DATABASE test [DEFAULT] PLACEMENT=default;
+ALTER TABLE t1 PLACEMENT=default;
+ALTER TABLE t1 ALTER PARTITION partition_name PLACEMENT=default;
+```
+
+In this case the default rules will apply to placement.
+
+### Information Schema + SHOW commands
+
+Besides `SHOW CREATE PLACEMENT POLICY x`, it should be possible to summarize all placement for a database system. This is beneficial for compliance scenarios.
+
+
+
+
+
+
+
+
+
+
 
 `ADD PLACEMENT POLICY` also supports adding TiFlash replicas for a table, as statement `ALTER TABLE table_name SET TIFLASH REPLICA count` does. For example:
 
@@ -64,35 +254,11 @@ ALTER TABLE table_name
 
 The only way to judge whether it’s adding a TiFlash replica is to check the label. If it contains `engine=tiflash`, then it’s adding or removing a TiFlash replica. This logic is conventional in PD for now.
 
-Placement rules must conform to Raft constraints. For example, an error should be reported when executing this statement:
 
-```sql
-ALTER TABLE test
-	ALTER PLACEMENT POLICY CONSTRAINTS="[+zone=sh]" ROLE=leader REPLICAS=2;
-```
 
-There can only be one leader, so `REPLICAS` must be 1 or omitted. But for other roles, `REPLICAS` must be specified.
-
-Besides, at most one role can be defined on the same object. If multiple rules are added on the same role, they will be combined to one rule. For example:
-
-```sql
-ALTER TABLE test
-	ADD PLACEMENT POLICY CONSTRAINTS="[+zone=sh]" ROLE=voter REPLICAS=2,
-	ADD PLACEMENT POLICY CONSTRAINTS="[+zone=bj]" ROLE=voter REPLICAS=2;
-```
-
-The same role `voter` is defined in 2 different rules, each of which adds 2 replicas. So it is equivalent to:
-
-```sql
-ALTER TABLE test
-	ADD PLACEMENT POLICY CONSTRAINTS="{+zone=sh:2,+zone=bj:2}" ROLE=voter REPLICAS=4;
-```
-
-Note that as there may already exist 3 replicas by default, so it will be 7 replicas after executing this statement. So `ADD PLACEMENT POLICY` can be taken as a shortcut for adding replicas to a defined role. In the example above, it can be replaced by `ALTER PLACEMENT POLICY`.
-
-More details of `CONSTRAINTS` option is described in the "Constraints Configuration" section.
 
 `ADD PLACEMENT POLICY` is implemented by adding one or more placement rules in PD. The statement must wait until the PD returns a message. It can be cancelled by executing `ADMIN CANCEL DDL JOBS` statement.
+
 
 ### Alter placement rules
 
@@ -171,41 +337,7 @@ ALTER TABLE test
 
 Similarly, `ALTER PLACEMENT POLICY` statements must wait until the PD returns a message. It is implemented by overwriting the current placement rule with a new one.
 
-### Drop placement rules
 
-Dropping the placement rule on a specified role can be achieved by a `DROP PLACEMENT POLICY` clause:
-
-```sql
-ALTER TABLE table_name
-	DROP PLACEMENT POLICY ROLE=role,
-	...
-```
-
-In the statement, only `ROLE` option is needed. It only drops the placement rule on `role`. The rule can be either defined on the object itself or inherited from its parent. For example, if a rule on table `t` is inherited from its database, it can also be dropped through this way.
-
-Dropping placement rules should also conform to Raft constraints. That is, there must be a leader after dropping. For example, if the original placement rule is:
-
-```sql
-ALTER TABLE table_name
-	ALTER PLACEMENT POLICY ROLE=voter REPLICAS=3;
-```
-
-It will report an error when executing following statement:
-
-```sql
-ALTER TABLE table_name
-	DROP PLACEMENT POLICY ROLE=voter;
-```
-
-No leader is left after dropping all the voters, so it's illegal.
-
-As leader must exist, it's not allowed to drop all the placement rules. Besides, if there are less than 2 followers left after dropping, a warning will be reported.
-
-However, resetting all the rules on an object may be useful. "Resetting" means to drop the placement rules defined on the object itself, and let the object follow all the rules of its parent.
-
-There is no shortcut to reset all the rules. It may help, but it makes the system more complicated. It will be reconsidered when it's really needed.
-
-Placement rules of indices and partitions can also be dropped in a similar grammar. The statement must wait until PD returns a message.
 
 ### Constraints configuration
 
@@ -289,31 +421,7 @@ In PD placement rule configuration, the key range must be specified. Now that `t
 
 Typically, key format is in such a format: `t_{table_id}_r_{pk_value}`, where `pk_value` may be `_tidb_rowid` in some cases. `table_id` can be inferred from `table_name`, thus key range is `t_{table_id}_` to `t_{table_id+1}_`.
 
-Similarly, key range of partitions and indices can also be inferred.
-
-### Database placement
-
-Defining placement rules of databases simplifies the procedures when there are many tables. For example, in a typical multi-tenant scenario, each user has a private database. The dataset in one database is relatively small, and it’s rare to query across databases. In this case, a whole database can be placed in a single region to reduce multi-region latency.
-
-Placement of databases is defined through `ALTER` statements:
-
-```sql
-ALTER {DATABASE | SCHEMA} schema_name
-	{ADD | ALTER} PLACEMENT POLICY ROLE=role CONSTRAINTS=constraints REPLICAS=replicas,
-	...
-	
-ALTER {DATABASE | SCHEMA} schema_name
-	DROP PLACEMENT POLICY ROLE=role,
-	...
-```
-
-This statement defines placement rules for one database, including all tables in it.
-
-Creating or dropping a table also affects the placement rules. If a placement rule is defined on a database, all tables in this database will automatically apply that rule, including the existing tables and the tables created later.
-
-Once the placement rules on a database are changed, the tables should also update their placement rules. Users can overwrite the rules by defining placement rules on the tables. See the section "Rule inheritance" for details.
-
-Since key range is not successive in one database, each table in the database corresponds to at least one placement rule, so there may be many placement rules.
+Similarly, key range of partitions can also be inferred.
 
 ### Partition placement
 
@@ -345,56 +453,6 @@ The key format of a partitioned table is `t_{partition_id}_r_{pk_value}`. As `pa
 
 Placement rules can also be defined on a partitioned table. Because there are multiple key ranges for the table, multiple rules will be generated and sent to PD. When placement rules are defined both on the table and its partitions, the rule priorities described later should be applied.
 
-### Unpartitioned index placement
-
-Defining placement rules of indices is more complicated, because indices can be unpartitioned or partitioned. Each case should be considered separately.
-
-The index here can be primary index or secondary index. When the key of a clustered index is `_tidb_rowid` rather than the primary key, the primary index is actually an unclustered index. In this case, an index placement statement is applied.
-
-Expression indices and invisible indices are also supported, as the key format is the same as normal.
-
-Defining placement of an unpartitioned index is in such a statement:
-
-```sql
-ALTER TABLE table_name ALTER INDEX index_name
-	{ADD | ALTER} PLACEMENT POLICY CONSTRAINTS=constraints ROLE=role REPLICAS=replicas,
-	...
-	
-ALTER TABLE table_name ALTER INDEX index_name
-	DROP PLACEMENT POLICY ROLE=role,
-	...
-```
-
-This key format of an unpartitioned index is `t_{table_id}_i_{index_id}_r_{pk_value}`. The key range can be inferred by `table_id` and `index_id`.
-
-### Partitioned index placement
-
-Defining placement rules of an index in one specific partition is in such a statement:
-
-```sql
-ALTER TABLE table_name ALTER PARTITION partition_name ALTER INDEX index_name
-	{ADD | ALTER} PLACEMENT POLICY CONSTRAINTS=constraints ROLE=role REPLICAS=replicas,
-	...
-	
-ALTER TABLE table_name ALTER PARTITION partition_name ALTER INDEX index_name
-	DROP PLACEMENT POLICY ROLE=role,
-	...
-```
-
-The key format of partitioned index is `t_{partition_id}_i_{index_id}_r_{pk_value}`. The key range can be inferred by `partition_id` and `index_id`.
-
-When an index is partitioned, defining placement rule of the whole index at once is not supported. It will involve multiple key ranges, and the scenario of its application is rare.
-
-For example, `t` is a partitioned table and `idx` is the index on `t`. It’s not supported to do this:
-
-```sql
-ALTER TABLE `t` ALTER INDEX `idx`
-	ADD PLACEMENT POLICY ...
-```
-
-To alter the placement rule of `idx`, a partition must be specified in the statement.
-
-Currently, global secondary index on partitioned tables is not supported, so it can be ignored for now.
 
 ### Sequence placement
 
@@ -402,15 +460,9 @@ Sequence is typically used to allocate ID in `INSERT` statements, so the placeme
 
 However, sequence is typically used with cache enabled, which means very few requests are sent to sequence. So defining placement rules of sequences is not supported for now.
 
-## DDL management
-
-Some kinds of DDL on databases also affect placement rules.
-
 ### DDL on tables
 
 Once a table is created, it follows the placement rule of its database.
-
-Defining placement rules in a `CREATE TABLE` statement is useful, especially in data sovereignty scenarios. Data sovereignty requires sensitive data to reside within its own national border, which is very serious. So defining placement rules after creating tables is not acceptable. But for now, it's not supported, as it complicates the implementation.
 
 Once a table is dropped, the placement rules on it cannot be dropped immediately, because the table can be recovered by `FLASHBACK` or `RECOVER` statements before GC collects the data. Related placement rules should be kept temporarily and will be removed after GC lifetime.
 
@@ -435,7 +487,7 @@ FLASHBACK table t to t1;
 
 In this case, the placement rules of `t` is altered by the user just after truncating. Once `t` is flashbacked to `t1`, the placement rules of `t1` should be recovered to the version before `TRUNCATE` instead of the version after `ALTER PLACEMENT POLICY`. However, the procedure is quite complicated and this kind of action is rare, so the placement rules will be recovered to the newest version for now.
 
-DDL on partitions and indices will be discussed below, and other DDL on tables won’t affect placement rules:
+DDL on partitions will be discussed below, and other DDL on tables won’t affect placement rules:
 
 * Altering columns
 * Renaming tables
@@ -451,22 +503,7 @@ Once a partition is dropped, it can’t be recovered anymore, so its placement r
 
 Also note that DDL on tables may also effect partitions. It's descibed in the section "DDL on tables".
 
-### DDL on indices
-
-Once an index is created on an unpartitioned table, the index should follow the rule of the table it belongs to.
-
-Once an index is created on a table with partitions, each part of the index should follow the rule of the partition it belongs to.
-
-Once an index is dropped, it can’t be recovered anymore, so its placement rules can be removed immediately.
-
-Altering primary index is the same with altering secondary indexes. Because if a primary index can be created or dropped, it must be an unclustered index.
-
-Other DDL on indices won’t affect placement rules:
-
-* Renaming index
-* Altering the visibility of index
-
-### Show DDL jobs
+### SHOW DDL jobs
 
 As mentioned before, all statements related to placement rules must wait until PD returns. If the execution is interrupted, the job will be cancelled and the DDL will rollback, just like other DDL jobs.
 
@@ -750,6 +787,7 @@ Privilege management is quite straightforward:
 * `ALTER` statement requires `Alter` privilege
 * `information_schema.placement_rules` and `SHOW PLACEMENT POLICY` only shows the placement rules on the objects that visible to the current user
 * `ADMIN SHOW DDL` requires `Super` privilege
+* `CREATE PLACEMENT POLICY`, `DROP PLACEMENT POLICY` and `ALTER PLACEMENT POLICY` require `PLACEMENT_ADMIN`.
 
 ## Ecosystem tools
 
@@ -760,3 +798,14 @@ If the downstream is not TiDB, no change needs to be made. But even if it is TiD
 Based on this consideration, placement rules need not to be exported to binlog or metadata. This is applicable for all tools, including TiCDC and BR.
 
 However, there may be also cases where users want exactly the same placement rules as the upstream, and altering placement rules manually is very annoying. It will be considered in the future if there’s a need.
+
+## Changelog
+
+* 2021-07-12:
+  - Removed the syntax "ALTER TABLE t1 ADD PLACEMENT POLICY" due to ambiguity in some cases, and risk of misconfiguration for compliance cases.
+  - Renamed `ALTER TABLE t1 ALTER PLACEMENT POLICY` to `ALTER TABLE t1 PLACEMENT` to bring syntax inline with other atomic changes, such as `ALTER TABLE t1 CHARACTER SET x`. The usage of `POLICY` now refers to a defined placement policy rather than an inline one.
+  - Remove index as a placement option (we can add it again once global indexes for temporary tables exist, but it is not strictly required for an MVP).
+  - Made implementation in `CREATE TABLE` and `SHOW CREATE TABLE` required, to support the compliance use-case.
+
+
+
