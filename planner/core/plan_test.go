@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"net/http"
 	_ "net/http/pprof"
 	"strings"
 
@@ -588,30 +587,6 @@ func (s *testPlanNormalize) BenchmarkEncodePlan(c *C) {
 	tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	c.ResetTimer()
 	for i := 0; i < c.N; i++ {
-		core.EncodePlan(p)
-	}
-}
-
-func (s *testPlanNormalize) BenchmarkEncodePlanPProf(c *C) {
-	go func() {
-		fmt.Println(http.ListenAndServe("localhost:8086", nil))
-	}()
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists th")
-	tk.MustExec("create table th (i int primary key);")
-	tk.MustExec("set @@tidb_slow_log_threshold=200000")
-
-	query := "select * from th where i = 2333;"
-	tk.Se.GetSessionVars().PlanID = 0
-	tk.MustExec(query)
-	info := tk.Se.ShowProcess()
-	c.Assert(info, NotNil)
-	p, ok := info.Plan.(core.PhysicalPlan)
-	c.Assert(ok, IsTrue)
-	// tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
-	c.ResetTimer()
-	for {
 		core.EncodePlan(p)
 	}
 }
