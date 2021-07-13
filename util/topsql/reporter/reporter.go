@@ -37,7 +37,7 @@ const (
 	reportTimeout             = 40 * time.Second
 	grpcInitialWindowSize     = 1 << 30
 	grpcInitialConnWindowSize = 1 << 30
-	// keyOthers is the key of others which stores the summary of all evicted records.
+	// keyOthers is the key to store the aggregation of all records that is out of Top N.
 	keyOthers = ""
 )
 
