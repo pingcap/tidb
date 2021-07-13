@@ -577,16 +577,6 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 			continue
 		}
 
-		if sessionData == nil {
-			// Create this txn just for getting a MemBuffer. It's a little tricky
-			bufferTxn, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
-			if err != nil {
-				return err
-			}
-
-			sessionData = bufferTxn.GetMemBuffer()
-		}
-
 		if stage == kv.InvalidStagingHandle {
 			stage = sessionData.Staging()
 		}
@@ -631,7 +621,6 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 
 	if stage != kv.InvalidStagingHandle {
 		sessionData.Release(stage)
-		s.sessionVars.TemporaryTableData = sessionData
 		stage = kv.InvalidStagingHandle
 	}
 
