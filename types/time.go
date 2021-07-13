@@ -1022,7 +1022,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 				dateTime.Year(), dateTime.Month(), dateTime.Day(), dateTime.Hour(), dateTime.Minute(), dateTime.Second()
 
 			// case: 0.XXX or like "20170118.999"
-			if seps[0] == "0" || l >= 9 && l <= 14 {
+			if seps[0] == "0" || (l >= 9 && l <= 14) {
 				hhmmss = true
 			}
 
