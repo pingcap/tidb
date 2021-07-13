@@ -2697,6 +2697,17 @@ func (s *testIntegrationSuite3) TestAutoIncrementForce(c *C) {
 		tk.MustQuery("select a from t;").Check(testkit.Rows(fmt.Sprintf("%d", b)))
 		tk.MustExec("delete from t;")
 	}
+
+	// @@auto_increment_increment and @@auto_increment_offset.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int key auto_increment);")
+	tk.MustExec("set @@auto_increment_offset=2;")
+	tk.MustExec("set @@auto_increment_increment = 11;")
+	tk.MustExec("insert into t values (500);")
+	tk.MustExec("alter table t force auto_increment=100;")
+	tk.MustExec("insert into t values (), ();")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("101", "112", "500"))
+	tk.MustQuery("select * from t order by a;").Check(testkit.Rows("101", "112", "500"))
 	tk.MustExec("drop table if exists t;")
 }
 
