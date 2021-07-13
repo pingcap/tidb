@@ -99,7 +99,7 @@ func (s *testRuleReorderResults) SetUpSuite(c *C) {
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "stable_result_mode_suite")
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "ordered_result_mode_suite")
 	c.Assert(err, IsNil)
 }
 
