@@ -373,7 +373,6 @@ func (p *BatchPointGetPlan) OperatorInfo(normalized bool) string {
 		if normalized {
 			buffer.WriteString("handle:?, ")
 		} else {
-			//fmt.Fprintf(buffer.WriteString("handle:%v, ", p.Handles)
 			buffer.WriteString("handle:")
 			buffer.WriteString(fmt.Sprintf("%v", p.Handles))
 			buffer.WriteString(", ")
@@ -384,7 +383,6 @@ func (p *BatchPointGetPlan) OperatorInfo(normalized bool) string {
 	buffer.WriteString(", desc:")
 	buffer.WriteString(strconv.FormatBool(p.Desc))
 	if p.Lock {
-		// fmt.Fprintf(buffer, "lock, ")
 		buffer.WriteString(", lock")
 	}
 	return buffer.String()
