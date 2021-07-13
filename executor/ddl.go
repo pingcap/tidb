@@ -76,43 +76,39 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	}
 	e.done = true
 
-	isLocalTempTable := func(keyWord ast.TemporaryKeyword) bool {
-		return keyWord == ast.TemporaryLocal
-	}
-	dropLocalTempTable := func(originTbNames []*ast.TableName) []*ast.TableName {
-		sessVars := e.ctx.GetSessionVars()
-		sessVarsTempTable := sessVars.LocalTemporaryTables
-		if sessVarsTempTable == nil {
-			return originTbNames
-		}
-		filteredTbNames := make([]*ast.TableName, 0)
-		localTempTables := sessVarsTempTable.(*infoschema.LocalTemporaryTables)
-		for tbIdx := range originTbNames {
-			if localTempTables.RemoveTable(originTbNames[tbIdx].Schema, originTbNames[tbIdx].Name) {
-				continue
-			}
-			filteredTbNames = append(filteredTbNames, originTbNames[tbIdx])
-		}
-		return filteredTbNames
-	}
-
 	// For each DDL, we should commit the previous transaction and create a new transaction.
 	// Following cases are exceptions
 	switch s := e.stmt.(type) {
 	case *ast.CreateTableStmt:
-		if isLocalTempTable(s.TemporaryKeyword) {
+		if s.TemporaryKeyword == ast.TemporaryLocal {
 			return e.createSessionTemporaryTable(s)
 		}
 	case *ast.DropTableStmt:
-		if !s.IsView {
-			s.Tables = dropLocalTempTable(s.Tables)
-			if len(s.Tables) == 0 {
-				return nil
+		if s.IsView {
+			break
+		}
+		sessVars := e.ctx.GetSessionVars()
+		sessVarsTempTable := sessVars.LocalTemporaryTables
+		if sessVarsTempTable == nil {
+			break
+		}
+		localTempTables := sessVarsTempTable.(*infoschema.LocalTemporaryTables)
+		var existsNum int
+		for tbIdx := range s.Tables {
+			if localTempTables.TableExists(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name) {
+				existsNum++
 			}
 		}
-	case *ast.DropSequenceStmt:
-		s.Sequences = dropLocalTempTable(s.Sequences)
-		if len(s.Sequences) == 0 {
+		// if all tables are local temporary, directly drop those tables.
+		if len(s.Tables) == existsNum {
+			for tbIdx := range s.Tables {
+				table, _ := localTempTables.TableByName(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name)
+				localTempTables.RemoveTable(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name)
+				err := sessVars.DeleteTemporaryTable(table.Meta().ID)
+				if err != nil {
+					return err
+				}
+			}
 			return nil
 		}
 	}
@@ -397,8 +393,24 @@ func (e *DDLExec) executeDropSequence(s *ast.DropSequenceStmt) error {
 
 // dropTableObject actually applies to `tableObject`, `viewObject` and `sequenceObject`.
 func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifExists bool) error {
-	var notExistTables []string
-	for _, tn := range objects {
+	var (
+		notExistTables      []string
+		localTemporaryTable *infoschema.LocalTemporaryTables
+	)
+	sessVars := e.ctx.GetSessionVars()
+	sessVarsTempTable := sessVars.LocalTemporaryTables
+	if sessVarsTempTable == nil {
+		localTemporaryTable = infoschema.NewLocalTemporaryTables()
+	} else {
+		localTemporaryTable = sessVarsTempTable.(*infoschema.LocalTemporaryTables)
+	}
+
+	localTempTableList := make([]*ast.TableName, 0)
+	for i, tn := range objects {
+		if obt == tableObject && localTemporaryTable.TableExists(tn.Schema, tn.Name) {
+			localTempTableList = append(localTempTableList, objects[i])
+			continue
+		}
 		fullti := ast.Ident{Schema: tn.Schema, Name: tn.Name}
 		_, ok := e.is.SchemaByName(tn.Schema)
 		if !ok {
@@ -464,9 +476,20 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 	if len(notExistTables) > 0 && ifExists {
 		for _, table := range notExistTables {
 			if obt == sequenceObject {
-				e.ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrSequenceDropExists.GenWithStackByArgs(table))
+				sessVars.StmtCtx.AppendNote(infoschema.ErrSequenceDropExists.GenWithStackByArgs(table))
 			} else {
-				e.ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableDropExists.GenWithStackByArgs(table))
+				sessVars.StmtCtx.AppendNote(infoschema.ErrTableDropExists.GenWithStackByArgs(table))
+			}
+		}
+	}
+
+	if obt == tableObject && len(localTempTableList) > 0 {
+		for tbIdx := range localTempTableList {
+			table, _ := localTemporaryTable.TableByName(localTempTableList[tbIdx].Schema, localTempTableList[tbIdx].Name)
+			localTemporaryTable.RemoveTable(localTempTableList[tbIdx].Schema, localTempTableList[tbIdx].Name)
+			err := sessVars.DeleteTemporaryTable(table.Meta().ID)
+			if err != nil {
+				return err
 			}
 		}
 	}

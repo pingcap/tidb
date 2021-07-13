@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -2239,4 +2240,38 @@ func (s *SessionVars) GetTemporaryTableTxnValue(ctx context.Context, txn kv.Tran
 	}
 
 	return s.GetTemporaryTableSnapshotValue(ctx, key)
+}
+
+// DeleteTemporaryTable delete temporary table data
+func (s *SessionVars) DeleteTemporaryTable(tblID int64) error {
+	memData := s.TemporaryTableData
+	if memData == nil {
+		return kv.ErrNotExist
+	}
+
+	tblPrefix := tablecodec.EncodeTablePrefix(tblID)
+	endKey := tablecodec.EncodeTablePrefix(tblID + 1)
+
+	iter, err := memData.Iter(tblPrefix, endKey)
+	if err != nil {
+		return err
+	}
+	for iter.Valid() {
+		key := iter.Key()
+		if !bytes.HasPrefix(key, tblPrefix) {
+			break
+		}
+
+		err = memData.Delete(key)
+		if err != nil {
+			return err
+		}
+
+		err = iter.Next()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

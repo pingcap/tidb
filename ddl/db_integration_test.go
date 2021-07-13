@@ -2921,4 +2921,7 @@ func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
 	defer tk.MustExec("drop table if exists a_normal_table_2")
 	_, err = tk.Exec("drop table a_local_temp_table_3, a_local_temp_table_4, a_local_temp_table_5, a_normal_table_2, a_local_temp_table_6")
 	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.a_local_temp_table_6'")
+	tk.MustQuery("select * from a_local_temp_table_3").Check(testkit.Rows())
+	tk.MustQuery("select * from a_local_temp_table_4").Check(testkit.Rows())
+	tk.MustQuery("select * from a_local_temp_table_5").Check(testkit.Rows())
 }
