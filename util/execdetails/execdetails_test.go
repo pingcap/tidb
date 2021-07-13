@@ -93,7 +93,7 @@ func mockExecutorExecutionSummaryForTiFlash(TimeProcessedNs, NumProducedRows, Nu
 }
 
 func TestCopRuntimeStats(t *testing.T) {
-	stats := NewRuntimeStatsColl()
+	stats := NewRuntimeStatsColl(nil)
 	tableScanID := 1
 	aggID := 2
 	tableReaderID := 3
@@ -156,7 +156,7 @@ func TestCopRuntimeStats(t *testing.T) {
 }
 
 func TestCopRuntimeStatsForTiFlash(t *testing.T) {
-	stats := NewRuntimeStatsColl()
+	stats := NewRuntimeStatsColl(nil)
 	tableScanID := 1
 	aggID := 2
 	tableReaderID := 3
@@ -261,7 +261,7 @@ func TestRootRuntimeStats(t *testing.T) {
 	basic1.Record(time.Second, 20)
 	basic2.Record(time.Second*2, 30)
 	pid := 1
-	stmtStats := NewRuntimeStatsColl()
+	stmtStats := NewRuntimeStatsColl(nil)
 	stmtStats.RegisterStats(pid, basic1)
 	stmtStats.RegisterStats(pid, basic2)
 	concurrency := &RuntimeStatsWithConcurrencyInfo{}
