@@ -1163,13 +1163,6 @@ func (e *LimitExec) adjustRequiredRows(chk *chunk.Chunk) *chunk.Chunk {
 	return chk.SetRequiredRows(mathutil.Min(limitTotal, limitRequired), e.maxChunkSize)
 }
 
-func minUint64(a, b uint64) uint64 {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // nextCalcFoundRows is different from Next() because we must read through all of the rows
 // in order to calculate the total number of rows. This is part of the SQL_CALC_FOUND_ROWS feature.
 // It is typically slower than running two queries (a LIMIT and a COUNT(*) for total),
@@ -1205,7 +1198,7 @@ func (e *LimitExec) nextCalcFoundRows(ctx context.Context, req *chunk.Chunk) err
 
 		// If this batch exceeds what we need, we need to truncate the end point.
 		// We then add these rows onto the found rows.
-		end := minUint64(batchSize, e.end-e.begin-e.cursor+begin)
+		end := mathutil.MinUint64(batchSize, e.end-e.begin-e.cursor+begin)
 		if end < batchSize {
 			e.ctx.GetSessionVars().StmtCtx.AddFoundRows(batchSize - end)
 		}
