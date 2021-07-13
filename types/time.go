@@ -929,8 +929,6 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 	seps, fracStr, hasTZ, tzSign, tzHour, tzSep, tzMinute := splitDateTime(str)
 
 	var truncatedOrIncorrect bool
-	var microsecond int
-	var overflow bool
 	/*
 		if we have timezone parsed, there are the following cases to be considered, however some of them are wrongly parsed, and we should consider absorb them back to seps.
 
@@ -1137,6 +1135,8 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 		}
 	}
 
+	var microsecond int
+	var overflow bool
 	if hhmmss {
 		// If input string is "20170118.999", without hhmmss, fsp is meaningless.
 		// TODO: this case is not only meaningless, but erroneous, please confirm.
