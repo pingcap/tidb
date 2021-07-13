@@ -2220,7 +2220,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableRateLimitAction,
 	variable.TiDBMemoryUsageAlarmRatio,
 	variable.TiDBMultiStatementMode,
-	variable.TiDBEnableStableResultMode,
+	variable.TiDBEnableOrderedResultMode,
 }
 
 var (

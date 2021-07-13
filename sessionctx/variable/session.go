@@ -1412,7 +1412,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		MemoryUsageAlarmRatio.Store(floatVal)
 	case TiDBMultiStatementMode:
 		s.MultiStatementMode = TiDBOptMultiStmt(val)
-	case TiDBEnableStableResultMode:
+	case TiDBEnableOrderedResultMode:
 		s.EnableStableResultMode = TiDBOptOn(val)
 	}
 	s.systems[name] = val
