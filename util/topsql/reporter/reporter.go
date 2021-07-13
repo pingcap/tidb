@@ -401,7 +401,7 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 	if len(evicted) == 0 {
 		return
 	}
-	// Evict redundant data.
+	// Clean up non Top N data and merge them as "others" (keyed by in the `keyOthers`) in `collectTarget`.
 	normalizedSQLMap := tsr.normalizedSQLMap.Load().(*sync.Map)
 	normalizedPlanMap := tsr.normalizedPlanMap.Load().(*sync.Map)
 	totalEvictedCPUTime := uint32(0)
