@@ -293,6 +293,10 @@ type clusterServerInfoRetriever struct {
 
 // retrieve implements the memTableRetriever interface
 func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	// To access TableClusterSystemInfo, TableClusterHardware, TableClusterLoad, PROCESS privileges is needed.
+	if !hasPriv(sctx, mysql.ProcessPriv) {
+		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
 	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
 	}
