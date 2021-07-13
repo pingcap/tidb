@@ -19,23 +19,22 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-type profileInternalSuite struct{}
+func TestProfileToDatum(t *testing.T) {
+	t.Parallel()
 
-var _ = Suite(&profileInternalSuite{})
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-func (s *profileInternalSuite) TestProfileToDatum(c *C) {
 	file, err := os.Open("testdata/test.pprof")
-	c.Assert(err, IsNil)
-	defer file.Close()
+	require.Nil(t, err)
+	defer func() {
+		err := file.Close()
+		require.Nil(t, err)
+	}()
 
 	data, err := (&Collector{}).ProfileReaderToDatums(file)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	datums := [][]types.Datum{
 		types.MakeDatums(`root`, "100%", "100%", 0, 0, `root`),
@@ -84,9 +83,9 @@ func (s *profileInternalSuite) TestProfileToDatum(c *C) {
 	for i, row := range data {
 		comment := Commentf("row %2d", i)
 		rowStr, err := types.DatumsToString(row, true)
-		c.Assert(err, IsNil, comment)
+		assert.Nil(t, err, comment)
 		expectStr, err := types.DatumsToString(datums[i], true)
-		c.Assert(err, IsNil, comment)
+		assert.Nil(t, err, comment)
 
 		comment = Commentf("row %2d, actual (%s), expected (%s)", i, rowStr, expectStr)
 		equal := true
@@ -97,7 +96,7 @@ func (s *profileInternalSuite) TestProfileToDatum(c *C) {
 				break
 			}
 		}
-		c.Assert(err, IsNil, comment)
-		c.Assert(equal, IsTrue, comment)
+		assert.Nil(t, err, comment)
+		assert.True(t, equal, comment)
 	}
 }
