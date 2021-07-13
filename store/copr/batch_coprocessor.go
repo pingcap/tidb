@@ -133,9 +133,10 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 		wg.Add(len(stores))
-		for _, s := range stores {
-			go func() {
+		for i := range stores {
+			go func(idx int) {
 				defer wg.Done()
+				s := stores[idx]
 				aliveReq := tikvrpc.NewRequest(tikvrpc.CmdMPPAlive, &mpp.IsAliveRequest{}, kvrpcpb.Context{})
 				aliveReq.StoreTp = tikvrpc.TiFlash
 				alive := false
@@ -161,7 +162,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 					cmdType:   originalTasks[0].cmdType,
 					ctx:       &tikv.RPCContext{Addr: s.GetAddr(), Store: s},
 				}
-			}()
+			}(i)
 		}
 		wg.Wait()
 	}
