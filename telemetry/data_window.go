@@ -61,11 +61,12 @@ const (
 )
 
 type windowData struct {
-	BeginAt        time.Time          `json:"beginAt"`
-	ExecuteCount   uint64             `json:"executeCount"`
-	TiFlashUsage   tiFlashUsageData   `json:"tiFlashUsage"`
-	CoprCacheUsage coprCacheUsageData `json:"coprCacheUsage"`
-	SQLUsage       sqlUsageData       `json:"SQLUsage"`
+	BeginAt               time.Time          `json:"beginAt"`
+	ExecuteCount          uint64             `json:"executeCount"`
+	TiFlashUsage          tiFlashUsageData   `json:"tiFlashUsage"`
+	CoprCacheUsage        coprCacheUsageData `json:"coprCacheUsage"`
+	SQLUsage              sqlUsageData       `json:"SQLUsage"`
+	BuiltinFunctionsUsage map[string]uint32  `json:"builtinFunctionsUsage"`
 }
 
 type sqlType map[string]uint64
@@ -89,6 +90,57 @@ type tiFlashUsageData struct {
 	PushDown         uint64 `json:"pushDown"`
 	ExchangePushDown uint64 `json:"exchangePushDown"`
 }
+
+type BuiltinFunctionsUsageCollector struct {
+	sync.Mutex
+
+	// Should acquire lock to access this
+	usageData BuiltinFunctionsUsage
+}
+
+// Merge BuiltinFunctionsUsage data
+func (b *BuiltinFunctionsUsageCollector) Collect(usageData BuiltinFunctionsUsage) {
+	// TODO: use multi-worker to collect
+	b.Lock()
+	defer b.Unlock()
+	b.usageData.Merge(usageData)
+}
+
+// Dump BuiltinFunctionsUsage data
+func (b *BuiltinFunctionsUsageCollector) Dump() map[string]uint32 {
+	b.Lock()
+	ret := b.usageData
+	b.usageData = make(map[string]uint32)
+	b.Unlock()
+
+	return ret
+}
+
+// map from ScalarFuncSig_name(string) to usage count(uint32)
+type BuiltinFunctionsUsage map[string]uint32
+
+func (b BuiltinFunctionsUsage) Inc(scalarFuncSigName string) {
+	v, ok := b[scalarFuncSigName]
+	if !ok {
+		b[scalarFuncSigName] = 0
+	} else {
+		b[scalarFuncSigName] = v + 1
+	}
+}
+
+// Merge BuiltinFunctionsUsage data
+func (b BuiltinFunctionsUsage) Merge(usageData BuiltinFunctionsUsage) {
+	for k, v := range usageData {
+		prev, ok := b[k]
+		if !ok {
+			b[k] = prev
+		} else {
+			b[k] = prev + v
+		}
+	}
+}
+
+var GlobalBuiltinFunctionsUsage = &BuiltinFunctionsUsageCollector{}
 
 var (
 	rotatedSubWindows []*windowData
@@ -186,6 +238,7 @@ func RotateSubWindow() {
 			SQLTotal: 0,
 			SQLType:  make(sqlType),
 		},
+		BuiltinFunctionsUsage: GlobalBuiltinFunctionsUsage.Dump(),
 	}
 
 	err := readSQLMetric(time.Now(), &thisSubWindow.SQLUsage)
@@ -243,6 +296,10 @@ func getWindowData() []*windowData {
 			thisWindow.CoprCacheUsage.GTE100 += rotatedSubWindows[i].CoprCacheUsage.GTE100
 			thisWindow.SQLUsage.SQLTotal = rotatedSubWindows[i].SQLUsage.SQLTotal - startWindow.SQLUsage.SQLTotal
 			thisWindow.SQLUsage.SQLType = calDeltaSQLTypeMap(rotatedSubWindows[i].SQLUsage.SQLType, startWindow.SQLUsage.SQLType)
+
+			mergedBuiltinFunctionsUsage := BuiltinFunctionsUsage(thisWindow.BuiltinFunctionsUsage)
+			mergedBuiltinFunctionsUsage.Merge(BuiltinFunctionsUsage(rotatedSubWindows[i].BuiltinFunctionsUsage))
+			thisWindow.BuiltinFunctionsUsage = mergedBuiltinFunctionsUsage
 			aggregatedSubWindows++
 			i++
 		}
