@@ -56,13 +56,14 @@ func (eqh *Handle) Run() {
 	defer ticker.Stop()
 	sm := eqh.sm.Load().(util.SessionManager)
 	record := &memoryUsageAlarm{}
+	var killList []uint64
 	for {
 		select {
 		case <-ticker.C:
-			processInfo := sm.ShowProcessList()
-			for _, info := range processInfo {
+			killList = killList[:0]
+			sm.ShowProcessList(func(info *util.ProcessInfo) {
 				if len(info.Info) == 0 {
-					continue
+					return
 				}
 				costTime := time.Since(info.Time)
 				if !info.ExceedExpensiveTimeThresh && costTime >= time.Second*time.Duration(threshold) && log.GetLevel() <= zapcore.WarnLevel {
@@ -71,9 +72,13 @@ func (eqh *Handle) Run() {
 				}
 
 				if info.MaxExecutionTime > 0 && costTime > time.Duration(info.MaxExecutionTime)*time.Millisecond {
-					sm.Kill(info.ID, true)
+					killList = append(killList, info.ID)
 				}
+			})
+			for _, id := range killList {
+				sm.Kill(id, true)
 			}
+
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
 
 			record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
@@ -101,11 +106,9 @@ func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
 		return
 	}
 	sm := v.(util.SessionManager)
-	info, ok := sm.GetProcessInfo(connID)
-	if !ok {
-		return
-	}
-	logExpensiveQuery(time.Since(info.Time), info)
+	sm.GetProcessInfo(connID, func(info *util.ProcessInfo) {
+		logExpensiveQuery(time.Since(info.Time), info)
+	})
 }
 
 func genLogFields(costTime time.Duration, info *util.ProcessInfo) []zap.Field {

@@ -19,11 +19,13 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -90,14 +92,16 @@ func (s *testPlanNormalize) TestPreferRangeScan(c *C) {
 		}
 		tk.Se.GetSessionVars().PlanID = 0
 		tk.MustExec(tt)
-		info := tk.Se.ShowProcess()
-		c.Assert(info, NotNil)
-		p, ok := info.Plan.(core.Plan)
-		c.Assert(ok, IsTrue)
-		normalized, _ := core.NormalizePlan(p)
-		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
-		normalizedPlanRows := getPlanRows(normalizedPlan)
-		c.Assert(err, IsNil)
+		var normalizedPlanRows []string
+		tk.Se.ShowProcess(func(info *util.ProcessInfo) {
+			c.Assert(info, NotNil)
+			p, ok := info.Plan.(core.Plan)
+			c.Assert(ok, IsTrue)
+			normalized, _ := core.NormalizePlan(p)
+			normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
+			c.Assert(err, IsNil)
+			normalizedPlanRows = getPlanRows(normalizedPlan)
+		})
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = normalizedPlanRows
@@ -124,14 +128,16 @@ func (s *testPlanNormalize) TestNormalizedPlan(c *C) {
 	for i, tt := range input {
 		tk.Se.GetSessionVars().PlanID = 0
 		tk.MustExec(tt)
-		info := tk.Se.ShowProcess()
-		c.Assert(info, NotNil)
-		p, ok := info.Plan.(core.Plan)
-		c.Assert(ok, IsTrue)
-		normalized, _ := core.NormalizePlan(p)
-		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
-		normalizedPlanRows := getPlanRows(normalizedPlan)
-		c.Assert(err, IsNil)
+		var normalizedPlanRows []string
+		tk.Se.ShowProcess(func(info *util.ProcessInfo) {
+			c.Assert(info, NotNil)
+			p, ok := info.Plan.(core.Plan)
+			c.Assert(ok, IsTrue)
+			normalized, _ := core.NormalizePlan(p)
+			normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
+			normalizedPlanRows = getPlanRows(normalizedPlan)
+			c.Assert(err, IsNil)
+		})
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = normalizedPlanRows
@@ -162,21 +168,25 @@ func (s *testPlanNormalize) TestNormalizedPlanForDiffStore(c *C) {
 	for i, tt := range input {
 		tk.Se.GetSessionVars().PlanID = 0
 		tk.MustExec(tt)
-		info := tk.Se.ShowProcess()
-		c.Assert(info, NotNil)
-		ep, ok := info.Plan.(*core.Explain)
-		c.Assert(ok, IsTrue)
-		normalized, digest := core.NormalizePlan(ep.TargetPlan)
-		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
-		normalizedPlanRows := getPlanRows(normalizedPlan)
-		c.Assert(err, IsNil)
+		var normalizedPlanRows []string
+		var digestString string
+		tk.Se.ShowProcess(func(info *util.ProcessInfo) {
+			c.Assert(info, NotNil)
+			ep, ok := info.Plan.(*core.Explain)
+			c.Assert(ok, IsTrue)
+			normalized, digest := core.NormalizePlan(ep.TargetPlan)
+			normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
+			c.Assert(err, IsNil)
+			normalizedPlanRows = getPlanRows(normalizedPlan)
+			digestString = digest.String()
+		})
 		s.testData.OnRecord(func() {
-			output[i].Digest = digest.String()
+			output[i].Digest = digestString
 			output[i].Plan = normalizedPlanRows
 		})
 		compareStringSlice(c, normalizedPlanRows, output[i].Plan)
-		c.Assert(digest.String() != lastDigest, IsTrue)
-		lastDigest = digest.String()
+		c.Assert(digestString != lastDigest, IsTrue)
+		lastDigest = digestString
 	}
 }
 
@@ -192,13 +202,16 @@ func (s *testPlanNormalize) TestEncodeDecodePlan(c *C) {
 
 	tk.Se.GetSessionVars().PlanID = 0
 	getPlanTree := func() string {
-		info := tk.Se.ShowProcess()
-		c.Assert(info, NotNil)
-		p, ok := info.Plan.(core.Plan)
-		c.Assert(ok, IsTrue)
-		encodeStr := core.EncodePlan(p)
-		planTree, err := plancodec.DecodePlan(encodeStr)
-		c.Assert(err, IsNil)
+		var planTree string
+		tk.Se.ShowProcess(func(info *util.ProcessInfo) {
+			c.Assert(info, NotNil)
+			p, ok := info.Plan.(core.Plan)
+			c.Assert(ok, IsTrue)
+			encodeStr := core.EncodePlan(p)
+			tmp, err := plancodec.DecodePlan(encodeStr)
+			c.Assert(err, IsNil)
+			planTree = tmp
+		})
 		return planTree
 	}
 	tk.MustExec("select max(a) from t1 where a>0;")
@@ -402,19 +415,24 @@ func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
 func testNormalizeDigest(tk *testkit.TestKit, c *C, sql1, sql2 string, isSame bool) {
 	tk.Se.GetSessionVars().PlanID = 0
 	tk.MustQuery(sql1)
-	info := tk.Se.ShowProcess()
-	c.Assert(info, NotNil)
-	physicalPlan, ok := info.Plan.(core.PhysicalPlan)
-	c.Assert(ok, IsTrue)
-	normalized1, digest1 := core.NormalizePlan(physicalPlan)
+	var normalized1, normalized2 string
+	var digest1, digest2 *parser.Digest
+	tk.Se.ShowProcess(func(info *util.ProcessInfo) {
+		c.Assert(info, NotNil)
+		physicalPlan, ok := info.Plan.(core.PhysicalPlan)
+		c.Assert(ok, IsTrue)
+		normalized1, digest1 = core.NormalizePlan(physicalPlan)
+	})
 
 	tk.Se.GetSessionVars().PlanID = 0
 	tk.MustQuery(sql2)
-	info = tk.Se.ShowProcess()
-	c.Assert(info, NotNil)
-	physicalPlan, ok = info.Plan.(core.PhysicalPlan)
-	c.Assert(ok, IsTrue)
-	normalized2, digest2 := core.NormalizePlan(physicalPlan)
+	tk.Se.ShowProcess(func(info *util.ProcessInfo) {
+		c.Assert(info, NotNil)
+		physicalPlan, ok := info.Plan.(core.PhysicalPlan)
+		c.Assert(ok, IsTrue)
+		normalized2, digest2 = core.NormalizePlan(physicalPlan)
+	})
+
 	comment := Commentf("sql1: %v, sql2: %v\n%v !=\n%v\n", sql1, sql2, normalized1, normalized2)
 	if isSame {
 		c.Assert(normalized1, Equals, normalized2, comment)
@@ -553,13 +571,15 @@ func (s *testPlanNormalize) BenchmarkDecodePlan(c *C) {
 	query := buf.String()
 	tk.Se.GetSessionVars().PlanID = 0
 	tk.MustExec(query)
-	info := tk.Se.ShowProcess()
-	c.Assert(info, NotNil)
-	p, ok := info.Plan.(core.PhysicalPlan)
-	c.Assert(ok, IsTrue)
-	// TODO: optimize the encode plan performance when encode plan with runtimeStats
-	tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
-	encodedPlanStr := core.EncodePlan(p)
+	var encodedPlanStr string
+	tk.Se.ShowProcess(func(info *util.ProcessInfo) {
+		c.Assert(info, NotNil)
+		p, ok := info.Plan.(core.PhysicalPlan)
+		c.Assert(ok, IsTrue)
+		// TODO: optimize the encode plan performance when encode plan with runtimeStats
+		tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
+		encodedPlanStr = core.EncodePlan(p)
+	})
 	c.ResetTimer()
 	for i := 0; i < c.N; i++ {
 		_, err := plancodec.DecodePlan(encodedPlanStr)
@@ -579,10 +599,13 @@ func (s *testPlanNormalize) BenchmarkEncodePlan(c *C) {
 	query := "select count(*) from th t1 join th t2 join th t3 join th t4 join th t5 join th t6 where t1.i=t2.a and t1.i=t3.i and t3.i=t4.i and t4.i=t5.i and t5.i=t6.i"
 	tk.Se.GetSessionVars().PlanID = 0
 	tk.MustExec(query)
-	info := tk.Se.ShowProcess()
-	c.Assert(info, NotNil)
-	p, ok := info.Plan.(core.PhysicalPlan)
-	c.Assert(ok, IsTrue)
+	var p core.PhysicalPlan
+	tk.Se.ShowProcess(func(info *util.ProcessInfo) {
+		c.Assert(info, NotNil)
+		var ok bool
+		p, ok = info.Plan.(core.PhysicalPlan)
+		c.Assert(ok, IsTrue)
+	})
 	tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	c.ResetTimer()
 	for i := 0; i < c.N; i++ {

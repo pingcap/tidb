@@ -112,7 +112,10 @@ func (s *testSerialSuite) TestPrepareStmtAfterIsolationReadChange(c *C) {
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("prepare stmt from \"select * from t\"")
 	tk.MustQuery("execute stmt")
-	tkProcess := tk.Se.ShowProcess()
+	var tkProcess *util.ProcessInfo
+	tk.Se.ShowProcess(func(info *util.ProcessInfo) {
+		tkProcess = info
+	})
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
@@ -120,7 +123,10 @@ func (s *testSerialSuite) TestPrepareStmtAfterIsolationReadChange(c *C) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
 	tk.MustExec("execute stmt")
-	tkProcess = tk.Se.ShowProcess()
+
+	tk.Se.ShowProcess(func(info *util.ProcessInfo) {
+		tkProcess = info
+	})
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
@@ -140,21 +146,17 @@ func (sm *mockSessionManager2) ShowTxnList() []*txninfo.TxnInfo {
 	panic("unimplemented!")
 }
 
-func (sm *mockSessionManager2) ShowProcessList() map[uint64]*util.ProcessInfo {
-	pl := make(map[uint64]*util.ProcessInfo)
-	if pi, ok := sm.GetProcessInfo(0); ok {
-		pl[pi.ID] = pi
-	}
-	return pl
+func (sm *mockSessionManager2) ShowProcessList(f func(*util.ProcessInfo)) {
+	sm.GetProcessInfo(0, func(pi *util.ProcessInfo) {
+		f(pi)
+	})
 }
 
-func (sm *mockSessionManager2) GetProcessInfo(id uint64) (pi *util.ProcessInfo, notNil bool) {
-	pi = sm.se.ShowProcess()
-	if pi != nil {
-		notNil = true
-	}
+func (sm *mockSessionManager2) GetProcessInfo(id uint64, f func(*util.ProcessInfo)) {
+	sm.se.ShowProcess(f)
 	return
 }
+
 func (sm *mockSessionManager2) Kill(connectionID uint64, query bool) {
 	sm.killed = true
 	atomic.StoreUint32(&sm.se.GetSessionVars().Killed, 1)
@@ -228,7 +230,10 @@ func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 	tk.MustExec("set @v1 = '3'")
 	tk.MustExec("set @v2 = '2'")
 	tk.MustQuery("execute stmt1 using @v1,@v2").Check(testkit.Rows("3 3 333"))
-	tkProcess := tk.Se.ShowProcess()
+	var tkProcess *util.ProcessInfo
+	tk.Se.ShowProcess(func(info *util.ProcessInfo) {
+		tkProcess = info
+	})
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
@@ -247,7 +252,9 @@ func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 	tk.MustExec("set @v1 = '3'")
 	tk.MustExec("set @v2 = '3'")
 	tk.MustQuery("execute stmt2 using @v1,@v2").Check(testkit.Rows("3 3 333"))
-	tkProcess = tk.Se.ShowProcess()
+	tk.Se.ShowProcess(func(info *util.ProcessInfo) {
+		tkProcess = info
+	})
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
@@ -276,7 +283,9 @@ func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 	tk.MustQuery(`execute stmt1 using @v1`).Check(testkit.Rows("a 1 1 1"))
 	tk.MustQuery(`execute stmt1 using @v2`).Check(testkit.Rows("b 2 2 2"))
 	tk.MustQuery(`execute stmt1 using @v2`).Check(testkit.Rows("b 2 2 2"))
-	tkProcess = tk.Se.ShowProcess()
+	tk.Se.ShowProcess(func(info *util.ProcessInfo) {
+		tkProcess = info
+	})
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
@@ -385,7 +394,10 @@ func (s *testPrepareSuite) TestPlanCacheWithDifferentVariableTypes(c *C) {
 			res := tk.MustQuery(exec.ExecuteSQL)
 			lastPlanUseCache := tk.MustQuery("select @@last_plan_from_cache").Rows()[0][0]
 			tk.MustQuery(exec.ExecuteSQL)
-			tkProcess := tk.Se.ShowProcess()
+			var tkProcess *util.ProcessInfo
+			tk.Se.ShowProcess(func(info *util.ProcessInfo) {
+				tkProcess = info
+			})
 			ps := []*util.ProcessInfo{tkProcess}
 			tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 			plan := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))

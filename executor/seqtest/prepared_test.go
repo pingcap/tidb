@@ -804,14 +804,11 @@ func (msm *mockSessionManager1) ShowTxnList() []*txninfo.TxnInfo {
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
-func (msm *mockSessionManager1) ShowProcessList() map[uint64]*util.ProcessInfo {
-	ret := make(map[uint64]*util.ProcessInfo)
-	return ret
+func (msm *mockSessionManager1) ShowProcessList(f func(*util.ProcessInfo)) {
 }
 
-func (msm *mockSessionManager1) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
-	pi := msm.Se.ShowProcess()
-	return pi, true
+func (msm *mockSessionManager1) GetProcessInfo(id uint64, f func(*util.ProcessInfo)) {
+	msm.Se.ShowProcess(f)
 }
 
 // Kill implements the SessionManager.Kill interface.

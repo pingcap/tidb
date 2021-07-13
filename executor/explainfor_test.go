@@ -44,21 +44,18 @@ func (msm *mockSessionManager1) ShowTxnList() []*txninfo.TxnInfo {
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
-func (msm *mockSessionManager1) ShowProcessList() map[uint64]*util.ProcessInfo {
-	ret := make(map[uint64]*util.ProcessInfo)
+func (msm *mockSessionManager1) ShowProcessList(f func(*util.ProcessInfo)) {
 	for _, item := range msm.PS {
-		ret[item.ID] = item
+		f(item)
 	}
-	return ret
 }
 
-func (msm *mockSessionManager1) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+func (msm *mockSessionManager1) GetProcessInfo(id uint64, f func(*util.ProcessInfo)) {
 	for _, item := range msm.PS {
 		if item.ID == id {
-			return item, true
+			f(item)
 		}
 	}
-	return &util.ProcessInfo{}, false
 }
 
 // Kill implements the SessionManager.Kill interface.
@@ -87,21 +84,28 @@ func (s *testSerialSuite) TestExplainFor(c *C) {
 
 	tkRoot.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tkRoot.MustQuery("select * from t1;")
-	tkRootProcess := tkRoot.Se.ShowProcess()
+	var tkRootProcess *util.ProcessInfo
+	tkRoot.Se.ShowProcess(func(info *util.ProcessInfo) {
+		tkRootProcess = info
+		c.Assert(tkRootProcess, NotNil)
+	})
 	ps := []*util.ProcessInfo{tkRootProcess}
 	tkRoot.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tkUser.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Check(testkit.Rows(
+	res := tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
+	res.Check(testkit.Rows(
 		"TableReader_5 10000.00 root  data:TableFullScan_4",
 		"└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 	))
 	tkRoot.MustExec("set @@tidb_enable_collect_execution_info=1;")
 	check := func() {
-		tkRootProcess = tkRoot.Se.ShowProcess()
-		ps = []*util.ProcessInfo{tkRootProcess}
+		var id uint64
+		tkRoot.Se.ShowProcess(func(tkRootProcess *util.ProcessInfo) {
+			id = tkRootProcess.ID
+		})
 		tkRoot.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 		tkUser.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-		rows := tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Rows()
+		rows := tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", id)).Rows()
 		c.Assert(len(rows), Equals, 2)
 		c.Assert(len(rows[0]), Equals, 9)
 		buf := bytes.NewBuffer(nil)
@@ -146,9 +150,20 @@ func (s *testSerialSuite) TestIssue11124(c *C) {
 	tk.MustExec("insert into kankan1 values(1, 'a'), (2, 'a');")
 	tk.MustExec("insert into kankan2 values(2, 'z');")
 	tk.MustQuery("select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1'")
-	tkRootProcess := tk.Se.ShowProcess()
+	var tkRootProcess *util.ProcessInfo
+	tk.Se.ShowProcess(func(info *util.ProcessInfo) {
+		tkRootProcess = info
+		c.Assert(tkRootProcess, NotNil)
+	})
 	ps := []*util.ProcessInfo{tkRootProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+
+	tk2.MustQuery("select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1'")
+	tk2.Se.ShowProcess(func(info *util.ProcessInfo) {
+		tkRootProcess = info
+		c.Assert(tkRootProcess, NotNil)
+	})
+	ps = []*util.ProcessInfo{tkRootProcess}
 	tk2.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 
 	rs := tk.MustQuery("explain select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1'").Rows()
@@ -240,8 +255,12 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	tk1.MustExec("prepare stmt from 'select * from t where a = ?'")
 	tk1.MustExec("set @p0='1'")
 
+	var id uint64
+	tk1.Se.ShowProcess(func(info *util.ProcessInfo) {
+		id = info.ID
+	})
 	executeQuery := "execute stmt using @p0"
-	explainQuery := "explain for connection " + strconv.FormatUint(tk1.Se.ShowProcess().ID, 10)
+	explainQuery := "explain for connection " + strconv.FormatUint(id, 10)
 	explainResult := testkit.Rows(
 		"TableReader_7 8000.00 root  data:Selection_6",
 		"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a, double BINARY), 1)",
@@ -254,9 +273,11 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 
 	// single test
 	tk1.MustExec(executeQuery)
-	tk2.Se.SetSessionManager(&mockSessionManager1{
-		PS: []*util.ProcessInfo{tk1.Se.ShowProcess()},
+	var PS []*util.ProcessInfo
+	tk1.Se.ShowProcess(func(info *util.ProcessInfo) {
+		PS = append(PS, info)
 	})
+	tk2.Se.SetSessionManager(&mockSessionManager1{PS})
 	tk2.MustQuery(explainQuery).Check(explainResult)
 
 	// multiple test, '1000' is both effective and efficient.
@@ -273,8 +294,12 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 
 	go func() {
 		for i := 0; i < repeats; i++ {
+			var ps []*util.ProcessInfo
+			tk1.Se.ShowProcess(func(info *util.ProcessInfo) {
+				ps = append(ps, info)
+			})
 			tk2.Se.SetSessionManager(&mockSessionManager1{
-				PS: []*util.ProcessInfo{tk1.Se.ShowProcess()},
+				PS: ps,
 			})
 			tk2.MustQuery(explainQuery).Check(explainResult)
 		}
@@ -327,8 +352,10 @@ func (s *testPrepareSerialSuite) TestExplainDotForExplainPlan(c *C) {
 		"└─TableDual 1.00 root  rows:1",
 	))
 
-	tkProcess := tk.Se.ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	var ps []*util.ProcessInfo
+	tk.Se.ShowProcess(func(pi *util.ProcessInfo) {
+		ps = append(ps, pi)
+	})
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 
 	tk.MustQuery(fmt.Sprintf("explain format=\"dot\" for connection %s", connID)).Check(nil)
@@ -342,8 +369,10 @@ func (s *testPrepareSerialSuite) TestExplainDotForQuery(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	connID := rows[0][0].(string)
 	tk.MustQuery("select 1")
-	tkProcess := tk.Se.ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	var ps []*util.ProcessInfo
+	tk.Se.ShowProcess(func(pi *util.ProcessInfo) {
+		ps = append(ps, pi)
+	})
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 
 	expected := tk2.MustQuery("explain format=\"dot\" select 1").Rows()
@@ -463,11 +492,13 @@ func (s *testPrepareSerialSuite) TestPointGetUserVarPlanCache(c *C) {
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"1 3 1 1",
 	))
-	tkProcess := tk.Se.ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	var ps []*util.ProcessInfo
+	tk.Se.ShowProcess(func(pi *util.ProcessInfo) {
+		ps = append(ps, pi)
+	})
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	// t2 should use PointGet.
-	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", ps[0].ID)).Rows()
 	c.Assert(strings.Contains(fmt.Sprintf("%v", rows[3][0]), "Point_Get"), IsTrue)
 	c.Assert(strings.Contains(fmt.Sprintf("%v", rows[3][3]), "table:t2"), IsTrue)
 
@@ -475,7 +506,11 @@ func (s *testPrepareSerialSuite) TestPointGetUserVarPlanCache(c *C) {
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
 	))
-	tkProcess = tk.Se.ShowProcess()
+	var tkProcess *util.ProcessInfo
+	tk.Se.ShowProcess(func(info *util.ProcessInfo) {
+		tkProcess = info
+		c.Assert(tkProcess, NotNil)
+	})
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	// t2 should use PointGet, range is changed to [2,2].

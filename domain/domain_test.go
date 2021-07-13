@@ -246,21 +246,18 @@ func (msm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
 	panic("unimplemented!")
 }
 
-func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
-	ret := make(map[uint64]*util.ProcessInfo)
+func (msm *mockSessionManager) ShowProcessList(f func(*util.ProcessInfo)) {
 	for _, item := range msm.PS {
-		ret[item.ID] = item
+		f(item)
 	}
-	return ret
 }
 
-func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+func (msm *mockSessionManager) GetProcessInfo(id uint64, f func(*util.ProcessInfo)) {
 	for _, item := range msm.PS {
 		if item.ID == id {
-			return item, true
+			f(item)
 		}
 	}
-	return &util.ProcessInfo{}, false
 }
 
 func (msm *mockSessionManager) Kill(cid uint64, query bool) {}
