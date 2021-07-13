@@ -45,8 +45,8 @@ func (c *batchCopTask) GetAddress() string {
 
 func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 	resultTasks := make([]kv.MPPTaskMeta, 0)
-	for _, addr := range c.store.GetRegionCache().GetTiFlashStoreAddrs() {
-		task := &batchCopTask{storeAddr: addr, cmdType: tikvrpc.CmdMPPTask}
+	for _, s := range c.store.GetRegionCache().GetTiFlashStores() {
+		task := &batchCopTask{storeAddr: s.GetAddr(), cmdType: tikvrpc.CmdMPPTask}
 		resultTasks = append(resultTasks, task)
 	}
 	return resultTasks
@@ -59,7 +59,12 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 	if req.KeyRanges == nil {
 		return c.selectAllTiFlashStore(), nil
 	}
+<<<<<<< HEAD
 	tasks, err := buildBatchCopTasks(bo, c.store.GetRegionCache(), tikv.NewKeyRanges(req.KeyRanges), kv.TiFlash)
+=======
+	ranges := NewKeyRanges(req.KeyRanges)
+	tasks, err := buildBatchCopTasks(bo, c.store, ranges, kv.TiFlash, true)
+>>>>>>> d696ce33a... mpp: check the tiflash availabilities before launching mpp queries. (#26130)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

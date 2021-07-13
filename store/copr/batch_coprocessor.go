@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
@@ -101,11 +102,13 @@ func (rs *batchCopResponse) RespTime() time.Duration {
 // 2. for the remaining regions:
 //    if there is only 1 available store, then put the region to the related store
 //    otherwise, use a greedy algorithm to put it into the store with highest weight
-func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
+func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []*batchCopTask, isMPP bool) []*batchCopTask {
 	if len(originalTasks) <= 1 {
 		return originalTasks
 	}
+	cache := kvStore.GetRegionCache()
 	storeTaskMap := make(map[uint64]*batchCopTask)
+<<<<<<< HEAD
 	storeCandidateRegionMap := make(map[uint64]map[string]tikv.RegionInfo)
 	totalRegionCandidateNum := 0
 	totalRemainingRegionNum := 0
@@ -117,30 +120,86 @@ func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 			cmdType:     task.cmdType,
 			ctx:         task.ctx,
 			regionInfos: []tikv.RegionInfo{task.regionInfos[0]},
+=======
+	// storeCandidateRegionMap stores all the possible store->region map. Its content is
+	// store id -> region signature -> region info. We can see it as store id -> region lists.
+	storeCandidateRegionMap := make(map[uint64]map[string]RegionInfo)
+	totalRegionCandidateNum := 0
+	totalRemainingRegionNum := 0
+
+	if !isMPP {
+		for _, task := range originalTasks {
+			taskStoreID := task.regionInfos[0].AllStores[0]
+			batchTask := &batchCopTask{
+				storeAddr:   task.storeAddr,
+				cmdType:     task.cmdType,
+				ctx:         task.ctx,
+				regionInfos: []RegionInfo{task.regionInfos[0]},
+			}
+			storeTaskMap[taskStoreID] = batchTask
 		}
-		storeTaskMap[taskStoreID] = batchTask
+	} else {
+		// decide the available stores
+		stores := cache.RegionCache.GetTiFlashStores()
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		wg.Add(len(stores))
+		for i := range stores {
+			go func(idx int) {
+				defer wg.Done()
+				s := stores[idx]
+				aliveReq := tikvrpc.NewRequest(tikvrpc.CmdMPPAlive, &mpp.IsAliveRequest{}, kvrpcpb.Context{})
+				aliveReq.StoreTp = tikvrpc.TiFlash
+				alive := false
+				resp, err := kvStore.GetTiKVClient().SendRequest(ctx, s.GetAddr(), aliveReq, tikv.ReadTimeoutMedium)
+				if err != nil {
+					logutil.BgLogger().Warn("Cannot detect store's availablity", zap.String("store address", s.GetAddr()), zap.String("err message", err.Error()))
+				} else {
+					rpcResp := resp.Resp.(*mpp.IsAliveResponse)
+					if rpcResp.Available {
+						alive = true
+					} else {
+						logutil.BgLogger().Warn("Cannot detect store's availablity", zap.String("store address", s.GetAddr()))
+					}
+				}
+				if !alive {
+					return
+				}
+
+				mu.Lock()
+				defer mu.Unlock()
+				storeTaskMap[s.StoreID()] = &batchCopTask{
+					storeAddr: s.GetAddr(),
+					cmdType:   originalTasks[0].cmdType,
+					ctx:       &tikv.RPCContext{Addr: s.GetAddr(), Store: s},
+				}
+			}(i)
+>>>>>>> d696ce33a... mpp: check the tiflash availabilities before launching mpp queries. (#26130)
+		}
+		wg.Wait()
 	}
 
 	for _, task := range originalTasks {
-		taskStoreID := task.regionInfos[0].AllStores[0]
 		for index, ri := range task.regionInfos {
 			// for each region, figure out the valid store num
 			validStoreNum := 0
-			if index == 0 {
+			if index == 0 && !isMPP {
 				continue
 			}
-			if len(ri.AllStores) <= 1 {
-				validStoreNum = 1
-			} else {
-				for _, storeID := range ri.AllStores {
-					if _, ok := storeTaskMap[storeID]; ok {
-						validStoreNum++
-					}
+			var validStoreID uint64
+			for _, storeID := range ri.AllStores {
+				if _, ok := storeTaskMap[storeID]; ok {
+					validStoreNum++
+					// original store id might be invalid, so we have to set it again.
+					validStoreID = storeID
 				}
 			}
-			if validStoreNum == 1 {
+			if validStoreNum == 0 {
+				logutil.BgLogger().Warn("Meet regions that don't have an available store. Give up balancing")
+				return originalTasks
+			} else if validStoreNum == 1 {
 				// if only one store is valid, just put it to storeTaskMap
-				storeTaskMap[taskStoreID].regionInfos = append(storeTaskMap[taskStoreID].regionInfos, ri)
+				storeTaskMap[validStoreID].regionInfos = append(storeTaskMap[validStoreID].regionInfos, ri)
 			} else {
 				// if more than one store is valid, put the region
 				// to store candidate map
@@ -238,12 +297,19 @@ func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 
 	var ret []*batchCopTask
 	for _, task := range storeTaskMap {
-		ret = append(ret, task)
+		if len(task.regionInfos) > 0 {
+			ret = append(ret, task)
+		}
 	}
 	return ret
 }
 
+<<<<<<< HEAD
 func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tikv.KeyRanges, storeType kv.StoreType) ([]*batchCopTask, error) {
+=======
+func buildBatchCopTasks(bo *Backoffer, store *kvStore, ranges *KeyRanges, storeType kv.StoreType, isMPP bool) ([]*batchCopTask, error) {
+	cache := store.GetRegionCache()
+>>>>>>> d696ce33a... mpp: check the tiflash availabilities before launching mpp queries. (#26130)
 	start := time.Now()
 	const cmdType = tikvrpc.CmdBatchCop
 	rangesLen := ranges.Len()
@@ -317,7 +383,7 @@ func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tik
 			}
 			logutil.BgLogger().Debug(msg)
 		}
-		batchTasks = balanceBatchCopTask(batchTasks)
+		batchTasks = balanceBatchCopTask(bo.GetCtx(), store, batchTasks, isMPP)
 		if log.GetLevel() <= zap.DebugLevel {
 			msg := "After region balance:"
 			for _, task := range batchTasks {
@@ -341,9 +407,16 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 	if req.KeepOrder || req.Desc {
 		return copErrorResponse{errors.New("batch coprocessor cannot prove keep order or desc property")}
 	}
+<<<<<<< HEAD
 	ctx = context.WithValue(ctx, tikv.TxnStartKey, req.StartTs)
 	bo := tikv.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	tasks, err := buildBatchCopTasks(bo, c.store.GetRegionCache(), tikv.NewKeyRanges(req.KeyRanges), req.StoreType)
+=======
+	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
+	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
+	ranges := NewKeyRanges(req.KeyRanges)
+	tasks, err := buildBatchCopTasks(bo, c.store.kvStore, ranges, req.StoreType, false)
+>>>>>>> d696ce33a... mpp: check the tiflash availabilities before launching mpp queries. (#26130)
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -484,7 +557,11 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *tikv.Backo
 			ranges = append(ranges, *ran)
 		})
 	}
+<<<<<<< HEAD
 	return buildBatchCopTasks(bo, b.store.GetRegionCache(), tikv.NewKeyRanges(ranges), b.req.StoreType)
+=======
+	return buildBatchCopTasks(bo, b.store, NewKeyRanges(ranges), b.req.StoreType, false)
+>>>>>>> d696ce33a... mpp: check the tiflash availabilities before launching mpp queries. (#26130)
 }
 
 func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *tikv.Backoffer, task *batchCopTask) ([]*batchCopTask, error) {

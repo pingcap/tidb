@@ -47,11 +47,18 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20201126102027-b0a155152ca3
 	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
+<<<<<<< HEAD
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20210526125828-7790f94ac2ad
 	github.com/pingcap/log v0.0.0-20210317133921-96f4fcab92a4
 	github.com/pingcap/parser v0.0.0-20210623034316-5ee95ed0081f
 	github.com/pingcap/sysutil v0.0.0-20210221112134-a07bda3bde99
+=======
+	github.com/pingcap/kvproto v0.0.0-20210712050333-b66fdbd6bfd5
+	github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7
+	github.com/pingcap/parser v0.0.0-20210707071004-31c87e37af5c
+	github.com/pingcap/sysutil v0.0.0-20210315073920-cc0985d983a3
+>>>>>>> d696ce33a... mpp: check the tiflash availabilities before launching mpp queries. (#26130)
 	github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible
 	github.com/pingcap/tipb v0.0.0-20210601083426-79a378b6d1c4
 	github.com/prometheus/client_golang v1.5.1
@@ -62,7 +69,12 @@ require (
 	github.com/sirupsen/logrus v1.6.0
 	github.com/soheilhy/cmux v0.1.4
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+<<<<<<< HEAD
 	github.com/tikv/pd v1.1.0-beta.0.20210323123936-c8fa72502f16
+=======
+	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210712082038-2c7970b2b7e8
+	github.com/tikv/pd v1.1.0-beta.0.20210323121136-78679e5e209d
+>>>>>>> d696ce33a... mpp: check the tiflash availabilities before launching mpp queries. (#26130)
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber-go/atomic v1.4.0
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
