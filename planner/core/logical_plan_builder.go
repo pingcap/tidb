@@ -3807,8 +3807,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if len(b.buildingViewStack) > 0 {
 		if tempIs, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
 			// For tables in view, always ignore local temporary table, considering the below case:
-			// If user created a normal table `t1` and a view `v1` referring `t1`, Aad then a local temporary table with a same name `t1` created.
-			// At this time, execute 'select * from v1' should still return all records from normal table `t1` instead of temporary table `t1`.
+			// If a user created a normal table `t1` and a view `v1` referring `t1`, and then a local temporary table with a same name `t1` is created.
+			// At this time, executing 'select * from v1' should still return all records from normal table `t1` instead of temporary table `t1`.
 			is = tempIs.InfoSchema
 		}
 	}
