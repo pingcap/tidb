@@ -2633,11 +2633,11 @@ func (s *testIntegrationSuite3) TestAutoIncrementForce(c *C) {
 		c.Assert(err, IsNil)
 		return gid
 	}
-	// rebase _tidb_row_id.
+	// Rebase _tidb_row_id.
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1),(2);")
 	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("1 1", "2 2"))
-	// cannot set next global ID to 0.
+	// Cannot set next global ID to 0.
 	tk.MustGetErrCode("alter table t force auto_increment = 0;", errno.ErrAutoincReadFailed)
 	tk.MustExec("alter table t force auto_increment = 1;")
 	c.Assert(getNextGlobalID(), Equals, uint64(1))
@@ -2646,21 +2646,21 @@ func (s *testIntegrationSuite3) TestAutoIncrementForce(c *C) {
 	tk.MustExec("insert into t values (3);")
 	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("3 1", "3 2"))
 
-	// rebase auto_increment.
+	// Rebase auto_increment.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int primary key auto_increment, b int);")
 	tk.MustExec("insert into t values (1, 1);")
 	tk.MustExec("insert into t values (100000000, 1);")
 	tk.MustExec("delete from t where a = 100000000;")
 	c.Assert(getNextGlobalID(), Greater, uint64(100000000))
-	// cannot set next global ID to 0.
+	// Cannot set next global ID to 0.
 	tk.MustGetErrCode("alter table t /*T![force_inc] force */ auto_increment = 0;", errno.ErrAutoincReadFailed)
 	tk.MustExec("alter table t /*T![force_inc] force */ auto_increment = 2;")
 	c.Assert(getNextGlobalID(), Equals, uint64(2))
 	tk.MustExec("insert into t(b) values (2);")
 	tk.MustQuery("select a, b from t;").Check(testkit.Rows("1 1", "2 2"))
 
-	// rebase auto_random.
+	// Rebase auto_random.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a bigint primary key auto_random(5));")
 	tk.MustExec("insert into t values ();")
@@ -2668,14 +2668,14 @@ func (s *testIntegrationSuite3) TestAutoIncrementForce(c *C) {
 	tk.MustExec("insert into t values (100000000);")
 	tk.MustExec("delete from t where a = 100000000;")
 	c.Assert(getNextGlobalID(), Greater, uint64(100000000))
-	// cannot set next global ID to 0.
+	// Cannot set next global ID to 0.
 	tk.MustGetErrCode("alter table t force auto_random_base = 0;", errno.ErrAutoincReadFailed)
 	tk.MustExec("alter table t force auto_random_base = 2;")
 	c.Assert(getNextGlobalID(), Equals, uint64(2))
 	tk.MustExec("insert into t values ();")
 	tk.MustQuery("select (a & 3) from t order by 1;").Check(testkit.Rows("1", "2"))
 
-	// change next global ID.
+	// Change next global ID.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a bigint primary key auto_increment);")
 	tk.MustExec("insert into t values (1);")
@@ -2687,7 +2687,7 @@ func (s *testIntegrationSuite3) TestAutoIncrementForce(c *C) {
 	}
 	tk.MustExec("insert into t values ();")
 	tk.MustQuery("select a from t;").Check(testkit.Rows("1", lastBase))
-	// Test alter unsigned int auto_increment column.
+	// Force alter unsigned int auto_increment column.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a bigint unsigned primary key auto_increment);")
 	for _, b := range bases {
@@ -2698,7 +2698,7 @@ func (s *testIntegrationSuite3) TestAutoIncrementForce(c *C) {
 		tk.MustExec("delete from t;")
 	}
 
-	// @@auto_increment_increment and @@auto_increment_offset.
+	// Force alter with @@auto_increment_increment and @@auto_increment_offset.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int key auto_increment);")
 	tk.MustExec("set @@auto_increment_offset=2;")
