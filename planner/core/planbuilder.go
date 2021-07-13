@@ -515,7 +515,7 @@ type handleColHelper struct {
 
 func (hch *handleColHelper) resetForReuse() {
 	*hch = handleColHelper{
-		id2HandleMapStack : hch.id2HandleMapStack[:0],
+		id2HandleMapStack: hch.id2HandleMapStack[:0],
 	}
 }
 
@@ -662,7 +662,7 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	b.outerCTEs = saveOuterCTEs
 	b.colMapper = saveColMapper
 	b.handleHelper = saveHandleHelper
-	b.correlatedAggMapper = saveCorrelateAggMapper 
+	b.correlatedAggMapper = saveCorrelateAggMapper
 
 	// Add more fields if they are safe to be reused.
 
