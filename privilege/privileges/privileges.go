@@ -76,8 +76,9 @@ func (p *UserPrivileges) RequestDynamicVerificationWithUser(privName string, gra
 	roles := mysqlPriv.getDefaultRoles(user.Username, user.Hostname)
 	return mysqlPriv.RequestDynamicVerification(roles, user.Username, user.Hostname, privName, grantable)
 }
-
-func (p *UserPrivileges) HasExplicitlyGrantedDynamicPriviledge(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool {
+// HasExplicitlyGrantedDynamicPrivilege checks if a user has a DYNAMIC privilege
+// without accepting SUPER privilege as a fallback.
+func (p *UserPrivileges) HasExplicitlyGrantedDynamicPrivilege(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool {
 	if SkipWithGrant {
 		return true
 	}
