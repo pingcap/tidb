@@ -1635,8 +1635,8 @@ func (s *testSuite) TestNotEvolvePlanForReadStorageHint(c *C) {
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, index idx_a(a), index idx_b(b))")
-	tk.MustExec("insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,6), (7,7), (8,8), (9,9), (10,10)")
+	tk.MustExec("create table t(a int, index idx_a(a))")
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
 	tk.MustExec("analyze table t")
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Se)
@@ -1653,22 +1653,22 @@ func (s *testSuite) TestNotEvolvePlanForReadStorageHint(c *C) {
 	}
 
 	// Make sure the best plan of the SQL is use TiKV index.
-	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
-	rows := tk.MustQuery("explain select * from t where a >= 11 and b >= 11").Rows()
+	tk.MustExec("set @@session.tidb_executor_concurrency = 1;")
+	rows := tk.MustQuery("explain select * from t where a >= 11").Rows()
 	c.Assert(fmt.Sprintf("%v", rows[len(rows)-1][2]), Equals, "cop[tikv]")
 
-	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 using select /*+ read_from_storage(tiflash[t]) */ * from t where a >= 1 and b >= 1")
+	tk.MustExec("create global binding for select * from t where a >= 1 using select /*+ read_from_storage(tiflash[t]) */ * from t where a >= 1")
 	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
 
 	// Even if index of TiKV has lower cost, it chooses TiFlash.
-	rows = tk.MustQuery("explain select * from t where a >= 11 and b >= 11").Rows()
+	rows = tk.MustQuery("explain select * from t where a >= 11").Rows()
 	c.Assert(fmt.Sprintf("%v", rows[len(rows)-1][2]), Equals, "cop[tiflash]")
 
 	tk.MustExec("admin flush bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	// None evolve task, because of the origin binding is a read_from_storage binding.
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][1], Equals, "SELECT /*+ read_from_storage(tiflash[`t`])*/ * FROM `test`.`t` WHERE `a` >= 1 AND `b` >= 1")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ read_from_storage(tiflash[`t`])*/ * FROM `test`.`t` WHERE `a` >= 1")
 	c.Assert(rows[0][3], Equals, "using")
 }
 
