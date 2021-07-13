@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/check"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/auth"
@@ -444,14 +445,13 @@ func (s *testSuite5) TestShowCreateUser(c *C) {
 	rows = tk1.MustQuery("show create user current_user")
 	rows.Check(testkit.Rows("CREATE USER 'check_priv'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
 
-	// Creating users with `IDENTIFIED WITH 'caching_sha2_password'` is not supported yet. So manually creating an entry for now.
-	// later this can be changed to test the full path once 'caching_sha2_password' support is completed.
-	tk.MustExec("CREATE USER 'sha_test'@'%' IDENTIFIED BY 'temp_passwd'")
-	tk.MustExec("UPDATE mysql.user SET plugin='caching_sha2_password', authentication_string=0x24412430303524532C06366D1D1E2B2F4437681A057B6807193D1C4B6E772F667A764663534E6C3978716C3057644D73427A787747674679687632644A384F337941704A542F WHERE user='sha_test' AND host='%'")
-	tk.MustExec("FLUSH PRIVILEGES")
+	// Creating users with `IDENTIFIED WITH 'caching_sha2_password'`
+	tk.MustExec("CREATE USER 'sha_test'@'%' IDENTIFIED WITH 'caching_sha2_password' BY 'temp_passwd'")
 
+	// Compare only the start of the output as the salt changes every time.
 	rows = tk.MustQuery("SHOW CREATE USER 'sha_test'@'%'")
-	rows.Check(testkit.Rows("CREATE USER 'sha_test'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$S,\x066m\x1d\x1e+/D7h\x1a\x05{h\a\x19=\x1cKnw/fzvFcSNl9xql0WdMsBzxwGgFyhv2dJ8O3yApJT/' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+	c.Assert(rows.Rows()[0][0].(string)[:78], check.Equals, "CREATE USER 'sha_test'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$")
+
 }
 
 func (s *testSuite5) TestUnprivilegedShow(c *C) {
@@ -590,8 +590,8 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk.MustExec("create table t1(a int,b int)")
 	tk.MustExec("drop view if exists v1")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select * from t1")
-	tk.MustQuery("show create table v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a`,`test`.`t1`.`b` FROM `test`.`t1`  "))
-	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a`,`test`.`t1`.`b` FROM `test`.`t1`  "))
+	tk.MustQuery("show create table v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1`  "))
+	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1`  "))
 	tk.MustExec("drop view v1")
 	tk.MustExec("drop table t1")
 
@@ -603,10 +603,10 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int,b int)")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select avg(a),t1.* from t1 group by a")
-	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`avg(a)`, `a`, `b`) AS SELECT AVG(`a`),`test`.`t1`.`a`,`test`.`t1`.`b` FROM `test`.`t1` GROUP BY `a`  "))
+	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`avg(a)`, `a`, `b`) AS SELECT AVG(`a`) AS `avg(a)`,`test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1` GROUP BY `a`  "))
 	tk.MustExec("drop view v1")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select a+b, t1.* , a as c from t1")
-	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a+b`, `a`, `b`, `c`) AS SELECT `a`+`b`,`test`.`t1`.`a`,`test`.`t1`.`b`,`a` AS `c` FROM `test`.`t1`  "))
+	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a+b`, `a`, `b`, `c`) AS SELECT `a`+`b` AS `a+b`,`test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b`,`a` AS `c` FROM `test`.`t1`  "))
 	tk.MustExec("drop table t1")
 	tk.MustExec("drop view v1")
 
@@ -1130,7 +1130,7 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	res := tk.MustQuery("show builtins;")
 	c.Assert(res, NotNil)
 	rows := res.Rows()
-	const builtinFuncNum = 269
+	const builtinFuncNum = 271
 	c.Assert(builtinFuncNum, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
 	c.Assert("yearweek", Equals, rows[builtinFuncNum-1][0].(string))

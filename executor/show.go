@@ -1712,8 +1712,8 @@ func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
 			e.result.AppendInt64(6, 0)
 		}
 
-		e.result.AppendInt64(7, regions[i].writtenBytes)
-		e.result.AppendInt64(8, regions[i].readBytes)
+		e.result.AppendUint64(7, regions[i].writtenBytes)
+		e.result.AppendUint64(8, regions[i].readBytes)
 		e.result.AppendInt64(9, regions[i].approximateSize)
 		e.result.AppendInt64(10, regions[i].approximateKeys)
 	}
