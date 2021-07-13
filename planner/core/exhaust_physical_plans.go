@@ -1697,7 +1697,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	})
 
 	if prop.IsFlashProp() && (p.preferJoinType&preferBCJoin) == 0 && p.preferJoinType > 0 {
-		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported now.")
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.")
 		return nil, false, nil
 	}
 	if prop.MPPPartitionTp == property.BroadcastType {
