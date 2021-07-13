@@ -405,6 +405,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		lockKeys := make([]kv.Key, len(keys)+len(indexKeys))
 		copy(lockKeys, keys)
 		copy(lockKeys[len(keys):], indexKeys)
+		err = LockKeys(ctx, e.ctx, e.waitTime, lockKeys...)
+		if err != nil {
+			return err
+		}
 		// Change the unique index LOCK into PUT record.
 		if len(indexKeys) > 0 {
 			if !e.txn.Valid() {
@@ -421,10 +425,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 					return err
 				}
 			}
-		}
-		err = LockKeys(ctx, e.ctx, e.waitTime, lockKeys...)
-		if err != nil {
-			return err
 		}
 	}
 	// Fetch all values.
@@ -443,6 +443,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			}
 		}
 	}
+	changeLockToPutIdxKeys := make([]kv.Key, 0, len(indexKeys))
 	for i, key := range keys {
 		val := values[string(key)]
 		if len(val) == 0 {
@@ -461,15 +462,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			// lock primary key for clustered index table is redundant
 			if len(indexKeys) != 0 {
 				existKeys = append(existKeys, indexKeys[i])
-				membuf := e.txn.GetMemBuffer()
-				handleVal := handleVals[string(indexKeys[i])]
-				if len(handleVal) == 0 {
-					return kv.ErrNotExist
-				}
-				err = membuf.Set(indexKeys[i], handleVal)
-				if err != nil {
-					return err
-				}
+				changeLockToPutIdxKeys = append(changeLockToPutIdxKeys, indexKeys[i])
 			}
 		}
 	}
@@ -478,6 +471,17 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		err = LockKeys(ctx, e.ctx, e.waitTime, existKeys...)
 		if err != nil {
 			return err
+		}
+		for _, idxKey := range changeLockToPutIdxKeys {
+			membuf := e.txn.GetMemBuffer()
+			handleVal := handleVals[string(idxKey)]
+			if len(handleVal) == 0 {
+				return kv.ErrNotExist
+			}
+			err = membuf.Set(idxKey, handleVal)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	e.handles = handles
