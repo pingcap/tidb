@@ -14,10 +14,10 @@
 package profile
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -81,13 +81,13 @@ func TestProfileToDatum(t *testing.T) {
 	}
 
 	for i, row := range data {
-		comment := Commentf("row %2d", i)
+		comment := fmt.Sprintf("row %2d", i)
 		rowStr, err := types.DatumsToString(row, true)
 		assert.Nil(t, err, comment)
 		expectStr, err := types.DatumsToString(datums[i], true)
 		assert.Nil(t, err, comment)
 
-		comment = Commentf("row %2d, actual (%s), expected (%s)", i, rowStr, expectStr)
+		comment = fmt.Sprintf("row %2d, actual (%s), expected (%s)", i, rowStr, expectStr)
 		equal := true
 		for j, r := range row {
 			v, err := r.CompareDatum(nil, &datums[i][j])
