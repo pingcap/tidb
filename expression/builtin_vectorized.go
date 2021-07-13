@@ -32,7 +32,7 @@ type columnBufferAllocator interface {
 }
 
 // localSliceBuffer implements columnBufferAllocator interface.
-// It works like a concurrency-safe deque which is implemented by a lock + slice.
+// It works like a concurrency-safe deque which is implemented by sync.Pool.
 type localSliceBuffer struct {
 	pool sync.Pool
 }
@@ -81,6 +81,7 @@ func PutColumn(buf *chunk.Column) {
 	globalColumnAllocator.put(buf)
 }
 
+// get will ignore evalType and capacity
 func (r *localSliceBuffer) get(evalType types.EvalType, capacity int) (*chunk.Column, error) {
 	col, _ := r.pool.Get().(*chunk.Column)
 	return col, nil
