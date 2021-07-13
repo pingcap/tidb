@@ -14,21 +14,21 @@
 package kv_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/tidb/kv"
+	"github.com/stretchr/testify/assert"
 )
 
-type checkerSuite struct{}
+func TestIsRequestTypeSupported(t *testing.T) {
+	t.Parallel()
 
-var _ = Suite(&checkerSuite{})
-
-func (s checkerSuite) TestIsRequestTypeSupported(c *C) {
 	checker := kv.RequestTypeSupportedChecker{}.IsRequestTypeSupported
-	c.Assert(checker(kv.ReqTypeSelect, kv.ReqSubTypeGroupBy), IsTrue)
-	c.Assert(checker(kv.ReqTypeDAG, kv.ReqSubTypeSignature), IsTrue)
-	c.Assert(checker(kv.ReqTypeDAG, kv.ReqSubTypeDesc), IsTrue)
-	c.Assert(checker(kv.ReqTypeDAG, kv.ReqSubTypeSignature), IsTrue)
-	c.Assert(checker(kv.ReqTypeDAG, kv.ReqSubTypeAnalyzeIdx), IsFalse)
-	c.Assert(checker(kv.ReqTypeAnalyze, 0), IsTrue)
-	c.Assert(checker(kv.ReqTypeChecksum, 0), IsFalse)
+	assert.True(t, checker(kv.ReqTypeSelect, kv.ReqSubTypeGroupBy))
+	assert.True(t, checker(kv.ReqTypeDAG, kv.ReqSubTypeSignature))
+	assert.True(t, checker(kv.ReqTypeDAG, kv.ReqSubTypeDesc))
+	assert.True(t, checker(kv.ReqTypeDAG, kv.ReqSubTypeSignature))
+	assert.False(t, checker(kv.ReqTypeDAG, kv.ReqSubTypeAnalyzeIdx))
+	assert.True(t, checker(kv.ReqTypeAnalyze, 0))
+	assert.False(t, checker(kv.ReqTypeChecksum, 0))
 }
