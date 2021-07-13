@@ -1747,17 +1747,18 @@ func (s *testPrivilegeSuite) TestDynamicPrivsRegistration(c *C) {
 }
 
 func (s *testPrivilegeSuite) TestInfoschemaUserPrivileges(c *C) {
+	// Being able to read all privileges from information_schema.user_privileges requires a very specific set of permissions.
+	// SUPER user is not sufficient. It was observed in MySQL to require SELECT on mysql.*
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("CREATE USER isnobody, isroot, isselectonmysqluser")
+	tk.MustExec("CREATE USER isnobody, isroot, isselectonmysqluser, isselectonmysql")
 	tk.MustExec("GRANT SUPER ON *.* TO isroot")
 	tk.MustExec("GRANT SELECT ON mysql.user TO isselectonmysqluser")
+	tk.MustExec("GRANT SELECT ON mysql.* TO isselectonmysql")
 
 	// First as Nobody
 	tk.Se.Auth(&auth.UserIdentity{
-		Username:     "isnobody",
-		Hostname:     "localhost",
-		AuthUsername: "isnobody",
-		AuthHostname: "%",
+		Username: "isnobody",
+		Hostname: "localhost",
 	}, nil, nil)
 
 	// I can see myself, but I can not see other users
@@ -1765,12 +1766,23 @@ func (s *testPrivilegeSuite) TestInfoschemaUserPrivileges(c *C) {
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isroot'@'%'"`).Check(testkit.Rows())
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysqluser'@'%'"`).Check(testkit.Rows())
 
+	// Basically the same result as as isselectonmysqluser
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "isselectonmysqluser",
+		Hostname: "localhost",
+	}, nil, nil)
+
+	// Now as isselectonmysqluser
+	// Tests discovered issue that SELECT on mysql.user is not sufficient. It must be on mysql.*
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isnobody'@'%'"`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isroot'@'%'"`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysqluser'@'%'"`).Check(testkit.Rows("'isselectonmysqluser'@'%' def USAGE NO"))
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysql'@'%'"`).Check(testkit.Rows())
+
 	// Now as root
 	tk.Se.Auth(&auth.UserIdentity{
-		Username:     "isroot",
-		Hostname:     "localhost",
-		AuthUsername: "isroot",
-		AuthHostname: "%",
+		Username: "isroot",
+		Hostname: "localhost",
 	}, nil, nil)
 
 	// I can see myself, but I can not see other users
@@ -1780,10 +1792,8 @@ func (s *testPrivilegeSuite) TestInfoschemaUserPrivileges(c *C) {
 
 	// Now as isselectonmysqluser
 	tk.Se.Auth(&auth.UserIdentity{
-		Username:     "isselectonmysqluser",
-		Hostname:     "localhost",
-		AuthUsername: "isselectonmysqluser",
-		AuthHostname: "%",
+		Username: "isselectonmysql",
+		Hostname: "localhost",
 	}, nil, nil)
 
 	// Now as isselectonmysqluser

@@ -1422,10 +1422,10 @@ func privToString(priv mysql.PrivilegeType, allPrivs []mysql.PrivilegeType, allP
 
 // UserPrivilegesTable provide data for INFORMATION_SCHEMA.USERS_PRIVILEGES table.
 func (p *MySQLPrivilege) UserPrivilegesTable(activeRoles []*auth.RoleIdentity, user, host string) [][]types.Datum {
-	// Seeing all users requires SELECT ON * FROM mysql.user
+	// Seeing all users requires SELECT ON * FROM mysql.*
 	// The SUPER privilege (or any other dynamic privilege) doesn't help here.
 	// This is verified against MySQL.
-	showOtherUsers := p.RequestVerification(activeRoles, user, host, mysql.SystemDB, mysql.UserTable, "", mysql.SelectPriv)
+	showOtherUsers := p.RequestVerification(activeRoles, user, host, mysql.SystemDB, "", "", mysql.SelectPriv)
 	var rows [][]types.Datum
 	for _, u := range p.User {
 		if showOtherUsers || u.match(user, host) {
