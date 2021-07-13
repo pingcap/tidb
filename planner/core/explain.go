@@ -393,7 +393,7 @@ func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) string {
 	tmp, ok := is.TableByID(ts.Table.ID)
 	if !ok {
 		buffer.WriteString("partition table not found: ")
-		buffer.WriteString(strconv.FormatInt(ts.Table.ID,10))
+		buffer.WriteString(strconv.FormatInt(ts.Table.ID, 10))
 		return buffer.String()
 	}
 
@@ -409,7 +409,7 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 		str.WriteString("limit embedded(offset:")
 		str.WriteString(strconv.FormatUint(p.PushedLimit.Offset, 10))
 		str.WriteString(", count:")
-		str.WriteString(strconv.FormatUint(p.PushedLimit.Count,10))
+		str.WriteString(strconv.FormatUint(p.PushedLimit.Count, 10))
 		str.WriteString(")")
 		return str.String()
 	}
@@ -501,7 +501,7 @@ func (p *PhysicalSort) ExplainInfo() string {
 func (p *PhysicalLimit) ExplainInfo() string {
 	var str strings.Builder
 	str.WriteString("offset:")
-	str.WriteString(strconv.FormatUint(p.Offset,10))
+	str.WriteString(strconv.FormatUint(p.Offset, 10))
 	str.WriteString(", count:")
 	str.WriteString(strconv.FormatUint(p.Count, 10))
 	return str.String()
