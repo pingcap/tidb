@@ -26,12 +26,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
 func TestProfiles(t *testing.T) {
 	t.Parallel()
 	var err error
 	var store kv.Storage
-	var dom   *domain.Domain
+	var dom *domain.Domain
 
 	store, err = mockstore.NewMockStore()
 	require.Nil(t, err)
