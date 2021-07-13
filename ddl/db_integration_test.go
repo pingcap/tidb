@@ -21,12 +21,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/tidb/planner/core"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -38,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -2893,6 +2892,23 @@ func (s *testIntegrationSuite3) TestAvoidCreateViewOnLocalTemporaryTable(c *C) {
 		c.Assert(err, NotNil)
 		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v3' doesn't exist")
 
+		_, err = tk.Exec("create view v4 as select a, (select count(1) from tt1 where tt1.a = tt0.a) as tt1a from tt0")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+		_, err = tk.Exec("select * from v4")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v4' doesn't exist")
+
+		_, err = tk.Exec("create view v5 as select a, (select count(1) from tt1 where tt1.a = 1) as tt1a from tt0")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+		_, err = tk.Exec("select * from v5")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v5' doesn't exist")
+
+		_, err = tk.Exec("create view v6 as select * from tt0 where tt0.a=(select max(tt1.b) from tt1)")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+		_, err = tk.Exec("select * from v6")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v6' doesn't exist")
 	}
 
 	checkCreateView()
