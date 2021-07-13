@@ -228,7 +228,7 @@ func allowInReadOnlyMode(sctx sessionctx.Context, node ast.Node) (bool, error) {
 	roles := sctx.GetSessionVars().ActiveRoles
 	// allow replication thread
 	// NOTE: it is required, whether SEM is enabled or not, only user with explicit RESTRICTED_REPLICA_WRITER_ADMIN granted can ignore the restriction, so we need to surpass the case that if SEM is not enabled, SUPER will has all privileges
-	if pm.HasExplicitlyGrantedDynamicPriviledge(roles, "RESTRICTED_REPLICA_WRITER_ADMIN", false) {
+	if pm.HasExplicitlyGrantedDynamicPrivilege(roles, "RESTRICTED_REPLICA_WRITER_ADMIN", false) {
 		return true, nil
 	}
 
