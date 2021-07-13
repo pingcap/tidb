@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -67,6 +69,39 @@ func (e *DDLExec) toErr(err error) error {
 		return errors.Trace(schemaInfoErr)
 	}
 	return err
+}
+
+// deleteTemporaryTableRecords delete temporary table data.
+func deleteTemporaryTableRecords(memData kv.MemBuffer, tblID int64) error {
+	if memData == nil {
+		return kv.ErrNotExist
+	}
+
+	tblPrefix := tablecodec.EncodeTablePrefix(tblID)
+	endKey := tablecodec.EncodeTablePrefix(tblID + 1)
+
+	iter, err := memData.Iter(tblPrefix, endKey)
+	if err != nil {
+		return err
+	}
+	for iter.Valid() {
+		key := iter.Key()
+		if !bytes.HasPrefix(key, tblPrefix) {
+			break
+		}
+
+		err = memData.Delete(key)
+		if err != nil {
+			return err
+		}
+
+		err = iter.Next()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Next implements the Executor Next interface.
@@ -104,7 +139,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			for tbIdx := range s.Tables {
 				table, _ := localTempTables.TableByName(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name)
 				localTempTables.RemoveTable(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name)
-				err := sessVars.DeleteTemporaryTable(table.Meta().ID)
+				err := deleteTemporaryTableRecords(sessVars.TemporaryTableData, table.Meta().ID)
 				if err != nil {
 					return err
 				}
@@ -495,7 +530,7 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 		for tbIdx := range localTempTableList {
 			table, _ := localTemporaryTable.TableByName(localTempTableList[tbIdx].Schema, localTempTableList[tbIdx].Name)
 			localTemporaryTable.RemoveTable(localTempTableList[tbIdx].Schema, localTempTableList[tbIdx].Name)
-			err := sessVars.DeleteTemporaryTable(table.Meta().ID)
+			err := deleteTemporaryTableRecords(sessVars.TemporaryTableData, table.Meta().ID)
 			if err != nil {
 				return err
 			}
