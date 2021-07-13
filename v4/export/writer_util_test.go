@@ -21,7 +21,7 @@ var appLogger log.Logger
 func TestT(t *testing.T) {
 	initColTypeRowReceiverMap()
 	logger, _, err := log.InitAppLogger(&log.Config{
-		Level:  "info",
+		Level:  "debug",
 		File:   "",
 		Format: "text",
 	})

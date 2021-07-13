@@ -6,8 +6,11 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"math/big"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,10 +25,15 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pclog "github.com/pingcap/log"
+	"github.com/pingcap/tidb/store/helper"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
+
+var openDBFunc = sql.Open
 
 // Dumper is the dump progress structure
 type Dumper struct {
@@ -36,16 +44,18 @@ type Dumper struct {
 	extStore storage.ExternalStorage
 	dbHandle *sql.DB
 
-	tidbPDClientForGC pd.Client
+	tidbPDClientForGC         pd.Client
+	selectTiDBTableRegionFunc func(tctx *tcontext.Context, conn *sql.Conn, dbName, tableName string) (pkFields []string, pkVals [][]string, err error)
 }
 
 // NewDumper returns a new Dumper
 func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 	tctx, cancelFn := tcontext.Background().WithContext(ctx).WithCancel()
 	d := &Dumper{
-		tctx:      tctx,
-		conf:      conf,
-		cancelCtx: cancelFn,
+		tctx:                      tctx,
+		conf:                      conf,
+		cancelCtx:                 cancelFn,
+		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 	}
 	err := adjustConfig(conf,
 		registerTLSConfig,
@@ -139,6 +149,9 @@ func (d *Dumper) Dump() (dumpErr error) {
 			return err
 		}
 	}
+	if err = d.renewSelectTableRegionFuncForLowerTiDB(tctx); err != nil {
+		tctx.L().Error("fail to update select table region info for TiDB", zap.Error(err))
+	}
 
 	rebuildConn := func(conn *sql.Conn) (*sql.Conn, error) {
 		// make sure that the lock connection is still alive
@@ -214,8 +227,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	})
 
 	// get estimate total count
-	err = d.getEstimateTotalRowsCount(tctx, metaConn)
-	if err != nil {
+	if err = d.getEstimateTotalRowsCount(tctx, metaConn); err != nil {
 		tctx.L().Error("fail to get estimate total count", zap.Error(err))
 	}
 
@@ -442,7 +454,7 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *sql.Conn, met
 	if conf.ServerInfo.ServerType == ServerTypeTiDB &&
 		conf.ServerInfo.ServerVersion != nil &&
 		(conf.ServerInfo.ServerVersion.Compare(*tableSampleVersion) >= 0 ||
-			(conf.ServerInfo.HasTiKV && conf.ServerInfo.ServerVersion.Compare(*gcSafePointVersion) >= 0)) {
+			(conf.ServerInfo.HasTiKV && conf.ServerInfo.ServerVersion.Compare(*decodeRegionVersion) >= 0)) {
 		return d.concurrentDumpTiDBTables(tctx, conn, meta, taskChan)
 	}
 	field, err := pickupPossibleField(db, tbl, conn, conf)
@@ -578,18 +590,22 @@ func (d *Dumper) concurrentDumpTiDBTables(tctx *tcontext.Context, conn *sql.Conn
 		handleVals     [][]string
 		err            error
 	)
+	// for TiDB v5.0+, we can use table sample directly
 	if d.conf.ServerInfo.ServerVersion.Compare(*tableSampleVersion) >= 0 {
 		tctx.L().Debug("dumping TiDB tables with TABLESAMPLE",
 			zap.String("database", db), zap.String("table", tbl))
 		handleColNames, handleVals, err = selectTiDBTableSample(tctx, conn, db, tbl)
 	} else {
+		// for TiDB v3.0+, we can use table region decode in TiDB directly
 		tctx.L().Debug("dumping TiDB tables with TABLE REGIONS",
 			zap.String("database", db), zap.String("table", tbl))
 		var partitions []string
-		partitions, err = GetPartitionNames(conn, db, tbl)
+		if d.conf.ServerInfo.ServerVersion.Compare(*gcSafePointVersion) >= 0 {
+			partitions, err = GetPartitionNames(conn, db, tbl)
+		}
 		if err == nil {
 			if len(partitions) == 0 {
-				handleColNames, handleVals, err = selectTiDBTableRegion(tctx, conn, db, tbl)
+				handleColNames, handleVals, err = d.selectTiDBTableRegionFunc(tctx, conn, db, tbl)
 			} else {
 				return d.concurrentDumpTiDBPartitionTables(tctx, conn, meta, taskChan, partitions)
 			}
@@ -1151,5 +1167,95 @@ func setSessionParam(d *Dumper) error {
 	if d.dbHandle, err = resetDBWithSessionParams(d.tctx, pool, conf.GetDSN(""), conf.SessionParams); err != nil {
 		return errors.Trace(err)
 	}
+	return nil
+}
+
+func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) error {
+	conf := d.conf
+	if !(conf.ServerInfo.ServerType == ServerTypeTiDB && conf.ServerInfo.ServerVersion != nil && conf.ServerInfo.HasTiKV &&
+		conf.ServerInfo.ServerVersion.Compare(*decodeRegionVersion) >= 0 &&
+		conf.ServerInfo.ServerVersion.Compare(*gcSafePointVersion) < 0) {
+		tctx.L().Debug("no need to build region info because database is not TiDB 3.x")
+		return nil
+	}
+	dbHandle, err := openDBFunc("mysql", conf.GetDSN(""))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer dbHandle.Close()
+	conn, err := dbHandle.Conn(tctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer conn.Close()
+	dbInfos, err := GetDBInfo(conn, DatabaseTablesToMap(conf.Tables))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	regionsInfo, err := GetRegionInfos(conn)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tikvHelper := &helper.Helper{}
+	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, dbInfos)
+
+	tableInfoMap := make(map[string]map[string][]int64, len(conf.Tables))
+	for _, region := range regionsInfo.Regions {
+		tableList := tableInfos[region.ID]
+		for _, table := range tableList {
+			db, tbl := table.DB.Name.O, table.Table.Name.O
+			if _, ok := tableInfoMap[db]; !ok {
+				tableInfoMap[db] = make(map[string][]int64, len(conf.Tables[db]))
+			}
+
+			key, err := hex.DecodeString(region.StartKey)
+			if err != nil {
+				d.L().Debug("invalid region start key", zap.Error(err), zap.String("key", region.StartKey))
+				continue
+			}
+			// Auto decode byte if needed.
+			_, bs, err := codec.DecodeBytes(key, nil)
+			if err == nil {
+				key = bs
+			}
+			// Try to decode it as a record key.
+			tableID, handle, err := tablecodec.DecodeRecordKey(key)
+			if err != nil {
+				d.L().Debug("fail to decode region start key", zap.Error(err), zap.String("key", region.StartKey), zap.Int64("tableID", tableID))
+				continue
+			}
+			if handle.IsInt() {
+				tableInfoMap[db][tbl] = append(tableInfoMap[db][tbl], handle.IntValue())
+			} else {
+				d.L().Debug("not an int handle", zap.Error(err), zap.Stringer("handle", handle))
+			}
+		}
+	}
+	for _, tbInfos := range tableInfoMap {
+		for _, tbInfoLoop := range tbInfos {
+			// make sure tbInfo is only used in this loop
+			tbInfo := tbInfoLoop
+			sort.Slice(tbInfo, func(i, j int) bool {
+				return tbInfo[i] < tbInfo[j]
+			})
+		}
+	}
+
+	d.selectTiDBTableRegionFunc = func(tctx *tcontext.Context, conn *sql.Conn, dbName, tableName string) (pkFields []string, pkVals [][]string, err error) {
+		pkFields, _, err = selectTiDBRowKeyFields(conn, dbName, tableName, checkTiDBTableRegionPkFields)
+		if err != nil {
+			return
+		}
+		if tbInfos, ok := tableInfoMap[dbName]; ok {
+			if tbInfo, ok := tbInfos[tableName]; ok {
+				pkVals = make([][]string, len(tbInfo))
+				for i, val := range tbInfo {
+					pkVals[i] = []string{strconv.FormatInt(val, 10)}
+				}
+			}
+		}
+		return
+	}
+
 	return nil
 }
