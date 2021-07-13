@@ -129,8 +129,8 @@ type RemoteTopSQLReporter struct {
 	normalizedPlanMap atomic.Value // sync.Map
 	planMapLength     atomic2.Int64
 
-	collectCPUDataChan chan cpuData
-	reportDataChan     chan reportData
+	collectCPUDataChan      chan cpuData
+	reportCollectedDataChan chan collectedData
 }
 
 // NewRemoteTopSQLReporter creates a new TopSQL reporter
@@ -140,11 +140,11 @@ type RemoteTopSQLReporter struct {
 func NewRemoteTopSQLReporter(client ReportClient) *RemoteTopSQLReporter {
 	ctx, cancel := context.WithCancel(context.Background())
 	tsr := &RemoteTopSQLReporter{
-		ctx:                ctx,
-		cancel:             cancel,
-		client:             client,
-		collectCPUDataChan: make(chan cpuData, 1),
-		reportDataChan:     make(chan reportData, 1),
+		ctx:                     ctx,
+		cancel:                  cancel,
+		client:                  client,
+		collectCPUDataChan:      make(chan cpuData, 1),
+		reportCollectedDataChan: make(chan collectedData, 1),
 	}
 	tsr.normalizedSQLMap.Store(&sync.Map{})
 	tsr.normalizedPlanMap.Store(&sync.Map{})
@@ -319,7 +319,6 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 			tsr.doCollect(collectedData, data.timestamp, data.records)
 		case <-reportTicker.C:
 			tsr.takeDataAndSendToReportChan(&collectedData)
-
 			// Update `reportTicker` if report interval changed.
 			if newInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load(); newInterval != currentReportInterval {
 				currentReportInterval = newInterval
@@ -424,18 +423,13 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 	addEvictedCPUTime(collectTarget, timestamp, totalEvictedCPUTime)
 }
 
-// takeDataAndSendToReportChan takes the topN collected data and the other data which summarize all evicted data.
-// These data will be send to a report channel for reporting later.
+// takeDataAndSendToReportChan takes collected data and then send to the report channel for reporting.
 func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *map[string]*dataPoints) {
-	// Fetch TopN dataPoints.
-	others := (*collectedDataPtr)[keyOthers]
-	delete(*collectedDataPtr, keyOthers)
-	records := make([]*dataPoints, 0, len(*collectedDataPtr))
-	for _, v := range *collectedDataPtr {
-		records = append(records, v)
+	data := collectedData{
+		records:           *collectedDataPtr,
+		normalizedSQLMap:  tsr.normalizedSQLMap.Load().(*sync.Map),
+		normalizedPlanMap: tsr.normalizedPlanMap.Load().(*sync.Map),
 	}
-	normalizedSQLMap := tsr.normalizedSQLMap.Load().(*sync.Map)
-	normalizedPlanMap := tsr.normalizedPlanMap.Load().(*sync.Map)
 
 	// Reset data for next report.
 	*collectedDataPtr = make(map[string]*dataPoints)
@@ -444,41 +438,24 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *m
 	tsr.sqlMapLength.Store(0)
 	tsr.planMapLength.Store(0)
 
-	// Evict redundant data.
-	var evicted []*dataPoints
-	records, evicted = getTopNDataPoints(records)
-	if others != nil {
-		// Sort the dataPoints by timestamp to fix the affect of time jump backward.
-		sort.Sort(others)
-	}
-	for _, evict := range evicted {
-		normalizedSQLMap.LoadAndDelete(string(evict.SQLDigest))
-		normalizedPlanMap.LoadAndDelete(string(evict.PlanDigest))
-		others = addEvictedIntoSortedDataPoints(others, evict)
-	}
-
-	// append others which summarize all evicted item's cpu-time.
-	if others != nil && others.CPUTimeMsTotal > 0 {
-		records = append(records, others)
-	}
-
-	data := reportData{
-		collectedData:     records,
-		normalizedSQLMap:  normalizedSQLMap,
-		normalizedPlanMap: normalizedPlanMap,
-	}
-
 	// Send to report channel. When channel is full, data will be dropped.
 	select {
-	case tsr.reportDataChan <- data:
+	case tsr.reportCollectedDataChan <- data:
 	default:
 		// ignore if chan blocked
 		ignoreReportChannelFullCounter.Inc()
 	}
 }
 
+type collectedData struct {
+	records           map[string]*dataPoints
+	normalizedSQLMap  *sync.Map
+	normalizedPlanMap *sync.Map
+}
+
 // reportData contains data that reporter sends to the agent
 type reportData struct {
+	// collectedData contains the topN collected records and the `others` record which aggregation all records that is out of Top N.
 	collectedData     []*dataPoints
 	normalizedSQLMap  *sync.Map
 	normalizedPlanMap *sync.Map
@@ -503,21 +480,58 @@ func (d *reportData) hasData() bool {
 	return cnt > 0
 }
 
-// reportWorker sends data to the gRPC endpoint from the `reportDataChan` one by one.
+// reportWorker sends data to the gRPC endpoint from the `reportCollectedDataChan` one by one.
 func (tsr *RemoteTopSQLReporter) reportWorker() {
 	defer util.Recover("top-sql", "reportWorker", nil, false)
 
 	for {
 		select {
-		case data := <-tsr.reportDataChan:
-			// When `reportDataChan` receives something, there could be ongoing `RegisterSQL` and `RegisterPlan` running,
+		case data := <-tsr.reportCollectedDataChan:
+			// When `reportCollectedDataChan` receives something, there could be ongoing `RegisterSQL` and `RegisterPlan` running,
 			// who writes to the data structure that `data` contains. So we wait for a little while to ensure that
 			// these writes are finished.
 			time.Sleep(time.Millisecond * 100)
-			tsr.doReport(data)
+			report := tsr.getReportData(data)
+			tsr.doReport(report)
 		case <-tsr.ctx.Done():
 			return
 		}
+	}
+}
+
+// getReportData gets reportData from the collectedData.
+// This function will calculate the topN collected records and the `others` record which aggregation all records that is out of Top N.
+func (tsr *RemoteTopSQLReporter) getReportData(collected collectedData) reportData {
+	// Fetch TopN dataPoints.
+	others := collected.records[keyOthers]
+	delete(collected.records, keyOthers)
+	records := make([]*dataPoints, 0, len(collected.records))
+	for _, v := range collected.records {
+		records = append(records, v)
+	}
+
+	// Evict all records that is out of Top N.
+	var evicted []*dataPoints
+	records, evicted = getTopNDataPoints(records)
+	if others != nil {
+		// Sort the dataPoints by timestamp to fix the affect of time jump backward.
+		sort.Sort(others)
+	}
+	for _, evict := range evicted {
+		collected.normalizedSQLMap.LoadAndDelete(string(evict.SQLDigest))
+		collected.normalizedPlanMap.LoadAndDelete(string(evict.PlanDigest))
+		others = addEvictedIntoSortedDataPoints(others, evict)
+	}
+
+	// append others which summarize all evicted item's cpu-time.
+	if others != nil && others.CPUTimeMsTotal > 0 {
+		records = append(records, others)
+	}
+
+	return reportData{
+		collectedData:     records,
+		normalizedSQLMap:  collected.normalizedSQLMap,
+		normalizedPlanMap: collected.normalizedPlanMap,
 	}
 }
 
