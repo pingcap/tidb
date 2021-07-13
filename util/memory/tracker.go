@@ -53,7 +53,7 @@ import (
 type Tracker struct {
 	mu struct {
 		sync.Mutex
-		// The children memory trackers. If the Tracker is the Global Tracker, like executor.GlobalDiskUsageTracker,
+		// children memory trackers. If the Tracker is the Global Tracker, like executor.GlobalDiskUsageTracker,
 		// we wouldn't maintain its children in order to avoiding mutex contention.
 		children map[int][]*Tracker
 	}
@@ -95,7 +95,6 @@ func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed)
 	t.bytesSoftLimit = int64(float64(bytesLimit) * softScale)
 	t.maxConsumed = 0
 	t.isGlobal = false
-	return
 }
 
 // NewTracker creates a memory tracker.

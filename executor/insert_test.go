@@ -1071,7 +1071,7 @@ func (s *testSuite3) TestInsertFloatOverflow(c *C) {
 	tk.MustExec("drop table if exists t,t1")
 }
 
-// There is a potential issue in MySQL: when the value of auto_increment_offset is greater
+// TestAutoIDIncrementAndOffset There is a potential issue in MySQL: when the value of auto_increment_offset is greater
 // than that of auto_increment_increment, the value of auto_increment_offset is ignored
 // (https://dev.mysql.com/doc/refman/8.0/en/replication-options-master.html#sysvar_auto_increment_increment),
 // This issue is a flaw of the implementation of MySQL and it doesn't exist in TiDB.
@@ -1537,6 +1537,18 @@ func (s *testSerialSuite) TestIssue20768(c *C) {
 	tk.MustQuery("select /*+ merge_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
 }
 
+func (s *testSerialSuite) TestIssue24044(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE `t1` (`id` int NOT NULL, `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL, PRIMARY KEY (`id`) USING BTREE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=COMPACT;")
+	tk.MustExec("insert into t1 values(1,\"a\")")
+	tk.MustExec("insert into t1 values(2,\"b\")")
+
+	err := tk.ExecToErr("insert into t1 select * from t1 on duplicate key update id = \"\"")
+	c.Assert(err.Error(), Equals, "[table:1366]Incorrect int value: '' for column 'id' at row 1")
+}
+
 func (s *testSuite9) TestIssue10402(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1571,7 +1583,7 @@ func combination(items []string) func() []string {
 	}
 }
 
-// See https://github.com/pingcap/tidb/issues/24582
+// TestDuplicatedEntryErr https://github.com/pingcap/tidb/issues/24582
 func (s *testSuite10) TestDuplicatedEntryErr(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
