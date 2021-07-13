@@ -268,8 +268,21 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	res.EqOrInCount = eqOrInCount
 	ranges, err = d.buildCNFIndexRange(tpSlice, eqOrInCount, accessConds)
 	if err != nil {
-		return res, err
+		return nil, err
 	}
+
+	// Though ranges are built from equal/in conditions, some range may not be a single point after UnionRanges in buildCNFIndexRange.
+	// In order to prepare for the following appendRanges2PointRanges, we set d.mergeConsecutive to false and call buildCNFIndexRange
+	// again to get pointRanges, in which each range must be a single point. If we use ranges rather than pointRanges when calling
+	// appendRanges2PointRanges, wrong ranges would be calculated as issue https://github.com/pingcap/tidb/issues/26029 describes.
+	mergeConsecutive := d.mergeConsecutive
+	d.mergeConsecutive = false
+	pointRanges, err := d.buildCNFIndexRange(tpSlice, eqOrInCount, accessConds)
+	if err != nil {
+		return nil, err
+	}
+	d.mergeConsecutive = mergeConsecutive
+
 	res.Ranges = ranges
 	res.AccessConds = accessConds
 	res.RemainedConds = filterConds
@@ -293,6 +306,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 			}
 			if len(pointRes.Ranges[0].LowVal) > eqOrInCount {
 				res = pointRes
+				pointRanges = pointRes.Ranges
 				eqOrInCount = len(res.Ranges[0].LowVal)
 				newConditions = newConditions[:0]
 				newConditions = append(newConditions, conditions[:offset]...)
@@ -314,7 +328,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 				return &DetachRangeResult{}, nil
 			}
 			if len(tailRes.AccessConds) > 0 {
-				res.Ranges = appendRanges2PointRanges(res.Ranges, tailRes.Ranges)
+				res.Ranges = appendRanges2PointRanges(pointRanges, tailRes.Ranges)
 				res.AccessConds = append(res.AccessConds, tailRes.AccessConds...)
 			}
 			res.RemainedConds = append(res.RemainedConds, tailRes.RemainedConds...)
