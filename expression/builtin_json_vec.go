@@ -1170,7 +1170,11 @@ func (b *builtinJSONUnquoteSig) vecEvalString(input *chunk.Chunk, result *chunk.
 			result.AppendNull()
 			continue
 		}
-		str, err := json.UnquoteString(buf.GetString(i))
+		str := buf.GetString(i)
+		if len(str) >= 2 && str[0] == '"' && str[len(str)-1] == '"' && !goJSON.Valid([]byte(str)) {
+			return json.ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")
+		}
+		str, err := json.UnquoteString(str)
 		if err != nil {
 			return err
 		}
@@ -1212,5 +1216,53 @@ func (b *builtinJSONSPrettySig) vecEvalString(input *chunk.Chunk, result *chunk.
 
 		result.AppendString(resBuf.String())
 	}
+	return nil
+}
+
+func (b *builtinJSONMergePatchSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinJSONMergePatchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
+	nr := input.NumRows()
+	argBuffers := make([]*chunk.Column, len(b.args))
+	var err error
+	for i, arg := range b.args {
+		if argBuffers[i], err = b.bufAllocator.get(types.ETJson, nr); err != nil {
+			return err
+		}
+		defer func(buf *chunk.Column) {
+			b.bufAllocator.put(buf)
+		}(argBuffers[i])
+
+		if err := arg.VecEvalJSON(b.ctx, input, argBuffers[i]); err != nil {
+			return err
+		}
+	}
+
+	result.ReserveJSON(nr)
+	jsonValue := make([]*json.BinaryJSON, 0, len(b.args))
+	for i := 0; i < nr; i++ {
+		jsonValue = jsonValue[:0]
+		for j := 0; j < len(b.args); j++ {
+			if argBuffers[j].IsNull(i) {
+				jsonValue = append(jsonValue, nil)
+			} else {
+				v := argBuffers[j].GetJSON(i)
+				jsonValue = append(jsonValue, &v)
+			}
+		}
+
+		tmpJSON, e := json.MergePatchBinary(jsonValue)
+		if e != nil {
+			return e
+		}
+		if tmpJSON == nil {
+			result.AppendNull()
+		} else {
+			result.AppendJSON(*tmpJSON)
+		}
+	}
+
 	return nil
 }
