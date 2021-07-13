@@ -15,6 +15,8 @@ import (
 	tcontext "github.com/pingcap/dumpling/v4/context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/store/helper"
 	"go.uber.org/zap"
 )
 
@@ -473,6 +475,51 @@ func GetSpecifiedColumnValueAndClose(rows *sql.Rows, columnName string) ([]strin
 	return strs, errors.Trace(rows.Err())
 }
 
+// GetSpecifiedColumnValuesAndClose get columns' values whose name is equal to columnName
+func GetSpecifiedColumnValuesAndClose(rows *sql.Rows, columnName ...string) ([][]string, error) {
+	if rows == nil {
+		return [][]string{}, nil
+	}
+	defer rows.Close()
+	var strs [][]string
+	columns, err := rows.Columns()
+	if err != nil {
+		return strs, errors.Trace(err)
+	}
+	addr := make([]interface{}, len(columns))
+	oneRow := make([]sql.NullString, len(columns))
+	fieldIndexMp := make(map[int]int)
+	for i, col := range columns {
+		addr[i] = &oneRow[i]
+		for j, name := range columnName {
+			if strings.ToUpper(col) == name {
+				fieldIndexMp[i] = j
+			}
+		}
+	}
+	if len(fieldIndexMp) == 0 {
+		return strs, nil
+	}
+	for rows.Next() {
+		err := rows.Scan(addr...)
+		if err != nil {
+			return strs, errors.Trace(err)
+		}
+		written := false
+		tmpStr := make([]string, len(columnName))
+		for colPos, namePos := range fieldIndexMp {
+			if oneRow[colPos].Valid {
+				written = true
+				tmpStr[namePos] = oneRow[colPos].String
+			}
+		}
+		if written {
+			strs = append(strs, tmpStr)
+		}
+	}
+	return strs, errors.Trace(rows.Err())
+}
+
 // GetPdAddrs gets PD address from TiDB
 func GetPdAddrs(tctx *tcontext.Context, db *sql.DB) ([]string, error) {
 	query := "SELECT * FROM information_schema.cluster_info where type = 'pd';"
@@ -562,13 +609,7 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, dsn string, pa
 	}
 
 	newDB, err := sql.Open("mysql", dsn)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	db.Close()
-
-	return newDB, nil
+	return newDB, errors.Trace(err)
 }
 
 func createConnWithConsistency(ctx context.Context, db *sql.DB) (*sql.Conn, error) {
@@ -816,18 +857,18 @@ func simpleQuery(conn *sql.Conn, sql string, handleOneRow func(*sql.Rows) error)
 func simpleQueryWithArgs(conn *sql.Conn, handleOneRow func(*sql.Rows) error, sql string, args ...interface{}) error {
 	rows, err := conn.QueryContext(context.Background(), sql, args...)
 	if err != nil {
-		return errors.Annotatef(err, "sql: %s", sql)
+		return errors.Annotatef(err, "sql: %s, args: %s", sql, args)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
 		if err := handleOneRow(rows); err != nil {
 			rows.Close()
-			return errors.Annotatef(err, "sql: %s", sql)
+			return errors.Annotatef(err, "sql: %s, args: %s", sql, args)
 		}
 	}
 	rows.Close()
-	return errors.Annotatef(rows.Err(), "sql: %s", sql)
+	return errors.Annotatef(rows.Err(), "sql: %s, args: %s", sql, args)
 }
 
 func pickupPossibleField(dbName, tableName string, db *sql.Conn, conf *Config) (string, error) {
@@ -1008,4 +1049,158 @@ func GetPartitionNames(db *sql.Conn, schema, table string) (partitions []string,
 		return nil
 	}, "SELECT PARTITION_NAME from INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?", schema, table)
 	return
+}
+
+// GetPartitionTableIDs get partition tableIDs through histograms.
+// SHOW STATS_HISTOGRAMS  has db_name,table_name,partition_name but doesn't have partition id
+// mysql.stats_histograms has partition_id but doesn't have db_name,table_name,partition_name
+// So we combine the results from these two sqls to get partition ids for each table
+// If UPDATE_TIME,DISTINCT_COUNT are equal, we assume these two records can represent one line.
+// If histograms are not accurate or (UPDATE_TIME,DISTINCT_COUNT) has duplicate data, it's still fine.
+// Because the possibility is low and the effect is that we will select more than one regions in one time,
+// this will not affect the correctness of the dumping data and will not affect the memory usage much.
+// This method is tricky, but no better way is found.
+// Because TiDB v3.0.0's information_schema.partition table doesn't have partition name or partition id info
+// return (dbName -> tbName -> partitionName -> partitionID, error)
+func GetPartitionTableIDs(db *sql.Conn, tables map[string]map[string]struct{}) (map[string]map[string]map[string]int64, error) {
+	const (
+		showStatsHistogramsSQL   = "SHOW STATS_HISTOGRAMS"
+		selectStatsHistogramsSQL = "SELECT TABLE_ID,FROM_UNIXTIME(VERSION DIV 262144 DIV 1000,'%Y-%m-%d %H:%i:%s') AS UPDATE_TIME,DISTINCT_COUNT FROM mysql.stats_histograms"
+	)
+	partitionIDs := make(map[string]map[string]map[string]int64, len(tables))
+	rows, err := db.QueryContext(context.Background(), showStatsHistogramsSQL)
+	if err != nil {
+		return nil, errors.Annotatef(err, "sql: %s", showStatsHistogramsSQL)
+	}
+	results, err := GetSpecifiedColumnValuesAndClose(rows, "DB_NAME", "TABLE_NAME", "PARTITION_NAME", "UPDATE_TIME", "DISTINCT_COUNT")
+	if err != nil {
+		return nil, errors.Annotatef(err, "sql: %s", showStatsHistogramsSQL)
+	}
+	type partitionInfo struct {
+		dbName, tbName, partitionName string
+	}
+	saveMap := make(map[string]map[string]partitionInfo)
+	for _, oneRow := range results {
+		dbName, tbName, partitionName, updateTime, distinctCount := oneRow[0], oneRow[1], oneRow[2], oneRow[3], oneRow[4]
+		if len(partitionName) == 0 {
+			continue
+		}
+		if tbm, ok := tables[dbName]; ok {
+			if _, ok = tbm[tbName]; ok {
+				if _, ok = saveMap[updateTime]; !ok {
+					saveMap[updateTime] = make(map[string]partitionInfo)
+				}
+				saveMap[updateTime][distinctCount] = partitionInfo{
+					dbName:        dbName,
+					tbName:        tbName,
+					partitionName: partitionName,
+				}
+			}
+		}
+	}
+	if len(saveMap) == 0 {
+		return map[string]map[string]map[string]int64{}, nil
+	}
+	err = simpleQuery(db, selectStatsHistogramsSQL, func(rows *sql.Rows) error {
+		var (
+			tableID                   int64
+			updateTime, distinctCount string
+		)
+		err2 := rows.Scan(&tableID, &updateTime, &distinctCount)
+		if err2 != nil {
+			return errors.Trace(err2)
+		}
+		if mpt, ok := saveMap[updateTime]; ok {
+			if partition, ok := mpt[distinctCount]; ok {
+				dbName, tbName, partitionName := partition.dbName, partition.tbName, partition.partitionName
+				if _, ok := partitionIDs[dbName]; !ok {
+					partitionIDs[dbName] = make(map[string]map[string]int64)
+				}
+				if _, ok := partitionIDs[dbName][tbName]; !ok {
+					partitionIDs[dbName][tbName] = make(map[string]int64)
+				}
+				partitionIDs[dbName][tbName][partitionName] = tableID
+			}
+		}
+		return nil
+	})
+	return partitionIDs, err
+}
+
+// GetDBInfo get model.DBInfos from database sql interface.
+// We need table_id to check whether a region belongs to this table
+func GetDBInfo(db *sql.Conn, tables map[string]map[string]struct{}) ([]*model.DBInfo, error) {
+	const tableIDSQL = "SELECT TABLE_SCHEMA,TABLE_NAME,TIDB_TABLE_ID FROM INFORMATION_SCHEMA.TABLES ORDER BY TABLE_SCHEMA"
+
+	schemas := make([]*model.DBInfo, 0, len(tables))
+	var (
+		tableSchema, tableName string
+		tidbTableID            int64
+	)
+	partitionIDs, err := GetPartitionTableIDs(db, tables)
+	if err != nil {
+		return nil, err
+	}
+	err = simpleQuery(db, tableIDSQL, func(rows *sql.Rows) error {
+		err2 := rows.Scan(&tableSchema, &tableName, &tidbTableID)
+		if err2 != nil {
+			return errors.Trace(err2)
+		}
+		if tbm, ok := tables[tableSchema]; !ok {
+			return nil
+		} else if _, ok = tbm[tableName]; !ok {
+			return nil
+		}
+		last := len(schemas) - 1
+		if last < 0 || schemas[last].Name.O != tableSchema {
+			schemas = append(schemas, &model.DBInfo{
+				Name:   model.CIStr{O: tableSchema},
+				Tables: make([]*model.TableInfo, 0, len(tables[tableSchema])),
+			})
+			last++
+		}
+		var partition *model.PartitionInfo
+		if tbm, ok := partitionIDs[tableSchema]; ok {
+			if ptm, ok := tbm[tableName]; ok {
+				partition = &model.PartitionInfo{Definitions: make([]model.PartitionDefinition, 0, len(ptm))}
+				for partitionName, partitionID := range ptm {
+					partition.Definitions = append(partition.Definitions, model.PartitionDefinition{
+						ID:   partitionID,
+						Name: model.CIStr{O: partitionName},
+					})
+				}
+			}
+		}
+		schemas[last].Tables = append(schemas[last].Tables, &model.TableInfo{
+			ID:        tidbTableID,
+			Name:      model.CIStr{O: tableName},
+			Partition: partition,
+		})
+		return nil
+	})
+	return schemas, err
+}
+
+// GetRegionInfos get region info including regionID, start key, end key from database sql interface.
+// start key, end key includes information to help split table
+func GetRegionInfos(db *sql.Conn) (*helper.RegionsInfo, error) {
+	const tableRegionSQL = "SELECT REGION_ID,START_KEY,END_KEY FROM INFORMATION_SCHEMA.TIKV_REGION_STATUS ORDER BY START_KEY;"
+	var (
+		regionID         int64
+		startKey, endKey string
+	)
+	regionsInfo := &helper.RegionsInfo{Regions: make([]helper.RegionInfo, 0)}
+	err := simpleQuery(db, tableRegionSQL, func(rows *sql.Rows) error {
+		err := rows.Scan(&regionID, &startKey, &endKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		regionsInfo.Regions = append(regionsInfo.Regions, helper.RegionInfo{
+			ID:       regionID,
+			StartKey: startKey,
+			EndKey:   endKey,
+		})
+		return nil
+	})
+	return regionsInfo, err
 }

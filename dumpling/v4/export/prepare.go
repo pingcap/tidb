@@ -183,3 +183,17 @@ func (d DatabaseTables) Literal() string {
 
 	return b.String()
 }
+
+// DatabaseTablesToMap transfers DatabaseTables to Map
+func DatabaseTablesToMap(d DatabaseTables) map[string]map[string]struct{} {
+	mp := make(map[string]map[string]struct{}, len(d))
+	for name, infos := range d {
+		mp[name] = make(map[string]struct{}, len(infos))
+		for _, info := range infos {
+			if info.Type == TableTypeBase {
+				mp[name][info.Name] = struct{}{}
+			}
+		}
+	}
+	return mp
+}
