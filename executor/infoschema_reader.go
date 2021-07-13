@@ -1904,6 +1904,9 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 }
 
 func (e *memtableRetriever) setDataForStatementsSummaryEvicted(ctx sessionctx.Context) error {
+	if e.table.Name.O == infoschema.ClusterTableStatementsSummaryEvicted && !hasPriv(ctx, mysql.ProcessPriv) {
+		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
 	e.rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
 	switch e.table.Name.O {
 	case infoschema.ClusterTableStatementsSummaryEvicted:

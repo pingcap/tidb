@@ -1436,6 +1436,16 @@ func (s *testClusterTableSuite) TestStmtSummaryEvictedCountTable(c *C) {
 		Check(testkit.Rows("2"))
 	// TODO: Add more tests.
 
+	tk.MustExec("create user 'testuser'@'localhost'")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "testuser",
+		Hostname: "localhost",
+	}, nil, nil), Equals, true)
+
+	err := tk.QueryToErr("select * from information_schema.CLUSTER_STATEMENTS_SUMMARY_EVICTED")
+	c.Assert(err, NotNil)
+	// This error is come from cop(TiDB) fetch from rpc server.
+	c.Assert(err.Error(), Equals, "other error: [planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 }
 
 func (s *testTableSuite) TestStmtSummaryTableOther(c *C) {
