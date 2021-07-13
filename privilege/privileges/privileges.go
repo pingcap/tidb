@@ -89,7 +89,6 @@ func (p *UserPrivileges) HasExplicitlyGrantedDynamicPrivilege(activeRoles []*aut
 
 	mysqlPriv := p.Handle.Get()
 	return mysqlPriv.HasExplicitlyGrantedDynamicPrivilege(activeRoles, p.user, p.host, privName, grantable)
-
 }
 
 // RequestDynamicVerification implements the Manager interface.
