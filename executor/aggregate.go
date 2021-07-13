@@ -992,28 +992,38 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			}
 		}
 
-		if length := len(sel); length > 0 {
-			if length == e.childResult.NumRows() {
-				err = e.listInDisk.Add(e.childResult)
-				if err != nil {
-					return err
-				}
-			} else {
-				for _, j := range sel {
-					e.spillChunk.Append(e.childResult, j, j+1)
-					if e.spillChunk.IsFull() {
-						err = e.listInDisk.Add(e.spillChunk)
-						if err != nil {
-							return err
-						}
-						e.spillChunk.Reset()
-					}
-				}
+		// spill unprocessed data when exceeded.
+		if len(sel) > 0 {
+			err = e.spillUnprocessedData(sel)
+			if err != nil {
+				return err
 			}
 		}
+
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		e.memTracker.Consume(allMemDelta)
 	}
+}
+
+func (e *HashAggExec) spillUnprocessedData(sel []int) (err error) {
+	if len(sel) == e.childResult.NumRows() {
+		err = e.listInDisk.Add(e.childResult)
+		if err != nil {
+			return err
+		}
+	} else {
+		for _, j := range sel {
+			e.spillChunk.Append(e.childResult, j, j+1)
+			if e.spillChunk.IsFull() {
+				err = e.listInDisk.Add(e.spillChunk)
+				if err != nil {
+					return err
+				}
+				e.spillChunk.Reset()
+			}
+		}
+	}
+	return nil
 }
 
 func (e *HashAggExec) getNextChunk(ctx context.Context) (err error) {
