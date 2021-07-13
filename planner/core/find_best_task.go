@@ -415,10 +415,11 @@ func (ds *DataSource) tryToGetDualTask() (task, error) {
 
 // candidatePath is used to maintain required info for skyline pruning.
 type candidatePath struct {
-	path         *util.AccessPath
-	columnSet    *intsets.Sparse // columnSet is the set of columns that occurred in the access conditions.
-	isSingleScan bool
-	isMatchProp  bool
+	path               *util.AccessPath
+	accessCondsColSet  *intsets.Sparse // accessCondsColSet is the set of columns that occurred in the access conditions.
+	indexFiltersColSet *intsets.Sparse // indexFiltersColSet is the set of columns that occurred in the index filters.
+	isSingleScan       bool
+	isMatchProp        bool
 }
 
 // onlyPointQuery checks whether there's only point query
@@ -484,6 +485,19 @@ func compareBool(l, r bool) int {
 	return 1
 }
 
+
+func compareScan(lhs, rhs *candidatePath) int {
+	result := compareBool(lhs.isSingleScan, rhs.isSingleScan)
+	if result == 0 && !lhs.isSingleScan {
+		// if both lhs and rhs need TableScan after IndexScan, we compare their IndexFilters.
+		setsResult, comparable := compareColumnSet(lhs.indexFiltersColSet, rhs.indexFiltersColSet)
+		if comparable {
+			result = setsResult
+		}
+	}
+	return result
+}
+
 // compareCandidates is the core of skyline pruning. It compares the two candidate paths on three dimensions:
 // (1): the set of columns that occurred in the access condition,
 // (2): whether or not it matches the physical property
@@ -491,11 +505,11 @@ func compareBool(l, r bool) int {
 // If `x` is not worse than `y` at all factors,
 // and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 func compareCandidates(lhs, rhs *candidatePath) int {
-	setsResult, comparable := compareColumnSet(lhs.columnSet, rhs.columnSet)
+	setsResult, comparable := compareColumnSet(lhs.accessCondsColSet, rhs.accessCondsColSet)
 	if !comparable {
 		return 0
 	}
-	scanResult := compareBool(lhs.isSingleScan, rhs.isSingleScan)
+	scanResult := compareScan(lhs, rhs)
 	matchResult := compareBool(lhs.isMatchProp, rhs.isMatchProp)
 	sum := setsResult + scanResult + matchResult
 	if setsResult >= 0 && scanResult >= 0 && matchResult >= 0 && sum > 0 {
@@ -507,52 +521,52 @@ func compareCandidates(lhs, rhs *candidatePath) int {
 	return 0
 }
 
-func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
-	candidate := &candidatePath{path: path}
+func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.PhysicalProperty) bool {
+	var isMatchProp bool
 	if path.IsIntHandlePath {
 		pkCol := ds.getPKIsHandleCol()
 		if len(prop.SortItems) == 1 && pkCol != nil {
-			candidate.isMatchProp = prop.SortItems[0].Col.Equal(nil, pkCol)
+			isMatchProp = prop.SortItems[0].Col.Equal(nil, pkCol)
 			if path.StoreType == kv.TiFlash {
-				candidate.isMatchProp = candidate.isMatchProp && !prop.SortItems[0].Desc
+				isMatchProp = isMatchProp && !prop.SortItems[0].Desc
 			}
 		}
-	} else {
-		all, _ := prop.AllSameOrder()
-		// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
-		// it needs not to keep order for index scan.
-		if !prop.IsEmpty() && all {
-			for i, col := range path.IdxCols {
-				if col.Equal(nil, prop.SortItems[0].Col) {
-					candidate.isMatchProp = matchIndicesProp(path.IdxCols[i:], path.IdxColLens[i:], prop.SortItems)
-					break
-				} else if i >= path.EqCondCount {
-					break
-				}
+		return isMatchProp
+	}
+	all, _ := prop.AllSameOrder()
+	// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
+	// it needs not to keep order for index scan.
+	if !prop.IsEmpty() && all {
+		for i, sortItem := range prop.SortItems {
+			var j, k int
+			if sortItem.Col.Equal(nil, path.EqualCols[j]) {
+				j++
+				k++
+			} else if path.IdxColLens[i] == types.UnspecifiedLength && sortItem.Col.Equal(nil, path.IdxCols[i]) {
+				k++
+			} else {
+				isMatchProp = false
+				break
 			}
 		}
 	}
-	candidate.columnSet = expression.ExtractColumnSet(path.AccessConds)
+	return isMatchProp
+}
+
+func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
+	candidate := &candidatePath{path: path}
+	candidate.isMatchProp = ds.isMatchProp(path, prop)
+	candidate.accessCondsColSet = expression.ExtractColumnSet(path.AccessConds)
+	// TODO: whether it is clustered index or not, table scan is always single scan?
 	candidate.isSingleScan = true
 	return candidate
 }
 
 func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.PhysicalProperty, isSingleScan bool) *candidatePath {
 	candidate := &candidatePath{path: path}
-	all, _ := prop.AllSameOrder()
-	// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
-	// it needs not to keep order for index scan.
-	if !prop.IsEmpty() && all {
-		for i, col := range path.IdxCols {
-			if col.Equal(nil, prop.SortItems[0].Col) {
-				candidate.isMatchProp = matchIndicesProp(path.IdxCols[i:], path.IdxColLens[i:], prop.SortItems)
-				break
-			} else if i >= path.EqCondCount {
-				break
-			}
-		}
-	}
-	candidate.columnSet = expression.ExtractColumnSet(path.AccessConds)
+	candidate.isMatchProp = ds.isMatchProp(path, prop)
+	candidate.accessCondsColSet = expression.ExtractColumnSet(path.AccessConds)
+	candidate.indexFiltersColSet = expression.ExtractColumnSet(path.IndexFilters)
 	candidate.isSingleScan = isSingleScan
 	return candidate
 }
@@ -605,18 +619,17 @@ func (ds *DataSource) getCandidatePaths(prop *property.PhysicalProperty) []*cand
 }
 
 func (ds *DataSource) tryHeuristics(candidates []*candidatePath) *candidatePath {
-	// TODO(yifan): check OptimDependOnMutableConst
 	uniqueIndicesWithDoubleScan := make([]*candidatePath, 0, len(candidates))
 	singleScanIndices := make([]*candidatePath, 0, len(candidates))
 	for _, cand := range candidates {
 		if cand.path.PartialIndexPaths != nil || cand.path.StoreType == kv.TiFlash {
-			// TODO(yifan): do we need to handle TiFlash case?
+			// TODO: do we need to handle TiFlash case?
 			continue
 		}
 		if cand.onlyPointQuery(ds.ctx.GetSessionVars().StmtCtx) {
 			if (cand.path.Index != nil && cand.path.Index.Unique) || cand.path.IsIntHandlePath {
 				if cand.isSingleScan {
-					// TODO(yifan): what if multiple candidates satisfy the above conditions?
+					// TODO: what if multiple candidates satisfy the above conditions?
 					return cand
 				}
 				uniqueIndicesWithDoubleScan = append(uniqueIndicesWithDoubleScan, cand)
@@ -635,7 +648,7 @@ func (ds *DataSource) tryHeuristics(candidates []*candidatePath) *candidatePath 
 	}
 	for _, singleScanIdx := range singleScanIndices {
 		for _, uniqueIdx := range uniqueIndicesWithDoubleScan {
-			setsResult, comparable := compareColumnSet(singleScanIdx.columnSet, uniqueIdx.columnSet)
+			setsResult, comparable := compareColumnSet(singleScanIdx.accessCondsColSet, uniqueIdx.accessCondsColSet)
 			if comparable && setsResult == 1 {
 				if currentBest == nil || len(singleScanIdx.path.Ranges) < len(currentBest.path.Ranges) {
 					currentBest = uniqueIdx
@@ -653,11 +666,11 @@ func (ds *DataSource) skylinePruning(candidates []*candidatePath) []*candidatePa
 	newCandidates := make([]*candidatePath, 0, len(candidates))
 	for i, cand := range candidates {
 		// TODO: do we need to compare between TiFlash candidates?
-		if cand.path.StoreType == kv.TiFlash {
+		if cand.path.PartialIndexPaths != nil || cand.path.StoreType == kv.TiFlash {
 			continue
 		}
 		for j := i + 1; j < len(candidates); j++ {
-			if candidates[j].path.StoreType == kv.TiFlash {
+			if candidates[j].path.PartialIndexPaths != nil || candidates[j].path.StoreType == kv.TiFlash {
 				continue
 			}
 			result := compareCandidates(cand, candidates[j])
@@ -744,6 +757,8 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		hit := ds.tryHeuristics(candidates)
 		if hit != nil {
 			candidates = []*candidatePath{hit}
+			// TODO: this line makes some sql unable to be cached? maybe we can improve it
+			ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
 		} else {
 			candidates = ds.skylinePruning(candidates)
 			if ds.ctx.GetSessionVars().GetAllowPreferRangeScan() && len(candidates) > 1 {

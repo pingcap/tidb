@@ -43,6 +43,7 @@ type AccessPath struct {
 	EqOrInCondCount int
 	IndexFilters    []expression.Expression
 	TableFilters    []expression.Expression
+	EqualCols       []*expression.Column
 	// PartialIndexPaths store all index access paths.
 	// If there are extra filters, store them in TableFilters.
 	PartialIndexPaths []*AccessPath
