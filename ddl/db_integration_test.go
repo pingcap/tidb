@@ -2909,6 +2909,12 @@ func (s *testIntegrationSuite3) TestAvoidCreateViewOnLocalTemporaryTable(c *C) {
 		_, err = tk.Exec("select * from v6")
 		c.Assert(err, NotNil)
 		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v6' doesn't exist")
+
+		_, err = tk.Exec("create view v7 as select * from tt0 where tt0.b=(select max(tt1.b) from tt1 where tt0.a=tt1.a)")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+		_, err = tk.Exec("select * from v7")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v7' doesn't exist")
 	}
 
 	checkCreateView()
