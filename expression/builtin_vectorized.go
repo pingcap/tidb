@@ -41,7 +41,9 @@ func newLocalSliceBuffer(initCap int) *localSliceBuffer {
 	buf := &localSliceBuffer{
 		pool: sync.Pool{
 			New: func() interface{} {
-				return nil
+				col, err := newBuffer(types.ETInt, chunk.InitialCapacity)
+				_ = err
+				return col
 			},
 		},
 	}
@@ -86,10 +88,8 @@ func PutColumn(buf *chunk.Column) {
 }
 
 func (r *localSliceBuffer) get(evalType types.EvalType, capacity int) (*chunk.Column, error) {
-	if col, _ := r.pool.Get().(*chunk.Column); col != nil {
-		return col, nil
-	}
-	return newBuffer(evalType, capacity)
+	col, _ := r.pool.Get().(*chunk.Column)
+	return col, nil
 }
 
 func (r *localSliceBuffer) put(col *chunk.Column) {

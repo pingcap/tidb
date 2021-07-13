@@ -157,8 +157,10 @@ func BenchmarkColumnBufferAllocateParallel(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			col, _ := allocator.get(types.ETInt, chunk.InitialCapacity)
-			allocator.put(col)
+			for i := 0; i < numTestGet; i++ {
+				col, _ := allocator.get(types.ETInt, chunk.InitialCapacity)
+				allocator.put(col)
+			}
 		}
 	})
 }
