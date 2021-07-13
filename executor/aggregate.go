@@ -198,13 +198,13 @@ type HashAggExec struct {
 
 	stats *HashAggRuntimeStats
 
-	listInDisk   *chunk.ListInDisk
-	lastChunkNum int
-	processIdx   int
-	spillMode    uint32
-	spillChunk   *chunk.Chunk
-	spillAction  *AggSpillDiskAction
-	childDrained bool
+	listInDisk   *chunk.ListInDisk   // listInDisk is the chunks to store row values for spilling data.
+	lastChunkNum int                 // lastChunkNum indicates the num of spilling chunk.
+	processIdx   int                 // processIdx indicates the num of processed chunk in disk.
+	spillMode    uint32              // spillMode means that no new groups are added to hash table.
+	spillChunk   *chunk.Chunk        // spillChunk is the temp chunk for spilling.
+	spillAction  *AggSpillDiskAction // spillAction save the Action for spilling.
+	childDrained bool                // childDrained indicates whether the all data from child has been taken out.
 }
 
 // HashAggInput indicates the input of hash agg exec.
@@ -247,9 +247,6 @@ func (e *HashAggExec) Close() error {
 		}
 		if e.listInDisk != nil {
 			firstErr = e.listInDisk.Close()
-		}
-		if e.spillAction != nil {
-			e.spillAction.spillTimes = maxSpillTimes
 		}
 		e.spillAction, e.spillChunk = nil, nil
 		if err := e.baseExecutor.Close(); firstErr == nil {
@@ -933,7 +930,7 @@ func (e *HashAggExec) resetSpillMode() {
 	e.partialResultMap = make(aggPartialResultMapper)
 	e.bInMap = 0
 	e.prepared = false
-	e.executed = e.lastChunkNum == e.listInDisk.NumChunks()
+	e.executed = e.lastChunkNum == e.listInDisk.NumChunks() // No data is spilling again, all data have been processed.
 	e.lastChunkNum = e.listInDisk.NumChunks()
 	e.memTracker.ReplaceBytesUsed(setSize)
 	atomic.StoreUint32(&e.spillMode, 0)
@@ -1857,6 +1854,7 @@ func (e *HashAggExec) ActionSpill() *AggSpillDiskAction {
 	return e.spillAction
 }
 
+// maxSpillTimes indicates how many times the data can spill at most.
 const maxSpillTimes = 10
 
 // AggSpillDiskAction implements memory.ActionOnExceed for unparalleled HashAgg.
