@@ -16,7 +16,6 @@ package core_test
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	_ "net/http/pprof"
 	"strings"
 
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/testkit"
