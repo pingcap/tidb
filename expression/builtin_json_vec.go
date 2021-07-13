@@ -1218,3 +1218,51 @@ func (b *builtinJSONSPrettySig) vecEvalString(input *chunk.Chunk, result *chunk.
 	}
 	return nil
 }
+
+func (b *builtinJSONMergePatchSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinJSONMergePatchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
+	nr := input.NumRows()
+	argBuffers := make([]*chunk.Column, len(b.args))
+	var err error
+	for i, arg := range b.args {
+		if argBuffers[i], err = b.bufAllocator.get(types.ETJson, nr); err != nil {
+			return err
+		}
+		defer func(buf *chunk.Column) {
+			b.bufAllocator.put(buf)
+		}(argBuffers[i])
+
+		if err := arg.VecEvalJSON(b.ctx, input, argBuffers[i]); err != nil {
+			return err
+		}
+	}
+
+	result.ReserveJSON(nr)
+	jsonValue := make([]*json.BinaryJSON, 0, len(b.args))
+	for i := 0; i < nr; i++ {
+		jsonValue = jsonValue[:0]
+		for j := 0; j < len(b.args); j++ {
+			if argBuffers[j].IsNull(i) {
+				jsonValue = append(jsonValue, nil)
+			} else {
+				v := argBuffers[j].GetJSON(i)
+				jsonValue = append(jsonValue, &v)
+			}
+		}
+
+		tmpJSON, e := json.MergePatchBinary(jsonValue)
+		if e != nil {
+			return e
+		}
+		if tmpJSON == nil {
+			result.AppendNull()
+		} else {
+			result.AppendJSON(*tmpJSON)
+		}
+	}
+
+	return nil
+}

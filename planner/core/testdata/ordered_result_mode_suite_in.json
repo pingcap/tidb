@@ -1,6 +1,6 @@
 [
   {
-    "name": "TestStableResultMode",
+    "name": "TestOrderedResultMode",
     "cases": [
       "select * from t use index(primary)",
       "select b from t use index(b)",
@@ -19,7 +19,7 @@
     ]
   },
   {
-    "name": "TestStableResultModeOnDML",
+    "name": "TestOrderedResultModeOnDML",
     "cases": [
       "insert into t select * from t",
       "insert into t select * from t where a>1",
@@ -32,7 +32,7 @@
     ]
   },
   {
-    "name": "TestStableResultModeOnSubQuery",
+    "name": "TestOrderedResultModeOnSubQuery",
     "cases": [
       "select * from t1 where t1.a in (select b from t2)",
       "select * from t1 where t1.a not in (select b from t2)",
@@ -46,7 +46,7 @@
     ]
   },
   {
-    "name": "TestStableResultModeOnJoin",
+    "name": "TestOrderedResultModeOnJoin",
     "cases": [
       "select * from t1, t2 where t1.a = t2.a",
       "select * from t1, t2 where t1.a > t2.a and t1.b = t2.b and t1.c < t2.c",
@@ -55,7 +55,7 @@
     ]
   },
   {
-    "name": "TestStableResultModeOnOtherOperators",
+    "name": "TestOrderedResultModeOnOtherOperators",
     "cases": [
       "select * from t1 where a = 1 or a = 222 or a = 33333",
       "select * from t1 where a in (1, 2, 3, 4)",
@@ -72,7 +72,7 @@
     ]
   },
   {
-    "name": "TestStableResultModeOnPartitionTable",
+    "name": "TestOrderedResultModeOnPartitionTable",
     "cases": [
       "select * from thash where a in (1, 200)",
       "select * from thash where a >= 50 and a <= 150",
