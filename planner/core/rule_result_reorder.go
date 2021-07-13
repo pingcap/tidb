@@ -23,7 +23,8 @@ import (
 /*
 	resultReorder reorder query results.
 	NOTE: it's not a common rule for all queries, it's specially implemented for a few customers.
-	Results of some queries are not stable, for example:
+
+	Results of some queries are not ordered, for example:
 		create table t (a int); insert into t values (1), (2); select a from t;
 	In the case above, the result can be `1 2` or `2 1`, which is not ordered.
 	This rule reorders results by modifying or injecting a Sort operator:
@@ -36,8 +37,8 @@ type resultReorder struct {
 }
 
 func (rs *resultReorder) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
-	stable := rs.completeSort(lp)
-	if !stable {
+	ordered := rs.completeSort(lp)
+	if !ordered {
 		lp = rs.injectSort(lp)
 	}
 	return lp, nil
@@ -116,5 +117,5 @@ func (rs *resultReorder) extractHandleCol(lp LogicalPlan) *expression.Column {
 }
 
 func (rs *resultReorder) name() string {
-	return "stabilize_results"
+	return "result_reorder"
 }
