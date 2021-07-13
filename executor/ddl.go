@@ -210,7 +210,7 @@ func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if ret.IsStaleness {
+	if ret.ExplicitStaleness {
 		return ErrViewInvalid.GenWithStackByArgs(s.ViewName.Schema.L, s.ViewName.Name.L)
 	}
 
