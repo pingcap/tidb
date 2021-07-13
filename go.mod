@@ -54,6 +54,7 @@ require (
 	github.com/rivo/uniseg v0.2.0 // indirect
 	github.com/shirou/gopsutil v3.21.2+incompatible
 	github.com/soheilhy/cmux v0.1.4
+	github.com/stretchr/testify v1.7.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210709052506-aadf3cf62721
 	github.com/tikv/pd v1.1.0-beta.0.20210323121136-78679e5e209d
@@ -68,6 +69,7 @@ require (
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200824191128-ae9734ed278b
 	go.uber.org/atomic v1.8.0
 	go.uber.org/automaxprocs v1.4.0
+	go.uber.org/goleak v1.1.10
 	go.uber.org/zap v1.18.1
 	golang.org/x/net v0.0.0-20210405180319-a5a99cb37ef4
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
