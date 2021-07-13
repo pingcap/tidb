@@ -127,7 +127,6 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 			storeTaskMap[taskStoreID] = batchTask
 		}
 	} else {
-
 		// decide the available stores
 		stores := cache.RegionCache.GetTiFlashStores()
 		var wg sync.WaitGroup
