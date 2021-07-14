@@ -1808,7 +1808,13 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.PrevAffectedRows = -1
 	}
 	if globalConfig.EnableCollectExecutionInfo {
-		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
+		// In ExplainFor case, RuntimeStatsColl should not be reset for reuse,
+		// because ExplainFor need to display the last statement information.
+		reuseObj := vars.StmtCtx.RuntimeStatsColl
+		if _, ok := s.(*ast.ExplainForStmt); ok {
+			reuseObj = nil
+		}
+		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(reuseObj)
 	}
 
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
