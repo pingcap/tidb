@@ -115,7 +115,7 @@ ALTER TABLE t1 PLACEMENT POLICY=`companystandardpolicy`;
 
 Expected Behaviors:
 - `CREATE` or `ALTER` and specifying a `PLACEMENT POLICY` that does not exist results in an error: placement policy 'x' is not defined (TBD: see "unresolved questions")
-- Placement policies are globally unique names. Thus; a policy named `companyplacementpolicy` can apply to the db `test` as well as `userdb`. The namespace does not overlap with other DB objects.
+- Placement policies are globally unique names. Thus, a policy named `companyplacementpolicy` can apply to the db `test` as well as `userdb`. The namespace does not overlap with other DB objects.
 - Placement Policy names are case insensitive, and follow the same rules as tables/other identifiers for length (64 chars) and special characters.
 - The full placement policy can be seen with `SHOW CREATE PLACEMENT POLICY x`. This is useful for shorthand usage by DBAs, and consistent with other database objects.
 - It is possible to update the definition of a placement policy with `ALTER PLACEMENT POLICY x CONSTRAINTS ..;` This is modeled on the statement `ALTER VIEW` (where the view needs to be redefined)
