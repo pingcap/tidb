@@ -677,6 +677,9 @@ type SessionVars struct {
 
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
+
+	// EnableStableResultMode if stabilize query results.
+	EnableStableResultMode bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -1412,6 +1415,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		MemoryUsageAlarmRatio.Store(floatVal)
 	case TiDBMultiStatementMode:
 		s.MultiStatementMode = TiDBOptMultiStmt(val)
+	case TiDBEnableStableResultMode:
+		s.EnableStableResultMode = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
