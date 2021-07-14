@@ -15,9 +15,7 @@ package txninfo
 
 import (
 	"strings"
-	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -60,8 +58,11 @@ type TxnInfo struct {
 
 	// Current execution state of the transaction.
 	State TxnRunningState
-	// Last trying to block start time. Invalid if State is not TxnLockWaiting. It's an unsafe pointer to time.Time or nil.
-	BlockStartTime unsafe.Pointer
+	// Last trying to block start time. Invalid if State is not TxnLockWaiting.
+	BlockStartTime struct {
+		Valid bool
+		time.Time
+	}
 	// How many entries are in MemDB
 	EntriesCount uint64
 	// MemDB used memory
@@ -77,24 +78,6 @@ type TxnInfo struct {
 	CurrentDB string
 }
 
-// ShallowClone shallow clones the TxnInfo. It's safe to call concurrently with the transaction.
-// Note that this function doesn't do deep copy and some fields of the result may be unsafe to write. Use it at your own
-// risk.
-func (info *TxnInfo) ShallowClone() *TxnInfo {
-	return &TxnInfo{
-		StartTS:          info.StartTS,
-		CurrentSQLDigest: info.CurrentSQLDigest,
-		AllSQLDigests:    info.AllSQLDigests,
-		State:            atomic.LoadInt32(&info.State),
-		BlockStartTime:   atomic.LoadPointer(&info.BlockStartTime),
-		EntriesCount:     atomic.LoadUint64(&info.EntriesCount),
-		EntriesSize:      atomic.LoadUint64(&info.EntriesSize),
-		ConnectionID:     info.ConnectionID,
-		Username:         info.Username,
-		CurrentDB:        info.CurrentDB,
-	}
-}
-
 // ToDatum Converts the `TxnInfo` to `Datum` to show in the `TIDB_TRX` table.
 func (info *TxnInfo) ToDatum() []types.Datum {
 	humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
@@ -105,10 +88,10 @@ func (info *TxnInfo) ToDatum() []types.Datum {
 	}
 
 	var blockStartTime interface{}
-	if t := (*time.Time)(atomic.LoadPointer(&info.BlockStartTime)); t == nil {
+	if !info.BlockStartTime.Valid {
 		blockStartTime = nil
 	} else {
-		blockStartTime = types.NewTime(types.FromGoTime(*t), mysql.TypeTimestamp, types.MaxFsp)
+		blockStartTime = types.NewTime(types.FromGoTime(info.BlockStartTime.Time), mysql.TypeTimestamp, types.MaxFsp)
 	}
 
 	e, err := types.ParseEnumValue(TxnRunningStateStrs, uint64(info.State+1))

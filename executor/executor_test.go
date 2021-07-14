@@ -77,8 +77,8 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/mockstore/cluster"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"google.golang.org/grpc"
@@ -168,13 +168,13 @@ type testStaleTxnSuite struct{ *baseTestSuite }
 type testCoprCache struct {
 	store kv.Storage
 	dom   *domain.Domain
-	cls   cluster.Cluster
+	cls   testutils.Cluster
 }
 type testPrepareSuite struct{ testData testutil.TestData }
 type testResourceTagSuite struct{ *baseTestSuite }
 
 type baseTestSuite struct {
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	store   kv.Storage
 	domain  *domain.Domain
 	*parser.Parser
@@ -189,7 +189,7 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	useMockTikv := *mockTikv
 	if useMockTikv {
 		store, err := mockstore.NewMockStore(
-			mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.WithClusterInspector(func(c testutils.Cluster) {
 				mockstore.BootstrapWithSingleStore(c)
 				s.cluster = c
 			}),
@@ -5707,7 +5707,7 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 type testRecoverTable struct {
 	store   kv.Storage
 	dom     *domain.Domain
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	cli     *regionProperityClient
 }
 
@@ -5722,7 +5722,7 @@ func (s *testRecoverTable) SetUpSuite(c *C) {
 	var err error
 	s.store, err = mockstore.NewMockStore(
 		mockstore.WithClientHijacker(hijackClient),
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			s.cluster = c
 		}),
@@ -7362,7 +7362,7 @@ func (s *testCoprCache) SetUpSuite(c *C) {
 	}
 	var err error
 	s.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			s.cls = c
 		}),

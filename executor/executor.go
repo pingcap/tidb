@@ -1022,14 +1022,14 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.L
 
 func filterTemporaryTableKeys(vars *variable.SessionVars, keys []kv.Key) []kv.Key {
 	txnCtx := vars.TxnCtx
-	if txnCtx == nil || txnCtx.GlobalTemporaryTables == nil {
+	if txnCtx == nil || txnCtx.TemporaryTables == nil {
 		return keys
 	}
 
 	newKeys := keys[:0:len(keys)]
 	for _, key := range keys {
 		tblID := tablecodec.DecodeTableID(key)
-		if _, ok := txnCtx.GlobalTemporaryTables[tblID]; !ok {
+		if _, ok := txnCtx.TemporaryTables[tblID]; !ok {
 			newKeys = append(newKeys, key)
 		}
 	}
@@ -1658,11 +1658,13 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
 	sc := &stmtctx.StatementContext{
 		TimeZone:      vars.Location(),
-		MemTracker:    memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery),
-		DiskTracker:   disk.NewTracker(memory.LabelForSQLText, -1),
 		TaskID:        stmtctx.AllocateTaskID(),
 		CTEStorageMap: map[int]*CTEStorages{},
+		IsStaleness:   false,
 	}
+
+	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
+	sc.InitDiskTracker(memory.LabelForSQLText, -1)
 	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 	globalConfig := config.GetGlobalConfig()
 	if globalConfig.OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
@@ -1701,7 +1703,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OriginalSQL = s.Text()
 	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
 		sc.InExplainStmt = true
-		sc.IgnoreExplainIDSuffix = (strings.ToLower(explainStmt.Format) == ast.ExplainFormatBrief)
+		sc.IgnoreExplainIDSuffix = (strings.ToLower(explainStmt.Format) == types.ExplainFormatBrief)
 		s = explainStmt.Stmt
 	}
 	if _, ok := s.(*ast.ExplainForStmt); ok {
@@ -1743,7 +1745,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true
 		sc.BadNullAsWarning = true
-		sc.TruncateAsWarning = !vars.StrictSQLMode
+		// With IGNORE or LOCAL, data-interpretation errors become warnings and the load operation continues,
+		// even if the SQL mode is restrictive. For details: https://dev.mysql.com/doc/refman/8.0/en/load-data.html
+		// TODO: since TiDB only support the LOCAL by now, so the TruncateAsWarning are always true here.
+		sc.TruncateAsWarning = true
 		sc.InLoadDataStmt = true
 		// return warning instead of error when load data meet no partition for value
 		sc.IgnoreNoPartition = true
@@ -1803,7 +1808,13 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.PrevAffectedRows = -1
 	}
 	if globalConfig.EnableCollectExecutionInfo {
-		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
+		// In ExplainFor case, RuntimeStatsColl should not be reset for reuse,
+		// because ExplainFor need to display the last statement information.
+		reuseObj := vars.StmtCtx.RuntimeStatsColl
+		if _, ok := s.(*ast.ExplainForStmt); ok {
+			reuseObj = nil
+		}
+		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(reuseObj)
 	}
 
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
