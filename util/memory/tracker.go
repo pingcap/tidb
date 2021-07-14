@@ -95,7 +95,6 @@ func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed)
 	t.bytesSoftLimit = int64(float64(bytesLimit) * softScale)
 	t.maxConsumed = 0
 	t.isGlobal = false
-	return
 }
 
 // NewTracker creates a memory tracker.
