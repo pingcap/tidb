@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/check"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/auth"
@@ -104,9 +105,9 @@ func (s *testSuite5) TestShowWarnings(c *C) {
 	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec("insert show_warnings values ('a')")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect FLOAT value: 'a'"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DOUBLE value: 'a'"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect FLOAT value: 'a'"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DOUBLE value: 'a'"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 
 	// Test Warning level 'Error'
@@ -149,6 +150,16 @@ func (s *testSuite5) TestShowWarningsForExprPushdown(c *C) {
 	tk.MustExec("explain select * from show_warnings_expr_pushdown where date_add(value, interval 1 day) = '2020-01-01'")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'date_add'(signature: AddDateDatetimeInt) can not be pushed to tikv"))
+	tk.MustExec("explain select max(date_add(value, interval 1 day)) from show_warnings_expr_pushdown group by a")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(2))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'date_add'(signature: AddDateDatetimeInt) can not be pushed to tikv", "Warning|1105|Aggregation can not be pushed to tikv because arguments of AggFunc `max` contains unsupported exprs"))
+	tk.MustExec("explain select max(a) from show_warnings_expr_pushdown group by date_add(value, interval 1 day)")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(2))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'date_add'(signature: AddDateDatetimeInt) can not be pushed to tikv", "Warning|1105|Aggregation can not be pushed to tikv because groupByItems contain unsupported exprs"))
+	tk.MustExec("set tidb_opt_distinct_agg_push_down=0")
+	tk.MustExec("explain select max(distinct a) from show_warnings_expr_pushdown group by value")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Aggregation can not be pushed to storage layer in non-mpp mode because it contains agg function with distinct"))
 }
 
 func (s *testSuite5) TestShowGrantsPrivilege(c *C) {
@@ -433,6 +444,14 @@ func (s *testSuite5) TestShowCreateUser(c *C) {
 	// "show create user" for current user doesn't check privileges.
 	rows = tk1.MustQuery("show create user current_user")
 	rows.Check(testkit.Rows("CREATE USER 'check_priv'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+
+	// Creating users with `IDENTIFIED WITH 'caching_sha2_password'`
+	tk.MustExec("CREATE USER 'sha_test'@'%' IDENTIFIED WITH 'caching_sha2_password' BY 'temp_passwd'")
+
+	// Compare only the start of the output as the salt changes every time.
+	rows = tk.MustQuery("SHOW CREATE USER 'sha_test'@'%'")
+	c.Assert(rows.Rows()[0][0].(string)[:78], check.Equals, "CREATE USER 'sha_test'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$")
+
 }
 
 func (s *testSuite5) TestUnprivilegedShow(c *C) {
@@ -571,8 +590,8 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk.MustExec("create table t1(a int,b int)")
 	tk.MustExec("drop view if exists v1")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select * from t1")
-	tk.MustQuery("show create table v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a`,`test`.`t1`.`b` FROM `test`.`t1`  "))
-	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a`,`test`.`t1`.`b` FROM `test`.`t1`  "))
+	tk.MustQuery("show create table v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1`  "))
+	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1`  "))
 	tk.MustExec("drop view v1")
 	tk.MustExec("drop table t1")
 
@@ -584,10 +603,10 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int,b int)")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select avg(a),t1.* from t1 group by a")
-	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`avg(a)`, `a`, `b`) AS SELECT AVG(`a`),`test`.`t1`.`a`,`test`.`t1`.`b` FROM `test`.`t1` GROUP BY `a`  "))
+	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`avg(a)`, `a`, `b`) AS SELECT AVG(`a`) AS `avg(a)`,`test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1` GROUP BY `a`  "))
 	tk.MustExec("drop view v1")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select a+b, t1.* , a as c from t1")
-	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a+b`, `a`, `b`, `c`) AS SELECT `a`+`b`,`test`.`t1`.`a`,`test`.`t1`.`b`,`a` AS `c` FROM `test`.`t1`  "))
+	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a+b`, `a`, `b`, `c`) AS SELECT `a`+`b` AS `a+b`,`test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b`,`a` AS `c` FROM `test`.`t1`  "))
 	tk.MustExec("drop table t1")
 	tk.MustExec("drop view v1")
 
@@ -911,6 +930,15 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  PARTITION `p0` VALUES IN ((3,\"1\"),(5,\"5\")),\n"+
 			"  PARTITION `p1` VALUES IN ((1,\"1\"))\n"+
 			")"))
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec(`create table t (id int primary key, v varchar(255) not null, key idx_v (v) comment 'foo\'bar')`)
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `id` int(11) NOT NULL,\n"+
+			"  `v` varchar(255) NOT NULL,\n"+
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
+			"  KEY `idx_v` (`v`) COMMENT 'foo''bar'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
@@ -1102,9 +1130,10 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	res := tk.MustQuery("show builtins;")
 	c.Assert(res, NotNil)
 	rows := res.Rows()
-	c.Assert(268, Equals, len(rows))
+	const builtinFuncNum = 271
+	c.Assert(builtinFuncNum, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
-	c.Assert("yearweek", Equals, rows[267][0].(string))
+	c.Assert("yearweek", Equals, rows[builtinFuncNum-1][0].(string))
 }
 
 func (s *testSuite5) TestShowClusterConfig(c *C) {
@@ -1236,7 +1265,7 @@ func (s *testSuite5) TestShowVar(c *C) {
 	sessionVars := make([]string, 0, len(variable.GetSysVars()))
 	globalVars := make([]string, 0, len(variable.GetSysVars()))
 	for _, v := range variable.GetSysVars() {
-		if variable.FilterImplicitFeatureSwitch(v) {
+		if v.Hidden {
 			continue
 		}
 
@@ -1264,13 +1293,14 @@ func (s *testSuite5) TestShowVar(c *C) {
 	res = tk.MustQuery(showSQL)
 	c.Check(res.Rows(), HasLen, len(globalVars))
 
-	// Test for switch variable which shouldn't seen by users.
-	for _, one := range variable.FeatureSwitchVariables {
-		res := tk.MustQuery("show variables like '" + one + "'")
-		c.Check(res.Rows(), HasLen, 0)
-		res = tk.MustQuery("show global variables like '" + one + "'")
-		c.Check(res.Rows(), HasLen, 0)
-	}
+	// Test a known hidden variable.
+	res = tk.MustQuery("show variables like '" + variable.TiDBPartitionPruneMode + "'")
+	c.Check(res.Rows(), HasLen, 0)
+	res = tk.MustQuery("show global variables like '" + variable.TiDBPartitionPruneMode + "'")
+	c.Check(res.Rows(), HasLen, 0)
+	// Test Hidden tx_read_ts
+	res = tk.MustQuery("show variables like '%tx_read_ts'")
+	c.Check(res.Rows(), HasLen, 0)
 }
 
 func (s *testSuite5) TestIssue19507(c *C) {
@@ -1303,4 +1333,43 @@ func (s *testSuite5) TestShowPerformanceSchema(c *C) {
 	tk.MustQuery("SHOW INDEX FROM performance_schema.events_statements_summary_by_digest").Check(
 		testkit.Rows("events_statements_summary_by_digest 0 SCHEMA_NAME 1 SCHEMA_NAME A 0 <nil> <nil> YES BTREE   YES NULL NO",
 			"events_statements_summary_by_digest 0 SCHEMA_NAME 2 DIGEST A 0 <nil> <nil> YES BTREE   YES NULL NO"))
+}
+
+func (s *testSuite5) TestShowTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	tk.MustExec("create global temporary table t1 (id int) on commit delete rows")
+	tk.MustExec("create global temporary table t3 (i int primary key, j int) on commit delete rows")
+	// For issue https://github.com/pingcap/tidb/issues/24752
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE GLOBAL TEMPORARY TABLE `t1` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"))
+	// No panic, fix issue https://github.com/pingcap/tidb/issues/24788
+	expect := "CREATE GLOBAL TEMPORARY TABLE `t3` (\n" +
+		"  `i` int(11) NOT NULL,\n" +
+		"  `j` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
+	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 " + expect))
+
+	// Verify that the `show create table` result can be used to build the table.
+	createTable := strings.ReplaceAll(expect, "t3", "t4")
+	tk.MustExec(createTable)
+
+	// Cover auto increment column.
+	tk.MustExec(`CREATE GLOBAL TEMPORARY TABLE t5 (
+	id int(11) NOT NULL AUTO_INCREMENT,
+	b int(11) NOT NULL,
+	pad varbinary(255) DEFAULT NULL,
+	PRIMARY KEY (id),
+	KEY b (b)) ON COMMIT DELETE ROWS`)
+	expect = "CREATE GLOBAL TEMPORARY TABLE `t5` (\n" +
+		"  `id` int(11) NOT NULL AUTO_INCREMENT,\n" +
+		"  `b` int(11) NOT NULL,\n" +
+		"  `pad` varbinary(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
+	tk.MustQuery("show create table t5").Check(testkit.Rows("t5 " + expect))
 }

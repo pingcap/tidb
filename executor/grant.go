@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -74,7 +73,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// Make sure the table exist.
 	if e.Level.Level == ast.GrantLevelTable {
 		dbNameStr := model.NewCIStr(dbName)
-		schema := infoschema.GetInfoSchema(e.ctx)
+		schema := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
 		tbl, err := schema.TableByName(dbNameStr, model.NewCIStr(e.Level.TableName))
 		if err != nil {
 			return err
@@ -137,7 +136,13 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if !ok {
 				return errors.Trace(ErrPasswordFormat)
 			}
-			_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, `INSERT INTO %n.%n (Host, User, authentication_string) VALUES (%?, %?, %?);`, mysql.SystemDB, mysql.UserTable, user.User.Hostname, user.User.Username, pwd)
+			authPlugin := mysql.AuthNativePassword
+			if user.AuthOpt.AuthPlugin != "" {
+				authPlugin = user.AuthOpt.AuthPlugin
+			}
+			_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx,
+				`INSERT INTO %n.%n (Host, User, authentication_string, plugin) VALUES (%?, %?, %?, %?);`,
+				mysql.SystemDB, mysql.UserTable, user.User.Hostname, user.User.Username, pwd, authPlugin)
 			if err != nil {
 				return err
 			}
@@ -429,9 +434,6 @@ func (e *GrantExec) grantLevelPriv(priv *ast.PrivElem, user *ast.UserSpec, inter
 
 func (e *GrantExec) grantDynamicPriv(privName string, user *ast.UserSpec, internalSession sessionctx.Context) error {
 	privName = strings.ToUpper(privName)
-	if !e.ctx.GetSessionVars().EnableDynamicPrivileges {
-		return fmt.Errorf("dynamic privileges is an experimental feature. Run 'SET tidb_enable_dynamic_privileges=1'")
-	}
 	if e.Level.Level != ast.GrantLevelGlobal { // DYNAMIC can only be *.*
 		return ErrIllegalPrivilegeLevel.GenWithStackByArgs(privName)
 	}
@@ -473,6 +475,12 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 	if priv.Priv == mysql.UsagePriv {
 		return nil
 	}
+	for _, v := range mysql.StaticGlobalOnlyPrivs {
+		if v == priv.Priv {
+			return ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")
+		}
+	}
+
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB
@@ -545,11 +553,10 @@ func (e *GrantExec) grantColumnLevel(priv *ast.PrivElem, user *ast.UserSpec, int
 // composeGlobalPrivUpdate composes update stmt assignment list string for global scope privilege update.
 func composeGlobalPrivUpdate(sql *strings.Builder, priv mysql.PrivilegeType, value string) error {
 	if priv != mysql.AllPriv {
-		col, ok := mysql.Priv2UserCol[priv]
-		if !ok {
-			return errors.Errorf("Unknown priv: %v", priv)
+		if priv != mysql.GrantPriv && !mysql.AllGlobalPrivs.Has(priv) {
+			return ErrWrongUsage.GenWithStackByArgs("GLOBAL GRANT", "NON-GLOBAL PRIVILEGES")
 		}
-		sqlexec.MustFormatSQL(sql, "%n=%?", col, value)
+		sqlexec.MustFormatSQL(sql, "%n=%?", priv.ColumnString(), value)
 		return nil
 	}
 
@@ -557,13 +564,7 @@ func composeGlobalPrivUpdate(sql *strings.Builder, priv mysql.PrivilegeType, val
 		if i > 0 {
 			sqlexec.MustFormatSQL(sql, ",")
 		}
-
-		k, ok := mysql.Priv2UserCol[v]
-		if !ok {
-			return errors.Errorf("Unknown priv %v", priv)
-		}
-
-		sqlexec.MustFormatSQL(sql, "%n=%?", k, value)
+		sqlexec.MustFormatSQL(sql, "%n=%?", v.ColumnString(), value)
 	}
 	return nil
 }
@@ -571,11 +572,10 @@ func composeGlobalPrivUpdate(sql *strings.Builder, priv mysql.PrivilegeType, val
 // composeDBPrivUpdate composes update stmt assignment list for db scope privilege update.
 func composeDBPrivUpdate(sql *strings.Builder, priv mysql.PrivilegeType, value string) error {
 	if priv != mysql.AllPriv {
-		col, ok := mysql.Priv2UserCol[priv]
-		if !ok {
-			return errors.Errorf("Unknown priv: %v", priv)
+		if priv != mysql.GrantPriv && !mysql.AllDBPrivs.Has(priv) {
+			return ErrWrongUsage.GenWithStackByArgs("DB GRANT", "NON-DB PRIVILEGES")
 		}
-		sqlexec.MustFormatSQL(sql, "%n=%?", col, value)
+		sqlexec.MustFormatSQL(sql, "%n=%?", priv.ColumnString(), value)
 		return nil
 	}
 
@@ -583,93 +583,68 @@ func composeDBPrivUpdate(sql *strings.Builder, priv mysql.PrivilegeType, value s
 		if i > 0 {
 			sqlexec.MustFormatSQL(sql, ",")
 		}
-
-		v, ok := mysql.Priv2UserCol[p]
-		if !ok {
-			return errors.Errorf("Unknown priv %v", priv)
-		}
-
-		sqlexec.MustFormatSQL(sql, "%n=%?", v, value)
+		sqlexec.MustFormatSQL(sql, "%n=%?", p.ColumnString(), value)
 	}
 	return nil
-}
-
-func privUpdateForGrant(cur []string, priv mysql.PrivilegeType) ([]string, error) {
-	p, ok := mysql.Priv2SetStr[priv]
-	if !ok {
-		return nil, errors.Errorf("Unknown priv: %v", priv)
-	}
-	cur = addToSet(cur, p)
-	return cur, nil
 }
 
 // composeTablePrivUpdateForGrant composes update stmt assignment list for table scope privilege update.
 func composeTablePrivUpdateForGrant(ctx sessionctx.Context, sql *strings.Builder, priv mysql.PrivilegeType, name string, host string, db string, tbl string) error {
 	var newTablePriv, newColumnPriv []string
-	var tblPrivs, colPrivs []mysql.PrivilegeType
 	if priv != mysql.AllPriv {
+		// TODO: https://github.com/pingcap/parser/pull/581 removed privs from all priv lists
+		// it is to avoid add GRANT in GRANT ALL SQLs
+		// WithGRANT seems broken, fix it later
+		if priv != mysql.GrantPriv && !mysql.AllTablePrivs.Has(priv) {
+			return ErrIllegalGrantForTable
+		}
+
 		currTablePriv, currColumnPriv, err := getTablePriv(ctx, name, host, db, tbl)
 		if err != nil {
 			return err
 		}
-		newTablePriv = setFromString(currTablePriv)
-		newColumnPriv = setFromString(currColumnPriv)
-		tblPrivs = []mysql.PrivilegeType{priv}
-		for _, cp := range mysql.AllColumnPrivs {
-			// in case it is not a column priv
-			if cp == priv {
-				colPrivs = []mysql.PrivilegeType{priv}
-				break
-			}
+		newTablePriv = SetFromString(currTablePriv)
+		newTablePriv = addToSet(newTablePriv, priv.SetString())
+
+		newColumnPriv = SetFromString(currColumnPriv)
+		if mysql.AllColumnPrivs.Has(priv) {
+			newColumnPriv = addToSet(newColumnPriv, priv.SetString())
 		}
 	} else {
-		tblPrivs = mysql.AllTablePrivs
-		colPrivs = mysql.AllColumnPrivs
-	}
+		for _, p := range mysql.AllTablePrivs {
+			newTablePriv = addToSet(newTablePriv, p.SetString())
+		}
 
-	var err error
-	for _, p := range tblPrivs {
-		newTablePriv, err = privUpdateForGrant(newTablePriv, p)
-		if err != nil {
-			return err
+		for _, p := range mysql.AllColumnPrivs {
+			newColumnPriv = addToSet(newColumnPriv, p.SetString())
 		}
 	}
 
-	for _, p := range colPrivs {
-		newColumnPriv, err = privUpdateForGrant(newColumnPriv, p)
-		if err != nil {
-			return err
-		}
-	}
-
-	sqlexec.MustFormatSQL(sql, `Table_priv=%?, Column_priv=%?, Grantor=%?`, strings.Join(newTablePriv, ","), strings.Join(newColumnPriv, ","), ctx.GetSessionVars().User.String())
+	sqlexec.MustFormatSQL(sql, `Table_priv=%?, Column_priv=%?, Grantor=%?`, setToString(newTablePriv), setToString(newColumnPriv), ctx.GetSessionVars().User.String())
 	return nil
 }
 
 // composeColumnPrivUpdateForGrant composes update stmt assignment list for column scope privilege update.
 func composeColumnPrivUpdateForGrant(ctx sessionctx.Context, sql *strings.Builder, priv mysql.PrivilegeType, name string, host string, db string, tbl string, col string) error {
 	var newColumnPriv []string
-	var colPrivs []mysql.PrivilegeType
 	if priv != mysql.AllPriv {
+		if !mysql.AllColumnPrivs.Has(priv) {
+			return ErrWrongUsage.GenWithStackByArgs("COLUMN GRANT", "NON-COLUMN PRIVILEGES")
+		}
+
 		currColumnPriv, err := getColumnPriv(ctx, name, host, db, tbl, col)
 		if err != nil {
 			return err
 		}
-		newColumnPriv = setFromString(currColumnPriv)
-		colPrivs = []mysql.PrivilegeType{priv}
+		newColumnPriv = SetFromString(currColumnPriv)
+		newColumnPriv = addToSet(newColumnPriv, priv.SetString())
 	} else {
-		colPrivs = mysql.AllColumnPrivs
-	}
-
-	var err error
-	for _, p := range colPrivs {
-		newColumnPriv, err = privUpdateForGrant(newColumnPriv, p)
-		if err != nil {
-			return err
+		for _, p := range mysql.AllColumnPrivs {
+			newColumnPriv = addToSet(newColumnPriv, p.SetString())
 		}
 	}
 
-	sqlexec.MustFormatSQL(sql, `Column_priv=%?`, strings.Join(newColumnPriv, ","))
+	sqlexec.MustFormatSQL(sql, `Column_priv=%?`, setToString(newColumnPriv))
 	return nil
 }
 

@@ -17,19 +17,13 @@ import (
 	"fmt"
 	"sort"
 	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/placement"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -316,40 +310,6 @@ func (is *infoSchema) SequenceByName(schema, sequence model.CIStr) (util.Sequenc
 	return tbl.(util.SequenceTable), nil
 }
 
-// Handle handles information schema, including getting and setting.
-type Handle struct {
-	value atomic.Value
-	store kv.Storage
-}
-
-// NewHandle creates a new Handle.
-func NewHandle(store kv.Storage) *Handle {
-	h := &Handle{
-		store: store,
-	}
-	return h
-}
-
-// Get gets information schema from Handle.
-func (h *Handle) Get() InfoSchema {
-	v := h.value.Load()
-	schema, _ := v.(InfoSchema)
-	return schema
-}
-
-// IsValid uses to check whether handle value is valid.
-func (h *Handle) IsValid() bool {
-	return h.value.Load() != nil
-}
-
-// EmptyClone creates a new Handle with the same store and memSchema, but the value is not set.
-func (h *Handle) EmptyClone() *Handle {
-	newHandle := &Handle{
-		store: h.store,
-	}
-	return newHandle
-}
-
 func init() {
 	// Initialize the information shema database and register the driver to `drivers`
 	dbID := autoid.InformationSchemaDBID
@@ -384,28 +344,6 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 		}
 	}
 	return false, ""
-}
-
-// GetInfoSchema gets TxnCtx InfoSchema if snapshot schema is not set,
-// Otherwise, snapshot schema is returned.
-func GetInfoSchema(ctx sessionctx.Context) InfoSchema {
-	return GetInfoSchemaBySessionVars(ctx.GetSessionVars())
-}
-
-// GetInfoSchemaBySessionVars gets TxnCtx InfoSchema if snapshot schema is not set,
-// Otherwise, snapshot schema is returned.
-func GetInfoSchemaBySessionVars(sessVar *variable.SessionVars) InfoSchema {
-	var is InfoSchema
-	if snap := sessVar.SnapshotInfoschema; snap != nil {
-		is = snap.(InfoSchema)
-		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", sessVar.ConnectionID), zap.Int64("schemaVersion", is.SchemaMetaVersion()))
-	} else {
-		if sessVar.TxnCtx == nil || sessVar.TxnCtx.InfoSchema == nil {
-			return nil
-		}
-		is = sessVar.TxnCtx.InfoSchema.(InfoSchema)
-	}
-	return is
 }
 
 func (is *infoSchema) BundleByName(name string) (*placement.Bundle, bool) {
@@ -464,4 +402,159 @@ func GetBundle(h InfoSchema, ids []int64) *placement.Bundle {
 		id = ids[0]
 	}
 	return &placement.Bundle{ID: placement.GroupID(id), Rules: newRules}
+}
+
+type schemaLocalTempSchemaTables struct {
+	tables map[string]table.Table
+}
+
+// LocalTemporaryTables store local temporary tables
+type LocalTemporaryTables struct {
+	schemaMap map[string]*schemaLocalTempSchemaTables
+	idx2table map[int64]table.Table
+}
+
+// NewLocalTemporaryTables creates a new NewLocalTemporaryTables object
+func NewLocalTemporaryTables() *LocalTemporaryTables {
+	return &LocalTemporaryTables{
+		schemaMap: make(map[string]*schemaLocalTempSchemaTables),
+		idx2table: make(map[int64]table.Table),
+	}
+}
+
+// TableByName get table by name
+func (is *LocalTemporaryTables) TableByName(schema, table model.CIStr) (table.Table, bool) {
+	if tbNames, ok := is.schemaMap[schema.L]; ok {
+		if t, ok := tbNames.tables[table.L]; ok {
+			return t, true
+		}
+	}
+	return nil, false
+}
+
+// TableExists check if table with the name exists
+func (is *LocalTemporaryTables) TableExists(schema, table model.CIStr) (ok bool) {
+	_, ok = is.TableByName(schema, table)
+	return
+}
+
+// TableByID get table by table id
+func (is *LocalTemporaryTables) TableByID(id int64) (tbl table.Table, ok bool) {
+	tbl, ok = is.idx2table[id]
+	return
+}
+
+// AddTable add a table
+func (is *LocalTemporaryTables) AddTable(schema *model.DBInfo, tbl table.Table) error {
+	schemaTables := is.ensureSchema(schema.Name)
+
+	tblMeta := tbl.Meta()
+	if _, ok := schemaTables.tables[tblMeta.Name.L]; ok {
+		return ErrTableExists.GenWithStackByArgs(tblMeta.Name)
+	}
+
+	if _, ok := is.idx2table[tblMeta.ID]; ok {
+		return ErrTableExists.GenWithStackByArgs(tblMeta.Name)
+	}
+
+	schemaTables.tables[tblMeta.Name.L] = tbl
+	is.idx2table[tblMeta.ID] = tbl
+
+	return nil
+}
+
+// RemoveTable remove a table
+func (is *LocalTemporaryTables) RemoveTable(schema, table model.CIStr) (exist bool) {
+	tbls := is.schemaTables(schema)
+	if tbls == nil {
+		return false
+	}
+
+	oldTable, exist := tbls.tables[table.L]
+	if !exist {
+		return false
+	}
+
+	delete(tbls.tables, table.L)
+	delete(is.idx2table, oldTable.Meta().ID)
+	return true
+}
+
+// SchemaByTable get a table's schema name
+func (is *LocalTemporaryTables) SchemaByTable(tableInfo *model.TableInfo) (string, bool) {
+	if tableInfo == nil {
+		return "", false
+	}
+
+	for schema, v := range is.schemaMap {
+		if tbl, ok := v.tables[tableInfo.Name.L]; ok {
+			if tbl.Meta().ID == tableInfo.ID {
+				return schema, true
+			}
+		}
+	}
+
+	return "", false
+}
+
+func (is *LocalTemporaryTables) ensureSchema(schema model.CIStr) *schemaLocalTempSchemaTables {
+	if tbls, ok := is.schemaMap[schema.L]; ok {
+		return tbls
+	}
+
+	tbls := &schemaLocalTempSchemaTables{tables: make(map[string]table.Table)}
+	is.schemaMap[schema.L] = tbls
+	return tbls
+}
+
+func (is *LocalTemporaryTables) schemaTables(schema model.CIStr) *schemaLocalTempSchemaTables {
+	if is.schemaMap == nil {
+		return nil
+	}
+
+	if tbls, ok := is.schemaMap[schema.L]; ok {
+		return tbls
+	}
+
+	return nil
+}
+
+// TemporaryTableAttachedInfoSchema implements InfoSchema
+// Local temporary table has a loose relationship with database.
+// So when a database is dropped, its temporary tables still exist and can be return by TableByName/TableByID.
+// However SchemaByTable will return nil if database is dropped.
+type TemporaryTableAttachedInfoSchema struct {
+	InfoSchema
+	LocalTemporaryTables *LocalTemporaryTables
+}
+
+// TableByName implements InfoSchema.TableByName
+func (ts *TemporaryTableAttachedInfoSchema) TableByName(schema, table model.CIStr) (table.Table, error) {
+	if tbl, ok := ts.LocalTemporaryTables.TableByName(schema, table); ok {
+		return tbl, nil
+	}
+
+	return ts.InfoSchema.TableByName(schema, table)
+}
+
+// TableByID implements InfoSchema.TableByID
+func (ts *TemporaryTableAttachedInfoSchema) TableByID(id int64) (table.Table, bool) {
+	if tbl, ok := ts.LocalTemporaryTables.TableByID(id); ok {
+		return tbl, true
+	}
+
+	return ts.InfoSchema.TableByID(id)
+}
+
+// SchemaByTable implements InfoSchema.SchemaByTable
+func (ts *TemporaryTableAttachedInfoSchema) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
+	if tableInfo == nil {
+		return nil, false
+	}
+
+	if schemaName, ok := ts.LocalTemporaryTables.SchemaByTable(tableInfo); ok {
+		return ts.SchemaByName(model.NewCIStr(schemaName))
+	}
+
+	return ts.InfoSchema.SchemaByTable(tableInfo)
 }

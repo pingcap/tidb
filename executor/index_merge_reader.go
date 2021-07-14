@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -243,9 +242,11 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetDesc(e.descs[workID]).
 					SetKeepOrder(false).
 					SetStreaming(e.partialStreamings[workID]).
+					SetTxnScope(e.txnScope).
+					SetIsStaleness(e.isStaleness).
 					SetFromSessionVars(e.ctx.GetSessionVars()).
 					SetMemTracker(e.memTracker).
-					SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx))
+					SetFromInfoSchema(e.ctx.GetInfoSchema())
 
 				worker := &partialIndexWorker{
 					stats:        e.stats,
@@ -327,6 +328,8 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					baseExecutor: newBaseExecutor(e.ctx, ts.Schema(), e.getPartitalPlanID(workID)),
 					dagPB:        e.dagPBs[workID],
 					startTS:      e.startTS,
+					txnScope:     e.txnScope,
+					isStaleness:  e.isStaleness,
 					streaming:    e.partialStreamings[workID],
 					feedback:     statistics.NewQueryFeedback(0, nil, 0, false),
 					plans:        e.partialPlans[workID],
@@ -538,6 +541,8 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		table:        tbl,
 		dagPB:        e.tableRequest,
 		startTS:      e.startTS,
+		txnScope:     e.txnScope,
+		isStaleness:  e.isStaleness,
 		streaming:    e.tableStreaming,
 		columns:      e.columns,
 		feedback:     statistics.NewQueryFeedback(0, nil, 0, false),

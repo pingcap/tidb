@@ -291,7 +291,7 @@ func extractStringFromStringSet(set set.StringSet) string {
 		l = append(l, fmt.Sprintf(`"%s"`, k))
 	}
 	sort.Strings(l)
-	return fmt.Sprintf("%s", strings.Join(l, ","))
+	return strings.Join(l, ",")
 }
 
 func tableHasDirtyContent(ctx sessionctx.Context, tableInfo *model.TableInfo) bool {

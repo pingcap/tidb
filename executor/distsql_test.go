@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
+// nolint:unused
 func checkGoroutineExists(keyword string) bool {
 	buf := new(bytes.Buffer)
 	profile := pprof.Lookup("goroutine")
@@ -241,7 +242,7 @@ func (s *testSuite3) TestInconsistentIndex(c *C) {
 	for i := 0; i < 10; i++ {
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-		err = idxOp.Delete(ctx.GetSessionVars().StmtCtx, txn.GetUnionStore(), types.MakeDatums(i+10), kv.IntHandle(100+i))
+		err = idxOp.Delete(ctx.GetSessionVars().StmtCtx, txn, types.MakeDatums(i+10), kv.IntHandle(100+i))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
@@ -360,7 +361,7 @@ func (s *testSuite3) TestPartitionTableIndexJoinIndexLookUp(c *C) {
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec(`create table t (a int, b int, key(a)) partition by hash(a) partitions 4`)
 	tk.MustExec("create table tnormal (a int, b int, key(a), key(b))")
-	nRows := 64
+	nRows := 512
 	values := make([]string, 0, nRows)
 	for i := 0; i < nRows; i++ {
 		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(nRows), rand.Intn(nRows)))

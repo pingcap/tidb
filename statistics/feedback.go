@@ -107,7 +107,6 @@ func (m *QueryFeedbackMap) Append(q *QueryFeedback) {
 		Tp:         q.Tp,
 	}
 	m.append(k, []*QueryFeedback{q})
-	return
 }
 
 // MaxQueryFeedbackCount is the max number of feedbacks that are cached in memory.
@@ -136,7 +135,6 @@ func (m *QueryFeedbackMap) Merge(r *QueryFeedbackMap) {
 			break
 		}
 	}
-	return
 }
 
 var (
