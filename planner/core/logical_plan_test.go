@@ -1694,7 +1694,7 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		},
 		{
 			sql:    "select * from t where f > 1 and g > 1",
-			result: "PRIMARY_KEY,f,g,f_g",
+			result: "PRIMARY_KEY,g,f_g",
 		},
 		{
 			sql:    "select count(1) from t",
