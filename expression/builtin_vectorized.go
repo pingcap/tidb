@@ -31,15 +31,15 @@ type columnBufferAllocator interface {
 	put(buf *chunk.Column)
 }
 
-// localSliceBuffer implements columnBufferAllocator interface.
-// It works like a concurrency-safe deque which is implemented by sync.Pool.
-type localSliceBuffer struct {
-	pool sync.Pool
+// localColumnPool implements columnBufferAllocator interface.
+// It works like a concurrency-safe deque which is implemented by lock-free sync.Pool.
+type localColumnPool struct {
+	sync.Pool
 }
 
-func newLocalSliceBuffer(initCap int) *localSliceBuffer {
-	return &localSliceBuffer{
-		pool: sync.Pool{
+func newLocalColumnPool(_ int) *localColumnPool {
+	return &localColumnPool{
+		sync.Pool{
 			New: func() interface{} {
 				// Use default arguments
 				return chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity)
@@ -48,7 +48,7 @@ func newLocalSliceBuffer(initCap int) *localSliceBuffer {
 	}
 }
 
-var globalColumnAllocator = newLocalSliceBuffer(1024)
+var globalColumnAllocator = newLocalColumnPool(1024)
 
 func newBuffer(evalType types.EvalType, capacity int) (*chunk.Column, error) {
 	switch evalType {
@@ -82,13 +82,13 @@ func PutColumn(buf *chunk.Column) {
 }
 
 // get will ignore evalType and capacity
-func (r *localSliceBuffer) get(evalType types.EvalType, capacity int) (*chunk.Column, error) {
-	col, _ := r.pool.Get().(*chunk.Column)
+func (r *localColumnPool) get(_ types.EvalType, _ int) (*chunk.Column, error) {
+	col, _ := r.Pool.Get().(*chunk.Column)
 	return col, nil
 }
 
-func (r *localSliceBuffer) put(col *chunk.Column) {
-	r.pool.Put(col)
+func (r *localColumnPool) put(col *chunk.Column) {
+	r.Pool.Put(col)
 }
 
 // vecEvalIntByRows uses the non-vectorized(row-based) interface `evalInt` to eval the expression.

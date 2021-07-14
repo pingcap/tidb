@@ -142,7 +142,7 @@ const (
 )
 
 func BenchmarkColumnBufferAllocate(b *testing.B) {
-	allocator := newLocalSliceBuffer(initTestBufCap)
+	allocator := newLocalColumnPool(initTestBufCap)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < numTestGet; j++ {
@@ -153,7 +153,7 @@ func BenchmarkColumnBufferAllocate(b *testing.B) {
 }
 
 func BenchmarkColumnBufferAllocateParallel(b *testing.B) {
-	allocator := newLocalSliceBuffer(initTestBufCap)
+	allocator := newLocalColumnPool(initTestBufCap)
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
