@@ -162,7 +162,7 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 			}
 			s.fieldBuf = s.fieldBuf[:0]
 			switch col.GetType().Tp {
-			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong:
+			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeYear:
 				s.fieldBuf = strconv.AppendInt(s.fieldBuf, row.GetInt64(j), 10)
 			case mysql.TypeLonglong:
 				if mysql.HasUnsignedFlag(col.GetType().Flag) {
