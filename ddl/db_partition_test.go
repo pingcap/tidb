@@ -3450,5 +3450,5 @@ func (s *testSerialDBSuite1) TestTruncatePartitionMultipleTimes(c *C) {
 	go backgroundExec(s.store, "alter table test.t truncate partition p0;", done2)
 	<-done1
 	<-done2
-	c.Assert(errCount, Equals, int32(0))
+	c.Assert(errCount, LessEqual, int32(1))
 }

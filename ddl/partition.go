@@ -1043,11 +1043,8 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 // onTruncateTablePartition truncates old partition meta.
 func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 	var ver int64
-	var (
-		oldIDs   []int64
-		oldNames []model.CIStr
-	)
-	if err := job.DecodeArgs(&oldIDs, &oldNames); err != nil {
+	var oldIDs []int64
+	if err := job.DecodeArgs(&oldIDs); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -1060,12 +1057,11 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		return ver, errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	compareByNames := len(oldNames) == len(oldIDs)
 	newPartitions := make([]model.PartitionDefinition, 0, len(oldIDs))
 	for _, oldID := range oldIDs {
 		for i := 0; i < len(pi.Definitions); i++ {
 			def := &pi.Definitions[i]
-			if (compareByNames && def.Name.L == oldNames[i].L) || def.ID == oldID {
+			if def.ID == oldID {
 				pid, err1 := t.GenGlobalID()
 				if err1 != nil {
 					return ver, errors.Trace(err1)
@@ -1078,7 +1074,8 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		}
 	}
 	if len(newPartitions) == 0 {
-		return ver, table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O)
+		job.State = model.JobStateCancelled
+		return ver, table.ErrUnknownPartition.GenWithStackByArgs(fmt.Sprintf("pid:%v", oldIDs), tblInfo.Name.O)
 	}
 
 	// Clear the tiflash replica available status.
