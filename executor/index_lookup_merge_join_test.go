@@ -129,3 +129,22 @@ func (s *testSuite9) TestIndexMergeJoinBinding(c *C) {
 	// TODO: reopen index merge join in future
 	c.Assert(strings.Index(rows[0][0].(string), "IndexJoin"), Equals, 0)
 }
+
+func (s *testSuite9) TestIssue24473AndIssue25669(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists x, t2, t3")
+	tk.MustExec("CREATE TABLE `x` (  `a` enum('y','b','1','x','0','null') DEFAULT NULL,  KEY `a` (`a`));")
+	tk.MustExec("insert into x values(\"x\"),(\"x\"),(\"b\"),(\"y\");")
+	tk.MustQuery("SELECT /*+ merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;").Sort().Check(
+		testkit.Rows("b b", "x x", "x x", "x x", "x x", "y y"))
+	tk.MustQuery("SELECT /*+ inl_merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;").Sort().Check(
+		testkit.Rows("b b", "x x", "x x", "x x", "x x", "y y"))
+
+	tk.MustExec("drop table if exists x, t2, t3")
+	tk.MustExec("CREATE TABLE `x` (  `a` set('y','b','1','x','0','null') DEFAULT NULL,  KEY `a` (`a`));")
+	tk.MustExec("insert into x values(\"x\"),(\"x\"),(\"b\"),(\"y\");")
+	tk.MustQuery("SELECT /*+ merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;").Sort().Check(
+		testkit.Rows("b b", "x x", "x x", "x x", "x x", "y y"))
+	tk.MustQuery("SELECT /*+ inl_merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;").Sort().Check(
+		testkit.Rows("b b", "x x", "x x", "x x", "x x", "y y"))
+}

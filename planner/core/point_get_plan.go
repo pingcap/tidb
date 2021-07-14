@@ -371,6 +371,11 @@ func (p *BatchPointGetPlan) GetCost(cols []*expression.Column) float64 {
 
 // TryFastPlan tries to use the PointGetPlan for the query.
 func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
+	if checkStableResultMode(ctx) {
+		// the rule of stabilizing results has not taken effect yet, so cannot generate a plan here in this mode
+		return nil
+	}
+
 	ctx.GetSessionVars().PlanID = 0
 	ctx.GetSessionVars().PlanColumnID = 0
 	switch x := node.(type) {
@@ -602,7 +607,7 @@ func newBatchPointGetPlan(
 
 func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *BatchPointGetPlan {
 	if selStmt.OrderBy != nil || selStmt.GroupBy != nil ||
-		selStmt.Limit != nil || selStmt.Having != nil ||
+		selStmt.Limit != nil || selStmt.Having != nil || selStmt.Distinct ||
 		len(selStmt.WindowSpecs) > 0 {
 		return nil
 	}
