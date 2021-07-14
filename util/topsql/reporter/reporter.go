@@ -99,11 +99,9 @@ type RemoteTopSQLReporter struct {
 	cancel context.CancelFunc
 	client ReportClient
 
-	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are normalized SQL strings
+	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are SQLMeta.
 	normalizedSQLMap atomic.Value // sync.Map
 	sqlMapLength     atomic2.Int64
-	// internalSQLMap is an map, whose key are internal SQL digest string, and the values are struct {}{}.
-	internalSQLMap atomic.Value
 
 	// normalizedPlanMap is an map, whose keys are plan digest strings and values are normalized plans **in binary**.
 	// The normalized plans in binary can be decoded to string using the `planBinaryDecoder`.
@@ -112,6 +110,12 @@ type RemoteTopSQLReporter struct {
 
 	collectCPUDataChan chan cpuData
 	reportDataChan     chan reportData
+}
+
+// SQLMeta is the SQL meta which contains the normalized SQL string and a bool field which uses to distinguish internal SQL.
+type SQLMeta struct {
+	normalizedSQL string
+	isInternal    bool
 }
 
 // NewRemoteTopSQLReporter creates a new TopSQL reporter
@@ -129,7 +133,6 @@ func NewRemoteTopSQLReporter(client ReportClient) *RemoteTopSQLReporter {
 	}
 	tsr.normalizedSQLMap.Store(&sync.Map{})
 	tsr.normalizedPlanMap.Store(&sync.Map{})
-	tsr.internalSQLMap.Store(&sync.Map{})
 
 	go tsr.collectWorker()
 	go tsr.reportWorker()
@@ -168,12 +171,12 @@ func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL str
 	}
 	m := tsr.normalizedSQLMap.Load().(*sync.Map)
 	key := string(sqlDigest)
-	_, loaded := m.LoadOrStore(key, normalizedSQL)
+	_, loaded := m.LoadOrStore(key, SQLMeta{
+		normalizedSQL: normalizedSQL,
+		isInternal:    isInternal,
+	})
 	if !loaded {
 		tsr.sqlMapLength.Add(1)
-	}
-	if isInternal {
-		tsr.internalSQLMap.Load().(*sync.Map).LoadOrStore(key, struct{}{})
 	}
 }
 
@@ -311,7 +314,6 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 	// Evict redundant data.
 	normalizedSQLMap := tsr.normalizedSQLMap.Load().(*sync.Map)
 	normalizedPlanMap := tsr.normalizedPlanMap.Load().(*sync.Map)
-	internalSQLMap := tsr.internalSQLMap.Load().(*sync.Map)
 	for _, evict := range evicted {
 		key := encodeKey(keyBuf, evict.SQLDigest, evict.PlanDigest)
 		_, ok := collectTarget[key]
@@ -326,7 +328,6 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 		if loaded {
 			tsr.planMapLength.Add(-1)
 		}
-		internalSQLMap.Delete(string(evict.SQLDigest))
 	}
 }
 
@@ -340,13 +341,11 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *m
 	}
 	normalizedSQLMap := tsr.normalizedSQLMap.Load().(*sync.Map)
 	normalizedPlanMap := tsr.normalizedPlanMap.Load().(*sync.Map)
-	internalSQLMap := tsr.internalSQLMap.Load().(*sync.Map)
 
 	// Reset data for next report.
 	*collectedDataPtr = make(map[string]*dataPoints)
 	tsr.normalizedSQLMap.Store(&sync.Map{})
 	tsr.normalizedPlanMap.Store(&sync.Map{})
-	tsr.internalSQLMap.Store(&sync.Map{})
 	tsr.sqlMapLength.Store(0)
 	tsr.planMapLength.Store(0)
 
@@ -362,7 +361,6 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *m
 		collectedData:     records,
 		normalizedSQLMap:  normalizedSQLMap,
 		normalizedPlanMap: normalizedPlanMap,
-		internalSQLMap:    internalSQLMap,
 	}
 
 	// Send to report channel. When channel is full, data will be dropped.
@@ -379,7 +377,6 @@ type reportData struct {
 	collectedData     []*dataPoints
 	normalizedSQLMap  *sync.Map
 	normalizedPlanMap *sync.Map
-	internalSQLMap    *sync.Map
 }
 
 func (d *reportData) hasData() bool {

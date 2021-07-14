@@ -66,7 +66,7 @@ func (r *GRPCReportClient) Send(ctx context.Context, targetRPCAddr string, data 
 
 	go func() {
 		defer wg.Done()
-		errCh <- r.sendBatchSQLMeta(ctx, data.normalizedSQLMap, data.internalSQLMap)
+		errCh <- r.sendBatchSQLMeta(ctx, data.normalizedSQLMap)
 	}()
 	go func() {
 		defer wg.Done()
@@ -132,7 +132,7 @@ func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records [
 }
 
 // sendBatchSQLMeta sends a batch of SQL metas by stream.
-func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, sqlMap, internalSQLMap *sync.Map) error {
+func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, sqlMap *sync.Map) error {
 	start := time.Now()
 	client := tipb.NewTopSQLAgentClient(r.conn)
 	stream, err := client.ReportSQLMeta(ctx)
@@ -142,11 +142,11 @@ func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, sqlMap, interna
 	cnt := 0
 	sqlMap.Range(func(key, value interface{}) bool {
 		cnt++
-		_, isInternal := internalSQLMap.Load(key)
+		meta := value.(SQLMeta)
 		sqlMeta := &tipb.SQLMeta{
 			SqlDigest:     []byte(key.(string)),
-			NormalizedSql: value.(string),
-			IsInternalSql: isInternal,
+			NormalizedSql: meta.normalizedSQL,
+			IsInternalSql: meta.isInternal,
 		}
 		if err = stream.Send(sqlMeta); err != nil {
 			return false
