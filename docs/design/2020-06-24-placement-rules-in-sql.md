@@ -293,7 +293,7 @@ If both `voter` and `follower` are defined in the rules, the replicas of `follow
 ```sql
 ALTER TABLE test
 	PLACEMENT CONSTRAINTS="[+zone=bj]" ROLE=follower REPLICAS=2,
-	PLACEMENT CONSTRAINTS="[+zone=sh]" ROLE=voter REPLICAS=2;
+	CONSTRAINTS="[+zone=sh]" ROLE=voter REPLICAS=2;
 ```
 
 There are 4 replicas for table `test`, 2 of which are in `sh` and 2 are in `bj`.  Leader can only be placed on `sh`.
