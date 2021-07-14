@@ -119,7 +119,7 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`70/10/22`, `%Y/%m/%d`, types.FromDate(1970, 10, 22, 0, 0, 0, 0)},
 		{`18/10/22`, `%Y/%m/%d`, types.FromDate(2018, 10, 22, 0, 0, 0, 0)},
 		{`100/10/22`, `%Y/%m/%d`, types.FromDate(100, 10, 22, 0, 0, 0, 0)},
-    // %X %V %W
+		// %X %V %W
 		{`200442 Monday`, `%X%V %W`, types.FromDate(2004, 10, 18, 0, 0, 0, 0)},
 		{`2004420`, `%X%V%w`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)},
 		{`2004423`, `%X%V%w`, types.FromDate(2004, 10, 20, 0, 0, 0, 0)},
@@ -185,7 +185,7 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{"2010-11-12 11 am", `%Y-%m-%d %H %p`},
 		{"2010-11-12 13 am", `%Y-%m-%d %h %p`},
 		{"2010-11-12 0 am", `%Y-%m-%d %h %p`},
-    // %X %V %W
+		// %X %V %W
 		{`2004427`, `%X%V%w`}, // %w range 0-6, here is 7
 		{"2004421", "%x%V%w"}, // %x should be used with %v
 		{"2004421", "%X%v%w"}, // %X should be used with %V
