@@ -848,13 +848,6 @@ func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []b
 		return errors.Errorf("[gc worker] destroy range finished with errors: %v", errs)
 	}
 
-	// Notify all affected regions in the range that UnsafeDestroyRange occurs.
-	notifyTask := tikv.NewNotifyDeleteRangeTask(w.tikvStore, startKey, endKey, concurrency)
-	err = notifyTask.Execute(ctx)
-	if err != nil {
-		return errors.Annotate(err, "[gc worker] failed notifying regions affected by UnsafeDestroyRange")
-	}
-
 	return nil
 }
 
