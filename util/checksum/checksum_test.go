@@ -131,9 +131,10 @@ func (w *mockWriter) Close() (err error) {
 	return w.w.Close()
 }
 
-func assertUnderlyingWrite(t *testing.T, encrypt bool, f *os.File, fc func(b []byte, offset int) []byte, err error) (*encrypt2.CtrCipher, bool) {
+func assertUnderlyingWrite(t *testing.T, encrypt bool, f *os.File, fc func(b []byte, offset int) []byte) (*encrypt2.CtrCipher, bool) {
 	var underlying io.WriteCloser = newMockWriter(f, fc)
 	var ctrCipher *encrypt2.CtrCipher
+	var err error
 	if encrypt {
 		ctrCipher, err = encrypt2.NewCtrCipher()
 		if err != nil {
@@ -180,7 +181,6 @@ func testAddOneByte(t *testing.T, encrypt bool) {
 	path := "TiCase3644"
 	f, clean := createTestFileWithoutClose(t, path)
 	defer clean()
-	var err error
 
 	insertPos := 5000
 	fc := func(b []byte, offset int) []byte {
@@ -191,7 +191,7 @@ func testAddOneByte(t *testing.T, encrypt bool) {
 		return b
 	}
 
-	ctrCipher, done := assertUnderlyingWrite(t, encrypt, f, fc, err)
+	ctrCipher, done := assertUnderlyingWrite(t, encrypt, f, fc)
 	if done {
 		return
 	}
@@ -226,7 +226,6 @@ func testDeleteOneByte(t *testing.T, encrypt bool) {
 	path := "TiCase3645"
 	f, clean := createTestFileWithoutClose(t, path)
 	defer clean()
-	var err error
 
 	deletePos := 5000
 	fc := func(b []byte, offset int) []byte {
@@ -237,7 +236,7 @@ func testDeleteOneByte(t *testing.T, encrypt bool) {
 		return b
 	}
 
-	ctrCipher, done := assertUnderlyingWrite(t, encrypt, f, fc, err)
+	ctrCipher, done := assertUnderlyingWrite(t, encrypt, f, fc)
 	if done {
 		return
 	}
@@ -272,7 +271,6 @@ func testModifyOneByte(t *testing.T, encrypt bool) {
 	path := "TiCase3646"
 	f, clean := createTestFileWithoutClose(t, path)
 	defer clean()
-	var err error
 
 	modifyPos := 5000
 	fc := func(b []byte, offset int) []byte {
@@ -283,7 +281,7 @@ func testModifyOneByte(t *testing.T, encrypt bool) {
 		return b
 	}
 
-	ctrCipher, done := assertUnderlyingWrite(t, encrypt, f, fc, err)
+	ctrCipher, done := assertUnderlyingWrite(t, encrypt, f, fc)
 	if done {
 		return
 	}
@@ -355,7 +353,6 @@ func testModifyThreeBytes(t *testing.T, encrypt bool) {
 	path := "TiCase3648"
 	f, clean := createTestFileWithoutClose(t, path)
 	defer clean()
-	var err error
 
 	modifyPos := 5000
 	fc := func(b []byte, offset int) []byte {
@@ -370,7 +367,7 @@ func testModifyThreeBytes(t *testing.T, encrypt bool) {
 		return b
 	}
 
-	ctrCipher, done := assertUnderlyingWrite(t, encrypt, f, fc, err)
+	ctrCipher, done := assertUnderlyingWrite(t, encrypt, f, fc)
 	if done {
 		return
 	}
