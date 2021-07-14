@@ -414,7 +414,7 @@ This behavior is inspired by how a `CHARACTER SET` or `COLLATE` attribute applie
 
 Placement policy can be removed from an object via the following syntax:
 ```sql
-ALTER DATABASE test [DEFAULT] PLACEMENT=default;
+ALTER DATABASE test [DEFAULT] PLACEMENT SET DEFAULT;
 ALTER TABLE t1 PLACEMENT=default;
 ALTER TABLE t1 ALTER PARTITION partition_name PLACEMENT=default;
 ```
