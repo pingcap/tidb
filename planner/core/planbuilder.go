@@ -487,6 +487,8 @@ type PlanBuilder struct {
 	buildingViewStack set.StringSet
 	// renamingViewName is the name of the view which is being renamed.
 	renamingViewName string
+	// isCreateView indicates whether the query is create view.
+	isCreateView bool
 
 	// evalDefaultExpr needs this information to find the corresponding column.
 	// It stores the OutputNames before buildProjection.
@@ -2497,7 +2499,7 @@ func calculateTsExpr(sctx sessionctx.Context, asOfClause *ast.AsOfClause) (uint6
 	if err != nil {
 		return 0, err
 	}
-	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(sctx.GetSessionVars().TimeZone)
+	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(sctx.GetSessionVars().Location())
 	if err != nil {
 		return 0, err
 	}
@@ -3019,6 +3021,8 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 					Value:   x.Datum,
 					RetType: &x.Type,
 				}
+			case *driver.ParamMarkerExpr:
+				expr, err = expression.ParamMarkerExpression(b.ctx, x)
 			default:
 				b.curClause = fieldList
 				// subquery in insert values should not reference upper scope
@@ -3606,11 +3610,13 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				v.ReferTable.Name.L, "", authErr)
 		}
 	case *ast.CreateViewStmt:
+		b.isCreateView = true
 		b.capFlag |= canExpandAST | renameView
 		b.renamingViewName = v.ViewName.Schema.L + "." + v.ViewName.Name.L
 		defer func() {
 			b.capFlag &= ^canExpandAST
 			b.capFlag &= ^renameView
+			b.isCreateView = false
 		}()
 		plan, err := b.Build(ctx, v.Select)
 		if err != nil {
@@ -3806,7 +3812,7 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, err
 		return &Explain{Format: explainFor.Format}, nil
 	}
 	var explainRows [][]string
-	if explainFor.Format == ast.ExplainFormatROW {
+	if explainFor.Format == types.ExplainFormatROW {
 		explainRows = processInfo.PlanExplainRows
 	}
 	return b.buildExplainPlan(targetPlan, explainFor.Format, explainRows, false, nil, processInfo.RuntimeStatsColl)

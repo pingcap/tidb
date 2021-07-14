@@ -325,9 +325,9 @@ func (sv *SysVar) checkTimeSystemVar(value string, vars *SessionVars) (string, e
 	var t time.Time
 	var err error
 	if len(value) <= len(localDayTimeFormat) {
-		t, err = time.ParseInLocation(localDayTimeFormat, value, vars.TimeZone)
+		t, err = time.ParseInLocation(localDayTimeFormat, value, vars.Location())
 	} else {
-		t, err = time.ParseInLocation(FullDayTimeFormat, value, vars.TimeZone)
+		t, err = time.ParseInLocation(FullDayTimeFormat, value, vars.Location())
 	}
 	if err != nil {
 		return "", err
@@ -1757,7 +1757,7 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal, Name: SkipNameResolve, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: DefaultAuthPlugin, Value: mysql.AuthNativePassword, Type: TypeEnum, PossibleValues: []string{mysql.AuthNativePassword, mysql.AuthCachingSha2Password}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableStableResultMode, Value: BoolToOnOff(DefTiDBEnableStableResultMode), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableOrderedResultMode, Value: BoolToOnOff(DefTiDBEnableOrderedResultMode), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableStableResultMode = TiDBOptOn(val)
 		return nil
 	}},
