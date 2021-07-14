@@ -778,7 +778,6 @@ func ParseDateFormat(format string) []string {
 
 	var end = 0
 	for end = start; end < len(format) && !isValidSeparator(format[end], len(seps)); end++ {
-
 	}
 
 	end = mathutil.Min(end, len(format))
