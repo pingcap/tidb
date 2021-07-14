@@ -1301,6 +1301,9 @@ func (s *testSuite5) TestShowVar(c *C) {
 	// Test Hidden tx_read_ts
 	res = tk.MustQuery("show variables like '%tx_read_ts'")
 	c.Check(res.Rows(), HasLen, 0)
+	// Test Hidden tidb_enable_streaming
+	res = tk.MustQuery("show variables like '%tidb_enable_streaming%';")
+	c.Check(res.Rows(), HasLen, 0)
 }
 
 func (s *testSuite5) TestIssue19507(c *C) {
