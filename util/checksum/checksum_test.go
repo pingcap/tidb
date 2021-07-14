@@ -25,47 +25,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func createTestFileWithoutClose(t *testing.T, path string) (f *os.File, clean func()) {
-	f, err := os.Create(path)
-	require.NoError(t, err)
-	clean = func() {
-		err := os.Remove(path)
-		assert.NoError(t, err)
-	}
-	return f, clean
-}
-
-func createTestFile(t *testing.T, path string) (f *os.File, clean func()) {
-	f, err := os.Create(path)
-	require.NoError(t, err)
-	clean = func() {
-		err := f.Close()
-		assert.NoError(t, err)
-		err = os.Remove(path)
-		assert.NoError(t, err)
-	}
-	return f, clean
-}
-
-func openTestFile(t *testing.T, path string) (f *os.File, clean func()) {
-	f, err := os.Open(path)
-	require.NoError(t, err)
-	clean = func() {
-		err := f.Close()
-		assert.NoError(t, err)
-	}
-	return f, clean
-}
-
-func newTestBuff(str string, n int) *bytes.Buffer {
-	buf := bytes.NewBuffer(nil)
-	testData := str
-	for i := 0; i < n; i++ {
-		buf.WriteString(testData)
-	}
-	return buf
-}
-
 func TestChecksumReadAt(t *testing.T) {
 	t.Parallel()
 	path := "checksum"
@@ -97,73 +56,6 @@ func TestChecksumReadAt(t *testing.T) {
 	assertReadAt(0, nil, 10, "0123456789")
 	assertReadAt(5, nil, 10, "5678901234")
 	assertReadAt(int64(n1+n2)-5, io.EOF, 5, "56789\x00\x00\x00\x00\x00")
-}
-
-type mockWriter struct {
-	err    error
-	w      io.WriteCloser
-	offset int
-	f      func(b []byte, offset int) []byte
-}
-
-func newMockWriter(w io.WriteCloser, f func(b []byte, offset int) []byte) *mockWriter {
-	return &mockWriter{w: w, f: f}
-}
-
-func (w *mockWriter) Write(p []byte) (n int, err error) {
-	// always write successfully.
-	n = len(p)
-	if w.f != nil {
-		p = w.f(p, w.offset)
-	}
-	nn, err := w.w.Write(p)
-	if err != nil {
-		return n, err
-	}
-	w.offset += nn
-	return n, err
-}
-
-func (w *mockWriter) Close() (err error) {
-	if w.err != nil {
-		return w.err
-	}
-	return w.w.Close()
-}
-
-func assertUnderlyingWrite(t *testing.T, encrypt bool, f *os.File, fc func(b []byte, offset int) []byte) (*encrypt2.CtrCipher, bool) {
-	var underlying io.WriteCloser = newMockWriter(f, fc)
-	var ctrCipher *encrypt2.CtrCipher
-	var err error
-	if encrypt {
-		ctrCipher, err = encrypt2.NewCtrCipher()
-		if err != nil {
-			return nil, true
-		}
-		underlying = encrypt2.NewWriter(underlying, ctrCipher)
-	}
-	underlying = NewWriter(underlying)
-
-	w := newTestBuff("0123456789", 510)
-	_, err = underlying.Write(w.Bytes())
-	assert.NoError(t, err)
-	_, err = underlying.Write(w.Bytes())
-	assert.NoError(t, err)
-	err = underlying.Close()
-	assert.NoError(t, err)
-	return ctrCipher, false
-}
-
-func underlyingReadAt(f *os.File, encrypt bool, ctrCipher *encrypt2.CtrCipher, n, off int) error {
-	var underlying io.ReaderAt = f
-	if encrypt {
-		underlying = encrypt2.NewReader(underlying, ctrCipher)
-	}
-	underlying = NewReader(underlying)
-
-	r := make([]byte, n)
-	_, err := underlying.ReadAt(r, int64(off))
-	return err
 }
 
 /*
@@ -451,21 +343,6 @@ func testReadDifferentBlockSize(t *testing.T, encrypt bool) {
 	assertReadAt(0, make([]byte, 11000), io.EOF, 10200, strings.Join([]string{strings.Repeat("0123456789", 1020), strings.Repeat("\x00", 800)}, ""), f)
 }
 
-func assertReadAtFunc(t *testing.T, encrypt bool, ctrCipher *encrypt2.CtrCipher) func(off int64, r []byte, assertErr error, assertN int, assertString string, f *os.File) {
-	return func(off int64, r []byte, assertErr error, assertN int, assertString string, f *os.File) {
-		var underlying io.ReaderAt = f
-		if encrypt {
-			underlying = encrypt2.NewReader(underlying, ctrCipher)
-		}
-
-		underlying = NewReader(underlying)
-		n, err := underlying.ReadAt(r, off)
-		assert.ErrorIs(t, err, assertErr)
-		assert.Equal(t, assertN, n)
-		assert.Equal(t, assertString, string(r))
-	}
-}
-
 /*
 	CaseID : TICASE-3651
 	Summary : Write some block at once.
@@ -562,15 +439,6 @@ func testWriteDifferentBlockSize(t *testing.T, encrypt bool) {
 	assertReadAt(0, make([]byte, 10200), nil, 10200, strings.Repeat("0123456789", 1020), f2)
 }
 
-var checkFlushedData = func(t *testing.T, f io.ReaderAt, off int64, readBufLen int, assertN int, assertErr error, assertRes []byte) {
-	readBuf := make([]byte, readBufLen)
-	r := NewReader(f)
-	n, err := r.ReadAt(readBuf, off)
-	assert.ErrorIs(t, err, assertErr)
-	assert.Equal(t, assertN, n)
-	assert.Equal(t, 0, bytes.Compare(readBuf, assertRes))
-}
-
 func TestChecksumWriter(t *testing.T) {
 	t.Parallel()
 	path := "checksum_TestChecksumWriter"
@@ -612,4 +480,136 @@ func TestChecksumWriterAutoFlush(t *testing.T) {
 	checkFlushedData(t, f, 0, 1020, 1020, nil, buf.Bytes())
 	cacheOff := w.GetCacheDataOffset()
 	assert.Equal(t, int64(len(buf.Bytes())), cacheOff)
+}
+
+func createTestFileWithoutClose(t *testing.T, path string) (f *os.File, clean func()) {
+	f, err := os.Create(path)
+	require.NoError(t, err)
+	clean = func() {
+		err := os.Remove(path)
+		assert.NoError(t, err)
+	}
+	return f, clean
+}
+
+func createTestFile(t *testing.T, path string) (f *os.File, clean func()) {
+	f, err := os.Create(path)
+	require.NoError(t, err)
+	clean = func() {
+		err := f.Close()
+		assert.NoError(t, err)
+		err = os.Remove(path)
+		assert.NoError(t, err)
+	}
+	return f, clean
+}
+
+func openTestFile(t *testing.T, path string) (f *os.File, clean func()) {
+	f, err := os.Open(path)
+	require.NoError(t, err)
+	clean = func() {
+		err := f.Close()
+		assert.NoError(t, err)
+	}
+	return f, clean
+}
+
+func newTestBuff(str string, n int) *bytes.Buffer {
+	buf := bytes.NewBuffer(nil)
+	testData := str
+	for i := 0; i < n; i++ {
+		buf.WriteString(testData)
+	}
+	return buf
+}
+
+type mockWriter struct {
+	err    error
+	w      io.WriteCloser
+	offset int
+	f      func(b []byte, offset int) []byte
+}
+
+func newMockWriter(w io.WriteCloser, f func(b []byte, offset int) []byte) *mockWriter {
+	return &mockWriter{w: w, f: f}
+}
+
+func (w *mockWriter) Write(p []byte) (n int, err error) {
+	// always write successfully.
+	n = len(p)
+	if w.f != nil {
+		p = w.f(p, w.offset)
+	}
+	nn, err := w.w.Write(p)
+	if err != nil {
+		return n, err
+	}
+	w.offset += nn
+	return n, err
+}
+
+func (w *mockWriter) Close() (err error) {
+	if w.err != nil {
+		return w.err
+	}
+	return w.w.Close()
+}
+
+func assertUnderlyingWrite(t *testing.T, encrypt bool, f *os.File, fc func(b []byte, offset int) []byte) (*encrypt2.CtrCipher, bool) {
+	var underlying io.WriteCloser = newMockWriter(f, fc)
+	var ctrCipher *encrypt2.CtrCipher
+	var err error
+	if encrypt {
+		ctrCipher, err = encrypt2.NewCtrCipher()
+		if err != nil {
+			return nil, true
+		}
+		underlying = encrypt2.NewWriter(underlying, ctrCipher)
+	}
+	underlying = NewWriter(underlying)
+
+	w := newTestBuff("0123456789", 510)
+	_, err = underlying.Write(w.Bytes())
+	assert.NoError(t, err)
+	_, err = underlying.Write(w.Bytes())
+	assert.NoError(t, err)
+	err = underlying.Close()
+	assert.NoError(t, err)
+	return ctrCipher, false
+}
+
+func underlyingReadAt(f *os.File, encrypt bool, ctrCipher *encrypt2.CtrCipher, n, off int) error {
+	var underlying io.ReaderAt = f
+	if encrypt {
+		underlying = encrypt2.NewReader(underlying, ctrCipher)
+	}
+	underlying = NewReader(underlying)
+
+	r := make([]byte, n)
+	_, err := underlying.ReadAt(r, int64(off))
+	return err
+}
+
+func assertReadAtFunc(t *testing.T, encrypt bool, ctrCipher *encrypt2.CtrCipher) func(off int64, r []byte, assertErr error, assertN int, assertString string, f *os.File) {
+	return func(off int64, r []byte, assertErr error, assertN int, assertString string, f *os.File) {
+		var underlying io.ReaderAt = f
+		if encrypt {
+			underlying = encrypt2.NewReader(underlying, ctrCipher)
+		}
+
+		underlying = NewReader(underlying)
+		n, err := underlying.ReadAt(r, off)
+		assert.ErrorIs(t, err, assertErr)
+		assert.Equal(t, assertN, n)
+		assert.Equal(t, assertString, string(r))
+	}
+}
+
+var checkFlushedData = func(t *testing.T, f io.ReaderAt, off int64, readBufLen int, assertN int, assertErr error, assertRes []byte) {
+	readBuf := make([]byte, readBufLen)
+	r := NewReader(f)
+	n, err := r.ReadAt(readBuf, off)
+	assert.ErrorIs(t, err, assertErr)
+	assert.Equal(t, assertN, n)
+	assert.Equal(t, 0, bytes.Compare(readBuf, assertRes))
 }
