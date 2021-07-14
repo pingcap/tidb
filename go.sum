@@ -410,8 +410,6 @@ github.com/phf/go-queue v0.0.0-20170504031614-9abe38d0371d h1:U+PMnTlV2tu7RuMK5e
 github.com/phf/go-queue v0.0.0-20170504031614-9abe38d0371d/go.mod h1:lXfE4PvvTW5xOjO6Mba8zDPyw8M93B6AQ7frTGnMlA8=
 github.com/pingcap/badger v1.5.1-0.20200908111422-2e78ee155d19 h1:IXpGy7y9HyoShAFmzW2OPF0xCA5EOoSTyZHwsgYk9Ro=
 github.com/pingcap/badger v1.5.1-0.20200908111422-2e78ee155d19/go.mod h1:LyrqUOHZrUDf9oGi1yoz1+qw9ckSIhQb5eMa1acOLNQ=
-github.com/pingcap/br v5.2.0-alpha.0.20210611153635-74f18bcbe19d+incompatible h1:L2W8DPb9rD83X15H1gyiFdKwZmi1pEDO8gULxzeDJrA=
-github.com/pingcap/br v5.2.0-alpha.0.20210611153635-74f18bcbe19d+incompatible/go.mod h1:ymVmo50lQydxib0tmK5hHk4oteB7hZ0IMCArunwy3UQ=
 github.com/pingcap/br v5.2.0-alpha.0.20210714061533-935998df85b2+incompatible h1:wmtS4lgnDDPWfbG6Orco+6ViZ0qQWmHqugCnBv8/9D4=
 github.com/pingcap/br v5.2.0-alpha.0.20210714061533-935998df85b2+incompatible/go.mod h1:ymVmo50lQydxib0tmK5hHk4oteB7hZ0IMCArunwy3UQ=
 github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8/go.mod h1:B1+S9LNcuMyLH/4HMTViQOJevkGiik3wW2AN9zb2fNQ=
