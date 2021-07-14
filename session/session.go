@@ -225,6 +225,8 @@ type session struct {
 	idxUsageCollector *handle.SessionIndexUsageCollector
 
 	cache [1]ast.StmtNode
+
+	builtinFunctionUsage telemetry.BuiltinFunctionsUsage
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -1750,6 +1752,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 	rs, err = s.Exec(ctx)
 	se.updateTelemetryMetric(s.(*executor.ExecStmt))
+	telemetry.GlobalBuiltinFunctionsUsage.Collect(se.GetBuiltinFunctionUsage())
 	sessVars.TxnCtx.StatementCount++
 	if rs != nil {
 		return &execStmtResult{
@@ -2659,11 +2662,12 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		return nil, err
 	}
 	s := &session{
-		store:           store,
-		sessionVars:     variable.NewSessionVars(),
-		ddlOwnerChecker: dom.DDL().OwnerManager(),
-		client:          store.GetClient(),
-		mppClient:       store.GetMPPClient(),
+		store:                store,
+		sessionVars:          variable.NewSessionVars(),
+		ddlOwnerChecker:      dom.DDL().OwnerManager(),
+		client:               store.GetClient(),
+		mppClient:            store.GetMPPClient(),
+		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		if opt != nil && opt.PreparedPlanCache != nil {
@@ -3125,4 +3129,8 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 	} else {
 		telemetryCTEUsage.WithLabelValues("notCTE").Inc()
 	}
+}
+
+func (s *session) GetBuiltinFunctionUsage() map[string]uint32 {
+	return s.builtinFunctionUsage
 }
