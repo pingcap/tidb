@@ -335,6 +335,10 @@ const (
 	// The variable name in mysql.TiDB table.
 	// It is used for getting the version of the TiDB server which bootstrapped the store.
 	tidbServerVersionVar = "tidb_server_version"
+	// The variable name in mysql.TiDB table.
+	// It is used for getting the version of the TiDB server which bootstrapped the store.
+	// It's only used for release-4.0.
+	tidbServerMinorVersionVar = "tidb_4.0_minor_version"
 	// The variable name in mysql.tidb table and it will be used when we want to know
 	// system timezone.
 	tidbSystemTZ = "system_tz"
@@ -409,6 +413,10 @@ const (
 	// version52 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
 	// and forces tidb_multi_statement_mode=OFF when tidb_multi_statement_mode=WARN
 	version52 = 52
+
+	// Const for TiDB release-4.0 minorVersion
+	// minorVersion1 restore all SQL bindings.
+	minorVersion1 = 1
 )
 
 var (
@@ -464,6 +472,10 @@ var (
 		upgradeToVer50,
 		upgradeToVer51,
 		upgradeToVer52,
+	}
+
+	upgradeMinorVersion = []func(Session, int64){
+		upgradeToMinorVer1,
 	}
 )
 
@@ -522,7 +534,9 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 func upgrade(s Session) {
 	ver, err := getBootstrapVersion(s)
 	terror.MustNil(err)
-	if ver >= currentBootstrapVersion {
+	minorVer, err := getMinorVersion(s)
+	terror.MustNil(err)
+	if ver >= currentBootstrapVersion && minorVer >= currentMinorVersion {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
 		return
 	}
@@ -531,7 +545,16 @@ func upgrade(s Session) {
 		upgrade(s, ver)
 	}
 
-	updateBootstrapVer(s)
+	for _, minorUpgrade := range upgradeMinorVersion {
+		minorUpgrade(s, ver)
+	}
+
+	if ver < currentBootstrapVersion {
+		updateBootstrapVer(s)
+	}
+	if minorVer < currentMinorVersion {
+		updateMinorVer(s)
+	}
 	_, err = s.ExecuteInternal(context.Background(), "COMMIT")
 
 	if err != nil {
@@ -544,13 +567,19 @@ func upgrade(s Session) {
 		if err1 != nil {
 			logutil.BgLogger().Fatal("upgrade failed", zap.Error(err1))
 		}
-		if v >= currentBootstrapVersion {
+		minorV, err2 := getMinorVersion(s)
+		if err2 != nil {
+			logutil.BgLogger().Fatal("upgrade minor failed", zap.Error(err2))
+		}
+		if v >= currentBootstrapVersion && minorV >= currentMinorVersion {
 			// It is already bootstrapped/upgraded by a higher version TiDB server.
 			return
 		}
 		logutil.BgLogger().Fatal("[Upgrade] upgrade failed",
 			zap.Int64("from", ver),
 			zap.Int("to", currentBootstrapVersion),
+			zap.Int64("from minor", ver),
+			zap.Int("to minor", currentMinorVersion),
 			zap.Error(err))
 	}
 }
@@ -1147,10 +1176,7 @@ type bindInfo struct {
 	source     string
 }
 
-func upgradeToVer51(s Session, ver int64) {
-	if ver >= version51 {
-		return
-	}
+func updateGlobalBindings(s Session) {
 	bindMap := make(map[string]bindInfo)
 	h := &bindinfo.BindHandle{}
 	var err error
@@ -1172,7 +1198,7 @@ func upgradeToVer51(s Session, ver int64) {
 			WHERE source != 'builtin'
 			ORDER BY update_time DESC`)
 	if err != nil {
-		logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
+		logutil.BgLogger().Fatal("upgradeToVer52 error", zap.Error(err))
 	}
 	defer terror.Call(rs.Close)
 	req := rs.NewChunk()
@@ -1182,7 +1208,7 @@ func upgradeToVer51(s Session, ver int64) {
 	for {
 		err = rs.Next(context.TODO(), req)
 		if err != nil {
-			logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
+			logutil.BgLogger().Fatal("upgradeToVer52 error", zap.Error(err))
 		}
 		if req.NumRows() == 0 {
 			break
@@ -1203,6 +1229,13 @@ func upgradeToVer51(s Session, ver int64) {
 			expression.Quote(bind.source),
 		))
 	}
+}
+
+func upgradeToVer51(s Session, ver int64) {
+	if ver >= version51 {
+		return
+	}
+	updateGlobalBindings(s)
 }
 
 func upgradeToVer52(s Session, ver int64) {
@@ -1248,6 +1281,13 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 	}
 }
 
+func upgradeToMinorVer1(s Session, ver int64) {
+	if ver >= minorVersion1 {
+		return
+	}
+	updateGlobalBindings(s)
+}
+
 func writeMemoryQuotaQuery(s Session) {
 	comment := "memory_quota_query is 32GB by default in v3.0.x, 1GB by default in v4.0.x"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
@@ -1266,6 +1306,23 @@ func updateBootstrapVer(s Session) {
 // getBootstrapVersion gets bootstrap version from mysql.tidb table;
 func getBootstrapVersion(s Session) (int64, error) {
 	sVal, isNull, err := getTiDBVar(s, tidbServerVersionVar)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if isNull {
+		return 0, nil
+	}
+	return strconv.ParseInt(sVal, 10, 64)
+}
+
+func updateMinorVer(s Session) {
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, "TiDB minor version. Only for release-4.0.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
+		mysql.SystemDB, mysql.TiDBTable, tidbServerMinorVersionVar, currentMinorVersion, currentMinorVersion,
+	)
+}
+
+func getMinorVersion(s Session) (int64, error) {
+	sVal, isNull, err := getTiDBVar(s, tidbServerMinorVersionVar)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -1355,6 +1412,10 @@ func doDMLWorks(s Session) {
 
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES(%?, %?, "Bootstrap version. Do not delete.")`,
 		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion,
+	)
+
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES(%?, %?, "TiDB minor version. Only for release-4.0.")`,
+		mysql.SystemDB, mysql.TiDBTable, tidbServerMinorVersionVar, currentMinorVersion,
 	)
 
 	writeSystemTZ(s)
