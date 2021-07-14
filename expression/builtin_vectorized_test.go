@@ -137,8 +137,7 @@ func (s *testVectorizeSuite2) TestMockVecPlusIntParallel(c *C) {
 }
 
 const (
-	initTestBufCap = 65536
-	numTestGet     = 4096
+	numTestGet = 4096
 )
 
 func BenchmarkColumnBufferAllocate(b *testing.B) {
