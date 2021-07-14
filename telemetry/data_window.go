@@ -92,7 +92,8 @@ type tiFlashUsageData struct {
 	ExchangePushDown uint64 `json:"exchangePushDown"`
 }
 
-type BuiltinFunctionsUsageCollector struct {
+// builtinFunctionsUsageCollector collects builtin functions usage information and dump it into windowData.
+type builtinFunctionsUsageCollector struct {
 	sync.Mutex
 
 	// Should acquire lock to access this
@@ -100,7 +101,7 @@ type BuiltinFunctionsUsageCollector struct {
 }
 
 // Merge BuiltinFunctionsUsage data
-func (b *BuiltinFunctionsUsageCollector) Collect(usageData BuiltinFunctionsUsage) {
+func (b *builtinFunctionsUsageCollector) Collect(usageData BuiltinFunctionsUsage) {
 	// TODO(leiysky): use multi-worker to collect the usage information so we can make this asynchronous
 	b.Lock()
 	defer b.Unlock()
@@ -108,7 +109,7 @@ func (b *BuiltinFunctionsUsageCollector) Collect(usageData BuiltinFunctionsUsage
 }
 
 // Dump BuiltinFunctionsUsage data
-func (b *BuiltinFunctionsUsageCollector) Dump() map[string]uint32 {
+func (b *builtinFunctionsUsageCollector) Dump() map[string]uint32 {
 	b.Lock()
 	ret := b.usageData
 	b.usageData = make(map[string]uint32)
@@ -117,9 +118,10 @@ func (b *BuiltinFunctionsUsageCollector) Dump() map[string]uint32 {
 	return ret
 }
 
-// map from ScalarFuncSig_name(string) to usage count(uint32)
+// BuiltinFunctionsUsage is a map from ScalarFuncSig_name(string) to usage count(uint32)
 type BuiltinFunctionsUsage map[string]uint32
 
+// Inc will increase the usage count of scalar function by 1
 func (b BuiltinFunctionsUsage) Inc(scalarFuncSigName string) {
 	v, ok := b[scalarFuncSigName]
 	if !ok {
@@ -141,7 +143,8 @@ func (b BuiltinFunctionsUsage) Merge(usageData BuiltinFunctionsUsage) {
 	}
 }
 
-var GlobalBuiltinFunctionsUsage = &BuiltinFunctionsUsageCollector{usageData: make(BuiltinFunctionsUsage)}
+// GlobalBuiltinFunctionsUsage is used to collect builtin functions usage information
+var GlobalBuiltinFunctionsUsage = &builtinFunctionsUsageCollector{usageData: make(BuiltinFunctionsUsage)}
 
 var (
 	rotatedSubWindows []*windowData
