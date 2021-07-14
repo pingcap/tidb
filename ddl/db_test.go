@@ -6935,3 +6935,21 @@ func (s *testDBSuite8) TestIssue24580(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 1")
 	tk.MustExec("drop table if exists t")
 }
+
+func (s *testSerialDBSuite) TestIssue23419(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	defer func() {
+		tk.MustExec("drop table if exists t;")
+	}()
+
+	r := tk.MustQuery("select @@sql_mode")
+	sqlMode := r.Rows()[0][0].(string)
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec("create table t(a int, b varchar(20))")
+	tk.MustExec("insert into t values (1, NULL), (2, 'A')")
+	tk.MustExec("alter table t modify column b varchar(20) not null")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 ", "2 A"))
+	tk.MustExec("set @@sql_mode= '" + sqlMode + "'")
+}
