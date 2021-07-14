@@ -150,7 +150,7 @@ Advantages of building system table include:
 
 The system table only contains stored placement rules, and users cannot query the effective rule of one object from it.
 
-For example, table `t` has two partitions `p0` and `p1`, and a placement rule is added on `t`. If the user wants to query the working rule of `p0`, he will find no placement rule is defined for `p0` through the system table. Based on the inheritance rules for partiioned tables the userneeds to query the placement rule on `t`. This procedure is annoying.
+For example, table `t` has two partitions `p0` and `p1`, and a placement rule is added on `t`. If the user wants to query the working rule of `p0`, he will find no placement rule is defined for `p0` through the system table. Based on the inheritance rules for partitioned tables the user needs to query the placement rule on `t`. This procedure is annoying.
 
 To simplify the procedure, a `SHOW PLACEMENT` statement is provided to summarize the effective rules for one specified object.
 
