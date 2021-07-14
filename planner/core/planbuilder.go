@@ -487,6 +487,8 @@ type PlanBuilder struct {
 	buildingViewStack set.StringSet
 	// renamingViewName is the name of the view which is being renamed.
 	renamingViewName string
+	// isCreateView indicates whether the query is create view.
+	isCreateView bool
 
 	// evalDefaultExpr needs this information to find the corresponding column.
 	// It stores the OutputNames before buildProjection.
@@ -1086,6 +1088,10 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	}
 
 	available = removeIgnoredPaths(available, ignored, tblInfo)
+	if ctx.GetSessionVars().StmtCtx.IsStaleness {
+		// skip tiflash if the statement is for stale read until tiflash support stale read
+		available = removeTiflashDuringStaleRead(available)
+	}
 
 	// If we have got "FORCE" or "USE" index hint but got no available index,
 	// we have to use table scan.
@@ -1139,6 +1145,17 @@ func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.T
 		}
 	}
 	return remainedPaths
+}
+
+func removeTiflashDuringStaleRead(paths []*util.AccessPath) []*util.AccessPath {
+	n := 0
+	for _, path := range paths {
+		if path.StoreType != kv.TiFlash {
+			paths[n] = path
+			n++
+		}
+	}
+	return paths[:n]
 }
 
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo) (*LogicalLock, error) {
@@ -2384,12 +2401,11 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
-		if b.ctx.GetSessionVars().CurrentDB == "" && raw.Level.DBName == "" {
-			if raw.Level.Level == ast.GrantLevelTable {
-				return nil, ErrNoDB
-			}
+		var err error
+		b.visitInfo, err = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
+		if err != nil {
+			return nil, err
 		}
-		b.visitInfo = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
 	case *ast.BRIEStmt:
 		p.setSchemaAndNames(buildBRIESchema())
 		if sem.IsEnabled() && strings.EqualFold(raw.Storage[:8], "local://") {
@@ -2414,7 +2430,11 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, user, "RESTRICTED_USER_ADMIN")
 		}
 	case *ast.RevokeStmt:
-		b.visitInfo = collectVisitInfoFromRevokeStmt(b.ctx, b.visitInfo, raw)
+		var err error
+		b.visitInfo, err = collectVisitInfoFromRevokeStmt(b.ctx, b.visitInfo, raw)
+		if err != nil {
+			return nil, err
+		}
 	case *ast.KillStmt:
 		// All users can kill their own connections regardless.
 		// If you have the SUPER privilege, you can kill all threads and statements unless SEM is enabled.
@@ -2479,14 +2499,14 @@ func calculateTsExpr(sctx sessionctx.Context, asOfClause *ast.AsOfClause) (uint6
 	if err != nil {
 		return 0, err
 	}
-	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(sctx.GetSessionVars().TimeZone)
+	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(sctx.GetSessionVars().Location())
 	if err != nil {
 		return 0, err
 	}
 	return oracle.GoTimeToTS(tsTime), nil
 }
 
-func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.RevokeStmt) []visitInfo {
+func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.RevokeStmt) ([]visitInfo, error) {
 	// To use REVOKE, you must have the GRANT OPTION privilege,
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
@@ -2494,6 +2514,9 @@ func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stm
 	// This supports a local revoke SELECT on tablename, but does
 	// not add dbName to the visitInfo of a *.* grant.
 	if dbName == "" && stmt.Level.Level != ast.GrantLevelGlobal {
+		if sctx.GetSessionVars().CurrentDB == "" {
+			return nil, ErrNoDB
+		}
 		dbName = sctx.GetSessionVars().CurrentDB
 	}
 	var nonDynamicPrivilege bool
@@ -2530,7 +2553,7 @@ func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stm
 		// we need to attach the "GLOBAL" version of the GRANT OPTION.
 		vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
 	}
-	return vi
+	return vi, nil
 }
 
 // appendVisitInfoIsRestrictedUser appends additional visitInfo if the user has a
@@ -2547,7 +2570,7 @@ func appendVisitInfoIsRestrictedUser(visitInfo []visitInfo, sctx sessionctx.Cont
 	return visitInfo
 }
 
-func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.GrantStmt) []visitInfo {
+func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.GrantStmt) ([]visitInfo, error) {
 	// To use GRANT, you must have the GRANT OPTION privilege,
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
@@ -2555,6 +2578,9 @@ func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt
 	// This supports a local revoke SELECT on tablename, but does
 	// not add dbName to the visitInfo of a *.* grant.
 	if dbName == "" && stmt.Level.Level != ast.GrantLevelGlobal {
+		if sctx.GetSessionVars().CurrentDB == "" {
+			return nil, ErrNoDB
+		}
 		dbName = sctx.GetSessionVars().CurrentDB
 	}
 	var nonDynamicPrivilege bool
@@ -2599,7 +2625,7 @@ func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt
 		// we need to attach the "GLOBAL" version of the GRANT OPTION.
 		vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
 	}
-	return vi
+	return vi, nil
 }
 
 func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, error) {
@@ -2995,6 +3021,8 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 					Value:   x.Datum,
 					RetType: &x.Type,
 				}
+			case *driver.ParamMarkerExpr:
+				expr, err = expression.ParamMarkerExpression(b.ctx, x)
 			default:
 				b.curClause = fieldList
 				// subquery in insert values should not reference upper scope
@@ -3582,11 +3610,13 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				v.ReferTable.Name.L, "", authErr)
 		}
 	case *ast.CreateViewStmt:
+		b.isCreateView = true
 		b.capFlag |= canExpandAST | renameView
 		b.renamingViewName = v.ViewName.Schema.L + "." + v.ViewName.Name.L
 		defer func() {
 			b.capFlag &= ^canExpandAST
 			b.capFlag &= ^renameView
+			b.isCreateView = false
 		}()
 		plan, err := b.Build(ctx, v.Select)
 		if err != nil {
@@ -3782,7 +3812,7 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, err
 		return &Explain{Format: explainFor.Format}, nil
 	}
 	var explainRows [][]string
-	if explainFor.Format == ast.ExplainFormatROW {
+	if explainFor.Format == types.ExplainFormatROW {
 		explainRows = processInfo.PlanExplainRows
 	}
 	return b.buildExplainPlan(targetPlan, explainFor.Format, explainRows, false, nil, processInfo.RuntimeStatsColl)

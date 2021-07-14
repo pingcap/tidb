@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -256,12 +257,39 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		sessVars.LocalTemporaryTables = infoschema.NewLocalTemporaryTables()
 	}
 	localTempTables := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
-	return localTempTables.AddTable(dbInfo, tbl)
+
+	// Init MemBuffer in session
+	if sessVars.TemporaryTableData == nil {
+		// Create this txn just for getting a MemBuffer. It's a little tricky
+		bufferTxn, err := e.ctx.GetStore().BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
+		if err != nil {
+			return err
+		}
+
+		sessVars.TemporaryTableData = bufferTxn.GetMemBuffer()
+	}
+
+	err = localTempTables.AddTable(dbInfo, tbl)
+
+	if err != nil && s.IfNotExists && infoschema.ErrTableExists.Equal(err) {
+		e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+
+	return err
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
-	err := domain.GetDomain(e.ctx).DDL().CreateView(e.ctx, s)
-	return err
+	ret := &core.PreprocessorReturn{}
+	err := core.Preprocess(e.ctx, s.Select, core.WithPreprocessorReturn(ret))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ret.IsStaleness {
+		return ErrViewInvalid.GenWithStackByArgs(s.ViewName.Schema.L, s.ViewName.Name.L)
+	}
+
+	return domain.GetDomain(e.ctx).DDL().CreateView(e.ctx, s)
 }
 
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {

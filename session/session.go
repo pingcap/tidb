@@ -18,6 +18,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -451,15 +452,21 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 }
 
 func (s *session) TxnInfo() *txninfo.TxnInfo {
-	txnInfo := s.txn.Info()
-	if txnInfo == nil {
+	s.txn.mu.RLock()
+	// Copy on read to get a snapshot, this API shouldn't be frequently called.
+	txnInfo := s.txn.mu.TxnInfo
+	s.txn.mu.RUnlock()
+
+	if txnInfo.StartTS == 0 {
 		return nil
 	}
+
 	processInfo := s.ShowProcess()
 	txnInfo.ConnectionID = processInfo.ID
 	txnInfo.Username = processInfo.User
 	txnInfo.CurrentDB = processInfo.DB
-	return txnInfo
+
+	return &txnInfo
 }
 
 func (s *session) doCommit(ctx context.Context) error {
@@ -479,9 +486,10 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
 	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
-		if val.(bool) && tikv.IsMockCommitErrorEnable() {
-			tikv.MockCommitErrorDisable()
-			failpoint.Return(kv.ErrTxnRetryable)
+		if val.(bool) {
+			if _, err := failpoint.Eval("tikvclient/mockCommitErrorOpt"); err == nil {
+				failpoint.Return(kv.ErrTxnRetryable)
+			}
 		}
 	})
 
@@ -506,8 +514,8 @@ func (s *session) doCommit(ctx context.Context) error {
 	sessVars := s.GetSessionVars()
 	// Get the related table or partition IDs.
 	relatedPhysicalTables := sessVars.TxnCtx.TableDeltaMap
-	// Get accessed global temporary tables in the transaction.
-	temporaryTables := sessVars.TxnCtx.GlobalTemporaryTables
+	// Get accessed temporary tables in the transaction.
+	temporaryTables := sessVars.TxnCtx.TemporaryTables
 	physicalTableIDs := make([]int64, 0, len(relatedPhysicalTables))
 	for id := range relatedPhysicalTables {
 		// Schema change on global temporary tables doesn't affect transactions.
@@ -536,11 +544,86 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.SetOption(kv.GuaranteeLinearizability,
 			sessVars.TxnCtx.IsExplicit && sessVars.GuaranteeLinearizability)
 	}
-	if tables := sessVars.TxnCtx.GlobalTemporaryTables; len(tables) > 0 {
+	if tables := sessVars.TxnCtx.TemporaryTables; len(tables) > 0 {
 		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
 	}
 
-	return s.txn.Commit(tikvutil.SetSessionID(ctx, sessVars.ConnectionID))
+	return s.commitTxnWithTemporaryData(tikvutil.SetSessionID(ctx, sessVars.ConnectionID), &s.txn)
+}
+
+func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transaction) error {
+	txnTempTables := s.sessionVars.TxnCtx.TemporaryTables
+	if len(txnTempTables) == 0 {
+		return txn.Commit(ctx)
+	}
+
+	sessionData := s.sessionVars.TemporaryTableData
+	var stage kv.StagingHandle
+
+	defer func() {
+		// stage != kv.InvalidStagingHandle means error occurs, we need to cleanup sessionData
+		if stage != kv.InvalidStagingHandle {
+			sessionData.Cleanup(stage)
+		}
+	}()
+
+	for tblID, tbl := range txnTempTables {
+		if !tbl.GetModified() {
+			continue
+		}
+
+		if tbl.GetMeta().TempTableType != model.TempTableLocal {
+			continue
+		}
+
+		if stage == kv.InvalidStagingHandle {
+			stage = sessionData.Staging()
+		}
+
+		tblPrefix := tablecodec.EncodeTablePrefix(tblID)
+		endKey := tablecodec.EncodeTablePrefix(tblID + 1)
+
+		txnMemBuffer := s.txn.GetMemBuffer()
+		iter, err := txnMemBuffer.Iter(tblPrefix, endKey)
+		if err != nil {
+			return err
+		}
+
+		for iter.Valid() {
+			key := iter.Key()
+			if !bytes.HasPrefix(key, tblPrefix) {
+				break
+			}
+
+			value := iter.Value()
+			if len(value) == 0 {
+				err = sessionData.Delete(key)
+			} else {
+				err = sessionData.Set(key, iter.Value())
+			}
+
+			if err != nil {
+				return err
+			}
+
+			err = iter.Next()
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	err := txn.Commit(ctx)
+	if err != nil {
+		return err
+	}
+
+	if stage != kv.InvalidStagingHandle {
+		sessionData.Release(stage)
+		stage = kv.InvalidStagingHandle
+	}
+
+	return nil
 }
 
 type temporaryTableKVFilter map[int64]tableutil.TempTable
@@ -1911,6 +1994,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, err
 	}
 	s.txn.onStmtStart(preparedStmt.SQLDigest.String())
+	defer s.txn.onStmtEnd()
 	var is infoschema.InfoSchema
 	var snapshotTS uint64
 	if preparedStmt.ForUpdateRead {
@@ -1927,14 +2011,10 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	} else {
 		is = s.GetInfoSchema().(infoschema.InfoSchema)
 	}
-	var rs sqlexec.RecordSet
 	if ok {
-		rs, err = s.cachedPlanExec(ctx, is, snapshotTS, stmtID, preparedStmt, args)
-	} else {
-		rs, err = s.preparedStmtExec(ctx, is, snapshotTS, stmtID, preparedStmt, args)
+		return s.cachedPlanExec(ctx, is, snapshotTS, stmtID, preparedStmt, args)
 	}
-	s.txn.onStmtEnd()
-	return rs, err
+	return s.preparedStmtExec(ctx, is, snapshotTS, stmtID, preparedStmt, args)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
@@ -2881,7 +2961,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
 				break
 			}
-			dcLocation, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
+			dcLocation, ok := bundle.GetLeaderDC(placement.DCLabelKey)
 			if !ok {
 				errMsg := fmt.Sprintf("table %v's leader placement policy is not defined", tableName)
 				if len(partitionName) > 0 {
