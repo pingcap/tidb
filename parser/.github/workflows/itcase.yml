@@ -1,0 +1,38 @@
+name: Integration Test
+
+on:
+  push:
+    branches:
+      - master
+      - release-5.0
+      - release-4.0
+      - release-3.0
+  pull_request:
+    branches:
+      - master
+      - release-5.0
+      - release-4.0
+      - release-3.0
+
+jobs:
+  test:
+    # TODO: skip for now as resource limitation
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+        with:
+          path: parser
+      - name: setup go
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.16
+      - name: test
+        run: |
+          git clone https://github.com/pingcap/tidb.git
+          cd tidb
+          rm go.sum
+          GO111MODULE=on go mod edit -replace github.com/pingcap/parser=$GITHUB_WORKSPACE/parser
+          go mod tidy
+          make gotest
