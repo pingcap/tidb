@@ -1145,7 +1145,7 @@ func BuildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInf
 
 func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, oldColInfo, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
 	logutil.BgLogger().Info("[ddl] start to update table row", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
-	return w.writePhysicalTableRecord(t.(table.PhysicalTable), typeUpdateColumnWorker, nil, oldColInfo, colInfo, reorgInfo)
+	return w.writePhysicalTableRecord(t, typeUpdateColumnWorker, nil, oldColInfo, colInfo, reorgInfo)
 }
 
 // TestReorgGoroutineRunning is only used in test to indicate the reorg goroutine has been started.
@@ -1783,7 +1783,7 @@ func rollbackModifyColumnJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.
 // modifyColsFromNull2NotNull modifies the type definitions of 'null' to 'not null'.
 // Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
 func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.TableInfo, cols []*model.ColumnInfo,
-	newColName model.CIStr, isModifiedType bool) error {
+	newColName model.CIStr, isDataTruncated bool) error {
 	// Get sessionctx from context resource pool.
 	var ctx sessionctx.Context
 	ctx, err := w.sessPool.get()
@@ -1800,7 +1800,7 @@ func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.
 	})
 	if !skipCheck {
 		// If there is a null value inserted, it cannot be modified and needs to be rollback.
-		err = checkForNullValue(ctx, isModifiedType, dbInfo.Name, tblInfo.Name, newColName, cols...)
+		err = checkForNullValue(ctx, isDataTruncated, dbInfo.Name, tblInfo.Name, newColName, cols...)
 		if err != nil {
 			return errors.Trace(err)
 		}

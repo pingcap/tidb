@@ -487,6 +487,8 @@ type PlanBuilder struct {
 	buildingViewStack set.StringSet
 	// renamingViewName is the name of the view which is being renamed.
 	renamingViewName string
+	// isCreateView indicates whether the query is create view.
+	isCreateView bool
 
 	// evalDefaultExpr needs this information to find the corresponding column.
 	// It stores the OutputNames before buildProjection.
@@ -1086,6 +1088,10 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	}
 
 	available = removeIgnoredPaths(available, ignored, tblInfo)
+	if ctx.GetSessionVars().StmtCtx.IsStaleness {
+		// skip tiflash if the statement is for stale read until tiflash support stale read
+		available = removeTiflashDuringStaleRead(available)
+	}
 
 	// If we have got "FORCE" or "USE" index hint but got no available index,
 	// we have to use table scan.
@@ -1141,14 +1147,58 @@ func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.T
 	return remainedPaths
 }
 
-func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo) *LogicalLock {
+func removeTiflashDuringStaleRead(paths []*util.AccessPath) []*util.AccessPath {
+	n := 0
+	for _, path := range paths {
+		if path.StoreType != kv.TiFlash {
+			paths[n] = path
+			n++
+		}
+	}
+	return paths[:n]
+}
+
+func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo) (*LogicalLock, error) {
 	selectLock := LogicalLock{
 		Lock:             lock,
 		tblID2Handle:     b.handleHelper.tailMap(),
 		partitionedTable: b.partitionedTable,
 	}.Init(b.ctx)
 	selectLock.SetChildren(src)
-	return selectLock
+
+	if len(b.partitionedTable) > 0 {
+		// If a chunk row is read from a partitioned table, which partition the row
+		// comes from is unknown. With the existence of Join, the situation could be
+		// even worse: SelectLock have to know the `pid` to construct the lock key.
+		// To solve the problem, an extra `pid` column is add to the schema, and the
+		// DataSource need to return the `pid` information in the chunk row.
+		err := addExtraPIDColumnToDataSource(src, &selectLock.extraPIDInfo)
+		if err != nil {
+			return nil, err
+		}
+		// TODO: Dynamic partition mode does not support adding extra pid column to the data source.
+		// (Because one table reader can read from multiple partitions, which partition a chunk row comes from is unknown)
+		// So we have to use the old "rewrite to union" way here, set `flagPartitionProcessor` flag for that.
+		b.optFlag = b.optFlag | flagPartitionProcessor
+	}
+	return selectLock, nil
+}
+
+func addExtraPIDColumnToDataSource(p LogicalPlan, info *extraPIDInfo) error {
+	switch raw := p.(type) {
+	case *DataSource:
+		raw.addExtraPIDColumn(info)
+		return nil
+	default:
+		var err error
+		for _, child := range p.Children() {
+			err = addExtraPIDColumnToDataSource(child, info)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
@@ -1705,7 +1755,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			DBName:        tbl.Schema.O,
 			TableName:     tbl.Name.O,
 			PartitionName: names[i],
-			TableID:       AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
+			TableID:       statistics.AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
 			Incremental:   false,
 			StatsVersion:  version,
 		}
@@ -1772,7 +1822,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 					DBName:        tbl.Schema.O,
 					TableName:     tbl.Name.O,
 					PartitionName: names[i],
-					TableID:       AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
+					TableID:       statistics.AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
 					Incremental:   as.Incremental,
 					StatsVersion:  version,
 				}
@@ -1793,7 +1843,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 					DBName:        tbl.Schema.O,
 					TableName:     tbl.Name.O,
 					PartitionName: names[i],
-					TableID:       AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
+					TableID:       statistics.AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
 					Incremental:   as.Incremental,
 					StatsVersion:  version,
 				}
@@ -1844,7 +1894,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 					info := AnalyzeInfo{
 						DBName:        as.TableNames[0].Schema.O,
 						TableName:     as.TableNames[0].Name.O,
-						PartitionName: names[i], TableID: AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
+						PartitionName: names[i], TableID: statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
 						Incremental:  as.Incremental,
 						StatsVersion: version,
 					}
@@ -1865,7 +1915,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 				DBName:        as.TableNames[0].Schema.O,
 				TableName:     as.TableNames[0].Name.O,
 				PartitionName: names[i],
-				TableID:       AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
+				TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
 				Incremental:   as.Incremental,
 				StatsVersion:  version,
 			}
@@ -1907,7 +1957,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 					DBName:        as.TableNames[0].Schema.O,
 					TableName:     as.TableNames[0].Name.O,
 					PartitionName: names[i],
-					TableID:       AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
+					TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
 					Incremental:   as.Incremental,
 					StatsVersion:  version,
 				}
@@ -1925,7 +1975,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 				DBName:        as.TableNames[0].Schema.O,
 				TableName:     as.TableNames[0].Name.O,
 				PartitionName: names[i],
-				TableID:       AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
+				TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
 				Incremental:   as.Incremental,
 				StatsVersion:  version,
 			}
@@ -2252,6 +2302,9 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			isView = table.Meta().IsView()
 			isSequence = table.Meta().IsSequence()
 		}
+	case ast.ShowConfig:
+		privErr := ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ConfigPriv, "", "", "", privErr)
 	case ast.ShowCreateView:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
@@ -2344,16 +2397,15 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 	case *ast.AlterInstanceStmt:
 		err := ErrSpecificAccessDenied.GenWithStack("SUPER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
-	case *ast.AlterUserStmt, *ast.RenameUserStmt:
+	case *ast.RenameUserStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
-		if b.ctx.GetSessionVars().CurrentDB == "" && raw.Level.DBName == "" {
-			if raw.Level.Level == ast.GrantLevelTable {
-				return nil, ErrNoDB
-			}
+		var err error
+		b.visitInfo, err = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
+		if err != nil {
+			return nil, err
 		}
-		b.visitInfo = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
 	case *ast.BRIEStmt:
 		p.setSchemaAndNames(buildBRIESchema())
 		if sem.IsEnabled() && strings.EqualFold(raw.Storage[:8], "local://") {
@@ -2378,7 +2430,11 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, user, "RESTRICTED_USER_ADMIN")
 		}
 	case *ast.RevokeStmt:
-		b.visitInfo = collectVisitInfoFromRevokeStmt(b.ctx, b.visitInfo, raw)
+		var err error
+		b.visitInfo, err = collectVisitInfoFromRevokeStmt(b.ctx, b.visitInfo, raw)
+		if err != nil {
+			return nil, err
+		}
 	case *ast.KillStmt:
 		// All users can kill their own connections regardless.
 		// If you have the SUPER privilege, you can kill all threads and statements unless SEM is enabled.
@@ -2411,15 +2467,20 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 	case *ast.ShutdownStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShutdownPriv, "", "", "", nil)
 	case *ast.BeginStmt:
-		readTS := b.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
+		readTS := b.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS()
 		if raw.AsOf != nil {
 			startTS, err := calculateTsExpr(b.ctx, raw.AsOf)
 			if err != nil {
 				return nil, err
 			}
+			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx, startTS); err != nil {
+				return nil, err
+			}
 			p.StaleTxnStartTS = startTS
 		} else if readTS > 0 {
 			p.StaleTxnStartTS = readTS
+			// consume read ts here
+			b.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
 		}
 	}
 	return p, nil
@@ -2438,14 +2499,14 @@ func calculateTsExpr(sctx sessionctx.Context, asOfClause *ast.AsOfClause) (uint6
 	if err != nil {
 		return 0, err
 	}
-	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(sctx.GetSessionVars().TimeZone)
+	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(sctx.GetSessionVars().Location())
 	if err != nil {
 		return 0, err
 	}
 	return oracle.GoTimeToTS(tsTime), nil
 }
 
-func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.RevokeStmt) []visitInfo {
+func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.RevokeStmt) ([]visitInfo, error) {
 	// To use REVOKE, you must have the GRANT OPTION privilege,
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
@@ -2453,6 +2514,9 @@ func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stm
 	// This supports a local revoke SELECT on tablename, but does
 	// not add dbName to the visitInfo of a *.* grant.
 	if dbName == "" && stmt.Level.Level != ast.GrantLevelGlobal {
+		if sctx.GetSessionVars().CurrentDB == "" {
+			return nil, ErrNoDB
+		}
 		dbName = sctx.GetSessionVars().CurrentDB
 	}
 	var nonDynamicPrivilege bool
@@ -2489,7 +2553,7 @@ func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stm
 		// we need to attach the "GLOBAL" version of the GRANT OPTION.
 		vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
 	}
-	return vi
+	return vi, nil
 }
 
 // appendVisitInfoIsRestrictedUser appends additional visitInfo if the user has a
@@ -2506,7 +2570,7 @@ func appendVisitInfoIsRestrictedUser(visitInfo []visitInfo, sctx sessionctx.Cont
 	return visitInfo
 }
 
-func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.GrantStmt) []visitInfo {
+func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.GrantStmt) ([]visitInfo, error) {
 	// To use GRANT, you must have the GRANT OPTION privilege,
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
@@ -2514,6 +2578,9 @@ func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt
 	// This supports a local revoke SELECT on tablename, but does
 	// not add dbName to the visitInfo of a *.* grant.
 	if dbName == "" && stmt.Level.Level != ast.GrantLevelGlobal {
+		if sctx.GetSessionVars().CurrentDB == "" {
+			return nil, ErrNoDB
+		}
 		dbName = sctx.GetSessionVars().CurrentDB
 	}
 	var nonDynamicPrivilege bool
@@ -2558,7 +2625,7 @@ func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt
 		// we need to attach the "GLOBAL" version of the GRANT OPTION.
 		vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
 	}
-	return vi
+	return vi, nil
 }
 
 func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, error) {
@@ -2954,6 +3021,8 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 					Value:   x.Datum,
 					RetType: &x.Type,
 				}
+			case *driver.ParamMarkerExpr:
+				expr, err = expression.ParamMarkerExpression(b.ctx, x)
 			default:
 				b.curClause = fieldList
 				// subquery in insert values should not reference upper scope
@@ -3541,11 +3610,13 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				v.ReferTable.Name.L, "", authErr)
 		}
 	case *ast.CreateViewStmt:
+		b.isCreateView = true
 		b.capFlag |= canExpandAST | renameView
 		b.renamingViewName = v.ViewName.Schema.L + "." + v.ViewName.Name.L
 		defer func() {
 			b.capFlag &= ^canExpandAST
 			b.capFlag &= ^renameView
+			b.isCreateView = false
 		}()
 		plan, err := b.Build(ctx, v.Select)
 		if err != nil {
@@ -3741,7 +3812,7 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, err
 		return &Explain{Format: explainFor.Format}, nil
 	}
 	var explainRows [][]string
-	if explainFor.Format == ast.ExplainFormatROW {
+	if explainFor.Format == types.ExplainFormatROW {
 		explainRows = processInfo.PlanExplainRows
 	}
 	return b.buildExplainPlan(targetPlan, explainFor.Format, explainRows, false, nil, processInfo.RuntimeStatsColl)

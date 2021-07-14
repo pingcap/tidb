@@ -1438,7 +1438,7 @@ func (b *builtinCastTimeAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 	if err != nil {
 		return res, false, err
 	}
-	res, err = res.RoundFrac(int8(b.tp.Decimal))
+	res, err = res.RoundFrac(int8(b.tp.Decimal), b.ctx.GetSessionVars().Location())
 	return res, false, err
 }
 
@@ -1457,7 +1457,7 @@ func (b *builtinCastDurationAsDurationSig) evalDuration(row chunk.Row) (res type
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	res, err = res.RoundFrac(int8(b.tp.Decimal))
+	res, err = res.RoundFrac(int8(b.tp.Decimal), b.ctx.GetSessionVars().Location())
 	return res, false, err
 }
 
@@ -1476,7 +1476,7 @@ func (b *builtinCastDurationAsIntSig) evalInt(row chunk.Row) (res int64, isNull 
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	dur, err := val.RoundFrac(types.DefaultFsp)
+	dur, err := val.RoundFrac(types.DefaultFsp, b.ctx.GetSessionVars().Location())
 	if err != nil {
 		return res, false, err
 	}

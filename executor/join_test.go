@@ -1182,7 +1182,6 @@ func (s *testSuiteJoin1) TestIssue15850JoinNullValue(c *C) {
 }
 
 func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
-	c.Skip("unstable, skip it and fix it before 20210622")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_init_chunk_size=2")
@@ -2592,4 +2591,21 @@ func (s *testSuiteJoinSerial) TestIssue20219(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select /*+ inl_join(s)*/ t.a from t left join s on t.a = s.a;").Check(testkit.Rows("i", "j"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
+func (s *testSuiteJoinSerial) TestIssue25902(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists tt1,tt2,tt3; ")
+	tk.MustExec("create table tt1 (ts timestamp);")
+	tk.MustExec("create table tt2 (ts varchar(32));")
+	tk.MustExec("create table tt3 (ts datetime);")
+	tk.MustExec("insert into tt1 values (\"2001-01-01 00:00:00\");")
+	tk.MustExec("insert into tt2 values (\"2001-01-01 00:00:00\");")
+	tk.MustExec("insert into tt3 values (\"2001-01-01 00:00:00\");")
+	tk.MustQuery("select * from tt1 where ts in (select ts from tt2);").Check(testkit.Rows("2001-01-01 00:00:00"))
+	tk.MustQuery("select * from tt1 where ts in (select ts from tt3);").Check(testkit.Rows("2001-01-01 00:00:00"))
+	tk.MustExec("set @tmp=(select @@session.time_zone);")
+	tk.MustExec("set @@session.time_zone = '+10:00';")
+	tk.MustQuery("select * from tt1 where ts in (select ts from tt2);").Check(testkit.Rows())
+	tk.MustExec("set @@session.time_zone = @tmp;")
 }

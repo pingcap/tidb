@@ -308,12 +308,6 @@ func (s *testStmtSummarySuite) TestEvictedCountDetailed(c *C) {
 	c.Assert(other.history.Len(), Equals, 0)
 }
 
-func (s *testStmtSummarySuite) TestEvictedElementToDatum(c *C) {
-	seElement := newStmtSummaryByDigestEvictedElement(0, 1)
-	datum0 := seElement.toDatum()
-	c.Assert(datum0, NotNil)
-}
-
 func (s *testStmtSummarySuite) TestNewStmtSummaryByDigestEvictedElement(c *C) {
 	now := time.Now().Unix()
 	end := now + 60

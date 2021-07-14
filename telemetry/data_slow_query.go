@@ -143,7 +143,7 @@ func init() {
 	currentSQBInfo["+Inf"] = 0
 
 	if mysql.TiDBReleaseVersion != "None" {
-		logutil.BgLogger().Info("Telemetry slow query stats initialized", zap.String("currentSQBInfo", currentSQBInfo.String()), zap.String("lastSQBInfo", lastSQBInfo.String()))
+		logutil.BgLogger().Debug("Telemetry slow query stats initialized", zap.String("currentSQBInfo", currentSQBInfo.String()), zap.String("lastSQBInfo", lastSQBInfo.String()))
 	}
 }
 

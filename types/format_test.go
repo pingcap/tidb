@@ -119,6 +119,7 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`70/10/22`, `%Y/%m/%d`, types.FromDate(1970, 10, 22, 0, 0, 0, 0)},
 		{`18/10/22`, `%Y/%m/%d`, types.FromDate(2018, 10, 22, 0, 0, 0, 0)},
 		{`100/10/22`, `%Y/%m/%d`, types.FromDate(100, 10, 22, 0, 0, 0, 0)},
+    // %X %V %W
 		{`200442 Monday`, `%X%V %W`, types.FromDate(2004, 10, 18, 0, 0, 0, 0)},
 		{`2004420`, `%X%V%w`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)},
 		{`2004423`, `%X%V%w`, types.FromDate(2004, 10, 20, 0, 0, 0, 0)},
@@ -128,20 +129,55 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`200442 suNd`, `%x%v%W`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)}, // Weird MySQL behavior, matched as sunday
 		{"2004421", "%Y%U%w", types.FromDate(2004, 10, 18, 0, 0, 0, 0)},     // %U,%u should be used with %Y and not %X or %x
 		{"69421", "%y%U%w", types.FromDate(2069, 10, 21, 0, 0, 0, 0)},       // %U,%u should be used with %Y and not %X or %x
+		//'%b'/'%M' should be case insensitive
+		{"31/may/2016 12:34:56.1234", "%d/%b/%Y %H:%i:%S.%f", types.FromDate(2016, 5, 31, 12, 34, 56, 123400)},
+		{"30/april/2016 12:34:56.", "%d/%M/%Y %H:%i:%s.%f", types.FromDate(2016, 4, 30, 12, 34, 56, 0)},
+		{"31/mAy/2016 12:34:56.1234", "%d/%b/%Y %H:%i:%S.%f", types.FromDate(2016, 5, 31, 12, 34, 56, 123400)},
+		{"30/apRil/2016 12:34:56.", "%d/%M/%Y %H:%i:%s.%f", types.FromDate(2016, 4, 30, 12, 34, 56, 0)},
+		// '%r'
+		{" 04 :13:56 AM13/05/2019", "%r %d/%c/%Y", types.FromDate(2019, 5, 13, 4, 13, 56, 0)},  //
+		{"12: 13:56 AM 13/05/2019", "%r%d/%c/%Y", types.FromDate(2019, 5, 13, 0, 13, 56, 0)},   //
+		{"12:13 :56 pm 13/05/2019", "%r %d/%c/%Y", types.FromDate(2019, 5, 13, 12, 13, 56, 0)}, //
+		{"12:3: 56pm  13/05/2019", "%r %d/%c/%Y", types.FromDate(2019, 5, 13, 12, 3, 56, 0)},   //
+		{"11:13:56", "%r", types.FromDate(0, 0, 0, 11, 13, 56, 0)},                             // EOF before parsing "AM"/"PM"
+		{"11:13", "%r", types.FromDate(0, 0, 0, 11, 13, 0, 0)},                                 // EOF after hh:mm
+		{"11:", "%r", types.FromDate(0, 0, 0, 11, 0, 0, 0)},                                    // EOF after hh:
+		{"11", "%r", types.FromDate(0, 0, 0, 11, 0, 0, 0)},                                     // EOF after hh:
+		{"12", "%r", types.FromDate(0, 0, 0, 0, 0, 0, 0)},                                      // EOF after hh:, and hh=12 -> 0
+		// '%T'
+		{" 4 :13:56 13/05/2019", "%T %d/%c/%Y", types.FromDate(2019, 5, 13, 4, 13, 56, 0)},
+		{"23: 13:56  13/05/2019", "%T%d/%c/%Y", types.FromDate(2019, 5, 13, 23, 13, 56, 0)},
+		{"12:13 :56 13/05/2019", "%T %d/%c/%Y", types.FromDate(2019, 5, 13, 12, 13, 56, 0)},
+		{"19:3: 56  13/05/2019", "%T %d/%c/%Y", types.FromDate(2019, 5, 13, 19, 3, 56, 0)},
+		{"21:13", "%T", types.FromDate(0, 0, 0, 21, 13, 0, 0)}, // EOF after hh:mm
+		{"21:", "%T", types.FromDate(0, 0, 0, 21, 0, 0, 0)},    // EOF after hh:
+		// More patterns than input string
+		{" 2/Jun", "%d/%b/%Y", types.FromDate(0, 6, 2, 0, 0, 0, 0)},
+		{" liter", "lit era l", types.ZeroCoreTime},
+		// Feb 29 in leap-year
+		{"29/Feb/2020 12:34:56.", "%d/%b/%Y %H:%i:%s.%f", types.FromDate(2020, 2, 29, 12, 34, 56, 0)},
+		// When `AllowInvalidDate` is true, check only that the month is in the range from 1 to 12 and the day is in the range from 1 to 31
+		{"31/April/2016 12:34:56.", "%d/%M/%Y %H:%i:%s.%f", types.FromDate(2016, 4, 31, 12, 34, 56, 0)},        // April 31th
+		{"29/Feb/2021 12:34:56.", "%d/%b/%Y %H:%i:%s.%f", types.FromDate(2021, 2, 29, 12, 34, 56, 0)},          // Feb 29 in non-leap-year
+		{"30/Feb/2016 12:34:56.1234", "%d/%b/%Y %H:%i:%S.%f", types.FromDate(2016, 2, 30, 12, 34, 56, 123400)}, // Feb 30th
 	}
 	for i, tt := range tests {
+		sc.AllowInvalidDate = true
 		var t types.Time
-		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsTrue, Commentf("no.%d failed", i))
-		c.Assert(t.CoreTime(), Equals, tt.expect, Commentf("no.%d failed", i))
+		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsTrue, Commentf("no.%d failed input=%s format=%s", i, tt.input, tt.format))
+		c.Assert(t.CoreTime(), Equals, tt.expect, Commentf("no.%d failed input=%s format=%s", i, tt.input, tt.format))
 	}
 
 	errTests := []struct {
 		input  string
 		format string
 	}{
-		{`04/31/2004`, `%m/%d/%Y`},
+		// invalid days when `AllowInvalidDate` is false
+		{`04/31/2004`, `%m/%d/%Y`},                        // not exists in the real world
+		{"29/Feb/2021 12:34:56.", "%d/%b/%Y %H:%i:%s.%f"}, // Feb 29 in non-leap-year
+
 		{`a09:30:17`, `%h:%i:%s`}, // format mismatch
-		{`12:43:24`, `%r`},        // no PM or AM followed
+		{`12:43:24 a`, `%r`},      // followed by incomplete 'AM'/'PM'
 		{`23:60:12`, `%T`},        // invalid minute
 		{`18`, `%l`},
 		{`00:21:22 AM`, `%h:%i:%s %p`},
@@ -149,15 +185,25 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{"2010-11-12 11 am", `%Y-%m-%d %H %p`},
 		{"2010-11-12 13 am", `%Y-%m-%d %h %p`},
 		{"2010-11-12 0 am", `%Y-%m-%d %h %p`},
+    // %X %V %W
 		{`2004427`, `%X%V%w`}, // %w range 0-6, here is 7
 		{"2004421", "%x%V%w"}, // %x should be used with %v
 		{"2004421", "%X%v%w"}, // %X should be used with %V
 		{"2004421", "%X%U%w"}, // %U,%u should be used with %Y and not %X or %x
 		{`2004663`, `%X%V%w`}, // %V out of range [0, 53]
 		{`200442 S`, `%x%v%W`},
+		// MySQL accept `SEPTEMB` as `SEPTEMBER`, but we don't want this "feature" in TiDB
+		// unless we have to.
+		{"15 SEPTEMB 2001", "%d %M %Y"},
+		// '%r'
+		{"13:13:56 AM13/5/2019", "%r"},  // hh = 13 with am is invalid
+		{"00:13:56 AM13/05/2019", "%r"}, // hh = 0 with am is invalid
+		{"00:13:56 pM13/05/2019", "%r"}, // hh = 0 with pm is invalid
+		{"11:13:56a", "%r"},             // EOF while parsing "AM"/"PM"
 	}
 	for i, tt := range errTests {
+		sc.AllowInvalidDate = false
 		var t types.Time
-		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsFalse, Commentf("no.%d failed", i))
+		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsFalse, Commentf("no.%d failed input=%s format=%s", i, tt.input, tt.format))
 	}
 }

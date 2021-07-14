@@ -44,9 +44,9 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	"github.com/tikv/client-go/v2/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -235,6 +235,7 @@ func createSession(store kv.Storage) session.Session {
 		}
 		// Disable privilege check for gc worker session.
 		privilege.BindPrivilegeManager(se, nil)
+		se.GetSessionVars().CommonGlobalLoaded = true
 		se.GetSessionVars().InRestrictedSQL = true
 		return se
 	}
