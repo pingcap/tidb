@@ -1,0 +1,58 @@
+name: Unit Test
+on:
+  push:
+    branches:
+      - master
+      - release-5.0
+      - release-4.0
+      - release-3.0
+  pull_request:
+    branches:
+      - master
+      - release-5.0
+      - release-4.0
+      - release-3.0
+
+jobs:
+  generated:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+      - name: setup go
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.16
+      - name: validation
+        run: |
+          mv parser.go parser.go.committed
+          make parser
+          diff -u parser.go.committed parser.go
+
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+      - name: setup go
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.16
+      - name: format
+        run: make fmt
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: setup go
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.16
+      - name: test
+        run: make test
+      - name: codecov
+        uses: codecov/codecov-action@v1
