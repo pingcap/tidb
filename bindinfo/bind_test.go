@@ -1089,9 +1089,13 @@ func (s *testSuite) TestShowGlobalBindings(c *C) {
 	tk.MustExec("admin reload bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 4)
+	c.Assert(rows[0][0], Equals, "select * from `spm` . `t0`")
 	c.Assert(rows[0][5], Equals, "2000-01-04 09:00:00.000")
-	c.Assert(rows[1][5], Equals, "2000-01-03 09:00:00.000")
-	c.Assert(rows[2][5], Equals, "2000-01-02 09:00:00.000")
+	c.Assert(rows[1][0], Equals, "select * from `spm` . `t0`")
+	c.Assert(rows[1][5], Equals, "2000-01-02 09:00:00.000")
+	c.Assert(rows[2][0], Equals, "select * from `spm` . `t`")
+	c.Assert(rows[2][5], Equals, "2000-01-03 09:00:00.000")
+	c.Assert(rows[3][0], Equals, "select * from `spm` . `t`")
 	c.Assert(rows[3][5], Equals, "2000-01-01 09:00:00.000")
 }
 
