@@ -14,7 +14,6 @@
 package core
 
 import (
-	"fmt"
 	math2 "math"
 	"sort"
 	"strconv"
@@ -373,9 +372,14 @@ func (p *BatchPointGetPlan) OperatorInfo(normalized bool) string {
 		if normalized {
 			buffer.WriteString("handle:?, ")
 		} else {
-			buffer.WriteString("handle:")
-			buffer.WriteString(fmt.Sprintf("%v", p.Handles))
-			buffer.WriteString(", ")
+			buffer.WriteString("handle:[")
+			for  i, handle := range p.Handles{
+				if i != 0 {
+					buffer.WriteString(" ")
+				}
+				buffer.WriteString(handle.String())
+			}
+			buffer.WriteString("], ")
 		}
 	}
 	buffer.WriteString("keep order:")

@@ -138,10 +138,14 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 			buffer.Write(expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
 			buffer.WriteString(", ")
 		} else {
-			buffer.WriteString("range: decided by ")
-			// TODO: optimize Sprintf
-			buffer.WriteString(fmt.Sprintf("%v", p.AccessCondition))
-			buffer.WriteString(", ")
+			buffer.WriteString("range: decided by [")
+			for i, expr := range p.AccessCondition {
+				if i != 0 {
+					buffer.WriteString(" ")
+				}
+				buffer.WriteString(expr.String())
+			}
+			buffer.WriteString("], ")
 		}
 	} else if len(p.Ranges) > 0 {
 		if normalized {
