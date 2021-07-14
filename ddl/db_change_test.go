@@ -942,7 +942,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 				checkErr = err1
 				break
 			}
-			checkErr = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES NULL NO"))
+			checkErr = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES <nil> NO"))
 		}
 	}
 
@@ -957,8 +957,8 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	result, err := s.execQuery(tk, showIndexSQL)
 	c.Assert(err, IsNil)
 	err = checkResult(result, testkit.Rows(
-		"t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES NULL NO",
-		"t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE   YES NULL NO",
+		"t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES <nil> NO",
+		"t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE   YES <nil> NO",
 	))
 	c.Assert(err, IsNil)
 	d.(ddl.DDLForTest).SetHook(originalCallback)
@@ -986,7 +986,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	c.Assert(err, IsNil)
 	result, err = s.execQuery(tk, "show index from tr;")
 	c.Assert(err, IsNil)
-	err = checkResult(result, testkit.Rows("tr 1 idx1 1 purchased A 0 <nil> <nil> YES BTREE   YES NULL NO"))
+	err = checkResult(result, testkit.Rows("tr 1 idx1 1 purchased A 0 <nil> <nil> YES BTREE   YES <nil> NO"))
 	c.Assert(err, IsNil)
 
 	_, err = s.se.Execute(context.Background(), "drop table if exists tr")
@@ -995,7 +995,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	c.Assert(err, IsNil)
 	result, err = s.execQuery(tk, "show index from tr")
 	c.Assert(err, IsNil)
-	c.Assert(checkResult(result, testkit.Rows("tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES", "tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES NULL NO")), IsNil)
+	c.Assert(checkResult(result, testkit.Rows("tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES", "tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO")), IsNil)
 	result, err = s.execQuery(tk, "select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name")
 	c.Assert(err, IsNil)
 	c.Assert(checkResult(result, testkit.Rows("PRIMARY YES", "vv NO")), IsNil)
@@ -1006,7 +1006,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	c.Assert(err, IsNil)
 	result, err = s.execQuery(tk, "show index from tr")
 	c.Assert(err, IsNil)
-	c.Assert(checkResult(result, testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES NULL NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO")), IsNil)
+	c.Assert(checkResult(result, testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES NULL NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> NO")), IsNil)
 	result, err = s.execQuery(tk, "select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name")
 	c.Assert(err, IsNil)
 	c.Assert(checkResult(result, testkit.Rows("PRIMARY NO", "vv NO")), IsNil)
@@ -1017,7 +1017,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	c.Assert(err, IsNil)
 	result, err = s.execQuery(tk, "show index from tr")
 	c.Assert(err, IsNil)
-	c.Assert(checkResult(result, testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES NULL NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL YES")), IsNil)
+	c.Assert(checkResult(result, testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES NULL NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> YES")), IsNil)
 	result, err = s.execQuery(tk, "select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name")
 	c.Assert(err, IsNil)
 	c.Assert(checkResult(result, testkit.Rows("PRIMARY YES", "vv NO")), IsNil)
@@ -1028,7 +1028,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	c.Assert(err, IsNil)
 	result, err = s.execQuery(tk, "show index from tr")
 	c.Assert(err, IsNil)
-	c.Assert(checkResult(result, testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES NULL NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES NULL NO")), IsNil)
+	c.Assert(checkResult(result, testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES NULL NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> NO")), IsNil)
 	result, err = s.execQuery(tk, "select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name")
 	c.Assert(err, IsNil)
 	c.Assert(checkResult(result, testkit.Rows("PRIMARY NO", "vv NO")), IsNil)
