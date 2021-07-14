@@ -191,6 +191,12 @@ type HashAggExec struct {
 	prepared                bool
 	executed                bool
 
+	// isAllFirstRow indicates whether all the aggregation functions return the result of function
+	// firstrow which is used to handle distinct immediately.
+	isAllFirstRow     bool
+	// firstRowProcessed indicates how many rows the firstrow function has been processed in a chunk.
+	firstRowProcessed int
+
 	memTracker *memory.Tracker // track memory usage.
 
 	stats *HashAggRuntimeStats
@@ -301,6 +307,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.groupKeyBuffer = make([][]byte, 0, 8)
 	e.childResult = newFirstChunk(e.children[0])
 	e.memTracker.Consume(e.childResult.MemoryUsage())
+	e.firstRowProcessed = 0
 }
 
 func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
@@ -853,6 +860,11 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 
 // unparallelExec executes hash aggregation algorithm in single thread.
 func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) error {
+	if e.isAllFirstRow {
+		// If all the agg func is first row, we can return the result immediately
+		// once we have got chk.RequiredRows() unique rows, so we optimize it by using a separate logic.
+		return e.executeAllFirstRow(ctx, chk)
+	}
 	// In this stage we consider all data from src as a single group.
 	if !e.prepared {
 		err := e.execute(ctx)
@@ -960,6 +972,57 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(allMemDelta)
 	return partialResults
+}
+
+func (e *HashAggExec) executeAllFirstRow(ctx context.Context, chk *chunk.Chunk) (err error) {
+	for {
+		// If firstRowProcessed rows have been processed, a new chunk will be fetched.
+		// And the firstRowProcessed should be reset to 0.
+		if e.firstRowProcessed == e.childResult.NumRows() {
+			mSize := e.childResult.MemoryUsage()
+			e.firstRowProcessed = 0
+			err := Next(ctx, e.children[0], e.childResult)
+			e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
+			if err != nil {
+				return err
+			}
+			// no more data.
+			if e.childResult.NumRows() == 0 {
+				return nil
+			}
+			e.groupKeyBuffer, err = getGroupKey(e.ctx, e.childResult, e.groupKeyBuffer, e.GroupByItems)
+			if err != nil {
+				return err
+			}
+		}
+
+		failpoint.Inject("unparallelHashAggError", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(errors.New("HashAggExec.unparallelExec error"))
+			}
+		})
+
+		for e.firstRowProcessed < e.childResult.NumRows() {
+			groupKey := string(hack.String(e.groupKeyBuffer[e.firstRowProcessed])) // do memory copy here, because e.groupKeyBuffer may be reused.
+			if !e.groupSet.Exist(groupKey) {
+				e.groupSet.Insert(groupKey)
+				for _, af := range e.PartialAggFuncs {
+					partialResult, _ := af.AllocPartialResult()
+					_, err := af.UpdatePartialResult(e.ctx, []chunk.Row{e.childResult.GetRow(e.firstRowProcessed)}, partialResult)
+					if err != nil {
+						return err
+					}
+					if err := af.AppendFinalResult2Chunk(e.ctx, partialResult, chk); err != nil {
+						return err
+					}
+				}
+			}
+			e.firstRowProcessed++
+			if chk.IsFull() {
+				return nil
+			}
+		}
+	}
 }
 
 func (e *HashAggExec) initRuntimeStats() {

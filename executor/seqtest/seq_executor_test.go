@@ -783,6 +783,15 @@ func (s *seqTestSuite) TestUnparallelHashAggClose(c *C) {
 	req := rs.NewChunk()
 	err = rs.Next(ctx, req)
 	c.Assert(err.Error(), Equals, "HashAggExec.unparallelExec error")
+
+	tk.MustExec("set @@tidb_hashagg_partial_concurrency=1")
+	tk.MustExec("set @@tidb_hashagg_final_concurrency=1")
+	rss, err = tk.Se.Execute(ctx, "select distinct a from t limit 1;")
+	c.Assert(err, IsNil)
+	rs = rss[0]
+	req = rs.NewChunk()
+	err = rs.Next(ctx, req)
+	c.Assert(err.Error(), Equals, "HashAggExec.unparallelExec error")
 }
 
 func checkGoroutineExists(keyword string) bool {

@@ -31,6 +31,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -1460,4 +1461,71 @@ func (s *testSuiteAgg) TestIssue23314(c *C) {
 	tk.MustExec("insert into t1 values(\"16:40:20.01\")")
 	res := tk.MustQuery("select col1 from t1 group by col1")
 	res.Check(testkit.Rows("16:40:20.01"))
+}
+
+func (s *testSuiteAgg) TestIssue15284(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	for i := 0; i < 3000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+	}
+	tk.MustExec("set @@tidb_hashagg_partial_concurrency=1")
+	tk.MustExec("set @@tidb_hashagg_final_concurrency=1")
+	tk.MustExec("set @@tidb_max_chunk_size=32;")
+
+	rows := tk.MustQuery("SELECT distinct a FROM t limit 3").Rows()
+	c.Assert(len(rows), Equals, 3)
+	assertNotExistSameElement(c, rows)
+	rows = tk.MustQuery("EXPLAIN ANALYZE SELECT distinct a FROM t limit 3").Rows()
+	assertTableReaderActRows(c, rows, "32")
+
+	rows = tk.MustQuery("SELECT distinct a FROM t limit 2000").Rows()
+	c.Assert(len(rows), Equals, 2000)
+	assertNotExistSameElement(c, rows)
+	rows = tk.MustQuery("EXPLAIN ANALYZE SELECT distinct a FROM t limit 2000").Rows()
+	assertTableReaderActRows(c, rows, "2016")
+
+	// Test for when allFirstRow is false.
+	rows = tk.MustQuery("SELECT distinct a, count(a) FROM t GROUP BY a limit 5000").Rows()
+	c.Assert(len(rows), Equals, 3000)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a int, b int)")
+	tk.MustExec("insert into t values (0, 0), (1, 1), (1, 2), (1, 3), (2, 4), (2, 5), (2, 6), (3, 7), (3, 10), (3, 11), (12, 12), (12, 13), (14, 14), (14, 15), (20, 20), (20, 21), (20, 22), (23, 23), (23, 24), (23, 25), (31, 30), (31, 31), (31, 32), (33, 33), (33, 34), (33, 35), (36, 36), (80, 80), (90, 90), (100, 100)")
+	rows = tk.MustQuery("SELECT distinct b, a FROM t limit 20").Rows()
+	c.Assert(len(rows), Equals, 20)
+	assertNotExistSameElement(c, rows)
+	rows = tk.MustQuery("EXPLAIN ANALYZE SELECT distinct b, a FROM t limit 20").Rows()
+	assertTableReaderActRows(c, rows, "30")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+}
+
+func assertNotExistSameElement(c *C, rows [][]interface{}) {
+	valSet := set.NewStringSet()
+	for _, row := range rows {
+		var key string
+		for _, r := range row {
+			if data, ok := r.(string); ok {
+				key += data
+			}
+		}
+		c.Assert(valSet.Exist(key), Equals, false)
+		valSet.Insert(key)
+	}
+}
+
+func assertTableReaderActRows(c *C, rows [][]interface{}, actRows string) {
+	for _, row := range rows {
+		if s, ok := row[0].(string); ok {
+			if strings.Contains(s, "TableReader") {
+				if numRows, ok := row[2].(string); ok {
+					c.Assert(numRows, Equals, actRows)
+				}
+			}
+		}
+	}
 }
